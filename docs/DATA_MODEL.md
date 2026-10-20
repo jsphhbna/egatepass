@@ -25,6 +25,8 @@ QR bearer tokens are never stored in plaintext; only a 32-byte digest is canonic
 
 M2 derives the raw QR bearer in the trusted server from actor ID plus an idempotency UUID under `PASS_TOKEN_SECRET`. The database transaction receives only the digest, locks the upload intents, and creates the visitor, verified evidence, pass, and audit event together. Uploaded-object byte inspection occurs immediately before this transaction in the Vercel handler; live race behavior is not yet verified.
 
+M3 lifecycle functions locate a pass by the QR digest and lock it before transition. Entry device identity supplies the gate and moves only `issued` to `pending`; Guard decision moves only `pending` to `inside` or `rejected`; exit moves only `inside` to `exited` and currently requires the same gate. Each accepted transition appends one `visit_events` row and increments the pass version. This source contract is not yet database-verified.
+
 ## Operations and recovery
 
 - `app_settings` is a typed singleton for Asia/Manila hours, scheduling window, Peak Mode scope, lists, and retention periods.

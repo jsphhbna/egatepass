@@ -25,7 +25,7 @@ Sensitive data includes visitor names/contact details, face and ID images, QR be
 | S2 | Supabase schema, RLS, grants, RPC/storage core, synthetic fixtures | Clean disposable migration chain and clean install; real low-privilege RLS/storage negative matrix | IMPLEMENTED — NOT VERIFIED / BLOCKED: migration chain and pgTAP matrix authored; no isolated DB runtime |
 | S3 | Shared staff/device auth and governance | Real Auth sessions and browser E2E for all staff/device roles, suspension/revocation/first-login/reset | IMPLEMENTED IN PART — Supabase session/profile, login/reset, privacy, logout, forced-password endpoint/RPC; provisioning/governance and all live integration NOT VERIFIED |
 | S4 | Portal/kiosk registration, private evidence, optional local OCR, Peak Mode | Phone/portrait browser E2E, real uploads, session separation, source-forgery negative tests | IMPLEMENTED IN PART — M2 code/static checks PASS; live Auth/Storage/DB/API/browser workflow BLOCKED |
-| S5 | Server QR issue, entry, Guard decision, exit | Actual DB state machine E2E plus duplicate/race/wrong-device/expired negative tests | PLANNED |
+| S5 | Server QR issue, entry, Guard decision, exit | Actual DB state machine E2E plus duplicate/race/wrong-device/expired negative tests | IMPLEMENTED IN PART — M2/M3 code/static checks PASS; live lifecycle BLOCKED |
 | S6 | Admin/operations parity | Browser and DB proof for records, complete export, users/devices, settings, emergency, audit/reconciliation | PLANNED |
 | S7 | Resend/Auth SMTP, retention, holds, alerts | Real inbox tests; physical Storage deletion; hold/race/retry/scheduler-auth evidence | PLANNED |
 | S8 | Original-faithful UX/accessibility polish and full docs rewrite | Before/after images, accessibility checks, no lost route/action, owner screen approval | PLANNED |
@@ -66,6 +66,10 @@ The ordinary Supabase-only launch at exact checkpoint `86a455e` was reproduced i
 Portal and kiosk registration now use isolated Supabase browser sessions, private owner-bound Storage intents, actual uploaded-byte signature/size/SHA-256 inspection in `/api/passes/issue`, and a service-role-only atomic issuance RPC. The QR bearer value is HMAC-derived from a stable request ID and only its SHA-256 digest is stored. Scope-specific Peak Mode is rechecked in the transaction. OCR choice is **NO** for this checkpoint: original manual fields and one standard ID evidence upload are preserved; no unreviewed OCR dependency was introduced.
 
 M2 remains `IMPLEMENTED — NOT VERIFIED`: no migration, Storage object, anonymous/kiosk Auth session, Vercel function, or issuance transaction has run against Supabase. Legacy upload/function files remain for rollback and must not be deleted until the live parity gates pass.
+
+## M3 implementation boundary
+
+Entry/exit scanners now send the opaque QR bearer to a Vercel handler that hashes it before a service-only RPC. The transaction resolves an active matching device and gate, locks the pass, records entry as pending, denies replay/wrong-gate use, and records exit only from inside. Guard queue/stats/settings use a bounded reauthorizing RPC with Realtime invalidation plus polling recovery. Guard decisions and private evidence reads are reauthorized server-side. All are `IMPLEMENTED — NOT VERIFIED` until the real database/Auth/API/browser lifecycle matrix runs.
 
 ## Resume rule
 

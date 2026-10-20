@@ -18,11 +18,11 @@ S2 PostgreSQL migrations, pgTAP, RLS, Storage, and real Supabase Auth remain BLO
 
 ## Active implementation boundary
 
-M1 identity and M2 portal/kiosk registration are implemented but not integration-verified. Supabase shared login/recovery/session resolution is active. Registration now uses separate portal/operator sessions, private Storage intents, a Vercel issuance handler with content inspection, and an atomic database issuance RPC. Legacy Firebase scan/Guard/Admin pages are still present in deferred chunks and must be migrated before deletion or a full-migration claim.
+M1 identity, M2 registration/issuance, and M3 scanner/Guard lifecycle are implemented but not integration-verified. Entry, pending decision, approval/rejection, gate-matched exit, bounded Guard reads, and private evidence delivery have target RPC/API code. Legacy Firebase Admin pages/config/type modules remain in deferred chunks and must be migrated before deletion or a full-migration claim.
 
 ## Next safe tasks
 
-1. Commit and push the M2 registration/issuance checkpoint after all local checks pass.
-2. Implement M3 entry scan, Guard decision, exit scan, evidence delivery, and visit events against trusted RPCs.
-3. Add trusted provisioning/revocation operations; keep them NOT VERIFIED without a database.
+1. Commit and push the M3 gate lifecycle checkpoint after all local checks pass.
+2. Implement M4 Admin dashboards, records/exports, settings, governance, devices, incidents, audit, and reconciliation.
+3. Keep every provider-dependent path NOT VERIFIED until the isolated database and browser lifecycle run.
 4. Request only one of: Docker-backed disposable local Supabase, or explicit permission naming a non-production hosted Supabase project after read-only identity/no-real-data preflight.

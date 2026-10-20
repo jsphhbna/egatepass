@@ -24,7 +24,7 @@ export function AuthenticatedImage({ publicId, fallbackText = 'Image unavailable
         setObjectUrl(null);
         
         const token = await getAccessToken();
-        const response = await fetch(`/api/image?publicId=${encodeURIComponent(publicId || '')}`, {
+        const response = await fetch(`/api/evidence?id=${encodeURIComponent(publicId || '')}`, {
           headers: {
             Authorization: `Bearer ${token}`
           },

@@ -2,7 +2,7 @@
 
 Updated: 2026-10-20 Asia/Manila
 
-Current stage: P0 recovery PASS locally; M1 identity and M2 registration/issuance IMPLEMENTED IN PART — provider integration NOT VERIFIED; S2 database promotion remains BLOCKED
+Current stage: P0 recovery PASS locally; M1–M3 runtime slices IMPLEMENTED IN PART — provider integration NOT VERIFIED; S2 database promotion remains BLOCKED
 
 ## Repository identity
 
@@ -77,15 +77,24 @@ Current stage: P0 recovery PASS locally; M1 identity and M2 registration/issuanc
 - The registration service requests short-lived owner/source/kind-bound intents and uploads only to server-derived private Storage paths.
 - `/api/passes/issue` authenticates the bearer, downloads actual objects, enforces JPEG/PNG/WebP magic bytes and 5 MiB limits, hashes them, and invokes the service-only transaction.
 - Migration `20261020000500_pass_issuance.sql` validates source identity, scheduling/Peak Mode/evidence, locks and claims intents, and creates visitor/evidence/pass/audit rows atomically. Stable request IDs make successful retries idempotent.
-- Local checks PASS: frontend build, API typecheck, issuance static 6/6, existing Supabase static 5/5, identity static 4/4. Ten issuance pgTAP assertions are authored but NOT RUN.
+- Local checks PASS: frontend build, API typecheck, issuance static 7/7, existing Supabase static 5/5, identity static 4/4. Ten issuance pgTAP assertions are authored but NOT RUN.
 - Live anonymous/kiosk Auth, RLS, Storage, API routing, transaction behavior, private reads, source-forgery rejection, phone/camera, and QR scan compatibility remain BLOCKED / NOT TESTED. The production build still includes a deferred Firebase chunk.
 - The case-sensitive cutover scan reports 48 matching lines in `src`, `api`, `package.json`, `vite.config.ts`, and `index.html`; the release gate remains FAILED.
+
+## M3/S5 gate lifecycle slice
+
+- Entry and exit pages preserve the original scanner UI and now call Vercel `/api/scan-pass`; the raw QR bearer is hashed before database lookup and never logged or stored.
+- Migration `20261020000600_gate_lifecycle.sql` implements locked entry/pending, Guard approve/reject, and gate-matched exit transitions with operational events and version increments.
+- Guard queue, daily summary, rejection reasons, and Realtime invalidation now use Supabase. A five-second refresh remains as delivery recovery.
+- `/api/evidence` revalidates the staff session/profile/privacy/password state, restricts Guard reads to currently pending visitors, rejects expired/purged evidence, and returns private no-store responses.
+- Local checks PASS: lifecycle static 6/6, frontend build, and API typecheck. Fourteen lifecycle pgTAP assertions are authored but NOT RUN; total authored database assertions are 59.
+- Deterministic case-sensitive legacy scan is 46 lines, down from 48. Admin/config/type modules still produce the 621.99 kB Firebase chunk; cleanup remains prohibited.
 
 ## Immediate blockers and next safe work
 
 1. Provide one isolated executable route for the S2 promotion gate: make Docker Desktop available for local Supabase, or explicitly authorize a separate non-production hosted Supabase project after identity confirmation.
-2. Run two clean migrations, all 45 authored pgTAP assertions, real Auth bearer-session Data API/RPC denials, and actual private Storage operations. Fix any migration/runtime defect before promotion.
-3. Continue M3 scan/Guard state-transition implementation without using an unidentified hosted database.
+2. Run two clean migrations, all 59 authored pgTAP assertions, real Auth bearer-session Data API/RPC denials, actual private Storage operations, and the full issue→entry→decision→exit browser lifecycle. Fix any defect before promotion.
+3. Continue M4 Admin/governance implementation without using an unidentified hosted database.
 4. Do not link/deploy Vercel, use the hosted database, or send email without owner authorization.
 
 ## Maturity

@@ -45,10 +45,20 @@ Date/time zone: 2026-10-20, Asia/Manila
 |---|---|---|---|---|
 | EV-M2-001 | IMPLEMENTATION | portal/kiosk Supabase service; private upload intents; `/api/passes/issue`; `20261020000500_pass_issuance.sql` | IMPLEMENTED — NOT VERIFIED | No real Auth, Storage, database, or Vercel request was executed |
 | EV-M2-002 | STATIC / TYPECHECK | `npm run build`; `npm run typecheck:api` | PASS, exit 0 | Compilation only; Vite still emits a 621.99 kB deferred Firebase chunk from unmigrated stages |
-| EV-M2-003 | STATIC CONTRACT | `npm run test:issuance:static` | PASS: 1 file / 6 tests | Source-level contracts only; not database proof |
+| EV-M2-003 | STATIC CONTRACT | `npm run test:issuance:static` | PASS: 1 file / 7 tests | Source-level contracts only; not database proof |
 | EV-M2-004 | DATABASE TEST AUTHORING | `supabase/tests/004_pass_issuance.test.sql` | NOT RUN / BLOCKED: 10 assertions authored | Requires Docker-backed local Supabase or authorized isolated non-production project; total authored pgTAP assertions now 45 |
 | EV-M2-005 | DEPENDENCY AUDIT | `npm audit --omit=dev --json` | FAIL release gate: 4 high, 0 moderate/critical | Findings remain in legacy Firebase runtime chain; no forced upgrade |
 | EV-M2-006 | CUTOVER INVENTORY | case-sensitive target `rg` scan | FAIL release gate: 48 matching lines | Down from M1's 50; portal/kiosk/new service/endpoint have zero matches; legacy scan/Guard/Admin/config remains |
+
+## M3/S5 gate lifecycle implementation
+
+| ID | Class | Command / artifact | Result | Scope and limitation |
+|---|---|---|---|---|
+| EV-M3-001 | IMPLEMENTATION | `/api/scan-pass`, `/api/decide-visit`, `/api/evidence`, Guard Supabase service, `20261020000600_gate_lifecycle.sql` | IMPLEMENTED — NOT VERIFIED | No request reached Vercel/Supabase and no lifecycle row changed in a database |
+| EV-M3-002 | STATIC / TYPECHECK | `npm run build`; `npm run typecheck:api` | PASS, exit 0 | Compilation only; Firebase deferred chunk remains 621.99 kB |
+| EV-M3-003 | STATIC CONTRACT | `npm run test:lifecycle:static` | PASS: 1 file / 6 tests | Source-level digest/device/gate/transition/evidence contracts only |
+| EV-M3-004 | DATABASE TEST AUTHORING | `supabase/tests/005_gate_lifecycle.test.sql` | NOT RUN / BLOCKED: 14 assertions authored | Real row locks, concurrent/replay behavior, Realtime/RLS and full lifecycle remain unproven; total pgTAP authored is 59 |
+| EV-M3-005 | CUTOVER INVENTORY | case-sensitive target `rg` scan | FAIL release gate: 46 matching lines | Down from 48; Guard page no longer imports Firebase, but Admin/config/type/runtime legacy remains |
 
 | ID | Class | Command / artifact | Result | Scope and limitation |
 |---|---|---|---|---|

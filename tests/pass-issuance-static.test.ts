@@ -34,6 +34,11 @@ describe('pass issuance migration contracts', () => {
     expect(migration).not.toMatch(/insert into public\.passes[\s\S]*qrToken/i);
   });
 
+  it('does not expire evidence before a future pass validity buffer', () => {
+    expect(migration).toContain("ends_at + interval '1 day'");
+    expect(migration).toContain('make_interval(days => settings.image_retention_days)');
+  });
+
   it('makes issuance service-only, actor-checked, intent-locked, and idempotent', () => {
     expect(migration).toContain("if auth.role() <> 'service_role'");
     expect(migration).toContain('coalesce(u.is_anonymous, false)');

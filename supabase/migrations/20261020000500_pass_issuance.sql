@@ -142,7 +142,10 @@ begin
   ) values (
     new_visitor_id, photo_intent.id, photo_intent.kind, photo_intent.bucket_id,
     photo_intent.object_path, photo_intent.content_type, requested_photo_bytes,
-    requested_photo_sha256, now(), now() + make_interval(days => settings.image_retention_days)
+    requested_photo_sha256, now(), greatest(
+      now() + make_interval(days => settings.image_retention_days),
+      ends_at + interval '1 day'
+    )
   );
   update public.upload_intents set status = 'claimed', claimed_at = now(), visitor_id = new_visitor_id
   where id = photo_intent.id;
@@ -154,7 +157,10 @@ begin
     ) values (
       new_visitor_id, id_intent.id, id_intent.kind, id_intent.bucket_id,
       id_intent.object_path, id_intent.content_type, requested_id_bytes,
-      requested_id_sha256, now(), now() + make_interval(days => settings.image_retention_days)
+      requested_id_sha256, now(), greatest(
+        now() + make_interval(days => settings.image_retention_days),
+        ends_at + interval '1 day'
+      )
     );
     update public.upload_intents set status = 'claimed', claimed_at = now(), visitor_id = new_visitor_id
     where id = id_intent.id;

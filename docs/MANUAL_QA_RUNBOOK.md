@@ -111,3 +111,22 @@ Run only after the isolated Supabase migrations and pgTAP suite pass. Use fictio
 - Evidence path:
 - Reviewer/date:
 - Result: [ ] PASS [ ] FAIL [ ] BLOCKED
+
+## Checkpoint sheet: M3 scanner and Guard lifecycle — BLOCKED / AWAITING OWNER
+
+After M2 succeeds in the isolated environment, use the issued fictional QR and distinct provisioned Entry, Exit, and Guard accounts.
+
+1. Entry: scan once at its assigned gate. Confirm UI reports pending, not admitted; Guard queue shows one visitor with correct face/ID, purpose, time, validity, and gate.
+2. Guard: compare evidence, approve, and confirm inside state/event. Repeat with a second pass and a required rejection reason; confirm no later entry/exit is possible.
+3. Exit: scan the approved pass at the matching gate and confirm exited. Try another gate, entry/exit device type mismatch, revoked device, pending/rejected/expired/early/forged/replayed QR, and concurrent duplicate scans.
+4. Confirm every denial leaves pass version/state unchanged except legitimate expiry, while invalid attempts append sanitized operational events without raw QR data.
+5. Suspend/revoke actors with sessions still open; the next API/RPC call must fail. A Guard who has not completed password/privacy requirements must not see queue/evidence or decide.
+6. Temporarily interrupt Realtime. Confirm the bounded polling recovery refreshes the queue without duplicates and the UI presents an understandable error while unavailable.
+
+- Environment/URL:
+- Entry/Exit/Guard devices and browsers:
+- Commit:
+- Observed result:
+- Evidence path:
+- Reviewer/date:
+- Result: [ ] PASS [ ] FAIL [ ] BLOCKED

@@ -120,3 +120,11 @@
 - Date: 2026-10-20
 - Status: accepted
 - Decision: choose the prompt's optional OCR path **NO**. Preserve manual visitor details, captured face, and one ID evidence upload. This avoids adding an unverified parser and does not weaken the review step or default ID requirement.
+
+## ADR-0018 — Database-owned gate lifecycle and bounded Guard projection
+
+- Date: 2026-10-20
+- Status: accepted for M3 implementation; integration NOT VERIFIED
+- Decision: QR plaintext crosses only the scanner-to-Vercel request and is hashed before lookup. Service-only row-locking RPCs resolve current device/staff records and own all status/time/gate/event fields. Entry yields `pending`, a privacy-complete Guard/Admin decision yields `inside` or `rejected`, and exit requires `inside` plus the same assigned gate.
+- Decision: the Guard reads a 50-item projection and daily aggregate from a caller-reauthorizing RPC. Realtime is an invalidation hint with bounded polling recovery; it is not the authorization boundary.
+- Consequence: the browser cannot write lifecycle rows directly, and replay/wrong-device/wrong-gate calls do not advance state.

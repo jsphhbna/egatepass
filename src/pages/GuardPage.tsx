@@ -1,19 +1,8 @@
 import { useEffect, useState, useRef } from 'react';
-import {
-  collection,
-  query,
-  where,
-  orderBy,
-  onSnapshot,
-  doc,
-  getDoc,
-  limit,
-} from 'firebase/firestore';
-import { db } from '@/lib/firebase';
 import { useAuth } from '@/hooks/useAuth';
 import { getAccessToken, signOutCurrentActor } from '@/services/auth';
 import { AuthenticatedImage } from '@/components/AuthenticatedImage';
-import type { GatePass } from '@/types';
+import { fetchGuardDashboard, subscribeToPassChanges, type GuardQueuePass } from '@/services/guard';
 import {
   CheckCircle2,
   XCircle,
@@ -34,9 +23,7 @@ import { toast } from 'sonner';
 import { GuardAccountMenu } from '@/components/GuardAccountMenu';
 import { GuardPasswordResetModal } from '@/components/GuardPasswordResetModal';
 
-interface PassWithId extends GatePass {
-  id: string;
-}
+type PassWithId = GuardQueuePass;
 
 export function GuardPage() {
   const { userData } = useAuth();
@@ -65,96 +52,34 @@ export function GuardPage() {
   const [showSignOutModal, setShowSignOutModal] = useState(false);
   const [isSigningOut, setIsSigningOut] = useState(false);
 
-  // ============================================================
-  // LOAD PREMADE REJECTION REASONS FROM settings/app
-  // ============================================================
   useEffect(() => {
-    async function loadSettings() {
-      const settingsSnap = await getDoc(doc(db, 'settings', 'app'));
-      if (settingsSnap.exists()) {
-        const data = settingsSnap.data();
-        if (Array.isArray(data.rejectionReasons)) {
-          setRejectionReasons(data.rejectionReasons);
-        }
-      }
-    }
-    loadSettings();
-  }, []);
-
-  // ============================================================
-  // REAL-TIME LISTENER: pending passes
-  // ============================================================
-  useEffect(() => {
-    const q = query(
-      collection(db, 'gatePasses'),
-      where('status', '==', 'pending'),
-      orderBy('scannedAt', 'asc'),
-      limit(50)
-    );
-
-    const unsub = onSnapshot(
-      q,
-      (snap) => {
+    let active = true;
+    let loading = false;
+    const refresh = async () => {
+      if (loading) return;
+      loading = true;
+      try {
+        const dashboard = await fetchGuardDashboard();
+        if (!active) return;
         setQueueError(false);
-        const list: PassWithId[] = [];
-        snap.forEach((docSnap) => {
-          list.push({ id: docSnap.id, ...docSnap.data() } as PassWithId);
-        });
-
-        // Play alert sound for new entries
-        if (list.length > previousPendingCountRef.current && audioRef.current) {
-          audioRef.current.play().catch(() => {});
+        if (dashboard.queue.length > previousPendingCountRef.current && audioRef.current) {
+          audioRef.current.play().catch(() => undefined);
         }
-
-        previousPendingCountRef.current = list.length;
-        setPasses(list);
-      },
-      (error) => {
-        console.error('Guard listener error:', error);
-        setQueueError(true);
+        previousPendingCountRef.current = dashboard.queue.length;
+        setPasses(dashboard.queue);
+        setDailyStats(dashboard.stats);
+        setRejectionReasons(dashboard.rejectionReasons);
+      } catch (error) {
+        if (active) setQueueError(true);
+        console.error('Guard dashboard error:', error);
+      } finally {
+        loading = false;
       }
-    );
-
-    return unsub;
-  }, []);
-
-  // ============================================================
-  // REAL-TIME LISTENER: daily report stats
-  // ============================================================
-  useEffect(() => {
-    // Get start of today
-    const startOfToday = new Date();
-    startOfToday.setHours(0, 0, 0, 0);
-
-    const q = query(
-      collection(db, 'gatePasses'),
-      where('issuedAt', '>=', startOfToday)
-    );
-
-    const unsub = onSnapshot(
-      q,
-      (snap) => {
-        let inside = 0;
-        let exited = 0;
-        let rejected = 0;
-        let total = 0;
-
-        snap.forEach((docSnap) => {
-          const pass = docSnap.data() as GatePass;
-          total++;
-          if (pass.status === 'inside') inside++;
-          else if (pass.status === 'exited') exited++;
-          else if (pass.status === 'rejected') rejected++;
-        });
-
-        setDailyStats({ inside, exited, rejected, total });
-      },
-      (error) => {
-        console.error('Daily stats listener error:', error);
-      }
-    );
-
-    return unsub;
+    };
+    void refresh();
+    const stopRealtime = subscribeToPassChanges(() => { void refresh(); });
+    const poll = window.setInterval(() => { void refresh(); }, 5000);
+    return () => { active = false; stopRealtime(); window.clearInterval(poll); };
   }, []);
 
   // ============================================================
@@ -240,7 +165,7 @@ export function GuardPage() {
   // ============================================================
   function isPendingLong(pass: PassWithId): boolean {
     if (!pass.scannedAt) return false;
-    const scannedMs = pass.scannedAt.toMillis();
+    const scannedMs = new Date(pass.scannedAt).getTime();
     return Date.now() - scannedMs > 30000;
   }
 
@@ -398,7 +323,7 @@ export function GuardPage() {
                           <div className="flex items-center gap-2 text-sm text-[var(--color-text-muted)]">
                             <Clock className="h-4 w-4" />
                             <span>
-                              Scanned: {pass.scannedAt ? new Date(pass.scannedAt.toMillis()).toLocaleTimeString() : '—'}
+                              Scanned: {pass.scannedAt ? new Date(pass.scannedAt).toLocaleTimeString() : '—'}
                             </span>
                           </div>
                           {pass.gate && (
@@ -410,7 +335,7 @@ export function GuardPage() {
                           <div className="flex items-center gap-2 text-sm text-[var(--color-text-muted)]">
                             <CheckCircle2 className="h-4 w-4" />
                             <span>
-                              Valid: {new Date(pass.validFrom.toMillis()).toLocaleTimeString()} - {new Date(pass.validUntil.toMillis()).toLocaleTimeString()}
+                              Valid: {new Date(pass.validFrom).toLocaleTimeString()} - {new Date(pass.validUntil).toLocaleTimeString()}
                             </span>
                           </div>
                         </div>
@@ -522,7 +447,7 @@ export function GuardPage() {
                       </p>
                       <div className="mt-2 flex items-center gap-1.5 text-xs font-medium text-[var(--color-text-muted)]">
                         <Clock className="h-3 w-3" />
-                        {pass.scannedAt ? new Date(pass.scannedAt.toMillis()).toLocaleTimeString() : '—'}
+                        {pass.scannedAt ? new Date(pass.scannedAt).toLocaleTimeString() : '—'}
                         {pass.gate && ` • ${pass.gate}`}
                       </div>
                     </div>

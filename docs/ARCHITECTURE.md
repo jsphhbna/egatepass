@@ -89,7 +89,7 @@ Pass issue is durable independently of optional email. Email retry uses a stable
 
 ## Current transition boundary
 
-Legacy files stay until replacement slices pass their gates. `firebase.json`, Firestore rules/indexes, `netlify/`, and Cloudinary code must not be removed based on architecture intent alone. P0 removed Firebase from the startup chain; M1 removes it from shared login/recovery/privacy/logout and scanner token acquisition. M2 moves portal/kiosk settings, private uploads, and issuance to Supabase/Vercel source contracts with separate browser sessions. Guard queues, scanners, admin data, authorized evidence delivery, cleanup, and account/device administration remain legacy and block cutover. M2 provider behavior remains unverified.
+Legacy files stay until replacement slices pass their gates. `firebase.json`, Firestore rules/indexes, `netlify/`, and Cloudinary code must not be removed based on architecture intent alone. P0 removed Firebase from startup; M1 migrates identity; M2 migrates registration/issuance; M3 migrates scanner transitions, Guard queue/decision, and evidence reads. Admin data/governance, cleanup, and account/device administration remain legacy and block cutover. All provider behavior remains unverified.
 
 ## Evidence and authority
 

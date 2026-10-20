@@ -25,8 +25,8 @@ This is a planning inventory, not proof that the target exists. Canonical SQL wi
 | Original function | Target endpoint/RPC responsibility |
 |---|---|
 | `create-pass` | `/api/passes/issue` plus `api.issue_pass`: actual-byte validation, atomic claim/visitor/pass/audit issue, server-derived source/validity, digest-only token and idempotency — IMPLEMENTED, NOT INTEGRATION-VERIFIED |
-| `scan-pass` | Device/gate/type lookup and atomic entry/exit transition + visit event |
-| `decide-visit` | Guard/admin pending-only approve/reject transaction + evidence expiry update |
+| `scan-pass` | `/api/scan-pass` plus `api.scan_pass`: digest lookup, active device/gate/type check, locked entry/exit transition + visit event — IMPLEMENTED, NOT INTEGRATION-VERIFIED |
+| `decide-visit` | `/api/decide-visit` plus `api.decide_visit`: eligible staff, pending-only locked approve/reject + visit event — IMPLEMENTED, NOT INTEGRATION-VERIFIED |
 | `create-user` | Supabase Admin invitation/create plus staff profile transaction/reconciliation |
 | `update-user` | Restricted status/role change with last-SA enforcement and audit |
 | `clear-password-flag` | `/api/auth/complete-password-change` plus service-role-only transactional finalizer — IMPLEMENTED, NOT INTEGRATION-VERIFIED |
@@ -37,7 +37,7 @@ This is a planning inventory, not proof that the target exists. Canonical SQL wi
 | `update-settings` | Typed role-scoped settings transaction + prior/new audit |
 | `cloudinary-sign` | Replace with single-use Storage upload-intent creation |
 | `cleanup-upload` | Expired/unclaimed object + intent cleanup with retry/reconciliation |
-| `image` | Authorized short-lived evidence delivery/proxy; never path-only authorization |
+| `image` | `/api/evidence`: authenticated profile/state and pending-queue authorization before private Storage delivery — IMPLEMENTED, NOT INTEGRATION-VERIFIED |
 | `purge-images` | Hold/active-pass-aware physical Storage deletion and metadata update |
 | `retention-cleanup` | Authenticated scheduled 7/7/30/365/90 cleanup with non-2xx partial failure |
 | `migrate-image-delivery` | Legacy-only provenance; no live Firebase/Cloudinary migration without separate approval |
@@ -66,7 +66,8 @@ No old configuration is removed merely because a target file compiles. Removal o
 - Current-actor and upload-intent RPCs: `20261020000300_core_rpc.sql` — IMPLEMENTED, NOT EXECUTED.
 - Privacy acknowledgement and Guard password finalization: `20261020000400_identity_rpcs.sql` plus `/api/auth/complete-password-change` — IMPLEMENTED, NOT EXECUTED.
 - Pass issuance and evidence claim: `20261020000500_pass_issuance.sql` plus `/api/passes/issue` — IMPLEMENTED, NOT EXECUTED.
+- Gate scan/decision/Guard projection: `20261020000600_gate_lifecycle.sql` plus three Vercel handlers — IMPLEMENTED, NOT EXECUTED.
 - One-time non-public Super Admin bootstrap: `supabase/bootstrap/README.md` — PROCEDURE AUTHORED, NOT TESTED.
-- Real database/schema matrix: `supabase/tests/*.test.sql` — 45 ASSERTIONS AUTHORED, BLOCKED.
+- Real database/schema matrix: `supabase/tests/*.test.sql` — 59 ASSERTIONS AUTHORED, BLOCKED.
 
 Shared login, recovery, privacy acknowledgement, logout, and bearer-token acquisition have target implementations. No database/provider behavior is declared replaced until the isolated integration matrix passes; Firebase collection/Cloudinary operational paths remain present.

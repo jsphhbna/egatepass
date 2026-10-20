@@ -8,12 +8,12 @@ Status values: PASS, FAIL, BLOCKED, NOT TESTED, AWAITING OWNER. A lower-level PA
 | Supabase-only startup | Dev/preview browser, missing/malformed config, desktop/390px | P0 | PASS locally on exact feature commit; owner-machine QA AWAITING OWNER |
 | Repository metadata/Vercel SPA config | Contract test, JSON inspection, build | S1 | PASS locally; deployed routing NOT TESTED |
 | Migration chain | `supabase db reset` on clean disposable instance | S2 | Tests authored; BLOCKED: isolated Supabase/Postgres unavailable |
-| RLS/grants/RPC denial matrix | Real Auth sessions and low-privilege Data API/SQL tests | S2/M1/M2 | 45 pgTAP assertions authored; BLOCKED: isolated Supabase unavailable |
+| RLS/grants/RPC denial matrix | Real Auth sessions and low-privilege Data API/SQL tests | S2/M1–M3 | 59 pgTAP assertions authored; BLOCKED: isolated Supabase unavailable |
 | Private Storage | Real synthetic upload/read/list/delete tests | S2/S4 | Policies authored; BLOCKED: isolated Supabase unavailable |
 | Shared staff/device login | Real Supabase Auth browser/API tests for all roles/states | S3 | IMPLEMENTED — NOT VERIFIED; Auth/database environment BLOCKED |
 | Guard forced password/recovery | Real Auth email/session, Vercel endpoint, profile/audit/reconciliation checks | S3 | IMPLEMENTED — NOT VERIFIED; static/type/browser unavailable-state checks PASS |
-| Portal/Kiosk evidence | Browser + real Storage + DB confirmation | S4 | IMPLEMENTED — NOT VERIFIED; static 6/6 PASS, live boundary BLOCKED |
-| Pass lifecycle/races | Real DB/browser issue-entry-decision-exit plus concurrent negatives | S5 | NOT TESTED |
+| Portal/Kiosk evidence | Browser + real Storage + DB confirmation | S4 | IMPLEMENTED — NOT VERIFIED; static 7/7 PASS, live boundary BLOCKED |
+| Pass lifecycle/races | Real DB/browser issue-entry-decision-exit plus concurrent negatives | S5 | IMPLEMENTED — NOT VERIFIED; lifecycle static 6/6 PASS, live boundary BLOCKED |
 | Admin operations | Browser actions plus canonical DB/audit checks | S6 | NOT TESTED |
 | Resend/Auth mail | Real approved test inbox and callback | S7 | NOT TESTED |
 | Retention/holds | Clock-safe DB plus physical Storage deletion | S7 | NOT TESTED |
