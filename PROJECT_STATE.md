@@ -255,3 +255,26 @@ Current product maturity is `IN PROGRESS (LEVEL 2+ / PRE-DEPLOYMENT VERIFIED)` â
   - `npx tsc --noEmit`: 0 errors.
   - `npm run build`: clean production build (2.13s).
   - `test:e2e:startup`: 4/4 passed (Playwright browser startup verification on Edge).
+
+
+33. **AUTH / RLS CONTRACT REPAIR & AUTOMATIC RECURRENCE ELIMINATION PASS (October 2026)**:
+    - **Group 1 (Dependency Exact Pin)**: `standardwebhooks: "1.1.1"` exact-pinned in `package.json` and `package-lock.json`. Contract test added.
+    - **Group 2 (Turnstile Lifecycle Hardening)**: Callback props stored in refs in `TurnstileWidget.tsx`. Widget lifecycle decoupled from parent render state. 8/8 lifecycle tests pass.
+    - **Group 3 (Dedicated PKCE Recovery Client)**: `requireRecoverySupabase()` with storage namespace `egatepass-recovery-auth` and PKCE flow. Operator client isolated. UI clears URL state, terminates recovery session on completion, and requires normal sign-in.
+    - **Group 4 (Server Recovery Confinement)**: Centralized `getVerifiedSessionContext(admin, token)`. `requireStaffActor` strictly rejects recovery and anonymous sessions. Guard, Admin, and Pass APIs reject recovery tokens.
+    - **Group 5 (PostgreSQL / RLS Identity Contract Hardening)**: Migration `20261021000100_auth_identity_contract_hardening.sql` deployed in offline chain. `private.is_portal_actor()` requires `auth.users.is_anonymous = true`. `private.current_staff_role()` blocks recovery sessions. `public.app_settings` restricts `anon` and `authenticated` to 6 safe columns only.
+    - **Group 6 (PGlite 10-Actor Test Matrix)**: Full actor matrix verified in `tests/migration-chain-pglite.test.ts` across: (1) pre-auth anon, (2) anonymous Auth visitor, (3) permanent non-staff, (4) guard, (5) admin, (6) superadmin, (7) kiosk device, (8) entry device, (9) exit device, and (10) recovery staff session.
+
+## Test Metrics (Current Pass)
+- `npm test`: 22 test files, 320 passed (0 failed).
+- `test:migrations`: 9/9 passed (PGlite sequential runner, upgrades, D1-D10 trigger contracts, safe anon settings RLS, 10-actor matrix).
+- `test:contracts`: 17/17 passed.
+- `typecheck:api`: 0 errors.
+- `npx tsc --noEmit`: 0 errors.
+- `npm run build`: clean production build (1.41s).
+- `test:e2e:startup`: 4/4 passed (Playwright browser startup verification on Edge across dev configured/missing/malformed and preview configured).
+
+## Documented Deployment Gates
+1. **Pre-Turnstile Development Anonymous Accounts Checkpoint**: Enumerate and clean stale dev anonymous identities before production with owner approval; verify fresh anonymous sessions require valid Turnstile tokens.
+2. **Hosted Data API Schema Exposure Gate**: Verify Data API exposed schemas include `public`, `graphql_public`, and `api`; perform canary RPC before production traffic.
+3. **Hosted Supabase Status**: **NOT APPLIED** (All migrations and hardening verified locally/offline).

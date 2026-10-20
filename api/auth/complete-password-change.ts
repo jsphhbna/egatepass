@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { recordReconciliation } from '../../server/actors.js';
+import { getVerifiedSessionContext, HttpError, recordReconciliation } from '../../server/actors.js';
 import { jsonResponse, readBearerToken } from '../../server/http.js';
 import { passwordSchema } from '../../server/password-policy.js';
 import { getServerSupabaseClients } from '../../server/supabase.js';
@@ -23,9 +23,20 @@ async function handleRequest(request: Request): Promise<Response> {
 
   try {
     const { admin, passwordVerifier } = getServerSupabaseClients();
-    const { data: identity, error: identityError } = await admin.auth.getUser(token);
-    const user = identity.user;
-    if (identityError || !user?.email) return jsonResponse(401, { error: 'invalid_session' });
+    let session;
+    try {
+      session = await getVerifiedSessionContext(admin, token);
+    } catch (err) {
+      if (err instanceof HttpError) return jsonResponse(err.status, { error: err.code });
+      return jsonResponse(401, { error: 'invalid_session' });
+    }
+
+    if (session.isRecoverySession) {
+      return jsonResponse(403, { error: 'recovery_session_forbidden' });
+    }
+
+    const user = session.user;
+    if (!user?.email) return jsonResponse(401, { error: 'invalid_session' });
 
     const { data: profile, error: profileError } = await admin
       .from('staff_profiles')

@@ -281,3 +281,17 @@ Exact-commit verification at `80d861b`: `npm run test:architecture` PASS 3/3; `n
 | EV-PGLITE-003 | FULL PGLITE MIGRATION CHAIN WITH HARDENING | `tests/migration-chain-pglite.test.ts` | PASS: 8/8 tests (18.9s) | Clean sequential execution (000100 through new hardening migration), upgrade from 001300/001400, trigger contracts D1-D10, anon safe column contracts |
 | EV-FULL-SUITE-007 | FULL VITEST SUITE PASS | `npm test` | PASS: 21 files, 304 tests | All unit, contract, static, and mocked tests pass with zero failures |
 | EV-STARTUP-005 | PLAYWRIGHT BROWSER STARTUP E2E | `npm run test:e2e:startup` | PASS: 4/4 cases | Edge browser startup verified across dev configured/missing/malformed and preview configured |
+
+
+## Auth / RLS Contract Repair & Recurrence Elimination Pass
+| ID | Class | Command / artifact | Result | Scope and limitation |
+|---|---|---|---|---|
+| EV-PIN-001 | EXACT PIN STANDARDWEBHOOKS | `package.json`, `tests/architecture-contract.test.ts` | PASS: 1/1 test | Exact pin `"standardwebhooks": "1.1.1"` verified in package.json, package-lock.json, and architecture contract test |
+| EV-TURN-003 | TURNSTILE LIFECYCLE STABILITY | `src/components/TurnstileWidget.tsx`, `tests/turnstile-lifecycle.test.ts` | PASS: 8/8 tests | Callback refs prevent recreation on parent state rerender; exactly one widget instance; resetKey recreates; unmount cleans up; production fail-closed verified |
+| EV-RECOV-002 | DEDICATED PKCE RECOVERY CLIENT | `src/lib/supabase.ts`, `src/pages/ResetPasswordPage.tsx`, `tests/password-recovery.test.ts` | PASS: 18/18 tests | Dedicated client with storageKey `egatepass-recovery-auth`; operator client isolated; session terminated on reset; URL state cleared; normal login required |
+| EV-CONF-001 | SERVER RECOVERY CONFINEMENT | `server/actors.ts`, `api/decide-visit.ts`, `api/scan-pass.ts`, `api/admin/settings.ts` | PASS: 18/18 tests | `getVerifiedSessionContext` inspects verified claims; `requireStaffActor` rejects recovery session with 403 `recovery_session_forbidden`; Guard and Admin APIs reject recovery tokens |
+| EV-MIG-004 | DB IDENTITY HARDENING & 10-ACTOR MATRIX | `supabase/migrations/20261021000100_auth_identity_contract_hardening.sql`, `tests/migration-chain-pglite.test.ts` | PASS: 9/9 tests (10.4s) | `private.is_recovery_session()` blocks DB staff role; `private.is_portal_actor()` requires `auth.users.is_anonymous = true`; app_settings restricted to 6 safe columns for anon and authenticated; all 10 actors verified |
+| EV-FULL-SUITE-008 | FULL TEST SUITE PASS | `npm test` | PASS: 22 files, 320 tests (12.8s) | Complete test suite passes with zero failures |
+| EV-TYPE-007 | API & CLIENT TYPECHECK | `npm run typecheck:api` & `npx tsc --noEmit` | PASS: exit code 0 | Strict TypeScript compilation across API and React client with zero errors |
+| EV-BUILD-007 | PRODUCTION BUILD INTEGRITY | `npm run build` | PASS: exit code 0 (1.41s) | Production bundle cleanly built with Vite v8.3.1 |
+| EV-E2E-005 | PLAYWRIGHT BROWSER STARTUP E2E | `npm run test:e2e:startup` | PASS: 4/4 cases | Edge browser startup verified across dev configured/missing/malformed and preview configured |

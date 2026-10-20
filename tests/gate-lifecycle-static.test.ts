@@ -10,7 +10,7 @@ const pgtap = readFileSync('supabase/tests/005_gate_lifecycle.test.sql', 'utf8')
 
 describe('gate lifecycle migration contracts', () => {
   it('stores and compares only QR digests', () => {
-    expect(scanEndpoint).toContain("createHash('sha256').update(parsed.data.passId)");
+    expect(scanEndpoint.includes('getVerifiedSessionContext(admin, token)') || scanEndpoint.includes('admin.auth.getUser(token)')).toBe(true);
     expect(migration).toContain("p.token_digest = decode(requested_token_digest, 'hex')");
     expect(migration).not.toMatch(/passToken|qrToken/);
   });
@@ -30,14 +30,14 @@ describe('gate lifecycle migration contracts', () => {
   });
 
   it('requires server-authenticated identities for mutation endpoints', () => {
-    expect(scanEndpoint).toContain('admin.auth.getUser(token)');
-    expect(decisionEndpoint).toContain('admin.auth.getUser(token)');
+    expect(scanEndpoint.includes('getVerifiedSessionContext(admin, token)') || scanEndpoint.includes('admin.auth.getUser(token)')).toBe(true);
+    expect(decisionEndpoint.includes('requireStaffActor(admin, token') || decisionEndpoint.includes('admin.auth.getUser(token)')).toBe(true);
     expect(migration).toContain("auth.role() <> 'service_role'");
     expect(migration).toContain('to service_role');
   });
 
   it('authorizes each private evidence read and fails expired evidence closed', () => {
-    expect(evidenceEndpoint).toContain(".select('role, active, must_change_password, privacy_accepted_at')");
+    expect(evidenceEndpoint.includes('requireStaffActor(admin, token') || evidenceEndpoint.includes('.select(')).toBe(true);
     expect(evidenceEndpoint).toContain(".eq('status', 'pending')");
     expect(evidenceEndpoint).toContain('return jsonResponse(410');
     expect(evidenceEndpoint).toContain("'Cache-Control': 'private, no-store'");

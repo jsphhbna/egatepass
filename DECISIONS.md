@@ -379,3 +379,23 @@
   5. **Device Credential Mutation Guard**: Abandon reliance on `auth.role()` inside auth database triggers. Enforce admin-controlled mutation marker `egatepass_device_credential_change_id` in `raw_app_meta_data`. Super Admin generates a fresh UUID marker on password/email changes. Compensating rollback must generate a distinct second fresh marker. Anonymous users are strictly barred from setting passwords. Trigger EXECUTE is revoked from `public, anon, authenticated`.
   6. **Dashboard Fail-Closed Aggregates**: Authoritative aggregate RPCs (`dashboard_calendar_counts`, `dashboard_today_insights`) must fail closed with HTTP 503 if the RPC errors, returns null, or fails strict Zod validation. Prohibit raw-row fallback and local JavaScript aggregation.
   7. **Supabase Returned Error Inspection & Partial Truth**: Prohibit relying on `try/catch` for Supabase database mutations. All audit and reconciliation inserts must inspect returned `.error`. When an irreversible action (password reset, device credential rotation, image purge) succeeds but audit logging fails, return truthful `result: "partial"` with `auditPending: true` and `reconciliationRecorded: true`, without rolling back or prompting user to repeat the operation.
+
+
+## ADR-0030 — Auth / RLS Contract Hardening, Recovery Confinement & True Anonymous Identity Model
+- **Date**: 2026-10-21
+- **Status**: accepted
+- **Context**: 
+  1. Password recovery tests previously modeled impossible fabricated AMR states rather than genuine Supabase PKCE recovery.
+  2. A recovery session risked being accepted as an operational staff session across server APIs and database RLS.
+  3. `private.is_portal_actor()` previously equated "not staff and not device" with Portal visitor, allowing permanent non-staff accounts to act as Portal actors.
+  4. `public.app_settings` granted table-wide SELECT to `authenticated`, leaking retention and internal configuration to anonymous Auth visitors who become role `authenticated`.
+  5. `TurnstileWidget` recreated on parent state updates due to callback prop identity changes.
+  6. `standardwebhooks` was pinned with a caret range `^1.1.1`.
+- **Decisions**:
+  1. **Dedicated PKCE Recovery Flow**: Instantiate a dedicated Supabase client via `requireRecoverySupabase()` with isolated storage namespace `egatepass-recovery-auth`, `flowType: 'pkce'`, and disabled auto-refresh. Isolate operator client from consuming recovery URLs. Terminate recovery session and clear URL state upon reset completion.
+  2. **Recovery Session Confinement**: Centralize verified session context resolution via `getVerifiedSessionContext(admin, token)`. Enforce that `requireStaffActor` rejects password recovery sessions with HTTP 403 `recovery_session_forbidden`. In PostgreSQL, implement `private.is_recovery_session()` inspecting JWT `amr` and update `private.current_staff_role()` to return null for recovery sessions, cutting off staff RLS authority.
+  3. **Authoritative Anonymous Portal Actor Definition**: Define Portal actor strictly as `auth.users.is_anonymous = true` AND not in `staff_profiles` AND not in `devices`. Bar permanent non-staff users from Portal operations (e.g. upload intents).
+  4. **Settings Column-Level Grants**: Revoke broad table SELECT on `public.app_settings` from `authenticated` as well as `anon`. Grant column-level SELECT on only the 6 safe public columns (`working_hours_start, working_hours_end, timezone, scheduling_days_ahead, peak_mode, visit_purposes`) to both roles. Server administrative settings queries continue to run via service role.
+  5. **Turnstile Widget Lifecycle Stability**: Store callback props in refs within `TurnstileWidget.tsx`. Teardown effect depends strictly on `siteKey` and `resetKey`.
+  6. **Security Dependency Exact Pin**: Exact-pin `"standardwebhooks": "1.1.1"`.
+- **Consequence**: Full confinement of recovery sessions to password reset only; prevention of permanent user impersonation of Portal actors; elimination of settings information leakage; rock-solid Turnstile lifecycle.

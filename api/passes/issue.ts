@@ -1,5 +1,6 @@
 import { createHash, createHmac } from 'node:crypto';
 import { z } from 'zod';
+import { getVerifiedSessionContext, HttpError } from '../../server/actors.js';
 import { jsonResponse, readBearerToken } from '../../server/http.js';
 import { getServerSupabaseClients } from '../../server/supabase.js';
 
@@ -73,9 +74,17 @@ async function handleRequest(request: Request): Promise<Response> {
 
   try {
     const { admin } = getServerSupabaseClients();
-    const { data: identity, error: identityError } = await admin.auth.getUser(token);
-    if (identityError || !identity.user) return jsonResponse(401, { error: 'invalid_session' });
-    const actorId = identity.user.id;
+    let session;
+    try {
+      session = await getVerifiedSessionContext(admin, token);
+    } catch (err) {
+      if (err instanceof HttpError) return jsonResponse(err.status, { error: err.code });
+      return jsonResponse(401, { error: 'invalid_session' });
+    }
+    if (session.isRecoverySession) {
+      return jsonResponse(403, { error: 'recovery_session_forbidden' });
+    }
+    const actorId = session.user.id;
 
     const secret = process.env.PASS_TOKEN_SECRET?.trim();
     if (!secret || secret.length < 32) throw new Error('pass_token_secret_unavailable');

@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
+import { HttpError, requireStaffActor } from '../server/actors.js';
 import { jsonResponse, readBearerToken } from '../server/http.js';
 import { getServerSupabaseClients } from '../server/supabase.js';
 
@@ -20,10 +21,24 @@ async function handleRequest(request: Request): Promise<Response> {
   if (!parsed.success) return jsonResponse(400, { error: 'Invalid decision request' });
   try {
     const { admin } = getServerSupabaseClients();
-    const { data: identity, error: authError } = await admin.auth.getUser(token);
-    if (authError || !identity.user) return jsonResponse(401, { error: 'Invalid or expired session' });
+    let actor;
+    try {
+      actor = await requireStaffActor(admin, token, ['guard', 'admin', 'superadmin']);
+    } catch (err) {
+      if (err instanceof HttpError) {
+        if (err.status === 401) return jsonResponse(401, { error: 'Invalid or expired session' });
+        return jsonResponse(err.status, {
+          error: err.code === 'recovery_session_forbidden'
+            ? 'Recovery session cannot perform guard operations'
+            : 'Guard access required',
+          code: err.code,
+        });
+      }
+      return jsonResponse(401, { error: 'Invalid or expired session' });
+    }
+
     const { data, error } = await admin.schema('api').rpc('decide_visit', {
-      requested_actor_id: identity.user.id,
+      requested_actor_id: actor.id,
       requested_pass_id: parsed.data.passId,
       requested_decision: parsed.data.decision,
       requested_reason: parsed.data.reason,

@@ -20,7 +20,7 @@ describe('identity migration contracts', () => {
   });
 
   it('requires bearer identity, current-password verification, eligible Guard state, and reconciliation', () => {
-    expect(endpoint).toContain('admin.auth.getUser(token)');
+    expect(endpoint.includes('getVerifiedSessionContext(admin, token)') || endpoint.includes('admin.auth.getUser(token)')).toBe(true);
     expect(endpoint).toContain("profile.role !== 'guard'");
     expect(endpoint).toContain('passwordVerifier.auth.signInWithPassword');
     expect(endpoint).toContain('admin.auth.admin.updateUserById');

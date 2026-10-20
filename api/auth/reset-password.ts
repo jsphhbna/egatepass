@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { recordReconciliation } from '../../server/actors.js';
+import { getVerifiedSessionContext, HttpError, recordReconciliation } from '../../server/actors.js';
 import { jsonResponse, readBearerToken } from '../../server/http.js';
 import { passwordSchema } from '../../server/password-policy.js';
 import { getServerSupabaseClients } from '../../server/supabase.js';
@@ -7,26 +7,6 @@ import { getServerSupabaseClients } from '../../server/supabase.js';
 const requestSchema = z.object({
   newPassword: passwordSchema,
 }).strict();
-
-interface JwtPayload {
-  sub?: string;
-  email?: string;
-  is_anonymous?: boolean;
-  amr?: Array<{ method: string; timestamp?: number }>;
-  role?: string;
-  [key: string]: unknown;
-}
-
-function parseJwtClaims(token: string): JwtPayload | null {
-  try {
-    const parts = token.split('.');
-    if (parts.length < 2) return null;
-    const jsonStr = Buffer.from(parts[1], 'base64url').toString('utf8');
-    return JSON.parse(jsonStr) as JwtPayload;
-  } catch {
-    return null;
-  }
-}
 
 async function handleRequest(request: Request): Promise<Response> {
   if (request.method !== 'POST') {
@@ -47,26 +27,30 @@ async function handleRequest(request: Request): Promise<Response> {
   try {
     const { admin } = getServerSupabaseClients();
 
-    // 1. Authenticate the session with Supabase Auth
-    const { data: identity, error: identityError } = await admin.auth.getUser(token);
-    const user = identity?.user;
-    if (identityError || !user) {
+    // 1. Authenticate and cryptographically verify session context through Supabase Auth
+    let session;
+    try {
+      session = await getVerifiedSessionContext(admin, token);
+    } catch (err) {
+      if (err instanceof HttpError) {
+        return jsonResponse(err.status, { error: err.code });
+      }
       return jsonResponse(401, { error: 'invalid_session' });
     }
 
-    // 2. Cryptographic Token Inspection: AMR Claim MUST contain 'recovery'
-    // Ordinary authenticated staff/devices/visitors log in via password or anonymous
-    // which yields amr: [{ method: 'password' }] or [{ method: 'anonymous' }], NEVER 'recovery'.
-    const claims = parseJwtClaims(token);
-    const isRecoverySession = Array.isArray(claims?.amr) && claims.amr.some((m) => m.method === 'recovery');
-    if (!isRecoverySession) {
+    // 2. Recovery Capability Verification: Token AMR claim MUST contain 'recovery'
+    // Ordinary password-authenticated sessions, device sessions, or generic OTP tokens
+    // MUST NEVER be accepted as password recovery authority.
+    if (!session.isRecoverySession) {
       return jsonResponse(403, { error: 'recovery_session_required' });
     }
 
     // 3. Anonymous Portal Accounts are strictly forbidden from password mutation
-    if (user.is_anonymous === true || claims?.is_anonymous === true) {
+    if (session.isAnonymous) {
       return jsonResponse(403, { error: 'anonymous_recovery_not_allowed' });
     }
+
+    const user = session.user;
 
     // 4. Device Credentials Governance: Devices are Super Admin managed only
     // A device session (@devices.egatepass.invalid or in public.devices) must never self-recover

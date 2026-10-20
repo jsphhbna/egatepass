@@ -3,6 +3,7 @@ import { browserRuntimeConfig } from '@/lib/runtimeConfig';
 
 let browserClient: SupabaseClient | null = null;
 let portalClient: SupabaseClient | null = null;
+let recoveryClient: SupabaseClient | null = null;
 
 if (browserRuntimeConfig.ok) {
   try {
@@ -11,9 +12,10 @@ if (browserRuntimeConfig.ok) {
       browserRuntimeConfig.config.supabasePublishableKey,
       {
         auth: {
+          flowType: 'pkce',
           persistSession: true,
           autoRefreshToken: true,
-          detectSessionInUrl: true,
+          detectSessionInUrl: typeof window !== 'undefined' ? !window.location.pathname.startsWith('/reset-password') : true,
           storageKey: 'egatepass-operator-auth',
         },
       },
@@ -41,6 +43,7 @@ export function requirePortalSupabase(): SupabaseClient {
     browserRuntimeConfig.config.supabasePublishableKey,
     {
       auth: {
+        flowType: 'pkce',
         persistSession: true,
         autoRefreshToken: true,
         detectSessionInUrl: false,
@@ -49,6 +52,26 @@ export function requirePortalSupabase(): SupabaseClient {
     },
   );
   return portalClient;
+}
+
+export function requireRecoverySupabase(): SupabaseClient {
+  if (!browserRuntimeConfig.ok) {
+    throw new Error('E-GatePass recovery services are not configured.');
+  }
+  recoveryClient ??= createClient(
+    browserRuntimeConfig.config.supabaseUrl,
+    browserRuntimeConfig.config.supabasePublishableKey,
+    {
+      auth: {
+        flowType: 'pkce',
+        persistSession: true,
+        autoRefreshToken: false,
+        detectSessionInUrl: true,
+        storageKey: 'egatepass-recovery-auth',
+      },
+    },
+  );
+  return recoveryClient;
 }
 
 export function getSupabaseAvailabilityMessage(): string | null {

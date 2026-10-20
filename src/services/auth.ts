@@ -1,4 +1,4 @@
-import { supabase } from '@/lib/supabase';
+import { supabase, requireRecoverySupabase } from '@/lib/supabase';
 
 export async function getAccessToken(): Promise<string> {
   if (!supabase) throw new Error('E-GatePass services are unavailable.');
@@ -14,8 +14,8 @@ export async function signOutCurrentActor(): Promise<void> {
 }
 
 export async function sendPasswordReset(email: string): Promise<void> {
-  if (!supabase) throw new Error('E-GatePass services are unavailable.');
-  const { error } = await supabase.auth.resetPasswordForEmail(email, {
+  const recoveryClient = requireRecoverySupabase();
+  const { error } = await recoveryClient.auth.resetPasswordForEmail(email, {
     redirectTo: `${window.location.origin}/reset-password`,
   });
   if (error) throw error;

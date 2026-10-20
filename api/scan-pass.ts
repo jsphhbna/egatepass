@@ -1,5 +1,6 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { z } from 'zod';
+import { getVerifiedSessionContext, HttpError } from '../server/actors.js';
 import { jsonResponse, readBearerToken } from '../server/http.js';
 import { getServerSupabaseClients } from '../server/supabase.js';
 
@@ -13,11 +14,19 @@ async function handleRequest(request: Request): Promise<Response> {
   if (!parsed.success) return jsonResponse(400, { error: 'Invalid scan request', code: 'invalid_request' });
   try {
     const { admin } = getServerSupabaseClients();
-    const { data: identity, error: authError } = await admin.auth.getUser(token);
-    if (authError || !identity.user) return jsonResponse(401, { error: 'Invalid or expired session' });
+    let session;
+    try {
+      session = await getVerifiedSessionContext(admin, token);
+    } catch (err) {
+      if (err instanceof HttpError) return jsonResponse(err.status, { error: err.code });
+      return jsonResponse(401, { error: 'Invalid or expired session' });
+    }
+    if (session.isRecoverySession) {
+      return jsonResponse(403, { error: 'recovery_session_forbidden' });
+    }
     const digest = createHash('sha256').update(parsed.data.passId).digest('hex');
     const { data, error } = await admin.schema('api').rpc('scan_pass', {
-      requested_actor_id: identity.user.id,
+      requested_actor_id: session.user.id,
       requested_token_digest: digest,
       requested_mode: parsed.data.mode,
       requested_request_id: randomUUID(),

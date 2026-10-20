@@ -65,6 +65,13 @@ describe('target repository and Vercel routing contract', () => {
     }
   });
 
+  it('pins standardwebhooks to exact version 1.1.1 for security dependency stability', () => {
+    const manifest = JSON.parse(readFileSync('package.json', 'utf8')) as {
+      dependencies?: Record<string, string>;
+    };
+    expect(manifest.dependencies?.standardwebhooks).toBe('1.1.1');
+  });
+
   it('provides all required self-hosted OCR static assets in public/tesseract', () => {
     const requiredAssets = [
       'public/tesseract/worker.min.js',

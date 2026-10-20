@@ -32,6 +32,18 @@ export function TurnstileWidget({ onVerify, onExpire, onError, resetKey }: Turns
   const widgetIdRef = useRef<string | null>(null);
   const siteKey = (import.meta as any).env?.VITE_TURNSTILE_SITE_KEY?.trim();
 
+  // Keep latest callback references in refs so that parent re-renders and inline callback changes
+  // do not trigger teardown and recreation of the Cloudflare Turnstile widget.
+  const onVerifyRef = useRef(onVerify);
+  const onExpireRef = useRef(onExpire);
+  const onErrorRef = useRef(onError);
+
+  useEffect(() => {
+    onVerifyRef.current = onVerify;
+    onExpireRef.current = onExpire;
+    onErrorRef.current = onError;
+  });
+
   useEffect(() => {
     if (!siteKey || !containerRef.current) return;
 
@@ -51,13 +63,13 @@ export function TurnstileWidget({ onVerify, onExpire, onError, resetKey }: Turns
       widgetIdRef.current = window.turnstile.render(containerRef.current, {
         sitekey: siteKey,
         callback: (token: string) => {
-          if (mounted) onVerify(token);
+          if (mounted && onVerifyRef.current) onVerifyRef.current(token);
         },
         'expired-callback': () => {
-          if (mounted && onExpire) onExpire();
+          if (mounted && onExpireRef.current) onExpireRef.current();
         },
         'error-callback': (err: string) => {
-          if (mounted && onError) onError(err);
+          if (mounted && onErrorRef.current) onErrorRef.current(err);
         },
         theme: 'light',
       });
@@ -95,9 +107,10 @@ export function TurnstileWidget({ onVerify, onExpire, onError, resetKey }: Turns
         } catch {
           // Ignore cleanup errors
         }
+        widgetIdRef.current = null;
       }
     };
-  }, [siteKey, resetKey, onVerify, onExpire, onError]);
+  }, [siteKey, resetKey]);
 
   if (!siteKey) return null;
 

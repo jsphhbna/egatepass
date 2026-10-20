@@ -4,7 +4,7 @@ import { toast } from 'sonner';
 import { BrandMark } from '@/components/BrandMark';
 import { Button, Card, FormField, Input, LoadingState } from '@/components/ui';
 import { getPasswordPolicyError, PASSWORD_MIN_LENGTH, PASSWORD_POLICY_HELPER_TEXT } from '@/lib/passwordPolicy';
-import { supabase } from '@/lib/supabase';
+import { requireRecoverySupabase } from '@/lib/supabase';
 import { resetPasswordWithRecoverySession } from '@/services/auth';
 
 export function ResetPasswordPage() {
@@ -15,12 +15,17 @@ export function ResetPasswordPage() {
   const [newPassword, setNewPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
   const [loading, setLoading] = useState(false);
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
   useEffect(() => {
-    if (!supabase) {
+    let recoveryClient: ReturnType<typeof requireRecoverySupabase>;
+    try {
+      recoveryClient = requireRecoverySupabase();
+    } catch {
       setChecking(false);
       return;
     }
+
     let active = true;
 
     const hash = window.location.hash || '';
@@ -31,15 +36,14 @@ export function ResetPasswordPage() {
       setHasRecoverySession(false);
       setRecoveryToken(null);
       setChecking(false);
+      setErrorMessage('This password reset link is invalid or has expired, or was opened in a different browser/device from where it was requested. For PKCE security, reset links must be opened in the same browser where they were requested.');
       return;
     }
 
-    // Subscribe to auth state changes FIRST.
+    // Subscribe to auth state changes on the DEDICATED recovery client.
     // In Supabase Auth, clicking a genuine recovery link triggers onAuthStateChange with event === 'PASSWORD_RECOVERY'.
-    // Browser storage (localStorage/sessionStorage) is NEVER used for recovery authority.
-    // Mere URL query parameters (?type=recovery) or ordinary active staff/device/visitor sessions
-    // MUST NEVER grant password reset authority.
-    const { data } = supabase.auth.onAuthStateChange((event, session) => {
+    // Storage namespace is isolated (egatepass-recovery-auth) and never used for authorization.
+    const { data } = recoveryClient.auth.onAuthStateChange((event, session) => {
       if (!active) return;
       if (event === 'PASSWORD_RECOVERY' && session?.user && session?.access_token) {
         // Governance: Device and guest accounts cannot reset passwords via recovery
@@ -51,6 +55,7 @@ export function ResetPasswordPage() {
           setHasRecoverySession(false);
           setRecoveryToken(null);
           setChecking(false);
+          setErrorMessage('Device and guest accounts cannot reset passwords.');
           toast.error('Device and guest accounts cannot reset passwords.');
           return;
         }
@@ -65,13 +70,31 @@ export function ResetPasswordPage() {
       }
     });
 
-    // Allow a brief window for onAuthStateChange to fire if PKCE exchange is in flight.
-    // If no genuine recovery event was received, do NOT authorize based on existing session.
+    void recoveryClient.auth.getSession().then(({ data: sessionData, error }) => {
+      if (!active) return;
+      if (error) {
+        setHasRecoverySession(false);
+        setRecoveryToken(null);
+        setChecking(false);
+        setErrorMessage('This password reset link is invalid or has expired, or was opened in a different browser/device from where it was requested.');
+        return;
+      }
+      if (sessionData?.session?.access_token && sessionData.session.user) {
+        const email = sessionData.session.user.email ?? '';
+        const isDevice = email.toLowerCase().endsWith('@devices.egatepass.invalid');
+        const isGuest = sessionData.session.user.is_anonymous === true;
+        if (!isDevice && !isGuest) {
+          setRecoveryToken(sessionData.session.access_token);
+          setHasRecoverySession(true);
+        }
+      }
+    });
+
     const timer = setTimeout(() => {
       if (active) {
         setChecking(false);
       }
-    }, 400);
+    }, 500);
 
     return () => {
       active = false;
@@ -85,19 +108,34 @@ export function ResetPasswordPage() {
     const policyError = getPasswordPolicyError(newPassword);
     if (policyError) return toast.error(policyError);
     if (newPassword !== confirmPassword) return toast.error('Passwords do not match.');
-    if (!supabase || !hasRecoverySession || !recoveryToken) {
+    if (!hasRecoverySession || !recoveryToken) {
       return toast.error('This reset link is invalid or has expired.');
     }
 
     setLoading(true);
     try {
       const res = await resetPasswordWithRecoverySession(recoveryToken, newPassword);
-      await supabase.auth.signOut();
+      
+      // 1. Terminate/sign out recovery session
+      try {
+        const recoveryClient = requireRecoverySupabase();
+        await recoveryClient.auth.signOut();
+      } catch {
+        // ignore sign-out error
+      }
+
+      // 2. Clear recovery URL state
+      if (typeof window !== 'undefined' && window.history?.replaceState) {
+        window.history.replaceState(null, '', window.location.pathname);
+      }
+
       if (res.result === 'partial') {
         toast.warning('Password updated successfully, but administrative logging requires follow-up. Please sign in using your new password.');
       } else {
-        toast.success('Password updated. Sign in with your new password.');
+        toast.success('Password updated successfully. Please sign in with your new password.');
       }
+
+      // 3. Require normal sign-in
       navigate('/login', { replace: true });
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : 'Password could not be updated. Request a new reset link and try again.';
@@ -123,7 +161,7 @@ export function ResetPasswordPage() {
         {!hasRecoverySession ? (
           <div className="space-y-5">
             <p className="rounded-lg border border-[var(--color-danger)] bg-[var(--color-danger-light)] px-4 py-3 text-sm text-[var(--color-danger-dark)]" role="alert">
-              This password reset link is invalid or has expired. Request a new link to continue.
+              {errorMessage || 'This password reset link is invalid or has expired, or was opened in a different browser/device from where it was requested. Request a new link to continue.'}
             </p>
             <Link to="/forgot-password" className="block text-center text-sm font-semibold text-[var(--color-brand)] hover:underline">Request a new reset link</Link>
           </div>

@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
-import { supabase } from '@/lib/supabase';
+import { sendPasswordReset } from '@/services/auth';
 import { Card, Button, Input, FormField } from '@/components/ui';
 import { BrandMark } from '@/components/BrandMark';
 import { toast } from 'sonner';
@@ -35,23 +35,18 @@ export function ForgotPasswordPage() {
 
     setLoading(true);
     try {
-      if (!supabase) throw new Error('service-unavailable');
-      const { error } = await supabase.auth.resetPasswordForEmail(email, {
-        redirectTo: `${window.location.origin}/reset-password`,
-      });
-      if (error) throw error;
+      await sendPasswordReset(email);
       toast.success('If an account exists for this email, a password reset link has been sent.', {
-        duration: 5000
+        duration: 6000
       });
       setCountdown(60);
-    } catch (err: any) {
+    } catch (err: unknown) {
       console.error('Password reset error:', err);
-      if (err instanceof Error && err.message === 'service-unavailable') {
+      if (err instanceof Error && err.message.includes('not configured')) {
         toast.error('Account recovery is not configured. Please contact the system administrator.');
       } else if (!navigator.onLine) {
         toast.error('Network error. Please check your connection and try again.');
       } else {
-        // Fallback for generic errors without exposing too much
         toast.error('Failed to send reset email. Please try again later.');
       }
     } finally {
@@ -86,6 +81,10 @@ export function ForgotPasswordPage() {
               disabled={loading || countdown > 0}
             />
           </FormField>
+
+          <p className="text-xs text-[var(--color-text-muted)]">
+            Security note: For PKCE protection, please open the reset link in this same browser.
+          </p>
 
           <Button
             type="submit"

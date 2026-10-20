@@ -39,12 +39,25 @@ async function setupSupabaseEmulation(db: PGlite) {
     );
 
     create or replace function auth.uid() returns uuid as $$
-      select '00000000-0000-0000-0000-000000000001'::uuid;
+      select coalesce(
+        nullif(current_setting('request.jwt.claim.sub', true), '')::uuid,
+        (nullif(current_setting('request.jwt.claims', true), '')::jsonb ->> 'sub')::uuid,
+        nullif(current_setting('my.auth.uid', true), '')::uuid,
+        '00000000-0000-0000-0000-000000000001'::uuid
+      );
     $$ language sql stable;
 
     create or replace function auth.role() returns text as $$
-      select 'service_role'::text;
+      select coalesce(
+        nullif(current_setting('request.jwt.claim.role', true), ''),
+        (nullif(current_setting('request.jwt.claims', true), '')::jsonb ->> 'role'),
+        'service_role'::text
+      );
     $$ language sql stable;
+
+    grant usage on schema auth to anon, authenticated, service_role;
+    grant execute on function auth.uid() to anon, authenticated, service_role;
+    grant execute on function auth.role() to anon, authenticated, service_role;
 
     create table if not exists storage.buckets (
       id text primary key,
@@ -534,12 +547,215 @@ describe('Permanent PostgreSQL Migration Chain & Schema Contracts (PGlite)', () 
 
     await db.exec('reset role;');
 
-    // 6. Authenticated role full select -> ALLOWED
+                // 6. Authenticated role safe columns -> ALLOWED
     await db.exec('set role authenticated;');
-    const authQuery = await db.query(
-      'select * from public.app_settings where singleton;'
+    const authSafeQuery = await db.query(
+      'select working_hours_start, working_hours_end, timezone, scheduling_days_ahead, peak_mode, visit_purposes from public.app_settings;'
     );
-    expect(authQuery.rows.length).toBe(1);
+    expect(authSafeQuery.rows.length).toBe(1);
+
+    // 7. Authenticated role full select / retention columns -> DENIED (leak prevented)
+    await expect(
+      db.query('select * from public.app_settings;')
+    ).rejects.toThrow(/permission denied/);
+
+    await expect(
+      db.query('select visitor_retention_days from public.app_settings;')
+    ).rejects.toThrow(/permission denied/);
+
+    await expect(
+      db.query('select automatic_cleanup_enabled from public.app_settings;')
+    ).rejects.toThrow(/permission denied/);
+
     await db.exec('reset role;');
+  }, 30000);
+
+  it('I. PGLITE/POSTGRES CONTRACT TEST: Supabase 10-actor identity matrix and recovery confinement', async () => {
+    const db = new PGlite();
+    await applyAllMigrations(db);
+
+    const ANON_VISITOR_UID = '00000000-0000-4000-b000-000000000001';
+    const PERM_NON_STAFF_UID = '00000000-0000-4000-b000-000000000002';
+    const GUARD_UID = '00000000-0000-4000-b000-000000000003';
+    const ADMIN_UID = '00000000-0000-4000-b000-000000000004';
+    const SUPERADMIN_UID = '00000000-0000-4000-b000-000000000005';
+    const KIOSK_DEVICE_UID = '00000000-0000-4000-b000-000000000006';
+    const ENTRY_DEVICE_UID = '00000000-0000-4000-b000-000000000007';
+    const EXIT_DEVICE_UID = '00000000-0000-4000-b000-000000000008';
+
+    // Seed Auth users and profiles
+    await db.exec(`
+      -- 1. Anonymous visitor
+      insert into auth.users (id, email, is_anonymous)
+      values ('${ANON_VISITOR_UID}', null, true);
+
+      -- 2. Permanent non-staff account
+      insert into auth.users (id, email, is_anonymous, email_confirmed_at)
+      values ('${PERM_NON_STAFF_UID}', 'perm-user@example.com', false, now());
+
+      -- 3. Guard
+      insert into auth.users (id, email, is_anonymous, email_confirmed_at)
+      values ('${GUARD_UID}', 'guard@earist.edu.ph', false, now());
+      insert into public.staff_profiles (user_id, display_name, role, active, must_change_password, privacy_accepted_at)
+      values ('${GUARD_UID}', 'Guard User', 'guard', true, false, now());
+
+      -- 4. Admin
+      insert into auth.users (id, email, is_anonymous, email_confirmed_at)
+      values ('${ADMIN_UID}', 'admin@earist.edu.ph', false, now());
+      insert into public.staff_profiles (user_id, display_name, role, active, must_change_password, privacy_accepted_at)
+      values ('${ADMIN_UID}', 'Admin User', 'admin', true, false, now());
+
+      -- 5. Super Admin
+      insert into auth.users (id, email, is_anonymous, email_confirmed_at)
+      values ('${SUPERADMIN_UID}', 'superadmin@earist.edu.ph', false, now());
+      insert into public.staff_profiles (user_id, display_name, role, active, must_change_password, privacy_accepted_at)
+      values ('${SUPERADMIN_UID}', 'Super Admin User', 'superadmin', true, false, now());
+
+      -- 6. Kiosk Device
+      insert into auth.users (id, email, is_anonymous, email_confirmed_at)
+      values ('${KIOSK_DEVICE_UID}', 'kiosk-01@devices.egatepass.invalid', false, now());
+      insert into public.devices (user_id, alias, name, type, gate, status)
+      values ('${KIOSK_DEVICE_UID}', 'kiosk-01', 'Kiosk 1', 'kiosk', 'Main Gate', 'active');
+
+      -- 7. Entry Device
+      insert into auth.users (id, email, is_anonymous, email_confirmed_at)
+      values ('${ENTRY_DEVICE_UID}', 'entry-01@devices.egatepass.invalid', false, now());
+      insert into public.devices (user_id, alias, name, type, gate, status)
+      values ('${ENTRY_DEVICE_UID}', 'entry-01', 'Entry 1', 'entry', 'Gate 1', 'active');
+
+      -- 8. Exit Device
+      insert into auth.users (id, email, is_anonymous, email_confirmed_at)
+      values ('${EXIT_DEVICE_UID}', 'exit-01@devices.egatepass.invalid', false, now());
+      insert into public.devices (user_id, alias, name, type, gate, status)
+      values ('${EXIT_DEVICE_UID}', 'exit-01', 'Exit 1', 'exit', 'Gate 1', 'active');
+    `);
+
+    async function setSession(sub, amr, role = 'authenticated') {
+      await db.exec(`set role ${role};`);
+      const claims = JSON.stringify({
+        sub,
+        role,
+        amr: amr.map((method) => ({ method, timestamp: Math.floor(Date.now() / 1000) })),
+      });
+      await db.exec(`set request.jwt.claims = '${claims}';`);
+    }
+
+    // 1. Pre-auth anon role
+    await db.exec(`set role anon; set request.jwt.claims = '';`);
+    const anonSettings = await db.query('select working_hours_start from public.app_settings;');
+    expect(anonSettings.rows.length).toBe(1);
+    await expect(db.query('select visitor_retention_days from public.app_settings;')).rejects.toThrow(/permission denied/);
+    await db.exec('reset role;');
+
+    // 2. Real Anonymous Portal visitor: is_anonymous = true
+    await setSession(ANON_VISITOR_UID, ['anonymous']);
+    const portalActorRes = await db.query('select * from api.current_actor();');
+    expect(portalActorRes.rows.length).toBe(1);
+    expect(portalActorRes.rows[0].actor_kind).toBe('visitor');
+    // Can read safe settings columns only
+    const visitorSettings = await db.query('select working_hours_start from public.app_settings;');
+    expect(visitorSettings.rows.length).toBe(1);
+    await expect(db.query('select * from public.app_settings;')).rejects.toThrow(/permission denied/);
+    await expect(db.query('select visitor_retention_days from public.app_settings;')).rejects.toThrow(/permission denied/);
+    // CAN create valid portal upload intent
+    const uploadRes = await db.query(
+      "select * from api.create_upload_intent('portal'::public.pass_source, 'photo'::public.evidence_kind, 'image/jpeg');"
+    );
+    expect(uploadRes.rows.length).toBe(1);
+    await db.exec('reset role;');
+
+    // Verify private.is_portal_actor() under service_role
+    await db.exec(`set request.jwt.claims = '{"sub": "${ANON_VISITOR_UID}"}';`);
+    const directPortalCheck = await db.query('select private.is_portal_actor() as is_portal;');
+    expect(directPortalCheck.rows[0].is_portal).toBe(true);
+
+    // 3. Permanent non-staff Auth user: is_anonymous = false
+    await setSession(PERM_NON_STAFF_UID, ['password']);
+    const nonStaffActorRes = await db.query('select * from api.current_actor();');
+    expect(nonStaffActorRes.rows.length).toBe(0); // Not a portal actor, staff, or device
+    // Cannot create portal upload intent
+    await expect(
+      db.query("select * from api.create_upload_intent('portal'::public.pass_source, 'photo'::public.evidence_kind, 'image/jpeg');")
+    ).rejects.toThrow(/visitor identity required/);
+    await db.exec('reset role;');
+
+    // Direct check of private.is_portal_actor() under service_role
+    await db.exec(`set request.jwt.claims = '{"sub": "${PERM_NON_STAFF_UID}"}';`);
+    const directPermCheck = await db.query('select private.is_portal_actor() as is_portal;');
+    expect(directPermCheck.rows[0].is_portal).toBe(false);
+
+    // 4. Guard: normal password login
+    await setSession(GUARD_UID, ['password']);
+    const guardActorRes = await db.query('select * from api.current_actor();');
+    expect(guardActorRes.rows.length).toBe(1);
+    expect(guardActorRes.rows[0].actor_kind).toBe('staff');
+    expect(guardActorRes.rows[0].staff_role).toBe('guard');
+    // Cannot forge portal source
+    await expect(
+      db.query("select * from api.create_upload_intent('portal'::public.pass_source, 'photo'::public.evidence_kind, 'image/jpeg');")
+    ).rejects.toThrow(/visitor identity required/);
+    await db.exec('reset role;');
+
+    // 5. Admin: normal password login
+    await setSession(ADMIN_UID, ['password']);
+    const adminActorRes = await db.query('select * from api.current_actor();');
+    expect(adminActorRes.rows.length).toBe(1);
+    expect(adminActorRes.rows[0].staff_role).toBe('admin');
+    await db.exec('reset role;');
+
+    // 6. Super Admin: normal password login
+    await setSession(SUPERADMIN_UID, ['password']);
+    const superActorRes = await db.query('select * from api.current_actor();');
+    expect(superActorRes.rows.length).toBe(1);
+    expect(superActorRes.rows[0].staff_role).toBe('superadmin');
+    await db.exec('reset role;');
+
+    // 7. Kiosk Device: authenticated device
+    await setSession(KIOSK_DEVICE_UID, ['password']);
+    const kioskActorRes = await db.query('select * from api.current_actor();');
+    expect(kioskActorRes.rows.length).toBe(1);
+    expect(kioskActorRes.rows[0].actor_kind).toBe('device');
+    expect(kioskActorRes.rows[0].device_type).toBe('kiosk');
+    // Can create kiosk upload intent
+    const kioskUploadRes = await db.query(
+      "select * from api.create_upload_intent('kiosk'::public.pass_source, 'photo'::public.evidence_kind, 'image/jpeg');"
+    );
+    expect(kioskUploadRes.rows.length).toBe(1);
+    // Cannot forge portal upload intent
+    await expect(
+      db.query("select * from api.create_upload_intent('portal'::public.pass_source, 'photo'::public.evidence_kind, 'image/jpeg');")
+    ).rejects.toThrow(/visitor identity required/);
+    await db.exec('reset role;');
+
+    // 8. Entry Device: authenticated entry scanner
+    await setSession(ENTRY_DEVICE_UID, ['password']);
+    const entryActorRes = await db.query('select * from api.current_actor();');
+    expect(entryActorRes.rows.length).toBe(1);
+    expect(entryActorRes.rows[0].device_type).toBe('entry');
+    await db.exec('reset role;');
+
+    // 9. Exit Device: authenticated exit scanner
+    await setSession(EXIT_DEVICE_UID, ['password']);
+    const exitActorRes = await db.query('select * from api.current_actor();');
+    expect(exitActorRes.rows.length).toBe(1);
+    expect(exitActorRes.rows[0].device_type).toBe('exit');
+    await db.exec('reset role;');
+
+    // 10. RECOVERY SESSION STAFF ACTOR: Guard user with recovery AMR
+    await setSession(GUARD_UID, ['recovery']);
+    // Current staff role must resolve to NULL: api.current_actor() returns 0 rows!
+    const recoveryActorRes = await db.query('select * from api.current_actor();');
+    expect(recoveryActorRes.rows.length).toBe(0); // NO operational staff authority!
+    // Cannot read operational RLS tables (e.g. devices)
+    const devicesRead = await db.query('select * from public.devices;');
+    expect(devicesRead.rows.length).toBe(0);
+    await db.exec('reset role;');
+
+    // Direct check of is_recovery_session under service_role
+    await db.exec(`set request.jwt.claims = '{"sub": "${GUARD_UID}", "amr": [{"method": "recovery"}]}';`);
+    const directRecCheck = await db.query('select private.is_recovery_session() as is_rec;');
+    expect(directRecCheck.rows[0].is_rec).toBe(true);
+    const directRoleCheck = await db.query('select private.current_staff_role() as role;');
+    expect(directRoleCheck.rows[0].role).toBeNull();
   }, 30000);
 });

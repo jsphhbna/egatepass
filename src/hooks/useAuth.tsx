@@ -22,9 +22,31 @@ export function useAuth(): AuthState {
   return useContext(AuthContext);
 }
 
+function parseTokenClaims(token: string): Record<string, unknown> | null {
+  try {
+    const parts = token.split('.');
+    const payload = parts[1];
+    if (!payload) return null;
+    const base64 = payload.replace(/-/g, '+').replace(/_/g, '/');
+    return JSON.parse(atob(base64)) as Record<string, unknown>;
+  } catch {
+    return null;
+  }
+}
+
 async function resolveRole(user: User): Promise<{ role: AuthRole; userData: AuthActor | null }> {
   if (!supabase) return { role: null, userData: null };
   if (user.is_anonymous === true) return { role: 'visitor', userData: null };
+
+  // Safety invariant: A recovery session must NEVER be treated as an operational staff session
+  const { data: sessionData } = await supabase.auth.getSession();
+  if (sessionData?.session?.access_token) {
+    const claims = parseTokenClaims(sessionData.session.access_token);
+    const isRecovery = Array.isArray(claims?.amr) && claims.amr.some((m: any) => m?.method === 'recovery');
+    if (isRecovery) {
+      return { role: null, userData: null };
+    }
+  }
 
   const staffResult = await supabase
     .from('staff_profiles')

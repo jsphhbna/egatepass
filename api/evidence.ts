@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import { jsonResponse, readBearerToken } from '../server/http.js';
-import { recordReconciliation } from '../server/actors.js';
+import { HttpError, recordReconciliation, requireStaffActor } from '../server/actors.js';
 import { getServerSupabaseClients } from '../server/supabase.js';
 
 const idSchema = z.string().uuid();
@@ -13,13 +13,16 @@ async function handleRequest(request: Request): Promise<Response> {
   if (!evidenceId.success) return jsonResponse(400, { error: 'Invalid evidence reference' });
   try {
     const { admin } = getServerSupabaseClients();
-    const { data: identity, error: authError } = await admin.auth.getUser(token);
-    if (authError || !identity.user) return jsonResponse(401, { error: 'Invalid or expired session' });
-    const { data: profile, error: profileError } = await admin.from('staff_profiles')
-      .select('role, active, must_change_password, privacy_accepted_at').eq('user_id', identity.user.id).maybeSingle();
-    if (profileError) throw profileError;
-    if (!profile?.active || profile.must_change_password || !profile.privacy_accepted_at
-      || !['guard', 'admin', 'superadmin'].includes(profile.role)) return jsonResponse(403, { error: 'Access denied' });
+    let actor;
+    try {
+      actor = await requireStaffActor(admin, token, ['guard', 'admin', 'superadmin']);
+    } catch (err) {
+      if (err instanceof HttpError) {
+        if (err.status === 401) return jsonResponse(401, { error: 'Invalid or expired session' });
+        return jsonResponse(err.status, { error: 'Access denied', code: err.code });
+      }
+      return jsonResponse(401, { error: 'Invalid or expired session' });
+    }
 
     const { data: evidence, error: evidenceError } = await admin.from('visitor_evidence')
       .select('visitor_id, bucket_id, object_path, content_type, expires_at, purged_at')
@@ -33,7 +36,7 @@ async function handleRequest(request: Request): Promise<Response> {
 
     if (isExpired) {
       // Ordinary guards cannot access expired evidence even under hold
-      if (profile.role === 'guard') {
+      if (actor.role === 'guard') {
         return jsonResponse(410, { error: 'Evidence expired' });
       }
 
@@ -75,11 +78,11 @@ async function handleRequest(request: Request): Promise<Response> {
 
       isHeld = true;
 
-      // 16A: Audit review of expired held evidence and fail closed if audit recording fails
+      // Audit review of expired held evidence and fail closed if audit recording fails
       const { error: auditError } = await admin.from('audit_events').insert({
-        actor_id: identity.user.id,
+        actor_id: actor.id,
         actor_kind: 'staff',
-        actor_role: profile.role,
+        actor_role: actor.role,
         action: 'evidence.review_held',
         target_type: 'visitor_evidence',
         target_id: evidenceId.data,
@@ -94,11 +97,11 @@ async function handleRequest(request: Request): Promise<Response> {
           'visitor_evidence',
           evidenceId.data,
           auditError.message || 'audit_insert_failed',
-          { actorId: identity.user.id, actorRole: profile.role }
+          { actorId: actor.id, actorRole: actor.role }
         ).catch(() => undefined);
         return jsonResponse(503, { error: 'Audit recording unavailable' });
       }
-    } else if (profile.role === 'guard') {
+    } else if (actor.role === 'guard') {
       const { count, error: passError } = await admin.from('passes').select('id', { count: 'exact', head: true })
         .eq('visitor_id', evidence.visitor_id).eq('status', 'pending');
       if (passError) throw passError;

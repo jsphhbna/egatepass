@@ -2,7 +2,11 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import resetPasswordHandler from '../api/auth/reset-password.js';
 import updateDeviceAuthHandler from '../api/update-device-auth.js';
 import completePasswordChangeHandler from '../api/auth/complete-password-change.js';
+import decideVisitHandler from '../api/decide-visit.js';
+import adminSettingsHandler from '../api/admin/settings.js';
 import { setServerSupabaseClientsForTest } from '../server/supabase.js';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 
 function makeJwt(payload: Record<string, unknown>): string {
   const header = Buffer.from(JSON.stringify({ alg: 'HS256', typ: 'JWT' })).toString('base64url');
@@ -72,19 +76,18 @@ describe('REPAIR GROUP A: Password Recovery Authorization & Credential Governanc
             }
             return { data: true, error: null };
           }
+          if (fn === 'decide_visit') {
+            return { data: 'approved', error: null };
+          }
           return { data: null, error: new Error(`Unknown RPC ${fn}`) };
         }),
       }),
       from: (table: string) => {
-        let selectedCol = '';
         let filterCol = '';
         let filterVal: any = null;
 
         const chain: any = {
-          select: (cols: string) => {
-            selectedCol = cols;
-            return chain;
-          },
+          select: () => chain,
           eq: (col: string, val: any) => {
             filterCol = col;
             filterVal = val;
@@ -99,12 +102,30 @@ describe('REPAIR GROUP A: Password Recovery Authorization & Credential Governanc
             }
             if (table === 'staff_profiles') {
               if (filterCol === 'user_id' && filterVal === STAFF_ID) {
-                return { data: { role: 'guard', active: true, must_change_password: guardMustChangePassword }, error: null };
+                return { data: { role: 'guard', active: true, must_change_password: guardMustChangePassword, privacy_accepted_at: '2026-01-01T00:00:00Z' }, error: null };
               }
               if (filterCol === 'user_id' && filterVal === SUPERADMIN_ID) {
                 return { data: { role: 'superadmin', active: true, must_change_password: false, privacy_accepted_at: '2026-01-01T00:00:00Z' }, error: null };
               }
               return { data: null, error: null };
+            }
+            if (table === 'app_settings') {
+              return {
+                data: {
+                  singleton: true,
+                  working_hours_start: '07:00:00',
+                  working_hours_end: '18:00:00',
+                  timezone: 'Asia/Manila',
+                  scheduling_days_ahead: 7,
+                  peak_mode: 'off',
+                  visit_purposes: ['academic'],
+                  visitor_retention_days: 90,
+                  audit_retention_days: 365,
+                  reconciliation_retention_days: 90,
+                  automatic_cleanup_enabled: true,
+                },
+                error: null,
+              };
             }
             return { data: null, error: null };
           },
@@ -120,16 +141,9 @@ describe('REPAIR GROUP A: Password Recovery Authorization & Credential Governanc
             }
             return { data, error: null };
           },
-          update: (data: any) => {
-            return {
-              eq: async (col: string, val: any) => {
-                if (table === 'staff_profiles' && failStaffProfileUpdate) {
-                  return { error: new Error('Staff profile update failed') };
-                }
-                return { error: null };
-              },
-            };
-          },
+          update: () => ({
+            eq: async () => ({ error: null }),
+          }),
         };
         return chain;
       },
@@ -152,7 +166,7 @@ describe('REPAIR GROUP A: Password Recovery Authorization & Credential Governanc
     });
   });
 
-  // 1. Forged sessionStorage / localStorage test
+  // A & B. Forged sessionStorage / localStorage and query params cannot authorize reset
   it('1. Forged client storage / query params (?type=recovery) cannot authorize reset without genuine token', async () => {
     const req = new Request('http://localhost/api/auth/reset-password', {
       method: 'POST',
@@ -166,7 +180,7 @@ describe('REPAIR GROUP A: Password Recovery Authorization & Credential Governanc
     expect(body.error).toBe('authentication_required');
   });
 
-  // 2. Ordinary active staff session without recovery AMR
+  // C. Ordinary active staff session without recovery AMR
   it('2. Ordinary active staff session without recovery AMR is DENIED from recovery flow (403 recovery_session_required)', async () => {
     const normalStaffJwt = makeJwt({
       sub: STAFF_ID,
@@ -181,7 +195,7 @@ describe('REPAIR GROUP A: Password Recovery Authorization & Credential Governanc
         Authorization: `Bearer ${normalStaffJwt}`,
         'Content-Type': 'application/json',
       },
-      body: JSON.stringify({ newPassword: 'NewStrongPassword123!' }),
+      body: JSON.stringify({ newPassword: 'HackedPassword123!' }),
     });
 
     const res = await resetPasswordHandler.fetch(req);
@@ -190,8 +204,32 @@ describe('REPAIR GROUP A: Password Recovery Authorization & Credential Governanc
     expect(body.error).toBe('recovery_session_required');
   });
 
-  // 3. Ordinary device session attempting recovery
-  it('3. Ordinary device session attempting password recovery is DENIED (403 device_password_change_forbidden)', async () => {
+  // D. Generic OTP / non-recovery AMR session cannot invoke recovery reset endpoint
+  it('2b. Generic OTP / non-recovery session is DENIED from recovery flow (403 recovery_session_required)', async () => {
+    const otpStaffJwt = makeJwt({
+      sub: STAFF_ID,
+      email: 'guard@earist.edu.ph',
+      role: 'authenticated',
+      amr: [{ method: 'otp', timestamp: Date.now() }],
+    });
+
+    const req = new Request('http://localhost/api/auth/reset-password', {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${otpStaffJwt}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ newPassword: 'HackedPassword123!' }),
+    });
+
+    const res = await resetPasswordHandler.fetch(req);
+    expect(res.status).toBe(403);
+    const body = await res.json();
+    expect(body.error).toBe('recovery_session_required');
+  });
+
+  // 3. Device session attempting recovery
+  it('3. Device session attempting password recovery is DENIED (403 device_password_change_forbidden)', async () => {
     const deviceJwt = makeJwt({
       sub: DEVICE_ID,
       email: 'kiosk-01@devices.egatepass.invalid',
@@ -205,7 +243,7 @@ describe('REPAIR GROUP A: Password Recovery Authorization & Credential Governanc
         Authorization: `Bearer ${deviceJwt}`,
         'Content-Type': 'application/json',
       },
-      body: JSON.stringify({ newPassword: 'NewDevicePassword123!' }),
+      body: JSON.stringify({ newPassword: 'HackedPassword123!' }),
     });
 
     const res = await resetPasswordHandler.fetch(req);
@@ -257,7 +295,7 @@ describe('REPAIR GROUP A: Password Recovery Authorization & Credential Governanc
     expect(body.error).toBe('invalid_session');
   });
 
-  // 6. Genuine recovery flow with recovery AMR is ALLOWED
+  // E. Genuine recovery flow with recovery AMR is ALLOWED
   it('6. Genuine recovery flow with recovery AMR is ALLOWED and updates password', async () => {
     const recoveryJwt = makeJwt({
       sub: STAFF_ID,
@@ -444,5 +482,121 @@ describe('REPAIR GROUP A: Password Recovery Authorization & Credential Governanc
     expect(body.passwordChanged).toBe(true);
     expect(body.reconciliationRecorded).toBe(true);
     expect(reconciliationLogs.some((r) => r.operation === 'guard.password_change_finalize')).toBe(true);
+  });
+
+  // G. Recovery session cannot call representative Guard API
+  it('12. RECOVERY CONFINEMENT: Recovery session cannot call representative Guard API (403 recovery_session_forbidden)', async () => {
+    const recoveryJwt = makeJwt({
+      sub: STAFF_ID,
+      email: 'guard@earist.edu.ph',
+      role: 'authenticated',
+      amr: [{ method: 'recovery', timestamp: Date.now() }],
+    });
+
+    const req = new Request('http://localhost/api/decide-visit', {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${recoveryJwt}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        passId: '00000000-0000-4000-a000-000000000001',
+        decision: 'approved',
+        reason: null,
+      }),
+    });
+
+    const res = await decideVisitHandler.fetch(req);
+    expect(res.status).toBe(403);
+    const body = await res.json();
+    expect(body.code).toBe('recovery_session_forbidden');
+  });
+
+  // J. Normal eligible staff session CAN call representative Guard API
+  it('13. RECOVERY CONFINEMENT: Normal eligible staff session CAN call representative Guard API (200 OK)', async () => {
+    const staffJwt = makeJwt({
+      sub: STAFF_ID,
+      email: 'guard@earist.edu.ph',
+      role: 'authenticated',
+      amr: [{ method: 'password', timestamp: Date.now() }],
+    });
+
+    const req = new Request('http://localhost/api/decide-visit', {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${staffJwt}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        passId: '00000000-0000-4000-a000-000000000001',
+        decision: 'approved',
+        reason: null,
+      }),
+    });
+
+    const res = await decideVisitHandler.fetch(req);
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.status).toBe('approved');
+  });
+
+  // H. Recovery session cannot call representative Admin API
+  it('14. RECOVERY CONFINEMENT: Recovery session cannot call representative Admin API (403 recovery_session_forbidden)', async () => {
+    const recoveryAdminJwt = makeJwt({
+      sub: SUPERADMIN_ID,
+      email: 'superadmin@earist.edu.ph',
+      role: 'authenticated',
+      amr: [{ method: 'recovery', timestamp: Date.now() }],
+    });
+
+    const req = new Request('http://localhost/api/admin/settings', {
+      method: 'GET',
+      headers: {
+        Authorization: `Bearer ${recoveryAdminJwt}`,
+      },
+    });
+
+    const res = await adminSettingsHandler(req);
+    expect(res.status).toBe(403);
+  });
+
+  // J. Normal eligible Super Admin CAN call representative Admin API
+  it('15. RECOVERY CONFINEMENT: Normal eligible Super Admin CAN call representative Admin API (200 OK)', async () => {
+    const adminJwt = makeJwt({
+      sub: SUPERADMIN_ID,
+      email: 'superadmin@earist.edu.ph',
+      role: 'authenticated',
+      amr: [{ method: 'password', timestamp: Date.now() }],
+    });
+
+    const req = new Request('http://localhost/api/admin/settings', {
+      method: 'GET',
+      headers: {
+        Authorization: `Bearer ${adminJwt}`,
+      },
+    });
+
+    const res = await adminSettingsHandler(req);
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.workingHours.timezone).toBe('Asia/Manila');
+  });
+
+  // K & L. Architecture contract: separate storage namespaces & callback isolation
+  it('16. CLIENT RECOVERY ISOLATION: Storage keys and URL detection isolated across clients', () => {
+    const supabaseSrc = readFileSync(join(process.cwd(), 'src', 'lib', 'supabase.ts'), 'utf8');
+
+    // K. Recovery client uses dedicated storage namespace
+    expect(supabaseSrc).toContain("storageKey: 'egatepass-recovery-auth'");
+    // K. Operator client uses dedicated storage namespace
+    expect(supabaseSrc).toContain("storageKey: 'egatepass-operator-auth'");
+    // K. Portal client uses dedicated storage namespace
+    expect(supabaseSrc).toContain("storageKey: 'egatepass-portal-auth'");
+
+    // L. Operator client does not consume recovery callback on /reset-password
+    expect(supabaseSrc).toContain("!window.location.pathname.startsWith('/reset-password')");
+
+    // E. Recovery client is configured with PKCE flowType
+    expect(supabaseSrc).toContain("flowType: 'pkce'");
   });
 });

@@ -631,3 +631,53 @@ Local promotion evidence: pre-fix regression run 7/7 FAILED as expected; correct
 - **Tests**: Mocked handler tests and password recovery tests for partial success and reconciliation recording.
 - **Results**: PASS (89/89 mocked handler tests, 12/12 password recovery tests).
 - **Remaining Hosted Validation**: Synthetic audit error canary in staging environment.
+
+
+### Auth / RLS Contract Repair & Automatic Recurrence Elimination Pass (October 2026)
+
+#### Group 1: Dependency Exact Pin (`standardwebhooks`)
+- **Problem**: `"standardwebhooks": "^1.1.1"` used a caret range specifier in security-sensitive webhook verification.
+- **Root Cause**: Default package specifier allowed unreviewed upstream drift.
+- **Fix Implemented**: Changed to exact pin `"standardwebhooks": "1.1.1"` in `package.json` and synchronized `package-lock.json` via `npm install`. Added contract test in `tests/architecture-contract.test.ts`.
+- **Status**: PASS (contract test passes, lockfile clean).
+
+#### Group 2: Turnstile Widget Lifecycle Hardening
+- **Problem**: Inline callback props (`onVerify`, `onExpire`, `onError`) in parent (`GetPassPage.tsx`) triggered widget teardown and recreation on parent rerenders when verification updated parent state.
+- **Root Cause**: `TurnstileWidget.tsx` included callbacks in the `useEffect` dependency array, coupling external widget instance lifecycle to React state updates.
+- **Fix Implemented**: Maintained latest callback references in `useRef`. Widget mount/teardown effect depends strictly on actual lifecycle configuration (`siteKey`, `resetKey`). Added component lifecycle test suite in `tests/turnstile-lifecycle.test.ts` proving zero recreation on callback identity change, single widget instance, and intentional recreation on `resetKey` change.
+- **Status**: PASS (8/8 tests pass).
+
+#### Group 3: Dedicated PKCE Recovery Client & Storage Namespace Isolation
+- **Problem**: Password recovery previously relied on default browser Supabase client and fabricated AMR claims in test fixtures, risking adoption of recovery callbacks into normal operator sessions.
+- **Root Cause**: Shared browser client and storage namespace between operator authentication and recovery flows.
+- **Fix Implemented**: Created `requireRecoverySupabase()` in `src/lib/supabase.ts` configured with `flowType: 'pkce'`, isolated storage namespace `egatepass-recovery-auth`, `detectSessionInUrl: true`, and `autoRefreshToken: false`. Operator `browserClient` ignores URL session detection on `/reset-password`. `ForgotPasswordPage.tsx` initiates recovery via `requireRecoverySupabase()`. `ResetPasswordPage.tsx` uses the dedicated recovery client, validates genuine session, terminates recovery session on success, clears URL state, and redirects to `/login`. Cross-device PKCE limitation is explicitly handled in the UX.
+- **Status**: PASS (18/18 tests in `tests/password-recovery.test.ts` pass).
+
+#### Group 4: Server-Side Recovery Session Confinement
+- **Problem**: Recovery session could be accepted as normal operational staff authority because `requireStaffActor` previously checked only user existence, active profile, and role without inspecting session purpose.
+- **Root Cause**: Authorization system did not distinguish a restricted password recovery session from a normal login session.
+- **Fix Implemented**: Centralized session context resolution in `server/actors.ts` with `getVerifiedSessionContext(admin, token)`. Verifies token with Supabase and inspects verified claims (`amr`, `is_anonymous`, `sessionId`). `requireStaffActor` strictly throws 403 `recovery_session_forbidden` if `session.isRecoverySession`. Guard (`api/decide-visit.ts`, `api/scan-pass.ts`, `api/evidence.ts`), Admin (`api/admin/settings.ts`), and Pass issuance endpoints hardened.
+- **Status**: PASS (denial tests verify Guard and Admin endpoints reject recovery sessions).
+
+#### Group 5: Database / RLS Identity Contract Hardening
+- **Problem**: 
+  1. `private.is_portal_actor()` was defined as `auth.uid() is not null and not staff and not device`, misclassifying permanent non-staff users as Portal visitors.
+  2. `private.current_staff_role()` did not exclude recovery sessions, allowing recovery sessions to resolve staff roles in PostgreSQL RLS.
+  3. `public.app_settings` granted broad table SELECT to `authenticated`, leaking retention and internal settings to anonymous Auth visitors.
+- **Root Cause**: Confusing PostgreSQL `authenticated` role with permanent human staff, and missing recovery claim inspection in DB.
+- **Fix Implemented**: Created additive migration `supabase/migrations/20261021000100_auth_identity_contract_hardening.sql`:
+  - `private.jwt_claims()` and `private.is_recovery_session()` inspect JWT `amr` for `{ method: 'recovery' }`.
+  - `private.current_staff_role()` enforces `and not (select private.is_recovery_session())`.
+  - `private.is_portal_actor()` requires `exists (select 1 from auth.users u where u.id = (select auth.uid()) and coalesce(u.is_anonymous, false) = true) and not staff and not device`.
+  - `api.current_actor()` set to `security definer` with `SET search_path = ''` to resolve caller identity safely without exposing schema `private`.
+  - `public.app_settings` revoked broad table SELECT from `anon` and `authenticated`; granted column-level SELECT on only the 6 safe public columns (`working_hours_start, working_hours_end, timezone, scheduling_days_ahead, peak_mode, visit_purposes`).
+- **Status**: PASS (9/9 PGlite migration tests pass including 10-actor identity matrix).
+
+#### Mandatory Deployment Gates (Documented)
+1. **Pre-Turnstile Development Anonymous Accounts Checkpoint**:
+   - Before real preview/production validation, the operator must enumerate existing dev anonymous users in `auth.users`.
+   - Distinguish test identities and revoke/delete stale pre-Turnstile development identities with explicit owner authorization.
+   - Verify that new anonymous sessions can only be created via valid Turnstile challenge.
+2. **Hosted Data API Schema Exposure Gate**:
+   - Hosted Supabase Data API settings must expose schemas `public`, `graphql_public`, and `api`.
+   - Perform authenticated canary RPC call against an `api` schema function before application deployment.
