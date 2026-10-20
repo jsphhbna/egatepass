@@ -62,6 +62,54 @@ export async function generateQrPngBuffer(qrToken: string): Promise<Buffer> {
   });
 }
 
+export interface ResendClassification {
+  outcome: 'definitive_rejection' | 'unknown';
+  code: string;
+  message: string;
+}
+
+export function classifyResendHttpStatus(
+  status: number,
+  data: { id?: string; message?: string; name?: string } | null,
+): ResendClassification {
+  const message = data?.message || `HTTP ${status}`;
+  // 400 (Bad Request), 401 (Unauthorized), 403 (Forbidden), 422 (Unprocessable Entity)
+  // are deterministic client/validation errors where Resend definitively rejects the submission.
+  if (status === 400 || status === 401 || status === 403 || status === 422) {
+    return {
+      outcome: 'definitive_rejection',
+      code: 'resend_rejected',
+      message,
+    };
+  }
+
+  // 429 (Rate Limit): Request was throttled. The message may or may not have been queued.
+  if (status === 429) {
+    return {
+      outcome: 'unknown',
+      code: 'resend_rate_limited',
+      message: 'Provider rate limit exceeded. Outcome is uncertain.',
+    };
+  }
+
+  // 5xx (Internal Error, Bad Gateway, Service Unavailable, Gateway Timeout):
+  // Upstream server errors cannot guarantee non-acceptance.
+  if (status >= 500 && status <= 599) {
+    return {
+      outcome: 'unknown',
+      code: 'resend_server_error',
+      message: `Provider server error (${status}). Outcome is uncertain.`,
+    };
+  }
+
+  // Any other non-2xx status
+  return {
+    outcome: 'unknown',
+    code: 'resend_status_uncertain',
+    message: `Unexpected provider status (${status}). Outcome is uncertain.`,
+  };
+}
+
 export async function sendResendEmail(payload: SendEmailPayload): Promise<SendEmailResult> {
   if (customEmailSender) {
     return customEmailSender(payload);
@@ -95,9 +143,10 @@ export async function sendResendEmail(payload: SendEmailPayload): Promise<SendEm
     throw new EmailDeliveryError('email_transport_unknown', 'unknown');
   }
 
-  const data = await response.json().catch(() => null) as { id?: string; message?: string } | null;
+  const data = await response.json().catch(() => null) as { id?: string; message?: string; name?: string } | null;
   if (!response.ok) {
-    throw new EmailDeliveryError('resend_rejected', 'definitive_rejection', data?.message || 'resend_rejected');
+    const classified = classifyResendHttpStatus(response.status, data);
+    throw new EmailDeliveryError(classified.code, classified.outcome, classified.message);
   }
   if (!data?.id) {
     // A successful HTTP status with an unreadable acknowledgement cannot prove

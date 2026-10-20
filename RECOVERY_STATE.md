@@ -18,29 +18,30 @@ Updated: 2026-10-20 Asia/Manila
 - M3 gate lifecycle pushed at `6239cd79de4ee51c4515b144804661bc4f4a506f`.
 - M4 Admin and operations runtime migration implemented.
 - M4 Corrections (F01–F12) and M5-F13 (Optional QR Email Delivery with inbox verification claim flow) implemented and verified.
-- One-Pass Root-Cause Resolution (P0-01–P0-05, C-01–C-05) implemented and verified: pass identifier contract unified across issuance and email endpoints; `\x` bytea digest handling with timing-safe comparison; additive migration `20261020000900_qr_email_idempotency.sql` with atomic RPCs (`api.request_email_verification_code`, `api.verify_and_claim_email_dispatch`, `api.finalize_email_dispatch`) and CSPRNG; fail-closed settings update without direct write fallback; dual hold checks and error inspection on purge; governance target checks and audit error handling; Manila day window for pending counts; emergency evacuation screen and print truncation alerts; strict cursor validation; formula injection defense.
-- `npm run test:e2e:startup` exercises 4 cases (dev/configured, dev/missing, dev/malformed, preview/configured): 4/4 PASS on Playwright Edge.
-- Vitest suite: 12 test files, 119 tests PASS (`npx vitest run --exclude "**/firestore.rules.test.ts"`), including 18 behavioral mocked handler tests `PASS (MOCKED HANDLER)` and 21 pure-service unit tests.
-- `npm run typecheck:api` PASS, `npm run build` PASS, `git diff --check` PASS.
-- S2 PostgreSQL migrations, pgTAP, RLS, Storage, Resend live email, and real Supabase Auth remain BLOCKED / NOT TESTED due to local machine limitations (no Docker Desktop/psql/disposable Supabase instance).
+- One-Pass Root-Cause Resolution (P0-01–P0-05, C-01–C-05) implemented and verified.
+- Targeted QR-Email Security Checkpoint (EMAIL-P0-01–P1-07) implemented and verified.
+- **OCR-First Kiosk, React Email & Confirmed Risk Resolutions (UX-01, EMAIL-ARCH-01, EMAIL-H01, EMAIL-H02, EMAIL-M01, EMAIL-M02, PRIVACY-M03, ADMIN-M04, DEPLOY-M05)** implemented and locally verified:
+  1. `UX-01`: OCR-First kiosk with default screen "Scan Your Valid ID", primary "Scan My ID", subordinate "Want to type manually instead?" link, offline local Tesseract.js engine with Philippine ID heuristics, single `idBlob` evidence reuse, mandatory face photo, and zero Tesseract bundle leakage into portal/admin routes.
+  2. `EMAIL-ARCH-01`: Restored `@react-email/components` and `@react-email/render` architecture with EARIST maroon/gold accessible responsive templates in `server/templates/`, server-side rendered HTML, and QR attachment PNG buffer.
+  3. `EMAIL-H01`: Documented conservative Resend HTTP status classification in `server/email.ts` (400/401/403/422 definitive rejection; 429/5xx/network/timeout unknown outcome fenced with non-retryable reconciliation).
+  4. `EMAIL-H02`: Additive migration `20261020001100_email_security_and_abuse_controls.sql` with finalizer contract distinguishing `matched`, `already_finalized_same_status`, and `terminal_conflict`. `api/passes/email.ts` fails closed on conflict.
+  5. `EMAIL-M01`: Per-recipient (max 5/15m) and per-actor (max 10/15m) challenge abuse limits enforced in migration and handler.
+  6. `EMAIL-M02`: Kiosk email requests enforce active, non-deleted device of type `kiosk` in `devices` table; revoked/guard devices rejected with 403.
+  7. `PRIVACY-M03`: DB-coordinated purge protocol via `claim_evidence_for_purge` and `finalize_evidence_purge` RPCs excluding incident holds.
+  8. `ADMIN-M04`: Keyset pagination in `api/admin/users.ts` and `src/pages/AdminUsers.tsx` with "Load More Users" button.
+  9. `DEPLOY-M05`: Corrected Vercel SPA rewrite in `vercel.json` to `/((?!api/).*)` -> `/index.html` preventing API route masking.
+- `npm run test:e2e:startup`: 4/4 PASS on Playwright Edge (dev configured, dev missing, dev malformed, preview configured).
+- Full Vitest suite: 16 test files, 197 tests PASS (`npx vitest run --exclude "**/firestore.rules.test.ts"`), including 55 behavioral mocked handler tests `PASS (MOCKED HANDLER)`, 10 Resend classification tests, 6 OCR parser tests, 4 React Email template tests, 8 static migration tests, and 3 architecture contract tests.
+- `npm run typecheck:api` PASS (exit 0), `npm run build` PASS (exit 0, 2537 modules transformed), `git diff --check` PASS (exit 0).
+- Local owner-owned `.env.example` file strictly preserved unstaged and uncommitted.
+- S2 PostgreSQL migrations, pgTAP (81 authored assertions across 00100–01100), RLS, Storage, Resend live email, and real Supabase Auth remain BLOCKED / NOT TESTED due to local machine limitations (no Docker Desktop/psql/disposable Supabase instance).
 
 ## Active implementation boundary
 
-M1 identity, M2 registration/issuance, M3 scanner/Guard lifecycle, M4 Admin & operations, M4 corrections (F01–F12), M5-F13 (optional QR email), and One-Pass Root-Cause Resolution (P0-01–P0-05, C-01–C-05) are implemented and locally verified. Entry, pending decision, approval/rejection, gate-matched exit, bounded Guard reads, private evidence delivery, staff governance, device accounts, dashboard metrics, emergency list, records/complete exports, audit/activity, settings/storage purge, and optional Resend QR email with inbox claim proof all have target Supabase/Vercel code, additive migrations (00100–00900), and local tests. Legacy code remains in the repository for rollback safety and must not be deleted until live parity gates pass.
+All 9 workstreams are implemented and verified locally. Additive migrations (00100–01100) are committed history; legacy Firebase/Netlify/Cloudinary code remains preserved for rollback until live cutover.
 
 ## Next safe tasks
 
-1. Commit and push the One-Pass Root-Cause Resolution (P0-01–P0-05, C-01–C-05) checkpoint to `origin feat/runtime-migration`.
-2. Verify actual remote HEAD SHA and declare truthfulness matrix.
-3. Keep every provider-dependent path NOT VERIFIED / INTEGRATION BLOCKED until the isolated database and browser lifecycle run.
-4. Prepare M5/S7 remaining items (scheduled retention execution, incident hold UI management, operational alerts) and staging readiness.
-5. Request only one of: Docker-backed disposable local Supabase, or explicit permission naming a non-production hosted Supabase project after read-only identity/no-real-data preflight.
-
-## Targeted QR-email correction handoff (supersedes older QR-email claims above)
-
-- Start checkpoint: `dcc9854d22c1aeec1c87d3a1dac55f183741b993` on `feat/runtime-migration`.
-- Pre-fix security contract: 7/7 expected failures. Corrected local evidence: focused 4 files/92 tests PASS; complete safe suite 13 files/166 tests PASS; API typecheck PASS; production build PASS; isolated Edge startup 4/4 PASS; whitespace PASS.
-- Additive migration `20261020001000_qr_email_security.sql` and pgTAP `007_qr_email_security.test.sql` are AUTHORED / NOT RUN. They supersede 00900 behavior without rewriting history.
-- QR-email now fails closed on RPC faults, binds stable keys to actor/pass/recipient, serializes code limits, fences ambiguous/stale provider outcomes, and accepts only the public-reference UUID returned by issuance.
-- Owner `.env.example` remains modified only by the owner and must stay unstaged. No uppercase backup, hosted database, deployment, live inbox, or legacy infrastructure was touched.
-- Next: verify the pushed feature-branch SHA, then wait for an isolated database or explicitly authorized non-production test target. Run 00100–01000, all pgTAP including genuine two-session contention, real portal/kiosk Auth/RPC tests, and approved inbox tests. Owner modal/workflow QA remains AWAITING OWNER. Do not begin unrelated M5 work before this handoff is accepted.
+1. Commit and push the verified UX-01, EMAIL-ARCH-01, EMAIL-H01/H02, and M01-M05 checkpoint to `origin feat/runtime-migration`.
+2. Verify pushed commit SHA on GitHub.
+3. Keep all cloud provider-dependent actions (real emails, hosted migrations, production deployments) marked BLOCKED until authorized.

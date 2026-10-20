@@ -115,14 +115,33 @@ Current stage: QR-email targeted correction LOCALLY VERIFIED; provider/database 
 - Local evidence: focused 4-file suite 92/92 PASS; full safe Vitest suite 166/166 PASS; API typecheck/build PASS; Edge startup 4/4 PASS; whitespace check PASS.
 - `20261020001000_qr_email_security.sql` and `007_qr_email_security.test.sql` are AUTHORED / NOT RUN. Real SQL syntax, grants, locks, RLS, PostgREST `bytea`, Auth identities, Resend acceptance/delivery, and inbox receipt remain NOT TESTED / BLOCKED.
 
+## OCR-First Kiosk, React Email & Confirmed Risk Resolutions Checkpoint
+
+- **UX-01 (OCR-First Kiosk Registration)**: Default initial screen is "Scan Your Valid ID" with primary action "Scan My ID" and understated secondary link "Want to type manually instead?". Features camera ID capture (environment/back-camera preferred with file upload fallback), on-device local OCR via Tesseract.js using offline static assets in `public/tesseract/`, Philippine ID heuristics in `src/lib/ocr.ts`, prefilled editable form with explicit confirmation, single `idBlob` reuse for pass evidence, mandatory face photo, and zero Tesseract bundle leakage into general routes.
+- **EMAIL-ARCH-01 (React Email + Resend Architecture)**: Installed `@react-email/components` and `@react-email/render`. Created accessible EARIST maroon/gold email templates in `server/templates/` (`VerificationCodeEmail.tsx`, `PassIssuedEmail.tsx`) rendered server-side in the Vercel API, with secure QR PNG attachment derived from server HMAC bearer.
+- **EMAIL-H01 (Conservative Resend Error Classification)**: `server/email.ts` documents explicit mapping of provider HTTP responses. Deterministic client/auth errors (400, 401, 403, 422) are classified as `definitive_rejection`; rate limits (429), server errors (500, 502, 503), timeouts, and malformed 2xx are classified as `unknown`. Fenced unknown outcomes finalize `outcome_unknown` without automatic retry and enqueue sanitized reconciliation tasks.
+- **EMAIL-H02 (Terminal State Conflict Rejection)**: Migration `20261020001100_email_security_and_abuse_controls.sql` updates `finalize_email_verification_code` and `finalize_email_dispatch` return contracts to distinguish `matched`, `already_finalized_same_status`, and `terminal_conflict`. `api/passes/email.ts` verifies exact match and fails closed on conflict.
+- **EMAIL-M01 (Abuse Safeguards)**: Rate limits across distinct passes per recipient (max 5 challenges per 15 min) and per actor (max 10 challenges per 15 min) implemented in SQL RPCs and mapped to HTTP 429 in API.
+- **EMAIL-M02 (Active Kiosk Device Enforcement)**: Kiosk email actions require caller actor to represent an active, non-deleted device of type `kiosk` in `devices` table. Revoked, deleted, or wrong-type devices fail with 403 `kiosk_device_revoked`.
+- **PRIVACY-M03 (DB-Coordinated Purge Protocol)**: Implemented atomic `api.claim_evidence_for_purge` and `api.finalize_evidence_purge` RPCs in migration 01100. `api/purge-images.ts` claims rows with incident hold exclusion before storage deletion, and records finalize/reconciliation.
+- **ADMIN-M04 (Staff List Keyset Pagination)**: Replaced silent 200 limit in `api/admin/users.ts` with stable cursor/keyset pagination (`limit`, `cursor`, `nextCursor`, `hasMore`) and bounded Auth user enrichment. Updated `AdminUsers.tsx` with "Load More Users" button.
+- **DEPLOY-M05 (Vercel SPA vs API Rewrite Precedence)**: Updated `vercel.json` rewrite to `/((?!api/).*)` -> `/index.html` ensuring `/api/*` function routes are executed instead of returning SPA index HTML.
+- **Verification Evidence**:
+  - Full Vitest safe suite: 16 test files, 197 tests PASS (0 failures).
+  - Behavioral mocked handler suite: 55/55 PASS.
+  - Startup Playwright Edge E2E: 4/4 PASS.
+  - TypeScript API compilation: `npm run typecheck:api` PASS (exit 0).
+  - Production build: `npm run build` PASS (exit 0, 2537 modules).
+  - Git whitespace: `git diff --check` PASS (exit 0).
+  - Uncommitted `.env.example` strictly preserved without staging.
+
 ## Immediate blockers and next safe work
 
-
 1. Provide one isolated executable route for the S2 promotion gate: make Docker Desktop available for local Supabase, or explicitly authorize a separate non-production hosted Supabase project after identity confirmation.
-2. Run clean migrations, all authored pgTAP assertions, real Auth bearer-session Data API/RPC denials, actual private Storage operations, and the full issue→entry→decision→exit browser lifecycle.
+2. Run clean migrations (00100–01100), all authored pgTAP assertions (81 assertions), real Auth bearer-session Data API/RPC denials, actual private Storage operations, and the full issue→entry→decision→exit browser lifecycle.
 3. Keep every provider-dependent path NOT VERIFIED / INTEGRATION BLOCKED until the isolated database and browser lifecycle run.
 4. Do not link/deploy Vercel, use the hosted database, or send real emails without owner authorization.
 
 ## Maturity
 
-Current product maturity is `IN PROGRESS` (Level 2 — reproducible local execution, complete static contracts, zero Firebase dependencies in Admin/operational UI, full build passing, comprehensive behavioral mocked-handler tests passing). Awaiting isolated Supabase database instance for Level 3 promotion; not defense-ready and not deployment-ready until PostgreSQL/Supabase behavior is live proven.
+Current product maturity is `IN PROGRESS` (Level 2 — reproducible local execution, complete static contracts, zero Firebase dependencies in Admin/operational UI, full build passing, comprehensive behavioral mocked-handler tests passing, offline OCR and React Email implemented). Awaiting isolated Supabase database instance for Level 3 promotion; not defense-ready and not deployment-ready until PostgreSQL/Supabase behavior is live proven.

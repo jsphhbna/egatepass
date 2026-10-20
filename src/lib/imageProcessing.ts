@@ -1,5 +1,5 @@
-/** Compresses a browser-selected image to WebP without loading a storage SDK. */
-export async function compressImageToWebP(file: File): Promise<Blob> {
+/** Compresses a browser-selected image or camera blob to WebP without loading a storage SDK. */
+export async function compressImageToWebP(file: Blob | File): Promise<Blob> {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
     reader.onload = (event) => {

@@ -94,4 +94,33 @@ describe('Supabase migration static safety contract', () => {
     expect(pgtap).toContain('stale failure cannot overwrite provider acceptance');
     expect(pgtap).toContain('AUTHORED / NOT RUN');
   });
+
+  it('applies additive email security and abuse controls in 01100', () => {
+    const migration = readFileSync('supabase/migrations/20261020001100_email_security_and_abuse_controls.sql', 'utf8');
+    const pgtap = readFileSync('supabase/tests/008_email_security_and_abuse_controls.test.sql', 'utf8');
+    const rpcs = [
+      'api.finalize_email_verification_code',
+      'api.finalize_email_dispatch',
+      'api.request_email_verification_code',
+      'api.verify_and_claim_email_dispatch',
+      'api.claim_evidence_for_purge',
+      'api.finalize_evidence_purge',
+    ];
+
+    expect(migration).toContain("set search_path = ''");
+    expect(migration).toContain('terminal_conflict');
+    expect(migration).toContain('already_finalized_same_status');
+    expect(migration).toContain('kiosk_device_revoked');
+    expect(migration).toContain('too_many_requests_recipient');
+    expect(migration).toContain('purge_claim_id');
+
+    for (const fn of rpcs) {
+      expect(migration).toMatch(new RegExp(`revoke all on function ${fn.replace('.', '\\.')}[^;]+from public, anon, authenticated;`, 'i'));
+      expect(migration).toMatch(new RegExp(`grant execute on function ${fn.replace('.', '\\.')}[^;]+to service_role;`, 'i'));
+    }
+
+    expect(pgtap).toContain('conflicting terminal status returns terminal_conflict');
+    expect(pgtap).toContain('retired kiosk device cannot request verification code');
+    expect(pgtap).toContain('AUTHORED / NOT RUN');
+  });
 });

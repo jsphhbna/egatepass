@@ -188,3 +188,29 @@
   4. A claimed send replays its durable state without calling the provider. Different keys cannot bypass `sending`, accepted, or unknown states. Definitive rejection permits only a deliberate new attempt.
   5. Transport errors and unreadable 2xx acknowledgements are ambiguous. They remain `outcome_unknown`; stale `sending` claims become unknown after 15 minutes and require reconciliation. No exactly-once guarantee is claimed across PostgreSQL and Resend.
   6. UI success means submitted to the provider, not delivered to an inbox. Email remains optional and can never revoke or roll back an issued pass.
+
+## ADR-0024 — OCR-First Kiosk Registration and Privacy Architecture (UX-01)
+
+- Date: 2026-10-20
+- Status: accepted for implementation; physical Android tablet camera/lighting AWAITING OWNER
+- Decision:
+  1. Priority Interaction: the kiosk starts with a default "Scan Your Valid ID" screen, prominent primary "Scan My ID" button, and an understated secondary text link "Want to type manually instead?".
+  2. Local-Only Processing: OCR executes strictly on-device using Tesseract.js with locally hosted static assets under `public/tesseract/`. No ID image or OCR text is sent to third-party vision APIs or telemetry.
+  3. Narrow Purpose & Confirmation: OCR extracts suggested names (first, middle, last) using Philippine ID layout heuristics (PhilSys, Driver's License, UMID, Postal ID). The visitor reviews and explicitly confirms editable fields.
+  4. Single Evidence Reuse: the captured ID image (`idBlob`) is reused as the mandatory ID-evidence upload. Visitors never capture their ID twice.
+  5. Mandatory Face Photo & Peak Mode: visitor face photos remain 100% mandatory across all modes. Peak Mode skips only ID evidence for authorized channels and never grants authenticity exemptions.
+  6. Resource Lifecycle: Tesseract.js is lazily loaded only on the kiosk scan step, maintaining a lean initial bundle. Workers and camera streams are terminated on completion, restart, or unmount.
+
+## ADR-0025 — React Email Restoration and Security Risk Mitigations (EMAIL-ARCH-01, EMAIL-H01/H02, M01-M05)
+
+- Date: 2026-10-20
+- Status: accepted for runtime implementation; live provider/PostgreSQL BLOCKED
+- Decision:
+  1. React Email Restoration (EMAIL-ARCH-01): replaced raw string concatenation with `@react-email/components` and `@react-email/render`. Server-rendered accessible EARIST maroon/gold email templates for verification codes and QR passes, attaching high-contrast scannable QR PNG buffers.
+  2. Conservative Provider Classification (EMAIL-H01): `server/email.ts` classifies 400, 401, 403, 422 as `definitive_rejection` (permitting deliberate retry), while 429, 5xx, timeouts, connection errors, and malformed 2xx are classified as `unknown` (fencing delivery status to `outcome_unknown`, disabling auto-retry, and enqueueing reconciliation).
+  3. Terminal State Conflict Handling (EMAIL-H02): migration `20261020001100_email_security_and_abuse_controls.sql` returns explicit `match_status` (`matched`, `already_finalized_same_status`, `terminal_conflict`). Handlers fail closed on conflict with HTTP 202 and log reconciliation.
+  4. Cross-Pass Abuse Thresholds (EMAIL-M01): enforced database-level limits of max 5 challenges per recipient email across passes and max 10 challenges per actor in 15 minutes, returning HTTP 429.
+  5. Kiosk Device State Verification (EMAIL-M02): kiosk-initiated email actions require caller actor to represent an active, non-deleted device of type `kiosk` in `devices` table, rejecting revoked or wrong-role devices with HTTP 403 `kiosk_device_revoked`.
+  6. DB-Coordinated Purge Protocol (PRIVACY-M03): `claim_evidence_for_purge` atomically locks and claims candidate evidence records excluding active incident holds before physical deletion in Supabase Storage.
+  7. Staff Keyset Pagination (ADMIN-M04): keyset/cursor pagination on `staff_profiles` with bounded Auth user enrichment, eliminating silent 200 truncation while avoiding N+1 full scans.
+  8. SPA Rewrite Precedence (DEPLOY-M05): `vercel.json` SPA rewrite configured with negative lookahead `/((?!api/).*)` -> `/index.html` ensuring API function routes are never masked by client SPA HTML.

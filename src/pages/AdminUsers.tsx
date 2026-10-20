@@ -40,6 +40,9 @@ export function AdminUsers() {
   const canManageAdministrativeRoles = isSuperAdmin(role);
   const [users, setUsers] = useState<AppUserWithId[]>([]);
   const [loading, setLoading] = useState(true);
+  const [nextCursor, setNextCursor] = useState<string | null>(null);
+  const [hasMore, setHasMore] = useState(false);
+  const [loadingMore, setLoadingMore] = useState(false);
   const [isCreating, setIsCreating] = useState(false);
   const [deactivatingUser, setDeactivatingUser] = useState<AppUserWithId | null>(null);
   const [isDeactivating, setIsDeactivating] = useState(false);
@@ -59,15 +62,37 @@ export function AdminUsers() {
   async function loadUsers() {
     setLoading(true);
     try {
-      const response = await fetch('/api/admin/users', { headers: { Authorization: `Bearer ${await getAccessToken()}` } });
-      const body = await response.json().catch(() => null) as { users?: AppUserWithId[]; error?: string } | null;
+      const response = await fetch('/api/admin/users?limit=50', { headers: { Authorization: `Bearer ${await getAccessToken()}` } });
+      const body = await response.json().catch(() => null) as { users?: AppUserWithId[]; nextCursor?: string | null; hasMore?: boolean; error?: string } | null;
       if (!response.ok) throw new Error(body?.error || 'Failed to load users');
       setUsers(body?.users ?? []);
+      setNextCursor(body?.nextCursor ?? null);
+      setHasMore(body?.hasMore ?? false);
     } catch (err) {
       console.error(err);
       toast.error('Failed to load users');
     } finally {
       setLoading(false);
+    }
+  }
+
+  async function loadMoreUsers() {
+    if (!nextCursor || loadingMore) return;
+    setLoadingMore(true);
+    try {
+      const response = await fetch(`/api/admin/users?limit=50&cursor=${encodeURIComponent(nextCursor)}`, {
+        headers: { Authorization: `Bearer ${await getAccessToken()}` },
+      });
+      const body = await response.json().catch(() => null) as { users?: AppUserWithId[]; nextCursor?: string | null; hasMore?: boolean; error?: string } | null;
+      if (!response.ok) throw new Error(body?.error || 'Failed to load more users');
+      setUsers((prev) => [...prev, ...(body?.users ?? [])]);
+      setNextCursor(body?.nextCursor ?? null);
+      setHasMore(body?.hasMore ?? false);
+    } catch (err) {
+      console.error(err);
+      toast.error('Failed to load more users');
+    } finally {
+      setLoadingMore(false);
     }
   }
 
@@ -314,6 +339,19 @@ export function AdminUsers() {
             )}
           </tbody>
         </DataTable>
+      )}
+
+      {hasMore && (
+        <div className="flex justify-center pt-2">
+          <Button
+            variant="secondary"
+            onClick={loadMoreUsers}
+            loading={loadingMore}
+            disabled={loadingMore}
+          >
+            Load More Users
+          </Button>
+        </div>
       )}
 
       <ConfirmModal

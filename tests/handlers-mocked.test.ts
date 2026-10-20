@@ -9,6 +9,7 @@ import emailPassHandler from '../api/passes/email.js';
 import purgeImagesHandler from '../api/purge-images.js';
 import recordsHandler from '../api/admin/records.js';
 import dashboardHandler from '../api/admin/dashboard.js';
+import adminUsersHandler from '../api/admin/users.js';
 import { requireStaffActor } from '../server/actors.js';
 import { encodeCompoundCursor } from '../server/cursor.js';
 
@@ -56,6 +57,7 @@ describe('Behavioral Mocked-Handler Tests [PASS (MOCKED HANDLER)]', () => {
   let mockRpcFailures: Record<string, any>;
   let mockRpcOverrides: Record<string, any>;
   let mockTableFailures: Record<string, any>;
+  let storageRemovedPaths: string[] = [];
 
   function createMockSupabase() {
     return {
@@ -115,9 +117,39 @@ describe('Behavioral Mocked-Handler Tests [PASS (MOCKED HANDLER)]', () => {
               error: null,
             };
           }
+          if (token === 'revoked-token') {
+            return {
+              data: {
+                user: {
+                  id: '00000000-0000-4000-a000-000000000098',
+                  email: 'kiosk.revoked@devices.egatepass.invalid',
+                },
+              },
+              error: null,
+            };
+          }
+          if (token === 'guard-device-token') {
+            return {
+              data: {
+                user: {
+                  id: OTHER_DEVICE_ID,
+                  email: 'gate2-exit@devices.egatepass.invalid',
+                },
+              },
+              error: null,
+            };
+          }
           return { data: { user: null }, error: new Error('Invalid token') };
         }),
         admin: {
+          listUsers: vi.fn(async () => {
+            return {
+              data: {
+                users: Object.values(mockAuthUsers),
+              },
+              error: null,
+            };
+          }),
           getUserById: vi.fn(async (uid: string) => {
             const user = mockAuthUsers[uid];
             if (!user) return { data: { user: null }, error: new Error('Auth user not found') };
@@ -180,12 +212,18 @@ describe('Behavioral Mocked-Handler Tests [PASS (MOCKED HANDLER)]', () => {
             return chain;
           },
           ilike: (_col: string, _pattern: string) => chain,
+          order: (_col: string, _opts?: { ascending?: boolean }) => chain,
           or: (expr: string) => {
             // Support public_reference vs id compound check
             if (expr.includes('public_reference.eq.') && expr.includes('id.eq.')) {
               const match = expr.match(/public_reference\.eq\.([^,]+)/);
               const val = match ? match[1] : '';
               filters.push((item) => item.public_reference === val || item.id === val);
+            }
+            if (expr.includes('created_at.lt.')) {
+              const match = expr.match(/created_at\.lt\.([^,]+)/);
+              const dt = match ? match[1] : '';
+              if (dt) filters.push((item) => item.created_at < dt);
             }
             return chain;
           },
@@ -442,6 +480,22 @@ describe('Behavioral Mocked-Handler Tests [PASS (MOCKED HANDLER)]', () => {
               error: null,
             };
           }
+          if (fn === 'finalize_email_verification_code') {
+            const verif = mockDbData.pass_email_verifications.find(
+              (v) => v.id === args.requested_verification_id
+            );
+            if (verif) {
+              verif.code_delivery_status = args.requested_delivery_status;
+            }
+            return {
+              data: {
+                success: true,
+                match_status: 'matched',
+                code_delivery_status: args.requested_delivery_status,
+              },
+              error: null,
+            };
+          }
           if (fn === 'finalize_email_dispatch') {
             const verif = mockDbData.pass_email_verifications.find(
               (v) => v.id === args.requested_verification_id && v.send_request_id === args.requested_send_request_id
@@ -454,14 +508,42 @@ describe('Behavioral Mocked-Handler Tests [PASS (MOCKED HANDLER)]', () => {
                 verif.sent_at = new Date().toISOString();
               }
             }
-            return { data: { success: true, delivery_status: verif.delivery_status }, error: null };
+            return { data: { success: true, match_status: 'matched', delivery_status: verif.delivery_status }, error: null };
+          }
+          if (fn === 'claim_evidence_for_purge') {
+            const ev = mockDbData.visitor_evidence.find((e) => e.id === args.requested_evidence_id);
+            if (!ev || ev.purged_at) {
+              return { data: { claimed: false, reason: 'not_found_or_purged' }, error: null };
+            }
+            const held = mockDbData.incident_holds.some(
+              (h) => h.active && (h.visitor_id === ev.visitor_id || h.pass_id === ev.pass_id)
+            );
+            if (held) {
+              return { data: { claimed: false, reason: 'held_by_incident_hold' }, error: null };
+            }
+            ev.purge_claim_id = args.requested_claim_id;
+            ev.purge_claimed_at = new Date().toISOString();
+            return { data: { claimed: true, evidence_id: ev.id, claim_id: args.requested_claim_id }, error: null };
+          }
+          if (fn === 'finalize_evidence_purge') {
+            const ev = mockDbData.visitor_evidence.find((e) => e.id === args.requested_evidence_id);
+            if (ev && args.requested_success) {
+              ev.purged_at = new Date().toISOString();
+              ev.purge_claim_id = null;
+            } else if (ev) {
+              ev.purge_claim_id = null;
+            }
+            return { data: { finalized: true, success: args.requested_success }, error: null };
           }
           return { data: null, error: new Error(`Unknown RPC: ${fn}`) };
         },
       }),
       storage: {
         from: (_bucket: string) => ({
-          remove: vi.fn(async (_keys: string[]) => ({ data: [], error: null })),
+          remove: vi.fn(async (keys: string[]) => {
+            storageRemovedPaths.push(...keys);
+            return { data: keys, error: null };
+          }),
         }),
       },
     };
@@ -471,6 +553,7 @@ describe('Behavioral Mocked-Handler Tests [PASS (MOCKED HANDLER)]', () => {
     mockRpcFailures = {};
     mockRpcOverrides = {};
     mockTableFailures = {};
+    storageRemovedPaths = [];
 
     mockDbData = {
       devices: [
@@ -489,6 +572,15 @@ describe('Behavioral Mocked-Handler Tests [PASS (MOCKED HANDLER)]', () => {
           name: 'Gate 2 Exit',
           type: 'guard',
           gate: 'Gate 2',
+          status: 'active',
+          deleted_at: null,
+        },
+        {
+          user_id: KIOSK_ID,
+          alias: 'kiosk-main',
+          name: 'Main Kiosk Device',
+          type: 'kiosk',
+          gate: 'Gate 1',
           status: 'active',
           deleted_at: null,
         },
@@ -1487,6 +1579,329 @@ describe('Behavioral Mocked-Handler Tests [PASS (MOCKED HANDLER)]', () => {
 
       expect(res.status).toBe(200);
       expect(Array.isArray(json.passes)).toBe(true);
+    });
+  });
+
+  // =========================================================================
+  // EMAIL-H02: Reject Mismatched Terminal State from Finalizers
+  // =========================================================================
+  describe('EMAIL-H02: Terminal State Conflict Rejection', () => {
+    it('returns 202 verification_finalization_conflict when verification finalizer reports conflict', async () => {
+      mockDbData.passes[0].visitors.owner_id = KIOSK_ID;
+      mockDbData.passes[0].visitors.source = 'kiosk';
+
+      mockRpcOverrides['finalize_email_verification_code'] = {
+        data: {
+          success: false,
+          match_status: 'terminal_conflict',
+          code_delivery_status: 'outcome_unknown',
+        },
+        error: null,
+      };
+
+      const req = new Request('http://localhost/api/passes/email', {
+        method: 'POST',
+        headers: { authorization: VALID_KIOSK_BEARER, 'content-type': 'application/json' },
+        body: JSON.stringify({
+          action: 'request_code',
+          passId: TEST_PUBLIC_REF,
+          qrToken: TEST_RAW_TOKEN,
+          recipientEmail: 'kiosk.visitor@example.com',
+          consent: true,
+          requestId: randomUUID(),
+        }),
+      });
+
+      const res = await invokeHandler(emailPassHandler, req);
+      const json = await res.json();
+
+      expect(res.status).toBe(202);
+      expect(json.error).toBe('verification_finalization_conflict');
+      expect(json.status).toBe('outcome_unknown');
+      expect(json.retryAllowed).toBe(false);
+      expect(json.reconciliationRequired).toBe(true);
+
+      const recon = mockDbData.reconciliation_tasks.find((r) => r.last_error_code === 'terminal_conflict');
+      expect(recon).toBeDefined();
+    });
+
+    it('returns 202 email_finalization_conflict when dispatch finalizer reports conflict', async () => {
+      mockDbData.passes[0].visitors.owner_id = KIOSK_ID;
+      mockDbData.passes[0].visitors.source = 'kiosk';
+
+      const verifId = randomUUID();
+      const sendReqId = randomUUID();
+      const code = '123456';
+      const codeHash = createHash('sha256').update(`${verifId}:${code}`).digest('hex');
+
+      mockDbData.pass_email_verifications.push({
+        id: verifId,
+        pass_id: TEST_PASS_ID,
+        recipient_email: 'kiosk.visitor@example.com',
+        code_hash: codeHash,
+        attempts: 0,
+        verified: false,
+        expires_at: new Date(Date.now() + 600_000).toISOString(),
+        request_id: randomUUID(),
+        request_actor_id: KIOSK_ID,
+        code_delivery_status: 'sent_to_provider',
+        delivery_status: 'pending',
+        created_at: new Date().toISOString(),
+      });
+
+      mockRpcOverrides['finalize_email_dispatch'] = {
+        data: {
+          success: false,
+          match_status: 'terminal_conflict',
+          delivery_status: 'outcome_unknown',
+        },
+        error: null,
+      };
+
+      const req = new Request('http://localhost/api/passes/email', {
+        method: 'POST',
+        headers: { authorization: VALID_KIOSK_BEARER, 'content-type': 'application/json' },
+        body: JSON.stringify({
+          action: 'verify_and_send',
+          passId: TEST_PUBLIC_REF,
+          qrToken: TEST_RAW_TOKEN,
+          recipientEmail: 'kiosk.visitor@example.com',
+          verificationId: verifId,
+          code,
+          requestId: sendReqId,
+        }),
+      });
+
+      const res = await invokeHandler(emailPassHandler, req);
+      const json = await res.json();
+
+      expect(res.status).toBe(202);
+      expect(json.error).toBe('email_finalization_conflict');
+      expect(json.status).toBe('outcome_unknown');
+      expect(json.retryAllowed).toBe(false);
+      expect(json.reconciliationRequired).toBe(true);
+
+      const recon = mockDbData.reconciliation_tasks.find((r) => r.last_error_code === 'terminal_conflict');
+      expect(recon).toBeDefined();
+    });
+  });
+
+  // =========================================================================
+  // EMAIL-M01: Cross-Pass / Recipient Abuse Safeguards
+  // =========================================================================
+  describe('EMAIL-M01: Abuse Safeguards Mapping', () => {
+    it('returns 429 when recipient challenge limit is exceeded', async () => {
+      mockDbData.passes[0].visitors.owner_id = KIOSK_ID;
+      mockDbData.passes[0].visitors.source = 'kiosk';
+
+      mockRpcOverrides['request_email_verification_code'] = {
+        data: null,
+        error: { code: '42501', message: 'recipient_challenge_limit_exceeded' },
+      };
+
+      const req = new Request('http://localhost/api/passes/email', {
+        method: 'POST',
+        headers: { authorization: VALID_KIOSK_BEARER, 'content-type': 'application/json' },
+        body: JSON.stringify({
+          action: 'request_code',
+          passId: TEST_PUBLIC_REF,
+          qrToken: TEST_RAW_TOKEN,
+          recipientEmail: 'spammer@example.com',
+          consent: true,
+          requestId: randomUUID(),
+        }),
+      });
+
+      const res = await invokeHandler(emailPassHandler, req);
+      const json = await res.json();
+
+      expect(res.status).toBe(429);
+      expect(json.error).toBe('recipient_challenge_limit_exceeded');
+    });
+
+    it('returns 429 when actor challenge limit is exceeded', async () => {
+      mockDbData.passes[0].visitors.owner_id = KIOSK_ID;
+      mockDbData.passes[0].visitors.source = 'kiosk';
+
+      mockRpcOverrides['request_email_verification_code'] = {
+        data: null,
+        error: { code: '42501', message: 'actor_challenge_limit_exceeded' },
+      };
+
+      const req = new Request('http://localhost/api/passes/email', {
+        method: 'POST',
+        headers: { authorization: VALID_KIOSK_BEARER, 'content-type': 'application/json' },
+        body: JSON.stringify({
+          action: 'request_code',
+          passId: TEST_PUBLIC_REF,
+          qrToken: TEST_RAW_TOKEN,
+          recipientEmail: 'victim@example.com',
+          consent: true,
+          requestId: randomUUID(),
+        }),
+      });
+
+      const res = await invokeHandler(emailPassHandler, req);
+      const json = await res.json();
+
+      expect(res.status).toBe(429);
+      expect(json.error).toBe('actor_challenge_limit_exceeded');
+    });
+  });
+
+  // =========================================================================
+  // EMAIL-M02: Revoked Kiosk Prevention
+  // =========================================================================
+  describe('EMAIL-M02: Revoked Kiosk Device Safeguards', () => {
+    it('blocks email requests from a revoked kiosk device with 403', async () => {
+      mockDbData.devices.push({
+        user_id: '00000000-0000-4000-a000-000000000098',
+        alias: 'kiosk-revoked',
+        name: 'Revoked Kiosk Device',
+        type: 'kiosk',
+        status: 'revoked',
+        deleted_at: null,
+      });
+
+      mockDbData.passes[0].visitors.owner_id = '00000000-0000-4000-a000-000000000098';
+      mockDbData.passes[0].visitors.source = 'kiosk';
+
+      const req = new Request('http://localhost/api/passes/email', {
+        method: 'POST',
+        headers: { authorization: 'Bearer revoked-token', 'content-type': 'application/json' },
+        body: JSON.stringify({
+          action: 'request_code',
+          passId: TEST_PUBLIC_REF,
+          qrToken: TEST_RAW_TOKEN,
+          recipientEmail: 'visitor@example.com',
+          consent: true,
+          requestId: randomUUID(),
+        }),
+      });
+
+      const res = await invokeHandler(emailPassHandler, req);
+      const json = await res.json();
+
+      expect(res.status).toBe(403);
+      expect(json.error).toBe('kiosk_device_revoked');
+    });
+
+    it('blocks device masquerading as kiosk when device type is guard', async () => {
+      mockDbData.passes[0].visitors.owner_id = OTHER_DEVICE_ID;
+      mockDbData.passes[0].visitors.source = 'kiosk';
+
+      const req = new Request('http://localhost/api/passes/email', {
+        method: 'POST',
+        headers: { authorization: 'Bearer guard-device-token', 'content-type': 'application/json' },
+        body: JSON.stringify({
+          action: 'request_code',
+          passId: TEST_PUBLIC_REF,
+          qrToken: TEST_RAW_TOKEN,
+          recipientEmail: 'visitor@example.com',
+          consent: true,
+          requestId: randomUUID(),
+        }),
+      });
+
+      const res = await invokeHandler(emailPassHandler, req);
+      const json = await res.json();
+
+      expect(res.status).toBe(403);
+      expect(json.error).toBe('kiosk_device_revoked');
+    });
+  });
+
+  // =========================================================================
+  // PRIVACY-M03: DB-Coordinated Purge Protocol
+  // =========================================================================
+  describe('PRIVACY-M03: DB-Coordinated Purge Protocol (api/purge-images.ts)', () => {
+    it('claims evidence via RPC before storage deletion and finalizes on success', async () => {
+      mockDbData.visitor_evidence = [
+        {
+          id: '00000000-0000-4000-a000-000000000999',
+          visitor_id: 'visitor-expired',
+          bucket_id: 'visitor-id-documents',
+          object_path: 'visitor-expired/id.webp',
+          purged_at: null,
+          expires_at: '2026-01-01T00:00:00Z',
+        },
+      ];
+
+      const req = new Request('http://localhost/api/purge-images', {
+        method: 'POST',
+        headers: { authorization: VALID_SUPERADMIN_BEARER, 'content-type': 'application/json' },
+        body: JSON.stringify({ dryRun: false }),
+      });
+
+      const res = await invokeHandler(purgeImagesHandler, req);
+      const json = await res.json();
+
+      expect(res.status).toBe(200);
+      expect(json.successCount).toBe(1);
+      expect(json.failedCount).toBe(0);
+      expect(storageRemovedPaths).toContain('visitor-expired/id.webp');
+    });
+
+    it('skips storage deletion if claim RPC returns claimed: false', async () => {
+      mockDbData.visitor_evidence = [
+        {
+          id: '00000000-0000-4000-a000-000000000999',
+          visitor_id: 'visitor-held',
+          bucket_id: 'visitor-id-documents',
+          object_path: 'visitor-held/id.webp',
+          purged_at: null,
+          expires_at: '2026-01-01T00:00:00Z',
+        },
+      ];
+
+      mockRpcOverrides['claim_evidence_for_purge'] = {
+        data: { claimed: false, reason: 'held_by_incident_hold' },
+        error: null,
+      };
+
+      const req = new Request('http://localhost/api/purge-images', {
+        method: 'POST',
+        headers: { authorization: VALID_SUPERADMIN_BEARER, 'content-type': 'application/json' },
+        body: JSON.stringify({ dryRun: false }),
+      });
+
+      const res = await invokeHandler(purgeImagesHandler, req);
+      const json = await res.json();
+
+      expect(res.status).toBe(200);
+      expect(json.successCount).toBe(0);
+      expect(storageRemovedPaths).toHaveLength(0);
+    });
+  });
+
+  // =========================================================================
+  // ADMIN-M04: Staff List Pagination
+  // =========================================================================
+  describe('ADMIN-M04: Staff List Keyset Pagination (api/admin/users.ts)', () => {
+    it('returns paginated users list with nextCursor and hasMore', async () => {
+      const req = new Request('http://localhost/api/admin/users?limit=1', {
+        headers: { authorization: VALID_SUPERADMIN_BEARER },
+      });
+
+      const res = await invokeHandler(adminUsersHandler, req);
+      const json = await res.json();
+
+      expect(res.status).toBe(200);
+      expect(json.users).toHaveLength(1);
+      expect(json.hasMore).toBe(true);
+      expect(typeof json.nextCursor).toBe('string');
+    });
+
+    it('denies access to unauthorized actor with 403', async () => {
+      const req = new Request('http://localhost/api/admin/users', {
+        headers: { authorization: VALID_VISITOR_BEARER },
+      });
+
+      const res = await invokeHandler(adminUsersHandler, req);
+      const json = await res.json();
+
+      expect(res.status).toBe(403);
+      expect(json.error).toBe('access_denied');
     });
   });
 });

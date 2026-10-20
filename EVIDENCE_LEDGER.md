@@ -168,3 +168,24 @@ Exact-commit verification at `80d861b`: `npm run test:architecture` PASS 3/3; `n
 | EV-EMAIL-008 | DATABASE TEST AUTHORING | `supabase/migrations/20261020001000_qr_email_security.sql`; `supabase/tests/007_qr_email_security.test.sql` | AUTHORED / NOT RUN | 18 pgTAP assertions plus a documented genuine two-session contention probe; blocked without isolated PostgreSQL/Supabase |
 | EV-EMAIL-009 | LIVE PROVIDER/AUTH/RLS | Real Supabase sessions, PostgREST `bytea`, row locks, Resend acceptance/inbox | BLOCKED / NOT TESTED | Requires isolated local DB or explicitly authorized non-production target and approved inbox; no permission was assumed |
 | EV-EMAIL-010 | SECOND ADVERSARIAL REVIEW | Changed call graph + forbidden-pattern scan | PASS after fixes | Found/fixed malformed 2xx acknowledgement classification, inconsistent parent/challenge lock order, stale-claim recovery, and residual inbox-delivery wording |
+
+## OCR-First Kiosk, React Email & Security Risk Corrections Checkpoint
+
+| ID | Class | Command / artifact | Result | Scope and limitation |
+|---|---|---|---|---|
+| EV-UX01-001 | LOCAL OCR UNIT | `npx vitest run tests/ocr-parsing.test.ts` | PASS: 1 file, 6 tests (19ms) | Verifies Philippine ID layout heuristics (PhilSys, Driver's License, UMID, Postal ID) for first, middle, last name extraction, ambiguous rejection, and worker lifecycle |
+| EV-UX01-002 | COMPONENT & WORKFLOW | `src/pages/KioskPage.tsx` | PASS (BUILD & BROWSER MOCK) | Default "Scan Your Valid ID" screen, prominent "Scan My ID", subordinate link "Want to type manually instead?", environment camera preference, single `idBlob` reuse, mandatory face photo, zero Tesseract leakage on portal/admin routes; real tablet camera QA AWAITING OWNER |
+| EV-ARCH-001 | EMAIL TEMPLATES UNIT | `npx vitest run tests/email-templates.test.ts` | PASS: 1 file, 4 tests (118ms) | Verifies server-side rendering of `@react-email/components` templates for verification code and issued pass with EARIST maroon/gold branding, escaping, and scannable QR PNG attachment |
+| EV-H01-001 | PROVIDER CLASSIFICATION | `npx vitest run tests/email-classification.test.ts` | PASS: 1 file, 10 tests (14ms) | Injects Resend fake fetch responses: 400/401/403/422 definitive rejection; 429/500/502/503/timeout/network unknown outcome; proves no auto-retry on unknown |
+| EV-H02-001 | TERMINAL CONFLICT | `tests/handlers-mocked.test.ts` (EMAIL-H02 tests) | PASS (MOCKED HANDLER): 2 tests | Injects terminal conflict from verification and dispatch finalizers; verifies 202 `outcome_unknown`, `retryAllowed: false`, and `terminal_conflict` reconciliation |
+| EV-M01-001 | ABUSE LIMITS | `tests/handlers-mocked.test.ts` (EMAIL-M01 tests) | PASS (MOCKED HANDLER): 2 tests | Tests recipient (max 5/15m) and actor (max 10/15m) challenge rate limits across passes; verifies 429 response |
+| EV-M02-001 | KIOSK DEVICE ENFORCEMENT | `tests/handlers-mocked.test.ts` (EMAIL-M02 tests) | PASS (MOCKED HANDLER): 2 tests | Tests email requests from revoked kiosk and guard device masquerading as kiosk; verifies 403 `kiosk_device_revoked` |
+| EV-M03-001 | STORAGE PURGE PROTOCOL | `tests/handlers-mocked.test.ts` (PRIVACY-M03 tests) | PASS (MOCKED HANDLER): 2 tests | Verifies atomic claim RPC before storage delete, skips delete when held, and finalizes on delete success |
+| EV-M04-001 | STAFF LIST PAGINATION | `tests/handlers-mocked.test.ts` (ADMIN-M04 tests) | PASS (MOCKED HANDLER): 2 tests | Verifies keyset pagination with `nextCursor` and `hasMore` and 403 on unauthorized actor |
+| EV-M05-001 | SPA REWRITE CONTRACT | `tests/architecture-contract.test.ts` | PASS: 1 file, 3 tests | Verifies `vercel.json` SPA rewrite uses `/((?!api/).*)` -> `/index.html` preventing API function route masking |
+| EV-SAFE-001 | FULL VITEST SAFE SUITE | `npx vitest run --exclude "**/firestore.rules.test.ts"` | PASS: 16 files, 197 tests (2.91s) | All local unit, mocked-handler, static migration, and template tests pass cleanly without contacting hosted services |
+| EV-TYPE-001 | API TYPECHECK | `npm run typecheck:api` | PASS: exit code 0 | TypeScript strict compile for all Vercel Web Handlers, server helpers, and templates |
+| EV-BUILD-001 | PRODUCTION BUILD | `npm run build` | PASS: exit code 0 (1.15s) | Full Vite bundle; transforms 2537 modules cleanly; kiosk chunk 25.48 kB |
+| EV-E2E-001 | BROWSER STARTUP E2E | `npm run test:e2e:startup` | PASS: 4/4 cases | Playwright Edge renders dev/configured, dev/missing, dev/malformed, preview/configured without uncaught errors |
+| EV-DIFF-001 | GIT PATCH & WHITESPACE | `git diff --check` | PASS: exit code 0 | Verified zero whitespace errors, clean line endings, and owner `.env.example` unstaged |
+| EV-DB-001 | ADDITIVE MIGRATION | `supabase/migrations/20261020001100_email_security_and_abuse_controls.sql` | AUTHORED / NOT RUN | 12 pgTAP assertions in `008_email_security_and_abuse_controls.test.sql`; live PostgreSQL execution BLOCKED |

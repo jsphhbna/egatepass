@@ -9,6 +9,10 @@ import {
   generateQrPngBuffer,
   sendResendEmail,
 } from '../../server/email.js';
+import {
+  renderVerificationCodeEmail,
+  renderPassIssuedEmail,
+} from '../../server/templates/index.js';
 
 const passIdSchema = z.string().uuid();
 
@@ -93,9 +97,18 @@ function rpcMessage(error: unknown): { code: string; message: string } {
 
 function failClosedRpcResponse(error: unknown): Response {
   const { code, message } = rpcMessage(error);
+  if (message.includes('kiosk_device_revoked')) {
+    return jsonResponse(403, { error: 'kiosk_device_revoked', message: 'Kiosk device is not active or has been revoked.' });
+  }
   if (message.includes('access_denied')) return jsonResponse(403, { error: 'access_denied' });
   if (code === 'P0002' || message.includes('pass_not_found') || message.includes('verification_not_found')) {
     return jsonResponse(404, { error: message.includes('verification') ? 'verification_not_found' : 'pass_not_found' });
+  }
+  if (message.includes('recipient_challenge_limit_exceeded')) {
+    return jsonResponse(429, { error: 'recipient_challenge_limit_exceeded', message: 'Too many verification code requests for this email address. Please try again later.' });
+  }
+  if (message.includes('actor_challenge_limit_exceeded')) {
+    return jsonResponse(429, { error: 'actor_challenge_limit_exceeded', message: 'Too many verification requests from this device or session. Please wait before retrying.' });
   }
   if (code === 'P0003' || message.includes('too_many_requests')) {
     return jsonResponse(429, { error: 'too_many_requests', message: 'Too many email requests for this pass. Please wait before trying again.' });
@@ -195,20 +208,32 @@ async function respondToDispatchReplay(
   });
 }
 
+interface FinalizeOutcome {
+  success: boolean;
+  matchStatus: 'matched' | 'already_finalized_same_status' | 'terminal_conflict' | 'error';
+  persistedStatus: string | null;
+}
+
 async function finalizeCodeDelivery(
   admin: ReturnType<typeof getServerSupabaseClients>['admin'],
   verificationId: string,
   requestId: string,
   status: Exclude<CodeDeliveryStatus, 'code_sending'>,
   providerId: string | null,
-): Promise<boolean> {
+): Promise<FinalizeOutcome> {
   const { data, error } = await admin.schema('api').rpc('finalize_email_verification_code', {
     requested_verification_id: verificationId,
     requested_request_id: requestId,
     requested_delivery_status: status,
     requested_provider_delivery_id: providerId,
   });
-  return !error && isObject(data) && data.success === true;
+  if (error || !isObject(data)) {
+    return { success: false, matchStatus: 'error', persistedStatus: null };
+  }
+  const matchStatus = typeof data.match_status === 'string' ? (data.match_status as any) : 'error';
+  const persistedStatus = typeof data.code_delivery_status === 'string' ? data.code_delivery_status : null;
+  const success = data.success === true && matchStatus !== 'terminal_conflict' && (persistedStatus === status || matchStatus === 'already_finalized_same_status');
+  return { success, matchStatus, persistedStatus };
 }
 
 async function finalizeDispatch(
@@ -217,14 +242,20 @@ async function finalizeDispatch(
   requestId: string,
   status: Exclude<DispatchStatus, 'pending' | 'sending'>,
   providerId: string | null,
-): Promise<boolean> {
+): Promise<FinalizeOutcome> {
   const { data, error } = await admin.schema('api').rpc('finalize_email_dispatch', {
     requested_verification_id: verificationId,
     requested_send_request_id: requestId,
     requested_delivery_status: status,
     requested_provider_delivery_id: providerId,
   });
-  return !error && isObject(data) && data.success === true;
+  if (error || !isObject(data)) {
+    return { success: false, matchStatus: 'error', persistedStatus: null };
+  }
+  const matchStatus = typeof data.match_status === 'string' ? (data.match_status as any) : 'error';
+  const persistedStatus = typeof data.delivery_status === 'string' ? data.delivery_status : null;
+  const success = data.success === true && matchStatus !== 'terminal_conflict' && (persistedStatus === status || matchStatus === 'already_finalized_same_status');
+  return { success, matchStatus, persistedStatus };
 }
 
 async function recordUnknownOutcome(
@@ -259,6 +290,18 @@ async function handleRequest(request: Request): Promise<Response> {
     if (passError) return jsonResponse(503, { error: 'email_state_unavailable' });
     if (!passRow?.visitors) return jsonResponse(404, { error: 'pass_not_found' });
     if (passRow.visitors.owner_id !== actorId) return jsonResponse(403, { error: 'access_denied' });
+
+    if (passRow.visitors.source === 'kiosk') {
+      const { data: device, error: deviceError } = await admin
+        .from('devices')
+        .select('user_id, type, status, deleted_at')
+        .eq('user_id', actorId)
+        .maybeSingle();
+      if (deviceError || !device || device.type !== 'kiosk' || device.status !== 'active' || device.deleted_at !== null) {
+        return jsonResponse(403, { error: 'kiosk_device_revoked', message: 'Kiosk device is not active or has been revoked.' });
+      }
+    }
+
     if (passRow.status !== 'issued') return jsonResponse(400, { error: 'pass_not_active', status: passRow.status });
     if (new Date(passRow.valid_until).getTime() <= Date.now()) return jsonResponse(400, { error: 'pass_expired' });
 
@@ -289,35 +332,57 @@ async function handleRequest(request: Request): Promise<Response> {
       if (!state) return jsonResponse(503, { error: 'email_state_unavailable' });
       if (state.idempotent_replay || !state.dispatch_code) return respondToCodeReplay(state);
 
-      const html = `<div style="font-family: Arial, sans-serif; max-width: 560px; margin: 0 auto; padding: 24px;">
-        <h2 style="color: #800000;">EARIST E-GatePass</h2>
-        <p>Hello <strong>${escapeHtml(passRow.visitors.full_name)}</strong>,</p>
-        <p>Enter this verification code to confirm ownership of your email address:</p>
-        <p style="font-size: 32px; font-weight: bold; letter-spacing: 6px; color: #800000;">${code}</p>
-        <p>This code expires in 10 minutes. If you did not request it, ignore this email.</p></div>`;
+      const html = await renderVerificationCodeEmail({
+        fullName: passRow.visitors.full_name,
+        code,
+        expiresInMinutes: 10,
+      });
 
       try {
         const sent = await sendResendEmail({ to: recipient, subject: 'EARIST Gate Pass — Verification Code', html });
-        if (!await finalizeCodeDelivery(admin, state.verification_id, parsed.data.requestId, 'sent_to_provider', sent.id)) {
-          const recorded = await recordUnknownOutcome(admin, 'pass.verification_delivery_unknown', passRow.id, 'finalize_failed', 'verification_code');
+        const finalResult = await finalizeCodeDelivery(admin, state.verification_id, parsed.data.requestId, 'sent_to_provider', sent.id);
+        if (!finalResult.success) {
+          const conflict = finalResult.matchStatus === 'terminal_conflict';
+          const recorded = await recordUnknownOutcome(
+            admin,
+            'pass.verification_delivery_unknown',
+            passRow.id,
+            conflict ? 'terminal_conflict' : 'finalize_failed',
+            'verification_code'
+          );
           return jsonResponse(202, {
-            error: 'verification_delivery_unknown', status: 'outcome_unknown', retryAllowed: false,
-            reconciliationRequired: true, reconciliationRecorded: recorded,
+            error: conflict ? 'verification_finalization_conflict' : 'verification_delivery_unknown',
+            status: 'outcome_unknown',
+            retryAllowed: false,
+            reconciliationRequired: true,
+            reconciliationRecorded: recorded,
           });
         }
         return jsonResponse(200, {
-          success: true, verificationId: state.verification_id, expiresAt: state.expires_at,
+          success: true,
+          verificationId: state.verification_id,
+          expiresAt: state.expires_at,
           status: 'code_sent_to_provider',
         });
       } catch (error) {
         const deliveryError = error instanceof EmailDeliveryError ? error : new EmailDeliveryError('email_transport_unknown', 'unknown');
         const finalStatus = deliveryError.outcome === 'definitive_rejection' ? 'delivery_failed' : 'outcome_unknown';
-        const finalized = await finalizeCodeDelivery(admin, state.verification_id, parsed.data.requestId, finalStatus, null);
-        if (deliveryError.outcome === 'unknown' || !finalized) {
-          const recorded = await recordUnknownOutcome(admin, 'pass.verification_delivery_unknown', passRow.id, deliveryError.code, 'verification_code');
+        const finalResult = await finalizeCodeDelivery(admin, state.verification_id, parsed.data.requestId, finalStatus, null);
+        if (deliveryError.outcome === 'unknown' || !finalResult.success || finalResult.matchStatus === 'terminal_conflict') {
+          const conflict = finalResult.matchStatus === 'terminal_conflict';
+          const recorded = await recordUnknownOutcome(
+            admin,
+            'pass.verification_delivery_unknown',
+            passRow.id,
+            conflict ? 'terminal_conflict' : deliveryError.code,
+            'verification_code'
+          );
           return jsonResponse(202, {
-            error: 'verification_delivery_unknown', status: 'outcome_unknown', retryAllowed: false,
-            reconciliationRequired: true, reconciliationRecorded: recorded,
+            error: conflict ? 'verification_finalization_conflict' : 'verification_delivery_unknown',
+            status: 'outcome_unknown',
+            retryAllowed: false,
+            reconciliationRequired: true,
+            reconciliationRecorded: recorded,
           });
         }
         if (deliveryError.code === 'email_service_unconfigured') {
@@ -348,18 +413,16 @@ async function handleRequest(request: Request): Promise<Response> {
     let providerAttempted = false;
     try {
       const qrBase64 = (await generateQrPngBuffer(parsed.data.qrToken)).toString('base64');
-      const visitorName = escapeHtml(passRow.visitors.full_name);
-      const visitDate = escapeHtml(passRow.visitors.visit_date);
-      const purpose = escapeHtml(passRow.visitors.purpose);
       const validFrom = new Date(passRow.valid_from).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', timeZone: 'Asia/Manila' });
       const validUntil = new Date(passRow.valid_until).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', timeZone: 'Asia/Manila' });
-      const html = `<div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 24px;">
-        <h2 style="color: #800000;">EARIST Digital Gate Pass</h2><p>Dear <strong>${visitorName}</strong>,</p>
-        <p>Your visitor pass for <strong>${visitDate}</strong> has been issued.</p>
-        <p><strong>Pass ID:</strong> ${escapeHtml(passRow.public_reference)}</p>
-        <p><strong>Valid Hours:</strong> ${validFrom} – ${validUntil} (Asia/Manila)</p>
-        <p><strong>Purpose:</strong> ${purpose}</p>
-        <p>Attached is your scannable QR code. Do not share or forward this bearer credential.</p></div>`;
+      const html = await renderPassIssuedEmail({
+        fullName: passRow.visitors.full_name,
+        visitDate: passRow.visitors.visit_date,
+        publicReference: passRow.public_reference,
+        validFrom,
+        validUntil,
+        purpose: passRow.visitors.purpose,
+      });
       providerAttempted = true;
       const sent = await sendResendEmail({
         to: recipient,
@@ -367,11 +430,22 @@ async function handleRequest(request: Request): Promise<Response> {
         html,
         attachments: [{ filename: 'earist-gate-pass-qr.png', content: qrBase64 }],
       });
-      if (!await finalizeDispatch(admin, verificationId, requestId, 'sent_to_provider', sent.id)) {
-        const recorded = await recordUnknownOutcome(admin, 'pass.email_delivery_unknown', passRow.id, 'finalize_failed', 'qr_dispatch');
+      const finalResult = await finalizeDispatch(admin, verificationId, requestId, 'sent_to_provider', sent.id);
+      if (!finalResult.success) {
+        const conflict = finalResult.matchStatus === 'terminal_conflict';
+        const recorded = await recordUnknownOutcome(
+          admin,
+          'pass.email_delivery_unknown',
+          passRow.id,
+          conflict ? 'terminal_conflict' : 'finalize_failed',
+          'qr_dispatch'
+        );
         return jsonResponse(202, {
-          error: 'email_outcome_unknown', status: 'outcome_unknown', retryAllowed: false,
-          reconciliationRequired: true, reconciliationRecorded: recorded,
+          error: conflict ? 'email_finalization_conflict' : 'email_outcome_unknown',
+          status: 'outcome_unknown',
+          retryAllowed: false,
+          reconciliationRequired: true,
+          reconciliationRecorded: recorded,
         });
       }
       return jsonResponse(200, { success: true, status: 'sent_to_provider' });
@@ -380,12 +454,22 @@ async function handleRequest(request: Request): Promise<Response> {
         ? error
         : new EmailDeliveryError(providerAttempted ? 'email_transport_unknown' : 'qr_generation_failed', providerAttempted ? 'unknown' : 'definitive_rejection');
       const finalStatus = deliveryError.outcome === 'definitive_rejection' ? 'delivery_failed' : 'outcome_unknown';
-      const finalized = await finalizeDispatch(admin, verificationId, requestId, finalStatus, null);
-      if (deliveryError.outcome === 'unknown' || !finalized) {
-        const recorded = await recordUnknownOutcome(admin, 'pass.email_delivery_unknown', passRow.id, deliveryError.code, 'qr_dispatch');
+      const finalResult = await finalizeDispatch(admin, verificationId, requestId, finalStatus, null);
+      if (deliveryError.outcome === 'unknown' || !finalResult.success || finalResult.matchStatus === 'terminal_conflict') {
+        const conflict = finalResult.matchStatus === 'terminal_conflict';
+        const recorded = await recordUnknownOutcome(
+          admin,
+          'pass.email_delivery_unknown',
+          passRow.id,
+          conflict ? 'terminal_conflict' : deliveryError.code,
+          'qr_dispatch'
+        );
         return jsonResponse(202, {
-          error: 'email_outcome_unknown', status: 'outcome_unknown', retryAllowed: false,
-          reconciliationRequired: true, reconciliationRecorded: recorded,
+          error: conflict ? 'email_finalization_conflict' : 'email_outcome_unknown',
+          status: 'outcome_unknown',
+          retryAllowed: false,
+          reconciliationRequired: true,
+          reconciliationRecorded: recorded,
         });
       }
       return jsonResponse(502, {

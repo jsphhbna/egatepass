@@ -4,10 +4,11 @@
     "lib": ["ES2022", "DOM"],
     "module": "NodeNext",
     "moduleResolution": "NodeNext",
+    "jsx": "react-jsx",
     "strict": true,
     "noEmit": true,
     "skipLibCheck": true,
     "types": ["node"]
   },
-  "include": ["api/**/*.ts", "server/**/*.ts"]
+  "include": ["api/**/*.ts", "server/**/*.ts", "server/**/*.tsx"]
 }

@@ -103,79 +103,29 @@ async function handleRequest(request: Request): Promise<Response> {
     let failedCount = 0;
 
     for (const item of batch) {
-      // P0-04: Authoritative, fail-closed recheck right before physical Storage removal
-      // 1. Re-check active holds by visitor_id
-      const { data: currentVisitorHolds, error: currentVisitorHoldsError } = await admin
-        .from('incident_holds')
-        .select('id')
-        .eq('active', true)
-        .eq('visitor_id', item.visitor_id)
-        .limit(1);
+      const claimId = crypto.randomUUID();
+      const { data: claimData, error: claimError } = await admin
+        .schema('api')
+        .rpc('claim_evidence_for_purge', {
+          requested_evidence_id: item.id,
+          requested_claim_id: claimId,
+        });
 
-      if (currentVisitorHoldsError) {
+      if (claimError) {
         failedCount++;
         await recordReconciliation(
           admin,
-          'image_purge_recheck_visitor_hold_query_failed',
+          'image_purge_claim_rpc_failed',
           'visitor_evidence',
           item.id,
-          currentVisitorHoldsError.message || 'visitor_hold_query_error',
+          claimError.message || 'claim_rpc_error',
           { visitorId: item.visitor_id }
         );
-        continue; // FAIL CLOSED: do not delete
-      }
-
-      if (currentVisitorHolds && currentVisitorHolds.length > 0) {
         continue;
       }
 
-      // 2. Re-check active holds by pass_id belonging to this visitor
-      const { data: currentPassHolds, error: currentPassHoldsError } = await admin
-        .from('incident_holds')
-        .select('id, pass_id, passes!inner(visitor_id)')
-        .eq('active', true)
-        .eq('passes.visitor_id', item.visitor_id)
-        .limit(1);
-
-      if (currentPassHoldsError) {
-        failedCount++;
-        await recordReconciliation(
-          admin,
-          'image_purge_recheck_pass_hold_query_failed',
-          'visitor_evidence',
-          item.id,
-          currentPassHoldsError.message || 'pass_hold_query_error',
-          { visitorId: item.visitor_id }
-        );
-        continue; // FAIL CLOSED: do not delete
-      }
-
-      if (currentPassHolds && currentPassHolds.length > 0) {
-        continue;
-      }
-
-      // 3. Re-check active or future passes
-      const { data: currentActive, error: currentActiveError } = await admin
-        .from('passes')
-        .select('id')
-        .eq('visitor_id', item.visitor_id)
-        .or(`status.in.(inside,pending),and(status.eq.issued,valid_until.gt.${new Date().toISOString()})`)
-        .limit(1);
-
-      if (currentActiveError) {
-        failedCount++;
-        await recordReconciliation(
-          admin,
-          'image_purge_recheck_active_pass_query_failed',
-          'visitor_evidence',
-          item.id,
-          currentActiveError.message || 'active_pass_query_error',
-          { visitorId: item.visitor_id }
-        );
-        continue; // FAIL CLOSED: do not delete
-      }
-
-      if (currentActive && currentActive.length > 0) {
+      if (!claimData || (claimData as any).claimed !== true) {
+        // Evidence is either held by an incident hold, belongs to an active pass, or already purged/claimed
         continue;
       }
 
@@ -204,28 +154,30 @@ async function handleRequest(request: Request): Promise<Response> {
         );
       }
 
-      if (storageDeleted) {
-        const { error: updateError } = await admin
-          .from('visitor_evidence')
-          .update({ purged_at: new Date().toISOString() })
-          .eq('id', item.id);
+      const { data: finalizeData, error: finalizeError } = await admin
+        .schema('api')
+        .rpc('finalize_evidence_purge', {
+          requested_evidence_id: item.id,
+          requested_claim_id: claimId,
+          requested_success: storageDeleted,
+        });
 
-        if (updateError) {
-          failedCount++;
-          await recordReconciliation(
-            admin,
-            'image_purge_db_mark_failed',
-            'visitor_evidence',
-            item.id,
-            updateError.message || 'db_update_purged_failed',
-            {
-              bucketId: item.bucket_id,
-              objectPath: item.object_path,
-            },
-          );
-        } else {
-          successCount++;
-        }
+      if (finalizeError || !finalizeData || (finalizeData as any).finalized !== true) {
+        failedCount++;
+        await recordReconciliation(
+          admin,
+          'image_purge_finalize_rpc_failed',
+          'visitor_evidence',
+          item.id,
+          finalizeError?.message || 'finalize_purge_error',
+          {
+            bucketId: item.bucket_id,
+            objectPath: item.object_path,
+            storageDeleted,
+          },
+        );
+      } else if (storageDeleted) {
+        successCount++;
       } else {
         failedCount++;
       }
