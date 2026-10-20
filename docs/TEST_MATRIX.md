@@ -6,9 +6,9 @@ Status values: PASS, FAIL, BLOCKED, NOT TESTED, AWAITING OWNER. A lower-level PA
 |---|---|---|---|
 | Original routes/UI | Build plus browser routes and screenshots | S0/S1 | PASS locally; owner visual QA AWAITING OWNER |
 | Repository metadata/Vercel SPA config | Contract test, JSON inspection, build | S1 | PASS locally; deployed routing NOT TESTED |
-| Migration chain | `supabase db reset` on clean disposable instance | S2 | BLOCKED: isolated Supabase/Postgres unavailable |
-| RLS/grants/RPC denial matrix | Real Auth sessions and low-privilege Data API/SQL tests | S2 | BLOCKED: isolated Supabase unavailable |
-| Private Storage | Real synthetic upload/read/list/delete tests | S2/S4 | BLOCKED: isolated Supabase unavailable |
+| Migration chain | `supabase db reset` on clean disposable instance | S2 | Tests authored; BLOCKED: isolated Supabase/Postgres unavailable |
+| RLS/grants/RPC denial matrix | Real Auth sessions and low-privilege Data API/SQL tests | S2 | 27 pgTAP assertions authored; BLOCKED: isolated Supabase unavailable |
+| Private Storage | Real synthetic upload/read/list/delete tests | S2/S4 | Policies authored; BLOCKED: isolated Supabase unavailable |
 | Shared staff/device login | Real Supabase Auth browser/API tests for all roles/states | S3 | NOT TESTED |
 | Portal/Kiosk evidence | Browser + real Storage + DB confirmation | S4 | NOT TESTED |
 | Pass lifecycle/races | Real DB/browser issue-entry-decision-exit plus concurrent negatives | S5 | NOT TESTED |

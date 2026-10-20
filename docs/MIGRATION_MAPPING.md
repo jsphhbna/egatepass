@@ -58,3 +58,13 @@ This is a planning inventory, not proof that the target exists. Canonical SQL wi
 Legacy `VITE_FIREBASE_*`, Firebase Admin, Cloudinary, and Netlify variables remain active only until their replacements pass the appropriate stage gate. Target browser variables are `VITE_SUPABASE_URL` and `VITE_SUPABASE_PUBLISHABLE_KEY`. Server-only variables include `SUPABASE_URL`, `SUPABASE_SECRET_KEY`, `RESEND_API_KEY`, `EMAIL_FROM`, and later `CRON_SECRET` if implemented. `RESEND_SUPABASE_SMTP_KEY` is an owner-side dashboard convenience and not application runtime configuration.
 
 No old configuration is removed merely because a target file compiles. Removal occurs only after executable replacement and rollback evidence.
+
+## S2 implementation status
+
+- Canonical tables/types/constraints/indexes/triggers: `supabase/migrations/20261020000100_core_schema.sql` — IMPLEMENTED, NOT EXECUTED.
+- Explicit grants, RLS helpers/policies, private Storage buckets: `20261020000200_rls_and_storage.sql` — IMPLEMENTED, NOT EXECUTED.
+- Current-actor and upload-intent RPCs: `20261020000300_core_rpc.sql` — IMPLEMENTED, NOT EXECUTED.
+- One-time non-public Super Admin bootstrap: `supabase/bootstrap/README.md` — PROCEDURE AUTHORED, NOT TESTED.
+- Real database/schema matrix: `supabase/tests/*.test.sql` — 27 ASSERTIONS AUTHORED, BLOCKED.
+
+No Firebase collection/function or Cloudinary behavior is removed or declared replaced at this checkpoint.

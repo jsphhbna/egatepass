@@ -1,6 +1,8 @@
 # Evidence Ledger
 
-Revision under test: `f2f1a2b58ef19808c1be83865ee8537073b0dada`
+S0 baseline revision: `f2f1a2b58ef19808c1be83865ee8537073b0dada`
+
+S1 checkpoint: `babb8c5f5cd5c77f4bafe3a535fd03e54b05e2a4`
 
 Date/time zone: 2026-10-20, Asia/Manila
 
@@ -43,3 +45,18 @@ Evidence is tied to the working-tree baseline plus S0 documentation/screenshots.
 | EV-S1-007 | DOCUMENTATION AUTHORITY | Supabase RLS/functions/Storage and Vercel Vite/Functions/config docs reviewed 2026-10-20 | REVIEWED | Establishes expected design, not runtime/project behavior |
 
 User manual S1 screen comparison remains AWAITING OWNER. Supabase clean migration/RLS/Storage integration remains BLOCKED pending an isolated executable environment.
+
+## S2 implementation checkpoint
+
+| ID | Class | Command / artifact | Result | Scope and limitation |
+|---|---|---|---|---|
+| EV-S2-001 | TOOLING | `npx --yes supabase@2.121.0 --version` | PASS: 2.121.0 | CLI availability only; Docker and `psql` are not found |
+| EV-S2-002 | STATIC / UNIT | `npm run test:supabase:static` | PASS: 1 file, 5 tests | Checks RLS coverage/grants/definer hardening/private-bucket/kiosk-isolation policy text; explicitly not SQL execution |
+| EV-S2-003 | STATIC BUILD | `npm run build` | PASS | Existing UI compiles; target backend is not connected; >500 kB warning remains |
+| EV-S2-004 | CONFIG REGRESSION | `npm run test:architecture` | PASS: 1 file, 2 tests | S1 repository/Vercel config contract retained |
+| EV-S2-005 | LIVE LOCAL DATABASE | `npx --yes supabase@2.121.0 db reset --local` | BLOCKED: `LocalDbRunningError: failed to inspect service` | No Docker engine/local Postgres; no migration was applied anywhere |
+| EV-S2-006 | DATABASE/RLS | `supabase/tests/*.test.sql` | NOT RUN / BLOCKED | 27 pgTAP assertions authored across authorization and schema contracts; no database boundary evidence |
+| EV-S2-007 | DEPENDENCY AUDIT | `npm audit --json`; `npm audit --omit=dev --json`; `npm ls ...`; `npm outdated --long` | TRIAGED: 24 total; production-only 4 high, 0 moderate/critical | No forced upgrade; reachability and removal plan in `docs/DEPENDENCY_AUDIT.md` |
+| EV-S2-008 | TEST HARNESS NEGATIVE / REGRESSION | `npm test` before and after `vitest.config.ts` | Initial FAIL: Playwright spec collected by Vitest; exact rerun PASS, exit 0 | First rerun was blocked by the known orphaned Firestore process; PID/command was verified, stopped, and final ports were clear |
+
+No remote database, Vercel project, Resend API, DNS, or backup infrastructure was accessed or mutated.

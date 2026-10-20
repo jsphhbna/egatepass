@@ -1,0 +1,13 @@
+# Technical Authority Register
+
+Reviewed 2026-10-20. Sources establish intended provider behavior, not project implementation proof.
+
+| Question | Direct authority and section/API | Establishes | Does not establish | Required project evidence |
+|---|---|---|---|---|
+| How are Supabase Data API rows authorized? | [Supabase Row Level Security — grants/policies, secure a table, helpers, definer functions](https://supabase.com/docs/guides/database/postgres/row-level-security) | Grants and policies both apply; anonymous Auth users use `authenticated`; `auth.uid()` behavior; policy tests; locked definer search path | That these migrations execute or deny this project's actors | Clean migration plus real bearer-session positive/negative matrix |
+| How are database functions secured? | [Supabase Database Functions — security invoker/definer and function privileges](https://supabase.com/docs/guides/database/functions) | Prefer invoker; definer risks; ownership checks; empty search path; revoke default execute | That an RPC has no bypass/overload | Catalog assertions and direct unauthorized RPC calls |
+| How is private Storage controlled? | [Storage buckets](https://supabase.com/docs/guides/storage/buckets/fundamentals), [access control](https://supabase.com/docs/guides/storage/security/access-control), [ownership](https://supabase.com/docs/guides/storage/security/ownership), [schema](https://supabase.com/docs/guides/storage/schema/design) | Private bucket semantics, bucket limits, RLS, `owner_id`; Storage API owns physical object operations | MIME magic/content validity or physical deletion in this project | Real synthetic object upload/read/list/update/delete and deletion proof |
+| How should a Vite SPA and Functions coexist? | [Vercel Vite](https://vercel.com/docs/frameworks/frontend/vite), [project configuration/rewrites](https://vercel.com/docs/project-configuration/vercel-json), [Node.js Functions](https://vercel.com/docs/functions/runtimes/node-js) | Root `api/` functions, filesystem precedence, SPA catch-all, current Node function conventions | That a linked/deployed project routes correctly | Owner-approved preview deployment smoke at exact commit |
+| What authorization principle governs the design? | [OWASP Authorization Cheat Sheet — deny by default, validate every request, least privilege](https://cheatsheetseries.owasp.org/cheatsheets/Authorization_Cheat_Sheet.html) | Trusted-boundary, per-request, default-deny design objectives | That the implementation is secure or compliant | Negative cross-actor tests and independent security review |
+
+Provider docs were current pages observed on the review date. Re-review them before deployment because defaults, CLI versions, runtimes, and limits can change.

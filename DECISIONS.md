@@ -58,3 +58,24 @@
 - Status: accepted for S2 implementation
 - Decision: roles and device attributes come from protected database rows keyed by `auth.uid()`, not user-editable JWT metadata. RLS and explicit grants default-deny direct access; `SECURITY DEFINER` helpers live outside exposed schemas, use an empty `search_path`, schema-qualified names, caller/resource checks, and narrow execute grants.
 - Consequence: S2 cannot be promoted from SQL review alone; real low-privilege positive/negative tests are mandatory.
+
+## ADR-0009 — Relational model and exposed API boundary
+
+- Date: 2026-10-20
+- Status: accepted, runtime verification blocked
+- Decision: normalize identities, visitors, evidence, passes, visit events, audit events, reconciliation, holds, and maintenance state. Expose RLS tables plus a small `api` RPC schema; keep policy helpers and bootstrap in unexposed `private`.
+- Alternatives rejected: one wide JSON document model weakens constraints/query evidence; placing roles in JWT user metadata creates stale/self-editable authority; routing every read through service-role functions expands bypass risk.
+
+## ADR-0010 — Evidence upload intent
+
+- Date: 2026-10-20
+- Status: accepted, runtime verification blocked
+- Decision: a caller-specific RPC creates a 15-minute, owner/source/kind/bucket/path/MIME-bound intent. Storage permits insert/select only through intent/reference authorization and has no client update/delete policy. Bucket policy limits are 5 MiB for JPEG/PNG/WebP; server content inspection remains mandatory before claim/pass issue.
+- Consequence: a successful upload alone can never issue a pass or prove file content.
+
+## ADR-0011 — No audit-driven dependency downgrade
+
+- Date: 2026-10-20
+- Status: accepted
+- Decision: do not run `npm audit fix --force`. Triage by dependency chain and reachable usage, regression-test safe parent upgrades, and remove legacy Firebase/Netlify chains only after verified replacements.
+- Evidence: `docs/DEPENDENCY_AUDIT.md`; full audit 24 findings, production-only audit 4 high in the legacy Firebase chain.

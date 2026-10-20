@@ -4,7 +4,7 @@ Last reviewed: 2026-10-20 (Asia/Manila)
 
 ## Status and invariant
 
-This document separates the running legacy baseline from the approved target. At S1 the browser still uses Firebase, Netlify Functions, and Cloudinary. Supabase, Vercel Functions, and Resend are the target architecture and are **not yet the active application backend**.
+This document separates the running legacy baseline from the approved target. At S2 the browser still uses Firebase, Netlify Functions, and Cloudinary. Supabase schema/RLS source now exists, but Supabase, Vercel Functions, and Resend are **not yet the active application backend**.
 
 Invariant: no browser-controlled role, source, device type, gate, pass status, timestamp, object path, or audit payload may authorize or manufacture a privileged outcome. The database or a trusted server function must resolve current actor/resource state and fail closed.
 

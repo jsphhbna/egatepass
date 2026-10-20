@@ -13,7 +13,8 @@
     "test": "npx firebase-tools@13.10.0 emulators:exec \"vitest run\"",
     "test:e2e:legacy": "npx firebase-tools@13.10.0 emulators:exec --only auth,firestore \"playwright test tests/e2e/legacy-baseline.spec.ts\"",
     "typecheck:functions": "tsc --noEmit --project netlify/tsconfig.json",
-    "test:architecture": "vitest run tests/architecture-contract.test.ts"
+    "test:architecture": "vitest run tests/architecture-contract.test.ts",
+    "test:supabase:static": "vitest run tests/supabase-migration-static.test.ts"
   },
   "repository": {
     "type": "git",

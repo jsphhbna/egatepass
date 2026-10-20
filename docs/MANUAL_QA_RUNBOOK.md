@@ -42,3 +42,23 @@ Use fictional visitors only. Never place passwords, QR bearer values, ID images,
 17. **Preview/live smoke (only after approval):** correct target repo/revision/domain, DNS mail records preserved, callbacks/camera/API/Storage/scheduler work. Do not run against live data without authorization.
 
 No case may be pre-filled from a build, unit test, screenshot, or AI observation. Report any issue with its exact case number so a regression test can be added.
+
+## Checkpoint sheet: S1 architecture/no-regression
+
+Owner status: **AWAITING OWNER**.
+
+1. From local commit `babb8c5` or later, start the documented legacy emulator/browser workflow with fictional data only.
+2. Compare `/`, `/login`, `/kiosk`, `/scan/entry`, `/scan/exit`, `/guard`, `/admin`, and every Admin tab with `docs/evidence/s0-baseline/`.
+3. Confirm no route, original action, copy section, role redirect, or visual identity was removed. Record the known 390px landing overflow separately; it is deferred to S8.
+4. Confirm public navigation still has no staff/device link.
+5. Fill one evidence record per discrepancy. Do not approve Supabase/Vercel behavior from this check; the runtime is still legacy.
+
+## Checkpoint sheet: S2 database/security (only after isolated environment is available)
+
+Owner status: **BLOCKED** — requires Docker-backed local Supabase or explicit authorization for a non-production hosted test project.
+
+1. Confirm the test project/instance identity and that it contains no production or real visitor data.
+2. Run the migration reset twice from clean state and `supabase test db`; attach complete sanitized outputs.
+3. With fictional Auth accounts for every actor/state, attempt cross-owner reads, role/source forgery, direct writes, last-Super-Admin removal, wrong/revoked device actions, and reconciliation access.
+4. Upload synthetic JPEG/PNG/WebP files through live intents. Attempt wrong path/bucket, expiry, list, overwrite, and delete. Confirm no real ID/face image is used.
+5. Record actual results, environment identity (sanitized), commit, browser/client version, reviewer, and evidence locations. A SQL file or static-test PASS is not acceptable as the observed result.
