@@ -25,7 +25,8 @@ describe('identity migration contracts', () => {
     expect(endpoint).toContain('passwordVerifier.auth.signInWithPassword');
     expect(endpoint).toContain('admin.auth.admin.updateUserById');
     expect(endpoint).toContain("rpc('finalize_guard_password_change'");
-    expect(endpoint).toContain("operation: 'guard.password_change_finalize'");
+    expect(endpoint).toContain("'guard.password_change_finalize'");
+    expect(endpoint).toContain('recordReconciliation');
     expect(endpoint).not.toMatch(/console\.(?:log|error)\([^\n]*(?:currentPassword|newPassword)/);
   });
 

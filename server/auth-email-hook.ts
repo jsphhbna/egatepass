@@ -1,4 +1,4 @@
-import { createHmac, timingSafeEqual } from 'node:crypto';
+import { Webhook } from 'standardwebhooks';
 import {
   renderSignupConfirmationEmail,
   renderPasswordResetEmail,
@@ -49,69 +49,60 @@ export interface SupabaseAuthEmailPayload {
 }
 
 /**
- * Verifies standard webhook signatures (Standard Webhooks specification).
- * Signature header format: "v1,signature_base64" or "v1,signature_hex"
+ * Verifies standard webhook signatures (Standard Webhooks specification) using the official standardwebhooks package.
+ * Secret format: canonical "v1,whsec_<base64>" or rotation format "v1,whsec_<new>|v1,whsec_<old>".
  */
 export function verifyStandardWebhookSignature(
   rawBody: string,
   headers: Headers | Record<string, string | string[] | undefined>,
   secret: string
 ): boolean {
-  if (!rawBody || !secret) return false;
-
-  const getHeader = (name: string): string | null => {
-    if (headers instanceof Headers) return headers.get(name);
-    const val = headers[name] ?? headers[name.toLowerCase()];
-    return Array.isArray(val) ? val[0] : (val ?? null);
-  };
-
-  const msgId = getHeader('webhook-id');
-  const timestamp = getHeader('webhook-timestamp');
-  const signatureHeader = getHeader('webhook-signature');
-
-  if (!msgId || !timestamp || !signatureHeader) return false;
-
-  // Enforce 5-minute replay tolerance
-  const timestampNum = parseInt(timestamp, 10);
-  if (isNaN(timestampNum)) return false;
-  const nowSeconds = Math.floor(Date.now() / 1000);
-  if (Math.abs(nowSeconds - timestampNum) > 300) {
+  if (!rawBody || !secret || typeof rawBody !== 'string' || typeof secret !== 'string') {
     return false;
   }
 
-  // Parse secret (strip 'whsec_' and decode base64 if present, else utf-8)
-  let secretKey: Buffer;
-  if (secret.startsWith('whsec_')) {
-    secretKey = Buffer.from(secret.slice(6), 'base64');
+  const normalizedHeaders: Record<string, string> = {};
+  if (headers instanceof Headers) {
+    const id = headers.get('webhook-id');
+    const ts = headers.get('webhook-timestamp');
+    const sig = headers.get('webhook-signature');
+    if (!id || !ts || !sig) return false;
+    normalizedHeaders['webhook-id'] = id;
+    normalizedHeaders['webhook-timestamp'] = ts;
+    normalizedHeaders['webhook-signature'] = sig;
+  } else if (headers && typeof headers === 'object') {
+    const getVal = (name: string): string | null => {
+      const val = headers[name] ?? headers[name.toLowerCase()];
+      return Array.isArray(val) ? val[0] : (val ?? null);
+    };
+    const id = getVal('webhook-id');
+    const ts = getVal('webhook-timestamp');
+    const sig = getVal('webhook-signature');
+    if (!id || !ts || !sig) return false;
+    normalizedHeaders['webhook-id'] = id;
+    normalizedHeaders['webhook-timestamp'] = ts;
+    normalizedHeaders['webhook-signature'] = sig;
   } else {
-    secretKey = Buffer.from(secret, 'utf-8');
+    return false;
   }
 
-  const toSign = `${msgId}.${timestamp}.${rawBody}`;
-  const computedBuffer = createHmac('sha256', secretKey).update(toSign).digest();
+  const candidates = secret.split('|').map((s) => s.trim()).filter(Boolean);
+  if (candidates.length === 0) return false;
 
-  // Signature header can contain multiple signatures separated by space
-  const signatures = signatureHeader.split(' ');
-  for (const sig of signatures) {
-    const parts = sig.split(',');
-    if (parts.length !== 2) continue;
-    const [version, hashString] = parts;
-    if (version !== 'v1') continue;
-
-    // Check base64 or hex
-    let receivedBuffer: Buffer;
-    try {
-      if (/^[0-9a-fA-F]{64}$/.test(hashString)) {
-        receivedBuffer = Buffer.from(hashString, 'hex');
-      } else {
-        receivedBuffer = Buffer.from(hashString, 'base64');
-      }
-    } catch {
+  for (const candidate of candidates) {
+    if (!candidate.startsWith('v1,whsec_')) {
       continue;
     }
+    const base64Secret = candidate.slice('v1,whsec_'.length);
+    if (!base64Secret) continue;
 
-    if (receivedBuffer.length === computedBuffer.length && timingSafeEqual(computedBuffer, receivedBuffer)) {
+    try {
+      const wh = new Webhook(base64Secret);
+      wh.verify(rawBody, normalizedHeaders, { jsonParse: false });
       return true;
+    } catch {
+      // Rotation candidate did not validate; try next candidate
+      continue;
     }
   }
 

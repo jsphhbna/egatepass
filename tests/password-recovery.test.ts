@@ -18,6 +18,10 @@ describe('REPAIR GROUP A: Password Recovery Authorization & Credential Governanc
 
   let updatedPasswords: Record<string, string> = {};
   let auditLogs: any[] = [];
+  let reconciliationLogs: any[] = [];
+  let failAuditInsert = false;
+  let guardMustChangePassword = false;
+  let failGuardFinalizeRpc = false;
 
   function createMockSupabase() {
     return {
@@ -43,6 +47,10 @@ describe('REPAIR GROUP A: Password Recovery Authorization & Credential Governanc
             return { data: { user: null }, error: new Error('parse_error') };
           }
         }),
+        signInWithPassword: vi.fn(async ({ email }: any) => {
+          return { data: { user: { id: STAFF_ID, email } }, error: null };
+        }),
+        signOut: vi.fn(async () => ({ error: null })),
         admin: {
           getUserById: vi.fn(async (uid: string) => ({
             data: { user: { id: uid, email: 'kiosk-01@devices.egatepass.invalid' } },
@@ -56,6 +64,17 @@ describe('REPAIR GROUP A: Password Recovery Authorization & Credential Governanc
           }),
         },
       },
+      schema: (_s: string) => ({
+        rpc: vi.fn(async (fn: string) => {
+          if (fn === 'finalize_guard_password_change') {
+            if (failGuardFinalizeRpc) {
+              return { data: null, error: new Error('RPC failure on finalize') };
+            }
+            return { data: true, error: null };
+          }
+          return { data: null, error: new Error(`Unknown RPC ${fn}`) };
+        }),
+      }),
       from: (table: string) => {
         let selectedCol = '';
         let filterCol = '';
@@ -80,7 +99,7 @@ describe('REPAIR GROUP A: Password Recovery Authorization & Credential Governanc
             }
             if (table === 'staff_profiles') {
               if (filterCol === 'user_id' && filterVal === STAFF_ID) {
-                return { data: { role: 'guard', active: true, must_change_password: false }, error: null };
+                return { data: { role: 'guard', active: true, must_change_password: guardMustChangePassword }, error: null };
               }
               if (filterCol === 'user_id' && filterVal === SUPERADMIN_ID) {
                 return { data: { role: 'superadmin', active: true, must_change_password: false, privacy_accepted_at: '2026-01-01T00:00:00Z' }, error: null };
@@ -91,9 +110,25 @@ describe('REPAIR GROUP A: Password Recovery Authorization & Credential Governanc
           },
           insert: async (data: any) => {
             if (table === 'audit_events') {
+              if (failAuditInsert) {
+                return { data: null, error: new Error('Audit insert failure') };
+              }
               auditLogs.push(data);
             }
+            if (table === 'reconciliation_tasks') {
+              reconciliationLogs.push(data);
+            }
             return { data, error: null };
+          },
+          update: (data: any) => {
+            return {
+              eq: async (col: string, val: any) => {
+                if (table === 'staff_profiles' && failStaffProfileUpdate) {
+                  return { error: new Error('Staff profile update failed') };
+                }
+                return { error: null };
+              },
+            };
           },
         };
         return chain;
@@ -105,6 +140,10 @@ describe('REPAIR GROUP A: Password Recovery Authorization & Credential Governanc
     vi.restoreAllMocks();
     updatedPasswords = {};
     auditLogs = [];
+    reconciliationLogs = [];
+    failAuditInsert = false;
+    guardMustChangePassword = false;
+    failGuardFinalizeRpc = false;
     const mockClient = createMockSupabase();
     setServerSupabaseClientsForTest({
       admin: mockClient as any,
@@ -244,6 +283,37 @@ describe('REPAIR GROUP A: Password Recovery Authorization & Credential Governanc
     expect(auditLogs.some((a) => a.action === 'staff.password_reset')).toBe(true);
   });
 
+  // 6b. Password reset audit failure returns truthful partial success
+  it('6b. Password reset audit failure returns partial success and records reconciliation', async () => {
+    failAuditInsert = true;
+    const recoveryJwt = makeJwt({
+      sub: STAFF_ID,
+      email: 'guard@earist.edu.ph',
+      role: 'authenticated',
+      amr: [{ method: 'recovery', timestamp: Date.now() }],
+    });
+
+    const req = new Request('http://localhost/api/auth/reset-password', {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${recoveryJwt}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ newPassword: 'NewStrongPassword123!' }),
+    });
+
+    const res = await resetPasswordHandler.fetch(req);
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.ok).toBe(true);
+    expect(body.result).toBe('partial');
+    expect(body.passwordChanged).toBe(true);
+    expect(body.auditPending).toBe(true);
+    expect(body.reconciliationRecorded).toBe(true);
+    expect(updatedPasswords[STAFF_ID]).toBe('NewStrongPassword123!');
+    expect(reconciliationLogs.some((r) => r.operation === 'staff.password_reset.audit_failed')).toBe(true);
+  });
+
   // 7. Password policy enforcement on recovery
   it('7. Password policy enforcement: weak or short password is rejected with 400', async () => {
     const recoveryJwt = makeJwt({
@@ -342,5 +412,37 @@ describe('REPAIR GROUP A: Password Recovery Authorization & Credential Governanc
 
     const res = await completePasswordChangeHandler.fetch(req);
     expect(res.status).toBe(403);
+  });
+
+  // 11. Staff password change finalization pending reports truthful 503
+  it('11. Staff password change finalization failure returns 503 and records reconciliation', async () => {
+    guardMustChangePassword = true;
+    failGuardFinalizeRpc = true;
+    const staffToken = makeJwt({
+      sub: STAFF_ID,
+      email: 'guard@earist.edu.ph',
+      role: 'authenticated',
+      amr: [{ method: 'password' }],
+    });
+
+    const req = new Request('http://localhost/api/auth/complete-password-change', {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${staffToken}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        currentPassword: 'OldPassword123!',
+        newPassword: 'NewStrongPassword123!',
+      }),
+    });
+
+    const res = await completePasswordChangeHandler.fetch(req);
+    expect(res.status).toBe(503);
+    const body = await res.json();
+    expect(body.error).toBe('password_changed_finalization_pending');
+    expect(body.passwordChanged).toBe(true);
+    expect(body.reconciliationRecorded).toBe(true);
+    expect(reconciliationLogs.some((r) => r.operation === 'guard.password_change_finalize')).toBe(true);
   });
 });

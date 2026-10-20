@@ -1,29 +1,36 @@
 import { describe, expect, it, vi } from 'vitest';
-import { createHmac } from 'node:crypto';
+import { Webhook } from 'standardwebhooks';
 import {
   verifyStandardWebhookSignature,
   buildAuthVerificationUrl,
   prepareAuthEmail,
+  prepareAuthEmails,
   type SupabaseAuthEmailPayload,
 } from '../server/auth-email-hook.js';
 import sendEmailHookHandler from '../api/auth/send-email-hook.js';
 
 describe('EMAIL-01: Supabase Auth Send Email Hook Infrastructure', () => {
-  const secret = 'whsec_MfKQ9r8vN5yU7wT3aB2cE1dF4gH6jK8m'; // base64 secret with whsec_ prefix
-  const rawSecret = Buffer.from(secret.slice(6), 'base64');
+  const base64KeyA = 'MfKQ9r8vN5yU7wT3aB2cE1dF4gH6jK8m';
+  const canonicalSecretA = `v1,whsec_${base64KeyA}`;
+  const webhookA = new Webhook(base64KeyA);
 
-  function makeSignature(msgId: string, timestamp: number, body: string, key = rawSecret): string {
-    const toSign = `${msgId}.${timestamp}.${body}`;
-    const hash = createHmac('sha256', key).update(toSign).digest('base64');
-    return `v1,${hash}`;
+  const base64KeyB = 'X1y2Z3a4B5c6D7e8F9g0H1i2J3k4L5m6';
+  const canonicalSecretB = `v1,whsec_${base64KeyB}`;
+  const webhookB = new Webhook(base64KeyB);
+
+  const base64KeyUnrelated = '99999999999999999999999999999999';
+  const webhookUnrelated = new Webhook(base64KeyUnrelated);
+
+  function makeSignature(msgId: string, timestamp: number, body: string, wh = webhookA): string {
+    return wh.sign(msgId, new Date(timestamp * 1000), body);
   }
 
-  describe('Standard Webhook Signature Verification', () => {
-    it('verifies valid signature with whsec_ base64 secret', () => {
+  describe('Standard Webhook Signature Verification (Canonical & Rotation)', () => {
+    it('A1 canonical Supabase secret verifies', () => {
       const msgId = 'msg_test_123';
       const timestamp = Math.floor(Date.now() / 1000);
       const body = JSON.stringify({ hello: 'world' });
-      const signature = makeSignature(msgId, timestamp, body);
+      const signature = makeSignature(msgId, timestamp, body, webhookA);
 
       const headers = new Headers({
         'webhook-id': msgId,
@@ -31,34 +38,15 @@ describe('EMAIL-01: Supabase Auth Send Email Hook Infrastructure', () => {
         'webhook-signature': signature,
       });
 
-      const valid = verifyStandardWebhookSignature(body, headers, secret);
+      const valid = verifyStandardWebhookSignature(body, headers, canonicalSecretA);
       expect(valid).toBe(true);
     });
 
-    it('verifies valid signature with raw utf-8 secret', () => {
-      const rawSecretStr = 'my_super_secret_raw_key_12345';
-      const msgId = 'msg_raw_456';
-      const timestamp = Math.floor(Date.now() / 1000);
-      const body = JSON.stringify({ action: 'ping' });
-      const toSign = `${msgId}.${timestamp}.${body}`;
-      const hash = createHmac('sha256', Buffer.from(rawSecretStr, 'utf-8')).update(toSign).digest('base64');
-      const signature = `v1,${hash}`;
-
-      const headers = {
-        'webhook-id': msgId,
-        'webhook-timestamp': timestamp.toString(),
-        'webhook-signature': signature,
-      };
-
-      const valid = verifyStandardWebhookSignature(body, headers, rawSecretStr);
-      expect(valid).toBe(true);
-    });
-
-    it('rejects tampered body', () => {
+    it('A2 tampered body fails', () => {
       const msgId = 'msg_tamper_1';
       const timestamp = Math.floor(Date.now() / 1000);
       const originalBody = JSON.stringify({ user: 'admin' });
-      const signature = makeSignature(msgId, timestamp, originalBody);
+      const signature = makeSignature(msgId, timestamp, originalBody, webhookA);
 
       const headers = new Headers({
         'webhook-id': msgId,
@@ -67,15 +55,30 @@ describe('EMAIL-01: Supabase Auth Send Email Hook Infrastructure', () => {
       });
 
       const tamperedBody = JSON.stringify({ user: 'attacker' });
-      const valid = verifyStandardWebhookSignature(tamperedBody, headers, secret);
+      const valid = verifyStandardWebhookSignature(tamperedBody, headers, canonicalSecretA);
       expect(valid).toBe(false);
     });
 
-    it('rejects expired timestamp beyond 5-minute replay window', () => {
+    it('A3 invalid signature fails', () => {
+      const msgId = 'msg_invalid_sig';
+      const timestamp = Math.floor(Date.now() / 1000);
+      const body = JSON.stringify({ action: 'ping' });
+
+      const headers = new Headers({
+        'webhook-id': msgId,
+        'webhook-timestamp': timestamp.toString(),
+        'webhook-signature': 'v1,invalid_signature_hash_here',
+      });
+
+      const valid = verifyStandardWebhookSignature(body, headers, canonicalSecretA);
+      expect(valid).toBe(false);
+    });
+
+    it('A4 stale timestamp fails', () => {
       const msgId = 'msg_expired_1';
-      const expiredTimestamp = Math.floor(Date.now() / 1000) - 360; // 6 minutes ago
+      const expiredTimestamp = Math.floor(Date.now() / 1000) - 360; // 6 minutes ago (>300s)
       const body = JSON.stringify({ test: 'replay' });
-      const signature = makeSignature(msgId, expiredTimestamp, body);
+      const signature = makeSignature(msgId, expiredTimestamp, body, webhookA);
 
       const headers = new Headers({
         'webhook-id': msgId,
@@ -83,13 +86,88 @@ describe('EMAIL-01: Supabase Auth Send Email Hook Infrastructure', () => {
         'webhook-signature': signature,
       });
 
-      const valid = verifyStandardWebhookSignature(body, headers, secret);
+      const valid = verifyStandardWebhookSignature(body, headers, canonicalSecretA);
       expect(valid).toBe(false);
     });
 
-    it('rejects missing signature headers', () => {
+    it('A5 missing headers fail', () => {
       const body = JSON.stringify({ hello: 'world' });
-      expect(verifyStandardWebhookSignature(body, new Headers(), secret)).toBe(false);
+      expect(verifyStandardWebhookSignature(body, new Headers(), canonicalSecretA)).toBe(false);
+
+      const missingSigHeaders = new Headers({
+        'webhook-id': 'msg_1',
+        'webhook-timestamp': Math.floor(Date.now() / 1000).toString(),
+      });
+      expect(verifyStandardWebhookSignature(body, missingSigHeaders, canonicalSecretA)).toBe(false);
+    });
+
+    it('A6 malformed secret fails', () => {
+      const msgId = 'msg_malformed_secret';
+      const timestamp = Math.floor(Date.now() / 1000);
+      const body = JSON.stringify({ hello: 'world' });
+      const signature = makeSignature(msgId, timestamp, body, webhookA);
+      const headers = new Headers({
+        'webhook-id': msgId,
+        'webhook-timestamp': timestamp.toString(),
+        'webhook-signature': signature,
+      });
+
+      // Non-canonical formats must fail
+      expect(verifyStandardWebhookSignature(body, headers, 'whsec_oldlegacyformat')).toBe(false);
+      expect(verifyStandardWebhookSignature(body, headers, 'raw_secret_without_prefix')).toBe(false);
+      expect(verifyStandardWebhookSignature(body, headers, '')).toBe(false);
+      expect(verifyStandardWebhookSignature(body, headers, 'v1,whsec_')).toBe(false);
+    });
+
+    it('A7 first key in rotation list verifies', () => {
+      const rotationSecret = `${canonicalSecretA}|${canonicalSecretB}`;
+      const msgId = 'msg_rotation_1';
+      const timestamp = Math.floor(Date.now() / 1000);
+      const body = JSON.stringify({ rotation: 'first' });
+      const signature = makeSignature(msgId, timestamp, body, webhookA);
+
+      const headers = {
+        'webhook-id': msgId,
+        'webhook-timestamp': timestamp.toString(),
+        'webhook-signature': signature,
+      };
+
+      const valid = verifyStandardWebhookSignature(body, headers, rotationSecret);
+      expect(valid).toBe(true);
+    });
+
+    it('A8 second key in rotation list verifies', () => {
+      const rotationSecret = `${canonicalSecretA}|${canonicalSecretB}`;
+      const msgId = 'msg_rotation_2';
+      const timestamp = Math.floor(Date.now() / 1000);
+      const body = JSON.stringify({ rotation: 'second' });
+      const signature = makeSignature(msgId, timestamp, body, webhookB);
+
+      const headers = {
+        'webhook-id': msgId,
+        'webhook-timestamp': timestamp.toString(),
+        'webhook-signature': signature,
+      };
+
+      const valid = verifyStandardWebhookSignature(body, headers, rotationSecret);
+      expect(valid).toBe(true);
+    });
+
+    it('A9 unrelated key fails', () => {
+      const rotationSecret = `${canonicalSecretA}|${canonicalSecretB}`;
+      const msgId = 'msg_unrelated';
+      const timestamp = Math.floor(Date.now() / 1000);
+      const body = JSON.stringify({ test: 'unrelated' });
+      const signature = makeSignature(msgId, timestamp, body, webhookUnrelated);
+
+      const headers = {
+        'webhook-id': msgId,
+        'webhook-timestamp': timestamp.toString(),
+        'webhook-signature': signature,
+      };
+
+      const valid = verifyStandardWebhookSignature(body, headers, rotationSecret);
+      expect(valid).toBe(false);
     });
   });
 
@@ -306,7 +384,7 @@ describe('EMAIL-01: Supabase Auth Send Email Hook Infrastructure', () => {
       expect(res.status).toBe(405);
     });
 
-    it('returns 503 if SEND_EMAIL_HOOK_SECRET is unconfigured', async () => {
+    it('A11 API endpoint missing hook secret returns 503', async () => {
       const origSecret = process.env.SEND_EMAIL_HOOK_SECRET;
       delete process.env.SEND_EMAIL_HOOK_SECRET;
 
@@ -321,7 +399,7 @@ describe('EMAIL-01: Supabase Auth Send Email Hook Infrastructure', () => {
     });
 
     it('returns 401 if signature is invalid or tampered', async () => {
-      process.env.SEND_EMAIL_HOOK_SECRET = secret;
+      process.env.SEND_EMAIL_HOOK_SECRET = canonicalSecretA;
 
       const body = JSON.stringify({ user: { email: 'test@earist.edu.ph' } });
       const req = new Request('http://localhost:5173/api/auth/send-email-hook', {
@@ -340,8 +418,8 @@ describe('EMAIL-01: Supabase Auth Send Email Hook Infrastructure', () => {
       expect(data.error).toBe('invalid_webhook_signature');
     });
 
-    it('returns 200 with empty object for valid signed payload', async () => {
-      process.env.SEND_EMAIL_HOOK_SECRET = secret;
+    it('A10 API endpoint accepts canonical signed payload', async () => {
+      process.env.SEND_EMAIL_HOOK_SECRET = canonicalSecretA;
       const prevResend = process.env.RESEND_API_KEY;
       delete process.env.RESEND_API_KEY; // Run in dry-run mode
 
@@ -382,7 +460,7 @@ describe('EMAIL-01: Supabase Auth Send Email Hook Infrastructure', () => {
     });
 
     it('returns 503 if RESEND_API_KEY is missing in production environment (REPAIR 6C)', async () => {
-      process.env.SEND_EMAIL_HOOK_SECRET = secret;
+      process.env.SEND_EMAIL_HOOK_SECRET = canonicalSecretA;
       const prevResend = process.env.RESEND_API_KEY;
       const prevEnv = process.env.NODE_ENV;
       delete process.env.RESEND_API_KEY;

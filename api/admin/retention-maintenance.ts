@@ -122,19 +122,30 @@ async function handleRequest(request: Request): Promise<Response> {
         { callerType: metrics.callerType }
       ).catch(() => undefined);
 
-      try {
-        await admin.from('audit_events').insert({
-          actor_id: caller.actorId ?? null,
-          actor_kind: caller.isCron ? 'system' : 'staff',
-          actor_role: caller.isCron ? 'cron' : 'superadmin',
-          action: 'maintenance.retention_run',
-          target_type: 'system',
-          target_id: 'retention_maintenance',
-          outcome: 'failure',
-          after_state: metrics,
-        });
-      } catch {
-        // Best-effort audit logging on settings failure
+      const { error: settingsAuditError } = await admin.from('audit_events').insert({
+        actor_id: caller.actorId ?? null,
+        actor_kind: caller.isCron ? 'system' : 'staff',
+        actor_role: caller.isCron ? 'cron' : 'superadmin',
+        action: 'maintenance.retention_run',
+        target_type: 'system',
+        target_id: 'retention_maintenance',
+        outcome: 'failure',
+        after_state: metrics,
+      });
+
+      if (settingsAuditError) {
+        metrics.errors.push(`audit_insert_failed: ${settingsAuditError.message || 'audit_insert_failed'}`);
+        const recRecorded = await recordReconciliation(
+          admin,
+          'maintenance.audit_insert_failed',
+          'system',
+          'retention_maintenance',
+          settingsAuditError.message || 'audit_insert_failed',
+          { callerType: metrics.callerType, stage: 'settings_failure' }
+        ).catch(() => false);
+        if (!recRecorded) {
+          metrics.errors.push('reconciliation_task_failed: audit_failure_unrecorded');
+        }
       }
 
       return jsonResponse(500, {

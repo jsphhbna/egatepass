@@ -24,9 +24,10 @@ interface TurnstileWidgetProps {
   onVerify: (token: string) => void;
   onExpire?: () => void;
   onError?: (error: string) => void;
+  resetKey?: number | string;
 }
 
-export function TurnstileWidget({ onVerify, onExpire, onError }: TurnstileWidgetProps) {
+export function TurnstileWidget({ onVerify, onExpire, onError, resetKey }: TurnstileWidgetProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const widgetIdRef = useRef<string | null>(null);
   const siteKey = (import.meta as any).env?.VITE_TURNSTILE_SITE_KEY?.trim();
@@ -39,7 +40,12 @@ export function TurnstileWidget({ onVerify, onExpire, onError }: TurnstileWidget
     function renderWidget() {
       if (!mounted || !containerRef.current || !window.turnstile) return;
       if (widgetIdRef.current) {
-        window.turnstile.remove(widgetIdRef.current);
+        try {
+          window.turnstile.remove(widgetIdRef.current);
+        } catch {
+          // ignore
+        }
+        widgetIdRef.current = null;
       }
 
       widgetIdRef.current = window.turnstile.render(containerRef.current, {
@@ -91,7 +97,7 @@ export function TurnstileWidget({ onVerify, onExpire, onError }: TurnstileWidget
         }
       }
     };
-  }, [siteKey, onVerify, onExpire, onError]);
+  }, [siteKey, resetKey, onVerify, onExpire, onError]);
 
   if (!siteKey) return null;
 

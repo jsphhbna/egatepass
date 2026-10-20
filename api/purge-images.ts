@@ -237,39 +237,44 @@ async function handleRequest(request: Request): Promise<Response> {
 
     const hasMore = eligibleItems.length > batch.length;
 
-    try {
-      const { error: auditError } = await admin.from('audit_events').insert({
-        actor_id: actor.id,
-        actor_kind: 'staff',
-        actor_role: actor.role,
-        action: 'image_purge',
-        target_type: 'visitor_evidence',
-        target_id: 'batch',
-        outcome: failedCount > 0 ? 'partial' : 'success',
-        after_state: {
-          successCount,
-          failedCount,
-          hasMore,
-          retentionDays,
-        },
-      });
+    let auditPending = false;
+    let reconciliationRecorded = false;
 
-      if (auditError) {
-        throw auditError;
-      }
-    } catch (auditErr) {
-      console.error('Audit event failed for image_purge batch', auditErr);
-      await recordReconciliation(
+    const { error: auditError } = await admin.from('audit_events').insert({
+      actor_id: actor.id,
+      actor_kind: 'staff',
+      actor_role: actor.role,
+      action: 'image_purge',
+      target_type: 'visitor_evidence',
+      target_id: 'batch',
+      outcome: failedCount > 0 ? 'partial' : 'success',
+      after_state: {
+        successCount,
+        failedCount,
+        hasMore,
+        retentionDays,
+      },
+    });
+
+    if (auditError) {
+      auditPending = true;
+      console.error('Audit event failed for image_purge batch', auditError);
+      reconciliationRecorded = await recordReconciliation(
         admin,
         'image_purge.audit_failed',
         'visitor_evidence',
         'batch',
-        auditErr instanceof Error ? auditErr.message : 'audit_insert_failed',
+        auditError.message || 'audit_insert_failed',
         { successCount, failedCount, hasMore }
       );
     }
 
+    const opResult = auditPending ? 'partial' : (failedCount > 0 ? 'partial' : 'success');
+
     return jsonResponse(200, {
+      result: opResult,
+      auditPending,
+      reconciliationRecorded,
       successCount,
       failedCount,
       orphanDeletedCount: 0,

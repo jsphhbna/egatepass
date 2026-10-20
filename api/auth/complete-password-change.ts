@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { recordReconciliation } from '../../server/actors.js';
 import { jsonResponse, readBearerToken } from '../../server/http.js';
 import { passwordSchema } from '../../server/password-policy.js';
 import { getServerSupabaseClients } from '../../server/supabase.js';
@@ -53,13 +54,19 @@ async function handleRequest(request: Request): Promise<Response> {
       target_user_id: user.id,
     });
     if (finalizeError) {
-      await admin.from('reconciliation_tasks').insert({
-        operation: 'guard.password_change_finalize',
-        reference_type: 'staff_profile',
-        reference_id: user.id,
-        safe_context: { passwordChanged: true },
+      const reconciliationRecorded = await recordReconciliation(
+        admin,
+        'guard.password_change_finalize',
+        'staff_profile',
+        user.id,
+        finalizeError.message || 'finalize_guard_password_change_failed',
+        { passwordChanged: true }
+      );
+      return jsonResponse(503, {
+        error: 'password_changed_finalization_pending',
+        passwordChanged: true,
+        reconciliationRecorded,
       });
-      return jsonResponse(503, { error: 'password_changed_finalization_pending' });
     }
 
     await passwordVerifier.auth.signOut();

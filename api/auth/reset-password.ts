@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { recordReconciliation } from '../../server/actors.js';
 import { jsonResponse, readBearerToken } from '../../server/http.js';
 import { passwordSchema } from '../../server/password-policy.js';
 import { getServerSupabaseClients } from '../../server/supabase.js';
@@ -103,8 +104,8 @@ async function handleRequest(request: Request): Promise<Response> {
       throw updateError;
     }
 
-    // 7. Insert immutable audit record
-    await admin.from('audit_events').insert({
+    // 7. Insert immutable audit record (inspect returned error truthfully)
+    const { error: auditError } = await admin.from('audit_events').insert({
       actor_id: user.id,
       actor_kind: 'staff',
       actor_role: profile.role,
@@ -115,7 +116,32 @@ async function handleRequest(request: Request): Promise<Response> {
       after_state: { passwordReset: true },
     });
 
-    return jsonResponse(200, { ok: true });
+    if (auditError) {
+      console.error('Password reset audit insert failed:', auditError.message || auditError);
+      const reconciliationRecorded = await recordReconciliation(
+        admin,
+        'staff.password_reset.audit_failed',
+        'staff_profile',
+        user.id,
+        auditError.message || 'audit_insert_failed',
+        { role: profile.role }
+      );
+
+      return jsonResponse(200, {
+        ok: true,
+        result: 'partial',
+        passwordChanged: true,
+        auditPending: true,
+        reconciliationRecorded,
+      });
+    }
+
+    return jsonResponse(200, {
+      ok: true,
+      result: 'success',
+      passwordChanged: true,
+      auditPending: false,
+    });
   } catch (error) {
     console.error('Password recovery reset failed:', error instanceof Error ? error.message : 'unknown');
     return jsonResponse(500, { error: 'password_reset_failed' });

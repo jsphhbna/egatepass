@@ -41,7 +41,15 @@ export async function completeGuardPasswordChange(currentPassword: string, newPa
   throw new Error('Password update could not be completed. Please try again.');
 }
 
-export async function resetPasswordWithRecoverySession(recoveryToken: string, newPassword: string): Promise<void> {
+export interface ResetPasswordResponse {
+  ok: boolean;
+  result: 'success' | 'partial';
+  passwordChanged: boolean;
+  auditPending?: boolean;
+  reconciliationRecorded?: boolean;
+}
+
+export async function resetPasswordWithRecoverySession(recoveryToken: string, newPassword: string): Promise<ResetPasswordResponse> {
   const response = await fetch('/api/auth/reset-password', {
     method: 'POST',
     headers: {
@@ -51,8 +59,12 @@ export async function resetPasswordWithRecoverySession(recoveryToken: string, ne
     body: JSON.stringify({ newPassword }),
   });
 
-  if (response.ok) return;
-  const payload = await response.json().catch(() => ({})) as { error?: string };
+  const payload = await response.json().catch(() => ({})) as ResetPasswordResponse & { error?: string };
+
+  if (response.ok) {
+    return payload;
+  }
+
   if (payload.error === 'recovery_session_required') {
     throw new Error('This password reset link is invalid or has expired. Please request a new link.');
   }

@@ -32,6 +32,8 @@ async function setupSupabaseEmulation(db: PGlite) {
       email_confirmed_at timestamptz,
       encrypted_password text,
       is_anonymous boolean default false,
+      raw_app_meta_data jsonb default '{}'::jsonb,
+      raw_user_meta_data jsonb default '{}'::jsonb,
       created_at timestamptz default now(),
       updated_at timestamptz default now()
     );
@@ -336,7 +338,7 @@ describe('Permanent PostgreSQL Migration Chain & Schema Contracts (PGlite)', () 
     expect(successRes.rows.length).toBe(1);
   }, 30000);
 
-  it('F. Upgrade execution: applying migration 001400 on top of 001300 cleanly succeeds', async () => {
+  it('F. Upgrade execution: applying migration 001400 and new hardening migration on top of 001300 cleanly succeeds', async () => {
     const db = new PGlite();
     await setupSupabaseEmulation(db);
     const files = readdirSync(MIGRATIONS_DIR)
@@ -345,7 +347,7 @@ describe('Permanent PostgreSQL Migration Chain & Schema Contracts (PGlite)', () 
 
     // Apply up to 001300
     for (const file of files) {
-      if (file.includes('001400')) continue;
+      if (file.includes('001400') || file.includes('204805')) continue;
       let sql = readFileSync(join(MIGRATIONS_DIR, file), 'utf8');
       sql = sql.replace(/create extension if not exists pgcrypto[^;]*;/gi, '-- pgcrypto no-op');
       await db.exec(sql);
@@ -356,69 +358,188 @@ describe('Permanent PostgreSQL Migration Chain & Schema Contracts (PGlite)', () 
     let sql14 = readFileSync(join(MIGRATIONS_DIR, migration14), 'utf8');
     sql14 = sql14.replace(/create extension if not exists pgcrypto[^;]*;/gi, '-- pgcrypto no-op');
     await expect(db.exec(sql14)).resolves.toBeDefined();
+
+    // Now apply new migration on top of 001400
+    const newMigration = files.find((f) => f.includes('204805'))!;
+    let sqlNew = readFileSync(join(MIGRATIONS_DIR, newMigration), 'utf8');
+    sqlNew = sqlNew.replace(/create extension if not exists pgcrypto[^;]*;/gi, '-- pgcrypto no-op');
+    await expect(db.exec(sqlNew)).resolves.toBeDefined();
   }, 30000);
 
-  it('G. Device and anonymous credential self-mutation protection trigger', async () => {
+  it('G. PGLITE/POSTGRES CONTRACT TEST: Device and anonymous credential mutation protection trigger (D1-D10)', async () => {
     const db = new PGlite();
-    await setupSupabaseEmulation(db);
-    const files = readdirSync(MIGRATIONS_DIR)
-      .filter((f) => f.endsWith('.sql'))
-      .sort();
-
-    for (const file of files) {
-      let sql = readFileSync(join(MIGRATIONS_DIR, file), 'utf8');
-      sql = sql.replace(/create extension if not exists pgcrypto[^;]*;/gi, '-- pgcrypto no-op');
-      await db.exec(sql);
-    }
+    const files = await applyAllMigrations(db);
+    expect(files.some((f) => f.includes('204805'))).toBe(true);
 
     const deviceUid = '11111111-2222-3333-4444-555555555555';
     const anonUid = '66666666-7777-8888-9999-000000000000';
+    const staffUid = '77777777-8888-9999-aaaa-bbbbbbbbbbbb';
 
     await db.exec(`
-      insert into auth.users (id, email, encrypted_password, is_anonymous)
-      values ('${deviceUid}'::uuid, 'kiosk-01@devices.egatepass.invalid', 'old_hash', false);
+      insert into auth.users (id, email, encrypted_password, is_anonymous, raw_app_meta_data)
+      values ('${deviceUid}'::uuid, 'kiosk-01@devices.egatepass.invalid', 'old_hash', false, '{"egatepass_device_credential_change_id":"marker-initial"}'::jsonb),
+             ('${anonUid}'::uuid, null, null, true, '{}'::jsonb),
+             ('${staffUid}'::uuid, 'staff.member@earist.edu.ph', 'initial_staff_hash', false, '{}'::jsonb);
 
       insert into public.devices (user_id, alias, name, type, gate, status)
       values ('${deviceUid}'::uuid, 'kiosk-01', 'Kiosk 1', 'kiosk', 'Main Gate', 'active');
-
-      insert into auth.users (id, email, encrypted_password, is_anonymous)
-      values ('${anonUid}'::uuid, null, null, true);
     `);
 
-    // Switch context to authenticated non-service-role
-    await db.exec(`
-      create or replace function auth.role() returns text as $$ select 'authenticated'::text; $$ language sql stable;
-    `);
-
-    // 1. Device self-password mutation must be blocked by database trigger
+    // D1 device password + no marker change -> DENIED
     await expect(
-      db.query(`
+      db.exec(`
         update auth.users
         set encrypted_password = 'new_stolen_hash'
         where id = '${deviceUid}'::uuid;
       `)
     ).rejects.toThrow(/device credentials are super admin managed/);
 
-    // 2. Anonymous self-password mutation must be blocked by database trigger
+    // D2 device email + no marker change -> DENIED
     await expect(
-      db.query(`
+      db.exec(`
+        update auth.users
+        set email = 'kiosk-hijacked@devices.egatepass.invalid'
+        where id = '${deviceUid}'::uuid;
+      `)
+    ).rejects.toThrow(/device credentials are super admin managed/);
+
+    // D3 device password + fresh marker -> ALLOWED
+    await expect(
+      db.exec(`
+        update auth.users
+        set encrypted_password = 'fresh_password_hash',
+            raw_app_meta_data = '{"egatepass_device_credential_change_id":"marker-fresh-1"}'::jsonb
+        where id = '${deviceUid}'::uuid;
+      `)
+    ).resolves.toBeDefined();
+
+    // D4 device email + fresh marker -> ALLOWED
+    await expect(
+      db.exec(`
+        update auth.users
+        set email = 'kiosk-01-renamed@devices.egatepass.invalid',
+            raw_app_meta_data = '{"egatepass_device_credential_change_id":"marker-fresh-2"}'::jsonb
+        where id = '${deviceUid}'::uuid;
+      `)
+    ).resolves.toBeDefined();
+
+    // D5 marker reused for second password/email mutation -> DENIED
+    await expect(
+      db.exec(`
+        update auth.users
+        set encrypted_password = 'reused_marker_hash',
+            raw_app_meta_data = '{"egatepass_device_credential_change_id":"marker-fresh-2"}'::jsonb
+        where id = '${deviceUid}'::uuid;
+      `)
+    ).rejects.toThrow(/device credentials are super admin managed/);
+
+    // D6 compensating email rollback + second fresh marker -> ALLOWED
+    await expect(
+      db.exec(`
+        update auth.users
+        set email = 'kiosk-01@devices.egatepass.invalid',
+            raw_app_meta_data = '{"egatepass_device_credential_change_id":"marker-rollback-3"}'::jsonb
+        where id = '${deviceUid}'::uuid;
+      `)
+    ).resolves.toBeDefined();
+
+    // D7 regular staff password mutation -> trigger does not block
+    await expect(
+      db.exec(`
+        update auth.users
+        set encrypted_password = 'new_regular_staff_hash'
+        where id = '${staffUid}'::uuid;
+      `)
+    ).resolves.toBeDefined();
+
+    // D8 anonymous password mutation -> DENIED
+    await expect(
+      db.exec(`
         update auth.users
         set encrypted_password = 'attacker_password_hash'
         where id = '${anonUid}'::uuid;
       `)
     ).rejects.toThrow(/anonymous accounts cannot set passwords/);
 
-    // 3. Service role update must succeed
-    await db.exec(`
-      create or replace function auth.role() returns text as $$ select 'service_role'::text; $$ language sql stable;
-    `);
-
+    // D9 housekeeping-only auth.users update -> ALLOWED
     await expect(
-      db.query(`
+      db.exec(`
         update auth.users
-        set encrypted_password = 'legit_updated_hash'
+        set updated_at = now()
         where id = '${deviceUid}'::uuid;
       `)
     ).resolves.toBeDefined();
+
+    // D10 trigger function direct execute privileges revoked
+    await db.exec('set role anon;');
+    await expect(
+      db.query('select public.protect_managed_credentials();')
+    ).rejects.toThrow(/permission denied/);
+    await db.exec('reset role;');
+
+    await db.exec('set role authenticated;');
+    await expect(
+      db.query('select public.protect_managed_credentials();')
+    ).rejects.toThrow(/permission denied/);
+    await db.exec('reset role;');
+  }, 30000);
+
+  it('H. PGLITE/POSTGRES CONTRACT TEST: Public registration settings safe column RLS and grants', async () => {
+    const db = new PGlite();
+    await applyAllMigrations(db);
+
+    // 1. Anon safe columns -> ALLOWED
+    await db.exec('set role anon;');
+    const anonQuery = await db.query<{ working_hours_start: string; visit_purposes: any }>(
+      'select working_hours_start, working_hours_end, timezone, scheduling_days_ahead, peak_mode, visit_purposes from public.app_settings;'
+    );
+    expect(anonQuery.rows.length).toBe(1);
+    expect(anonQuery.rows[0].working_hours_start).toBeDefined();
+
+    // 2. Anon retention fields -> DENIED
+    await expect(
+      db.query('select automatic_cleanup_enabled from public.app_settings;')
+    ).rejects.toThrow(/permission denied/);
+
+    await expect(
+      db.query('select image_retention_days from public.app_settings;')
+    ).rejects.toThrow(/permission denied/);
+
+    await expect(
+      db.query('select visitor_retention_days from public.app_settings;')
+    ).rejects.toThrow(/permission denied/);
+
+    await expect(
+      db.query('select reconciliation_retention_days from public.app_settings;')
+    ).rejects.toThrow(/permission denied/);
+
+    await expect(
+      db.query('select audit_retention_days from public.app_settings;')
+    ).rejects.toThrow(/permission denied/);
+
+    // 3. Anon UPDATE -> DENIED
+    await expect(
+      db.query("update public.app_settings set working_hours_start = '09:00';")
+    ).rejects.toThrow(/permission denied/);
+
+    // 4. Anon INSERT -> DENIED
+    await expect(
+      db.query("insert into public.app_settings (singleton) values (true);")
+    ).rejects.toThrow(/permission denied/);
+
+    // 5. Anon DELETE -> DENIED
+    await expect(
+      db.query('delete from public.app_settings;')
+    ).rejects.toThrow(/permission denied/);
+
+    await db.exec('reset role;');
+
+    // 6. Authenticated role full select -> ALLOWED
+    await db.exec('set role authenticated;');
+    const authQuery = await db.query(
+      'select * from public.app_settings where singleton;'
+    );
+    expect(authQuery.rows.length).toBe(1);
+    await db.exec('reset role;');
   }, 30000);
 });

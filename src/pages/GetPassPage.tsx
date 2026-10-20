@@ -86,6 +86,12 @@ export function GetPassPage() {
   const [idBlob, setIdBlob] = useState<Blob | null>(null);
   const [idPreview, setIdPreview] = useState<string | null>(null);
   const [captchaToken, setCaptchaToken] = useState<string | null>(null);
+  const [turnstileKey, setTurnstileKey] = useState(0);
+
+  function resetTurnstile() {
+    setCaptchaToken(null);
+    setTurnstileKey((prev) => prev + 1);
+  }
   const [qrDataUrl, setQrDataUrl] = useState<string | null>(null);
   const [passId, setPassId] = useState<string | null>(null);
   const [rawQrToken, setRawQrToken] = useState<string | null>(null);
@@ -226,6 +232,8 @@ export function GetPassPage() {
       );
       setStep('review');
       toast.error('Failed to generate pass. Please try again.');
+    } finally {
+      resetTurnstile();
     }
   }
 
@@ -594,7 +602,15 @@ export function GetPassPage() {
                 </div>
               </div>
 
-              <TurnstileWidget onVerify={setCaptchaToken} onExpire={() => setCaptchaToken(null)} />
+              <TurnstileWidget
+                resetKey={turnstileKey}
+                onVerify={setCaptchaToken}
+                onExpire={() => setCaptchaToken(null)}
+                onError={() => {
+                  setCaptchaToken(null);
+                  toast.error('Verification challenge failed. Please verify and try again.');
+                }}
+              />
 
               <div className="flex gap-3">
                 <Button 

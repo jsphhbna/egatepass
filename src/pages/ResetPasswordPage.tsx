@@ -91,9 +91,13 @@ export function ResetPasswordPage() {
 
     setLoading(true);
     try {
-      await resetPasswordWithRecoverySession(recoveryToken, newPassword);
+      const res = await resetPasswordWithRecoverySession(recoveryToken, newPassword);
       await supabase.auth.signOut();
-      toast.success('Password updated. Sign in with your new password.');
+      if (res.result === 'partial') {
+        toast.warning('Password updated successfully, but administrative logging requires follow-up. Please sign in using your new password.');
+      } else {
+        toast.success('Password updated. Sign in with your new password.');
+      }
       navigate('/login', { replace: true });
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : 'Password could not be updated. Request a new reset link and try again.';

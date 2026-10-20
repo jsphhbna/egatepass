@@ -237,3 +237,21 @@ All 21 confirmed defect groups and their recurring patterns across the codebase 
 ## Maturity
 
 Current product maturity is `IN PROGRESS (LEVEL 2+ / PRE-DEPLOYMENT VERIFIED)` — all confirmed root causes repaired, all recurring patterns eliminated across the repository, full regression suite passing (288 tests, 0 failures, 100% reproducible), .env.example modern and committed with zero secrets. Hosted Supabase remains unmutated pending independent owner authorization.
+
+## Root-Cause Closure & Recurrence Elimination Status
+- **Class A (Standard Webhooks)**: Fully resolved using `standardwebhooks` with canonical `v1,whsec_` support and multi-key rotation. Zero handwritten verifiers remain.
+- **Class B (Portal Settings Decoupling)**: Settings reading decoupled from `authenticatedClient()`. Public anon SELECT policy added for only 6 safe columns. Kiosk unaffected.
+- **Class C (Turnstile Token Lifecycle)**: Single-use credential lifecycle enforced. Widget recreation via `resetKey`. Tokens cleared on submission, expire, and error.
+- **Class D (Device Credential Auth)**: Trigger upgraded to verify server-controlled `egatepass_device_credential_change_id` marker in `raw_app_meta_data`. Compromised self-password changes blocked. Compensating rollback authorized via second fresh marker. Trigger execution revoked from public roles.
+- **Class E (Dashboard Authoritative Aggregates)**: Removed raw-row fallback. Fails closed with 503 on RPC error, null, or schema validation failure.
+- **Class F (Supabase Returned Error Handling)**: All audit/reconciliation inserts inspect returned `.error`. Partial success semantics returned when irreversible mutations succeed but audit logging fails.
+- **New Additive Migration**: `supabase/migrations/20261020204805_public_registration_settings_and_auth_hardening.sql`
+- **Hosted Supabase Status**: **NOT APPLIED** (Clean offline migration chain verified through PGlite).
+- **Test Metrics**:
+  - `npm test`: 21 test files, 304 passed (0 failed).
+  - `test:migrations`: 8/8 passed (PGlite sequential runner, upgrades, D1-D10 trigger contracts, safe anon settings RLS).
+  - `test:contracts`: 16/16 passed.
+  - `typecheck:api`: 0 errors.
+  - `npx tsc --noEmit`: 0 errors.
+  - `npm run build`: clean production build (2.13s).
+  - `test:e2e:startup`: 4/4 passed (Playwright browser startup verification on Edge).

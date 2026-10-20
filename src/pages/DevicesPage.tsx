@@ -221,12 +221,21 @@ export function DevicesPage() {
         }),
       });
 
-      const result = await res.json().catch(() => null) as { error?: string; reconciliationRequired?: boolean; reference?: string } | null;
+      const result = await res.json().catch(() => null) as {
+        error?: string;
+        ok?: boolean;
+        result?: 'success' | 'partial';
+        credentialsChanged?: boolean;
+        auditPending?: boolean;
+        reconciliationRecorded?: boolean;
+        reconciliationRequired?: boolean;
+        reference?: string;
+      } | null;
       if (!res.ok) {
         throw new Error(result?.error || 'Failed to update credentials');
       }
-      if (result?.reconciliationRequired) {
-        toast.warning(`Credentials changed, but follow-up is required. Reference: ${result.reference}`);
+      if (result?.result === 'partial' || result?.reconciliationRequired) {
+        toast.warning('Device credentials were changed successfully, but the administrative audit requires follow-up.');
       } else {
         toast.success('Device credentials updated successfully');
       }

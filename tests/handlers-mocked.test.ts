@@ -720,6 +720,26 @@ describe('Behavioral Mocked-Handler Tests [PASS (MOCKED HANDLER)]', () => {
             pass.decided_at = new Date().toISOString();
             return { data: pass.status, error: null };
           }
+          if (fn === 'dashboard_calendar_counts') {
+            return {
+              data: {
+                '2026-10-20': 5,
+                '2026-10-21': 8,
+              },
+              error: null,
+            };
+          }
+          if (fn === 'dashboard_today_insights') {
+            return {
+              data: {
+                topPurpose: { label: 'Official Business', count: 4 },
+                busiestGate: { label: 'Gate 1', count: 6 },
+                topRejection: { label: 'Incomplete requirements', count: 1 },
+                avgApprovalTime: '12m',
+              },
+              error: null,
+            };
+          }
           return { data: null, error: new Error(`Unknown RPC: ${fn}`) };
         },
       }),
@@ -1739,7 +1759,7 @@ describe('Behavioral Mocked-Handler Tests [PASS (MOCKED HANDLER)]', () => {
   // C-01: Admin Dashboard Counts
   // =========================================================================
   describe('C-01: Dashboard True Counts (api/admin/dashboard.ts)', () => {
-    it('returns true counts aligned to Manila local calendar day window', async () => {
+    it('returns true counts and authoritative aggregate RPC payloads (200)', async () => {
       const req = new Request('http://localhost/api/admin/dashboard', {
         headers: { authorization: VALID_SUPERADMIN_BEARER },
       });
@@ -1753,6 +1773,63 @@ describe('Behavioral Mocked-Handler Tests [PASS (MOCKED HANDLER)]', () => {
       expect(typeof json.counts.currentlyInside).toBe('number');
       expect(typeof json.counts.pendingToday).toBe('number');
       expect(typeof json.counts.allPending).toBe('number');
+      expect(json.calendarCounts).toBeDefined();
+      expect(json.insights).toBeDefined();
+      expect(json.insights.topPurpose.label).toBe('Official Business');
+    });
+
+    it('fails closed with 503 when calendar counts RPC returns an error', async () => {
+      mockRpcFailures['dashboard_calendar_counts'] = new Error('Database connection failure in calendar RPC');
+      const req = new Request('http://localhost/api/admin/dashboard', {
+        headers: { authorization: VALID_SUPERADMIN_BEARER },
+      });
+
+      const res = await invokeHandler(dashboardHandler, req);
+      expect(res.status).toBe(503);
+      const json = await res.json();
+      expect(json.error).toBe('service_unavailable');
+    });
+
+    it('fails closed with 503 when today insights RPC returns an error', async () => {
+      mockRpcFailures['dashboard_today_insights'] = new Error('Database timeout in today insights RPC');
+      const req = new Request('http://localhost/api/admin/dashboard', {
+        headers: { authorization: VALID_SUPERADMIN_BEARER },
+      });
+
+      const res = await invokeHandler(dashboardHandler, req);
+      expect(res.status).toBe(503);
+      const json = await res.json();
+      expect(json.error).toBe('service_unavailable');
+    });
+
+    it('fails closed with 503 when calendar counts RPC returns malformed payload', async () => {
+      mockRpcOverrides['dashboard_calendar_counts'] = {
+        data: { 'not-a-valid-date-format': -5 },
+        error: null,
+      };
+      const req = new Request('http://localhost/api/admin/dashboard', {
+        headers: { authorization: VALID_SUPERADMIN_BEARER },
+      });
+
+      const res = await invokeHandler(dashboardHandler, req);
+      expect(res.status).toBe(503);
+      const json = await res.json();
+      expect(json.error).toBe('service_unavailable');
+    });
+
+    it('fails closed with 503 when today insights RPC returns malformed payload', async () => {
+      mockRpcOverrides['dashboard_today_insights'] = {
+        data: { topPurpose: 'invalid_shape_without_count_and_label' },
+        error: null,
+      };
+      const req = new Request('http://localhost/api/admin/dashboard', {
+        headers: { authorization: VALID_SUPERADMIN_BEARER },
+      });
+
+      const res = await invokeHandler(dashboardHandler, req);
+      expect(res.status).toBe(503);
+      const json = await res.json();
+      expect(json.error).toBe('service_unavailable');
     });
   });
 
@@ -2044,6 +2121,36 @@ describe('Behavioral Mocked-Handler Tests [PASS (MOCKED HANDLER)]', () => {
       expect(json.successCount).toBe(1);
       expect(json.failedCount).toBe(0);
       expect(storageRemovedPaths).toContain('visitor-expired/id.webp');
+    });
+
+    it('returns partial result and records reconciliation when purge succeeds but audit fails', async () => {
+      mockDbData.visitor_evidence = [
+        {
+          id: '00000000-0000-4000-a000-000000000999',
+          visitor_id: 'visitor-expired',
+          bucket_id: 'visitor-id-documents',
+          object_path: 'visitor-expired/id.webp',
+          purged_at: null,
+          expires_at: '2026-01-01T00:00:00Z',
+        },
+      ];
+      mockTableFailures['audit_events:insert'] = new Error('Audit disk full');
+
+      const req = new Request('http://localhost/api/purge-images', {
+        method: 'POST',
+        headers: { authorization: VALID_SUPERADMIN_BEARER, 'content-type': 'application/json' },
+        body: JSON.stringify({ dryRun: false }),
+      });
+
+      const res = await invokeHandler(purgeImagesHandler, req);
+      const json = await res.json();
+
+      expect(res.status).toBe(200);
+      expect(json.result).toBe('partial');
+      expect(json.auditPending).toBe(true);
+      expect(json.successCount).toBe(1);
+      const recon = mockDbData.reconciliation_tasks.find((r) => r.operation === 'image_purge.audit_failed');
+      expect(recon).toBeDefined();
     });
 
     it('skips storage deletion if claim RPC returns claimed: false', async () => {

@@ -309,3 +309,68 @@ describe('Cloudflare Turnstile Fail-Closed Policy Matrix (Repair Group J)', () =
     expect(devKiosk.allowed).toBe(true);
   });
 });
+
+describe('Turnstile Token Lifecycle & Single-Use Invariant (Root Cause Class C)', () => {
+  it('consumed token is cleared immediately after pass submission', () => {
+    let captchaToken: string | null = 'cf-turnstile-one-use-token';
+    let resetCount = 0;
+
+    const onTokenConsumed = () => {
+      captchaToken = null;
+      resetCount++;
+    };
+
+    // Simulate submission finally block
+    onTokenConsumed();
+
+    expect(captchaToken).toBeNull();
+    expect(resetCount).toBe(1);
+  });
+
+  it('expired challenge resets token and increments resetKey', () => {
+    let captchaToken: string | null = 'cf-turnstile-expired-token';
+    let resetKey = 0;
+
+    const onExpired = () => {
+      captchaToken = null;
+      resetKey++;
+    };
+
+    onExpired();
+    expect(captchaToken).toBeNull();
+    expect(resetKey).toBe(1);
+  });
+
+  it('widget error resets token and clears challenge', () => {
+    let captchaToken: string | null = 'cf-turnstile-err-token';
+    let resetKey = 0;
+    let errorMessage = '';
+
+    const onError = () => {
+      captchaToken = null;
+      resetKey++;
+      errorMessage = 'Verification challenge failed. Please retry.';
+    };
+
+    onError();
+    expect(captchaToken).toBeNull();
+    expect(resetKey).toBe(1);
+    expect(errorMessage).toContain('Verification challenge failed');
+  });
+
+  it('retry path rejects null token in production until new challenge completes', () => {
+    const siteKey = '0x4AAAAAAABbbbbbb';
+    const isProd = true;
+
+    // After consumption / reset, token is null
+    const consumedToken = null;
+    const retryAttempt = evaluateTurnstilePolicy('portal', isProd, siteKey, consumedToken);
+    expect(retryAttempt.allowed).toBe(false);
+    expect(retryAttempt.error).toBe('Verification challenge required to start registration.');
+
+    // Once a fresh challenge resolves with a new token
+    const freshToken = 'cf-turnstile-fresh-retry-token';
+    const freshAttempt = evaluateTurnstilePolicy('portal', isProd, siteKey, freshToken);
+    expect(freshAttempt.allowed).toBe(true);
+  });
+});

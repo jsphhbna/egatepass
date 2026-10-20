@@ -140,11 +140,10 @@ export async function issueVisitorPass(
 }
 
 export async function loadRegistrationSettings(source: RegistrationSource) {
-  const { client } = await authenticatedClient(source);
+  const client = source === 'portal' ? requirePortalSupabase() : requireSupabase();
   const { data, error } = await client
     .from('app_settings')
     .select('working_hours_start, working_hours_end, timezone, scheduling_days_ahead, peak_mode, visit_purposes')
-    .eq('singleton', true)
     .maybeSingle();
 
   if (error) {

@@ -91,18 +91,34 @@ async function handleRequest(request: Request): Promise<Response> {
     }
 
     const previousEmail = before.data.user.email || '';
+    const existingAppMetadata = (before.data.user.app_metadata as Record<string, unknown> | undefined) || {};
 
-    // 5. Update Auth credentials
-    const authUpdatePayload: { email?: string; email_confirm?: boolean; password?: string } = {};
+    // 5. Update Auth credentials with Admin-Controlled Rotation Marker (Root Cause Class D & 6A)
+    const credentialChangeId = randomUUID();
+    const authUpdatePayload: {
+      email?: string;
+      email_confirm?: boolean;
+      password?: string;
+      app_metadata: Record<string, unknown>;
+    } = {
+      app_metadata: {
+        ...existingAppMetadata,
+        egatepass_device_credential_change_id: credentialChangeId,
+      },
+    };
+
+    let hasCredentialMutation = false;
     if (nextIdentity && nextIdentity.email !== previousEmail) {
       authUpdatePayload.email = nextIdentity.email;
       authUpdatePayload.email_confirm = true;
+      hasCredentialMutation = true;
     }
     if (parsed.data.password) {
       authUpdatePayload.password = parsed.data.password;
+      hasCredentialMutation = true;
     }
 
-    if (Object.keys(authUpdatePayload).length > 0) {
+    if (hasCredentialMutation) {
       const authUpdate = await admin.auth.admin.updateUserById(parsed.data.targetUid, authUpdatePayload);
       if (authUpdate.error) {
         throw authUpdate.error;
@@ -121,10 +137,16 @@ async function handleRequest(request: Request): Promise<Response> {
 
       if (profile.error) {
         // Honest compensation: email can be reverted in Auth, but password cannot be un-hashed
+        // Section 7A: Compensating rollback MUST use a second fresh marker
         if (nextIdentity.email !== previousEmail && previousEmail) {
+          const rollbackCredentialChangeId = randomUUID();
           const rollbackAuth = await admin.auth.admin.updateUserById(parsed.data.targetUid, {
             email: previousEmail,
             email_confirm: true,
+            app_metadata: {
+              ...existingAppMetadata,
+              egatepass_device_credential_change_id: rollbackCredentialChangeId,
+            },
           });
           if (rollbackAuth.error) {
             await recordReconciliation(
@@ -154,47 +176,56 @@ async function handleRequest(request: Request): Promise<Response> {
     }
 
     // 7. Mandatory immutable audit event for credential updates
-    // P0-05: Properly inspect { error: auditError }
-    try {
-      const { error: auditError } = await admin.from('audit_events').insert({
-        actor_id: actor.id,
-        actor_kind: 'staff',
-        actor_role: actor.role,
-        action: 'device.password_update',
-        target_type: 'device',
-        target_id: parsed.data.targetUid,
-        before_state: {
-          alias: deviceRecord.alias,
-          email: previousEmail,
-          password_changed: false,
-        },
-        after_state: {
-          alias: nextIdentity ? nextIdentity.alias : deviceRecord.alias,
-          email: nextIdentity ? nextIdentity.email : previousEmail,
-          password_changed: !!parsed.data.password,
-        },
-        outcome: 'success',
-      });
+    // Section 14: Return truthful partial success if credentials changed but audit failed
+    const { error: auditError } = await admin.from('audit_events').insert({
+      actor_id: actor.id,
+      actor_kind: 'staff',
+      actor_role: actor.role,
+      action: 'device.password_update',
+      target_type: 'device',
+      target_id: parsed.data.targetUid,
+      before_state: {
+        alias: deviceRecord.alias,
+        email: previousEmail,
+        password_changed: false,
+      },
+      after_state: {
+        alias: nextIdentity ? nextIdentity.alias : deviceRecord.alias,
+        email: nextIdentity ? nextIdentity.email : previousEmail,
+        password_changed: !!parsed.data.password,
+      },
+      outcome: 'success',
+    });
 
-      if (auditError) {
-        throw auditError;
-      }
-    } catch (auditError) {
+    if (auditError) {
       console.error('Audit insert failed for device credentials update', auditError);
-      await recordReconciliation(
+      const reconciliationRecorded = await recordReconciliation(
         admin,
         'device.credentials.audit_failed',
         'device',
         parsed.data.targetUid,
-        auditError instanceof Error ? auditError.message : 'audit_insert_failed',
+        auditError.message || 'audit_insert_failed',
         {
           alias: nextIdentity ? nextIdentity.alias : deviceRecord.alias,
           passwordChanged: !!parsed.data.password,
         }
       );
+
+      return jsonResponse(200, {
+        ok: true,
+        result: 'partial',
+        credentialsChanged: true,
+        auditPending: true,
+        reconciliationRecorded,
+      });
     }
 
-    return jsonResponse(200, { ok: true });
+    return jsonResponse(200, {
+      ok: true,
+      result: 'success',
+      credentialsChanged: true,
+      auditPending: false,
+    });
   } catch (error) {
     if (error instanceof HttpError || (error && typeof error === 'object' && typeof (error as any).status === 'number')) {
       return jsonResponse((error as any).status, { error: (error as any).code || (error as any).message });

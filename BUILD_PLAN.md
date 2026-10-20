@@ -539,3 +539,95 @@ Local promotion evidence: pre-fix regression run 7/7 FAILED as expected; correct
 - **Production Bundle Build**: `npm run build` PASS (2539 modules transformed in 1.15s).
 - **Local Startup Browser E2E**: `npm run test:e2e:startup` PASS (4/4 test cases passed on Edge).
 - **Git State**: Clean working tree ready for commit; `.env.local` remains ignored and untouched.
+
+## Root-Cause Closure & Recurrence Elimination Pass (Classes A through F)
+
+### Group A: Protocol Implemented From Memory (Standard Webhooks)
+- **Problem**: Handwritten HMAC verifier in `server/auth-email-hook.ts` parsed noncanonical `whsec_<base64>`, failed on Supabase's canonical `v1,whsec_<base64>`, and lacked support for pipe-separated key rotation (`v1,whsec_<new>|v1,whsec_<old>`).
+- **Root Cause**: External security protocol reimplemented from memory with self-confirming tests that generated noncanonical signatures matching the wrong implementation.
+- **Why Previous Fix Was Insufficient**: The custom verifier passed unit tests because the tests used the same noncanonical format, hiding the mismatch with actual Supabase Auth Hook webhooks.
+- **Prescribed Fix Implemented**: Removed custom HMAC verifier. Installed official `standardwebhooks` package. Verification flow parses raw `SEND_EMAIL_HOOK_SECRET`, splits on `|`, verifies canonical prefix `v1,whsec_`, strips prefix, constructs `new Webhook(base64Secret)`, and verifies raw HTTP body, webhook-id, webhook-timestamp, and webhook-signature against candidate keys. Reject if secret absent, malformed, headers missing, or timestamp/signature invalid.
+- **Files Changed**: `package.json`, `package-lock.json`, `server/auth-email-hook.ts`, `tests/auth-email-hook.test.ts`.
+- **Same-Pattern Search**: Searched entire codebase for other usages of `SEND_EMAIL_HOOK_SECRET`, `webhook-signature`, `webhook-timestamp`, `webhook-id`, `createHmac`, and `Standard Webhooks`.
+- **Recurrences Found**: None. No other webhook signature verification endpoints exist.
+- **Recurrences Fixed**: N/A (zero additional verifiers).
+- **False Positives**: Unrelated crypto utilities (e.g. `createHash` for QR code tokens in `server/email.ts`).
+- **Tests**: `tests/auth-email-hook.test.ts` tests A1 through A11 (23 tests total).
+- **Results**: PASS (all 23 tests pass).
+- **Remaining Hosted Validation**: Configure actual Vercel hook endpoint and `SEND_EMAIL_HOOK_SECRET` in hosted Supabase Auth Hooks.
+
+### Group B: Helper with Hidden Side Effects Reused for Read-Only Operation
+- **Problem**: `src/services/visitorRegistration.ts` used `authenticatedClient()` inside `loadRegistrationSettings()`. This caused page loads to attempt anonymous session creation before Turnstile CAPTCHA completion, which failed closed and hid settings.
+- **Root Cause**: Coupled read-only public configuration loading with stateful anonymous Portal identity creation in a single helper.
+- **Why Previous Fix Was Insufficient**: Enforcing Turnstile token requirement broke settings loading on initial page render because no CAPTCHA token existed at that moment.
+- **Prescribed Fix Implemented**: Decoupled settings reading from auth session creation. `loadRegistrationSettings('portal')` queries `public.app_settings` directly via `requirePortalSupabase()` for only 6 safe columns without calling `authenticatedClient()`, `getSession()`, `signInAnonymously()`, or requiring Turnstile. Anonymous session creation occurs strictly when visitor submits form in `issueVisitorPass()`. Added additive migration with anon SELECT RLS policy (`singleton = true`) and column-level SELECT grants for only the 6 safe public columns.
+- **Files Changed**: `src/services/visitorRegistration.ts`, `supabase/migrations/20261020204805_public_registration_settings_and_auth_hardening.sql`, `tests/migration-chain-pglite.test.ts`.
+- **Same-Pattern Search**: Searched for callers using `authenticatedClient()` for read-only operations.
+- **Recurrences Found**: None. Only `issueVisitorPass()` calls `authenticatedClient()`.
+- **Recurrences Fixed**: N/A.
+- **False Positives**: Kiosk initialization which correctly uses device-scoped credentials.
+- **Tests**: PGlite Test H (`tests/migration-chain-pglite.test.ts`).
+- **Results**: PASS (anon can read only safe columns; retention columns, INSERT, UPDATE, DELETE denied).
+- **Remaining Hosted Validation**: Verify Portal settings load on hosted Supabase without creating anonymous session.
+
+### Group C: Captcha Token Lifecycle Treated Like Ordinary UI State
+- **Problem**: Turnstile tokens are single-use credentials; retaining a submitted/failed token in React state caused retries to submit stale/consumed tokens.
+- **Root Cause**: `captchaToken` was treated as persistent state until expiration rather than a one-time credential consumed by auth.
+- **Why Previous Fix Was Insufficient**: Previous fix required token existence but did not clear token or reset widget after submission attempts.
+- **Prescribed Fix Implemented**: Added `resetKey` prop to `TurnstileWidget.tsx` to allow deterministic widget recreation and challenge reset. In `GetPassPage.tsx`, submission `finally`-equivalent block sets `setCaptchaToken(null)` and increments `resetKey`. Cleared token on `expired-callback` and `error-callback` with safe error feedback.
+- **Files Changed**: `src/components/TurnstileWidget.tsx`, `src/pages/GetPassPage.tsx`, `tests/pure-services.test.ts`.
+- **Same-Pattern Search**: Searched for `captchaToken`, `setCaptchaToken`, `TurnstileWidget`, `issueVisitorPass`, and `signInAnonymously`.
+- **Recurrences Found**: None. Only `GetPassPage.tsx` uses Turnstile.
+- **Recurrences Fixed**: N/A.
+- **False Positives**: Kiosk and staff interfaces intentionally exempt from Turnstile.
+- **Tests**: Unit tests in `tests/pure-services.test.ts` for single-use token lifecycle and retry enforcement.
+- **Results**: PASS (44/44 tests pass).
+- **Remaining Hosted Validation**: End-to-end verification with live Cloudflare Turnstile widget.
+
+### Group D: Request Role Confused with Auth-Service Database Authority
+- **Problem**: Database trigger `public.protect_managed_credentials()` checked `auth.role() <> 'service_role'`. Because password updates pass through the Supabase Auth service, request JWT role does not reliably identify Super Admin server-side actions.
+- **Root Cause**: Confused client service-role request context with internal Auth service database context.
+- **Why Previous Fix Was Insufficient**: PGlite tests manually faked `auth.role()`, creating false confidence.
+- **Prescribed Fix Implemented**: Replaced `auth.role()` check with an admin-controlled mutation marker `egatepass_device_credential_change_id` stored in `auth.users.raw_app_meta_data`. In `api/update-device-auth.ts`, Super Admin generates a `randomUUID()` marker and submits credential changes and app_metadata in a single update. Trigger checks if managed device email or password changed; requires fresh distinct marker. Prohibits anonymous users from setting passwords. Revoked trigger EXECUTE privileges from `public, anon, authenticated`.
+- **Important Recurrence (Rollback Marker)**: Compensating email rollback in `api/update-device-auth.ts` also mutates email and would be blocked without a second fresh marker. Implemented `rollbackCredentialChangeId = randomUUID()` in rollback path.
+- **Files Changed**: `api/update-device-auth.ts`, `supabase/migrations/20261020204805_public_registration_settings_and_auth_hardening.sql`, `tests/migration-chain-pglite.test.ts`.
+- **Same-Pattern Search**: Searched for all `admin.auth.admin.updateUserById` calls mutating managed device email or password.
+- **Recurrences Found**: Only `api/update-device-auth.ts` primary update and compensating rollback.
+- **Recurrences Fixed**: Both primary and rollback paths use fresh rotation markers.
+- **False Positives**: User password reset for staff does not mutate managed device credentials.
+- **Tests**: PGlite Test G (D1 through D10 contracts) in `tests/migration-chain-pglite.test.ts`.
+- **Results**: PASS (all 10 contracts verified).
+- **Remaining Hosted Validation**: Device password rotation test against live Supabase Auth Admin API.
+
+### Group E: Resilience Fallback Violates Authoritative Data Contract
+- **Problem**: `api/admin/dashboard.ts` silently fell back to raw row retrieval and JavaScript aggregation when RPCs `dashboard_calendar_counts` or `dashboard_today_insights` failed.
+- **Root Cause**: Designed for availability over authoritative correctness, converting partial row fetches into seemingly authoritative totals.
+- **Why Previous Fix Was Insufficient**: Added RPCs but retained the fallback, leaving a fail-open correctness defect.
+- **Prescribed Fix Implemented**: Removed all raw-row fallback logic and unused queries (`todayAllPassesRes`). Added strict Zod schemas for `calendarSchema` and `insightsSchema`. If either RPC errors, returns null, or fails schema validation, handler fails closed with HTTP 503 `service_unavailable`.
+- **Files Changed**: `api/admin/dashboard.ts`, `tests/handlers-mocked.test.ts`.
+- **Same-Pattern Search**: Searched dashboard/analytics code for aggregate RPCs falling back to bounded row queries.
+- **Recurrences Found**: None.
+- **Recurrences Fixed**: N/A.
+- **False Positives**: Bounded display lists (recent passes, inside passes) which are explicitly non-aggregate previews.
+- **Tests**: Mocked handler tests (calendar good/error/malformed, insights good/error/malformed) in `tests/handlers-mocked.test.ts`.
+- **Results**: PASS (5/5 dashboard tests pass).
+- **Remaining Hosted Validation**: Canary check on hosted Supabase with live RPC execution.
+
+### Group F: Supabase Returned Errors Confused with Thrown Exceptions
+- **Problem**: Supabase JS methods return `{ data, error }` rather than throwing. Using `try/catch` without checking `.error` resulted in silent failures of audit event and reconciliation task inserts.
+- **Root Cause**: Mixed exception-based error model with return-value error model.
+- **Why Previous Fix Was Insufficient**: Some files inspected `.error` while others relied on `try/catch`.
+- **Prescribed Fix Implemented**:
+  1. `api/auth/reset-password.ts`: Checked `{ error: auditError }`. On error, records reconciliation and returns HTTP 200 with `{ ok: true, result: "partial", passwordChanged: true, auditPending: true, reconciliationRecorded }`. `ResetPasswordPage.tsx` guides user to sign in with new password without prompting retry.
+  2. `api/admin/retention-maintenance.ts`: Checked `{ error: settingsAuditError }`. On error, pushes `audit_insert_failed` to metrics, records reconciliation, and keeps operation as failure with zero destructive work.
+  3. `api/update-device-auth.ts`: Checked `auditError`. On error, returns HTTP 200 with `result: "partial"`. `DevicesPage.tsx` shows warning and reloads device list without retrying mutation.
+  4. `api/purge-images.ts`: Checked `auditError`. On error, returns HTTP 200 with `result: "partial"`, `auditPending: true`.
+  5. `api/auth/complete-password-change.ts`: Replaced raw insert with `recordReconciliation(...)`. Returns HTTP 503 with truthful state `password_changed_finalization_pending`.
+- **Files Changed**: `api/auth/reset-password.ts`, `src/services/auth.ts`, `src/pages/ResetPasswordPage.tsx`, `api/admin/retention-maintenance.ts`, `api/update-device-auth.ts`, `src/pages/DevicesPage.tsx`, `api/purge-images.ts`, `api/auth/complete-password-change.ts`, `tests/handlers-mocked.test.ts`, `tests/password-recovery.test.ts`.
+- **Same-Pattern Search**: Searched active target code for `.from('audit_events').insert` and `.from('reconciliation_tasks').insert`.
+- **Recurrences Found**: All 5 locations identified and repaired.
+- **Recurrences Fixed**: All 5 locations now explicitly inspect returned `.error`.
+- **False Positives**: Inserts inside SQL RPC transactions which roll back atomically.
+- **Tests**: Mocked handler tests and password recovery tests for partial success and reconciliation recording.
+- **Results**: PASS (89/89 mocked handler tests, 12/12 password recovery tests).
+- **Remaining Hosted Validation**: Synthetic audit error canary in staging environment.

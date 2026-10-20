@@ -1,6 +1,29 @@
+import { z } from 'zod';
 import { HttpError, requireStaffActor } from '../../server/actors.js';
 import { jsonResponse, readBearerToken } from '../../server/http.js';
 import { getServerSupabaseClients } from '../../server/supabase.js';
+
+
+const calendarSchema = z.record(
+  z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+  z.number().int().nonnegative()
+);
+
+const insightsSchema = z.object({
+  topPurpose: z.object({
+    label: z.string(),
+    count: z.number().int().nonnegative(),
+  }),
+  busiestGate: z.object({
+    label: z.string(),
+    count: z.number().int().nonnegative(),
+  }),
+  topRejection: z.object({
+    label: z.string(),
+    count: z.number().int().nonnegative(),
+  }),
+  avgApprovalTime: z.string(),
+});
 
 interface RawPassRow {
   id: string;
@@ -110,7 +133,6 @@ async function handleRequest(request: Request): Promise<Response> {
       pendingCountRes,
       allPendingCountRes,
       rejectedCountRes,
-      todayAllPassesRes,
       recentResult,
       insideResult,
       exitedResult,
@@ -123,7 +145,6 @@ async function handleRequest(request: Request): Promise<Response> {
       admin.from('passes').select('id', { count: 'exact', head: true }).eq('status', 'pending').gte('entry_scanned_at', startToday).lte('entry_scanned_at', endToday),
       admin.from('passes').select('id', { count: 'exact', head: true }).eq('status', 'pending'),
       admin.from('passes').select('id', { count: 'exact', head: true }).eq('status', 'rejected').gte('decided_at', startToday).lte('decided_at', endToday),
-      admin.from('passes').select('id, status, gate, rejection_reason, entry_scanned_at, time_in, visitors(purpose)').gte('issued_at', startToday).lte('issued_at', endToday),
       admin.from('passes').select(PASS_SELECT).order('issued_at', { ascending: false }).limit(100),
       admin.from('passes').select(PASS_SELECT).eq('status', 'inside').limit(200),
       admin.from('passes').select(PASS_SELECT).eq('status', 'exited').gte('time_out', startToday).lte('time_out', endToday).limit(200),
@@ -137,13 +158,12 @@ async function handleRequest(request: Request): Promise<Response> {
     if (pendingCountRes.error) throw pendingCountRes.error;
     if (allPendingCountRes.error) throw allPendingCountRes.error;
     if (rejectedCountRes.error) throw rejectedCountRes.error;
-    if (todayAllPassesRes.error) throw todayAllPassesRes.error;
     if (recentResult.error) throw recentResult.error;
     if (insideResult.error) throw insideResult.error;
     if (exitedResult.error) throw exitedResult.error;
     if (decisionsResult.error) throw decisionsResult.error;
 
-    // Query authoritative database-complete aggregate RPCs with query fallback
+    // Query authoritative database-complete aggregate RPCs without raw-row fallback (Root Cause Class E)
     const [
       calendarRpcRes,
       insightsRpcRes,
@@ -152,71 +172,25 @@ async function handleRequest(request: Request): Promise<Response> {
       admin.schema('api').rpc('dashboard_today_insights', { p_start: startToday, p_end: endToday }),
     ]);
 
-    let calendarCounts: Record<string, number> = {};
-    if (calendarRpcRes.data && !calendarRpcRes.error && typeof calendarRpcRes.data === 'object') {
-      calendarCounts = calendarRpcRes.data as Record<string, number>;
-    } else {
-      // Fallback: compute per-day counts from month passes
-      const { data: monthRows } = await admin
-        .from('passes')
-        .select('issued_at')
-        .gte('issued_at', startMonth)
-        .lte('issued_at', endToday);
-
-      (monthRows || []).forEach((row: any) => {
-        if (!row.issued_at) return;
-        const day = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Manila' }).format(new Date(row.issued_at));
-        calendarCounts[day] = (calendarCounts[day] || 0) + 1;
-      });
+    if (calendarRpcRes.error || !calendarRpcRes.data) {
+      throw new HttpError(503, 'service_unavailable');
+    }
+    if (insightsRpcRes.error || !insightsRpcRes.data) {
+      throw new HttpError(503, 'service_unavailable');
     }
 
-    let insights = {
-      topPurpose: { label: 'No data yet', count: 0 },
-      busiestGate: { label: 'No data yet', count: 0 },
-      topRejection: { label: 'No data yet', count: 0 },
-      avgApprovalTime: '—',
-    };
-
-    if (insightsRpcRes.data && !insightsRpcRes.error && typeof insightsRpcRes.data === 'object' && insightsRpcRes.data.topPurpose) {
-      insights = insightsRpcRes.data as typeof insights;
-    } else {
-      // Authoritative fallback computed across passes issued today
-      const allTodayPasses = (todayAllPassesRes.data ?? []) as unknown as Array<{
-        id: string;
-        status: string;
-        gate: string | null;
-        rejection_reason: string | null;
-        entry_scanned_at: string | null;
-        time_in: string | null;
-        visitors: { purpose: string } | null;
-      }>;
-
-      function countMostCommon(vals: Array<string | null | undefined>): { label: string; count: number } {
-        const counts = new Map<string, number>();
-        vals.forEach((v) => {
-          const norm = v?.trim();
-          if (norm) counts.set(norm, (counts.get(norm) || 0) + 1);
-        });
-        let best = { label: 'No data yet', count: 0 };
-        counts.forEach((count, label) => {
-          if (count > best.count) best = { label, count };
-        });
-        return best;
-      }
-
-      insights.topPurpose = countMostCommon(allTodayPasses.map((p) => p.visitors?.purpose?.split(' — ')[0]?.trim()));
-      insights.busiestGate = countMostCommon(allTodayPasses.map((p) => p.gate));
-      const rejectedPassesToday = allTodayPasses.filter((p) => p.status === 'rejected');
-      insights.topRejection = countMostCommon(rejectedPassesToday.map((p) => p.rejection_reason));
-
-      const durations = allTodayPasses.flatMap((p) => {
-        if (!p.entry_scanned_at || !p.time_in) return [];
-        const diff = new Date(p.time_in).getTime() - new Date(p.entry_scanned_at).getTime();
-        return diff >= 0 ? [diff] : [];
-      });
-      const avgSec = durations.length > 0 ? Math.round(durations.reduce((a, b) => a + b, 0) / durations.length / 1000) : null;
-      insights.avgApprovalTime = avgSec === null ? '—' : avgSec < 60 ? `${avgSec}s` : `${Math.round(avgSec / 60)}m`;
+    const calendarParsed = calendarSchema.safeParse(calendarRpcRes.data);
+    if (!calendarParsed.success) {
+      throw new HttpError(503, 'service_unavailable');
     }
+
+    const insightsParsed = insightsSchema.safeParse(insightsRpcRes.data);
+    if (!insightsParsed.success) {
+      throw new HttpError(503, 'service_unavailable');
+    }
+
+    const calendarCounts = calendarParsed.data;
+    const insights = insightsParsed.data;
 
     return jsonResponse(200, {
       counts: {
