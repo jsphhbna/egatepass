@@ -100,10 +100,22 @@ export async function issueVisitorPass(
 
 export async function loadRegistrationSettings(source: RegistrationSource) {
   const { client } = await authenticatedClient(source);
-  const { data } = await client
+  const { data, error } = await client
     .from('app_settings')
     .select('working_hours_start, working_hours_end, timezone, scheduling_days_ahead, peak_mode, visit_purposes')
     .eq('singleton', true)
     .maybeSingle();
+
+  if (error) {
+    if (error.code === 'PGRST205' || error.code === 'PGRST202') {
+      console.warn(
+        `[E-GatePass Diagnostic] Supabase schema migration required: table 'public.app_settings' was not found in schema cache (${error.code}). Default registration settings will be applied. Run migrations (starting with 20261020000100_core_schema.sql) on the Supabase project to persist custom settings.`
+      );
+    } else {
+      console.warn('[E-GatePass Diagnostic] Could not load app_settings from Supabase:', error.message || error);
+    }
+    return null;
+  }
+
   return data;
 }

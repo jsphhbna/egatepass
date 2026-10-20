@@ -43,11 +43,11 @@ select extensions.ok(
 insert into auth.users (id, aud, role, email, encrypted_password, email_confirmed_at, is_anonymous, created_at, updated_at)
 values ('00000000-0000-0000-0000-000000000801', 'authenticated', 'authenticated', 'kiosk@devices.egatepass.invalid', '', now(), false, now(), now());
 
-insert into public.devices (id, device_alias, device_type, label, status, registered_at)
-values ('00000000-0000-0000-0000-000000000801', 'kiosk-unit-1', 'kiosk', 'Main Lobby Kiosk', 'active', now());
+insert into public.devices (user_id, alias, name, type, gate, status)
+values ('00000000-0000-0000-0000-000000000801', 'kiosk-unit-1', 'Main Lobby Kiosk', 'kiosk', 'Main Gate', 'active');
 
-insert into public.visitors (id, owner_id, source, full_name, contact_number, purpose, visit_date, consent_accepted_at)
-values ('00000000-0000-0000-0000-000000000811', '00000000-0000-0000-0000-000000000801', 'kiosk',
+insert into public.visitors (id, owner_id, source, created_by_device_id, full_name, contact_number, purpose, visit_date, consent_accepted_at)
+values ('00000000-0000-0000-0000-000000000811', '00000000-0000-0000-0000-000000000801', 'kiosk', '00000000-0000-0000-0000-000000000801',
         'Kiosk Visitor', '09170000001', 'Registrar', current_date, now());
 
 insert into public.passes (id, visitor_id, public_reference, token_digest, source, status, valid_from, valid_until)
@@ -63,14 +63,14 @@ select extensions.lives_ok($$select api.request_email_verification_code(
   '00000000-0000-0000-0000-000000000831', '00000000-0000-0000-0000-000000000841', now() + interval '10 minutes')$$,
   'active kiosk device can request verification code');
 
--- Retiring kiosk device
-update public.devices set status = 'retired', retired_at = now() where id = '00000000-0000-0000-0000-000000000801';
+-- Revoking kiosk device
+update public.devices set status = 'revoked', deleted_at = now() where user_id = '00000000-0000-0000-0000-000000000801';
 
--- EMAIL-M02: Retired kiosk device is denied
+-- EMAIL-M02: Revoked kiosk device is denied
 select extensions.throws_ok($$select api.request_email_verification_code(
   '00000000-0000-0000-0000-000000000821', '00000000-0000-0000-0000-000000000801', 'kiosk.vis2@example.com', repeat('6', 64),
   '00000000-0000-0000-0000-000000000832', '00000000-0000-0000-0000-000000000842', now() + interval '10 minutes')$$,
-  '42501', 'kiosk_device_revoked', 'retired kiosk device cannot request verification code');
+  '42501', 'kiosk_device_revoked', 'revoked kiosk device cannot request verification code');
 
 -- Finalize with terminal status
 select api.finalize_email_verification_code(

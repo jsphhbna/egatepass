@@ -2,7 +2,7 @@
 
 Updated: 2026-10-20 Asia/Manila
 
-Current stage: QR-email targeted correction LOCALLY VERIFIED; provider/database integration BLOCKED (no isolated DB runtime or approved inbox)
+Current stage: Targeted root-cause corrections, Supabase 404 diagnosis, and Vercel Preview preflight LOCALLY VERIFIED; provider/database integration BLOCKED (no isolated DB runtime or approved migrations on egatepass-dev)
 
 ## Repository identity
 
@@ -135,13 +135,30 @@ Current stage: QR-email targeted correction LOCALLY VERIFIED; provider/database 
   - Git whitespace: `git diff --check` PASS (exit 0).
   - Uncommitted `.env.example` strictly preserved without staging.
 
+## Codex Targeted Root-Cause Correction, Supabase 404 Diagnosis & Vercel Preview Preflight Checkpoint
+
+- **P0-A (Image Purge API↔SQL Contract & Authorization Hardening)**: Additive migration `20261020001200_concurrency_and_purge_contract_hardening.sql` updates `api.claim_evidence_for_purge` and `api.finalize_evidence_purge`. Enforces row locking (`FOR UPDATE`), exact claim verification (`ve.purge_claim_id = requested_claim_id`), lease expiry (5 minutes), revalidation of pass expiration/holds, and returns typed JSON `{ finalized: true, match_status: 'matched', purged: true, evidence_id: ... }`. `api/purge-images.ts` updated to check returned contract, require object path/bucket match, and reconcile failures.
+- **P0-B (PostgreSQL pgTAP Fixture/Schema Corrections)**: Corrected `supabase/tests/008_email_security_and_abuse_controls.test.sql` to canonical schema (`user_id, alias, name, type, gate, status`) and `public.visitors` (`created_by_device_id`). Statically validated in `tests/supabase-migration-static.test.ts`. Total authored pgTAP assertions: 93 across 9 suites (all AUTHORED / NOT RUN).
+- **P0-C (Cross-Pass Abuse Rate Limiting Advisory Locks)**: Additive migration 001200 adds transaction-scoped advisory locks (`pg_advisory_xact_lock`) on actor and recipient in `api.request_email_verification_code`. Authored `supabase/tests/009_cross_pass_abuse_concurrency.test.sql`. `api/passes/email.ts` updated to prioritize specific recipient/actor 429 codes.
+- **P0-D (Localhost:5173 Supabase 404 Root-Cause Diagnosis & Vite Dev API Routing)**: Captured network trace: `GET https://nhoawvkfqblsgutdffie.supabase.co/rest/v1/app_settings` returning PostgREST HTTP 404 `PGRST205` ("Could not find the table 'public.app_settings' in the schema cache"). Root cause: `egatepass-dev` remote project lacks migrations 000100–001200. Fallback defaults and diagnostic logging added to `src/services/visitorRegistration.ts`. Stale Netlify proxy replaced with `vercelApiDevPlugin` in `vite.config.ts`, directly serving Vercel web handlers in local Vite dev.
+- **P1-E (Vercel Preview Deployment Preflight)**: 10/10 endpoints probed successfully locally. OCR static assets verified. Server secrets isolated from client bundle. `docs/VERCEL_PREVIEW_PREFLIGHT.md` authored.
+- **Verification Evidence**:
+  - Full Vitest safe suite: 16 test files, 205 tests PASS (0 failures).
+  - Behavioral mocked handler suite: 63/63 PASS.
+  - Startup Playwright Edge E2E: 4/4 PASS.
+  - TypeScript API compilation: `npm run typecheck:api` PASS (exit 0).
+  - Production build: `npm run build` PASS (exit 0, 2537 modules).
+  - Git whitespace: `git diff --check` PASS (exit 0).
+  - Uncommitted `.env.example` strictly preserved without staging.
+
 ## Immediate blockers and next safe work
 
-1. Provide one isolated executable route for the S2 promotion gate: make Docker Desktop available for local Supabase, or explicitly authorize a separate non-production hosted Supabase project after identity confirmation.
-2. Run clean migrations (00100–01100), all authored pgTAP assertions (81 assertions), real Auth bearer-session Data API/RPC denials, actual private Storage operations, and the full issue→entry→decision→exit browser lifecycle.
-3. Keep every provider-dependent path NOT VERIFIED / INTEGRATION BLOCKED until the isolated database and browser lifecycle run.
-4. Do not link/deploy Vercel, use the hosted database, or send real emails without owner authorization.
+1. Owner authorization to run migrations 000100–001200 against `egatepass-dev` (`nhoawvkfqblsgutdffie`), which will resolve the PostgREST 404 `PGRST205` on `public.app_settings` and enable functional testing.
+2. Provide an isolated PostgreSQL/Supabase runtime (Docker Desktop or authorized test branch) to run authored pgTAP test suites 001–009 (93 assertions).
+3. Vercel Preview deployment of branch `feat/runtime-migration` for frontend-only smoke testing is SAFE and ready. Functional testing remains blocked until database migrations are applied.
+4. Keep every provider-dependent path NOT VERIFIED / INTEGRATION BLOCKED until the isolated database and browser lifecycle run.
+5. Do not link/deploy Vercel production, use the hosted database without approval, or send real emails.
 
 ## Maturity
 
-Current product maturity is `IN PROGRESS` (Level 2 — reproducible local execution, complete static contracts, zero Firebase dependencies in Admin/operational UI, full build passing, comprehensive behavioral mocked-handler tests passing, offline OCR and React Email implemented). Awaiting isolated Supabase database instance for Level 3 promotion; not defense-ready and not deployment-ready until PostgreSQL/Supabase behavior is live proven.
+Current product maturity is `IN PROGRESS` (Level 2 — reproducible local execution, complete static contracts, zero Firebase dependencies in Admin/operational UI, full build passing, comprehensive behavioral mocked-handler tests passing, offline OCR, React Email implemented, purge contract hardened, local dev API plugin implemented). Awaiting isolated Supabase database instance or migration approval on `egatepass-dev` for Level 3 promotion; not defense-ready and not deployment-ready until PostgreSQL/Supabase behavior is live proven.

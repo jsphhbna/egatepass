@@ -104,11 +104,17 @@ function failClosedRpcResponse(error: unknown): Response {
   if (code === 'P0002' || message.includes('pass_not_found') || message.includes('verification_not_found')) {
     return jsonResponse(404, { error: message.includes('verification') ? 'verification_not_found' : 'pass_not_found' });
   }
-  if (message.includes('recipient_challenge_limit_exceeded')) {
-    return jsonResponse(429, { error: 'recipient_challenge_limit_exceeded', message: 'Too many verification code requests for this email address. Please try again later.' });
+  if (message.includes('too_many_requests_recipient') || message.includes('recipient_challenge_limit_exceeded')) {
+    return jsonResponse(429, {
+      error: message.includes('recipient_challenge_limit_exceeded') ? 'recipient_challenge_limit_exceeded' : 'too_many_requests_recipient',
+      message: 'Too many verification code requests for this email address. Please try again later.',
+    });
   }
-  if (message.includes('actor_challenge_limit_exceeded')) {
-    return jsonResponse(429, { error: 'actor_challenge_limit_exceeded', message: 'Too many verification requests from this device or session. Please wait before retrying.' });
+  if (message.includes('too_many_requests_actor') || message.includes('actor_challenge_limit_exceeded')) {
+    return jsonResponse(429, {
+      error: message.includes('actor_challenge_limit_exceeded') ? 'actor_challenge_limit_exceeded' : 'too_many_requests_actor',
+      message: 'Too many verification requests from this device or session. Please wait before retrying.',
+    });
   }
   if (code === 'P0003' || message.includes('too_many_requests')) {
     return jsonResponse(429, { error: 'too_many_requests', message: 'Too many email requests for this pass. Please wait before trying again.' });

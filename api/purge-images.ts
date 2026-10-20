@@ -6,6 +6,27 @@ interface PurgeRequestBody {
   dryRun?: boolean;
 }
 
+interface ClaimResult {
+  claimed: boolean;
+  evidence_id?: string;
+  visitor_id?: string;
+  bucket_id?: string;
+  object_path?: string;
+  claim_id?: string;
+  claimed_at?: string;
+  reason?: string;
+}
+
+interface FinalizeResult {
+  success: boolean;
+  finalized: boolean;
+  match_status: 'matched' | 'terminal_conflict' | 'claim_mismatch' | 'not_claimed' | 'expired_claim' | 'not_found' | 'claim_released' | 'invalid_argument';
+  purged?: boolean;
+  purged_at?: string;
+  claim_released?: boolean;
+  reason?: string;
+}
+
 const BATCH_SIZE = 50;
 
 async function handleRequest(request: Request): Promise<Response> {
@@ -92,9 +113,11 @@ async function handleRequest(request: Request): Promise<Response> {
 
     if (body.dryRun) {
       const distinctVisitors = new Set(eligibleItems.map((item) => item.visitor_id));
+      const capped = (evidenceRows || []).length >= 200;
       return jsonResponse(200, {
         visitorsAffected: distinctVisitors.size,
         retentionDays,
+        hasMore: capped,
       });
     }
 
@@ -104,12 +127,12 @@ async function handleRequest(request: Request): Promise<Response> {
 
     for (const item of batch) {
       const claimId = crypto.randomUUID();
-      const { data: claimData, error: claimError } = await admin
+      const { data: claimData, error: claimError } = (await admin
         .schema('api')
         .rpc('claim_evidence_for_purge', {
           requested_evidence_id: item.id,
           requested_claim_id: claimId,
-        });
+        })) as { data: ClaimResult | null; error: any };
 
       if (claimError) {
         failedCount++;
@@ -124,23 +147,50 @@ async function handleRequest(request: Request): Promise<Response> {
         continue;
       }
 
-      if (!claimData || (claimData as any).claimed !== true) {
+      if (!claimData || claimData.claimed !== true) {
         // Evidence is either held by an incident hold, belongs to an active pass, or already purged/claimed
+        continue;
+      }
+
+      // Claim identity validation: ensure object deletion only follows the verified bucket and path returned by claim
+      const targetBucket = claimData.bucket_id;
+      const targetPath = claimData.object_path;
+      if (!targetBucket || !targetPath || targetBucket !== item.bucket_id || targetPath !== item.object_path) {
+        failedCount++;
+        await recordReconciliation(
+          admin,
+          'image_purge_claim_identity_mismatch',
+          'visitor_evidence',
+          item.id,
+          'claim_identity_mismatch',
+          {
+            expectedBucket: item.bucket_id,
+            expectedPath: item.object_path,
+            claimedBucket: targetBucket,
+            claimedPath: targetPath,
+          }
+        );
+        // Safely release the mismatched claim
+        await admin.schema('api').rpc('finalize_evidence_purge', {
+          requested_evidence_id: item.id,
+          requested_claim_id: claimId,
+          requested_success: false,
+        });
         continue;
       }
 
       let storageDeleted = false;
       try {
         const { error: storageError } = await admin.storage
-          .from(item.bucket_id)
-          .remove([item.object_path]);
+          .from(targetBucket)
+          .remove([targetPath]);
 
         if (storageError) {
           throw storageError;
         }
         storageDeleted = true;
       } catch (err: unknown) {
-        console.error(`Failed to delete storage asset ${item.bucket_id}/${item.object_path}:`, err);
+        console.error(`Failed to delete storage asset ${targetBucket}/${targetPath}:`, err);
         await recordReconciliation(
           admin,
           'image_purge_storage_failed',
@@ -148,35 +198,37 @@ async function handleRequest(request: Request): Promise<Response> {
           item.id,
           err instanceof Error ? err.message : 'storage_removal_failed',
           {
-            bucketId: item.bucket_id,
-            objectPath: item.object_path,
+            bucketId: targetBucket,
+            objectPath: targetPath,
           },
         );
       }
 
-      const { data: finalizeData, error: finalizeError } = await admin
+      const { data: finalizeData, error: finalizeError } = (await admin
         .schema('api')
         .rpc('finalize_evidence_purge', {
           requested_evidence_id: item.id,
           requested_claim_id: claimId,
           requested_success: storageDeleted,
-        });
+        })) as { data: FinalizeResult | null; error: any };
 
-      if (finalizeError || !finalizeData || (finalizeData as any).finalized !== true) {
+      if (finalizeError || !finalizeData || finalizeData.finalized !== true || (storageDeleted && finalizeData.match_status !== 'matched')) {
         failedCount++;
         await recordReconciliation(
           admin,
           'image_purge_finalize_rpc_failed',
           'visitor_evidence',
           item.id,
-          finalizeError?.message || 'finalize_purge_error',
+          finalizeError?.message || finalizeData?.reason || 'finalize_purge_error',
           {
-            bucketId: item.bucket_id,
-            objectPath: item.object_path,
+            claimId,
+            bucketId: targetBucket,
+            objectPath: targetPath,
             storageDeleted,
+            finalizeData,
           },
         );
-      } else if (storageDeleted) {
+      } else if (storageDeleted && finalizeData.purged === true) {
         successCount++;
       } else {
         failedCount++;

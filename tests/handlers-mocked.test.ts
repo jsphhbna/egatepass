@@ -57,6 +57,7 @@ describe('Behavioral Mocked-Handler Tests [PASS (MOCKED HANDLER)]', () => {
   let mockRpcFailures: Record<string, any>;
   let mockRpcOverrides: Record<string, any>;
   let mockTableFailures: Record<string, any>;
+  let mockStorageFailures: Record<string, any>;
   let storageRemovedPaths: string[] = [];
 
   function createMockSupabase() {
@@ -369,6 +370,20 @@ describe('Behavioral Mocked-Handler Tests [PASS (MOCKED HANDLER)]', () => {
             if (recent.length >= 3) {
               return { data: null, error: { code: 'P0003', message: 'too_many_requests' } };
             }
+            const recipientRecent = mockDbData.pass_email_verifications.filter(
+              (v) => v.recipient_email?.toLowerCase().trim() === args.requested_recipient_email?.toLowerCase().trim()
+            );
+            if (recipientRecent.length >= 5) {
+              return { data: null, error: { code: 'P0003', message: 'too_many_requests_recipient' } };
+            }
+            if (args.requested_actor_id) {
+              const actorRecent = mockDbData.pass_email_verifications.filter(
+                (v) => v.request_actor_id === args.requested_actor_id
+              );
+              if (actorRecent.length >= 10) {
+                return { data: null, error: { code: 'P0003', message: 'too_many_requests_actor' } };
+              }
+            }
             const row = {
               id: args.requested_verification_id,
               pass_id: args.requested_pass_id,
@@ -515,6 +530,15 @@ describe('Behavioral Mocked-Handler Tests [PASS (MOCKED HANDLER)]', () => {
             if (!ev || ev.purged_at) {
               return { data: { claimed: false, reason: 'not_found_or_purged' }, error: null };
             }
+            if (ev.expires_at && new Date(ev.expires_at).getTime() > Date.now()) {
+              return { data: { claimed: false, reason: 'not_expired' }, error: null };
+            }
+            if (ev.purge_claim_id && ev.purge_claim_id !== args.requested_claim_id && ev.purge_claimed_at) {
+              const claimedAt = new Date(ev.purge_claimed_at).getTime();
+              if (Date.now() - claimedAt < 5 * 60 * 1000) {
+                return { data: { claimed: false, reason: 'concurrent_purge_in_progress' }, error: null };
+              }
+            }
             const held = mockDbData.incident_holds.some(
               (h) => h.active && (h.visitor_id === ev.visitor_id || h.pass_id === ev.pass_id)
             );
@@ -523,24 +547,74 @@ describe('Behavioral Mocked-Handler Tests [PASS (MOCKED HANDLER)]', () => {
             }
             ev.purge_claim_id = args.requested_claim_id;
             ev.purge_claimed_at = new Date().toISOString();
-            return { data: { claimed: true, evidence_id: ev.id, claim_id: args.requested_claim_id }, error: null };
+            return {
+              data: {
+                claimed: true,
+                evidence_id: ev.id,
+                visitor_id: ev.visitor_id,
+                bucket_id: ev.bucket_id,
+                object_path: ev.object_path,
+                claim_id: args.requested_claim_id,
+                claimed_at: ev.purge_claimed_at,
+              },
+              error: null,
+            };
           }
           if (fn === 'finalize_evidence_purge') {
             const ev = mockDbData.visitor_evidence.find((e) => e.id === args.requested_evidence_id);
-            if (ev && args.requested_success) {
+            if (!ev) {
+              return { data: { success: false, finalized: false, match_status: 'not_found', reason: 'evidence_not_found' }, error: null };
+            }
+            if (ev.purged_at) {
+              return { data: { success: false, finalized: false, match_status: 'terminal_conflict', purged: true, reason: 'already_purged' }, error: null };
+            }
+            if (!ev.purge_claim_id) {
+              return { data: { success: false, finalized: false, match_status: 'not_claimed', reason: 'no_active_claim' }, error: null };
+            }
+            if (ev.purge_claim_id !== args.requested_claim_id) {
+              return { data: { success: false, finalized: false, match_status: 'claim_mismatch', reason: 'claim_id_mismatch' }, error: null };
+            }
+            if (ev.purge_claimed_at && (Date.now() - new Date(ev.purge_claimed_at).getTime() > 5 * 60 * 1000)) {
+              return { data: { success: false, finalized: false, match_status: 'expired_claim', reason: 'claim_lease_expired' }, error: null };
+            }
+            if (args.requested_success) {
               ev.purged_at = new Date().toISOString();
               ev.purge_claim_id = null;
-            } else if (ev) {
+              ev.purge_claimed_at = null;
+              return {
+                data: {
+                  success: true,
+                  finalized: true,
+                  match_status: 'matched',
+                  purged: true,
+                  purged_at: ev.purged_at,
+                },
+                error: null,
+              };
+            } else {
               ev.purge_claim_id = null;
+              ev.purge_claimed_at = null;
+              return {
+                data: {
+                  success: true,
+                  finalized: true,
+                  match_status: 'claim_released',
+                  purged: false,
+                  claim_released: true,
+                },
+                error: null,
+              };
             }
-            return { data: { finalized: true, success: args.requested_success }, error: null };
           }
           return { data: null, error: new Error(`Unknown RPC: ${fn}`) };
         },
       }),
       storage: {
-        from: (_bucket: string) => ({
+        from: (bucket: string) => ({
           remove: vi.fn(async (keys: string[]) => {
+            if (mockStorageFailures[bucket]) {
+              return { data: null, error: mockStorageFailures[bucket] };
+            }
             storageRemovedPaths.push(...keys);
             return { data: keys, error: null };
           }),
@@ -553,6 +627,7 @@ describe('Behavioral Mocked-Handler Tests [PASS (MOCKED HANDLER)]', () => {
     mockRpcFailures = {};
     mockRpcOverrides = {};
     mockTableFailures = {};
+    mockStorageFailures = {};
     storageRemovedPaths = [];
 
     mockDbData = {
@@ -1871,6 +1946,151 @@ describe('Behavioral Mocked-Handler Tests [PASS (MOCKED HANDLER)]', () => {
       expect(res.status).toBe(200);
       expect(json.successCount).toBe(0);
       expect(storageRemovedPaths).toHaveLength(0);
+    });
+
+    it('P0-A: skips storage deletion and records reconciliation when claimed bucket/path identity mismatches', async () => {
+      mockDbData.visitor_evidence = [
+        {
+          id: '00000000-0000-4000-a000-000000000999',
+          visitor_id: 'visitor-mismatch',
+          bucket_id: 'visitor-id-documents',
+          object_path: 'visitor-mismatch/id.webp',
+          purged_at: null,
+          expires_at: '2026-01-01T00:00:00Z',
+        },
+      ];
+
+      mockRpcOverrides['claim_evidence_for_purge'] = {
+        data: {
+          claimed: true,
+          evidence_id: '00000000-0000-4000-a000-000000000999',
+          visitor_id: 'visitor-mismatch',
+          bucket_id: 'wrong-bucket',
+          object_path: 'wrong-path/id.webp',
+          claim_id: '00000000-0000-4000-a000-000000000998',
+        },
+        error: null,
+      };
+
+      const req = new Request('http://localhost/api/purge-images', {
+        method: 'POST',
+        headers: { authorization: VALID_SUPERADMIN_BEARER, 'content-type': 'application/json' },
+        body: JSON.stringify({ dryRun: false }),
+      });
+
+      const res = await invokeHandler(purgeImagesHandler, req);
+      const json = await res.json();
+
+      expect(res.status).toBe(200);
+      expect(json.successCount).toBe(0);
+      expect(json.failedCount).toBe(1);
+      expect(storageRemovedPaths).toHaveLength(0);
+      expect(mockDbData.reconciliation_tasks.some((t: any) => t.operation === 'image_purge_claim_identity_mismatch')).toBe(true);
+    });
+
+    it('P0-A: records failedCount and reconciliation when finalize RPC returns claim_mismatch or errors', async () => {
+      mockDbData.visitor_evidence = [
+        {
+          id: '00000000-0000-4000-a000-000000000999',
+          visitor_id: 'visitor-finalize-fail',
+          bucket_id: 'visitor-id-documents',
+          object_path: 'visitor-finalize-fail/id.webp',
+          purged_at: null,
+          expires_at: '2026-01-01T00:00:00Z',
+        },
+      ];
+
+      mockRpcOverrides['finalize_evidence_purge'] = {
+        data: {
+          success: false,
+          finalized: false,
+          match_status: 'claim_mismatch',
+          reason: 'claim_id_mismatch',
+        },
+        error: null,
+      };
+
+      const req = new Request('http://localhost/api/purge-images', {
+        method: 'POST',
+        headers: { authorization: VALID_SUPERADMIN_BEARER, 'content-type': 'application/json' },
+        body: JSON.stringify({ dryRun: false }),
+      });
+
+      const res = await invokeHandler(purgeImagesHandler, req);
+      const json = await res.json();
+
+      expect(res.status).toBe(200);
+      expect(json.successCount).toBe(0);
+      expect(json.failedCount).toBe(1);
+      expect(mockDbData.reconciliation_tasks.some((t: any) => t.operation === 'image_purge_finalize_rpc_failed')).toBe(true);
+    });
+
+    it('P0-A: reconciles and increments failedCount when storage removal fails', async () => {
+      mockDbData.visitor_evidence = [
+        {
+          id: '00000000-0000-4000-a000-000000000999',
+          visitor_id: 'visitor-storage-fail',
+          bucket_id: 'visitor-id-documents',
+          object_path: 'visitor-storage-fail/id.webp',
+          purged_at: null,
+          expires_at: '2026-01-01T00:00:00Z',
+        },
+      ];
+
+      mockStorageFailures['visitor-id-documents'] = new Error('storage_connection_timeout');
+
+      const req = new Request('http://localhost/api/purge-images', {
+        method: 'POST',
+        headers: { authorization: VALID_SUPERADMIN_BEARER, 'content-type': 'application/json' },
+        body: JSON.stringify({ dryRun: false }),
+      });
+
+      const res = await invokeHandler(purgeImagesHandler, req);
+      const json = await res.json();
+
+      expect(res.status).toBe(200);
+      expect(json.successCount).toBe(0);
+      expect(json.failedCount).toBe(1);
+      expect(mockDbData.reconciliation_tasks.some((t: any) => t.operation === 'image_purge_storage_failed')).toBe(true);
+    });
+
+    it('P0-C: cross-pass recipient abuse limit blocks 6th challenge across distinct passes', async () => {
+      const recipient = 'shared-recipient@example.com';
+      // Pre-seed 5 challenges across different passes for this recipient
+      for (let i = 1; i <= 5; i++) {
+        mockDbData.pass_email_verifications.push({
+          id: `00000000-0000-4000-a000-00000000100${i}`,
+          pass_id: `00000000-0000-4000-a000-00000000200${i}`,
+          recipient_email: recipient,
+          code_hash: 'abcdef',
+          attempts: 0,
+          verified: false,
+          request_id: randomUUID(),
+          request_actor_id: VISITOR_OWNER_ID,
+          code_delivery_status: 'sent_to_provider',
+          delivery_status: 'pending',
+          created_at: new Date().toISOString(),
+        });
+      }
+
+      const req = new Request('http://localhost/api/passes/email', {
+        method: 'POST',
+        headers: { authorization: VALID_VISITOR_BEARER, 'content-type': 'application/json' },
+        body: JSON.stringify({
+          action: 'request_code',
+          passId: TEST_PUBLIC_REF,
+          qrToken: TEST_RAW_TOKEN,
+          recipientEmail: recipient,
+          consent: true,
+          requestId: randomUUID(),
+        }),
+      });
+
+      const res = await invokeHandler(emailPassHandler, req);
+      const json = await res.json();
+
+      expect(res.status).toBe(429);
+      expect(json.error).toBe('too_many_requests_recipient');
     });
   });
 

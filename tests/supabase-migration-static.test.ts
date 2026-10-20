@@ -120,7 +120,43 @@ describe('Supabase migration static safety contract', () => {
     }
 
     expect(pgtap).toContain('conflicting terminal status returns terminal_conflict');
-    expect(pgtap).toContain('retired kiosk device cannot request verification code');
+    expect(pgtap).toContain('revoked kiosk device cannot request verification code');
+    expect(pgtap).toContain('AUTHORED / NOT RUN');
+
+    // P0-B: Verify 008 test strictly uses canonical public.devices schema columns and valid enums
+    expect(pgtap).not.toContain('device_alias');
+    expect(pgtap).not.toContain('device_type');
+    expect(pgtap).not.toContain('registered_at');
+    expect(pgtap).not.toContain('retired_at');
+    expect(pgtap).not.toMatch(/status\s*=\s*'retired'/i);
+    expect(pgtap).toContain('user_id, alias, name, type, gate, status');
+    expect(pgtap).toContain("created_by_device_id");
+  });
+
+  it('applies additive concurrency hardening and purge claim contracts in 01200 & pgTAP 009', () => {
+    const migration = readFileSync('supabase/migrations/20261020001200_concurrency_and_purge_contract_hardening.sql', 'utf8');
+    const pgtap = readFileSync('supabase/tests/009_cross_pass_abuse_concurrency.test.sql', 'utf8');
+    const rpcs = [
+      'api.claim_evidence_for_purge',
+      'api.finalize_evidence_purge',
+      'api.request_email_verification_code',
+    ];
+
+    expect(migration).toContain("set search_path = ''");
+    expect(migration).toContain('pg_advisory_xact_lock');
+    expect(migration).toContain('claim_mismatch');
+    expect(migration).toContain('expired_claim');
+    expect(migration).toContain('terminal_conflict');
+    expect(migration).toContain('match_status');
+
+    for (const fn of rpcs) {
+      expect(migration).toMatch(new RegExp(`revoke all on function ${fn.replace('.', '\\.')}[^;]+from public, anon, authenticated;`, 'i'));
+      expect(migration).toMatch(new RegExp(`grant execute on function ${fn.replace('.', '\\.')}[^;]+to service_role;`, 'i'));
+    }
+
+    expect(pgtap).toContain('cross-pass 6th challenge is rejected by recipient rate limit');
+    expect(pgtap).toContain('worker 2 cannot finalize worker 1 claim');
+    expect(pgtap).toContain('worker 1 finalizes evidence with matching claim ID');
     expect(pgtap).toContain('AUTHORED / NOT RUN');
   });
 });

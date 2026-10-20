@@ -214,3 +214,35 @@
   6. DB-Coordinated Purge Protocol (PRIVACY-M03): `claim_evidence_for_purge` atomically locks and claims candidate evidence records excluding active incident holds before physical deletion in Supabase Storage.
   7. Staff Keyset Pagination (ADMIN-M04): keyset/cursor pagination on `staff_profiles` with bounded Auth user enrichment, eliminating silent 200 truncation while avoiding N+1 full scans.
   8. SPA Rewrite Precedence (DEPLOY-M05): `vercel.json` SPA rewrite configured with negative lookahead `/((?!api/).*)` -> `/index.html` ensuring API function routes are never masked by client SPA HTML.
+
+## ADR-0026 — Root-Cause Purge Hardening, Advisory Abuse Throttling, and Dev API Architecture (P0-A, P0-B, P0-C, P0-D, P1-E)
+
+- Date: 2026-10-20
+- Status: accepted for implementation; live hosted Supabase migrations BLOCKED pending owner approval
+- Decision:
+  1. **Purge Claim-ID Authorization & Contract Hardening (P0-A)**:
+     - Additive migration `20261020001200_concurrency_and_purge_contract_hardening.sql` updates `api.claim_evidence_for_purge` and `api.finalize_evidence_purge`.
+     - Finalization enforces exact row-level matching under `FOR UPDATE`: `ve.id = target_evidence_id AND ve.purge_claim_id = requested_claim_id`.
+     - If the claim is null, stale (> 5 minutes old), expired, or owned by another worker, the RPC fails closed and returns `{ finalized: false, match_status: 'claim_mismatch' }`.
+     - Standardized typed JSON response: `{ finalized: true, match_status: 'matched', purged: true, evidence_id: ... }`.
+     - `api/purge-images.ts` strictly validates this contract, requires exact storage bucket and object path match against the authoritative claim, and reconciles failures.
+  2. **Canonical PostgreSQL pgTAP Fixtures (P0-B)**:
+     - Corrected `supabase/tests/008_email_security_and_abuse_controls.test.sql` to canonical `public.devices` schema (`user_id, alias, name, type, gate, status`) and `public.visitors` (`created_by_device_id`).
+     - Added static regression assertions in `tests/supabase-migration-static.test.ts` to prevent obsolete/fabricated column references (`device_alias`, `registered_at`, `retired_at`, `status = 'retired'`).
+     - Total authored assertions: 93 across 9 test suites, marked `AUTHORED / NOT RUN` until isolated PostgreSQL instance is available.
+  3. **Transactional Advisory Locking for Cross-Pass Abuse Throttling (P0-C)**:
+     - Migration 001200 introduces deterministic transaction-scoped PostgreSQL advisory locks (`pg_advisory_xact_lock`) in `api.request_email_verification_code`.
+     - Strict lock hierarchy: Level 1 locks actor ID (`('x' || substr(md5('actor:' || request_actor_id), 1, 16))::bit(64)::bigint`); Level 2 locks recipient email (`('x' || substr(md5('recipient:' || recipient_email), 1, 16))::bit(64)::bigint`).
+     - This serializes concurrent requests across distinct passes without deadlocks or race conditions on the shared challenge counter.
+     - Preserves agreed limits: max 3/pass/15m, 5/recipient/15m, 10/portal-actor/15m.
+     - In `api/passes/email.ts`, prioritized specific recipient and actor error codes before generic limit strings.
+  4. **Vite Dev API Handler Plugin & PostgREST 404 Diagnosis (P0-D)**:
+     - Identified root cause of the localhost:5173 Supabase 404: `GET https://nhoawvkfqblsgutdffie.supabase.co/rest/v1/app_settings` returns PostgREST HTTP 404 `PGRST205` ("Could not find the table 'public.app_settings' in the schema cache") because the hosted `egatepass-dev` project has not yet had migrations 000100–001200 applied.
+     - Added graceful fallback defaults and diagnostic warning logs in `src/services/visitorRegistration.ts`.
+     - Replaced outdated Netlify port 8888 proxy in `vite.config.ts` with `vercelApiDevPlugin` which natively routes `/api/*` to the current Vercel web handlers in `api/` during local Vite dev, returning proper JSON responses (401/405/404) with zero external daemon dependencies.
+  5. **Vercel Preview Deployment Preflight (P1-E)**:
+     - Authored `docs/VERCEL_PREVIEW_PREFLIGHT.md`.
+     - Probed 10 critical endpoints locally (10/10 PASS).
+     - Verified offline self-hosted OCR assets in `public/tesseract/`.
+     - Verified zero leakage of server secrets (`SUPABASE_SECRET_KEY`, `PASS_TOKEN_SECRET`, `RESEND_API_KEY`) into the frontend bundle.
+     - Formulated unambiguous three-level deployment verdict: (a) Safe for frontend-only Vercel Preview, (b) Blocked for functional preview until owner-approved migrations on `egatepass-dev`, (c) Production blocked.

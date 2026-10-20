@@ -43,4 +43,43 @@ describe('target repository and Vercel routing contract', () => {
     expect(pattern.test('/api/admin/users')).toBe(false);
     expect(pattern.test('/api/unknown')).toBe(false);
   });
+
+  it('routes local dev /api directly to Vercel-style handlers without legacy Netlify proxy', () => {
+    const viteConfig = readFileSync('vite.config.ts', 'utf8');
+    expect(viteConfig).not.toContain('localhost:8888/.netlify/functions');
+    expect(viteConfig).toContain('vercelApiDevPlugin');
+    expect(viteConfig).toContain("req.url?.startsWith('/api/')");
+  });
+
+  it('strictly isolates server secrets from client frontend bundles', () => {
+    // Ensure no client source imports server-only Supabase clients or secret variables
+    const clientEntry = readFileSync('src/main.tsx', 'utf8');
+    const clientApp = readFileSync('src/App.tsx', 'utf8');
+    const clientSupabase = readFileSync('src/lib/supabase.ts', 'utf8');
+
+    for (const content of [clientEntry, clientApp, clientSupabase]) {
+      expect(content).not.toContain('SUPABASE_SECRET_KEY');
+      expect(content).not.toContain('PASS_TOKEN_SECRET');
+      expect(content).not.toContain('RESEND_API_KEY');
+      expect(content).not.toContain('getServerSupabaseClients');
+    }
+  });
+
+  it('provides all required self-hosted OCR static assets in public/tesseract', () => {
+    const requiredAssets = [
+      'public/tesseract/worker.min.js',
+      'public/tesseract/tesseract-core.wasm',
+      'public/tesseract/tesseract-core.wasm.js',
+      'public/tesseract/tesseract-core-simd-lstm.wasm',
+      'public/tesseract/tesseract-core-simd-lstm.wasm.js',
+      'public/tesseract/tesseract-core-lstm.wasm',
+      'public/tesseract/tesseract-core-lstm.wasm.js',
+      'public/tesseract/eng.traineddata.gz',
+    ];
+
+    for (const asset of requiredAssets) {
+      const content = readFileSync(asset);
+      expect(content.length).toBeGreaterThan(1000);
+    }
+  });
 });
