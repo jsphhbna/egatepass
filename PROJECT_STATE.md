@@ -10,6 +10,7 @@ Current stage: S2 — IMPLEMENTED — NOT VERIFIED; integration promotion BLOCKE
 - Branch: `main`
 - S0 checkpoint HEAD: `2e3b342ad313e926a19be7eecd995aa2a862f3f7`
 - S1 checkpoint commit: `babb8c5` (`docs: establish S1 target architecture`)
+- S2 implementation commit: `80d861b8186418837ed0b862288da4e4b53e4637` (`feat: implement Supabase security core`)
 - `origin/main`: `f2f1a2b58ef19808c1be83865ee8537073b0dada`; local commits have not been pushed
 - Target origin: `https://github.com/jsphhbna/egatepass.git`
 - Read-only reference main: `6906b91f9a1c4910f6bdfa14ee62aa3e3d46da7c`
@@ -46,6 +47,7 @@ Current stage: S2 — IMPLEMENTED — NOT VERIFIED; integration promotion BLOCKE
 - `npm run typecheck:functions`: PASS for unchanged legacy functions.
 - `npm run test:e2e:legacy`: PASS; Playwright last-run status passed with zero failed tests. The known emulator orphan was identity-checked, stopped, and ports were verified clear.
 - `npm test`: PASS after adding an explicit Vitest/Playwright discovery boundary; the initial runner-overlap failure is preserved in EV-S2-008.
+- Exact S2 implementation commit rerun: architecture 3/3, Supabase static 5/5, build PASS, legacy function typecheck PASS.
 - Owner visual/manual QA remains AWAITING OWNER.
 
 ## Immediate blockers and next safe work

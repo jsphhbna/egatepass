@@ -4,6 +4,8 @@ S0 baseline revision: `f2f1a2b58ef19808c1be83865ee8537073b0dada`
 
 S1 checkpoint: `babb8c5f5cd5c77f4bafe3a535fd03e54b05e2a4`
 
+S2 implementation checkpoint: `80d861b8186418837ed0b862288da4e4b53e4637`
+
 Date/time zone: 2026-10-20, Asia/Manila
 
 | ID | Class | Command / artifact | Result | Scope and limitation |
@@ -60,3 +62,5 @@ User manual S1 screen comparison remains AWAITING OWNER. Supabase clean migratio
 | EV-S2-008 | TEST HARNESS NEGATIVE / REGRESSION | `npm test` before and after `vitest.config.ts` | Initial FAIL: Playwright spec collected by Vitest; exact rerun PASS, exit 0 | First rerun was blocked by the known orphaned Firestore process; PID/command was verified, stopped, and final ports were clear |
 
 No remote database, Vercel project, Resend API, DNS, or backup infrastructure was accessed or mutated.
+
+Exact-commit verification at `80d861b`: `npm run test:architecture` PASS 3/3; `npm run test:supabase:static` PASS 5/5; `npm run build` PASS; `npm run typecheck:functions` PASS. The only working-tree change during those commands was the preserved, pre-existing `.env.example` edit.
