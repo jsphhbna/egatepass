@@ -19,12 +19,12 @@ Current stage: S0 — PARTIAL
 
 | Capability | Implementation | Verification |
 |---|---|---|
-| Original React/Vite UI | Present | Build PASS; public landing/login screenshots PASS; authenticated screens BLOCKED |
+| Original React/Vite UI | Present | Build PASS; public and isolated authenticated role-route browser captures PASS; phone overflow finding remains |
 | Firebase/Firestore/Netlify/Cloudinary backend | Present (legacy target baseline) | 238 emulator/unit tests PASS; production behavior NOT TESTED |
 | Supabase target | Environment names present only | BLOCKED: both configured URL variables are malformed; CLI/Docker absent; project identity unverified |
 | Vercel target | Not linked locally | BLOCKED: no `.vercel/project.json` and no Vercel CLI |
 | Resend target | Environment names present | NOT TESTED; no real email sent |
-| Browser E2E | No project harness | Public static screenshots PARTIAL; interactive/authenticated E2E NOT TESTED |
+| Browser E2E | Playwright 1.64.1 harness added for legacy baseline | 9 isolated Edge tests PASS for public-nav exposure, all six actor redirects, wrong-role denial, and Admin tabs |
 | Owner manual QA | Runbook initialized | AWAITING OWNER |
 
 ## Baseline toolchain
@@ -41,8 +41,7 @@ Current stage: S0 — PARTIAL
 
 1. Correct the two local Supabase URL values to valid `https://...` URLs through the private `.env.local` file. Do not paste values into Markdown or chat.
 2. Choose an isolated executable Postgres/Supabase test route for S2: install/start Docker Desktop, or explicitly authorize use of a separate non-production hosted test project after its identity is confirmed.
-3. Provide or locally provision synthetic legacy emulator accounts if authenticated original-screen screenshots are required. Never use live visitor/staff credentials.
-4. S1 architecture/docs/test-harness work can continue locally without crossing those blockers.
+3. S1 architecture/docs/test-harness work can continue locally without crossing those blockers.
 
 ## Maturity
 

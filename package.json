@@ -11,6 +11,7 @@
     "netlify:dev": "netlify dev",
     "emulators": "npx firebase-tools@13.10.0 emulators:start --only auth,firestore",
     "test": "npx firebase-tools@13.10.0 emulators:exec \"vitest run\"",
+    "test:e2e:legacy": "npx firebase-tools@13.10.0 emulators:exec --only auth,firestore \"playwright test tests/e2e/legacy-baseline.spec.ts\"",
     "typecheck:functions": "tsc --noEmit --project netlify/tsconfig.json"
   },
   "repository": {
@@ -42,6 +43,7 @@
   "devDependencies": {
     "@firebase/rules-unit-testing": "^5.0.2",
     "@netlify/functions": "^6.0.1",
+    "@playwright/test": "^1.64.1",
     "@tailwindcss/vite": "^4.3.3",
     "@types/qrcode": "^1.5.6",
     "@types/react": "^19.3.0",

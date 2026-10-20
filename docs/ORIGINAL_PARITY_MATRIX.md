@@ -10,11 +10,11 @@ Source baseline: `f2f1a2b58ef19808c1be83865ee8537073b0dada`. The target and uppe
 | `/get-pass` | Anonymous visitor | Details → face photo → ID unless Peak Mode → review → server pass issue → QR download/share | STATIC | Anonymous remains first-class; private evidence; optional local OCR; no pass after upload failure |
 | `/login` | Staff/device | One email/device identifier and password form; show/hide; human forgot-password; role redirect | Desktop capture + STATIC | One shared Supabase Auth journey; server-resolved role/device; no public nav link |
 | `/forgot-password` | Human staff | Enumeration-resistant reset request and login return | STATIC | Verified callback/reset flow; device aliases do not use human reset |
-| `/kiosk` | Active kiosk only | Portrait form/photo/ID/review; QR print; “Next visitor” clears fields while device stays signed in | STATIC/BLOCKED screenshot | Same workflow; optional OCR question; strict session/data separation |
-| `/scan/entry` | Active entry device only | Full-screen dark scanner; assigned gate; valid issue → pending, never automatic approval | STATIC/BLOCKED screenshot | Server derives active device/gate/type; duplicate/early/expired/wrong gate denied atomically |
-| `/scan/exit` | Active exit device only | Full-screen scanner; inside → exited | STATIC/BLOCKED screenshot | Same with atomic single transition and immutable visit event |
-| `/guard` | Guard/Admin/Super Admin | Live pending queue, age, search, photo/ID review, approve/reject reason, daily counts, password/account controls | STATIC/BLOCKED screenshot | Scoped evidence access, realtime/poll fallback, server-only decision transaction |
-| `/admin` | Admin/Super Admin | Dashboard metrics/activity and navigation | STATIC/BLOCKED screenshot | Preserve layout and truthful live metrics |
+| `/kiosk` | Active kiosk only | Portrait form/photo/ID/review; QR print; “Next visitor” clears fields while device stays signed in | Browser route/render PASS; workflow STATIC | Same workflow; optional OCR question; strict session/data separation |
+| `/scan/entry` | Active entry device only | Full-screen dark scanner; assigned gate; valid issue → pending, never automatic approval | Browser route/render PASS; scan workflow NOT TESTED | Server derives active device/gate/type; duplicate/early/expired/wrong gate denied atomically |
+| `/scan/exit` | Active exit device only | Full-screen scanner; inside → exited | Browser route/render PASS; scan workflow NOT TESTED | Same with atomic single transition and immutable visit event |
+| `/guard` | Guard/Admin/Super Admin | Live pending queue, age, search, photo/ID review, approve/reject reason, daily counts, password/account controls | Browser route/render PASS; decision workflow STATIC | Scoped evidence access, realtime/poll fallback, server-only decision transaction |
+| `/admin` | Admin/Super Admin | Dashboard metrics/activity and navigation | Browser route/render PASS with empty synthetic data | Preserve layout and truthful live metrics |
 | `/admin/visitors` | Admin/Super Admin | Status/date filters, pagination, details, complete CSV and print | STATIC | Query all selected records, never claim loaded page is complete |
 | `/admin/devices` | Admin/Super Admin with action differences | Create, activate/revoke, credential changes, delete with confirmation | STATIC | Real Auth identities and DB links; stricter Super Admin rotation/delete controls |
 | `/admin/users` | Admin/Super Admin with role matrix | Create staff, verification email, activate/deactivate, role change restrictions | STATIC | Real Supabase invitation identity; Admin cannot create/promote privileged roles; last-SA invariant |
@@ -45,4 +45,4 @@ Face photo and valid ID are current Cloudinary authenticated assets referenced b
 - EARIST seal: `public/earist-logo.png`.
 - Colors: maroon `#7A0A0A`, action red `#E60000`, gold `#F2C94C`, white, canvas `#F7F8FA`, text `#172033`.
 - Keep original landing copy structure in `src/content/landing.ts`, conventional Admin shell, portrait Kiosk, and dark scanner treatment.
-- S0 screenshots are the initial public reference. Authenticated screen evidence is BLOCKED pending isolated accounts; source inspection must not be mislabeled as visual PASS.
+- S0 screenshots are the initial public and synthetic authenticated reference. They prove route rendering against local emulators, not complete interactions, camera behavior, backend transitions, or production configuration.

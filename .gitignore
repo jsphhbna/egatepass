@@ -34,6 +34,10 @@ Thumbs.db
 *.log
 npm-debug.log*
 
+# Browser test output
+playwright-report/
+test-results/
+
 # AI skills and rules
 .agents/
 GEMINI.md
