@@ -12,19 +12,20 @@
     "emulators": "npx firebase-tools@13.10.0 emulators:start --only auth,firestore",
     "test": "npx firebase-tools@13.10.0 emulators:exec \"vitest run\"",
     "test:e2e:legacy": "npx firebase-tools@13.10.0 emulators:exec --only auth,firestore \"playwright test tests/e2e/legacy-baseline.spec.ts\"",
-    "typecheck:functions": "tsc --noEmit --project netlify/tsconfig.json"
+    "typecheck:functions": "tsc --noEmit --project netlify/tsconfig.json",
+    "test:architecture": "vitest run tests/architecture-contract.test.ts"
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/jsphhbna/E-GATEPASS.git"
+    "url": "git+https://github.com/jsphhbna/egatepass.git"
   },
   "keywords": [],
   "author": "",
   "license": "ISC",
   "bugs": {
-    "url": "https://github.com/jsphhbna/E-GATEPASS/issues"
+    "url": "https://github.com/jsphhbna/egatepass/issues"
   },
-  "homepage": "https://github.com/jsphhbna/E-GATEPASS#readme",
+  "homepage": "https://github.com/jsphhbna/egatepass#readme",
   "dependencies": {
     "@hookform/resolvers": "^5.9.1",
     "@radix-ui/react-dialog": "^1.1.23",

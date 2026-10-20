@@ -37,3 +37,24 @@
 - Supabase local-test execution route (Docker Desktop versus owner-approved isolated hosted test project).
 - Vercel Functions versus narrowly granted Supabase Edge/RPC placement per endpoint; decide in S1 from trust/race/operational needs.
 - Optional registered visitor accounts remain pending until anonymous ownership and RLS tests pass; guest registration stays first-class.
+
+## ADR-0006 — Staged runtime replacement
+
+- Date: 2026-10-20
+- Status: accepted
+- Decision: preserve the current source layout and legacy adapters until replacement vertical slices pass their gates. Add `api/`, `supabase/`, and email modules alongside them; remove Firebase/Netlify/Cloudinary files only after executable parity and rollback evidence.
+- Consequence: S1 is deliberately a no-runtime-switch change.
+
+## ADR-0007 — Vercel Vite routing and region
+
+- Date: 2026-10-20
+- Status: accepted, deployment unverified
+- Decision: use the official Vite SPA catch-all in `vercel.json` and Vercel filesystem precedence for future `/api/*` function files. Select `syd1` near the declared Sydney Supabase region.
+- Authority: Vercel Vite and project-configuration documentation reviewed 2026-10-20. Local contract/build tests are project evidence; deployed routing is not.
+
+## ADR-0008 — Database-owned authorization
+
+- Date: 2026-10-20
+- Status: accepted for S2 implementation
+- Decision: roles and device attributes come from protected database rows keyed by `auth.uid()`, not user-editable JWT metadata. RLS and explicit grants default-deny direct access; `SECURITY DEFINER` helpers live outside exposed schemas, use an empty `search_path`, schema-qualified names, caller/resource checks, and narrow execute grants.
+- Consequence: S2 cannot be promoted from SQL review alone; real low-privilege positive/negative tests are mandatory.

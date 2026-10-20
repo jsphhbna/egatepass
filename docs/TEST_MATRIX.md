@@ -1,0 +1,23 @@
+# Modernization Test Matrix
+
+Status values: PASS, FAIL, BLOCKED, NOT TESTED, AWAITING OWNER. A lower-level PASS does not promote a higher-level gate.
+
+| Boundary | Required evidence | Stage | Current status |
+|---|---|---|---|
+| Original routes/UI | Build plus browser routes and screenshots | S0/S1 | PASS locally; owner visual QA AWAITING OWNER |
+| Repository metadata/Vercel SPA config | Contract test, JSON inspection, build | S1 | PASS locally; deployed routing NOT TESTED |
+| Migration chain | `supabase db reset` on clean disposable instance | S2 | BLOCKED: isolated Supabase/Postgres unavailable |
+| RLS/grants/RPC denial matrix | Real Auth sessions and low-privilege Data API/SQL tests | S2 | BLOCKED: isolated Supabase unavailable |
+| Private Storage | Real synthetic upload/read/list/delete tests | S2/S4 | BLOCKED: isolated Supabase unavailable |
+| Shared staff/device login | Real Supabase Auth browser/API tests for all roles/states | S3 | NOT TESTED |
+| Portal/Kiosk evidence | Browser + real Storage + DB confirmation | S4 | NOT TESTED |
+| Pass lifecycle/races | Real DB/browser issue-entry-decision-exit plus concurrent negatives | S5 | NOT TESTED |
+| Admin operations | Browser actions plus canonical DB/audit checks | S6 | NOT TESTED |
+| Resend/Auth mail | Real approved test inbox and callback | S7 | NOT TESTED |
+| Retention/holds | Clock-safe DB plus physical Storage deletion | S7 | NOT TESTED |
+| Accessibility/responsive | Automated checks plus owner keyboard/device walkthrough | S8 | NOT TESTED |
+| Preview/deployment | Exact commit preview smoke and rollback rehearsal | S9 | BLOCKED pending authorization |
+
+## S2 actor matrix
+
+Each row requires a real Auth session and both positive and negative cases: anonymous guest, registered visitor, Guard, Admin, Super Admin, kiosk, entry scanner, exit scanner, suspended staff, and revoked device. Cross-owner reads/writes, direct REST bypass, forged role/source/gate, audit/event writes, last-Super-Admin changes, wrong scanner type/gate, and arbitrary Storage operations must be denied at the trusted boundary.
