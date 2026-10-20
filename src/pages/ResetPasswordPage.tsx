@@ -5,51 +5,13 @@ import { BrandMark } from '@/components/BrandMark';
 import { Button, Card, FormField, Input, LoadingState } from '@/components/ui';
 import { getPasswordPolicyError, PASSWORD_MIN_LENGTH, PASSWORD_POLICY_HELPER_TEXT } from '@/lib/passwordPolicy';
 import { supabase } from '@/lib/supabase';
-
-const RECOVERY_STORAGE_KEY = 'egatepass_recovery_auth_v1';
-const RECOVERY_WINDOW_MS = 15 * 60 * 1000; // 15 minutes max validity
-
-interface StoredRecoveryAuth {
-  userId: string;
-  timestamp: number;
-}
-
-function getValidRecoveryAuth(currentUserId?: string): boolean {
-  try {
-    const raw = sessionStorage.getItem(RECOVERY_STORAGE_KEY);
-    if (!raw) return false;
-    const parsed: StoredRecoveryAuth = JSON.parse(raw);
-    if (!parsed || !parsed.userId || !parsed.timestamp) return false;
-    if (Date.now() - parsed.timestamp > RECOVERY_WINDOW_MS) {
-      sessionStorage.removeItem(RECOVERY_STORAGE_KEY);
-      return false;
-    }
-    if (currentUserId && parsed.userId !== currentUserId) {
-      return false;
-    }
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-function setRecoveryAuth(userId: string) {
-  try {
-    const payload: StoredRecoveryAuth = { userId, timestamp: Date.now() };
-    sessionStorage.setItem(RECOVERY_STORAGE_KEY, JSON.stringify(payload));
-  } catch {}
-}
-
-function clearRecoveryAuth() {
-  try {
-    sessionStorage.removeItem(RECOVERY_STORAGE_KEY);
-  } catch {}
-}
+import { resetPasswordWithRecoverySession } from '@/services/auth';
 
 export function ResetPasswordPage() {
   const navigate = useNavigate();
   const [checking, setChecking] = useState(true);
   const [hasRecoverySession, setHasRecoverySession] = useState(false);
+  const [recoveryToken, setRecoveryToken] = useState<string | null>(null);
   const [newPassword, setNewPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
   const [loading, setLoading] = useState(false);
@@ -66,49 +28,54 @@ export function ResetPasswordPage() {
     const isErrorUrl = hash.includes('error=') || search.includes('error=');
 
     if (isErrorUrl) {
-      clearRecoveryAuth();
       setHasRecoverySession(false);
+      setRecoveryToken(null);
       setChecking(false);
       return;
     }
 
     // Subscribe to auth state changes FIRST.
-    // Only a genuine PASSWORD_RECOVERY event from Supabase grants recovery authority.
-    // Mere URL parameters (e.g. ?type=recovery) or ordinary authenticated sessions
-    // (Admin, Guard, Device, Portal) must NEVER be granted recovery authority.
+    // In Supabase Auth, clicking a genuine recovery link triggers onAuthStateChange with event === 'PASSWORD_RECOVERY'.
+    // Browser storage (localStorage/sessionStorage) is NEVER used for recovery authority.
+    // Mere URL query parameters (?type=recovery) or ordinary active staff/device/visitor sessions
+    // MUST NEVER grant password reset authority.
     const { data } = supabase.auth.onAuthStateChange((event, session) => {
       if (!active) return;
-      if (event === 'PASSWORD_RECOVERY' && session?.user) {
-        setRecoveryAuth(session.user.id);
+      if (event === 'PASSWORD_RECOVERY' && session?.user && session?.access_token) {
+        // Governance: Device and guest accounts cannot reset passwords via recovery
+        const email = session.user.email ?? '';
+        const isDevice = email.toLowerCase().endsWith('@devices.egatepass.invalid');
+        const isGuest = session.user.is_anonymous === true;
+
+        if (isDevice || isGuest) {
+          setHasRecoverySession(false);
+          setRecoveryToken(null);
+          setChecking(false);
+          toast.error('Device and guest accounts cannot reset passwords.');
+          return;
+        }
+
+        setRecoveryToken(session.access_token);
         setHasRecoverySession(true);
         setChecking(false);
       } else if (event === 'SIGNED_OUT') {
-        clearRecoveryAuth();
         setHasRecoverySession(false);
+        setRecoveryToken(null);
         setChecking(false);
       }
     });
 
-    // Check if we have an active, unexpired recovery authorization for this session
-    // to support legitimate page reloads during the recovery window.
-    void supabase.auth.getSession().then(({ data: sessionData }) => {
-      if (!active) return;
-      const user = sessionData.session?.user;
-      if (user && getValidRecoveryAuth(user.id)) {
-        setHasRecoverySession(true);
+    // Allow a brief window for onAuthStateChange to fire if PKCE exchange is in flight.
+    // If no genuine recovery event was received, do NOT authorize based on existing session.
+    const timer = setTimeout(() => {
+      if (active) {
         setChecking(false);
-      } else {
-        // Allow a brief window for onAuthStateChange to fire if PKCE exchange is in flight
-        setTimeout(() => {
-          if (active) {
-            setChecking(false);
-          }
-        }, 350);
       }
-    });
+    }, 400);
 
     return () => {
       active = false;
+      clearTimeout(timer);
       data.subscription.unsubscribe();
     };
   }, []);
@@ -118,18 +85,19 @@ export function ResetPasswordPage() {
     const policyError = getPasswordPolicyError(newPassword);
     if (policyError) return toast.error(policyError);
     if (newPassword !== confirmPassword) return toast.error('Passwords do not match.');
-    if (!supabase || !hasRecoverySession) return toast.error('This reset link is invalid or has expired.');
+    if (!supabase || !hasRecoverySession || !recoveryToken) {
+      return toast.error('This reset link is invalid or has expired.');
+    }
 
     setLoading(true);
     try {
-      const { error } = await supabase.auth.updateUser({ password: newPassword });
-      if (error) throw error;
-      clearRecoveryAuth();
+      await resetPasswordWithRecoverySession(recoveryToken, newPassword);
       await supabase.auth.signOut();
       toast.success('Password updated. Sign in with your new password.');
       navigate('/login', { replace: true });
-    } catch {
-      toast.error('Password could not be updated. Request a new reset link and try again.');
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : 'Password could not be updated. Request a new reset link and try again.';
+      toast.error(message);
     } finally {
       setLoading(false);
     }

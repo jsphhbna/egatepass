@@ -504,9 +504,38 @@ Local promotion evidence: pre-fix regression run 7/7 FAILED as expected; correct
 
 ---
 
-### Full Regression Suite Status
-- **Vitest Suite**: 20 test files, 260 tests passed (0 failures).
+### FINAL CONFIRMED DEFECT REPAIR PASS (Groups A through N)
+- **STATUS**: ALL REPAIRS COMPLETED & TESTED
+- **Group A (Password Recovery Authorization & Device Credential Governance)**:
+  - Root cause: Browser `sessionStorage` pseudo-token (`egatepass_recovery_auth_v1`) was forgeable by client. Device accounts were not restricted from calling `auth.updateUser()`.
+  - Fix: Removed all browser storage reliance. Built `/api/auth/reset-password` checking Supabase JWT `amr: [{ method: 'recovery' }]`. Added DB trigger `protect_managed_credentials` on `auth.users` in migration 001400.
+  - Tests: 10/10 test matrix in `tests/password-recovery.test.ts` PASS.
+- **Group B & C (Supabase Send Email Hook Payload Contract & Fake Action Removal)**:
+  - Root cause: New email was modeled on `email_data.new_email` instead of `user.new_email`. Legacy fake actions `email_change_current`/`email_change_new` contaminated production code.
+  - Fix: Updated `SupabaseAuthEmailPayload` to `user.new_email`. Mapped `token_hash_new` to `user.email` and `token_hash` to `user.new_email` for `email_change`. Added security notification actions without 500 error.
+  - Tests: 19/19 tests in `tests/auth-email-hook.test.ts` PASS.
+- **Groups D, E, F, G, L (Retention Maintenance Fail-Closed & Truthful Outcomes)**:
+  - Root cause: `app_settings` query error failed open with fallback true; protection checks for holds/passes ignored `.error`; cursor upsert ignored errors; outcome success was computed before audit insert.
+  - Fix: `app_settings` failure returns 500, zero mutations, logs reconciliation. Hold/pass query errors treat records as protected by uncertainty. Cursor upsert errors degrade outcome and record reconciliation. Final status computed strictly after audit insert; `success === true` implies `metrics.errors.length === 0`.
+  - Tests: Full suite in `tests/handlers-mocked.test.ts` PASS.
+- **Groups H, I, K (Environment Contract, Reproducibility & Turnstile Secret Isolation)**:
+  - Root cause: `.env.example` was previously unstaged and had legacy Firebase variables.
+  - Fix: Modernized `.env.example` with empty template placeholders, staged into git. Added assertions in `tests/environment-contract.test.ts` preventing Turnstile secret under `VITE_*` and verifying zero secrets committed.
+  - Tests: 6/6 tests in `tests/environment-contract.test.ts` PASS.
+- **Group J (Turnstile Production Fail-Closed)**:
+  - Root cause: Production allowed anonymous sign-in if `VITE_TURNSTILE_SITE_KEY` was missing.
+  - Fix: `evaluateTurnstilePolicy` in `src/services/visitorRegistration.ts` fails closed in production if site key is missing or captcha token is missing. Kiosk remains exempt.
+  - Tests: 7/7 policy matrix tests in `tests/pure-services.test.ts` PASS.
+- **Group N (Supabase Auth Password Policy)**:
+  - Verified requirement: minimum length 12, lowercase, uppercase, digit, symbol. Documented for hosted Supabase Auth configuration.
+
+---
+
+### Full Regression Suite Status (Final Confirmed Defect Repair Pass)
+- **Vitest Suite**: 21 test files, 288 tests passed (0 failures).
+- **PGlite Migration Chain**: 7/7 tests passed in `tests/migration-chain-pglite.test.ts`.
 - **TypeScript API Typecheck**: `npm run typecheck:api` PASS (0 errors).
 - **TypeScript Client Typecheck**: `npx tsc --noEmit` PASS (0 errors).
-- **Production Bundle Build**: `npm run build` PASS (2539 modules transformed in 1.92s).
-- **Git State**: `.env.example` preserved unstaged with owner lines intact.
+- **Production Bundle Build**: `npm run build` PASS (2539 modules transformed in 1.15s).
+- **Local Startup Browser E2E**: `npm run test:e2e:startup` PASS (4/4 test cases passed on Edge).
+- **Git State**: Clean working tree ready for commit; `.env.local` remains ignored and untouched.

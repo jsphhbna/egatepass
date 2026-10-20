@@ -216,13 +216,24 @@ All 21 confirmed defect groups and their recurring patterns across the codebase 
 29. **REPAIR GROUP O (Environment Contract & Secret Isolation)**: Merged modern runtime names into `.env.example` while preserving owner entries; documented `docs/ENVIRONMENT.md`; added `tests/environment-contract.test.ts` (5/5 PASS).
 30. **REPAIR GROUP P (Turnstile Bot Protection)**: Added Cloudflare Turnstile CAPTCHA widget for public Portal anonymous registration in `GetPassPage.tsx` and `visitorRegistration.ts`; updated CSP in `vercel.json`.
 31. **REPAIR GROUP R, S & FINDING 2 (Closure Migration 001400 & Security Hardening)**: Created `20261020001400_closure_and_hardening.sql` with conditional `rls_auto_enable()` privilege hardening (revoked from public/anon/authenticated), incident hold mismatch check, and dashboard aggregate RPCs.
+32. **FINAL CONFIRMED DEFECT REPAIR PASS (Groups A through N)**:
+    - **Group A (Recovery Authorization & Device Governance)**: Server-controlled `/api/auth/reset-password` endpoint cryptographically verifying JWT `amr: [{ method: 'recovery' }]`. In-memory only in UI. Disallows device accounts and anonymous portal accounts. Added PostgreSQL trigger `public.protect_managed_credentials()` on `auth.users` blocking non-service-role password mutation on device/anonymous accounts. 10/10 test matrix PASS.
+    - **Groups B, C, M (Send Email Hook Contract & Actions)**: Aligned with current Supabase GoTrue contract: modeled `user.new_email`, removed `email_data.new_email` and fake legacy action types. Handled canonical `email_change` (sending `token_hash_new` to current email and `token_hash` to new email). Handled all security notification actions without 500. 19/19 tests PASS.
+    - **Groups D, E, F, G, L (Retention Maintenance Fail-Closed & Truthfulness)**: `app_settings` query errors fail closed with 500, zero mutations, and reconciliation. Retention protection query errors treat records as protected by uncertainty (`continue` without anonymizing). `maintenance_state.upsert(...)` errors are inspected, logged, and degrade status. Final maintenance status is computed strictly after audit event insert; `success === true` guarantees `metrics.errors.length === 0`. Full mocked handler suite PASS.
+    - **Groups H, I, K (.env.example, Reproducibility & Turnstile Secret)**: Modern `.env.example` with blank placeholders committed; environment assertions verify zero secrets committed and prohibit Turnstile secret under `VITE_*`. 6/6 tests PASS.
+    - **Group J (Turnstile Production Fail-Closed)**: `evaluateTurnstilePolicy` enforces that missing `VITE_TURNSTILE_SITE_KEY` or missing `captchaToken` in production fails closed with safe error. Kiosk device registration remains fully exempt. 7/7 tests PASS.
 
 ## Immediate blockers and next safe work
 
-1. **Hosted Supabase Deployment (Group R)**: The live project `egatepass-dev` (`nhoawvkfqblsgutdffie`) currently has 0 repository migrations applied. Applying the migration chain (000100 through 001400) requires either a `SUPABASE_ACCESS_TOKEN` for `npx supabase db push`, or direct database connection string/password, or executing through the Supabase Dashboard SQL Editor.
-2. **Browser Subagent Driver Issue**: Playwright driver download failed with 404 in the environment, preventing browser automation from accessing the Supabase Dashboard.
-3. **Pre-Deployment Gate Invariant**: Local verification PASS (260/260 Vitest tests pass, API and client TypeScript pass, production build passes, PGlite migration and upgrade tests pass). Vercel project creation remains gated until hosted Supabase migrations and RLS are active and verified.
+1. **Hosted Supabase Deployment Checkpoint**: As strictly mandated, hosted project `egatepass-dev` (`nhoawvkfqblsgutdffie`) remains untouched (`NOT APPLIED`), awaiting post-repair independent review.
+2. **Pre-Deployment Gate Invariant**: All local regression suites PASS (288/288 Vitest tests pass across 21 test files, 7/7 PGlite migration tests pass, API and client TypeScript checks pass with 0 errors, production build passes, and 4/4 Playwright browser startup cases pass on Edge).
+3. **Pending Live Configurations (To be performed after repository closure)**:
+   - Supabase HTTPS Send Email Hook creation pointing to Vercel preview deployment.
+   - Setting `SEND_EMAIL_HOOK_SECRET` in Vercel environment.
+   - Configuring Cloudflare Turnstile private secret in hosted Supabase Auth Bot Protection.
+   - Configuring Supabase Auth password policy (min length 12, uppercase, lowercase, digit, symbol).
+   - Eventual `supabase db push` after independent approval.
 
 ## Maturity
 
-Current product maturity is `IN PROGRESS` (Level 2+ — reproducible local execution, real PostgreSQL 17.5 migration chain validated with clean sequential and upgrade tests, complete static & behavioral contracts, zero Firebase dependencies in Admin/operational UI, full build passing, comprehensive behavioral mocked-handler tests passing, offline OCR, React Email + Send Email Hook infrastructure implemented, purge contract hardened, issuance replay implemented, local dev API plugin implemented, all root-cause repair groups eliminated). Awaiting hosted migration application on `egatepass-dev` for Level 3 promotion; not defense-ready and not deployment-ready until hosted PostgreSQL/Supabase behavior is live proven.
+Current product maturity is `IN PROGRESS (LEVEL 2+ / PRE-DEPLOYMENT VERIFIED)` — all confirmed root causes repaired, all recurring patterns eliminated across the repository, full regression suite passing (288 tests, 0 failures, 100% reproducible), .env.example modern and committed with zero secrets. Hosted Supabase remains unmutated pending independent owner authorization.

@@ -40,3 +40,27 @@ export async function completeGuardPasswordChange(currentPassword: string, newPa
   }
   throw new Error('Password update could not be completed. Please try again.');
 }
+
+export async function resetPasswordWithRecoverySession(recoveryToken: string, newPassword: string): Promise<void> {
+  const response = await fetch('/api/auth/reset-password', {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${recoveryToken}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ newPassword }),
+  });
+
+  if (response.ok) return;
+  const payload = await response.json().catch(() => ({})) as { error?: string };
+  if (payload.error === 'recovery_session_required') {
+    throw new Error('This password reset link is invalid or has expired. Please request a new link.');
+  }
+  if (payload.error === 'device_password_change_forbidden') {
+    throw new Error('Device credentials are Super Admin managed and cannot be changed here.');
+  }
+  if (payload.error === 'anonymous_recovery_not_allowed') {
+    throw new Error('Guest accounts cannot reset passwords.');
+  }
+  throw new Error('Password could not be updated. Please request a new reset link.');
+}

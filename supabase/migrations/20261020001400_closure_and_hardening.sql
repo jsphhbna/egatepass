@@ -351,3 +351,53 @@ grant execute on function api.dashboard_today_insights(timestamptz, timestamptz)
 -- =============================================================================
 create index if not exists passes_issued_at_idx on public.passes (issued_at desc);
 create index if not exists visitors_anonymized_created_idx on public.visitors (anonymized_at, created_at) where anonymized_at is null;
+
+-- =============================================================================
+-- 5. REPAIR GROUP A: Protect Managed Device & Anonymous Credentials
+-- =============================================================================
+create or replace function public.protect_managed_credentials()
+returns trigger
+language plpgsql
+security definer
+set search_path = ''
+as $$
+begin
+  if (new.encrypted_password is distinct from old.encrypted_password) then
+    -- 1. Anonymous accounts cannot set passwords
+    if (coalesce(old.is_anonymous, false) is true) then
+      if auth.role() <> 'service_role' then
+        raise exception using errcode = '42501', message = 'anonymous accounts cannot set passwords';
+      end if;
+    end if;
+
+    -- 2. Device credentials are Super Admin managed and cannot be changed by device sessions
+    if (old.email like '%@devices.egatepass.invalid') or exists (
+      select 1 from public.devices d where d.user_id = old.id
+    ) then
+      if auth.role() <> 'service_role' then
+        raise exception using errcode = '42501', message = 'device credentials are super admin managed and cannot be changed by device sessions';
+      end if;
+    end if;
+  end if;
+
+  return new;
+end;
+$$;
+
+do $$
+begin
+  if exists (
+    select 1
+      from information_schema.columns
+     where table_schema = 'auth'
+       and table_name = 'users'
+       and column_name = 'encrypted_password'
+  ) then
+    drop trigger if exists trg_protect_managed_credentials on auth.users;
+    create trigger trg_protect_managed_credentials
+      before update on auth.users
+      for each row
+      execute function public.protect_managed_credentials();
+  end if;
+end;
+$$;

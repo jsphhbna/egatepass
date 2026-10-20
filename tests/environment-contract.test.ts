@@ -5,6 +5,7 @@ import { describe, expect, it } from 'vitest';
 const REQUIRED_ACTIVE_RUNTIME_VARS = [
   'VITE_SUPABASE_URL',
   'VITE_SUPABASE_PUBLISHABLE_KEY',
+  'VITE_TURNSTILE_SITE_KEY',
   'SUPABASE_URL',
   'SUPABASE_SECRET_KEY',
   'PASS_TOKEN_SECRET',
@@ -98,6 +99,27 @@ describe('Environment Contract & Safety Verification', () => {
           `Client file ${file} directly references server secret ${secret}`
         ).toBe(false);
       }
+    }
+  });
+
+  it('prohibits Cloudflare Turnstile secret key from being placed under VITE_* or in client source', () => {
+    const envExample = readFileSync('.env.example', 'utf8');
+    const definedNames = envExample
+      .split('\n')
+      .map((line) => line.trim())
+      .filter((line) => line && !line.startsWith('#'))
+      .map((line) => line.split('=')[0].trim());
+
+    // Private Turnstile secret belongs to hosted Supabase Auth Bot Protection, NEVER frontend
+    for (const name of definedNames) {
+      expect(name).not.toMatch(/VITE_.*TURNSTILE.*SECRET/i);
+      expect(name).not.toMatch(/VITE_.*TURNSTILE.*KEY.*SECRET/i);
+    }
+
+    const clientFiles = getAllFiles('src', ['.ts', '.tsx', '.js', '.jsx']);
+    for (const file of clientFiles) {
+      const content = readFileSync(file, 'utf8');
+      expect(content).not.toMatch(/TURNSTILE.*SECRET/i);
     }
   });
 });

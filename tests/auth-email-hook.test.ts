@@ -189,62 +189,18 @@ describe('EMAIL-01: Supabase Auth Send Email Hook Infrastructure', () => {
       expect(prepared.html).toContain('hash_invite_111');
     });
 
-    it('maps secure email change: token_hash_new to current email, token_hash to new email', async () => {
-      // 1. Notification to current email
-      const payloadCurrent: SupabaseAuthEmailPayload = {
-        user: {
-          id: 'user-0004',
-          email: 'old.address@earist.edu.ph',
-        },
-        email_data: {
-          token: '111222',
-          token_hash: 'new_address_hash',
-          token_hash_new: 'current_address_hash', // Counter-intuitive Supabase naming!
-          new_email: 'new.address@earist.edu.ph',
-          email_action_type: 'email_change_current',
-          site_url: 'https://egatepass.earist.edu.ph',
-        },
-      };
-
-      const currentEmail = await prepareAuthEmail(payloadCurrent);
-      expect(currentEmail.to).toBe('old.address@earist.edu.ph');
-      expect(currentEmail.subject).toContain('Authorize email address change');
-      expect(currentEmail.html).toContain('current_address_hash'); // Uses token_hash_new!
-      expect(currentEmail.html).toContain('new.address@earist.edu.ph');
-
-      // 2. Notification to new email
-      const payloadNew: SupabaseAuthEmailPayload = {
-        user: {
-          id: 'user-0004',
-          email: 'old.address@earist.edu.ph',
-        },
-        email_data: {
-          token: '333444',
-          token_hash: 'new_address_hash',
-          new_email: 'new.address@earist.edu.ph',
-          email_action_type: 'email_change_new',
-          site_url: 'https://egatepass.earist.edu.ph',
-        },
-      };
-
-      const newEmail = await prepareAuthEmail(payloadNew);
-      expect(newEmail.to).toBe('new.address@earist.edu.ph');
-      expect(newEmail.subject).toContain('Verify new email address');
-      expect(newEmail.html).toContain('new_address_hash'); // Uses token_hash!
-    });
-
-    it('handles current Supabase email_change action with Secure Email Change enabled (2 emails)', async () => {
+    it('handles current Supabase email_change action with Secure Email Change enabled (2 emails: user.new_email & user.email)', async () => {
       const payload: SupabaseAuthEmailPayload = {
         user: {
           id: 'user-0005',
           email: 'current.staff@earist.edu.ph',
+          new_email: 'updated.staff@earist.edu.ph',
           user_metadata: { displayName: 'Staff Member' },
         },
         email_data: {
           token: '555666',
           token_hash: 'hash_for_new_email',
           token_hash_new: 'hash_for_current_email',
-          new_email: 'updated.staff@earist.edu.ph',
           email_action_type: 'email_change',
           site_url: 'https://egatepass.tech',
         },
@@ -255,29 +211,29 @@ describe('EMAIL-01: Supabase Auth Send Email Hook Infrastructure', () => {
       expect(emails.length).toBe(2);
 
       // 1. Current address confirmation email uses token_hash_new
-      const currentEmail = emails.find(e => e.to === 'current.staff@earist.edu.ph');
+      const currentEmail = emails.find((e) => e.to === 'current.staff@earist.edu.ph');
       expect(currentEmail).toBeDefined();
       expect(currentEmail!.subject).toContain('Authorize email address change');
       expect(currentEmail!.html).toContain('hash_for_current_email');
 
       // 2. New address verification email uses token_hash
-      const newEmail = emails.find(e => e.to === 'updated.staff@earist.edu.ph');
+      const newEmail = emails.find((e) => e.to === 'updated.staff@earist.edu.ph');
       expect(newEmail).toBeDefined();
       expect(newEmail!.subject).toContain('Verify new email address');
       expect(newEmail!.html).toContain('hash_for_new_email');
     });
 
-    it('handles current Supabase email_change action with Secure Email Change disabled (1 email)', async () => {
+    it('handles current Supabase email_change action with Secure Email Change disabled (1 email to user.new_email)', async () => {
       const payload: SupabaseAuthEmailPayload = {
         user: {
           id: 'user-0006',
           email: 'current.staff@earist.edu.ph',
+          new_email: 'new.staff@earist.edu.ph',
           user_metadata: { displayName: 'Staff Member' },
         },
         email_data: {
           token: '777888',
           token_hash: 'single_hash_for_change',
-          new_email: 'new.staff@earist.edu.ph',
           email_action_type: 'email_change',
           site_url: 'https://egatepass.tech',
         },
@@ -288,6 +244,37 @@ describe('EMAIL-01: Supabase Auth Send Email Hook Infrastructure', () => {
       expect(emails.length).toBe(1);
       expect(emails[0].to).toBe('new.staff@earist.edu.ph');
       expect(emails[0].html).toContain('single_hash_for_change');
+    });
+
+    it('handles security-notification action types without throwing 500 error', async () => {
+      const { prepareAuthEmails } = await import('../server/auth-email-hook.js');
+
+      const securityActions: Array<SupabaseAuthEmailPayload['email_data']['email_action_type']> = [
+        'password_changed_notification',
+        'email_changed_notification',
+        'phone_changed_notification',
+        'identity_linked_notification',
+        'identity_unlinked_notification',
+        'mfa_factor_enrolled_notification',
+        'mfa_factor_unenrolled_notification',
+        'email',
+      ];
+
+      for (const actionType of securityActions) {
+        const payload: SupabaseAuthEmailPayload = {
+          user: { id: `user-${actionType}`, email: 'security.target@earist.edu.ph', user_metadata: { displayName: 'Alert User' } },
+          email_data: {
+            token: '123',
+            token_hash: 'hash_alert',
+            email_action_type: actionType,
+            site_url: 'https://egatepass.tech',
+          },
+        };
+
+        const emails = await prepareAuthEmails(payload);
+        expect(emails.length).toBeGreaterThan(0);
+        expect(emails[0].to).toBe('security.target@earist.edu.ph');
+      }
     });
 
     it('handles magiclink and reauthentication actions', async () => {
@@ -309,6 +296,7 @@ describe('EMAIL-01: Supabase Auth Send Email Hook Infrastructure', () => {
       expect(reauthEmails[0].to).toBe('reauth@earist.edu.ph');
       expect(reauthEmails[0].subject).toContain('identity');
     });
+
   });
 
   describe('API Web Handler: /api/auth/send-email-hook', () => {

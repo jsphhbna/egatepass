@@ -26,6 +26,32 @@ interface UploadIntent {
   max_bytes: number;
 }
 
+export function evaluateTurnstilePolicy(
+  source: RegistrationSource,
+  isProd: boolean,
+  siteKey?: string | null,
+  captchaToken?: string | null,
+): { allowed: boolean; error?: string } {
+  if (source === 'kiosk') {
+    return { allowed: true };
+  }
+  if (isProd) {
+    if (!siteKey || siteKey.trim() === '') {
+      return {
+        allowed: false,
+        error: 'Visitor registration is currently unavailable due to missing security configuration.',
+      };
+    }
+    if (!captchaToken || captchaToken.trim() === '') {
+      return {
+        allowed: false,
+        error: 'Verification challenge required to start registration.',
+      };
+    }
+  }
+  return { allowed: true };
+}
+
 async function authenticatedClient(
   source: RegistrationSource,
   captchaToken?: string,
@@ -38,11 +64,11 @@ async function authenticatedClient(
   }
   if (source === 'portal' && !session) {
     const siteKey = (import.meta as any).env?.VITE_TURNSTILE_SITE_KEY?.trim();
-    const isProd = (import.meta as any).env?.PROD;
+    const isProd = Boolean((import.meta as any).env?.PROD);
 
-    // Fail closed in production when Turnstile protection is configured but challenge token is absent
-    if (isProd && siteKey && !captchaToken) {
-      throw new Error('Verification challenge required to start registration.');
+    const policy = evaluateTurnstilePolicy(source, isProd, siteKey, captchaToken);
+    if (!policy.allowed) {
+      throw new Error(policy.error);
     }
 
     const signInOptions = captchaToken ? { options: { captchaToken } } : undefined;

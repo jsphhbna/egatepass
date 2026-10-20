@@ -14,13 +14,20 @@ export type AuthEmailActionType =
   | 'magiclink'
   | 'email_change'
   | 'reauthentication'
-  | 'email_change_current'
-  | 'email_change_new';
+  | 'password_changed_notification'
+  | 'email_changed_notification'
+  | 'phone_changed_notification'
+  | 'identity_linked_notification'
+  | 'identity_unlinked_notification'
+  | 'mfa_factor_enrolled_notification'
+  | 'mfa_factor_unenrolled_notification'
+  | 'email';
 
 export interface SupabaseAuthEmailPayload {
   user: {
     id: string;
     email: string;
+    new_email?: string;
     user_metadata?: {
       displayName?: string;
       role?: string;
@@ -30,11 +37,14 @@ export interface SupabaseAuthEmailPayload {
   email_data: {
     token: string;
     token_hash: string;
+    token_new?: string;
+    token_hash_new?: string;
     redirect_to?: string;
     email_action_type: AuthEmailActionType;
     site_url?: string;
-    token_hash_new?: string;
-    new_email?: string;
+    old_email?: string;
+    provider?: string;
+    factor_type?: string;
   };
 }
 
@@ -143,8 +153,8 @@ export interface PreparedAuthEmail {
 
 /**
  * Maps Supabase Auth Send Email Hook payload to one or more EARIST React Email templates.
- * When Secure Email Change is enabled, current Supabase sends email_action_type = "email_change"
- * with token_hash_new (for current email) and token_hash (for new email), requiring two emails.
+ * When Secure Email Change is enabled, Supabase sends email_action_type = "email_change"
+ * with token_hash_new (for current email) and token_hash (for new email: user.new_email).
  */
 export async function prepareAuthEmails(
   payload: SupabaseAuthEmailPayload
@@ -201,17 +211,20 @@ export async function prepareAuthEmails(
 
     case 'email_change': {
       // Current Supabase Send Email Hook specification:
-      // If Secure Email Change is enabled, both token_hash_new and token_hash are provided.
+      // Current email is on: user.email
+      // Requested new email is on: user.new_email
+      // When Secure Email Change is enabled, both token_hash_new and token_hash are sent:
       // - token_hash_new must be sent to the CURRENT email (user.email)
-      // - token_hash must be sent to the NEW email (email_data.new_email)
+      // - token_hash must be sent to the NEW email (user.new_email)
       const emails: PreparedAuthEmail[] = [];
+      const newEmail = user.new_email || user.email;
 
-      if (email_data.token_hash_new && email_data.new_email) {
+      if (email_data.token_hash_new && user.new_email) {
         // 1. Authorize change on current email
         const currentUrl = buildAuthVerificationUrl(authBaseUrl, email_data.token_hash_new, 'email_change', redirectTo);
         const currentHtml = await renderEmailChangeEmail({
           currentEmail: user.email,
-          newEmail: email_data.new_email,
+          newEmail: user.new_email,
           changeUrl: currentUrl,
           targetAddress: 'current',
           displayName,
@@ -226,72 +239,33 @@ export async function prepareAuthEmails(
         const newUrl = buildAuthVerificationUrl(authBaseUrl, email_data.token_hash, 'email_change', redirectTo);
         const newHtml = await renderEmailChangeEmail({
           currentEmail: user.email,
-          newEmail: email_data.new_email,
+          newEmail: user.new_email,
           changeUrl: newUrl,
           targetAddress: 'new',
           displayName,
         });
         emails.push({
-          to: email_data.new_email,
+          to: user.new_email,
           subject: 'Verify new email address for EARIST E-GatePass',
           html: newHtml,
         });
       } else {
-        // Secure Email Change disabled: single confirmation sent to new or current email
-        const targetEmail = email_data.new_email || user.email;
+        // Secure Email Change disabled: single confirmation sent to new email
         const changeUrl = buildAuthVerificationUrl(authBaseUrl, email_data.token_hash, 'email_change', redirectTo);
         const html = await renderEmailChangeEmail({
           currentEmail: user.email,
-          newEmail: targetEmail,
+          newEmail,
           changeUrl,
           targetAddress: 'new',
           displayName,
         });
         emails.push({
-          to: targetEmail,
+          to: newEmail,
           subject: 'Verify new email address for EARIST E-GatePass',
           html,
         });
       }
       return emails;
-    }
-
-    case 'email_change_current': {
-      // Backward compatibility for legacy tests/payloads
-      const currentHash = email_data.token_hash_new || email_data.token_hash;
-      const changeUrl = buildAuthVerificationUrl(authBaseUrl, currentHash, 'email_change', redirectTo);
-      const newEmail = email_data.new_email || 'the requested address';
-      const html = await renderEmailChangeEmail({
-        currentEmail: user.email,
-        newEmail,
-        changeUrl,
-        targetAddress: 'current',
-        displayName,
-      });
-      return [{
-        to: user.email,
-        subject: 'Authorize email address change for EARIST E-GatePass',
-        html,
-      }];
-    }
-
-    case 'email_change_new': {
-      // Backward compatibility for legacy tests/payloads
-      const newHash = email_data.token_hash;
-      const changeUrl = buildAuthVerificationUrl(authBaseUrl, newHash, 'email_change', redirectTo);
-      const targetEmail = email_data.new_email || user.email;
-      const html = await renderEmailChangeEmail({
-        currentEmail: user.email,
-        newEmail: targetEmail,
-        changeUrl,
-        targetAddress: 'new',
-        displayName,
-      });
-      return [{
-        to: targetEmail,
-        subject: 'Verify new email address for EARIST E-GatePass',
-        html,
-      }];
     }
 
     case 'magiclink': {
@@ -322,13 +296,66 @@ export async function prepareAuthEmails(
       }];
     }
 
+    case 'password_changed_notification': {
+      return [{
+        to: user.email,
+        subject: 'Security Alert: Your EARIST E-GatePass password was changed',
+        html: `<p>Hello ${displayName || 'Staff'},</p><p>The password for your EARIST E-GatePass staff account (${user.email}) was recently changed.</p><p>If you did not perform this action, please contact your Super Admin immediately to secure your account.</p>`,
+      }];
+    }
+
+    case 'email_changed_notification': {
+      return [{
+        to: user.email,
+        subject: 'Security Alert: Your EARIST E-GatePass email address was changed',
+        html: `<p>Hello ${displayName || 'Staff'},</p><p>The email address associated with your EARIST E-GatePass account was changed.</p><p>If you did not authorize this change, please report this incident immediately to the administrator.</p>`,
+      }];
+    }
+
+    case 'phone_changed_notification': {
+      return [{
+        to: user.email,
+        subject: 'Security Alert: Phone number updated for EARIST E-GatePass',
+        html: `<p>Hello ${displayName || 'Staff'},</p><p>A phone number update was made to your account. If you did not make this change, please contact an administrator.</p>`,
+      }];
+    }
+
+    case 'mfa_factor_enrolled_notification':
+    case 'mfa_factor_unenrolled_notification': {
+      const isEnrolled = email_data.email_action_type === 'mfa_factor_enrolled_notification';
+      return [{
+        to: user.email,
+        subject: `Security Alert: Multi-factor authentication ${isEnrolled ? 'enrolled' : 'removed'}`,
+        html: `<p>Hello ${displayName || 'Staff'},</p><p>A multi-factor authentication factor was ${isEnrolled ? 'enrolled on' : 'removed from'} your EARIST E-GatePass account. If you did not perform this update, contact an administrator immediately.</p>`,
+      }];
+    }
+
+    case 'identity_linked_notification':
+    case 'identity_unlinked_notification': {
+      const isLinked = email_data.email_action_type === 'identity_linked_notification';
+      return [{
+        to: user.email,
+        subject: `Security Alert: External identity ${isLinked ? 'linked' : 'unlinked'}`,
+        html: `<p>Hello ${displayName || 'Staff'},</p><p>An identity provider was ${isLinked ? 'linked to' : 'unlinked from'} your EARIST E-GatePass account. If you did not authorize this, contact an administrator immediately.</p>`,
+      }];
+    }
+
+    case 'email': {
+      const verifyUrl = buildAuthVerificationUrl(authBaseUrl, email_data.token_hash, 'email', redirectTo);
+      return [{
+        to: user.email,
+        subject: 'Confirm your EARIST E-GatePass email',
+        html: `<p>Hello ${displayName || 'Staff'},</p><p>Please confirm your email by clicking the link below:</p><p><a href="${verifyUrl}">${verifyUrl}</a></p>`,
+      }];
+    }
+
     default:
-      throw new Error(`unsupported_auth_email_action: ${email_data.email_action_type}`);
+      throw new Error(`unsupported_auth_email_action: ${(email_data as any).email_action_type}`);
   }
 }
 
 /**
- * Backward compatibility wrapper returning a single PreparedAuthEmail.
+ * Convenience wrapper returning the primary PreparedAuthEmail.
  */
 export async function prepareAuthEmail(
   payload: SupabaseAuthEmailPayload

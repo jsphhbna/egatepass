@@ -281,6 +281,9 @@ describe('Behavioral Mocked-Handler Tests [PASS (MOCKED HANDLER)]', () => {
             return { data: rows, error: null };
           },
           upsert: async (data: any, opts?: any) => {
+            if (mockTableFailures[`${currentTable}:upsert`]) {
+              return { data: null, error: mockTableFailures[`${currentTable}:upsert`] };
+            }
             const items = (mockDbData as any)[currentTable] || [];
             const rows = Array.isArray(data) ? data : [data];
             for (const row of rows) {
@@ -323,6 +326,18 @@ describe('Behavioral Mocked-Handler Tests [PASS (MOCKED HANDLER)]', () => {
               const deletedCount = items.length - remaining.length;
               (mockDbData as any)[currentTable] = remaining;
               resolve({ data: null, count: deletedCount, error: null });
+              return;
+            }
+            if (currentTable === 'incident_holds' && eqCols['visitor_id'] && mockTableFailures['incident_holds:visitor_hold']) {
+              resolve({ data: null, count: null, error: mockTableFailures['incident_holds:visitor_hold'] });
+              return;
+            }
+            if (currentTable === 'incident_holds' && eqCols['passes.visitor_id'] && mockTableFailures['incident_holds:pass_hold']) {
+              resolve({ data: null, count: null, error: mockTableFailures['incident_holds:pass_hold'] });
+              return;
+            }
+            if (currentTable === 'passes' && eqCols['visitor_id'] && mockTableFailures['passes:active_check']) {
+              resolve({ data: null, count: null, error: mockTableFailures['passes:active_check'] });
               return;
             }
             if (mockTableFailures[currentTable]) {
@@ -2762,6 +2777,350 @@ describe('Behavioral Mocked-Handler Tests [PASS (MOCKED HANDLER)]', () => {
       expect(json.maintenance.visitorsAnonymized).toBeDefined();
       expect(json.maintenance.auditEventsCleaned).toBeDefined();
       expect(json.maintenance.reconciliationTasksCleaned).toBeDefined();
+    });
+
+    // =========================================================================
+    // REPAIR GROUPS D, E, F, G: Retention Maintenance Fail-Closed & Truthful Outcomes
+    // =========================================================================
+    it('Group D: settings query error fails closed with 500, performs zero destructive changes, and records reconciliation', async () => {
+      process.env.CRON_SECRET = 'test_cron_secret_123';
+      mockTableFailures['app_settings'] = new Error('Database read failure for settings');
+
+      // Seed candidate visitor that would otherwise be anonymized
+      const visitorId = randomUUID();
+      mockDbData.visitors.push({
+        id: visitorId,
+        full_name: 'Protected Juan Dela Cruz',
+        contact_number: '09123456789',
+        email: 'juan@example.com',
+        created_at: new Date(Date.now() - 100 * 86400000).toISOString(),
+        anonymized_at: null,
+      });
+
+      const req = new Request('http://localhost/api/admin/retention-maintenance', {
+        method: 'POST',
+        headers: {
+          authorization: 'Bearer test_cron_secret_123',
+          'content-type': 'application/json',
+        },
+        body: JSON.stringify({ dryRun: false }),
+      });
+
+      const res = await invokeHandler(retentionMaintenanceHandler, req);
+      const json = await res.json();
+
+      expect(res.status).toBe(500);
+      expect(json.success).toBe(false);
+      expect(json.result).toBe('failure');
+      expect(json.reason).toBe('settings_unavailable');
+      expect(json.maintenance.visitorsAnonymized).toBe(0);
+
+      // Verify visitor was NOT anonymized
+      const visitor = mockDbData.visitors.find((v: any) => v.id === visitorId);
+      expect(visitor.full_name).toBe('Protected Juan Dela Cruz');
+      expect(visitor.anonymized_at).toBeNull();
+
+      // Verify reconciliation was recorded
+      const recon = mockDbData.reconciliation_tasks.find((r: any) => r.operation === 'maintenance.settings_failed');
+      expect(recon).toBeDefined();
+    });
+
+    it('Group D: missing singleton settings row fails closed with 500 and performs zero destructive changes', async () => {
+      process.env.CRON_SECRET = 'test_cron_secret_123';
+      mockDbData.app_settings = []; // Empty settings table
+
+      const req = new Request('http://localhost/api/admin/retention-maintenance', {
+        method: 'POST',
+        headers: {
+          authorization: 'Bearer test_cron_secret_123',
+          'content-type': 'application/json',
+        },
+        body: JSON.stringify({ dryRun: false }),
+      });
+
+      const res = await invokeHandler(retentionMaintenanceHandler, req);
+      const json = await res.json();
+
+      expect(res.status).toBe(500);
+      expect(json.success).toBe(false);
+      expect(json.result).toBe('failure');
+      expect(json.reason).toBe('settings_unavailable');
+
+      const recon = mockDbData.reconciliation_tasks.find((r: any) => r.operation === 'maintenance.settings_failed');
+      expect(recon).toBeDefined();
+    });
+
+    it('Group D: cron execution with automatic_cleanup_enabled=false skips destructive maintenance safely', async () => {
+      process.env.CRON_SECRET = 'test_cron_secret_123';
+      mockDbData.app_settings = [{
+        singleton: true,
+        automatic_cleanup_enabled: false, // DISABLED
+        visitor_retention_days: 30,
+        image_retention_days: 7,
+        audit_retention_days: 365,
+        reconciliation_retention_days: 90,
+      }];
+
+      const visitorId = randomUUID();
+      mockDbData.visitors.push({
+        id: visitorId,
+        full_name: 'Skipped Juan',
+        contact_number: '09123456789',
+        created_at: new Date(Date.now() - 100 * 86400000).toISOString(),
+        anonymized_at: null,
+      });
+
+      const req = new Request('http://localhost/api/admin/retention-maintenance', {
+        method: 'POST',
+        headers: {
+          authorization: 'Bearer test_cron_secret_123',
+          'content-type': 'application/json',
+        },
+        body: JSON.stringify({ dryRun: false }),
+      });
+
+      const res = await invokeHandler(retentionMaintenanceHandler, req);
+      const json = await res.json();
+
+      expect(res.status).toBe(200);
+      expect(json.success).toBe(true);
+      expect(json.result).toBe('skipped');
+      expect(json.reason).toBe('automatic_cleanup_disabled');
+
+      const visitor = mockDbData.visitors.find((v: any) => v.id === visitorId);
+      expect(visitor.full_name).toBe('Skipped Juan');
+      expect(visitor.anonymized_at).toBeNull();
+    });
+
+    it('Group D: manual Super Admin execution proceeds even if automatic_cleanup_enabled=false', async () => {
+      mockDbData.app_settings = [{
+        singleton: true,
+        automatic_cleanup_enabled: false, // DISABLED for cron, but superadmin manual allowed
+        visitor_retention_days: 30,
+        image_retention_days: 7,
+        audit_retention_days: 365,
+        reconciliation_retention_days: 90,
+      }];
+
+      const req = new Request('http://localhost/api/admin/retention-maintenance', {
+        method: 'POST',
+        headers: {
+          authorization: VALID_SUPERADMIN_BEARER,
+          'content-type': 'application/json',
+        },
+        body: JSON.stringify({ dryRun: true }),
+      });
+
+      const res = await invokeHandler(retentionMaintenanceHandler, req);
+      const json = await res.json();
+
+      expect(res.status).toBe(200);
+      expect(json.success).toBe(true);
+      expect(json.result).toBe('success');
+      expect(json.maintenance.callerType).toBe('superadmin');
+    });
+
+    it('Group E: protection query error on visitor hold check prevents anonymization (fail-closed)', async () => {
+      process.env.CRON_SECRET = 'test_cron_secret_123';
+      mockDbData.app_settings = [{
+        singleton: true,
+        automatic_cleanup_enabled: true,
+        visitor_retention_days: 30,
+      }];
+
+      const visitorId = randomUUID();
+      mockDbData.visitors.push({
+        id: visitorId,
+        full_name: 'Protected By Uncertainty Juan',
+        contact_number: '09123456789',
+        created_at: new Date(Date.now() - 100 * 86400000).toISOString(),
+        anonymized_at: null,
+      });
+
+      // Inject error into visitor hold check
+      mockTableFailures['incident_holds:visitor_hold'] = new Error('Visitor hold table unreachable');
+
+      const req = new Request('http://localhost/api/admin/retention-maintenance', {
+        method: 'POST',
+        headers: {
+          authorization: 'Bearer test_cron_secret_123',
+          'content-type': 'application/json',
+        },
+        body: JSON.stringify({ dryRun: false }),
+      });
+
+      const res = await invokeHandler(retentionMaintenanceHandler, req);
+      const json = await res.json();
+
+      // Anonymization must NOT occur
+      const visitor = mockDbData.visitors.find((v: any) => v.id === visitorId);
+      expect(visitor.full_name).toBe('Protected By Uncertainty Juan');
+      expect(visitor.anonymized_at).toBeNull();
+      expect(json.maintenance.visitorsAnonymized).toBe(0);
+      expect(json.maintenance.errors.some((e: string) => e.includes('visitor_hold_query_failed'))).toBe(true);
+
+      const recon = mockDbData.reconciliation_tasks.find((r: any) => r.operation === 'visitor.hold_check_failed');
+      expect(recon).toBeDefined();
+    });
+
+    it('Group E: protection query error on pass hold check prevents anonymization (fail-closed)', async () => {
+      process.env.CRON_SECRET = 'test_cron_secret_123';
+      mockDbData.app_settings = [{
+        singleton: true,
+        automatic_cleanup_enabled: true,
+        visitor_retention_days: 30,
+      }];
+
+      const visitorId = randomUUID();
+      mockDbData.visitors.push({
+        id: visitorId,
+        full_name: 'Protected Pass Hold Juan',
+        contact_number: '09123456789',
+        created_at: new Date(Date.now() - 100 * 86400000).toISOString(),
+        anonymized_at: null,
+      });
+
+      // Inject error into pass hold check
+      mockTableFailures['incident_holds:pass_hold'] = new Error('Pass hold join failed');
+
+      const req = new Request('http://localhost/api/admin/retention-maintenance', {
+        method: 'POST',
+        headers: {
+          authorization: 'Bearer test_cron_secret_123',
+          'content-type': 'application/json',
+        },
+        body: JSON.stringify({ dryRun: false }),
+      });
+
+      const res = await invokeHandler(retentionMaintenanceHandler, req);
+      const json = await res.json();
+
+      // Anonymization must NOT occur
+      const visitor = mockDbData.visitors.find((v: any) => v.id === visitorId);
+      expect(visitor.full_name).toBe('Protected Pass Hold Juan');
+      expect(visitor.anonymized_at).toBeNull();
+      expect(json.maintenance.visitorsAnonymized).toBe(0);
+      expect(json.maintenance.errors.some((e: string) => e.includes('pass_hold_query_failed'))).toBe(true);
+
+      const recon = mockDbData.reconciliation_tasks.find((r: any) => r.operation === 'visitor.pass_hold_check_failed');
+      expect(recon).toBeDefined();
+    });
+
+    it('Group E: protection query error on active pass check prevents anonymization (fail-closed)', async () => {
+      process.env.CRON_SECRET = 'test_cron_secret_123';
+      mockDbData.app_settings = [{
+        singleton: true,
+        automatic_cleanup_enabled: true,
+        visitor_retention_days: 30,
+      }];
+
+      const visitorId = randomUUID();
+      mockDbData.visitors.push({
+        id: visitorId,
+        full_name: 'Active Pass Uncertain Juan',
+        contact_number: '09123456789',
+        created_at: new Date(Date.now() - 100 * 86400000).toISOString(),
+        anonymized_at: null,
+      });
+
+      // Inject error into active pass check
+      mockTableFailures['passes:active_check'] = new Error('Passes active status query failed');
+
+      const req = new Request('http://localhost/api/admin/retention-maintenance', {
+        method: 'POST',
+        headers: {
+          authorization: 'Bearer test_cron_secret_123',
+          'content-type': 'application/json',
+        },
+        body: JSON.stringify({ dryRun: false }),
+      });
+
+      const res = await invokeHandler(retentionMaintenanceHandler, req);
+      const json = await res.json();
+
+      // Anonymization must NOT occur
+      const visitor = mockDbData.visitors.find((v: any) => v.id === visitorId);
+      expect(visitor.full_name).toBe('Active Pass Uncertain Juan');
+      expect(visitor.anonymized_at).toBeNull();
+      expect(json.maintenance.visitorsAnonymized).toBe(0);
+      expect(json.maintenance.errors.some((e: string) => e.includes('active_pass_query_failed'))).toBe(true);
+
+      const recon = mockDbData.reconciliation_tasks.find((r: any) => r.operation === 'visitor.active_pass_check_failed');
+      expect(recon).toBeDefined();
+    });
+
+    it('Group F: maintenance cursor upsert error adds truthful error and degrades result status', async () => {
+      process.env.CRON_SECRET = 'test_cron_secret_123';
+      mockDbData.app_settings = [{
+        singleton: true,
+        automatic_cleanup_enabled: true,
+      }];
+
+      // Seed expired evidence
+      const evId = randomUUID();
+      mockDbData.visitor_evidence.push({
+        id: evId,
+        visitor_id: randomUUID(),
+        bucket_id: 'visitor-id-documents',
+        object_path: 'path/to/doc.jpg',
+        expires_at: new Date(Date.now() - 1000).toISOString(),
+        purged_at: null,
+      });
+
+      // Inject error into maintenance_state upsert
+      mockTableFailures['maintenance_state:upsert'] = new Error('Disk full on maintenance_state');
+
+      const req = new Request('http://localhost/api/admin/retention-maintenance', {
+        method: 'POST',
+        headers: {
+          authorization: 'Bearer test_cron_secret_123',
+          'content-type': 'application/json',
+        },
+        body: JSON.stringify({ dryRun: false }),
+      });
+
+      const res = await invokeHandler(retentionMaintenanceHandler, req);
+      const json = await res.json();
+
+      expect(json.maintenance.errors.some((e: string) => e.includes('maintenance_cursor_upsert_failed'))).toBe(true);
+      expect(json.result).not.toBe('success');
+      expect(json.success).toBe(false);
+
+      const recon = mockDbData.reconciliation_tasks.find((r: any) => r.operation === 'maintenance.cursor_upsert_failed');
+      expect(recon).toBeDefined();
+    });
+
+    it('Group G: audit insert error prevents success outcome and enforces success implies zero errors', async () => {
+      process.env.CRON_SECRET = 'test_cron_secret_123';
+      mockDbData.app_settings = [{
+        singleton: true,
+        automatic_cleanup_enabled: true,
+      }];
+
+      // Inject error into audit_events insert
+      mockTableFailures['audit_events:insert'] = new Error('Audit table read-only');
+
+      const req = new Request('http://localhost/api/admin/retention-maintenance', {
+        method: 'POST',
+        headers: {
+          authorization: 'Bearer test_cron_secret_123',
+          'content-type': 'application/json',
+        },
+        body: JSON.stringify({ dryRun: true }),
+      });
+
+      const res = await invokeHandler(retentionMaintenanceHandler, req);
+      const json = await res.json();
+
+      // Audit insert failure must prevent success
+      expect(json.maintenance.errors.some((e: string) => e.includes('audit_insert_failed'))).toBe(true);
+      expect(json.result).not.toBe('success');
+      expect(json.success).toBe(false);
+
+      // Direct regression assertion: success === true MUST imply metrics.errors.length === 0
+      if (json.success === true) {
+        expect(json.maintenance.errors.length).toBe(0);
+      }
     });
   });
 

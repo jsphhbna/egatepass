@@ -342,3 +342,29 @@
   3. Validate `passes.visitor_id = requested_visitor_id` in both API and SQL RPC when both IDs are provided.
   4. Create additive migration `20261020001400_closure_and_hardening.sql` that conditionally revokes execute on `public.rls_auto_enable()` from `public, anon, authenticated` and grants to `postgres`, adds incident hold checks, adds server aggregate RPCs, and indexes.
 - **Consequence**: Guaranteed retention forward progress without starvation; incident hold integrity guaranteed at DB and API layers; security advisor warning resolved cleanly.
+
+## ADR-0028 — Cryptographic Server-Controlled Recovery Authorization & Device Credential Mutability Guard (Repair Group A)
+- **Date**: 2026-10-21
+- **Status**: accepted
+- **Context**: `ResetPasswordPage.tsx` previously stored a pseudo-token in browser `sessionStorage` (`egatepass_recovery_auth_v1`), allowing any authenticated client (e.g. kiosk or portal user) to forge authorization. Device credentials must be Super Admin-managed; signed-in devices must not be permitted to self-mutate credentials via `auth.updateUser()`.
+- **Decision**:
+  1. Completely remove all client-side browser storage (`sessionStorage`/`localStorage`) authorization tokens for password recovery. Client UI holds token strictly in memory during genuine `PASSWORD_RECOVERY` events.
+  2. Implement server-controlled endpoint `/api/auth/reset-password` that inspects the Supabase JWT `amr` (Authentication Method Reference) claim, requiring `{ method: 'recovery' }`.
+  3. Deny password recovery to device accounts (`@devices.egatepass.invalid` and in `public.devices`), anonymous portal sessions (`is_anonymous: true`), and deactivated/invalid staff profiles.
+  4. Implement database trigger `public.protect_managed_credentials()` on `auth.users` in migration `20261020001400_closure_and_hardening.sql` to block non-service-role password mutation on device and anonymous accounts directly in PostgreSQL.
+  5. Build full 10-case test matrix in `tests/password-recovery.test.ts` proving browser forgery, active staff/device/portal sessions, and expired tokens are rejected, while legitimate recovery and Super Admin device management succeed.
+- **Consequence**: Elimination of client-forgeable recovery state; rock-solid defense-in-depth across API and database layers against device self-mutation.
+
+## ADR-0029 — Supabase Send Email Hook Contract Alignment, Retention Fail-Closed Discipline & Turnstile Production Invariants (Repair Groups B–K, M)
+- **Date**: 2026-10-21
+- **Status**: accepted
+- **Context**: `server/auth-email-hook.ts` incorrectly modeled new emails under `email_data.new_email` instead of `user.new_email` and retained fake action types (`email_change_current`, `email_change_new`). Retention maintenance failed open on settings errors, ignored protection query errors, ignored cursor upsert errors, and computed success prior to audit completion. Cloudflare Turnstile allowed anonymous portal registration if `VITE_TURNSTILE_SITE_KEY` was missing in production.
+- **Decision**:
+  1. Align `server/auth-email-hook.ts` with current Supabase GoTrue contract: model `user.new_email`, remove `email_data.new_email`, remove obsolete action variants, map `token_hash_new` -> current email and `token_hash` -> new email under Secure Email Change, and handle security notifications (`password_changed_notification`, `email_changed_notification`, etc.) without throwing 500.
+  2. Retention maintenance fails closed: if `app_settings` query errors or returns no singleton, immediately return HTTP 500, execute zero mutations, and log reconciliation.
+  3. Retention protection checks fail closed: if visitor hold, pass hold, or active pass queries error, treat protection status as uncertain and `continue` without anonymizing candidate records.
+  4. Explicitly inspect `maintenance_state.upsert(...)` error, log truthful error to metrics and reconciliation, and prevent success outcome.
+  5. Calculate maintenance result status strictly AFTER audit event recording; enforce regression assertion that `success === true` guarantees `metrics.errors.length === 0`.
+  6. Cloudflare Turnstile fails closed in production: if `PROD` is true and `VITE_TURNSTILE_SITE_KEY` is missing or empty, fail closed with explicit safe error; if `captchaToken` is missing, require verification challenge. Kiosk and staff remain completely exempt.
+  7. Turnstile private secret belongs exclusively to hosted Supabase Auth Bot Protection configuration; prohibit placement under `VITE_*` in `.env.example` or client source.
+- **Consequence**: Full alignment with current official Supabase payload contracts; leak-proof fail-closed retention and bot abuse controls.

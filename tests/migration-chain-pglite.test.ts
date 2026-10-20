@@ -30,6 +30,8 @@ async function setupSupabaseEmulation(db: PGlite) {
       id uuid primary key,
       email text,
       email_confirmed_at timestamptz,
+      encrypted_password text,
+      is_anonymous boolean default false,
       created_at timestamptz default now(),
       updated_at timestamptz default now()
     );
@@ -354,5 +356,69 @@ describe('Permanent PostgreSQL Migration Chain & Schema Contracts (PGlite)', () 
     let sql14 = readFileSync(join(MIGRATIONS_DIR, migration14), 'utf8');
     sql14 = sql14.replace(/create extension if not exists pgcrypto[^;]*;/gi, '-- pgcrypto no-op');
     await expect(db.exec(sql14)).resolves.toBeDefined();
+  }, 30000);
+
+  it('G. Device and anonymous credential self-mutation protection trigger', async () => {
+    const db = new PGlite();
+    await setupSupabaseEmulation(db);
+    const files = readdirSync(MIGRATIONS_DIR)
+      .filter((f) => f.endsWith('.sql'))
+      .sort();
+
+    for (const file of files) {
+      let sql = readFileSync(join(MIGRATIONS_DIR, file), 'utf8');
+      sql = sql.replace(/create extension if not exists pgcrypto[^;]*;/gi, '-- pgcrypto no-op');
+      await db.exec(sql);
+    }
+
+    const deviceUid = '11111111-2222-3333-4444-555555555555';
+    const anonUid = '66666666-7777-8888-9999-000000000000';
+
+    await db.exec(`
+      insert into auth.users (id, email, encrypted_password, is_anonymous)
+      values ('${deviceUid}'::uuid, 'kiosk-01@devices.egatepass.invalid', 'old_hash', false);
+
+      insert into public.devices (user_id, alias, name, type, gate, status)
+      values ('${deviceUid}'::uuid, 'kiosk-01', 'Kiosk 1', 'kiosk', 'Main Gate', 'active');
+
+      insert into auth.users (id, email, encrypted_password, is_anonymous)
+      values ('${anonUid}'::uuid, null, null, true);
+    `);
+
+    // Switch context to authenticated non-service-role
+    await db.exec(`
+      create or replace function auth.role() returns text as $$ select 'authenticated'::text; $$ language sql stable;
+    `);
+
+    // 1. Device self-password mutation must be blocked by database trigger
+    await expect(
+      db.query(`
+        update auth.users
+        set encrypted_password = 'new_stolen_hash'
+        where id = '${deviceUid}'::uuid;
+      `)
+    ).rejects.toThrow(/device credentials are super admin managed/);
+
+    // 2. Anonymous self-password mutation must be blocked by database trigger
+    await expect(
+      db.query(`
+        update auth.users
+        set encrypted_password = 'attacker_password_hash'
+        where id = '${anonUid}'::uuid;
+      `)
+    ).rejects.toThrow(/anonymous accounts cannot set passwords/);
+
+    // 3. Service role update must succeed
+    await db.exec(`
+      create or replace function auth.role() returns text as $$ select 'service_role'::text; $$ language sql stable;
+    `);
+
+    await expect(
+      db.query(`
+        update auth.users
+        set encrypted_password = 'legit_updated_hash'
+        where id = '${deviceUid}'::uuid;
+      `)
+    ).resolves.toBeDefined();
   }, 30000);
 });

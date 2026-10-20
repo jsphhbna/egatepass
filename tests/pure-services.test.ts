@@ -5,6 +5,7 @@ import { normalizeLoginIdentity } from '../src/lib/identity.js';
 import { escapeCsvCell } from '../src/lib/completeExport.js';
 import { normalizeSha256Digest } from '../api/passes/email.js';
 import { EmailDeliveryError, sendResendEmail, setEmailSenderForTest } from '../server/email.js';
+import { evaluateTurnstilePolicy } from '../src/services/visitorRegistration.js';
 
 describe('QR email digest normalization', () => {
   const hex = 'a'.repeat(64);
@@ -256,5 +257,55 @@ describe('Peak Mode Scope Validation (M4-F09, C-04)', () => {
     expect(skipsId('kiosk', 'kiosk')).toBe(true);
     expect(skipsId('both', 'portal')).toBe(true);
     expect(skipsId('both', 'kiosk')).toBe(true);
+  });
+});
+
+describe('Cloudflare Turnstile Fail-Closed Policy Matrix (Repair Group J)', () => {
+  it('fails closed in production when VITE_TURNSTILE_SITE_KEY is missing', () => {
+    const result = evaluateTurnstilePolicy('portal', true, undefined, undefined);
+    expect(result.allowed).toBe(false);
+    expect(result.error).toBe('Visitor registration is currently unavailable due to missing security configuration.');
+  });
+
+  it('fails closed in production when site key is empty string', () => {
+    const result = evaluateTurnstilePolicy('portal', true, '   ', 'some-token');
+    expect(result.allowed).toBe(false);
+    expect(result.error).toBe('Visitor registration is currently unavailable due to missing security configuration.');
+  });
+
+  it('fails closed in production when site key is configured but captchaToken is missing', () => {
+    const result = evaluateTurnstilePolicy('portal', true, '0x4AAAAAAABbbbbbb', undefined);
+    expect(result.allowed).toBe(false);
+    expect(result.error).toBe('Verification challenge required to start registration.');
+  });
+
+  it('fails closed in production when site key is configured but captchaToken is empty whitespace', () => {
+    const result = evaluateTurnstilePolicy('portal', true, '0x4AAAAAAABbbbbbb', '   ');
+    expect(result.allowed).toBe(false);
+    expect(result.error).toBe('Verification challenge required to start registration.');
+  });
+
+  it('allows registration in production when site key and captchaToken are both present', () => {
+    const result = evaluateTurnstilePolicy('portal', true, '0x4AAAAAAABbbbbbb', 'cf-turnstile-token-xyz');
+    expect(result.allowed).toBe(true);
+    expect(result.error).toBeUndefined();
+  });
+
+  it('allows registration in development/test even without site key or captchaToken', () => {
+    const result = evaluateTurnstilePolicy('portal', false, undefined, undefined);
+    expect(result.allowed).toBe(true);
+    expect(result.error).toBeUndefined();
+  });
+
+  it('never imposes Turnstile requirements on Kiosk device registration', () => {
+    // Kiosk is authenticated via managed device credentials, NEVER public Turnstile
+    const prodNoKey = evaluateTurnstilePolicy('kiosk', true, undefined, undefined);
+    expect(prodNoKey.allowed).toBe(true);
+
+    const prodWithKeyNoToken = evaluateTurnstilePolicy('kiosk', true, '0x4AAAAAAABbbbbbb', undefined);
+    expect(prodWithKeyNoToken.allowed).toBe(true);
+
+    const devKiosk = evaluateTurnstilePolicy('kiosk', false, undefined, undefined);
+    expect(devKiosk.allowed).toBe(true);
   });
 });

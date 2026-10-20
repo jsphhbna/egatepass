@@ -85,14 +85,13 @@ async function handleRequest(request: Request): Promise<Response> {
       }
     }
 
-    // Load retention settings
-    const { data: settings } = await admin
+    // Load retention settings (fail-closed if authoritative settings cannot be retrieved)
+    const { data: settings, error: settingsError } = await admin
       .from('app_settings')
       .select('automatic_cleanup_enabled, image_retention_days, visitor_retention_days, reconciliation_retention_days, audit_retention_days')
       .eq('singleton', true)
       .maybeSingle();
 
-    const cleanupEnabled = settings?.automatic_cleanup_enabled ?? true;
     const now = new Date().toISOString();
 
     const metrics = {
@@ -110,6 +109,44 @@ async function handleRequest(request: Request): Promise<Response> {
       errors: [] as string[],
     };
 
+    if (settingsError || !settings) {
+      const errorMsg = settingsError?.message || 'missing_authoritative_settings';
+      metrics.errors.push(`settings_query_failed: ${errorMsg}`);
+
+      await recordReconciliation(
+        admin,
+        'maintenance.settings_failed',
+        'app_settings',
+        'singleton',
+        errorMsg,
+        { callerType: metrics.callerType }
+      ).catch(() => undefined);
+
+      try {
+        await admin.from('audit_events').insert({
+          actor_id: caller.actorId ?? null,
+          actor_kind: caller.isCron ? 'system' : 'staff',
+          actor_role: caller.isCron ? 'cron' : 'superadmin',
+          action: 'maintenance.retention_run',
+          target_type: 'system',
+          target_id: 'retention_maintenance',
+          outcome: 'failure',
+          after_state: metrics,
+        });
+      } catch {
+        // Best-effort audit logging on settings failure
+      }
+
+      return jsonResponse(500, {
+        success: false,
+        result: 'failure',
+        reason: 'settings_unavailable',
+        maintenance: metrics,
+      });
+    }
+
+    const cleanupEnabled = settings.automatic_cleanup_enabled ?? true;
+
     // Scheduled cron runs respect automatic_cleanup_enabled; manual Super Admin execution is always allowed
     if (caller.isCron && !cleanupEnabled) {
       return jsonResponse(200, {
@@ -124,11 +161,15 @@ async function handleRequest(request: Request): Promise<Response> {
     // 1. EVIDENCE PURGE (REPAIR J: Persistent Maintenance Cursor to Prevent Starvation)
     // =========================================================================
     const evidenceJobName = 'retention_evidence_purge';
-    const { data: mState } = await admin
+    const { data: mState, error: mStateErr } = await admin
       .from('maintenance_state')
       .select('cursor_value')
       .eq('job_name', evidenceJobName)
       .maybeSingle();
+
+    if (mStateErr) {
+      metrics.errors.push(`maintenance_state_query_failed: ${mStateErr.message}`);
+    }
 
     let evidenceCursor = decodeCursor(mState?.cursor_value, { idType: 'uuid' });
 
@@ -248,18 +289,27 @@ async function handleRequest(request: Request): Promise<Response> {
           ? encodeCursor(nextEvidenceCursor.timestamp, nextEvidenceCursor.id)
           : null;
 
-        try {
-          await admin
-            .from('maintenance_state')
-            .upsert({
-              job_name: evidenceJobName,
-              cursor_value: encodedCursor,
-              last_started_at: now,
-              last_completed_at: new Date().toISOString(),
-              last_outcome: metrics.errors.length === 0 ? 'success' : (metrics.evidencePurged > 0 ? 'partial' : 'failure'),
-            }, { onConflict: 'job_name' });
-        } catch (err: unknown) {
-          console.error('Failed to update maintenance_state cursor:', err);
+        const { error: upsertError } = await admin
+          .from('maintenance_state')
+          .upsert({
+            job_name: evidenceJobName,
+            cursor_value: encodedCursor,
+            last_started_at: now,
+            last_completed_at: new Date().toISOString(),
+            last_outcome: metrics.errors.length === 0 ? 'success' : (metrics.evidencePurged > 0 ? 'partial' : 'failure'),
+          }, { onConflict: 'job_name' });
+
+        if (upsertError) {
+          console.error('Failed to update maintenance_state cursor:', upsertError);
+          metrics.errors.push(`maintenance_cursor_upsert_failed: ${upsertError.message}`);
+          await recordReconciliation(
+            admin,
+            'maintenance.cursor_upsert_failed',
+            'maintenance_state',
+            evidenceJobName,
+            upsertError.message || 'cursor_upsert_error',
+            { cursor: encodedCursor }
+          ).catch(() => undefined);
         }
       }
     }
@@ -340,32 +390,71 @@ async function handleRequest(request: Request): Promise<Response> {
       if (!dryRun) {
         for (const visitor of candidateVisitors) {
           // Check protection: active hold by visitor_id
-          const { data: visitorHolds } = await admin
+          const { data: visitorHolds, error: visitorHoldsErr } = await admin
             .from('incident_holds')
             .select('id')
             .eq('visitor_id', visitor.id)
             .eq('active', true)
             .limit(1);
 
+          if (visitorHoldsErr) {
+            metrics.errors.push(`visitor_hold_query_failed_${visitor.id}: ${visitorHoldsErr.message}`);
+            await recordReconciliation(
+              admin,
+              'visitor.hold_check_failed',
+              'visitors',
+              visitor.id,
+              visitorHoldsErr.message,
+              { protection_type: 'visitor_hold' }
+            ).catch(() => undefined);
+            continue; // Protected by uncertainty: DO NOT ANONYMIZE
+          }
+
           if (visitorHolds && visitorHolds.length > 0) continue;
 
           // Check protection: active hold by pass belonging to this visitor
-          const { data: passHolds } = await admin
+          const { data: passHolds, error: passHoldsErr } = await admin
             .from('incident_holds')
             .select('id, passes!inner(visitor_id)')
             .eq('passes.visitor_id', visitor.id)
             .eq('active', true)
             .limit(1);
 
+          if (passHoldsErr) {
+            metrics.errors.push(`pass_hold_query_failed_${visitor.id}: ${passHoldsErr.message}`);
+            await recordReconciliation(
+              admin,
+              'visitor.pass_hold_check_failed',
+              'visitors',
+              visitor.id,
+              passHoldsErr.message,
+              { protection_type: 'pass_hold' }
+            ).catch(() => undefined);
+            continue; // Protected by uncertainty: DO NOT ANONYMIZE
+          }
+
           if (passHolds && passHolds.length > 0) continue;
 
           // Check protection: active, pending, or future issued passes
-          const { data: activePasses } = await admin
+          const { data: activePasses, error: activePassesErr } = await admin
             .from('passes')
             .select('id')
             .eq('visitor_id', visitor.id)
             .or(`status.in.(inside,pending),and(status.eq.issued,valid_until.gt.${now})`)
             .limit(1);
+
+          if (activePassesErr) {
+            metrics.errors.push(`active_pass_query_failed_${visitor.id}: ${activePassesErr.message}`);
+            await recordReconciliation(
+              admin,
+              'visitor.active_pass_check_failed',
+              'visitors',
+              visitor.id,
+              activePassesErr.message,
+              { protection_type: 'active_passes' }
+            ).catch(() => undefined);
+            continue; // Protected by uncertainty: DO NOT ANONYMIZE
+          }
 
           if (activePasses && activePasses.length > 0) continue;
 
@@ -495,10 +584,8 @@ async function handleRequest(request: Request): Promise<Response> {
       metrics.reconciliationTasksCleaned > 0 ||
       metrics.verificationCodesCleaned > 0;
 
-    const resultStatus: 'success' | 'partial' | 'failure' =
+    let preAuditOutcome: 'success' | 'partial' | 'failure' =
       metrics.errors.length === 0 ? 'success' : (hasWorkDone ? 'partial' : 'failure');
-
-    const auditOutcome: 'success' | 'partial' | 'failure' = resultStatus;
 
     const { error: auditError } = await admin.from('audit_events').insert({
       actor_id: caller.actorId ?? null,
@@ -507,7 +594,7 @@ async function handleRequest(request: Request): Promise<Response> {
       action: 'maintenance.retention_run',
       target_type: 'system',
       target_id: 'retention_maintenance',
-      outcome: auditOutcome,
+      outcome: preAuditOutcome,
       after_state: metrics,
     });
 
@@ -520,13 +607,21 @@ async function handleRequest(request: Request): Promise<Response> {
         'system',
         'retention_maintenance',
         auditError.message || 'audit_insert_error',
-        { metrics, outcome: auditOutcome }
+        { metrics, outcome: preAuditOutcome }
       ).catch(() => undefined);
     }
 
-    return jsonResponse(resultStatus === 'failure' ? 500 : 200, {
-      success: resultStatus !== 'failure',
-      result: resultStatus,
+    // Result status MUST be calculated AFTER all operations, including audit & reconciliation
+    const finalResultStatus: 'success' | 'partial' | 'failure' =
+      metrics.errors.length === 0
+        ? 'success'
+        : (hasWorkDone ? 'partial' : 'failure');
+
+    const isSuccess = metrics.errors.length === 0 && finalResultStatus === 'success';
+
+    return jsonResponse(finalResultStatus === 'failure' ? 500 : 200, {
+      success: isSuccess,
+      result: finalResultStatus,
       maintenance: metrics,
     });
   } catch (error) {
