@@ -1,0 +1,58 @@
+{
+  "name": "e-gatepass",
+  "private": true,
+  "version": "1.0.0",
+  "description": "EARIST E-GatePass — Smart QR Code-Based Visitor Management System",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc && vite build",
+    "preview": "vite preview",
+    "netlify:dev": "netlify dev",
+    "emulators": "npx firebase-tools@13.10.0 emulators:start --only auth,firestore",
+    "test": "npx firebase-tools@13.10.0 emulators:exec \"vitest run\"",
+    "typecheck:functions": "tsc --noEmit --project netlify/tsconfig.json"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/jsphhbna/E-GATEPASS.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/jsphhbna/E-GATEPASS/issues"
+  },
+  "homepage": "https://github.com/jsphhbna/E-GATEPASS#readme",
+  "dependencies": {
+    "@hookform/resolvers": "^5.9.1",
+    "@radix-ui/react-dialog": "^1.1.23",
+    "date-fns": "^4.4.0",
+    "firebase": "^12.19.0",
+    "html5-qrcode": "^2.3.8",
+    "lucide-react": "^1.49.0",
+    "qrcode": "^1.5.4",
+    "react": "^19.3.0",
+    "react-dom": "^19.3.0",
+    "react-hook-form": "^7.89.0",
+    "react-router-dom": "^7.18.4",
+    "sonner": "^2.0.8",
+    "zod": "^4.6.5"
+  },
+  "devDependencies": {
+    "@firebase/rules-unit-testing": "^5.0.2",
+    "@netlify/functions": "^6.0.1",
+    "@tailwindcss/vite": "^4.3.3",
+    "@types/qrcode": "^1.5.6",
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
+    "@vitejs/plugin-react": "^6.1.1",
+    "cloudinary": "^2.11.0",
+    "firebase-admin": "^14.5.0",
+    "netlify-cli": "27.10.2",
+    "tailwindcss": "^4.3.3",
+    "typescript": "5.9.3",
+    "vite": "^8.3.1",
+    "vitest": "^5.0.2"
+  }
+}

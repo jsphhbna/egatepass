@@ -1,0 +1,268 @@
+@import "tailwindcss";
+
+/* ============================================================
+   DESIGN TOKENS — Edit here to restyle the entire product.
+   EARIST brand: institutional maroon with red and gold accents.
+   ============================================================ */
+@theme {
+  /* EARIST Brand — Red as Primary */
+  --color-brand: #7A0A0A;
+  --color-brand-light: #F8EEEE;
+  --color-brand-dark: #5F0808;
+  --color-action: #E60000;
+  --color-action-dark: #B30000;
+  --color-accent: #F2C94C;
+  --color-institutional: #7A0A0A;
+  --color-institutional-dark: #5F0808;
+  --color-institutional-highlight: rgba(242, 201, 76, 0.24);
+  
+  /* EARIST Identity Colors */
+  --color-earist-red: #E60000;
+  --color-earist-gold: #F2C94C;
+  --color-earist-maroon: #7A0A0A;
+  --color-earist-ink: #172033;
+
+  /* Surfaces (60% canvas, 30% secondary) */
+  --color-canvas: #F7F8FA;
+  --color-surface: #FFFFFF;
+  --color-overlay: hsl(220, 14%, 96%);
+  --color-overlay-strong: rgba(23, 32, 51, 0.68);
+
+  /* Text */
+  --color-text-primary: #172033;
+  --color-text-secondary: #64748B;
+  --color-text-muted: hsl(220, 8%, 64%);
+
+  /* Borders */
+  --color-border: hsl(220, 13%, 88%);
+  --color-border-strong: hsl(220, 13%, 72%);
+  --color-neutral: #475569;
+  --color-neutral-light: #F1F5F9;
+
+  /* Semantic */
+  --color-success: #168A53;
+  --color-success-light: #EAF7F0;
+  --color-success-dark: #0F6B3F;
+  --color-danger: hsl(0, 72%, 51%);
+  --color-danger-light: hsl(0, 72%, 95%);
+  --color-danger-dark: #B91C1C;
+  --color-warning: hsl(38, 92%, 50%);
+  --color-warning-light: hsl(38, 92%, 95%);
+  --color-warning-dark: #92400E;
+  --color-scanner-canvas: #080B12;
+
+  /* Shadows (subtle only) */
+  --shadow-xs: 0 1px 2px rgba(0, 0, 0, 0.04);
+  --shadow-sm: 0 2px 8px rgba(0, 0, 0, 0.05), 0 1px 2px rgba(0, 0, 0, 0.03);
+  --shadow-md: 0 4px 16px rgba(0, 0, 0, 0.07), 0 2px 4px rgba(0, 0, 0, 0.04);
+  --shadow-lg: 0 8px 24px rgba(0, 0, 0, 0.09), 0 4px 8px rgba(0, 0, 0, 0.05);
+
+  /* Border radius scale */
+  --radius-xs: 4px;
+  --radius-sm: 6px;
+  --radius-md: 10px;
+  --radius-lg: 14px;
+  --radius-xl: 18px;
+  --radius-full: 9999px;
+
+  /* Type scale */
+  --text-xs: 11px;
+  --text-sm: 13px;
+  --text-base: 15px;
+  --text-md: 17px;
+  --text-lg: 20px;
+  --text-xl: 24px;
+  --text-2xl: 30px;
+  --text-3xl: 40px;
+}
+
+/* ============================================================
+   SPRING EASING TOKENS
+   ============================================================ */
+:root {
+  --color-brand: #7A0A0A;
+  --color-brand-light: #F8EEEE;
+  --color-brand-dark: #5F0808;
+  --color-action: #E60000;
+  --color-action-dark: #B30000;
+  --color-accent: #F2C94C;
+  --color-institutional: #7A0A0A;
+  --color-institutional-dark: #5F0808;
+  --color-institutional-highlight: rgba(242, 201, 76, 0.24);
+  --color-earist-red: #E60000;
+  --color-earist-gold: #F2C94C;
+  --color-earist-maroon: #7A0A0A;
+  --color-earist-ink: #172033;
+  --color-canvas: #F7F8FA;
+  --color-surface: #FFFFFF;
+  --color-overlay: hsl(220, 14%, 96%);
+  --color-overlay-strong: rgba(23, 32, 51, 0.68);
+  --color-text-primary: #172033;
+  --color-text-secondary: #64748B;
+  --color-text-muted: hsl(220, 8%, 64%);
+  --color-border: hsl(220, 13%, 88%);
+  --color-border-strong: hsl(220, 13%, 72%);
+  --color-neutral: #475569;
+  --color-neutral-light: #F1F5F9;
+  --color-success: #168A53;
+  --color-success-light: #EAF7F0;
+  --color-success-dark: #0F6B3F;
+  --color-danger: hsl(0, 72%, 51%);
+  --color-danger-light: hsl(0, 72%, 95%);
+  --color-danger-dark: #B91C1C;
+  --color-warning: hsl(38, 92%, 50%);
+  --color-warning-light: hsl(38, 92%, 95%);
+  --color-warning-dark: #92400E;
+  --color-scanner-canvas: #080B12;
+  --shadow-xs: 0 1px 2px rgba(0, 0, 0, 0.04);
+  --shadow-sm: 0 2px 8px rgba(0, 0, 0, 0.05), 0 1px 2px rgba(0, 0, 0, 0.03);
+  --shadow-md: 0 4px 16px rgba(0, 0, 0, 0.07), 0 2px 4px rgba(0, 0, 0, 0.04);
+  --shadow-lg: 0 8px 24px rgba(0, 0, 0, 0.09), 0 4px 8px rgba(0, 0, 0, 0.05);
+  --radius-xs: 4px;
+  --radius-sm: 6px;
+  --radius-md: 10px;
+  --radius-lg: 14px;
+  --radius-xl: 18px;
+  --radius-full: 9999px;
+  --text-xs: 11px;
+  --text-sm: 13px;
+  --text-base: 15px;
+  --text-md: 17px;
+  --text-lg: 20px;
+  
+  --spring-snappy: cubic-bezier(0.34, 1.56, 0.64, 1);
+  --spring-smooth: cubic-bezier(0.32, 0.72, 0, 1);
+  --spring-gentle: cubic-bezier(0.22, 1, 0.36, 1);
+  --transition-color: 180ms ease;
+}
+
+/* ============================================================
+   BASE STYLES
+   ============================================================ */
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html {
+  font-family: system-ui, -apple-system, sans-serif;
+  font-size: var(--text-base);
+  color: var(--color-text-primary);
+  background-color: var(--color-canvas);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+.landing-hero-glow {
+  background: radial-gradient(
+    circle at center,
+    var(--color-institutional-highlight),
+    transparent 68%
+  );
+}
+
+body {
+  margin: 0;
+  min-height: 100dvh;
+}
+
+/* ============================================================
+   INTERACTIVE ELEMENT TRANSITIONS — GPU-safe properties only
+   ============================================================ */
+button,
+a,
+[role="button"] {
+  transition:
+    color var(--transition-color),
+    background-color var(--transition-color),
+    border-color var(--transition-color),
+    transform 220ms var(--spring-snappy),
+    opacity 220ms var(--spring-smooth);
+}
+
+button:active,
+[role="button"]:active {
+  transition-duration: 0ms;
+  transform: scale(0.97);
+}
+
+/* ============================================================
+   FOCUS STYLES — :focus-visible only, never bare :focus
+   ============================================================ */
+:focus-visible {
+  outline: 2px solid var(--color-brand);
+  outline-offset: 2px;
+}
+
+/* ============================================================
+   REDUCED MOTION — hard switch, not suggestion
+   ============================================================ */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    transition-duration: 0.001ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+/* ============================================================
+   SKIP LINK — visually hidden until focused
+   ============================================================ */
+.skip-link {
+  position: absolute;
+  top: -40px;
+  left: 0;
+  z-index: 100;
+  padding: 8px 16px;
+  background: var(--color-brand);
+  color: white;
+  font-weight: 600;
+  text-decoration: none;
+  border-radius: 0 0 var(--radius-sm) 0;
+}
+
+.skip-link:focus {
+  top: 0;
+}
+
+/* ============================================================
+   ANIMATIONS
+   ============================================================ */
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+.animate-spin {
+  animation: spin 1s linear infinite;
+}
+
+/* Scanner previews scale with the available tablet, phone, or desktop viewport. */
+.scanner-viewport {
+  width: min(94vw, 40rem);
+  height: auto;
+  aspect-ratio: 4 / 3;
+}
+
+@media (min-width: 640px) {
+  .scanner-viewport {
+    width: min(94vw, clamp(20rem, calc(133.333dvh - 10.667rem), 64rem));
+  }
+}
+
+.scanner-viewport video {
+  width: 100% !important;
+  height: 100% !important;
+  object-fit: cover;
+  transform: scaleX(-1);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  /* Keep loading progress visible with a slower rotation. */
+  .animate-spin {
+    animation-duration: 2s !important;
+  }
+}

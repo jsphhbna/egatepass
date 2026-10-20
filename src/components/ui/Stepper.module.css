@@ -1,0 +1,26 @@
+.completedStep {
+  animation: completed-step-pop 360ms var(--spring-snappy);
+}
+
+@keyframes completed-step-pop {
+  0% {
+    transform: scale(0.82);
+    box-shadow: 0 0 0 0 var(--color-success-light);
+  }
+
+  65% {
+    transform: scale(1.14);
+    box-shadow: 0 0 0 7px var(--color-success-light);
+  }
+
+  100% {
+    transform: scale(1);
+    box-shadow: 0 0 0 0 transparent;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .completedStep {
+    animation: none;
+  }
+}

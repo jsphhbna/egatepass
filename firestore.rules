@@ -1,0 +1,295 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // ============================================================
+    // HELPER FUNCTIONS
+    // ============================================================
+    function isLoggedIn() {
+      return request.auth != null;
+    }
+    
+    function isAdmin() {
+      return isLoggedIn() && 
+             request.auth.token.email_verified == true &&
+             exists(/databases/$(database)/documents/users/$(request.auth.uid)) && 
+             get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role in ['admin', 'superadmin'] &&
+             get(/databases/$(database)/documents/users/$(request.auth.uid)).data.active == true;
+    }
+
+    function isSuperAdmin() {
+      return isLoggedIn() &&
+             request.auth.token.email_verified == true &&
+             exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
+             get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'superadmin' &&
+             get(/databases/$(database)/documents/users/$(request.auth.uid)).data.active == true;
+    }
+
+    function isRegularAdmin() {
+      return isLoggedIn() &&
+             request.auth.token.email_verified == true &&
+             exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
+             get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin' &&
+             get(/databases/$(database)/documents/users/$(request.auth.uid)).data.active == true;
+    }
+    
+    function isGuard() {
+      return isLoggedIn() && 
+             request.auth.token.email_verified == true &&
+             exists(/databases/$(database)/documents/users/$(request.auth.uid)) && 
+             get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'guard' && 
+             get(/databases/$(database)/documents/users/$(request.auth.uid)).data.active == true;
+    }
+    
+    function isDevice(type) {
+      return isLoggedIn() && 
+             exists(/databases/$(database)/documents/devices/$(request.auth.uid)) && 
+             get(/databases/$(database)/documents/devices/$(request.auth.uid)).data.type == type && 
+             get(/databases/$(database)/documents/devices/$(request.auth.uid)).data.status == 'active';
+    }
+    
+    function isActiveDevice() {
+      return isLoggedIn() && 
+             exists(/databases/$(database)/documents/devices/$(request.auth.uid)) && 
+             get(/databases/$(database)/documents/devices/$(request.auth.uid)).data.status == 'active';
+    }
+
+    // Firebase's signed provider claim identifies an Anonymous Auth session.
+    function isAnonymousVisitor() {
+      return isLoggedIn() &&
+             request.auth.token.firebase.sign_in_provider == 'anonymous' &&
+             !exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
+             !exists(/databases/$(database)/documents/devices/$(request.auth.uid));
+    }
+
+    // ============================================================
+    // COLLECTION RULES
+    // ============================================================
+
+    match /users/{userId} {
+      // Staff can read their own record; administrative roles can list users.
+      allow read: if isAdmin() || (isLoggedIn() && request.auth.uid == userId);
+
+      // Account creation is a privileged server operation so Auth, profile, and
+      // audit records can be coordinated without exposing role assignment.
+      allow create: if false;
+
+      // Role and activation changes are backend-only. Staff may only acknowledge
+      // the privacy policy on their own record from the client.
+      allow update: if (
+        isLoggedIn() && 
+        request.auth.uid == userId && 
+        request.resource.data.diff(resource.data).affectedKeys().hasOnly(['privacyAcceptedAt'])
+      );
+      allow delete: if false;
+    }
+
+    match /devices/{deviceId} {
+      // Administrative roles can read all devices; devices can read their own.
+      // Registration and management mutations are server-only.
+      allow read: if isAdmin() || (isLoggedIn() && request.auth.uid == deviceId);
+      allow write: if false;
+    }
+
+    // Operational repair tasks can contain sensitive server-state details.
+    match /reconciliationTasks/{taskId} {
+      allow read, write: if false;
+    }
+
+    // Upload ownership records are server-only. They cannot be forged to gain
+    // image access or to delete another actor's pending upload.
+    match /imageUploads/{uploadId} {
+      allow read, write: if false;
+    }
+
+    match /visitors/{visitorId} {
+      // Visitor/pass creation is one protected backend transaction.
+      allow create: if false && isLoggedIn() &&
+                       request.resource.data.keys().hasAll(['firstName', 'middleName', 'lastName', 'fullName', 'contactNumber', 'purpose', 'visitDate', 'idImagePublicId', 'photoPublicId', 'consentAcceptedAt', 'createdAt', 'createdByUid', 'imagesPurgedAt']) &&
+                       request.resource.data.keys().hasOnly(['firstName', 'middleName', 'lastName', 'fullName', 'contactNumber', 'purpose', 'visitDate', 'idImagePublicId', 'photoPublicId', 'consentAcceptedAt', 'createdAt', 'createdByUid', 'imagesPurgedAt']) &&
+                       // Type validation
+                       request.resource.data.firstName is string && request.resource.data.firstName.size() > 0 &&
+                       request.resource.data.middleName is string &&
+                       request.resource.data.lastName is string && request.resource.data.lastName.size() > 0 &&
+                       request.resource.data.fullName is string && request.resource.data.fullName.size() > 0 &&
+                       request.resource.data.contactNumber is string && request.resource.data.contactNumber.size() > 0 &&
+                       request.resource.data.purpose is string && request.resource.data.purpose.size() > 0 &&
+                       request.resource.data.visitDate is string && request.resource.data.visitDate.size() > 0 &&
+                       (request.resource.data.idImagePublicId is string || request.resource.data.idImagePublicId == null) &&
+                       request.resource.data.photoPublicId is string && request.resource.data.photoPublicId.size() > 0 &&
+                       request.resource.data.consentAcceptedAt is timestamp &&
+                       request.resource.data.createdAt is timestamp &&
+                       request.resource.data.imagesPurgedAt == null &&
+                       request.resource.data.createdByUid == request.auth.uid;
+                       
+      allow read: if isAdmin() || isGuard() || (isLoggedIn() && resource.data.createdByUid == request.auth.uid);
+      allow update: if false;
+      allow delete: if false; // Retention purge is an update to imagesPurgedAt, not delete
+    }
+
+    match /gatePasses/{passId} {
+      // ── Creation ──
+      // Portal passes: only anonymous visitors (not known users/devices)
+      // Kiosk passes: only active kiosk devices
+      allow create: if false && (
+        // ── Portal source: anonymous visitor ──
+        (
+          isAnonymousVisitor() &&
+          request.resource.data.source == 'portal' &&
+          request.resource.data.keys().hasAll(['visitorId', 'visitorName', 'purpose', 'photoPublicId', 'idImagePublicId', 'source', 'status', 'validFrom', 'validUntil', 'issuedAt', 'scannedAt', 'timeIn', 'timeOut', 'entryDeviceId', 'exitDeviceId', 'decidedByUid', 'rejectionReason', 'gate', 'createdByUid']) &&
+          request.resource.data.keys().hasOnly(['visitorId', 'visitorName', 'purpose', 'photoPublicId', 'idImagePublicId', 'source', 'status', 'validFrom', 'validUntil', 'issuedAt', 'scannedAt', 'timeIn', 'timeOut', 'entryDeviceId', 'exitDeviceId', 'decidedByUid', 'rejectionReason', 'gate', 'createdByUid']) &&
+          // Type & content validation
+          request.resource.data.visitorId is string && request.resource.data.visitorId.size() > 0 &&
+          request.resource.data.visitorName is string && request.resource.data.visitorName.size() > 0 &&
+          request.resource.data.purpose is string && request.resource.data.purpose.size() > 0 &&
+          request.resource.data.photoPublicId is string && request.resource.data.photoPublicId.size() > 0 &&
+          (request.resource.data.idImagePublicId is string || request.resource.data.idImagePublicId == null) &&
+          request.resource.data.status == 'issued' &&
+          request.resource.data.validFrom is timestamp &&
+          request.resource.data.validUntil is timestamp &&
+          request.resource.data.validUntil > request.resource.data.validFrom &&
+          request.resource.data.issuedAt is timestamp &&
+          // Null-initial fields
+          request.resource.data.scannedAt == null &&
+          request.resource.data.timeIn == null &&
+          request.resource.data.timeOut == null &&
+          request.resource.data.entryDeviceId == null &&
+          request.resource.data.exitDeviceId == null &&
+          request.resource.data.decidedByUid == null &&
+          request.resource.data.rejectionReason == null &&
+          request.resource.data.gate == null &&
+          // Ownership
+          request.resource.data.createdByUid == request.auth.uid &&
+          get(/databases/$(database)/documents/visitors/$(request.resource.data.visitorId)).data.createdByUid == request.auth.uid
+        ) ||
+        // ── Kiosk source: active kiosk device ──
+        (
+          isDevice('kiosk') &&
+          request.resource.data.source == 'kiosk' &&
+          request.resource.data.keys().hasAll(['visitorId', 'visitorName', 'purpose', 'photoPublicId', 'idImagePublicId', 'source', 'status', 'validFrom', 'validUntil', 'issuedAt', 'scannedAt', 'timeIn', 'timeOut', 'entryDeviceId', 'exitDeviceId', 'decidedByUid', 'rejectionReason', 'gate', 'createdByUid']) &&
+          request.resource.data.keys().hasOnly(['visitorId', 'visitorName', 'purpose', 'photoPublicId', 'idImagePublicId', 'source', 'status', 'validFrom', 'validUntil', 'issuedAt', 'scannedAt', 'timeIn', 'timeOut', 'entryDeviceId', 'exitDeviceId', 'decidedByUid', 'rejectionReason', 'gate', 'createdByUid']) &&
+          // Type & content validation
+          request.resource.data.visitorId is string && request.resource.data.visitorId.size() > 0 &&
+          request.resource.data.visitorName is string && request.resource.data.visitorName.size() > 0 &&
+          request.resource.data.purpose is string && request.resource.data.purpose.size() > 0 &&
+          request.resource.data.photoPublicId is string && request.resource.data.photoPublicId.size() > 0 &&
+          (request.resource.data.idImagePublicId is string || request.resource.data.idImagePublicId == null) &&
+          request.resource.data.status == 'issued' &&
+          request.resource.data.validFrom is timestamp &&
+          request.resource.data.validUntil is timestamp &&
+          request.resource.data.validUntil > request.resource.data.validFrom &&
+          request.resource.data.issuedAt is timestamp &&
+          // Null-initial fields
+          request.resource.data.scannedAt == null &&
+          request.resource.data.timeIn == null &&
+          request.resource.data.timeOut == null &&
+          request.resource.data.entryDeviceId == null &&
+          request.resource.data.exitDeviceId == null &&
+          request.resource.data.decidedByUid == null &&
+          request.resource.data.rejectionReason == null &&
+          request.resource.data.gate == null &&
+          // Ownership
+          request.resource.data.createdByUid == request.auth.uid &&
+          get(/databases/$(database)/documents/visitors/$(request.resource.data.visitorId)).data.createdByUid == request.auth.uid
+        ));
+                       
+      allow get: if isAdmin() || isGuard() || isActiveDevice() || (isLoggedIn() && resource.data.createdByUid == request.auth.uid);
+      allow list: if isAdmin() || isGuard() || (isLoggedIn() && resource.data.createdByUid == request.auth.uid);
+      
+      // ── Updates ──
+      allow update: if false && (
+        // Entry device: issued → pending (with scanner UID ownership + type checks)
+        (
+          isDevice('entry') && 
+          resource.data.status == 'issued' && 
+          (
+            (
+              request.resource.data.status == 'pending' && 
+              request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status', 'scannedAt', 'entryDeviceId', 'gate']) &&
+              request.resource.data.scannedAt is timestamp &&
+              request.resource.data.entryDeviceId == request.auth.uid &&
+               request.resource.data.gate is string && request.resource.data.gate.size() > 0 &&
+               request.resource.data.gate == get(/databases/$(database)/documents/devices/$(request.auth.uid)).data.gate
+            ) ||
+            // Entry device: issued → expired (only if pass is actually expired)
+            (
+              request.resource.data.status == 'expired' && 
+              request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status']) &&
+              resource.data.validUntil < request.time
+            )
+          )
+        ) ||
+        // Exit device: inside → exited (with scanner UID ownership)
+        (
+          isDevice('exit') && 
+          resource.data.status == 'inside' && 
+          request.resource.data.status == 'exited' &&
+          request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status', 'timeOut', 'exitDeviceId']) &&
+          request.resource.data.timeOut is timestamp &&
+          request.resource.data.exitDeviceId == request.auth.uid
+        ));
+        
+      allow delete: if false;
+    }
+
+    match /visitLogs/{logId} {
+      // Scanner and Guard logs are emitted only by protected backend transactions.
+      allow create: if false && isLoggedIn() &&
+        request.resource.data.keys().hasAll(['passToken', 'visitorId', 'event', 'reason', 'deviceId', 'gate', 'guardUid', 'timestamp']) &&
+        request.resource.data.keys().hasOnly(['passToken', 'visitorId', 'event', 'reason', 'deviceId', 'gate', 'guardUid', 'timestamp']) &&
+        request.resource.data.passToken is string &&
+        request.resource.data.event in ['scan_entry', 'scan_exit', 'invalid_scan', 'approved', 'rejected'] &&
+        request.resource.data.timestamp is timestamp &&
+        (request.resource.data.gate is string || request.resource.data.gate == null) &&
+        (
+          (
+            request.resource.data.event == 'invalid_scan' &&
+            (
+              request.resource.data.visitorId == null ||
+              (
+                request.resource.data.visitorId is string &&
+                request.resource.data.visitorId.size() > 0 &&
+                exists(/databases/$(database)/documents/gatePasses/$(request.resource.data.passToken)) &&
+                get(/databases/$(database)/documents/gatePasses/$(request.resource.data.passToken)).data.visitorId == request.resource.data.visitorId
+              )
+            )
+          ) ||
+          (request.resource.data.event != 'invalid_scan' && request.resource.data.visitorId is string && request.resource.data.visitorId.size() > 0 && request.resource.data.passToken.size() > 0)
+        ) &&
+        (
+          (request.resource.data.event in ['invalid_scan', 'rejected'] && request.resource.data.reason is string && request.resource.data.reason.size() > 0) ||
+          (request.resource.data.event in ['scan_entry', 'scan_exit', 'approved'] && request.resource.data.reason == null)
+        ) &&
+        (
+          (
+            request.resource.data.deviceId is string && request.resource.data.deviceId == request.auth.uid &&
+            request.resource.data.guardUid == null && request.resource.data.gate is string &&
+            (
+              (isDevice('entry') && request.resource.data.event in ['scan_entry', 'invalid_scan']) ||
+              (isDevice('exit') && request.resource.data.event in ['scan_exit', 'invalid_scan'])
+            )
+          )
+        );
+      allow read: if isAdmin() || isGuard();
+      allow update, delete: if false;
+    }
+
+    match /settings/app {
+      // Everyone can read operational settings. Security-sensitive fields are
+      // Super Admin-only; normal Admins may update daily operational options.
+      allow read: if true;
+      allow write: if false;
+    }
+
+    match /auditLogs/{logId} {
+      // Administrative events are server-authored and immutable.
+      allow read: if isAdmin();
+      allow write: if false;
+    }
+
+    // Default deny all
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}
