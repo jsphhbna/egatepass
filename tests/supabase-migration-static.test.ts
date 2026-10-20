@@ -71,4 +71,27 @@ describe('Supabase migration static safety contract', () => {
       expect(idempotency).toMatch(new RegExp(`grant execute on function ${fn.replace('.', '\\.')}[^;]+to service_role;`, 'i'));
     }
   });
+
+  it('applies additive QR-email state-machine hardening in 01000', () => {
+    const security = readFileSync('supabase/migrations/20261020001000_qr_email_security.sql', 'utf8');
+    const pgtap = readFileSync('supabase/tests/007_qr_email_security.test.sql', 'utf8');
+    const rpcs = [
+      'api.request_email_verification_code',
+      'api.finalize_email_verification_code',
+      'api.verify_and_claim_email_dispatch',
+      'api.finalize_email_dispatch',
+    ];
+    expect(security).toContain("set search_path = ''");
+    expect(security).toContain('for update;');
+    expect(security).toContain('request_actor_id');
+    expect(security).toContain("'outcome_unknown'");
+    expect(security).toContain('pass_email_verifications_pass_created_idx');
+    for (const fn of rpcs) {
+      expect(security).toMatch(new RegExp(`revoke all on function ${fn.replace('.', '\\.')}[^;]+from public, anon, authenticated;`, 'i'));
+      expect(security).toMatch(new RegExp(`grant execute on function ${fn.replace('.', '\\.')}[^;]+to service_role;`, 'i'));
+    }
+    expect(pgtap).toContain('different send key cannot bypass active claim');
+    expect(pgtap).toContain('stale failure cannot overwrite provider acceptance');
+    expect(pgtap).toContain('AUTHORED / NOT RUN');
+  });
 });

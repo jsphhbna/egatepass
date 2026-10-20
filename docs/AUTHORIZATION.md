@@ -24,6 +24,7 @@ S2 implements identity resolution, select policies, private evidence buckets, an
 - The browser cannot write visit events, audit events, reconciliation tasks, holds, limiter state, or maintenance state.
 - Storage insert requires a live, owner/path/bucket-bound intent. No client Storage update/delete policy exists.
 - A service-role server function bypasses RLS and must independently authorize the caller before using it.
+- QR-email RPCs are service-role-only. The Vercel handler authenticates the bearer, resolves only the issuance public-reference UUID, verifies current owner/status/expiry and bearer digest, and passes the authenticated actor ID. Each definer repeats owner/status/expiry/tuple checks under locks; anon/authenticated/PUBLIC execution is revoked.
 - The Guard password endpoint authenticates the bearer against Supabase Auth, checks the active Guard profile, verifies the current password, and uses a separate privileged client so the verification session cannot replace the admin client's service-role authorization.
 
 ## Mandatory runtime denial tests

@@ -25,6 +25,7 @@ This is a planning inventory, not proof that the target exists. Canonical SQL wi
 | Original function | Target endpoint/RPC responsibility |
 |---|---|
 | `create-pass` | `/api/passes/issue` plus `api.issue_pass`: actual-byte validation, atomic claim/visitor/pass/audit issue, server-derived source/validity, digest-only token and idempotency — IMPLEMENTED, NOT INTEGRATION-VERIFIED |
+| optional QR email | `/api/passes/email` plus service-role-only request/code-finalize/claim/dispatch-finalize RPCs: public-reference UUID lookup, mailbox challenge, stable idempotency, fail-closed state machine, conservative unknown outcome — IMPLEMENTED, NOT INTEGRATION-VERIFIED |
 | `scan-pass` | `/api/scan-pass` plus `api.scan_pass`: digest lookup, active device/gate/type check, locked entry/exit transition + visit event — IMPLEMENTED, NOT INTEGRATION-VERIFIED |
 | `decide-visit` | `/api/decide-visit` plus `api.decide_visit`: eligible staff, pending-only locked approve/reject + visit event — IMPLEMENTED, NOT INTEGRATION-VERIFIED |
 | `create-user` | Supabase Admin invitation/create plus staff profile transaction/reconciliation |
@@ -67,6 +68,7 @@ No old configuration is removed merely because a target file compiles. Removal o
 - Privacy acknowledgement and Guard password finalization: `20261020000400_identity_rpcs.sql` plus `/api/auth/complete-password-change` — IMPLEMENTED, NOT EXECUTED.
 - Pass issuance and evidence claim: `20261020000500_pass_issuance.sql` plus `/api/passes/issue` — IMPLEMENTED, NOT EXECUTED.
 - Gate scan/decision/Guard projection: `20261020000600_gate_lifecycle.sql` plus three Vercel handlers — IMPLEMENTED, NOT EXECUTED.
+- QR-email correction: additive `20261020001000_qr_email_security.sql` supersedes 00900 function bodies, adds actor-bound request keys, serialized rate limits, code-delivery state, unknown/stale-claim fencing, and exact service-role grants — IMPLEMENTED, NOT EXECUTED.
 - One-time non-public Super Admin bootstrap: `supabase/bootstrap/README.md` — PROCEDURE AUTHORED, NOT TESTED.
 - Real database/schema matrix: `supabase/tests/*.test.sql` — 59 ASSERTIONS AUTHORED, BLOCKED.
 

@@ -175,3 +175,16 @@
   6. **Dashboard Calendar Window Alignment (C-01)**: In `api/admin/dashboard.ts`, `pendingToday` measures passes scanned today (`entry_scanned_at` within Manila calendar day), while `allPending` captures all unapproved passes regardless of date.
   7. **Emergency Evacuation Truncation & Failure Alerts (C-02)**: In `AdminEmergency.tsx`, bold screen and print alerts display prominently if records hit the 10,000 ceiling (`isTruncated === true`) or if network polling fails (`loadError`), preventing false complete evacuation lists.
   8. **Strict Compound Cursor Decoding & CSV Formula Defense (C-03)**: In `server/cursor.ts`, `decodeCursorStrict` validates ISO timestamp format and UUID/BigInt identifier types, returning HTTP 400 `invalid_cursor` on malformed input. In `src/lib/completeExport.ts`, `escapeCsvCell` sanitizes formula prefixes `=+\-@` even when preceded by whitespace, tabs, or control characters.
+
+## ADR-0023 — QR-email fail-closed state machine and conservative delivery semantics
+
+- Date: 2026-10-20
+- Status: accepted for targeted correction; live Supabase/Resend NOT VERIFIED
+- Supersedes ADR-0021 delivery-failure retry wording and ADR-0022 item 1's non-schema `GP-...`/internal-ID fallback.
+- Decision:
+  1. The API accepts only the issuance response's UUID `public_reference`; the internal UUID `passes.id` is never an alternate public lookup key.
+  2. Security-critical RPC absence, denial, malformed data, or transient failure fails closed. Application code never reads or writes `pass_email_verifications` as a fallback.
+  3. Request-code keys are bound to actor/pass/recipient. Code rate limiting locks the parent pass before counting/inserting, and invalid attempts update under the challenge row lock.
+  4. A claimed send replays its durable state without calling the provider. Different keys cannot bypass `sending`, accepted, or unknown states. Definitive rejection permits only a deliberate new attempt.
+  5. Transport errors and unreadable 2xx acknowledgements are ambiguous. They remain `outcome_unknown`; stale `sending` claims become unknown after 15 minutes and require reconciliation. No exactly-once guarantee is claimed across PostgreSQL and Resend.
+  6. UI success means submitted to the provider, not delivered to an inbox. Email remains optional and can never revoke or roll back an issued pass.

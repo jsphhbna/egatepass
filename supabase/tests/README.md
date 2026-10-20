@@ -7,6 +7,6 @@ npx supabase@latest db reset
 npx supabase@latest test db
 ```
 
-The two SQL files currently define 27 assertions. Required promotion evidence also includes a second clean-install run, migration-chain metadata/policy comparison, real Auth bearer sessions through the Data API, and actual private Storage uploads/download/list/delete denials. `tests/supabase-migration-static.test.ts` is only a source-safety regression and cannot replace these commands.
+The numbered SQL files include the additive QR-email state-machine checks in `007_qr_email_security.test.sql`. Required promotion evidence also includes a second clean-install run, migration-chain metadata/policy comparison, real Auth bearer sessions through the Data API, genuine two-session lock contention, and actual private Storage uploads/download/list/delete denials. `tests/supabase-migration-static.test.ts` is only a source-safety regression and cannot replace these commands.
 
 Current status: **BLOCKED** because this workstation has no Docker-backed local Supabase and no authorized hosted test target.

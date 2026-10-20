@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { createHash, randomUUID } from 'node:crypto';
 import { setServerSupabaseClientsForTest } from '../server/supabase.js';
-import { setEmailSenderForTest, SendEmailPayload } from '../server/email.js';
+import { EmailDeliveryError, setEmailSenderForTest, SendEmailPayload } from '../server/email.js';
 import updateDeviceAuthHandler from '../api/update-device-auth.js';
 import updateSettingsHandler from '../api/update-settings.js';
 import adminSettingsHandler from '../api/admin/settings.js';
@@ -27,13 +27,15 @@ describe('Behavioral Mocked-Handler Tests [PASS (MOCKED HANDLER)]', () => {
   const OTHER_DEVICE_ID = '00000000-0000-4000-a000-000000000004';
   const VISITOR_OWNER_ID = '00000000-0000-4000-a000-000000000005';
   const OTHER_VISITOR_ID = '00000000-0000-4000-a000-000000000006';
+  const KIOSK_ID = '00000000-0000-4000-a000-000000000007';
 
   const VALID_SUPERADMIN_BEARER = 'Bearer valid-superadmin-token';
   const VALID_VISITOR_BEARER = 'Bearer valid-visitor-token';
   const OTHER_VISITOR_BEARER = 'Bearer other-visitor-token';
+  const VALID_KIOSK_BEARER = 'Bearer valid-kiosk-token';
 
   const TEST_PASS_ID = '00000000-0000-4000-a000-000000000888';
-  const TEST_PUBLIC_REF = 'GP-20261020-0888';
+  const TEST_PUBLIC_REF = '10000000-0000-4000-a000-000000000888';
   const TEST_RAW_TOKEN = 'gp_valid_raw_token_xyz123';
   const TEST_TOKEN_DIGEST = createHash('sha256').update(TEST_RAW_TOKEN).digest('hex');
 
@@ -52,6 +54,7 @@ describe('Behavioral Mocked-Handler Tests [PASS (MOCKED HANDLER)]', () => {
   let mockAuthUsers: Record<string, any>;
   let sentEmails: SendEmailPayload[];
   let mockRpcFailures: Record<string, any>;
+  let mockRpcOverrides: Record<string, any>;
   let mockTableFailures: Record<string, any>;
 
   function createMockSupabase() {
@@ -91,6 +94,12 @@ describe('Behavioral Mocked-Handler Tests [PASS (MOCKED HANDLER)]', () => {
                   email_confirmed_at: '2026-01-01T00:00:00Z',
                 },
               },
+              error: null,
+            };
+          }
+          if (token === 'valid-kiosk-token') {
+            return {
+              data: { user: { id: KIOSK_ID, email: 'lobby-kiosk@devices.egatepass.invalid' } },
               error: null,
             };
           }
@@ -251,6 +260,7 @@ describe('Behavioral Mocked-Handler Tests [PASS (MOCKED HANDLER)]', () => {
       },
       schema: (_s: string) => ({
         rpc: async (fn: string, args: any) => {
+          if (Object.prototype.hasOwnProperty.call(mockRpcOverrides, fn)) return mockRpcOverrides[fn];
           if (mockRpcFailures[fn]) {
             return { data: null, error: mockRpcFailures[fn] };
           }
@@ -299,10 +309,17 @@ describe('Behavioral Mocked-Handler Tests [PASS (MOCKED HANDLER)]', () => {
               (v) => v.request_id === args.requested_request_id
             );
             if (existing) {
+              if (existing.pass_id !== args.requested_pass_id
+                || existing.request_actor_id !== args.requested_actor_id
+                || existing.recipient_email !== args.requested_recipient_email) {
+                return { data: null, error: { code: 'P0008', message: 'idempotency_key_mismatch' } };
+              }
               return {
                 data: {
                   verification_id: existing.id,
                   expires_at: existing.expires_at,
+                  code_delivery_status: existing.code_delivery_status,
+                  dispatch_code: false,
                   idempotent_replay: true,
                 },
                 error: null,
@@ -323,27 +340,64 @@ describe('Behavioral Mocked-Handler Tests [PASS (MOCKED HANDLER)]', () => {
               verified: false,
               expires_at: args.requested_expires_at,
               request_id: args.requested_request_id,
+              request_actor_id: args.requested_actor_id,
+              code_delivery_status: 'code_sending',
               delivery_status: 'pending',
               created_at: new Date().toISOString(),
             };
             mockDbData.pass_email_verifications.push(row);
             return {
               data: {
-                verification_id: row.id,
-                expires_at: row.expires_at,
-                idempotent_replay: false,
+                  verification_id: row.id,
+                  expires_at: row.expires_at,
+                  code_delivery_status: row.code_delivery_status,
+                  dispatch_code: true,
+                  idempotent_replay: false,
               },
               error: null,
             };
+          }
+          if (fn === 'finalize_email_verification_code') {
+            const verif = mockDbData.pass_email_verifications.find(
+              (v) => v.id === args.requested_verification_id && v.request_id === args.requested_request_id
+            );
+            if (!verif) return { data: null, error: { code: 'P0002', message: 'verification_not_found' } };
+            if (verif.code_delivery_status === 'code_sending') {
+              verif.code_delivery_status = args.requested_delivery_status;
+              verif.code_provider_delivery_id = args.requested_provider_delivery_id;
+            }
+            return { data: { success: true, code_delivery_status: verif.code_delivery_status }, error: null };
           }
           if (fn === 'verify_and_claim_email_dispatch') {
             const verif = mockDbData.pass_email_verifications.find(
               (v) => v.id === args.requested_verification_id && v.pass_id === args.requested_pass_id
             );
             if (!verif) return { data: null, error: { code: 'P0002', message: 'verification_not_found' } };
+            const pass = mockDbData.passes.find((p) => p.id === args.requested_pass_id);
+            if (!pass || pass.visitors.owner_id !== args.requested_actor_id) {
+              return { data: null, error: { code: '42501', message: 'access_denied' } };
+            }
+            if (pass.status !== 'issued') return { data: null, error: { code: 'P0001', message: 'pass_not_active' } };
+            if (new Date(pass.valid_until).getTime() <= Date.now()) return { data: null, error: { code: 'P0001', message: 'pass_expired' } };
+            if (verif.recipient_email !== args.requested_recipient_email) {
+              return { data: null, error: { code: 'P0008', message: 'recipient_mismatch' } };
+            }
+            if (verif.code_delivery_status !== 'sent_to_provider') {
+              return { data: null, error: { code: 'P0005', message: 'verification_delivery_unconfirmed' } };
+            }
             if (verif.send_request_id === args.requested_send_request_id) {
+              const stale = verif.delivery_status === 'sending'
+                && verif.dispatch_claimed_at
+                && new Date(verif.dispatch_claimed_at).getTime() < Date.now() - 15 * 60_000;
+              if (stale) verif.delivery_status = 'outcome_unknown';
               return {
-                data: { success: true, idempotent_replay: true, recipient_email: verif.recipient_email },
+                data: {
+                  success: true,
+                  idempotent_replay: true,
+                  dispatch_authorized: false,
+                  delivery_status: verif.delivery_status,
+                  stale_claim_promoted: Boolean(stale),
+                },
                 error: null,
               };
             }
@@ -359,38 +413,48 @@ describe('Behavioral Mocked-Handler Tests [PASS (MOCKED HANDLER)]', () => {
             if (verif.attempts >= 3) {
               return { data: null, error: { code: 'P0007', message: 'max_attempts_exceeded' } };
             }
-            if (verif.recipient_email !== args.requested_recipient_email) {
-              return { data: null, error: { code: 'P0008', message: 'recipient_mismatch' } };
-            }
             if (verif.code_hash !== args.requested_expected_hash) {
               verif.attempts++;
               return {
-                data: { success: false, attempts_remaining: Math.max(0, 3 - verif.attempts) },
+                data: {
+                  success: false,
+                  error: 'invalid_code',
+                  attempts_remaining: Math.max(0, 3 - verif.attempts),
+                  idempotent_replay: false,
+                  dispatch_authorized: false,
+                  delivery_status: verif.delivery_status,
+                },
                 error: null,
               };
             }
             verif.verified = true;
             verif.delivery_status = 'sending';
             verif.send_request_id = args.requested_send_request_id;
+            verif.dispatch_claimed_at = new Date().toISOString();
             return {
-              data: { success: true, recipient_email: verif.recipient_email, idempotent_replay: false },
+              data: {
+                success: true,
+                idempotent_replay: false,
+                dispatch_authorized: true,
+                delivery_status: 'sending',
+                stale_claim_promoted: false,
+              },
               error: null,
             };
           }
           if (fn === 'finalize_email_dispatch') {
             const verif = mockDbData.pass_email_verifications.find(
-              (v) => v.id === args.requested_verification_id
+              (v) => v.id === args.requested_verification_id && v.send_request_id === args.requested_send_request_id
             );
             if (!verif) return { data: null, error: { code: 'P0002', message: 'verification_not_found' } };
-            verif.delivery_status = args.requested_delivery_status;
-            if (args.requested_delivery_status === 'sent_to_provider') {
-              verif.provider_delivery_id = args.requested_provider_delivery_id;
-              verif.sent_at = new Date().toISOString();
-            } else {
-              verif.delivery_status = 'delivery_failed';
-              verif.send_request_id = null;
+            if (verif.delivery_status === 'sending') {
+              verif.delivery_status = args.requested_delivery_status;
+              if (args.requested_delivery_status === 'sent_to_provider') {
+                verif.provider_delivery_id = args.requested_provider_delivery_id;
+                verif.sent_at = new Date().toISOString();
+              }
             }
-            return { data: { success: true }, error: null };
+            return { data: { success: true, delivery_status: verif.delivery_status }, error: null };
           }
           return { data: null, error: new Error(`Unknown RPC: ${fn}`) };
         },
@@ -405,6 +469,7 @@ describe('Behavioral Mocked-Handler Tests [PASS (MOCKED HANDLER)]', () => {
 
   beforeEach(() => {
     mockRpcFailures = {};
+    mockRpcOverrides = {};
     mockTableFailures = {};
 
     mockDbData = {
@@ -486,8 +551,8 @@ describe('Behavioral Mocked-Handler Tests [PASS (MOCKED HANDLER)]', () => {
           // Postgres bytea PostgREST serialization starts with \x
           token_digest: `\\x${TEST_TOKEN_DIGEST}`,
           status: 'issued',
-          valid_from: '2026-10-20T00:00:00Z',
-          valid_until: '2026-10-20T23:59:59Z',
+          valid_from: new Date(Date.now() - 60_000).toISOString(),
+          valid_until: new Date(Date.now() + 24 * 60 * 60_000).toISOString(),
           entry_scanned_at: '2026-10-20T08:00:00+08:00',
           issued_at: '2026-10-20T07:30:00+08:00',
           visitors: {
@@ -535,7 +600,7 @@ describe('Behavioral Mocked-Handler Tests [PASS (MOCKED HANDLER)]', () => {
     sentEmails = [];
     setEmailSenderForTest(async (payload) => {
       sentEmails.push(payload);
-      return { id: `resend_${randomUUID()}` };
+      return { id: `resend_${randomUUID()}`, provider: 'mock' };
     });
 
     const mockClients = {
@@ -548,6 +613,43 @@ describe('Behavioral Mocked-Handler Tests [PASS (MOCKED HANDLER)]', () => {
   afterEach(() => {
     vi.restoreAllMocks();
   });
+
+  function seedVerification(code = '123456', overrides: Record<string, unknown> = {}) {
+    const id = randomUUID();
+    mockDbData.pass_email_verifications = [{
+      id,
+      pass_id: TEST_PASS_ID,
+      recipient_email: 'maria.santos@gmail.com',
+      code_hash: createHash('sha256').update(`${id}:${code}`).digest('hex'),
+      expires_at: new Date(Date.now() + 10 * 60_000).toISOString(),
+      attempts: 0,
+      verified: false,
+      code_delivery_status: 'sent_to_provider',
+      delivery_status: 'pending',
+      ...overrides,
+    }];
+    return { id, code };
+  }
+
+  function emailRequest(body: Record<string, unknown>, bearer = VALID_VISITOR_BEARER) {
+    return new Request('http://localhost/api/passes/email', {
+      method: 'POST',
+      headers: { authorization: bearer, 'content-type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+  }
+
+  function verifyBody(verificationId: string, code: string, requestId = randomUUID()) {
+    return {
+      action: 'verify_and_send',
+      passId: TEST_PUBLIC_REF,
+      qrToken: TEST_RAW_TOKEN,
+      recipientEmail: 'maria.santos@gmail.com',
+      verificationId,
+      code,
+      requestId,
+    };
+  }
 
   // =========================================================================
   // P0-01 & P0-02: QR Email Delivery Contract & Atomicity
@@ -562,7 +664,7 @@ describe('Behavioral Mocked-Handler Tests [PASS (MOCKED HANDLER)]', () => {
         },
         body: JSON.stringify({
           action: 'request_code',
-          passId: TEST_PUBLIC_REF, // Public reference from issuance (GP-20261020-0888)
+          passId: TEST_PUBLIC_REF, // Public UUID returned by issuance
           qrToken: TEST_RAW_TOKEN,
           recipientEmail: 'maria.santos@gmail.com',
           consent: true,
@@ -575,7 +677,7 @@ describe('Behavioral Mocked-Handler Tests [PASS (MOCKED HANDLER)]', () => {
 
       expect(res.status).toBe(200);
       expect(json.success).toBe(true);
-      expect(json.status).toBe('code_sent');
+      expect(json.status).toBe('code_sent_to_provider');
       expect(typeof json.verificationId).toBe('string');
 
       // Crucial verification: pass_id in DB row is internal UUID, NOT the public reference
@@ -666,6 +768,53 @@ describe('Behavioral Mocked-Handler Tests [PASS (MOCKED HANDLER)]', () => {
       expect(sentEmails.length).toBe(1);
     });
 
+    it('EMAIL-P0-02: failed initial code delivery replays stable failure without fabricating sent', async () => {
+      let providerCalls = 0;
+      setEmailSenderForTest(async () => {
+        providerCalls += 1;
+        throw new EmailDeliveryError('resend_rejected', 'definitive_rejection');
+      });
+      const body = {
+        action: 'request_code', passId: TEST_PUBLIC_REF, qrToken: TEST_RAW_TOKEN,
+        recipientEmail: 'maria.santos@gmail.com', consent: true, requestId: randomUUID(),
+      };
+      const first = await invokeHandler(emailPassHandler, emailRequest(body));
+      const replay = await invokeHandler(emailPassHandler, emailRequest(body));
+      expect(first.status).toBe(502);
+      expect(replay.status).toBe(409);
+      expect(await replay.json()).toMatchObject({ status: 'delivery_failed', retryAllowed: true });
+      expect(providerCalls).toBe(1);
+    });
+
+    it('EMAIL-P0-02: request-code key reuse is bound to actor, pass, and recipient tuple', async () => {
+      const requestId = randomUUID();
+      const base = {
+        action: 'request_code', passId: TEST_PUBLIC_REF, qrToken: TEST_RAW_TOKEN,
+        recipientEmail: 'maria.santos@gmail.com', consent: true, requestId,
+      };
+      expect((await invokeHandler(emailPassHandler, emailRequest(base))).status).toBe(200);
+
+      const changedRecipient = await invokeHandler(emailPassHandler, emailRequest({
+        ...base, recipientEmail: 'different@example.com',
+      }));
+      expect(changedRecipient.status).toBe(400);
+
+      mockDbData.passes.push({
+        ...mockDbData.passes[0],
+        id: '00000000-0000-4000-a000-000000000889',
+        public_reference: '10000000-0000-4000-a000-000000000889',
+      });
+      const changedPass = await invokeHandler(emailPassHandler, emailRequest({
+        ...base, passId: '10000000-0000-4000-a000-000000000889',
+      }));
+      expect(changedPass.status).toBe(400);
+
+      mockDbData.passes[0].visitors.owner_id = OTHER_VISITOR_ID;
+      const changedActor = await invokeHandler(emailPassHandler, emailRequest(base, OTHER_VISITOR_BEARER));
+      expect(changedActor.status).toBe(400);
+      expect(sentEmails).toHaveLength(1);
+    });
+
     it('P0-02: enforces fail-closed rate limit (max 3 requests per 15 min)', async () => {
       for (let i = 0; i < 3; i++) {
         const res = await invokeHandler(emailPassHandler, new Request('http://localhost/api/passes/email', {
@@ -715,6 +864,7 @@ describe('Behavioral Mocked-Handler Tests [PASS (MOCKED HANDLER)]', () => {
           expires_at: new Date(Date.now() + 600000).toISOString(),
           attempts: 0,
           verified: false,
+          code_delivery_status: 'sent_to_provider',
           delivery_status: 'pending',
         },
       ];
@@ -787,7 +937,7 @@ describe('Behavioral Mocked-Handler Tests [PASS (MOCKED HANDLER)]', () => {
       expect(res4.status).toBe(429);
     });
 
-    it('P0-02: delivery failure records reconciliation, keeps delivery_failed status, preserves pass', async () => {
+    it('P0-04: ambiguous delivery failure records reconciliation, fences outcome_unknown, and preserves pass', async () => {
       setEmailSenderForTest(async () => {
         throw new Error('Resend Network Timeout');
       });
@@ -805,6 +955,7 @@ describe('Behavioral Mocked-Handler Tests [PASS (MOCKED HANDLER)]', () => {
           expires_at: new Date(Date.now() + 600000).toISOString(),
           attempts: 0,
           verified: false,
+          code_delivery_status: 'sent_to_provider',
           delivery_status: 'pending',
         },
       ];
@@ -824,16 +975,18 @@ describe('Behavioral Mocked-Handler Tests [PASS (MOCKED HANDLER)]', () => {
       }));
       const json = await res.json();
 
-      expect(res.status).toBe(502);
-      expect(json.error).toBe('email_delivery_failed');
+      expect(res.status).toBe(202);
+      expect(json.error).toBe('email_outcome_unknown');
+      expect(json.retryAllowed).toBe(false);
 
-      // Status in DB must reflect delivery_failed
+      // Ambiguous transport failure must remain fenced against automatic retry.
       const verif = mockDbData.pass_email_verifications.find((v) => v.id === verificationId);
-      expect(verif?.delivery_status).toBe('delivery_failed');
+      expect(verif?.delivery_status).toBe('outcome_unknown');
 
       // Reconciliation recorded in reconciliation_tasks
       expect(mockDbData.reconciliation_tasks.length).toBe(1);
-      expect(mockDbData.reconciliation_tasks[0].operation).toBe('pass.email_delivery_failed');
+      expect(mockDbData.reconciliation_tasks[0].operation).toBe('pass.email_delivery_unknown');
+      expect(mockDbData.reconciliation_tasks[0].safe_context).toEqual({ phase: 'qr_dispatch', outcome: 'unknown' });
 
       // Pass must remain intact
       expect(mockDbData.passes.find((p) => p.id === TEST_PASS_ID)).toBeDefined();
@@ -853,6 +1006,7 @@ describe('Behavioral Mocked-Handler Tests [PASS (MOCKED HANDLER)]', () => {
           expires_at: new Date(Date.now() + 600000).toISOString(),
           attempts: 0,
           verified: false,
+          code_delivery_status: 'sent_to_provider',
           delivery_status: 'pending',
         },
       ];
@@ -875,11 +1029,200 @@ describe('Behavioral Mocked-Handler Tests [PASS (MOCKED HANDLER)]', () => {
       expect(res.status).toBe(200);
       expect(json.success).toBe(true);
       expect(json.status).toBe('sent_to_provider');
-      expect(typeof json.deliveryId).toBe('string');
-
       const deliveryEmail = sentEmails.find((e) => e.subject.includes('Your EARIST Digital Gate Pass'));
       expect(deliveryEmail).toBeDefined();
       expect(deliveryEmail?.attachments?.length).toBe(1);
+    });
+
+    it.each([
+      ['missing RPC', { code: '42883', message: 'function does not exist' }],
+      ['permission denied', { code: '42501', message: 'permission denied' }],
+      ['transient SQL failure', { code: '40001', message: 'serialization failure' }],
+    ])('EMAIL-P0-01: request-code %s fails closed with no row or provider call', async (_label, failure) => {
+      mockRpcFailures.request_email_verification_code = failure;
+      const res = await invokeHandler(emailPassHandler, emailRequest({
+        action: 'request_code', passId: TEST_PUBLIC_REF, qrToken: TEST_RAW_TOKEN,
+        recipientEmail: 'maria.santos@gmail.com', consent: true, requestId: randomUUID(),
+      }));
+      expect([403, 503]).toContain(res.status);
+      expect(mockDbData.pass_email_verifications).toHaveLength(0);
+      expect(sentEmails).toHaveLength(0);
+    });
+
+    it('EMAIL-P0-01: invalid request-code RPC response fails closed', async () => {
+      mockRpcOverrides.request_email_verification_code = { data: { unexpected: true }, error: null };
+      const res = await invokeHandler(emailPassHandler, emailRequest({
+        action: 'request_code', passId: TEST_PUBLIC_REF, qrToken: TEST_RAW_TOKEN,
+        recipientEmail: 'maria.santos@gmail.com', consent: true, requestId: randomUUID(),
+      }));
+      expect(res.status).toBe(503);
+      expect(sentEmails).toHaveLength(0);
+    });
+
+    it.each([
+      ['missing RPC', { code: '42883', message: 'function does not exist' }],
+      ['permission denied', { code: '42501', message: 'permission denied' }],
+      ['transient SQL failure', { code: '40001', message: 'serialization failure' }],
+    ])('EMAIL-P0-01: claim %s performs zero QR dispatches', async (_label, failure) => {
+      const seeded = seedVerification();
+      mockRpcFailures.verify_and_claim_email_dispatch = failure;
+      const res = await invokeHandler(emailPassHandler, emailRequest(verifyBody(seeded.id, seeded.code)));
+      expect([403, 503]).toContain(res.status);
+      expect(sentEmails.filter((email) => email.attachments?.length)).toHaveLength(0);
+      expect(mockDbData.pass_email_verifications[0].delivery_status).toBe('pending');
+    });
+
+    it('EMAIL-P0-01: invalid claim response performs zero QR dispatches', async () => {
+      const seeded = seedVerification();
+      mockRpcOverrides.verify_and_claim_email_dispatch = { data: { success: true }, error: null };
+      const res = await invokeHandler(emailPassHandler, emailRequest(verifyBody(seeded.id, seeded.code)));
+      expect(res.status).toBe(503);
+      expect(sentEmails).toHaveLength(0);
+    });
+
+    it('EMAIL-P0-02: identical replay after provider acceptance never calls provider twice', async () => {
+      const seeded = seedVerification();
+      const requestId = randomUUID();
+      const body = verifyBody(seeded.id, seeded.code, requestId);
+      const first = await invokeHandler(emailPassHandler, emailRequest(body));
+      const replay = await invokeHandler(emailPassHandler, emailRequest(body));
+      expect(first.status).toBe(200);
+      expect(replay.status).toBe(200);
+      expect(await replay.json()).toMatchObject({ status: 'sent_to_provider', idempotentReplay: true });
+      expect(sentEmails.filter((email) => email.attachments?.length)).toHaveLength(1);
+    });
+
+    it('EMAIL-P0-04: stale sending claim becomes fenced unknown and raises reconciliation', async () => {
+      const requestId = randomUUID();
+      const seeded = seedVerification('123456', {
+        verified: true,
+        delivery_status: 'sending',
+        send_request_id: requestId,
+        dispatch_claimed_at: new Date(Date.now() - 16 * 60_000).toISOString(),
+      });
+      const response = await invokeHandler(emailPassHandler, emailRequest(verifyBody(seeded.id, seeded.code, requestId)));
+      expect(response.status).toBe(202);
+      expect(await response.json()).toMatchObject({
+        status: 'outcome_unknown', reconciliationRequired: true, reconciliationRecorded: true,
+      });
+      expect(sentEmails).toHaveLength(0);
+      expect(mockDbData.pass_email_verifications[0].delivery_status).toBe('outcome_unknown');
+    });
+
+    it('EMAIL-P0-02: parallel same-key calls authorize at most one provider request', async () => {
+      const seeded = seedVerification();
+      const requestId = randomUUID();
+      let release!: () => void;
+      const gate = new Promise<void>((resolve) => { release = resolve; });
+      setEmailSenderForTest(async (payload) => {
+        sentEmails.push(payload);
+        await gate;
+        return { id: 'provider-parallel', provider: 'mock' };
+      });
+      const body = verifyBody(seeded.id, seeded.code, requestId);
+      const firstPromise = invokeHandler(emailPassHandler, emailRequest(body));
+      await vi.waitFor(() => expect(sentEmails).toHaveLength(1));
+      const replay = await invokeHandler(emailPassHandler, emailRequest(body));
+      expect(replay.status).toBe(202);
+      release();
+      expect((await firstPromise).status).toBe(200);
+      expect(sentEmails).toHaveLength(1);
+    });
+
+    it('EMAIL-P0-02: different concurrent send key cannot bypass an active claim', async () => {
+      const seeded = seedVerification();
+      let release!: () => void;
+      const gate = new Promise<void>((resolve) => { release = resolve; });
+      setEmailSenderForTest(async (payload) => {
+        sentEmails.push(payload);
+        await gate;
+        return { id: 'provider-one', provider: 'mock' };
+      });
+      const firstPromise = invokeHandler(emailPassHandler, emailRequest(verifyBody(seeded.id, seeded.code)));
+      await vi.waitFor(() => expect(sentEmails).toHaveLength(1));
+      const second = await invokeHandler(emailPassHandler, emailRequest(verifyBody(seeded.id, seeded.code)));
+      expect(second.status).toBe(409);
+      release();
+      await firstPromise;
+      expect(sentEmails).toHaveLength(1);
+    });
+
+    it('EMAIL-P0-04: definitive provider rejection permits deliberate retry but does not auto-retry', async () => {
+      const seeded = seedVerification();
+      setEmailSenderForTest(async () => {
+        throw new EmailDeliveryError('resend_rejected', 'definitive_rejection');
+      });
+      const requestId = randomUUID();
+      const response = await invokeHandler(emailPassHandler, emailRequest(verifyBody(seeded.id, seeded.code, requestId)));
+      expect(response.status).toBe(502);
+      expect(await response.json()).toMatchObject({ status: 'delivery_failed', retryAllowed: true });
+      expect(mockDbData.pass_email_verifications[0].delivery_status).toBe('delivery_failed');
+    });
+
+    it('EMAIL-P0-04: finalization failure reports unknown and reconciliation failure is operator-visible', async () => {
+      const seeded = seedVerification();
+      mockRpcFailures.finalize_email_dispatch = { code: '40001', message: 'serialization failure' };
+      mockTableFailures['reconciliation_tasks:insert'] = new Error('reconciliation unavailable');
+      const response = await invokeHandler(emailPassHandler, emailRequest(verifyBody(seeded.id, seeded.code)));
+      expect(response.status).toBe(202);
+      expect(await response.json()).toMatchObject({
+        status: 'outcome_unknown', reconciliationRequired: true, reconciliationRecorded: false,
+      });
+      expect(sentEmails.filter((email) => email.attachments?.length)).toHaveLength(1);
+      expect(mockDbData.pass_email_verifications[0].delivery_status).toBe('sending');
+    });
+
+    it('EMAIL-P0-05: accepts the distinct public UUID for a kiosk-owned pass', async () => {
+      mockDbData.passes[0].visitors.owner_id = KIOSK_ID;
+      mockDbData.passes[0].visitors.source = 'kiosk';
+      const response = await invokeHandler(emailPassHandler, emailRequest({
+        action: 'request_code', passId: TEST_PUBLIC_REF, qrToken: TEST_RAW_TOKEN,
+        recipientEmail: 'kiosk.visitor@example.com', consent: true, requestId: randomUUID(),
+      }, VALID_KIOSK_BEARER));
+      expect(response.status).toBe(200);
+      expect(TEST_PUBLIC_REF).not.toBe(TEST_PASS_ID);
+      expect(mockDbData.pass_email_verifications[0].pass_id).toBe(TEST_PASS_ID);
+    });
+
+    it.each(['xyz', '\\x1234', `\\x${'g'.repeat(64)}`, `${TEST_TOKEN_DIGEST}00`])(
+      'EMAIL-P0-05: rejects malformed stored digest %s',
+      async (digest) => {
+        mockDbData.passes[0].token_digest = digest;
+        const response = await invokeHandler(emailPassHandler, emailRequest({
+          action: 'request_code', passId: TEST_PUBLIC_REF, qrToken: TEST_RAW_TOKEN,
+          recipientEmail: 'maria.santos@gmail.com', consent: true, requestId: randomUUID(),
+        }));
+        expect(response.status).toBe(403);
+        expect(sentEmails).toHaveLength(0);
+      },
+    );
+
+    it.each(['pending', 'inside', 'exited', 'rejected', 'revoked'])(
+      'EMAIL-P0-05: denies non-issued pass status %s',
+      async (status) => {
+        mockDbData.passes[0].status = status;
+        const response = await invokeHandler(emailPassHandler, emailRequest({
+          action: 'request_code', passId: TEST_PUBLIC_REF, qrToken: TEST_RAW_TOKEN,
+          recipientEmail: 'maria.santos@gmail.com', consent: true, requestId: randomUUID(),
+        }));
+        expect(response.status).toBe(400);
+        expect(sentEmails).toHaveLength(0);
+      },
+    );
+
+    it('EMAIL-P0-05: denies expired pass and unknown public reference without leakage', async () => {
+      mockDbData.passes[0].valid_until = new Date(Date.now() - 1).toISOString();
+      const expired = await invokeHandler(emailPassHandler, emailRequest({
+        action: 'request_code', passId: TEST_PUBLIC_REF, qrToken: TEST_RAW_TOKEN,
+        recipientEmail: 'maria.santos@gmail.com', consent: true, requestId: randomUUID(),
+      }));
+      expect(expired.status).toBe(400);
+      const missing = await invokeHandler(emailPassHandler, emailRequest({
+        action: 'request_code', passId: '20000000-0000-4000-a000-000000000888', qrToken: TEST_RAW_TOKEN,
+        recipientEmail: 'maria.santos@gmail.com', consent: true, requestId: randomUUID(),
+      }));
+      expect(missing.status).toBe(404);
+      expect(sentEmails).toHaveLength(0);
     });
   });
 

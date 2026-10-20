@@ -2,7 +2,7 @@
 
 Updated: 2026-10-20 Asia/Manila
 
-Current stage: P0 recovery PASS; M1–M4 runtime slices IMPLEMENTED — static/build/browser PASS; provider integration BLOCKED (no isolated DB runtime)
+Current stage: QR-email targeted correction LOCALLY VERIFIED; provider/database integration BLOCKED (no isolated DB runtime or approved inbox)
 
 ## Repository identity
 
@@ -15,6 +15,7 @@ Current stage: P0 recovery PASS; M1–M4 runtime slices IMPLEMENTED — static/b
 - Read-only reference main: `6906b91f9a1c4910f6bdfa14ee62aa3e3d46da7c`
 - Local rollback branch: `checkpoint/s0-original-f2f1a2b-20261020`
 - Pre-existing user change preserved: `.env.example` (unstaged, uncommitted)
+- Targeted correction start: `dcc9854d22c1aeec1c87d3a1dac55f183741b993`
 
 ## Baseline capability state
 
@@ -103,7 +104,19 @@ Current stage: P0 recovery PASS; M1–M4 runtime slices IMPLEMENTED — static/b
 - **C-05 Static SQL & Migration Safety**: Expanded static migration tests in `tests/supabase-migration-static.test.ts` to validate migrations 00800 and 00900.
 
 
+## Targeted QR-email security checkpoint
+
+- EMAIL-P0-01 through EMAIL-P1-07 are corrected in source, additive SQL, UI, and regression tests. The former internal-ID fallback and all direct `pass_email_verifications` fallback DML were removed.
+- `passes.public_reference` and `passes.id` are distinct UUIDs. The email endpoint filters only by `public_reference`; internal foreign keys and reconciliation use `passes.id`.
+- Stable browser request IDs are reused for the same logical operation. Only a user-visible deliberate retry after definitive rejection gets a new key.
+- Verification-code and bearer-QR provider outcomes are `sent_to_provider`, `delivery_failed`, or `outcome_unknown`. A 2xx acknowledgement without provider ID, transport exception, worker/finalization ambiguity, or stale claim never becomes a fabricated inbox-delivery success.
+- Reconciliation metadata contains only phase/outcome; it excludes recipient address, verification code, and QR bearer data. Reconciliation insertion failure is returned as `reconciliationRecorded: false` for operator visibility.
+- Second adversarial review fixed provider 2xx acknowledgement ambiguity, inconsistent SQL lock ordering, stale-claim recovery, and remaining inbox-delivery wording.
+- Local evidence: focused 4-file suite 92/92 PASS; full safe Vitest suite 166/166 PASS; API typecheck/build PASS; Edge startup 4/4 PASS; whitespace check PASS.
+- `20261020001000_qr_email_security.sql` and `007_qr_email_security.test.sql` are AUTHORED / NOT RUN. Real SQL syntax, grants, locks, RLS, PostgREST `bytea`, Auth identities, Resend acceptance/delivery, and inbox receipt remain NOT TESTED / BLOCKED.
+
 ## Immediate blockers and next safe work
+
 
 1. Provide one isolated executable route for the S2 promotion gate: make Docker Desktop available for local Supabase, or explicitly authorize a separate non-production hosted Supabase project after identity confirmation.
 2. Run clean migrations, all authored pgTAP assertions, real Auth bearer-session Data API/RPC denials, actual private Storage operations, and the full issue→entry→decision→exit browser lifecycle.

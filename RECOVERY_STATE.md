@@ -35,3 +35,12 @@ M1 identity, M2 registration/issuance, M3 scanner/Guard lifecycle, M4 Admin & op
 3. Keep every provider-dependent path NOT VERIFIED / INTEGRATION BLOCKED until the isolated database and browser lifecycle run.
 4. Prepare M5/S7 remaining items (scheduled retention execution, incident hold UI management, operational alerts) and staging readiness.
 5. Request only one of: Docker-backed disposable local Supabase, or explicit permission naming a non-production hosted Supabase project after read-only identity/no-real-data preflight.
+
+## Targeted QR-email correction handoff (supersedes older QR-email claims above)
+
+- Start checkpoint: `dcc9854d22c1aeec1c87d3a1dac55f183741b993` on `feat/runtime-migration`.
+- Pre-fix security contract: 7/7 expected failures. Corrected local evidence: focused 4 files/92 tests PASS; complete safe suite 13 files/166 tests PASS; API typecheck PASS; production build PASS; isolated Edge startup 4/4 PASS; whitespace PASS.
+- Additive migration `20261020001000_qr_email_security.sql` and pgTAP `007_qr_email_security.test.sql` are AUTHORED / NOT RUN. They supersede 00900 behavior without rewriting history.
+- QR-email now fails closed on RPC faults, binds stable keys to actor/pass/recipient, serializes code limits, fences ambiguous/stale provider outcomes, and accepts only the public-reference UUID returned by issuance.
+- Owner `.env.example` remains modified only by the owner and must stay unstaged. No uppercase backup, hosted database, deployment, live inbox, or legacy infrastructure was touched.
+- Next: verify the pushed feature-branch SHA, then wait for an isolated database or explicitly authorized non-production test target. Run 00100–01000, all pgTAP including genuine two-session contention, real portal/kiosk Auth/RPC tests, and approved inbox tests. Owner modal/workflow QA remains AWAITING OWNER. Do not begin unrelated M5 work before this handoff is accepted.

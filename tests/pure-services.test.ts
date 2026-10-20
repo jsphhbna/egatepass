@@ -1,8 +1,57 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { encodeCompoundCursor, decodeCompoundCursor, decodeCursorStrict } from '../server/cursor.js';
 import { controlledDeviceEmail } from '../server/actors.js';
 import { normalizeLoginIdentity } from '../src/lib/identity.js';
 import { escapeCsvCell } from '../src/lib/completeExport.js';
+import { normalizeSha256Digest } from '../api/passes/email.js';
+import { EmailDeliveryError, sendResendEmail, setEmailSenderForTest } from '../server/email.js';
+
+describe('QR email digest normalization', () => {
+  const hex = 'a'.repeat(64);
+
+  it.each([hex, `\\x${hex}`, `0x${hex}`, hex.toUpperCase()])('accepts an exact supported 32-byte digest shape', (value) => {
+    expect(normalizeSha256Digest(value)?.length).toBe(32);
+  });
+
+  it.each([null, '', 'a'.repeat(62), 'a'.repeat(66), `\\x${'g'.repeat(64)}`, `00${hex}`])(
+    'rejects malformed or non-32-byte digest %s',
+    (value) => expect(normalizeSha256Digest(value)).toBeNull(),
+  );
+});
+
+describe('Email provider acknowledgement classification', () => {
+  it('treats a 2xx response without a provider ID as an unknown outcome', async () => {
+    const previousKey = process.env.RESEND_API_KEY;
+    process.env.RESEND_API_KEY = 'local-test-key';
+    setEmailSenderForTest(null);
+    vi.stubGlobal('fetch', vi.fn(async () => new Response('{}', { status: 200 })));
+    try {
+      await expect(sendResendEmail({ to: 'fixture@example.invalid', subject: 'fixture', html: '<p>fixture</p>' }))
+        .rejects.toMatchObject<Partial<EmailDeliveryError>>({
+          code: 'provider_acknowledgement_unknown', outcome: 'unknown',
+        });
+    } finally {
+      vi.unstubAllGlobals();
+      if (previousKey === undefined) delete process.env.RESEND_API_KEY;
+      else process.env.RESEND_API_KEY = previousKey;
+    }
+  });
+
+  it('treats an explicit non-2xx provider response as definitive rejection', async () => {
+    const previousKey = process.env.RESEND_API_KEY;
+    process.env.RESEND_API_KEY = 'local-test-key';
+    setEmailSenderForTest(null);
+    vi.stubGlobal('fetch', vi.fn(async () => new Response('{"message":"rejected"}', { status: 422 })));
+    try {
+      await expect(sendResendEmail({ to: 'fixture@example.invalid', subject: 'fixture', html: '<p>fixture</p>' }))
+        .rejects.toMatchObject<Partial<EmailDeliveryError>>({ code: 'resend_rejected', outcome: 'definitive_rejection' });
+    } finally {
+      vi.unstubAllGlobals();
+      if (previousKey === undefined) delete process.env.RESEND_API_KEY;
+      else process.env.RESEND_API_KEY = previousKey;
+    }
+  });
+});
 
 describe('Compound Cursor Pagination & PostgREST Filter Safety (M4-F08, C-03)', () => {
   it('encodes and decodes compound cursor with timestamp and id', () => {

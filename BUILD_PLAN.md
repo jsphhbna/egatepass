@@ -27,7 +27,7 @@ Sensitive data includes visitor names/contact details, face and ID images, QR be
 | S4 | Portal/kiosk registration, private evidence, optional local OCR, Peak Mode | Phone/portrait browser E2E, real uploads, session separation, source-forgery negative tests | IMPLEMENTED IN PART — M2 code/static checks PASS; live Auth/Storage/DB/API/browser workflow BLOCKED |
 | S5 | Server QR issue, entry, Guard decision, exit | Actual DB state machine E2E plus duplicate/race/wrong-device/expired negative tests | IMPLEMENTED IN PART — M2/M3 code/static checks PASS; live lifecycle BLOCKED |
 | S6 | Admin/operations parity | Browser and DB proof for records, complete export, users/devices, settings, emergency, audit/reconciliation | CORRECTIONS COMPLETE (F01–F12) — PASS (MOCKED HANDLER) & pure services; live Supabase integration blocked by unavailable runtime |
-| S7 | Resend/Auth SMTP, retention, holds, alerts | Real inbox tests; physical Storage deletion; hold/race/retry/scheduler-auth evidence | M5-F13 CODE COMPLETE — Optional QR email claim flow, verification code, mock adapter tested; real provider delivery BLOCKED |
+| S7 | Resend/Auth SMTP, retention, holds, alerts | Real inbox tests; physical Storage deletion; hold/race/retry/scheduler-auth evidence | QR-email targeted correction LOCALLY VERIFIED; real PostgreSQL concurrency, RLS and provider delivery BLOCKED |
 | S8 | Original-faithful UX/accessibility polish and full docs rewrite | Before/after images, accessibility checks, no lost route/action, owner screen approval | PLANNED |
 | S9 | Staging rehearsal and release gate | Exact-commit DB/browser matrix, rollback rehearsal, preview smoke, owner QA signoff | PLANNED |
 
@@ -117,3 +117,11 @@ All confirmed source-level findings F01 through F12 and product requirement M5-F
 ## Resume rule
 
 Read `PROJECT_STATE.md`, `DECISIONS.md`, `DEVKIT_FINDINGS.md`, and `EVIDENCE_LEDGER.md` before work. Do not promote a stage with a mandatory FAILED/BLOCKED category. Safe work in later stages may be prepared, but its status remains `IMPLEMENTED — NOT VERIFIED` until the required boundary test runs.
+
+## Targeted QR-email correction (EMAIL-P0-01 through EMAIL-P1-07)
+
+The earlier 00900 report above is superseded for QR-email behavior by additive migration `20261020001000_qr_email_security.sql`. The handler now accepts only the issuance `public_reference` UUID, resolves it to the distinct internal `passes.id`, strictly normalizes a 32-byte SHA-256 `bytea` representation, and performs no direct verification-table fallback. Request-code, claim, code-finalization, and QR-finalization RPC responses are mandatory and validated.
+
+The database state machine serializes code limits on the parent pass, binds request keys to actor/pass/recipient, authorizes one dispatch claim, fences `sending` and `outcome_unknown`, and prevents stale finalizers from overwriting provider acceptance. A stale claim is promoted to operator-visible unknown after 15 minutes; automatic resend remains disabled until an operator establishes the provider outcome. This is an at-most-one automatic-attempt policy, not an exactly-once guarantee across PostgreSQL and Resend.
+
+Local promotion evidence: pre-fix regression run 7/7 FAILED as expected; corrected focused suite 4 files/92 tests PASS; complete non-Firestore Vitest suite 13 files/166 tests PASS; API typecheck PASS; production build PASS; isolated Edge startup 4/4 PASS; `git diff --check` PASS. Migration 01000 and 18 pgTAP assertions are AUTHORED / NOT RUN. No hosted database, deployment, live inbox, Firebase/Netlify infrastructure, or production data was touched.

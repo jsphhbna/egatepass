@@ -41,7 +41,7 @@ export async function recordReconciliation(
   referenceId: string,
   errorCode: string,
   safeContext: Record<string, unknown> = {},
-): Promise<void> {
+): Promise<boolean> {
   try {
     const { error } = await admin.from('reconciliation_tasks').insert({
       operation,
@@ -52,9 +52,12 @@ export async function recordReconciliation(
     });
     if (error) {
       console.error('Failed to record reconciliation task:', error);
+      return false;
     }
+    return true;
   } catch (err) {
     console.error('Exception recording reconciliation task:', err);
+    return false;
   }
 }
 

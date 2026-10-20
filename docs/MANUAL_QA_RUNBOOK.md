@@ -130,3 +130,16 @@ After M2 succeeds in the isolated environment, use the issued fictional QR and d
 - Evidence path:
 - Reviewer/date:
 - Result: [ ] PASS [ ] FAIL [ ] BLOCKED
+# Targeted QR-email owner QA — AWAITING OWNER
+
+Use only an explicitly approved non-production environment and test inbox after migrations 00100–01000 have passed. Do not use production visitor data.
+
+1. Issue one portal pass and one portrait-kiosk pass. Confirm the original QR display and Download, Print/Share, and Next Visitor controls are unchanged before opening email.
+2. Open Email My QR Code, enter the approved test address, consent, and double-tap Send Code. Confirm one logical request is shown and no duplicate verification email is generated.
+3. Enter a wrong code, an expired code, and then a valid code. Confirm the modal distinguishes incorrect, expired, rate-limited, provider-unavailable, and unknown outcomes without invalidating the displayed pass.
+4. Double-tap Verify & Send and retry the same operation after a simulated slow response. Confirm at most one QR-provider submission and that pending/unknown instructs the user not to retry automatically.
+5. Close and reopen the modal, then issue the next kiosk visitor. Confirm email, consent, code, verification ID, messages, and logical request IDs do not carry into the new visitor.
+6. Confirm success wording says submitted to the email provider/check inbox; it must not claim inbox delivery. Confirm the QR can still be downloaded, printed/shared, scanned at entry, approved by Guard, and scanned at exit even when email fails.
+7. Ask an operator to inspect reconciliation records after an injected timeout/finalization failure. Confirm no recipient address, code, QR bearer, or email HTML appears in broad reconciliation/audit context.
+
+Record browser/device, portal or kiosk source, observed result, and screenshot/reference for each item. Do not mark owner QA PASS until the owner performs and signs off this checklist.

@@ -19,6 +19,17 @@ export interface SendEmailResult {
 
 export type EmailSender = (payload: SendEmailPayload) => Promise<SendEmailResult>;
 
+export class EmailDeliveryError extends Error {
+  constructor(
+    public readonly code: string,
+    public readonly outcome: 'definitive_rejection' | 'unknown',
+    message = code,
+  ) {
+    super(message);
+    this.name = 'EmailDeliveryError';
+  }
+}
+
 let customEmailSender: EmailSender | null = null;
 
 export function setEmailSenderForTest(sender: EmailSender | null): void {
@@ -58,33 +69,40 @@ export async function sendResendEmail(payload: SendEmailPayload): Promise<SendEm
 
   const apiKey = process.env.RESEND_API_KEY?.trim();
   if (!apiKey) {
-    const error = new Error('email_service_unconfigured');
-    (error as unknown as { code: string }).code = 'email_service_unconfigured';
-    throw error;
+    throw new EmailDeliveryError('email_service_unconfigured', 'definitive_rejection');
   }
 
   const fromEmail = process.env.RESEND_FROM_EMAIL?.trim() || 'EARIST E-GatePass <onboarding@resend.dev>';
 
-  const response = await fetch('https://api.resend.com/emails', {
-    method: 'POST',
-    headers: {
-      Authorization: `Bearer ${apiKey}`,
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({
-      from: fromEmail,
-      to: [payload.to],
-      subject: payload.subject,
-      html: payload.html,
-      attachments: payload.attachments,
-    }),
-  });
+  let response: Response;
+  try {
+    response = await fetch('https://api.resend.com/emails', {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        from: fromEmail,
+        to: [payload.to],
+        subject: payload.subject,
+        html: payload.html,
+        attachments: payload.attachments,
+      }),
+    });
+  } catch {
+    // A transport exception can happen after the provider accepted the request.
+    throw new EmailDeliveryError('email_transport_unknown', 'unknown');
+  }
 
   const data = await response.json().catch(() => null) as { id?: string; message?: string } | null;
-  if (!response.ok || !data?.id) {
-    const error = new Error(data?.message || 'resend_send_failed');
-    (error as unknown as { code: string }).code = 'resend_send_failed';
-    throw error;
+  if (!response.ok) {
+    throw new EmailDeliveryError('resend_rejected', 'definitive_rejection', data?.message || 'resend_rejected');
+  }
+  if (!data?.id) {
+    // A successful HTTP status with an unreadable acknowledgement cannot prove
+    // whether the provider durably accepted the message.
+    throw new EmailDeliveryError('provider_acknowledgement_unknown', 'unknown');
   }
 
   return { id: data.id, provider: 'resend' };

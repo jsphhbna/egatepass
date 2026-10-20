@@ -153,3 +153,18 @@ Exact-commit verification at `80d861b`: `npm run test:architecture` PASS 3/3; `n
 | EV-P0-020 | BROWSER E2E STARTUP | `npm run test:e2e:startup` | PASS: 4/4 cases | Playwright Edge browser startup for dev/configured (14.0s), dev/missing (14.4s), dev/malformed (14.7s), and preview/configured (5.3s) without Firebase environment injection |
 | EV-P0-021 | GIT WHITESPACE | `git diff --check` | PASS: exit code 0 | Clean whitespace across all modified and newly created source/SQL/test files |
 | EV-P0-022 | DATABASE MIGRATION EXECUTION | `supabase/migrations/20261020000900_qr_email_idempotency.sql` | IMPLEMENTED — NOT VERIFIED / BLOCKED | Authored additive migration with atomic RPCs `api.request_email_verification_code`, `api.verify_and_claim_email_dispatch`, `api.finalize_email_dispatch`; execution blocked by lack of local Docker/Postgres instance |
+
+## Targeted QR-email security and integration-contract correction
+
+| ID | Class | Command / artifact | Result | Scope and limitation |
+|---|---|---|---|---|
+| EV-EMAIL-001 | PRE-FIX NEGATIVE CONTROL | `npx vitest run tests/qr-email-security-regression.test.ts` at start SHA `dcc9854` | EXPECTED FAIL: 1 file, 7/7 failed | Reproduced all seven workstreams before correction: fallbacks, replay, rate lock, unknown outcome, UUID/digest, UI keys/copy, additive SQL hardening |
+| EV-EMAIL-002 | FOCUSED LOCAL | `npx vitest run tests/handlers-mocked.test.ts tests/pure-services.test.ts tests/supabase-migration-static.test.ts tests/qr-email-security-regression.test.ts` | PASS: 4 files, 92/92 tests | Local unit, strict exported-handler mocks, provider adapter fault injection, and static SQL only; not real PostgreSQL/Resend |
+| EV-EMAIL-003 | COMPLETE SAFE SUITE | `npx vitest run --exclude "**/firestore.rules.test.ts"` | PASS: 13 files, 166/166 tests (3.15s) | Excludes legacy Firestore emulator suite as requested; no hosted service contacted |
+| EV-EMAIL-004 | API TYPECHECK | `npm run typecheck:api` | PASS: exit 0 | TypeScript API/server compilation |
+| EV-EMAIL-005 | PRODUCTION BUILD | `npm run build` | PASS: exit 0, 2514 modules | Client compile/bundle only; no deployment |
+| EV-EMAIL-006 | ISOLATED BROWSER STARTUP | `npm run test:e2e:startup` | PASS: Edge 4/4 | dev/configured, dev/missing, dev/malformed, preview/configured; startup only, no hosted Supabase/Resend workflow |
+| EV-EMAIL-007 | PATCH INTEGRITY | `git diff --check` | PASS: exit 0 | Line-ending warnings only; owner `.env.example` remains excluded from authored changes/staging |
+| EV-EMAIL-008 | DATABASE TEST AUTHORING | `supabase/migrations/20261020001000_qr_email_security.sql`; `supabase/tests/007_qr_email_security.test.sql` | AUTHORED / NOT RUN | 18 pgTAP assertions plus a documented genuine two-session contention probe; blocked without isolated PostgreSQL/Supabase |
+| EV-EMAIL-009 | LIVE PROVIDER/AUTH/RLS | Real Supabase sessions, PostgREST `bytea`, row locks, Resend acceptance/inbox | BLOCKED / NOT TESTED | Requires isolated local DB or explicitly authorized non-production target and approved inbox; no permission was assumed |
+| EV-EMAIL-010 | SECOND ADVERSARIAL REVIEW | Changed call graph + forbidden-pattern scan | PASS after fixes | Found/fixed malformed 2xx acknowledgement classification, inconsistent parent/challenge lock order, stale-claim recovery, and residual inbox-delivery wording |
