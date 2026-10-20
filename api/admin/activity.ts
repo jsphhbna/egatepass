@@ -1,5 +1,5 @@
 import { HttpError, requireStaffActor } from '../../server/actors.js';
-import { decodeCursor, encodeCursor } from '../../server/cursor.js';
+import { decodeCursorStrict, encodeCursor } from '../../server/cursor.js';
 import { jsonResponse, readBearerToken } from '../../server/http.js';
 import { getServerSupabaseClients } from '../../server/supabase.js';
 
@@ -82,7 +82,7 @@ async function handleRequest(request: Request): Promise<Response> {
         query = query.lt('occurred_at', nextDay);
       }
       if (cursor) {
-        const decoded = decodeCursor(cursor);
+        const decoded = decodeCursorStrict(cursor, { idType: 'bigint' });
         if (decoded) {
           if (decoded.id) {
             query = query.or(`occurred_at.lt.${decoded.timestamp},and(occurred_at.eq.${decoded.timestamp},id.lt.${decoded.id})`);
@@ -147,7 +147,7 @@ async function handleRequest(request: Request): Promise<Response> {
         query = query.lt('occurred_at', nextDay);
       }
       if (cursor) {
-        const decoded = decodeCursor(cursor);
+        const decoded = decodeCursorStrict(cursor, { idType: 'bigint' });
         if (decoded) {
           if (decoded.id) {
             query = query.or(`occurred_at.lt.${decoded.timestamp},and(occurred_at.eq.${decoded.timestamp},id.lt.${decoded.id})`);

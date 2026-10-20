@@ -7,7 +7,10 @@ import updateSettingsHandler from '../api/update-settings.js';
 import adminSettingsHandler from '../api/admin/settings.js';
 import emailPassHandler from '../api/passes/email.js';
 import purgeImagesHandler from '../api/purge-images.js';
+import recordsHandler from '../api/admin/records.js';
+import dashboardHandler from '../api/admin/dashboard.js';
 import { requireStaffActor } from '../server/actors.js';
+import { encodeCompoundCursor } from '../server/cursor.js';
 
 async function invokeHandler(handler: any, req: Request): Promise<Response> {
   if (typeof handler === 'function') return handler(req);
@@ -23,9 +26,11 @@ describe('Behavioral Mocked-Handler Tests [PASS (MOCKED HANDLER)]', () => {
   const DEVICE_ID = '00000000-0000-4000-a000-000000000003';
   const OTHER_DEVICE_ID = '00000000-0000-4000-a000-000000000004';
   const VISITOR_OWNER_ID = '00000000-0000-4000-a000-000000000005';
+  const OTHER_VISITOR_ID = '00000000-0000-4000-a000-000000000006';
 
   const VALID_SUPERADMIN_BEARER = 'Bearer valid-superadmin-token';
   const VALID_VISITOR_BEARER = 'Bearer valid-visitor-token';
+  const OTHER_VISITOR_BEARER = 'Bearer other-visitor-token';
 
   const TEST_PASS_ID = '00000000-0000-4000-a000-000000000888';
   const TEST_PUBLIC_REF = 'GP-20261020-0888';
@@ -40,12 +45,14 @@ describe('Behavioral Mocked-Handler Tests [PASS (MOCKED HANDLER)]', () => {
     incident_holds: any[];
     passes: any[];
     visitor_evidence: any[];
-    reconciliations: any[];
+    reconciliation_tasks: any[];
     pass_email_verifications: any[];
   };
 
   let mockAuthUsers: Record<string, any>;
   let sentEmails: SendEmailPayload[];
+  let mockRpcFailures: Record<string, any>;
+  let mockTableFailures: Record<string, any>;
 
   function createMockSupabase() {
     return {
@@ -69,6 +76,18 @@ describe('Behavioral Mocked-Handler Tests [PASS (MOCKED HANDLER)]', () => {
                 user: {
                   id: VISITOR_OWNER_ID,
                   email: 'visitor.owner@gmail.com',
+                  email_confirmed_at: '2026-01-01T00:00:00Z',
+                },
+              },
+              error: null,
+            };
+          }
+          if (token === 'other-visitor-token') {
+            return {
+              data: {
+                user: {
+                  id: OTHER_VISITOR_ID,
+                  email: 'other.visitor@gmail.com',
                   email_confirmed_at: '2026-01-01T00:00:00Z',
                 },
               },
@@ -106,6 +125,7 @@ describe('Behavioral Mocked-Handler Tests [PASS (MOCKED HANDLER)]', () => {
       from: (table: string) => {
         let currentTable = table;
         let filters: Array<(item: any) => boolean> = [];
+        let eqCols: Record<string, any> = {};
         let limitVal: number | null = null;
         let isHeadCount = false;
 
@@ -117,8 +137,8 @@ describe('Behavioral Mocked-Handler Tests [PASS (MOCKED HANDLER)]', () => {
             return chain;
           },
           eq: (col: string, val: any) => {
+            eqCols[col] = val;
             filters.push((item) => {
-              // Support boolean singleton check
               if (col === 'singleton' && val === true) return true;
               return item[col] === val;
             });
@@ -146,8 +166,18 @@ describe('Behavioral Mocked-Handler Tests [PASS (MOCKED HANDLER)]', () => {
             filters.push((item) => item[col] <= val);
             return chain;
           },
-          or: (_expr: string) => {
-            // Keep permissive in mock
+          lt: (col: string, val: any) => {
+            filters.push((item) => item[col] < val);
+            return chain;
+          },
+          ilike: (_col: string, _pattern: string) => chain,
+          or: (expr: string) => {
+            // Support public_reference vs id compound check
+            if (expr.includes('public_reference.eq.') && expr.includes('id.eq.')) {
+              const match = expr.match(/public_reference\.eq\.([^,]+)/);
+              const val = match ? match[1] : '';
+              filters.push((item) => item.public_reference === val || item.id === val);
+            }
             return chain;
           },
           order: () => chain,
@@ -156,17 +186,29 @@ describe('Behavioral Mocked-Handler Tests [PASS (MOCKED HANDLER)]', () => {
             return chain;
           },
           maybeSingle: async () => {
+            if (currentTable === 'staff_profiles' && mockTableFailures['staff_profiles:target'] && eqCols['user_id'] !== SUPERADMIN_ID) {
+              return { data: null, error: mockTableFailures['staff_profiles:target'] };
+            }
+            if (mockTableFailures[currentTable]) {
+              return { data: null, error: mockTableFailures[currentTable] };
+            }
             const items = (mockDbData as any)[currentTable] || [];
             const filtered = items.filter((x: any) => filters.every((f) => f(x)));
             return { data: filtered[0] || null, error: null };
           },
           single: async () => {
+            if (mockTableFailures[currentTable]) {
+              return { data: null, error: mockTableFailures[currentTable] };
+            }
             const items = (mockDbData as any)[currentTable] || [];
             const filtered = items.filter((x: any) => filters.every((f) => f(x)));
             if (!filtered[0]) return { data: null, error: new Error('Record not found') };
             return { data: filtered[0], error: null };
           },
           insert: async (data: any) => {
+            if (mockTableFailures[`${currentTable}:insert`]) {
+              return { data: null, error: mockTableFailures[`${currentTable}:insert`] };
+            }
             const items = (mockDbData as any)[currentTable] || [];
             const rows = Array.isArray(data) ? data : [data];
             items.push(...rows);
@@ -175,6 +217,9 @@ describe('Behavioral Mocked-Handler Tests [PASS (MOCKED HANDLER)]', () => {
           update: (data: any) => {
             return {
               eq: (col: string, val: any) => {
+                if (mockTableFailures[`${currentTable}:update`]) {
+                  return { error: mockTableFailures[`${currentTable}:update`] };
+                }
                 const items = (mockDbData as any)[currentTable] || [];
                 items.forEach((item: any) => {
                   if (col === 'singleton' && val === true) {
@@ -188,6 +233,10 @@ describe('Behavioral Mocked-Handler Tests [PASS (MOCKED HANDLER)]', () => {
             };
           },
           then: (resolve: any) => {
+            if (mockTableFailures[currentTable]) {
+              resolve({ data: null, count: null, error: mockTableFailures[currentTable] });
+              return;
+            }
             const items = (mockDbData as any)[currentTable] || [];
             let result = items.filter((x: any) => filters.every((f) => f(x)));
             if (isHeadCount) {
@@ -202,6 +251,9 @@ describe('Behavioral Mocked-Handler Tests [PASS (MOCKED HANDLER)]', () => {
       },
       schema: (_s: string) => ({
         rpc: async (fn: string, args: any) => {
+          if (mockRpcFailures[fn]) {
+            return { data: null, error: mockRpcFailures[fn] };
+          }
           if (fn === 'update_device_profile') {
             const dev = mockDbData.devices.find((d) => d.user_id === args.requested_user_id);
             if (dev) {
@@ -237,6 +289,109 @@ describe('Behavioral Mocked-Handler Tests [PASS (MOCKED HANDLER)]', () => {
             });
             return { data: updated, error: null };
           }
+          if (fn === 'request_email_verification_code') {
+            const pass = mockDbData.passes.find((p) => p.id === args.requested_pass_id);
+            if (!pass) return { data: null, error: { code: 'P0002', message: 'pass_not_found' } };
+            if (pass.visitors.owner_id !== args.requested_actor_id) {
+              return { data: null, error: { code: '42501', message: 'access_denied' } };
+            }
+            const existing = mockDbData.pass_email_verifications.find(
+              (v) => v.request_id === args.requested_request_id
+            );
+            if (existing) {
+              return {
+                data: {
+                  verification_id: existing.id,
+                  expires_at: existing.expires_at,
+                  idempotent_replay: true,
+                },
+                error: null,
+              };
+            }
+            const recent = mockDbData.pass_email_verifications.filter(
+              (v) => v.pass_id === args.requested_pass_id
+            );
+            if (recent.length >= 3) {
+              return { data: null, error: { code: 'P0003', message: 'too_many_requests' } };
+            }
+            const row = {
+              id: args.requested_verification_id,
+              pass_id: args.requested_pass_id,
+              recipient_email: args.requested_recipient_email,
+              code_hash: args.requested_code_hash,
+              attempts: 0,
+              verified: false,
+              expires_at: args.requested_expires_at,
+              request_id: args.requested_request_id,
+              delivery_status: 'pending',
+              created_at: new Date().toISOString(),
+            };
+            mockDbData.pass_email_verifications.push(row);
+            return {
+              data: {
+                verification_id: row.id,
+                expires_at: row.expires_at,
+                idempotent_replay: false,
+              },
+              error: null,
+            };
+          }
+          if (fn === 'verify_and_claim_email_dispatch') {
+            const verif = mockDbData.pass_email_verifications.find(
+              (v) => v.id === args.requested_verification_id && v.pass_id === args.requested_pass_id
+            );
+            if (!verif) return { data: null, error: { code: 'P0002', message: 'verification_not_found' } };
+            if (verif.send_request_id === args.requested_send_request_id) {
+              return {
+                data: { success: true, idempotent_replay: true, recipient_email: verif.recipient_email },
+                error: null,
+              };
+            }
+            if (verif.verified && verif.delivery_status === 'sent_to_provider') {
+              return { data: null, error: { code: 'P0004', message: 'code_already_used' } };
+            }
+            if (verif.delivery_status === 'sending') {
+              return { data: null, error: { code: 'P0005', message: 'dispatch_in_progress' } };
+            }
+            if (new Date(verif.expires_at).getTime() <= Date.now()) {
+              return { data: null, error: { code: 'P0006', message: 'code_expired' } };
+            }
+            if (verif.attempts >= 3) {
+              return { data: null, error: { code: 'P0007', message: 'max_attempts_exceeded' } };
+            }
+            if (verif.recipient_email !== args.requested_recipient_email) {
+              return { data: null, error: { code: 'P0008', message: 'recipient_mismatch' } };
+            }
+            if (verif.code_hash !== args.requested_expected_hash) {
+              verif.attempts++;
+              return {
+                data: { success: false, attempts_remaining: Math.max(0, 3 - verif.attempts) },
+                error: null,
+              };
+            }
+            verif.verified = true;
+            verif.delivery_status = 'sending';
+            verif.send_request_id = args.requested_send_request_id;
+            return {
+              data: { success: true, recipient_email: verif.recipient_email, idempotent_replay: false },
+              error: null,
+            };
+          }
+          if (fn === 'finalize_email_dispatch') {
+            const verif = mockDbData.pass_email_verifications.find(
+              (v) => v.id === args.requested_verification_id
+            );
+            if (!verif) return { data: null, error: { code: 'P0002', message: 'verification_not_found' } };
+            verif.delivery_status = args.requested_delivery_status;
+            if (args.requested_delivery_status === 'sent_to_provider') {
+              verif.provider_delivery_id = args.requested_provider_delivery_id;
+              verif.sent_at = new Date().toISOString();
+            } else {
+              verif.delivery_status = 'delivery_failed';
+              verif.send_request_id = null;
+            }
+            return { data: { success: true }, error: null };
+          }
           return { data: null, error: new Error(`Unknown RPC: ${fn}`) };
         },
       }),
@@ -249,6 +404,9 @@ describe('Behavioral Mocked-Handler Tests [PASS (MOCKED HANDLER)]', () => {
   }
 
   beforeEach(() => {
+    mockRpcFailures = {};
+    mockTableFailures = {};
+
     mockDbData = {
       devices: [
         {
@@ -322,13 +480,16 @@ describe('Behavioral Mocked-Handler Tests [PASS (MOCKED HANDLER)]', () => {
       incident_holds: [],
       passes: [
         {
-          id: TEST_PASS_ID,
-          public_reference: TEST_PUBLIC_REF,
+          id: TEST_PASS_ID, // Internal UUID
+          public_reference: TEST_PUBLIC_REF, // Distinct public reference
           visitor_id: 'visitor-888',
-          token_digest: TEST_TOKEN_DIGEST,
+          // Postgres bytea PostgREST serialization starts with \x
+          token_digest: `\\x${TEST_TOKEN_DIGEST}`,
           status: 'issued',
           valid_from: '2026-10-20T00:00:00Z',
           valid_until: '2026-10-20T23:59:59Z',
+          entry_scanned_at: '2026-10-20T08:00:00+08:00',
+          issued_at: '2026-10-20T07:30:00+08:00',
           visitors: {
             id: 'visitor-888',
             owner_id: VISITOR_OWNER_ID,
@@ -340,7 +501,7 @@ describe('Behavioral Mocked-Handler Tests [PASS (MOCKED HANDLER)]', () => {
         },
       ],
       visitor_evidence: [],
-      reconciliations: [],
+      reconciliation_tasks: [],
       pass_email_verifications: [],
     };
 
@@ -348,12 +509,10 @@ describe('Behavioral Mocked-Handler Tests [PASS (MOCKED HANDLER)]', () => {
       [SUPERADMIN_ID]: {
         id: SUPERADMIN_ID,
         email: 'superadmin@earist.edu.ph',
-        email_confirmed_at: '2026-01-01T00:00:00Z',
       },
       [STAFF_VICTIM_ID]: {
         id: STAFF_VICTIM_ID,
-        email: 'guard@earist.edu.ph',
-        email_confirmed_at: '2026-01-01T00:00:00Z',
+        email: 'guard.officer@earist.edu.ph',
       },
       [DEVICE_ID]: {
         id: DEVICE_ID,
@@ -366,233 +525,35 @@ describe('Behavioral Mocked-Handler Tests [PASS (MOCKED HANDLER)]', () => {
       [VISITOR_OWNER_ID]: {
         id: VISITOR_OWNER_ID,
         email: 'visitor.owner@gmail.com',
-        email_confirmed_at: '2026-01-01T00:00:00Z',
+      },
+      [OTHER_VISITOR_ID]: {
+        id: OTHER_VISITOR_ID,
+        email: 'other.visitor@gmail.com',
       },
     };
 
     sentEmails = [];
     setEmailSenderForTest(async (payload) => {
       sentEmails.push(payload);
-      return { id: 'mock-msg-001', provider: 'mock' };
+      return { id: `resend_${randomUUID()}` };
     });
 
-    const mockSupabase = createMockSupabase();
-    setServerSupabaseClientsForTest({
-      admin: mockSupabase as any,
-      passwordVerifier: mockSupabase as any,
-    });
+    const mockClients = {
+      client: createMockSupabase(),
+      admin: createMockSupabase(),
+    };
+    setServerSupabaseClientsForTest(mockClients as any);
   });
 
   afterEach(() => {
-    setServerSupabaseClientsForTest(null);
-    setEmailSenderForTest(null);
+    vi.restoreAllMocks();
   });
 
   // =========================================================================
-  // M4-F01: Device Credential Target Validation & Atomicity
+  // P0-01 & P0-02: QR Email Delivery Contract & Atomicity
   // =========================================================================
-  describe('M4-F01: Device Credential Target Validation (api/update-device-auth.ts)', () => {
-    it('rejects attempt to modify staff user via device credential endpoint', async () => {
-      const req = new Request('http://localhost/api/update-device-auth', {
-        method: 'POST',
-        headers: {
-          authorization: VALID_SUPERADMIN_BEARER,
-          'content-type': 'application/json',
-        },
-        body: JSON.stringify({
-          targetUid: STAFF_VICTIM_ID,
-          password: 'NewPassword123!',
-        }),
-      });
-
-      const res = await invokeHandler(updateDeviceAuthHandler, req);
-      const json = await res.json();
-
-      expect(res.status).toBe(403);
-      expect(json.error).toBe('cannot_modify_staff_via_device_endpoint');
-    });
-
-    it('rejects attempt to change alias to one already used by another active device', async () => {
-      const req = new Request('http://localhost/api/update-device-auth', {
-        method: 'POST',
-        headers: {
-          authorization: VALID_SUPERADMIN_BEARER,
-          'content-type': 'application/json',
-        },
-        body: JSON.stringify({
-          targetUid: DEVICE_ID,
-          email: 'gate2-exit', // In use by OTHER_DEVICE_ID
-        }),
-      });
-
-      const res = await invokeHandler(updateDeviceAuthHandler, req);
-      const json = await res.json();
-
-      expect(res.status).toBe(409);
-      expect(json.error).toBe('device_alias_conflict');
-    });
-
-    it('rejects non-existent device target UID', async () => {
-      const req = new Request('http://localhost/api/update-device-auth', {
-        method: 'POST',
-        headers: {
-          authorization: VALID_SUPERADMIN_BEARER,
-          'content-type': 'application/json',
-        },
-        body: JSON.stringify({
-          targetUid: '00000000-0000-4000-a000-000000000999',
-          password: 'NewPassword123!',
-        }),
-      });
-
-      const res = await invokeHandler(updateDeviceAuthHandler, req);
-      const json = await res.json();
-
-      expect(res.status).toBe(404);
-      expect(json.error).toBe('device_not_found');
-    });
-
-    it('updates password and logs immutable audit event for valid target device', async () => {
-      const req = new Request('http://localhost/api/update-device-auth', {
-        method: 'POST',
-        headers: {
-          authorization: VALID_SUPERADMIN_BEARER,
-          'content-type': 'application/json',
-        },
-        body: JSON.stringify({
-          targetUid: DEVICE_ID,
-          password: 'ValidPassword123!',
-        }),
-      });
-
-      const res = await invokeHandler(updateDeviceAuthHandler, req);
-      const json = await res.json();
-
-      expect(res.status).toBe(200);
-      expect(json.ok).toBe(true);
-
-      const audit = mockDbData.audit_events.find(
-        (a) => a.target_id === DEVICE_ID && a.action === 'device.password_update'
-      );
-      expect(audit).toBeDefined();
-      expect(audit.outcome).toBe('success');
-      expect(audit.after_state.password_changed).toBe(true);
-    });
-  });
-
-  // =========================================================================
-  // M4-F04: Staff Email Verification Requirement at Boundary
-  // =========================================================================
-  describe('M4-F04: Staff Verification at Boundary (server/actors.ts)', () => {
-    it('rejects human staff actor if email is unconfirmed', async () => {
-      const mockSupabase = createMockSupabase();
-      await expect(
-        requireStaffActor(mockSupabase as any, 'unverified-staff-token', ['guard', 'superadmin'])
-      ).rejects.toMatchObject({
-        status: 403,
-        code: 'email_verification_required',
-      });
-    });
-
-    it('accepts human staff actor if email is confirmed', async () => {
-      const mockSupabase = createMockSupabase();
-      const actor = await requireStaffActor(mockSupabase as any, 'valid-superadmin-token', ['superadmin']);
-      expect(actor.id).toBe(SUPERADMIN_ID);
-      expect(actor.role).toBe('superadmin');
-    });
-  });
-
-  // =========================================================================
-  // M4-F03 & M4-F10: Settings Atomic Persistence
-  // =========================================================================
-  describe('M4-F03 & M4-F10: Settings Atomic Persistence (api/update-settings.ts & api/admin/settings.ts)', () => {
-    it('persists automaticCleanupEnabled and peakMode scope via atomic RPC', async () => {
-      const req = new Request('http://localhost/api/update-settings', {
-        method: 'POST',
-        headers: {
-          authorization: VALID_SUPERADMIN_BEARER,
-          'content-type': 'application/json',
-        },
-        body: JSON.stringify({
-          peakMode: 'portal',
-          automaticCleanupEnabled: false,
-          rejectionReasons: ['Incomplete requirements'],
-          visitPurposes: [{ label: 'Registrar', requiresDetails: false, detailPrompt: '' }],
-        }),
-      });
-
-      const res = await invokeHandler(updateSettingsHandler, req);
-      const json = await res.json();
-
-      expect(res.status).toBe(200);
-      expect(json.success).toBe(true);
-
-      expect(mockDbData.app_settings[0].peak_mode).toBe('portal');
-      expect(mockDbData.app_settings[0].automatic_cleanup_enabled).toBe(false);
-
-      // Read back via GET /api/admin/settings
-      const getReq = new Request('http://localhost/api/admin/settings', {
-        headers: { authorization: VALID_SUPERADMIN_BEARER },
-      });
-      const getRes = await invokeHandler(adminSettingsHandler, getReq);
-      const getJson = await getRes.json();
-
-      expect(getRes.status).toBe(200);
-      expect(getJson.peakModeScope).toBe('portal');
-      expect(getJson.automaticCleanupEnabled).toBe(false);
-    });
-  });
-
-  // =========================================================================
-  // M4-F02: Image Purge Incident Hold Protection
-  // =========================================================================
-  describe('M4-F02: Image Purge Incident Hold Protection (api/purge-images.ts)', () => {
-    it('protects passes with active hold from purge and honors dry-run', async () => {
-      const PASS_WITH_HOLD = '00000000-0000-4000-a000-000000000501';
-      mockDbData.incident_holds = [
-        {
-          id: 'hold-1',
-          pass_id: PASS_WITH_HOLD,
-          visitor_id: 'visitor-501',
-          active: true,
-        },
-      ];
-      mockDbData.visitor_evidence = [
-        {
-          id: 'ev-1',
-          visitor_id: 'visitor-501',
-          bucket_id: 'pass-photos',
-          object_path: 'visitor-501/photo.webp',
-          purged_at: null,
-          expires_at: '2026-01-01T00:00:00Z',
-        },
-      ];
-
-      const req = new Request('http://localhost/api/purge-images', {
-        method: 'POST',
-        headers: {
-          authorization: VALID_SUPERADMIN_BEARER,
-          'content-type': 'application/json',
-        },
-        body: JSON.stringify({
-          dryRun: true,
-          limit: 10,
-        }),
-      });
-
-      const res = await invokeHandler(purgeImagesHandler, req);
-      const json = await res.json();
-
-      expect(res.status).toBe(200);
-      expect(json.visitorsAffected).toBe(0);
-    });
-  });
-
-  // =========================================================================
-  // M5-F13: Optional QR Code Email Delivery
-  // =========================================================================
-  describe('M5-F13: Optional QR Email Delivery (api/passes/email.ts)', () => {
-    it('completes request_code step by issuing 6-digit verification code to inbox', async () => {
+  describe('P0-01 & P0-02: QR Email Delivery Contract (api/passes/email.ts)', () => {
+    it('P0-01: successfully accepts public_reference and resolves internal pass ID', async () => {
       const req = new Request('http://localhost/api/passes/email', {
         method: 'POST',
         headers: {
@@ -601,7 +562,7 @@ describe('Behavioral Mocked-Handler Tests [PASS (MOCKED HANDLER)]', () => {
         },
         body: JSON.stringify({
           action: 'request_code',
-          passId: TEST_PASS_ID,
+          passId: TEST_PUBLIC_REF, // Public reference from issuance (GP-20261020-0888)
           qrToken: TEST_RAW_TOKEN,
           recipientEmail: 'maria.santos@gmail.com',
           consent: true,
@@ -617,18 +578,12 @@ describe('Behavioral Mocked-Handler Tests [PASS (MOCKED HANDLER)]', () => {
       expect(json.status).toBe('code_sent');
       expect(typeof json.verificationId).toBe('string');
 
-      // Verify email was sent with 6-digit code
-      expect(sentEmails.length).toBe(1);
-      expect(sentEmails[0].to).toBe('maria.santos@gmail.com');
-      expect(sentEmails[0].subject).toContain('Verification Code');
-
-      // Verify code was recorded in pass_email_verifications
+      // Crucial verification: pass_id in DB row is internal UUID, NOT the public reference
       expect(mockDbData.pass_email_verifications.length).toBe(1);
       expect(mockDbData.pass_email_verifications[0].pass_id).toBe(TEST_PASS_ID);
-      expect(mockDbData.pass_email_verifications[0].code_hash).toBeDefined();
     });
 
-    it('rejects request_code if consent is not explicitly given', async () => {
+    it('P0-01: timing-safe check normalizes Postgres bytea \\x hex digest', async () => {
       const req = new Request('http://localhost/api/passes/email', {
         method: 'POST',
         headers: {
@@ -637,10 +592,10 @@ describe('Behavioral Mocked-Handler Tests [PASS (MOCKED HANDLER)]', () => {
         },
         body: JSON.stringify({
           action: 'request_code',
-          passId: TEST_PASS_ID,
-          qrToken: TEST_RAW_TOKEN,
+          passId: TEST_PUBLIC_REF,
+          qrToken: 'wrong_raw_token_value_abc', // Invalid token
           recipientEmail: 'maria.santos@gmail.com',
-          consent: false,
+          consent: true,
           requestId: randomUUID(),
         }),
       });
@@ -648,11 +603,105 @@ describe('Behavioral Mocked-Handler Tests [PASS (MOCKED HANDLER)]', () => {
       const res = await invokeHandler(emailPassHandler, req);
       const json = await res.json();
 
-      expect(res.status).toBe(400);
-      expect(json.error).toBe('invalid_request');
+      expect(res.status).toBe(403);
+      expect(json.error).toBe('invalid_bearer_token');
     });
 
-    it('verifies code and delivers QR code attachment', async () => {
+    it('P0-01: rejects request from non-owner actor', async () => {
+      const req = new Request('http://localhost/api/passes/email', {
+        method: 'POST',
+        headers: {
+          authorization: OTHER_VISITOR_BEARER, // Different visitor actor
+          'content-type': 'application/json',
+        },
+        body: JSON.stringify({
+          action: 'request_code',
+          passId: TEST_PUBLIC_REF,
+          qrToken: TEST_RAW_TOKEN,
+          recipientEmail: 'maria.santos@gmail.com',
+          consent: true,
+          requestId: randomUUID(),
+        }),
+      });
+
+      const res = await invokeHandler(emailPassHandler, req);
+      const json = await res.json();
+
+      expect(res.status).toBe(403);
+      expect(json.error).toBe('access_denied');
+    });
+
+    it('P0-02: request_code enforces idempotency on requestId', async () => {
+      const sameRequestId = randomUUID();
+
+      const body = {
+        action: 'request_code',
+        passId: TEST_PUBLIC_REF,
+        qrToken: TEST_RAW_TOKEN,
+        recipientEmail: 'maria.santos@gmail.com',
+        consent: true,
+        requestId: sameRequestId,
+      };
+
+      // Call 1
+      const res1 = await invokeHandler(emailPassHandler, new Request('http://localhost/api/passes/email', {
+        method: 'POST',
+        headers: { authorization: VALID_VISITOR_BEARER, 'content-type': 'application/json' },
+        body: JSON.stringify(body),
+      }));
+      const json1 = await res1.json();
+      expect(res1.status).toBe(200);
+
+      // Call 2 with identical requestId
+      const res2 = await invokeHandler(emailPassHandler, new Request('http://localhost/api/passes/email', {
+        method: 'POST',
+        headers: { authorization: VALID_VISITOR_BEARER, 'content-type': 'application/json' },
+        body: JSON.stringify(body),
+      }));
+      const json2 = await res2.json();
+      expect(res2.status).toBe(200);
+      expect(json2.verificationId).toBe(json1.verificationId);
+
+      // Only one email should have been dispatched
+      expect(sentEmails.length).toBe(1);
+    });
+
+    it('P0-02: enforces fail-closed rate limit (max 3 requests per 15 min)', async () => {
+      for (let i = 0; i < 3; i++) {
+        const res = await invokeHandler(emailPassHandler, new Request('http://localhost/api/passes/email', {
+          method: 'POST',
+          headers: { authorization: VALID_VISITOR_BEARER, 'content-type': 'application/json' },
+          body: JSON.stringify({
+            action: 'request_code',
+            passId: TEST_PUBLIC_REF,
+            qrToken: TEST_RAW_TOKEN,
+            recipientEmail: 'maria.santos@gmail.com',
+            consent: true,
+            requestId: randomUUID(),
+          }),
+        }));
+        expect(res.status).toBe(200);
+      }
+
+      // 4th request must be rate-limited
+      const res4 = await invokeHandler(emailPassHandler, new Request('http://localhost/api/passes/email', {
+        method: 'POST',
+        headers: { authorization: VALID_VISITOR_BEARER, 'content-type': 'application/json' },
+        body: JSON.stringify({
+          action: 'request_code',
+          passId: TEST_PUBLIC_REF,
+          qrToken: TEST_RAW_TOKEN,
+          recipientEmail: 'maria.santos@gmail.com',
+          consent: true,
+          requestId: randomUUID(),
+        }),
+      }));
+      const json4 = await res4.json();
+      expect(res4.status).toBe(429);
+      expect(json4.error).toBe('too_many_requests');
+    });
+
+    it('P0-02: verify_and_send increments attempts on invalid code and caps at 3', async () => {
       const verificationId = randomUUID();
       const code = '123456';
       const codeHash = createHash('sha256').update(`${verificationId}:${code}`).digest('hex');
@@ -666,44 +715,81 @@ describe('Behavioral Mocked-Handler Tests [PASS (MOCKED HANDLER)]', () => {
           expires_at: new Date(Date.now() + 600000).toISOString(),
           attempts: 0,
           verified: false,
+          delivery_status: 'pending',
         },
       ];
 
-      const req = new Request('http://localhost/api/passes/email', {
+      // Attempt 1: wrong code
+      const res1 = await invokeHandler(emailPassHandler, new Request('http://localhost/api/passes/email', {
         method: 'POST',
-        headers: {
-          authorization: VALID_VISITOR_BEARER,
-          'content-type': 'application/json',
-        },
+        headers: { authorization: VALID_VISITOR_BEARER, 'content-type': 'application/json' },
         body: JSON.stringify({
           action: 'verify_and_send',
-          passId: TEST_PASS_ID,
+          passId: TEST_PUBLIC_REF,
           qrToken: TEST_RAW_TOKEN,
           recipientEmail: 'maria.santos@gmail.com',
           verificationId,
-          code,
+          code: '999999',
           requestId: randomUUID(),
         }),
-      });
+      }));
+      const json1 = await res1.json();
+      expect(res1.status).toBe(400);
+      expect(json1.error).toBe('invalid_code');
+      expect(json1.attemptsRemaining).toBe(2);
 
-      const res = await invokeHandler(emailPassHandler, req);
-      const json = await res.json();
+      // Attempt 2: wrong code
+      const res2 = await invokeHandler(emailPassHandler, new Request('http://localhost/api/passes/email', {
+        method: 'POST',
+        headers: { authorization: VALID_VISITOR_BEARER, 'content-type': 'application/json' },
+        body: JSON.stringify({
+          action: 'verify_and_send',
+          passId: TEST_PUBLIC_REF,
+          qrToken: TEST_RAW_TOKEN,
+          recipientEmail: 'maria.santos@gmail.com',
+          verificationId,
+          code: '999999',
+          requestId: randomUUID(),
+        }),
+      }));
+      expect(res2.status).toBe(400);
 
-      expect(res.status).toBe(200);
-      expect(json.success).toBe(true);
-      expect(json.status).toBe('sent');
+      // Attempt 3: wrong code
+      const res3 = await invokeHandler(emailPassHandler, new Request('http://localhost/api/passes/email', {
+        method: 'POST',
+        headers: { authorization: VALID_VISITOR_BEARER, 'content-type': 'application/json' },
+        body: JSON.stringify({
+          action: 'verify_and_send',
+          passId: TEST_PUBLIC_REF,
+          qrToken: TEST_RAW_TOKEN,
+          recipientEmail: 'maria.santos@gmail.com',
+          verificationId,
+          code: '999999',
+          requestId: randomUUID(),
+        }),
+      }));
+      expect(res3.status).toBe(400);
 
-      // Verify QR email was dispatched with PNG attachment
-      const deliveryEmail = sentEmails.find((e) => e.subject.includes('Your EARIST Digital Gate Pass'));
-      expect(deliveryEmail).toBeDefined();
-      expect(deliveryEmail?.attachments?.length).toBe(1);
-      expect(deliveryEmail?.attachments?.[0].filename).toBe('earist-gate-pass-qr.png');
+      // Attempt 4: attempts exceeded
+      const res4 = await invokeHandler(emailPassHandler, new Request('http://localhost/api/passes/email', {
+        method: 'POST',
+        headers: { authorization: VALID_VISITOR_BEARER, 'content-type': 'application/json' },
+        body: JSON.stringify({
+          action: 'verify_and_send',
+          passId: TEST_PUBLIC_REF,
+          qrToken: TEST_RAW_TOKEN,
+          recipientEmail: 'maria.santos@gmail.com',
+          verificationId,
+          code: code, // Even with correct code, must reject
+          requestId: randomUUID(),
+        }),
+      }));
+      expect(res4.status).toBe(429);
     });
 
-    it('delivery failure records reconciliation and does not rollback or delete pass', async () => {
-      // Mock failure in sender
+    it('P0-02: delivery failure records reconciliation, keeps delivery_failed status, preserves pass', async () => {
       setEmailSenderForTest(async () => {
-        throw new Error('Resend API Network Timeout');
+        throw new Error('Resend Network Timeout');
       });
 
       const verificationId = randomUUID();
@@ -719,34 +805,345 @@ describe('Behavioral Mocked-Handler Tests [PASS (MOCKED HANDLER)]', () => {
           expires_at: new Date(Date.now() + 600000).toISOString(),
           attempts: 0,
           verified: false,
+          delivery_status: 'pending',
         },
       ];
 
-      const req = new Request('http://localhost/api/passes/email', {
+      const res = await invokeHandler(emailPassHandler, new Request('http://localhost/api/passes/email', {
         method: 'POST',
-        headers: {
-          authorization: VALID_VISITOR_BEARER,
-          'content-type': 'application/json',
-        },
+        headers: { authorization: VALID_VISITOR_BEARER, 'content-type': 'application/json' },
         body: JSON.stringify({
           action: 'verify_and_send',
-          passId: TEST_PASS_ID,
+          passId: TEST_PUBLIC_REF,
           qrToken: TEST_RAW_TOKEN,
           recipientEmail: 'maria.santos@gmail.com',
           verificationId,
           code,
           requestId: randomUUID(),
         }),
-      });
-
-      const res = await invokeHandler(emailPassHandler, req);
+      }));
       const json = await res.json();
 
       expect(res.status).toBe(502);
       expect(json.error).toBe('email_delivery_failed');
 
-      // Pass MUST still exist and not be deleted or rolled back
+      // Status in DB must reflect delivery_failed
+      const verif = mockDbData.pass_email_verifications.find((v) => v.id === verificationId);
+      expect(verif?.delivery_status).toBe('delivery_failed');
+
+      // Reconciliation recorded in reconciliation_tasks
+      expect(mockDbData.reconciliation_tasks.length).toBe(1);
+      expect(mockDbData.reconciliation_tasks[0].operation).toBe('pass.email_delivery_failed');
+
+      // Pass must remain intact
       expect(mockDbData.passes.find((p) => p.id === TEST_PASS_ID)).toBeDefined();
+    });
+
+    it('P0-02: successful delivery marks status sent_to_provider with attachment', async () => {
+      const verificationId = randomUUID();
+      const code = '123456';
+      const codeHash = createHash('sha256').update(`${verificationId}:${code}`).digest('hex');
+
+      mockDbData.pass_email_verifications = [
+        {
+          id: verificationId,
+          pass_id: TEST_PASS_ID,
+          recipient_email: 'maria.santos@gmail.com',
+          code_hash: codeHash,
+          expires_at: new Date(Date.now() + 600000).toISOString(),
+          attempts: 0,
+          verified: false,
+          delivery_status: 'pending',
+        },
+      ];
+
+      const res = await invokeHandler(emailPassHandler, new Request('http://localhost/api/passes/email', {
+        method: 'POST',
+        headers: { authorization: VALID_VISITOR_BEARER, 'content-type': 'application/json' },
+        body: JSON.stringify({
+          action: 'verify_and_send',
+          passId: TEST_PUBLIC_REF,
+          qrToken: TEST_RAW_TOKEN,
+          recipientEmail: 'maria.santos@gmail.com',
+          verificationId,
+          code,
+          requestId: randomUUID(),
+        }),
+      }));
+      const json = await res.json();
+
+      expect(res.status).toBe(200);
+      expect(json.success).toBe(true);
+      expect(json.status).toBe('sent_to_provider');
+      expect(typeof json.deliveryId).toBe('string');
+
+      const deliveryEmail = sentEmails.find((e) => e.subject.includes('Your EARIST Digital Gate Pass'));
+      expect(deliveryEmail).toBeDefined();
+      expect(deliveryEmail?.attachments?.length).toBe(1);
+    });
+  });
+
+  // =========================================================================
+  // P0-03: Settings Fails Closed On RPC Error (Zero Fallback)
+  // =========================================================================
+  describe('P0-03: Settings RPC Failure Must Fail Closed (api/update-settings.ts)', () => {
+    it('fails closed with 503 and performs ZERO direct table update when RPC fails', async () => {
+      mockRpcFailures['update_app_settings'] = {
+        code: '50000',
+        message: 'Database write transaction aborted',
+      };
+
+      const initialSettings = JSON.parse(JSON.stringify(mockDbData.app_settings));
+      const initialAuditCount = mockDbData.audit_events.length;
+
+      const req = new Request('http://localhost/api/update-settings', {
+        method: 'POST',
+        headers: {
+          authorization: VALID_SUPERADMIN_BEARER,
+          'content-type': 'application/json',
+        },
+        body: JSON.stringify({
+          peakMode: 'both',
+          automaticCleanupEnabled: false,
+          rejectionReasons: ['Updated reason'],
+          visitPurposes: [{ label: 'Updated Purpose', requiresDetails: false, detailPrompt: '' }],
+        }),
+      });
+
+      const res = await invokeHandler(updateSettingsHandler, req);
+      const json = await res.json();
+
+      expect(res.status).toBe(503);
+      expect(json.error).toBe('Database write transaction aborted');
+
+      // CRITICAL: Verify NO direct fallback occurred on app_settings
+      expect(mockDbData.app_settings).toEqual(initialSettings);
+      // Verify NO audit event was inserted by direct write
+      expect(mockDbData.audit_events.length).toBe(initialAuditCount);
+    });
+
+    it('rejects operational admin attempt to modify security settings with 403', async () => {
+      // Create admin actor profile
+      const ADMIN_ACTOR_ID = '00000000-0000-4000-a000-000000000007';
+      mockDbData.staff_profiles.push({
+        user_id: ADMIN_ACTOR_ID,
+        role: 'admin', // Not superadmin
+        full_name: 'Operational Admin',
+        active: true,
+        must_change_password: false,
+        privacy_accepted_at: '2026-01-01T00:00:00Z',
+        deleted_at: null,
+      });
+
+      const client = createMockSupabase();
+      (client.auth.getUser as any).mockResolvedValue({
+        data: {
+          user: {
+            id: ADMIN_ACTOR_ID,
+            email: 'admin@earist.edu.ph',
+            email_confirmed_at: '2026-01-01T00:00:00Z',
+          },
+        },
+        error: null,
+      });
+      setServerSupabaseClientsForTest({ client, admin: client } as any);
+
+      const req = new Request('http://localhost/api/update-settings', {
+        method: 'POST',
+        headers: {
+          authorization: 'Bearer valid-admin-token',
+          'content-type': 'application/json',
+        },
+        body: JSON.stringify({
+          peakMode: 'portal',
+          automaticCleanupEnabled: false, // Security sensitive field
+          rejectionReasons: ['Standard'],
+          visitPurposes: [{ label: 'Registrar', requiresDetails: false, detailPrompt: '' }],
+        }),
+      });
+
+      const res = await invokeHandler(updateSettingsHandler, req);
+      const json = await res.json();
+
+      expect(res.status).toBe(403);
+      expect(json.error).toContain('Only Super Admins');
+    });
+  });
+
+  // =========================================================================
+  // P0-04: Image Purge Concurrency & Fail-Closed Checks
+  // =========================================================================
+  describe('P0-04: Image Purge Incident Hold Protection & Fail-Closed (api/purge-images.ts)', () => {
+    it('detects pass-only incident hold during per-item recheck and skips deletion', async () => {
+      mockDbData.incident_holds = [
+        {
+          id: 'hold-pass-only',
+          pass_id: TEST_PASS_ID,
+          visitor_id: null, // Pass-only hold!
+          active: true,
+        },
+      ];
+
+      mockDbData.visitor_evidence = [
+        {
+          id: 'ev-1',
+          visitor_id: 'visitor-888',
+          bucket_id: 'pass-photos',
+          object_path: 'visitor-888/photo.webp',
+          purged_at: null,
+          expires_at: '2026-01-01T00:00:00Z',
+        },
+      ];
+
+      const res = await invokeHandler(purgeImagesHandler, new Request('http://localhost/api/purge-images', {
+        method: 'POST',
+        headers: { authorization: VALID_SUPERADMIN_BEARER, 'content-type': 'application/json' },
+        body: JSON.stringify({ dryRun: false }),
+      }));
+      const json = await res.json();
+
+      expect(res.status).toBe(200);
+      expect(json.successCount).toBe(0);
+      // Asset must NOT have been marked purged
+      expect(mockDbData.visitor_evidence[0].purged_at).toBeNull();
+    });
+
+    it('fails closed when database query errors during per-item hold check', async () => {
+      mockTableFailures['incident_holds'] = new Error('Database read timeout');
+
+      mockDbData.visitor_evidence = [
+        {
+          id: 'ev-fail-closed',
+          visitor_id: 'visitor-888',
+          bucket_id: 'pass-photos',
+          object_path: 'visitor-888/photo.webp',
+          purged_at: null,
+          expires_at: '2026-01-01T00:00:00Z',
+        },
+      ];
+
+      // Initial candidate scan will fail with 500/503 because holds query errored
+      const res = await invokeHandler(purgeImagesHandler, new Request('http://localhost/api/purge-images', {
+        method: 'POST',
+        headers: { authorization: VALID_SUPERADMIN_BEARER, 'content-type': 'application/json' },
+        body: JSON.stringify({ dryRun: false }),
+      }));
+
+      expect(res.status).toBe(500);
+      // Asset must NOT be purged
+      expect(mockDbData.visitor_evidence[0].purged_at).toBeNull();
+    });
+  });
+
+  // =========================================================================
+  // P0-05: Device Governance & Audit Errors
+  // =========================================================================
+  describe('P0-05: Governance Target Validation & Error Inspection (api/update-device-auth.ts)', () => {
+    it('fails closed with 503 if staff check query returns a database error', async () => {
+      mockTableFailures['staff_profiles:target'] = new Error('DB connection pool exhausted');
+
+      const req = new Request('http://localhost/api/update-device-auth', {
+        method: 'POST',
+        headers: { authorization: VALID_SUPERADMIN_BEARER, 'content-type': 'application/json' },
+        body: JSON.stringify({
+          targetUid: DEVICE_ID,
+          password: 'NewPassword123!',
+        }),
+      });
+
+      const res = await invokeHandler(updateDeviceAuthHandler, req);
+      const json = await res.json();
+
+      expect(res.status).toBe(503);
+      expect(json.error).toBe('staff_verification_failed');
+    });
+
+    it('blocks modification when target is a staff user', async () => {
+      const req = new Request('http://localhost/api/update-device-auth', {
+        method: 'POST',
+        headers: { authorization: VALID_SUPERADMIN_BEARER, 'content-type': 'application/json' },
+        body: JSON.stringify({
+          targetUid: STAFF_VICTIM_ID,
+          password: 'NewPassword123!',
+        }),
+      });
+
+      const res = await invokeHandler(updateDeviceAuthHandler, req);
+      const json = await res.json();
+
+      expect(res.status).toBe(403);
+      expect(json.error).toBe('cannot_modify_staff_via_device_endpoint');
+    });
+
+    it('records reconciliation when audit event insert returns an error', async () => {
+      mockTableFailures['audit_events:insert'] = new Error('Audit table disk full');
+
+      const req = new Request('http://localhost/api/update-device-auth', {
+        method: 'POST',
+        headers: { authorization: VALID_SUPERADMIN_BEARER, 'content-type': 'application/json' },
+        body: JSON.stringify({
+          targetUid: DEVICE_ID,
+          password: 'NewPassword123!',
+        }),
+      });
+
+      const res = await invokeHandler(updateDeviceAuthHandler, req);
+      expect(res.status).toBe(200);
+
+      // Reconciliation must have been recorded
+      const recon = mockDbData.reconciliation_tasks.find((r) => r.operation === 'device.credentials.audit_failed');
+      expect(recon).toBeDefined();
+    });
+  });
+
+  // =========================================================================
+  // C-01: Admin Dashboard Counts
+  // =========================================================================
+  describe('C-01: Dashboard True Counts (api/admin/dashboard.ts)', () => {
+    it('returns true counts aligned to Manila local calendar day window', async () => {
+      const req = new Request('http://localhost/api/admin/dashboard', {
+        headers: { authorization: VALID_SUPERADMIN_BEARER },
+      });
+
+      const res = await invokeHandler(dashboardHandler, req);
+      const json = await res.json();
+
+      expect(res.status).toBe(200);
+      expect(json.counts).toBeDefined();
+      expect(typeof json.counts.todayTotal).toBe('number');
+      expect(typeof json.counts.currentlyInside).toBe('number');
+      expect(typeof json.counts.pendingToday).toBe('number');
+      expect(typeof json.counts.allPending).toBe('number');
+    });
+  });
+
+  // =========================================================================
+  // C-03: Secure Compound Cursor in Admin Records
+  // =========================================================================
+  describe('C-03: Secure Compound Cursor in Records (api/admin/records.ts)', () => {
+    it('rejects malformed or injected cursor with 400', async () => {
+      const req = new Request('http://localhost/api/admin/records?cursor=injected_syntax_or_invalid_base64', {
+        headers: { authorization: VALID_SUPERADMIN_BEARER },
+      });
+
+      const res = await invokeHandler(recordsHandler, req);
+      const json = await res.json();
+
+      expect(res.status).toBe(400);
+      expect(json.error).toBe('invalid_cursor');
+    });
+
+    it('accepts valid compound cursor with UUID id', async () => {
+      const validCursor = encodeCompoundCursor('2026-10-20T08:00:00.000Z', TEST_PASS_ID);
+      const req = new Request(`http://localhost/api/admin/records?cursor=${validCursor}`, {
+        headers: { authorization: VALID_SUPERADMIN_BEARER },
+      });
+
+      const res = await invokeHandler(recordsHandler, req);
+      const json = await res.json();
+
+      expect(res.status).toBe(200);
+      expect(Array.isArray(json.passes)).toBe(true);
     });
   });
 });

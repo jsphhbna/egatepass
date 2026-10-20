@@ -18,6 +18,7 @@ interface EmergencyEvacuationPass {
 export function AdminEmergency() {
   const [passes, setPasses] = useState<EmergencyEvacuationPass[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [gateFilter, setGateFilter] = useState('');
   const [search, setSearch] = useState('');
   const [isTruncated, setIsTruncated] = useState(false);
@@ -27,6 +28,7 @@ export function AdminEmergency() {
 
   async function loadEmergencyPasses() {
     try {
+      setLoadError(null);
       const token = await getAccessToken();
       const response = await fetch('/api/admin/emergency', {
         headers: { Authorization: `Bearer ${token}` },
@@ -37,6 +39,8 @@ export function AdminEmergency() {
       setPasses(data?.passes ?? []);
       setIsTruncated(Boolean(data?.truncated));
     } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Failed to load evacuation list';
+      setLoadError(msg);
       console.error('Emergency load error:', err);
     } finally {
       setLoading(false);
@@ -73,11 +77,6 @@ export function AdminEmergency() {
           <p className="mt-1 text-sm font-medium text-[var(--color-danger)]">
             Currently Inside: {passes.length} Visitors
           </p>
-          {isTruncated && (
-            <p className="mt-2 text-sm font-semibold text-[var(--color-danger)]">
-              Notice: The safety query limit was reached. Showing the first {passes.length.toLocaleString()} inside visitors.
-            </p>
-          )}
         </div>
         <Button
           onClick={() => window.print()}
@@ -88,16 +87,63 @@ export function AdminEmergency() {
         </Button>
       </div>
 
+      {/* Screen Incompleteness Alert Banner (C-02) */}
+      {isTruncated && (
+        <div className="rounded-lg border-2 border-red-500 bg-red-50 p-4 text-red-900 shadow-sm print:hidden" role="alert">
+          <div className="flex items-center gap-3">
+            <AlertTriangle className="h-6 w-6 flex-shrink-0 text-red-600" />
+            <div>
+              <h3 className="text-sm font-bold uppercase tracking-wide">Warning: Evacuation List Truncated</h3>
+              <p className="mt-1 text-xs leading-relaxed">
+                The safety query ceiling (10,000 records) was reached. Showing the first {passes.length.toLocaleString()} inside visitors. Additional visitors may be inside the premises. Immediately check physical gate logs.
+              </p>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Screen Load Error Banner (C-02) */}
+      {loadError && (
+        <div className="rounded-lg border-2 border-red-500 bg-red-50 p-4 text-red-900 print:hidden" role="alert">
+          <p className="font-bold text-sm">Failed to refresh live evacuation list: {loadError}</p>
+          <p className="text-xs mt-1">Do not rely on stale evacuation counts during active incidents. Verify manual gate logs.</p>
+        </div>
+      )}
+
       {/* Print Header (Visible only in print) */}
-      <div className="hidden print:block mb-6">
-        <h1 className="text-2xl font-bold text-black mb-2">Emergency Roll Call</h1>
+      <div className="hidden print:block mb-4">
+        <h1 className="text-2xl font-bold text-black mb-1">EARIST Emergency Roll Call</h1>
         <p className="text-sm font-medium text-black">
-          Generated: {format(new Date(), 'PPpp')}
+          Generated: {format(new Date(), 'PPpp')} (Asia/Manila)
         </p>
         <p className="text-sm font-medium text-black">
-          Total Visitors Inside: {filteredPasses.length}
+          Total Visitors Listed Inside: {filteredPasses.length}
         </p>
       </div>
+
+      {/* Print Incompleteness Warning Banner (Visible only in print) */}
+      {isTruncated && (
+        <div className="hidden print:block border-4 border-black p-3 mb-4 text-black bg-white">
+          <p className="font-extrabold text-base uppercase tracking-wider">
+            *** CRITICAL WARNING: EVACUATION LIST INCOMPLETE / TRUNCATED ***
+          </p>
+          <p className="text-xs font-bold mt-1">
+            Safety ceiling of 10,000 records reached. Do NOT assume all visitors are listed. Reconcile with manual gate logs immediately.
+          </p>
+        </div>
+      )}
+
+      {/* Print Error Warning Banner (Visible only in print) */}
+      {loadError && (
+        <div className="hidden print:block border-4 border-black p-3 mb-4 text-black bg-white">
+          <p className="font-extrabold text-base uppercase tracking-wider">
+            *** CRITICAL WARNING: DATA REFRESH FAILED — ROSTER MAY BE STALE ***
+          </p>
+          <p className="text-xs font-bold mt-1">
+            Error: {loadError}
+          </p>
+        </div>
+      )}
 
       <Card className="flex flex-wrap gap-4 p-5 print:hidden">
         <div className="min-w-0 flex-1 sm:min-w-52">

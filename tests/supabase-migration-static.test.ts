@@ -45,4 +45,30 @@ describe('Supabase migration static safety contract', () => {
     expect(rls).toContain('and (select private.is_portal_actor())');
     expect(rls).toContain("and ui.status in ('pending'::public.upload_intent_status, 'uploaded'::public.upload_intent_status)");
   });
+
+  it('secures pass_email_verifications with RLS and locks down idempotency RPCs (00800 & 00900)', () => {
+    const hardening = readFileSync('supabase/migrations/20261020000800_admin_hardening.sql', 'utf8');
+    const idempotency = readFileSync('supabase/migrations/20261020000900_qr_email_idempotency.sql', 'utf8');
+
+    expect(hardening).toContain('alter table public.pass_email_verifications enable row level security;');
+    expect(hardening).toContain('revoke all on public.pass_email_verifications from public, anon, authenticated;');
+    expect(hardening).toContain('grant select, insert, update on public.pass_email_verifications to service_role;');
+
+    // Verify partial unique indexes for idempotency
+    expect(idempotency).toContain('create unique index if not exists pass_email_verifications_request_id_idx');
+    expect(idempotency).toContain('create unique index if not exists pass_email_verifications_send_request_id_idx');
+
+    // Verify RPC security definer and service-role-only grants
+    const rpcs = [
+      'api.request_email_verification_code',
+      'api.verify_and_claim_email_dispatch',
+      'api.finalize_email_dispatch',
+    ];
+
+    for (const fn of rpcs) {
+      expect(idempotency).toContain(fn);
+      expect(idempotency).toMatch(new RegExp(`revoke all on function ${fn.replace('.', '\\.')}[^;]+from public, anon, authenticated;`, 'i'));
+      expect(idempotency).toMatch(new RegExp(`grant execute on function ${fn.replace('.', '\\.')}[^;]+to service_role;`, 'i'));
+    }
+  });
 });

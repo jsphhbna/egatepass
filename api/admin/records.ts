@@ -1,5 +1,5 @@
 import { HttpError, requireStaffActor } from '../../server/actors.js';
-import { decodeCursor, encodeCursor } from '../../server/cursor.js';
+import { decodeCursorStrict, encodeCursor } from '../../server/cursor.js';
 import { jsonResponse, readBearerToken } from '../../server/http.js';
 import { getServerSupabaseClients } from '../../server/supabase.js';
 
@@ -123,7 +123,7 @@ async function handleRequest(request: Request): Promise<Response> {
     }
 
     if (cursor) {
-      const decoded = decodeCursor(cursor);
+      const decoded = decodeCursorStrict(cursor, { idType: 'uuid' });
       if (decoded) {
         if (decoded.id) {
           query = query.or(`issued_at.lt.${decoded.timestamp},and(issued_at.eq.${decoded.timestamp},id.lt.${decoded.id})`);

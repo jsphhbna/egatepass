@@ -30,11 +30,13 @@ async function handleRequest(request: Request): Promise<Response> {
     const { admin } = getServerSupabaseClients();
     const actor = await requireStaffActor(admin, token, ['superadmin']);
 
-    const { data: settingsData } = await admin
+    const { data: settingsData, error: settingsError } = await admin
       .from('app_settings')
       .select('image_retention_days')
       .eq('singleton', true)
       .maybeSingle();
+
+    if (settingsError) throw settingsError;
 
     const retentionDays = settingsData?.image_retention_days ?? 7;
     const now = new Date().toISOString();
@@ -49,7 +51,7 @@ async function handleRequest(request: Request): Promise<Response> {
     if (visitorHoldsError) throw visitorHoldsError;
     const heldVisitorIds = new Set((activeVisitorHolds || []).map((h) => h.visitor_id as string));
 
-    // 2. Fetch active incident holds by pass_id (M4-F02: resolve pass.visitor_id)
+    // 2. Fetch active incident holds by pass_id (resolve pass.visitor_id)
     const { data: activePassHolds, error: passHoldsError } = await admin
       .from('incident_holds')
       .select('pass_id, passes ( visitor_id )')
@@ -101,24 +103,77 @@ async function handleRequest(request: Request): Promise<Response> {
     let failedCount = 0;
 
     for (const item of batch) {
-      // Re-check TOCTOU hold / active pass right before physical Storage removal
-      const { data: currentHolds } = await admin
+      // P0-04: Authoritative, fail-closed recheck right before physical Storage removal
+      // 1. Re-check active holds by visitor_id
+      const { data: currentVisitorHolds, error: currentVisitorHoldsError } = await admin
         .from('incident_holds')
         .select('id')
         .eq('active', true)
         .eq('visitor_id', item.visitor_id)
         .limit(1);
 
-      if (currentHolds && currentHolds.length > 0) {
+      if (currentVisitorHoldsError) {
+        failedCount++;
+        await recordReconciliation(
+          admin,
+          'image_purge_recheck_visitor_hold_query_failed',
+          'visitor_evidence',
+          item.id,
+          currentVisitorHoldsError.message || 'visitor_hold_query_error',
+          { visitorId: item.visitor_id }
+        );
+        continue; // FAIL CLOSED: do not delete
+      }
+
+      if (currentVisitorHolds && currentVisitorHolds.length > 0) {
         continue;
       }
 
-      const { data: currentActive } = await admin
+      // 2. Re-check active holds by pass_id belonging to this visitor
+      const { data: currentPassHolds, error: currentPassHoldsError } = await admin
+        .from('incident_holds')
+        .select('id, pass_id, passes!inner(visitor_id)')
+        .eq('active', true)
+        .eq('passes.visitor_id', item.visitor_id)
+        .limit(1);
+
+      if (currentPassHoldsError) {
+        failedCount++;
+        await recordReconciliation(
+          admin,
+          'image_purge_recheck_pass_hold_query_failed',
+          'visitor_evidence',
+          item.id,
+          currentPassHoldsError.message || 'pass_hold_query_error',
+          { visitorId: item.visitor_id }
+        );
+        continue; // FAIL CLOSED: do not delete
+      }
+
+      if (currentPassHolds && currentPassHolds.length > 0) {
+        continue;
+      }
+
+      // 3. Re-check active or future passes
+      const { data: currentActive, error: currentActiveError } = await admin
         .from('passes')
         .select('id')
         .eq('visitor_id', item.visitor_id)
         .or(`status.in.(inside,pending),and(status.eq.issued,valid_until.gt.${new Date().toISOString()})`)
         .limit(1);
+
+      if (currentActiveError) {
+        failedCount++;
+        await recordReconciliation(
+          admin,
+          'image_purge_recheck_active_pass_query_failed',
+          'visitor_evidence',
+          item.id,
+          currentActiveError.message || 'active_pass_query_error',
+          { visitorId: item.visitor_id }
+        );
+        continue; // FAIL CLOSED: do not delete
+      }
 
       if (currentActive && currentActive.length > 0) {
         continue;
@@ -179,7 +234,7 @@ async function handleRequest(request: Request): Promise<Response> {
     const hasMore = eligibleItems.length > batch.length;
 
     try {
-      await admin.from('audit_events').insert({
+      const { error: auditError } = await admin.from('audit_events').insert({
         actor_id: actor.id,
         actor_kind: 'staff',
         actor_role: actor.role,
@@ -194,6 +249,10 @@ async function handleRequest(request: Request): Promise<Response> {
           retentionDays,
         },
       });
+
+      if (auditError) {
+        throw auditError;
+      }
     } catch (auditErr) {
       console.error('Audit event failed for image_purge batch', auditErr);
       await recordReconciliation(

@@ -99,11 +99,13 @@ async function handleRequest(request: Request): Promise<Response> {
     const startToday = `${manilaDateString}T00:00:00+08:00`;
     const endToday = `${manilaDateString}T23:59:59.999+08:00`;
 
+    // C-01: Filter pendingToday by entry_scanned_at within Manila local day, distinct from all-time pending
     const [
       todayCountRes,
       insideCountRes,
       exitedCountRes,
       pendingCountRes,
+      allPendingCountRes,
       rejectedCountRes,
       recentResult,
       insideResult,
@@ -113,6 +115,7 @@ async function handleRequest(request: Request): Promise<Response> {
       admin.from('passes').select('id', { count: 'exact', head: true }).gte('issued_at', startToday).lte('issued_at', endToday),
       admin.from('passes').select('id', { count: 'exact', head: true }).eq('status', 'inside'),
       admin.from('passes').select('id', { count: 'exact', head: true }).eq('status', 'exited').gte('time_out', startToday).lte('time_out', endToday),
+      admin.from('passes').select('id', { count: 'exact', head: true }).eq('status', 'pending').gte('entry_scanned_at', startToday).lte('entry_scanned_at', endToday),
       admin.from('passes').select('id', { count: 'exact', head: true }).eq('status', 'pending'),
       admin.from('passes').select('id', { count: 'exact', head: true }).eq('status', 'rejected').gte('decided_at', startToday).lte('decided_at', endToday),
       admin.from('passes').select(PASS_SELECT).order('issued_at', { ascending: false }).limit(100),
@@ -125,6 +128,7 @@ async function handleRequest(request: Request): Promise<Response> {
     if (insideCountRes.error) throw insideCountRes.error;
     if (exitedCountRes.error) throw exitedCountRes.error;
     if (pendingCountRes.error) throw pendingCountRes.error;
+    if (allPendingCountRes.error) throw allPendingCountRes.error;
     if (rejectedCountRes.error) throw rejectedCountRes.error;
     if (recentResult.error) throw recentResult.error;
     if (insideResult.error) throw insideResult.error;
@@ -137,6 +141,7 @@ async function handleRequest(request: Request): Promise<Response> {
         currentlyInside: insideCountRes.count ?? 0,
         exitedToday: exitedCountRes.count ?? 0,
         pendingToday: pendingCountRes.count ?? 0,
+        allPending: allPendingCountRes.count ?? 0,
         rejectedToday: rejectedCountRes.count ?? 0,
       },
       recentPasses: ((recentResult.data ?? []) as unknown as RawPassRow[]).map(mapPass),

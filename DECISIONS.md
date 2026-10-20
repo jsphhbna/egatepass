@@ -159,3 +159,19 @@
   3. High-Entropy Scannable QR: render server-side high-contrast PNG QR attachment via `QRCode.toBuffer` with EARIST maroon branding. Redact private IDs, face photos, and service keys from email body.
   4. Reconciliation on Failure: if Resend dispatch fails, record a reconciliation item to `reconciliation_items` and return HTTP 502 with an actionable fallback message directing the user to use the intact Download QR button.
 
+## ADR-0022 — One-Pass Root-Cause Resolution: Pass Identity Contract, Atomic Idempotency RPCs, Fail-Closed Controls, and Roster Safety
+
+- Date: 2026-10-20
+- Status: accepted for runtime implementation; live Supabase/Resend BLOCKED
+- Decision:
+  1. **Pass Identity Contract (P0-01)**: `api/passes/email.ts` resolves either `public_reference` (e.g., `GP-20261020-0888`) or UUID against `passes.public_reference` / `passes.id` to identify the pass. The internal UUID `passes.id` is used for all internal foreign key relationships (`pass_email_verifications`, `reconciliation_tasks`). For `token_digest` comparison, Postgres `bytea` values returned by PostgREST as `\x<hex>` or `0x<hex>` are stripped and parsed to a 32-byte binary buffer, then verified with `crypto.timingSafeEqual` against the computed SHA-256 digest.
+  2. **Atomic Idempotency and Email Challenge RPCs (P0-02)**: Authored migration `20261020000900_qr_email_idempotency.sql` introducing service-role RPCs:
+     - `api.request_email_verification_code`: validates rate limits (max 3 per 15 min), generates challenge hash from CSPRNG (`crypto.randomInt`), and enforces idempotency on `request_id`.
+     - `api.verify_and_claim_email_dispatch`: locks row `FOR UPDATE`, checks attempts (max 5), verifies hash with timing-safety, verifies expiration (10 min), claims dispatch (`delivery_status = 'claiming'`), and checks `send_request_id` idempotency.
+     - `api.finalize_email_dispatch`: transitions status to `sent_to_provider` or records provider failure without consuming code or invalidating pass.
+  3. **Strict Fail-Closed Settings Updates (P0-03)**: Removed direct table write and unverified audit write fallback from `api/update-settings.ts`. If `api.update_app_settings` fails, the API returns a structured HTTP error (403, 404, 400, 503) and performs zero mutations.
+  4. **Dual Hold Verification & Error Inspection on Storage Purge (P0-04)**: `api/purge-images.ts` checks both visitor-linked AND pass-linked active incident holds immediately prior to storage deletion. Queries explicitly check `.error`; any error triggers a fail-closed response, skipping deletion and logging reconciliation.
+  5. **Governance Target Validation & Audit Error Handling (P0-05)**: `api/update-device-auth.ts` inspects `staffError` on `staff_profiles` lookup and fails closed with 503; inspects `{ error: auditError }` on audit insert and logs reconciliation.
+  6. **Dashboard Calendar Window Alignment (C-01)**: In `api/admin/dashboard.ts`, `pendingToday` measures passes scanned today (`entry_scanned_at` within Manila calendar day), while `allPending` captures all unapproved passes regardless of date.
+  7. **Emergency Evacuation Truncation & Failure Alerts (C-02)**: In `AdminEmergency.tsx`, bold screen and print alerts display prominently if records hit the 10,000 ceiling (`isTruncated === true`) or if network polling fails (`loadError`), preventing false complete evacuation lists.
+  8. **Strict Compound Cursor Decoding & CSV Formula Defense (C-03)**: In `server/cursor.ts`, `decodeCursorStrict` validates ISO timestamp format and UUID/BigInt identifier types, returning HTTP 400 `invalid_cursor` on malformed input. In `src/lib/completeExport.ts`, `escapeCsvCell` sanitizes formula prefixes `=+\-@` even when preceded by whitespace, tabs, or control characters.

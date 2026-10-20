@@ -18,18 +18,19 @@ Updated: 2026-10-20 Asia/Manila
 - M3 gate lifecycle pushed at `6239cd79de4ee51c4515b144804661bc4f4a506f`.
 - M4 Admin and operations runtime migration implemented.
 - M4 Corrections (F01–F12) and M5-F13 (Optional QR Email Delivery with inbox verification claim flow) implemented and verified.
+- One-Pass Root-Cause Resolution (P0-01–P0-05, C-01–C-05) implemented and verified: pass identifier contract unified across issuance and email endpoints; `\x` bytea digest handling with timing-safe comparison; additive migration `20261020000900_qr_email_idempotency.sql` with atomic RPCs (`api.request_email_verification_code`, `api.verify_and_claim_email_dispatch`, `api.finalize_email_dispatch`) and CSPRNG; fail-closed settings update without direct write fallback; dual hold checks and error inspection on purge; governance target checks and audit error handling; Manila day window for pending counts; emergency evacuation screen and print truncation alerts; strict cursor validation; formula injection defense.
 - `npm run test:e2e:startup` exercises 4 cases (dev/configured, dev/missing, dev/malformed, preview/configured): 4/4 PASS on Playwright Edge.
-- Vitest suite: 12 test files, 107 tests PASS (including 12 behavioral mocked handler tests `PASS (MOCKED HANDLER)` and 16 pure-service unit tests).
+- Vitest suite: 12 test files, 119 tests PASS (`npx vitest run --exclude "**/firestore.rules.test.ts"`), including 18 behavioral mocked handler tests `PASS (MOCKED HANDLER)` and 21 pure-service unit tests.
 - `npm run typecheck:api` PASS, `npm run build` PASS, `git diff --check` PASS.
 - S2 PostgreSQL migrations, pgTAP, RLS, Storage, Resend live email, and real Supabase Auth remain BLOCKED / NOT TESTED due to local machine limitations (no Docker Desktop/psql/disposable Supabase instance).
 
 ## Active implementation boundary
 
-M1 identity, M2 registration/issuance, M3 scanner/Guard lifecycle, M4 Admin & operations, and M4 corrections (F01–F12) + M5-F13 (optional QR email) are implemented and locally verified. Entry, pending decision, approval/rejection, gate-matched exit, bounded Guard reads, private evidence delivery, staff governance, device accounts, dashboard metrics, emergency list, records/complete exports, audit/activity, settings/storage purge, and optional Resend QR email with inbox claim proof all have target Supabase/Vercel code, migrations, and local tests. Legacy code remains in the repository for rollback safety and must not be deleted until live parity gates pass.
+M1 identity, M2 registration/issuance, M3 scanner/Guard lifecycle, M4 Admin & operations, M4 corrections (F01–F12), M5-F13 (optional QR email), and One-Pass Root-Cause Resolution (P0-01–P0-05, C-01–C-05) are implemented and locally verified. Entry, pending decision, approval/rejection, gate-matched exit, bounded Guard reads, private evidence delivery, staff governance, device accounts, dashboard metrics, emergency list, records/complete exports, audit/activity, settings/storage purge, and optional Resend QR email with inbox claim proof all have target Supabase/Vercel code, additive migrations (00100–00900), and local tests. Legacy code remains in the repository for rollback safety and must not be deleted until live parity gates pass.
 
 ## Next safe tasks
 
-1. Commit and push the M4 Corrections & M5-F13 checkpoint to `origin feat/runtime-migration`.
+1. Commit and push the One-Pass Root-Cause Resolution (P0-01–P0-05, C-01–C-05) checkpoint to `origin feat/runtime-migration`.
 2. Verify actual remote HEAD SHA and declare truthfulness matrix.
 3. Keep every provider-dependent path NOT VERIFIED / INTEGRATION BLOCKED until the isolated database and browser lifecycle run.
 4. Prepare M5/S7 remaining items (scheduled retention execution, incident hold UI management, operational alerts) and staging readiness.

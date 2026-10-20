@@ -87,7 +87,21 @@ Current stage: P0 recovery PASS; M1–M4 runtime slices IMPLEMENTED — static/b
 - **F09 Peak Mode Scope Selector in UI**: `src/pages/AdminSettings.tsx` updated to provide 4-way scope selector (`off`, `portal`, `kiosk`, `both`), truthful scope modal disclosure, and strict face photo retention.
 - **F11 Staff List Scalability & Email Semantics**: `api/admin/users.ts` updated with per-user fallback lookup for profiles beyond page 1 and marked unconfirmed users as `confirmationPending: true`.
 - **M5-F13 Optional QR Email Delivery**: Built two-step mailbox possession proof and delivery endpoint `api/passes/email.ts` with Resend adapter, QR PNG generation, recipient consent verification, 6-digit code verification, and reconciliation logging on provider failure without rolling back the issued pass. Built `src/components/EmailPassModal.tsx` and integrated into `src/pages/GetPassPage.tsx` and `src/pages/KioskPage.tsx`, fully preserving Download QR, print, and share actions with zero visual disruption.
-- **Local Verification**: 12 test files, 107 tests PASS (`npx vitest run ...`), `npm run typecheck:api` (PASS), `npm run build` (PASS), `npm run test:e2e:startup` (4/4 PASS on Edge), `git diff --check` (PASS). Real provider integration remains `IMPLEMENTED — NOT VERIFIED / INTEGRATION BLOCKED`.
+- **Local Verification**: 12 test files, 119 tests PASS (`npx vitest run --exclude "**/firestore.rules.test.ts"`), `npm run typecheck:api` (PASS), `npm run build` (PASS), `npm run test:e2e:startup` (4/4 PASS on Edge), `git diff --check` (PASS). Real provider integration remains `IMPLEMENTED — NOT VERIFIED / INTEGRATION BLOCKED`.
+
+## One-Pass Root-Cause Resolution & Independent Audit (P0-01–P0-05, C-01–C-05)
+
+- **P0-01 Pass Identity Contract & Digest Hex Serialization**: `api/passes/email.ts` unifies pass lookup by resolving `public_reference` or UUID to `passes.id`. Strips Postgres `\x` or `0x` bytea prefix on `token_digest` and uses `crypto.timingSafeEqual` with 32-byte SHA-256 buffer.
+- **P0-02 Email Challenge Atomicity, CSPRNG & Idempotency**: Additive migration `20261020000900_qr_email_idempotency.sql` creates atomic RPCs `api.request_email_verification_code`, `api.verify_and_claim_email_dispatch`, and `api.finalize_email_dispatch` with row locking (`FOR UPDATE`), unique idempotency indexes, and request ID deduplication. Replaced pseudo-random generator with Node `crypto.randomInt`. Enforces race-resistant rate limits, failure-safe retries without duplicate dispatches, and non-destructive reconciliation on provider failure.
+- **P0-03 Settings Atomic RPC Fail-Closed**: Removed direct table update and unverified audit insert fallback from `api/update-settings.ts`. Strictly fails closed with mapped HTTP errors (403, 404, 400, 503) on RPC failure without partial mutations.
+- **P0-04 Image Purge Incident Hold Protection & Fail-Closed Checks**: `api/purge-images.ts` checks both visitor-linked AND pass-linked active incident holds right before storage delete. Explicitly inspects `.error` outcomes on all queries and fails closed without deleting assets if any check fails.
+- **P0-05 Governance Target Validation & Error Inspection**: `api/update-device-auth.ts` inspects `staffError` on `staff_profiles` check (fails closed with 503); inspects `{ error: auditError }` on audit insert and logs reconciliation on failure.
+- **C-01 Dashboard True Counts & Manila Window**: Aligned `pendingToday` in `api/admin/dashboard.ts` to passes scanned today (`entry_scanned_at` within Manila day), distinct from all-time pending (`allPending`).
+- **C-02 Emergency Evacuation Roster Integrity**: In `AdminEmergency.tsx`, added bold screen alert and print header (`print:block`) when `isTruncated === true` (10,000 ceiling), and prominent error banner on load failures.
+- **C-03 Compound Cursor Validation & CSV Formula Injection Defense**: Hardened `server/cursor.ts` with `decodeCursorStrict` checking ISO timestamp and UUID/BigInt formats, rejecting malformed cursors with 400. In `src/lib/completeExport.ts`, sanitized formula prefixes `=+\-@` even after leading spaces, tabs, carriage returns, or control characters.
+- **C-04 Peak Mode & Roles Validation**: Re-verified 4-way peak mode scope rules (`off`, `portal`, `kiosk`, `both`), ensuring visitor face photos are never skipped.
+- **C-05 Static SQL & Migration Safety**: Expanded static migration tests in `tests/supabase-migration-static.test.ts` to validate migrations 00800 and 00900.
+
 
 ## Immediate blockers and next safe work
 

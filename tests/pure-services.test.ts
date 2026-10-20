@@ -1,9 +1,10 @@
 import { describe, it, expect } from 'vitest';
-import { encodeCompoundCursor, decodeCompoundCursor } from '../server/cursor.js';
+import { encodeCompoundCursor, decodeCompoundCursor, decodeCursorStrict } from '../server/cursor.js';
 import { controlledDeviceEmail } from '../server/actors.js';
 import { normalizeLoginIdentity } from '../src/lib/identity.js';
+import { escapeCsvCell } from '../src/lib/completeExport.js';
 
-describe('Compound Cursor Pagination (M4-F08)', () => {
+describe('Compound Cursor Pagination & PostgREST Filter Safety (M4-F08, C-03)', () => {
   it('encodes and decodes compound cursor with timestamp and id', () => {
     const timestamp = '2026-10-20T08:30:00.000Z';
     const id = 'c4d15682-124e-4f18-bb58-cf7e3c90716f';
@@ -25,12 +26,36 @@ describe('Compound Cursor Pagination (M4-F08)', () => {
     expect(decoded?.id).toBeNull();
   });
 
-  it('returns null for empty, invalid, or malformed cursors', () => {
+  it('returns null for empty or whitespace cursors in non-strict mode', () => {
     expect(decodeCompoundCursor(null)).toBeNull();
     expect(decodeCompoundCursor(undefined)).toBeNull();
     expect(decodeCompoundCursor('')).toBeNull();
     expect(decodeCompoundCursor('   ')).toBeNull();
-    expect(decodeCompoundCursor('not-valid-base64-or-date!!!')).toBeNull();
+  });
+
+  it('rejects malformed or malicious injected cursors with 400 in strict mode', () => {
+    // Malicious injection attempt in JSON payload
+    const maliciousPayload = Buffer.from(JSON.stringify({
+      t: '2026-10-20T00:00:00Z),or(id.gt.0',
+      i: 'malicious-syntax',
+    })).toString('base64url');
+
+    expect(() => decodeCursorStrict(maliciousPayload)).toThrowError('invalid_cursor');
+    expect(() => decodeCursorStrict('not-valid-base64-or-date!')).toThrowError('invalid_cursor');
+  });
+
+  it('validates id format strictly per table type (uuid vs bigint)', () => {
+    const validUuidCursor = encodeCompoundCursor('2026-10-20T08:30:00.000Z', 'c4d15682-124e-4f18-bb58-cf7e3c90716f');
+    const validBigintCursor = encodeCompoundCursor('2026-10-20T08:30:00.000Z', '987654321012345');
+
+    // UUID target rejects bigint
+    expect(() => decodeCursorStrict(validBigintCursor, { idType: 'uuid' })).toThrowError('invalid_cursor');
+    // Bigint target rejects UUID
+    expect(() => decodeCursorStrict(validUuidCursor, { idType: 'bigint' })).toThrowError('invalid_cursor');
+
+    // Matching types succeed
+    expect(decodeCursorStrict(validUuidCursor, { idType: 'uuid' })?.id).toBe('c4d15682-124e-4f18-bb58-cf7e3c90716f');
+    expect(decodeCursorStrict(validBigintCursor, { idType: 'bigint' })?.id).toBe('987654321012345');
   });
 });
 
@@ -68,31 +93,41 @@ describe('Device Alias & Controlled Email Contract (M4-F05)', () => {
   });
 });
 
-describe('CSV Formula Injection Defense (M4-F08)', () => {
-  const sanitizeFormulaCell = (raw: string): string => {
-    if (/^[=+\-@\t\r]/.test(raw)) {
-      return `'${raw}`;
-    }
-    return raw;
-  };
-
-  it('neutralizes spreadsheet formula trigger characters', () => {
-    expect(sanitizeFormulaCell('=SUM(A1:A10)')).toBe("'=SUM(A1:A10)");
-    expect(sanitizeFormulaCell('+cmd|/c calc')).toBe("'+cmd|/c calc");
-    expect(sanitizeFormulaCell('-2+5')).toBe("'-2+5");
-    expect(sanitizeFormulaCell('@SUM(1,2)')).toBe("'@SUM(1,2)");
-    expect(sanitizeFormulaCell('\tTAB_PREFIX')).toBe("'\tTAB_PREFIX");
-    expect(sanitizeFormulaCell('\rRETURN_PREFIX')).toBe("'\rRETURN_PREFIX");
+describe('Real CSV Formula Injection Defense & Escaping (M4-F08, C-03)', () => {
+  it('directly uses imported escapeCsvCell to neutralize spreadsheet formula prefixes', () => {
+    expect(escapeCsvCell('=SUM(A1:A10)')).toBe('"\'=SUM(A1:A10)"');
+    expect(escapeCsvCell('+cmd|/c calc')).toBe('"\' +cmd|/c calc"'.replace(' ', ''));
+    expect(escapeCsvCell('-2+5')).toBe('"\' -2+5"'.replace(' ', ''));
+    expect(escapeCsvCell('@SUM(1,2)')).toBe('"\'@SUM(1,2)"');
+    expect(escapeCsvCell('\tTAB_PREFIX')).toBe('"\'\tTAB_PREFIX"');
+    expect(escapeCsvCell('\rRETURN_PREFIX')).toBe('"\'\rRETURN_PREFIX"');
   });
 
-  it('leaves safe alphanumeric data untouched', () => {
-    expect(sanitizeFormulaCell('Juan Dela Cruz')).toBe('Juan Dela Cruz');
-    expect(sanitizeFormulaCell('Official Business')).toBe('Official Business');
-    expect(sanitizeFormulaCell('Gate 1 Main')).toBe('Gate 1 Main');
+  it('neutralizes formula prefixes even after leading whitespace or control characters', () => {
+    expect(escapeCsvCell('   =SUM(1,2)')).toBe('"\'   =SUM(1,2)"');
+    expect(escapeCsvCell('\t=cmd')).toBe('"\'\t=cmd"');
+    expect(escapeCsvCell('\r\n+12345')).toBe('"\'\r\n+12345"');
+    expect(escapeCsvCell('\x00=calc')).toBe('"\'\x00=calc"');
+  });
+
+  it('escapes internal double quotes properly', () => {
+    expect(escapeCsvCell('Juan "Boss" Dela Cruz')).toBe('"Juan ""Boss"" Dela Cruz"');
+    expect(escapeCsvCell('""')).toBe('""""""');
+  });
+
+  it('returns empty quoted cell for null and undefined', () => {
+    expect(escapeCsvCell(null)).toBe('""');
+    expect(escapeCsvCell(undefined)).toBe('""');
+  });
+
+  it('leaves safe alphanumeric data untouched inside quotes', () => {
+    expect(escapeCsvCell('Juan Dela Cruz')).toBe('"Juan Dela Cruz"');
+    expect(escapeCsvCell('Official Business')).toBe('"Official Business"');
+    expect(escapeCsvCell('Gate 1 Main')).toBe('"Gate 1 Main"');
   });
 });
 
-describe('Hold Eligibility & Concurrency Invariants (M4-F02)', () => {
+describe('Hold Eligibility & Concurrency Invariants (M4-F02, P0-04)', () => {
   interface IncidentHold {
     visitor_id: string | null;
     pass_id: string | null;
@@ -141,7 +176,7 @@ describe('Hold Eligibility & Concurrency Invariants (M4-F02)', () => {
   });
 });
 
-describe('Peak Mode Scope Validation (M4-F09)', () => {
+describe('Peak Mode Scope Validation (M4-F09, C-04)', () => {
   const validScopes = ['off', 'portal', 'kiosk', 'both'] as const;
 
   it('validates 4-way peak mode scope values', () => {
@@ -151,7 +186,7 @@ describe('Peak Mode Scope Validation (M4-F09)', () => {
   });
 
   it('enforces face photo requirement regardless of peak mode scope', () => {
-    const requiresFacePhoto = (_scope: string) => true; // Face photo is NEVER skipped
+    const requiresFacePhoto = (_scope: string) => true; // Face photo is ALWAYS required
     validScopes.forEach((scope) => {
       expect(requiresFacePhoto(scope)).toBe(true);
     });

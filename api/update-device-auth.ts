@@ -40,11 +40,16 @@ async function handleRequest(request: Request): Promise<Response> {
     const actor = await requireStaffActor(admin, token, ['superadmin']);
 
     // 1. Explicitly verify target is NOT a staff user (defense-in-depth against staff modification)
-    const { data: staffCheck } = await admin
+    // P0-05: Handle staff_profiles read error fail-closed
+    const { data: staffCheck, error: staffError } = await admin
       .from('staff_profiles')
       .select('user_id')
       .eq('user_id', parsed.data.targetUid)
       .maybeSingle();
+
+    if (staffError) {
+      throw new HttpError(503, 'staff_verification_failed');
+    }
 
     if (staffCheck) {
       return jsonResponse(403, { error: 'cannot_modify_staff_via_device_endpoint' });
@@ -62,7 +67,7 @@ async function handleRequest(request: Request): Promise<Response> {
       return jsonResponse(404, { error: 'device_not_found' });
     }
 
-    // 2. If alias is changing, verify no conflict with another active device
+    // 3. If alias is changing, verify no conflict with another active device
     if (nextIdentity && nextIdentity.alias !== deviceRecord.alias) {
       const { data: conflictRecord, error: conflictError } = await admin
         .from('devices')
@@ -78,7 +83,7 @@ async function handleRequest(request: Request): Promise<Response> {
       }
     }
 
-    // 3. Verify Auth user exists before making any changes
+    // 4. Verify Auth user exists before making any changes
     const before = await admin.auth.admin.getUserById(parsed.data.targetUid);
     if (before.error || !before.data.user) {
       return jsonResponse(404, { error: 'device_auth_user_not_found' });
@@ -86,7 +91,7 @@ async function handleRequest(request: Request): Promise<Response> {
 
     const previousEmail = before.data.user.email || '';
 
-    // 4. Update Auth credentials
+    // 5. Update Auth credentials
     const authUpdatePayload: { email?: string; email_confirm?: boolean; password?: string } = {};
     if (nextIdentity && nextIdentity.email !== previousEmail) {
       authUpdatePayload.email = nextIdentity.email;
@@ -103,7 +108,7 @@ async function handleRequest(request: Request): Promise<Response> {
       }
     }
 
-    // 5. If alias changed, update database record via service RPC
+    // 6. If alias changed, update database record via service RPC
     if (nextIdentity && nextIdentity.alias !== deviceRecord.alias) {
       const profile = await admin.schema('api').rpc('update_device_profile', {
         requested_actor_id: actor.id,
@@ -147,9 +152,10 @@ async function handleRequest(request: Request): Promise<Response> {
       }
     }
 
-    // 6. Mandatory immutable audit event for credential updates
+    // 7. Mandatory immutable audit event for credential updates
+    // P0-05: Properly inspect { error: auditError }
     try {
-      await admin.from('audit_events').insert({
+      const { error: auditError } = await admin.from('audit_events').insert({
         actor_id: actor.id,
         actor_kind: 'staff',
         actor_role: actor.role,
@@ -168,6 +174,10 @@ async function handleRequest(request: Request): Promise<Response> {
         },
         outcome: 'success',
       });
+
+      if (auditError) {
+        throw auditError;
+      }
     } catch (auditError) {
       console.error('Audit insert failed for device credentials update', auditError);
       await recordReconciliation(
@@ -185,8 +195,8 @@ async function handleRequest(request: Request): Promise<Response> {
 
     return jsonResponse(200, { ok: true });
   } catch (error) {
-    if (error instanceof HttpError) {
-      return jsonResponse(error.status, { error: error.code });
+    if (error instanceof HttpError || (error && typeof error === 'object' && typeof (error as any).status === 'number')) {
+      return jsonResponse((error as any).status, { error: (error as any).code || (error as any).message });
     }
     console.error('Device credential update failed.', error instanceof Error ? error.message : 'unknown_error');
     return jsonResponse(503, { error: 'service_unavailable' });

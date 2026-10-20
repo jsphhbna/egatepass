@@ -37,7 +37,9 @@ export async function collectCursorPages<T, Cursor>(
 export function escapeCsvCell(value: unknown): string {
   if (value === null || value === undefined) return '""';
   let text = String(value);
-  if (/^[=+\-@\t\r]/.test(text)) text = `'${text}`;
+  if (/^[\s\x00-\x1f]*[=+\-@]/.test(text) || /^[=+\-@\t\r\n]/.test(text)) {
+    text = `'${text}`;
+  }
   return `"${text.replace(/"/g, '""')}"`;
 }
 

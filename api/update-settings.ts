@@ -88,7 +88,7 @@ async function handleRequest(request: Request): Promise<Response> {
     const schedDays = parsed.data.schedulingDaysAhead ?? null;
     const cleanupVal = parsed.data.automaticCleanupEnabled ?? null;
 
-    // Try atomic RPC in schema api
+    // Atomic audited RPC invocation in schema api (logs action: 'settings_updated' in same SQL transaction)
     const rpcResult = await admin.schema('api').rpc('update_app_settings', {
       requested_actor_id: actor.id,
       requested_peak_mode: peakModeScope,
@@ -105,57 +105,25 @@ async function handleRequest(request: Request): Promise<Response> {
       requested_request_id: randomUUID(),
     });
 
-    if (rpcResult.error && rpcResult.error.code === '42501') {
-      throw new HttpError(403, rpcResult.error.message);
-    }
-
+    // P0-03: Zero direct table write fallback; fail closed on any RPC error
     if (rpcResult.error) {
-      // Fallback for mocked direct client environments
-      const { data: beforeData } = await admin
-        .from('app_settings')
-        .select('*')
-        .eq('singleton', true)
-        .maybeSingle();
+      const errCode = rpcResult.error.code;
+      const errMsg = rpcResult.error.message || 'settings_update_failed';
+      console.error('update_app_settings RPC failed:', rpcResult.error);
 
-      const updatePayload: Record<string, unknown> = {
-        peak_mode: peakModeScope,
-        rejection_reasons: [...new Set(parsed.data.rejectionReasons)],
-        visit_purposes: parsed.data.visitPurposes,
-        updated_by: actor.id,
-        updated_at: new Date().toISOString(),
-      };
-
-      if (actor.role === 'superadmin') {
-        if (startVal) updatePayload.working_hours_start = startVal;
-        if (endVal) updatePayload.working_hours_end = endVal;
-        if (imgRet !== null) updatePayload.image_retention_days = imgRet;
-        if (visRet !== null) updatePayload.visitor_retention_days = visRet;
-        if (audRet !== null) updatePayload.audit_retention_days = audRet;
-        if (recRet !== null) updatePayload.reconciliation_retention_days = recRet;
-        if (schedDays !== null) updatePayload.scheduling_days_ahead = schedDays;
-        if (cleanupVal !== null) updatePayload.automatic_cleanup_enabled = cleanupVal;
+      if (errCode === '42501' || errMsg.includes('access_denied') || errMsg.includes('permission denied')) {
+        throw new HttpError(403, errMsg);
       }
-
-      const { error: updateError } = await admin
-        .from('app_settings')
-        .update(updatePayload)
-        .eq('singleton', true);
-
-      if (updateError) throw updateError;
-
-      await admin.from('audit_events').insert({
-        actor_id: actor.id,
-        actor_kind: 'staff',
-        actor_role: actor.role,
-        action: 'settings_updated',
-        target_type: 'settings',
-        target_id: 'app',
-        before_state: beforeData ? (beforeData as Record<string, unknown>) : null,
-        after_state: updatePayload,
-        outcome: 'success',
-      });
-
-      return jsonResponse(200, { success: true, settings: updatePayload });
+      if (errCode === 'P0002' || errMsg.includes('not_found')) {
+        throw new HttpError(404, errMsg);
+      }
+      if (errCode === '23514' || errMsg.includes('check_violation') || errMsg.includes('opening time must be earlier')) {
+        throw new HttpError(400, errMsg);
+      }
+      if (errCode === 'PGRST202' || errMsg.includes('function api.update_app_settings') || errMsg.includes('Could not find the function')) {
+        throw new HttpError(503, 'service_unavailable_migration_required');
+      }
+      throw new HttpError(503, errMsg);
     }
 
     return jsonResponse(200, {
@@ -178,10 +146,9 @@ async function handleRequest(request: Request): Promise<Response> {
     if (error instanceof HttpError) {
       return jsonResponse(error.status, { error: error.message });
     }
-    console.error('Failed to update settings', error);
-    return jsonResponse(500, { error: 'failed_to_update_settings' });
+    console.error('Settings update failed.', error instanceof Error ? error.message : 'unknown_error');
+    return jsonResponse(503, { error: 'service_unavailable' });
   }
 }
 
-export default handleRequest;
-export { handleRequest as POST };
+export default { fetch: handleRequest };
