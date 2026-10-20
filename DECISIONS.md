@@ -101,3 +101,22 @@
 - Decision: a Vercel Node Web Handler validates the bearer using Supabase Auth, rechecks the active Guard profile, verifies the current password in a separate non-persistent client, changes the Auth password with the server-only secret client, then invokes a service-role-only transactional database finalizer. A database-finalization failure returns non-2xx and creates a retryable reconciliation task.
 - Rejected: a browser-callable flag-clearing RPC could be invoked without proving the password changed; reusing the privileged client for password sign-in could replace its service-role Authorization header with a user session.
 - Authority reviewed 2026-10-20: Supabase `auth.getUser(jwt)` reference; Supabase API keys and service-role client troubleshooting; Vercel Vite and Node.js Function handler documentation. Documentation is expected-behavior evidence, not runtime proof.
+
+## ADR-0015 — Separate portal and operator browser sessions
+
+- Date: 2026-10-20
+- Status: accepted for M2 implementation; integration NOT VERIFIED
+- Decision: use distinct Supabase clients/storage keys for anonymous portal visitors and staff/devices. Kiosk form reset never signs out the device, and portal anonymous sign-in cannot overwrite an operator session in the same browser profile.
+
+## ADR-0016 — Digest-only, idempotent pass issuance
+
+- Date: 2026-10-20
+- Status: accepted for M2 implementation; integration NOT VERIFIED
+- Decision: the Vercel handler validates real Storage bytes, derives a high-entropy QR bearer using a server-only HMAC secret and stable request UUID, and passes only its SHA-256 digest to a service-role-only transaction. The transaction reauthorizes source identity, settings and locked intents, then atomically creates visitor/evidence/pass/audit state.
+- Consequence: a caller cannot choose status, gate, actor, validity, object path, or raw stored token. `PASS_TOKEN_SECRET` must be at least 32 characters in each authorized server environment and must never enter browser configuration.
+
+## ADR-0017 — No OCR dependency in M2
+
+- Date: 2026-10-20
+- Status: accepted
+- Decision: choose the prompt's optional OCR path **NO**. Preserve manual visitor details, captured face, and one ID evidence upload. This avoids adding an unverified parser and does not weaken the review step or default ID requirement.

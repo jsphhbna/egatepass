@@ -2,7 +2,7 @@
 
 Updated: 2026-10-20 Asia/Manila
 
-Current stage: P0 recovery PASS locally; S3/M1 IN PROGRESS — provider integration NOT VERIFIED; S2 database promotion remains BLOCKED
+Current stage: P0 recovery PASS locally; M1 identity and M2 registration/issuance IMPLEMENTED IN PART — provider integration NOT VERIFIED; S2 database promotion remains BLOCKED
 
 ## Repository identity
 
@@ -70,11 +70,23 @@ Current stage: P0 recovery PASS locally; S3/M1 IN PROGRESS — provider integrat
 - Exact S2 implementation commit rerun: architecture 3/3, Supabase static 5/5, build PASS, legacy function typecheck PASS.
 - Owner visual/manual QA remains AWAITING OWNER.
 
+## M2/S4 registration and issuance slice
+
+- Portal and kiosk visible forms, photo/ID previews, consent, success QR, download/share/print, and default scheduling presentation are preserved.
+- Portal anonymous Auth uses `egatepass-portal-auth`; staff/device Auth uses `egatepass-operator-auth`, preventing a portal registration from replacing a kiosk/operator session.
+- The registration service requests short-lived owner/source/kind-bound intents and uploads only to server-derived private Storage paths.
+- `/api/passes/issue` authenticates the bearer, downloads actual objects, enforces JPEG/PNG/WebP magic bytes and 5 MiB limits, hashes them, and invokes the service-only transaction.
+- Migration `20261020000500_pass_issuance.sql` validates source identity, scheduling/Peak Mode/evidence, locks and claims intents, and creates visitor/evidence/pass/audit rows atomically. Stable request IDs make successful retries idempotent.
+- Local checks PASS: frontend build, API typecheck, issuance static 6/6, existing Supabase static 5/5, identity static 4/4. Ten issuance pgTAP assertions are authored but NOT RUN.
+- Live anonymous/kiosk Auth, RLS, Storage, API routing, transaction behavior, private reads, source-forgery rejection, phone/camera, and QR scan compatibility remain BLOCKED / NOT TESTED. The production build still includes a deferred Firebase chunk.
+- The case-sensitive cutover scan reports 48 matching lines in `src`, `api`, `package.json`, `vite.config.ts`, and `index.html`; the release gate remains FAILED.
+
 ## Immediate blockers and next safe work
 
 1. Provide one isolated executable route for the S2 promotion gate: make Docker Desktop available for local Supabase, or explicitly authorize a separate non-production hosted Supabase project after identity confirmation.
-2. Run two clean installs, pgTAP, real Auth bearer-session Data API/RPC denials, and actual private Storage operations. Fix any migration/runtime defect before S3.
-3. Do not link/deploy Vercel, use the hosted database, or send email without owner authorization.
+2. Run two clean migrations, all 45 authored pgTAP assertions, real Auth bearer-session Data API/RPC denials, and actual private Storage operations. Fix any migration/runtime defect before promotion.
+3. Continue M3 scan/Guard state-transition implementation without using an unidentified hosted database.
+4. Do not link/deploy Vercel, use the hosted database, or send email without owner authorization.
 
 ## Maturity
 

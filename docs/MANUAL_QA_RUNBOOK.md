@@ -92,3 +92,22 @@ Owner status: **BLOCKED** — requires Docker-backed local Supabase or explicit 
 3. With fictional Auth accounts for every actor/state, attempt cross-owner reads, role/source forgery, direct writes, last-Super-Admin removal, wrong/revoked device actions, and reconciliation access.
 4. Upload synthetic JPEG/PNG/WebP files through live intents. Attempt wrong path/bucket, expiry, list, overwrite, and delete. Confirm no real ID/face image is used.
 5. Record actual results, environment identity (sanitized), commit, browser/client version, reviewer, and evidence locations. A SQL file or static-test PASS is not acceptable as the observed result.
+
+## Checkpoint sheet: M2 portal/kiosk registration — BLOCKED / AWAITING OWNER
+
+Run only after the isolated Supabase migrations and pgTAP suite pass. Use fictional images/details and never capture a real ID or face.
+
+1. Portal: open `/get-pass` at desktop and 390px, complete manual details, webcam photo, ID preview, consent, date/purpose, QR success, download and share. Confirm no staff/device session is changed.
+2. Kiosk: sign in as an active kiosk, complete the same flow, print, then select Next Visitor. Confirm all prior data/images/QR clear while the kiosk remains signed in.
+3. Test Peak Mode OFF/Portal/Kiosk/Both. Photo must always be required; ID omission must succeed only for the selected source scope.
+4. Attempt files over 5 MiB, fake image bytes with an allowed extension/MIME, expired/reused/cross-owner intents, wrong bucket/path, overwrite/list/delete, portal-as-kiosk source forgery, and a revoked kiosk. All must fail without a pass.
+5. Interrupt after upload and retry with the same request. Confirm at most one pass/visitor is issued, the recovered QR is identical, and unclaimed objects remain eligible for cleanup rather than becoming evidence.
+6. Inspect the database: one visitor, required evidence with verified size/SHA-256, claimed intents, one pass with only a 32-byte digest, one audit event, correct Asia/Manila validity window, and no caller-selected lifecycle fields.
+
+- Environment/URL:
+- Browser/phone/kiosk:
+- Commit:
+- Observed result:
+- Evidence path:
+- Reviewer/date:
+- Result: [ ] PASS [ ] FAIL [ ] BLOCKED

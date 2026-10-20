@@ -2,6 +2,7 @@ import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 import { browserRuntimeConfig } from '@/lib/runtimeConfig';
 
 let browserClient: SupabaseClient | null = null;
+let portalClient: SupabaseClient | null = null;
 
 if (browserRuntimeConfig.ok) {
   try {
@@ -13,6 +14,7 @@ if (browserRuntimeConfig.ok) {
           persistSession: true,
           autoRefreshToken: true,
           detectSessionInUrl: true,
+          storageKey: 'egatepass-operator-auth',
         },
       },
     );
@@ -28,6 +30,25 @@ export function requireSupabase(): SupabaseClient {
     throw new Error('E-GatePass services are unavailable because browser configuration is missing or invalid.');
   }
   return supabase;
+}
+
+export function requirePortalSupabase(): SupabaseClient {
+  if (!browserRuntimeConfig.ok) {
+    throw new Error('E-GatePass visitor services are not configured.');
+  }
+  portalClient ??= createClient(
+    browserRuntimeConfig.config.supabaseUrl,
+    browserRuntimeConfig.config.supabasePublishableKey,
+    {
+      auth: {
+        persistSession: true,
+        autoRefreshToken: true,
+        detectSessionInUrl: false,
+        storageKey: 'egatepass-portal-auth',
+      },
+    },
+  );
+  return portalClient;
 }
 
 export function getSupabaseAvailabilityMessage(): string | null {

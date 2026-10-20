@@ -18,6 +18,7 @@
     "test:supabase:static": "vitest run tests/supabase-migration-static.test.ts",
     "test:runtime": "vitest run tests/runtime-config.test.ts",
     "test:identity:static": "vitest run tests/identity-migration-static.test.ts",
+    "test:issuance:static": "vitest run tests/pass-issuance-static.test.ts",
     "typecheck:api": "tsc --noEmit --project tsconfig.api.json"
   },
   "repository": {

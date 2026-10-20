@@ -39,6 +39,17 @@ Date/time zone: 2026-10-20, Asia/Manila
 | EV-M1-006 | PROVIDER DOCUMENTATION | Official Supabase Auth/API-key/server-client and Vercel Vite/Node Function docs reviewed 2026-10-20 | REVIEWED | Supports design expectations only; not project runtime evidence |
 | EV-M1-007 | CUTOVER INVENTORY | target `rg` scan | FAIL release gate: 50 legacy-provider match lines | Reduced from 67; Firebase chunk remains; cleanup prohibited until parity gates pass |
 
+## M2/S4 registration and issuance implementation
+
+| ID | Class | Command / artifact | Result | Scope and limitation |
+|---|---|---|---|---|
+| EV-M2-001 | IMPLEMENTATION | portal/kiosk Supabase service; private upload intents; `/api/passes/issue`; `20261020000500_pass_issuance.sql` | IMPLEMENTED — NOT VERIFIED | No real Auth, Storage, database, or Vercel request was executed |
+| EV-M2-002 | STATIC / TYPECHECK | `npm run build`; `npm run typecheck:api` | PASS, exit 0 | Compilation only; Vite still emits a 621.99 kB deferred Firebase chunk from unmigrated stages |
+| EV-M2-003 | STATIC CONTRACT | `npm run test:issuance:static` | PASS: 1 file / 6 tests | Source-level contracts only; not database proof |
+| EV-M2-004 | DATABASE TEST AUTHORING | `supabase/tests/004_pass_issuance.test.sql` | NOT RUN / BLOCKED: 10 assertions authored | Requires Docker-backed local Supabase or authorized isolated non-production project; total authored pgTAP assertions now 45 |
+| EV-M2-005 | DEPENDENCY AUDIT | `npm audit --omit=dev --json` | FAIL release gate: 4 high, 0 moderate/critical | Findings remain in legacy Firebase runtime chain; no forced upgrade |
+| EV-M2-006 | CUTOVER INVENTORY | case-sensitive target `rg` scan | FAIL release gate: 48 matching lines | Down from M1's 50; portal/kiosk/new service/endpoint have zero matches; legacy scan/Guard/Admin/config remains |
+
 | ID | Class | Command / artifact | Result | Scope and limitation |
 |---|---|---|---|---|
 | EV-S0-001 | STATIC / GIT | `git remote -v`; branch/status/HEAD checks; `git ls-remote` for both main refs | PASS | Lowercase target only is configured; backup queried read-only |

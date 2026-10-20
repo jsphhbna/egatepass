@@ -8,6 +8,7 @@ Never commit values. `.env.local` is ignored. Validate presence and format witho
 | `VITE_SUPABASE_PUBLISHABLE_KEY` | Browser/build | Supabase client | Public publishable key; not authorization |
 | `SUPABASE_URL` | Vercel server | Privileged/admin operations | Server configuration |
 | `SUPABASE_SECRET_KEY` | Vercel server | Service-role/admin operations | Secret; bypasses RLS |
+| `PASS_TOKEN_SECRET` | Vercel server | HMAC derivation of retry-stable QR bearer values | Secret; minimum 32 characters; never browser-visible |
 | `RESEND_API_KEY` | Vercel server | App transactional email | Secret |
 | `EMAIL_FROM` | Vercel server | Approved sender identity | Non-secret address, server-owned |
 | `RESEND_SUPABASE_SMTP_KEY` | Owner workstation/dashboard only | Configure Supabase Auth SMTP | Secret; application must not read it |

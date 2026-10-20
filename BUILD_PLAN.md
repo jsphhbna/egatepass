@@ -24,7 +24,7 @@ Sensitive data includes visitor names/contact details, face and ID images, QR be
 | S1 | Architecture/docs foundation, test harness, safe structure plan | Original routes/UI still build and render; target architecture and migration map reviewed; no backend switch | PASS — build/type/contract checks and 9-case legacy browser regression passed |
 | S2 | Supabase schema, RLS, grants, RPC/storage core, synthetic fixtures | Clean disposable migration chain and clean install; real low-privilege RLS/storage negative matrix | IMPLEMENTED — NOT VERIFIED / BLOCKED: migration chain and pgTAP matrix authored; no isolated DB runtime |
 | S3 | Shared staff/device auth and governance | Real Auth sessions and browser E2E for all staff/device roles, suspension/revocation/first-login/reset | IMPLEMENTED IN PART — Supabase session/profile, login/reset, privacy, logout, forced-password endpoint/RPC; provisioning/governance and all live integration NOT VERIFIED |
-| S4 | Portal/kiosk registration, private evidence, optional local OCR, Peak Mode | Phone/portrait browser E2E, real uploads, session separation, source-forgery negative tests | PLANNED |
+| S4 | Portal/kiosk registration, private evidence, optional local OCR, Peak Mode | Phone/portrait browser E2E, real uploads, session separation, source-forgery negative tests | IMPLEMENTED IN PART — M2 code/static checks PASS; live Auth/Storage/DB/API/browser workflow BLOCKED |
 | S5 | Server QR issue, entry, Guard decision, exit | Actual DB state machine E2E plus duplicate/race/wrong-device/expired negative tests | PLANNED |
 | S6 | Admin/operations parity | Browser and DB proof for records, complete export, users/devices, settings, emergency, audit/reconciliation | PLANNED |
 | S7 | Resend/Auth SMTP, retention, holds, alerts | Real inbox tests; physical Storage deletion; hold/race/retry/scheduler-auth evidence | PLANNED |
@@ -60,6 +60,12 @@ S2 adds an additive schema, least-privilege grants/RLS, private buckets, authori
 ## P0 recovery result and rollback
 
 The ordinary Supabase-only launch at exact checkpoint `86a455e` was reproduced in Edge with an empty `#root` and `FirebaseError: auth/invalid-api-key` at `src/lib/firebase.ts:13`. The legacy Playwright setup had hidden this by injecting synthetic Firebase values. The repaired boot renders a shell before dynamically importing the app, validates public Supabase configuration without throwing, keeps the public landing available, and fails staff/device access closed with a visible message. Roll back this slice by reverting its checkpoint commit; do not reset S0–S2 or the owner-owned `.env.example` edit.
+
+## M2 implementation boundary
+
+Portal and kiosk registration now use isolated Supabase browser sessions, private owner-bound Storage intents, actual uploaded-byte signature/size/SHA-256 inspection in `/api/passes/issue`, and a service-role-only atomic issuance RPC. The QR bearer value is HMAC-derived from a stable request ID and only its SHA-256 digest is stored. Scope-specific Peak Mode is rechecked in the transaction. OCR choice is **NO** for this checkpoint: original manual fields and one standard ID evidence upload are preserved; no unreviewed OCR dependency was introduced.
+
+M2 remains `IMPLEMENTED — NOT VERIFIED`: no migration, Storage object, anonymous/kiosk Auth session, Vercel function, or issuance transaction has run against Supabase. Legacy upload/function files remain for rollback and must not be deleted until the live parity gates pass.
 
 ## Resume rule
 

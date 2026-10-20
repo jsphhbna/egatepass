@@ -24,7 +24,7 @@ This is a planning inventory, not proof that the target exists. Canonical SQL wi
 
 | Original function | Target endpoint/RPC responsibility |
 |---|---|
-| `create-pass` | Atomic validation/claim/visitor/pass issue; server-derived source/validity; idempotency |
+| `create-pass` | `/api/passes/issue` plus `api.issue_pass`: actual-byte validation, atomic claim/visitor/pass/audit issue, server-derived source/validity, digest-only token and idempotency — IMPLEMENTED, NOT INTEGRATION-VERIFIED |
 | `scan-pass` | Device/gate/type lookup and atomic entry/exit transition + visit event |
 | `decide-visit` | Guard/admin pending-only approve/reject transaction + evidence expiry update |
 | `create-user` | Supabase Admin invitation/create plus staff profile transaction/reconciliation |
@@ -51,7 +51,7 @@ This is a planning inventory, not proof that the target exists. Canonical SQL wi
 | `src/hooks/useAuth.tsx` | Supabase session listener + authoritative protected profile/device resolution — IMPLEMENTED, NOT LIVE-VERIFIED |
 | direct Firestore reads/listeners | typed API/RPC or narrowly scoped RLS views/realtime subscriptions |
 | `/api/*` and `/.netlify/functions/*` mix | stable `/api/*` Vercel Functions or explicitly documented RPC calls |
-| `src/lib/cloudinary.ts` | Storage intent/upload/claim client; no server secret or broad bucket access |
+| `src/lib/cloudinary.ts` | `src/services/visitorRegistration.ts` now serves portal/kiosk private intent/upload/claim; legacy module remains only for unmigrated rollback paths until deletion gates pass |
 
 ## Configuration mapping
 
@@ -65,7 +65,8 @@ No old configuration is removed merely because a target file compiles. Removal o
 - Explicit grants, RLS helpers/policies, private Storage buckets: `20261020000200_rls_and_storage.sql` — IMPLEMENTED, NOT EXECUTED.
 - Current-actor and upload-intent RPCs: `20261020000300_core_rpc.sql` — IMPLEMENTED, NOT EXECUTED.
 - Privacy acknowledgement and Guard password finalization: `20261020000400_identity_rpcs.sql` plus `/api/auth/complete-password-change` — IMPLEMENTED, NOT EXECUTED.
+- Pass issuance and evidence claim: `20261020000500_pass_issuance.sql` plus `/api/passes/issue` — IMPLEMENTED, NOT EXECUTED.
 - One-time non-public Super Admin bootstrap: `supabase/bootstrap/README.md` — PROCEDURE AUTHORED, NOT TESTED.
-- Real database/schema matrix: `supabase/tests/*.test.sql` — 35 ASSERTIONS AUTHORED, BLOCKED.
+- Real database/schema matrix: `supabase/tests/*.test.sql` — 45 ASSERTIONS AUTHORED, BLOCKED.
 
 Shared login, recovery, privacy acknowledgement, logout, and bearer-token acquisition have target implementations. No database/provider behavior is declared replaced until the isolated integration matrix passes; Firebase collection/Cloudinary operational paths remain present.

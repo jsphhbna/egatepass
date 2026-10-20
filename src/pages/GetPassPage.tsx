@@ -2,11 +2,9 @@ import { useState, useRef, useEffect } from 'react';
 import { useForm } from 'react-hook-form';
 import { z } from 'zod';
 import { zodResolver } from '@hookform/resolvers/zod';
-import { signInAnonymously } from 'firebase/auth';
-import { collection, doc, getDoc } from 'firebase/firestore';
-import { auth, db } from '@/lib/firebase';
 import { useWebcam } from '@/hooks/useWebcam';
-import { cleanupUploadedImages, compressImageToWebP, uploadToCloudinary } from '@/lib/cloudinary';
+import { compressImageToWebP } from '@/lib/imageProcessing';
+import { issueVisitorPass, loadRegistrationSettings } from '@/services/visitorRegistration';
 import { toDataURL } from 'qrcode';
 import {
   Camera,
@@ -89,18 +87,23 @@ export function GetPassPage() {
   const [isPeakMode, setIsPeakMode] = useState(false);
   const [visitPurposes, setVisitPurposes] = useState<VisitPurposeOption[]>(DEFAULT_VISIT_PURPOSES);
   const [workingHours, setWorkingHours] = useState(DEFAULT_WORKING_HOURS);
+  const [schedulingDaysAhead, setSchedulingDaysAhead] = useState(MAX_VISIT_ADVANCE_DAYS);
   const [issuedValidity, setIssuedValidity] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const issueRequestId = useRef(crypto.randomUUID());
 
   useEffect(() => {
-    getDoc(doc(db, 'settings', 'app')).then((docSnap) => {
-      if (docSnap.exists()) {
-        const data = docSnap.data();
-        setIsPeakMode(data.peakMode === true);
-        setVisitPurposes(normalizeVisitPurposes(data.visitPurposes));
-        setWorkingHours(normalizeWorkingHours(data.workingHours));
-      }
-    });
+    loadRegistrationSettings('portal').then((data) => {
+      if (!data) return;
+      setIsPeakMode(data.peak_mode === 'portal' || data.peak_mode === 'both');
+      setVisitPurposes(normalizeVisitPurposes(data.visit_purposes));
+      setWorkingHours(normalizeWorkingHours({
+        start: data.working_hours_start?.slice(0, 5),
+        end: data.working_hours_end?.slice(0, 5),
+        timezone: data.timezone,
+      }));
+      if (Number.isInteger(data.scheduling_days_ahead)) setSchedulingDaysAhead(data.scheduling_days_ahead);
+    }).catch(() => undefined);
   }, []);
 
   const webcam = useWebcam({ facingMode: 'user' });
@@ -121,7 +124,7 @@ export function GetPassPage() {
 
   // Get today as min date
   const today = format(new Date(), 'yyyy-MM-dd');
-  const latestVisitDate = format(addDays(new Date(), MAX_VISIT_ADVANCE_DAYS), 'yyyy-MM-dd');
+  const latestVisitDate = format(addDays(new Date(), schedulingDaysAhead), 'yyyy-MM-dd');
 
   // ============================================================
   // STEP HANDLERS
@@ -189,59 +192,10 @@ export function GetPassPage() {
     setStep('generating');
     setSubmitError(null);
 
-    const uploadedPublicIds: string[] = [];
     try {
-      // 1. Anonymous sign-in
-      const userCredential = await signInAnonymously(auth);
-
-      // 2. Upload images to Cloudinary
-      const trackedUpload = async (blob: Blob, folder: 'e-gatepass/photos' | 'e-gatepass/ids') => {
-        const publicId = await uploadToCloudinary(blob, folder);
-        uploadedPublicIds.push(publicId);
-        return publicId;
-      };
-      const uploads = [trackedUpload(photoBlob, 'e-gatepass/photos')];
-      if (idBlob) {
-        uploads.push(trackedUpload(idBlob, 'e-gatepass/ids'));
-      }
-      const [photoPublicId, idImagePublicId] = await Promise.all(uploads);
-
-      // 3. Create visitor doc
       const formData = getValues();
-      const visitorRef = doc(collection(db, 'visitors'));
-      const visitorId = visitorRef.id;
-      const gatePassRef = doc(collection(db, 'gatePasses'));
-      const gatePassId = gatePassRef.id;
-      const token = await userCredential.user.getIdToken();
-      const response = await fetch('/api/create-pass', {
-        method: 'POST',
-        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          visitorId,
-          passId: gatePassId,
-          firstName: formData.firstName,
-          middleName: formData.middleName || '',
-          lastName: formData.lastName,
-          contactNumber: formData.contactNumber,
-          purpose: formData.purpose,
-          visitDate: formData.visitDate,
-          idImagePublicId: idImagePublicId || null,
-          photoPublicId,
-        }),
-      });
-      const result = await response.json().catch(() => null) as {
-        error?: string;
-        passId?: string;
-        validFrom?: string | null;
-        validUntil?: string | null;
-      } | null;
-      if (!response.ok || result?.passId !== gatePassId) {
-        throw new Error(result?.error || 'Failed to create visitor pass');
-      }
-
-      // 6. Generate QR code
-      // QR payload is the gate pass document ID (scanner looks up the doc)
-      const qrUrl = await toDataURL(gatePassId, {
+      const result = await issueVisitorPass('portal', formData, photoBlob, idBlob, issueRequestId.current);
+      const qrUrl = await toDataURL(result.qrToken, {
         width: 300,
         margin: 2,
         color: {
@@ -251,14 +205,13 @@ export function GetPassPage() {
       });
 
       setQrDataUrl(qrUrl);
-      setPassId(gatePassId);
-      setIssuedValidity(result?.validFrom && result.validUntil
+      setPassId(result.passId);
+      setIssuedValidity(result.validFrom && result.validUntil
         ? formatValidityWindow(result.validFrom, result.validUntil)
         : formatWorkingHours(workingHours));
       setStep('done');
       toast.success('Gate pass generated successfully!');
     } catch (err) {
-      await cleanupUploadedImages(uploadedPublicIds);
       console.error('Pass generation error:', err);
       setSubmitError(
         err instanceof Error ? err.message : 'An unexpected error occurred.'

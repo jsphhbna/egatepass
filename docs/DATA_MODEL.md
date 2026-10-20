@@ -1,6 +1,6 @@
 # Supabase Data Model
 
-Status: S2 plus M1 identity RPCs `IMPLEMENTED — NOT VERIFIED`. The migrations have not executed against PostgreSQL.
+Status: S2 plus M1 identity and M2 issuance RPCs `IMPLEMENTED — NOT VERIFIED`. The migrations have not executed against PostgreSQL.
 
 ## Identity and authorization
 
@@ -18,10 +18,12 @@ Application role/type never comes from editable user metadata. Protected helpers
 | `visitors` | PII, purpose, date, consent, portal/kiosk source | Owner Auth UID; kiosk creator required only for kiosk source |
 | `upload_intents` | One-use, short-lived Storage authorization | Owner, source, kind, bucket/path, MIME, 5 MB maximum, expiry |
 | `visitor_evidence` | Verified face/ID reference and lifecycle metadata | One evidence item per visitor/kind; SHA-256 and verified size/type |
-| `passes` | Authoritative pass lifecycle and opaque-token digest | One pass per visitor; 32-byte digest; validity interval; constrained rejection state |
+| `passes` | Authoritative pass lifecycle and opaque-token digest | One pass per visitor; 32-byte digest; validity interval; constrained rejection state; unique non-null issue request ID |
 | `visit_events` | Operational append-only history | Server/RPC authored; request/event uniqueness prevents duplicates |
 
 QR bearer tokens are never stored in plaintext; only a 32-byte digest is canonical. `public_reference` is a correlation identifier, not an authorization secret.
+
+M2 derives the raw QR bearer in the trusted server from actor ID plus an idempotency UUID under `PASS_TOKEN_SECRET`. The database transaction receives only the digest, locks the upload intents, and creates the visitor, verified evidence, pass, and audit event together. Uploaded-object byte inspection occurs immediately before this transaction in the Vercel handler; live race behavior is not yet verified.
 
 ## Operations and recovery
 
