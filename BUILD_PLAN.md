@@ -26,7 +26,7 @@ Sensitive data includes visitor names/contact details, face and ID images, QR be
 | S3 | Shared staff/device auth and governance | Real Auth sessions and browser E2E for all staff/device roles, suspension/revocation/first-login/reset | IMPLEMENTED IN PART — Supabase session/profile, login/reset, privacy, logout, forced-password endpoint/RPC; provisioning/governance and all live integration NOT VERIFIED |
 | S4 | Portal/kiosk registration, private evidence, optional local OCR, Peak Mode | Phone/portrait browser E2E, real uploads, session separation, source-forgery negative tests | IMPLEMENTED IN PART — M2 code/static checks PASS; live Auth/Storage/DB/API/browser workflow BLOCKED |
 | S5 | Server QR issue, entry, Guard decision, exit | Actual DB state machine E2E plus duplicate/race/wrong-device/expired negative tests | IMPLEMENTED IN PART — M2/M3 code/static checks PASS; live lifecycle BLOCKED |
-| S6 | Admin/operations parity | Browser and DB proof for records, complete export, users/devices, settings, emergency, audit/reconciliation | PLANNED |
+| S6 | Admin/operations parity | Browser and DB proof for records, complete export, users/devices, settings, emergency, audit/reconciliation | IMPLEMENTED — NOT VERIFIED / INTEGRATION BLOCKED (Code/static tests PASS; live Supabase integration blocked by unavailable runtime) |
 | S7 | Resend/Auth SMTP, retention, holds, alerts | Real inbox tests; physical Storage deletion; hold/race/retry/scheduler-auth evidence | PLANNED |
 | S8 | Original-faithful UX/accessibility polish and full docs rewrite | Before/after images, accessibility checks, no lost route/action, owner screen approval | PLANNED |
 | S9 | Staging rehearsal and release gate | Exact-commit DB/browser matrix, rollback rehearsal, preview smoke, owner QA signoff | PLANNED |
@@ -70,6 +70,19 @@ M2 remains `IMPLEMENTED — NOT VERIFIED`: no migration, Storage object, anonymo
 ## M3 implementation boundary
 
 Entry/exit scanners now send the opaque QR bearer to a Vercel handler that hashes it before a service-only RPC. The transaction resolves an active matching device and gate, locks the pass, records entry as pending, denies replay/wrong-gate use, and records exit only from inside. Guard queue/stats/settings use a bounded reauthorizing RPC with Realtime invalidation plus polling recovery. Guard decisions and private evidence reads are reauthorized server-side. All are `IMPLEMENTED — NOT VERIFIED` until the real database/Auth/API/browser lifecycle matrix runs.
+
+## M4 implementation boundary (Admin and Operations Migration)
+
+All Admin and operations pages (`AdminDashboard.tsx`, `AdminRecords.tsx`, `AdminUsers.tsx`, `DevicesPage.tsx`, `AdminSettings.tsx`, `AdminEmergency.tsx`, `AdminAuditLogs.tsx`, `AdminPage.tsx`) now run completely decoupled from Firebase, Firestore, and legacy Netlify functions.
+1. Decoupled Timestamp: Introduced `AppTimestamp` and `asAppTimestamp()` in `src/lib/timestamp.ts`, eliminating `@firebase/firestore` types from `src/types/index.ts`.
+2. Staff Governance: Provisioned through `/api/create-user`, `/api/update-user`, `/api/admin/users` and service-role RPCs `api.create_staff_profile` and `api.update_staff_profile`. Enforces last-superadmin protection via PostgreSQL trigger `protect_last_superadmin`.
+3. Device Governance: Provisioned through `/api/create-device`, `/api/update-device`, `/api/update-device-auth`, `/api/delete-device`, `/api/admin/devices` and service-role RPCs `api.create_device_profile`, `api.update_device_profile`, `api.retire_device`. Enforces `@devices.egatepass.invalid` naming.
+4. Dashboard Metrics: Real aggregation via `/api/admin/dashboard` returning bounded today passes, inside passes, exited passes, and decisions.
+5. Emergency Evacuation: Queried via `/api/admin/emergency` for visitors currently inside, retaining 15-second polling and paper checklist print capability.
+6. Records & Exports: Filtered, cursor-paginated records via `/api/admin/records` with complete CSV download via `collectCursorPages`. Credentials and private object paths redacted.
+7. Audit & Reconciliation: Served via `/api/admin/activity` and `/api/reconciliation-items`, with cursor-based export.
+8. Settings & Image Purge: Managed via `/api/admin/settings`, `/api/update-settings`, and `/api/purge-images`. Separates Admin operational rights from Super Admin security/retention rights. Supports dry-run and bounded storage deletion with reconciliation logging.
+9. Verification: `tests/admin-governance-static.test.ts` (6/6 PASS), Vitest static suite (10 files, 79 tests PASS), `npm run typecheck:api` (PASS), `npm run build` (PASS), and Playwright startup suite (4/4 PASS). Integration remains `IMPLEMENTED — NOT VERIFIED / INTEGRATION BLOCKED` until an isolated Supabase database instance is available.
 
 ## Resume rule
 

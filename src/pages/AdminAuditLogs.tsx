@@ -1,12 +1,12 @@
 import { useState } from 'react';
 import { format } from 'date-fns';
 import { ClipboardList, Download, ShieldCheck } from 'lucide-react';
-import { collection, getDocs, limit, orderBy, query, startAfter, where, Timestamp, type DocumentData, type QueryConstraint, type QueryDocumentSnapshot } from 'firebase/firestore';
 import { toast } from 'sonner';
 import { Button, DataTable, DataTableHead, DataTableRow, DataTableCell, Input, Select } from '@/components/ui';
 import { useAuth } from '@/hooks/useAuth';
 import { isSuperAdmin } from '@/lib/permissions';
-import { db } from '@/lib/firebase';
+import { getAccessToken } from '@/services/auth';
+import { asAppTimestamp } from '@/lib/timestamp';
 import { collectCursorPages, downloadCsvFile, EXPORT_MAX_ROWS } from '@/lib/completeExport';
 import {
   normalizeAdministrativeAudit,
@@ -71,32 +71,44 @@ export function AdminAuditLogs() {
     if (tab === 'reconciliation') return;
     setExporting(true);
     try {
-      const collectionName = tab === 'visitor' ? 'visitLogs' : 'auditLogs';
-      const result = await collectCursorPages<Record<string, unknown>, QueryDocumentSnapshot<DocumentData>>(
+      const token = await getAccessToken();
+      if (!token) throw new Error('Not authenticated');
+
+      const result = await collectCursorPages<any, string>(
         async (cursor, pageSize) => {
-          const constraints: QueryConstraint[] = [orderBy('timestamp', 'desc')];
-          if (dateFrom) constraints.push(where('timestamp', '>=', Timestamp.fromDate(new Date(`${dateFrom}T00:00:00+08:00`))));
-          if (dateTo) constraints.push(where('timestamp', '<', Timestamp.fromDate(new Date(new Date(`${dateTo}T00:00:00+08:00`).getTime() + 86_400_000))));
-          if (cursor) constraints.push(startAfter(cursor));
-          constraints.push(limit(pageSize));
-          const snapshot = await getDocs(query(collection(db, collectionName), ...constraints));
+          const params = new URLSearchParams({
+            type: tab === 'visitor' ? 'visitor' : 'administrative',
+            pageSize: String(pageSize),
+          });
+          if (dateFrom) params.set('dateFrom', dateFrom);
+          if (dateTo) params.set('dateTo', dateTo);
+          if (cursor) params.set('cursor', cursor);
+          if (tab === 'visitor' && visitorEvent) params.set('event', visitorEvent);
+          if (tab === 'administrative' && administrativeRole) params.set('role', administrativeRole);
+          if (tab === 'administrative' && actionSearch) params.set('action', actionSearch);
+
+          const res = await fetch(`/api/admin/activity?${params.toString()}`, {
+            headers: { Authorization: `Bearer ${token}` },
+          });
+          if (!res.ok) throw new Error('Failed to fetch activity records');
+          const data = await res.json();
           return {
-            items: snapshot.docs.map((document) => ({ id: document.id, document })),
-            nextCursor: snapshot.docs[snapshot.docs.length - 1] || null,
+            items: data.items || [],
+            nextCursor: data.nextCursor || null,
           };
         },
       );
 
       if (tab === 'visitor') {
         const items = result.items
-          .map(({ document }) => {
-            const snapshot = document as QueryDocumentSnapshot<DocumentData>;
-            return { id: snapshot.id, ...snapshot.data() } as VisitorActivityItem;
-          })
-          .filter((item) => !visitorEvent || item.event === visitorEvent);
+          .map((raw) => ({
+            ...raw,
+            timestamp: asAppTimestamp(raw.timestamp),
+          }))
+          .filter((item: VisitorActivityItem) => !visitorEvent || item.event === visitorEvent);
         downloadCsvFile(`visitor_activity_${format(new Date(), 'yyyyMMdd_HHmmss')}.csv`, [
           ['Time', 'Event', 'Gate', 'Guard UID', 'Device UID', 'Visitor UID', 'Reason'],
-          ...items.map((item) => [
+          ...items.map((item: VisitorActivityItem) => [
             item.timestamp ? format(item.timestamp.toMillis(), 'yyyy-MM-dd HH:mm:ss') : '',
             item.event,
             item.gate || '',
@@ -109,7 +121,7 @@ export function AdminAuditLogs() {
         toast.success(`Exported ${items.length.toLocaleString()} visitor activity record${items.length === 1 ? '' : 's'}.`);
       } else {
         const items = result.items
-          .map(({ document }) => normalizeAdministrativeAudit(document as QueryDocumentSnapshot<DocumentData>))
+          .map((raw) => normalizeAdministrativeAudit(raw))
           .filter((item) => (!administrativeRole || item.actorRole === administrativeRole)
             && (!actionSearch || item.action.toLocaleLowerCase().includes(actionSearch)));
         downloadCsvFile(`administrative_activity_${format(new Date(), 'yyyyMMdd_HHmmss')}.csv`, [
@@ -255,7 +267,7 @@ export function AdminAuditLogs() {
         <div className="space-y-3">
           <div className="flex items-start gap-3 rounded-lg border border-[var(--color-warning)]/40 bg-[var(--color-warning-light)] p-4">
             <ShieldCheck className="mt-0.5 h-5 w-5 text-[var(--color-warning-dark)]" />
-            <div><p className="font-semibold text-[var(--color-text-primary)]">Manual investigation required</p><p className="text-sm text-[var(--color-text-secondary)]">These records are read-only. Confirm external and Firestore state before taking corrective action.</p></div>
+            <div><p className="font-semibold text-[var(--color-text-primary)]">Manual investigation required</p><p className="text-sm text-[var(--color-text-secondary)]">These records are read-only. Confirm external and system state before taking corrective action.</p></div>
           </div>
           <DataTable>
             <DataTableHead><DataTableRow>

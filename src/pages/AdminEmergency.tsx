@@ -1,18 +1,23 @@
 import { useState, useEffect } from 'react';
-import {
-  collection,
-  query,
-  where,
-  onSnapshot,
-} from 'firebase/firestore';
-import { db } from '@/lib/firebase';
 import { AlertTriangle, Printer } from 'lucide-react';
 import { format } from 'date-fns';
 import { Card, Input, Select, Button, DataTable, DataTableHead, DataTableRow, DataTableCell, StatusBadge } from '@/components/ui';
 import type { GatePass } from '@/types';
+import { asAppTimestamp } from '@/lib/timestamp';
+import { getAccessToken } from '@/services/auth';
 
 interface GatePassWithId extends GatePass {
   id: string;
+}
+
+interface RawEmergencyPass {
+  id: string;
+  visitorId: string;
+  visitorName: string;
+  purpose: string;
+  gate: string | null;
+  timeIn: string | null;
+  status: 'inside';
 }
 
 export function AdminEmergency() {
@@ -24,27 +29,51 @@ export function AdminEmergency() {
   // Extract unique gates from passes
   const gates = Array.from(new Set(passes.map((p) => p.gate).filter(Boolean))) as string[];
 
+  async function loadEmergencyPasses() {
+    try {
+      const token = await getAccessToken();
+      const response = await fetch('/api/admin/emergency', {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      const data = await response.json().catch(() => null) as { passes?: RawEmergencyPass[]; error?: string } | null;
+      if (!response.ok) throw new Error(data?.error || 'Failed to load evacuation list');
+
+      const mapped: GatePassWithId[] = (data?.passes ?? []).map((p) => ({
+        id: p.id,
+        visitorId: p.visitorId,
+        visitorName: p.visitorName,
+        purpose: p.purpose,
+        photoPublicId: '',
+        idImagePublicId: null,
+        source: 'portal',
+        status: 'inside',
+        validFrom: asAppTimestamp(new Date())!,
+        validUntil: asAppTimestamp(new Date())!,
+        issuedAt: asAppTimestamp(new Date())!,
+        scannedAt: asAppTimestamp(p.timeIn),
+        timeIn: asAppTimestamp(p.timeIn),
+        timeOut: null,
+        entryDeviceId: null,
+        exitDeviceId: null,
+        decidedByUid: null,
+        rejectionReason: null,
+        gate: p.gate,
+      }));
+
+      setPasses(mapped);
+    } catch (err) {
+      console.error('Emergency load error:', err);
+    } finally {
+      setLoading(false);
+    }
+  }
+
   useEffect(() => {
-    const q = query(
-      collection(db, 'gatePasses'),
-      where('status', '==', 'inside')
-    );
-    const unsubscribe = onSnapshot(
-      q,
-      (snap) => {
-        const list: GatePassWithId[] = [];
-        snap.forEach((doc) => {
-          list.push({ id: doc.id, ...doc.data() } as GatePassWithId);
-        });
-        setPasses(list);
-        setLoading(false);
-      },
-      (err) => {
-        console.error(err);
-        setLoading(false);
-      }
-    );
-    return unsubscribe;
+    void loadEmergencyPasses();
+    const timer = setInterval(() => {
+      void loadEmergencyPasses();
+    }, 15_000);
+    return () => clearInterval(timer);
   }, []);
 
   const filteredPasses = passes.filter((p) => {

@@ -1,17 +1,39 @@
 import { useSyncExternalStore } from 'react';
-import {
-  collection,
-  onSnapshot,
-  query,
-  where,
-  type DocumentData,
-  type Query,
-} from 'firebase/firestore';
-import { endOfDay, endOfMonth, startOfDay, startOfMonth } from 'date-fns';
-import { db } from '@/lib/firebase';
-import type { GatePass } from '@/types';
+import type { GatePass, PassSource, PassStatus } from '@/types';
+import { asAppTimestamp } from '@/lib/timestamp';
+import { getAccessToken } from '@/services/auth';
 
-interface DashboardDataSnapshot {
+interface SerializedPass {
+  id: string;
+  visitorId: string;
+  visitorName: string;
+  purpose: string;
+  photoPublicId: string | null;
+  idImagePublicId: string | null;
+  source: PassSource;
+  status: PassStatus;
+  validFrom: string;
+  validUntil: string;
+  issuedAt: string;
+  scannedAt: string | null;
+  timeIn: string | null;
+  timeOut: string | null;
+  entryDeviceId: string | null;
+  exitDeviceId: string | null;
+  decidedByUid: string | null;
+  rejectionReason: string | null;
+  gate: string | null;
+}
+
+interface DashboardApiResponse {
+  recentPasses: SerializedPass[];
+  insidePasses: SerializedPass[];
+  exitedTodayPasses: SerializedPass[];
+  decisionsTodayPasses: SerializedPass[];
+  error?: string;
+}
+
+export interface DashboardDataSnapshot {
   recentPasses: GatePass[];
   insidePasses: GatePass[];
   exitedTodayPasses: GatePass[];
@@ -20,11 +42,6 @@ interface DashboardDataSnapshot {
   error: string | null;
   updatedAt: number | null;
 }
-
-type PassSource = keyof Pick<
-  DashboardDataSnapshot,
-  'recentPasses' | 'insidePasses' | 'exitedTodayPasses' | 'decisionsTodayPasses'
->;
 
 const initialSnapshot: DashboardDataSnapshot = {
   recentPasses: [],
@@ -37,101 +54,112 @@ const initialSnapshot: DashboardDataSnapshot = {
 };
 
 let currentSnapshot = initialSnapshot;
-let pendingSources = new Set<PassSource>();
-let firestoreUnsubscribes: Array<() => void> = [];
-let midnightTimer: ReturnType<typeof setTimeout> | null = null;
-let generation = 0;
+let pollTimer: ReturnType<typeof setInterval> | null = null;
+let activeFetchController: AbortController | null = null;
 const subscribers = new Set<() => void>();
+
+function deserializePass(p: SerializedPass): GatePass {
+  return {
+    visitorId: p.visitorId,
+    visitorName: p.visitorName,
+    purpose: p.purpose,
+    photoPublicId: p.photoPublicId ?? '',
+    idImagePublicId: p.idImagePublicId,
+    source: p.source,
+    status: p.status,
+    validFrom: asAppTimestamp(p.validFrom)!,
+    validUntil: asAppTimestamp(p.validUntil)!,
+    issuedAt: asAppTimestamp(p.issuedAt)!,
+    scannedAt: asAppTimestamp(p.scannedAt),
+    timeIn: asAppTimestamp(p.timeIn),
+    timeOut: asAppTimestamp(p.timeOut),
+    entryDeviceId: p.entryDeviceId,
+    exitDeviceId: p.exitDeviceId,
+    decidedByUid: p.decidedByUid,
+    rejectionReason: p.rejectionReason,
+    gate: p.gate,
+  };
+}
 
 function emitChange() {
   subscribers.forEach((subscriber) => subscriber());
 }
 
-function stopFirestoreListeners() {
-  generation++;
-  firestoreUnsubscribes.forEach((unsubscribe) => unsubscribe());
-  firestoreUnsubscribes = [];
-  if (midnightTimer) clearTimeout(midnightTimer);
-  midnightTimer = null;
-}
+async function fetchDashboardData() {
+  if (activeFetchController) {
+    activeFetchController.abort();
+  }
+  const controller = new AbortController();
+  activeFetchController = controller;
 
-function listenToPasses(source: PassSource, passesQuery: Query<DocumentData>, activeGeneration: number) {
-  const unsubscribe = onSnapshot(
-    passesQuery,
-    (querySnapshot) => {
-      if (activeGeneration !== generation) return;
-      pendingSources.delete(source);
+  try {
+    const token = await getAccessToken();
+    const response = await fetch('/api/admin/dashboard', {
+      headers: { Authorization: `Bearer ${token}` },
+      signal: controller.signal,
+    });
+
+    const data = await response.json().catch(() => null) as DashboardApiResponse | null;
+    if (!response.ok) {
+      throw new Error(data?.error || 'Failed to load dashboard data');
+    }
+
+    currentSnapshot = {
+      recentPasses: (data?.recentPasses ?? []).map(deserializePass),
+      insidePasses: (data?.insidePasses ?? []).map(deserializePass),
+      exitedTodayPasses: (data?.exitedTodayPasses ?? []).map(deserializePass),
+      decisionsTodayPasses: (data?.decisionsTodayPasses ?? []).map(deserializePass),
+      loading: false,
+      error: null,
+      updatedAt: Date.now(),
+    };
+    emitChange();
+  } catch (error) {
+    if (!controller.signal.aborted) {
+      console.error('Dashboard data fetch error:', error);
       currentSnapshot = {
         ...currentSnapshot,
-        [source]: querySnapshot.docs.map((document) => document.data() as GatePass),
-        loading: pendingSources.size > 0,
-        updatedAt: Date.now(),
-      };
-      emitChange();
-    },
-    (error) => {
-      if (activeGeneration !== generation) return;
-      console.error(`Dashboard listener failed for ${source}:`, error);
-      pendingSources.delete(source);
-      currentSnapshot = {
-        ...currentSnapshot,
-        loading: pendingSources.size > 0,
-        error: 'The dashboard could not load live visitor data.',
+        loading: false,
+        error: error instanceof Error ? error.message : 'The dashboard could not load visitor data.',
       };
       emitChange();
     }
-  );
-  firestoreUnsubscribes.push(unsubscribe);
+  } finally {
+    if (activeFetchController === controller) {
+      activeFetchController = null;
+    }
+  }
 }
 
-function startFirestoreListeners() {
-  stopFirestoreListeners();
-  currentSnapshot = initialSnapshot;
-  pendingSources = new Set<PassSource>([
-    'recentPasses',
-    'insidePasses',
-    'exitedTodayPasses',
-    'decisionsTodayPasses',
-  ]);
-  emitChange();
+function startPolling() {
+  stopPolling();
+  void fetchDashboardData();
+  pollTimer = setInterval(() => {
+    void fetchDashboardData();
+  }, 30_000);
+}
 
-  const activeGeneration = generation;
-  const now = new Date();
-  const startToday = startOfDay(now);
-  const endToday = endOfDay(now);
-  const monthStart = startOfMonth(now);
-  const dataEnd = endOfMonth(now);
-  const passes = collection(db, 'gatePasses');
-
-  listenToPasses(
-    'recentPasses',
-    query(passes, where('issuedAt', '>=', monthStart), where('issuedAt', '<=', dataEnd)),
-    activeGeneration
-  );
-  listenToPasses('insidePasses', query(passes, where('status', '==', 'inside')), activeGeneration);
-  listenToPasses(
-    'exitedTodayPasses',
-    query(passes, where('timeOut', '>=', startToday), where('timeOut', '<=', endToday)),
-    activeGeneration
-  );
-  listenToPasses(
-    'decisionsTodayPasses',
-    query(passes, where('scannedAt', '>=', startToday), where('scannedAt', '<=', endToday)),
-    activeGeneration
-  );
-
-  const nextMidnight = startOfDay(new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1));
-  midnightTimer = setTimeout(refreshAdminDashboardData, nextMidnight.getTime() - now.getTime() + 1000);
+function stopPolling() {
+  if (pollTimer) {
+    clearInterval(pollTimer);
+    pollTimer = null;
+  }
+  if (activeFetchController) {
+    activeFetchController.abort();
+    activeFetchController = null;
+  }
 }
 
 function subscribe(callback: () => void) {
   subscribers.add(callback);
-  if (subscribers.size === 1) startFirestoreListeners();
+  if (subscribers.size === 1) {
+    startPolling();
+  }
 
   return () => {
     subscribers.delete(callback);
     if (subscribers.size === 0) {
-      stopFirestoreListeners();
+      stopPolling();
       currentSnapshot = initialSnapshot;
     }
   };
@@ -142,9 +170,11 @@ function getSnapshot() {
 }
 
 export function refreshAdminDashboardData() {
-  if (subscribers.size > 0) startFirestoreListeners();
+  if (subscribers.size > 0) {
+    void fetchDashboardData();
+  }
 }
 
-export function useAdminDashboardData() {
+export function useAdminDashboardData(): DashboardDataSnapshot {
   return useSyncExternalStore(subscribe, getSnapshot, () => initialSnapshot);
 }

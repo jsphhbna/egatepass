@@ -1,11 +1,4 @@
 import { useState, useEffect } from 'react';
-import {
-  collection,
-  onSnapshot,
-  query,
-  orderBy,
-} from 'firebase/firestore';
-import { auth, db } from '@/lib/firebase';
 import { useAuth } from '@/hooks/useAuth';
 import type { Device, DeviceType } from '@/types';
 import { Tablet, Plus, X, Lock, Unlock, Key, AtSign, Trash2, Eye, EyeOff } from 'lucide-react';
@@ -16,6 +9,7 @@ import { zodResolver } from '@hookform/resolvers/zod';
 import { Button, Card, FormField, Input, Select, StatusBadge, Modal, ConfirmModal } from '@/components/ui';
 import { isSuperAdmin } from '@/lib/permissions';
 import { getPasswordPolicyError, PASSWORD_MIN_LENGTH } from '@/lib/passwordPolicy';
+import { getAccessToken } from '@/services/auth';
 
 // ============================================================
 // TYPES AND SCHEMA
@@ -67,17 +61,23 @@ export function DevicesPage() {
     resolver: zodResolver(deviceSchema),
   });
 
-  // Live listener on devices collection
-  useEffect(() => {
-    const q = query(collection(db, 'devices'), orderBy('createdAt', 'desc'));
-    const unsub = onSnapshot(q, (snap) => {
-      const list: DeviceWithId[] = [];
-      snap.forEach((docSnap) => {
-        list.push({ id: docSnap.id, ...docSnap.data() } as DeviceWithId);
+  async function loadDevices() {
+    try {
+      const token = await getAccessToken();
+      const response = await fetch('/api/admin/devices', {
+        headers: { Authorization: `Bearer ${token}` },
       });
-      setDevices(list);
-    });
-    return unsub;
+      const data = await response.json().catch(() => null) as { devices?: DeviceWithId[]; error?: string } | null;
+      if (!response.ok) throw new Error(data?.error || 'Failed to load devices');
+      setDevices(data?.devices ?? []);
+    } catch (err) {
+      console.error('Load devices error:', err);
+      toast.error('Failed to load devices');
+    }
+  }
+
+  useEffect(() => {
+    void loadDevices();
   }, []);
 
   // ============================================================
@@ -86,8 +86,7 @@ export function DevicesPage() {
   async function onCreateDevice(data: DeviceFormData) {
     setCreating(true);
     try {
-      const token = await auth.currentUser?.getIdToken();
-      if (!token) throw new Error('Your session has expired. Please sign in again.');
+      const token = await getAccessToken();
       const response = await fetch('/api/create-device', {
         method: 'POST',
         headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
@@ -99,6 +98,7 @@ export function DevicesPage() {
       toast.success(`Device "${data.name}" registered successfully`);
       reset();
       setShowForm(false);
+      await loadDevices();
     } catch (err) {
       console.error('Device registration error:', err);
       const message = err instanceof Error ? err.message : 'Failed to register device. Please try again.';
@@ -119,6 +119,7 @@ export function DevicesPage() {
       try {
         await updateDeviceStatus(device.id, 'active');
         toast.success(`Device "${device.name}" reactivated`);
+        await loadDevices();
       } catch (err) {
         console.error('Reactivate device error:', err);
         toast.error('Failed to reactivate device.');
@@ -132,6 +133,7 @@ export function DevicesPage() {
       await updateDeviceStatus(device.id, 'revoked');
       toast.success(`Device "${device.name}" revoked`);
       setRevokingDevice(null);
+      await loadDevices();
     } catch (err) {
       console.error('Revoke device error:', err);
       toast.error('Failed to revoke device.');
@@ -164,8 +166,7 @@ export function DevicesPage() {
 
     setIsUpdatingAuth(true);
     try {
-      const token = await auth.currentUser?.getIdToken();
-      if (!token) throw new Error('Not authenticated');
+      const token = await getAccessToken();
 
       const res = await fetch('/api/update-device-auth', {
         method: 'POST',
@@ -192,6 +193,7 @@ export function DevicesPage() {
       setEditingDevice(null);
       setEditPassword('');
       setShowEditPassword(false);
+      await loadDevices();
     } catch (err) {
       console.error('Update credentials error:', err);
       toast.error(err instanceof Error ? err.message : 'Failed to update credentials');
@@ -203,8 +205,7 @@ export function DevicesPage() {
   async function handleDeleteDevice(device: DeviceWithId) {
     setIsDeleting(true);
     try {
-      const token = await auth.currentUser?.getIdToken();
-      if (!token) throw new Error('Not authenticated');
+      const token = await getAccessToken();
 
       const res = await fetch('/api/delete-device', {
         method: 'DELETE',
@@ -226,6 +227,7 @@ export function DevicesPage() {
         toast.success(`Device "${device.name}" deleted`);
       }
       setDeletingDevice(null);
+      await loadDevices();
     } catch (err) {
       console.error('Delete device error:', err);
       toast.error(err instanceof Error ? err.message : 'Failed to delete device');
@@ -235,8 +237,7 @@ export function DevicesPage() {
   }
 
   async function updateDeviceStatus(targetUid: string, status: 'active' | 'revoked') {
-    const token = await auth.currentUser?.getIdToken();
-    if (!token) throw new Error('Your session has expired. Please sign in again.');
+    const token = await getAccessToken();
     const response = await fetch('/api/update-device', {
       method: 'POST',
       headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
@@ -337,7 +338,7 @@ export function DevicesPage() {
             <FormField
               label="Device Username"
               id="device-username"
-              hint="This is not an email inbox. Firebase requires the username to follow an email format."
+              hint="This is not an email inbox. Device usernames must follow an email format for sign-in."
               error={errors.email?.message}
             >
               <Input
@@ -485,7 +486,7 @@ export function DevicesPage() {
       >
         <form onSubmit={handleUpdateCredentials} className="space-y-5">
           <p className="mb-2 text-sm text-[var(--color-text-secondary)]">
-            Update login credentials for <strong>{editingDevice?.name}</strong>. The username is not an email inbox, but it must follow an email format because Firebase uses it for sign-in.
+            Update login credentials for <strong>{editingDevice?.name}</strong>. The username is not an email inbox, but it must follow an email format for device sign-in.
           </p>
 
           <FormField label="Device Username" hint="Example: maingate-entry@earist-devices.local">

@@ -1,4 +1,6 @@
-import { Timestamp } from 'firebase/firestore';
+import type { AppTimestamp } from '@/lib/timestamp';
+
+export type Timestamp = AppTimestamp;
 
 /* ============================================================
    USER ROLES

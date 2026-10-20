@@ -1,9 +1,4 @@
 import { useState, useEffect } from 'react';
-import {
-  doc,
-  getDoc,
-} from 'firebase/firestore';
-import { db, auth } from '@/lib/firebase';
 import { Save, Trash2, AlertTriangle, Plus } from 'lucide-react';
 import { toast } from 'sonner';
 import { Button, Card, Input, ConfirmModal, LoadingState } from '@/components/ui';
@@ -12,6 +7,7 @@ import { DEFAULT_REJECTION_REASONS, DEFAULT_VISIT_PURPOSES, normalizeVisitPurpos
 import type { VisitPurposeOption } from '@/types';
 import { useAuth } from '@/hooks/useAuth';
 import { isSuperAdmin } from '@/lib/permissions';
+import { getAccessToken } from '@/services/auth';
 import { DEFAULT_WORKING_HOURS, normalizeWorkingHours } from '@/lib/workingHours';
 import { DEFAULT_RETENTION_POLICY, normalizeRetentionPolicy } from '@/lib/retentionPolicy';
 import {
@@ -52,9 +48,12 @@ export function AdminSettings() {
   useEffect(() => {
     async function loadSettings() {
       try {
-        const snap = await getDoc(doc(db, 'settings', 'app'));
-        if (snap.exists()) {
-          const data = snap.data();
+        const token = await getAccessToken();
+        const res = await fetch('/api/admin/settings', {
+          headers: token ? { Authorization: `Bearer ${token}` } : {},
+        });
+        if (res.ok) {
+          const data = await res.json();
           const retentionPolicy = normalizeRetentionPolicy(data);
           setSettings({
             ...retentionPolicy,
@@ -119,7 +118,7 @@ export function AdminSettings() {
           ...retentionValidation?.data,
           automaticCleanupEnabled: settings.automaticCleanupEnabled }
         : operationalSettings;
-      const token = await auth.currentUser?.getIdToken();
+      const token = await getAccessToken();
       if (!token) throw new Error('Your session has expired. Please sign in again.');
       const response = await fetch('/api/update-settings', {
         method: 'POST',
@@ -213,7 +212,7 @@ export function AdminSettings() {
   async function handlePurgeClick() {
     setCalculatingPurge(true);
     try {
-      const token = await auth.currentUser?.getIdToken();
+      const token = await getAccessToken();
       if (!token) throw new Error('Not authenticated');
 
       const res = await fetch('/api/purge-images', {
@@ -244,7 +243,7 @@ export function AdminSettings() {
   async function executePurge() {
     setPurging(true);
     try {
-      const token = await auth.currentUser?.getIdToken();
+      const token = await getAccessToken();
       if (!token) throw new Error('Not authenticated');
 
       const res = await fetch('/api/purge-images', {

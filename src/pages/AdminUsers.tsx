@@ -1,37 +1,15 @@
 import { useState, useEffect } from 'react';
-import {
-  collection,
-  query,
-  getDocs,
-} from 'firebase/firestore';
-import { auth, db } from '@/lib/firebase';
-import { FirebaseApp, initializeApp } from 'firebase/app';
-import { getAuth, sendEmailVerification, signInWithEmailAndPassword, signOut } from 'firebase/auth';
 import { Plus } from 'lucide-react';
 import { Button, FormField, Input, Select, StatusBadge, DataTable, DataTableHead, DataTableRow, DataTableCell, Modal, ConfirmModal } from '@/components/ui';
 import { toast } from 'sonner';
 import { z } from 'zod';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
-import type { AppUser } from '@/types';
+import type { UserRole } from '@/types';
 import { PASSWORD_MIN_LENGTH } from '@/lib/passwordPolicy';
 import { useAuth } from '@/hooks/useAuth';
 import { formatUserRole, isSuperAdmin } from '@/lib/permissions';
-
-// Use same config as primary app
-const firebaseConfig = {
-  apiKey: import.meta.env.VITE_FIREBASE_API_KEY,
-  authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN,
-  projectId: import.meta.env.VITE_FIREBASE_PROJECT_ID,
-  appId: import.meta.env.VITE_FIREBASE_APP_ID,
-};
-
-let secondaryApp: FirebaseApp | null = null;
-try {
-  secondaryApp = initializeApp(firebaseConfig, 'SecondaryAppUserCreation');
-} catch (error) {
-  console.error('Secondary app init error:', error);
-}
+import { getAccessToken } from '@/services/auth';
 
 const userSchema = z.object({
   name: z.string().min(2, 'Name is required').max(50),
@@ -46,8 +24,15 @@ const userSchema = z.object({
 });
 type UserFormData = z.infer<typeof userSchema>;
 
-interface AppUserWithId extends AppUser {
+interface AppUserWithId {
   uid: string;
+  name: string;
+  email: string;
+  role: UserRole;
+  active: boolean;
+  privacyAcceptedAt: string | null;
+  mustChangePassword?: boolean;
+  createdAt: string;
 }
 
 export function AdminUsers() {
@@ -58,7 +43,7 @@ export function AdminUsers() {
   const [isCreating, setIsCreating] = useState(false);
   const [deactivatingUser, setDeactivatingUser] = useState<AppUserWithId | null>(null);
   const [isDeactivating, setIsDeactivating] = useState(false);
-  const [roleChange, setRoleChange] = useState<{ user: AppUserWithId; newRole: AppUser['role'] } | null>(null);
+  const [roleChange, setRoleChange] = useState<{ user: AppUserWithId; newRole: UserRole } | null>(null);
   const [isChangingRole, setIsChangingRole] = useState(false);
 
   const {
@@ -74,13 +59,10 @@ export function AdminUsers() {
   async function loadUsers() {
     setLoading(true);
     try {
-      const q = query(collection(db, 'users'));
-      const snap = await getDocs(q);
-      const list: AppUserWithId[] = [];
-      snap.forEach((d) => {
-        list.push({ uid: d.id, ...d.data() } as AppUserWithId);
-      });
-      setUsers(list);
+      const response = await fetch('/api/admin/users', { headers: { Authorization: `Bearer ${await getAccessToken()}` } });
+      const body = await response.json().catch(() => null) as { users?: AppUserWithId[]; error?: string } | null;
+      if (!response.ok) throw new Error(body?.error || 'Failed to load users');
+      setUsers(body?.users ?? []);
     } catch (err) {
       console.error(err);
       toast.error('Failed to load users');
@@ -98,14 +80,8 @@ export function AdminUsers() {
       toast.error('Admins may only create Guard accounts');
       return;
     }
-    if (!secondaryApp) {
-      toast.error('Secondary app not initialized');
-      return;
-    }
-
     try {
-      const token = await auth.currentUser?.getIdToken();
-      if (!token) throw new Error('Your session has expired. Please sign in again.');
+      const token = await getAccessToken();
 
       const response = await fetch('/api/create-user', {
         method: 'POST',
@@ -115,22 +91,9 @@ export function AdminUsers() {
         },
         body: JSON.stringify(data),
       });
-      const result = await response.json().catch(() => null) as { error?: string } | null;
+      const result = await response.json().catch(() => null) as { error?: string; verificationEmailSent?: boolean } | null;
       if (!response.ok) throw new Error(result?.error || 'Failed to create user');
-
-      const secondaryAuth = getAuth(secondaryApp);
-      let emailSent = false;
-      try {
-        const userCredential = await signInWithEmailAndPassword(secondaryAuth, data.email, data.password);
-        await sendEmailVerification(userCredential.user);
-        emailSent = true;
-      } catch (emailErr) {
-        console.error('Email verification error:', emailErr);
-      } finally {
-        await signOut(secondaryAuth).catch(() => undefined);
-      }
-
-      if (emailSent) {
+      if (result?.verificationEmailSent) {
         toast.success(`${data.role} account created. Verification email sent!`);
       } else {
         toast.warning(`${data.role} account created, but failed to send verification email.`);
@@ -144,9 +107,8 @@ export function AdminUsers() {
     }
   }
 
-  async function updateUserAccount(targetUid: string, update: { role?: AppUser['role']; active?: boolean }) {
-    const token = await auth.currentUser?.getIdToken();
-    if (!token) throw new Error('Your session has expired. Please sign in again.');
+  async function updateUserAccount(targetUid: string, update: { role?: UserRole; active?: boolean }) {
+    const token = await getAccessToken();
 
     const response = await fetch('/api/update-user', {
       method: 'POST',
@@ -214,7 +176,7 @@ export function AdminUsers() {
     }
   }
 
-  function roleOptionsFor(user: AppUserWithId): AppUser['role'][] {
+  function roleOptionsFor(user: AppUserWithId): UserRole[] {
     if (user.role === 'guard') return ['guard', 'admin'];
     if (user.role === 'admin') return ['guard', 'admin', 'superadmin'];
     return ['admin', 'superadmin'];
@@ -317,7 +279,7 @@ export function AdminUsers() {
                       <Select
                         value={user.role}
                         onChange={(event) => {
-                          const newRole = event.target.value as AppUser['role'];
+                          const newRole = event.target.value as UserRole;
                           if (newRole !== user.role) setRoleChange({ user, newRole });
                         }}
                         aria-label={`Change role for ${user.name}`}

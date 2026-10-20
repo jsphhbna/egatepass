@@ -128,3 +128,13 @@
 - Decision: QR plaintext crosses only the scanner-to-Vercel request and is hashed before lookup. Service-only row-locking RPCs resolve current device/staff records and own all status/time/gate/event fields. Entry yields `pending`, a privacy-complete Guard/Admin decision yields `inside` or `rejected`, and exit requires `inside` plus the same assigned gate.
 - Decision: the Guard reads a 50-item projection and daily aggregate from a caller-reauthorizing RPC. Realtime is an invalidation hint with bounded polling recovery; it is not the authorization boundary.
 - Consequence: the browser cannot write lifecycle rows directly, and replay/wrong-device/wrong-gate calls do not advance state.
+
+## ADR-0019 — Decoupled timestamp architecture and complete Admin runtime migration
+
+- Date: 2026-10-20
+- Status: accepted for M4 implementation; integration NOT VERIFIED
+- Decision: introduce `AppTimestamp` (`toDate()`, `toMillis()`, `toISOString()`, `seconds`, `nanoseconds`) in `src/lib/timestamp.ts` and re-export as `type Timestamp = AppTimestamp` in `src/types/index.ts`. All Admin pages and hooks deserialize ISO strings or unix epochs into `AppTimestamp`, eliminating direct `@firebase/firestore` imports while maintaining 100% compatibility with components, formatting utilities, and UI tests.
+- Decision: protect staff and device accounts through dedicated Vercel APIs and service-only RPCs (`api.create_staff_profile`, `api.update_staff_profile`, `api.create_device_profile`, `api.update_device_profile`, `api.retire_device`). Enforce the Last Active Super Admin invariant in Postgres triggers so that neither UPDATE nor DELETE can leave the system with zero active superadmins.
+- Decision: isolate Admin operational rights (Peak Mode scope, rejection reasons, visit purposes) from Super Admin security-sensitive rights (retention days, campus working hours, image purge). Server rejects unprivileged attempts with HTTP 403 and records all operational mutations to `public.audit_events`.
+- Decision: support bounded cursor pagination across visitor records and activity exports (`/api/admin/records`, `/api/admin/activity`) via `collectCursorPages`, completely redacting QR tokens, signing secrets, and raw private storage paths from client downloads.
+

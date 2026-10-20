@@ -1,27 +1,38 @@
 import { useState, useEffect } from 'react';
-import {
-  collection,
-  query,
-  orderBy,
-  limit,
-  getDocs,
-  where,
-  startAfter,
-  type DocumentData,
-  type QueryDocumentSnapshot,
-  type QueryConstraint,
-} from 'firebase/firestore';
-import { db } from '@/lib/firebase';
 import { Download, Eye, Printer } from 'lucide-react';
-import { addDays, format } from 'date-fns';
+import { format } from 'date-fns';
 import { Card, Input, Select, Button, DataTable, DataTableHead, DataTableRow, DataTableCell, Modal, StatusBadge } from '@/components/ui';
 import { AuthenticatedImage } from '@/components/AuthenticatedImage';
-import type { GatePass } from '@/types';
+import type { GatePass, PassSource, PassStatus } from '@/types';
 import { toast } from 'sonner';
 import { collectCursorPages, downloadCsvFile, EXPORT_MAX_ROWS } from '@/lib/completeExport';
+import { asAppTimestamp } from '@/lib/timestamp';
+import { getAccessToken } from '@/services/auth';
 
 interface GatePassWithId extends GatePass {
   id: string;
+}
+
+interface SerializedRecordPass {
+  id: string;
+  visitorId: string;
+  visitorName: string;
+  purpose: string;
+  photoPublicId: string | null;
+  idImagePublicId: string | null;
+  source: PassSource;
+  status: PassStatus;
+  validFrom: string;
+  validUntil: string;
+  issuedAt: string;
+  scannedAt: string | null;
+  timeIn: string | null;
+  timeOut: string | null;
+  entryDeviceId: string | null;
+  exitDeviceId: string | null;
+  decidedByUid: string | null;
+  rejectionReason: string | null;
+  gate: string | null;
 }
 
 const RECORDS_PAGE_SIZE = 50;
@@ -33,33 +44,67 @@ export function AdminRecords() {
   const [statusFilter, setStatusFilter] = useState('');
   const [search, setSearch] = useState('');
   const [selectedPass, setSelectedPass] = useState<GatePassWithId | null>(null);
-  const [lastDocument, setLastDocument] = useState<QueryDocumentSnapshot<DocumentData> | null>(null);
+  const [nextCursor, setNextCursor] = useState<string | null>(null);
   const [hasMore, setHasMore] = useState(false);
   const [loadingMore, setLoadingMore] = useState(false);
   const [exporting, setExporting] = useState(false);
 
-  function recordsQuery(pageSize: number, cursor: QueryDocumentSnapshot<DocumentData> | null = null) {
-    const constraints: QueryConstraint[] = [];
-    if (statusFilter) constraints.push(where('status', '==', statusFilter));
-    if (dateFilter) {
-      const start = new Date(`${dateFilter}T00:00:00+08:00`);
-      const end = addDays(start, 1);
-      constraints.push(where('issuedAt', '>=', start), where('issuedAt', '<', end));
-    }
-    constraints.push(orderBy('issuedAt', 'desc'));
-    if (cursor) constraints.push(startAfter(cursor));
-    constraints.push(limit(pageSize));
-    return query(collection(db, 'gatePasses'), ...constraints);
+  async function fetchRecordsPage(cursor: string | null, pageSize: number) {
+    const token = await getAccessToken();
+    const params = new URLSearchParams();
+    if (statusFilter) params.set('status', statusFilter);
+    if (dateFilter) params.set('date', dateFilter);
+    if (cursor) params.set('cursor', cursor);
+    params.set('pageSize', String(pageSize));
+
+    const response = await fetch(`/api/admin/records?${params.toString()}`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    const data = await response.json().catch(() => null) as {
+      passes?: SerializedRecordPass[];
+      nextCursor?: string | null;
+      hasMore?: boolean;
+      error?: string;
+    } | null;
+
+    if (!response.ok) throw new Error(data?.error || 'Failed to load records');
+
+    const mapped: GatePassWithId[] = (data?.passes ?? []).map((p) => ({
+      id: p.id,
+      visitorId: p.visitorId,
+      visitorName: p.visitorName,
+      purpose: p.purpose,
+      photoPublicId: p.photoPublicId ?? '',
+      idImagePublicId: p.idImagePublicId,
+      source: p.source,
+      status: p.status,
+      validFrom: asAppTimestamp(p.validFrom)!,
+      validUntil: asAppTimestamp(p.validUntil)!,
+      issuedAt: asAppTimestamp(p.issuedAt)!,
+      scannedAt: asAppTimestamp(p.scannedAt),
+      timeIn: asAppTimestamp(p.timeIn),
+      timeOut: asAppTimestamp(p.timeOut),
+      entryDeviceId: p.entryDeviceId,
+      exitDeviceId: p.exitDeviceId,
+      decidedByUid: p.decidedByUid,
+      rejectionReason: p.rejectionReason,
+      gate: p.gate,
+    }));
+
+    return {
+      items: mapped,
+      nextCursor: data?.nextCursor ?? null,
+      hasMore: data?.hasMore ?? false,
+    };
   }
 
   async function loadRecords(append = false) {
     append ? setLoadingMore(true) : setLoading(true);
     try {
-      const snap = await getDocs(recordsQuery(RECORDS_PAGE_SIZE, append ? lastDocument : null));
-      const list = snap.docs.map((document) => ({ id: document.id, ...document.data() } as GatePassWithId));
-      setPasses((current) => append ? [...current, ...list] : list);
-      setLastDocument(snap.docs[snap.docs.length - 1] || null);
-      setHasMore(snap.docs.length === RECORDS_PAGE_SIZE);
+      const res = await fetchRecordsPage(append ? nextCursor : null, RECORDS_PAGE_SIZE);
+      setPasses((current) => (append ? [...current, ...res.items] : res.items));
+      setNextCursor(res.nextCursor);
+      setHasMore(res.hasMore);
     } catch (err) {
       console.error(err);
       toast.error('Visitor records could not be loaded');
@@ -70,7 +115,7 @@ export function AdminRecords() {
   }
 
   useEffect(() => {
-    setLastDocument(null);
+    setNextCursor(null);
     void loadRecords(false);
   }, [dateFilter, statusFilter]);
 
@@ -83,14 +128,15 @@ export function AdminRecords() {
   async function exportCSV() {
     setExporting(true);
     try {
-      const exportResult = await collectCursorPages<GatePassWithId, QueryDocumentSnapshot<DocumentData>>(
+      const exportResult = await collectCursorPages<GatePassWithId, string>(
         async (cursor, pageSize) => {
-          const snapshot = await getDocs(recordsQuery(pageSize, cursor));
+          const res = await fetchRecordsPage(cursor, pageSize);
           return {
-            items: snapshot.docs.map((document) => ({ id: document.id, ...document.data() } as GatePassWithId)),
-            nextCursor: snapshot.docs[snapshot.docs.length - 1] || null,
+            items: res.items,
+            nextCursor: res.nextCursor,
           };
         },
+        { pageSize: 250 },
       );
       const normalizedSearch = search.trim().toLocaleLowerCase();
       const exportPasses = exportResult.items.filter((pass) => !normalizedSearch

@@ -113,6 +113,16 @@ User manual S1 screen comparison remains AWAITING OWNER. Supabase clean migratio
 | EV-S2-007 | DEPENDENCY AUDIT | `npm audit --json`; `npm audit --omit=dev --json`; `npm ls ...`; `npm outdated --long` | TRIAGED: 24 total; production-only 4 high, 0 moderate/critical | No forced upgrade; reachability and removal plan in `docs/DEPENDENCY_AUDIT.md` |
 | EV-S2-008 | TEST HARNESS NEGATIVE / REGRESSION | `npm test` before and after `vitest.config.ts` | Initial FAIL: Playwright spec collected by Vitest; exact rerun PASS, exit 0 | First rerun was blocked by the known orphaned Firestore process; PID/command was verified, stopped, and final ports were clear |
 
-No remote database, Vercel project, Resend API, DNS, or backup infrastructure was accessed or mutated.
-
 Exact-commit verification at `80d861b`: `npm run test:architecture` PASS 3/3; `npm run test:supabase:static` PASS 5/5; `npm run build` PASS; `npm run typecheck:functions` PASS. The only working-tree change during those commands was the preserved, pre-existing `.env.example` edit.
+
+## M4 / S6 Admin and operations runtime checkpoint
+
+| ID | Class | Command / artifact | Result | Scope and limitation |
+|---|---|---|---|---|
+| EV-M4-001 | STATIC / UNIT | `npx vitest run tests/admin-governance-static.test.ts` | PASS: 1 file, 6 tests | Verifies decoupling of all Admin pages from Firebase, bearer auth on all 16 admin endpoints, Super Admin privilege boundaries, controlled device aliases, cursor exports, and audit logging |
+| EV-M4-002 | STATIC / UNIT | `npx vitest run tests/*.test.ts` (10 test files) | PASS: 10 files, 79 tests | Complete unit and static test suite covering architecture, exports, gate lifecycle, identity, issuance, retention, runtime config, Supabase static, and admin governance |
+| EV-M4-003 | STATIC BUILD | `npm run typecheck:api` | PASS: exit code 0 | Type checks all Vercel Web Handlers in `api/` and helpers in `server/` against `@supabase/supabase-js` and Zod schemas |
+| EV-M4-004 | STATIC BUILD | `npm run build` | PASS: exit code 0 | React + Vite client compilation producing production bundles without any runtime syntax or type errors |
+| EV-M4-005 | BROWSER E2E / STARTUP | `npm run test:e2e:startup` | PASS: 4/4 cases | Playwright Edge browser tests for dev/configured, dev/missing, dev/malformed, and preview/configured startup without synthetic Firebase variables |
+| EV-M4-006 | DATABASE/RLS | `supabase/tests/006_admin_governance.test.sql` | NOT RUN / BLOCKED | 10 pgTAP assertions authored for staff/device RPCs and last-superadmin protection; blocked by lack of local Docker/Postgres environment |
+

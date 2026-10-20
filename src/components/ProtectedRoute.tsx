@@ -18,7 +18,7 @@ interface ProtectedRouteProps {
 }
 
 /**
- * Route guard that checks Firebase auth state and Firestore role.
+ * Route guard that checks Supabase auth state and profile role.
  * Redirects to login if unauthenticated, or to unauthorized page if wrong role.
  */
 export function ProtectedRoute({
