@@ -93,3 +93,11 @@
 - Status: accepted for M1 implementation; provider behavior NOT VERIFIED
 - Decision: only `VITE_SUPABASE_URL` and `VITE_SUPABASE_PUBLISHABLE_KEY` configure the browser client. Missing/malformed values leave public information available and disable privileged sign-in. Device usernames must match the database alias constraint and map deterministically to `<alias>@devices.egatepass.invalid`; arbitrary caller-selected mappings are rejected.
 - Security boundary: publishable configuration is not authorization. Auth UID plus active `staff_profiles`/`devices` rows remain authoritative through RLS; live enforcement is blocked pending an isolated Supabase test environment.
+
+## ADR-0014 — Server-verified Guard password completion
+
+- Date: 2026-10-20
+- Status: accepted for implementation; integration NOT VERIFIED
+- Decision: a Vercel Node Web Handler validates the bearer using Supabase Auth, rechecks the active Guard profile, verifies the current password in a separate non-persistent client, changes the Auth password with the server-only secret client, then invokes a service-role-only transactional database finalizer. A database-finalization failure returns non-2xx and creates a retryable reconciliation task.
+- Rejected: a browser-callable flag-clearing RPC could be invoked without proving the password changed; reusing the privileged client for password sign-in could replace its service-role Authorization header with a user session.
+- Authority reviewed 2026-10-20: Supabase `auth.getUser(jwt)` reference; Supabase API keys and service-role client troubleshooting; Vercel Vite and Node.js Function handler documentation. Documentation is expected-behavior evidence, not runtime proof.

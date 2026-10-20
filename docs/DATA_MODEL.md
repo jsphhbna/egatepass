@@ -1,6 +1,6 @@
 # Supabase Data Model
 
-Status: S2 `IMPLEMENTED — NOT VERIFIED`. The migrations have not executed against PostgreSQL.
+Status: S2 plus M1 identity RPCs `IMPLEMENTED — NOT VERIFIED`. The migrations have not executed against PostgreSQL.
 
 ## Identity and authorization
 

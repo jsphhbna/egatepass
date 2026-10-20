@@ -1,6 +1,5 @@
 import { NavLink, Outlet, useNavigate } from 'react-router-dom';
-import { signOut } from 'firebase/auth';
-import { auth } from '@/lib/firebase';
+import { signOutCurrentActor } from '@/services/auth';
 import { useAuth } from '@/hooks/useAuth';
 import {
   LayoutDashboard,
@@ -17,7 +16,6 @@ import {
 import { BrandMark } from '@/components/BrandMark';
 import { ConfirmModal } from '@/components/ui';
 import { useState } from 'react';
-import type { AppUser } from '@/types';
 import { formatUserRole, isSuperAdmin } from '@/lib/permissions';
 
 const navItems = [
@@ -35,7 +33,7 @@ export function AdminPage() {
   const navigate = useNavigate();
   const [sidebarOpen, setSidebarOpen] = useState(false);
 
-  const adminName = (userData as AppUser | null)?.name ?? 'Admin';
+  const adminName = userData?.kind === 'staff' ? userData.name : 'Admin';
   const adminRoleLabel = isSuperAdmin(role) ? formatUserRole('superadmin') : 'Admin';
 
   const [isSigningOut, setIsSigningOut] = useState(false);
@@ -44,7 +42,7 @@ export function AdminPage() {
   async function handleSignOut() {
     setIsSigningOut(true);
     try {
-      await signOut(auth);
+      await signOutCurrentActor();
       navigate('/login', { replace: true });
     } finally {
       setIsSigningOut(false);
@@ -145,4 +143,3 @@ export function AdminPage() {
     </div>
   );
 }
-

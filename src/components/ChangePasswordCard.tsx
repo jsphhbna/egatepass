@@ -1,8 +1,8 @@
 import { useState } from 'react';
-import { sendPasswordResetEmail } from 'firebase/auth';
 import { KeyRound, Mail } from 'lucide-react';
 import { toast } from 'sonner';
-import { auth } from '@/lib/firebase';
+import { sendPasswordReset } from '@/services/auth';
+import { useAuth } from '@/hooks/useAuth';
 import { Button, Card } from '@/components/ui';
 
 function errorMessage(error: unknown): string | undefined {
@@ -10,19 +10,20 @@ function errorMessage(error: unknown): string | undefined {
 }
 
 export function PasswordResetCard() {
+  const { userData } = useAuth();
   const [isSendingReset, setIsSendingReset] = useState(false);
 
   async function sendResetLink() {
-    const user = auth.currentUser;
-    if (!user?.email) {
+    const email = userData?.kind === 'staff' ? userData.email : '';
+    if (!email) {
       toast.error('Your account session has expired. Please sign in again.');
       return;
     }
 
     setIsSendingReset(true);
     try {
-      await sendPasswordResetEmail(auth, user.email);
-      toast.success(`A password reset link was sent to ${user.email}.`);
+      await sendPasswordReset(email);
+      toast.success(`A password reset link was sent to ${email}.`);
     } catch (error) {
       toast.error(errorMessage(error) || 'Could not send the password reset email.');
     } finally {

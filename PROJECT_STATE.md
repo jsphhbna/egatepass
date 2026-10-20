@@ -41,6 +41,15 @@ Current stage: P0 recovery PASS locally; S3/M1 IN PROGRESS — provider integrat
 - Legacy Firebase remains in deferred feature chunks and operational pages. The build still emits `firebase-*.js`; full runtime cutover is not claimed.
 - Current deterministic inventory: 67 matching legacy-provider lines across the target runtime/config scan; production-only audit remains 4 high findings in the legacy dependency chain.
 
+## M1/S3 identity slice
+
+- Implemented Supabase session/profile/device resolution, controlled device-alias normalization, shared login, verification resend, recovery request/callback, staff privacy acknowledgement, logout, and token acquisition.
+- Implemented `/api/auth/complete-password-change` as a Vercel Web Handler plus `20261020000400_identity_rpcs.sql`. It revalidates bearer/current password/active Guard state and records partial completion for reconciliation.
+- Official Supabase and Vercel docs were reviewed on 2026-10-20 for network-authenticated `getUser(token)`, server-only secret keys/BYPASSRLS, separate privileged/user-session clients, and Vite `/api` TypeScript handlers.
+- Local checks PASS: API typecheck; frontend build; identity static 4/4; existing Supabase static 5/5; four-case startup browser matrix including reset-route unavailable behavior.
+- Real Auth users, email delivery, RLS queries, RPC execution, password mutation, Vercel routing, and revocation are BLOCKED / NOT TESTED. `supabase status` reports Docker and Podman absent; no project is linked.
+- Legacy inventory is now 50 matching lines, down from 67, but the Firebase output chunk remains. M1 is not complete and cutover is not claimed.
+
 ## Baseline toolchain
 
 - Windows PowerShell 5.1.19041.7725

@@ -27,6 +27,18 @@ Date/time zone: 2026-10-20, Asia/Manila
 | EV-P0-011 | DEPENDENCY / CUTOVER INVENTORY | `npm audit --omit=dev --json`; target `rg` inventory | FAIL release gate: 4 high production findings; 67 legacy-match lines | Findings remain in reachable legacy Firebase chain; Firebase bundle still emitted and legacy cleanup is correctly deferred |
 | EV-P0-012 | LEGACY E2E | `npm run test:e2e:legacy` | NOT RUN on migration branch | It provisions Firebase emulator users while the shared login now targets Supabase; running it would send synthetic credentials to the unidentified hosted Supabase URL. Replacement real Supabase E2E is BLOCKED pending an authorized isolated environment |
 
+## M1/S3 identity implementation
+
+| ID | Class | Command / artifact | Result | Scope and limitation |
+|---|---|---|---|---|
+| EV-M1-001 | IMPLEMENTATION | Supabase Auth/session/login/reset/privacy/logout code; identity RPC migration; Vercel forced-password handler | IMPLEMENTED — NOT VERIFIED | Source exists and compiles; no provider/database claim |
+| EV-M1-002 | STATIC / TYPECHECK | `npm run typecheck:api`; `npm run build` | PASS | Vercel TypeScript and frontend compile only; built output still includes Firebase deferred chunk |
+| EV-M1-003 | STATIC CONTRACT | `npm run test:identity:static`; `npm run test:supabase:static` | PASS: 4/4 and 5/5 | Reviews source contracts only; 35 pgTAP assertions are authored, not executed |
+| EV-M1-004 | BROWSER E2E | `npm run test:e2e:startup` | PASS: 4/4 Edge cases | Landing and reset unavailable/invalid-link behavior in dev/preview; no real Auth session or email link |
+| EV-M1-005 | ENVIRONMENT / DATABASE | `npx --yes supabase@2.121.0 status` | BLOCKED: `StatusDbInspectError`; Docker and Podman not found; linked project null | No migration/RPC/Auth/Storage operation was run |
+| EV-M1-006 | PROVIDER DOCUMENTATION | Official Supabase Auth/API-key/server-client and Vercel Vite/Node Function docs reviewed 2026-10-20 | REVIEWED | Supports design expectations only; not project runtime evidence |
+| EV-M1-007 | CUTOVER INVENTORY | target `rg` scan | FAIL release gate: 50 legacy-provider match lines | Reduced from 67; Firebase chunk remains; cleanup prohibited until parity gates pass |
+
 | ID | Class | Command / artifact | Result | Scope and limitation |
 |---|---|---|---|---|
 | EV-S0-001 | STATIC / GIT | `git remote -v`; branch/status/HEAD checks; `git ls-remote` for both main refs | PASS | Lowercase target only is configured; backup queried read-only |

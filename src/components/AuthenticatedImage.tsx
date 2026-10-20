@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { auth } from '@/lib/firebase';
+import { getAccessToken } from '@/services/auth';
 import { ImageOff } from 'lucide-react';
 
 interface AuthenticatedImageProps extends React.ImgHTMLAttributes<HTMLImageElement> {
@@ -23,12 +23,7 @@ export function AuthenticatedImage({ publicId, fallbackText = 'Image unavailable
         setState('loading');
         setObjectUrl(null);
         
-        const user = auth.currentUser;
-        if (!user) {
-          throw new Error('User not authenticated');
-        }
-
-        const token = await user.getIdToken();
+        const token = await getAccessToken();
         const response = await fetch(`/api/image?publicId=${encodeURIComponent(publicId || '')}`, {
           headers: {
             Authorization: `Bearer ${token}`

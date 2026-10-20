@@ -14,7 +14,7 @@ Status: SQL/RLS implementation reviewed; runtime enforcement is **BLOCKED / NOT 
 | Read reconciliation | No | No | No | No | No | No | Yes |
 | Manage privileged roles/settings/holds | No | No | No | No | No | Restricted | Yes |
 
-S2 implements identity resolution, select policies, private evidence buckets, and upload-intent RPC authorization. Lifecycle, governance, and retention RPCs are intentionally reserved for later stages and therefore have no client write path today.
+S2 implements identity resolution, select policies, private evidence buckets, and upload-intent RPC authorization. M1 adds caller-bound privacy acknowledgement and a service-role-only Guard password finalizer. Pass lifecycle, governance, provisioning, and retention RPCs remain reserved for later stages and therefore have no client write path today.
 
 ## Fail-closed rules
 
@@ -24,6 +24,7 @@ S2 implements identity resolution, select policies, private evidence buckets, an
 - The browser cannot write visit events, audit events, reconciliation tasks, holds, limiter state, or maintenance state.
 - Storage insert requires a live, owner/path/bucket-bound intent. No client Storage update/delete policy exists.
 - A service-role server function bypasses RLS and must independently authorize the caller before using it.
+- The Guard password endpoint authenticates the bearer against Supabase Auth, checks the active Guard profile, verifies the current password, and uses a separate privileged client so the verification session cannot replace the admin client's service-role authorization.
 
 ## Mandatory runtime denial tests
 

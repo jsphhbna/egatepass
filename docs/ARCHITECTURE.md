@@ -4,7 +4,7 @@ Last reviewed: 2026-10-20 (Asia/Manila)
 
 ## Status and invariant
 
-This document separates the running legacy baseline from the approved target. At S2 the browser still uses Firebase, Netlify Functions, and Cloudinary. Supabase schema/RLS source now exists, but Supabase, Vercel Functions, and Resend are **not yet the active application backend**.
+This document separates the partially migrated feature branch from the approved final target. Public startup and shared staff/device identity now use Supabase configuration/Auth, and the first Vercel Auth endpoint is implemented. Operational visitor, Guard, Admin, Storage, and pass-lifecycle features still contain Firebase/Netlify/Cloudinary code in deferred chunks. Supabase SQL and Vercel behavior remain **not integration-verified**.
 
 Invariant: no browser-controlled role, source, device type, gate, pass status, timestamp, object path, or audit payload may authorize or manufacture a privileged outcome. The database or a trusted server function must resolve current actor/resource state and fail closed.
 
@@ -70,6 +70,8 @@ An anonymous visitor or active kiosk requests a one-use upload intent. The Stora
 
 The shared `/login` authenticates through Supabase Auth. The application resolves either an active `staff_profile` or active `device` record by Auth UID. It never accepts role/type from user metadata. Revocation/suspension is checked on the next protected DB query/RPC even if a JWT has not expired.
 
+Device aliases are normalized only when they satisfy the database alias constraint and map to a fixed non-routable Auth email domain; arbitrary caller-provided alias-to-email mappings are not accepted. Password recovery uses Supabase Auth links. Guard first-login password completion uses `/api/auth/complete-password-change`: the function validates the access token with Auth, rechecks the active Guard row, verifies the current password in an isolated client, changes the Auth password, then calls a service-role-only transactional finalizer. A post-Auth database failure remains explicit and creates a reconciliation task.
+
 ### Scanning and Guard decision
 
 The RPC resolves the scanner's type and gate from its device row. Entry creates `pending`, not approval. Guard/Admin/Super Admin may inspect only operationally required pending evidence and decide a still-pending pass. Exit accepts only `inside` at the authorized gate policy.
@@ -87,8 +89,8 @@ Pass issue is durable independently of optional email. Email retry uses a stable
 
 ## Current transition boundary
 
-Legacy files stay active until replacement slices pass their gates. `firebase.json`, Firestore rules/indexes, `netlify/`, and Cloudinary code must not be removed based on architecture intent alone. S1 changes repository metadata, documentation, and target deployment scaffolding while preserving all existing runtime behavior.
+Legacy files stay until replacement slices pass their gates. `firebase.json`, Firestore rules/indexes, `netlify/`, and Cloudinary code must not be removed based on architecture intent alone. P0 removed Firebase from the startup chain; M1 removes it from shared login/recovery/privacy/logout and scanner token acquisition. Guard queues, portal/kiosk registration, admin data, Storage/image delivery, pass APIs, and several account/device administration paths remain legacy and block cutover.
 
 ## Evidence and authority
 
-Current provider behavior was reviewed on 2026-10-20 against Supabase RLS/function/Storage documentation and Vercel Vite/Functions/configuration documentation. Those sources define expected configuration; they do not prove this repository or a deployed environment behaves correctly. Project proof is recorded in `EVIDENCE_LEDGER.md`.
+Current provider behavior was reviewed on 2026-10-20 against Supabase Auth `getUser`, API-key/RLS, and server-client guidance plus Vercel Vite and Node Function handler documentation. Those sources define expected behavior; they do not prove this repository or a deployed environment behaves correctly. Project proof is recorded in `EVIDENCE_LEDGER.md`.

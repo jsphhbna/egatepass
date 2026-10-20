@@ -35,7 +35,7 @@ Use fictional visitors only. Never place passwords, QR bearer values, ID images,
 1. Start only the disposable Firebase Auth/Firestore emulators and local app. Confirm the host is `127.0.0.1`, not a production domain.
 2. At 1440px and approximately 390px, capture `/` and type `/login` manually. Confirm public navigation contains only How it works, What you need, Privacy, FAQ, and Get Your Gate Pass; no staff/device links or V10/official-certification claims.
 3. With synthetic emulator accounts, capture `/kiosk`, `/scan/entry`, `/scan/exit`, `/guard`, `/admin`, and every Admin tab. Do not use live accounts or real visitor data.
-4. Record any overflow, unreadable text, missing route, modal/focus issue, or workflow difference. Current automated capture already shows phone landing horizontal clipping; confirm whether a real phone reproduces it.
+4. Record any overflow, unreadable text, missing route, modal/focus issue, or workflow difference. The historical S0 capture raised a clipping concern; the P0 390px browser assertion now passes, but owner-device confirmation remains required.
 
 ## Modernized-system acceptance cases
 
@@ -67,7 +67,21 @@ Owner status: **AWAITING OWNER**.
 2. Compare `/`, `/login`, `/kiosk`, `/scan/entry`, `/scan/exit`, `/guard`, `/admin`, and every Admin tab with `docs/evidence/s0-baseline/`.
 3. Confirm no route, original action, copy section, role redirect, or visual identity was removed. Record the known 390px landing overflow separately; it is deferred to S8.
 4. Confirm public navigation still has no staff/device link.
-5. Fill one evidence record per discrepancy. Do not approve Supabase/Vercel behavior from this check; the runtime is still legacy.
+5. Fill one evidence record per discrepancy. This is historical S1 guidance; on the migration branch, shared startup/Auth is now Supabase while operational feature chunks remain legacy.
+
+## Checkpoint sheet: M1 shared identity — BLOCKED / AWAITING OWNER
+
+Provider execution is BLOCKED until a disposable local Supabase or explicitly authorized non-production project is available. Once available, use fictional accounts only:
+
+1. Record environment identity, feature commit, browser, and reviewer. Confirm migrations execute twice and pgTAP passes before creating users.
+2. Sign in through `/login` as active Super Admin, Admin, Guard, Kiosk, Entry, and Exit identities; record exact redirects, refresh persistence, logout, and wrong-role denial.
+3. Verify unconfirmed and suspended staff, revoked and wrong-type devices, and an Auth user with no profile/device row cannot obtain operational access.
+4. Enter a device alias (not its internal email) and confirm only the provisioned matching device authenticates. Try malformed aliases and arbitrary email mappings.
+5. Exercise Guard forced password change with wrong current password, weak/same password, success, and injected finalization failure. Confirm no password/token appears in logs and reconciliation is created only for the partial-failure case.
+6. Exercise forgot-password and verification-resend emails only through an approved synthetic inbox; confirm expired/used callbacks fail safely and no account enumeration appears for unknown email submissions.
+7. Revoke or suspend an already signed-in actor and confirm the next protected database/API operation fails even if the browser still holds an unexpired token.
+
+- Result: [ ] PASS [ ] FAIL [ ] BLOCKED
 
 ## Checkpoint sheet: S2 database/security (only after isolated environment is available)
 

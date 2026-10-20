@@ -1,7 +1,6 @@
 import { useEffect, useState } from 'react';
-import { sendPasswordResetEmail } from 'firebase/auth';
 import { Mail } from 'lucide-react';
-import { auth } from '@/lib/firebase';
+import { sendPasswordReset } from '@/services/auth';
 import { Button, Modal } from '@/components/ui';
 import { toast } from 'sonner';
 
@@ -44,7 +43,7 @@ export function GuardPasswordResetModal({ isOpen, email, onClose }: GuardPasswor
     if (!email || secondsRemaining > 0) return;
     setSending(true);
     try {
-      await sendPasswordResetEmail(auth, email);
+      await sendPasswordReset(email);
       const sentAt = Date.now();
       window.localStorage.setItem(storageKeyFor(email), String(sentAt));
       setLastSentAt(sentAt);

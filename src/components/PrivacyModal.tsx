@@ -1,27 +1,25 @@
 import { useState } from 'react';
-import { doc, updateDoc, serverTimestamp } from 'firebase/firestore';
-import { db } from '@/lib/firebase';
+import { requireSupabase } from '@/lib/supabase';
 import { useAuth } from '@/hooks/useAuth';
 import { BrandMark } from '@/components/BrandMark';
 import { toast } from 'sonner';
 import { Button, Modal } from '@/components/ui';
 
 export function PrivacyModal() {
-  const { status, uid, userData } = useAuth();
+  const { status, userData } = useAuth();
   const [loading, setLoading] = useState(false);
   const [accepted, setAccepted] = useState(false);
 
   // Only show if a staff user has not accepted yet.
-  if (status !== 'authenticated' || !uid || !userData || !('privacyAcceptedAt' in userData)) return null;
+  if (status !== 'authenticated' || !userData || userData.kind !== 'staff') return null;
   if (userData.role !== 'admin' && userData.role !== 'superadmin' && userData.role !== 'guard') return null;
   if (userData.privacyAcceptedAt !== null || accepted) return null;
 
   async function handleAccept() {
     setLoading(true);
     try {
-      await updateDoc(doc(db, 'users', uid!), {
-        privacyAcceptedAt: serverTimestamp(),
-      });
+      const { error } = await requireSupabase().schema('api').rpc('acknowledge_privacy');
+      if (error) throw error;
       setAccepted(true);
       toast.success('Privacy policy acknowledged');
     } catch (err) {

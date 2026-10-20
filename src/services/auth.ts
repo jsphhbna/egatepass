@@ -1,0 +1,42 @@
+import { supabase } from '@/lib/supabase';
+
+export async function getAccessToken(): Promise<string> {
+  if (!supabase) throw new Error('E-GatePass services are unavailable.');
+  const { data, error } = await supabase.auth.getSession();
+  if (error || !data.session?.access_token) throw new Error('Your session has expired. Please sign in again.');
+  return data.session.access_token;
+}
+
+export async function signOutCurrentActor(): Promise<void> {
+  if (!supabase) return;
+  const { error } = await supabase.auth.signOut();
+  if (error) throw error;
+}
+
+export async function sendPasswordReset(email: string): Promise<void> {
+  if (!supabase) throw new Error('E-GatePass services are unavailable.');
+  const { error } = await supabase.auth.resetPasswordForEmail(email, {
+    redirectTo: `${window.location.origin}/reset-password`,
+  });
+  if (error) throw error;
+}
+
+export async function completeGuardPasswordChange(currentPassword: string, newPassword: string): Promise<void> {
+  const token = await getAccessToken();
+  const response = await fetch('/api/auth/complete-password-change', {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${token}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ currentPassword, newPassword }),
+  });
+
+  if (response.ok) return;
+  const payload = await response.json().catch(() => ({})) as { error?: string };
+  if (payload.error === 'invalid_current_password') throw new Error('Incorrect current password.');
+  if (payload.error === 'password_changed_finalization_pending') {
+    throw new Error('Your password changed, but account activation is still pending. Retry using the new password or contact an administrator.');
+  }
+  throw new Error('Password update could not be completed. Please try again.');
+}

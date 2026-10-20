@@ -9,9 +9,9 @@ import {
   getDoc,
   limit,
 } from 'firebase/firestore';
-import { auth, db } from '@/lib/firebase';
-import { signOut } from 'firebase/auth';
+import { db } from '@/lib/firebase';
 import { useAuth } from '@/hooks/useAuth';
+import { getAccessToken, signOutCurrentActor } from '@/services/auth';
 import { AuthenticatedImage } from '@/components/AuthenticatedImage';
 import type { GatePass } from '@/types';
 import {
@@ -186,10 +186,9 @@ export function GuardPage() {
   }
 
   async function recordDecision(passId: string, decision: 'approved' | 'rejected', reason: string | null = null) {
-    const token = await auth.currentUser?.getIdToken();
-    if (!token) throw new Error('Your session has expired. Please sign in again.');
+    const token = await getAccessToken();
 
-    const response = await fetch('/.netlify/functions/decide-visit', {
+    const response = await fetch('/api/decide-visit', {
       method: 'POST',
       headers: {
         Authorization: `Bearer ${token}`,
@@ -252,7 +251,7 @@ export function GuardPage() {
   async function handleSignOut() {
     setIsSigningOut(true);
     try {
-      await signOut(auth);
+      await signOutCurrentActor();
     } catch (err) {
       toast.error('Failed to sign out');
     } finally {
@@ -629,7 +628,7 @@ export function GuardPage() {
 
       <GuardPasswordResetModal
         isOpen={showPasswordReset}
-        email={auth.currentUser?.email || (userData && 'email' in userData ? userData.email || '' : '')}
+        email={userData?.kind === 'staff' ? userData.email : ''}
         onClose={() => setShowPasswordReset(false)}
       />
 

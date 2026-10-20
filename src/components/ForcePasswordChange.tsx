@@ -1,6 +1,5 @@
 import { useState } from 'react';
-import { updatePassword } from 'firebase/auth';
-import { auth } from '@/lib/firebase';
+import { completeGuardPasswordChange } from '@/services/auth';
 import { Button, Card, Input, FormField, Modal } from '@/components/ui';
 import { BrandMark } from '@/components/BrandMark';
 import { toast } from 'sonner';
@@ -38,28 +37,7 @@ export function ForcePasswordChange() {
 
     setLoading(true);
     try {
-      if (!auth.currentUser || !auth.currentUser.email) throw new Error('Not authenticated');
-
-      // Re-authenticate first
-      const { EmailAuthProvider, reauthenticateWithCredential } = await import('firebase/auth');
-      const credential = EmailAuthProvider.credential(auth.currentUser.email, currentPassword);
-      await reauthenticateWithCredential(auth.currentUser, credential);
-
-      // Update password using client SDK
-      await updatePassword(auth.currentUser, newPassword);
-
-      // Call the Netlify function to clear the flag
-      const token = await auth.currentUser.getIdToken(true);
-      const res = await fetch('/.netlify/functions/clear-password-flag', {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${token}`
-        }
-      });
-
-      if (!res.ok) {
-        throw new Error('Failed to update server-side state. Please contact an administrator.');
-      }
+      await completeGuardPasswordChange(currentPassword, newPassword);
 
       toast.success('Password updated successfully. You can now continue using your account.');
       // After success, we want the app to reload or re-evaluate the auth state.
@@ -67,13 +45,7 @@ export function ForcePasswordChange() {
       window.location.reload();
     } catch (err: any) {
       console.error(err);
-      if (err.code === 'auth/wrong-password' || err.code === 'auth/invalid-credential') {
-        toast.error('Incorrect current password.');
-      } else if (err.code === 'auth/weak-password') {
-        toast.error(`Password is too weak. Please use at least ${PASSWORD_MIN_LENGTH} characters.`);
-      } else {
-        toast.error(err.message || 'Failed to update password');
-      }
+      toast.error(err instanceof Error ? err.message : 'Failed to update password');
     } finally {
       setLoading(false);
     }

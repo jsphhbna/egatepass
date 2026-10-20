@@ -75,8 +75,16 @@ export function LoginPage() {
         await supabase.auth.signOut();
         setError('Account not verified. Please verify your email first. Check your inbox, spam, or trash folder for the verification email.');
       }
-    } catch {
-      setError('Invalid email, device username, or password. Please try again.');
+    } catch (signInError: unknown) {
+      const code = typeof signInError === 'object' && signInError !== null && 'code' in signInError
+        ? String(signInError.code)
+        : '';
+      if (code === 'email_not_confirmed' && identity.includes('@')) {
+        setUnverifiedEmail(normalized.email);
+        setError('Account not verified. Please verify your email first. Check your inbox, spam, or trash folder for the verification email.');
+      } else {
+        setError('Invalid email, device username, or password. Please try again.');
+      }
     } finally {
       setLoading(false);
     }

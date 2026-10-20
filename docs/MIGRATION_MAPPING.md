@@ -29,7 +29,7 @@ This is a planning inventory, not proof that the target exists. Canonical SQL wi
 | `decide-visit` | Guard/admin pending-only approve/reject transaction + evidence expiry update |
 | `create-user` | Supabase Admin invitation/create plus staff profile transaction/reconciliation |
 | `update-user` | Restricted status/role change with last-SA enforcement and audit |
-| `clear-password-flag` | Verified Guard password-update completion RPC |
+| `clear-password-flag` | `/api/auth/complete-password-change` plus service-role-only transactional finalizer — IMPLEMENTED, NOT INTEGRATION-VERIFIED |
 | `create-device` | Real Auth identity + device/gate link; return credentials only after both exist |
 | `update-device` | Allowed label/gate/status changes with actor matrix/audit |
 | `update-device-auth` | Super Admin credential rotation; invalidate/deny old session on next operation |
@@ -47,8 +47,8 @@ This is a planning inventory, not proof that the target exists. Canonical SQL wi
 
 | Current module | Planned target |
 |---|---|
-| `src/lib/firebase.ts` | typed browser Supabase client using publishable key only |
-| `src/hooks/useAuth.tsx` | Supabase session listener + authoritative protected profile/device resolution |
+| `src/lib/firebase.ts` | `src/lib/supabase.ts` is active for bootstrap/Auth; Firebase remains only for unmigrated feature chunks |
+| `src/hooks/useAuth.tsx` | Supabase session listener + authoritative protected profile/device resolution — IMPLEMENTED, NOT LIVE-VERIFIED |
 | direct Firestore reads/listeners | typed API/RPC or narrowly scoped RLS views/realtime subscriptions |
 | `/api/*` and `/.netlify/functions/*` mix | stable `/api/*` Vercel Functions or explicitly documented RPC calls |
 | `src/lib/cloudinary.ts` | Storage intent/upload/claim client; no server secret or broad bucket access |
@@ -64,7 +64,8 @@ No old configuration is removed merely because a target file compiles. Removal o
 - Canonical tables/types/constraints/indexes/triggers: `supabase/migrations/20261020000100_core_schema.sql` — IMPLEMENTED, NOT EXECUTED.
 - Explicit grants, RLS helpers/policies, private Storage buckets: `20261020000200_rls_and_storage.sql` — IMPLEMENTED, NOT EXECUTED.
 - Current-actor and upload-intent RPCs: `20261020000300_core_rpc.sql` — IMPLEMENTED, NOT EXECUTED.
+- Privacy acknowledgement and Guard password finalization: `20261020000400_identity_rpcs.sql` plus `/api/auth/complete-password-change` — IMPLEMENTED, NOT EXECUTED.
 - One-time non-public Super Admin bootstrap: `supabase/bootstrap/README.md` — PROCEDURE AUTHORED, NOT TESTED.
-- Real database/schema matrix: `supabase/tests/*.test.sql` — 27 ASSERTIONS AUTHORED, BLOCKED.
+- Real database/schema matrix: `supabase/tests/*.test.sql` — 35 ASSERTIONS AUTHORED, BLOCKED.
 
-No Firebase collection/function or Cloudinary behavior is removed or declared replaced at this checkpoint.
+Shared login, recovery, privacy acknowledgement, logout, and bearer-token acquisition have target implementations. No database/provider behavior is declared replaced until the isolated integration matrix passes; Firebase collection/Cloudinary operational paths remain present.

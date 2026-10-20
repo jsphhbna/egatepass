@@ -1,10 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { auth } from '@/lib/firebase';
 import { useAuth } from '@/hooks/useAuth';
+import { getAccessToken, signOutCurrentActor } from '@/services/auth';
 import { Html5Qrcode } from 'html5-qrcode';
 import { toast } from 'sonner';
 import { LogOut as LogOutIcon, CheckCircle2, XCircle, AlertTriangle } from 'lucide-react';
-import type { Device } from '@/types';
 import { createOptimizedQrScanner, enableContinuousFocus, QR_SCAN_CONFIG } from '@/lib/qrScanner';
 
 type ScanStatus = 'ready' | 'processing' | 'success' | 'warning' | 'error';
@@ -17,7 +16,7 @@ export function ExitScanPage() {
   const debounceRef = useRef(false);
   const resetTimerRef = useRef<NodeJS.Timeout | null>(null);
 
-  const device = userData as Device | null;
+  const device = userData?.kind === 'device' ? userData : null;
   const gate = device?.gate ?? 'Unknown Gate';
 
   const processQR = useCallback(async (passId: string) => {
@@ -28,8 +27,7 @@ export function ExitScanPage() {
     setStatusMessage('Verifying…');
 
     try {
-      const token = await auth.currentUser?.getIdToken();
-      if (!token) throw { code: 'unauthorized', message: 'Device session has expired' };
+      const token = await getAccessToken();
       const response = await fetch('/api/scan-pass', {
         method: 'POST',
         headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
@@ -109,7 +107,7 @@ export function ExitScanPage() {
       <div
         className="mb-5 cursor-default text-center"
         onDoubleClick={() => {
-          if (window.confirm('Admin: Sign out of this scanner?')) auth.signOut();
+          if (window.confirm('Admin: Sign out of this scanner?')) void signOutCurrentActor();
         }}
       >
         <div className="mb-2 inline-flex rounded-full border border-[var(--color-accent)]/40 bg-[var(--color-accent)]/10 px-3 py-1">

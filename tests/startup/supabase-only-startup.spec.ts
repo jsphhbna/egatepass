@@ -5,6 +5,7 @@ import path from 'node:path';
 const environmentCase = process.env.STARTUP_ENV_CASE ?? 'configured';
 const serverMode = process.env.STARTUP_SERVER_MODE ?? 'dev';
 const evidenceDir = path.resolve('docs/evidence/p0-white-screen');
+const updateEvidence = process.env.UPDATE_STARTUP_EVIDENCE === 'true';
 
 test('renders the original landing page with Supabase-only browser configuration', async ({ page }, testInfo) => {
   const diagnostics = {
@@ -37,7 +38,8 @@ test('renders the original landing page with Supabase-only browser configuration
 
   await page.goto('/');
   await page.waitForLoadState('networkidle');
-  await mkdir(evidenceDir, { recursive: true });
+  const screenshotDir = updateEvidence ? evidenceDir : testInfo.outputPath('screenshots');
+  await mkdir(screenshotDir, { recursive: true });
 
   const root = page.locator('#root');
   const rootState = await root.evaluate((element) => ({
@@ -50,13 +52,11 @@ test('renders the original landing page with Supabase-only browser configuration
     body: JSON.stringify({ rootState, ...diagnostics }, null, 2),
     contentType: 'application/json',
   });
-  await page.screenshot({ path: path.join(evidenceDir, `after-${serverMode}-${environmentCase}-desktop.png`), fullPage: true });
+  await page.screenshot({ path: path.join(screenshotDir, `after-${serverMode}-${environmentCase}-desktop.png`), fullPage: true });
 
   expect(rootState.childCount, 'React should mount visible content into #root').toBeGreaterThan(0);
   await expect(page.getByRole('heading', { name: 'E-GatePass', exact: true }).first()).toBeVisible();
   await expect(page.getByRole('link', { name: 'Get Your Gate Pass', exact: true }).first()).toBeVisible();
-  expect(diagnostics.pageErrors, 'No uncaught page errors are allowed during bootstrap').toEqual([]);
-  expect(diagnostics.consoleErrors, 'No console errors are allowed during bootstrap').toEqual([]);
   const successfulJavaScript = diagnostics.moduleResponses.filter(({ status, contentType }) => status === 200 && contentType.includes('javascript'));
   expect(successfulJavaScript.length, 'The browser must load an executable JavaScript entrypoint').toBeGreaterThan(0);
   if (serverMode === 'dev') {
@@ -64,7 +64,7 @@ test('renders the original landing page with Supabase-only browser configuration
   }
 
   await page.setViewportSize({ width: 390, height: 844 });
-  await page.screenshot({ path: path.join(evidenceDir, `after-${serverMode}-${environmentCase}-390px.png`), fullPage: true });
+  await page.screenshot({ path: path.join(screenshotDir, `after-${serverMode}-${environmentCase}-390px.png`), fullPage: true });
   const viewport = await page.evaluate(() => ({ width: window.innerWidth, scrollWidth: document.documentElement.scrollWidth }));
   expect(viewport.scrollWidth, 'The landing page must not clip horizontally at 390px').toBeLessThanOrEqual(viewport.width);
 
@@ -74,4 +74,11 @@ test('renders the original landing page with Supabase-only browser configuration
     await expect(page.getByRole('status')).toContainText(environmentCase === 'missing' ? 'not configured' : 'configuration is invalid');
     await expect(page.getByRole('button', { name: 'Sign In' })).toBeDisabled();
   }
+
+  await page.goto('/reset-password');
+  await expect(page.getByRole('heading', { name: 'Create New Password' })).toBeVisible();
+  await expect(page.getByRole('alert')).toContainText('invalid or has expired');
+
+  expect(diagnostics.pageErrors, 'No uncaught page errors are allowed during startup routes').toEqual([]);
+  expect(diagnostics.consoleErrors, 'No console errors are allowed during startup routes').toEqual([]);
 });

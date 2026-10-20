@@ -12,17 +12,17 @@ Updated: 2026-10-20 Asia/Manila
 
 ## Current verified boundary
 
-P0 local white-screen recovery is browser-verified. `npm run test:e2e:startup` exercises configured, missing, malformed, and preview startup cases. Evidence is under `docs/evidence/p0-white-screen/`.
+P0 local white-screen recovery is browser-verified at pushed commit `e3fc3ce119602403281f09c7d31f6c3712f55da5`. `npm run test:e2e:startup` exercises configured, missing, malformed, and preview startup cases. Evidence is under `docs/evidence/p0-white-screen/`.
 
 S2 PostgreSQL migrations, pgTAP, RLS, Storage, and real Supabase Auth remain BLOCKED / NOT TESTED. No remote schema, Vercel deployment, Resend delivery, production service, or backup repository was mutated.
 
 ## Active implementation boundary
 
-M1/S3 is in progress. `src/lib/supabase.ts`, `src/lib/runtimeConfig.ts`, `src/lib/identity.ts`, `src/hooks/useAuth.tsx`, `src/pages/LoginPage.tsx`, and `src/pages/ForgotPasswordPage.tsx` are the target Auth path. Legacy Firebase operational pages are still present in deferred chunks and must be migrated before deletion or a full-migration claim.
+M1/S3 is in progress. Supabase shared login/recovery/session resolution is active; the first Vercel Auth endpoint and identity RPC migration are implemented but not integration-verified. Legacy Firebase operational pages are still present in deferred chunks and must be migrated before deletion or a full-migration claim.
 
 ## Next safe tasks
 
-1. Commit and push the P0 recovery checkpoint after all local static/browser checks pass.
-2. Add trusted backend operations needed for forced-password completion, privacy acknowledgement, provisioning, and revocation; keep them NOT VERIFIED without a database.
-3. Migrate Admin/Guard/device logout and credential flows, then portal/kiosk evidence and issuance in stage order.
+1. Commit and push the M1 identity implementation checkpoint after all local static/browser checks pass.
+2. Add trusted provisioning/revocation operations; keep them NOT VERIFIED without a database.
+3. Migrate Guard/device operational data, then portal/kiosk evidence and issuance in stage order.
 4. Request only one of: Docker-backed disposable local Supabase, or explicit permission naming a non-production hosted Supabase project after read-only identity/no-real-data preflight.

@@ -12,6 +12,7 @@ const LoginPage = lazy(() => import('@/pages/LoginPage').then((module) => ({ def
 const AdminPage = lazy(() => import('@/pages/AdminPage').then((module) => ({ default: module.AdminPage })));
 const PrivacyModal = lazy(() => import('@/components/PrivacyModal').then((module) => ({ default: module.PrivacyModal })));
 const ForgotPasswordPage = lazy(() => import('@/pages/ForgotPasswordPage').then((module) => ({ default: module.ForgotPasswordPage })));
+const ResetPasswordPage = lazy(() => import('@/pages/ResetPasswordPage').then((module) => ({ default: module.ResetPasswordPage })));
 const KioskPage = lazy(() => import('@/pages/KioskPage').then((module) => ({ default: module.KioskPage })));
 const GuardPage = lazy(() => import('@/pages/GuardPage').then((module) => ({ default: module.GuardPage })));
 const AdminDashboard = lazy(() => import('@/pages/AdminDashboard').then((module) => ({ default: module.AdminDashboard })));
@@ -55,6 +56,7 @@ export function App() {
           <Route path="/get-pass" element={<GetPassPage />} />
           <Route path="/login" element={<LoginPage />} />
           <Route path="/forgot-password" element={<ForgotPasswordPage />} />
+          <Route path="/reset-password" element={<ResetPasswordPage />} />
 
           {/* Kiosk — requires kiosk device account */}
           <Route element={<ProtectedRoute allowedRoles={['kiosk']} />}>
