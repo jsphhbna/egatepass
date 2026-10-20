@@ -12,9 +12,11 @@
     "emulators": "npx firebase-tools@13.10.0 emulators:start --only auth,firestore",
     "test": "npx firebase-tools@13.10.0 emulators:exec \"vitest run\"",
     "test:e2e:legacy": "npx firebase-tools@13.10.0 emulators:exec --only auth,firestore \"playwright test tests/e2e/legacy-baseline.spec.ts\"",
+    "test:e2e:startup": "npm run build && node scripts/run-startup-e2e.mjs",
     "typecheck:functions": "tsc --noEmit --project netlify/tsconfig.json",
     "test:architecture": "vitest run tests/architecture-contract.test.ts",
-    "test:supabase:static": "vitest run tests/supabase-migration-static.test.ts"
+    "test:supabase:static": "vitest run tests/supabase-migration-static.test.ts",
+    "test:runtime": "vitest run tests/runtime-config.test.ts"
   },
   "repository": {
     "type": "git",
@@ -30,6 +32,7 @@
   "dependencies": {
     "@hookform/resolvers": "^5.9.1",
     "@radix-ui/react-dialog": "^1.1.23",
+    "@supabase/supabase-js": "^2.118.0",
     "date-fns": "^4.4.0",
     "firebase": "^12.19.0",
     "html5-qrcode": "^2.3.8",

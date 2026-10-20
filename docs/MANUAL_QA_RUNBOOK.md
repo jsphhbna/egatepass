@@ -2,6 +2,22 @@
 
 Use fictional visitors only. Never place passwords, QR bearer values, ID images, or signed URLs in this repository. Record browser/device/version, commit SHA, timestamp, observed result, evidence location, reviewer, and one of PASS / FAIL / BLOCKED. The fields below are intentionally blank until the owner performs each case.
 
+## P0 owner white-screen confirmation — AWAITING OWNER
+
+1. On the feature branch/commit supplied in the milestone report, run `npm ci` and `npm run dev -- --host 127.0.0.1`.
+2. Open the exact URL printed by Vite in a normal browser window and a 390px-wide phone/device view.
+3. Confirm the original E-GatePass landing page, hero, sections, footer, and **Get Your Gate Pass** actions appear with no horizontal clipping.
+4. Open `/login`; confirm the original staff/device sign-in layout appears. Do not use production credentials.
+5. If the page is still white, securely attach only the first red console error and failed request path with tokens/query strings removed. Report whether `VITE_FIREBASE_*` names exist as yes/no; never send values.
+
+- Environment/URL:
+- Browser/phone:
+- Commit:
+- Observed result:
+- Evidence path:
+- Reviewer/date:
+- Result: [ ] PASS [ ] FAIL [ ] BLOCKED
+
 ## Evidence record template
 
 - Case:

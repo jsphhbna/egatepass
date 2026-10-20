@@ -145,5 +145,28 @@ export interface AuthState {
   status: 'loading' | 'authenticated' | 'unauthenticated' | 'requires_password_change';
   uid: string | null;
   role: AuthRole;
-  userData: AppUser | Device | null;
+  userData: AuthActor | null;
+  serviceStatus: 'available' | 'unavailable';
+  serviceMessage: string | null;
 }
+
+export interface StaffAuthActor {
+  kind: 'staff';
+  name: string;
+  email: string;
+  role: UserRole;
+  active: boolean;
+  privacyAcceptedAt: string | null;
+  mustChangePassword: boolean;
+}
+
+export interface DeviceAuthActor {
+  kind: 'device';
+  name: string;
+  type: DeviceType;
+  gate: string;
+  alias: string;
+  status: DeviceStatus;
+}
+
+export type AuthActor = StaffAuthActor | DeviceAuthActor;

@@ -1,7 +1,6 @@
 import { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
-import { sendPasswordResetEmail } from 'firebase/auth';
-import { auth } from '@/lib/firebase';
+import { supabase } from '@/lib/supabase';
 import { Card, Button, Input, FormField } from '@/components/ui';
 import { BrandMark } from '@/components/BrandMark';
 import { toast } from 'sonner';
@@ -36,17 +35,21 @@ export function ForgotPasswordPage() {
 
     setLoading(true);
     try {
-      await sendPasswordResetEmail(auth, email);
+      if (!supabase) throw new Error('service-unavailable');
+      const { error } = await supabase.auth.resetPasswordForEmail(email, {
+        redirectTo: `${window.location.origin}/login`,
+      });
+      if (error) throw error;
       toast.success('If an account exists for this email, a password reset link has been sent.', {
         duration: 5000
       });
       setCountdown(60);
     } catch (err: any) {
       console.error('Password reset error:', err);
-      if (err.code === 'auth/network-request-failed') {
+      if (err instanceof Error && err.message === 'service-unavailable') {
+        toast.error('Account recovery is not configured. Please contact the system administrator.');
+      } else if (!navigator.onLine) {
         toast.error('Network error. Please check your connection and try again.');
-      } else if (err.code === 'auth/too-many-requests') {
-        toast.error('Too many attempts. Please try again later.');
       } else {
         // Fallback for generic errors without exposing too much
         toast.error('Failed to send reset email. Please try again later.');

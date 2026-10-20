@@ -6,7 +6,26 @@ S1 checkpoint: `babb8c5f5cd5c77f4bafe3a535fd03e54b05e2a4`
 
 S2 implementation checkpoint: `80d861b8186418837ed0b862288da4e4b53e4637`
 
+S2 documentation/pushed checkpoint: `86a455ede2adc68ef6e09794e3ad118b70f63162`
+
 Date/time zone: 2026-10-20, Asia/Manila
+
+## P0 runtime recovery and M1 start
+
+| ID | Class | Command / artifact | Result | Scope and limitation |
+|---|---|---|---|---|
+| EV-P0-001 | STATIC / GIT / ENVIRONMENT | fetch, remote/upstream/status/rollback refs; sanitized env-name inventory | PASS | Local and `origin/main` both `86a455e`; lowercase origin only; `.env.example` remains owner-owned; Supabase names present and Firebase names absent; no values displayed |
+| EV-P0-002 | CLEAN INSTALL | `npm ci` | PASS: 1,317 packages installed; audit reported 24 findings (22 high, 2 moderate) | Install reproducibility only; findings remain under documented triage |
+| EV-P0-003 | BROWSER FAILURE REPRODUCTION | detached worktree at `86a455e`; Edge via Playwright/Vite with Firebase variables empty | FAIL as expected: empty `#root`; first runtime error `auth/invalid-api-key` at `src/lib/firebase.ts:13` | Proves the local white-screen root cause at the checkpoint; screenshot `docs/evidence/p0-white-screen/before-desktop.png` |
+| EV-P0-004 | SOURCE / RUNTIME INVENTORY | `rg` across `src`, package and Vite configuration | FAIL migration gate: active Firebase/Firestore/Netlify/Cloudinary references remain | Proves S2 had not migrated the application runtime; full cutover not claimed |
+| EV-P0-005 | STATIC BUILD | `npm run build` | PASS; Firebase remains a deferred 626.59 kB output chunk | Compilation and chunk inventory only; not provider integration |
+| EV-P0-006 | BROWSER E2E | `npm run test:e2e:startup` | PASS: 4/4 isolated Edge runs (dev configured/missing/malformed; preview configured) | Original landing visible, no uncaught page/console errors, JS entrypoint served, 390px no horizontal overflow; screenshots retained |
+| EV-P0-007 | NEGATIVE BROWSER | missing and malformed public Supabase variables in EV-P0-006 | PASS | Public page remains visible; `/login` shows actionable unavailable state and disabled submit; no Firebase fallback |
+| EV-P0-008 | HARNESS FAILURE | first repaired browser rerun and first preview rerun | FAIL then corrected | CTA regex did not match preserved label; preview incorrectly required dev-only `/src/main.tsx`. Assertions were corrected and the complete matrix reran PASS |
+| EV-P0-009 | SUPABASE DATABASE / AUTH / STORAGE | S2 migrations plus new Supabase Auth client | BLOCKED / NOT TESTED | No SQL was applied and no real Auth/RLS/Storage session was exercised; requires Docker-backed local Supabase or explicit isolated hosted-project authorization |
+| EV-P0-010 | UNIT / STATIC CONTRACT | `npm run test:runtime`; `npm run test:architecture`; `npm run test:supabase:static` | PASS: 4/4, 3/3, and 5/5 assertions | Pure config/identity/bootstrap contracts plus existing architecture/SQL text contracts; not live provider evidence |
+| EV-P0-011 | DEPENDENCY / CUTOVER INVENTORY | `npm audit --omit=dev --json`; target `rg` inventory | FAIL release gate: 4 high production findings; 67 legacy-match lines | Findings remain in reachable legacy Firebase chain; Firebase bundle still emitted and legacy cleanup is correctly deferred |
+| EV-P0-012 | LEGACY E2E | `npm run test:e2e:legacy` | NOT RUN on migration branch | It provisions Firebase emulator users while the shared login now targets Supabase; running it would send synthetic credentials to the unidentified hosted Supabase URL. Replacement real Supabase E2E is BLOCKED pending an authorized isolated environment |
 
 | ID | Class | Command / artifact | Result | Scope and limitation |
 |---|---|---|---|---|

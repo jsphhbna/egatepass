@@ -1,63 +1,73 @@
-import {
-  createContext,
-  useContext,
-  useEffect,
-  useState,
-  type ReactNode,
-} from 'react';
-import { onAuthStateChanged, signOut, type User } from 'firebase/auth';
-import { doc, getDoc } from 'firebase/firestore';
-import { auth, db } from '@/lib/firebase';
+import { createContext, useContext, useEffect, useState, type ReactNode } from 'react';
+import type { User } from '@supabase/supabase-js';
 import { toast } from 'sonner';
-import type { AppUser, AuthRole, AuthState, Device } from '@/types';
+import { getSupabaseAvailabilityMessage, supabase } from '@/lib/supabase';
+import type { AuthActor, AuthRole, AuthState, DeviceAuthActor, StaffAuthActor } from '@/types';
 import { isUserRole } from '@/lib/permissions';
 
-const AuthContext = createContext<AuthState>({
-  status: 'loading',
+const unavailableMessage = getSupabaseAvailabilityMessage();
+
+const initialState: AuthState = {
+  status: supabase ? 'loading' : 'unauthenticated',
   uid: null,
   role: null,
   userData: null,
-});
+  serviceStatus: supabase ? 'available' : 'unavailable',
+  serviceMessage: unavailableMessage,
+};
+
+const AuthContext = createContext<AuthState>(initialState);
 
 export function useAuth(): AuthState {
   return useContext(AuthContext);
 }
 
-/**
- * Resolves the role of the signed-in user by checking Firestore documents.
- * Order: users/{uid} (guard/admin) → devices/{uid} (entry/exit/kiosk) → anonymous visitor
- */
-async function resolveRole(
-  user: User
-): Promise<{ role: AuthRole; userData: AppUser | Device | null }> {
-  // Check if this is an anonymous user (visitor)
-  if (user.isAnonymous) {
-    return { role: 'visitor', userData: null };
+async function resolveRole(user: User): Promise<{ role: AuthRole; userData: AuthActor | null }> {
+  if (!supabase) return { role: null, userData: null };
+  if (user.is_anonymous === true) return { role: 'visitor', userData: null };
+
+  const staffResult = await supabase
+    .from('staff_profiles')
+    .select('display_name, role, active, must_change_password, privacy_accepted_at')
+    .eq('user_id', user.id)
+    .maybeSingle();
+
+  if (staffResult.error) throw staffResult.error;
+  if (staffResult.data) {
+    const profile = staffResult.data;
+    if (!profile.active || !isUserRole(profile.role)) return { role: null, userData: null };
+    const userData: StaffAuthActor = {
+      kind: 'staff',
+      name: profile.display_name,
+      email: user.email ?? '',
+      role: profile.role,
+      active: profile.active,
+      mustChangePassword: profile.must_change_password,
+      privacyAcceptedAt: profile.privacy_accepted_at,
+    };
+    return { role: profile.role, userData };
   }
 
-  // Check users collection (guard/admin)
-  const userDoc = await getDoc(doc(db, 'users', user.uid));
-  if (userDoc.exists()) {
-    const data = userDoc.data() as AppUser;
-    if (data.active && isUserRole(data.role)) {
-      return { role: data.role, userData: data };
-    }
-    // Inactive user — treat as unauthenticated
-    return { role: null, userData: null };
+  const deviceResult = await supabase
+    .from('devices')
+    .select('alias, name, type, gate, status')
+    .eq('user_id', user.id)
+    .maybeSingle();
+
+  if (deviceResult.error) throw deviceResult.error;
+  if (deviceResult.data?.status === 'active') {
+    const device = deviceResult.data;
+    const userData: DeviceAuthActor = {
+      kind: 'device',
+      alias: device.alias,
+      name: device.name,
+      type: device.type,
+      gate: device.gate,
+      status: device.status,
+    };
+    return { role: device.type, userData };
   }
 
-  // Check devices collection
-  const deviceDoc = await getDoc(doc(db, 'devices', user.uid));
-  if (deviceDoc.exists()) {
-    const data = deviceDoc.data() as Device;
-    if (data.status === 'active') {
-      return { role: data.type, userData: data };
-    }
-    // Revoked device — treat as unauthenticated
-    return { role: null, userData: null };
-  }
-
-  // No matching document — unknown role
   return { role: null, userData: null };
 }
 
@@ -66,82 +76,77 @@ interface AuthProviderProps {
 }
 
 export function AuthProvider({ children }: AuthProviderProps) {
-  const [state, setState] = useState<AuthState>({
-    status: 'loading',
-    uid: null,
-    role: null,
-    userData: null,
-  });
+  const [state, setState] = useState<AuthState>(initialState);
 
   useEffect(() => {
-    const unsubscribe = onAuthStateChanged(auth, async (user) => {
+    if (!supabase) return;
+    let active = true;
+
+    async function applyUser(user: User | null) {
+      if (!active) return;
       if (!user) {
-        setState({
-          status: 'unauthenticated',
-          uid: null,
-          role: null,
-          userData: null,
-        });
+        setState({ ...initialState, status: 'unauthenticated' });
         return;
       }
 
       try {
         const { role, userData } = await resolveRole(user);
-
         if (!role) {
-          await signOut(auth);
-          setState({
-            status: 'unauthenticated',
-            uid: null,
-            role: null,
-            userData: null,
-          });
+          await supabase!.auth.signOut();
+          if (active) setState({ ...initialState, status: 'unauthenticated' });
           return;
         }
 
-        if (role === 'admin' || role === 'superadmin' || role === 'guard') {
-          await user.reload();
-          if (!auth.currentUser?.emailVerified) {
-            await signOut(auth);
-            toast.error(
-              'Account not verified. Please verify your email first. Check your inbox, spam, or trash folder for the verification email.',
-              { id: 'unverified-toast' }
-            );
-            // setState to unauthenticated will happen on the next onAuthStateChanged(null)
-            return;
-          }
-          // Force token refresh so Firestore rules receive email_verified: true
-          await auth.currentUser?.getIdToken(true);
+        if ((role === 'admin' || role === 'superadmin' || role === 'guard') && !user.email_confirmed_at) {
+          await supabase!.auth.signOut();
+          toast.error('Account not verified. Please verify your email first. Check your inbox, spam, or trash folder for the verification email.', { id: 'unverified-toast' });
+          return;
         }
 
-        if (role === 'guard' && userData && 'mustChangePassword' in userData && userData.mustChangePassword === true) {
+        const requiresPasswordChange = role === 'guard'
+          && userData?.kind === 'staff'
+          && userData.mustChangePassword;
+
+        if (active) {
           setState({
-            status: 'requires_password_change',
-            uid: user.uid,
+            status: requiresPasswordChange ? 'requires_password_change' : 'authenticated',
+            uid: user.id,
             role,
             userData,
+            serviceStatus: 'available',
+            serviceMessage: null,
           });
-          return;
         }
-
-        setState({
-          status: 'authenticated',
-          uid: user.uid,
-          role,
-          userData,
-        });
       } catch (error) {
-        console.error('Failed to resolve user role:', error);
-        setState({
-          status: 'unauthenticated',
-          uid: null,
-          role: null,
-          userData: null,
-        });
+        console.error('Failed to resolve the signed-in identity.', error);
+        if (active) {
+          setState({
+            ...initialState,
+            status: 'unauthenticated',
+            serviceStatus: 'unavailable',
+            serviceMessage: 'Staff and device services are temporarily unavailable. Please try again later.',
+          });
+        }
       }
+    }
+
+    void supabase.auth.getSession().then(({ data, error }) => {
+      if (error) {
+        console.error('Unable to restore the sign-in session.', error);
+        if (active) setState({ ...initialState, status: 'unauthenticated' });
+        return;
+      }
+      void applyUser(data.session?.user ?? null);
     });
 
-    return unsubscribe;
+    const { data: listener } = supabase.auth.onAuthStateChange((_event, session) => {
+      window.setTimeout(() => void applyUser(session?.user ?? null), 0);
+    });
+
+    return () => {
+      active = false;
+      listener.subscription.unsubscribe();
+    };
   }, []);
 
   return <AuthContext.Provider value={state}>{children}</AuthContext.Provider>;

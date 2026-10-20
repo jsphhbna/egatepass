@@ -14,12 +14,16 @@ Sensitive data includes visitor names/contact details, face and ID images, QR be
 
 ## Stage gates
 
+| Recovery milestone | Scope | Required evidence | Current state |
+|---|---|---|---|
+| P0 | Supabase-only boot, white-screen diagnosis, fail-safe configuration states | Exact pre-fix browser reproduction; dev + preview browser smoke; missing/malformed config negative cases; desktop/390px captures | PASS locally on feature branch; owner-machine confirmation AWAITING OWNER |
+
 | Stage | Scope | Required promotion evidence | Current state |
 |---|---|---|---|
 | S0 | Repository safety, original inventory, baseline tooling, environment fingerprint, screenshots | Git isolation/tree parity; rollback ref; build/type checks; Firebase emulator suite or explicit blocker; baseline screens/static parity | PARTIAL — accepted checkpoint; external provider identity remained unavailable |
 | S1 | Architecture/docs foundation, test harness, safe structure plan | Original routes/UI still build and render; target architecture and migration map reviewed; no backend switch | PASS — build/type/contract checks and 9-case legacy browser regression passed |
 | S2 | Supabase schema, RLS, grants, RPC/storage core, synthetic fixtures | Clean disposable migration chain and clean install; real low-privilege RLS/storage negative matrix | IMPLEMENTED — NOT VERIFIED / BLOCKED: migration chain and pgTAP matrix authored; no isolated DB runtime |
-| S3 | Shared staff/device auth and governance | Real Auth sessions and browser E2E for all staff/device roles, suspension/revocation/first-login/reset | PLANNED |
+| S3 | Shared staff/device auth and governance | Real Auth sessions and browser E2E for all staff/device roles, suspension/revocation/first-login/reset | IN PROGRESS — Supabase client/session/profile resolution and login/recovery implemented; provider integration NOT VERIFIED |
 | S4 | Portal/kiosk registration, private evidence, optional local OCR, Peak Mode | Phone/portrait browser E2E, real uploads, session separation, source-forgery negative tests | PLANNED |
 | S5 | Server QR issue, entry, Guard decision, exit | Actual DB state machine E2E plus duplicate/race/wrong-device/expired negative tests | PLANNED |
 | S6 | Admin/operations parity | Browser and DB proof for records, complete export, users/devices, settings, emergency, audit/reconciliation | PLANNED |
@@ -52,6 +56,10 @@ S1 adds only target architecture/environment/test documentation, lowercase repos
 ## S2 implementation boundary
 
 S2 adds an additive schema, least-privilege grants/RLS, private buckets, authorization helpers, an upload-intent RPC, bootstrap guard, and executable pgTAP tests. Static tests are not database proof. Promotion and S3 runtime migration remain blocked until `supabase db reset` and `supabase test db` pass against an isolated environment with real Auth/Data/Storage API negative tests.
+
+## P0 recovery result and rollback
+
+The ordinary Supabase-only launch at exact checkpoint `86a455e` was reproduced in Edge with an empty `#root` and `FirebaseError: auth/invalid-api-key` at `src/lib/firebase.ts:13`. The legacy Playwright setup had hidden this by injecting synthetic Firebase values. The repaired boot renders a shell before dynamically importing the app, validates public Supabase configuration without throwing, keeps the public landing available, and fails staff/device access closed with a visible message. Roll back this slice by reverting its checkpoint commit; do not reset S0–S2 or the owner-owned `.env.example` edit.
 
 ## Resume rule
 

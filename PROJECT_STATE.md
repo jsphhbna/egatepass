@@ -2,7 +2,7 @@
 
 Updated: 2026-10-20 Asia/Manila
 
-Current stage: S2 — IMPLEMENTED — NOT VERIFIED; integration promotion BLOCKED
+Current stage: P0 recovery PASS locally; S3/M1 IN PROGRESS — provider integration NOT VERIFIED; S2 database promotion remains BLOCKED
 
 ## Repository identity
 
@@ -11,7 +11,8 @@ Current stage: S2 — IMPLEMENTED — NOT VERIFIED; integration promotion BLOCKE
 - S0 checkpoint HEAD: `2e3b342ad313e926a19be7eecd995aa2a862f3f7`
 - S1 checkpoint commit: `babb8c5` (`docs: establish S1 target architecture`)
 - S2 implementation commit: `80d861b8186418837ed0b862288da4e4b53e4637` (`feat: implement Supabase security core`)
-- `origin/main`: `f2f1a2b58ef19808c1be83865ee8537073b0dada`; local commits have not been pushed
+- Working branch: `feat/runtime-migration`, based on `86a455ede2adc68ef6e09794e3ad118b70f63162`
+- `origin/main`: `86a455ede2adc68ef6e09794e3ad118b70f63162`; S0–S2 commits are pushed
 - Target origin: `https://github.com/jsphhbna/egatepass.git`
 - Read-only reference main: `6906b91f9a1c4910f6bdfa14ee62aa3e3d46da7c`
 - S0 baseline target/reference tracked files: 126/126; tree diff: 0 files before modernization commits
@@ -29,6 +30,16 @@ Current stage: S2 — IMPLEMENTED — NOT VERIFIED; integration promotion BLOCKE
 | Resend target | Environment names present | NOT TESTED; no real email sent |
 | Browser E2E | Playwright 1.64.1 harness added for legacy baseline | 9 isolated Edge tests PASS for public-nav exposure, all six actor redirects, wrong-role denial, and Admin tabs |
 | Owner manual QA | Runbook initialized | AWAITING OWNER |
+
+## P0 white-screen recovery
+
+- Exact pre-fix revision `86a455e` reproduced a blank document in Edge: `#root` had zero children and Firebase Auth threw `auth/invalid-api-key` from `src/lib/firebase.ts:13` before React mounted.
+- Ordinary `.env.local` contains the Supabase browser variable names and no `VITE_FIREBASE_*` names; values were not displayed.
+- The runtime now mounts a fail-safe shell before dynamically loading `App`, validates the Supabase URL/key without throwing, and isolates still-legacy privileged modules behind lazy routes.
+- Shared Auth session/profile resolution, login, verification resend, and password-reset request now use `@supabase/supabase-js`. Real hosted/local Auth actors remain NOT TESTED because no authorized isolated Supabase environment is available.
+- `npm run test:e2e:startup`: PASS for dev configured, dev missing, dev malformed, and built preview configured; each exercises Edge, the original landing, no page/console error, JavaScript entrypoint response, and 390px no-overflow check.
+- Legacy Firebase remains in deferred feature chunks and operational pages. The build still emits `firebase-*.js`; full runtime cutover is not claimed.
+- Current deterministic inventory: 67 matching legacy-provider lines across the target runtime/config scan; production-only audit remains 4 high findings in the legacy dependency chain.
 
 ## Baseline toolchain
 

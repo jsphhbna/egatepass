@@ -1,16 +1,16 @@
 import { lazy, Suspense } from 'react';
 import { BrowserRouter, Routes, Route } from 'react-router-dom';
 import { Toaster } from 'sonner';
-import { AuthProvider } from '@/hooks/useAuth';
+import { AuthProvider, useAuth } from '@/hooks/useAuth';
 import { ProtectedRoute } from '@/components/ProtectedRoute';
 import { LandingPage } from '@/pages/LandingPage';
-import { LoginPage } from '@/pages/LoginPage';
-import { AdminPage } from '@/pages/AdminPage';
-import { PrivacyModal } from '@/components/PrivacyModal';
 import { OfflineBanner } from '@/components/OfflineBanner';
 import { LoadingState } from '@/components/ui';
 
 const GetPassPage = lazy(() => import('@/pages/GetPassPage').then((module) => ({ default: module.GetPassPage })));
+const LoginPage = lazy(() => import('@/pages/LoginPage').then((module) => ({ default: module.LoginPage })));
+const AdminPage = lazy(() => import('@/pages/AdminPage').then((module) => ({ default: module.AdminPage })));
+const PrivacyModal = lazy(() => import('@/components/PrivacyModal').then((module) => ({ default: module.PrivacyModal })));
 const ForgotPasswordPage = lazy(() => import('@/pages/ForgotPasswordPage').then((module) => ({ default: module.ForgotPasswordPage })));
 const KioskPage = lazy(() => import('@/pages/KioskPage').then((module) => ({ default: module.KioskPage })));
 const GuardPage = lazy(() => import('@/pages/GuardPage').then((module) => ({ default: module.GuardPage })));
@@ -32,11 +32,17 @@ function RouteLoadingFallback() {
   );
 }
 
+function AuthenticatedPrivacyGate() {
+  const { status, role } = useAuth();
+  if (status !== 'authenticated' || !['guard', 'admin', 'superadmin'].includes(role ?? '')) return null;
+  return <Suspense fallback={null}><PrivacyModal /></Suspense>;
+}
+
 export function App() {
   return (
     <AuthProvider>
       <OfflineBanner />
-      <PrivacyModal />
+      <AuthenticatedPrivacyGate />
       <BrowserRouter>
         <a href="#main-content" className="skip-link">
           Skip to main content

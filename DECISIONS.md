@@ -79,3 +79,17 @@
 - Status: accepted
 - Decision: do not run `npm audit fix --force`. Triage by dependency chain and reachable usage, regression-test safe parent upgrades, and remove legacy Firebase/Netlify chains only after verified replacements.
 - Evidence: `docs/DEPENDENCY_AUDIT.md`; full audit 24 findings, production-only audit 4 high in the legacy Firebase chain.
+
+## ADR-0012 — Bootstrap before application module evaluation
+
+- Date: 2026-10-20
+- Status: accepted and browser-verified locally
+- Decision: `main.tsx` mounts a minimal non-sensitive shell before dynamically importing `App`. A module-evaluation failure renders a visible generic recovery screen outside the application component tree. Public rendering cannot require legacy Firebase configuration.
+- Reason: the prior static import chain reached Firebase Auth before the React `ErrorBoundary` existed, producing an empty `#root` when Firebase variables were absent.
+
+## ADR-0013 — Supabase browser configuration and device identity normalization
+
+- Date: 2026-10-20
+- Status: accepted for M1 implementation; provider behavior NOT VERIFIED
+- Decision: only `VITE_SUPABASE_URL` and `VITE_SUPABASE_PUBLISHABLE_KEY` configure the browser client. Missing/malformed values leave public information available and disable privileged sign-in. Device usernames must match the database alias constraint and map deterministically to `<alias>@devices.egatepass.invalid`; arbitrary caller-selected mappings are rejected.
+- Security boundary: publishable configuration is not authorization. Auth UID plus active `staff_profiles`/`devices` rows remain authoritative through RLS; live enforcement is blocked pending an isolated Supabase test environment.
