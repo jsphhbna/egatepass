@@ -338,13 +338,15 @@ async function handleRequest(request: Request): Promise<Response> {
       if (!state) return jsonResponse(503, { error: 'email_state_unavailable' });
       if (state.idempotent_replay || !state.dispatch_code) return respondToCodeReplay(state);
 
-      const html = await renderVerificationCodeEmail({
-        fullName: passRow.visitors.full_name,
-        code,
-        expiresInMinutes: 10,
-      });
-
+      let providerAttempted = false;
       try {
+        const html = await renderVerificationCodeEmail({
+          fullName: passRow.visitors.full_name,
+          code,
+          expiresInMinutes: 10,
+        });
+
+        providerAttempted = true;
         const sent = await sendResendEmail({ to: recipient, subject: 'EARIST Gate Pass — Verification Code', html });
         const finalResult = await finalizeCodeDelivery(admin, state.verification_id, parsed.data.requestId, 'sent_to_provider', sent.id);
         if (!finalResult.success) {
@@ -371,7 +373,9 @@ async function handleRequest(request: Request): Promise<Response> {
           status: 'code_sent_to_provider',
         });
       } catch (error) {
-        const deliveryError = error instanceof EmailDeliveryError ? error : new EmailDeliveryError('email_transport_unknown', 'unknown');
+        const deliveryError = error instanceof EmailDeliveryError
+          ? error
+          : new EmailDeliveryError(providerAttempted ? 'email_transport_unknown' : 'template_render_failed', providerAttempted ? 'unknown' : 'definitive_rejection');
         const finalStatus = deliveryError.outcome === 'definitive_rejection' ? 'delivery_failed' : 'outcome_unknown';
         const finalResult = await finalizeCodeDelivery(admin, state.verification_id, parsed.data.requestId, finalStatus, null);
         if (deliveryError.outcome === 'unknown' || !finalResult.success || finalResult.matchStatus === 'terminal_conflict') {

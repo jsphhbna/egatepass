@@ -497,7 +497,7 @@ export function KioskPage() {
               <div>
                 <h3 className="text-lg font-bold text-[var(--color-text-primary)]">Reading ID Details…</h3>
                 <p className="text-sm text-[var(--color-text-secondary)] mt-1">
-                  Using local on-device recognition. Your ID is not uploaded to any cloud service.
+                  Using local on-device recognition. The ID image is uploaded only to private campus storage upon your review and submission.
                 </p>
               </div>
             </div>

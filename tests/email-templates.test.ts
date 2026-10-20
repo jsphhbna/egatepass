@@ -38,13 +38,13 @@ describe('EMAIL-ARCH-01: React Email Templates', () => {
         fullName: 'Maria Santos',
         visitDate: '2026-10-20',
         purpose: 'Registrar Transcript Request',
-        publicReference: 'GP-20261020-0888',
+        publicReference: '10000000-0000-4000-a000-000000000888',
       })
     );
 
     expect(html).toContain('EARIST E-GatePass');
     expect(html).toContain('Maria Santos');
-    expect(html).toContain('GP-20261020-0888');
+    expect(html).toContain('10000000-0000-4000-a000-000000000888');
     expect(html).toContain('2026-10-20');
     expect(html).toContain('Registrar Transcript Request');
     expect(html).toContain('earist-gate-pass-qr.png');
@@ -57,7 +57,7 @@ describe('EMAIL-ARCH-01: React Email Templates', () => {
         fullName: 'Maria Santos',
         visitDate: '2026-10-20',
         purpose: '<img src=x onerror=alert(1)>',
-        publicReference: 'GP-20261020-0888',
+        publicReference: '10000000-0000-4000-a000-000000000888',
       })
     );
 

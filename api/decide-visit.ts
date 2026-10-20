@@ -32,6 +32,9 @@ async function handleRequest(request: Request): Promise<Response> {
     if (error) {
       if (error.code === '40001') return jsonResponse(409, { error: 'This pass is no longer waiting for a decision' });
       if (error.code === 'P0002') return jsonResponse(404, { error: 'Pass not found' });
+      if (error.code === '22023' || error.message?.includes('pass_has_expired')) {
+        return jsonResponse(422, { error: 'Pass has expired and cannot be approved' });
+      }
       throw error;
     }
     return jsonResponse(200, { status: data });

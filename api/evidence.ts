@@ -25,13 +25,72 @@ async function handleRequest(request: Request): Promise<Response> {
       .eq('id', evidenceId.data).maybeSingle();
     if (evidenceError) throw evidenceError;
     if (!evidence) return jsonResponse(404, { error: 'Evidence not found' });
-    if (evidence.purged_at || new Date(evidence.expires_at).getTime() <= Date.now()) return jsonResponse(410, { error: 'Evidence expired' });
-    if (profile.role === 'guard') {
+    if (evidence.purged_at) return jsonResponse(410, { error: 'Evidence expired' });
+
+    const isExpired = new Date(evidence.expires_at).getTime() <= Date.now();
+    let isHeld = false;
+
+    if (isExpired) {
+      // Ordinary guards cannot access expired evidence even under hold
+      if (profile.role === 'guard') {
+        return jsonResponse(410, { error: 'Evidence expired' });
+      }
+
+      // Admins and Super Admins may review expired evidence ONLY if an active incident hold protects it
+      const { data: visitorHold, error: visitorHoldError } = await admin
+        .from('incident_holds')
+        .select('id, reason')
+        .eq('visitor_id', evidence.visitor_id)
+        .eq('active', true)
+        .maybeSingle();
+
+      if (visitorHoldError) throw visitorHoldError;
+      let activeHold = visitorHold;
+
+      if (!activeHold) {
+        const { data: passes, error: passesError } = await admin
+          .from('passes')
+          .select('id')
+          .eq('visitor_id', evidence.visitor_id);
+
+        if (passesError) throw passesError;
+        const passIds = (passes || []).map((p: any) => p.id);
+        if (passIds.length > 0) {
+          const { data: passHold, error: passHoldError } = await admin
+            .from('incident_holds')
+            .select('id, reason')
+            .in('pass_id', passIds)
+            .eq('active', true)
+            .maybeSingle();
+
+          if (passHoldError) throw passHoldError;
+          activeHold = passHold;
+        }
+      }
+
+      if (!activeHold) {
+        return jsonResponse(410, { error: 'Evidence expired' });
+      }
+
+      isHeld = true;
+
+      // Audit review of expired held evidence
+      await admin.from('audit_events').insert({
+        actor_id: identity.user.id,
+        actor_kind: 'staff',
+        actor_role: profile.role,
+        action: 'evidence.review_held',
+        target_type: 'visitor_evidence',
+        target_id: evidenceId.data,
+        outcome: 'success',
+      });
+    } else if (profile.role === 'guard') {
       const { count, error: passError } = await admin.from('passes').select('id', { count: 'exact', head: true })
         .eq('visitor_id', evidence.visitor_id).eq('status', 'pending');
       if (passError) throw passError;
       if (!count) return jsonResponse(403, { error: 'Evidence is not in the pending queue' });
     }
+
     const file = await admin.storage.from(evidence.bucket_id).download(evidence.object_path);
     if (file.error) return jsonResponse(404, { error: 'Evidence object not found' });
     return new Response(file.data, {
@@ -41,6 +100,7 @@ async function handleRequest(request: Request): Promise<Response> {
         'Content-Type': evidence.content_type,
         'Content-Security-Policy': "default-src 'none'; sandbox",
         'X-Content-Type-Options': 'nosniff',
+        ...(isHeld ? { 'X-Evidence-Hold-Status': 'active_hold' } : {}),
       },
     });
   } catch (error) {

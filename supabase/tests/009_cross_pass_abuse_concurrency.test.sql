@@ -7,7 +7,7 @@
 begin;
 
 create extension if not exists pgtap with schema extensions;
-select extensions.plan(14);
+select extensions.plan(15);
 
 -- 1. Function privileges for 001200 hardened functions
 select extensions.ok(
@@ -37,19 +37,22 @@ values
   ('00000000-0000-0000-0000-000000000901', 'authenticated', 'authenticated', null, '', now(), true, now(), now()),
   ('00000000-0000-0000-0000-000000000902', 'authenticated', 'authenticated', null, '', now(), true, now(), now());
 
--- Seed two distinct visitors
+-- Seed three distinct visitors (Visitor 3 has only an expired pass for purge testing)
 insert into public.visitors (id, owner_id, source, full_name, contact_number, purpose, visit_date, consent_accepted_at)
 values
   ('00000000-0000-0000-0000-000000000911', '00000000-0000-0000-0000-000000000901', 'portal', 'Visitor One', '09170000001', 'Meeting', current_date, now()),
-  ('00000000-0000-0000-0000-000000000912', '00000000-0000-0000-0000-000000000902', 'portal', 'Visitor Two', '09170000002', 'Meeting', current_date, now());
+  ('00000000-0000-0000-0000-000000000912', '00000000-0000-0000-0000-000000000902', 'portal', 'Visitor Two', '09170000002', 'Meeting', current_date, now()),
+  ('00000000-0000-0000-0000-000000000913', '00000000-0000-0000-0000-000000000901', 'portal', 'Visitor Expired', '09170000003', 'Meeting', current_date - 2, now() - interval '2 days');
 
--- Seed two distinct passes for different owners
+-- Seed passes: pass 1 & 2 are active; pass 3 is already expired/exited
 insert into public.passes (id, visitor_id, public_reference, token_digest, source, status, valid_from, valid_until)
 values
   ('00000000-0000-0000-0000-000000000921', '00000000-0000-0000-0000-000000000911',
    '10000000-0000-4000-a000-000000000921', decode(repeat('c', 64), 'hex'), 'portal', 'issued', now() - interval '1 minute', now() + interval '1 day'),
   ('00000000-0000-0000-0000-000000000922', '00000000-0000-0000-0000-000000000912',
-   '10000000-0000-4000-a000-000000000922', decode(repeat('d', 64), 'hex'), 'portal', 'issued', now() - interval '1 minute', now() + interval '1 day');
+   '10000000-0000-4000-a000-000000000922', decode(repeat('d', 64), 'hex'), 'portal', 'issued', now() - interval '1 minute', now() + interval '1 day'),
+  ('00000000-0000-0000-0000-000000000923', '00000000-0000-0000-0000-000000000913',
+   '10000000-0000-4000-a000-000000000923', decode(repeat('e', 64), 'hex'), 'portal', 'exited', now() - interval '2 days', now() - interval '1 day');
 
 set local role service_role;
 select set_config('request.jwt.claim.role', 'service_role', true);
@@ -94,43 +97,60 @@ select extensions.throws_ok($$select api.request_email_verification_code(
   'cross-pass 6th challenge is rejected by recipient rate limit');
 
 -- Seed evidence for purge testing
+-- Evidence 961: attached to visitor 913 (all passes expired, eligible for purge)
 insert into public.upload_intents (id, owner_id, source, kind, bucket_id, object_path, content_type, max_bytes, status, expires_at, claimed_at, visitor_id)
 values ('00000000-0000-0000-0000-000000000951', '00000000-0000-0000-0000-000000000901', 'portal', 'photo',
+        'visitor-photos', 'visitor-913/photo.jpg', 'image/jpeg', 5242880, 'claimed', now() + interval '1 hour', now(), '00000000-0000-0000-0000-000000000913');
+
+insert into public.visitor_evidence (id, visitor_id, upload_intent_id, kind, bucket_id, object_path, content_type, byte_size, sha256_hex, verified_at, expires_at, purged_at)
+values ('00000000-0000-0000-0000-000000000961', '00000000-0000-0000-0000-000000000913',
+        '00000000-0000-0000-0000-000000000951', 'photo', 'visitor-photos', 'visitor-913/photo.jpg', 'image/jpeg', 1024, repeat('e', 64), now(), now() - interval '1 hour', null);
+
+-- Evidence 962: attached to visitor 911 (has active pass 921, MUST be protected from purge)
+insert into public.upload_intents (id, owner_id, source, kind, bucket_id, object_path, content_type, max_bytes, status, expires_at, claimed_at, visitor_id)
+values ('00000000-0000-0000-0000-000000000952', '00000000-0000-0000-0000-000000000901', 'portal', 'photo',
         'visitor-photos', 'visitor-911/photo.jpg', 'image/jpeg', 5242880, 'claimed', now() + interval '1 hour', now(), '00000000-0000-0000-0000-000000000911');
 
 insert into public.visitor_evidence (id, visitor_id, upload_intent_id, kind, bucket_id, object_path, content_type, byte_size, sha256_hex, verified_at, expires_at, purged_at)
-values ('00000000-0000-0000-0000-000000000961', '00000000-0000-0000-0000-000000000911',
-        '00000000-0000-0000-0000-000000000951', 'photo', 'visitor-photos', 'visitor-911/photo.jpg', 'image/jpeg', 1024, repeat('e', 64), now(), now() - interval '1 hour', null);
+values ('00000000-0000-0000-0000-000000000962', '00000000-0000-0000-0000-000000000911',
+        '00000000-0000-0000-0000-000000000952', 'photo', 'visitor-photos', 'visitor-911/photo.jpg', 'image/jpeg', 1024, repeat('f', 64), now(), now() - interval '1 hour', null);
 
--- Test 5: Claim evidence for purge
+-- Test 5: Claim expired evidence for eligible visitor 913 succeeds
 select extensions.is(
   (select api.claim_evidence_for_purge(
     '00000000-0000-0000-0000-000000000961', '00000000-0000-0000-0000-000000000971')->>'claimed'),
   'true',
-  'worker 1 claims expired evidence');
+  'worker 1 claims expired evidence for eligible visitor');
 
--- Test 6: Simultaneous different worker claim is rejected
+-- Test 6: Attempt to claim evidence for visitor 911 with active pass is rejected (HIGH-02 invariant)
+select extensions.is(
+  (select api.claim_evidence_for_purge(
+    '00000000-0000-0000-0000-000000000962', '00000000-0000-0000-0000-000000000971')->>'reason'),
+  'active_pass_exists',
+  'claim rejected when visitor has active pass');
+
+-- Test 7: Simultaneous different worker claim on 961 is rejected while lease held
 select extensions.is(
   (select api.claim_evidence_for_purge(
     '00000000-0000-0000-0000-000000000961', '00000000-0000-0000-0000-000000000972')->>'claimed'),
   'false',
   'worker 2 is rejected while worker 1 holds active lease');
 
--- Test 7: Finalize with wrong claim ID is rejected
+-- Test 8: Finalize with wrong claim ID is rejected
 select extensions.is(
   (select api.finalize_evidence_purge(
     '00000000-0000-0000-0000-000000000961', '00000000-0000-0000-0000-000000000972', true)->>'match_status'),
   'claim_mismatch',
   'worker 2 cannot finalize worker 1 claim');
 
--- Test 8: Finalize with matching claim ID succeeds
+-- Test 9: Finalize with matching claim ID succeeds
 select extensions.is(
   (select api.finalize_evidence_purge(
     '00000000-0000-0000-0000-000000000961', '00000000-0000-0000-0000-000000000971', true)->>'match_status'),
   'matched',
   'worker 1 finalizes evidence with matching claim ID');
 
--- Test 9: Duplicate finalization after purge returns terminal_conflict
+-- Test 10: Duplicate finalization after purge returns terminal_conflict
 select extensions.is(
   (select api.finalize_evidence_purge(
     '00000000-0000-0000-0000-000000000961', '00000000-0000-0000-0000-000000000971', true)->>'match_status'),
@@ -139,5 +159,6 @@ select extensions.is(
 
 reset role;
 select * from extensions.finish();
+
 rollback;
 -- This file is AUTHORED / NOT RUN in the current environment pending isolated PostgreSQL runtime.

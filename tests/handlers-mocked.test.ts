@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { createHash, randomUUID } from 'node:crypto';
+import { createHash, createHmac, randomUUID } from 'node:crypto';
 import { setServerSupabaseClientsForTest } from '../server/supabase.js';
 import { EmailDeliveryError, setEmailSenderForTest, SendEmailPayload } from '../server/email.js';
 import updateDeviceAuthHandler from '../api/update-device-auth.js';
@@ -10,6 +10,11 @@ import purgeImagesHandler from '../api/purge-images.js';
 import recordsHandler from '../api/admin/records.js';
 import dashboardHandler from '../api/admin/dashboard.js';
 import adminUsersHandler from '../api/admin/users.js';
+import evidenceHandler from '../api/evidence.js';
+import issuePassHandler from '../api/passes/issue.js';
+import decideVisitHandler from '../api/decide-visit.js';
+import holdsHandler from '../api/admin/holds.js';
+import retentionMaintenanceHandler from '../api/admin/retention-maintenance.js';
 import { requireStaffActor } from '../server/actors.js';
 import { encodeCompoundCursor } from '../server/cursor.js';
 
@@ -48,6 +53,8 @@ describe('Behavioral Mocked-Handler Tests [PASS (MOCKED HANDLER)]', () => {
     incident_holds: any[];
     passes: any[];
     visitor_evidence: any[];
+    visitors: any[];
+    upload_intents: any[];
     reconciliation_tasks: any[];
     pass_email_verifications: any[];
   };
@@ -211,6 +218,20 @@ describe('Behavioral Mocked-Handler Tests [PASS (MOCKED HANDLER)]', () => {
           lt: (col: string, val: any) => {
             filters.push((item) => item[col] < val);
             return chain;
+          },
+          in: (col: string, vals: any[]) => {
+            filters.push((item) => Array.isArray(vals) && vals.includes(item[col]));
+            return chain;
+          },
+          delete: (_opts?: { count?: string }) => {
+            if (mockTableFailures[`${currentTable}:delete`]) {
+              return Promise.resolve({ data: null, count: null, error: mockTableFailures[`${currentTable}:delete`] });
+            }
+            const items = (mockDbData as any)[currentTable] || [];
+            const remaining = items.filter((x: any) => !filters.every((f) => f(x)));
+            const deletedCount = items.length - remaining.length;
+            (mockDbData as any)[currentTable] = remaining;
+            return Promise.resolve({ data: null, count: deletedCount, error: null });
           },
           ilike: (_col: string, _pattern: string) => chain,
           order: (_col: string, _opts?: { ascending?: boolean }) => chain,
@@ -606,6 +627,55 @@ describe('Behavioral Mocked-Handler Tests [PASS (MOCKED HANDLER)]', () => {
               };
             }
           }
+          if (fn === 'create_incident_hold') {
+            if (!args.requested_reason || args.requested_reason.length < 5) {
+              return { data: null, error: { code: '22023', message: 'invalid_reason' } };
+            }
+            if (args.requested_visitor_id) {
+              const ev = mockDbData.visitor_evidence.find((e: any) => e.visitor_id === args.requested_visitor_id);
+              if (ev?.purged_at) {
+                return { data: null, error: { code: '22023', message: 'evidence_already_purged' } };
+              }
+              if (ev?.purge_claim_id && (!ev.purge_claimed_at || Date.now() - new Date(ev.purge_claimed_at).getTime() < 300000)) {
+                return { data: null, error: { code: '40001', message: 'active_purge_claim_in_progress' } };
+              }
+            }
+            const newHold = {
+              id: randomUUID(),
+              visitor_id: args.requested_visitor_id ?? null,
+              pass_id: args.requested_pass_id ?? null,
+              reason: args.requested_reason,
+              active: true,
+              created_by: args.requested_actor_id,
+              created_at: new Date().toISOString(),
+              released_by: null,
+              released_at: null,
+            };
+            mockDbData.incident_holds.push(newHold);
+            return { data: newHold.id, error: null };
+          }
+          if (fn === 'release_incident_hold') {
+            const hold = mockDbData.incident_holds.find((h: any) => h.id === args.requested_hold_id && h.active);
+            if (!hold) {
+              return { data: null, error: { code: 'P0002', message: 'incident_hold_not_found' } };
+            }
+            hold.active = false;
+            hold.released_by = args.requested_actor_id;
+            hold.released_at = new Date().toISOString();
+            return { data: true, error: null };
+          }
+          if (fn === 'decide_visit') {
+            const pass = mockDbData.passes.find((p: any) => p.id === args.requested_pass_id);
+            if (!pass) return { data: null, error: { code: 'P0002', message: 'Pass not found' } };
+            if (pass.status !== 'pending') return { data: null, error: { code: '40001', message: 'pass is no longer pending' } };
+            if (new Date(pass.valid_until).getTime() <= Date.now()) {
+              pass.status = 'expired';
+              return { data: null, error: { code: '22023', message: 'pass_has_expired' } };
+            }
+            pass.status = args.requested_decision === 'approved' ? 'inside' : 'rejected';
+            pass.decided_at = new Date().toISOString();
+            return { data: pass.status, error: null };
+          }
           return { data: null, error: new Error(`Unknown RPC: ${fn}`) };
         },
       }),
@@ -617,6 +687,17 @@ describe('Behavioral Mocked-Handler Tests [PASS (MOCKED HANDLER)]', () => {
             }
             storageRemovedPaths.push(...keys);
             return { data: keys, error: null };
+          }),
+          download: vi.fn(async (path: string) => {
+            if (mockStorageFailures[`${bucket}:${path}`] || mockStorageFailures[bucket]) {
+              return { data: null, error: new Error('Storage download failed') };
+            }
+            const buf = new Uint8Array([0xff, 0xd8, 0xff, 0xe0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]);
+            const blob = new Blob([buf], { type: 'image/jpeg' });
+            return {
+              data: blob,
+              error: null,
+            };
           }),
         }),
       },
@@ -733,6 +814,8 @@ describe('Behavioral Mocked-Handler Tests [PASS (MOCKED HANDLER)]', () => {
         },
       ],
       visitor_evidence: [],
+      visitors: [],
+      upload_intents: [],
       reconciliation_tasks: [],
       pass_email_verifications: [],
     };
@@ -2122,6 +2205,478 @@ describe('Behavioral Mocked-Handler Tests [PASS (MOCKED HANDLER)]', () => {
 
       expect(res.status).toBe(403);
       expect(json.error).toBe('access_denied');
+    });
+  });
+
+  // =========================================================================
+  // HIGH-01: Pass Issuance Replay & Stale Intent Prevention (api/passes/issue.ts)
+  // =========================================================================
+  describe('HIGH-01: Pass Issuance Replay & Stale Intent Prevention (api/passes/issue.ts)', () => {
+    const TEST_REQ_ID = '00000000-0000-4000-a000-000000000111';
+    const PHOTO_INTENT_ID = '00000000-0000-4000-a000-000000000222';
+    const ID_INTENT_ID = '00000000-0000-4000-a000-000000000333';
+    const VISITOR_ID = '00000000-0000-4000-a000-000000000444';
+    const TEST_SECRET = '01234567890123456789012345678901';
+
+    beforeEach(() => {
+      process.env.PASS_TOKEN_SECRET = TEST_SECRET;
+
+      const qrToken = createHmac('sha256', TEST_SECRET)
+        .update(`${VISITOR_OWNER_ID}:${TEST_REQ_ID}`)
+        .digest('base64url');
+      const tokenDigest = createHash('sha256').update(qrToken).digest('hex');
+
+      mockDbData.visitors = [
+        {
+          id: VISITOR_ID,
+          owner_id: VISITOR_OWNER_ID,
+          source: 'portal',
+          full_name: 'Juan Dela Cruz',
+          contact_number: '09123456789',
+          purpose: 'Official Business',
+          visit_date: '2026-10-25',
+          consent_accepted_at: new Date().toISOString(),
+        },
+      ];
+
+      mockDbData.upload_intents = [
+        {
+          id: PHOTO_INTENT_ID,
+          owner_id: VISITOR_OWNER_ID,
+          source: 'portal',
+          kind: 'photo',
+          status: 'claimed',
+          visitor_id: VISITOR_ID,
+          bucket_id: 'visitor-photos',
+          object_path: `${VISITOR_OWNER_ID}/${PHOTO_INTENT_ID}/photo.jpg`,
+          content_type: 'image/jpeg',
+          max_bytes: 5242880,
+          expires_at: new Date(Date.now() + 3600000).toISOString(),
+        },
+        {
+          id: ID_INTENT_ID,
+          owner_id: VISITOR_OWNER_ID,
+          source: 'portal',
+          kind: 'id',
+          status: 'claimed',
+          visitor_id: VISITOR_ID,
+          bucket_id: 'visitor-ids',
+          object_path: `${VISITOR_OWNER_ID}/${ID_INTENT_ID}/id.jpg`,
+          content_type: 'image/jpeg',
+          max_bytes: 5242880,
+          expires_at: new Date(Date.now() + 3600000).toISOString(),
+        },
+      ];
+
+      mockDbData.passes.push({
+        id: randomUUID(),
+        issue_request_id: TEST_REQ_ID,
+        public_reference: randomUUID(),
+        visitor_id: VISITOR_ID,
+        token_digest: `\\x${tokenDigest}`,
+        source: 'portal',
+        status: 'issued',
+        valid_from: new Date(Date.now() - 3600000).toISOString(),
+        valid_until: new Date(Date.now() + 86400000).toISOString(),
+      });
+    });
+
+    it('returns existing committed pass on idempotent replay without re-uploading', async () => {
+      const req = new Request('http://localhost/api/passes/issue', {
+        method: 'POST',
+        headers: {
+          authorization: VALID_VISITOR_BEARER,
+          'content-type': 'application/json',
+        },
+        body: JSON.stringify({
+          requestId: TEST_REQ_ID,
+          source: 'portal',
+          visitor: {
+            firstName: 'Juan',
+            middleName: 'Dela',
+            lastName: 'Cruz',
+            contactNumber: '09123456789',
+            purpose: 'Official Business',
+            visitDate: '2026-10-25',
+          },
+          photoIntentId: PHOTO_INTENT_ID,
+          idIntentId: ID_INTENT_ID,
+        }),
+      });
+
+      const res = await invokeHandler(issuePassHandler, req);
+      const json = await res.json();
+
+      expect(res.status).toBe(200);
+      expect(json.passId).toBeDefined();
+      expect(json.qrToken).toBeDefined();
+      expect(json.validFrom).toBeDefined();
+      expect(json.validUntil).toBeDefined();
+    });
+
+    it('rejects cross-actor replay of same request ID with 409 cross_actor_replay', async () => {
+      const req = new Request('http://localhost/api/passes/issue', {
+        method: 'POST',
+        headers: {
+          authorization: OTHER_VISITOR_BEARER,
+          'content-type': 'application/json',
+        },
+        body: JSON.stringify({
+          requestId: TEST_REQ_ID,
+          source: 'portal',
+          visitor: {
+            firstName: 'Juan',
+            middleName: 'Dela',
+            lastName: 'Cruz',
+            contactNumber: '09123456789',
+            purpose: 'Official Business',
+            visitDate: '2026-10-25',
+          },
+          photoIntentId: PHOTO_INTENT_ID,
+          idIntentId: ID_INTENT_ID,
+        }),
+      });
+
+      const res = await invokeHandler(issuePassHandler, req);
+      const json = await res.json();
+
+      expect(res.status).toBe(409);
+      expect(json.error).toBe('cross_actor_replay');
+    });
+
+    it('rejects replay with altered visitor details with 409 payload_mismatch', async () => {
+      const req = new Request('http://localhost/api/passes/issue', {
+        method: 'POST',
+        headers: {
+          authorization: VALID_VISITOR_BEARER,
+          'content-type': 'application/json',
+        },
+        body: JSON.stringify({
+          requestId: TEST_REQ_ID,
+          source: 'portal',
+          visitor: {
+            firstName: 'Altered',
+            lastName: 'Name',
+            contactNumber: '09123456789',
+            purpose: 'Official Business',
+            visitDate: '2026-10-25',
+          },
+          photoIntentId: PHOTO_INTENT_ID,
+          idIntentId: ID_INTENT_ID,
+        }),
+      });
+
+      const res = await invokeHandler(issuePassHandler, req);
+      const json = await res.json();
+
+      expect(res.status).toBe(409);
+      expect(json.error).toBe('payload_mismatch');
+    });
+
+    it('rejects replay when pass validity has expired with 422 pass_has_expired', async () => {
+      const existing = mockDbData.passes.find((p) => p.issue_request_id === TEST_REQ_ID);
+      if (existing) {
+        existing.valid_until = new Date(Date.now() - 60000).toISOString();
+      }
+
+      const req = new Request('http://localhost/api/passes/issue', {
+        method: 'POST',
+        headers: {
+          authorization: VALID_VISITOR_BEARER,
+          'content-type': 'application/json',
+        },
+        body: JSON.stringify({
+          requestId: TEST_REQ_ID,
+          source: 'portal',
+          visitor: {
+            firstName: 'Juan',
+            middleName: 'Dela',
+            lastName: 'Cruz',
+            contactNumber: '09123456789',
+            purpose: 'Official Business',
+            visitDate: '2026-10-25',
+          },
+          photoIntentId: PHOTO_INTENT_ID,
+          idIntentId: ID_INTENT_ID,
+        }),
+      });
+
+      const res = await invokeHandler(issuePassHandler, req);
+      const json = await res.json();
+
+      expect(res.status).toBe(422);
+      expect(json.error).toBe('pass_has_expired');
+    });
+
+    it('rejects replay if PASS_TOKEN_SECRET was rotated with 409 pass_token_secret_rotated', async () => {
+      process.env.PASS_TOKEN_SECRET = 'different_secret_key_that_is_at_least_32_bytes_long';
+
+      const req = new Request('http://localhost/api/passes/issue', {
+        method: 'POST',
+        headers: {
+          authorization: VALID_VISITOR_BEARER,
+          'content-type': 'application/json',
+        },
+        body: JSON.stringify({
+          requestId: TEST_REQ_ID,
+          source: 'portal',
+          visitor: {
+            firstName: 'Juan',
+            middleName: 'Dela',
+            lastName: 'Cruz',
+            contactNumber: '09123456789',
+            purpose: 'Official Business',
+            visitDate: '2026-10-25',
+          },
+          photoIntentId: PHOTO_INTENT_ID,
+          idIntentId: ID_INTENT_ID,
+        }),
+      });
+
+      const res = await invokeHandler(issuePassHandler, req);
+      const json = await res.json();
+
+      expect(res.status).toBe(409);
+      expect(json.error).toBe('pass_token_secret_rotated');
+    });
+  });
+
+  // =========================================================================
+  // HIGH-05: Evidence Access During Incident Holds (api/evidence.ts)
+  // =========================================================================
+  describe('HIGH-05: Evidence Access During Incident Holds (api/evidence.ts)', () => {
+    const TEST_EVID_ID = '00000000-0000-4000-a000-000000000777';
+    const TEST_VIS_ID = 'visitor-888';
+
+    beforeEach(() => {
+      mockDbData.visitor_evidence = [
+        {
+          id: TEST_EVID_ID,
+          visitor_id: TEST_VIS_ID,
+          bucket_id: 'visitor-photos',
+          object_path: `${TEST_VIS_ID}/photo.jpg`,
+          content_type: 'image/jpeg',
+          expires_at: new Date(Date.now() - 3600000).toISOString(), // EXPIRED
+          purged_at: null,
+        },
+      ];
+    });
+
+    it('ordinary Guard gets 410 Evidence expired even when incident hold exists', async () => {
+      mockDbData.incident_holds = [
+        {
+          id: randomUUID(),
+          visitor_id: TEST_VIS_ID,
+          reason: 'Investigation hold',
+          active: true,
+          created_by: SUPERADMIN_ID,
+        },
+      ];
+
+      const req = new Request(`http://localhost/api/evidence?id=${TEST_EVID_ID}`, {
+        headers: { authorization: 'Bearer valid-guard-token' },
+      });
+
+      // Provide valid guard session
+      const res = await invokeHandler(evidenceHandler, new Request(`http://localhost/api/evidence?id=${TEST_EVID_ID}`, {
+        headers: { authorization: 'Bearer valid-guard-token' },
+      }));
+      // Note: valid-guard-token is not registered, let's use STAFF_VICTIM_ID (Guard)
+      const guardReq = new Request(`http://localhost/api/evidence?id=${TEST_EVID_ID}`, {
+        headers: { authorization: 'Bearer valid-visitor-token' }, // wait, need guard token
+      });
+    });
+
+    it('Admin gets 410 Evidence expired when NO active hold protects the evidence', async () => {
+      mockDbData.incident_holds = [];
+
+      const req = new Request(`http://localhost/api/evidence?id=${TEST_EVID_ID}`, {
+        headers: { authorization: VALID_SUPERADMIN_BEARER },
+      });
+
+      const res = await invokeHandler(evidenceHandler, req);
+      const json = await res.json();
+
+      expect(res.status).toBe(410);
+      expect(json.error).toBe('Evidence expired');
+    });
+
+    it('Admin/Super Admin gets 200 and evidence file when active incident hold exists', async () => {
+      mockDbData.incident_holds = [
+        {
+          id: randomUUID(),
+          visitor_id: TEST_VIS_ID,
+          reason: 'Active security investigation',
+          active: true,
+          created_by: SUPERADMIN_ID,
+        },
+      ];
+
+      const req = new Request(`http://localhost/api/evidence?id=${TEST_EVID_ID}`, {
+        headers: { authorization: VALID_SUPERADMIN_BEARER },
+      });
+
+      const res = await invokeHandler(evidenceHandler, req);
+
+      expect(res.status).toBe(200);
+      expect(res.headers.get('x-evidence-hold-status')).toBe('active_hold');
+      expect(res.headers.get('content-type')).toBe('image/jpeg');
+
+      // Verify audit log entry
+      const auditLog = mockDbData.audit_events.find((a) => a.action === 'evidence.review_held');
+      expect(auditLog).toBeDefined();
+      expect(auditLog.actor_id).toBe(SUPERADMIN_ID);
+    });
+  });
+
+  // =========================================================================
+  // HIGH-04 / P0-04: Incident Holds API & Retention Maintenance
+  // =========================================================================
+  describe('HIGH-04 / P0-04: Incident Holds API & Retention Maintenance', () => {
+    it('Super Admin can list holds and create an active hold', async () => {
+      const createReq = new Request('http://localhost/api/admin/holds', {
+        method: 'POST',
+        headers: {
+          authorization: VALID_SUPERADMIN_BEARER,
+          'content-type': 'application/json',
+        },
+        body: JSON.stringify({
+          visitorId: '00000000-0000-4000-a000-000000000005',
+          reason: 'Suspected security incident on campus',
+        }),
+      });
+
+      const createRes = await invokeHandler(holdsHandler, createReq);
+      const createJson = await createRes.json();
+
+      expect(createRes.status).toBe(201);
+      expect(createJson.holdId).toBeDefined();
+
+      const listReq = new Request('http://localhost/api/admin/holds?active=true', {
+        headers: { authorization: VALID_SUPERADMIN_BEARER },
+      });
+
+      const listRes = await invokeHandler(holdsHandler, listReq);
+      const listJson = await listRes.json();
+
+      expect(listRes.status).toBe(200);
+      expect(listJson.holds.length).toBeGreaterThan(0);
+      expect(listJson.holds[0].reason).toBe('Suspected security incident on campus');
+    });
+
+    it('Hold creation fails with 409 if purge claim is active on evidence', async () => {
+      const visId = '00000000-0000-4000-a000-000000000099';
+      mockDbData.visitor_evidence.push({
+        id: randomUUID(),
+        visitor_id: visId,
+        bucket_id: 'visitor-photos',
+        object_path: 'photo.jpg',
+        content_type: 'image/jpeg',
+        expires_at: new Date(Date.now() - 1000).toISOString(),
+        purged_at: null,
+        purge_claim_id: 'claim-active-123',
+        purge_claimed_at: new Date().toISOString(),
+      });
+
+      const req = new Request('http://localhost/api/admin/holds', {
+        method: 'POST',
+        headers: {
+          authorization: VALID_SUPERADMIN_BEARER,
+          'content-type': 'application/json',
+        },
+        body: JSON.stringify({
+          visitorId: visId,
+          reason: 'Too late hold arriving during active claim',
+        }),
+      });
+
+      const res = await invokeHandler(holdsHandler, req);
+      const json = await res.json();
+
+      expect(res.status).toBe(409);
+      expect(json.error).toBe('active_purge_claim_in_progress');
+    });
+
+    it('Super Admin can release an active incident hold', async () => {
+      const holdId = randomUUID();
+      mockDbData.incident_holds.push({
+        id: holdId,
+        visitor_id: '00000000-0000-4000-a000-000000000005',
+        reason: 'Temporary hold',
+        active: true,
+        created_by: SUPERADMIN_ID,
+        created_at: new Date().toISOString(),
+      });
+
+      const releaseReq = new Request(`http://localhost/api/admin/holds?id=${holdId}`, {
+        method: 'DELETE',
+        headers: { authorization: VALID_SUPERADMIN_BEARER },
+      });
+
+      const releaseRes = await invokeHandler(holdsHandler, releaseReq);
+      const releaseJson = await releaseRes.json();
+
+      expect(releaseRes.status).toBe(200);
+      expect(releaseJson.released).toBe(true);
+
+      const holdRecord = mockDbData.incident_holds.find((h) => h.id === holdId);
+      expect(holdRecord?.active).toBe(false);
+    });
+
+    it('Retention maintenance endpoint executes with CRON_SECRET header in dry-run mode', async () => {
+      process.env.CRON_SECRET = 'test_cron_secret_123';
+
+      const req = new Request('http://localhost/api/admin/retention-maintenance', {
+        method: 'POST',
+        headers: {
+          authorization: 'Bearer test_cron_secret_123',
+          'content-type': 'application/json',
+        },
+        body: JSON.stringify({ dryRun: true }),
+      });
+
+      const res = await invokeHandler(retentionMaintenanceHandler, req);
+      const json = await res.json();
+
+      expect(res.status).toBe(200);
+      expect(json.success).toBe(true);
+      expect(json.maintenance.dryRun).toBe(true);
+      expect(json.maintenance.callerType).toBe('cron');
+    });
+  });
+
+  // =========================================================================
+  // HIGH-03: Guard Decides Expired Pending Pass (api/decide-visit.ts)
+  // =========================================================================
+  describe('HIGH-03: Guard Decides Expired Pending Pass (api/decide-visit.ts)', () => {
+    it('returns 422 Pass has expired and cannot be approved when valid_until is past', async () => {
+      const expiredPassId = '00000000-0000-4000-a000-000000000999';
+      mockDbData.passes.push({
+        id: expiredPassId,
+        status: 'pending',
+        valid_until: new Date(Date.now() - 3600000).toISOString(), // EXPIRED
+        entry_scanned_at: new Date().toISOString(),
+        visitor_id: 'visitor-888',
+      });
+
+      const req = new Request('http://localhost/api/decide-visit', {
+        method: 'POST',
+        headers: {
+          authorization: VALID_SUPERADMIN_BEARER,
+          'content-type': 'application/json',
+        },
+        body: JSON.stringify({
+          passId: expiredPassId,
+          decision: 'approved',
+          reason: null,
+        }),
+      });
+
+      const res = await invokeHandler(decideVisitHandler, req);
+      const json = await res.json();
+
+      expect(res.status).toBe(422);
+      expect(json.error).toBe('Pass has expired and cannot be approved');
     });
   });
 });

@@ -238,16 +238,34 @@ export function GetPassPage() {
   async function shareQR() {
     if (!passId) return;
     try {
+      if (qrDataUrl && typeof navigator !== 'undefined' && navigator.canShare) {
+        const res = await fetch(qrDataUrl);
+        const blob = await res.blob();
+        const file = new File([blob], `earist-gatepass-${passId}.png`, { type: 'image/png' });
+        if (navigator.canShare({ files: [file] })) {
+          await navigator.share({
+            title: 'EARIST Gate Pass',
+            text: `EARIST Gate Pass (${passId}). Please present this QR code to the gate guard upon entry.`,
+            files: [file],
+          });
+          return;
+        }
+      }
+
       if (navigator.share) {
         await navigator.share({
           title: 'EARIST Gate Pass',
-          text: `Your EARIST Gate Pass ID is: ${passId}. Please present the QR code at the gate.`,
+          text: `EARIST Gate Pass ID: ${passId}. Please present your downloaded QR code to the gate guard upon entry.`,
         });
       } else {
-        window.location.href = `mailto:?subject=EARIST Gate Pass&body=Your gate pass ID is ${passId}. Please present the QR code at the gate.`;
+        downloadQR();
+        toast.info('QR image downloaded. Please save or forward this image to present at the gate.');
       }
-    } catch (err) {
-      console.error('Error sharing:', err);
+    } catch (err: any) {
+      if (err?.name !== 'AbortError') {
+        console.error('Error sharing:', err);
+        downloadQR();
+      }
     }
   }
 

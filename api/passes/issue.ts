@@ -76,10 +76,6 @@ async function handleRequest(request: Request): Promise<Response> {
     const { data: identity, error: identityError } = await admin.auth.getUser(token);
     if (identityError || !identity.user) return jsonResponse(401, { error: 'invalid_session' });
     const actorId = identity.user.id;
-    const photo = await inspectUpload(admin, parsed.data.photoIntentId, actorId, parsed.data.source, 'photo');
-    const identification = parsed.data.idIntentId
-      ? await inspectUpload(admin, parsed.data.idIntentId, actorId, parsed.data.source, 'id')
-      : null;
 
     const secret = process.env.PASS_TOKEN_SECRET?.trim();
     if (!secret || secret.length < 32) throw new Error('pass_token_secret_unavailable');
@@ -87,6 +83,94 @@ async function handleRequest(request: Request): Promise<Response> {
       .update(`${actorId}:${parsed.data.requestId}`)
       .digest('base64url');
     const tokenDigest = createHash('sha256').update(qrToken).digest('hex');
+
+    // Safe idempotent replay check before inspecting upload intents.
+    // If the database already committed the pass on a prior attempt whose response dropped,
+    // the upload intents will already be in status = 'claimed'.
+    const { data: existingPass, error: existingPassError } = await admin
+      .from('passes')
+      .select('id, public_reference, valid_from, valid_until, token_digest, visitor_id, status')
+      .eq('issue_request_id', parsed.data.requestId)
+      .maybeSingle();
+
+    if (existingPassError) throw existingPassError;
+
+    if (existingPass) {
+      // Replay found. Validate owner, source, and payload consistency.
+      const { data: existingVisitor, error: visitorError } = await admin
+        .from('visitors')
+        .select('id, owner_id, source, full_name, contact_number, purpose, visit_date')
+        .eq('id', existingPass.visitor_id)
+        .maybeSingle();
+
+      if (visitorError) throw visitorError;
+      if (!existingVisitor) throw new Error('visitor_record_missing');
+
+      // Actor and source checks
+      if (existingVisitor.owner_id !== actorId) {
+        return jsonResponse(409, { error: 'cross_actor_replay' });
+      }
+      if (existingVisitor.source !== parsed.data.source) {
+        return jsonResponse(409, { error: 'source_mismatch' });
+      }
+
+      // Payload consistency checks
+      const expectedFullName = [parsed.data.visitor.firstName, parsed.data.visitor.middleName, parsed.data.visitor.lastName].filter(Boolean).join(' ');
+      if (
+        existingVisitor.full_name !== expectedFullName ||
+        existingVisitor.contact_number !== parsed.data.visitor.contactNumber.trim() ||
+        existingVisitor.purpose !== parsed.data.visitor.purpose.trim() ||
+        existingVisitor.visit_date !== parsed.data.visitor.visitDate
+      ) {
+        return jsonResponse(409, { error: 'payload_mismatch' });
+      }
+
+      // Verify associated intents match
+      const intentIds = [parsed.data.photoIntentId, parsed.data.idIntentId].filter(Boolean) as string[];
+      const { data: claimedIntents, error: intentsError } = await admin
+        .from('upload_intents')
+        .select('id, kind, status, visitor_id')
+        .in('id', intentIds);
+
+      if (intentsError) throw intentsError;
+      const photoIntentRow = claimedIntents?.find((i: any) => i.id === parsed.data.photoIntentId && i.kind === 'photo');
+      if (!photoIntentRow || photoIntentRow.visitor_id !== existingVisitor.id) {
+        return jsonResponse(409, { error: 'intent_mismatch' });
+      }
+      if (parsed.data.idIntentId) {
+        const idIntentRow = claimedIntents?.find((i: any) => i.id === parsed.data.idIntentId && i.kind === 'id');
+        if (!idIntentRow || idIntentRow.visitor_id !== existingVisitor.id) {
+          return jsonResponse(409, { error: 'intent_mismatch' });
+        }
+      }
+
+      // Check pass validity window
+      if (new Date(existingPass.valid_until).getTime() <= Date.now() || existingPass.status === 'expired') {
+        return jsonResponse(422, { error: 'pass_has_expired' });
+      }
+
+      // Check if HMAC secret was rotated
+      const rawStoredDigest = typeof existingPass.token_digest === 'string'
+        ? (existingPass.token_digest.startsWith('\\x') ? existingPass.token_digest.slice(2) : existingPass.token_digest)
+        : '';
+      if (rawStoredDigest.toLowerCase() !== tokenDigest.toLowerCase()) {
+        throw new Error('pass_token_secret_rotated');
+      }
+
+      // Return existing pass with 200 OK (idempotent replay)
+      return jsonResponse(200, {
+        passId: existingPass.public_reference,
+        qrToken,
+        validFrom: existingPass.valid_from,
+        validUntil: existingPass.valid_until,
+      });
+    }
+
+    const photo = await inspectUpload(admin, parsed.data.photoIntentId, actorId, parsed.data.source, 'photo');
+    const identification = parsed.data.idIntentId
+      ? await inspectUpload(admin, parsed.data.idIntentId, actorId, parsed.data.source, 'id')
+      : null;
+
     const visitor = parsed.data.visitor;
     const { data, error } = await admin.schema('api').rpc('issue_pass', {
       requested_actor_id: actorId,
@@ -115,8 +199,14 @@ async function handleRequest(request: Request): Promise<Response> {
   } catch (error) {
     const code = error instanceof Error ? error.message : 'unknown_error';
     console.error('Pass issuance failed.', code);
-    if (code.startsWith('invalid_') || code === 'missing_uploaded_object') {
+    if (code === 'pass_token_secret_rotated') {
+      return jsonResponse(409, { error: 'pass_token_secret_rotated' });
+    }
+    if (code.startsWith('invalid_') || code === 'missing_uploaded_object' || code === 'pass_has_expired') {
       return jsonResponse(422, { error: code });
+    }
+    if (code === 'pass_token_secret_unavailable') {
+      return jsonResponse(503, { error: code });
     }
     return jsonResponse(503, { error: 'service_unavailable' });
   }

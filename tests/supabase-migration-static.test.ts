@@ -157,6 +157,46 @@ describe('Supabase migration static safety contract', () => {
     expect(pgtap).toContain('cross-pass 6th challenge is rejected by recipient rate limit');
     expect(pgtap).toContain('worker 2 cannot finalize worker 1 claim');
     expect(pgtap).toContain('worker 1 finalizes evidence with matching claim ID');
+    expect(pgtap).toContain('claim rejected when visitor has active pass');
     expect(pgtap).toContain('AUTHORED / NOT RUN');
+  });
+
+  it('applies additive cross-layer root cause hardening in 01300', () => {
+    const migration = readFileSync('supabase/migrations/20261020001300_cross_layer_root_cause_hardening.sql', 'utf8');
+
+    // P0-01: RLS operational predicate checks must_change_password and privacy_accepted_at
+    expect(migration).toContain('must_change_password = false');
+    expect(migration).toContain('privacy_accepted_at is not null');
+    expect(migration).toContain('api.acknowledge_privacy');
+    expect(migration).toContain('staff_profiles_select');
+
+    // P0-02: Fixes passes join to visitors resolving v.owner_id
+    expect(migration).toContain('join public.visitors v on v.id = p.visitor_id');
+    expect(migration).toContain('v_pass.owner_id');
+
+    // P0-03: Explicit schema grants
+    expect(migration).toContain('grant usage on schema api to authenticated, service_role');
+    expect(migration).toContain('grant usage on schema public to anon, authenticated, service_role');
+    expect(migration).toContain('revoke all on schema private from public, anon, authenticated');
+
+    // P0-04: Atomic incident hold create & release
+    expect(migration).toContain('api.create_incident_hold');
+    expect(migration).toContain('api.release_incident_hold');
+    expect(migration).toContain('evidence_already_purged');
+    expect(migration).toContain('purge_in_progress');
+
+    // HIGH-03: Guard approval expired check
+    expect(migration).toContain("pass_has_expired");
+    expect(migration).toContain("target.valid_until <= statement_timestamp()");
+
+    // MED-04: Upload intent rate limiting
+    expect(migration).toContain('too_many_pending_intents');
+
+    // MED-01: Guard queue pagination & backlog count
+    expect(migration).toContain('api.guard_dashboard');
+    expect(migration).toContain('requested_limit integer default 50');
+    expect(migration).toContain('requested_offset integer default 0');
+    expect(migration).toContain('pendingTotal');
+    expect(migration).toContain('hasMore');
   });
 });

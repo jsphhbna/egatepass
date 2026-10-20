@@ -246,3 +246,47 @@
      - Verified offline self-hosted OCR assets in `public/tesseract/`.
      - Verified zero leakage of server secrets (`SUPABASE_SECRET_KEY`, `PASS_TOKEN_SECRET`, `RESEND_API_KEY`) into the frontend bundle.
      - Formulated unambiguous three-level deployment verdict: (a) Safe for frontend-only Vercel Preview, (b) Blocked for functional preview until owner-approved migrations on `egatepass-dev`, (c) Production blocked.
+
+## ADR-0027 — Cross-Layer Root-Cause Hardening: RLS Staff Onboarding, Supabase Auth Email Hooks, Idempotent Issuance Replay, and Coordinated Incident Holds
+
+- Date: 2026-10-20
+- Status: accepted for implementation; live hosted Supabase migrations & Send Email Hook activation BLOCKED pending owner approval.
+- Decision:
+  1. **RLS Staff Eligibility Drift & Self-Profile Onboarding (P0-01)**:
+     - Migration `20261020001300_cross_layer_root_cause_hardening.sql` aligns `private.current_staff_role()` with backend/UI eligibility: requires `active = true`, `email_confirmed_at IS NOT NULL`, `must_change_password = false`, and `privacy_accepted_at IS NOT NULL`.
+     - Avoids onboarding deadlocks by updating `staff_profiles_select` RLS policy: users can read their own minimal profile (`user_id = auth.uid()`) during onboarding before password change and privacy acknowledgment.
+     - Added `api.acknowledge_privacy()` RPC to record privacy consent without requiring operational staff privileges.
+  2. **Passes↔Visitors Ownership Join in Verification Challenge (P0-02)**:
+     - Repaired `api.request_email_verification_code` in migration 001300. Canonical `public.passes` contains `visitor_id`, while `public.visitors` contains `owner_id` and `source`. Joined `passes p` to `visitors v` under lock to resolve `v.owner_id` and `v.source`, eliminating runtime column-not-found errors.
+  3. **Explicit Least-Privilege Schema Grants (P0-03)**:
+     - Granted explicit USAGE on `api` and `public` to `authenticated` and `service_role`.
+     - Revoked all privileges on schema `private` from `public`, `anon`, and `authenticated`.
+  4. **Atomic Incident Hold Create/Release & Storage Purge Protocol (P0-04)**:
+     - Implemented atomic RPCs `api.create_incident_hold` and `api.release_incident_hold` in migration 001300.
+     - `create_incident_hold` verifies that candidate evidence has not already been purged and does not have an active purge claim in progress (`40001` conflict).
+     - Created `api/admin/holds.ts` handler for Super Admin hold operations.
+  5. **Supabase Auth Send Email Hook & React Email Architecture (EMAIL-01 & EMAIL-02)**:
+     - Implemented `verifyStandardWebhookSignature` in `server/auth-email-hook.ts` using Standard Webhooks HMAC-SHA256 with 5-minute replay window and `whsec_` key decoding.
+     - Authored responsive EARIST-branded React Email templates: `SignupConfirmationEmail.tsx`, `PasswordResetEmail.tsx`, `StaffInviteEmail.tsx`, `EmailChangeEmail.tsx`.
+     - Inverted secure email change token mapping according to Supabase GoTrue semantics: `token_hash_new` for current email, `token_hash` for new email.
+     - Implemented Vercel Web Handler `/api/auth/send-email-hook` and standalone Deno Edge Function in `supabase/functions/auth-send-email/index.ts`.
+     - Audited staff onboarding: preserved existing administrator-supplied password creation with customized React Email confirmation template; documented one-time invitation token mechanism awaiting owner policy decision.
+  6. **Pre-Provider Rendering Error Protection (EMAIL-03)**:
+     - In `api/passes/email.ts`, wrapped template rendering in a controlled pre-send try/catch block with `providerAttempted = false`, finalizing failed template rendering as `delivery_failed` instead of leaving orphaned challenges in `code_sending`.
+  7. **Pass Issuance Idempotent Replay (HIGH-01)**:
+     - In `api/passes/issue.ts`, queries existing passes by `issue_request_id` before inspecting upload intents.
+     - If committed pass exists, verifies actor, source, form details, and claimed intents match, verifies pass is not expired, checks HMAC secret rotation, and returns 200 OK with existing pass details without duplicating storage or DB records.
+  8. **pgTAP 009 Fixture Purge Invariant Correction (HIGH-02)**:
+     - Corrected `supabase/tests/009_cross_pass_abuse_concurrency.test.sql` by separating test fixtures: dedicated visitor 913 with expired pass 923 for purge tests, visitor 911 with active pass 921 to assert negative invariant (`active_pass_exists`).
+  9. **Guard Approval Expired Pass Recheck (HIGH-03)**:
+     - In migration 001300, `api.decide_visit` re-checks `target.valid_until <= statement_timestamp()` on approval, marking expired passes with `status = 'expired'` and raising `pass_has_expired`. Handled in `api/decide-visit.ts` returning 422.
+  10. **Retention Maintenance Scheduling (HIGH-04)**:
+      - Authoritative endpoint `/api/admin/retention-maintenance.ts` with `CRON_SECRET` authentication, dry-run mode, and batch cleanup of expired unheld evidence, abandoned upload intents, and expired verification codes.
+  11. **Evidence Access During Active Incident Holds (HIGH-05)**:
+      - In `api/evidence.ts`, enables authorized review of expired evidence by Admin/Super Admin when an active incident hold protects it, setting `X-Evidence-Hold-Status: active_hold` and logging audit event `evidence.review_held`. Guards receive 410.
+  12. **Medium-Risk UI & Database Refinements (MED-01–MED-04, MED-07)**:
+      - `MED-01`: Guard queue pagination with `api.guard_dashboard(requested_limit, requested_offset)` returning `pendingTotal` and `hasMore`.
+      - `MED-02`: Real QR sharing via Web Share API File for scannable PNG with download and instructional fallback.
+      - `MED-03`: Accurate OCR privacy notice distinguishing local on-device recognition from eventual private storage upload.
+      - `MED-04`: Rate-limiting upload intent quota (max 10 active pending intents per portal visitor) in migration 001300.
+      - `MED-07`: Aligned pass public reference fixture to canonical UUID in `tests/email-templates.test.ts`.
