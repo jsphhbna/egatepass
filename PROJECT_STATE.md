@@ -172,18 +172,45 @@ Current stage: Targeted root-cause corrections, Supabase 404 diagnosis, and Verc
 - **MED-04 (Upload Intent Quota)**: Added quota to `api.create_upload_intent` in migration 001300 (max 10 active pending intents per portal visitor).
 - **MED-07 (Canonical UUID Test Fixtures)**: Aligned pass public reference fixture to canonical UUID in `tests/email-templates.test.ts`.
 - **Verification Evidence**:
-  - Full Vitest safe suite: 17 test files, 233 tests PASS (0 failures).
+  - Full Vitest safe suite: 18 test files, 238 tests PASS (0 failures).
+  - PGlite in-memory PostgreSQL 17.5 WASM: 4/4 tests PASS (all 13 migrations 000100–001300 execute sequentially from clean DB; RPC contracts, enum contracts, audit schema verified).
   - Behavioral mocked handler suite: 72/72 PASS.
   - Startup Playwright Edge E2E: 4/4 PASS.
   - TypeScript API compilation: `npm run typecheck:api` PASS (exit 0).
-  - Production build: `npm run build` PASS (exit 0, 2537 modules).
+  - TypeScript frontend compilation: `npx tsc --noEmit` PASS (exit 0).
+  - Production build: `npm run build` PASS (exit 0, 2538 modules transformed in 1.41s).
   - Git whitespace: `git diff --check` PASS (exit 0).
   - Uncommitted `.env.example` strictly preserved without staging.
+
+## Comprehensive Root-Cause Repair & Recurring-Pattern Elimination Campaign (Repairs 1A–21)
+
+All 21 confirmed defect groups and their recurring patterns across the codebase were repaired and verified:
+1. **REPAIR 1A & 1B (Migration Chain & Audit Schema)**: Preserved canonical `api.acknowledge_privacy() RETURNS timestamptz`. Fixed all `audit_events` writes to canonical columns `(actor_id, actor_kind, actor_role, action, target_type, target_id, request_id, outcome, after_state)` without invalid `details`.
+2. **REPAIR 2A & 2B (QR Email DB State Machine)**: Restored `request_actor_id` in verification table queries/inserts. Enforced tuple-bound idempotency on `(pass_id, request_actor_id, recipient_email)`.
+3. **REPAIR GROUP 3 (Incident Hold RPC Contract)**: Aligned `api.create_incident_hold` and `api.release_incident_hold` parameters (`requested_actor_id`, `requested_visitor_id`, `requested_pass_id`, `requested_reason`, `requested_request_id`) with `api/admin/holds.ts`. Handled 409 conflict responses.
+4. **REPAIR GROUP 4 (Expired Guard Approval)**: Transaction updates `status = 'expired'`, writes `invalid_scan` visit event (`'expired'` is not in `visit_event_type`), writes audit record, commits, and returns `'expired'`. Handler returns 422.
+5. **REPAIR GROUP 5 (Retention Maintenance)**: Canonical parameter `requested_success: true`, storage split-brain reconciliation, enforced `automatic_cleanup_enabled`, canonical audit outcomes (`success`, `partial`, `failure`, `denied`), and candidate oversampling to prevent starvation.
+6. **REPAIR GROUP 6 (Supabase Auth Hook & Verification URLs)**: `buildAuthVerificationUrl` uses Supabase Auth base URL for `/auth/v1/verify` and `siteUrl`/`redirect_to` for application destination. Production hook fails closed (503) if `RESEND_API_KEY` is missing.
+7. **REPAIR GROUP 7 (Unified Password Policy)**: Enforced 12-char min, upper, lower, digit, symbol across `server/password-policy.ts`, `src/lib/passwordPolicy.ts`, and Zod schemas.
+8. **REPAIR GROUP 8 (Reset Password Session Security)**: `ResetPasswordPage` strictly requires `PASSWORD_RECOVERY` context or `type=recovery` URL.
+9. **REPAIR GROUP 9 (System Settings Fail-Open UI)**: Eliminated writable fallback defaults on fetch failure; renders explicit error alert with retry button and locks Save.
+10. **REPAIR GROUP 10 (Guard Queue Pagination)**: `fetchGuardDashboard` supports pagination (`limit`, `offset`, `pendingTotal`, `hasMore`). Header shows authoritative `pendingTotal`; loaded passes preserved across realtime updates.
+11. **REPAIR GROUP 11 (Visitor Record Search)**: Debounced server-side search query parameter with cursor reset and server-filtered export.
+12. **REPAIR GROUP 12 (Audit Filters)**: Passed all audit filters (`event`, `role`, `action`, `dateFrom`, `dateTo`) to `/api/admin/activity` with pagination reset.
+13. **REPAIR GROUP 13 (Reconciliation Pagination)**: Keyset pagination with cursor, nextCursor, and authoritative total count.
+14. **REPAIR GROUP 14 (Device List Pagination)**: Keyset pagination with cursor, total count, and direct per-device `getUserById` lookup.
+15. **REPAIR GROUP 15 (Dashboard Completeness)**: Authoritative server-side aggregate queries for insights and month total.
+16. **REPAIR GROUP 16 (Evidence Hold Access)**: Fail-closed audit handling; replaced `.maybeSingle()` with `.limit(1)` for multi-pass holds.
+17. **REPAIR GROUP 17 (Environment Alignment)**: Supported `RESEND_FROM_EMAIL` with fallback to `EMAIL_FROM`; documented all variables.
+18. **REPAIR GROUP 18 (Production Web Hardening)**: Full CSP, HSTS, nosniff, DENY frame-options, and Permissions-Policy in `vercel.json`.
+19. **REPAIR GROUP 19 (ErrorBoundary Disclosure)**: Restricted componentStack and technical details to DEV mode.
+20. **REPAIR GROUP 20 (404 Route)**: Catch-all `<Route path="*" element={<NotFoundPage />} />` with accessible EARIST branding.
+21. **REPAIR GROUP 21 (Anonymous Abuse Controls)**: Transactional advisory lock in `api.create_upload_intent` serializing concurrent intent creation.
 
 ## Immediate blockers and next safe work
 
 1. Owner authorization to run migrations 000100–001300 against `egatepass-dev` (`nhoawvkfqblsgutdffie`), which will resolve the PostgREST 404 `PGRST205` on `public.app_settings` and enable functional testing.
-2. Provide an isolated PostgreSQL/Supabase runtime (Docker Desktop or authorized test branch) to run authored pgTAP test suites 001–009.
+2. Provide an isolated PostgreSQL/Supabase runtime (Docker Desktop or authorized test branch) to run authored pgTAP test suites 001–009 (migration chain 000100–001300 now proven sequentially in real PostgreSQL 17.5 via PGlite).
 3. Vercel Preview deployment of branch `feat/runtime-migration` for frontend-only smoke testing is SAFE and ready. Functional testing remains blocked until database migrations are applied.
 4. Supabase Auth Send Email Hook activation requires owner to configure `SEND_EMAIL_HOOK_SECRET` and enable the HTTPS Auth Hook in Supabase Dashboard.
 5. Keep every provider-dependent path NOT VERIFIED / INTEGRATION BLOCKED until the isolated database and browser lifecycle run.
@@ -191,4 +218,4 @@ Current stage: Targeted root-cause corrections, Supabase 404 diagnosis, and Verc
 
 ## Maturity
 
-Current product maturity is `IN PROGRESS` (Level 2 — reproducible local execution, complete static contracts, zero Firebase dependencies in Admin/operational UI, full build passing, comprehensive behavioral mocked-handler tests passing, offline OCR, React Email + Send Email Hook infrastructure implemented, purge contract hardened, issuance replay implemented, local dev API plugin implemented). Awaiting isolated Supabase database instance or migration approval on `egatepass-dev` for Level 3 promotion; not defense-ready and not deployment-ready until PostgreSQL/Supabase behavior is live proven.
+Current product maturity is `IN PROGRESS` (Level 2+ — reproducible local execution, real PostgreSQL 17.5 migration chain validated, complete static & behavioral contracts, zero Firebase dependencies in Admin/operational UI, full build passing, comprehensive behavioral mocked-handler tests passing, offline OCR, React Email + Send Email Hook infrastructure implemented, purge contract hardened, issuance replay implemented, local dev API plugin implemented, all 21 root-cause repair groups eliminated). Awaiting isolated Supabase database instance or migration approval on `egatepass-dev` for Level 3 promotion; not defense-ready and not deployment-ready until hosted PostgreSQL/Supabase behavior is live proven.

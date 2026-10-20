@@ -9,10 +9,10 @@ Never commit values. `.env.local` is ignored. Validate presence and format witho
 | `SUPABASE_URL` | Vercel server | Privileged/admin operations | Server configuration |
 | `SUPABASE_SECRET_KEY` | Vercel server | Service-role/admin operations | Secret; bypasses RLS |
 | `PASS_TOKEN_SECRET` | Vercel server | HMAC derivation of retry-stable QR bearer values | Secret; minimum 32 characters; never browser-visible |
-| `RESEND_API_KEY` | Vercel server | App transactional email | Secret |
-| `EMAIL_FROM` | Vercel server | Approved sender identity | Non-secret address, server-owned |
-| `RESEND_SUPABASE_SMTP_KEY` | Owner workstation/dashboard only | Configure Supabase Auth SMTP | Secret; application must not read it |
-| `CRON_SECRET` | Vercel server/scheduler | Future cleanup invocation | Secret; add only when scheduler exists |
+| `RESEND_API_KEY` | Vercel server | App transactional email and Supabase Auth email hook | Secret |
+| `RESEND_FROM_EMAIL` | Vercel server | Approved sender identity (alias: `EMAIL_FROM`) | Non-secret address, server-owned |
+| `SEND_EMAIL_HOOK_SECRET` | Vercel server | Verification of Supabase Auth Send Email Hook payloads | Secret; minimum 32 characters |
+| `CRON_SECRET` | Vercel server/scheduler | Authorization for scheduled retention cleanup invocation | Secret |
 
 Legacy Firebase/Cloudinary/Netlify names remain necessary only while their implementations remain active. Their presence does not authorize connecting the modernization target to production legacy resources.
 

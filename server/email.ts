@@ -120,7 +120,7 @@ export async function sendResendEmail(payload: SendEmailPayload): Promise<SendEm
     throw new EmailDeliveryError('email_service_unconfigured', 'definitive_rejection');
   }
 
-  const fromEmail = process.env.RESEND_FROM_EMAIL?.trim() || 'EARIST E-GatePass <onboarding@resend.dev>';
+  const fromEmail = process.env.RESEND_FROM_EMAIL?.trim() || process.env.EMAIL_FROM?.trim() || 'EARIST E-GatePass <onboarding@resend.dev>';
 
   let response: Response;
   try {

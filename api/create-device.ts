@@ -2,9 +2,10 @@ import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import { controlledDeviceEmail, HttpError, recordReconciliation, requireStaffActor } from '../server/actors.js';
 import { jsonResponse, readBearerToken } from '../server/http.js';
+import { passwordSchema } from '../server/password-policy.js';
 import { getServerSupabaseClients } from '../server/supabase.js';
 
-const schema = z.object({ name: z.string().trim().min(2).max(50), type: z.enum(['entry', 'exit', 'kiosk']), gate: z.string().trim().min(1).max(50), email: z.string().min(3).max(320), password: z.string().min(12).max(128).regex(/[A-Za-z]/).regex(/\d/) }).strict();
+const schema = z.object({ name: z.string().trim().min(2).max(50), type: z.enum(['entry', 'exit', 'kiosk']), gate: z.string().trim().min(1).max(50), email: z.string().min(3).max(320), password: passwordSchema }).strict();
 async function handleRequest(request: Request): Promise<Response> {
   if (request.method !== 'POST') return jsonResponse(405, { error: 'method_not_allowed' }, { Allow: 'POST' });
   const token = readBearerToken(request); const parsed = schema.safeParse(await request.json().catch(() => null));

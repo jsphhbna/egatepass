@@ -40,19 +40,22 @@ async function handleRequest(request: Request): Promise<Response> {
   try {
     const prepared = await prepareAuthEmail(payload);
 
-    // Only attempt real sending if RESEND_API_KEY is configured
-    if (process.env.RESEND_API_KEY?.trim()) {
-      await sendResendEmail({
-        to: prepared.to,
-        subject: prepared.subject,
-        html: prepared.html,
-      });
-      console.log(`[AUTH-EMAIL-HOOK] Dispatched ${payload.email_data.email_action_type} email for user ${payload.user.id.slice(0, 8)}...`);
-    } else {
-      console.log(`[AUTH-EMAIL-HOOK] Dry-run: rendered ${payload.email_data.email_action_type} email for user ${payload.user.id.slice(0, 8)}... (RESEND_API_KEY absent)`);
+    // Production hook: missing provider configuration -> non-2xx failure (REPAIR 6C)
+    if (!process.env.RESEND_API_KEY?.trim()) {
+      if (process.env.NODE_ENV === 'test' || process.env.AUTH_HOOK_DRY_RUN === 'true') {
+        console.log(`[AUTH-EMAIL-HOOK] Test dry-run: rendered ${payload.email_data.email_action_type} email for user ${payload.user.id.slice(0, 8)}...`);
+        return jsonResponse(200, {});
+      }
+      console.error('[AUTH-EMAIL-HOOK] RESEND_API_KEY is not configured in environment.');
+      return jsonResponse(503, { error: 'provider_unconfigured' });
     }
 
-    // GoTrue expects a 200 OK with empty JSON object {}
+    await sendResendEmail({
+      to: prepared.to,
+      subject: prepared.subject,
+      html: prepared.html,
+    });
+    console.log(`[AUTH-EMAIL-HOOK] Dispatched ${payload.email_data.email_action_type} email for user ${payload.user.id.slice(0, 8)}...`);
     return jsonResponse(200, {});
   } catch (error) {
     console.error('Failed to process auth email hook:', error instanceof Error ? error.message : 'unknown');

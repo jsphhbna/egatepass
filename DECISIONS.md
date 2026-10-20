@@ -290,3 +290,34 @@
       - `MED-03`: Accurate OCR privacy notice distinguishing local on-device recognition from eventual private storage upload.
       - `MED-04`: Rate-limiting upload intent quota (max 10 active pending intents per portal visitor) in migration 001300.
       - `MED-07`: Aligned pass public reference fixture to canonical UUID in `tests/email-templates.test.ts`.
+   13. **Root-Cause Repair & Recurring-Pattern Elimination Architectural Decisions (Repairs 1A–21)**:
+      - **D-RG01 (PostgreSQL Function Signature Invariance & Audit Schema)**:
+        - Decided to preserve canonical `returns timestamptz` for `api.acknowledge_privacy()` across all migrations rather than attempting incompatible `CREATE OR REPLACE FUNCTION` type mutations.
+        - Decided to strictly enforce canonical `public.audit_events` schema `(actor_id, actor_kind, actor_role, action, target_type, target_id, request_id, outcome, after_state)` across all SQL migrations and API handlers, removing non-schema `details` column and requiring valid enum outcomes (`success`, `denied`, `partial`, `failure`).
+      - **D-RG02 (QR Email State Machine & Idempotency Tuple Binding)**:
+        - Decided to retain `request_actor_id` as the authoritative column in `email_verification_codes` without introducing redundant aliases.
+        - Permanently bound idempotency request keys to the immutable tuple `(pass_id, request_actor_id, recipient_email)`, rejecting mismatched replays as bad requests rather than issuing redundant challenges.
+      - **D-RG03 (Privileged Incident Hold RPC Contract)**:
+        - Aligned API caller and SQL signature for `api.create_incident_hold` and `api.release_incident_hold` to accept explicit `requested_actor_id`, `requested_visitor_id`, `requested_pass_id`, `requested_reason`, `requested_request_id`, revalidating authorization under the service-role context.
+      - **D-RG04 (Committed Transactional Expiration on Guard Approval)**:
+        - Decided not to raise a rolling-back exception when a guard approves an already-expired pass. Instead, the transaction writes `status = 'expired'::public.pass_status`, logs an `invalid_scan` visit event (`pass_has_expired`), and commits cleanly, returning `'expired'` to the API which reports 422 to the client.
+      - **D-RG05 (Durable Retention & Storage Split-Brain Recovery)**:
+        - Decided that any storage deletion followed by database finalization failure must write an authoritative reconciliation record detailing the physical deletion fact, preventing ghost re-creations or inaccurate status.
+        - Enforced strict checks for `automatic_cleanup_enabled` and candidate oversampling (200 query limit for 50-claim batch) to avoid starvation on old held items.
+      - **D-RG06 (Supabase Auth Send Email Hook & Verify URL Structure)**:
+        - Decided to construct `/auth/v1/verify` endpoints using `SUPABASE_URL` as the base authority while preserving `siteUrl` / `redirect_to` for application navigation.
+        - Enforced fail-closed behavior (HTTP 503) when `RESEND_API_KEY` is missing in production environments.
+      - **D-RG07 (Canonical Shared Password Policy)**:
+        - Unified frontend and backend password policies to require min 12 characters, uppercase, lowercase, digit, and special symbol, eliminating validation drift between client Zod schemas and Supabase Auth configuration.
+      - **D-RG08 (Strict Password Recovery Context)**:
+        - Decided that `ResetPasswordPage` must verify an active recovery context (`PASSWORD_RECOVERY` event or `type=recovery` query param) rather than permitting any authenticated device/staff session to treat it as an unauthenticated self-service credential reset.
+      - **D-RG09 (Fail-Closed Admin Settings UI)**:
+        - Decided that fetch failure in `AdminSettings` must produce a non-editable error state with locked Save buttons, preventing accidental overwriting of production configuration with default fallbacks.
+      - **D-RG10–15 (Authoritative Pagination & Complete Metrics Reporting)**:
+        - Replaced in-memory slicing and page-1 assumptions across Guard queue, Records search, Audit logs, Reconciliation items, Device lists, and Dashboard aggregates with server-side pagination, debounced query params, and authoritative PostgreSQL counts.
+      - **D-RG16 (Multi-Pass Hold Query Support)**:
+        - Replaced `.maybeSingle()` with `.limit(1)` for pass-level hold checks to safely handle visitors with multiple held passes without runtime query crashes.
+      - **D-RG17–20 (Environment, CSP, ErrorBoundary & Routing Hardening)**:
+        - Decided to support both `RESEND_FROM_EMAIL` and `EMAIL_FROM`, enforce strict CSP in `vercel.json` with OCR WASM and camera permissions, suppress React component stacks in production ErrorBoundaries, and provide an accessible branded 404 route.
+      - **D-RG21 (Advisory Locking for Anonymous Intent Quotas)**:
+        - Added transaction-scoped advisory locks on caller IDs in `api.create_upload_intent` to serialize concurrent requests and eliminate count-then-insert race conditions.

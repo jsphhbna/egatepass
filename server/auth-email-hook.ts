@@ -102,12 +102,12 @@ export function verifyStandardWebhookSignature(
  * Builds the canonical Supabase Auth verification URL based on action type.
  */
 export function buildAuthVerificationUrl(
-  siteUrl: string,
+  authBaseUrl: string,
   tokenHash: string,
   actionType: string,
   redirectTo?: string
 ): string {
-  const baseUrl = (siteUrl || 'https://egatepass.earist.edu.ph').replace(/\/+$/, '');
+  const baseUrl = (authBaseUrl || process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL || 'https://egatepass.earist.edu.ph').replace(/\/+$/, '');
   const params = new URLSearchParams({
     token: tokenHash,
     type: actionType,
@@ -131,13 +131,13 @@ export async function prepareAuthEmail(
   payload: SupabaseAuthEmailPayload
 ): Promise<PreparedAuthEmail> {
   const { user, email_data } = payload;
-  const siteUrl = email_data.site_url || process.env.VITE_SUPABASE_URL || 'https://egatepass.earist.edu.ph';
-  const redirectTo = email_data.redirect_to;
+  const authBaseUrl = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL || email_data.site_url || 'https://egatepass.earist.edu.ph';
+  const redirectTo = email_data.redirect_to || email_data.site_url || 'https://egatepass.earist.edu.ph';
   const displayName = user.user_metadata?.displayName as string | undefined;
 
   switch (email_data.email_action_type) {
     case 'signup': {
-      const confirmationUrl = buildAuthVerificationUrl(siteUrl, email_data.token_hash, 'signup', redirectTo);
+      const confirmationUrl = buildAuthVerificationUrl(authBaseUrl, email_data.token_hash, 'signup', redirectTo);
       const html = await renderSignupConfirmationEmail({
         email: user.email,
         confirmationUrl,
@@ -151,7 +151,7 @@ export async function prepareAuthEmail(
     }
 
     case 'recovery': {
-      const resetUrl = buildAuthVerificationUrl(siteUrl, email_data.token_hash, 'recovery', redirectTo);
+      const resetUrl = buildAuthVerificationUrl(authBaseUrl, email_data.token_hash, 'recovery', redirectTo);
       const html = await renderPasswordResetEmail({
         email: user.email,
         resetUrl,
@@ -165,7 +165,7 @@ export async function prepareAuthEmail(
     }
 
     case 'invite': {
-      const inviteUrl = buildAuthVerificationUrl(siteUrl, email_data.token_hash, 'invite', redirectTo);
+      const inviteUrl = buildAuthVerificationUrl(authBaseUrl, email_data.token_hash, 'invite', redirectTo);
       const roleName = (user.user_metadata?.role as string) || 'Authorized Staff';
       const html = await renderStaffInviteEmail({
         email: user.email,
@@ -183,7 +183,7 @@ export async function prepareAuthEmail(
     case 'email_change_current': {
       // Under secure change, Supabase counterintuitively assigns token_hash_new to the current email!
       const currentHash = email_data.token_hash_new || email_data.token_hash;
-      const changeUrl = buildAuthVerificationUrl(siteUrl, currentHash, 'email_change', redirectTo);
+      const changeUrl = buildAuthVerificationUrl(authBaseUrl, currentHash, 'email_change', redirectTo);
       const newEmail = email_data.new_email || 'the requested address';
       const html = await renderEmailChangeEmail({
         currentEmail: user.email,
@@ -202,7 +202,7 @@ export async function prepareAuthEmail(
     case 'email_change_new': {
       // And token_hash to the new email!
       const newHash = email_data.token_hash;
-      const changeUrl = buildAuthVerificationUrl(siteUrl, newHash, 'email_change', redirectTo);
+      const changeUrl = buildAuthVerificationUrl(authBaseUrl, newHash, 'email_change', redirectTo);
       const targetEmail = email_data.new_email || user.email;
       const html = await renderEmailChangeEmail({
         currentEmail: user.email,

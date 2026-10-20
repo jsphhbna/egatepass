@@ -27,14 +27,23 @@ interface SerializedPass {
 
 export interface DashboardCounts {
   todayTotal: number;
+  monthTotal?: number;
   currentlyInside: number;
   exitedToday: number;
   pendingToday: number;
   rejectedToday: number;
 }
 
+export interface DashboardInsights {
+  topPurpose: { label: string; count: number };
+  busiestGate: { label: string; count: number };
+  topRejection: { label: string; count: number };
+  avgApprovalTime: string;
+}
+
 interface DashboardApiResponse {
   counts?: DashboardCounts;
+  insights?: DashboardInsights;
   recentPasses: SerializedPass[];
   insidePasses: SerializedPass[];
   exitedTodayPasses: SerializedPass[];
@@ -44,6 +53,7 @@ interface DashboardApiResponse {
 
 export interface DashboardDataSnapshot {
   counts?: DashboardCounts;
+  insights?: DashboardInsights;
   recentPasses: GatePass[];
   insidePasses: GatePass[];
   exitedTodayPasses: GatePass[];
@@ -55,6 +65,7 @@ export interface DashboardDataSnapshot {
 
 const initialSnapshot: DashboardDataSnapshot = {
   counts: undefined,
+  insights: undefined,
   recentPasses: [],
   insidePasses: [],
   exitedTodayPasses: [],
@@ -117,6 +128,7 @@ async function fetchDashboardData() {
 
     currentSnapshot = {
       counts: data?.counts,
+      insights: data?.insights,
       recentPasses: (data?.recentPasses ?? []).map(deserializePass),
       insidePasses: (data?.insidePasses ?? []).map(deserializePass),
       exitedTodayPasses: (data?.exitedTodayPasses ?? []).map(deserializePass),

@@ -35,10 +35,12 @@ export class ErrorBoundary extends Component<Props, State> {
             <h1 className="mt-2 text-2xl font-bold text-[var(--color-text-primary)]">Something went wrong</h1>
             <p className="mt-2 text-sm leading-relaxed text-[var(--color-text-secondary)]">Refresh the page and try again. If the problem continues, contact the system administrator.</p>
             <button type="button" onClick={() => window.location.reload()} className="mt-5 min-h-11 rounded-md bg-[var(--color-brand)] px-4 text-sm font-semibold text-white hover:bg-[var(--color-brand-dark)]">Refresh Page</button>
-            <details className="mt-5 rounded-lg border border-[var(--color-border)] bg-[var(--color-canvas)] p-3 text-xs text-[var(--color-text-secondary)]">
-              <summary className="cursor-pointer font-semibold text-[var(--color-text-primary)]">Technical details</summary>
-              <pre className="mt-3 max-h-48 overflow-auto whitespace-pre-wrap break-words font-mono">{this.state.error?.toString()}{'\n'}{this.state.errorInfo?.componentStack}</pre>
-            </details>
+            {import.meta.env.DEV && (
+              <details className="mt-5 rounded-lg border border-[var(--color-border)] bg-[var(--color-canvas)] p-3 text-xs text-[var(--color-text-secondary)]">
+                <summary className="cursor-pointer font-semibold text-[var(--color-text-primary)]">Technical details (development only)</summary>
+                <pre className="mt-3 max-h-48 overflow-auto whitespace-pre-wrap break-words font-mono">{this.state.error?.toString()}{'\n'}{this.state.errorInfo?.componentStack}</pre>
+              </details>
+            )}
           </div>
         </main>
       );

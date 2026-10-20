@@ -1,4 +1,5 @@
 import { HttpError, requireStaffActor } from '../server/actors.js';
+import { decodeCursorStrict, encodeCursor } from '../server/cursor.js';
 import { jsonResponse, readBearerToken } from '../server/http.js';
 import { getServerSupabaseClients } from '../server/supabase.js';
 
@@ -21,20 +22,52 @@ async function handleRequest(request: Request): Promise<Response> {
   const token = readBearerToken(request);
   if (!token) return jsonResponse(401, { error: 'authentication_required' });
 
+  const url = new URL(request.url);
+  const cursor = url.searchParams.get('cursor')?.trim();
+  const pageSizeParam = parseInt(url.searchParams.get('pageSize') || '50', 10);
+  const pageSize = Math.min(Math.max(Number.isFinite(pageSizeParam) ? pageSizeParam : 50, 1), 250);
+
   try {
     const { admin } = getServerSupabaseClients();
     await requireStaffActor(admin, token, ['superadmin']);
 
-    const { data: rows, error } = await admin
+    const countRes = await admin
+      .from('reconciliation_tasks')
+      .select('id', { count: 'exact', head: true })
+      .eq('status', 'pending');
+    if (countRes.error) throw countRes.error;
+    const unresolvedTotal = countRes.count ?? 0;
+
+    let query = admin
       .from('reconciliation_tasks')
       .select('id, operation, status, reference_type, reference_id, last_error_code, safe_context, created_at')
       .eq('status', 'pending')
       .order('created_at', { ascending: false })
-      .limit(50);
+      .order('id', { ascending: false });
 
+    if (cursor) {
+      const decoded = decodeCursorStrict(cursor, { idType: 'uuid' });
+      if (decoded) {
+        if (decoded.id) {
+          query = query.or(`created_at.lt.${decoded.timestamp},and(created_at.eq.${decoded.timestamp},id.lt.${decoded.id})`);
+        } else {
+          query = query.lt('created_at', decoded.timestamp);
+        }
+      }
+    }
+
+    query = query.limit(pageSize + 1);
+
+    const { data: rows, error } = await query;
     if (error) throw error;
 
-    const items = ((rows ?? []) as unknown as RawReconciliationTask[]).map((row) => ({
+    const rawRows = (rows ?? []) as unknown as RawReconciliationTask[];
+    const hasMore = rawRows.length > pageSize;
+    const returnRows = hasMore ? rawRows.slice(0, pageSize) : rawRows;
+    const lastRow = returnRows[returnRows.length - 1];
+    const nextCursor = hasMore && lastRow ? encodeCursor(lastRow.created_at, lastRow.id) : null;
+
+    const items = returnRows.map((row) => ({
       id: row.id,
       type: row.operation,
       status: 'unresolved',
@@ -48,7 +81,10 @@ async function handleRequest(request: Request): Promise<Response> {
     return jsonResponse(200, {
       items,
       count: items.length,
-      limit: 50,
+      total: unresolvedTotal,
+      hasMore,
+      nextCursor,
+      limit: pageSize,
       readOnly: true,
     });
   } catch (error) {

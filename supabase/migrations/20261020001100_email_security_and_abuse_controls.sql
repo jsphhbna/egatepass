@@ -27,7 +27,7 @@ create or replace function api.finalize_email_verification_code(
   requested_verification_id uuid,
   requested_request_id uuid,
   requested_delivery_status text,
-  requested_provider_delivery_id text
+  requested_provider_delivery_id text default null
 )
 returns jsonb
 language plpgsql
@@ -93,7 +93,7 @@ create or replace function api.finalize_email_dispatch(
   requested_verification_id uuid,
   requested_send_request_id uuid,
   requested_delivery_status text,
-  requested_provider_delivery_id text
+  requested_provider_delivery_id text default null
 )
 returns jsonb
 language plpgsql

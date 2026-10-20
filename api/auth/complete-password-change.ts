@@ -1,10 +1,11 @@
 import { z } from 'zod';
 import { jsonResponse, readBearerToken } from '../../server/http.js';
+import { passwordSchema } from '../../server/password-policy.js';
 import { getServerSupabaseClients } from '../../server/supabase.js';
 
 const requestSchema = z.object({
   currentPassword: z.string().min(1).max(256),
-  newPassword: z.string().min(12).max(128).regex(/[A-Za-z]/).regex(/\d/),
+  newPassword: passwordSchema,
 }).refine(({ currentPassword, newPassword }) => currentPassword !== newPassword, {
   message: 'new password must differ from current password',
   path: ['newPassword'],

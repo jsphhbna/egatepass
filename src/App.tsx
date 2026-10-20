@@ -24,6 +24,7 @@ const AdminAuditLogs = lazy(() => import('@/pages/AdminAuditLogs').then((module)
 const DevicesPage = lazy(() => import('@/pages/DevicesPage').then((module) => ({ default: module.DevicesPage })));
 const EntryScanPage = lazy(() => import('@/pages/EntryScanPage').then((module) => ({ default: module.EntryScanPage })));
 const ExitScanPage = lazy(() => import('@/pages/ExitScanPage').then((module) => ({ default: module.ExitScanPage })));
+const NotFoundPage = lazy(() => import('@/pages/NotFoundPage').then((module) => ({ default: module.NotFoundPage })));
 
 function RouteLoadingFallback() {
   return (
@@ -88,6 +89,9 @@ export function App() {
               <Route path="settings" element={<AdminSettings />} />
             </Route>
           </Route>
+
+          {/* Catch-all 404 */}
+          <Route path="*" element={<NotFoundPage />} />
           </Routes>
         </Suspense>
 

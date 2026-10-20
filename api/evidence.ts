@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { jsonResponse, readBearerToken } from '../server/http.js';
+import { recordReconciliation } from '../server/actors.js';
 import { getServerSupabaseClients } from '../server/supabase.js';
 
 const idSchema = z.string().uuid();
@@ -56,15 +57,15 @@ async function handleRequest(request: Request): Promise<Response> {
         if (passesError) throw passesError;
         const passIds = (passes || []).map((p: any) => p.id);
         if (passIds.length > 0) {
-          const { data: passHold, error: passHoldError } = await admin
+          const { data: passHolds, error: passHoldError } = await admin
             .from('incident_holds')
             .select('id, reason')
             .in('pass_id', passIds)
             .eq('active', true)
-            .maybeSingle();
+            .limit(1);
 
           if (passHoldError) throw passHoldError;
-          activeHold = passHold;
+          activeHold = passHolds?.[0] ?? null;
         }
       }
 
@@ -74,8 +75,8 @@ async function handleRequest(request: Request): Promise<Response> {
 
       isHeld = true;
 
-      // Audit review of expired held evidence
-      await admin.from('audit_events').insert({
+      // 16A: Audit review of expired held evidence and fail closed if audit recording fails
+      const { error: auditError } = await admin.from('audit_events').insert({
         actor_id: identity.user.id,
         actor_kind: 'staff',
         actor_role: profile.role,
@@ -84,6 +85,19 @@ async function handleRequest(request: Request): Promise<Response> {
         target_id: evidenceId.data,
         outcome: 'success',
       });
+
+      if (auditError) {
+        console.error('Audit recording failed during held evidence review:', auditError);
+        await recordReconciliation(
+          admin,
+          'evidence.review_held.audit_failed',
+          'visitor_evidence',
+          evidenceId.data,
+          auditError.message || 'audit_insert_failed',
+          { actorId: identity.user.id, actorRole: profile.role }
+        ).catch(() => undefined);
+        return jsonResponse(503, { error: 'Audit recording unavailable' });
+      }
     } else if (profile.role === 'guard') {
       const { count, error: passError } = await admin.from('passes').select('id', { count: 'exact', head: true })
         .eq('visitor_id', evidence.visitor_id).eq('status', 'pending');

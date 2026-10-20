@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { format } from 'date-fns';
 import { ClipboardList, Download, ShieldCheck } from 'lucide-react';
 import { toast } from 'sonner';
@@ -49,23 +49,39 @@ export function AdminAuditLogs() {
   const [visitorEvent, setVisitorEvent] = useState('');
   const [administrativeRole, setAdministrativeRole] = useState('');
   const [administrativeAction, setAdministrativeAction] = useState('');
+  const [debouncedAction, setDebouncedAction] = useState('');
   const [dateFrom, setDateFrom] = useState('');
   const [dateTo, setDateTo] = useState('');
   const [exporting, setExporting] = useState(false);
-  const visitor = useVisitorActivity(tab === 'visitor');
-  const administrative = useAdministrativeAudit(tab === 'administrative');
+
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setDebouncedAction(administrativeAction);
+    }, 300);
+    return () => clearTimeout(timer);
+  }, [administrativeAction]);
+
+  const visitor = useVisitorActivity(tab === 'visitor', {
+    event: visitorEvent || undefined,
+    dateFrom: dateFrom || undefined,
+    dateTo: dateTo || undefined,
+  });
+  const administrative = useAdministrativeAudit(tab === 'administrative', {
+    role: administrativeRole || undefined,
+    action: debouncedAction.trim() || undefined,
+    dateFrom: dateFrom || undefined,
+    dateTo: dateTo || undefined,
+  });
   const reconciliation = useReconciliationItems(canViewReconciliation);
 
   const tabs: Array<{ id: AuditTab; label: string }> = [
     { id: 'visitor', label: 'Visitor / Gate Activity' },
     { id: 'administrative', label: 'Administrative / System Activity' },
-    ...(canViewReconciliation ? [{ id: 'reconciliation' as const, label: `Reconciliation (${reconciliation.data.length})` }] : []),
+    ...(canViewReconciliation ? [{ id: 'reconciliation' as const, label: `Reconciliation (${reconciliation.total})` }] : []),
   ];
-  const visibleVisitor = visitor.data.filter((item) => !visitorEvent || item.event === visitorEvent);
+  const visibleVisitor = visitor.data;
   const actionSearch = administrativeAction.trim().toLocaleLowerCase();
-  const visibleAdministrative = administrative.data.filter((item) =>
-    (!administrativeRole || item.actorRole === administrativeRole)
-    && (!actionSearch || item.action.toLocaleLowerCase().includes(actionSearch)));
+  const visibleAdministrative = administrative.data;
 
   async function exportActivity() {
     if (tab === 'reconciliation') return;
@@ -288,6 +304,18 @@ export function AdminAuditLogs() {
                     </DataTableRow>)}
             </tbody>
           </DataTable>
+          {reconciliation.hasMore && (
+            <div className="mt-4 flex justify-center">
+              <Button
+                variant="secondary"
+                loading={reconciliation.loadingMore}
+                disabled={reconciliation.loadingMore}
+                onClick={reconciliation.loadMore}
+              >
+                Load more reconciliation items ({reconciliation.data.length} of {reconciliation.total})
+              </Button>
+            </div>
+          )}
         </div>
       )}
     </div>

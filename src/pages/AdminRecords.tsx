@@ -43,17 +43,27 @@ export function AdminRecords() {
   const [dateFilter, setDateFilter] = useState('');
   const [statusFilter, setStatusFilter] = useState('');
   const [search, setSearch] = useState('');
+  const [debouncedSearch, setDebouncedSearch] = useState('');
   const [selectedPass, setSelectedPass] = useState<GatePassWithId | null>(null);
   const [nextCursor, setNextCursor] = useState<string | null>(null);
   const [hasMore, setHasMore] = useState(false);
   const [loadingMore, setLoadingMore] = useState(false);
   const [exporting, setExporting] = useState(false);
 
-  async function fetchRecordsPage(cursor: string | null, pageSize: number) {
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setDebouncedSearch(search);
+    }, 300);
+    return () => clearTimeout(timer);
+  }, [search]);
+
+  async function fetchRecordsPage(cursor: string | null, pageSize: number, searchOverride?: string) {
     const token = await getAccessToken();
     const params = new URLSearchParams();
     if (statusFilter) params.set('status', statusFilter);
     if (dateFilter) params.set('date', dateFilter);
+    const activeSearch = searchOverride !== undefined ? searchOverride : debouncedSearch;
+    if (activeSearch.trim()) params.set('search', activeSearch.trim());
     if (cursor) params.set('cursor', cursor);
     params.set('pageSize', String(pageSize));
 
@@ -98,10 +108,10 @@ export function AdminRecords() {
     };
   }
 
-  async function loadRecords(append = false) {
+  async function loadRecords(append = false, currentSearch?: string) {
     append ? setLoadingMore(true) : setLoading(true);
     try {
-      const res = await fetchRecordsPage(append ? nextCursor : null, RECORDS_PAGE_SIZE);
+      const res = await fetchRecordsPage(append ? nextCursor : null, RECORDS_PAGE_SIZE, currentSearch);
       setPasses((current) => (append ? [...current, ...res.items] : res.items));
       setNextCursor(res.nextCursor);
       setHasMore(res.hasMore);
@@ -116,21 +126,17 @@ export function AdminRecords() {
 
   useEffect(() => {
     setNextCursor(null);
-    void loadRecords(false);
-  }, [dateFilter, statusFilter]);
+    void loadRecords(false, debouncedSearch);
+  }, [dateFilter, statusFilter, debouncedSearch]);
 
-  const filteredPasses = passes.filter((p) => {
-    if (statusFilter && p.status !== statusFilter) return false;
-    if (search && !(p.visitorName ?? '').toLowerCase().includes(search.toLowerCase())) return false;
-    return true;
-  });
+  const filteredPasses = passes;
 
   async function exportCSV() {
     setExporting(true);
     try {
       const exportResult = await collectCursorPages<GatePassWithId, string>(
         async (cursor, pageSize) => {
-          const res = await fetchRecordsPage(cursor, pageSize);
+          const res = await fetchRecordsPage(cursor, pageSize, debouncedSearch);
           return {
             items: res.items,
             nextCursor: res.nextCursor,
@@ -138,9 +144,7 @@ export function AdminRecords() {
         },
         { pageSize: 250 },
       );
-      const normalizedSearch = search.trim().toLocaleLowerCase();
-      const exportPasses = exportResult.items.filter((pass) => !normalizedSearch
-        || (pass.visitorName ?? '').toLocaleLowerCase().includes(normalizedSearch));
+      const exportPasses = exportResult.items;
     const headers = ['Visitor Name', 'Purpose', 'Status', 'Issued At', 'Time In', 'Time Out', 'Gate'];
       const rows = exportPasses.map((p) => [
       p.visitorName,

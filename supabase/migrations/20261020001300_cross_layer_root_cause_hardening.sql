@@ -1,7 +1,7 @@
 -- Additive migration 20261020001300_cross_layer_root_cause_hardening.sql
 -- Hardens RLS operational predicates, fixes email challenge owner join,
 -- adds incident hold atomic create/release, enforces upload intent quotas,
--- and rechecks pass expiration before guard approval.
+-- and rechecks pass expiration before guard approval without transaction rollback.
 
 -- ============================================================================
 -- 1. P0-01: RLS Staff Operational Eligibility Predicate
@@ -37,8 +37,9 @@ using (
 );
 
 -- Ensure staff can acknowledge privacy even before full operational eligibility
+-- REPAIR 1A & 1B: Preserves canonical RETURNS timestamptz and valid audit_events columns
 create or replace function api.acknowledge_privacy()
-returns boolean
+returns timestamptz
 language plpgsql
 volatile
 security definer
@@ -46,6 +47,8 @@ set search_path = ''
 as $$
 declare
   caller_id uuid := (select auth.uid());
+  accepted_at timestamptz;
+  caller_role public.staff_role;
 begin
   if caller_id is null then
     raise exception using errcode = '42501', message = 'authentication required';
@@ -55,20 +58,21 @@ begin
      set privacy_accepted_at = coalesce(privacy_accepted_at, now()),
          updated_at = now()
    where user_id = caller_id
-     and active = true;
+     and active = true
+  returning privacy_accepted_at, role into accepted_at, caller_role;
 
-  if not found then
+  if accepted_at is null then
     raise exception using errcode = 'P0002', message = 'staff profile not found or inactive';
   end if;
 
   insert into public.audit_events (
-    actor_id, actor_role, action, target_type, target_id, details
+    actor_id, actor_kind, actor_role, action, target_type, target_id, after_state
   ) values (
-    caller_id, 'staff', 'staff.privacy_acknowledged', 'staff_profile', caller_id::text,
-    jsonb_build_object('timestamp', now())
+    caller_id, 'staff', caller_role::text, 'privacy.acknowledged', 'staff_profile', caller_id::text,
+    jsonb_build_object('accepted', true, 'timestamp', accepted_at)
   );
 
-  return true;
+  return accepted_at;
 end;
 $$;
 
@@ -76,10 +80,11 @@ revoke all on function api.acknowledge_privacy() from public, anon;
 grant execute on function api.acknowledge_privacy() to authenticated, service_role;
 
 -- ============================================================================
--- 2. P0-02: Fix api.request_email_verification_code owner_id join
+-- 2. P0-02, REPAIR 2A, REPAIR 2B: Email Verification Challenge Hardening
 -- ============================================================================
 -- Joins passes to visitors to resolve owner_id and source authoritatively.
--- Preserves Level 1 (actor) and Level 2 (recipient) transaction advisory locks.
+-- Uses request_actor_id consistently and binds idempotency replay strictly to
+-- the (pass_id, request_actor_id, recipient_email) tuple.
 
 create or replace function api.request_email_verification_code(
   requested_pass_id uuid,
@@ -109,7 +114,7 @@ begin
   v_recipient := lower(trim(coalesce(requested_recipient_email, '')));
 
   -- 1. Pass lock (serializes requests targeting the same pass)
-  -- P0-02 FIX: Join passes to visitors to resolve owner_id and source correctly!
+  -- P0-02 FIX: Join passes to visitors to resolve owner_id and source correctly
   select p.id, p.status, p.valid_until, v.owner_id, v.source into v_pass
     from public.passes p
     join public.visitors v on v.id = p.visitor_id
@@ -137,30 +142,37 @@ begin
     end if;
   end if;
 
-  -- 2. Deterministic advisory locks across passes to serialize recipient/actor counters
-  -- Level 1: Actor lock
-  v_actor_lock_key := ('x' || substr(md5('actor:' || requested_actor_id::text), 1, 16))::bit(64)::bigint;
-  perform pg_advisory_xact_lock(v_actor_lock_key);
-
-  -- Level 2: Recipient lock
-  v_recipient_lock_key := ('x' || substr(md5('recipient:' || v_recipient), 1, 16))::bit(64)::bigint;
-  perform pg_advisory_xact_lock(v_recipient_lock_key);
-
-  -- 3. Idempotent request replay check
-  select id, code_delivery_status, expires_at into v_existing
-    from public.pass_email_verifications
-   where request_id = requested_request_id;
+  -- 2. REPAIR 2B: Idempotency replay check under pass lock
+  -- Binds request_id to pass_id, request_actor_id, and recipient_email
+  select ev.id, ev.pass_id, ev.request_actor_id, ev.recipient_email, ev.expires_at, ev.code_delivery_status
+    into v_existing
+    from public.pass_email_verifications ev
+   where ev.request_id = requested_request_id
+   for update;
 
   if found then
+    if v_existing.pass_id <> requested_pass_id
+      or v_existing.request_actor_id is distinct from requested_actor_id
+      or lower(trim(v_existing.recipient_email)) <> v_recipient then
+      raise exception 'idempotency_key_mismatch' using errcode = 'P0008';
+    end if;
     return jsonb_build_object(
       'verification_id', v_existing.id,
       'expires_at', v_existing.expires_at,
       'code_delivery_status', v_existing.code_delivery_status,
+      'dispatch_code', false,
       'idempotent_replay', true
     );
   end if;
 
-  -- 4. Shared sliding-window rate limit checks (15 minutes)
+  -- 3. Concurrency serialization across distinct passes:
+  -- Acquire deterministic advisory transaction locks to eliminate cross-pass count-then-insert races.
+  if v_pass.source <> 'kiosk' and requested_actor_id is not null then
+    perform pg_advisory_xact_lock(1, hashtext(requested_actor_id::text));
+  end if;
+  perform pg_advisory_xact_lock(2, hashtext(v_recipient));
+
+  -- 4. Sliding-window rate limit checks (15 minutes)
   -- (a) Max 3 requests per individual pass
   select count(*) into v_pass_recent_count
     from public.pass_email_verifications
@@ -181,29 +193,30 @@ begin
     raise exception 'too_many_requests_recipient' using errcode = 'P0003';
   end if;
 
-  -- (c) Max 10 requests per actor across all passes
+  -- (c) Max 10 requests per actor across all passes (REPAIR 2A: uses request_actor_id)
   select count(*) into v_actor_recent_count
-    from public.pass_email_verifications
-   where actor_id = requested_actor_id
-     and created_at >= statement_timestamp() - interval '15 minutes';
+    from public.pass_email_verifications ev
+   where ev.request_actor_id = requested_actor_id
+     and ev.created_at >= statement_timestamp() - interval '15 minutes';
 
   if v_actor_recent_count >= 10 then
     raise exception 'too_many_requests_actor' using errcode = 'P0003';
   end if;
 
-  -- 5. Insert challenge row in code_sending state
+  -- 5. Insert challenge row in code_sending state (REPAIR 2A: uses request_actor_id)
   insert into public.pass_email_verifications (
-    id, pass_id, actor_id, recipient_email, code_hash,
-    code_delivery_status, expires_at, request_id
+    id, pass_id, request_id, request_actor_id, recipient_email, code_hash,
+    code_delivery_status, delivery_status, expires_at, created_at
   ) values (
-    requested_verification_id, requested_pass_id, requested_actor_id, v_recipient,
-    requested_code_hash, 'code_sending', requested_expires_at, requested_request_id
+    requested_verification_id, requested_pass_id, requested_request_id, requested_actor_id,
+    v_recipient, requested_code_hash, 'code_sending', 'pending', requested_expires_at, now()
   );
 
   return jsonb_build_object(
     'verification_id', requested_verification_id,
     'expires_at', requested_expires_at,
     'code_delivery_status', 'code_sending',
+    'dispatch_code', true,
     'idempotent_replay', false
   );
 end;
@@ -222,13 +235,18 @@ revoke all on schema private from public, anon, authenticated;
 grant usage on schema private to service_role;
 
 -- ============================================================================
--- 4. P0-04: Atomic Incident Hold Create & Release Protocol
+-- 4. P0-04, REPAIR GROUP 3: Incident Hold Create & Release Protocol
 -- ============================================================================
+-- Matches the trusted Vercel service-role caller contract:
+--   create_incident_hold(requested_actor_id, requested_visitor_id, requested_pass_id, requested_reason, requested_request_id)
+--   release_incident_hold(requested_actor_id, requested_hold_id, requested_reason, requested_request_id)
 
 create or replace function api.create_incident_hold(
+  requested_actor_id uuid,
   requested_visitor_id uuid,
   requested_pass_id uuid,
-  requested_reason text
+  requested_reason text,
+  requested_request_id uuid default null
 )
 returns jsonb
 language plpgsql
@@ -237,16 +255,27 @@ security definer
 set search_path = ''
 as $$
 declare
-  caller_id uuid := (select auth.uid());
-  caller_role public.staff_role := (select private.current_staff_role());
+  actor public.staff_profiles%rowtype;
   new_hold_id uuid := gen_random_uuid();
   v_visitor_id uuid := requested_visitor_id;
   v_pass_id uuid := requested_pass_id;
   v_evidence_record record;
   cleaned_reason text := btrim(coalesce(requested_reason, ''));
+  v_existing_hold_id uuid;
 begin
-  -- Authorization: Super Admin only
-  if caller_id is null or caller_role is distinct from 'superadmin'::public.staff_role then
+  if auth.role() <> 'service_role' then
+    raise exception using errcode = '42501', message = 'service role required';
+  end if;
+
+  select * into actor
+    from public.staff_profiles
+   where user_id = requested_actor_id
+     and active = true
+     and not must_change_password
+     and privacy_accepted_at is not null
+   for share;
+
+  if not found or actor.role is distinct from 'superadmin'::public.staff_role then
     raise exception using errcode = '42501', message = 'superadmin required';
   end if;
 
@@ -276,14 +305,44 @@ begin
     end if;
   end if;
 
-  -- Check if any evidence for this visitor has already been claimed or purged
+  -- Check if an active hold already exists for this pass or visitor
+  if v_pass_id is not null then
+    select id into v_existing_hold_id
+      from public.incident_holds
+     where pass_id = v_pass_id and active = true
+     limit 1;
+    if found then
+      return jsonb_build_object(
+        'success', true,
+        'hold_id', v_existing_hold_id,
+        'conflict', null,
+        'already_active', true
+      );
+    end if;
+  end if;
+
+  if v_visitor_id is not null then
+    select id into v_existing_hold_id
+      from public.incident_holds
+     where visitor_id = v_visitor_id and active = true
+     limit 1;
+    if found then
+      return jsonb_build_object(
+        'success', true,
+        'hold_id', v_existing_hold_id,
+        'conflict', null,
+        'already_active', true
+      );
+    end if;
+  end if;
+
+  -- Check if any evidence for this visitor has already been permanently purged or claimed
   for v_evidence_record in
     select id, purged_at, purge_claim_id, purge_claimed_at
       from public.visitor_evidence
      where visitor_id = v_visitor_id
   loop
     if v_evidence_record.purged_at is not null then
-      -- Evidence was already physically deleted; cannot falsely claim retention
       return jsonb_build_object(
         'success', false,
         'conflict', 'evidence_already_purged',
@@ -293,7 +352,6 @@ begin
 
     if v_evidence_record.purge_claim_id is not null
        and v_evidence_record.purge_claimed_at >= statement_timestamp() - interval '5 minutes' then
-      -- Active purge claim is in flight
       return jsonb_build_object(
         'success', false,
         'conflict', 'purge_in_progress',
@@ -306,14 +364,15 @@ begin
   insert into public.incident_holds (
     id, visitor_id, pass_id, reason, active, created_by, created_at
   ) values (
-    new_hold_id, v_visitor_id, v_pass_id, cleaned_reason, true, caller_id, now()
+    new_hold_id, v_visitor_id, v_pass_id, cleaned_reason, true, requested_actor_id, now()
   );
 
-  -- Audit log entry
+  -- Audit log entry with valid schema columns
   insert into public.audit_events (
-    actor_id, actor_role, action, target_type, target_id, details
+    actor_id, actor_kind, actor_role, action, target_type, target_id, request_id, outcome, after_state
   ) values (
-    caller_id, 'superadmin', 'incident_hold.created', 'incident_hold', new_hold_id::text,
+    requested_actor_id, 'staff', 'superadmin', 'incident_hold.created', 'incident_hold', new_hold_id::text,
+    requested_request_id, 'success',
     jsonb_build_object(
       'visitor_id', v_visitor_id,
       'pass_id', v_pass_id,
@@ -324,16 +383,16 @@ begin
   return jsonb_build_object(
     'success', true,
     'hold_id', new_hold_id,
-    'visitor_id', v_visitor_id,
-    'pass_id', v_pass_id,
-    'active', true
+    'conflict', null
   );
 end;
 $$;
 
 create or replace function api.release_incident_hold(
+  requested_actor_id uuid,
   requested_hold_id uuid,
-  requested_reason text
+  requested_reason text default null,
+  requested_request_id uuid default null
 )
 returns jsonb
 language plpgsql
@@ -342,18 +401,28 @@ security definer
 set search_path = ''
 as $$
 declare
-  caller_id uuid := (select auth.uid());
-  caller_role public.staff_role := (select private.current_staff_role());
+  actor public.staff_profiles%rowtype;
   target_hold public.incident_holds%rowtype;
   cleaned_reason text := btrim(coalesce(requested_reason, ''));
 begin
-  -- Authorization: Super Admin only
-  if caller_id is null or caller_role is distinct from 'superadmin'::public.staff_role then
+  if auth.role() <> 'service_role' then
+    raise exception using errcode = '42501', message = 'service role required';
+  end if;
+
+  select * into actor
+    from public.staff_profiles
+   where user_id = requested_actor_id
+     and active = true
+     and not must_change_password
+     and privacy_accepted_at is not null
+   for share;
+
+  if not found or actor.role is distinct from 'superadmin'::public.staff_role then
     raise exception using errcode = '42501', message = 'superadmin required';
   end if;
 
-  if char_length(cleaned_reason) not between 5 and 500 then
-    raise exception using errcode = '22023', message = 'release reason must be between 5 and 500 characters';
+  if requested_reason is not null and char_length(cleaned_reason) not between 1 and 500 then
+    raise exception using errcode = '22023', message = 'release reason must be between 1 and 500 characters';
   end if;
 
   select * into target_hold
@@ -362,7 +431,7 @@ begin
    for update;
 
   if not found then
-    raise exception using errcode = 'P0002', message = 'incident hold not found';
+    raise exception using errcode = 'P0002', message = 'incident_hold_not_found';
   end if;
 
   if not target_hold.active then
@@ -375,14 +444,15 @@ begin
 
   update public.incident_holds
      set active = false,
-         released_by = caller_id,
+         released_by = requested_actor_id,
          released_at = now()
    where id = target_hold.id;
 
   insert into public.audit_events (
-    actor_id, actor_role, action, target_type, target_id, details
+    actor_id, actor_kind, actor_role, action, target_type, target_id, request_id, outcome, after_state
   ) values (
-    caller_id, 'superadmin', 'incident_hold.released', 'incident_hold', target_hold.id::text,
+    requested_actor_id, 'staff', 'superadmin', 'incident_hold.released', 'incident_hold', target_hold.id::text,
+    requested_request_id, 'success',
     jsonb_build_object(
       'visitor_id', target_hold.visitor_id,
       'pass_id', target_hold.pass_id,
@@ -399,17 +469,17 @@ begin
 end;
 $$;
 
-revoke all on function api.create_incident_hold(uuid, uuid, text) from public, anon;
-revoke all on function api.release_incident_hold(uuid, text) from public, anon;
-grant execute on function api.create_incident_hold(uuid, uuid, text) to authenticated, service_role;
-grant execute on function api.release_incident_hold(uuid, text) to authenticated, service_role;
+revoke all on function api.create_incident_hold(uuid, uuid, uuid, text, uuid) from public, anon, authenticated;
+revoke all on function api.release_incident_hold(uuid, uuid, text, uuid) from public, anon, authenticated;
+grant execute on function api.create_incident_hold(uuid, uuid, uuid, text, uuid) to service_role;
+grant execute on function api.release_incident_hold(uuid, uuid, text, uuid) to service_role;
 
 -- ============================================================================
--- 5. HIGH-03: Guard Approval Expired Pass Recheck
+-- 5. HIGH-03, REPAIR GROUP 4: Guard Approval Expired Pass Recheck
 -- ============================================================================
 -- If an awaiting-guard pass expired before the guard clicked approve,
--- transition to expired rather than inside, record expired audit event,
--- and reject the approval.
+-- transitions to expired, writes audit/event record, and returns 'expired'
+-- without raising an exception (which would roll back the transaction).
 
 create or replace function api.decide_visit(
   requested_actor_id uuid,
@@ -452,14 +522,25 @@ begin
     raise exception using errcode = '40001', message = 'pass is no longer pending';
   end if;
 
-  -- HIGH-03 FIX: Guard cannot approve an expired pass
+  -- REPAIR GROUP 4: Guard cannot approve an expired pass.
+  -- Persist the expired status and commit instead of raising an exception.
   if requested_decision = 'approved' and target.valid_until <= statement_timestamp() then
     update public.passes set
-      status = 'expired', updated_at = now(), version = version + 1
+      status = 'expired'::public.pass_status, updated_at = now(), version = version + 1
     where id = target.id;
+
     insert into public.visit_events(pass_id, visitor_id, event, reason, gate, guard_id, request_id)
-    values (target.id, target.visitor_id, 'expired'::public.visit_event_type, 'Pass expired while pending guard decision', target.gate, actor.user_id, requested_request_id);
-    raise exception using errcode = 'P0001', message = 'pass_has_expired';
+    values (target.id, target.visitor_id, 'invalid_scan'::public.visit_event_type, 'pass_has_expired', target.gate, actor.user_id, requested_request_id)
+    on conflict (request_id, event) do nothing;
+
+    insert into public.audit_events (
+      actor_id, actor_kind, actor_role, action, target_type, target_id, request_id, outcome, after_state
+    ) values (
+      actor.user_id, 'staff', actor.role::text, 'pass.expired_pending_decision', 'pass', target.id::text,
+      requested_request_id, 'success', jsonb_build_object('reason', 'pass_has_expired')
+    );
+
+    return 'expired'::public.pass_status;
   end if;
 
   next_status := case requested_decision when 'approved' then 'inside'::public.pass_status else 'rejected'::public.pass_status end;
@@ -531,6 +612,9 @@ begin
       raise exception using errcode = '42501', message = 'visitor identity required';
     end if;
 
+    -- REPAIR GROUP 21: Serialize concurrent upload intent creations per caller
+    perform pg_advisory_xact_lock(hashtext('upload_intent:' || caller_id::text));
+
     -- MED-04: Cap active pending intents for anonymous portal callers
     select count(*) into pending_count
       from public.upload_intents
@@ -575,7 +659,7 @@ revoke all on function api.create_upload_intent(public.pass_source, public.evide
 grant execute on function api.create_upload_intent(public.pass_source, public.evidence_kind, text) to authenticated;
 
 -- ============================================================================
--- 8. MED-01: Guard Queue Pagination & Total Backlog Count
+-- 7. MED-01: Guard Queue Pagination & Total Backlog Count
 -- ============================================================================
 
 drop function if exists api.guard_dashboard();
@@ -650,4 +734,3 @@ $$;
 
 revoke all on function api.guard_dashboard(integer, integer) from public, anon;
 grant execute on function api.guard_dashboard(integer, integer) to authenticated;
-

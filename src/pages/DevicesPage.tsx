@@ -6,7 +6,7 @@ import { toast } from 'sonner';
 import { useForm } from 'react-hook-form';
 import { z } from 'zod';
 import { zodResolver } from '@hookform/resolvers/zod';
-import { Button, Card, FormField, Input, Select, StatusBadge, Modal, ConfirmModal } from '@/components/ui';
+import { Button, Card, FormField, Input, Select, StatusBadge, Modal, ConfirmModal, LoadingState } from '@/components/ui';
 import { isSuperAdmin } from '@/lib/permissions';
 import { getPasswordPolicyError, PASSWORD_MIN_LENGTH } from '@/lib/passwordPolicy';
 import { getAccessToken } from '@/services/auth';
@@ -51,6 +51,7 @@ export function DevicesPage() {
   const { role } = useAuth();
   const canManageCredentials = isSuperAdmin(role);
   const [devices, setDevices] = useState<DeviceWithId[]>([]);
+  const [loading, setLoading] = useState(true);
   const [showForm, setShowForm] = useState(false);
   const [creating, setCreating] = useState(false);
   const [revokingDevice, setRevokingDevice] = useState<DeviceWithId | null>(null);
@@ -72,23 +73,43 @@ export function DevicesPage() {
     resolver: zodResolver(deviceSchema),
   });
 
-  async function loadDevices() {
+  const [totalDevices, setTotalDevices] = useState(0);
+  const [nextCursor, setNextCursor] = useState<string | null>(null);
+  const [hasMore, setHasMore] = useState(false);
+  const [loadingMore, setLoadingMore] = useState(false);
+
+  async function loadDevices(append = false) {
+    append ? setLoadingMore(true) : setLoading(true);
     try {
       const token = await getAccessToken();
-      const response = await fetch('/api/admin/devices', {
+      const params = new URLSearchParams({ pageSize: '50' });
+      if (append && nextCursor) params.set('cursor', nextCursor);
+      const response = await fetch(`/api/admin/devices?${params.toString()}`, {
         headers: { Authorization: `Bearer ${token}` },
       });
-      const data = await response.json().catch(() => null) as { devices?: DeviceWithId[]; error?: string } | null;
+      const data = await response.json().catch(() => null) as {
+        devices?: DeviceWithId[];
+        total?: number;
+        hasMore?: boolean;
+        nextCursor?: string | null;
+        error?: string;
+      } | null;
       if (!response.ok) throw new Error(data?.error || 'Failed to load devices');
-      setDevices(data?.devices ?? []);
+      setDevices((prev) => append ? [...prev, ...(data?.devices ?? [])] : (data?.devices ?? []));
+      setTotalDevices(data?.total ?? data?.devices?.length ?? 0);
+      setHasMore(Boolean(data?.hasMore));
+      setNextCursor(data?.nextCursor ?? null);
     } catch (err) {
       console.error('Load devices error:', err);
       toast.error('Failed to load devices');
+    } finally {
+      setLoading(false);
+      setLoadingMore(false);
     }
   }
 
   useEffect(() => {
-    void loadDevices();
+    void loadDevices(false);
   }, []);
 
   // ============================================================
@@ -297,7 +318,8 @@ export function DevicesPage() {
             Devices
           </h1>
           <p className="mt-1 text-sm text-[var(--color-text-secondary)]">
-            Manage enrolled scanner tablets and kiosk devices
+            {totalDevices} enrolled device{totalDevices !== 1 ? 's' : ''}
+            {devices.length < totalDevices ? ` (showing ${devices.length} of ${totalDevices})` : ''}
           </p>
         </div>
         <Button
@@ -402,7 +424,9 @@ export function DevicesPage() {
       </Modal>
 
       {/* Device List */}
-      {devices.length === 0 ? (
+      {loading ? (
+        <LoadingState label="Loading devices..." className="py-16" />
+      ) : devices.length === 0 ? (
         <div className="flex flex-col items-center justify-center rounded-xl border-2 border-dashed border-[var(--color-border)] py-16">
           <Tablet className="mb-3 h-10 w-10 text-[var(--color-text-muted)]" />
           <p className="text-sm font-medium text-[var(--color-text-secondary)]">
@@ -474,6 +498,19 @@ export function DevicesPage() {
               </div>
             </Card>
           ))}
+        </div>
+      )}
+
+      {hasMore && (
+        <div className="mt-6 flex justify-center">
+          <Button
+            variant="secondary"
+            onClick={() => void loadDevices(true)}
+            loading={loadingMore}
+            disabled={loadingMore}
+          >
+            Load More Devices ({devices.length} of {totalDevices})
+          </Button>
         </div>
       )}
 

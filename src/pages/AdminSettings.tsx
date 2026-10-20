@@ -3,7 +3,7 @@ import { Save, Trash2, AlertTriangle, Plus } from 'lucide-react';
 import { toast } from 'sonner';
 import { Button, Card, Input, Select, ConfirmModal, LoadingState } from '@/components/ui';
 import { PasswordResetCard } from '@/components/ChangePasswordCard';
-import { DEFAULT_REJECTION_REASONS, DEFAULT_VISIT_PURPOSES, normalizeVisitPurposes } from '@/lib/settingsDefaults';
+import { DEFAULT_REJECTION_REASONS, normalizeVisitPurposes } from '@/lib/settingsDefaults';
 import type { VisitPurposeOption } from '@/types';
 import { useAuth } from '@/hooks/useAuth';
 import { isSuperAdmin } from '@/lib/permissions';
@@ -24,6 +24,7 @@ export function AdminSettings() {
   const { role } = useAuth();
   const canManageSecuritySettings = isSuperAdmin(role);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [purging, setPurging] = useState(false);
   
@@ -48,47 +49,48 @@ export function AdminSettings() {
   const [purgeRetentionDays, setPurgeRetentionDays] = useState<number | null>(null);
   const [calculatingPurge, setCalculatingPurge] = useState(false);
 
-  useEffect(() => {
-    async function loadSettings() {
-      try {
-        const token = await getAccessToken();
-        const res = await fetch('/api/admin/settings', {
-          headers: token ? { Authorization: `Bearer ${token}` } : {},
+  async function loadSettings() {
+    setLoading(true);
+    setLoadError(null);
+    try {
+      const token = await getAccessToken();
+      const res = await fetch('/api/admin/settings', {
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+      });
+      if (res.ok) {
+        const data = await res.json();
+        const retentionPolicy = normalizeRetentionPolicy(data);
+        const rawScope = data.peakModeScope;
+        const peakScope: PeakModeScope = (['off', 'portal', 'kiosk', 'both'].includes(rawScope)
+          ? rawScope
+          : (data.peakMode ? 'both' : 'off')) as PeakModeScope;
+        setSettings({
+          ...retentionPolicy,
+          workingHours: normalizeWorkingHours(data.workingHours),
+          peakMode: peakScope,
+          rejectionReasons: Array.isArray(data.rejectionReasons) ? data.rejectionReasons : DEFAULT_REJECTION_REASONS,
+          visitPurposes: normalizeVisitPurposes(data.visitPurposes),
         });
-        if (res.ok) {
-          const data = await res.json();
-          const retentionPolicy = normalizeRetentionPolicy(data);
-          const rawScope = data.peakModeScope;
-          const peakScope: PeakModeScope = (['off', 'portal', 'kiosk', 'both'].includes(rawScope)
-            ? rawScope
-            : (data.peakMode ? 'both' : 'off')) as PeakModeScope;
-          setSettings({
-            ...retentionPolicy,
-            workingHours: normalizeWorkingHours(data.workingHours),
-            peakMode: peakScope,
-            rejectionReasons: Array.isArray(data.rejectionReasons) ? data.rejectionReasons : DEFAULT_REJECTION_REASONS,
-            visitPurposes: normalizeVisitPurposes(data.visitPurposes),
-          });
-          setRetentionInputs(createRetentionInputValues(retentionPolicy));
-        } else {
-          const defaultSettings = {
-            ...DEFAULT_RETENTION_POLICY,
-            workingHours: DEFAULT_WORKING_HOURS,
-            peakMode: 'off' as PeakModeScope,
-            rejectionReasons: DEFAULT_REJECTION_REASONS,
-            visitPurposes: DEFAULT_VISIT_PURPOSES,
-          };
-          setSettings(defaultSettings);
-          setRetentionInputs(createRetentionInputValues(DEFAULT_RETENTION_POLICY));
-        }
-      } catch (err) {
-        console.error(err);
-        toast.error('Failed to load settings');
-      } finally {
-        setLoading(false);
+        setRetentionInputs(createRetentionInputValues(retentionPolicy));
+        setLoadError(null);
+      } else {
+        const errorData = await res.json().catch(() => null) as { error?: string } | null;
+        const errMsg = errorData?.error || `Failed to load settings (HTTP ${res.status})`;
+        setLoadError(errMsg);
+        toast.error(errMsg);
       }
+    } catch (err) {
+      const errMsg = err instanceof Error ? err.message : 'Network failure loading system settings';
+      console.error(err);
+      setLoadError(errMsg);
+      toast.error('Failed to load settings');
+    } finally {
+      setLoading(false);
     }
-    loadSettings();
+  }
+
+  useEffect(() => {
+    void loadSettings();
   }, []);
 
   async function handleSave() {
@@ -289,6 +291,27 @@ export function AdminSettings() {
 
   if (loading) {
     return <LoadingState label="Loading system settings" className="h-32" />;
+  }
+
+  if (loadError) {
+    return (
+      <div className="mx-auto max-w-6xl space-y-6">
+        <div>
+          <h1 className="text-2xl font-bold text-[var(--color-text-primary)]">System Settings</h1>
+          <p className="text-sm text-[var(--color-text-secondary)]">Configure policies, reasons, and data retention</p>
+        </div>
+        <Card className="p-8 text-center border-[var(--color-danger)]">
+          <AlertTriangle className="mx-auto h-12 w-12 text-[var(--color-danger)] mb-4" />
+          <h2 className="text-lg font-bold text-[var(--color-text-primary)] mb-2">Unable to Load System Settings</h2>
+          <p className="text-sm text-[var(--color-text-secondary)] max-w-md mx-auto mb-6">
+            Authoritative system settings could not be retrieved from the server ({loadError}). Editable defaults have been locked to prevent accidental overwrite of production configuration.
+          </p>
+          <Button onClick={() => void loadSettings()}>
+            Retry Loading Settings
+          </Button>
+        </Card>
+      </div>
+    );
   }
 
   return (

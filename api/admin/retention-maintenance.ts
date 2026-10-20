@@ -3,37 +3,44 @@ import { z } from 'zod';
 import { HttpError, recordReconciliation, requireStaffActor } from '../../server/actors.js';
 import { jsonResponse, readBearerToken } from '../../server/http.js';
 import { getServerSupabaseClients } from '../../server/supabase.js';
-import type { SupabaseClient } from '@supabase/supabase-js';
 
 const maintenanceSchema = z.object({
   dryRun: z.boolean().default(false),
   batchSize: z.number().int().min(1).max(200).default(50),
-}).default({ dryRun: false, batchSize: 50 });
+}).strict();
 
-async function authenticateMaintenance(
-  request: Request,
-  admin: SupabaseClient,
-): Promise<{ isCron: boolean; actorId?: string }> {
+interface CallerContext {
+  isCron: boolean;
+  actorId?: string;
+  role?: string;
+}
+
+async function authenticateMaintenance(request: Request, admin: any): Promise<CallerContext> {
+  const authHeader = request.headers.get('authorization') || '';
   const cronSecret = process.env.CRON_SECRET?.trim();
-  const authHeader = request.headers.get('authorization')?.trim() || '';
-  const xCronSecret = request.headers.get('x-cron-secret')?.trim() || '';
 
-  if (cronSecret && (authHeader === `Bearer ${cronSecret}` || xCronSecret === cronSecret)) {
+  // 1. Check for Vercel Cron Bearer secret
+  if (cronSecret && authHeader === `Bearer ${cronSecret}`) {
     return { isCron: true };
   }
 
+  // 2. Otherwise require Super Admin staff session
   const token = readBearerToken(request);
-  if (token) {
-    const actor = await requireStaffActor(admin, token, ['superadmin']);
-    return { isCron: false, actorId: actor.id };
+  if (!token) {
+    throw new HttpError(401, 'authentication_required');
   }
 
-  throw new HttpError(401, 'authentication_required');
+  const staff = await requireStaffActor(admin, token, ['superadmin']);
+  return {
+    isCron: false,
+    actorId: staff.id,
+    role: staff.role,
+  };
 }
 
 async function handleRequest(request: Request): Promise<Response> {
   if (request.method !== 'POST' && request.method !== 'GET') {
-    return jsonResponse(405, { error: 'method_not_allowed' }, { Allow: 'GET, POST' });
+    return jsonResponse(405, { error: 'method_not_allowed' }, { Allow: 'POST, GET' });
   }
 
   try {
@@ -59,14 +66,14 @@ async function handleRequest(request: Request): Promise<Response> {
       }
     }
 
+    // Load retention settings
     const { data: settings } = await admin
       .from('app_settings')
-      .select('image_retention_days, visitor_retention_days, reconciliation_retention_days')
+      .select('automatic_cleanup_enabled, image_retention_days, visitor_retention_days, reconciliation_retention_days, audit_retention_days')
       .eq('singleton', true)
       .maybeSingle();
 
-    const imageRetentionDays = settings?.image_retention_days ?? 7;
-    const visitorRetentionDays = settings?.visitor_retention_days ?? 30;
+    const cleanupEnabled = settings?.automatic_cleanup_enabled ?? true;
     const now = new Date().toISOString();
 
     const metrics = {
@@ -81,14 +88,25 @@ async function handleRequest(request: Request): Promise<Response> {
       errors: [] as string[],
     };
 
-    // 1. Evidence purge candidates (authoritative claim via api.claim_evidence_for_purge)
+    // REPAIR 5C: Enforce automatic_cleanup_enabled on scheduled cron runs
+    if (caller.isCron && !cleanupEnabled) {
+      return jsonResponse(200, {
+        success: true,
+        skipped: true,
+        reason: 'automatic_cleanup_disabled',
+        maintenance: metrics,
+      });
+    }
+
+    // 1. Evidence Purge (oversample candidates to prevent hold starvation - REPAIR 5G)
+    const oversampleLimit = Math.min(batchSize * 3, 300);
     const { data: expiredEvidence, error: evidenceError } = await admin
       .from('visitor_evidence')
       .select('id, visitor_id, bucket_id, object_path')
       .is('purged_at', null)
       .lte('expires_at', now)
       .order('expires_at', { ascending: true })
-      .limit(batchSize);
+      .limit(oversampleLimit);
 
     if (evidenceError) {
       metrics.errors.push(`evidence_query_failed: ${evidenceError.message}`);
@@ -96,7 +114,10 @@ async function handleRequest(request: Request): Promise<Response> {
       metrics.evidenceEligible = expiredEvidence.length;
 
       if (!dryRun) {
+        let processedCount = 0;
         for (const item of expiredEvidence) {
+          if (processedCount >= batchSize) break;
+
           const claimId = randomUUID();
           const { data: claimData, error: claimErr } = await admin
             .schema('api')
@@ -111,21 +132,32 @@ async function handleRequest(request: Request): Promise<Response> {
           }
 
           if (claimData?.claimed) {
+            processedCount++;
             // Delete storage object
             const delRes = await admin.storage.from(item.bucket_id).remove([item.object_path]);
             const storageDeleted = !delRes.error;
 
             if (storageDeleted) {
+              // REPAIR 5A: Canonically pass requested_success: true
               const { error: finErr } = await admin
                 .schema('api')
                 .rpc('finalize_evidence_purge', {
                   requested_evidence_id: item.id,
                   requested_claim_id: claimId,
-                  storage_deletion_confirmed: true,
+                  requested_success: true,
                 });
 
               if (finErr) {
                 metrics.errors.push(`finalize_failed_${item.id}: ${finErr.message}`);
+                // REPAIR 5B: Storage deleted, but DB finalize failed. Record reconciliation
+                await recordReconciliation(
+                  admin,
+                  'image_purge_finalize_failed',
+                  'visitor_evidence',
+                  item.id,
+                  finErr.message || 'db_finalize_failed',
+                  { bucket_id: item.bucket_id, object_path: item.object_path, claimId, storageDeleted: true },
+                );
               } else {
                 metrics.evidencePurged++;
               }
@@ -159,9 +191,7 @@ async function handleRequest(request: Request): Promise<Response> {
     } else if (abandonedIntents && abandonedIntents.length > 0) {
       if (!dryRun) {
         for (const intent of abandonedIntents) {
-          // Remove any stray uploaded object
           await admin.storage.from(intent.bucket_id).remove([intent.object_path]);
-          // Mark intent expired
           await admin.from('upload_intents').update({ status: 'expired' }).eq('id', intent.id);
           metrics.abandonedIntentsCleaned++;
         }
@@ -180,17 +210,32 @@ async function handleRequest(request: Request): Promise<Response> {
       metrics.verificationCodesCleaned = count ?? 0;
     }
 
-    // 4. Record audit event
-    await admin.from('audit_events').insert({
+    // 4. Record audit event (REPAIR 5E: valid outcome enum, REPAIR 5F: check error)
+    const auditOutcome: 'success' | 'partial' | 'failure' =
+      metrics.errors.length === 0 ? 'success' : (metrics.evidencePurged > 0 ? 'partial' : 'failure');
+
+    const { error: auditError } = await admin.from('audit_events').insert({
       actor_id: caller.actorId ?? null,
       actor_kind: caller.isCron ? 'system' : 'staff',
       actor_role: caller.isCron ? 'cron' : 'superadmin',
       action: 'maintenance.retention_run',
       target_type: 'system',
       target_id: 'retention_maintenance',
-      outcome: metrics.errors.length === 0 ? 'success' : 'partial_failure',
+      outcome: auditOutcome,
       after_state: metrics,
     });
+
+    if (auditError) {
+      console.error('Audit recording failed during maintenance run:', auditError);
+      await recordReconciliation(
+        admin,
+        'maintenance.audit_failed',
+        'system',
+        'retention_maintenance',
+        auditError.message || 'audit_insert_error',
+        { metrics, outcome: auditOutcome }
+      ).catch(() => undefined);
+    }
 
     return jsonResponse(200, {
       success: true,

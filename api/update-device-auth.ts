@@ -2,12 +2,13 @@ import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import { controlledDeviceEmail, HttpError, recordReconciliation, requireStaffActor } from '../server/actors.js';
 import { jsonResponse, readBearerToken } from '../server/http.js';
+import { passwordSchema } from '../server/password-policy.js';
 import { getServerSupabaseClients } from '../server/supabase.js';
 
 const schema = z.object({
   targetUid: z.string().uuid(),
   email: z.string().min(3).max(320).optional(),
-  password: z.string().min(12).max(128).regex(/[A-Za-z]/).regex(/\d/).optional(),
+  password: passwordSchema.optional(),
 }).strict().refine((v) => v.email || v.password, { message: 'Either email or password must be provided' });
 
 async function handleRequest(request: Request): Promise<Response> {

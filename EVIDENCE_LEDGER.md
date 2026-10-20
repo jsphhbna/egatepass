@@ -239,3 +239,12 @@ Exact-commit verification at `80d861b`: `npm run test:architecture` PASS 3/3; `n
 | EV-BUILD-003 | PRODUCTION BUILD | `npm run build` | PASS: exit code 0 (2.47s) | Clean production Vite bundle; 2537 modules transformed; 0 errors |
 | EV-E2E-003 | BROWSER STARTUP E2E | `npm run test:e2e:startup` | PASS: 4/4 cases | Playwright Edge browser startup verification (dev configured/missing/malformed, preview configured) |
 | EV-DIFF-003 | GIT PATCH INTEGRITY | `git diff --check` | PASS: exit code 0 | Clean whitespace; owner .env.example strictly preserved unstaged |
+| EV-PGMIG-001 | PGLITE SEQUENTIAL MIGRATION CHAIN | `tests/migration-chain-pglite.test.ts` | PASS: 4/4 tests (5.09s) | Executed all 13 PostgreSQL migrations (000100 through 001300) sequentially in real in-memory PostgreSQL 17.5 WASM from clean database |
+| EV-RPC-001 | PERMANENT RPC CONTRACT VALIDATION | `tests/migration-chain-pglite.test.ts` | PASS | Verified pg_proc signatures for decide_visit, create_incident_hold, guard_dashboard, request_email_verification_code, create_upload_intent, acknowledge_privacy (timestamptz) |
+| EV-ENUM-001 | ENUM CONTRACT INTEGRITY | `tests/migration-chain-pglite.test.ts` | PASS | Verified visit_event_type and pass_status; confirmed 'expired' is not a visit_event_type |
+| EV-AUDIT-001 | AUDIT SCHEMA & OUTCOME CONTRACT | `tests/migration-chain-pglite.test.ts` | PASS | Verified canonical audit columns; confirmed 'details' absent; valid insert resolves; 'partial_failure' rejected by check constraint |
+| EV-EMAIL-002 | AUTH EMAIL HOOK RESEND FAIL-CLOSED | `tests/auth-email-hook.test.ts` | PASS: 15/15 tests | Verified /auth/v1/verify URL composition using SUPABASE_URL origin, redirect_to app destination, and 503 fail-closed when RESEND_API_KEY missing |
+| EV-SAFE-004 | EXPANDED VITEST SAFE SUITE | `npx vitest run --exclude "**/firestore.rules.test.ts"` | PASS: 18 files, 238 tests (7.86s) | Complete test suite pass including real PostgreSQL migration runner and schema contract tests |
+| EV-TYPE-004 | API & CLIENT TYPECHECK | `npm run typecheck:api` & `npx tsc --noEmit` | PASS: exit code 0 | Strict TypeScript compilation across both API/server and React client with zero errors |
+| EV-BUILD-004 | PRODUCTION BUILD INTEGRITY | `npm run build` | PASS: exit code 0 (1.41s) | Vite v8.3.1 production build (2538 modules transformed; clean CSS and JS chunks; 0 errors) |
+| EV-DIFF-004 | WORKING TREE PRESERVATION | `git status --short` | PASS | Owner .env.example strictly preserved unstaged byte-for-byte; zero secrets committed |

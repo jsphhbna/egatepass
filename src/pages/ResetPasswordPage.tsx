@@ -3,7 +3,7 @@ import { Link, useNavigate } from 'react-router-dom';
 import { toast } from 'sonner';
 import { BrandMark } from '@/components/BrandMark';
 import { Button, Card, FormField, Input, LoadingState } from '@/components/ui';
-import { getPasswordPolicyError, PASSWORD_MIN_LENGTH } from '@/lib/passwordPolicy';
+import { getPasswordPolicyError, PASSWORD_MIN_LENGTH, PASSWORD_POLICY_HELPER_TEXT } from '@/lib/passwordPolicy';
 import { supabase } from '@/lib/supabase';
 
 export function ResetPasswordPage() {
@@ -20,17 +20,43 @@ export function ResetPasswordPage() {
       return;
     }
     let active = true;
+
+    const hash = window.location.hash || '';
+    const search = window.location.search || '';
+    const isErrorUrl = hash.includes('error=') || search.includes('error=');
+    const hasRecoveryTokenInUrl =
+      hash.includes('type=recovery') ||
+      search.includes('type=recovery') ||
+      (search.includes('code=') && search.includes('type=recovery'));
+
+    if (isErrorUrl) {
+      setHasRecoverySession(false);
+      setChecking(false);
+      return;
+    }
+
+    // A session is only valid for recovery if confirmed by PASSWORD_RECOVERY event
+    // or by the presence of a recovery token in the URL.
+    // Ordinary authenticated staff/devices browsing here must NOT be granted recovery.
     void supabase.auth.getSession().then(({ data }) => {
-      if (active) {
-        setHasRecoverySession(Boolean(data.session));
+      if (!active) return;
+      if (hasRecoveryTokenInUrl && data.session) {
+        setHasRecoverySession(true);
+      }
+      setChecking(false);
+    });
+
+    const { data } = supabase.auth.onAuthStateChange((event, session) => {
+      if (!active) return;
+      if (event === 'PASSWORD_RECOVERY' && session) {
+        setHasRecoverySession(true);
+        setChecking(false);
+      } else if (event === 'SIGNED_OUT') {
+        setHasRecoverySession(false);
         setChecking(false);
       }
     });
-    const { data } = supabase.auth.onAuthStateChange((event, session) => {
-      if (!active) return;
-      if (event === 'PASSWORD_RECOVERY' || session) setHasRecoverySession(true);
-      setChecking(false);
-    });
+
     return () => {
       active = false;
       data.subscription.unsubscribe();
@@ -82,7 +108,7 @@ export function ResetPasswordPage() {
           <form onSubmit={handleSubmit} className="space-y-5">
             <FormField label="New Password" id="reset-new-password">
               <Input id="reset-new-password" type="password" autoComplete="new-password" minLength={PASSWORD_MIN_LENGTH} required value={newPassword} onChange={(event) => setNewPassword(event.target.value)} disabled={loading} />
-              <p className="mt-1 text-xs text-[var(--color-text-muted)]">Use at least {PASSWORD_MIN_LENGTH} characters with a letter and a number.</p>
+              <p className="mt-1 text-xs text-[var(--color-text-muted)]">{PASSWORD_POLICY_HELPER_TEXT}</p>
             </FormField>
             <FormField label="Confirm Password" id="reset-confirm-password">
               <Input id="reset-confirm-password" type="password" autoComplete="new-password" minLength={PASSWORD_MIN_LENGTH} required value={confirmPassword} onChange={(event) => setConfirmPassword(event.target.value)} disabled={loading} />

@@ -6,6 +6,7 @@ import type { GatePass } from '@/types';
 
 export interface DashboardReportSummary {
   visitorsToday: number;
+  monthTotal?: number;
   currentlyInside: number;
   exitedToday: number;
   pendingApproval: number;
@@ -79,11 +80,12 @@ function downloadCsv(passes: GatePass[], summary: DashboardReportSummary) {
   const exportedAt = new Date();
   const monthLabel = format(exportedAt, 'MMMM yyyy');
   const monthlyPasses = passesForMonth(passes, exportedAt);
+  const totalCount = summary.monthTotal ?? monthlyPasses.length;
   const summaryRows = [
     ['E-GatePass Dashboard Report'],
     ['Reporting month', monthLabel],
     ['Downloaded on', format(exportedAt, 'MMMM d, yyyy h:mm a')],
-    ['Passes issued', String(monthlyPasses.length)],
+    ['Total passes issued this month (authoritative)', String(totalCount)],
     [],
     ['Dashboard Summary', 'Value'],
     ['Visitors today', String(summary.visitorsToday)],
@@ -93,7 +95,7 @@ function downloadCsv(passes: GatePass[], summary: DashboardReportSummary) {
     ['Rejected today', String(summary.rejectedToday)],
   ];
   const insightRows = [
-    ["Today's Insights", 'Result', 'Records', 'Description'],
+    ["Today's Insights (Authoritative)", 'Result', 'Records', 'Description'],
     ...summary.insights.map((insight) => [
       insight.title,
       insight.value,
@@ -106,7 +108,7 @@ function downloadCsv(passes: GatePass[], summary: DashboardReportSummary) {
     [],
     ...insightRows,
     [],
-    [`${monthLabel} Pass Details`],
+    [`${monthLabel} Recent Sample Records (Showing ${monthlyPasses.length} of ${totalCount} total; use Visitor Records for complete historical export)`],
     [...reportColumns],
     ...reportRows(monthlyPasses),
   ]

@@ -99,25 +99,31 @@ async function handleRequest(request: Request): Promise<Response> {
     const startToday = `${manilaDateString}T00:00:00+08:00`;
     const endToday = `${manilaDateString}T23:59:59.999+08:00`;
 
+    const startMonth = `${manilaDateString.slice(0, 7)}-01T00:00:00+08:00`;
+
     // C-01: Filter pendingToday by entry_scanned_at within Manila local day, distinct from all-time pending
     const [
       todayCountRes,
+      monthCountRes,
       insideCountRes,
       exitedCountRes,
       pendingCountRes,
       allPendingCountRes,
       rejectedCountRes,
+      todayAllPassesRes,
       recentResult,
       insideResult,
       exitedResult,
       decisionsResult,
     ] = await Promise.all([
       admin.from('passes').select('id', { count: 'exact', head: true }).gte('issued_at', startToday).lte('issued_at', endToday),
+      admin.from('passes').select('id', { count: 'exact', head: true }).gte('issued_at', startMonth).lte('issued_at', endToday),
       admin.from('passes').select('id', { count: 'exact', head: true }).eq('status', 'inside'),
       admin.from('passes').select('id', { count: 'exact', head: true }).eq('status', 'exited').gte('time_out', startToday).lte('time_out', endToday),
       admin.from('passes').select('id', { count: 'exact', head: true }).eq('status', 'pending').gte('entry_scanned_at', startToday).lte('entry_scanned_at', endToday),
       admin.from('passes').select('id', { count: 'exact', head: true }).eq('status', 'pending'),
       admin.from('passes').select('id', { count: 'exact', head: true }).eq('status', 'rejected').gte('decided_at', startToday).lte('decided_at', endToday),
+      admin.from('passes').select('id, status, gate, rejection_reason, entry_scanned_at, time_in, visitors(purpose)').gte('issued_at', startToday).lte('issued_at', endToday),
       admin.from('passes').select(PASS_SELECT).order('issued_at', { ascending: false }).limit(100),
       admin.from('passes').select(PASS_SELECT).eq('status', 'inside').limit(200),
       admin.from('passes').select(PASS_SELECT).eq('status', 'exited').gte('time_out', startToday).lte('time_out', endToday).limit(200),
@@ -125,24 +131,70 @@ async function handleRequest(request: Request): Promise<Response> {
     ]);
 
     if (todayCountRes.error) throw todayCountRes.error;
+    if (monthCountRes.error) throw monthCountRes.error;
     if (insideCountRes.error) throw insideCountRes.error;
     if (exitedCountRes.error) throw exitedCountRes.error;
     if (pendingCountRes.error) throw pendingCountRes.error;
     if (allPendingCountRes.error) throw allPendingCountRes.error;
     if (rejectedCountRes.error) throw rejectedCountRes.error;
+    if (todayAllPassesRes.error) throw todayAllPassesRes.error;
     if (recentResult.error) throw recentResult.error;
     if (insideResult.error) throw insideResult.error;
     if (exitedResult.error) throw exitedResult.error;
     if (decisionsResult.error) throw decisionsResult.error;
 
+    // Authoritative complete insights computed across all passes issued today
+    const allTodayPasses = (todayAllPassesRes.data ?? []) as unknown as Array<{
+      id: string;
+      status: string;
+      gate: string | null;
+      rejection_reason: string | null;
+      entry_scanned_at: string | null;
+      time_in: string | null;
+      visitors: { purpose: string } | null;
+    }>;
+
+    function countMostCommon(vals: Array<string | null | undefined>): { label: string; count: number } {
+      const counts = new Map<string, number>();
+      vals.forEach((v) => {
+        const norm = v?.trim();
+        if (norm) counts.set(norm, (counts.get(norm) || 0) + 1);
+      });
+      let best = { label: 'No data yet', count: 0 };
+      counts.forEach((count, label) => {
+        if (count > best.count) best = { label, count };
+      });
+      return best;
+    }
+
+    const topPurpose = countMostCommon(allTodayPasses.map((p) => p.visitors?.purpose?.split(' — ')[0]?.trim()));
+    const busiestGate = countMostCommon(allTodayPasses.map((p) => p.gate));
+    const rejectedPassesToday = allTodayPasses.filter((p) => p.status === 'rejected');
+    const topRejection = countMostCommon(rejectedPassesToday.map((p) => p.rejection_reason));
+
+    const durations = allTodayPasses.flatMap((p) => {
+      if (!p.entry_scanned_at || !p.time_in) return [];
+      const diff = new Date(p.time_in).getTime() - new Date(p.entry_scanned_at).getTime();
+      return diff >= 0 ? [diff] : [];
+    });
+    const avgSec = durations.length > 0 ? Math.round(durations.reduce((a, b) => a + b, 0) / durations.length / 1000) : null;
+    const avgApprovalTime = avgSec === null ? '—' : avgSec < 60 ? `${avgSec}s` : `${Math.round(avgSec / 60)}m`;
+
     return jsonResponse(200, {
       counts: {
         todayTotal: todayCountRes.count ?? 0,
+        monthTotal: monthCountRes.count ?? 0,
         currentlyInside: insideCountRes.count ?? 0,
         exitedToday: exitedCountRes.count ?? 0,
         pendingToday: pendingCountRes.count ?? 0,
         allPending: allPendingCountRes.count ?? 0,
         rejectedToday: rejectedCountRes.count ?? 0,
+      },
+      insights: {
+        topPurpose,
+        busiestGate,
+        topRejection,
+        avgApprovalTime,
       },
       recentPasses: ((recentResult.data ?? []) as unknown as RawPassRow[]).map(mapPass),
       insidePasses: ((insideResult.data ?? []) as unknown as RawPassRow[]).map(mapPass),

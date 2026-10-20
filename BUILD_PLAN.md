@@ -169,3 +169,204 @@ Local promotion evidence: pre-fix regression run 7/7 FAILED as expected; correct
 - **MED-04 (Upload Intent Quota)**: Added quota to `api.create_upload_intent` in migration 001300 (max 10 active pending intents per portal visitor).
 - **MED-07 (Canonical UUID Test Fixtures)**: Aligned pass public reference fixture to canonical UUID in `tests/email-templates.test.ts`.
 - **Verification Evidence**: 17 test files, 233 tests PASS in Vitest (`npx vitest run --exclude "**/firestore.rules.test.ts"`); behavioral mocked-handler suite: 72/72 PASS; API typecheck PASS (`npm run typecheck:api`); production build PASS (`npm run build`, 2537 modules); startup Playwright Edge 4/4 PASS (`npm run test:e2e:startup`); git whitespace check PASS (`git diff --check`). Owner `.env.example` strictly preserved without staging. Migrations 00100–001300 and pgTAP 001–009 AUTHORED / NOT RUN on live DB.
+
+## Root-Cause Repair, Recurring-Pattern Elimination & Full Regression Campaign (Repairs 1A through 21)
+
+### REPAIR GROUP 1 — Final SQL Migration Chain & Schema Contracts (1A & 1B)
+- **Fixed**:
+  - **1A**: Preserved canonical `api.acknowledge_privacy() RETURNS timestamptz` in both migration 000400 and migration 001300; preserved default `requested_provider_delivery_id text default null` in migration 001100.
+  - **1B**: Corrected all writes to `public.audit_events` across migrations, handlers, and tests to match canonical schema: `(actor_id, actor_kind, actor_role, action, target_type, target_id, request_id, outcome, after_state)`; removed invalid `details` column and enforced mandatory `actor_kind`.
+- **Files**: `supabase/migrations/20261020001300_cross_layer_root_cause_hardening.sql`, `supabase/migrations/20261020001100_email_security_and_abuse_controls.sql`, `tests/migration-chain-pglite.test.ts`.
+- **Root Cause**: `CREATE OR REPLACE FUNCTION` in PostgreSQL cannot change return types. Schema drift occurred between early migrations and hardening migrations regarding audit column definitions.
+- **Recurrence Search**: Searched entire repository for `CREATE OR REPLACE FUNCTION` return type mismatches and all writes to `audit_events`.
+- **Additional Findings**: Discovered in migration 001100 that `finalize_email_dispatch` signature had dropped the default parameter clause. Corrected it to maintain contract compatibility.
+- **Tests**: Permanent PGlite test `tests/migration-chain-pglite.test.ts` executes all 13 migrations sequentially against in-memory PostgreSQL 17.5 WASM, verifying schema integrity, function signatures, and check constraints (PASS).
+
+### REPAIR GROUP 2 — QR Email Database State Machine (2A & 2B)
+- **Fixed**:
+  - **2A**: Restored `request_actor_id` (not `actor_id`) consistently in `api.request_email_verification_code` queries and inserts.
+  - **2B**: Enforced strict idempotency binding: request ID is permanently bound to `(pass_id, request_actor_id, recipient_email)`. Conflicting replays fail immediately with clear domain errors instead of issuing duplicate challenges or mutating request identity.
+- **Files**: `supabase/migrations/20261020001300_cross_layer_root_cause_hardening.sql`, `api/passes/email.ts`.
+- **Root Cause**: Variable naming confusion between authentication caller (`actor_id`) and table column (`request_actor_id`) in `email_verification_codes`.
+- **Recurrence Search**: Searched repository for all references to `actor_id` vs `request_actor_id` in email verification tables and mocks.
+- **Additional Findings**: Ensured index `email_verification_codes_request_id_idx` and rate-limiting queries use `request_actor_id`.
+- **Tests**: Mocked handler idempotency suite (72/72 PASS) and PGlite RPC signature verification.
+
+### REPAIR GROUP 3 — Incident Hold RPC Contract
+- **Fixed**: Aligned parameters of `api.create_incident_hold` and `api.release_incident_hold` with API handler `api/admin/holds.ts` (`requested_actor_id`, `requested_visitor_id`, `requested_pass_id`, `requested_reason`, `requested_request_id`). Handled 409 conflict states (`purge_in_progress`, `evidence_already_purged`).
+- **Files**: `supabase/migrations/20261020001300_cross_layer_root_cause_hardening.sql`, `api/admin/holds.ts`.
+- **Root Cause**: SQL migration and API handler were authored with differing parameter naming conventions.
+- **Recurrence Search**: Programmatically enumerated all `.rpc()` calls across `api/` and `src/` to confirm caller and callee parameter alignment.
+- **Additional Findings**: Hold release revalidates authorization and writes structured audit record.
+- **Tests**: Vitest mocked-handler hold suite and PGlite RPC parameter validation.
+
+### REPAIR GROUP 4 — Expired Guard Approval Transaction Semantics
+- **Fixed**: In `api.decide_visit`, when an expired pass is approved by guard, the transaction now updates `status = 'expired'::public.pass_status`, writes a valid `invalid_scan` visit event (`expired` is not a valid `visit_event_type`), writes an audit record, commits the state, and returns `'expired'`. In `api/decide-visit.ts`, handled status `'expired'` returning HTTP 422 with structured failure.
+- **Files**: `supabase/migrations/20261020001300_cross_layer_root_cause_hardening.sql`, `api/decide-visit.ts`.
+- **Root Cause**: Raising an exception in PostgreSQL aborted the transaction, preventing the intended `'expired'` state from persisting. Furthermore, `'expired'` was not a valid member of `public.visit_event_type`.
+- **Recurrence Search**: Searched migrations for `UPDATE ... RAISE EXCEPTION` anti-patterns and searched all enum casts across SQL files.
+- **Additional Findings**: `visit_event_type` valid values are `invalid_scan`, `scan_entry`, `approved`, `rejected`, `scan_exit`.
+- **Tests**: PGlite test confirms enum values; Vitest test validates 422 response.
+
+### REPAIR GROUP 5 — Retention and Physical Storage Maintenance (5A through 5G)
+- **Fixed**:
+  - **5A**: Canonical parameter `requested_success: true` in `api.finalize_evidence_purge`.
+  - **5B**: Split-brain handling: if storage deletion succeeds but DB finalization fails, durable reconciliation record is written with exact evidence ID, claim ID, bucket, path, and storage deletion fact.
+  - **5C**: Enforced `automatic_cleanup_enabled` for cron tasks; skips destructive operations with truthful skipped response when disabled.
+  - **5D**: Enforced retention policies for images, visitors, audit events, and reconciliation items based on `app_settings`.
+  - **5E**: Canonical audit outcomes: restricted to `'success' | 'partial' | 'failure' | 'denied'`, eliminating invalid `'partial_failure'`.
+  - **5F**: Handled destructive storage deletion errors and audit insert errors explicitly.
+  - **5G**: Prevented retention starvation by oversampling candidates (querying 200 candidates to claim batch size of 50).
+- **Files**: `api/admin/retention-maintenance.ts`, `supabase/migrations/20261020001300_cross_layer_root_cause_hardening.sql`.
+- **Root Cause**: Maintenance scripts lacked guard checks for configuration flags, used mismatched parameter names, and ignored potential storage/database partial failures.
+- **Recurrence Search**: Searched for `.error` handling across all destructive operations and audit outcome string values.
+- **Additional Findings**: Fixed audit outcome check constraint compliance in PGlite.
+- **Tests**: Mocked handler tests for purge protocol and PGlite audit check constraint verification.
+
+### REPAIR GROUP 6 — Supabase Auth, React Email & Resend (6A through 6F)
+- **Fixed**:
+  - **6A**: Preserved Send Email Hook with Resend as authoritative email provider.
+  - **6B**: Corrected `buildAuthVerificationUrl` in `server/auth-email-hook.ts`: verification endpoint `/auth/v1/verify` is built from Supabase Auth base URL (`SUPABASE_URL` / `VITE_SUPABASE_URL`), while `siteUrl` / `redirect_to` is used as application destination.
+  - **6C**: Fail-closed in `api/auth/send-email-hook.ts`: returns HTTP 503 (`provider_unconfigured`) if `RESEND_API_KEY` is missing in production.
+  - **6D**: Consolidated on single canonical React Email templates (`SignupConfirmationEmail`, `PasswordResetEmail`, `StaffInviteEmail`, `EmailChangeEmail`).
+  - **6E**: Preserved admin temporary-password workflow with branded signup confirmation email and forced first password change.
+  - **6F**: Audited all email actions (signup, recovery, email change, QR OTP).
+- **Files**: `server/auth-email-hook.ts`, `api/auth/send-email-hook.ts`, `tests/auth-email-hook.test.ts`.
+- **Root Cause**: Building verification URLs from frontend site URL resulted in 404s because `/auth/v1/verify` is a Supabase GoTrue endpoint, not a Vite frontend route.
+- **Recurrence Search**: Searched all verification and redirect URL builders across `server/` and `api/`.
+- **Additional Findings**: Updated tests in `tests/auth-email-hook.test.ts` to assert that Supabase URL is the origin for the verify URL and frontend site URL is in the `redirect_to` query parameter.
+- **Tests**: 15/15 tests PASS in `tests/auth-email-hook.test.ts`.
+
+### REPAIR GROUP 7 — Unified Password Policy
+- **Fixed**: Created unified password policy in `server/password-policy.ts` and updated `src/lib/passwordPolicy.ts`: minimum 12 characters, requiring uppercase, lowercase, digit, and symbol. Applied shared Zod `passwordSchema` across staff creation, device provisioning, device credential updates, and forced password changes.
+- **Files**: `server/password-policy.ts`, `src/lib/passwordPolicy.ts`, `api/create-user.ts`, `api/create-device.ts`, `api/update-device-auth.ts`, `api/auth/complete-password-change.ts`.
+- **Root Cause**: Drift between frontend regex (`>= 12`, letter, digit) and Supabase Auth backend configuration (requiring uppercase, lowercase, digits, symbols).
+- **Recurrence Search**: Searched repository for all password validation regexes and Zod string schemas.
+- **Additional Findings**: Helper text updated in UI components to accurately reflect all 4 character classes.
+- **Tests**: API typecheck and Vitest pure service tests PASS.
+
+### REPAIR GROUP 8 — Reset Password Session Security
+- **Fixed**: In `src/pages/ResetPasswordPage.tsx`, recovery context is now strictly required (`PASSWORD_RECOVERY` event or URL `type=recovery`). Disallowed normal authenticated staff/devices from accessing recovery as a self-service credential reset without recovery tokens.
+- **Files**: `src/pages/ResetPasswordPage.tsx`.
+- **Root Cause**: Page previously checked only `session !== null`, allowing active sessions to bypass recovery token checks.
+- **Recurrence Search**: Searched all auth pages for session-check logic.
+- **Additional Findings**: Added `PASSWORD_POLICY_HELPER_TEXT` display.
+- **Tests**: Production build PASS; TypeScript validation PASS.
+
+### REPAIR GROUP 9 — System Settings Fail-Open UI Prevention
+- **Fixed**: In `src/pages/AdminSettings.tsx`, removed silent fallback to editable default values when `/api/admin/settings` fails. Rendered explicit error banner with `AlertTriangle`, disabled Save button, and added a "Retry Loading Settings" button.
+- **Files**: `src/pages/AdminSettings.tsx`.
+- **Root Cause**: Fetch errors previously triggered catch block that populated form with default settings, risking accidental overwrite of production settings.
+- **Recurrence Search**: Searched all admin pages for error fallbacks that could overwrite authoritative data.
+- **Additional Findings**: Guarded against null settings payload.
+- **Tests**: Production build PASS; TypeScript validation PASS.
+
+### REPAIR GROUP 10 — Guard Queue Pagination (>50 passes)
+- **Fixed**: In `src/services/guard.ts`, added `limit`, `offset`, `pendingTotal`, and `hasMore` to `fetchGuardDashboard`. In `src/pages/GuardPage.tsx`, displayed authoritative `pendingTotal` in badge, preserved loaded passes across realtime/poll updates using dynamic limit, and added "Load More Pending Passes" pagination.
+- **Files**: `src/services/guard.ts`, `src/pages/GuardPage.tsx`.
+- **Root Cause**: UI previously requested fixed 50 records and displayed `passes.length` instead of total pending backlog.
+- **Recurrence Search**: Searched for `.limit(` and list length displays across guard and admin views.
+- **Additional Findings**: Guarded realtime update subscriptions to preserve pagination depth.
+- **Tests**: Production build PASS; TypeScript validation PASS.
+
+### REPAIR GROUP 11 — Visitor Record Server-Side Search
+- **Fixed**: In `src/pages/AdminRecords.tsx`, added server-side `search` query parameter with 300ms debounce, cursor reset on search change, and aligned CSV export filter.
+- **Files**: `src/pages/AdminRecords.tsx`.
+- **Root Cause**: Search input was applied only as a client-side filter over the current loaded page.
+- **Recurrence Search**: Searched all table search inputs in `src/pages/`.
+- **Additional Findings**: Resetting cursor on search/filter changes ensures complete pagination from page 1.
+- **Tests**: Production build PASS; TypeScript validation PASS.
+
+### REPAIR GROUP 12 — Server-Side Audit Filters
+- **Fixed**: In `src/hooks/useAuditActivity.ts`, updated `useVisitorActivity` and `useAdministrativeAudit` to pass filter parameters (`event`, `role`, `action`, `dateFrom`, `dateTo`) to `/api/admin/activity`. Connected debounced filters and pagination reset in `src/pages/AdminAuditLogs.tsx`.
+- **Files**: `src/hooks/useAuditActivity.ts`, `src/pages/AdminAuditLogs.tsx`.
+- **Root Cause**: Filter dropdowns were not passed to backend queries, filtering only in-memory records.
+- **Recurrence Search**: Searched for filter dropdown controls in admin interfaces.
+- **Additional Findings**: Debounced action text search input by 300ms to avoid query flooding.
+- **Tests**: Production build PASS; TypeScript validation PASS.
+
+### REPAIR GROUP 13 — Reconciliation Pagination & Total Count
+- **Fixed**: In `api/reconciliation-items.ts`, implemented keyset pagination with `cursor`, `pageSize`, `hasMore`, `nextCursor`, and authoritative count query (`select('id', { count: 'exact', head: true })`). In `src/hooks/useAuditActivity.ts` and `src/pages/AdminAuditLogs.tsx`, surfaced paginated state, authoritative count in tab header, and "Load more" button.
+- **Files**: `api/reconciliation-items.ts`, `src/hooks/useAuditActivity.ts`, `src/pages/AdminAuditLogs.tsx`.
+- **Root Cause**: Query was hardcoded to `.limit(50)` without pagination or total count.
+- **Recurrence Search**: Searched for hardcoded operational limits.
+- **Additional Findings**: Tab label displays exact total unresolved items.
+- **Tests**: Production build PASS; TypeScript validation PASS.
+
+### REPAIR GROUP 14 — Device List Keyset Pagination & Direct Email Resolution
+- **Fixed**: In `api/admin/devices.ts`, implemented keyset pagination (`cursor`, `pageSize`, `hasMore`, `nextCursor`, `total`). Replaced 200-user `listUsers` scan with direct per-device `admin.auth.admin.getUserById(id)` lookup, eliminating cross-page email resolution cutoffs. In `src/pages/DevicesPage.tsx`, added pagination state and "Load More Devices" button.
+- **Files**: `api/admin/devices.ts`, `src/pages/DevicesPage.tsx`.
+- **Root Cause**: Device list relied on `listUsers({ perPage: 200 })`, which omitted devices whose Auth users were beyond page 1.
+- **Recurrence Search**: Searched all admin identity queries for fixed user list queries.
+- **Additional Findings**: Direct user lookup is immune to page size limits and respects RLS.
+- **Tests**: Production build PASS; TypeScript validation PASS.
+
+### REPAIR GROUP 15 — Dashboard Data Completeness & Server Aggregates
+- **Fixed**: In `api/admin/dashboard.ts`, replaced client-side sampling with authoritative server-side aggregate queries for `topPurpose`, `busiestGate`, `topRejection`, `avgApprovalTime`, and added `monthTotal` count query. Updated `src/components/DashboardExportActions.tsx` to clearly distinguish complete monthly aggregates from recent sample lists.
+- **Files**: `api/admin/dashboard.ts`, `src/hooks/useAdminDashboardData.ts`, `src/pages/AdminDashboard.tsx`, `src/components/DashboardExportActions.tsx`.
+- **Root Cause**: Insights were derived from the first 100 recent passes, misrepresenting monthly totals.
+- **Recurrence Search**: Searched for statistics derived from `.slice(0, 100)` or `.limit(100)` arrays.
+- **Additional Findings**: CSV and print views now display truthful server-computed month totals.
+- **Tests**: Production build PASS; TypeScript validation PASS.
+
+### REPAIR GROUP 16 — Evidence Hold Access Audit & Multi-Pass Hold Queries
+- **Fixed**:
+  - **16A**: Handled audit insert error in `api/evidence.ts` with fail-closed behavior, ensuring unauthorized access without audit cannot occur.
+  - **16B**: Replaced `.maybeSingle()` with `.limit(1)` in `activePassHold` query to support visitors with multiple held passes without query exceptions.
+- **Files**: `api/evidence.ts`.
+- **Root Cause**: `maybeSingle()` in Supabase PostgREST throws an error if more than 1 record matches, which occurs when multiple passes are under hold for the same visitor.
+- **Recurrence Search**: Searched entire codebase for `.maybeSingle()` calls on non-unique columns.
+- **Additional Findings**: Verified hold queries across all endpoints.
+- **Tests**: Mocked handler hold tests (3/3 PASS) and production build PASS.
+
+### REPAIR GROUP 17 — Environment Variable Alignment
+- **Fixed**: Supported `RESEND_FROM_EMAIL` with fallback to `EMAIL_FROM` in `server/email.ts`. Updated `docs/ENVIRONMENT.md` documenting all required variables (`VITE_SUPABASE_URL`, `VITE_SUPABASE_PUBLISHABLE_KEY`, `SUPABASE_URL`, `SUPABASE_SECRET_KEY`, `PASS_TOKEN_SECRET`, `RESEND_API_KEY`, `RESEND_FROM_EMAIL`, `SEND_EMAIL_HOOK_SECRET`, `CRON_SECRET`). Preserved owner `.env.example` unstaged.
+- **Files**: `server/email.ts`, `docs/ENVIRONMENT.md`.
+- **Root Cause**: Variable naming disparity between documentation (`EMAIL_FROM`) and Resend configuration (`RESEND_FROM_EMAIL`).
+- **Recurrence Search**: Programmatically compared referenced environment names in source code against documentation.
+- **Additional Findings**: Zero secrets committed; all variables validated.
+- **Tests**: Typecheck and Vitest suite PASS.
+
+### REPAIR GROUP 18 — Production Web Hardening & Content Security Policy
+- **Fixed**: In `vercel.json`, configured comprehensive security headers: CSP (supporting camera, scanner, OCR WASM, fonts, Supabase storage blobs, WebSockets), HSTS, `X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY`, `Referrer-Policy: strict-origin-when-cross-origin`, and `Permissions-Policy: camera=(self), microphone=(), geolocation=()`.
+- **Files**: `vercel.json`.
+- **Root Cause**: Missing production HTTP security headers for browser hardening against clickjacking, MIME-sniffing, and cross-site scripting.
+- **Recurrence Search**: Verified camera, scanner, and WebAssembly operational requirements against CSP directives.
+- **Additional Findings**: WASM `wasm-unsafe-eval` included for client-side Tesseract.js OCR.
+- **Tests**: JSON syntax validation and architecture contract tests PASS.
+
+### REPAIR GROUP 19 — ErrorBoundary Disclosure Hardening
+- **Fixed**: In `src/components/ErrorBoundary.tsx`, restricted internal React component stack and raw error messages to `import.meta.env.DEV`. In production, displays user-friendly error UI with refresh/retry actions and zero internal component trace disclosures.
+- **Files**: `src/components/ErrorBoundary.tsx`.
+- **Root Cause**: ErrorBoundary previously rendered raw error and component stack in all environments.
+- **Recurrence Search**: Searched for error disclosure patterns across UI components.
+- **Additional Findings**: Retry button cleans local state and reloads gracefully.
+- **Tests**: Production build PASS; TypeScript validation PASS.
+
+### REPAIR GROUP 20 — Catch-All 404 Route
+- **Fixed**: Created `src/pages/NotFoundPage.tsx` with accessible EARIST branding, clear message, and navigation buttons. Added `<Route path="*" element={<NotFoundPage />} />` in `src/App.tsx`.
+- **Files**: `src/pages/NotFoundPage.tsx`, `src/App.tsx`.
+- **Root Cause**: Missing 404 route in React Router caused invalid URLs to render a blank page or default route.
+- **Recurrence Search**: Verified all declared routes and sub-routes in `App.tsx`.
+- **Additional Findings**: Deep links rewritten safely via `vercel.json` SPA rule `/((?!api/).*)`.
+- **Tests**: Production build PASS; TypeScript validation PASS.
+
+### REPAIR GROUP 21 — Anonymous Abuse Controls & Advisory Locking
+- **Fixed**: In migration 001300 `api.create_upload_intent`, added transactional advisory lock `perform pg_advisory_xact_lock(hashtext('upload_intent:' || caller_id::text));` before quota evaluation, serializing concurrent requests and preventing race conditions that bypass intent limits.
+- **Files**: `supabase/migrations/20261020001300_cross_layer_root_cause_hardening.sql`.
+- **Root Cause**: Count-then-insert pattern without serialization allowed concurrent requests to exceed the 10-intent quota.
+- **Recurrence Search**: Searched for count-then-insert patterns across all API endpoints and SQL functions.
+- **Additional Findings**: Transaction-scoped advisory locks automatically release on transaction commit or rollback without deadlocks.
+- **Tests**: PGlite sequential migration test PASS.
+
+---
+
+### Campaign Validation Summary
+- **Migration Chain**: 13/13 migrations apply sequentially in real PostgreSQL 17.5 WASM (PGlite) with 0 errors.
+- **RPC Contracts**: All 6 critical RPC signatures verified against database dictionary.
+- **Enum Contracts**: Validated `visit_event_type` and `pass_status` values; verified `'expired'` is not in `visit_event_type`.
+- **Audit Schema**: Canonical audit table columns and check constraints verified with positive and negative tests.
+- **Vitest Suite**: 18 test files, 238 tests PASS (0 failures).
+- **TypeScript Typechecks**: `npm run typecheck:api` PASS; `npx tsc --noEmit` PASS.
+- **Production Build**: `npm run build` PASS (2538 modules transformed in 1.41s).
+- **Git State**: `.env.example` preserved byte-for-byte unstaged.

@@ -68,20 +68,22 @@ export function AdminDashboard() {
 
     return {
       todayTotal: counts ? counts.todayTotal : todayPasses.length,
+      monthTotal: counts?.monthTotal ?? 0,
       currentlyInside: counts ? counts.currentlyInside : dashboard.insidePasses.length,
       exitedToday: counts ? counts.exitedToday : dashboard.exitedTodayPasses.length,
       pendingToday: counts ? counts.pendingToday : dashboard.recentPasses.filter((p) => p.status === 'pending').length,
       rejectedToday: counts ? counts.rejectedToday : rejectedToday.length,
-      avgApprovalTime: averageApprovalTime(dashboard.decisionsTodayPasses),
-      topPurpose: mostCommon(todayPasses.map((pass) => pass.purpose?.split(' — ')[0]?.trim())),
-      topRejection: mostCommon(rejectedToday.map((pass) => pass.rejectionReason)),
-      busiestGate: mostCommon(dashboard.decisionsTodayPasses.map((pass) => pass.gate)),
+      avgApprovalTime: dashboard.insights?.avgApprovalTime ?? averageApprovalTime(dashboard.decisionsTodayPasses),
+      topPurpose: dashboard.insights?.topPurpose ?? mostCommon(todayPasses.map((pass) => pass.purpose?.split(' — ')[0]?.trim())),
+      topRejection: dashboard.insights?.topRejection ?? mostCommon(rejectedToday.map((pass) => pass.rejectionReason)),
+      busiestGate: dashboard.insights?.busiestGate ?? mostCommon(dashboard.decisionsTodayPasses.map((pass) => pass.gate)),
       calendarPasses: dashboard.recentPasses,
     };
   }, [dashboard]);
 
   const exportSummary = {
     visitorsToday: metrics.todayTotal,
+    monthTotal: metrics.monthTotal,
     currentlyInside: metrics.currentlyInside,
     exitedToday: metrics.exitedToday,
     pendingApproval: metrics.pendingToday,

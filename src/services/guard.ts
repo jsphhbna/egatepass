@@ -18,6 +18,8 @@ export interface GuardDashboardData {
   queue: GuardQueuePass[];
   stats: { inside: number; exited: number; rejected: number; total: number };
   rejectionReasons: string[];
+  pendingTotal: number;
+  hasMore: boolean;
 }
 
 interface DashboardWire {
@@ -28,10 +30,22 @@ interface DashboardWire {
   }>;
   stats?: GuardDashboardData['stats'];
   rejectionReasons?: string[];
+  pendingTotal?: number;
+  hasMore?: boolean;
 }
 
-export async function fetchGuardDashboard(): Promise<GuardDashboardData> {
-  const { data: rawData, error } = await requireSupabase().schema('api').rpc('guard_dashboard');
+export async function fetchGuardDashboard(options?: {
+  limit?: number;
+  offset?: number;
+}): Promise<GuardDashboardData> {
+  const limit = options?.limit ?? 50;
+  const offset = options?.offset ?? 0;
+  const { data: rawData, error } = await requireSupabase()
+    .schema('api')
+    .rpc('guard_dashboard', {
+      requested_limit: limit,
+      requested_offset: offset,
+    });
   const data = rawData as DashboardWire | null;
   if (error || !data) throw error ?? new Error('Guard dashboard unavailable');
   return {
@@ -42,6 +56,8 @@ export async function fetchGuardDashboard(): Promise<GuardDashboardData> {
     })),
     stats: data.stats ?? { inside: 0, exited: 0, rejected: 0, total: 0 },
     rejectionReasons: Array.isArray(data.rejectionReasons) ? data.rejectionReasons : [],
+    pendingTotal: Number(data.pendingTotal ?? data.queue?.length ?? 0),
+    hasMore: Boolean(data.hasMore),
   };
 }
 

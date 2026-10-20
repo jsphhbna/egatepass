@@ -14,6 +14,7 @@ const createHoldSchema = z.object({
 
 const releaseHoldSchema = z.object({
   holdId: z.string().uuid(),
+  reason: z.string().trim().min(1).max(500).optional(),
 });
 
 async function handleRequest(request: Request): Promise<Response> {
@@ -29,9 +30,8 @@ async function handleRequest(request: Request): Promise<Response> {
     if (request.method === 'GET') {
       await requireStaffActor(admin, token, ['admin', 'superadmin']);
 
+      const limit = Math.min(Math.max(parseInt(url.searchParams.get('limit') || '50', 10), 1), 100);
       const activeParam = url.searchParams.get('active');
-      const limitParam = parseInt(url.searchParams.get('limit') || '50', 10);
-      const limit = Math.min(Math.max(Number.isFinite(limitParam) ? limitParam : 50, 1), 100);
 
       let query = admin
         .from('incident_holds')
@@ -100,7 +100,7 @@ async function handleRequest(request: Request): Promise<Response> {
       });
 
       if (error) {
-        if (error.code === '40001' || error.message?.includes('active_purge_claim_in_progress')) {
+        if (error.code === '40001' || error.message?.includes('active_purge_claim_in_progress') || error.message?.includes('purge_in_progress')) {
           return jsonResponse(409, { error: 'active_purge_claim_in_progress' });
         }
         if (error.code === '22023' || error.message?.includes('evidence_already_purged')) {
@@ -109,8 +109,15 @@ async function handleRequest(request: Request): Promise<Response> {
         throw error;
       }
 
+      if (data?.conflict === 'purge_in_progress') {
+        return jsonResponse(409, { error: 'active_purge_claim_in_progress' });
+      }
+      if (data?.conflict === 'evidence_already_purged') {
+        return jsonResponse(409, { error: 'evidence_already_purged' });
+      }
+
       return jsonResponse(201, {
-        holdId: data,
+        holdId: data?.hold_id ?? data,
         requestId,
       });
     }
@@ -121,8 +128,9 @@ async function handleRequest(request: Request): Promise<Response> {
       const holdIdFromQuery = url.searchParams.get('id');
       const body = await request.json().catch(() => ({}));
       const holdId = holdIdFromQuery || body?.holdId;
+      const reason = body?.reason;
 
-      const parsed = releaseHoldSchema.safeParse({ holdId });
+      const parsed = releaseHoldSchema.safeParse({ holdId, reason });
       if (!parsed.success) {
         return jsonResponse(400, { error: 'invalid_request', details: parsed.error.issues });
       }
@@ -131,6 +139,7 @@ async function handleRequest(request: Request): Promise<Response> {
       const { data, error } = await admin.schema('api').rpc('release_incident_hold', {
         requested_actor_id: actor.id,
         requested_hold_id: parsed.data.holdId,
+        requested_reason: parsed.data.reason ?? null,
         requested_request_id: requestId,
       });
 
@@ -153,7 +162,7 @@ async function handleRequest(request: Request): Promise<Response> {
       return jsonResponse(error.status, { error: error.code });
     }
     console.error('Incident hold operation failed:', error instanceof Error ? error.message : 'unknown_error');
-    return jsonResponse(500, { error: 'internal_error' });
+    return jsonResponse(500, { error: 'incident_hold_operation_failed' });
   }
 }
 

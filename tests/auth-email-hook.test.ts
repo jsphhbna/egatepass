@@ -297,5 +297,40 @@ describe('EMAIL-01: Supabase Auth Send Email Hook Infrastructure', () => {
 
       if (prevResend) process.env.RESEND_API_KEY = prevResend;
     });
+
+    it('returns 503 if RESEND_API_KEY is missing in production environment (REPAIR 6C)', async () => {
+      process.env.SEND_EMAIL_HOOK_SECRET = secret;
+      const prevResend = process.env.RESEND_API_KEY;
+      const prevEnv = process.env.NODE_ENV;
+      delete process.env.RESEND_API_KEY;
+      process.env.NODE_ENV = 'production';
+
+      const msgId = 'msg_valid_hook_prod_1';
+      const timestamp = Math.floor(Date.now() / 1000);
+      const payload: SupabaseAuthEmailPayload = {
+        user: { id: 'user-hook-2', email: 'prod@earist.edu.ph' },
+        email_data: { token: '111', token_hash: 'hash', email_action_type: 'signup' },
+      };
+      const rawBody = JSON.stringify(payload);
+      const signature = makeSignature(msgId, timestamp, rawBody);
+
+      const req = new Request('http://localhost:5173/api/auth/send-email-hook', {
+        method: 'POST',
+        headers: {
+          'webhook-id': msgId,
+          'webhook-timestamp': timestamp.toString(),
+          'webhook-signature': signature,
+        },
+        body: rawBody,
+      });
+
+      const res = await sendEmailHookHandler.fetch(req);
+      expect(res.status).toBe(503);
+      const json = await res.json();
+      expect(json.error).toBe('provider_unconfigured');
+
+      process.env.NODE_ENV = prevEnv;
+      if (prevResend) process.env.RESEND_API_KEY = prevResend;
+    });
   });
 });

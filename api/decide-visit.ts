@@ -37,6 +37,9 @@ async function handleRequest(request: Request): Promise<Response> {
       }
       throw error;
     }
+    if (data === 'expired') {
+      return jsonResponse(422, { error: 'Pass has expired and cannot be approved', status: 'expired' });
+    }
     return jsonResponse(200, { status: data });
   } catch (error) {
     const code = typeof error === 'object' && error !== null && 'code' in error ? String(error.code) : null;

@@ -98,17 +98,32 @@ export function normalizeAdministrativeAudit(item: any): AdministrativeAuditItem
   return mapRawAdministrativeItem(item);
 }
 
+export interface VisitorActivityFilters {
+  event?: string;
+  dateFrom?: string;
+  dateTo?: string;
+}
+
+export interface AdministrativeAuditFilters {
+  role?: string;
+  action?: string;
+  dateFrom?: string;
+  dateTo?: string;
+}
+
 function usePaginatedActivity<T>(
   enabled: boolean,
   type: 'visitor' | 'administrative',
   mapper: (raw: any) => T,
   errorMessage: string,
+  filters?: Record<string, string | undefined>,
 ): PaginatedQueryState<T> {
   const [state, setState] = useState<QueryState<T>>({ data: [], loading: enabled, error: null });
   const [hasMore, setHasMore] = useState(false);
   const [loadingMore, setLoadingMore] = useState(false);
   const cursorRef = useRef<string | null>(null);
   const requestIdRef = useRef(0);
+  const filtersKey = JSON.stringify(filters ?? {});
 
   const loadPage = useCallback(async (append: boolean) => {
     if (!enabled) return;
@@ -120,6 +135,11 @@ function usePaginatedActivity<T>(
         type,
         pageSize: String(ACTIVITY_PAGE_SIZE),
       });
+      if (filters) {
+        Object.entries(filters).forEach(([key, val]) => {
+          if (val && val.trim()) params.set(key, val.trim());
+        });
+      }
       if (append && cursorRef.current) {
         params.set('cursor', cursorRef.current);
       }
@@ -146,7 +166,7 @@ function usePaginatedActivity<T>(
     } finally {
       if (requestId === requestIdRef.current) setLoadingMore(false);
     }
-  }, [enabled, errorMessage, mapper, type]);
+  }, [enabled, errorMessage, mapper, type, filtersKey]);
 
   useEffect(() => {
     if (!enabled) return;
@@ -155,44 +175,81 @@ function usePaginatedActivity<T>(
     setHasMore(false);
     void loadPage(false);
     return () => { requestIdRef.current += 1; };
-  }, [enabled, loadPage]);
+  }, [enabled, loadPage, filtersKey]);
 
   return { ...state, hasMore, loadingMore, loadMore: () => void loadPage(true) };
 }
 
-export function useVisitorActivity(enabled: boolean): PaginatedQueryState<VisitorActivityItem> {
-  return usePaginatedActivity(enabled, 'visitor', mapRawVisitorItem, 'Visitor activity could not be loaded.');
+export function useVisitorActivity(
+  enabled: boolean,
+  filters?: VisitorActivityFilters,
+): PaginatedQueryState<VisitorActivityItem> {
+  return usePaginatedActivity(enabled, 'visitor', mapRawVisitorItem, 'Visitor activity could not be loaded.', filters as Record<string, string | undefined>);
 }
 
-export function useAdministrativeAudit(enabled: boolean): PaginatedQueryState<AdministrativeAuditItem> {
-  return usePaginatedActivity(enabled, 'administrative', mapRawAdministrativeItem, 'Administrative activity could not be loaded.');
+export function useAdministrativeAudit(
+  enabled: boolean,
+  filters?: AdministrativeAuditFilters,
+): PaginatedQueryState<AdministrativeAuditItem> {
+  return usePaginatedActivity(enabled, 'administrative', mapRawAdministrativeItem, 'Administrative activity could not be loaded.', filters as Record<string, string | undefined>);
 }
 
-export function useReconciliationItems(enabled: boolean): QueryState<ReconciliationItem> {
+export interface PaginatedReconciliationState extends PaginatedQueryState<ReconciliationItem> {
+  total: number;
+}
+
+export function useReconciliationItems(enabled: boolean): PaginatedReconciliationState {
   const [state, setState] = useState<QueryState<ReconciliationItem>>({ data: [], loading: enabled, error: null });
+  const [total, setTotal] = useState(0);
+  const [hasMore, setHasMore] = useState(false);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const cursorRef = useRef<string | null>(null);
+
+  const loadPage = useCallback(async (append: boolean) => {
+    if (!enabled) return;
+    append ? setLoadingMore(true) : setState({ data: [], loading: true, error: null });
+    try {
+      const token = await getAccessToken();
+      const params = new URLSearchParams({ pageSize: '50' });
+      if (append && cursorRef.current) {
+        params.set('cursor', cursorRef.current);
+      }
+      const response = await fetch(`/api/reconciliation-items?${params.toString()}`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      const body = await response.json().catch(() => null) as {
+        items?: ReconciliationItem[];
+        total?: number;
+        hasMore?: boolean;
+        nextCursor?: string | null;
+        error?: string;
+      } | null;
+      if (!response.ok) throw new Error(body?.error || 'Reconciliation items could not be loaded.');
+      const items = body?.items || [];
+      cursorRef.current = body?.nextCursor ?? null;
+      setHasMore(Boolean(body?.hasMore));
+      setTotal(body?.total ?? items.length);
+      setState((current) => ({
+        data: append ? [...current.data, ...items] : items,
+        loading: false,
+        error: null,
+      }));
+    } catch (error) {
+      setState((current) => ({
+        data: append ? current.data : [],
+        loading: false,
+        error: error instanceof Error ? error.message : 'Reconciliation items could not be loaded.',
+      }));
+    } finally {
+      setLoadingMore(false);
+    }
+  }, [enabled]);
+
   useEffect(() => {
     if (!enabled) return;
-    const controller = new AbortController();
-    setState((current) => ({ ...current, loading: true, error: null }));
-    void (async () => {
-      try {
-        const token = await getAccessToken();
-        const response = await fetch('/api/reconciliation-items', {
-          headers: { Authorization: `Bearer ${token}` },
-          signal: controller.signal,
-        });
-        const body = await response.json().catch(() => null) as { items?: ReconciliationItem[]; error?: string } | null;
-        if (!response.ok) throw new Error(body?.error || 'Request failed');
-        setState({ data: body?.items || [], loading: false, error: null });
-      } catch (error) {
-        if (!controller.signal.aborted) setState({
-          data: [],
-          loading: false,
-          error: error instanceof Error ? error.message : 'Reconciliation items could not be loaded.',
-        });
-      }
-    })();
-    return () => controller.abort();
-  }, [enabled]);
-  return state;
+    cursorRef.current = null;
+    void loadPage(false);
+  }, [enabled, loadPage]);
+
+  return { ...state, total, hasMore, loadingMore, loadMore: () => void loadPage(true) };
 }

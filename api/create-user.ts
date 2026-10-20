@@ -2,11 +2,12 @@ import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import { HttpError, recordReconciliation, requireStaffActor } from '../server/actors.js';
 import { jsonResponse, readBearerToken } from '../server/http.js';
+import { passwordSchema } from '../server/password-policy.js';
 import { getServerSupabaseClients } from '../server/supabase.js';
 
 const schema = z.object({
   name: z.string().trim().min(2).max(50), email: z.email().max(320),
-  password: z.string().min(12).max(128).regex(/[A-Za-z]/).regex(/\d/), role: z.enum(['guard', 'admin']),
+  password: passwordSchema, role: z.enum(['guard', 'admin']),
 }).strict();
 
 async function handleRequest(request: Request): Promise<Response> {

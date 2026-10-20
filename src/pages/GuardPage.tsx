@@ -39,6 +39,11 @@ export function GuardPage() {
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const previousPendingCountRef = useRef(0);
 
+  const [pendingTotal, setPendingTotal] = useState(0);
+  const [hasMore, setHasMore] = useState(false);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const passesLengthRef = useRef(50);
+
   // Daily Report stats
   const [dailyStats, setDailyStats] = useState({
     inside: 0,
@@ -59,14 +64,18 @@ export function GuardPage() {
       if (loading) return;
       loading = true;
       try {
-        const dashboard = await fetchGuardDashboard();
+        const fetchLimit = Math.max(50, passesLengthRef.current);
+        const dashboard = await fetchGuardDashboard({ limit: fetchLimit, offset: 0 });
         if (!active) return;
         setQueueError(false);
-        if (dashboard.queue.length > previousPendingCountRef.current && audioRef.current) {
+        if (dashboard.pendingTotal > previousPendingCountRef.current && audioRef.current) {
           audioRef.current.play().catch(() => undefined);
         }
-        previousPendingCountRef.current = dashboard.queue.length;
+        previousPendingCountRef.current = dashboard.pendingTotal;
         setPasses(dashboard.queue);
+        passesLengthRef.current = dashboard.queue.length;
+        setPendingTotal(dashboard.pendingTotal);
+        setHasMore(dashboard.hasMore);
         setDailyStats(dashboard.stats);
         setRejectionReasons(dashboard.rejectionReasons);
       } catch (error) {
@@ -81,6 +90,28 @@ export function GuardPage() {
     const poll = window.setInterval(() => { void refresh(); }, 5000);
     return () => { active = false; stopRealtime(); window.clearInterval(poll); };
   }, []);
+
+  async function handleLoadMore() {
+    if (loadingMore || !hasMore) return;
+    setLoadingMore(true);
+    try {
+      const nextBatch = await fetchGuardDashboard({ limit: 50, offset: passes.length });
+      setPasses((prev) => {
+        const existingIds = new Set(prev.map((p) => p.id));
+        const newItems = nextBatch.queue.filter((p) => !existingIds.has(p.id));
+        const combined = [...prev, ...newItems];
+        passesLengthRef.current = combined.length;
+        return combined;
+      });
+      setPendingTotal(nextBatch.pendingTotal);
+      setHasMore(nextBatch.hasMore);
+    } catch (err) {
+      console.error('Failed to load more queue passes:', err);
+      toast.error('Failed to load more passes');
+    } finally {
+      setLoadingMore(false);
+    }
+  }
 
   // ============================================================
   // ONLINE/OFFLINE DETECTION
@@ -215,8 +246,8 @@ export function GuardPage() {
               Guard Queue
             </h1>
             <p className="mt-1 text-sm text-[var(--color-text-secondary)]">
-              {passes.length} pending verification
-              {passes.length !== 1 ? 's' : ''}
+              {pendingTotal} pending verification{pendingTotal !== 1 ? 's' : ''}
+              {passes.length < pendingTotal ? ` (showing ${passes.length} of ${pendingTotal})` : ''}
             </p>
           </div>
 
@@ -479,6 +510,18 @@ export function GuardPage() {
               </Card>
             );
           })}
+          {hasMore && (
+            <div className="col-span-full mt-4 flex justify-center">
+              <Button
+                variant="secondary"
+                size="md"
+                onClick={handleLoadMore}
+                loading={loadingMore}
+              >
+                Load More Pending Passes ({passes.length} of {pendingTotal})
+              </Button>
+            </div>
+          )}
         </div>
       )}
       {/* Reject Modal */}
