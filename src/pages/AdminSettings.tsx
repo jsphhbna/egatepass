@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { Save, Trash2, AlertTriangle, Plus } from 'lucide-react';
 import { toast } from 'sonner';
-import { Button, Card, Input, ConfirmModal, LoadingState } from '@/components/ui';
+import { Button, Card, Input, Select, ConfirmModal, LoadingState } from '@/components/ui';
 import { PasswordResetCard } from '@/components/ChangePasswordCard';
 import { DEFAULT_REJECTION_REASONS, DEFAULT_VISIT_PURPOSES, normalizeVisitPurposes } from '@/lib/settingsDefaults';
 import type { VisitPurposeOption } from '@/types';
@@ -18,6 +18,8 @@ import {
   type RetentionInputErrors,
 } from '@/lib/retentionInput';
 
+export type PeakModeScope = 'off' | 'portal' | 'kiosk' | 'both';
+
 export function AdminSettings() {
   const { role } = useAuth();
   const canManageSecuritySettings = isSuperAdmin(role);
@@ -28,7 +30,7 @@ export function AdminSettings() {
   const [settings, setSettings] = useState({
     ...DEFAULT_RETENTION_POLICY,
     workingHours: DEFAULT_WORKING_HOURS,
-    peakMode: false,
+    peakMode: 'off' as PeakModeScope,
     rejectionReasons: [] as string[],
     visitPurposes: [] as VisitPurposeOption[],
   });
@@ -40,6 +42,7 @@ export function AdminSettings() {
   
   // Modals state
   const [showPeakModeConfirm, setShowPeakModeConfirm] = useState(false);
+  const [pendingPeakMode, setPendingPeakMode] = useState<PeakModeScope | null>(null);
   const [showPurgeConfirm, setShowPurgeConfirm] = useState(false);
   const [purgeEligibleCount, setPurgeEligibleCount] = useState<number | null>(null);
   const [purgeRetentionDays, setPurgeRetentionDays] = useState<number | null>(null);
@@ -55,10 +58,14 @@ export function AdminSettings() {
         if (res.ok) {
           const data = await res.json();
           const retentionPolicy = normalizeRetentionPolicy(data);
+          const rawScope = data.peakModeScope;
+          const peakScope: PeakModeScope = (['off', 'portal', 'kiosk', 'both'].includes(rawScope)
+            ? rawScope
+            : (data.peakMode ? 'both' : 'off')) as PeakModeScope;
           setSettings({
             ...retentionPolicy,
             workingHours: normalizeWorkingHours(data.workingHours),
-            peakMode: data.peakMode === true,
+            peakMode: peakScope,
             rejectionReasons: Array.isArray(data.rejectionReasons) ? data.rejectionReasons : DEFAULT_REJECTION_REASONS,
             visitPurposes: normalizeVisitPurposes(data.visitPurposes),
           });
@@ -67,7 +74,7 @@ export function AdminSettings() {
           const defaultSettings = {
             ...DEFAULT_RETENTION_POLICY,
             workingHours: DEFAULT_WORKING_HOURS,
-            peakMode: false,
+            peakMode: 'off' as PeakModeScope,
             rejectionReasons: DEFAULT_REJECTION_REASONS,
             visitPurposes: DEFAULT_VISIT_PURPOSES,
           };
@@ -279,15 +286,6 @@ export function AdminSettings() {
     }
   }
 
-  function togglePeakMode() {
-    if (!settings.peakMode) {
-      setShowPeakModeConfirm(true);
-    } else {
-      // Instant off
-      setSettings({ ...settings, peakMode: false });
-      toast.success('Peak Mode disabled');
-    }
-  }
 
   if (loading) {
     return <LoadingState label="Loading system settings" className="h-32" />;
@@ -353,29 +351,52 @@ export function AdminSettings() {
 
           {/* Peak Mode */}
           <Card className="p-6">
-            <div className="flex items-center justify-between gap-4">
-              <div className="min-w-0">
-                <h2 className="text-xl font-bold text-[var(--color-text-primary)]">Peak Mode</h2>
+            <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+              <div className="min-w-0 flex-1">
+                <div className="flex items-center gap-2">
+                  <h2 className="text-xl font-bold text-[var(--color-text-primary)]">Peak Mode</h2>
+                  {settings.peakMode !== 'off' && (
+                    <span className="inline-flex rounded-full border border-[var(--color-warning)] bg-[var(--color-warning-light)] px-2.5 py-0.5 text-xs font-bold text-[var(--color-warning-dark)]">
+                      Active
+                    </span>
+                  )}
+                </div>
                 <p className="mt-2 text-sm leading-relaxed text-[var(--color-text-secondary)]">
-                  When enabled, visitors are not required to upload a government ID, helping speed up the queue.
+                  When enabled, visitors are not required to upload a government ID, helping speed up the queue. Face photo is always required.
                 </p>
+                {settings.peakMode !== 'off' && (
+                  <p className="mt-2 text-xs font-semibold text-[var(--color-brand)]">
+                    Currently skipping ID requirement on: {
+                      settings.peakMode === 'both' ? 'Both Online Portal & Kiosk'
+                      : settings.peakMode === 'portal' ? 'Online Portal only'
+                      : 'Kiosk only'
+                    }
+                  </p>
+                )}
               </div>
-              <button
-                type="button"
-                onClick={togglePeakMode}
-                className={`relative inline-flex h-7 w-12 shrink-0 items-center rounded-full transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-brand)] focus-visible:ring-offset-2 ${
-                  settings.peakMode ? 'bg-[var(--color-brand)]' : 'bg-[var(--color-border-strong)]'
-                }`}
-                role="switch"
-                aria-checked={settings.peakMode}
-                aria-label="Peak mode"
-              >
-                <span
-                  className={`inline-block h-5 w-5 transform rounded-full bg-white shadow transition-transform ${
-                    settings.peakMode ? 'translate-x-6' : 'translate-x-1'
-                  }`}
-                />
-              </button>
+              <div className="w-full sm:w-60">
+                <label className="mb-1 block text-xs font-semibold text-[var(--color-text-secondary)]">
+                  Scope
+                </label>
+                <Select
+                  value={settings.peakMode}
+                  onChange={(e) => {
+                    const newScope = e.target.value as PeakModeScope;
+                    if (newScope !== 'off' && settings.peakMode === 'off') {
+                      setPendingPeakMode(newScope);
+                      setShowPeakModeConfirm(true);
+                    } else {
+                      setSettings((s) => ({ ...s, peakMode: newScope }));
+                    }
+                  }}
+                  aria-label="Peak Mode Scope"
+                >
+                  <option value="off">Off (IDs Required)</option>
+                  <option value="portal">Online Portal Only</option>
+                  <option value="kiosk">Kiosk Devices Only</option>
+                  <option value="both">Both (Portal & Kiosk)</option>
+                </Select>
+              </div>
             </div>
           </Card>
 
@@ -599,17 +620,24 @@ export function AdminSettings() {
 
       <ConfirmModal
         isOpen={showPeakModeConfirm}
-        onClose={() => setShowPeakModeConfirm(false)}
+        onClose={() => {
+          setShowPeakModeConfirm(false);
+          setPendingPeakMode(null);
+        }}
         title="Enable Peak Mode?"
         description={
           <>
-            Are you sure you want to enable Peak Mode? Visitors will not be required to provide a government ID photo during registration. This reduces security but speeds up processing.
+            Enabling Peak Mode for <strong className="text-[var(--color-text-primary)]">{pendingPeakMode === 'both' ? 'both Portal and Kiosk' : pendingPeakMode === 'portal' ? 'Online Portal' : 'Kiosk Devices'}</strong> allows visitors to register without providing a government ID photo.
+            Face photo is still strictly required. You can turn this off at any time.
           </>
         }
         onConfirm={() => {
-          setSettings({ ...settings, peakMode: true });
+          if (pendingPeakMode) {
+            setSettings({ ...settings, peakMode: pendingPeakMode });
+            toast.success(`Peak Mode enabled for ${pendingPeakMode}`);
+          }
           setShowPeakModeConfirm(false);
-          toast.success('Peak Mode enabled');
+          setPendingPeakMode(null);
         }}
         confirmText="Enable Peak Mode"
       />

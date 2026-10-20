@@ -2,29 +2,25 @@ import { useState, useEffect } from 'react';
 import { AlertTriangle, Printer } from 'lucide-react';
 import { format } from 'date-fns';
 import { Card, Input, Select, Button, DataTable, DataTableHead, DataTableRow, DataTableCell, StatusBadge } from '@/components/ui';
-import type { GatePass } from '@/types';
-import { asAppTimestamp } from '@/lib/timestamp';
 import { getAccessToken } from '@/services/auth';
 
-interface GatePassWithId extends GatePass {
-  id: string;
-}
-
-interface RawEmergencyPass {
+interface EmergencyEvacuationPass {
   id: string;
   visitorId: string;
   visitorName: string;
   purpose: string;
   gate: string | null;
   timeIn: string | null;
+  issuedAt: string | null;
   status: 'inside';
 }
 
 export function AdminEmergency() {
-  const [passes, setPasses] = useState<GatePassWithId[]>([]);
+  const [passes, setPasses] = useState<EmergencyEvacuationPass[]>([]);
   const [loading, setLoading] = useState(true);
   const [gateFilter, setGateFilter] = useState('');
   const [search, setSearch] = useState('');
+  const [isTruncated, setIsTruncated] = useState(false);
 
   // Extract unique gates from passes
   const gates = Array.from(new Set(passes.map((p) => p.gate).filter(Boolean))) as string[];
@@ -35,32 +31,11 @@ export function AdminEmergency() {
       const response = await fetch('/api/admin/emergency', {
         headers: { Authorization: `Bearer ${token}` },
       });
-      const data = await response.json().catch(() => null) as { passes?: RawEmergencyPass[]; error?: string } | null;
+      const data = await response.json().catch(() => null) as { passes?: EmergencyEvacuationPass[]; truncated?: boolean; error?: string } | null;
       if (!response.ok) throw new Error(data?.error || 'Failed to load evacuation list');
 
-      const mapped: GatePassWithId[] = (data?.passes ?? []).map((p) => ({
-        id: p.id,
-        visitorId: p.visitorId,
-        visitorName: p.visitorName,
-        purpose: p.purpose,
-        photoPublicId: '',
-        idImagePublicId: null,
-        source: 'portal',
-        status: 'inside',
-        validFrom: asAppTimestamp(new Date())!,
-        validUntil: asAppTimestamp(new Date())!,
-        issuedAt: asAppTimestamp(new Date())!,
-        scannedAt: asAppTimestamp(p.timeIn),
-        timeIn: asAppTimestamp(p.timeIn),
-        timeOut: null,
-        entryDeviceId: null,
-        exitDeviceId: null,
-        decidedByUid: null,
-        rejectionReason: null,
-        gate: p.gate,
-      }));
-
-      setPasses(mapped);
+      setPasses(data?.passes ?? []);
+      setIsTruncated(Boolean(data?.truncated));
     } catch (err) {
       console.error('Emergency load error:', err);
     } finally {
@@ -98,6 +73,11 @@ export function AdminEmergency() {
           <p className="mt-1 text-sm font-medium text-[var(--color-danger)]">
             Currently Inside: {passes.length} Visitors
           </p>
+          {isTruncated && (
+            <p className="mt-2 text-sm font-semibold text-[var(--color-danger)]">
+              Notice: The safety query limit was reached. Showing the first {passes.length.toLocaleString()} inside visitors.
+            </p>
+          )}
         </div>
         <Button
           onClick={() => window.print()}
@@ -176,7 +156,7 @@ export function AdminEmergency() {
                 <DataTableRow key={pass.id as string} className="print:hover:bg-transparent">
                   <DataTableCell className="font-bold print:px-2">{pass.visitorName}</DataTableCell>
                   <DataTableCell className="print:px-2">
-                    {pass.timeIn ? format(pass.timeIn.toMillis(), 'h:mm a') : '—'}
+                    {pass.timeIn ? format(new Date(pass.timeIn), 'h:mm a') : '—'}
                   </DataTableCell>
                   <DataTableCell className="print:px-2">{pass.gate || 'Unknown'}</DataTableCell>
                   <DataTableCell className="print:px-2 print:text-black"><StatusBadge status="inside" label="Inside" /></DataTableCell>

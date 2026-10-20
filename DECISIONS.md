@@ -138,3 +138,24 @@
 - Decision: isolate Admin operational rights (Peak Mode scope, rejection reasons, visit purposes) from Super Admin security-sensitive rights (retention days, campus working hours, image purge). Server rejects unprivileged attempts with HTTP 403 and records all operational mutations to `public.audit_events`.
 - Decision: support bounded cursor pagination across visitor records and activity exports (`/api/admin/records`, `/api/admin/activity`) via `collectCursorPages`, completely redacting QR tokens, signing secrets, and raw private storage paths from client downloads.
 
+## ADR-0020 — Administrative Hardening, Hold Integrity, and Atomic Settings/Audit RPC
+
+- Date: 2026-10-20
+- Status: accepted for M4 correction; integration NOT VERIFIED
+- Decision:
+  1. `api/update-device-auth.ts`: require target validation by verifying the target UID is NOT in `staff_profiles` first (defense-in-depth, HTTP 403 `cannot_modify_staff_via_device_endpoint`), confirming an active, non-retired device row in `devices` (HTTP 404), ensuring alias uniqueness across active devices (HTTP 409), and verifying Auth account existence before any write. Log honest reconciliation compensation on partial failure and write immutable audit records.
+  2. `api/purge-images.ts`: protect evidence from deletion by inspecting active incident holds by both `visitor_id` AND `pass_id` (resolving `passes.visitor_id`), re-verifying holds and active passes right before physical storage delete, and respecting dry-run truthfulness.
+  3. `api/update-settings.ts`: wrap settings update and audit log write into a single atomic PostgreSQL transaction via `api.update_app_settings` RPC locking `app_settings` singleton row, preventing split-brain states. Truthfully persist and return `automatic_cleanup_enabled`.
+  4. `server/actors.ts`: enforce `email_confirmed_at` check on human staff actors (HTTP 403 `email_verification_required`), preserving device exemptions.
+  5. `server/cursor.ts`: replace timestamp-only cursor with compound stable key `(timestamp, id)` base64url JSON cursor with legacy ISO fallback. Deterministic secondary order by `id DESC`.
+
+## ADR-0021 — Optional Resend QR Email Delivery with Mailbox Possession Claim Flow
+
+- Date: 2026-10-20
+- Status: accepted for M5-F13 implementation; live email delivery BLOCKED
+- Decision:
+  1. Optional & Non-Impact: email delivery is strictly optional. The pass issuance, QR display, Download QR, print, and share actions remain 100% usable without entering an email address or requiring email service availability. Provider failure or timeout NEVER rolls back or invalidates the issued pass.
+  2. Two-Step Inbox Possession Proof: to prevent unauthorized disclosure of the bearer credential to typed addresses or kiosk snooping, require explicit visitor consent and a 6-digit verification code sent to the destination inbox (`action: 'request_code'`) before releasing the scannable QR code (`action: 'verify_and_send'`).
+  3. High-Entropy Scannable QR: render server-side high-contrast PNG QR attachment via `QRCode.toBuffer` with EARIST maroon branding. Redact private IDs, face photos, and service keys from email body.
+  4. Reconciliation on Failure: if Resend dispatch fails, record a reconciliation item to `reconciliation_items` and return HTTP 502 with an actionable fallback message directing the user to use the intact Download QR button.
+

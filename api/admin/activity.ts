@@ -1,4 +1,5 @@
 import { HttpError, requireStaffActor } from '../../server/actors.js';
+import { decodeCursor, encodeCursor } from '../../server/cursor.js';
 import { jsonResponse, readBearerToken } from '../../server/http.js';
 import { getServerSupabaseClients } from '../../server/supabase.js';
 
@@ -69,7 +70,8 @@ async function handleRequest(request: Request): Promise<Response> {
           visitors ( full_name ),
           staff_profiles ( display_name )
         `)
-        .order('occurred_at', { ascending: false });
+        .order('occurred_at', { ascending: false })
+        .order('id', { ascending: false });
 
       if (eventFilter) query = query.eq('event', eventFilter);
       if (dateFrom && /^\d{4}-\d{2}-\d{2}$/.test(dateFrom)) {
@@ -79,7 +81,16 @@ async function handleRequest(request: Request): Promise<Response> {
         const nextDay = new Date(new Date(`${dateTo}T00:00:00+08:00`).getTime() + 86_400_000).toISOString();
         query = query.lt('occurred_at', nextDay);
       }
-      if (cursor) query = query.lt('occurred_at', cursor);
+      if (cursor) {
+        const decoded = decodeCursor(cursor);
+        if (decoded) {
+          if (decoded.id) {
+            query = query.or(`occurred_at.lt.${decoded.timestamp},and(occurred_at.eq.${decoded.timestamp},id.lt.${decoded.id})`);
+          } else {
+            query = query.lt('occurred_at', decoded.timestamp);
+          }
+        }
+      }
 
       query = query.limit(pageSize + 1);
 
@@ -89,7 +100,8 @@ async function handleRequest(request: Request): Promise<Response> {
       const rows = (rawRows ?? []) as unknown as RawVisitEventRow[];
       const hasMore = rows.length > pageSize;
       const returnRows = hasMore ? rows.slice(0, pageSize) : rows;
-      const nextCursor = hasMore && returnRows.length > 0 ? returnRows[returnRows.length - 1].occurred_at : null;
+      const lastRow = returnRows[returnRows.length - 1];
+      const nextCursor = hasMore && lastRow ? encodeCursor(lastRow.occurred_at, lastRow.id) : null;
 
       const items = returnRows.map((row) => ({
         id: String(row.id),
@@ -122,7 +134,8 @@ async function handleRequest(request: Request): Promise<Response> {
           after_state,
           outcome
         `)
-        .order('occurred_at', { ascending: false });
+        .order('occurred_at', { ascending: false })
+        .order('id', { ascending: false });
 
       if (roleFilter) query = query.eq('actor_role', roleFilter);
       if (actionFilter) query = query.ilike('action', `%${actionFilter}%`);
@@ -133,7 +146,16 @@ async function handleRequest(request: Request): Promise<Response> {
         const nextDay = new Date(new Date(`${dateTo}T00:00:00+08:00`).getTime() + 86_400_000).toISOString();
         query = query.lt('occurred_at', nextDay);
       }
-      if (cursor) query = query.lt('occurred_at', cursor);
+      if (cursor) {
+        const decoded = decodeCursor(cursor);
+        if (decoded) {
+          if (decoded.id) {
+            query = query.or(`occurred_at.lt.${decoded.timestamp},and(occurred_at.eq.${decoded.timestamp},id.lt.${decoded.id})`);
+          } else {
+            query = query.lt('occurred_at', decoded.timestamp);
+          }
+        }
+      }
 
       query = query.limit(pageSize + 1);
 
@@ -143,7 +165,8 @@ async function handleRequest(request: Request): Promise<Response> {
       const rows = (rawRows ?? []) as unknown as RawAuditEventRow[];
       const hasMore = rows.length > pageSize;
       const returnRows = hasMore ? rows.slice(0, pageSize) : rows;
-      const nextCursor = hasMore && returnRows.length > 0 ? returnRows[returnRows.length - 1].occurred_at : null;
+      const lastAuditRow = returnRows[returnRows.length - 1];
+      const nextCursor = hasMore && lastAuditRow ? encodeCursor(lastAuditRow.occurred_at, lastAuditRow.id) : null;
 
       const items = returnRows.map((row) => {
         const prevRole = typeof row.before_state?.role === 'string' ? row.before_state.role : undefined;

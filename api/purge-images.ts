@@ -39,17 +39,32 @@ async function handleRequest(request: Request): Promise<Response> {
     const retentionDays = settingsData?.image_retention_days ?? 7;
     const now = new Date().toISOString();
 
-    // 1. Fetch active incident holds
-    const { data: activeHolds, error: holdsError } = await admin
+    // 1. Fetch active incident holds by visitor_id
+    const { data: activeVisitorHolds, error: visitorHoldsError } = await admin
       .from('incident_holds')
       .select('visitor_id')
       .eq('active', true)
       .not('visitor_id', 'is', null);
 
-    if (holdsError) throw holdsError;
-    const heldVisitorIds = new Set((activeHolds || []).map((h) => h.visitor_id as string));
+    if (visitorHoldsError) throw visitorHoldsError;
+    const heldVisitorIds = new Set((activeVisitorHolds || []).map((h) => h.visitor_id as string));
 
-    // 2. Fetch active/future passes that protect evidence
+    // 2. Fetch active incident holds by pass_id (M4-F02: resolve pass.visitor_id)
+    const { data: activePassHolds, error: passHoldsError } = await admin
+      .from('incident_holds')
+      .select('pass_id, passes ( visitor_id )')
+      .eq('active', true)
+      .not('pass_id', 'is', null);
+
+    if (passHoldsError) throw passHoldsError;
+    for (const h of activePassHolds || []) {
+      const passVisitorId = (h as any).passes?.visitor_id;
+      if (passVisitorId) {
+        heldVisitorIds.add(passVisitorId);
+      }
+    }
+
+    // 3. Fetch active or future passes that protect evidence
     const { data: activePasses, error: passesError } = await admin
       .from('passes')
       .select('visitor_id, status, valid_until')
@@ -58,7 +73,7 @@ async function handleRequest(request: Request): Promise<Response> {
     if (passesError) throw passesError;
     const activePassVisitorIds = new Set((activePasses || []).map((p) => p.visitor_id as string));
 
-    // 3. Fetch expired unpurged evidence
+    // 4. Fetch expired unpurged evidence
     const { data: evidenceRows, error: evidenceError } = await admin
       .from('visitor_evidence')
       .select('id, visitor_id, bucket_id, object_path')
@@ -86,6 +101,29 @@ async function handleRequest(request: Request): Promise<Response> {
     let failedCount = 0;
 
     for (const item of batch) {
+      // Re-check TOCTOU hold / active pass right before physical Storage removal
+      const { data: currentHolds } = await admin
+        .from('incident_holds')
+        .select('id')
+        .eq('active', true)
+        .eq('visitor_id', item.visitor_id)
+        .limit(1);
+
+      if (currentHolds && currentHolds.length > 0) {
+        continue;
+      }
+
+      const { data: currentActive } = await admin
+        .from('passes')
+        .select('id')
+        .eq('visitor_id', item.visitor_id)
+        .or(`status.in.(inside,pending),and(status.eq.issued,valid_until.gt.${new Date().toISOString()})`)
+        .limit(1);
+
+      if (currentActive && currentActive.length > 0) {
+        continue;
+      }
+
       let storageDeleted = false;
       try {
         const { error: storageError } = await admin.storage
@@ -119,6 +157,17 @@ async function handleRequest(request: Request): Promise<Response> {
 
         if (updateError) {
           failedCount++;
+          await recordReconciliation(
+            admin,
+            'image_purge_db_mark_failed',
+            'visitor_evidence',
+            item.id,
+            updateError.message || 'db_update_purged_failed',
+            {
+              bucketId: item.bucket_id,
+              objectPath: item.object_path,
+            },
+          );
         } else {
           successCount++;
         }
@@ -129,21 +178,33 @@ async function handleRequest(request: Request): Promise<Response> {
 
     const hasMore = eligibleItems.length > batch.length;
 
-    await admin.from('audit_events').insert({
-      actor_id: actor.id,
-      actor_kind: 'staff',
-      actor_role: actor.role,
-      action: 'image_purge',
-      target_type: 'visitor_evidence',
-      target_id: 'batch',
-      outcome: failedCount > 0 ? 'partial' : 'success',
-      after_state: {
-        successCount,
-        failedCount,
-        hasMore,
-        retentionDays,
-      },
-    });
+    try {
+      await admin.from('audit_events').insert({
+        actor_id: actor.id,
+        actor_kind: 'staff',
+        actor_role: actor.role,
+        action: 'image_purge',
+        target_type: 'visitor_evidence',
+        target_id: 'batch',
+        outcome: failedCount > 0 ? 'partial' : 'success',
+        after_state: {
+          successCount,
+          failedCount,
+          hasMore,
+          retentionDays,
+        },
+      });
+    } catch (auditErr) {
+      console.error('Audit event failed for image_purge batch', auditErr);
+      await recordReconciliation(
+        admin,
+        'image_purge.audit_failed',
+        'visitor_evidence',
+        'batch',
+        auditErr instanceof Error ? auditErr.message : 'audit_insert_failed',
+        { successCount, failedCount, hasMore }
+      );
+    }
 
     return jsonResponse(200, {
       successCount,

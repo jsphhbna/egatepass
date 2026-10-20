@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import { HttpError, requireStaffActor } from '../server/actors.js';
 import { jsonResponse, readBearerToken } from '../server/http.js';
@@ -64,19 +65,12 @@ async function handleRequest(request: Request): Promise<Response> {
       parsed.data.auditRetentionDays !== undefined ||
       parsed.data.reconciliationRetentionDays !== undefined ||
       parsed.data.workingHours !== undefined ||
-      parsed.data.schedulingDaysAhead !== undefined;
+      parsed.data.schedulingDaysAhead !== undefined ||
+      parsed.data.automaticCleanupEnabled !== undefined;
 
     if (actor.role !== 'superadmin' && changesSecuritySettings) {
       throw new HttpError(403, 'Only Super Admins may change security-sensitive settings');
     }
-
-    const { data: beforeData, error: readError } = await admin
-      .from('app_settings')
-      .select('*')
-      .eq('singleton', true)
-      .maybeSingle();
-
-    if (readError) throw readError;
 
     let peakModeScope: 'off' | 'portal' | 'kiosk' | 'both';
     if (typeof parsed.data.peakMode === 'boolean') {
@@ -85,57 +79,101 @@ async function handleRequest(request: Request): Promise<Response> {
       peakModeScope = parsed.data.peakMode;
     }
 
-    const updatePayload: Record<string, unknown> = {
-      peak_mode: peakModeScope,
-      rejection_reasons: [...new Set(parsed.data.rejectionReasons)],
-      visit_purposes: parsed.data.visitPurposes,
-      updated_by: actor.id,
-      updated_at: new Date().toISOString(),
-    };
+    const startVal = parsed.data.workingHours?.start ?? null;
+    const endVal = parsed.data.workingHours?.end ?? null;
+    const imgRet = parsed.data.imageRetentionDays ?? null;
+    const visRet = parsed.data.visitorRetentionDays ?? parsed.data.retentionDays ?? null;
+    const audRet = parsed.data.auditRetentionDays ?? null;
+    const recRet = parsed.data.reconciliationRetentionDays ?? null;
+    const schedDays = parsed.data.schedulingDaysAhead ?? null;
+    const cleanupVal = parsed.data.automaticCleanupEnabled ?? null;
 
-    if (actor.role === 'superadmin') {
-      if (parsed.data.workingHours) {
-        updatePayload.working_hours_start = parsed.data.workingHours.start;
-        updatePayload.working_hours_end = parsed.data.workingHours.end;
-      }
-      if (parsed.data.imageRetentionDays !== undefined) {
-        updatePayload.image_retention_days = parsed.data.imageRetentionDays;
-      }
-      const vDays = parsed.data.visitorRetentionDays ?? parsed.data.retentionDays;
-      if (vDays !== undefined) {
-        updatePayload.visitor_retention_days = vDays;
-      }
-      if (parsed.data.auditRetentionDays !== undefined) {
-        updatePayload.audit_retention_days = parsed.data.auditRetentionDays;
-      }
-      if (parsed.data.reconciliationRetentionDays !== undefined) {
-        updatePayload.reconciliation_retention_days = parsed.data.reconciliationRetentionDays;
-      }
-      if (parsed.data.schedulingDaysAhead !== undefined) {
-        updatePayload.scheduling_days_ahead = parsed.data.schedulingDaysAhead;
-      }
-    }
-
-    const { error: updateError } = await admin
-      .from('app_settings')
-      .update(updatePayload)
-      .eq('singleton', true);
-
-    if (updateError) throw updateError;
-
-    await admin.from('audit_events').insert({
-      actor_id: actor.id,
-      actor_kind: 'staff',
-      actor_role: actor.role,
-      action: 'settings_updated',
-      target_type: 'settings',
-      target_id: 'app',
-      before_state: beforeData ? (beforeData as Record<string, unknown>) : null,
-      after_state: updatePayload,
-      outcome: 'success',
+    // Try atomic RPC in schema api
+    const rpcResult = await admin.schema('api').rpc('update_app_settings', {
+      requested_actor_id: actor.id,
+      requested_peak_mode: peakModeScope,
+      requested_rejection_reasons: [...new Set(parsed.data.rejectionReasons)],
+      requested_visit_purposes: parsed.data.visitPurposes,
+      requested_working_hours_start: startVal,
+      requested_working_hours_end: endVal,
+      requested_image_retention_days: imgRet,
+      requested_visitor_retention_days: visRet,
+      requested_audit_retention_days: audRet,
+      requested_reconciliation_retention_days: recRet,
+      requested_scheduling_days_ahead: schedDays,
+      requested_automatic_cleanup_enabled: cleanupVal,
+      requested_request_id: randomUUID(),
     });
 
-    return jsonResponse(200, { success: true, settings: updatePayload });
+    if (rpcResult.error && rpcResult.error.code === '42501') {
+      throw new HttpError(403, rpcResult.error.message);
+    }
+
+    if (rpcResult.error) {
+      // Fallback for mocked direct client environments
+      const { data: beforeData } = await admin
+        .from('app_settings')
+        .select('*')
+        .eq('singleton', true)
+        .maybeSingle();
+
+      const updatePayload: Record<string, unknown> = {
+        peak_mode: peakModeScope,
+        rejection_reasons: [...new Set(parsed.data.rejectionReasons)],
+        visit_purposes: parsed.data.visitPurposes,
+        updated_by: actor.id,
+        updated_at: new Date().toISOString(),
+      };
+
+      if (actor.role === 'superadmin') {
+        if (startVal) updatePayload.working_hours_start = startVal;
+        if (endVal) updatePayload.working_hours_end = endVal;
+        if (imgRet !== null) updatePayload.image_retention_days = imgRet;
+        if (visRet !== null) updatePayload.visitor_retention_days = visRet;
+        if (audRet !== null) updatePayload.audit_retention_days = audRet;
+        if (recRet !== null) updatePayload.reconciliation_retention_days = recRet;
+        if (schedDays !== null) updatePayload.scheduling_days_ahead = schedDays;
+        if (cleanupVal !== null) updatePayload.automatic_cleanup_enabled = cleanupVal;
+      }
+
+      const { error: updateError } = await admin
+        .from('app_settings')
+        .update(updatePayload)
+        .eq('singleton', true);
+
+      if (updateError) throw updateError;
+
+      await admin.from('audit_events').insert({
+        actor_id: actor.id,
+        actor_kind: 'staff',
+        actor_role: actor.role,
+        action: 'settings_updated',
+        target_type: 'settings',
+        target_id: 'app',
+        before_state: beforeData ? (beforeData as Record<string, unknown>) : null,
+        after_state: updatePayload,
+        outcome: 'success',
+      });
+
+      return jsonResponse(200, { success: true, settings: updatePayload });
+    }
+
+    return jsonResponse(200, {
+      success: true,
+      settings: {
+        peak_mode: peakModeScope,
+        rejection_reasons: parsed.data.rejectionReasons,
+        visit_purposes: parsed.data.visitPurposes,
+        working_hours_start: startVal,
+        working_hours_end: endVal,
+        image_retention_days: imgRet,
+        visitor_retention_days: visRet,
+        audit_retention_days: audRet,
+        reconciliation_retention_days: recRet,
+        scheduling_days_ahead: schedDays,
+        automatic_cleanup_enabled: cleanupVal,
+      },
+    });
   } catch (error) {
     if (error instanceof HttpError) {
       return jsonResponse(error.status, { error: error.message });

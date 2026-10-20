@@ -74,13 +74,28 @@ Current stage: P0 recovery PASS; M1–M4 runtime slices IMPLEMENTED — static/b
 - Database assertions: Authored `supabase/tests/006_admin_governance.test.sql` (10 assertions). Total authored database assertions: 69.
 - Provider integration remains `IMPLEMENTED — NOT VERIFIED / INTEGRATION BLOCKED` until Docker Desktop or an authorized non-production Supabase project is available.
 
+## M4 Corrections & M5-F13 Slice
+
+- **F01 Device Credential Target Validation**: `api/update-device-auth.ts` validates staff profile first (returns 403 `cannot_modify_staff_via_device_endpoint`), checks existing non-retired device target (returns 404), checks alias uniqueness, validates Auth existence before writes, logs honest compensation/reconciliation on partial failure, and writes mandatory immutable audit records.
+- **F02 Image Purge Incident Hold Protection**: `api/purge-images.ts` inspects active holds by both `visitor_id` AND `pass_id` (resolving `passes.visitor_id`), re-verifies holds and active/future passes right before physical storage delete, respects dry-run truthfulness, and records audit/reconciliation.
+- **F03 & F10 Settings & Audit Atomic Persistence**: Migration `20261020000800_admin_hardening.sql` created atomic `api.update_app_settings` RPC locking singleton row and inserting audit log within one PostgreSQL transaction; added `automatic_cleanup_enabled` column and truthful persistence.
+- **F04 Staff Email Verification**: `server/actors.ts` enforces `email_confirmed_at` check on human staff actors (403 `email_verification_required`), preserving device exemptions.
+- **F05 Device Alias Contract Alignment**: `src/pages/DevicesPage.tsx` updated to `DEVICE_ALIAS_PATTERN` (`/^[a-z0-9][a-z0-9-]{2,62}$/`), accepting short alias or `@devices.egatepass.invalid`, matching backend `controlledDeviceEmail` and client `normalizeLoginIdentity`.
+- **F06 Authoritative Dashboard Counters**: `api/admin/dashboard.ts`, `useAdminDashboardData.ts`, and `AdminDashboard.tsx` query authoritative database counts (`{ count: 'exact', head: true }`) for today totals, inside, exited, rejected, and pending (`status = 'pending'`, unconstrained by null `decided_at`).
+- **F07 & F12 Complete Emergency Roster**: `api/admin/emergency.ts` replaces silent 500 limit with paginated fetch-to-completion (bounded by 10,000 ceiling and returning truthful `truncated` flag); removed all fabricated `new Date()` timestamps in `AdminEmergency.tsx`.
+- **F08 Stable Compound Cursors & CSV Formula Escaping**: `server/cursor.ts` supports `(timestamp, id)` base64url JSON cursors with legacy ISO fallback. `api/admin/records.ts` and `api/admin/activity.ts` use deterministic secondary sort by `id DESC` and PostgREST compound `.or(...)` filter. Hardened formula escaping in `completeExport.ts` and `DashboardExportActions.tsx` for `/^[=+\-@\t\r]/`.
+- **F09 Peak Mode Scope Selector in UI**: `src/pages/AdminSettings.tsx` updated to provide 4-way scope selector (`off`, `portal`, `kiosk`, `both`), truthful scope modal disclosure, and strict face photo retention.
+- **F11 Staff List Scalability & Email Semantics**: `api/admin/users.ts` updated with per-user fallback lookup for profiles beyond page 1 and marked unconfirmed users as `confirmationPending: true`.
+- **M5-F13 Optional QR Email Delivery**: Built two-step mailbox possession proof and delivery endpoint `api/passes/email.ts` with Resend adapter, QR PNG generation, recipient consent verification, 6-digit code verification, and reconciliation logging on provider failure without rolling back the issued pass. Built `src/components/EmailPassModal.tsx` and integrated into `src/pages/GetPassPage.tsx` and `src/pages/KioskPage.tsx`, fully preserving Download QR, print, and share actions with zero visual disruption.
+- **Local Verification**: 12 test files, 107 tests PASS (`npx vitest run ...`), `npm run typecheck:api` (PASS), `npm run build` (PASS), `npm run test:e2e:startup` (4/4 PASS on Edge), `git diff --check` (PASS). Real provider integration remains `IMPLEMENTED — NOT VERIFIED / INTEGRATION BLOCKED`.
+
 ## Immediate blockers and next safe work
 
 1. Provide one isolated executable route for the S2 promotion gate: make Docker Desktop available for local Supabase, or explicitly authorize a separate non-production hosted Supabase project after identity confirmation.
-2. Run clean migrations, all 69 authored pgTAP assertions, real Auth bearer-session Data API/RPC denials, actual private Storage operations, and the full issue→entry→decision→exit browser lifecycle.
-3. Proceed to M5/S7: Resend optional QR email, Supabase Auth SMTP configuration verification, scheduled bounded retention, physical Storage deletion, and incident-hold governance.
-4. Do not link/deploy Vercel, use the hosted database, or send email without owner authorization.
+2. Run clean migrations, all authored pgTAP assertions, real Auth bearer-session Data API/RPC denials, actual private Storage operations, and the full issue→entry→decision→exit browser lifecycle.
+3. Keep every provider-dependent path NOT VERIFIED / INTEGRATION BLOCKED until the isolated database and browser lifecycle run.
+4. Do not link/deploy Vercel, use the hosted database, or send real emails without owner authorization.
 
 ## Maturity
 
-Current product maturity is `IN PROGRESS` (Level 2 — reproducible local execution, complete static contracts, zero Firebase dependencies in Admin/operational UI, full build passing). Awaiting isolated Supabase database instance for Level 3 promotion; not defense-ready and not deployment-ready until PostgreSQL/Supabase behavior is live proven.
+Current product maturity is `IN PROGRESS` (Level 2 — reproducible local execution, complete static contracts, zero Firebase dependencies in Admin/operational UI, full build passing, comprehensive behavioral mocked-handler tests passing). Awaiting isolated Supabase database instance for Level 3 promotion; not defense-ready and not deployment-ready until PostgreSQL/Supabase behavior is live proven.

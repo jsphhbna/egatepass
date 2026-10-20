@@ -17,10 +17,12 @@ import {
   AlertCircle,
   X,
   RotateCcw,
+  Mail,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { addDays, format } from 'date-fns';
 import { Button, Card, Input, FormField, Stepper } from '@/components/ui';
+import { EmailPassModal } from '@/components/EmailPassModal';
 import { BrandMark } from '@/components/BrandMark';
 import { VisitPurposeField } from '@/components/VisitPurposeField';
 import { DEFAULT_VISIT_PURPOSES, normalizeVisitPurposes } from '@/lib/settingsDefaults';
@@ -75,6 +77,9 @@ export function KioskPage() {
   const [idBlob, setIdBlob] = useState<Blob | null>(null);
   const [idPreview, setIdPreview] = useState<string | null>(null);
   const [qrDataUrl, setQrDataUrl] = useState<string | null>(null);
+  const [passId, setPassId] = useState<string | null>(null);
+  const [rawQrToken, setRawQrToken] = useState<string | null>(null);
+  const [showEmailModal, setShowEmailModal] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [isPeakMode, setIsPeakMode] = useState(false);
   const [visitPurposes, setVisitPurposes] = useState<VisitPurposeOption[]>(DEFAULT_VISIT_PURPOSES);
@@ -187,6 +192,8 @@ export function KioskPage() {
       });
 
       setQrDataUrl(qrUrl);
+      setPassId(result.passId);
+      setRawQrToken(result.qrToken);
       setIssuedValidity(result.validFrom && result.validUntil
         ? formatValidityWindow(result.validFrom, result.validUntil)
         : formatWorkingHours(workingHours));
@@ -213,6 +220,9 @@ export function KioskPage() {
     if (idPreview) URL.revokeObjectURL(idPreview);
     setIdPreview(null);
     setQrDataUrl(null);
+    setPassId(null);
+    setRawQrToken(null);
+    setShowEmailModal(false);
     setIssuedValidity(null);
     setStep('form');
   }
@@ -438,6 +448,9 @@ export function KioskPage() {
                 <Button variant="secondary" type="button" onClick={handlePrint} className="flex-1" icon={<Printer className="h-4 w-4" />}>
                   Print Pass
                 </Button>
+                <Button variant="secondary" type="button" onClick={() => setShowEmailModal(true)} className="flex-1" icon={<Mail className="h-4 w-4" />}>
+                  Email my QR code
+                </Button>
                 <Button type="button" onClick={handleNextVisitor} className="flex-1">
                   Next Visitor
                 </Button>
@@ -445,6 +458,16 @@ export function KioskPage() {
             </div>
           )}
         </Card>
+
+        {showEmailModal && passId && rawQrToken && (
+          <EmailPassModal
+            isOpen={showEmailModal}
+            onClose={() => setShowEmailModal(false)}
+            passId={passId}
+            qrToken={rawQrToken}
+            source="kiosk"
+          />
+        )}
       </div>
     </main>
   );

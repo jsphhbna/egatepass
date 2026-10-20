@@ -1,6 +1,7 @@
 import { Download, Printer } from 'lucide-react';
 import { format, isSameMonth } from 'date-fns';
 import { Button } from '@/components/ui';
+import { escapeCsvCell } from '@/lib/completeExport';
 import type { GatePass } from '@/types';
 
 export interface DashboardReportSummary {
@@ -64,10 +65,6 @@ function passesForMonth(passes: GatePass[], month: Date): GatePass[] {
   return passes.filter((pass) => isSameMonth(pass.issuedAt.toDate(), month));
 }
 
-function escapeCsv(value: string): string {
-  return `"${value.replace(/"/g, '""')}"`;
-}
-
 function escapeHtml(value: string): string {
   return value.replace(/[&<>"']/g, (character) => ({
     '&': '&amp;',
@@ -113,7 +110,7 @@ function downloadCsv(passes: GatePass[], summary: DashboardReportSummary) {
     [...reportColumns],
     ...reportRows(monthlyPasses),
   ]
-    .map((row) => row.map(escapeCsv).join(','))
+    .map((row) => row.map(escapeCsvCell).join(','))
     .join('\r\n');
   const blob = new Blob([`\uFEFF${csv}`], { type: 'text/csv;charset=utf-8' });
   const url = URL.createObjectURL(blob);

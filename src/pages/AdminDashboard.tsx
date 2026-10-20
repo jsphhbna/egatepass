@@ -63,15 +63,15 @@ export function AdminDashboard() {
   const metrics = useMemo(() => {
     const today = new Date();
     const todayPasses = dashboard.recentPasses.filter((pass) => isSameDay(pass.issuedAt.toDate(), today));
-    const pendingToday = dashboard.decisionsTodayPasses.filter((pass) => pass.status === 'pending');
     const rejectedToday = dashboard.decisionsTodayPasses.filter((pass) => pass.status === 'rejected');
+    const counts = dashboard.counts;
 
     return {
-      todayTotal: todayPasses.length,
-      currentlyInside: dashboard.insidePasses.length,
-      exitedToday: dashboard.exitedTodayPasses.length,
-      pendingToday: pendingToday.length,
-      rejectedToday: rejectedToday.length,
+      todayTotal: counts ? counts.todayTotal : todayPasses.length,
+      currentlyInside: counts ? counts.currentlyInside : dashboard.insidePasses.length,
+      exitedToday: counts ? counts.exitedToday : dashboard.exitedTodayPasses.length,
+      pendingToday: counts ? counts.pendingToday : dashboard.recentPasses.filter((p) => p.status === 'pending').length,
+      rejectedToday: counts ? counts.rejectedToday : rejectedToday.length,
       avgApprovalTime: averageApprovalTime(dashboard.decisionsTodayPasses),
       topPurpose: mostCommon(todayPasses.map((pass) => pass.purpose?.split(' — ')[0]?.trim())),
       topRejection: mostCommon(rejectedToday.map((pass) => pass.rejectionReason)),

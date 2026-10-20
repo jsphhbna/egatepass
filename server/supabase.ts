@@ -6,6 +6,11 @@ interface ServerSupabaseClients {
 }
 
 let adminClient: SupabaseClient | null = null;
+let overrideClients: ServerSupabaseClients | null = null;
+
+export function setServerSupabaseClientsForTest(clients: ServerSupabaseClients | null): void {
+  overrideClients = clients;
+}
 
 function requireServerValue(name: 'SUPABASE_URL' | 'SUPABASE_SECRET_KEY'): string {
   const value = process.env[name]?.trim();
@@ -14,6 +19,7 @@ function requireServerValue(name: 'SUPABASE_URL' | 'SUPABASE_SECRET_KEY'): strin
 }
 
 export function getServerSupabaseClients(): ServerSupabaseClients {
+  if (overrideClients) return overrideClients;
   const url = requireServerValue('SUPABASE_URL');
   const secretKey = requireServerValue('SUPABASE_SECRET_KEY');
   const auth = { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false };

@@ -99,38 +99,46 @@ async function handleRequest(request: Request): Promise<Response> {
     const startToday = `${manilaDateString}T00:00:00+08:00`;
     const endToday = `${manilaDateString}T23:59:59.999+08:00`;
 
-    const [recentResult, insideResult, exitedResult, decisionsResult] = await Promise.all([
-      admin
-        .from('passes')
-        .select(PASS_SELECT)
-        .order('issued_at', { ascending: false })
-        .limit(100),
-      admin
-        .from('passes')
-        .select(PASS_SELECT)
-        .eq('status', 'inside')
-        .limit(200),
-      admin
-        .from('passes')
-        .select(PASS_SELECT)
-        .eq('status', 'exited')
-        .gte('time_out', startToday)
-        .lte('time_out', endToday)
-        .limit(200),
-      admin
-        .from('passes')
-        .select(PASS_SELECT)
-        .gte('decided_at', startToday)
-        .lte('decided_at', endToday)
-        .limit(200),
+    const [
+      todayCountRes,
+      insideCountRes,
+      exitedCountRes,
+      pendingCountRes,
+      rejectedCountRes,
+      recentResult,
+      insideResult,
+      exitedResult,
+      decisionsResult,
+    ] = await Promise.all([
+      admin.from('passes').select('id', { count: 'exact', head: true }).gte('issued_at', startToday).lte('issued_at', endToday),
+      admin.from('passes').select('id', { count: 'exact', head: true }).eq('status', 'inside'),
+      admin.from('passes').select('id', { count: 'exact', head: true }).eq('status', 'exited').gte('time_out', startToday).lte('time_out', endToday),
+      admin.from('passes').select('id', { count: 'exact', head: true }).eq('status', 'pending'),
+      admin.from('passes').select('id', { count: 'exact', head: true }).eq('status', 'rejected').gte('decided_at', startToday).lte('decided_at', endToday),
+      admin.from('passes').select(PASS_SELECT).order('issued_at', { ascending: false }).limit(100),
+      admin.from('passes').select(PASS_SELECT).eq('status', 'inside').limit(200),
+      admin.from('passes').select(PASS_SELECT).eq('status', 'exited').gte('time_out', startToday).lte('time_out', endToday).limit(200),
+      admin.from('passes').select(PASS_SELECT).gte('decided_at', startToday).lte('decided_at', endToday).limit(200),
     ]);
 
+    if (todayCountRes.error) throw todayCountRes.error;
+    if (insideCountRes.error) throw insideCountRes.error;
+    if (exitedCountRes.error) throw exitedCountRes.error;
+    if (pendingCountRes.error) throw pendingCountRes.error;
+    if (rejectedCountRes.error) throw rejectedCountRes.error;
     if (recentResult.error) throw recentResult.error;
     if (insideResult.error) throw insideResult.error;
     if (exitedResult.error) throw exitedResult.error;
     if (decisionsResult.error) throw decisionsResult.error;
 
     return jsonResponse(200, {
+      counts: {
+        todayTotal: todayCountRes.count ?? 0,
+        currentlyInside: insideCountRes.count ?? 0,
+        exitedToday: exitedCountRes.count ?? 0,
+        pendingToday: pendingCountRes.count ?? 0,
+        rejectedToday: rejectedCountRes.count ?? 0,
+      },
       recentPasses: ((recentResult.data ?? []) as unknown as RawPassRow[]).map(mapPass),
       insidePasses: ((insideResult.data ?? []) as unknown as RawPassRow[]).map(mapPass),
       exitedTodayPasses: ((exitedResult.data ?? []) as unknown as RawPassRow[]).map(mapPass),

@@ -16,6 +16,27 @@ async function handleRequest(request: Request): Promise<Response> {
     const { data: authPage, error: authListError } = await admin.auth.admin.listUsers({ page: 1, perPage: 200 });
     if (authListError) throw authListError;
     const emails = new Map(authPage.users.map((user) => [user.id, user.email ?? '']));
+
+    const missingProfileIds = (profiles ?? [])
+      .map((p) => p.user_id)
+      .filter((id) => !emails.has(id));
+
+    if (missingProfileIds.length > 0) {
+      const fetched = await Promise.all(
+        missingProfileIds.map(async (id) => {
+          try {
+            const { data: userData } = await admin.auth.admin.getUserById(id);
+            return userData?.user ? ([id, userData.user.email ?? ''] as const) : null;
+          } catch {
+            return null;
+          }
+        })
+      );
+      for (const item of fetched) {
+        if (item) emails.set(item[0], item[1]);
+      }
+    }
+
     return jsonResponse(200, { users: (profiles ?? []).map((profile) => ({
       uid: profile.user_id, name: profile.display_name, email: emails.get(profile.user_id) ?? '',
       role: profile.role, active: profile.active, privacyAcceptedAt: profile.privacy_accepted_at,

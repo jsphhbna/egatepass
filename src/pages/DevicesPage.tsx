@@ -18,13 +18,24 @@ interface DeviceWithId extends Device {
   id: string;
 }
 
+const DEVICE_ALIAS_PATTERN = /^[a-z0-9][a-z0-9-]{2,62}$/;
+
 const deviceSchema = z.object({
   name: z.string().min(2, 'Name is required').max(50),
-  type: z.enum({ entry: 'entry', exit: 'exit', kiosk: 'kiosk' }, {
+  type: z.enum(['entry', 'exit', 'kiosk'], {
     message: 'Select a device type',
   }),
   gate: z.string().min(1, 'Gate/location is required').max(50),
-  email: z.string().email('Username must use an email format, such as maingate-entry@earist-devices.local'),
+  email: z.string()
+    .trim()
+    .min(3, 'Username / alias must be at least 3 characters')
+    .max(63, 'Username / alias must be at most 63 characters')
+    .refine((val) => {
+      const alias = val.toLowerCase().endsWith('@devices.egatepass.invalid')
+        ? val.toLowerCase().slice(0, -'@devices.egatepass.invalid'.length)
+        : val.toLowerCase();
+      return DEVICE_ALIAS_PATTERN.test(alias);
+    }, 'Alias must use 3-63 lowercase letters, numbers, or hyphens (e.g., maingate-entry)'),
   password: z.string()
     .min(PASSWORD_MIN_LENGTH, `Password must be at least ${PASSWORD_MIN_LENGTH} characters`)
     .regex(/[A-Za-z]/, 'Password must include at least one letter')
@@ -146,11 +157,22 @@ export function DevicesPage() {
     e.preventDefault();
     if (!editingDevice) return;
 
-    const normalizedEmail = editEmail.trim();
-    const emailChanged = normalizedEmail !== (editingDevice.email || '');
-    if (emailChanged && !normalizedEmail) {
-      toast.error('Device username cannot be empty.');
-      return;
+    const normalizedInput = editEmail.trim().toLowerCase();
+    const cleanAlias = normalizedInput.endsWith('@devices.egatepass.invalid')
+      ? normalizedInput.slice(0, -'@devices.egatepass.invalid'.length)
+      : normalizedInput;
+    const currentAlias = (editingDevice.email || '').toLowerCase().replace(/@devices\.egatepass\.invalid$/i, '');
+    const emailChanged = cleanAlias !== currentAlias;
+
+    if (emailChanged) {
+      if (!cleanAlias) {
+        toast.error('Device username/alias cannot be empty.');
+        return;
+      }
+      if (!DEVICE_ALIAS_PATTERN.test(cleanAlias)) {
+        toast.error('Device alias must use 3-63 lowercase letters, numbers, or hyphens (e.g., maingate-entry).');
+        return;
+      }
     }
     if (!emailChanged && !editPassword) {
       toast.error('Please enter a new device username or password.');
@@ -176,7 +198,7 @@ export function DevicesPage() {
         },
         body: JSON.stringify({
           targetUid: editingDevice.id,
-          email: emailChanged ? normalizedEmail : undefined,
+          email: emailChanged ? cleanAlias : undefined,
           password: editPassword || undefined,
         }),
       });
@@ -258,8 +280,10 @@ export function DevicesPage() {
     return map[type];
   }
 
+  const cleanEditAlias = editEmail.trim().toLowerCase().replace(/@devices\.egatepass\.invalid$/i, '');
+  const cleanCurrentAlias = (editingDevice?.email || '').toLowerCase().replace(/@devices\.egatepass\.invalid$/i, '');
   const hasCredentialChanges = !!editingDevice && (
-    editEmail.trim() !== (editingDevice.email || '') || editPassword.length > 0
+    cleanEditAlias !== cleanCurrentAlias || editPassword.length > 0
   );
 
   // ============================================================
@@ -336,16 +360,16 @@ export function DevicesPage() {
 
           <div className="sm:col-span-2">
             <FormField
-              label="Device Username"
+              label="Device Username / Alias"
               id="device-username"
-              hint="This is not an email inbox. Device usernames must follow an email format for sign-in."
+              hint="Enter a unique device alias (e.g. maingate-entry). The sign-in identity will be maingate-entry@devices.egatepass.invalid."
               error={errors.email?.message}
             >
               <Input
                 id="device-username"
-                type="email"
+                type="text"
                 {...register('email')}
-                placeholder="maingate-entry@earist-devices.local"
+                placeholder="maingate-entry"
                 autoComplete="username"
                 error={!!errors.email}
               />
@@ -428,7 +452,8 @@ export function DevicesPage() {
                     variant="secondary"
                     onClick={() => {
                       setEditingDevice(device);
-                      setEditEmail(device.email || '');
+                      const cleanAlias = (device.email || '').replace(/@devices\.egatepass\.invalid$/i, '');
+                      setEditEmail(cleanAlias);
                       setEditPassword('');
                       setShowEditPassword(false);
                     }}
@@ -486,15 +511,15 @@ export function DevicesPage() {
       >
         <form onSubmit={handleUpdateCredentials} className="space-y-5">
           <p className="mb-2 text-sm text-[var(--color-text-secondary)]">
-            Update login credentials for <strong>{editingDevice?.name}</strong>. The username is not an email inbox, but it must follow an email format for device sign-in.
+            Update login credentials for <strong>{editingDevice?.name}</strong>. Enter a short device alias (e.g. maingate-entry) or the full sign-in identity.
           </p>
 
-          <FormField label="Device Username" hint="Example: maingate-entry@earist-devices.local">
+          <FormField label="Device Username / Alias" hint="Example: maingate-entry (sign-in: maingate-entry@devices.egatepass.invalid)">
             <Input
-              type="email"
+              type="text"
               value={editEmail}
               onChange={(e) => setEditEmail(e.target.value)}
-              placeholder="maingate-entry@earist-devices.local"
+              placeholder="maingate-entry"
               autoComplete="username"
             />
           </FormField>

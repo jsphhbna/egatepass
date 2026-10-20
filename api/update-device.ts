@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
-import { HttpError, requireStaffActor } from '../server/actors.js';
+import { HttpError, recordReconciliation, requireStaffActor } from '../server/actors.js';
 import { jsonResponse, readBearerToken } from '../server/http.js';
 import { getServerSupabaseClients } from '../server/supabase.js';
 
@@ -14,7 +14,17 @@ async function handleRequest(request: Request): Promise<Response> {
     const updated = await admin.schema('api').rpc('update_device_profile', { requested_actor_id: actor.id, requested_user_id: parsed.data.targetUid, requested_status: parsed.data.status, requested_alias: null, requested_request_id: randomUUID() });
     if (updated.error) { if (updated.error.code === '42501') return jsonResponse(403, { error: 'access_denied' }); throw updated.error; }
     const authUpdate = await admin.auth.admin.updateUserById(parsed.data.targetUid, { ban_duration: parsed.data.status === 'active' ? 'none' : '876000h' });
-    if (authUpdate.error) return jsonResponse(503, { error: 'device_updated_auth_reconciliation_required' });
+    if (authUpdate.error) {
+      await recordReconciliation(
+        admin,
+        'device.status.auth_ban_failed',
+        'device',
+        parsed.data.targetUid,
+        authUpdate.error.message || 'auth_ban_failed',
+        { targetStatus: parsed.data.status }
+      );
+      return jsonResponse(503, { error: 'device_updated_auth_reconciliation_required' });
+    }
     return jsonResponse(200, { ok: true });
   } catch (error) { if (error instanceof HttpError) return jsonResponse(error.status, { error: error.code }); console.error('Device update failed.', error instanceof Error ? error.message : 'unknown_error'); return jsonResponse(503, { error: 'service_unavailable' }); }
 }

@@ -1,4 +1,5 @@
 import { HttpError, requireStaffActor } from '../../server/actors.js';
+import { decodeCursor, encodeCursor } from '../../server/cursor.js';
 import { jsonResponse, readBearerToken } from '../../server/http.js';
 import { getServerSupabaseClients } from '../../server/supabase.js';
 
@@ -103,7 +104,8 @@ async function handleRequest(request: Request): Promise<Response> {
           )
         )
       `)
-      .order('issued_at', { ascending: false });
+      .order('issued_at', { ascending: false })
+      .order('id', { ascending: false });
 
     if (statusParam) {
       query = query.eq('status', statusParam);
@@ -121,7 +123,14 @@ async function handleRequest(request: Request): Promise<Response> {
     }
 
     if (cursor) {
-      query = query.lt('issued_at', cursor);
+      const decoded = decodeCursor(cursor);
+      if (decoded) {
+        if (decoded.id) {
+          query = query.or(`issued_at.lt.${decoded.timestamp},and(issued_at.eq.${decoded.timestamp},id.lt.${decoded.id})`);
+        } else {
+          query = query.lt('issued_at', decoded.timestamp);
+        }
+      }
     }
 
     query = query.limit(pageSize + 1);
@@ -133,7 +142,8 @@ async function handleRequest(request: Request): Promise<Response> {
     const hasMore = rows.length > pageSize;
     const returnRows = hasMore ? rows.slice(0, pageSize) : rows;
     const passes = returnRows.map(mapPass);
-    const nextCursor = hasMore && returnRows.length > 0 ? returnRows[returnRows.length - 1].issued_at : null;
+    const lastRow = returnRows[returnRows.length - 1];
+    const nextCursor = hasMore && lastRow ? encodeCursor(lastRow.issued_at, lastRow.id) : null;
 
     return jsonResponse(200, {
       passes,

@@ -28,6 +28,7 @@ async function handleRequest(request: Request): Promise<Response> {
         visitor_retention_days,
         audit_retention_days,
         reconciliation_retention_days,
+        automatic_cleanup_enabled,
         updated_at
       `)
       .eq('singleton', true)
@@ -58,7 +59,7 @@ async function handleRequest(request: Request): Promise<Response> {
       retentionDays: data.visitor_retention_days,
       auditRetentionDays: data.audit_retention_days,
       reconciliationRetentionDays: data.reconciliation_retention_days,
-      automaticCleanupEnabled: true,
+      automaticCleanupEnabled: (data as any).automatic_cleanup_enabled ?? true,
       schedulingDaysAhead: data.scheduling_days_ahead,
       updatedAt: data.updated_at,
     });

@@ -21,6 +21,9 @@ export async function requireStaffActor(
 ): Promise<StaffActor> {
   const { data: identity, error: authError } = await admin.auth.getUser(token);
   if (authError || !identity.user?.email) throw new HttpError(401, 'invalid_session');
+  if (!identity.user.email_confirmed_at) {
+    throw new HttpError(403, 'email_verification_required');
+  }
   const { data: profile, error } = await admin.from('staff_profiles')
     .select('role, active, must_change_password, privacy_accepted_at')
     .eq('user_id', identity.user.id).maybeSingle();
@@ -39,13 +42,20 @@ export async function recordReconciliation(
   errorCode: string,
   safeContext: Record<string, unknown> = {},
 ): Promise<void> {
-  await admin.from('reconciliation_tasks').insert({
-    operation,
-    reference_type: referenceType,
-    reference_id: referenceId,
-    last_error_code: errorCode.slice(0, 120),
-    safe_context: safeContext,
-  });
+  try {
+    const { error } = await admin.from('reconciliation_tasks').insert({
+      operation,
+      reference_type: referenceType,
+      reference_id: referenceId,
+      last_error_code: errorCode.slice(0, 120),
+      safe_context: safeContext,
+    });
+    if (error) {
+      console.error('Failed to record reconciliation task:', error);
+    }
+  } catch (err) {
+    console.error('Exception recording reconciliation task:', err);
+  }
 }
 
 export function controlledDeviceEmail(value: string): { alias: string; email: string } | null {

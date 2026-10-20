@@ -126,3 +126,17 @@ Exact-commit verification at `80d861b`: `npm run test:architecture` PASS 3/3; `n
 | EV-M4-005 | BROWSER E2E / STARTUP | `npm run test:e2e:startup` | PASS: 4/4 cases | Playwright Edge browser tests for dev/configured, dev/missing, dev/malformed, and preview/configured startup without synthetic Firebase variables |
 | EV-M4-006 | DATABASE/RLS | `supabase/tests/006_admin_governance.test.sql` | NOT RUN / BLOCKED | 10 pgTAP assertions authored for staff/device RPCs and last-superadmin protection; blocked by lack of local Docker/Postgres environment |
 
+## M4 Corrections (F01–F12) & M5-F13 Runtime Hardening Checkpoint
+
+| ID | Class | Command / artifact | Result | Scope and limitation |
+|---|---|---|---|---|
+| EV-M4-007 | PURE SERVICES UNIT | `npx vitest run tests/pure-services.test.ts` | PASS: 1 file, 16 tests | Pure unit tests for compound base64url cursors, legacy ISO fallback, controlled device email aliases, CSV formula injection defense (`=+\-@\t\r`), incident hold protection (visitor and pass_id holds), and 4-way peak mode scope rules |
+| EV-M4-008 | BEHAVIORAL MOCKED HANDLER | `npx vitest run tests/handlers-mocked.test.ts` | PASS (MOCKED HANDLER): 1 file, 12 tests | Behavioral tests with mock Supabase Admin and email adapters: F01 staff target rejection (403), missing device (404), alias conflict (409), device password update + audit; F04 unconfirmed staff email rejected (403); F03 & F10 settings atomic persistence via RPC; F02 image purge hold protection; F13 two-step QR email claim flow, consent validation, QR attachment delivery, and reconciliation logging on delivery failure |
+| EV-M4-009 | TEST SUITE RUN | `npx vitest run tests/*.test.ts` (12 test files) | PASS: 12 files, 107 tests (3.81s) | Complete test suite covering architecture, static contracts, pure services, retention, and behavioral mocked handlers |
+| EV-M4-010 | STATIC TYPECHECK | `npm run typecheck:api` | PASS: exit code 0 | TypeScript strict typecheck for all Vercel Web Handlers in `api/` and helpers in `server/` |
+| EV-M4-011 | STATIC BUILD | `npm run build` | PASS: exit code 0 (1.77s) | TypeScript compilation and Vite client bundling producing clean production distribution |
+| EV-M4-012 | BROWSER E2E STARTUP | `npm run test:e2e:startup` | PASS: 4/4 cases | Playwright Edge browser startup for dev/configured, dev/missing, dev/malformed, and preview/configured without Firebase environment injection |
+| EV-M4-013 | GIT WHITESPACE | `git diff --check` | PASS: exit code 0 | Verifies no whitespace or patch corruptions across modified source files |
+| EV-M5-001 | DATABASE MIGRATION EXECUTION | `supabase/migrations/20261020000800_admin_hardening.sql` | IMPLEMENTED — NOT VERIFIED / BLOCKED | Authored atomic `api.update_app_settings` RPC and `pass_email_verifications` table; execution blocked by lack of local Docker/Postgres instance |
+| EV-M5-002 | LIVE RESEND EMAIL DELIVERY | `api/passes/email.ts` to real inboxes | BLOCKED / NOT TESTED | Real email dispatch deferred until authorized staging environment with verified domain and production Resend API key |
+

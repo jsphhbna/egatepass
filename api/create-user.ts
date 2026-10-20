@@ -32,7 +32,7 @@ async function handleRequest(request: Request): Promise<Response> {
     }
     const resend = await admin.auth.resend({ type: 'signup', email: parsed.data.email.toLowerCase() });
     if (resend.error) await recordReconciliation(admin, 'staff.verification_email', 'staff_profile', targetId, resend.error.code ?? 'email_failed');
-    return jsonResponse(201, { userId: targetId, verificationEmailSent: !resend.error });
+    return jsonResponse(201, { userId: targetId, verificationEmailSent: !resend.error, confirmationPending: true });
   } catch (error) {
     if (error instanceof HttpError) return jsonResponse(error.status, { error: error.code });
     const code = typeof error === 'object' && error !== null && 'code' in error ? String(error.code) : 'service_unavailable';
