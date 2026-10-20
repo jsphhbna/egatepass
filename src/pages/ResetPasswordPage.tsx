@@ -6,6 +6,46 @@ import { Button, Card, FormField, Input, LoadingState } from '@/components/ui';
 import { getPasswordPolicyError, PASSWORD_MIN_LENGTH, PASSWORD_POLICY_HELPER_TEXT } from '@/lib/passwordPolicy';
 import { supabase } from '@/lib/supabase';
 
+const RECOVERY_STORAGE_KEY = 'egatepass_recovery_auth_v1';
+const RECOVERY_WINDOW_MS = 15 * 60 * 1000; // 15 minutes max validity
+
+interface StoredRecoveryAuth {
+  userId: string;
+  timestamp: number;
+}
+
+function getValidRecoveryAuth(currentUserId?: string): boolean {
+  try {
+    const raw = sessionStorage.getItem(RECOVERY_STORAGE_KEY);
+    if (!raw) return false;
+    const parsed: StoredRecoveryAuth = JSON.parse(raw);
+    if (!parsed || !parsed.userId || !parsed.timestamp) return false;
+    if (Date.now() - parsed.timestamp > RECOVERY_WINDOW_MS) {
+      sessionStorage.removeItem(RECOVERY_STORAGE_KEY);
+      return false;
+    }
+    if (currentUserId && parsed.userId !== currentUserId) {
+      return false;
+    }
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function setRecoveryAuth(userId: string) {
+  try {
+    const payload: StoredRecoveryAuth = { userId, timestamp: Date.now() };
+    sessionStorage.setItem(RECOVERY_STORAGE_KEY, JSON.stringify(payload));
+  } catch {}
+}
+
+function clearRecoveryAuth() {
+  try {
+    sessionStorage.removeItem(RECOVERY_STORAGE_KEY);
+  } catch {}
+}
+
 export function ResetPasswordPage() {
   const navigate = useNavigate();
   const [checking, setChecking] = useState(true);
@@ -24,36 +64,46 @@ export function ResetPasswordPage() {
     const hash = window.location.hash || '';
     const search = window.location.search || '';
     const isErrorUrl = hash.includes('error=') || search.includes('error=');
-    const hasRecoveryTokenInUrl =
-      hash.includes('type=recovery') ||
-      search.includes('type=recovery') ||
-      (search.includes('code=') && search.includes('type=recovery'));
 
     if (isErrorUrl) {
+      clearRecoveryAuth();
       setHasRecoverySession(false);
       setChecking(false);
       return;
     }
 
-    // A session is only valid for recovery if confirmed by PASSWORD_RECOVERY event
-    // or by the presence of a recovery token in the URL.
-    // Ordinary authenticated staff/devices browsing here must NOT be granted recovery.
-    void supabase.auth.getSession().then(({ data }) => {
-      if (!active) return;
-      if (hasRecoveryTokenInUrl && data.session) {
-        setHasRecoverySession(true);
-      }
-      setChecking(false);
-    });
-
+    // Subscribe to auth state changes FIRST.
+    // Only a genuine PASSWORD_RECOVERY event from Supabase grants recovery authority.
+    // Mere URL parameters (e.g. ?type=recovery) or ordinary authenticated sessions
+    // (Admin, Guard, Device, Portal) must NEVER be granted recovery authority.
     const { data } = supabase.auth.onAuthStateChange((event, session) => {
       if (!active) return;
-      if (event === 'PASSWORD_RECOVERY' && session) {
+      if (event === 'PASSWORD_RECOVERY' && session?.user) {
+        setRecoveryAuth(session.user.id);
         setHasRecoverySession(true);
         setChecking(false);
       } else if (event === 'SIGNED_OUT') {
+        clearRecoveryAuth();
         setHasRecoverySession(false);
         setChecking(false);
+      }
+    });
+
+    // Check if we have an active, unexpired recovery authorization for this session
+    // to support legitimate page reloads during the recovery window.
+    void supabase.auth.getSession().then(({ data: sessionData }) => {
+      if (!active) return;
+      const user = sessionData.session?.user;
+      if (user && getValidRecoveryAuth(user.id)) {
+        setHasRecoverySession(true);
+        setChecking(false);
+      } else {
+        // Allow a brief window for onAuthStateChange to fire if PKCE exchange is in flight
+        setTimeout(() => {
+          if (active) {
+            setChecking(false);
+          }
+        }, 350);
       }
     });
 
@@ -74,6 +124,7 @@ export function ResetPasswordPage() {
     try {
       const { error } = await supabase.auth.updateUser({ password: newPassword });
       if (error) throw error;
+      clearRecoveryAuth();
       await supabase.auth.signOut();
       toast.success('Password updated. Sign in with your new password.');
       navigate('/login', { replace: true });

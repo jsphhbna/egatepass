@@ -44,6 +44,7 @@ export interface DashboardInsights {
 interface DashboardApiResponse {
   counts?: DashboardCounts;
   insights?: DashboardInsights;
+  calendarCounts?: Record<string, number>;
   recentPasses: SerializedPass[];
   insidePasses: SerializedPass[];
   exitedTodayPasses: SerializedPass[];
@@ -54,6 +55,7 @@ interface DashboardApiResponse {
 export interface DashboardDataSnapshot {
   counts?: DashboardCounts;
   insights?: DashboardInsights;
+  calendarCounts?: Record<string, number>;
   recentPasses: GatePass[];
   insidePasses: GatePass[];
   exitedTodayPasses: GatePass[];
@@ -66,6 +68,7 @@ export interface DashboardDataSnapshot {
 const initialSnapshot: DashboardDataSnapshot = {
   counts: undefined,
   insights: undefined,
+  calendarCounts: undefined,
   recentPasses: [],
   insidePasses: [],
   exitedTodayPasses: [],
@@ -129,6 +132,7 @@ async function fetchDashboardData() {
     currentSnapshot = {
       counts: data?.counts,
       insights: data?.insights,
+      calendarCounts: data?.calendarCounts,
       recentPasses: (data?.recentPasses ?? []).map(deserializePass),
       insidePasses: (data?.insidePasses ?? []).map(deserializePass),
       exitedTodayPasses: (data?.exitedTodayPasses ?? []).map(deserializePass),

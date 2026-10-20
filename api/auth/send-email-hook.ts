@@ -2,7 +2,7 @@ import { jsonResponse } from '../../server/http.js';
 import { sendResendEmail } from '../../server/email.js';
 import {
   verifyStandardWebhookSignature,
-  prepareAuthEmail,
+  prepareAuthEmails,
   type SupabaseAuthEmailPayload,
 } from '../../server/auth-email-hook.js';
 
@@ -38,11 +38,11 @@ async function handleRequest(request: Request): Promise<Response> {
   }
 
   try {
-    const prepared = await prepareAuthEmail(payload);
+    const preparedList = await prepareAuthEmails(payload);
 
-    // Production hook: missing provider configuration -> non-2xx failure (REPAIR 6C)
+    // Production hook: missing provider configuration -> non-2xx failure (REPAIR 6C & REPAIR GROUP E)
     if (!process.env.RESEND_API_KEY?.trim()) {
-      if (process.env.NODE_ENV === 'test' || process.env.AUTH_HOOK_DRY_RUN === 'true') {
+      if (process.env.NODE_ENV !== 'production' && (process.env.NODE_ENV === 'test' || process.env.AUTH_HOOK_DRY_RUN === 'true')) {
         console.log(`[AUTH-EMAIL-HOOK] Test dry-run: rendered ${payload.email_data.email_action_type} email for user ${payload.user.id.slice(0, 8)}...`);
         return jsonResponse(200, {});
       }
@@ -50,12 +50,14 @@ async function handleRequest(request: Request): Promise<Response> {
       return jsonResponse(503, { error: 'provider_unconfigured' });
     }
 
-    await sendResendEmail({
-      to: prepared.to,
-      subject: prepared.subject,
-      html: prepared.html,
-    });
-    console.log(`[AUTH-EMAIL-HOOK] Dispatched ${payload.email_data.email_action_type} email for user ${payload.user.id.slice(0, 8)}...`);
+    for (const prepared of preparedList) {
+      await sendResendEmail({
+        to: prepared.to,
+        subject: prepared.subject,
+        html: prepared.html,
+      });
+    }
+    console.log(`[AUTH-EMAIL-HOOK] Dispatched ${preparedList.length} ${payload.email_data.email_action_type} email(s) for user ${payload.user.id.slice(0, 8)}...`);
     return jsonResponse(200, {});
   } catch (error) {
     console.error('Failed to process auth email hook:', error instanceof Error ? error.message : 'unknown');

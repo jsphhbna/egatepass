@@ -248,3 +248,22 @@ Exact-commit verification at `80d861b`: `npm run test:architecture` PASS 3/3; `n
 | EV-TYPE-004 | API & CLIENT TYPECHECK | `npm run typecheck:api` & `npx tsc --noEmit` | PASS: exit code 0 | Strict TypeScript compilation across both API/server and React client with zero errors |
 | EV-BUILD-004 | PRODUCTION BUILD INTEGRITY | `npm run build` | PASS: exit code 0 (1.41s) | Vite v8.3.1 production build (2538 modules transformed; clean CSS and JS chunks; 0 errors) |
 | EV-DIFF-004 | WORKING TREE PRESERVATION | `git status --short` | PASS | Owner .env.example strictly preserved unstaged byte-for-byte; zero secrets committed |
+
+## Final Root-Cause & Live Integration Closure Checkpoint
+
+| ID | Class | Command / artifact | Result | Scope and limitation |
+|---|---|---|---|---|
+| EV-AUTH-A01 | PASSWORD RECOVERY CONTEXT INTEGRITY | `src/pages/ResetPasswordPage.tsx` | PASS (BUILD & UNIT) | Stripped trust from raw URL query param `?type=recovery`; strictly requires genuine Supabase `PASSWORD_RECOVERY` event or unexpired `sessionStorage` token (15-min window) |
+| EV-EMAIL-B01 | CONSOLIDATED EMAIL HOOK & INVERTED TOKENS | `server/auth-email-hook.ts`, `api/auth/send-email-hook.ts` | PASS: 19/19 tests | Removed duplicate edge function; handled GoTrue secure email change inverted token hashes (`token_hash_new` for current email, `token_hash` for new email); verified canonical Supabase Auth origin URL |
+| EV-STAFF-F01 | STAFF ONBOARDING INVITE SEARCH | Repo-wide search | PASS | Confirmed 0 calls to `inviteUserByEmail`, `/invite`, or `user_invited` in active target codebase |
+| EV-RET-H01 | FULL RETENTION & STARVATION AVOIDANCE | `api/admin/retention-maintenance.ts` | PASS (MOCKED HANDLER): 75/75 tests | Keyset persistent cursor in `public.maintenance_state` (`job_name = 'retention_evidence_purge'`) advances through held items without starvation; visitor PII anonymization implemented; audit/reconciliation pruning; truthful statuses |
+| EV-PASS-L01 | CANONICAL PASSWORD POLICY MATRIX | `tests/password-policy.test.ts` | PASS: 8/8 tests | Validated 12-char min, upper, lower, digit, symbol across server and client UI (`AdminUsers.tsx`, `DevicesPage.tsx`, `passwordPolicy.ts`) |
+| EV-HOLD-M01 | INCIDENT HOLD RELATIONAL INVARIANT | `api/admin/holds.ts`, `supabase/migrations/20261020001400_closure_and_hardening.sql` | PASS (PGLITE & MOCKED) | Database RPC and API return `pass_visitor_mismatch` (400 / 22023) when `passes.visitor_id` does not match `requested_visitor_id` |
+| EV-DASH-N01 | AUTHORITATIVE DASHBOARD AGGREGATES | `supabase/migrations/20261020001400_closure_and_hardening.sql`, `api/admin/dashboard.ts` | PASS (PGLITE & BUILD) | Added `api.dashboard_calendar_counts` and `api.dashboard_today_insights` RPCs; exact per-day calendar counts wired to UI; truthful monthly totals in print export |
+| EV-ENV-O01 | ENVIRONMENT CONTRACT AUTOMATION | `tests/environment-contract.test.ts` | PASS: 5/5 tests | Automated scanning of `.env.example`, `docs/ENVIRONMENT.md`, and client source; 0 committed secrets; 0 server secrets in frontend; 0 `VITE_` server secrets |
+| EV-TURN-P01 | TURNSTILE BOT PROTECTION | `src/components/TurnstileWidget.tsx`, `src/pages/GetPassPage.tsx`, `vercel.json` | PASS (BUILD & RUNTIME) | Cloudflare Turnstile CAPTCHA widget for public Portal anonymous sign-in; CSP directives updated |
+| EV-MIG-002 | SEQUENTIAL & UPGRADE PGLITE MIGRATION | `tests/migration-chain-pglite.test.ts` | PASS: 6/6 tests (15.1s) | Sequential run 000100 through 001400 and upgrade run 001300 -> 001400 succeed in real PostgreSQL 17.5 WASM with 0 errors |
+| EV-SAFE-005 | FULL VITEST SUITE | `npm test` | PASS: 20 files, 260 tests | Complete test suite pass with zero failures and no Firebase emulator requirement |
+| EV-TYPE-005 | API & CLIENT TYPECHECK | `npm run typecheck:api` & `npx tsc --noEmit` | PASS: exit code 0 | Strict TypeScript compilation across both API/server and React client with zero errors |
+| EV-BUILD-005 | PRODUCTION BUILD INTEGRITY | `npm run build` | PASS: exit code 0 (1.92s) | Vite v8.3.1 production build (2539 modules transformed; clean CSS and JS chunks; 0 errors) |
+| EV-DIFF-005 | WORKING TREE PRESERVATION | `git status --short` | PASS | Owner .env.example strictly preserved unstaged byte-for-byte; zero secrets committed |

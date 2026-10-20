@@ -78,6 +78,7 @@ export function AdminDashboard() {
       topRejection: dashboard.insights?.topRejection ?? mostCommon(rejectedToday.map((pass) => pass.rejectionReason)),
       busiestGate: dashboard.insights?.busiestGate ?? mostCommon(dashboard.decisionsTodayPasses.map((pass) => pass.gate)),
       calendarPasses: dashboard.recentPasses,
+      calendarCounts: dashboard.calendarCounts,
     };
   }, [dashboard]);
 
@@ -171,7 +172,7 @@ export function AdminDashboard() {
       </section>
 
       <div className="grid gap-6 lg:grid-cols-2">
-        <IssuedPassesCalendar passes={metrics.calendarPasses} />
+        <IssuedPassesCalendar passes={metrics.calendarPasses} calendarCounts={metrics.calendarCounts} />
         <Card className="p-6">
           <h2 className="mb-5 text-xl font-bold text-[var(--color-text-primary)]">Operational Summary</h2>
           <div className="space-y-4">
@@ -197,7 +198,7 @@ function InsightCard({ icon, title, insight, description }: { icon: React.ReactN
   );
 }
 
-function IssuedPassesCalendar({ passes }: { passes: GatePass[] }) {
+function IssuedPassesCalendar({ passes, calendarCounts }: { passes: GatePass[]; calendarCounts?: Record<string, number> }) {
   const month = new Date();
   const monthStart = startOfMonth(month);
   const monthEnd = endOfMonth(month);
@@ -229,7 +230,7 @@ function IssuedPassesCalendar({ passes }: { passes: GatePass[] }) {
         ))}
         {calendarDays.map((day) => {
           const key = format(day, 'yyyy-MM-dd');
-          const count = countsByDate.get(key) || 0;
+          const count = calendarCounts ? (calendarCounts[key] ?? 0) : (countsByDate.get(key) || 0);
           const inCurrentMonth = isSameMonth(day, month);
           const currentDay = isToday(day);
 

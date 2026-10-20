@@ -321,3 +321,24 @@
         - Decided to support both `RESEND_FROM_EMAIL` and `EMAIL_FROM`, enforce strict CSP in `vercel.json` with OCR WASM and camera permissions, suppress React component stacks in production ErrorBoundaries, and provide an accessible branded 404 route.
       - **D-RG21 (Advisory Locking for Anonymous Intent Quotas)**:
         - Added transaction-scoped advisory locks on caller IDs in `api.create_upload_intent` to serialize concurrent requests and eliminate count-then-insert race conditions.
+
+## ADR-0013 — Email Architecture Consolidation & Password Recovery Authorization Security
+- **Date**: 2026-10-21
+- **Status**: accepted
+- **Context**: The repository had a duplicate unmaintained edge function `supabase/functions/auth-send-email/`, and `ResetPasswordPage.tsx` unlocked password modification for any authenticated session if `?type=recovery` was in the URL.
+- **Decision**:
+  1. Consolidate production Auth email delivery exclusively on Vercel Send Email Hook (`/api/auth/send-email-hook`) + React Email templates + Resend. Delete obsolete Supabase Edge Function implementation.
+  2. In `server/auth-email-hook.ts`, correctly handle GoTrue Secure Email Change inverted token hashes (`token_hash_new` for current email confirmation, `token_hash` for new email confirmation).
+  3. In `ResetPasswordPage.tsx`, strictly require genuine Supabase `PASSWORD_RECOVERY` auth event or unexpired `sessionStorage` recovery token (15-minute window). Disallow raw URL text parameter `?type=recovery` from acting as recovery authorization.
+- **Consequence**: Single authoritative email renderer; eliminated recovery authorization bypass for staff/device/portal sessions.
+
+## ADR-0014 — Retention Keyset Cursoring, Incident Hold Invariant & Additive Migration 001400
+- **Date**: 2026-10-21
+- **Status**: accepted
+- **Context**: Retention maintenance suffered from potential starvation on held records and did not enforce visitor PII anonymization or audit/reconciliation pruning. `api.create_incident_hold` lacked relational consistency checks between visitor and pass. Live project `egatepass-dev` flagged `public.rls_auto_enable()` privilege leak.
+- **Decision**:
+  1. Implement persistent maintenance cursor in `public.maintenance_state` (`job_name = 'retention_evidence_purge'`) with composite `(expires_at, id)` keyset advancement to guarantee forward progress past held items.
+  2. Implement truthful retention behavior for `visitor_retention_days` (anonymize personal fields while preserving referential integrity and protecting active passes / incident holds), `audit_retention_days`, and `reconciliation_retention_days` (resolved items only).
+  3. Validate `passes.visitor_id = requested_visitor_id` in both API and SQL RPC when both IDs are provided.
+  4. Create additive migration `20261020001400_closure_and_hardening.sql` that conditionally revokes execute on `public.rls_auto_enable()` from `public, anon, authenticated` and grants to `postgres`, adds incident hold checks, adds server aggregate RPCs, and indexes.
+- **Consequence**: Guaranteed retention forward progress without starvation; incident hold integrity guaranteed at DB and API layers; security advisor warning resolved cleanly.

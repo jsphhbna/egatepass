@@ -26,7 +26,10 @@ interface UploadIntent {
   max_bytes: number;
 }
 
-async function authenticatedClient(source: RegistrationSource): Promise<{ client: SupabaseClient; token: string }> {
+async function authenticatedClient(
+  source: RegistrationSource,
+  captchaToken?: string,
+): Promise<{ client: SupabaseClient; token: string }> {
   const client = source === 'portal' ? requirePortalSupabase() : requireSupabase();
   let { data: { session } } = await client.auth.getSession();
   if (source === 'portal' && session && !session.user.is_anonymous) {
@@ -34,7 +37,18 @@ async function authenticatedClient(source: RegistrationSource): Promise<{ client
     session = null;
   }
   if (source === 'portal' && !session) {
-    const result = await client.auth.signInAnonymously();
+    const siteKey = (import.meta as any).env?.VITE_TURNSTILE_SITE_KEY?.trim();
+    const isProd = (import.meta as any).env?.PROD;
+
+    // Fail closed in production when Turnstile protection is configured but challenge token is absent
+    if (isProd && siteKey && !captchaToken) {
+      throw new Error('Verification challenge required to start registration.');
+    }
+
+    const signInOptions = captchaToken ? { options: { captchaToken } } : undefined;
+    const result = signInOptions
+      ? await client.auth.signInAnonymously(signInOptions)
+      : await client.auth.signInAnonymously();
     if (result.error) throw new Error('Visitor registration could not be started.');
     session = result.data.session;
   }
@@ -71,8 +85,9 @@ export async function issueVisitorPass(
   photo: Blob,
   identification: Blob | null,
   requestId = crypto.randomUUID(),
+  captchaToken?: string,
 ): Promise<IssuedPass> {
-  const { client, token } = await authenticatedClient(source);
+  const { client, token } = await authenticatedClient(source, captchaToken);
   const [photoIntentId, idIntentId] = await Promise.all([
     uploadEvidence(client, source, 'photo', photo),
     identification ? uploadEvidence(client, source, 'id', identification) : Promise.resolve(null),

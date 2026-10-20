@@ -143,42 +143,80 @@ async function handleRequest(request: Request): Promise<Response> {
     if (exitedResult.error) throw exitedResult.error;
     if (decisionsResult.error) throw decisionsResult.error;
 
-    // Authoritative complete insights computed across all passes issued today
-    const allTodayPasses = (todayAllPassesRes.data ?? []) as unknown as Array<{
-      id: string;
-      status: string;
-      gate: string | null;
-      rejection_reason: string | null;
-      entry_scanned_at: string | null;
-      time_in: string | null;
-      visitors: { purpose: string } | null;
-    }>;
+    // Query authoritative database-complete aggregate RPCs with query fallback
+    const [
+      calendarRpcRes,
+      insightsRpcRes,
+    ] = await Promise.all([
+      admin.schema('api').rpc('dashboard_calendar_counts', { p_start: startMonth, p_end: endToday }),
+      admin.schema('api').rpc('dashboard_today_insights', { p_start: startToday, p_end: endToday }),
+    ]);
 
-    function countMostCommon(vals: Array<string | null | undefined>): { label: string; count: number } {
-      const counts = new Map<string, number>();
-      vals.forEach((v) => {
-        const norm = v?.trim();
-        if (norm) counts.set(norm, (counts.get(norm) || 0) + 1);
+    let calendarCounts: Record<string, number> = {};
+    if (calendarRpcRes.data && !calendarRpcRes.error && typeof calendarRpcRes.data === 'object') {
+      calendarCounts = calendarRpcRes.data as Record<string, number>;
+    } else {
+      // Fallback: compute per-day counts from month passes
+      const { data: monthRows } = await admin
+        .from('passes')
+        .select('issued_at')
+        .gte('issued_at', startMonth)
+        .lte('issued_at', endToday);
+
+      (monthRows || []).forEach((row: any) => {
+        if (!row.issued_at) return;
+        const day = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Manila' }).format(new Date(row.issued_at));
+        calendarCounts[day] = (calendarCounts[day] || 0) + 1;
       });
-      let best = { label: 'No data yet', count: 0 };
-      counts.forEach((count, label) => {
-        if (count > best.count) best = { label, count };
-      });
-      return best;
     }
 
-    const topPurpose = countMostCommon(allTodayPasses.map((p) => p.visitors?.purpose?.split(' — ')[0]?.trim()));
-    const busiestGate = countMostCommon(allTodayPasses.map((p) => p.gate));
-    const rejectedPassesToday = allTodayPasses.filter((p) => p.status === 'rejected');
-    const topRejection = countMostCommon(rejectedPassesToday.map((p) => p.rejection_reason));
+    let insights = {
+      topPurpose: { label: 'No data yet', count: 0 },
+      busiestGate: { label: 'No data yet', count: 0 },
+      topRejection: { label: 'No data yet', count: 0 },
+      avgApprovalTime: '—',
+    };
 
-    const durations = allTodayPasses.flatMap((p) => {
-      if (!p.entry_scanned_at || !p.time_in) return [];
-      const diff = new Date(p.time_in).getTime() - new Date(p.entry_scanned_at).getTime();
-      return diff >= 0 ? [diff] : [];
-    });
-    const avgSec = durations.length > 0 ? Math.round(durations.reduce((a, b) => a + b, 0) / durations.length / 1000) : null;
-    const avgApprovalTime = avgSec === null ? '—' : avgSec < 60 ? `${avgSec}s` : `${Math.round(avgSec / 60)}m`;
+    if (insightsRpcRes.data && !insightsRpcRes.error && typeof insightsRpcRes.data === 'object' && insightsRpcRes.data.topPurpose) {
+      insights = insightsRpcRes.data as typeof insights;
+    } else {
+      // Authoritative fallback computed across passes issued today
+      const allTodayPasses = (todayAllPassesRes.data ?? []) as unknown as Array<{
+        id: string;
+        status: string;
+        gate: string | null;
+        rejection_reason: string | null;
+        entry_scanned_at: string | null;
+        time_in: string | null;
+        visitors: { purpose: string } | null;
+      }>;
+
+      function countMostCommon(vals: Array<string | null | undefined>): { label: string; count: number } {
+        const counts = new Map<string, number>();
+        vals.forEach((v) => {
+          const norm = v?.trim();
+          if (norm) counts.set(norm, (counts.get(norm) || 0) + 1);
+        });
+        let best = { label: 'No data yet', count: 0 };
+        counts.forEach((count, label) => {
+          if (count > best.count) best = { label, count };
+        });
+        return best;
+      }
+
+      insights.topPurpose = countMostCommon(allTodayPasses.map((p) => p.visitors?.purpose?.split(' — ')[0]?.trim()));
+      insights.busiestGate = countMostCommon(allTodayPasses.map((p) => p.gate));
+      const rejectedPassesToday = allTodayPasses.filter((p) => p.status === 'rejected');
+      insights.topRejection = countMostCommon(rejectedPassesToday.map((p) => p.rejection_reason));
+
+      const durations = allTodayPasses.flatMap((p) => {
+        if (!p.entry_scanned_at || !p.time_in) return [];
+        const diff = new Date(p.time_in).getTime() - new Date(p.entry_scanned_at).getTime();
+        return diff >= 0 ? [diff] : [];
+      });
+      const avgSec = durations.length > 0 ? Math.round(durations.reduce((a, b) => a + b, 0) / durations.length / 1000) : null;
+      insights.avgApprovalTime = avgSec === null ? '—' : avgSec < 60 ? `${avgSec}s` : `${Math.round(avgSec / 60)}m`;
+    }
 
     return jsonResponse(200, {
       counts: {
@@ -190,12 +228,8 @@ async function handleRequest(request: Request): Promise<Response> {
         allPending: allPendingCountRes.count ?? 0,
         rejectedToday: rejectedCountRes.count ?? 0,
       },
-      insights: {
-        topPurpose,
-        busiestGate,
-        topRejection,
-        avgApprovalTime,
-      },
+      insights,
+      calendarCounts,
       recentPasses: ((recentResult.data ?? []) as unknown as RawPassRow[]).map(mapPass),
       insidePasses: ((insideResult.data ?? []) as unknown as RawPassRow[]).map(mapPass),
       exitedTodayPasses: ((exitedResult.data ?? []) as unknown as RawPassRow[]).map(mapPass),

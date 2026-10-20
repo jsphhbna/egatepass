@@ -90,6 +90,19 @@ async function handleRequest(request: Request): Promise<Response> {
         return jsonResponse(400, { error: 'invalid_request', details: parsed.error.issues });
       }
 
+      if (parsed.data.visitorId && parsed.data.passId) {
+        const { data: passRow, error: passErr } = await admin
+          .from('passes')
+          .select('visitor_id')
+          .eq('id', parsed.data.passId)
+          .maybeSingle();
+
+        if (passErr) throw passErr;
+        if (!passRow || passRow.visitor_id !== parsed.data.visitorId) {
+          return jsonResponse(400, { error: 'pass_visitor_mismatch' });
+        }
+      }
+
       const requestId = randomUUID();
       const { data, error } = await admin.schema('api').rpc('create_incident_hold', {
         requested_actor_id: actor.id,
@@ -100,6 +113,9 @@ async function handleRequest(request: Request): Promise<Response> {
       });
 
       if (error) {
+        if (error.code === '22023' && error.message?.includes('pass_visitor_mismatch')) {
+          return jsonResponse(400, { error: 'pass_visitor_mismatch' });
+        }
         if (error.code === '40001' || error.message?.includes('active_purge_claim_in_progress') || error.message?.includes('purge_in_progress')) {
           return jsonResponse(409, { error: 'active_purge_claim_in_progress' });
         }

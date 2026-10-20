@@ -94,9 +94,27 @@ describe('EMAIL-01: Supabase Auth Send Email Hook Infrastructure', () => {
   });
 
   describe('Auth Verification URL Builder', () => {
-    it('constructs correct Supabase GoTrue verification link', () => {
-      const url = buildAuthVerificationUrl('https://egatepass.earist.edu.ph', 'sample_token_hash_123', 'signup', 'https://egatepass.earist.edu.ph/login');
-      expect(url).toBe('https://egatepass.earist.edu.ph/auth/v1/verify?token=sample_token_hash_123&type=signup&redirect_to=https%3A%2F%2Fegatepass.earist.edu.ph%2Flogin');
+    it('constructs correct Supabase GoTrue verification link with Supabase origin and app redirect_to', () => {
+      const url = buildAuthVerificationUrl('https://nhoawvkfqblsgutdffie.supabase.co', 'sample_token_hash_123', 'signup', 'https://egatepass.tech/login');
+      expect(url).toBe('https://nhoawvkfqblsgutdffie.supabase.co/auth/v1/verify?token=sample_token_hash_123&type=signup&redirect_to=https%3A%2F%2Fegatepass.tech%2Flogin');
+
+      const parsed = new URL(url);
+      expect(parsed.origin).toBe('https://nhoawvkfqblsgutdffie.supabase.co');
+      expect(parsed.pathname).toBe('/auth/v1/verify');
+      expect(parsed.searchParams.get('token')).toBe('sample_token_hash_123');
+      expect(parsed.searchParams.get('type')).toBe('signup');
+      expect(parsed.searchParams.get('redirect_to')).toBe('https://egatepass.tech/login');
+    });
+
+    it('asserts origin is Supabase and app domain appears only as redirect_to for all actions', () => {
+      const actions = ['signup', 'invite', 'recovery', 'email_change', 'magiclink', 'reauthentication'];
+      for (const action of actions) {
+        const url = buildAuthVerificationUrl('https://nhoawvkfqblsgutdffie.supabase.co', 'hash_test', action, 'https://egatepass.tech/dest');
+        const parsed = new URL(url);
+        expect(parsed.origin).toBe('https://nhoawvkfqblsgutdffie.supabase.co');
+        expect(parsed.searchParams.get('type')).toBe(action);
+        expect(parsed.searchParams.get('redirect_to')).toBe('https://egatepass.tech/dest');
+      }
     });
   });
 
@@ -213,6 +231,83 @@ describe('EMAIL-01: Supabase Auth Send Email Hook Infrastructure', () => {
       expect(newEmail.to).toBe('new.address@earist.edu.ph');
       expect(newEmail.subject).toContain('Verify new email address');
       expect(newEmail.html).toContain('new_address_hash'); // Uses token_hash!
+    });
+
+    it('handles current Supabase email_change action with Secure Email Change enabled (2 emails)', async () => {
+      const payload: SupabaseAuthEmailPayload = {
+        user: {
+          id: 'user-0005',
+          email: 'current.staff@earist.edu.ph',
+          user_metadata: { displayName: 'Staff Member' },
+        },
+        email_data: {
+          token: '555666',
+          token_hash: 'hash_for_new_email',
+          token_hash_new: 'hash_for_current_email',
+          new_email: 'updated.staff@earist.edu.ph',
+          email_action_type: 'email_change',
+          site_url: 'https://egatepass.tech',
+        },
+      };
+
+      const { prepareAuthEmails } = await import('../server/auth-email-hook.js');
+      const emails = await prepareAuthEmails(payload);
+      expect(emails.length).toBe(2);
+
+      // 1. Current address confirmation email uses token_hash_new
+      const currentEmail = emails.find(e => e.to === 'current.staff@earist.edu.ph');
+      expect(currentEmail).toBeDefined();
+      expect(currentEmail!.subject).toContain('Authorize email address change');
+      expect(currentEmail!.html).toContain('hash_for_current_email');
+
+      // 2. New address verification email uses token_hash
+      const newEmail = emails.find(e => e.to === 'updated.staff@earist.edu.ph');
+      expect(newEmail).toBeDefined();
+      expect(newEmail!.subject).toContain('Verify new email address');
+      expect(newEmail!.html).toContain('hash_for_new_email');
+    });
+
+    it('handles current Supabase email_change action with Secure Email Change disabled (1 email)', async () => {
+      const payload: SupabaseAuthEmailPayload = {
+        user: {
+          id: 'user-0006',
+          email: 'current.staff@earist.edu.ph',
+          user_metadata: { displayName: 'Staff Member' },
+        },
+        email_data: {
+          token: '777888',
+          token_hash: 'single_hash_for_change',
+          new_email: 'new.staff@earist.edu.ph',
+          email_action_type: 'email_change',
+          site_url: 'https://egatepass.tech',
+        },
+      };
+
+      const { prepareAuthEmails } = await import('../server/auth-email-hook.js');
+      const emails = await prepareAuthEmails(payload);
+      expect(emails.length).toBe(1);
+      expect(emails[0].to).toBe('new.staff@earist.edu.ph');
+      expect(emails[0].html).toContain('single_hash_for_change');
+    });
+
+    it('handles magiclink and reauthentication actions', async () => {
+      const { prepareAuthEmails } = await import('../server/auth-email-hook.js');
+
+      const magicPayload: SupabaseAuthEmailPayload = {
+        user: { id: 'user-magic', email: 'magic@earist.edu.ph' },
+        email_data: { token: '11', token_hash: 'hash_magic', email_action_type: 'magiclink' },
+      };
+      const magicEmails = await prepareAuthEmails(magicPayload);
+      expect(magicEmails[0].to).toBe('magic@earist.edu.ph');
+      expect(magicEmails[0].subject).toContain('sign-in link');
+
+      const reauthPayload: SupabaseAuthEmailPayload = {
+        user: { id: 'user-reauth', email: 'reauth@earist.edu.ph' },
+        email_data: { token: '22', token_hash: 'hash_reauth', email_action_type: 'reauthentication' },
+      };
+      const reauthEmails = await prepareAuthEmails(reauthPayload);
+      expect(reauthEmails[0].to).toBe('reauth@earist.edu.ph');
+      expect(reauthEmails[0].subject).toContain('identity');
     });
   });
 

@@ -7,6 +7,16 @@ import {
 } from './templates/index.js';
 import { sendResendEmail } from './email.js';
 
+export type AuthEmailActionType =
+  | 'signup'
+  | 'recovery'
+  | 'invite'
+  | 'magiclink'
+  | 'email_change'
+  | 'reauthentication'
+  | 'email_change_current'
+  | 'email_change_new';
+
 export interface SupabaseAuthEmailPayload {
   user: {
     id: string;
@@ -21,7 +31,7 @@ export interface SupabaseAuthEmailPayload {
     token: string;
     token_hash: string;
     redirect_to?: string;
-    email_action_type: 'signup' | 'recovery' | 'invite' | 'magiclink' | 'email_change_current' | 'email_change_new' | 'reauthentication';
+    email_action_type: AuthEmailActionType;
     site_url?: string;
     token_hash_new?: string;
     new_email?: string;
@@ -100,6 +110,7 @@ export function verifyStandardWebhookSignature(
 
 /**
  * Builds the canonical Supabase Auth verification URL based on action type.
+ * Authority must always be the Supabase Auth base URL, never the application site URL.
  */
 export function buildAuthVerificationUrl(
   authBaseUrl: string,
@@ -107,7 +118,13 @@ export function buildAuthVerificationUrl(
   actionType: string,
   redirectTo?: string
 ): string {
-  const baseUrl = (authBaseUrl || process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL || 'https://egatepass.earist.edu.ph').replace(/\/+$/, '');
+  const baseUrl = (
+    process.env.SUPABASE_URL ||
+    process.env.VITE_SUPABASE_URL ||
+    authBaseUrl ||
+    'https://nhoawvkfqblsgutdffie.supabase.co'
+  ).replace(/\/+$/, '');
+
   const params = new URLSearchParams({
     token: tokenHash,
     type: actionType,
@@ -125,14 +142,16 @@ export interface PreparedAuthEmail {
 }
 
 /**
- * Maps Supabase Auth Send Email Hook payload to an EARIST React Email template.
+ * Maps Supabase Auth Send Email Hook payload to one or more EARIST React Email templates.
+ * When Secure Email Change is enabled, current Supabase sends email_action_type = "email_change"
+ * with token_hash_new (for current email) and token_hash (for new email), requiring two emails.
  */
-export async function prepareAuthEmail(
+export async function prepareAuthEmails(
   payload: SupabaseAuthEmailPayload
-): Promise<PreparedAuthEmail> {
+): Promise<PreparedAuthEmail[]> {
   const { user, email_data } = payload;
-  const authBaseUrl = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL || email_data.site_url || 'https://egatepass.earist.edu.ph';
-  const redirectTo = email_data.redirect_to || email_data.site_url || 'https://egatepass.earist.edu.ph';
+  const authBaseUrl = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL || 'https://nhoawvkfqblsgutdffie.supabase.co';
+  const redirectTo = email_data.redirect_to || email_data.site_url || 'https://egatepass.tech';
   const displayName = user.user_metadata?.displayName as string | undefined;
 
   switch (email_data.email_action_type) {
@@ -143,11 +162,11 @@ export async function prepareAuthEmail(
         confirmationUrl,
         displayName,
       });
-      return {
+      return [{
         to: user.email,
         subject: 'Confirm your EARIST E-GatePass staff account',
         html,
-      };
+      }];
     }
 
     case 'recovery': {
@@ -157,11 +176,11 @@ export async function prepareAuthEmail(
         resetUrl,
         displayName,
       });
-      return {
+      return [{
         to: user.email,
         subject: 'Reset your EARIST E-GatePass account password',
         html,
-      };
+      }];
     }
 
     case 'invite': {
@@ -173,15 +192,72 @@ export async function prepareAuthEmail(
         roleName: roleName.toUpperCase(),
         displayName,
       });
-      return {
+      return [{
         to: user.email,
         subject: 'Invitation to join EARIST E-GatePass as staff',
         html,
-      };
+      }];
+    }
+
+    case 'email_change': {
+      // Current Supabase Send Email Hook specification:
+      // If Secure Email Change is enabled, both token_hash_new and token_hash are provided.
+      // - token_hash_new must be sent to the CURRENT email (user.email)
+      // - token_hash must be sent to the NEW email (email_data.new_email)
+      const emails: PreparedAuthEmail[] = [];
+
+      if (email_data.token_hash_new && email_data.new_email) {
+        // 1. Authorize change on current email
+        const currentUrl = buildAuthVerificationUrl(authBaseUrl, email_data.token_hash_new, 'email_change', redirectTo);
+        const currentHtml = await renderEmailChangeEmail({
+          currentEmail: user.email,
+          newEmail: email_data.new_email,
+          changeUrl: currentUrl,
+          targetAddress: 'current',
+          displayName,
+        });
+        emails.push({
+          to: user.email,
+          subject: 'Authorize email address change for EARIST E-GatePass',
+          html: currentHtml,
+        });
+
+        // 2. Verify new email
+        const newUrl = buildAuthVerificationUrl(authBaseUrl, email_data.token_hash, 'email_change', redirectTo);
+        const newHtml = await renderEmailChangeEmail({
+          currentEmail: user.email,
+          newEmail: email_data.new_email,
+          changeUrl: newUrl,
+          targetAddress: 'new',
+          displayName,
+        });
+        emails.push({
+          to: email_data.new_email,
+          subject: 'Verify new email address for EARIST E-GatePass',
+          html: newHtml,
+        });
+      } else {
+        // Secure Email Change disabled: single confirmation sent to new or current email
+        const targetEmail = email_data.new_email || user.email;
+        const changeUrl = buildAuthVerificationUrl(authBaseUrl, email_data.token_hash, 'email_change', redirectTo);
+        const html = await renderEmailChangeEmail({
+          currentEmail: user.email,
+          newEmail: targetEmail,
+          changeUrl,
+          targetAddress: 'new',
+          displayName,
+        });
+        emails.push({
+          to: targetEmail,
+          subject: 'Verify new email address for EARIST E-GatePass',
+          html,
+        });
+      }
+      return emails;
     }
 
     case 'email_change_current': {
-      // Under secure change, Supabase counterintuitively assigns token_hash_new to the current email!
+      // Backward compatibility for legacy tests/payloads
       const currentHash = email_data.token_hash_new || email_data.token_hash;
       const changeUrl = buildAuthVerificationUrl(authBaseUrl, currentHash, 'email_change', redirectTo);
       const newEmail = email_data.new_email || 'the requested address';
@@ -192,15 +268,15 @@ export async function prepareAuthEmail(
         targetAddress: 'current',
         displayName,
       });
-      return {
+      return [{
         to: user.email,
         subject: 'Authorize email address change for EARIST E-GatePass',
         html,
-      };
+      }];
     }
 
     case 'email_change_new': {
-      // And token_hash to the new email!
+      // Backward compatibility for legacy tests/payloads
       const newHash = email_data.token_hash;
       const changeUrl = buildAuthVerificationUrl(authBaseUrl, newHash, 'email_change', redirectTo);
       const targetEmail = email_data.new_email || user.email;
@@ -211,14 +287,55 @@ export async function prepareAuthEmail(
         targetAddress: 'new',
         displayName,
       });
-      return {
+      return [{
         to: targetEmail,
         subject: 'Verify new email address for EARIST E-GatePass',
         html,
-      };
+      }];
+    }
+
+    case 'magiclink': {
+      const magicUrl = buildAuthVerificationUrl(authBaseUrl, email_data.token_hash, 'magiclink', redirectTo);
+      const html = await renderSignupConfirmationEmail({
+        email: user.email,
+        confirmationUrl: magicUrl,
+        displayName,
+      });
+      return [{
+        to: user.email,
+        subject: 'Your EARIST E-GatePass sign-in link',
+        html,
+      }];
+    }
+
+    case 'reauthentication': {
+      const reauthUrl = buildAuthVerificationUrl(authBaseUrl, email_data.token_hash, 'reauthentication', redirectTo);
+      const html = await renderPasswordResetEmail({
+        email: user.email,
+        resetUrl: reauthUrl,
+        displayName,
+      });
+      return [{
+        to: user.email,
+        subject: 'Confirm your identity for EARIST E-GatePass',
+        html,
+      }];
     }
 
     default:
       throw new Error(`unsupported_auth_email_action: ${email_data.email_action_type}`);
   }
+}
+
+/**
+ * Backward compatibility wrapper returning a single PreparedAuthEmail.
+ */
+export async function prepareAuthEmail(
+  payload: SupabaseAuthEmailPayload
+): Promise<PreparedAuthEmail> {
+  const emails = await prepareAuthEmails(payload);
+  if (!emails || emails.length === 0) {
+    throw new Error('No email could be prepared for the supplied auth payload');
+  }
+  return emails[0];
 }

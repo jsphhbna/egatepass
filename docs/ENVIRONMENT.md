@@ -6,6 +6,7 @@ Never commit values. `.env.local` is ignored. Validate presence and format witho
 |---|---|---|---|
 | `VITE_SUPABASE_URL` | Browser/build | Supabase client | Public project URL |
 | `VITE_SUPABASE_PUBLISHABLE_KEY` | Browser/build | Supabase client | Public publishable key; not authorization |
+| `VITE_TURNSTILE_SITE_KEY` | Browser/build | Cloudflare Turnstile CAPTCHA on Portal (optional in local dev) | Public site key; not authorization |
 | `SUPABASE_URL` | Vercel server | Privileged/admin operations | Server configuration |
 | `SUPABASE_SECRET_KEY` | Vercel server | Service-role/admin operations | Secret; bypasses RLS |
 | `PASS_TOKEN_SECRET` | Vercel server | HMAC derivation of retry-stable QR bearer values | Secret; minimum 32 characters; never browser-visible |

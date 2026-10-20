@@ -163,6 +163,10 @@ describe('Permanent PostgreSQL Migration Chain & Schema Contracts (PGlite)', () 
       where n.nspname = 'api' and p.proname = 'acknowledge_privacy';
     `);
     expect(ackPrivacy.rows[0]?.typname).toBe('timestamptz');
+
+    // 7. dashboard aggregates RPCs (Repair Group N)
+    expect(funcMap.has('dashboard_calendar_counts')).toBe(true);
+    expect(funcMap.has('dashboard_today_insights')).toBe(true);
   }, 30000);
 
   it('C. Enum contract: verifies visit_event_type and pass_status values', async () => {
@@ -258,5 +262,97 @@ describe('Permanent PostgreSQL Migration Chain & Schema Contracts (PGlite)', () 
         );
       `)
     ).rejects.toThrow();
+  }, 30000);
+
+  it('E. Incident hold cross-target invariant: rejects mismatched visitor and pass', async () => {
+    const db = new PGlite();
+    await applyAllMigrations(db);
+
+    const testStaffId = '00000000-0000-0000-0000-000000000001';
+    const testVisitorOwnerId = '00000000-0000-0000-0000-000000000002';
+    await db.exec(`
+      insert into auth.users (id, email)
+      values ('${testStaffId}'::uuid, 'admin@example.com'),
+             ('${testVisitorOwnerId}'::uuid, 'visitor-owner@example.com')
+      on conflict (id) do nothing;
+
+      insert into public.staff_profiles (user_id, display_name, role, active, must_change_password, privacy_accepted_at)
+      values ('${testStaffId}'::uuid, 'Test Superadmin', 'superadmin', true, false, now())
+      on conflict (user_id) do nothing;
+    `);
+
+    // Insert visitor 1 and visitor 2
+    const visitor1Id = '11111111-1111-1111-1111-111111111111';
+    const visitor2Id = '22222222-2222-2222-2222-222222222222';
+    await db.exec(`
+      insert into public.visitors (id, owner_id, source, full_name, contact_number, purpose, visit_date, consent_accepted_at)
+      values ('${visitor1Id}'::uuid, '${testVisitorOwnerId}'::uuid, 'portal', 'Visitor 1', '09123456789', 'Meeting', current_date, now()),
+             ('${visitor2Id}'::uuid, '${testVisitorOwnerId}'::uuid, 'portal', 'Visitor 2', '09123456780', 'Interview', current_date, now());
+    `);
+
+    // Insert pass for visitor 2
+    const pass2Id = '33333333-3333-3333-3333-333333333333';
+    await db.exec(`
+      insert into public.passes (
+        id, visitor_id, public_reference, token_digest, source, status,
+        valid_from, valid_until
+      ) values (
+        '${pass2Id}'::uuid,
+        '${visitor2Id}'::uuid,
+        gen_random_uuid(),
+        decode('0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef', 'hex'),
+        'portal',
+        'pending',
+        now(),
+        now() + interval '8 hours'
+      );
+    `);
+
+    // Attempting to create hold with visitor 1 and pass 2 (mismatch!) must throw pass_visitor_mismatch
+    await expect(
+      db.query(`
+        select api.create_incident_hold(
+          '${testStaffId}'::uuid,
+          '${visitor1Id}'::uuid,
+          '${pass2Id}'::uuid,
+          'Investigation into incident',
+          gen_random_uuid()
+        );
+      `)
+    ).rejects.toThrow(/pass_visitor_mismatch/);
+
+    // Matching visitor 2 and pass 2 succeeds
+    const successRes = await db.query(`
+      select api.create_incident_hold(
+        '${testStaffId}'::uuid,
+        '${visitor2Id}'::uuid,
+        '${pass2Id}'::uuid,
+        'Investigation into incident',
+        gen_random_uuid()
+      );
+    `);
+    expect(successRes.rows.length).toBe(1);
+  }, 30000);
+
+  it('F. Upgrade execution: applying migration 001400 on top of 001300 cleanly succeeds', async () => {
+    const db = new PGlite();
+    await setupSupabaseEmulation(db);
+    const files = readdirSync(MIGRATIONS_DIR)
+      .filter((f) => f.endsWith('.sql'))
+      .sort();
+
+    // Apply up to 001300
+    for (const file of files) {
+      if (file.includes('001400')) continue;
+      let sql = readFileSync(join(MIGRATIONS_DIR, file), 'utf8');
+      sql = sql.replace(/create extension if not exists pgcrypto[^;]*;/gi, '-- pgcrypto no-op');
+      await db.exec(sql);
+    }
+
+    // Now apply 001400 closure migration
+    const migration14 = files.find((f) => f.includes('001400'))!;
+    let sql14 = readFileSync(join(MIGRATIONS_DIR, migration14), 'utf8');
+    sql14 = sql14.replace(/create extension if not exists pgcrypto[^;]*;/gi, '-- pgcrypto no-op');
+    await expect(db.exec(sql14)).resolves.toBeDefined();
   }, 30000);
 });

@@ -6,7 +6,7 @@ import { z } from 'zod';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import type { UserRole } from '@/types';
-import { PASSWORD_MIN_LENGTH } from '@/lib/passwordPolicy';
+import { PASSWORD_MIN_LENGTH, PASSWORD_POLICY_HELPER_TEXT, passwordSchema } from '@/lib/passwordPolicy';
 import { useAuth } from '@/hooks/useAuth';
 import { formatUserRole, isSuperAdmin } from '@/lib/permissions';
 import { getAccessToken } from '@/services/auth';
@@ -14,10 +14,7 @@ import { getAccessToken } from '@/services/auth';
 const userSchema = z.object({
   name: z.string().min(2, 'Name is required').max(50),
   email: z.string().email('Valid email required'),
-  password: z.string()
-    .min(PASSWORD_MIN_LENGTH, `Password must be at least ${PASSWORD_MIN_LENGTH} characters`)
-    .regex(/[A-Za-z]/, 'Password must include at least one letter')
-    .regex(/\d/, 'Password must include at least one number'),
+  password: passwordSchema,
   role: z.enum({ admin: 'admin', guard: 'guard' }, {
     message: 'Select a valid role',
   }),
@@ -245,7 +242,7 @@ export function AdminUsers() {
           <FormField label="Password" id="new-user-password" error={errors.password?.message}>
             <Input id="new-user-password" type="password" minLength={PASSWORD_MIN_LENGTH} autoComplete="new-password" {...register('password')} error={!!errors.password} />
             <p className="mt-1 text-xs text-[var(--color-text-muted)]">
-              At least {PASSWORD_MIN_LENGTH} characters with a letter and a number.
+              {PASSWORD_POLICY_HELPER_TEXT}
             </p>
           </FormField>
 

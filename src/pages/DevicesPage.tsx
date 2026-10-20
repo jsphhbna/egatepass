@@ -8,7 +8,7 @@ import { z } from 'zod';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { Button, Card, FormField, Input, Select, StatusBadge, Modal, ConfirmModal, LoadingState } from '@/components/ui';
 import { isSuperAdmin } from '@/lib/permissions';
-import { getPasswordPolicyError, PASSWORD_MIN_LENGTH } from '@/lib/passwordPolicy';
+import { getPasswordPolicyError, PASSWORD_MIN_LENGTH, PASSWORD_POLICY_HELPER_TEXT, passwordSchema } from '@/lib/passwordPolicy';
 import { getAccessToken } from '@/services/auth';
 
 // ============================================================
@@ -36,10 +36,7 @@ const deviceSchema = z.object({
         : val.toLowerCase();
       return DEVICE_ALIAS_PATTERN.test(alias);
     }, 'Alias must use 3-63 lowercase letters, numbers, or hyphens (e.g., maingate-entry)'),
-  password: z.string()
-    .min(PASSWORD_MIN_LENGTH, `Password must be at least ${PASSWORD_MIN_LENGTH} characters`)
-    .regex(/[A-Za-z]/, 'Password must include at least one letter')
-    .regex(/\d/, 'Password must include at least one number'),
+  password: passwordSchema,
 });
 
 type DeviceFormData = z.infer<typeof deviceSchema>;
@@ -407,6 +404,9 @@ export function DevicesPage() {
                 placeholder="••••••••"
                 error={!!errors.password}
               />
+              <p className="mt-1 text-xs text-[var(--color-text-muted)]">
+                {PASSWORD_POLICY_HELPER_TEXT}
+              </p>
             </FormField>
           </div>
 
@@ -583,7 +583,7 @@ export function DevicesPage() {
               </button>
             </div>
             <p className="mt-2 text-xs leading-relaxed text-[var(--color-text-muted)]">
-              For your security, we cannot show the current password. A replacement must have at least {PASSWORD_MIN_LENGTH} characters, including a letter and a number.
+              For your security, we cannot show the current password. {PASSWORD_POLICY_HELPER_TEXT}
             </p>
           </FormField>
 

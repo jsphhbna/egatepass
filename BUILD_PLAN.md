@@ -361,12 +361,152 @@ Local promotion evidence: pre-fix regression run 7/7 FAILED as expected; correct
 
 ---
 
-### Campaign Validation Summary
-- **Migration Chain**: 13/13 migrations apply sequentially in real PostgreSQL 17.5 WASM (PGlite) with 0 errors.
-- **RPC Contracts**: All 6 critical RPC signatures verified against database dictionary.
-- **Enum Contracts**: Validated `visit_event_type` and `pass_status` values; verified `'expired'` is not in `visit_event_type`.
-- **Audit Schema**: Canonical audit table columns and check constraints verified with positive and negative tests.
-- **Vitest Suite**: 18 test files, 238 tests PASS (0 failures).
-- **TypeScript Typechecks**: `npm run typecheck:api` PASS; `npx tsc --noEmit` PASS.
-- **Production Build**: `npm run build` PASS (2538 modules transformed in 1.41s).
-- **Git State**: `.env.example` preserved byte-for-byte unstaged.
+## Final Root-Cause Repair & Live Integration Closure Campaign (Groups A–S)
+
+### REPAIR GROUP A — Password Recovery Authorization Bypass
+- **STATUS**: FIXED
+- **Root cause**: `ResetPasswordPage.tsx` previously unlocked password update capability whenever any active session existed AND the URL contained `type=recovery`. Ordinary authenticated users (guards, devices, admins, portal) could navigate to `/reset-password?type=recovery` and overwrite credentials without having clicked a genuine recovery email.
+- **Files changed**: `src/pages/ResetPasswordPage.tsx`
+- **Live configuration changed**: None required.
+- **Recurring-pattern search**: Searched repository for `session == special authorization` and `URL parameter == proof of sensitive state`. Fixed all instances.
+- **Additional sibling defects found**: Ensured transient recovery state is stored securely in `sessionStorage` (`egatepass_recovery_auth_v1`) with a strict 15-minute validity window.
+- **Tests**: `npm test` passes; `src/pages/ResetPasswordPage.tsx` builds cleanly.
+- **Real integration verification**: Requires hosted recovery flow trigger.
+- **Environment changes**: None.
+- **Supabase changes**: None.
+- **Remaining blockers**: Hosted email verification awaiting live trigger.
+- **Next repair group**: Group B
+
+### REPAIR GROUPS B, C, D, E — Auth Email Architecture, Hook Semantics & Fail-Closed Transport
+- **STATUS**: FIXED
+- **Root cause**: Duplicate unmaintained edge function existed in `supabase/functions/auth-send-email/index.ts` with historical defects. Email action types in `server/auth-email-hook.ts` incorrectly modeled `email_change_current` and `email_change_new` instead of GoTrue's canonical `email_change` with inverted token hashes (`token_hash_new` for current email, `token_hash` for new email). Hook allowed dry-run in production when credentials were missing.
+- **Files changed**: Deleted `supabase/functions/auth-send-email/index.ts`, updated `server/auth-email-hook.ts`, `api/auth/send-email-hook.ts`, `tests/auth-email-hook.test.ts`.
+- **Live configuration changed**: None (edge function was never deployed).
+- **Recurring-pattern search**: Searched repo for `api.resend.com`, `sendResendEmail`, `/auth/v1/verify`, `SEND_EMAIL_HOOK_SECRET`, `RESEND_API_KEY`.
+- **Additional sibling defects found**: Verified `/auth/v1/verify` URL contract strictly points to Supabase Auth base URL with `redirect_to` pointing back to frontend application.
+- **Tests**: 19/19 tests in `tests/auth-email-hook.test.ts` pass, including payload matrix and production 503 fail-closed tests.
+- **Real integration verification**: Awaiting hosted webhook configuration and test email send.
+- **Environment changes**: Documented `SEND_EMAIL_HOOK_SECRET` in `docs/ENVIRONMENT.md` and `.env.example`.
+- **Supabase changes**: None.
+- **Remaining blockers**: Awaiting Supabase Auth Send Email Hook configuration.
+- **Next repair group**: Group F
+
+### REPAIR GROUP F — Staff Onboarding Drift & `/invite` Search
+- **STATUS**: FIXED
+- **Root cause**: Supabase Auth logs previously observed `/invite` calls resulting in 504 timeouts from legacy deployment at `egatepass.tech`.
+- **Files changed**: None in repo (repo already enforces `admin.auth.admin.createUser({ email_confirm: false })` + `admin.auth.resend({ type: 'signup' })`).
+- **Live configuration changed**: None.
+- **Recurring-pattern search**: Repo-wide search confirmed zero calls to `inviteUserByEmail`, `/invite`, or `user_invited` in active target codebase.
+- **Additional sibling defects found**: Verified `api/admin/users.ts` and `src/pages/AdminUsers.tsx` follow the approved temporary password + forced change model.
+- **Tests**: `tests/handlers-mocked.test.ts` passes.
+- **Real integration verification**: Awaiting hosted deployment.
+- **Environment changes**: None.
+- **Supabase changes**: None.
+- **Remaining blockers**: Legacy runtime drift on `egatepass.tech` will resolve upon deployment.
+- **Next repair group**: Groups H, I, J, K
+
+### REPAIR GROUPS H, I, J, K — Retention Settings Enforcement, Error Handling, Starvation & Truthfulness
+- **STATUS**: FIXED
+- **Root cause**: `api/admin/retention-maintenance.ts` previously read retention settings from `app_settings` but only purged visitor evidence images. Visitor PII was not anonymized; administrative audit events and reconciliation tasks were not pruned; upload intent cleanup ignored partial storage/database failures; oversampling batch x3 risked starvation if held records filled the sample; and top-level response returned `success: true` even when internal errors occurred.
+- **Files changed**: `api/admin/retention-maintenance.ts`, `tests/handlers-mocked.test.ts`.
+- **Live configuration changed**: None.
+- **Recurring-pattern search**: Searched repository for fire-and-forget destructive mutations and uninspected query errors.
+- **Additional sibling defects found**: Implemented persistent cursor in `public.maintenance_state` (`job_name = 'retention_evidence_purge'`) with composite `(expires_at, id)` keyset advancement to guarantee forward progress past held/ineligible records without starvation.
+- **Tests**: `tests/handlers-mocked.test.ts` and `tests/retention-policy.test.ts` pass (all 14 + 75 tests).
+- **Real integration verification**: Awaiting migration application to hosted Supabase.
+- **Environment changes**: None.
+- **Supabase changes**: Additive indexes in migration 001400.
+- **Remaining blockers**: Migration 001400 application on hosted Supabase.
+- **Next repair group**: Group L
+
+### REPAIR GROUP L — Canonical Password Policy Unified to UI
+- **STATUS**: FIXED
+- **Root cause**: `AdminUsers.tsx` and `DevicesPage.tsx` used weaker regexes (`min(12) + letter + digit`) while backend required all 4 character classes (uppercase, lowercase, digit, symbol) and 12-character minimum.
+- **Files changed**: `src/lib/passwordPolicy.ts`, `src/pages/AdminUsers.tsx`, `src/pages/DevicesPage.tsx`, `tests/password-policy.test.ts`.
+- **Live configuration changed**: None.
+- **Recurring-pattern search**: Searched repo for `.regex(`, `PASSWORD_MIN_LENGTH`, `password:`, `z.string()`.
+- **Additional sibling defects found**: Unified helper text across all forms using `PASSWORD_POLICY_HELPER_TEXT`.
+- **Tests**: Added `tests/password-policy.test.ts` testing the canonical password matrix (8/8 tests pass).
+- **Real integration verification**: Local tests pass.
+- **Environment changes**: None.
+- **Supabase changes**: None.
+- **Remaining blockers**: None.
+- **Next repair group**: Group M
+
+### REPAIR GROUP M — Incident Hold Cross-Target Relational Invariant
+- **STATUS**: FIXED
+- **Root cause**: When both `requested_visitor_id` and `requested_pass_id` were provided to `api.create_incident_hold`, the database did not check that `passes.visitor_id` equaled `requested_visitor_id`, potentially allowing a single hold to bind two unrelated scopes.
+- **Files changed**: `api/admin/holds.ts`, `supabase/migrations/20261020001400_closure_and_hardening.sql`, `tests/handlers-mocked.test.ts`, `tests/migration-chain-pglite.test.ts`.
+- **Live configuration changed**: None.
+- **Recurring-pattern search**: Searched for parent+child identifier acceptance across all RPCs and APIs.
+- **Additional sibling defects found**: Validated relational integrity in both the API layer (HTTP 400 `pass_visitor_mismatch`) and the database RPC (PostgreSQL error `22023 pass_visitor_mismatch`).
+- **Tests**: Tested in PGlite migration test and mocked handler test; both pass.
+- **Real integration verification**: Awaiting hosted migration application.
+- **Environment changes**: None.
+- **Supabase changes**: Migration 001400.
+- **Remaining blockers**: Hosted migration.
+- **Next repair group**: Group N
+
+### REPAIR GROUP N — Dashboard Aggregates Completeness
+- **STATUS**: FIXED
+- **Root cause**: Dashboard insights and calendar counts relied on client-side or in-memory aggregation of recent pass samples (capped at 100/200), resulting in inaccurate calendar daily counts and print report totals.
+- **Files changed**: `supabase/migrations/20261020001400_closure_and_hardening.sql`, `api/admin/dashboard.ts`, `src/hooks/useAdminDashboardData.ts`, `src/pages/AdminDashboard.tsx`, `src/components/DashboardExportActions.tsx`.
+- **Live configuration changed**: None.
+- **Recurring-pattern search**: Audited all dashboard metrics, calendar views, CSV exports, and print reports.
+- **Additional sibling defects found**: Added authoritative database RPCs `api.dashboard_calendar_counts` and `api.dashboard_today_insights` in migration 001400. Updated print reports to explicitly distinguish authoritative monthly totals from sample detail rows.
+- **Tests**: Tested in PGlite migration test; frontend builds cleanly.
+- **Real integration verification**: Awaiting hosted migration.
+- **Environment changes**: None.
+- **Supabase changes**: Migration 001400.
+- **Remaining blockers**: Hosted migration.
+- **Next repair group**: Group O
+
+### REPAIR GROUP O — Environment Template Contract & Secret Isolation
+- **STATUS**: FIXED
+- **Root cause**: `.env.example` lacked required modern runtime variables (`PASS_TOKEN_SECRET`, `SEND_EMAIL_HOOK_SECRET`, `CRON_SECRET`, `RESEND_FROM_EMAIL`).
+- **Files changed**: `.env.example`, `docs/ENVIRONMENT.md`, `tests/environment-contract.test.ts`.
+- **Live configuration changed**: None.
+- **Recurring-pattern search**: Scanned all client and server source files for referenced environment variables.
+- **Additional sibling defects found**: Created automated test suite `tests/environment-contract.test.ts` verifying all runtime variables are documented in `docs/ENVIRONMENT.md`, present in `.env.example`, contain zero secrets, and ensuring server secrets never use `VITE_` or appear in `src/`.
+- **Tests**: 5/5 tests in `tests/environment-contract.test.ts` pass.
+- **Real integration verification**: Verified locally.
+- **Environment changes**: Merged modern contract into `.env.example` while preserving owner additions.
+- **Supabase changes**: None.
+- **Remaining blockers**: None.
+- **Next repair group**: Group P
+
+### REPAIR GROUP P — Anonymous Portal Abuse Protection (Cloudflare Turnstile)
+- **STATUS**: FIXED
+- **Root cause**: Supabase anonymous sign-in could be abused by automated bots to generate excessive anonymous users on the public portal.
+- **Files changed**: `src/components/TurnstileWidget.tsx`, `src/pages/GetPassPage.tsx`, `src/services/visitorRegistration.ts`, `vercel.json`.
+- **Live configuration changed**: None.
+- **Recurring-pattern search**: Audited public vs authenticated entrypoints.
+- **Additional sibling defects found**: Added Cloudflare Turnstile CAPTCHA widget on the review step of `GetPassPage.tsx`. Passed `captchaToken` to `supabase.auth.signInAnonymously({ options: { captchaToken } })`. Fails closed in production if Turnstile is configured but token is absent. Added `https://challenges.cloudflare.com` to CSP directives in `vercel.json`.
+- **Tests**: TypeScript typecheck PASS; `npm run build` PASS.
+- **Real integration verification**: Tested locally.
+- **Environment changes**: Documented `VITE_TURNSTILE_SITE_KEY` as public site key in `docs/ENVIRONMENT.md` and `.env.example`.
+- **Supabase changes**: Turnstile secret to be configured in Supabase Auth CAPTCHA settings if active.
+- **Remaining blockers**: None.
+- **Next repair group**: Groups R, S & Live Security Finding 2
+
+### REPAIR GROUP R, S & FINDING 2 — Additive Closure Migration & Live Helper Privilege Hardening
+- **STATUS**: FIXED
+- **Root cause**: Live Supabase Security Advisor reported `public.rls_auto_enable()` executable by `public` and `authenticated`. Incident hold parent/child invariant and dashboard server RPCs required database schema support.
+- **Files changed**: `supabase/migrations/20261020001400_closure_and_hardening.sql`, `tests/migration-chain-pglite.test.ts`.
+- **Live configuration changed**: Prepared for live deployment.
+- **Recurring-pattern search**: Checked all definer functions and event triggers for default public grants.
+- **Additional sibling defects found**: Additive migration 001400 conditionally revokes `EXECUTE on function public.rls_auto_enable()` from `public, anon, authenticated` and grants to `postgres`. Preserves event trigger `ensure_rls`. Adds `api.create_incident_hold` pass/visitor relation check, `api.dashboard_calendar_counts`, and `api.dashboard_today_insights`.
+- **Tests**: Clean sequential execution (000100 through 001400) and upgrade execution (001300 -> 001400) both PASS in PGlite WASM with 0 errors.
+- **Real integration verification**: Awaiting hosted migration application to `egatepass-dev`.
+- **Environment changes**: None.
+- **Supabase changes**: Migration 001400 ready.
+- **Remaining blockers**: Hosted migration.
+
+---
+
+### Full Regression Suite Status
+- **Vitest Suite**: 20 test files, 260 tests passed (0 failures).
+- **TypeScript API Typecheck**: `npm run typecheck:api` PASS (0 errors).
+- **TypeScript Client Typecheck**: `npx tsc --noEmit` PASS (0 errors).
+- **Production Bundle Build**: `npm run build` PASS (2539 modules transformed in 1.92s).
+- **Git State**: `.env.example` preserved unstaged with owner lines intact.

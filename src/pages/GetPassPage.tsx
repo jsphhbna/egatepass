@@ -5,6 +5,7 @@ import { zodResolver } from '@hookform/resolvers/zod';
 import { useWebcam } from '@/hooks/useWebcam';
 import { compressImageToWebP } from '@/lib/imageProcessing';
 import { issueVisitorPass, loadRegistrationSettings } from '@/services/visitorRegistration';
+import { TurnstileWidget } from '@/components/TurnstileWidget';
 import { toDataURL } from 'qrcode';
 import {
   Camera,
@@ -84,6 +85,7 @@ export function GetPassPage() {
   const [photoPreview, setPhotoPreview] = useState<string | null>(null);
   const [idBlob, setIdBlob] = useState<Blob | null>(null);
   const [idPreview, setIdPreview] = useState<string | null>(null);
+  const [captchaToken, setCaptchaToken] = useState<string | null>(null);
   const [qrDataUrl, setQrDataUrl] = useState<string | null>(null);
   const [passId, setPassId] = useState<string | null>(null);
   const [rawQrToken, setRawQrToken] = useState<string | null>(null);
@@ -199,7 +201,7 @@ export function GetPassPage() {
 
     try {
       const formData = getValues();
-      const result = await issueVisitorPass('portal', formData, photoBlob, idBlob, issueRequestId.current);
+      const result = await issueVisitorPass('portal', formData, photoBlob, idBlob, issueRequestId.current, captchaToken ?? undefined);
       const qrUrl = await toDataURL(result.qrToken, {
         width: 300,
         margin: 2,
@@ -591,6 +593,8 @@ export function GetPassPage() {
                   )}
                 </div>
               </div>
+
+              <TurnstileWidget onVerify={setCaptchaToken} onExpire={() => setCaptchaToken(null)} />
 
               <div className="flex gap-3">
                 <Button 

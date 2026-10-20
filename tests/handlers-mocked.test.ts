@@ -57,6 +57,8 @@ describe('Behavioral Mocked-Handler Tests [PASS (MOCKED HANDLER)]', () => {
     upload_intents: any[];
     reconciliation_tasks: any[];
     pass_email_verifications: any[];
+    maintenance_state: any[];
+    pass_email_verification_codes: any[];
   };
 
   let mockAuthUsers: Record<string, any>;
@@ -177,6 +179,7 @@ describe('Behavioral Mocked-Handler Tests [PASS (MOCKED HANDLER)]', () => {
         let eqCols: Record<string, any> = {};
         let limitVal: number | null = null;
         let isHeadCount = false;
+        let isDelete = false;
 
         const chain: any = {
           select: (_cols?: string, opts?: { count?: string; head?: boolean }) => {
@@ -224,14 +227,8 @@ describe('Behavioral Mocked-Handler Tests [PASS (MOCKED HANDLER)]', () => {
             return chain;
           },
           delete: (_opts?: { count?: string }) => {
-            if (mockTableFailures[`${currentTable}:delete`]) {
-              return Promise.resolve({ data: null, count: null, error: mockTableFailures[`${currentTable}:delete`] });
-            }
-            const items = (mockDbData as any)[currentTable] || [];
-            const remaining = items.filter((x: any) => !filters.every((f) => f(x)));
-            const deletedCount = items.length - remaining.length;
-            (mockDbData as any)[currentTable] = remaining;
-            return Promise.resolve({ data: null, count: deletedCount, error: null });
+            isDelete = true;
+            return chain;
           },
           ilike: (_col: string, _pattern: string) => chain,
           order: (_col: string, _opts?: { ascending?: boolean }) => chain,
@@ -283,6 +280,20 @@ describe('Behavioral Mocked-Handler Tests [PASS (MOCKED HANDLER)]', () => {
             items.push(...rows);
             return { data: rows, error: null };
           },
+          upsert: async (data: any, opts?: any) => {
+            const items = (mockDbData as any)[currentTable] || [];
+            const rows = Array.isArray(data) ? data : [data];
+            for (const row of rows) {
+              const onConflict = opts?.onConflict || 'job_name';
+              const existingIndex = items.findIndex((it: any) => it[onConflict] === row[onConflict]);
+              if (existingIndex >= 0) {
+                Object.assign(items[existingIndex], row);
+              } else {
+                items.push(row);
+              }
+            }
+            return { data: rows, error: null };
+          },
           update: (data: any) => {
             return {
               eq: (col: string, val: any) => {
@@ -302,6 +313,18 @@ describe('Behavioral Mocked-Handler Tests [PASS (MOCKED HANDLER)]', () => {
             };
           },
           then: (resolve: any) => {
+            if (isDelete) {
+              if (mockTableFailures[`${currentTable}:delete`]) {
+                resolve({ data: null, count: null, error: mockTableFailures[`${currentTable}:delete`] });
+                return;
+              }
+              const items = (mockDbData as any)[currentTable] || [];
+              const remaining = items.filter((x: any) => !filters.every((f) => f(x)));
+              const deletedCount = items.length - remaining.length;
+              (mockDbData as any)[currentTable] = remaining;
+              resolve({ data: null, count: deletedCount, error: null });
+              return;
+            }
             if (mockTableFailures[currentTable]) {
               resolve({ data: null, count: null, error: mockTableFailures[currentTable] });
               return;
@@ -631,6 +654,12 @@ describe('Behavioral Mocked-Handler Tests [PASS (MOCKED HANDLER)]', () => {
             if (!args.requested_reason || args.requested_reason.length < 5) {
               return { data: null, error: { code: '22023', message: 'invalid_reason' } };
             }
+            if (args.requested_visitor_id && args.requested_pass_id) {
+              const pass = mockDbData.passes.find((p: any) => p.id === args.requested_pass_id);
+              if (pass && pass.visitor_id !== args.requested_visitor_id) {
+                return { data: null, error: { code: '22023', message: 'pass_visitor_mismatch' } };
+              }
+            }
             if (args.requested_visitor_id) {
               const ev = mockDbData.visitor_evidence.find((e: any) => e.visitor_id === args.requested_visitor_id);
               if (ev?.purged_at) {
@@ -818,6 +847,8 @@ describe('Behavioral Mocked-Handler Tests [PASS (MOCKED HANDLER)]', () => {
       upload_intents: [],
       reconciliation_tasks: [],
       pass_email_verifications: [],
+      maintenance_state: [],
+      pass_email_verification_codes: [],
     };
 
     mockAuthUsers = {
@@ -2623,6 +2654,72 @@ describe('Behavioral Mocked-Handler Tests [PASS (MOCKED HANDLER)]', () => {
       expect(holdRecord?.active).toBe(false);
     });
 
+    it('rejects incident hold creation when visitorId and passId mismatch', async () => {
+      const visitor1Id = randomUUID();
+      const visitor2Id = randomUUID();
+      const passId = randomUUID();
+
+      mockDbData.visitors.push(
+        { id: visitor1Id, full_name: 'Visitor 1' },
+        { id: visitor2Id, full_name: 'Visitor 2' }
+      );
+      mockDbData.passes.push({
+        id: passId,
+        visitor_id: visitor2Id, // Belongs to visitor 2
+        public_reference: randomUUID(),
+      });
+
+      const createReq = new Request('http://localhost/api/admin/holds', {
+        method: 'POST',
+        headers: {
+          authorization: VALID_SUPERADMIN_BEARER,
+          'content-type': 'application/json',
+        },
+        body: JSON.stringify({
+          visitorId: visitor1Id, // Mismatched visitor!
+          passId: passId,
+          reason: 'Investigation into unauthorized entry',
+        }),
+      });
+
+      const res = await invokeHandler(holdsHandler, createReq);
+      const json = await res.json();
+
+      expect(res.status).toBe(400);
+      expect(json.error).toBe('pass_visitor_mismatch');
+    });
+
+    it('accepts incident hold creation when visitorId and passId match', async () => {
+      const visitorId = randomUUID();
+      const passId = randomUUID();
+
+      mockDbData.visitors.push({ id: visitorId, full_name: 'Matched Visitor' });
+      mockDbData.passes.push({
+        id: passId,
+        visitor_id: visitorId,
+        public_reference: randomUUID(),
+      });
+
+      const createReq = new Request('http://localhost/api/admin/holds', {
+        method: 'POST',
+        headers: {
+          authorization: VALID_SUPERADMIN_BEARER,
+          'content-type': 'application/json',
+        },
+        body: JSON.stringify({
+          visitorId: visitorId,
+          passId: passId,
+          reason: 'Valid incident hold investigation',
+        }),
+      });
+
+      const res = await invokeHandler(holdsHandler, createReq);
+      const json = await res.json();
+
+      expect(res.status).toBe(201);
+      expect(json.holdId).toBeDefined();
+    });
+
     it('Retention maintenance endpoint executes with CRON_SECRET header in dry-run mode', async () => {
       process.env.CRON_SECRET = 'test_cron_secret_123';
 
@@ -2642,6 +2739,29 @@ describe('Behavioral Mocked-Handler Tests [PASS (MOCKED HANDLER)]', () => {
       expect(json.success).toBe(true);
       expect(json.maintenance.dryRun).toBe(true);
       expect(json.maintenance.callerType).toBe('cron');
+    });
+
+    it('Retention maintenance endpoint executes real cleanup with CRON_SECRET header and truthful status', async () => {
+      process.env.CRON_SECRET = 'test_cron_secret_123';
+
+      const req = new Request('http://localhost/api/admin/retention-maintenance', {
+        method: 'POST',
+        headers: {
+          authorization: 'Bearer test_cron_secret_123',
+          'content-type': 'application/json',
+        },
+        body: JSON.stringify({ dryRun: false }),
+      });
+
+      const res = await invokeHandler(retentionMaintenanceHandler, req);
+      const json = await res.json();
+
+      expect(res.status).toBe(200);
+      expect(['success', 'partial', 'skipped']).toContain(json.result);
+      expect(json.maintenance.dryRun).toBe(false);
+      expect(json.maintenance.visitorsAnonymized).toBeDefined();
+      expect(json.maintenance.auditEventsCleaned).toBeDefined();
+      expect(json.maintenance.reconciliationTasksCleaned).toBeDefined();
     });
   });
 
