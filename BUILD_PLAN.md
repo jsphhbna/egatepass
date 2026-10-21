@@ -737,3 +737,106 @@ Local promotion evidence: pre-fix regression run 7/7 FAILED as expected; correct
 #### Evidence Classification Discipline & Pending Canary
 - **Mocked Recovery Tests**: Relabeled tests in `tests/password-recovery.test.ts` to explicitly state `MOCKED SERVER CONTRACT TEST`. Documented that local unit tests prove handler contract given verified-style recovery AMR, not live hosted Supabase Auth PKCE exchange.
 - **Pending Hosted Canary**: `REAL SUPABASE RECOVERY CANARY` formally recorded as pending future authorized deployment stage (request reset -> receive email -> PKCE exchange -> real AMR -> password reset -> session termination -> normal login required).
+
+
+### Guard Dashboard Contract & Timezone Repair + Migration-Chain Predeployment Closure Pass (October 2026)
+
+- **Baseline Starting Commit**: `559af9b89ac7111a00e97062a65e065f5d72d420`
+- **Branch**: `feat/runtime-migration`
+- **Scope**: Targeted repair of `api.guard_dashboard()` response contract drift and Asia/Manila daily statistics timezone regression, predeployment migration chain closure, and same-root-cause recurrence elimination. Zero new API endpoints. Hosted Supabase migrations remain **NOT APPLIED**.
+
+#### Hosted Migration History Predeployment Status
+- **Authoritative Hosted State**: The live Supabase development project (`nhoawvkfqblsgutdffie`, `egatepass-dev`) currently has an **EMPTY** migration history and **0** E-GatePass application tables.
+- **Pending Migrations**: The **ENTIRE** migration chain (all 18 migrations from `20261020000100_core_schema.sql` through `20261021054710_guard_dashboard_contract_timezone_closure.sql`) is pending, NOT just the final migrations.
+- **Deployment Invariant**: No hosted database migration, push, or mutation is authorized in this pass. All verification is performed locally and in PGlite.
+
+#### Repair 1: api.guard_dashboard() Response Contract Restoration
+- **Problem**: In migration `20261021000200_recovery_confinement_and_device_closure.sql`, the authorization check correctly confined recovery sessions and enforced staff roles. However, the RPC's response-building logic was inadvertently rewritten:
+  - Evidence was returned as a generic `evidence: [{ id, kind }]` array rather than canonical `photoEvidenceId` and `idEvidenceId`.
+  - Root pagination count was returned as `totalPending` instead of canonical `pendingTotal`.
+  - Daily stats object returned `pending` and omitted canonical `total`.
+  - This broke runtime integration with `src/services/guard.ts`, causing undefined photo IDs, missing evidence photos in AuthenticatedImage, pagination fallback to current page length (`pendingTotal = queue.length`), and undefined "Total Issued" metrics.
+- **Root Cause**: Security hardening migration recreated the entire RPC from memory rather than preserving the established client JSON wire contract.
+- **Fix Implemented**: Created additive migration `supabase/migrations/20261021054710_guard_dashboard_contract_timezone_closure.sql` via Supabase CLI recreating `api.guard_dashboard(integer, integer)`:
+  - Retains strict recovery session rejection: raises SQLSTATE 42501 `recovery_session_forbidden` when `private.is_recovery_session()` is true.
+  - Enforces staff operational role: caller must have role `guard`, `admin`, or `superadmin` via `private.current_staff_role()`.
+  - Restores queue item contract:
+    ```sql
+    jsonb_build_object(
+      'id', q.id,
+      'visitorName', q.full_name,
+      'purpose', q.purpose,
+      'source', q.source,
+      'status', q.status,
+      'validFrom', to_char(q.valid_from, 'YYYY-MM-DD"T"HH24:MI:SS"Z"'),
+      'validUntil', to_char(q.valid_until, 'YYYY-MM-DD"T"HH24:MI:SS"Z"'),
+      'scannedAt', case when q.entry_scanned_at is not null then to_char(q.entry_scanned_at, 'YYYY-MM-DD"T"HH24:MI:SS"Z"') else null end,
+      'gate', coalesce(g.name, 'Main Gate'),
+      'photoEvidenceId', pe.id,
+      'idEvidenceId', ie.id
+    )
+    ```
+  - Restores root response contract:
+    ```sql
+    jsonb_build_object(
+      'queue', coalesce(v_queue, '[]'::jsonb),
+      'stats', v_stats,
+      'rejectionReasons', v_reasons,
+      'pendingTotal', v_pending_total,
+      'hasMore', v_has_more
+    )
+    ```
+  - Restores stats contract:
+    ```sql
+    jsonb_build_object(
+      'inside', coalesce(v_inside_count, 0),
+      'exited', coalesce(v_exited_count, 0),
+      'rejected', coalesce(v_rejected_count, 0),
+      'total', coalesce(v_total_issued_today, 0)
+    )
+    ```
+  - Restores queue ordering `entry_scanned_at ASC` and pagination `hasMore := v_pending_total > (v_offset + v_limit)`.
+- **Status**: PASS (verified in PGlite migration suite and frontend contract suite).
+
+#### Repair 2: Asia/Manila Day Boundary Restoration
+- **Problem**: Migration `20261021000200` replaced explicit `Asia/Manila` day boundary computation with session-dependent `current_date` expressions (`time_out >= current_date`, `decided_at >= current_date`). If PostgreSQL or session timezone runs on UTC or US time, daily metrics shift around midnight in the Philippines.
+- **Root Cause**: Inadvertent simplification during RPC recreation lost timezone awareness.
+- **Fix Implemented**: Restored explicit Manila day boundaries in `20261021054710_guard_dashboard_contract_timezone_closure.sql`:
+  ```sql
+  v_day_start := date_trunc('day', statement_timestamp() at time zone 'Asia/Manila') at time zone 'Asia/Manila';
+  v_day_end := (date_trunc('day', statement_timestamp() at time zone 'Asia/Manila') + interval '1 day') at time zone 'Asia/Manila';
+  ```
+  Applied consistently:
+  - Daily passes issued: `issued_at >= v_day_start and issued_at < v_day_end`
+  - Currently inside: `entry_scanned_at >= v_day_start and entry_scanned_at < v_day_end and status = 'inside'`
+  - Exited today: `entry_scanned_at >= v_day_start and entry_scanned_at < v_day_end and status = 'completed'`
+  - Rejected today: `created_at >= v_day_start and created_at < v_day_end and status = 'rejected'`
+- **Status**: PASS (verified across `UTC` and `America/New_York` session timezones in PGlite Test J).
+
+#### Repair 3: Frontend Strict Wire Contract Validation
+- **Problem**: `src/services/guard.ts` silently destructured properties from `data`. A malformed DB contract caused undefined fields to propagate downstream into UI state.
+- **Fix Implemented**: Added strict runtime contract validation to `fetchGuardDashboard()` in `src/services/guard.ts`:
+  - Validates `Array.isArray(data.queue)`.
+  - Validates `typeof data.pendingTotal === 'number'`.
+  - Validates `typeof data.hasMore === 'boolean'`.
+  - Validates `data.stats` contains numeric `inside, exited, rejected, total`.
+  - Validates each queue item contains `'photoEvidenceId'` and `'idEvidenceId'` keys.
+  - Throws descriptive `Error('api.guard_dashboard contract violation: ...')` to prevent corrupted UI states.
+- **Status**: PASS (5/5 tests in `tests/guard-dashboard-contract.test.ts` pass).
+
+#### Recurrence Search & Elimination
+1. **Repeated Function Contract Drift Scan**:
+   - Inspected all functions defined more than once across migrations:
+     - `api.guard_dashboard(integer, integer)`: Drifted in `20261021000200`; repaired in `20261021054710`.
+     - `api.acknowledge_privacy()`: Recreated in `20261021000200` with only the `private.is_recovery_session()` check added; returns boolean; contract preserved.
+     - `api.decide_visit(uuid, text, text)`: Recreated in `20261020000800` and `20261020001300`; contract preserved.
+     - `api.create_upload_intent(...)`: Contract preserved across iterations.
+     - `api.create_incident_hold(...)`: Contract preserved across iterations.
+   - Finding: Only `guard_dashboard` suffered contract drift.
+2. **JSON Key Renaming Drift Scan**:
+   - Searched for mismatches such as `pendingTotal` vs `totalPending`, `photoEvidenceId` vs `evidence`, `stats.total` vs `stats.pending`.
+   - Verified that client consumers and RPC producers match canonical keys.
+3. **Manila "Today" Semantics Scan**:
+   - Audited all uses of `current_date` and `now()` across active migrations and server code.
+   - SQL operations requiring Manila day context now strictly use explicit `Asia/Manila` boundaries (`v_day_start` to `v_day_end`).
+   - Server endpoints (`api/admin/dashboard.ts`, `api/admin/today-insights.ts`) receive explicit date range boundaries (`startToday` / `endToday`) computed via Manila date helpers.

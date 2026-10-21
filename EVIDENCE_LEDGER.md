@@ -310,3 +310,12 @@ Exact-commit verification at `80d861b`: `npm run test:architecture` PASS 3/3; `n
 | EV-TYPE-008 | API & CLIENT TYPECHECK | `npm run typecheck:api` & `npx tsc --noEmit` | PASS: exit code 0 | Strict TypeScript compilation across API and React client with zero errors |
 | EV-BUILD-008 | PRODUCTION BUILD INTEGRITY | `npm run build` | PASS: exit code 0 (1.90s) | Production bundle cleanly built with Vite v8.3.1 |
 | EV-E2E-006 | PLAYWRIGHT BROWSER STARTUP E2E | `npm run test:e2e:startup` | PASS: 4/4 cases | Edge browser startup verified across dev configured/missing/malformed and preview configured |
+
+| EV-GUARD-CONTRACT-001 | GUARD DASHBOARD PRODUCER/CONSUMER CONTRACT | `api.guard_dashboard()`, `src/services/guard.ts`, `tests/guard-dashboard-contract.test.ts` | PASS: 5/5 tests | Exact JSON contract verified: photoEvidenceId, idEvidenceId, pendingTotal, stats.total, hasMore; malformed contract rejected |
+| EV-GUARD-TIMEZONE-001 | ASIA/MANILA DAILY STATS TIMEZONE INVARIANT | `api.guard_dashboard()`, `tests/migration-chain-pglite.test.ts` Test J | PASS: 10/10 tests | Manila day boundaries deterministic; UTC and America/New_York session timezones produce identical Manila-day totals |
+| EV-MIG-006 | FULL 18-MIGRATION PGLITE SEQUENTIAL & UPGRADE RUNNER | `npm run test:migrations` | PASS: 10/10 tests (19.4s) | Clean sequential execution (000100 through 20261021054710) and upgrade from 001300/001400/20261021000100/20261021000200 |
+| EV-FULL-SUITE-010 | FULL TEST SUITE PASS | `npm test` | PASS: 23 files, 330 tests (22.8s) | All unit, contract, static, and mocked tests pass with zero failures |
+| EV-CONTRACTS-004 | ARCHITECTURE CONTRACTS | `npm run test:contracts` | PASS: 2 files, 17 tests | Architecture contract rules verified |
+| EV-TYPE-009 | API & CLIENT TYPECHECK | `npm run typecheck:api` & `npx tsc --noEmit` | PASS: exit code 0 | Strict TypeScript compilation across API and React client with zero errors |
+| EV-BUILD-009 | PRODUCTION BUILD INTEGRITY | `npm run build` | PASS: exit code 0 (1.40s) | Production bundle cleanly built with Vite v8.3.1 |
+| EV-E2E-007 | PLAYWRIGHT BROWSER STARTUP E2E | `npm run test:e2e:startup` | PASS: 4/4 cases | Edge browser startup verified across dev configured/missing/malformed and preview configured |

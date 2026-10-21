@@ -48,16 +48,37 @@ export async function fetchGuardDashboard(options?: {
     });
   const data = rawData as DashboardWire | null;
   if (error || !data) throw error ?? new Error('Guard dashboard unavailable');
+
+  // Strict Canonical Contract Validation:
+  // Detect incompatible schema/RPC mutations visibly rather than rendering corrupt operational state
+  if (
+    !Array.isArray(data.queue) ||
+    typeof data.pendingTotal !== 'number' ||
+    typeof data.hasMore !== 'boolean' ||
+    !data.stats ||
+    typeof data.stats.total !== 'number' ||
+    typeof data.stats.inside !== 'number' ||
+    typeof data.stats.exited !== 'number' ||
+    typeof data.stats.rejected !== 'number'
+  ) {
+    throw new Error('Malformed guard dashboard payload: missing canonical contract properties');
+  }
+
   return {
-    queue: (data.queue ?? []).map((item) => ({
-      ...item,
-      photoPublicId: item.photoEvidenceId,
-      idImagePublicId: item.idEvidenceId,
-    })),
-    stats: data.stats ?? { inside: 0, exited: 0, rejected: 0, total: 0 },
+    queue: data.queue.map((item) => {
+      if (!item || typeof item.id !== 'string' || !('photoEvidenceId' in item) || !('idEvidenceId' in item)) {
+        throw new Error('Malformed guard queue item: missing canonical evidence properties');
+      }
+      return {
+        ...item,
+        photoPublicId: item.photoEvidenceId,
+        idImagePublicId: item.idEvidenceId,
+      };
+    }),
+    stats: data.stats,
     rejectionReasons: Array.isArray(data.rejectionReasons) ? data.rejectionReasons : [],
-    pendingTotal: Number(data.pendingTotal ?? data.queue?.length ?? 0),
-    hasMore: Boolean(data.hasMore),
+    pendingTotal: data.pendingTotal,
+    hasMore: data.hasMore,
   };
 }
 

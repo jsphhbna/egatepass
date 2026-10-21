@@ -420,3 +420,33 @@
   5. **Baseline SHA Correction**: Record authoritative starting SHA as `1d1633890dff98e79583276798c31ed95d2dac8e`.
   6. **Zero API Sprawl**: Zero new API endpoints added. Repaired existing RLS, RPCs, and API handler.
 - **Consequence**: Full database-level confinement of recovery sessions; fail-closed device identity lookup; accurate evidence ledger; zero hosted mutation.
+
+
+## ADR-0032 — Guard Dashboard Contract Restoration and Asia/Manila Daily Statistics Invariant
+- **Date**: 2026-10-21
+- **Status**: accepted
+- **Context**:
+  1. Migration `20261021000200_recovery_confinement_and_device_closure.sql` properly hardened `api.guard_dashboard(integer, integer)` against recovery sessions and enforced staff operational roles.
+  2. However, the migration unintentionally altered the established JSON response contract consumed by `src/services/guard.ts`:
+     - Evidence IDs were replaced with a generic `evidence: [{ id, kind }]` array, breaking `photoEvidenceId` and `idEvidenceId`.
+     - Root pagination property was renamed to `totalPending` instead of canonical `pendingTotal`.
+     - Daily stats object omitted `total` and returned `pending`.
+     - These mismatches broke photo evidence rendering, caused pagination backlog count to fall back to current page length, and caused "Total Issued" stats to be undefined.
+  3. Daily statistics in `20261021000200` replaced explicit `Asia/Manila` day boundaries with session-dependent `current_date` expressions, shifting daily counts around midnight depending on database session timezone.
+  4. Existing tests verified function execution and error handling, but did not assert producer-consumer wire contract compatibility.
+  5. Live hosted Supabase development database (`egatepass-dev`, `nhoawvkfqblsgutdffie`) migration history is EMPTY with 0 application tables; the entire 18-migration chain remains unapplied.
+- **Decisions**:
+  1. **Additive Migration 20261021054710**: Create `supabase/migrations/20261021054710_guard_dashboard_contract_timezone_closure.sql` via Supabase CLI recreating `api.guard_dashboard(integer, integer)`.
+  2. **Preserve Authorization Hardening**: Reject recovery sessions with SQLSTATE 42501 `recovery_session_forbidden` and require staff operational role `guard`, `admin`, or `superadmin` via `private.current_staff_role()`.
+  3. **Restore Canonical Response Contract**:
+     - Queue item: returns `photoEvidenceId` and `idEvidenceId` (UUID or null) mapped from `visitor_evidence`.
+     - Root object: returns `queue, stats, rejectionReasons, pendingTotal, hasMore`.
+     - Stats object: returns `inside, exited, rejected, total`.
+     - Pagination: `hasMore := v_pending_total > (v_offset + v_limit)`.
+     - Queue ordering: `entry_scanned_at ASC`.
+  4. **Explicit Asia/Manila Day Window**: Compute `v_day_start` and `v_day_end` using `date_trunc('day', statement_timestamp() at time zone 'Asia/Manila') at time zone 'Asia/Manila'`. Apply across all daily counts. Invariance verified under `SET TIME ZONE 'UTC'` and `SET TIME ZONE 'America/New_York'`.
+  5. **Frontend Strict Wire Validation**: In `src/services/guard.ts`, validate that required canonical keys exist and are of expected types; throw descriptive contract violation errors if malformed to prevent silent UI corruption.
+  6. **Producer-Consumer Contract Tests**: Add 5 frontend contract tests in `tests/guard-dashboard-contract.test.ts` and PGlite database contract test (Test J) in `tests/migration-chain-pglite.test.ts`.
+  7. **Hosted Migration Chain Status Correction**: Explicitly document that live hosted Supabase migration history is empty; all 18 migrations are pending and must be applied sequentially upon authorization.
+  8. **Zero API Sprawl**: Zero new API endpoints added.
+- **Consequence**: Full runtime compatibility restored between database and Guard UI; deterministic Manila-day statistics; strict validation protects against silent contract drift; zero hosted mutations performed.

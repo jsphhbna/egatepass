@@ -1,8 +1,8 @@
 # E-GatePass Project State
 
-Updated: 2026-10-20 Asia/Manila
+Updated: 2026-10-21 Asia/Manila
 
-Current stage: Targeted root-cause corrections, Supabase 404 diagnosis, and Vercel Preview preflight LOCALLY VERIFIED; provider/database integration BLOCKED (no isolated DB runtime or approved migrations on egatepass-dev)
+Current stage: Guard dashboard contract restoration, Asia/Manila daily statistics invariant, Auth / RLS recovery confinement, and Vercel Preview preflight LOCALLY VERIFIED; provider/database integration BLOCKED (hosted Supabase migration history EMPTY; entire 18-migration chain UNAPPLIED on egatepass-dev)
 
 ## Repository identity
 
@@ -307,3 +307,28 @@ Current product maturity is `IN PROGRESS (LEVEL 2+ / PRE-DEPLOYMENT VERIFIED)` â
 2. **Hosted Data API Schema Exposure Gate**: Verify Data API exposed schemas include `public`, `graphql_public`, and `api`; perform canary RPC before production traffic.
 3. **Real Supabase Recovery Canary (Pending)**: Real end-to-end Supabase Auth PKCE recovery flow (request reset -> email delivery -> PKCE code exchange -> real token AMR -> password reset -> session termination -> normal login).
 4. **Hosted Supabase Status**: **NOT APPLIED** (All migrations and hardening verified locally/offline).
+
+
+34. **GUARD DASHBOARD CONTRACT / TIMEZONE REPAIR & PREDEPLOYMENT CLOSURE PASS (October 2026)**:
+    - **Guard Dashboard Wire Contract Restoration**: Additive migration `20261021054710_guard_dashboard_contract_timezone_closure.sql` created via Supabase CLI. Restored canonical queue evidence IDs (`photoEvidenceId`, `idEvidenceId`), canonical pagination total (`pendingTotal`), canonical stats (`stats.total`, `stats.inside`, `stats.exited`, `stats.rejected`), and pagination flag (`hasMore`).
+    - **Recovery Confinement Retained**: Recreated RPC strictly preserves recovery session rejection (`42501 recovery_session_forbidden`) and staff operational role check (`guard, admin, superadmin`).
+    - **Explicit Asia/Manila Day Window**: Daily stats computed using deterministic Manila boundaries (`v_day_start` and `v_day_end` relative to `statement_timestamp() at time zone 'Asia/Manila'`). Invariance across session timezones verified in PGlite.
+    - **Frontend Strict Contract Validation**: `src/services/guard.ts` validates exact canonical payload and rejects malformed shapes with descriptive errors.
+    - **Local & PGlite Regression Coverage**: Added 5 frontend contract tests in `tests/guard-dashboard-contract.test.ts` and added Test J in `tests/migration-chain-pglite.test.ts` verifying contract, evidence resolution, pagination, and Manila boundaries.
+    - **Predeployment Migration State Clarification**: Authoritative hosted Supabase migration history is **EMPTY** (0 tables); all **18 migrations** are pending and UNAPPLIED.
+
+## Test Metrics (Current Pass)
+- `npm test`: 23 test files, 330 passed (0 failed).
+- `test:migrations`: 10/10 passed (PGlite sequential runner, upgrades, D1-D10 trigger contracts, safe anon settings RLS, 10-actor matrix, recovery confinement, Guard contract & Manila timezone).
+- `test:contracts`: 17/17 passed.
+- `typecheck:api`: 0 errors.
+- `npx tsc --noEmit`: 0 errors.
+- `npm run build`: clean production build (1.40s).
+- `test:e2e:startup`: 4/4 passed (Playwright browser startup verification on Edge across dev configured/missing/malformed and preview configured).
+
+## Documented Deployment Gates & Canaries
+1. **Hosted Supabase Status**: **NOT APPLIED** (Live hosted migration history is EMPTY; 0 application tables; entire 18-migration chain pending).
+2. **Pre-Turnstile Development Anonymous Accounts Checkpoint**: Enumerate and clean stale dev anonymous identities before production with owner approval; verify fresh anonymous sessions require valid Turnstile tokens.
+3. **Hosted Data API Schema Exposure Gate**: Verify Data API exposed schemas include `public`, `graphql_public`, and `api`; perform canary RPC before production traffic.
+4. **Real Supabase Recovery Canary (Pending)**: Real end-to-end Supabase Auth PKCE recovery flow (request reset -> email delivery -> PKCE code exchange -> real token AMR -> password reset -> session termination -> normal login).
+5. **Real Guard Dashboard RPC Canary (Pending)**: Verify photo/ID evidence IDs, pagination > page limit, and Asia/Manila daily stats against live Supabase after migration push.
