@@ -1,7 +1,7 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 
-const handler = readFileSync('api/passes/email.ts', 'utf8');
+const handler = readFileSync('server/routes/passes/email.ts', 'utf8');
 const emailAdapter = readFileSync('server/email.ts', 'utf8');
 const modal = readFileSync('src/components/EmailPassModal.tsx', 'utf8');
 const migrationPath = 'supabase/migrations/20261020001000_qr_email_security.sql';

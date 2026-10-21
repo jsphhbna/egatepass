@@ -357,3 +357,22 @@ Current product maturity is `IN PROGRESS (LEVEL 2+ / PRE-DEPLOYMENT VERIFIED)` â
 3. **Hosted Data API Schema Exposure Gate**: Verify Data API exposed schemas include `public`, `graphql_public`, and `api`; perform canary RPC before production traffic.
 4. **Real Supabase Recovery Canary (Pending)**: Real end-to-end Supabase Auth PKCE recovery flow (request reset -> email delivery -> PKCE code exchange -> real token AMR -> password reset -> session termination -> normal login).
 5. **Real Guard Dashboard RPC Canary (Pending)**: Verify photo/ID evidence IDs, deterministic queue ordering, pagination > page limit, and Asia/Manila daily stats against live Supabase after migration push.
+
+
+36. **VERCEL HOBBY FUNCTION-LIMIT ARCHITECTURE FIX (October 2026)**:
+    - **Physical Function Consolidation**: Replaced 26 separate Vercel functions in `api/` with 6 grouped catch-all functions (`admin`, `auth`, `passes`, `device`, `gate`, `system`).
+    - **Handler Separation**: Extracted all 26 handlers into `server/routes/` as standard library modules outside `api/`.
+    - **Contract Preservation**: All 26 public endpoints remain identical. Added rewrites in `vercel.json` for top-level paths prior to SPA fallback.
+    - **Security Invariant Preserved**: Routers perform dispatch only; individual handlers retain all authorization, rate limiting, and recovery session confinement.
+    - **Architecture Regression Test**: Added `tests/architecture-vercel-hobby.test.ts` enforcing physical function count $\le 8$ (actual: 6) and verifying all 26 routes.
+    - **Email Template Bundling**: Pre-compiled React Email templates in `server/templates/` to `.js` to ensure seamless bundling under Vercel NFT runtime.
+    - **Vercel Preview Verified**: Deployed preview `dpl_HvTJxhjW91nP6Nookzg6WsMZbZ3T` with status `READY` and 6 deployed functions. Hobby limit blocker completely resolved.
+
+## Test Metrics (Current Pass)
+- `npm test`: 24 test files, 353 passed (0 failed).
+- `test:migrations`: 10/10 passed (PGlite sequential runner, upgrades, D1-D10 trigger contracts, safe anon settings RLS, 10-actor matrix, recovery confinement, deterministic Guard queue & Manila timezone).
+- `test:contracts`: 17/17 passed.
+- `typecheck:api`: 0 errors.
+- `npx tsc --noEmit`: 0 errors.
+- `npm run build`: clean production build (1.25s).
+- `tests/architecture-vercel-hobby.test.ts`: 12/12 passed (enforces $\le 8$ functions, route contract matrix, dispatch semantics).

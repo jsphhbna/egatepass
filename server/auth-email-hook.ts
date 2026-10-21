@@ -5,7 +5,6 @@ import {
   renderStaffInviteEmail,
   renderEmailChangeEmail,
 } from './templates/index.js';
-import { sendResendEmail } from './email.js';
 
 export type AuthEmailActionType =
   | 'signup'
@@ -73,7 +72,7 @@ export function verifyStandardWebhookSignature(
   } else if (headers && typeof headers === 'object') {
     const getVal = (name: string): string | null => {
       const val = headers[name] ?? headers[name.toLowerCase()];
-      return Array.isArray(val) ? val[0] : (val ?? null);
+      return Array.isArray(val) ? (val[0] ?? null) : (val ?? null);
     };
     const id = getVal('webhook-id');
     const ts = getVal('webhook-timestamp');
@@ -355,5 +354,7 @@ export async function prepareAuthEmail(
   if (!emails || emails.length === 0) {
     throw new Error('No email could be prepared for the supplied auth payload');
   }
-  return emails[0];
+  const first = emails[0];
+  if (!first) throw new Error('No email could be prepared');
+  return first;
 }

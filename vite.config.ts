@@ -45,8 +45,15 @@ const vercelApiDevPlugin = (): Plugin => {
         const relativePath = parsedUrl.pathname.replace(/^\/api\//, '');
 
         const candidatePaths = [
+          resolve(import.meta.dirname, 'server', 'routes', `${relativePath}.ts`),
+          resolve(import.meta.dirname, 'server', 'routes', relativePath, 'index.ts'),
+          resolve(import.meta.dirname, 'server', 'routes', 'admin', `${relativePath}.ts`),
+          resolve(import.meta.dirname, 'server', 'routes', 'auth', `${relativePath}.ts`),
+          resolve(import.meta.dirname, 'server', 'routes', 'passes', `${relativePath}.ts`),
+          resolve(import.meta.dirname, 'server', 'routes', 'device', `${relativePath}.ts`),
+          resolve(import.meta.dirname, 'server', 'routes', 'gate', `${relativePath}.ts`),
+          resolve(import.meta.dirname, 'server', 'routes', 'system', `${relativePath}.ts`),
           resolve(import.meta.dirname, 'api', `${relativePath}.ts`),
-          resolve(import.meta.dirname, 'api', relativePath, 'index.ts'),
         ];
 
         const handlerFile = candidatePaths.find((p) => existsSync(p));

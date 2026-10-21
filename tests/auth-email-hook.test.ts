@@ -7,7 +7,7 @@ import {
   prepareAuthEmails,
   type SupabaseAuthEmailPayload,
 } from '../server/auth-email-hook.js';
-import sendEmailHookHandler from '../api/auth/send-email-hook.js';
+import sendEmailHookHandler from '../server/routes/auth/send-email-hook.js';
 
 describe('EMAIL-01: Supabase Auth Send Email Hook Infrastructure', () => {
   const base64KeyA = 'MfKQ9r8vN5yU7wT3aB2cE1dF4gH6jK8m';

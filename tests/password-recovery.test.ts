@@ -1,9 +1,9 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import resetPasswordHandler from '../api/auth/reset-password.js';
-import updateDeviceAuthHandler from '../api/update-device-auth.js';
-import completePasswordChangeHandler from '../api/auth/complete-password-change.js';
-import decideVisitHandler from '../api/decide-visit.js';
-import adminSettingsHandler from '../api/admin/settings.js';
+import resetPasswordHandler from '../server/routes/auth/reset-password.js';
+import updateDeviceAuthHandler from '../server/routes/device/update-device-auth.js';
+import completePasswordChangeHandler from '../server/routes/auth/complete-password-change.js';
+import decideVisitHandler from '../server/routes/gate/decide-visit.js';
+import adminSettingsHandler from '../server/routes/admin/settings.js';
 import { setServerSupabaseClientsForTest } from '../server/supabase.js';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';

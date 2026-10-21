@@ -3,7 +3,7 @@ import { encodeCompoundCursor, decodeCompoundCursor, decodeCursorStrict } from '
 import { controlledDeviceEmail } from '../server/actors.js';
 import { normalizeLoginIdentity } from '../src/lib/identity.js';
 import { escapeCsvCell } from '../src/lib/completeExport.js';
-import { normalizeSha256Digest } from '../api/passes/email.js';
+import { normalizeSha256Digest } from '../server/routes/passes/email.js';
 import { EmailDeliveryError, sendResendEmail, setEmailSenderForTest } from '../server/email.js';
 import { evaluateTurnstilePolicy } from '../src/services/visitorRegistration.js';
 

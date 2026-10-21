@@ -2,7 +2,7 @@ import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 
 const migration = readFileSync('supabase/migrations/20261020000500_pass_issuance.sql', 'utf8');
-const endpoint = readFileSync('api/passes/issue.ts', 'utf8');
+const endpoint = readFileSync('server/routes/passes/issue.ts', 'utf8');
 const service = readFileSync('src/services/visitorRegistration.ts', 'utf8');
 const supabaseClient = readFileSync('src/lib/supabase.ts', 'utf8');
 const pgtap = readFileSync('supabase/tests/004_pass_issuance.test.sql', 'utf8');

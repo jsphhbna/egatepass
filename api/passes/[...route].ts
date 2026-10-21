@@ -1,0 +1,11 @@
+import { createGroupedRouter } from '../../server/router.js';
+import email from '../../server/routes/passes/email.js';
+import issue from '../../server/routes/passes/issue.js';
+
+const router = createGroupedRouter('passes', {
+  email,
+  issue,
+});
+
+export const { fetch, handleRequest, GET, POST, PUT, PATCH, DELETE, HEAD, OPTIONS } = router;
+export default { fetch: router.fetch };

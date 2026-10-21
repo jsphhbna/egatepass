@@ -132,7 +132,7 @@ const footerText: React.CSSProperties = {
 };
 
 export function StaffInviteEmail({
-  email,
+  email: _email,
   inviteUrl,
   roleName,
   displayName,

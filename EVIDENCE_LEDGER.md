@@ -334,3 +334,16 @@ Exact-commit verification at `80d861b`: `npm run test:architecture` PASS 3/3; `n
 | EV-HOSTED-ADVISORS-001 | HOSTED SECURITY & PERFORMANCE ADVISORS | `npx supabase db advisors --linked` | PASS: 0 performance findings | Performance advisor: 0 issues; Security advisor: rls_auto_enable findings closed |
 | EV-HOSTED-STORAGE-001 | STORAGE BUCKET INTEGRITY | `storage.buckets`, `storage.objects` | PASS: 2 buckets, 0 objects | `visitor-photos` and `visitor-ids` private, 5 MiB limit, valid MIME types, 0 objects |
 | EV-HOSTED-DATA-API-001 | POSTGREST DATA API SCHEMA PROBE | HTTP PostgREST probe | RECORDED: PGRST106 | Public table app_settings 401 (permission denied); api schema returns PGRST106 until exposed in Supabase Dashboard |
+
+
+## Vercel Hobby Function-Limit Architecture Fix (October 2026)
+| ID | Class | Command / artifact | Result | Scope and limitation |
+|---|---|---|---|---|
+| EV-HOBBY-LIMIT-001 | FUNCTION COUNT REGRESSION | `tests/architecture-vercel-hobby.test.ts` | PASS: 6 <= 8 functions | Verified physical files under `api/` count exactly 6 (admin, auth, passes, device, gate, system) |
+| EV-ROUTE-MAP-001 | ROUTE CONTRACT MATRIX | `server/route-map.ts`, `tests/architecture-vercel-hobby.test.ts` | PASS: 26/26 routes | All 26 original routes mapped to extracted handlers; zero route dropped or altered |
+| EV-DISPATCH-CONTRACT-001 | DISPATCH REQUEST SEMANTICS | `server/router.ts`, `tests/architecture-vercel-hobby.test.ts` | PASS: verified | Headers, cookies, query, body, IP headers, and response status/error contract preserved |
+| EV-FULL-SUITE-012 | FULL TEST SUITE PASS | `npm test` | PASS: 24 files, 353 tests | All 353 unit, contract, static, and architecture tests pass with zero failures |
+| EV-TYPE-010 | API & CLIENT TYPECHECK | `npm run typecheck:api` & `npx tsc --noEmit` | PASS: exit code 0 | Strict TypeScript compilation across API routes and React client with zero errors |
+| EV-BUILD-010 | PRODUCTION BUILD INTEGRITY | `npm run build` | PASS: exit code 0 (1.25s) | Production bundle cleanly built with Vite v8.3.1 |
+| EV-VERCEL-PREVIEW-001 | VERCEL PREVIEW DEPLOYMENT | `vercel deploy` -> `dpl_HvTJxhjW91nP6Nookzg6WsMZbZ3T` | PASS: READY, 6 functions | Successfully deployed to Vercel preview; Hobby 12-function limit error completely resolved |
+| EV-VERCEL-CANARIES-001 | PREVIEW ROUTE CANARIES | `vercel curl` across 7 representative endpoints | PASS: all reached handlers | 404 on unknown, 401 on admin, 405 on auth, 405 on pass, 405 on device, 405 on gate, 401 on evidence |

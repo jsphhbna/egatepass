@@ -1,7 +1,9 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "framework": "vite",
-  "regions": ["syd1"],
+  "regions": [
+    "syd1"
+  ],
   "headers": [
     {
       "source": "/(.*)",
@@ -34,6 +36,54 @@
     }
   ],
   "rewrites": [
+    {
+      "source": "/api/create-device",
+      "destination": "/api/device/create-device"
+    },
+    {
+      "source": "/api/delete-device",
+      "destination": "/api/device/delete-device"
+    },
+    {
+      "source": "/api/update-device",
+      "destination": "/api/device/update-device"
+    },
+    {
+      "source": "/api/update-device-auth",
+      "destination": "/api/device/update-device-auth"
+    },
+    {
+      "source": "/api/scan-pass",
+      "destination": "/api/gate/scan-pass"
+    },
+    {
+      "source": "/api/decide-visit",
+      "destination": "/api/gate/decide-visit"
+    },
+    {
+      "source": "/api/evidence",
+      "destination": "/api/gate/evidence"
+    },
+    {
+      "source": "/api/create-user",
+      "destination": "/api/system/create-user"
+    },
+    {
+      "source": "/api/update-user",
+      "destination": "/api/system/update-user"
+    },
+    {
+      "source": "/api/update-settings",
+      "destination": "/api/system/update-settings"
+    },
+    {
+      "source": "/api/purge-images",
+      "destination": "/api/system/purge-images"
+    },
+    {
+      "source": "/api/reconciliation-items",
+      "destination": "/api/system/reconciliation-items"
+    },
     {
       "source": "/((?!api/).*)",
       "destination": "/index.html"

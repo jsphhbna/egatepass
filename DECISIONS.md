@@ -510,3 +510,25 @@
   7. **Preserve Auth & Storage Integrity**: Zero Auth users modified (5 total, 4 anonymous, 4 sessions). Zero Storage buckets modified (2 private buckets, 0 objects).
   8. **Strict Pre-Vercel Gate**: Zero Vercel deployments, zero domain attachment, zero automated repair.
 - **Consequence**: Hosted database is in a known, verified, and pristine state matching local migration contracts, awaiting Dashboard Data API schema exposure and Auth hook setup.
+
+
+---
+
+### Decision: Vercel Hobby Function-Limit Consolidation (26 Functions -> 6 Grouped Catch-All Routers) (October 2026)
+
+- **Context**: Deployment to Vercel Hobby failed with `exceeded_serverless_functions_per_deployment` because the Hobby tier limits deployments to 12 Serverless Functions. The repository contained 26 individual TypeScript entrypoints in `api/`.
+- **Decisions**:
+  1. **Consolidate to 6 Grouped Catch-All Entrypoints**:
+     - `api/admin/[...route].ts` -> 9 admin routes
+     - `api/auth/[...route].ts` -> 3 auth routes
+     - `api/passes/[...route].ts` -> 2 pass routes
+     - `api/device/[...route].ts` -> 4 device routes
+     - `api/gate/[...route].ts` -> 3 gate/evidence routes
+     - `api/system/[...route].ts` -> 5 system/user/governance routes
+     This reduces the physical function count from 26 to 6 (under the hard limit of $\le 8$ and well below the Hobby cap of 12).
+  2. **Extract Handlers Outside `api/`**: Move all 26 endpoint implementations to `server/routes/<group>/<endpoint>.ts`. Because Vercel builds every file in `api/` as a function, keeping handlers outside `api/` guarantees they are not treated as independent serverless functions.
+  3. **Zero Compromise on Handler Security**: Router dispatchers (`server/router.ts`) only perform route matching and argument forwarding. Every endpoint handler independently enforces `requireStaffActor`, role checks, input validation, rate limiting, and recovery session confinement. No router acts as a privileged bypass.
+  4. **Preserve External Contract via Vercel Rewrites**: Added rewrites in `vercel.json` mapping legacy paths (`/api/create-device`, `/api/scan-pass`, etc.) to `/api/device/create-device`, `/api/gate/scan-pass`, etc., placed strictly before the SPA wildcard fallback.
+  5. **Pre-compile Email Template Components**: Pre-compile React Email `.tsx` templates in `server/templates/` into `.js` to ensure Vercel's NFT tracer packages them without requiring on-the-fly TSX compilation at runtime.
+  6. **Add Architecture Regression Test**: Implemented `tests/architecture-vercel-hobby.test.ts` which asserts physical entrypoint count in `api/` is $\le 8$ and validates route mapping and dispatch request semantics.
+- **Consequence**: Full Hobby plan compatibility achieved; 100% of existing API contracts and security guarantees preserved; deployment succeeded in Preview with status `READY`.

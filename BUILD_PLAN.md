@@ -970,3 +970,40 @@ Local promotion evidence: pre-fix regression run 7/7 FAILED as expected; correct
   2. Turnstile CAPTCHA configuration in Supabase Auth.
   3. Send Email Hook configuration with secret in Supabase Auth Hooks.
   4. Vercel preview deployment and custom domain.
+
+
+---
+
+### Vercel Hobby Function-Limit Architecture Fix (October 2026)
+
+- **Problem & Root Cause**:
+  - Live deployment failed with `exceeded_serverless_functions_per_deployment`: Vercel Hobby plan strictly limits deployments to no more than 12 Serverless Functions per deployment.
+  - The repository had 26 individual TypeScript entrypoint files in `api/`, exceeding the Hobby limit by 14 functions.
+- **Architectural Solution**:
+  - Consolidated 26 physical Serverless Function entrypoints into exactly 6 grouped catch-all entrypoints (`[...route].ts`), well below the target of $\le 8$ functions.
+  - Extracted all 26 endpoint implementation handlers into `server/routes/<group>/<endpoint>.ts`, ensuring they are no longer built as standalone Vercel functions.
+  - Grouped catch-all entrypoint files created in `api/`:
+    1. `api/admin/[...route].ts` (9 routes: `activity`, `dashboard`, `devices`, `emergency`, `holds`, `records`, `retention-maintenance`, `settings`, `users`)
+    2. `api/auth/[...route].ts` (3 routes: `complete-password-change`, `reset-password`, `send-email-hook`)
+    3. `api/passes/[...route].ts` (2 routes: `email`, `issue`)
+    4. `api/device/[...route].ts` (4 routes: `create-device`, `delete-device`, `update-device`, `update-device-auth`)
+    5. `api/gate/[...route].ts` (3 routes: `scan-pass`, `decide-visit`, `evidence`)
+    6. `api/system/[...route].ts` (5 routes: `create-user`, `update-user`, `update-settings`, `purge-images`, `reconciliation-items`)
+  - Created central routing module `server/router.ts` and immutable contract matrix `server/route-map.ts`.
+  - Added Vercel rewrites in `vercel.json` preceding the SPA fallback to map existing top-level legacy paths (`/api/create-device`, `/api/scan-pass`, etc.) to their respective grouped functions while preserving public paths 100%.
+  - Compiled React Email templates (`.tsx` to `.js`) under `server/templates/` so that Vercel's NFT asset tracer bundles them seamlessly without runtime TSX module-loading issues.
+- **Preserved Contract & Security**:
+  - All 26 public API paths, HTTP methods, headers, query parameters, cookies, bodies, and error response formats preserved without modification.
+  - Individual handlers retain all `requireStaffActor` authentication, role authorization, rate limiting, audit logging, Turnstile checks, and recovery-session confinement.
+- **Verification Results**:
+  - `npm run typecheck:api`: PASS (0 errors)
+  - `npm run build`: PASS (0 errors, 1.25s)
+  - `npm test`: PASS (24 files, 353 passed, 0 failed)
+  - `tests/architecture-vercel-hobby.test.ts`: PASS (12/12 passed; proves function count is 6 $\le 8$, all 26 routes mapped, dispatch preserves query/headers/body/status)
+- **Vercel Preview Deployment**:
+  - Target: preview
+  - Deployment ID: `dpl_HvTJxhjW91nP6Nookzg6WsMZbZ3T`
+  - Deployment URL: `https://egatepass-iydrm3qjz-jsphhbnas-projects.vercel.app`
+  - Status: `READY`
+  - Physical function count: 6 (Hobby limit error resolved)
+  - Canaries: 7 representative routes verified via preview curl (unknown route 404, admin 401, auth 405, pass 405, device 405, gate 405, evidence 401; all reaching handlers correctly)

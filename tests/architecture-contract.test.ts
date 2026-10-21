@@ -30,11 +30,14 @@ describe('target repository and Vercel routing contract', () => {
 
     expect(config.framework).toBe('vite');
     expect(config.regions).toEqual(['syd1']);
-    expect(config.rewrites).toEqual([
-      { source: '/((?!api/).*)', destination: '/index.html' },
-    ]);
+    const spaRewrite = config.rewrites?.find((r) => r.destination === '/index.html');
+    expect(spaRewrite).toEqual({ source: '/((?!api/).*)', destination: '/index.html' });
+    expect(config.rewrites?.[config.rewrites.length - 1]).toEqual({
+      source: '/((?!api/).*)',
+      destination: '/index.html',
+    });
 
-    const pattern = new RegExp(`^${config.rewrites![0].source!}$`);
+    const pattern = new RegExp(`^${spaRewrite!.source!}$`);
     expect(pattern.test('/kiosk')).toBe(true);
     expect(pattern.test('/admin')).toBe(true);
     expect(pattern.test('/login')).toBe(true);

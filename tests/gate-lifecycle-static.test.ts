@@ -2,9 +2,9 @@ import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 
 const migration = readFileSync('supabase/migrations/20261020000600_gate_lifecycle.sql', 'utf8');
-const scanEndpoint = readFileSync('api/scan-pass.ts', 'utf8');
-const decisionEndpoint = readFileSync('api/decide-visit.ts', 'utf8');
-const evidenceEndpoint = readFileSync('api/evidence.ts', 'utf8');
+const scanEndpoint = readFileSync('server/routes/gate/scan-pass.ts', 'utf8');
+const decisionEndpoint = readFileSync('server/routes/gate/decide-visit.ts', 'utf8');
+const evidenceEndpoint = readFileSync('server/routes/gate/evidence.ts', 'utf8');
 const guardPage = readFileSync('src/pages/GuardPage.tsx', 'utf8');
 const pgtap = readFileSync('supabase/tests/005_gate_lifecycle.test.sql', 'utf8');
 

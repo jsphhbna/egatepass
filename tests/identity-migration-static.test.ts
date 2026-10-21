@@ -2,7 +2,7 @@ import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 
 const migration = readFileSync('supabase/migrations/20261020000400_identity_rpcs.sql', 'utf8');
-const endpoint = readFileSync('api/auth/complete-password-change.ts', 'utf8');
+const endpoint = readFileSync('server/routes/auth/complete-password-change.ts', 'utf8');
 const pgtap = readFileSync('supabase/tests/003_identity_lifecycle.test.sql', 'utf8');
 
 describe('identity migration contracts', () => {
