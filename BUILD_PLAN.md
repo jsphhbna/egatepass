@@ -856,7 +856,7 @@ Local promotion evidence: pre-fix regression run 7/7 FAILED as expected; correct
 #### Repair A: Documentation Truth Reconciliation
 - **Stale Statements Corrected**:
   1. *Guard stats semantics*: Corrected description to reflect that stats operate on passes with `issued_at >= v_day_start and issued_at < v_day_end`, filtering by status.
-  2. *Valid exit status*: Corrected stale references to `'completed'` to canonical enum value `'exited'`.
+  2. *Valid pass status enum*: Corrected stale references to `'completed'` to canonical enum value `'exited'`. Canonical `public.pass_status` values are `'issued'`, `'pending'`, `'inside'`, `'rejected'`, `'exited'`, `'expired'`. `'approved'` is a valid event in `public.visit_event_type`, not a `public.pass_status`.
   3. *JSON snippet*: Removed intermediate `to_char` / gate-join draft snippets; documented actual SQL expressions.
   4. *`api.acknowledge_privacy()` return type*: Corrected description from `boolean` to actual SQL return type `timestamptz`.
   5. *Migration count*: Updated total migration count from 18 to 19.
@@ -916,7 +916,7 @@ Local promotion evidence: pre-fix regression run 7/7 FAILED as expected; correct
   4. `api.create_upload_intent` (3 definitions) - A (security hardening, contract preserved)
   5. `api.acknowledge_privacy` (3 definitions) - A (recovery confinement, contract preserved)
   6. `api.decide_visit` (2 definitions) - A (concurrency idempotency, contract preserved)
-  7. `api.guard_dashboard` (5 definitions) - D (contract drift in 000200) -> FIXED in 054710 & 063500
+  7. `api.guard_dashboard` (5 definitions) - D (contract drift in 000200) -> FIXED in 054710 & 063038
   8. `api.request_email_verification_code` (5 definitions) - A (abuse controls, contract preserved)
   9. `api.verify_and_claim_email_dispatch` (3 definitions) - A (abuse controls, contract preserved)
   10. `api.finalize_email_dispatch` (3 definitions) - A (search_path hardening, contract preserved)

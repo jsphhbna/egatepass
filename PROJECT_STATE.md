@@ -335,7 +335,7 @@ Current product maturity is `IN PROGRESS (LEVEL 2+ / PRE-DEPLOYMENT VERIFIED)` â
 
 
 35. **FINAL PRE-MIGRATION CONTRACT CLOSURE PASS (October 2026)**:
-    - **Documentation Truth Reconciled**: All documentation descriptions aligned with actual committed SQL. Corrected daily stats semantics (`issued_at` Manila window), pass status (`'exited'` instead of stale `'completed'`), and `api.acknowledge_privacy()` return type (`timestamptz`).
+    - **Documentation Truth Reconciled**: All documentation descriptions aligned with actual committed SQL. Corrected daily stats semantics (`issued_at` Manila window), canonical pass status (`'issued'`, `'pending'`, `'inside'`, `'rejected'`, `'exited'`, `'expired'`, noting `'approved'` is in `visit_event_type`), and `api.acknowledge_privacy()` return type (`timestamptz`).
     - **Deterministic Guard Queue Aggregation**: Additive migration `20261021063038_guard_dashboard_deterministic_order_closure.sql` created. Dual-level sorting (`sort_scanned_at ASC NULLS LAST, sort_id ASC`) enforced across both inner pagination subquery and outer `jsonb_agg` aggregate.
     - **Complete Zod Runtime Wire Contract Validation**: `src/services/guard.ts` validates exact canonical payload via `guardDashboardWireSchema`. Verified with 16 unit tests in `tests/guard-dashboard-contract.test.ts`.
     - **Midnight-Safe Manila Test Fixture**: Test J in `tests/migration-chain-pglite.test.ts` updated to seed all today records using explicit offsets from `v_day_start` and Manila dates, eliminating midnight flakiness. Tested and verified invariant across UTC and America/New_York.
