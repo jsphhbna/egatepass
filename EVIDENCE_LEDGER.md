@@ -295,3 +295,18 @@ Exact-commit verification at `80d861b`: `npm run test:architecture` PASS 3/3; `n
 | EV-TYPE-007 | API & CLIENT TYPECHECK | `npm run typecheck:api` & `npx tsc --noEmit` | PASS: exit code 0 | Strict TypeScript compilation across API and React client with zero errors |
 | EV-BUILD-007 | PRODUCTION BUILD INTEGRITY | `npm run build` | PASS: exit code 0 (1.41s) | Production bundle cleanly built with Vite v8.3.1 |
 | EV-E2E-005 | PLAYWRIGHT BROWSER STARTUP E2E | `npm run test:e2e:startup` | PASS: 4/4 cases | Edge browser startup verified across dev configured/missing/malformed and preview configured |
+
+
+## Final Auth/RLS Recurrence Closure Pass (October 2026)
+| ID | Class | Command / artifact | Result | Scope and limitation |
+|---|---|---|---|---|
+| EV-RECOV-RLS-001 | DB RLS RECOVERY CONFINEMENT | `supabase/migrations/20261021000200_recovery_confinement_and_device_closure.sql`, `tests/migration-chain-pglite.test.ts` | PASS: 9/9 tests | `staff_profiles_select` and `devices_select` deny self-read to recovery sessions; normal Guard and Admin operational access preserved |
+| EV-RECOV-RPC-001 | DB RPC RECOVERY CONFINEMENT | `api.acknowledge_privacy()`, `api.guard_dashboard()`, `tests/migration-chain-pglite.test.ts` | PASS: 9/9 tests | `acknowledge_privacy` and `guard_dashboard` reject recovery sessions with 42501; normal Guard onboarding privacy acknowledgement verified |
+| EV-DEVICE-LOOKUP-001 | DEVICE QUERY FAIL-CLOSED | `api/auth/reset-password.ts`, `tests/password-recovery.test.ts` | PASS: 22/22 tests | Device lookup uses canonical columns (no `id`); database error on device or profile fails closed with 503 `service_unavailable`; no password change or audit emitted |
+| EV-MOCK-EVIDENCE-001 | EVIDENCE CLASSIFICATION DISCIPLINE | `tests/password-recovery.test.ts`, `BUILD_PLAN.md` | PASS: labeled | Local recovery tests labeled `MOCKED SERVER CONTRACT TEST`; `REAL SUPABASE RECOVERY CANARY` recorded as pending hosted stage |
+| EV-MIG-005 | PGLITE SEQUENTIAL & UPGRADE RUNNER | `npm run test:migrations` | PASS: 9/9 tests (18.7s) | Clean sequential execution (000100 through 20261021000200) and upgrade from 001300/001400/20261021000100 |
+| EV-FULL-SUITE-009 | FULL TEST SUITE PASS | `npm test` | PASS: 22 files, 324 tests (22.3s) | All unit, contract, static, and mocked tests pass with zero failures |
+| EV-CONTRACTS-003 | ARCHITECTURE CONTRACTS | `npm run test:contracts` | PASS: 2 files, 17 tests | Contract rules verified |
+| EV-TYPE-008 | API & CLIENT TYPECHECK | `npm run typecheck:api` & `npx tsc --noEmit` | PASS: exit code 0 | Strict TypeScript compilation across API and React client with zero errors |
+| EV-BUILD-008 | PRODUCTION BUILD INTEGRITY | `npm run build` | PASS: exit code 0 (1.90s) | Production bundle cleanly built with Vite v8.3.1 |
+| EV-E2E-006 | PLAYWRIGHT BROWSER STARTUP E2E | `npm run test:e2e:startup` | PASS: 4/4 cases | Edge browser startup verified across dev configured/missing/malformed and preview configured |

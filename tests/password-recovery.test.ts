@@ -26,6 +26,9 @@ describe('REPAIR GROUP A: Password Recovery Authorization & Credential Governanc
   let failAuditInsert = false;
   let guardMustChangePassword = false;
   let failGuardFinalizeRpc = false;
+  let failDeviceQuery = false;
+  let failProfileQuery = false;
+  let lastDeviceSelectedCols = '';
 
   function createMockSupabase() {
     return {
@@ -87,7 +90,12 @@ describe('REPAIR GROUP A: Password Recovery Authorization & Credential Governanc
         let filterVal: any = null;
 
         const chain: any = {
-          select: () => chain,
+          select: (cols?: string) => {
+            if (table === 'devices' && typeof cols === 'string') {
+              lastDeviceSelectedCols = cols;
+            }
+            return chain;
+          },
           eq: (col: string, val: any) => {
             filterCol = col;
             filterVal = val;
@@ -95,12 +103,18 @@ describe('REPAIR GROUP A: Password Recovery Authorization & Credential Governanc
           },
           maybeSingle: async () => {
             if (table === 'devices') {
-              if (filterCol === 'user_id' && filterVal === DEVICE_ID) {
-                return { data: { id: 'dev-1', user_id: DEVICE_ID, alias: 'kiosk-01', type: 'kiosk', status: 'active', deleted_at: null }, error: null };
+              if (failDeviceQuery) {
+                return { data: null, error: new Error('Database connection failed on devices') };
+              }
+              if (filterCol === 'user_id' && (filterVal === DEVICE_ID || filterVal === '00000000-0000-4000-a000-000000000099')) {
+                return { data: { user_id: filterVal, alias: 'kiosk-01', type: 'kiosk', status: 'active', deleted_at: null }, error: null };
               }
               return { data: null, error: null };
             }
             if (table === 'staff_profiles') {
+              if (failProfileQuery) {
+                return { data: null, error: new Error('Database connection failed on staff_profiles') };
+              }
               if (filterCol === 'user_id' && filterVal === STAFF_ID) {
                 return { data: { role: 'guard', active: true, must_change_password: guardMustChangePassword, privacy_accepted_at: '2026-01-01T00:00:00Z' }, error: null };
               }
@@ -158,6 +172,9 @@ describe('REPAIR GROUP A: Password Recovery Authorization & Credential Governanc
     failAuditInsert = false;
     guardMustChangePassword = false;
     failGuardFinalizeRpc = false;
+    failDeviceQuery = false;
+    failProfileQuery = false;
+    lastDeviceSelectedCols = '';
     const mockClient = createMockSupabase();
     setServerSupabaseClientsForTest({
       admin: mockClient as any,
@@ -228,7 +245,7 @@ describe('REPAIR GROUP A: Password Recovery Authorization & Credential Governanc
     expect(body.error).toBe('recovery_session_required');
   });
 
-  // 3. Device session attempting recovery
+  // 3. Device session attempting recovery (email suffix)
   it('3. Device session attempting password recovery is DENIED (403 device_password_change_forbidden)', async () => {
     const deviceJwt = makeJwt({
       sub: DEVICE_ID,
@@ -250,6 +267,108 @@ describe('REPAIR GROUP A: Password Recovery Authorization & Credential Governanc
     expect(res.status).toBe(403);
     const body = await res.json();
     expect(body.error).toBe('device_password_change_forbidden');
+  });
+
+  // 3b. Device without @devices.egatepass.invalid email but with matching devices row is DENIED
+  it('3b. Device whose auth identity matches public.devices row without device email suffix is DENIED (403 device_password_change_forbidden)', async () => {
+    const stealthDeviceUid = '00000000-0000-4000-a000-000000000099';
+    const stealthJwt = makeJwt({
+      sub: stealthDeviceUid,
+      email: 'stealth-device@customdomain.com', // Non-standard email format
+      role: 'authenticated',
+      amr: [{ method: 'recovery', timestamp: Date.now() }],
+    });
+
+    const req = new Request('http://localhost/api/auth/reset-password', {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${stealthJwt}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ newPassword: 'HackedPassword123!' }),
+    });
+
+    const res = await resetPasswordHandler.fetch(req);
+    expect(res.status).toBe(403);
+    const body = await res.json();
+    expect(body.error).toBe('device_password_change_forbidden');
+  });
+
+  // 3c. Fail-closed: DB error during device lookup returns 503 and changes nothing
+  it('3c. FAIL-CLOSED: Database error during authoritative device lookup returns 503 and aborts without mutating password or logging success', async () => {
+    failDeviceQuery = true;
+    const recoveryJwt = makeJwt({
+      sub: STAFF_ID,
+      email: 'guard@earist.edu.ph',
+      role: 'authenticated',
+      amr: [{ method: 'recovery', timestamp: Date.now() }],
+    });
+
+    const req = new Request('http://localhost/api/auth/reset-password', {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${recoveryJwt}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ newPassword: 'NewValidPassword123!' }),
+    });
+
+    const res = await resetPasswordHandler.fetch(req);
+    expect(res.status).toBe(503);
+    const body = await res.json();
+    expect(body.error).toBe('service_unavailable');
+    expect(updatedPasswords[STAFF_ID]).toBeUndefined();
+    expect(auditLogs.length).toBe(0);
+  });
+
+  // 3d. Fail-closed: DB error during staff profile lookup returns 503 and changes nothing
+  it('3d. FAIL-CLOSED: Database error during authoritative staff profile lookup returns 503 and aborts without mutating password', async () => {
+    failProfileQuery = true;
+    const recoveryJwt = makeJwt({
+      sub: STAFF_ID,
+      email: 'guard@earist.edu.ph',
+      role: 'authenticated',
+      amr: [{ method: 'recovery', timestamp: Date.now() }],
+    });
+
+    const req = new Request('http://localhost/api/auth/reset-password', {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${recoveryJwt}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ newPassword: 'NewValidPassword123!' }),
+    });
+
+    const res = await resetPasswordHandler.fetch(req);
+    expect(res.status).toBe(503);
+    const body = await res.json();
+    expect(body.error).toBe('service_unavailable');
+    expect(updatedPasswords[STAFF_ID]).toBeUndefined();
+    expect(auditLogs.length).toBe(0);
+  });
+
+  // 3e. Device lookup queries canonical columns and does not select nonexistent id
+  it('3e. Device recovery lookup queries real canonical schema columns and does not select nonexistent id', async () => {
+    const recoveryJwt = makeJwt({
+      sub: STAFF_ID,
+      email: 'guard@earist.edu.ph',
+      role: 'authenticated',
+      amr: [{ method: 'recovery', timestamp: Date.now() }],
+    });
+
+    const req = new Request('http://localhost/api/auth/reset-password', {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${recoveryJwt}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ newPassword: 'NewValidPassword123!' }),
+    });
+
+    await resetPasswordHandler.fetch(req);
+    expect(lastDeviceSelectedCols).toContain('user_id');
+    expect(lastDeviceSelectedCols).not.toMatch(/\bid\b/);
   });
 
   // 4. Anonymous Portal session attempting recovery
@@ -296,7 +415,7 @@ describe('REPAIR GROUP A: Password Recovery Authorization & Credential Governanc
   });
 
   // E. Genuine recovery flow with recovery AMR is ALLOWED
-  it('6. Genuine recovery flow with recovery AMR is ALLOWED and updates password', async () => {
+  it('6. MOCKED SERVER CONTRACT TEST: verified-style recovery AMR accepted and updates password', async () => {
     const recoveryJwt = makeJwt({
       sub: STAFF_ID,
       email: 'guard@earist.edu.ph',

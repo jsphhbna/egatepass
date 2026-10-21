@@ -359,24 +359,20 @@ describe('Permanent PostgreSQL Migration Chain & Schema Contracts (PGlite)', () 
       .sort();
 
     // Apply up to 001300
-    for (const file of files) {
-      if (file.includes('001400') || file.includes('204805')) continue;
+    const earlyFiles = files.filter((f) => f <= '20261020001300_cross_layer_root_cause_hardening.sql');
+    for (const file of earlyFiles) {
       let sql = readFileSync(join(MIGRATIONS_DIR, file), 'utf8');
       sql = sql.replace(/create extension if not exists pgcrypto[^;]*;/gi, '-- pgcrypto no-op');
       await db.exec(sql);
     }
 
-    // Now apply 001400 closure migration
-    const migration14 = files.find((f) => f.includes('001400'))!;
-    let sql14 = readFileSync(join(MIGRATIONS_DIR, migration14), 'utf8');
-    sql14 = sql14.replace(/create extension if not exists pgcrypto[^;]*;/gi, '-- pgcrypto no-op');
-    await expect(db.exec(sql14)).resolves.toBeDefined();
-
-    // Now apply new migration on top of 001400
-    const newMigration = files.find((f) => f.includes('204805'))!;
-    let sqlNew = readFileSync(join(MIGRATIONS_DIR, newMigration), 'utf8');
-    sqlNew = sqlNew.replace(/create extension if not exists pgcrypto[^;]*;/gi, '-- pgcrypto no-op');
-    await expect(db.exec(sqlNew)).resolves.toBeDefined();
+    // Now apply subsequent upgrade migrations sequentially in timestamp order
+    const upgradeFiles = files.filter((f) => f > '20261020001300_cross_layer_root_cause_hardening.sql');
+    for (const file of upgradeFiles) {
+      let sql = readFileSync(join(MIGRATIONS_DIR, file), 'utf8');
+      sql = sql.replace(/create extension if not exists pgcrypto[^;]*;/gi, '-- pgcrypto no-op');
+      await expect(db.exec(sql)).resolves.toBeDefined();
+    }
   }, 30000);
 
   it('G. PGLITE/POSTGRES CONTRACT TEST: Device and anonymous credential mutation protection trigger (D1-D10)', async () => {
@@ -741,17 +737,66 @@ describe('Permanent PostgreSQL Migration Chain & Schema Contracts (PGlite)', () 
     expect(exitActorRes.rows[0].device_type).toBe('exit');
     await db.exec('reset role;');
 
-    // 10. RECOVERY SESSION STAFF ACTOR: Guard user with recovery AMR
-    await setSession(GUARD_UID, ['recovery']);
-    // Current staff role must resolve to NULL: api.current_actor() returns 0 rows!
-    const recoveryActorRes = await db.query('select * from api.current_actor();');
-    expect(recoveryActorRes.rows.length).toBe(0); // NO operational staff authority!
-    // Cannot read operational RLS tables (e.g. devices)
-    const devicesRead = await db.query('select * from public.devices;');
-    expect(devicesRead.rows.length).toBe(0);
+    // 10. RECOVERY SESSION STAFF ACTOR & CONFINEMENT CONTRACT
+    // Seed an onboarding guard who has not yet accepted privacy
+    const GUARD_ONBOARDING_UID = '00000000-0000-4000-b000-000000000011';
+    await db.exec(`
+      insert into auth.users (id, email, is_anonymous, email_confirmed_at)
+      values ('${GUARD_ONBOARDING_UID}', 'guard-onboarding@earist.edu.ph', false, now());
+      insert into public.staff_profiles (user_id, display_name, role, active, must_change_password, privacy_accepted_at)
+      values ('${GUARD_ONBOARDING_UID}', 'New Guard', 'guard', true, true, null);
+    `);
+
+    // A. Normal Guard session CAN read its own staff profile
+    await setSession(GUARD_UID, ['password']);
+    const guardProfileNormal = await db.query('select * from public.staff_profiles;');
+    expect(guardProfileNormal.rows.length).toBe(1);
+    expect(guardProfileNormal.rows[0].user_id).toBe(GUARD_UID);
+    // Normal Guard session CAN execute guard_dashboard
+    const dashboardNormal = await db.query('select * from api.guard_dashboard();');
+    expect(dashboardNormal.rows.length).toBe(1);
     await db.exec('reset role;');
 
-    // Direct check of is_recovery_session under service_role
+    // B. Guard RECOVERY session CANNOT read its own staff profile through RLS
+    await setSession(GUARD_UID, ['recovery']);
+    const guardProfileRecovery = await db.query('select * from public.staff_profiles;');
+    expect(guardProfileRecovery.rows.length).toBe(0); // DENIED by hardened staff_profiles_select!
+
+    // C. Guard RECOVERY session CANNOT call api.guard_dashboard()
+    await expect(db.query('select * from api.guard_dashboard();')).rejects.toThrow(/recovery_session_forbidden/);
+
+    // D. Guard RECOVERY session CANNOT call api.acknowledge_privacy()
+    await expect(db.query('select api.acknowledge_privacy();')).rejects.toThrow(/recovery_session_forbidden/);
+
+    // E. Guard RECOVERY session CANNOT read devices
+    const devicesRead = await db.query('select * from public.devices;');
+    expect(devicesRead.rows.length).toBe(0);
+
+    // F. Current staff role must resolve to NULL: api.current_actor() returns 0 rows!
+    const recoveryActorRes = await db.query('select * from api.current_actor();');
+    expect(recoveryActorRes.rows.length).toBe(0);
+    await db.exec('reset role;');
+
+    // G. Normal onboarding Guard CAN read own profile and acknowledge privacy
+    await setSession(GUARD_ONBOARDING_UID, ['password']);
+    const onboardingProfile = await db.query('select * from public.staff_profiles;');
+    expect(onboardingProfile.rows.length).toBe(1);
+    expect(onboardingProfile.rows[0].privacy_accepted_at).toBeNull();
+    const ackRes = await db.query('select api.acknowledge_privacy() as accepted_at;');
+    expect(ackRes.rows[0].accepted_at).not.toBeNull();
+    // Verify privacy_accepted_at was updated
+    const updatedProfile = await db.query('select privacy_accepted_at from public.staff_profiles;');
+    expect(updatedProfile.rows[0].privacy_accepted_at).not.toBeNull();
+    await db.exec('reset role;');
+
+    // H. Admin RECOVERY session CANNOT read staff profiles or call guard_dashboard
+    await setSession(ADMIN_UID, ['recovery']);
+    const adminRecProfiles = await db.query('select * from public.staff_profiles;');
+    expect(adminRecProfiles.rows.length).toBe(0); // DENIED by RLS!
+    await expect(db.query('select * from api.guard_dashboard();')).rejects.toThrow(/recovery_session_forbidden/);
+    await db.exec('reset role;');
+
+    // I. Direct check of is_recovery_session under service_role
     await db.exec(`set request.jwt.claims = '{"sub": "${GUARD_UID}", "amr": [{"method": "recovery"}]}';`);
     const directRecCheck = await db.query('select private.is_recovery_session() as is_rec;');
     expect(directRecCheck.rows[0].is_rec).toBe(true);

@@ -59,11 +59,17 @@ async function handleRequest(request: Request): Promise<Response> {
       return jsonResponse(403, { error: 'device_password_change_forbidden' });
     }
 
-    const { data: deviceRecord } = await admin
+    // Query devices using real canonical columns and fail closed if lookup fails
+    const { data: deviceRecord, error: deviceError } = await admin
       .from('devices')
-      .select('id, alias, type')
+      .select('user_id, alias, type, status')
       .eq('user_id', user.id)
       .maybeSingle();
+
+    if (deviceError) {
+      console.error('Authoritative device lookup failed during password recovery:', deviceError.message || deviceError);
+      return jsonResponse(503, { error: 'service_unavailable' });
+    }
 
     if (deviceRecord) {
       return jsonResponse(403, { error: 'device_password_change_forbidden' });
@@ -76,7 +82,12 @@ async function handleRequest(request: Request): Promise<Response> {
       .eq('user_id', user.id)
       .maybeSingle();
 
-    if (profileError || !profile || !profile.active) {
+    if (profileError) {
+      console.error('Authoritative staff profile lookup failed during password recovery:', profileError.message || profileError);
+      return jsonResponse(503, { error: 'service_unavailable' });
+    }
+
+    if (!profile || !profile.active) {
       return jsonResponse(403, { error: 'unauthorized_staff_identity' });
     }
 

@@ -16,6 +16,7 @@ Current stage: Targeted root-cause corrections, Supabase 404 diagnosis, and Verc
 - Local rollback branch: `checkpoint/s0-original-f2f1a2b-20261020`
 - Pre-existing user change preserved: `.env.example` (unstaged, uncommitted)
 - Targeted correction start: `dcc9854d22c1aeec1c87d3a1dac55f183741b993`
+- Auth/RLS recurrence closure baseline HEAD: `1d1633890dff98e79583276798c31ed95d2dac8e` (corrects previous report typo `1d1633890bb8a728b77a064da2cf8a38541eb93a`)
 
 ## Baseline capability state
 
@@ -278,3 +279,31 @@ Current product maturity is `IN PROGRESS (LEVEL 2+ / PRE-DEPLOYMENT VERIFIED)` â
 1. **Pre-Turnstile Development Anonymous Accounts Checkpoint**: Enumerate and clean stale dev anonymous identities before production with owner approval; verify fresh anonymous sessions require valid Turnstile tokens.
 2. **Hosted Data API Schema Exposure Gate**: Verify Data API exposed schemas include `public`, `graphql_public`, and `api`; perform canary RPC before production traffic.
 3. **Hosted Supabase Status**: **NOT APPLIED** (All migrations and hardening verified locally/offline).
+
+
+## Final Auth/RLS Recurrence Closure Status (October 2026)
+- **Baseline Starting Commit**: `1d1633890dff98e79583276798c31ed95d2dac8e`
+- **Branch**: `feat/runtime-migration`
+- **Repairs Implemented**:
+  1. `staff_profiles_select` RLS policy: excluded recovery sessions via `and not (select private.is_recovery_session())`.
+  2. `devices_select` RLS policy: excluded recovery sessions via `and not (select private.is_recovery_session())`.
+  3. `api.acknowledge_privacy()` RPC: rejects recovery sessions with `42501 recovery_session_forbidden`.
+  4. `api.guard_dashboard(integer, integer)` RPC: rejects recovery sessions with `42501 recovery_session_forbidden` and enforces `caller_role := (select private.current_staff_role())`.
+  5. `api/auth/reset-password.ts`: selects canonical columns `user_id, alias, type, status` from `public.devices` (no nonexistent `id`); inspects `deviceError` and `profileError` and fails closed with 503 `service_unavailable`.
+  6. Migration `20261021000200_recovery_confinement_and_device_closure.sql` created and verified clean sequential and upgrade in PGlite. Hosted Supabase migration remains **NOT APPLIED**.
+  7. Evidence classification updated: Mocked recovery tests accurately labeled; `REAL SUPABASE RECOVERY CANARY` documented as pending hosted stage.
+
+## Test Metrics (Current Pass)
+- `npm test`: 22 test files, 324 passed (0 failed).
+- `test:migrations`: 9/9 passed (PGlite sequential runner, upgrades, D1-D10 trigger contracts, safe anon settings RLS, 10-actor matrix, recovery confinement).
+- `test:contracts`: 17/17 passed.
+- `typecheck:api`: 0 errors.
+- `npx tsc --noEmit`: 0 errors.
+- `npm run build`: clean production build (1.90s).
+- `test:e2e:startup`: 4/4 passed (Playwright browser startup verification on Edge across dev configured/missing/malformed and preview configured).
+
+## Documented Deployment Gates & Canaries
+1. **Pre-Turnstile Development Anonymous Accounts Checkpoint**: Enumerate and clean stale dev anonymous identities before production with owner approval; verify fresh anonymous sessions require valid Turnstile tokens.
+2. **Hosted Data API Schema Exposure Gate**: Verify Data API exposed schemas include `public`, `graphql_public`, and `api`; perform canary RPC before production traffic.
+3. **Real Supabase Recovery Canary (Pending)**: Real end-to-end Supabase Auth PKCE recovery flow (request reset -> email delivery -> PKCE code exchange -> real token AMR -> password reset -> session termination -> normal login).
+4. **Hosted Supabase Status**: **NOT APPLIED** (All migrations and hardening verified locally/offline).

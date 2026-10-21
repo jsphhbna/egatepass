@@ -399,3 +399,24 @@
   5. **Turnstile Widget Lifecycle Stability**: Store callback props in refs within `TurnstileWidget.tsx`. Teardown effect depends strictly on `siteKey` and `resetKey`.
   6. **Security Dependency Exact Pin**: Exact-pin `"standardwebhooks": "1.1.1"`.
 - **Consequence**: Full confinement of recovery sessions to password reset only; prevention of permanent user impersonation of Portal actors; elimination of settings information leakage; rock-solid Turnstile lifecycle.
+
+
+## ADR-0031 — Final Auth/RLS Recurrence Closure, Database Recovery Confinement & Fail-Closed Device Lookups
+- **Date**: 2026-10-21
+- **Status**: accepted
+- **Context**:
+  1. `staff_profiles_select` RLS previously allowed self-read `user_id = auth.uid()` without checking whether the session was a recovery session, allowing recovery tokens to query staff profiles.
+  2. `api.acknowledge_privacy()` permitted authenticated callers to acknowledge privacy and mutate `staff_profiles` while holding a recovery token.
+  3. `devices_select` RLS permitted self-read for recovery sessions.
+  4. `api.guard_dashboard(integer, integer)` queried `staff_profiles` directly without excluding recovery sessions.
+  5. `api/auth/reset-password.ts` queried nonexistent column `id` on `public.devices` and destructured `{ data: deviceRecord }` without checking returned `error`, creating a fail-open condition on database error.
+  6. Previous test descriptions in `tests/password-recovery.test.ts` referred to mocked AMR testing as "genuine recovery flow".
+  7. Previous report contained a typographical commit SHA `1d1633890bb8a728b77a064da2cf8a38541eb93a`.
+- **Decisions**:
+  1. **Database RLS Recovery Confinement**: Recreated `staff_profiles_select` and `devices_select` to require `(user_id = (select auth.uid()) and not (select private.is_recovery_session())) or (select private.has_staff_role(array['admin','superadmin']::public.staff_role[]))`.
+  2. **Database RPC Recovery Confinement**: In `api.acknowledge_privacy()` and `api.guard_dashboard(integer, integer)`, raise exception `recovery_session_forbidden` (SQLSTATE 42501) if `private.is_recovery_session()` is true.
+  3. **Device Query Schema & Fail-Closed Error Handling**: Query canonical columns `user_id, alias, type, status` from `public.devices`. If `deviceError` or `profileError` occurs, fail closed with HTTP 503 `service_unavailable`.
+  4. **Evidence Classification Discipline**: Reclassify local recovery tests as `MOCKED SERVER CONTRACT TEST`. Document `REAL SUPABASE RECOVERY CANARY` as a remaining gate after hosted migration approval.
+  5. **Baseline SHA Correction**: Record authoritative starting SHA as `1d1633890dff98e79583276798c31ed95d2dac8e`.
+  6. **Zero API Sprawl**: Zero new API endpoints added. Repaired existing RLS, RPCs, and API handler.
+- **Consequence**: Full database-level confinement of recovery sessions; fail-closed device identity lookup; accurate evidence ledger; zero hosted mutation.

@@ -681,3 +681,59 @@ Local promotion evidence: pre-fix regression run 7/7 FAILED as expected; correct
 2. **Hosted Data API Schema Exposure Gate**:
    - Hosted Supabase Data API settings must expose schemas `public`, `graphql_public`, and `api`.
    - Perform authenticated canary RPC call against an `api` schema function before application deployment.
+
+
+### Final Auth/RLS Recurrence Closure Pass (October 2026)
+
+- **Baseline Starting Commit**: `1d1633890dff98e79583276798c31ed95d2dac8e` (Correcting previous report typo `1d1633890bb8a728b77a064da2cf8a38541eb93a` which does not exist in git history).
+- **Branch**: `feat/runtime-migration`
+- **Scope**: Targeted root-cause repair pass for Auth / RLS recurrence elimination. Zero new API endpoints. Hosted Supabase migrations remain **NOT APPLIED**.
+
+#### Repair 1: staff_profiles RLS Recovery Confinement
+- **Problem**: In `staff_profiles_select` policy, the self-read branch `user_id = (select auth.uid())` lacked session-purpose verification. A staff user holding a valid password-recovery token could read their own operational staff profile directly via Supabase Data API.
+- **Root Cause**: Policy checked caller identity without checking whether the active session was a restricted recovery session.
+- **Fix Implemented**: Recreated `staff_profiles_select` in additive migration `supabase/migrations/20261021000200_recovery_confinement_and_device_closure.sql` with predicate:
+  ```sql
+  (user_id = (select auth.uid()) and not (select private.is_recovery_session()))
+  or (select private.has_staff_role(array['admin','superadmin']::public.staff_role[]))
+  ```
+  Normal Guard onboarding (forced password change and privacy acknowledgement) and normal staff self-read are fully preserved; recovery sessions are strictly denied.
+- **Status**: PASS (verified in `tests/migration-chain-pglite.test.ts`).
+
+#### Repair 2: api.acknowledge_privacy() Recovery Confinement
+- **Problem**: `api.acknowledge_privacy()` permitted any authenticated caller with an active staff profile to mutate `staff_profiles.privacy_accepted_at` and emit audit records, even when holding a password recovery token.
+- **Root Cause**: Missing check for `private.is_recovery_session()` at the start of the RPC.
+- **Fix Implemented**: Added guard at the start of `api.acknowledge_privacy()`:
+  ```sql
+  if (select private.is_recovery_session()) then
+    raise exception 'recovery_session_forbidden' using errcode = '42501';
+  end if;
+  ```
+  Legitimate first-login Guard privacy acknowledgement flow is preserved; recovery session mutation is rejected.
+- **Status**: PASS (verified in `tests/migration-chain-pglite.test.ts`).
+
+#### Database Recovery Recurrence Search & Repair
+- **Inspected Objects**:
+  1. `devices_select` policy: Contained self-read `user_id = (select auth.uid())`. Hardened with `and not (select private.is_recovery_session())`.
+  2. `api.guard_dashboard(integer, integer)`: Executable by authenticated; previously queried `staff_profiles` directly without checking recovery. Hardened to reject recovery sessions (`42501 recovery_session_forbidden`) and enforce `caller_role := (select private.current_staff_role())`.
+  3. Other RPCs (`api.register_kiosk_visitor`, `api.decide_pass`, `api.scan_gate_pass`, etc.): Already guarded by role checks or caller token validation.
+- **Status**: PASS (all authenticated operational surfaces confined).
+
+#### Repair 3: Reset Password Device Query Schema & Fail-Closed Error Inspection
+- **Problem**:
+  1. `api/auth/reset-password.ts` queried `select('id, alias, type')` on `public.devices`. Column `id` does not exist on `public.devices` (primary key is `user_id`).
+  2. The query destructured `{ data: deviceRecord }` without checking returned `error`. Database query errors were silently interpreted as "not a device" (fail-open).
+- **Root Cause**: Schema mismatch and missing Supabase error inspection.
+- **Fix Implemented**:
+  1. Corrected query to select canonical columns: `.select('user_id, alias, type, status')`.
+  2. Inspected returned `deviceError`: fails closed with HTTP 503 `service_unavailable`.
+  3. Inspected returned `profileError`: fails closed with HTTP 503 `service_unavailable`.
+- **Status**: PASS (22/22 tests in `tests/password-recovery.test.ts` pass, including schema verification and 503 fail-closed tests).
+
+#### Supabase .error Recurrence Search
+- **Search Across `api/`**: Audited queries in `api/auth/`, `api/admin/`, `api/decide-visit.ts`, `api/scan-pass.ts`, `api/evidence.ts`.
+- **Findings**: All security-critical paths in `api/` inspect returned `.error` and fail closed. Harmless non-critical logs and fallback defaults properly isolated.
+
+#### Evidence Classification Discipline & Pending Canary
+- **Mocked Recovery Tests**: Relabeled tests in `tests/password-recovery.test.ts` to explicitly state `MOCKED SERVER CONTRACT TEST`. Documented that local unit tests prove handler contract given verified-style recovery AMR, not live hosted Supabase Auth PKCE exchange.
+- **Pending Hosted Canary**: `REAL SUPABASE RECOVERY CANARY` formally recorded as pending future authorized deployment stage (request reset -> receive email -> PKCE exchange -> real AMR -> password reset -> session termination -> normal login required).
