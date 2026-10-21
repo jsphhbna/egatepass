@@ -926,3 +926,47 @@ Local promotion evidence: pre-fix regression run 7/7 FAILED as expected; correct
   14. `api.create_incident_hold` (2 definitions) - A (cross-target invariant, contract preserved)
   15. `public.protect_managed_credentials` (2 definitions) - A (marker-based trigger hardening, contract preserved)
 - **Finding**: Only `guard_dashboard` had unintended contract drift, which is now fully closed.
+
+
+---
+
+### Real Hosted Supabase Migration & Verification (October 2026)
+
+- **Target Project**: `egatepass-dev` (`nhoawvkfqblsgutdffie`), PostgreSQL 17 (ap-southeast-2).
+- **Execution Command**: `npx supabase db push`
+- **Result**: PASS (All 19 migrations applied sequentially without error; zero drift).
+- **Remote Migrations Applied**: 19/19
+  1. `20261020000100_core_schema.sql`
+  2. `20261020000200_rls_and_storage.sql`
+  3. `20261020000300_core_rpc.sql`
+  4. `20261020000400_identity_rpcs.sql`
+  5. `20261020000500_pass_issuance.sql`
+  6. `20261020000600_gate_lifecycle.sql`
+  7. `20261020000700_admin_governance.sql`
+  8. `20261020000800_admin_hardening.sql`
+  9. `20261020000900_qr_email_idempotency.sql`
+  10. `20261020001000_qr_email_security.sql`
+  11. `20261020001100_email_security_and_abuse_controls.sql`
+  12. `20261020001200_concurrency_and_purge_contract_hardening.sql`
+  13. `20261020001300_cross_layer_root_cause_hardening.sql`
+  14. `20261020001400_closure_and_hardening.sql`
+  15. `20261020204805_public_registration_settings_and_auth_hardening.sql`
+  16. `20261021000100_auth_identity_contract_hardening.sql`
+  17. `20261021000200_recovery_confinement_and_device_closure.sql`
+  18. `20261021054710_guard_dashboard_contract_timezone_closure.sql`
+  19. `20261021063038_guard_dashboard_deterministic_order_closure.sql`
+- **Hosted Schema State**:
+  - Schemas `public`, `api`, `private` confirmed present.
+  - 14 public application tables confirmed present with `rls_enabled: true` (`app_settings`, `audit_events`, `devices`, `incident_holds`, `maintenance_state`, `pass_email_verifications`, `passes`, `rate_limit_buckets`, `reconciliation_tasks`, `staff_profiles`, `upload_intents`, `visit_events`, `visitor_evidence`, `visitors`).
+  - Storage buckets `visitor-photos` and `visitor-ids` confirmed private, 5 MiB size limit, allowed MIME types (JPEG/PNG/WebP), 0 objects.
+  - `api.guard_dashboard` verified in `pg_proc`: `SECURITY DEFINER`, `search_path = ''`, recovery session rejection (42501), roles guard/admin/superadmin, deterministic ordering (`order by entry_scanned_at asc nulls last, id asc`) in pagination and `jsonb_agg`, Asia/Manila daily stats bounds.
+  - `public.rls_auto_enable()` execute privilege verified revoked (`false` for PUBLIC, anon, and authenticated).
+  - Auth baseline preserved: 5 users, 4 anonymous, 4 sessions (zero modification).
+- **Advisors**:
+  - Security Advisor: 0 findings for `rls_auto_enable` (fully resolved); `auth_leaked_password_protection` remains as an Auth dashboard configuration note; standard advisory notices for tables with policies referencing roles while anonymous sign-in is enabled.
+  - Performance Advisor: 0 findings ("No issues found").
+- **Pending Hosted Configuration Before Vercel**:
+  1. Supabase Dashboard Data API: Add `api` to exposed schemas (`public, graphql_public, api`). Tested HTTP PostgREST endpoint currently returns `PGRST106` when querying `api` until enabled in Dashboard settings.
+  2. Turnstile CAPTCHA configuration in Supabase Auth.
+  3. Send Email Hook configuration with secret in Supabase Auth Hooks.
+  4. Vercel preview deployment and custom domain.

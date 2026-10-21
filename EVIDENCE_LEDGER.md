@@ -326,3 +326,11 @@ Exact-commit verification at `80d861b`: `npm run test:architecture` PASS 3/3; `n
 | EV-REPEATED-FUNC-001 | COMPLETE 15 REPEATED-FUNCTION CONTRACT AUDIT | `supabase/migrations/*.sql` | PASS: audited | Full programmatic review of 15 repeated functions across 19 migrations; 0 unresolved contract drift |
 | EV-MIG-007 | FULL 19-MIGRATION PGLITE SEQUENTIAL & UPGRADE RUNNER | `npm run test:migrations` | PASS: 10/10 tests (14.1s) | Clean sequential execution (000100 through 20261021063038) and upgrade paths verified |
 | EV-FULL-SUITE-011 | FULL TEST SUITE PASS | `npm test` | PASS: 23 files, 341 tests | All unit, contract, static, and mocked tests pass with zero failures |
+
+| EV-HOSTED-MIG-001 | REAL HOSTED SUPABASE MIGRATION PUSH | `npx supabase db push` | PASS: 19/19 applied | All 19 migrations applied sequentially to `nhoawvkfqblsgutdffie` (`egatepass-dev`); remote migration list confirms 19 versions, 0 pending |
+| EV-HOSTED-SCHEMA-001 | HOSTED SCHEMA & RLS VERIFICATION | `npx supabase db query --linked` | PASS: verified | Schemas `public`, `api`, `private` confirmed; 14 public application tables all have `rls_enabled: true` |
+| EV-HOSTED-GUARD-001 | HOSTED GUARD DASHBOARD CONTRACT | `api.guard_dashboard()`, `pg_proc` | PASS: verified | SECURITY DEFINER, search_path='', 42501 recovery session rejection, operational roles, dual-level ordering (subquery and jsonb_agg), Manila day stats |
+| EV-HOSTED-RLS-REVOKE-001 | RLS_AUTO_ENABLE REVOCATION | `public.rls_auto_enable()` | PASS: false/false/false | Execute privilege verified false for PUBLIC, anon, and authenticated; advisor warnings closed |
+| EV-HOSTED-ADVISORS-001 | HOSTED SECURITY & PERFORMANCE ADVISORS | `npx supabase db advisors --linked` | PASS: 0 performance findings | Performance advisor: 0 issues; Security advisor: rls_auto_enable findings closed |
+| EV-HOSTED-STORAGE-001 | STORAGE BUCKET INTEGRITY | `storage.buckets`, `storage.objects` | PASS: 2 buckets, 0 objects | `visitor-photos` and `visitor-ids` private, 5 MiB limit, valid MIME types, 0 objects |
+| EV-HOSTED-DATA-API-001 | POSTGREST DATA API SCHEMA PROBE | HTTP PostgREST probe | RECORDED: PGRST106 | Public table app_settings 401 (permission denied); api schema returns PGRST106 until exposed in Supabase Dashboard |

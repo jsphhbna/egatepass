@@ -494,3 +494,19 @@
   5. **Full 15 Repeated-Function Review**: Verified all 15 repeated functions across migrations; confirmed zero contract drift.
   6. **Zero API Sprawl & Zero Hosted Mutation**: Zero new endpoints added. Hosted database remains untouched.
 - **Consequence**: Queue ordering is mathematically deterministic across all database engines and executions; frontend runtime rejects malformed payloads safely; test suite is completely immune to midnight flakiness; documentation accurately reflects committed source of truth.
+
+---
+
+### Decision: Hosted Supabase Migration Execution & Post-Migration Baseline Verification (October 2026)
+
+- **Context**: The full 19-migration chain was verified via PGlite tests and dry-run planning. Owner authorized execution of `npx supabase db push` against linked project `egatepass-dev` (`nhoawvkfqblsgutdffie`).
+- **Decisions**:
+  1. **Execute npx supabase db push**: Applied all 19 migrations sequentially. Verified `npx supabase migration list` recorded all 19 versions remotely with 0 pending.
+  2. **Inspect Hosted Schema & RLS**: Verified schemas `public`, `api`, `private` exist. Verified all 14 public tables have `rls_enabled: true`.
+  3. **Verify Function Contract & Privileges**: Confirmed `api.guard_dashboard` has `SECURITY DEFINER`, `search_path = ''`, 42501 recovery session rejection, operational roles check, dual-level deterministic queue ordering (`sort_scanned_at ASC NULLS LAST, sort_id ASC`), and Asia/Manila day-start/end stats bounds.
+  4. **Verify rls_auto_enable Privilege Revocation**: Confirmed execute privilege is `false` for PUBLIC, anon, and authenticated. Security advisor warnings for `rls_auto_enable` are fully closed.
+  5. **Inspect Performance & Security Advisors**: Confirmed 0 findings in Performance Advisor. In Security Advisor, confirmed closure of `rls_auto_enable` warnings.
+  6. **Data API Exposure Probe**: Confirmed local config requests `api` schema; PostgREST returns `PGRST106` on live HTTP probe until `api` is explicitly selected under Dashboard Data API Exposed Schemas.
+  7. **Preserve Auth & Storage Integrity**: Zero Auth users modified (5 total, 4 anonymous, 4 sessions). Zero Storage buckets modified (2 private buckets, 0 objects).
+  8. **Strict Pre-Vercel Gate**: Zero Vercel deployments, zero domain attachment, zero automated repair.
+- **Consequence**: Hosted database is in a known, verified, and pristine state matching local migration contracts, awaiting Dashboard Data API schema exposure and Auth hook setup.

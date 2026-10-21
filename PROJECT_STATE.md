@@ -226,7 +226,7 @@ All 21 confirmed defect groups and their recurring patterns across the codebase 
 
 ## Immediate blockers and next safe work
 
-1. **Hosted Supabase Deployment Checkpoint**: As strictly mandated, hosted project `egatepass-dev` (`nhoawvkfqblsgutdffie`) remains untouched (`NOT APPLIED`), awaiting post-repair independent review.
+1. **Hosted Supabase Deployment Checkpoint**: All 19 migrations successfully applied to hosted project `egatepass-dev` (`nhoawvkfqblsgutdffie`). Immediate hosted verification passed (19/19 remote migrations recorded, 14 public tables with RLS enabled, buckets verified, guard_dashboard contract verified, rls_auto_enable revoked, security and performance advisors verified). Pending hosted configurations: Dashboard Data API schema exposure (`api`), Turnstile CAPTCHA, Send Email Hook, and Vercel preview deployment.
 2. **Pre-Deployment Gate Invariant**: All local regression suites PASS (288/288 Vitest tests pass across 21 test files, 7/7 PGlite migration tests pass, API and client TypeScript checks pass with 0 errors, production build passes, and 4/4 Playwright browser startup cases pass on Edge).
 3. **Pending Live Configurations (To be performed after repository closure)**:
    - Supabase HTTPS Send Email Hook creation pointing to Vercel preview deployment.
