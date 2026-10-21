@@ -434,7 +434,7 @@
      - These mismatches broke photo evidence rendering, caused pagination backlog count to fall back to current page length, and caused "Total Issued" stats to be undefined.
   3. Daily statistics in `20261021000200` replaced explicit `Asia/Manila` day boundaries with session-dependent `current_date` expressions, shifting daily counts around midnight depending on database session timezone.
   4. Existing tests verified function execution and error handling, but did not assert producer-consumer wire contract compatibility.
-  5. Live hosted Supabase development database (`egatepass-dev`, `nhoawvkfqblsgutdffie`) migration history is EMPTY with 0 application tables; the entire 18-migration chain remains unapplied.
+  5. Live hosted Supabase development database (`egatepass-dev`, `nhoawvkfqblsgutdffie`) migration history is EMPTY with 0 application tables; the entire 19-migration chain remains unapplied.
 - **Decisions**:
   1. **Additive Migration 20261021054710**: Create `supabase/migrations/20261021054710_guard_dashboard_contract_timezone_closure.sql` via Supabase CLI recreating `api.guard_dashboard(integer, integer)`.
   2. **Preserve Authorization Hardening**: Reject recovery sessions with SQLSTATE 42501 `recovery_session_forbidden` and require staff operational role `guard`, `admin`, or `superadmin` via `private.current_staff_role()`.
@@ -447,6 +447,50 @@
   4. **Explicit Asia/Manila Day Window**: Compute `v_day_start` and `v_day_end` using `date_trunc('day', statement_timestamp() at time zone 'Asia/Manila') at time zone 'Asia/Manila'`. Apply across all daily counts. Invariance verified under `SET TIME ZONE 'UTC'` and `SET TIME ZONE 'America/New_York'`.
   5. **Frontend Strict Wire Validation**: In `src/services/guard.ts`, validate that required canonical keys exist and are of expected types; throw descriptive contract violation errors if malformed to prevent silent UI corruption.
   6. **Producer-Consumer Contract Tests**: Add 5 frontend contract tests in `tests/guard-dashboard-contract.test.ts` and PGlite database contract test (Test J) in `tests/migration-chain-pglite.test.ts`.
-  7. **Hosted Migration Chain Status Correction**: Explicitly document that live hosted Supabase migration history is empty; all 18 migrations are pending and must be applied sequentially upon authorization.
+  7. **Hosted Migration Chain Status Correction**: Explicitly document that live hosted Supabase migration history is empty; all 19 migrations are pending and must be applied sequentially upon authorization.
   8. **Zero API Sprawl**: Zero new API endpoints added.
 - **Consequence**: Full runtime compatibility restored between database and Guard UI; deterministic Manila-day statistics; strict validation protects against silent contract drift; zero hosted mutations performed.
+
+
+## ADR-0033 — Deterministic Guard Queue Aggregation, Runtime Wire Contract Schema, and Test Day-Boundary Invariants
+- **Date**: 2026-10-21
+- **Status**: accepted
+- **Context**:
+  1. `api.guard_dashboard` applied `ORDER BY` in the inner pagination subquery, but the outer `jsonb_agg` omitted an explicit aggregate `ORDER BY`. Furthermore, passes scanned at the exact same instant lacked a secondary tie-breaker key.
+  2. `src/services/guard.ts` performed basic key-presence checks, but did not strictly validate types or non-nullability (e.g. `photoEvidenceId: null` or numeric IDs passed key-presence checks).
+  3. PGlite Test J seeded test records using `now() - interval '1 hour'`, which falls into yesterday when tests run between 12:00 AM and 12:59 AM in Asia/Manila, causing midnight test flakiness.
+  4. Documentation in `BUILD_PLAN.md` described daily stats with intermediate status `'completed'` (valid enum is `'exited'`) and intermediate timestamp filters, and described `api.acknowledge_privacy()` as returning boolean rather than `timestamptz`.
+  5. The repeated-function recurrence audit in the previous pass listed only 5 functions rather than the full set of 15 repeatedly-defined functions.
+- **Decisions**:
+  1. **Additive Migration 20261021063038**: Create `supabase/migrations/20261021063038_guard_dashboard_deterministic_order_closure.sql` recreating `api.guard_dashboard(integer, integer)` enforcing:
+     ```sql
+     select coalesce(
+       jsonb_agg(
+         pending.item
+         order by pending.sort_scanned_at asc nulls last,
+                  pending.sort_id asc
+       ),
+       '[]'::jsonb
+     ) into queue
+     from (
+       select
+         p.entry_scanned_at as sort_scanned_at,
+         p.id as sort_id,
+         jsonb_build_object(...) as item
+       from public.passes p
+       join public.visitors v on v.id = p.visitor_id
+       where p.status = 'pending'::public.pass_status
+       order by
+         p.entry_scanned_at asc nulls last,
+         p.id asc
+       limit v_limit
+       offset v_offset
+     ) pending;
+     ```
+     Dual-level sorting (`sort_scanned_at ASC NULLS LAST, sort_id ASC`) drives both pagination and aggregation.
+  2. **Complete Zod Runtime Wire Contract Validation**: In `src/services/guard.ts`, validate the RPC response using `guardDashboardWireSchema`. Requires UUID string for `photoEvidenceId`, UUID or null for `idEvidenceId`, non-negative integers for all stats, and throws descriptive contract violation errors without leaking visitor data.
+  3. **Deterministic Day-Start Test Fixtures**: In `tests/migration-chain-pglite.test.ts` Test J, derive all "today" records from `v_day_start + interval 'X hours'` and `v_manila_date`. Prohibit `now() - interval '1 hour'` for calendar-day assertions.
+  4. **Documentation Source-of-Truth Reconciliation**: Correct all documentation to match effective SQL: stats filter by `issued_at` within Manila day start/end, valid exit status is `'exited'`, `api.acknowledge_privacy()` returns `timestamptz`.
+  5. **Full 15 Repeated-Function Review**: Verified all 15 repeated functions across migrations; confirmed zero contract drift.
+  6. **Zero API Sprawl & Zero Hosted Mutation**: Zero new endpoints added. Hosted database remains untouched.
+- **Consequence**: Queue ordering is mathematically deterministic across all database engines and executions; frontend runtime rejects malformed payloads safely; test suite is completely immune to midnight flakiness; documentation accurately reflects committed source of truth.

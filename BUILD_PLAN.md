@@ -763,17 +763,17 @@ Local promotion evidence: pre-fix regression run 7/7 FAILED as expected; correct
   - Restores queue item contract:
     ```sql
     jsonb_build_object(
-      'id', q.id,
-      'visitorName', q.full_name,
-      'purpose', q.purpose,
-      'source', q.source,
-      'status', q.status,
-      'validFrom', to_char(q.valid_from, 'YYYY-MM-DD"T"HH24:MI:SS"Z"'),
-      'validUntil', to_char(q.valid_until, 'YYYY-MM-DD"T"HH24:MI:SS"Z"'),
-      'scannedAt', case when q.entry_scanned_at is not null then to_char(q.entry_scanned_at, 'YYYY-MM-DD"T"HH24:MI:SS"Z"') else null end,
-      'gate', coalesce(g.name, 'Main Gate'),
-      'photoEvidenceId', pe.id,
-      'idEvidenceId', ie.id
+      'id', p.id,
+      'visitorName', v.full_name,
+      'purpose', v.purpose,
+      'source', p.source,
+      'status', p.status,
+      'validFrom', p.valid_from,
+      'validUntil', p.valid_until,
+      'scannedAt', p.entry_scanned_at,
+      'gate', p.gate,
+      'photoEvidenceId', (select ve.id from public.visitor_evidence ve where ve.visitor_id = v.id and ve.kind = 'photo' and ve.purged_at is null),
+      'idEvidenceId', (select ve.id from public.visitor_evidence ve where ve.visitor_id = v.id and ve.kind = 'id' and ve.purged_at is null)
     )
     ```
   - Restores root response contract:
@@ -806,11 +806,12 @@ Local promotion evidence: pre-fix regression run 7/7 FAILED as expected; correct
   v_day_start := date_trunc('day', statement_timestamp() at time zone 'Asia/Manila') at time zone 'Asia/Manila';
   v_day_end := (date_trunc('day', statement_timestamp() at time zone 'Asia/Manila') + interval '1 day') at time zone 'Asia/Manila';
   ```
-  Applied consistently:
-  - Daily passes issued: `issued_at >= v_day_start and issued_at < v_day_end`
-  - Currently inside: `entry_scanned_at >= v_day_start and entry_scanned_at < v_day_end and status = 'inside'`
-  - Exited today: `entry_scanned_at >= v_day_start and entry_scanned_at < v_day_end and status = 'completed'`
-  - Rejected today: `created_at >= v_day_start and created_at < v_day_end and status = 'rejected'`
+  Applied consistently on passes issued within the Manila calendar day:
+  - Daily stats window: `issued_at >= v_day_start and issued_at < v_day_end`
+  - Total issued: `count(*)`
+  - Currently inside: `count(*) filter (where status = 'inside'::public.pass_status)`
+  - Exited today: `count(*) filter (where status = 'exited'::public.pass_status)` (valid terminal state is 'exited', not 'completed')
+  - Rejected today: `count(*) filter (where status = 'rejected'::public.pass_status)`
 - **Status**: PASS (verified across `UTC` and `America/New_York` session timezones in PGlite Test J).
 
 #### Repair 3: Frontend Strict Wire Contract Validation
@@ -828,7 +829,7 @@ Local promotion evidence: pre-fix regression run 7/7 FAILED as expected; correct
 1. **Repeated Function Contract Drift Scan**:
    - Inspected all functions defined more than once across migrations:
      - `api.guard_dashboard(integer, integer)`: Drifted in `20261021000200`; repaired in `20261021054710`.
-     - `api.acknowledge_privacy()`: Recreated in `20261021000200` with only the `private.is_recovery_session()` check added; returns boolean; contract preserved.
+     - `api.acknowledge_privacy()`: Recreated in `20261021000200` with only the `private.is_recovery_session()` check added; returns timestamptz (timestamp of acceptance); contract preserved.
      - `api.decide_visit(uuid, text, text)`: Recreated in `20261020000800` and `20261020001300`; contract preserved.
      - `api.create_upload_intent(...)`: Contract preserved across iterations.
      - `api.create_incident_hold(...)`: Contract preserved across iterations.
@@ -840,3 +841,88 @@ Local promotion evidence: pre-fix regression run 7/7 FAILED as expected; correct
    - Audited all uses of `current_date` and `now()` across active migrations and server code.
    - SQL operations requiring Manila day context now strictly use explicit `Asia/Manila` boundaries (`v_day_start` to `v_day_end`).
    - Server endpoints (`api/admin/dashboard.ts`, `api/admin/today-insights.ts`) receive explicit date range boundaries (`startToday` / `endToday`) computed via Manila date helpers.
+
+
+### Final Pre-Migration Contract Closure Pass (October 2026)
+
+- **Baseline Starting Commit**: `b1f4370e8e2880b79d8744f2f6cf539eb62de267`
+- **Branch**: `feat/runtime-migration`
+- **Scope**: Documentation truth reconciliation, deterministic Guard queue aggregation, Zod runtime wire contract validation, midnight test fixture determinism, and full 15 repeated-function recurrence elimination. Zero new API endpoints. Hosted Supabase migrations remain **NOT APPLIED**.
+
+#### Authoritative Hosted Migration Status
+- **Live Supabase State**: Migration history is **EMPTY**; application tables = **0**.
+- **Pending Migrations**: The entire chain of **19 migrations** (from `20261020000100_core_schema.sql` through `20261021063038_guard_dashboard_deterministic_order_closure.sql`) remains pending and unapplied.
+
+#### Repair A: Documentation Truth Reconciliation
+- **Stale Statements Corrected**:
+  1. *Guard stats semantics*: Corrected description to reflect that stats operate on passes with `issued_at >= v_day_start and issued_at < v_day_end`, filtering by status.
+  2. *Valid exit status*: Corrected stale references to `'completed'` to canonical enum value `'exited'`.
+  3. *JSON snippet*: Removed intermediate `to_char` / gate-join draft snippets; documented actual SQL expressions.
+  4. *`api.acknowledge_privacy()` return type*: Corrected description from `boolean` to actual SQL return type `timestamptz`.
+  5. *Migration count*: Updated total migration count from 18 to 19.
+
+#### Repair B: Guard Queue Formal Determinism
+- **Problem**: In previous iterations, `ORDER BY p.entry_scanned_at ASC` was applied in the inner pagination subquery, but the outer `jsonb_agg(item)` omitted an explicit aggregate `ORDER BY`, and passes with identical scan timestamps lacked a deterministic tie-breaker.
+- **Root Cause**: Ordering was applied to row pagination but not explicitly bound to the aggregate aggregation contract.
+- **Fix Implemented**: Created additive migration `supabase/migrations/20261021063038_guard_dashboard_deterministic_order_closure.sql` recreating `api.guard_dashboard(integer, integer)` with:
+  ```sql
+  select coalesce(
+    jsonb_agg(
+      pending.item
+      order by pending.sort_scanned_at asc nulls last,
+               pending.sort_id asc
+    ),
+    '[]'::jsonb
+  ) into queue
+  from (
+    select
+      p.entry_scanned_at as sort_scanned_at,
+      p.id as sort_id,
+      jsonb_build_object(...) as item
+    from public.passes p
+    join public.visitors v on v.id = p.visitor_id
+    where p.status = 'pending'::public.pass_status
+    order by
+      p.entry_scanned_at asc nulls last,
+      p.id asc
+    limit v_limit
+    offset v_offset
+  ) pending;
+  ```
+  Enforces deterministic order (`sort_scanned_at ASC NULLS LAST, sort_id ASC`) across both pagination and `jsonb_agg`.
+
+#### Repair C: Complete Guard Wire Contract Runtime Validation
+- **Problem**: `src/services/guard.ts` checked key presence (`'photoEvidenceId' in item`), which satisfied cases where fields existed but were null, non-UUID, or wrong types.
+- **Root Cause**: Static TypeScript interfaces do not provide runtime type validation across database boundaries.
+- **Fix Implemented**: Implemented complete Zod schema in `src/services/guard.ts` (`guardDashboardWireSchema`):
+  - `queue`: array of queue items where `id` is UUID, `visitorName` is non-empty string, `purpose` is string, `source` is `'portal' | 'kiosk'`, `status` is `'pending'`, `scannedAt` is string, `photoEvidenceId` is UUID string (non-null), `idEvidenceId` is UUID string or null, `gate` is string or null.
+  - `stats`: non-negative integers for `inside`, `exited`, `rejected`, `total`.
+  - `pendingTotal`: non-negative integer.
+  - `hasMore`: boolean.
+  - `rejectionReasons`: array of strings.
+  - On failure, throws `Error('api.guard_dashboard contract violation: ...')` without leaking visitor PII.
+- **Tests**: 16 unit tests in `tests/guard-dashboard-contract.test.ts` testing positive mapping and 14 negative boundary cases.
+
+#### Repair D: Manila Day Test Fixture Determinism
+- **Problem**: Test J seeded passes with `issued_at = now() - interval '1 hour'`. Near midnight in Manila (12:00 AM - 12:59 AM), this timestamp falls into the previous calendar day, causing false test failure.
+- **Root Cause**: Test fixture defined relative to current instant instead of the Manila day boundary.
+- **Fix Implemented**: Seeded all "today" test passes in Test J using explicit offsets from `v_day_start` (`v_day_start + interval '1h'`, `2h'`, `3h'`, etc.) and derived `visit_date` from `(statement_timestamp() at time zone 'Asia/Manila')::date`. Eliminated all `now() - interval '1 hour'` fixtures. Verified invariance under UTC and America/New_York session timezones.
+
+#### Repair E: Complete Repeated-Function Review (15 Functions)
+- **Enumeration**: Programmatically scanned all migrations in `supabase/migrations/` and verified every repeated function:
+  1. `private.current_staff_role` (3 definitions) - A (security hardening, contract preserved)
+  2. `private.is_portal_actor` (2 definitions) - A (security hardening, contract preserved)
+  3. `api.current_actor` (2 definitions) - A (security definer hardening, contract preserved)
+  4. `api.create_upload_intent` (3 definitions) - A (security hardening, contract preserved)
+  5. `api.acknowledge_privacy` (3 definitions) - A (recovery confinement, contract preserved)
+  6. `api.decide_visit` (2 definitions) - A (concurrency idempotency, contract preserved)
+  7. `api.guard_dashboard` (5 definitions) - D (contract drift in 000200) -> FIXED in 054710 & 063500
+  8. `api.request_email_verification_code` (5 definitions) - A (abuse controls, contract preserved)
+  9. `api.verify_and_claim_email_dispatch` (3 definitions) - A (abuse controls, contract preserved)
+  10. `api.finalize_email_dispatch` (3 definitions) - A (search_path hardening, contract preserved)
+  11. `api.finalize_email_verification_code` (2 definitions) - A (search_path hardening, contract preserved)
+  12. `api.claim_evidence_for_purge` (2 definitions) - A (lease concurrency, contract preserved)
+  13. `api.finalize_evidence_purge` (2 definitions) - A (audit reconciliation, contract preserved)
+  14. `api.create_incident_hold` (2 definitions) - A (cross-target invariant, contract preserved)
+  15. `public.protect_managed_credentials` (2 definitions) - A (marker-based trigger hardening, contract preserved)
+- **Finding**: Only `guard_dashboard` had unintended contract drift, which is now fully closed.

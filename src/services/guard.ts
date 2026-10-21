@@ -1,3 +1,4 @@
+import { z } from 'zod';
 import { requireSupabase } from '@/lib/supabase';
 
 export interface GuardQueuePass {
@@ -22,17 +23,34 @@ export interface GuardDashboardData {
   hasMore: boolean;
 }
 
-interface DashboardWire {
-  queue?: Array<{
-    id: string; visitorName: string; purpose: string; source: 'portal' | 'kiosk'; status: 'pending';
-    validFrom: string; validUntil: string; scannedAt: string; gate: string | null;
-    photoEvidenceId: string; idEvidenceId: string | null;
-  }>;
-  stats?: GuardDashboardData['stats'];
-  rejectionReasons?: string[];
-  pendingTotal?: number;
-  hasMore?: boolean;
-}
+export const guardQueueItemSchema = z.object({
+  id: z.string().uuid(),
+  visitorName: z.string().min(1),
+  purpose: z.string(),
+  source: z.enum(['portal', 'kiosk']),
+  status: z.literal('pending'),
+  validFrom: z.string(),
+  validUntil: z.string(),
+  scannedAt: z.string(),
+  gate: z.string().nullable(),
+  photoEvidenceId: z.string().uuid(),
+  idEvidenceId: z.string().uuid().nullable(),
+});
+
+export const guardStatsSchema = z.object({
+  inside: z.number().int().nonnegative(),
+  exited: z.number().int().nonnegative(),
+  rejected: z.number().int().nonnegative(),
+  total: z.number().int().nonnegative(),
+});
+
+export const guardDashboardWireSchema = z.object({
+  queue: z.array(guardQueueItemSchema),
+  stats: guardStatsSchema,
+  rejectionReasons: z.array(z.string()),
+  pendingTotal: z.number().int().nonnegative(),
+  hasMore: z.boolean(),
+});
 
 export async function fetchGuardDashboard(options?: {
   limit?: number;
@@ -46,37 +64,36 @@ export async function fetchGuardDashboard(options?: {
       requested_limit: limit,
       requested_offset: offset,
     });
-  const data = rawData as DashboardWire | null;
-  if (error || !data) throw error ?? new Error('Guard dashboard unavailable');
+  if (error || !rawData) throw error ?? new Error('Guard dashboard unavailable');
 
-  // Strict Canonical Contract Validation:
-  // Detect incompatible schema/RPC mutations visibly rather than rendering corrupt operational state
-  if (
-    !Array.isArray(data.queue) ||
-    typeof data.pendingTotal !== 'number' ||
-    typeof data.hasMore !== 'boolean' ||
-    !data.stats ||
-    typeof data.stats.total !== 'number' ||
-    typeof data.stats.inside !== 'number' ||
-    typeof data.stats.exited !== 'number' ||
-    typeof data.stats.rejected !== 'number'
-  ) {
-    throw new Error('Malformed guard dashboard payload: missing canonical contract properties');
+  // Strict Runtime Wire Contract Validation:
+  // Detects incompatible database RPC contract mutations without leaking sensitive visitor data
+  const parsed = guardDashboardWireSchema.safeParse(rawData);
+  if (!parsed.success) {
+    const issueSummary = parsed.error.issues
+      .map((i) => `${i.path.join('.')}: ${i.message}`)
+      .join(', ');
+    throw new Error(`api.guard_dashboard contract violation: ${issueSummary}`);
   }
 
+  const data = parsed.data;
+
   return {
-    queue: data.queue.map((item) => {
-      if (!item || typeof item.id !== 'string' || !('photoEvidenceId' in item) || !('idEvidenceId' in item)) {
-        throw new Error('Malformed guard queue item: missing canonical evidence properties');
-      }
-      return {
-        ...item,
-        photoPublicId: item.photoEvidenceId,
-        idImagePublicId: item.idEvidenceId,
-      };
-    }),
+    queue: data.queue.map((item) => ({
+      id: item.id,
+      visitorName: item.visitorName,
+      purpose: item.purpose,
+      source: item.source,
+      status: item.status,
+      validFrom: item.validFrom,
+      validUntil: item.validUntil,
+      scannedAt: item.scannedAt,
+      gate: item.gate,
+      photoPublicId: item.photoEvidenceId,
+      idImagePublicId: item.idEvidenceId,
+    })),
     stats: data.stats,
-    rejectionReasons: Array.isArray(data.rejectionReasons) ? data.rejectionReasons : [],
+    rejectionReasons: data.rejectionReasons,
     pendingTotal: data.pendingTotal,
     hasMore: data.hasMore,
   };

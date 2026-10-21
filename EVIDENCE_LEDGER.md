@@ -319,3 +319,10 @@ Exact-commit verification at `80d861b`: `npm run test:architecture` PASS 3/3; `n
 | EV-TYPE-009 | API & CLIENT TYPECHECK | `npm run typecheck:api` & `npx tsc --noEmit` | PASS: exit code 0 | Strict TypeScript compilation across API and React client with zero errors |
 | EV-BUILD-009 | PRODUCTION BUILD INTEGRITY | `npm run build` | PASS: exit code 0 (1.40s) | Production bundle cleanly built with Vite v8.3.1 |
 | EV-E2E-007 | PLAYWRIGHT BROWSER STARTUP E2E | `npm run test:e2e:startup` | PASS: 4/4 cases | Edge browser startup verified across dev configured/missing/malformed and preview configured |
+
+| EV-GUARD-DETERMINISM-001 | GUARD QUEUE FORMAL DETERMINISTIC ORDERING | `api.guard_dashboard()`, `tests/migration-chain-pglite.test.ts` Test J | PASS: 10/10 tests | Dual-level ordering (sort_scanned_at ASC NULLS LAST, sort_id ASC) enforced in subquery and jsonb_agg; tie-breaker verified |
+| EV-GUARD-ZOD-001 | COMPLETE GUARD WIRE RUNTIME VALIDATION | `src/services/guard.ts`, `tests/guard-dashboard-contract.test.ts` | PASS: 16/16 tests | Complete Zod validation: photoEvidenceId UUID, idEvidenceId UUID|null, non-negative stats, pendingTotal int; 14 negative cases rejected |
+| EV-TEST-MANILA-001 | MANILA TEST FIXTURE MIDNIGHT DETERMINISM | `tests/migration-chain-pglite.test.ts` Test J | PASS: verified | All today records seeded via v_day_start offsets; zero now()-1h usage; invariant under UTC and America/New_York |
+| EV-REPEATED-FUNC-001 | COMPLETE 15 REPEATED-FUNCTION CONTRACT AUDIT | `supabase/migrations/*.sql` | PASS: audited | Full programmatic review of 15 repeated functions across 19 migrations; 0 unresolved contract drift |
+| EV-MIG-007 | FULL 19-MIGRATION PGLITE SEQUENTIAL & UPGRADE RUNNER | `npm run test:migrations` | PASS: 10/10 tests (14.1s) | Clean sequential execution (000100 through 20261021063038) and upgrade paths verified |
+| EV-FULL-SUITE-011 | FULL TEST SUITE PASS | `npm test` | PASS: 23 files, 341 tests | All unit, contract, static, and mocked tests pass with zero failures |

@@ -804,7 +804,7 @@ describe('Permanent PostgreSQL Migration Chain & Schema Contracts (PGlite)', () 
     expect(directRoleCheck.rows[0].role).toBeNull();
   }, 30000);
 
-  it('J. PGLITE/POSTGRES CONTRACT TEST: api.guard_dashboard response contract, pagination, and Asia/Manila daily statistics', async () => {
+  it('J. PGLITE/POSTGRES CONTRACT TEST: api.guard_dashboard response contract, deterministic ordering, and Asia/Manila daily statistics', async () => {
     const db = new PGlite();
     await applyAllMigrations(db);
 
@@ -817,7 +817,7 @@ describe('Permanent PostgreSQL Migration Chain & Schema Contracts (PGlite)', () 
       values ('${GUARD_UID}', 'Officer Ramos', 'guard', true, false, now());
     `);
 
-    // 2. Seed visitors with valid auth.users owners and required schema fields
+    // 2. Seed visitors with valid auth.users owners and explicit Manila day dates
     const OWNER_1 = '00000000-0000-4000-e000-000000000001';
     const OWNER_2 = '00000000-0000-4000-e000-000000000002';
     const OWNER_3 = '00000000-0000-4000-e000-000000000003';
@@ -826,6 +826,7 @@ describe('Permanent PostgreSQL Migration Chain & Schema Contracts (PGlite)', () 
     const OWNER_6 = '00000000-0000-4000-e000-000000000006';
     const OWNER_7 = '00000000-0000-4000-e000-000000000007';
     const OWNER_8 = '00000000-0000-4000-e000-000000000008';
+    const OWNER_9 = '00000000-0000-4000-e000-000000000009';
 
     await db.exec(`
       insert into auth.users (id, email, is_anonymous, email_confirmed_at)
@@ -837,7 +838,8 @@ describe('Permanent PostgreSQL Migration Chain & Schema Contracts (PGlite)', () 
         ('${OWNER_5}', 'v5@example.com', true, now()),
         ('${OWNER_6}', 'v6@example.com', true, now()),
         ('${OWNER_7}', 'v7@example.com', true, now()),
-        ('${OWNER_8}', 'v8@example.com', true, now());
+        ('${OWNER_8}', 'v8@example.com', true, now()),
+        ('${OWNER_9}', 'v9@example.com', true, now());
     `);
 
     const VISITOR_1 = '00000000-0000-4000-a000-000000000001';
@@ -848,18 +850,26 @@ describe('Permanent PostgreSQL Migration Chain & Schema Contracts (PGlite)', () 
     const VISITOR_6 = '00000000-0000-4000-a000-000000000006';
     const VISITOR_7 = '00000000-0000-4000-a000-000000000007';
     const VISITOR_8 = '00000000-0000-4000-a000-000000000008';
+    const VISITOR_9 = '00000000-0000-4000-a000-000000000009';
 
+    // Seed visitors using explicit Manila dates (avoiding session-dependent current_date)
     await db.exec(`
-      insert into public.visitors (id, owner_id, source, full_name, contact_number, email, purpose, visit_date, consent_accepted_at)
-      values
-        ('${VISITOR_1}', '${OWNER_1}', 'portal', 'Alice Santos', '09123456781', 'alice@example.com', 'Meeting', current_date, now()),
-        ('${VISITOR_2}', '${OWNER_2}', 'portal', 'Bob Cruz', '09123456782', 'bob@example.com', 'Delivery', current_date, now()),
-        ('${VISITOR_3}', '${OWNER_3}', 'portal', 'Charlie Diaz', '09123456783', 'charlie@example.com', 'Interview', current_date, now()),
-        ('${VISITOR_4}', '${OWNER_4}', 'portal', 'Dan Inside', '09123456784', 'dan@example.com', 'Meeting', current_date, now()),
-        ('${VISITOR_5}', '${OWNER_5}', 'portal', 'Eva Exited', '09123456785', 'eva@example.com', 'Meeting', current_date, now()),
-        ('${VISITOR_6}', '${OWNER_6}', 'portal', 'Frank Rejected', '09123456786', 'frank@example.com', 'Meeting', current_date, now()),
-        ('${VISITOR_7}', '${OWNER_7}', 'portal', 'Grace Yesterday', '09123456787', 'grace@example.com', 'Meeting', current_date - 1, now() - interval '1 day'),
-        ('${VISITOR_8}', '${OWNER_8}', 'portal', 'Heidi Tomorrow', '09123456788', 'heidi@example.com', 'Meeting', current_date + 1, now());
+      do $$
+      declare
+        v_manila_today date := (statement_timestamp() at time zone 'Asia/Manila')::date;
+      begin
+        insert into public.visitors (id, owner_id, source, full_name, contact_number, email, purpose, visit_date, consent_accepted_at)
+        values
+          ('${VISITOR_1}', '${OWNER_1}', 'portal', 'Alice Santos', '09123456781', 'alice@example.com', 'Meeting', v_manila_today, now()),
+          ('${VISITOR_2}', '${OWNER_2}', 'portal', 'Bob Cruz', '09123456782', 'bob@example.com', 'Delivery', v_manila_today, now()),
+          ('${VISITOR_3}', '${OWNER_3}', 'portal', 'Charlie Diaz', '09123456783', 'charlie@example.com', 'Interview', v_manila_today, now()),
+          ('${VISITOR_4}', '${OWNER_4}', 'portal', 'David Tie', '09123456784', 'david@example.com', 'Inquiry', v_manila_today, now()),
+          ('${VISITOR_5}', '${OWNER_5}', 'portal', 'Dan Inside', '09123456785', 'dan@example.com', 'Meeting', v_manila_today, now()),
+          ('${VISITOR_6}', '${OWNER_6}', 'portal', 'Eva Exited', '09123456786', 'eva@example.com', 'Meeting', v_manila_today, now()),
+          ('${VISITOR_7}', '${OWNER_7}', 'portal', 'Frank Rejected', '09123456787', 'frank@example.com', 'Meeting', v_manila_today, now()),
+          ('${VISITOR_8}', '${OWNER_8}', 'portal', 'Grace Yesterday', '09123456788', 'grace@example.com', 'Meeting', v_manila_today - 1, now() - interval '1 day'),
+          ('${VISITOR_9}', '${OWNER_9}', 'portal', 'Heidi Tomorrow', '09123456789', 'heidi@example.com', 'Meeting', v_manila_today + 1, now());
+      end $$;
     `);
 
     // 3. Seed visitor evidence and upload intents
@@ -885,49 +895,73 @@ describe('Permanent PostgreSQL Migration Chain & Schema Contracts (PGlite)', () 
         ('${PHOTO_EVID_2}', '${VISITOR_2}', '${INTENT_3}', 'photo', 'visitor-photos', 'bob/photo.jpg', 'image/jpeg', 1024, repeat('c', 64), now(), now() + interval '30 days');
     `);
 
-    // 4. Seed 3 pending passes with distinct entry_scanned_at
+    // 4. Seed passes using explicit Asia/Manila day bounds (v_day_start offsets)
+    // Eliminates midnight flakiness (never uses now() - 1 hour)
     const PASS_1 = '00000000-0000-4000-d000-000000000001';
     const PASS_2 = '00000000-0000-4000-d000-000000000002';
     const PASS_3 = '00000000-0000-4000-d000-000000000003';
-    await db.exec(`
-      insert into public.passes (
-        id, visitor_id, token_digest, source, status, valid_from, valid_until, entry_scanned_at, gate, issued_at
-      ) values
-        ('${PASS_1}', '${VISITOR_1}', decode('0101010101010101010101010101010101010101010101010101010101010101', 'hex'), 'portal', 'pending', now() - interval '1 hour', now() + interval '8 hours', now() - interval '30 minutes', 'Gate 1', now() - interval '1 hour'),
-        ('${PASS_2}', '${VISITOR_2}', decode('0202020202020202020202020202020202020202020202020202020202020202', 'hex'), 'portal', 'pending', now() - interval '1 hour', now() + interval '8 hours', now() - interval '20 minutes', 'Gate 2', now() - interval '1 hour'),
-        ('${PASS_3}', '${VISITOR_3}', decode('0303030303030303030303030303030303030303030303030303030303030303', 'hex'), 'portal', 'pending', now() - interval '1 hour', now() + interval '8 hours', now() - interval '10 minutes', 'Gate 1', now() - interval '1 hour');
-    `);
+    const PASS_4_TIE = '00000000-0000-4000-d000-000000000004';
 
-    // 5. Seed non-pending passes to test daily stats relative to Asia/Manila day boundary
     await db.exec(`
       do $$
       declare
         v_day_start timestamptz := date_trunc('day', statement_timestamp() at time zone 'Asia/Manila') at time zone 'Asia/Manila';
         v_day_end timestamptz := (date_trunc('day', statement_timestamp() at time zone 'Asia/Manila') + interval '1 day') at time zone 'Asia/Manila';
       begin
+        -- Pending 1: scanned earliest (v_day_start + 1h)
+        insert into public.passes (
+          id, visitor_id, token_digest, source, status, valid_from, valid_until, entry_scanned_at, gate, issued_at
+        ) values (
+          '${PASS_1}', '${VISITOR_1}', decode('0101010101010101010101010101010101010101010101010101010101010101', 'hex'), 'portal', 'pending',
+          v_day_start + interval '1 hour', v_day_start + interval '8 hours', v_day_start + interval '1 hour 10 minutes', 'Gate 1', v_day_start + interval '1 hour'
+        );
+
+        -- Pending 2: scanned second (v_day_start + 2h)
+        insert into public.passes (
+          id, visitor_id, token_digest, source, status, valid_from, valid_until, entry_scanned_at, gate, issued_at
+        ) values (
+          '${PASS_2}', '${VISITOR_2}', decode('0202020202020202020202020202020202020202020202020202020202020202', 'hex'), 'portal', 'pending',
+          v_day_start + interval '2 hours', v_day_start + interval '8 hours', v_day_start + interval '2 hours 20 minutes', 'Gate 2', v_day_start + interval '2 hours'
+        );
+
+        -- Pending 3 & Pending 4: EXACT SAME entry_scanned_at (v_day_start + 3h 30m) to test deterministic UUID tie-breaker
+        insert into public.passes (
+          id, visitor_id, token_digest, source, status, valid_from, valid_until, entry_scanned_at, gate, issued_at
+        ) values (
+          '${PASS_3}', '${VISITOR_3}', decode('0303030303030303030303030303030303030303030303030303030303030303', 'hex'), 'portal', 'pending',
+          v_day_start + interval '3 hours', v_day_start + interval '8 hours', v_day_start + interval '3 hours 30 minutes', 'Gate 1', v_day_start + interval '3 hours'
+        );
+
+        insert into public.passes (
+          id, visitor_id, token_digest, source, status, valid_from, valid_until, entry_scanned_at, gate, issued_at
+        ) values (
+          '${PASS_4_TIE}', '${VISITOR_4}', decode('0404040404040404040404040404040404040404040404040404040404040404', 'hex'), 'portal', 'pending',
+          v_day_start + interval '3 hours 15 minutes', v_day_start + interval '8 hours', v_day_start + interval '3 hours 30 minutes', 'Gate 2', v_day_start + interval '3 hours 15 minutes'
+        );
+
         -- Today Manila: status inside
         insert into public.passes (id, visitor_id, token_digest, source, status, valid_from, valid_until, issued_at)
-        values (gen_random_uuid(), '${VISITOR_4}', decode('0404040404040404040404040404040404040404040404040404040404040404', 'hex'), 'portal', 'inside', v_day_start + interval '1 hour', v_day_start + interval '8 hours', v_day_start + interval '1 hour');
+        values (gen_random_uuid(), '${VISITOR_5}', decode('0505050505050505050505050505050505050505050505050505050505050505', 'hex'), 'portal', 'inside', v_day_start + interval '4 hours', v_day_start + interval '8 hours', v_day_start + interval '4 hours');
 
         -- Today Manila: status exited
         insert into public.passes (id, visitor_id, token_digest, source, status, valid_from, valid_until, issued_at, time_out)
-        values (gen_random_uuid(), '${VISITOR_5}', decode('0505050505050505050505050505050505050505050505050505050505050505', 'hex'), 'portal', 'exited', v_day_start + interval '1 hour', v_day_start + interval '8 hours', v_day_start + interval '2 hours', v_day_start + interval '4 hours');
+        values (gen_random_uuid(), '${VISITOR_6}', decode('0606060606060606060606060606060606060606060606060606060606060606', 'hex'), 'portal', 'exited', v_day_start + interval '5 hours', v_day_start + interval '8 hours', v_day_start + interval '5 hours', v_day_start + interval '7 hours');
 
         -- Today Manila: status rejected
         insert into public.passes (id, visitor_id, token_digest, source, status, valid_from, valid_until, issued_at, decided_at, rejection_reason)
-        values (gen_random_uuid(), '${VISITOR_6}', decode('0606060606060606060606060606060606060606060606060606060606060606', 'hex'), 'portal', 'rejected', v_day_start + interval '1 hour', v_day_start + interval '8 hours', v_day_start + interval '3 hours', v_day_start + interval '3 hours', 'Security Hold');
+        values (gen_random_uuid(), '${VISITOR_7}', decode('0707070707070707070707070707070707070707070707070707070707070707', 'hex'), 'portal', 'rejected', v_day_start + interval '6 hours', v_day_start + interval '8 hours', v_day_start + interval '6 hours', v_day_start + interval '6 hours', 'Security Hold');
 
         -- Yesterday (outside Manila today boundary: BEFORE v_day_start)
         insert into public.passes (id, visitor_id, token_digest, source, status, valid_from, valid_until, issued_at)
-        values (gen_random_uuid(), '${VISITOR_7}', decode('0707070707070707070707070707070707070707070707070707070707070707', 'hex'), 'portal', 'inside', v_day_start - interval '5 hours', v_day_start - interval '1 hour', v_day_start - interval '2 hours');
+        values (gen_random_uuid(), '${VISITOR_8}', decode('0808080808080808080808080808080808080808080808080808080808080808', 'hex'), 'portal', 'inside', v_day_start - interval '5 hours', v_day_start - interval '1 hour', v_day_start - interval '2 hours');
 
         -- Tomorrow (outside Manila today boundary: AT OR AFTER v_day_end)
         insert into public.passes (id, visitor_id, token_digest, source, status, valid_from, valid_until, issued_at)
-        values (gen_random_uuid(), '${VISITOR_8}', decode('0808080808080808080808080808080808080808080808080808080808080808', 'hex'), 'portal', 'inside', v_day_end + interval '2 hours', v_day_end + interval '8 hours', v_day_end + interval '2 hours');
+        values (gen_random_uuid(), '${VISITOR_9}', decode('0909090909090909090909090909090909090909090909090909090909090909', 'hex'), 'portal', 'inside', v_day_end + interval '2 hours', v_day_end + interval '8 hours', v_day_end + interval '2 hours');
       end $$;
     `);
 
-    // Helper to switch session
+    // Helper to switch session to Guard actor
     async function asGuard() {
       await db.exec(`
         set role authenticated;
@@ -937,85 +971,76 @@ describe('Permanent PostgreSQL Migration Chain & Schema Contracts (PGlite)', () 
 
     await asGuard();
 
-    // 6. Test Pagination & Exact Contract (limit = 1, offset = 0)
-    // Total pending = 3, requested limit = 1.
-    const resPage1 = await db.query<{ guard_dashboard: any }>('select api.guard_dashboard(1, 0) as guard_dashboard;');
-    const d1 = resPage1.rows[0].guard_dashboard;
+    // 5. Test Deterministic Ordering & Full Queue: All 4 pending passes
+    const resFull = await db.query<{ guard_dashboard: any }>('select api.guard_dashboard(10, 0) as guard_dashboard;');
+    const dFull = resFull.rows[0].guard_dashboard;
 
-    // Root keys
-    expect(d1).toHaveProperty('queue');
-    expect(d1).toHaveProperty('stats');
-    expect(d1).toHaveProperty('rejectionReasons');
-    expect(d1).toHaveProperty('pendingTotal');
-    expect(d1).toHaveProperty('hasMore');
-    expect(d1).not.toHaveProperty('totalPending'); // Must not use broken key
+    // Verify root contract keys
+    expect(dFull).toHaveProperty('queue');
+    expect(dFull).toHaveProperty('stats');
+    expect(dFull).toHaveProperty('rejectionReasons');
+    expect(dFull).toHaveProperty('pendingTotal');
+    expect(dFull).toHaveProperty('hasMore');
+    expect(dFull).not.toHaveProperty('totalPending'); // Canonical key is pendingTotal
 
-    // Authoritative total vs page length
-    expect(d1.queue.length).toBe(1);
-    expect(d1.pendingTotal).toBe(3); // Authoritative count of pending rows
-    expect(d1.hasMore).toBe(true);
+    expect(dFull.queue).toHaveLength(4);
+    expect(dFull.pendingTotal).toBe(4);
+    expect(dFull.hasMore).toBe(false);
 
-    // Verify first queue item exact contract
-    const item1 = d1.queue[0];
-    expect(item1).toHaveProperty('id');
-    expect(item1).toHaveProperty('visitorName');
-    expect(item1).toHaveProperty('purpose');
-    expect(item1).toHaveProperty('source');
-    expect(item1).toHaveProperty('status');
-    expect(item1).toHaveProperty('validFrom');
-    expect(item1).toHaveProperty('validUntil');
-    expect(item1).toHaveProperty('scannedAt');
-    expect(item1).toHaveProperty('gate');
-    expect(item1).toHaveProperty('photoEvidenceId');
-    expect(item1).toHaveProperty('idEvidenceId');
-    expect(item1).not.toHaveProperty('evidence'); // Must not replace with generic array
+    // Verify DETERMINISTIC ORDERING:
+    // PASS_1 (1h 10m) < PASS_2 (2h 20m) < PASS_3 (3h 30m, UUID ending 0003) < PASS_4_TIE (3h 30m, UUID ending 0004)
+    expect(dFull.queue[0].id).toBe(PASS_1);
+    expect(dFull.queue[1].id).toBe(PASS_2);
+    expect(dFull.queue[2].id).toBe(PASS_3);
+    expect(dFull.queue[3].id).toBe(PASS_4_TIE);
 
-    // Value checks for Item 1 (Alice has both photo and ID evidence)
-    expect(item1.id).toBe(PASS_1);
+    // Verify evidence contract on item 0 (Alice has both photo and ID evidence)
+    const item1 = dFull.queue[0];
     expect(item1.visitorName).toBe('Alice Santos');
     expect(item1.photoEvidenceId).toBe(PHOTO_EVID_1);
     expect(item1.idEvidenceId).toBe(ID_EVID_1);
+    expect(item1).not.toHaveProperty('evidence'); // Canonical keys, not generic array
 
-    // 7. Test Page 2 (limit = 2, offset = 1) -> items 2 and 3
-    const resPage2 = await db.query<{ guard_dashboard: any }>('select api.guard_dashboard(2, 1) as guard_dashboard;');
-    const d2 = resPage2.rows[0].guard_dashboard;
-    expect(d2.queue.length).toBe(2);
-    expect(d2.pendingTotal).toBe(3);
-    expect(d2.hasMore).toBe(false); // 1 + 2 = 3, no more items
-
-    // Item 2 (Bob has photo evidence, but no ID evidence)
-    const item2 = d2.queue[0];
+    // Item 1 (Bob has photo evidence, but null ID evidence)
+    const item2 = dFull.queue[1];
     expect(item2.id).toBe(PASS_2);
     expect(item2.photoEvidenceId).toBe(PHOTO_EVID_2);
     expect(item2.idEvidenceId).toBeNull();
 
-    // Item 3 (Charlie has neither)
-    const item3 = d2.queue[1];
-    expect(item3.id).toBe(PASS_3);
-    expect(item3.photoEvidenceId).toBeNull();
-    expect(item3.idEvidenceId).toBeNull();
+    // 6. Test Pagination & Authoritative Backlog Count (limit = 2, offset = 0)
+    const resPage1 = await db.query<{ guard_dashboard: any }>('select api.guard_dashboard(2, 0) as guard_dashboard;');
+    const dPage1 = resPage1.rows[0].guard_dashboard;
+    expect(dPage1.queue.length).toBe(2);
+    expect(dPage1.pendingTotal).toBe(4); // Backlog total remains authoritative
+    expect(dPage1.hasMore).toBe(true);
+    expect(dPage1.queue[0].id).toBe(PASS_1);
+    expect(dPage1.queue[1].id).toBe(PASS_2);
 
-    // 8. Test Daily Stats contract and Asia/Manila boundary enforcement
-    // Today's Manila passes in passes table:
-    // Pass 1, 2, 3: issued_at = now() - 1 hour (today Manila, status = pending)
-    // Pass 4: status = inside (issued today Manila)
-    // Pass 5: status = exited (issued today Manila)
-    // Pass 6: status = rejected (issued today Manila)
-    // Pass 7: yesterday (MUST NOT be counted)
-    // Pass 8: tomorrow (MUST NOT be counted)
-    // Total today Manila passes = 3 (pending) + 1 (inside) + 1 (exited) + 1 (rejected) = 6
-    expect(d1.stats).toHaveProperty('inside');
-    expect(d1.stats).toHaveProperty('exited');
-    expect(d1.stats).toHaveProperty('rejected');
-    expect(d1.stats).toHaveProperty('total');
-    expect(d1.stats).not.toHaveProperty('pending'); // Must not replace total with pending
+    // Page 2 (limit = 2, offset = 2)
+    const resPage2 = await db.query<{ guard_dashboard: any }>('select api.guard_dashboard(2, 2) as guard_dashboard;');
+    const dPage2 = resPage2.rows[0].guard_dashboard;
+    expect(dPage2.queue.length).toBe(2);
+    expect(dPage2.pendingTotal).toBe(4);
+    expect(dPage2.hasMore).toBe(false);
+    expect(dPage2.queue[0].id).toBe(PASS_3);
+    expect(dPage2.queue[1].id).toBe(PASS_4_TIE);
 
-    expect(d1.stats.inside).toBe(1);
-    expect(d1.stats.exited).toBe(1);
-    expect(d1.stats.rejected).toBe(1);
-    expect(d1.stats.total).toBe(6);
+    // 7. Test Daily Stats contract and Asia/Manila boundary enforcement
+    // Today's Manila passes:
+    // 4 pending (issued today Manila) + 1 inside + 1 exited + 1 rejected = 7 total
+    // Yesterday and tomorrow passes excluded.
+    expect(dFull.stats).toHaveProperty('inside');
+    expect(dFull.stats).toHaveProperty('exited');
+    expect(dFull.stats).toHaveProperty('rejected');
+    expect(dFull.stats).toHaveProperty('total');
+    expect(dFull.stats).not.toHaveProperty('pending');
 
-    // 9. TIMEZONE REGRESSION TEST: Change session timezone to UTC and ensure Manila results remain invariant
+    expect(dFull.stats.inside).toBe(1);
+    expect(dFull.stats.exited).toBe(1);
+    expect(dFull.stats.rejected).toBe(1);
+    expect(dFull.stats.total).toBe(7);
+
+    // 8. TIMEZONE INVARIANCE TEST: Session time zone changed to UTC
     await db.exec("SET TIME ZONE 'UTC';");
     const resUtc = await db.query<{ guard_dashboard: any }>('select api.guard_dashboard(10, 0) as guard_dashboard;');
     const dUtc = resUtc.rows[0].guard_dashboard;
@@ -1023,10 +1048,14 @@ describe('Permanent PostgreSQL Migration Chain & Schema Contracts (PGlite)', () 
     expect(dUtc.stats.inside).toBe(1);
     expect(dUtc.stats.exited).toBe(1);
     expect(dUtc.stats.rejected).toBe(1);
-    expect(dUtc.stats.total).toBe(6);
-    expect(dUtc.pendingTotal).toBe(3);
+    expect(dUtc.stats.total).toBe(7);
+    expect(dUtc.pendingTotal).toBe(4);
+    expect(dUtc.queue[0].id).toBe(PASS_1);
+    expect(dUtc.queue[1].id).toBe(PASS_2);
+    expect(dUtc.queue[2].id).toBe(PASS_3);
+    expect(dUtc.queue[3].id).toBe(PASS_4_TIE);
 
-    // Also change to another non-Manila timezone (e.g. America/New_York)
+    // Session time zone changed to America/New_York
     await db.exec("SET TIME ZONE 'America/New_York';");
     const resNy = await db.query<{ guard_dashboard: any }>('select api.guard_dashboard(10, 0) as guard_dashboard;');
     const dNy = resNy.rows[0].guard_dashboard;
@@ -1034,8 +1063,12 @@ describe('Permanent PostgreSQL Migration Chain & Schema Contracts (PGlite)', () 
     expect(dNy.stats.inside).toBe(1);
     expect(dNy.stats.exited).toBe(1);
     expect(dNy.stats.rejected).toBe(1);
-    expect(dNy.stats.total).toBe(6);
-    expect(dNy.pendingTotal).toBe(3);
+    expect(dNy.stats.total).toBe(7);
+    expect(dNy.pendingTotal).toBe(4);
+    expect(dNy.queue[0].id).toBe(PASS_1);
+    expect(dNy.queue[1].id).toBe(PASS_2);
+    expect(dNy.queue[2].id).toBe(PASS_3);
+    expect(dNy.queue[3].id).toBe(PASS_4_TIE);
 
     await db.exec('reset role;');
   }, 30000);
