@@ -347,3 +347,17 @@ Exact-commit verification at `80d861b`: `npm run test:architecture` PASS 3/3; `n
 | EV-BUILD-010 | PRODUCTION BUILD INTEGRITY | `npm run build` | PASS: exit code 0 (1.25s) | Production bundle cleanly built with Vite v8.3.1 |
 | EV-VERCEL-PREVIEW-001 | VERCEL PREVIEW DEPLOYMENT | `vercel deploy` -> `dpl_HvTJxhjW91nP6Nookzg6WsMZbZ3T` | PASS: READY, 6 functions | Successfully deployed to Vercel preview; Hobby 12-function limit error completely resolved |
 | EV-VERCEL-CANARIES-001 | PREVIEW ROUTE CANARIES | `vercel curl` across 7 representative endpoints | PASS: all reached handlers | 404 on unknown, 401 on admin, 405 on auth, 405 on pass, 405 on device, 405 on gate, 401 on evidence |
+
+
+## Hosted Service_Role Privilege Contract Repair (October 2026)
+| ID | Class | Command / artifact | Result | Scope and limitation |
+|---|---|---|---|---|
+| EV-PRIV-AUDIT-001 | SERVER DIRECT TABLE AUDIT | `scratch/group_table_access.js`, `server/privilege-contract.ts` | PASS: 44 accesses audited | Mapped all server `.from()` calls across 14 tables; determined exact required and forbidden privileges |
+| EV-MIG-008 | SERVICE_ROLE TABLE GRANTS MIGRATION | `supabase/migrations/20261021155132_service_role_backend_table_grants.sql` | PASS: 20/20 applied | Applied to linked Supabase project `nhoawvkfqblsgutdffie`; remote migration list confirms 20 versions, 0 pending |
+| EV-HOSTED-PRIV-001 | HOSTED PRIVILEGE MATRIX VERIFICATION | `information_schema.table_privileges` query on linked DB | PASS: verified | Exact expected permissions confirmed on all 14 tables; audit immutability preserved; sequence privileges verified |
+| EV-STATIC-CONTRACT-001 | STATIC PRIVILEGE CONTRACT REGRESSION | `tests/service-role-privilege-contract.test.ts` | PASS: 5/5 tests | Static code scan validates all direct table calls against contracted tables and enforces RPC-only boundaries |
+| EV-PGLITE-GRANTS-001 | PGLITE MIGRATION GRANTS REGRESSION | `tests/migration-chain-pglite.test.ts` Test K | PASS: 11/11 tests | Clean sequential migration and upgrade runs verify all 14 table grant contracts, sequence grants, and negative assertions |
+| EV-FULL-SUITE-013 | FULL TEST SUITE PASS | `npm test` | PASS: 25 files, 359 tests | All unit, contract, static, and migration tests pass with zero failures |
+| EV-TYPE-011 | API & CLIENT TYPECHECK | `npm run typecheck:api` & `npx tsc --noEmit` | PASS: exit code 0 | Strict TypeScript compilation across API routes and React client with zero errors |
+| EV-BUILD-011 | PRODUCTION BUILD INTEGRITY | `npm run build` | PASS: exit code 0 (1.27s) | Production bundle cleanly built with Vite v8.3.1 |
+| EV-HOSTED-ADVISORS-002 | HOSTED SECURITY & PERFORMANCE ADVISORS | `npx supabase db advisors --linked` | PASS: 0 blockers | Performance: 0 findings; Security: 0 blockers (only standard anonymous sign-in warnings) |

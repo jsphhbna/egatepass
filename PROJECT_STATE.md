@@ -376,3 +376,19 @@ Current product maturity is `IN PROGRESS (LEVEL 2+ / PRE-DEPLOYMENT VERIFIED)` â
 - `npx tsc --noEmit`: 0 errors.
 - `npm run build`: clean production build (1.25s).
 - `tests/architecture-vercel-hobby.test.ts`: 12/12 passed (enforces $\le 8$ functions, route contract matrix, dispatch semantics).
+
+
+37. **HOSTED SERVICE_ROLE PRIVILEGE CONTRACT REPAIR (October 2026)**:
+    - **Privilege Drift Resolved**: Re-established least-privilege table grants for `service_role` across 13 public tables following strict audit.
+    - **Pass Replay Unblocked**: Resolved SQLSTATE 42501 on `public.passes` SELECT.
+    - **Audit & Mutation Invariants**: Explicitly denied direct mutations on RPC-owned tables (`passes`, `devices`, `staff_profiles`, `incident_holds`, `app_settings`, `visitor_evidence`, `visit_events`); denied UPDATE on `audit_events` to maintain audit immutability.
+    - **Additive Migration**: Applied `20261021155132_service_role_backend_table_grants.sql` to hosted Supabase (`nhoawvkfqblsgutdffie`). Migration count: 20/20.
+    - **Architecture & Static Contracts**: Added `server/privilege-contract.ts` and `tests/service-role-privilege-contract.test.ts` enforcing repo-wide registration of direct table queries. Added Test K in `tests/migration-chain-pglite.test.ts`.
+
+## Test Metrics (Current Pass)
+- `npm test`: 25 test files, 359 passed (0 failed).
+- `test:migrations`: 11/11 passed (PGlite sequential runner, upgrades, D1-D10 trigger contracts, safe anon settings RLS, 10-actor matrix, recovery confinement, deterministic Guard queue, and service_role privilege matrix).
+- `typecheck:api`: 0 errors.
+- `npx tsc --noEmit`: 0 errors.
+- `npm run build`: clean production build (1.27s).
+- `tests/service-role-privilege-contract.test.ts`: 5/5 passed.

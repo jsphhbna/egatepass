@@ -532,3 +532,22 @@
   5. **Pre-compile Email Template Components**: Pre-compile React Email `.tsx` templates in `server/templates/` into `.js` to ensure Vercel's NFT tracer packages them without requiring on-the-fly TSX compilation at runtime.
   6. **Add Architecture Regression Test**: Implemented `tests/architecture-vercel-hobby.test.ts` which asserts physical entrypoint count in `api/` is $\le 8$ and validates route mapping and dispatch request semantics.
 - **Consequence**: Full Hobby plan compatibility achieved; 100% of existing API contracts and security guarantees preserved; deployment succeeded in Preview with status `READY`.
+
+
+---
+
+### Decision: Least-Privilege Table Grants for service_role Backend Access (October 2026)
+
+- **Context**: Pass issuance failed with `permission denied for table passes` (SQLSTATE 42501) when the server handler attempted idempotent replay lookup via `admin.from('passes').select(...)`. Hardening had revoked broad table grants from `service_role`, while the Vercel backend relies on direct PostgREST operations using the service-role secret.
+- **Decisions**:
+  1. **Reject Blanket `GRANT ALL`**: Blanket grants were rejected because they would grant table mutation capabilities on tables whose updates and insertions are strictly encapsulated in `SECURITY DEFINER` RPCs (e.g. `passes`, `staff_profiles`, `devices`).
+  2. **Grant Audited Least Privilege**:
+     - SELECT only: `app_settings`, `devices`, `incident_holds`, `passes`, `staff_profiles`, `visit_events`, `visitor_evidence`.
+     - SELECT, UPDATE: `upload_intents` (intent expiry), `visitors` (privacy anonymization).
+     - SELECT, INSERT, UPDATE: `maintenance_state` (upsert job cursors).
+     - SELECT, INSERT, DELETE: `audit_events` (immutable audit logging and aged retention purge; sequence `audit_events_id_seq` granted USAGE, SELECT), `reconciliation_tasks` (unresolved task recording and resolved task purge).
+     - SELECT, INSERT, UPDATE, DELETE: `pass_email_verifications` (email verification lifecycles and retention purge).
+     - NONE: `rate_limit_buckets` (managed exclusively via DB functions).
+  3. **Preserve RLS and Separation of Roles**: All 14 application tables retain `rowsecurity = true`. No table privileges were granted to `anon` or expanded for `authenticated`.
+  4. **Code & Migration Guardrails**: Created `server/privilege-contract.ts` and `tests/service-role-privilege-contract.test.ts` which scan server code and fail if any future uncontracted `.from()` call is added without corresponding database grant definitions.
+- **Consequence**: Backend operations execute with minimal sufficient database permissions; immutability of audit records is guaranteed by the database; RPC boundaries remain fully protected.

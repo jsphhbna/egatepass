@@ -1072,4 +1072,97 @@ describe('Permanent PostgreSQL Migration Chain & Schema Contracts (PGlite)', () 
 
     await db.exec('reset role;');
   }, 30000);
+
+  it('K. PGLITE/POSTGRES CONTRACT TEST: service_role least-privilege backend table grants matrix', async () => {
+    const db = new PGlite();
+    await applyAllMigrations(db);
+
+    const tables = [
+      'app_settings',
+      'audit_events',
+      'devices',
+      'incident_holds',
+      'maintenance_state',
+      'pass_email_verifications',
+      'passes',
+      'rate_limit_buckets',
+      'reconciliation_tasks',
+      'staff_profiles',
+      'upload_intents',
+      'visit_events',
+      'visitor_evidence',
+      'visitors',
+    ];
+
+    // 1. Verify RLS is enabled on all 14 tables
+    const rlsRes = await db.query<{ relname: string; relrowsecurity: boolean }>(`
+      select c.relname, c.relrowsecurity
+      from pg_class c
+      join pg_namespace n on n.oid = c.relnamespace
+      where n.nspname = 'public' and c.relname = any($1);
+    `, [tables]);
+    expect(rlsRes.rows.length).toBe(14);
+    for (const r of rlsRes.rows) {
+      expect(r.relrowsecurity, `Table ${r.relname} must have RLS enabled`).toBe(true);
+    }
+
+    // 2. Verify exact service_role table privileges
+    const expectedGrants: Record<string, { allowed: string[]; forbidden: string[] }> = {
+      app_settings: { allowed: ['SELECT'], forbidden: ['INSERT', 'UPDATE', 'DELETE'] },
+      audit_events: { allowed: ['SELECT', 'INSERT', 'DELETE'], forbidden: ['UPDATE'] },
+      devices: { allowed: ['SELECT'], forbidden: ['INSERT', 'UPDATE', 'DELETE'] },
+      incident_holds: { allowed: ['SELECT'], forbidden: ['INSERT', 'UPDATE', 'DELETE'] },
+      maintenance_state: { allowed: ['SELECT', 'INSERT', 'UPDATE'], forbidden: ['DELETE'] },
+      pass_email_verifications: { allowed: ['SELECT', 'INSERT', 'UPDATE', 'DELETE'], forbidden: [] },
+      passes: { allowed: ['SELECT'], forbidden: ['INSERT', 'UPDATE', 'DELETE'] },
+      rate_limit_buckets: { allowed: [], forbidden: ['SELECT', 'INSERT', 'UPDATE', 'DELETE'] },
+      reconciliation_tasks: { allowed: ['SELECT', 'INSERT', 'DELETE'], forbidden: ['UPDATE'] },
+      staff_profiles: { allowed: ['SELECT'], forbidden: ['INSERT', 'UPDATE', 'DELETE'] },
+      upload_intents: { allowed: ['SELECT', 'UPDATE'], forbidden: ['INSERT', 'DELETE'] },
+      visit_events: { allowed: ['SELECT'], forbidden: ['INSERT', 'UPDATE', 'DELETE'] },
+      visitor_evidence: { allowed: ['SELECT'], forbidden: ['INSERT', 'UPDATE', 'DELETE'] },
+      visitors: { allowed: ['SELECT', 'UPDATE'], forbidden: ['INSERT', 'DELETE'] },
+    };
+
+    for (const [table, matrix] of Object.entries(expectedGrants)) {
+      for (const priv of matrix.allowed) {
+        const res = await db.query<{ has_priv: boolean }>(
+          `select has_table_privilege('service_role', $1, $2) as has_priv;`,
+          [`public.${table}`, priv]
+        );
+        expect(res.rows[0].has_priv, `service_role must have ${priv} on public.${table}`).toBe(true);
+      }
+      for (const priv of matrix.forbidden) {
+        const res = await db.query<{ has_priv: boolean }>(
+          `select has_table_privilege('service_role', $1, $2) as has_priv;`,
+          [`public.${table}`, priv]
+        );
+        expect(res.rows[0].has_priv, `service_role must NOT have ${priv} on public.${table}`).toBe(false);
+      }
+    }
+
+    // 3. Verify sequence privilege on audit_events_id_seq
+    const seqRes = await db.query<{ has_usage: boolean; has_select: boolean }>(`
+      select
+        has_sequence_privilege('service_role', 'public.audit_events_id_seq', 'USAGE') as has_usage,
+        has_sequence_privilege('service_role', 'public.audit_events_id_seq', 'SELECT') as has_select;
+    `);
+    expect(seqRes.rows[0].has_usage).toBe(true);
+    expect(seqRes.rows[0].has_select).toBe(true);
+
+    // 4. Verify negative assertions for anon and authenticated (least privilege)
+    for (const table of ['passes', 'visitors', 'staff_profiles', 'audit_events', 'reconciliation_tasks']) {
+      const anonRes = await db.query<{ has_priv: boolean }>(
+        `select has_table_privilege('anon', $1, 'SELECT') as has_priv;`,
+        [`public.${table}`]
+      );
+      expect(anonRes.rows[0].has_priv, `anon must NOT have SELECT on public.${table}`).toBe(false);
+
+      const authInsert = await db.query<{ has_priv: boolean }>(
+        `select has_table_privilege('authenticated', $1, 'INSERT') as has_priv;`,
+        [`public.${table}`]
+      );
+      expect(authInsert.rows[0].has_priv, `authenticated must NOT have direct INSERT on public.${table}`).toBe(false);
+    }
+  }, 30000);
 });

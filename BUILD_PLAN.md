@@ -1007,3 +1007,39 @@ Local promotion evidence: pre-fix regression run 7/7 FAILED as expected; correct
   - Status: `READY`
   - Physical function count: 6 (Hobby limit error resolved)
   - Canaries: 7 representative routes verified via preview curl (unknown route 404, admin 401, auth 405, pass 405, device 405, gate 405, evidence 401; all reaching handlers correctly)
+
+
+---
+
+### Hosted Service_Role Privilege Contract Repair (October 2026)
+
+- **Live Failure & Reproduction**:
+  - Live Portal visitor registration reached Review and failed at `/api/passes/issue` with HTTP 503 `{"error":"service_unavailable"}`, rendered in the frontend as "Pass service is temporarily unavailable."
+  - Supabase live logs revealed Postgres SQLSTATE `42501` (`permission denied for table passes`) originating from PostgREST when querying `public.passes` by `issue_request_id` for idempotent replay checking.
+- **Root Cause & Architectural Rationale**:
+  - During prior database hardening, broad table privileges were revoked from `service_role`, while server handlers in Vercel legitimately perform direct table operations using the `service_role` key (e.g. pass replay queries, staff actor role resolution, audit event insertion, and maintenance state upserts).
+  - RLS was not the root cause: Postgres table `GRANT` checks are evaluated before RLS policies can even be applied.
+  - Blanket `GRANT ALL ON ALL TABLES IN SCHEMA public TO service_role` was strictly rejected to preserve least-privilege boundaries and ensure domain tables whose mutations are owned by `SECURITY DEFINER` RPCs cannot be modified directly via table mutations.
+- **Audited Privilege Matrix**:
+  - `app_settings`: SELECT (mutations RPC-only via `api.update_app_settings`)
+  - `audit_events`: SELECT, INSERT, DELETE (UPDATE forbidden to preserve audit immutability; `audit_events_id_seq` granted USAGE, SELECT)
+  - `devices`: SELECT (mutations RPC-only via device RPCs)
+  - `incident_holds`: SELECT (mutations RPC-only via hold RPCs)
+  - `maintenance_state`: SELECT, INSERT, UPDATE (upsert cursor tracking; DELETE forbidden)
+  - `pass_email_verifications`: SELECT, INSERT, UPDATE, DELETE (expired code cleanup)
+  - `passes`: SELECT (replay and admin queries; mutations strictly RPC-only: INSERT, UPDATE, DELETE forbidden)
+  - `rate_limit_buckets`: NONE (0 grants; handled exclusively by database triggers and functions)
+  - `reconciliation_tasks`: SELECT, INSERT, DELETE (error task recording and retention purge; UPDATE forbidden)
+  - `staff_profiles`: SELECT (actor verification and user lists; mutations RPC-only)
+  - `upload_intents`: SELECT, UPDATE (intent validation and expiry marking; INSERT, DELETE forbidden)
+  - `visit_events`: SELECT (activity feed queries; mutations RPC-only)
+  - `visitor_evidence`: SELECT (evidence retrieval and purge candidate scanning; mutations RPC-only)
+  - `visitors`: SELECT, UPDATE (replay queries and privacy anonymization; INSERT, DELETE forbidden)
+- **Additive Migration**:
+  - Created `supabase/migrations/20261021155132_service_role_backend_table_grants.sql`.
+  - Applied to hosted Supabase project `egatepass-dev` (`nhoawvkfqblsgutdffie`); remote migration list now 20 / 20.
+- **Verification Evidence**:
+  - `information_schema.table_privileges` query against hosted database confirms exact expected service-role permissions; zero excess grants; `anon` has 0 table permissions; `authenticated` has SELECT-only.
+  - `tests/service-role-privilege-contract.test.ts`: 5/5 passed (static scan against all server files ensures all 44 direct table accesses are registered and mapped).
+  - `tests/migration-chain-pglite.test.ts`: 11/11 passed (Test K verifies full table grant and forbidden matrix in PGlite).
+  - Full test suite: 25 files, 359 tests passed cleanly.
