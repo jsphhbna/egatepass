@@ -23,7 +23,7 @@ export const SERVICE_ROLE_TABLE_CONTRACT: Record<string, ServerTablePrivilegeCon
     table: 'app_settings',
     allowedPrivileges: ['SELECT'],
     forbiddenPrivileges: ['INSERT', 'UPDATE', 'DELETE'],
-    justification: 'Server reads singleton app settings in retention-maintenance, settings, and purge-images. Mutations are restricted to api.update_app_settings RPC.',
+    justification: 'Server reads singleton app settings in retention-maintenance, settings, update-settings, and purge-images. Mutations are restricted to api.update_app_settings RPC.',
   },
   audit_events: {
     table: 'audit_events',
@@ -150,6 +150,7 @@ export const SERVER_DIRECT_TABLE_OPERATIONS: DirectServerTableOperation[] = [
   { file: 'server/routes/passes/issue.ts', table: 'passes', operations: ['SELECT'], purpose: 'Idempotent replay query by issue_request_id' },
   { file: 'server/routes/passes/issue.ts', table: 'visitors', operations: ['SELECT'], purpose: 'Lookup existing visitor on replay' },
   { file: 'server/routes/system/purge-images.ts', table: 'app_settings', operations: ['SELECT'], purpose: 'Read image retention days' },
+  { file: 'server/routes/system/update-settings.ts', table: 'app_settings', operations: ['SELECT'], purpose: 'Read current peak mode to verify authorization' },
   { file: 'server/routes/system/purge-images.ts', table: 'incident_holds', operations: ['SELECT'], purpose: 'Filter out evidence under active holds' },
   { file: 'server/routes/system/purge-images.ts', table: 'passes', operations: ['SELECT'], purpose: 'Filter out evidence with active/pending passes' },
   { file: 'server/routes/system/purge-images.ts', table: 'visitor_evidence', operations: ['SELECT'], purpose: 'Query candidate evidence for purge' },

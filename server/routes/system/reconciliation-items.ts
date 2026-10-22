@@ -1,3 +1,5 @@
+import { randomUUID } from 'node:crypto';
+import { z } from 'zod';
 import { HttpError, requireStaffActor } from '../../actors.js';
 import { decodeCursorStrict, encodeCursor } from '../../cursor.js';
 import { jsonResponse, readBearerToken } from '../../http.js';
@@ -14,13 +16,67 @@ interface RawReconciliationTask {
   created_at: string;
 }
 
-async function handleRequest(request: Request): Promise<Response> {
-  if (request.method !== 'GET') {
-    return jsonResponse(405, { error: 'method_not_allowed' }, { Allow: 'GET' });
-  }
+const patchSchema = z.object({
+  taskId: z.string().uuid(),
+  resolutionNote: z.string().trim().min(1).max(500),
+}).strict();
 
+async function handleRequest(request: Request): Promise<Response> {
   const token = readBearerToken(request);
   if (!token) return jsonResponse(401, { error: 'authentication_required' });
+
+  const { admin } = getServerSupabaseClients();
+
+  // PATCH: Resolve reconciliation task (Super Admin required)
+  if (request.method === 'PATCH') {
+    let rawBody: unknown;
+    try {
+      rawBody = await request.json();
+    } catch {
+      return jsonResponse(400, { error: 'invalid_json_body' });
+    }
+
+    const parsed = patchSchema.safeParse(rawBody);
+    if (!parsed.success) {
+      return jsonResponse(400, { error: 'invalid_resolution_payload', details: parsed.error.issues });
+    }
+
+    try {
+      const actor = await requireStaffActor(admin, token, ['superadmin']);
+      const rpcResult = await admin.schema('api').rpc('resolve_reconciliation_task', {
+        requested_actor_id: actor.id,
+        requested_task_id: parsed.data.taskId,
+        requested_note: parsed.data.resolutionNote,
+        requested_request_id: randomUUID(),
+      });
+
+      if (rpcResult.error) {
+        const errCode = rpcResult.error.code;
+        const errMsg = rpcResult.error.message || 'resolution_failed';
+        if (errCode === '42501' || errMsg.includes('super administrator required')) {
+          throw new HttpError(403, 'super_administrator_required');
+        }
+        if (errCode === 'P0002' || errMsg.includes('reconciliation task not found')) {
+          throw new HttpError(404, 'reconciliation_task_not_found');
+        }
+        throw new HttpError(503, errMsg);
+      }
+
+      return jsonResponse(200, {
+        ok: true,
+        resolved: true,
+        taskId: parsed.data.taskId,
+      });
+    } catch (error) {
+      if (error instanceof HttpError) return jsonResponse(error.status, { error: error.code || error.message });
+      console.error('Reconciliation item resolution failed.', error instanceof Error ? error.message : 'unknown_error');
+      return jsonResponse(503, { error: 'service_unavailable' });
+    }
+  }
+
+  if (request.method !== 'GET') {
+    return jsonResponse(405, { error: 'method_not_allowed' }, { Allow: 'GET, PATCH' });
+  }
 
   const url = new URL(request.url);
   const cursor = url.searchParams.get('cursor')?.trim();
@@ -28,7 +84,6 @@ async function handleRequest(request: Request): Promise<Response> {
   const pageSize = Math.min(Math.max(Number.isFinite(pageSizeParam) ? pageSizeParam : 50, 1), 250);
 
   try {
-    const { admin } = getServerSupabaseClients();
     await requireStaffActor(admin, token, ['superadmin']);
 
     const countRes = await admin
@@ -70,7 +125,7 @@ async function handleRequest(request: Request): Promise<Response> {
     const items = returnRows.map((row) => ({
       id: row.id,
       type: row.operation,
-      status: 'unresolved',
+      status: row.status ?? 'pending',
       targetType: row.reference_type,
       targetId: row.reference_id ?? 'unknown',
       createdAt: row.created_at,
@@ -88,7 +143,7 @@ async function handleRequest(request: Request): Promise<Response> {
       readOnly: true,
     });
   } catch (error) {
-    if (error instanceof HttpError) return jsonResponse(error.status, { error: error.code });
+    if (error instanceof HttpError) return jsonResponse(error.status, { error: error.code || error.message });
     console.error('Reconciliation items load failed.', error instanceof Error ? error.message : 'unknown_error');
     return jsonResponse(503, { error: 'service_unavailable' });
   }

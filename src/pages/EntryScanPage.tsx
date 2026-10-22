@@ -26,9 +26,11 @@ export function EntryScanPage() {
 
   const [scannerKey, setScannerKey] = useState(0);
   function retryCamera() {
+    scannerRef.current?.stop().catch(() => undefined);
+    scannerRef.current = null;
     setCameraState('starting');
     setCameraError(null);
-    setScannerKey(k => k + 1);
+    setScannerKey((k) => k + 1);
   }
 
   const device = userData?.kind === 'device' ? userData : null;
@@ -90,9 +92,27 @@ export function EntryScanPage() {
           await scanner.stop().catch(() => undefined);
           return;
         }
+        setCameraState('active');
+        setCameraError(null);
         await enableContinuousFocus(scanner);
-      } catch (error) {
+      } catch (error: unknown) {
         console.error('QR scanner init error:', error);
+        if (cancelled) return;
+        setCameraState('error');
+        const errName = typeof error === 'object' && error !== null && 'name' in error ? String((error as any).name) : '';
+        const errMsg = typeof error === 'object' && error !== null && 'message' in error ? String((error as any).message) : String(error);
+        
+        if (errName === 'NotAllowedError' || errMsg.includes('Permission') || errMsg.includes('permission')) {
+          setCameraError('Camera access denied. Please grant camera permission to scan gate passes.');
+        } else if (errName === 'NotReadableError' || errMsg.includes('busy') || errMsg.includes('in use') || errMsg.includes('could not start')) {
+          setCameraError('Camera is busy or in use by another application. Please close other camera apps and retry.');
+        } else if (errName === 'NotFoundError' || errName === 'DevicesNotFoundError' || errMsg.includes('found')) {
+          setCameraError('No camera found on this device. Please connect a working camera.');
+        } else if (errName === 'NotSupportedError' || errMsg.includes('secure context') || errMsg.includes('not supported')) {
+          setCameraError('Camera scanning is not supported on this browser or insecure connection.');
+        } else {
+          setCameraError('Unable to start camera. Please verify device camera settings and retry.');
+        }
       }
     }, 500);
 
@@ -121,9 +141,7 @@ export function EntryScanPage() {
     <main className="flex min-h-dvh flex-col items-center justify-center bg-[var(--color-scanner-canvas)] px-3 py-5 sm:px-6 sm:py-8">
       <div
         className="mb-5 cursor-default text-center"
-        onDoubleClick={() => {
-          if (window.confirm('Admin: Sign out of this scanner?')) void signOutCurrentActor();
-        }}
+
       >
         <div className="mb-2 flex items-center justify-center gap-2">
           <BrandMark size="sm" />

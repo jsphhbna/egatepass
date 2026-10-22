@@ -4,6 +4,7 @@ import { setServerSupabaseClientsForTest } from '../server/supabase.js';
 import { EmailDeliveryError, setEmailSenderForTest, SendEmailPayload } from '../server/email.js';
 import updateDeviceAuthHandler from '../server/routes/device/update-device-auth.js';
 import updateSettingsHandler from '../server/routes/system/update-settings.js';
+import reconciliationItemsHandler from '../server/routes/system/reconciliation-items.js';
 import adminSettingsHandler from '../server/routes/admin/settings.js';
 import emailPassHandler from '../server/routes/passes/email.js';
 import purgeImagesHandler from '../server/routes/system/purge-images.js';
@@ -68,11 +69,24 @@ describe('Behavioral Mocked-Handler Tests [PASS (MOCKED HANDLER)]', () => {
   let mockTableFailures: Record<string, any>;
   let mockStorageFailures: Record<string, any>;
   let storageRemovedPaths: string[] = [];
+  let lastRpcArgs: Record<string, any> = {};
 
   function createMockSupabase() {
     return {
       auth: {
         getUser: vi.fn(async (token: string) => {
+                    if (token === 'valid-admin-token' || token === 'valid-opadmin-token') {
+            return {
+              data: {
+                user: {
+                  id: '00000000-0000-4000-a000-000000000077',
+                  email: 'opadmin@earist.edu.ph',
+                  email_confirmed_at: '2026-01-01T00:00:00Z',
+                },
+              },
+              error: null,
+            };
+          }
           if (token === 'valid-superadmin-token') {
             return {
               data: {
@@ -210,6 +224,10 @@ describe('Behavioral Mocked-Handler Tests [PASS (MOCKED HANDLER)]', () => {
             }
             return chain;
           },
+                    gt: (col: string, val: any) => {
+            filters.push((item) => item[col] > val);
+            return chain;
+          },
           gte: (col: string, val: any) => {
             filters.push((item) => item[col] >= val);
             return chain;
@@ -298,22 +316,36 @@ describe('Behavioral Mocked-Handler Tests [PASS (MOCKED HANDLER)]', () => {
             return { data: rows, error: null };
           },
           update: (data: any) => {
-            return {
-              eq: (col: string, val: any) => {
-                if (mockTableFailures[`${currentTable}:update`]) {
-                  return { error: mockTableFailures[`${currentTable}:update`] };
+            const updateFilters: Array<(item: any) => boolean> = [];
+            const applyUpdate = () => {
+              if (mockTableFailures[`${currentTable}:update`]) {
+                return { error: mockTableFailures[`${currentTable}:update`] };
+              }
+              const items = (mockDbData as any)[currentTable] || [];
+              items.forEach((item: any) => {
+                if (updateFilters.length === 0 || updateFilters.every((f) => f(item))) {
+                  Object.assign(item, data);
                 }
-                const items = (mockDbData as any)[currentTable] || [];
-                items.forEach((item: any) => {
-                  if (col === 'singleton' && val === true) {
-                    Object.assign(item, data);
-                  } else if (item[col] === val) {
-                    Object.assign(item, data);
-                  }
+              });
+              return { error: null };
+            };
+            const updateChain: any = {
+              eq: (col: string, val: any) => {
+                updateFilters.push((item) => {
+                  if (col === 'singleton' && val === true) return true;
+                  return item[col] === val;
                 });
-                return { error: null };
+                return updateChain;
+              },
+              is: (col: string, val: any) => {
+                updateFilters.push((item) => item[col] === val);
+                return updateChain;
+              },
+              then: (resolve: any, reject?: any) => {
+                return Promise.resolve(applyUpdate()).then(resolve, reject);
               },
             };
+            return updateChain;
           },
           then: (resolve: any) => {
             if (isDelete) {
@@ -358,9 +390,23 @@ describe('Behavioral Mocked-Handler Tests [PASS (MOCKED HANDLER)]', () => {
       },
       schema: (_s: string) => ({
         rpc: async (fn: string, args: any) => {
+          lastRpcArgs[fn] = args;
           if (Object.prototype.hasOwnProperty.call(mockRpcOverrides, fn)) return mockRpcOverrides[fn];
           if (mockRpcFailures[fn]) {
             return { data: null, error: mockRpcFailures[fn] };
+          }
+          if (fn === 'cleanup_expired_rate_limit_buckets') {
+            return { data: 5, error: null };
+          }
+          if (fn === 'resolve_reconciliation_task') {
+            const task = mockDbData.reconciliation_tasks.find((t) => t.id === args.requested_task_id);
+            if (!task) return { data: null, error: { code: 'P0002', message: 'reconciliation task not found' } };
+            task.status = 'resolved';
+            task.resolution_note = args.requested_note;
+            return { data: true, error: null };
+          }
+          if (fn === 'consume_rate_limit') {
+            return { data: true, error: null };
           }
           if (fn === 'update_device_profile') {
             const dev = mockDbData.devices.find((d) => d.user_id === args.requested_user_id);
@@ -378,13 +424,15 @@ describe('Behavioral Mocked-Handler Tests [PASS (MOCKED HANDLER)]', () => {
               peak_mode: args.requested_peak_mode,
               automatic_cleanup_enabled: args.requested_automatic_cleanup_enabled ?? args.requested_automatic_cleanup,
               purposes: args.requested_purposes,
-              working_hours_start: '08:00',
-              working_hours_end: '17:00',
+              working_hours_start: args.requested_working_hours_start || '08:00',
+              working_hours_end: args.requested_working_hours_end || '17:00',
               timezone: 'Asia/Manila',
-              rejection_reasons: ['Incomplete requirements'],
-              visit_purposes: args.requested_purposes,
-              visitor_retention_days: 90,
-              image_retention_days: 30,
+              rejection_reasons: args.requested_rejection_reasons || ['Incomplete requirements'],
+              visit_purposes: args.requested_visit_purposes || args.requested_purposes,
+              visitor_retention_days: args.requested_visitor_retention_days || 90,
+              image_retention_days: args.requested_image_retention_days || 30,
+              photo_retention_days: args.requested_photo_retention_days ?? 7,
+              id_retention_days: args.requested_id_retention_days ?? 30,
               audit_retention_days: 365,
               reconciliation_retention_days: 90,
               updated_at: new Date().toISOString(),
@@ -599,7 +647,7 @@ describe('Behavioral Mocked-Handler Tests [PASS (MOCKED HANDLER)]', () => {
               }
             }
             const held = mockDbData.incident_holds.some(
-              (h) => h.active && (h.visitor_id === ev.visitor_id || h.pass_id === ev.pass_id)
+              (h) => h.active && ((h.visitor_id && h.visitor_id === ev.visitor_id) || (h.pass_id && h.pass_id === ev.pass_id))
             );
             if (held) {
               return { data: { claimed: false, reason: 'held_by_incident_hold' }, error: null };
@@ -774,6 +822,7 @@ describe('Behavioral Mocked-Handler Tests [PASS (MOCKED HANDLER)]', () => {
     mockTableFailures = {};
     mockStorageFailures = {};
     storageRemovedPaths = [];
+    lastRpcArgs = {};
 
     mockDbData = {
       devices: [
@@ -806,6 +855,15 @@ describe('Behavioral Mocked-Handler Tests [PASS (MOCKED HANDLER)]', () => {
         },
       ],
       staff_profiles: [
+        {
+          user_id: '00000000-0000-4000-a000-000000000077',
+          role: 'admin',
+          full_name: 'Operational Admin',
+          active: true,
+          must_change_password: false,
+          privacy_accepted_at: '2026-01-01T00:00:00Z',
+          deleted_at: null,
+        },
         {
           user_id: SUPERADMIN_ID,
           role: 'superadmin',
@@ -990,6 +1048,7 @@ describe('Behavioral Mocked-Handler Tests [PASS (MOCKED HANDLER)]', () => {
 
       const res = await invokeHandler(emailPassHandler, req);
       const json = await res.json();
+      console.log("STARVATION TEST RESULT:", JSON.stringify(json));
 
       expect(res.status).toBe(200);
       expect(json.success).toBe(true);
@@ -3263,6 +3322,576 @@ describe('Behavioral Mocked-Handler Tests [PASS (MOCKED HANDLER)]', () => {
 
       expect(res.status).toBe(422);
       expect(json.error).toBe('Pass has expired and cannot be approved');
+    });
+  });
+
+  // =========================================================================
+  // CORRECTIVE CLOSURE SUITE: Mandatory Behavioral Handler Tests
+  // =========================================================================
+  describe('CORRECTIVE CLOSURE SUITE: Mandatory Behavioral Handler Tests', () => {
+    it('executes full settings round-trip for photo and ID retention (11/37 -> 14/45 -> 14/45)', async () => {
+      // 1. Initial settings with photo=11, id=37
+      mockDbData.app_settings = [{
+        singleton: true,
+        working_hours_start: '08:00',
+        working_hours_end: '17:00',
+        timezone: 'Asia/Manila',
+        scheduling_days_ahead: 7,
+        peak_mode: 'off',
+        visit_purposes: [{ label: 'Official', requiresDetails: false, detailPrompt: '' }],
+        rejection_reasons: ['Incomplete requirements'],
+        photo_retention_days: 11,
+        id_retention_days: 37,
+        image_retention_days: 11,
+        visitor_retention_days: 30,
+        audit_retention_days: 365,
+        reconciliation_retention_days: 90,
+        automatic_cleanup_enabled: true,
+        updated_at: new Date().toISOString(),
+      }];
+
+      // 2. Observe 11/37 in GET /api/admin/settings response
+      const getReq = new Request('http://localhost/api/admin/settings', {
+        method: 'GET',
+        headers: { authorization: VALID_SUPERADMIN_BEARER },
+      });
+      const getRes = await invokeHandler(adminSettingsHandler, getReq);
+      expect(getRes.status).toBe(200);
+      const getJson = await getRes.json();
+      expect(getJson.photoRetentionDays).toBe(11);
+      expect(getJson.idRetentionDays).toBe(37);
+
+      // 3. Submit photo=14 and id=45 via POST /api/update-settings
+      const postReq = new Request('http://localhost/api/update-settings', {
+        method: 'POST',
+        headers: {
+          authorization: VALID_SUPERADMIN_BEARER,
+          'content-type': 'application/json',
+        },
+        body: JSON.stringify({
+          peakMode: 'off',
+          rejectionReasons: ['Incomplete requirements'],
+          visitPurposes: [{ label: 'Official', requiresDetails: false, detailPrompt: '' }],
+          photoRetentionDays: 14,
+          idRetentionDays: 45,
+        }),
+      });
+
+      const postRes = await invokeHandler(updateSettingsHandler, postReq);
+      expect(postRes.status).toBe(200);
+      const postJson = await postRes.json();
+      expect(postJson.settings.photoRetentionDays).toBe(14);
+      expect(postJson.settings.idRetentionDays).toBe(45);
+
+      // 4. Verify the RPC receives 14/45
+      expect(lastRpcArgs['update_app_settings'].requested_photo_retention_days).toBe(14);
+      expect(lastRpcArgs['update_app_settings'].requested_id_retention_days).toBe(45);
+
+      // 5. Reloads and gets 14/45
+      const reloadReq = new Request('http://localhost/api/admin/settings', {
+        method: 'GET',
+        headers: { authorization: VALID_SUPERADMIN_BEARER },
+      });
+      const reloadRes = await invokeHandler(adminSettingsHandler, reloadReq);
+      expect(reloadRes.status).toBe(200);
+      const reloadJson = await reloadRes.json();
+      expect(reloadJson.photoRetentionDays).toBe(14);
+      expect(reloadJson.idRetentionDays).toBe(45);
+    });
+
+    it('verifies scoped admin permissions: Admin changes rejection reason -> allowed', async () => {
+      mockDbData.app_settings = [{
+        singleton: true,
+        peak_mode: 'off',
+        working_hours_start: '08:00',
+        working_hours_end: '17:00',
+        timezone: 'Asia/Manila',
+        scheduling_days_ahead: 7,
+        visit_purposes: [{ label: 'Official', requiresDetails: false, detailPrompt: '' }],
+        rejection_reasons: ['Old Reason'],
+      }];
+
+      const req = new Request('http://localhost/api/update-settings', {
+        method: 'POST',
+        headers: {
+          authorization: 'Bearer valid-opadmin-token',
+          'content-type': 'application/json',
+        },
+        body: JSON.stringify({
+          peakMode: 'off',
+          rejectionReasons: ['New Rejection Reason'],
+          visitPurposes: [{ label: 'Official', requiresDetails: false, detailPrompt: '' }],
+        }),
+      });
+      const res = await invokeHandler(updateSettingsHandler, req);
+      expect(res.status).toBe(200);
+    });
+
+    it('verifies scoped admin permissions: Admin changes visit purpose -> allowed', async () => {
+      mockDbData.app_settings = [{
+        singleton: true,
+        peak_mode: 'off',
+        working_hours_start: '08:00',
+        working_hours_end: '17:00',
+        timezone: 'Asia/Manila',
+        scheduling_days_ahead: 7,
+        visit_purposes: [{ label: 'Official', requiresDetails: false, detailPrompt: '' }],
+        rejection_reasons: ['Standard'],
+      }];
+
+      const req = new Request('http://localhost/api/update-settings', {
+        method: 'POST',
+        headers: {
+          authorization: 'Bearer valid-opadmin-token',
+          'content-type': 'application/json',
+        },
+        body: JSON.stringify({
+          peakMode: 'off',
+          rejectionReasons: ['Standard'],
+          visitPurposes: [{ label: 'New Visit Purpose', requiresDetails: false, detailPrompt: '' }],
+        }),
+      });
+      const res = await invokeHandler(updateSettingsHandler, req);
+      expect(res.status).toBe(200);
+    });
+
+    it('verifies scoped admin permissions: Admin changes peak mode -> 403', async () => {
+      mockDbData.app_settings = [{
+        singleton: true,
+        peak_mode: 'off',
+        working_hours_start: '08:00',
+        working_hours_end: '17:00',
+        timezone: 'Asia/Manila',
+        scheduling_days_ahead: 7,
+        visit_purposes: [{ label: 'Official', requiresDetails: false, detailPrompt: '' }],
+        rejection_reasons: ['Standard'],
+      }];
+
+      const req = new Request('http://localhost/api/update-settings', {
+        method: 'POST',
+        headers: {
+          authorization: 'Bearer valid-opadmin-token',
+          'content-type': 'application/json',
+        },
+        body: JSON.stringify({
+          peakMode: 'portal',
+          rejectionReasons: ['Standard'],
+          visitPurposes: [{ label: 'Official', requiresDetails: false, detailPrompt: '' }],
+        }),
+      });
+      const res = await invokeHandler(updateSettingsHandler, req);
+      expect(res.status).toBe(403);
+    });
+
+    it('verifies scoped admin permissions: Admin changes retention -> 403', async () => {
+      mockDbData.app_settings = [{
+        singleton: true,
+        peak_mode: 'off',
+        working_hours_start: '08:00',
+        working_hours_end: '17:00',
+        timezone: 'Asia/Manila',
+        scheduling_days_ahead: 7,
+        visit_purposes: [{ label: 'Official', requiresDetails: false, detailPrompt: '' }],
+        rejection_reasons: ['Standard'],
+      }];
+
+      const req = new Request('http://localhost/api/update-settings', {
+        method: 'POST',
+        headers: {
+          authorization: 'Bearer valid-opadmin-token',
+          'content-type': 'application/json',
+        },
+        body: JSON.stringify({
+          peakMode: 'off',
+          rejectionReasons: ['Standard'],
+          visitPurposes: [{ label: 'Official', requiresDetails: false, detailPrompt: '' }],
+          photoRetentionDays: 14,
+        }),
+      });
+      const res = await invokeHandler(updateSettingsHandler, req);
+      expect(res.status).toBe(403);
+    });
+
+    it('verifies scoped admin permissions: Super Admin changes peak mode -> allowed', async () => {
+      mockDbData.app_settings = [{
+        singleton: true,
+        peak_mode: 'off',
+        working_hours_start: '08:00',
+        working_hours_end: '17:00',
+        timezone: 'Asia/Manila',
+        scheduling_days_ahead: 7,
+        visit_purposes: [{ label: 'Official', requiresDetails: false, detailPrompt: '' }],
+        rejection_reasons: ['Standard'],
+      }];
+
+      const req = new Request('http://localhost/api/update-settings', {
+        method: 'POST',
+        headers: {
+          authorization: VALID_SUPERADMIN_BEARER,
+          'content-type': 'application/json',
+        },
+        body: JSON.stringify({
+          peakMode: 'portal',
+          rejectionReasons: ['Standard'],
+          visitPurposes: [{ label: 'Official', requiresDetails: false, detailPrompt: '' }],
+        }),
+      });
+      const res = await invokeHandler(updateSettingsHandler, req);
+      expect(res.status).toBe(200);
+    });
+
+    it('reconciliation items PATCH: requires Super Admin (Admin denied with 403)', async () => {
+      const taskId = randomUUID();
+      const req = new Request('http://localhost/api/reconciliation-items', {
+        method: 'PATCH',
+        headers: {
+          authorization: 'Bearer valid-opadmin-token',
+          'content-type': 'application/json',
+        },
+        body: JSON.stringify({
+          taskId,
+          resolutionNote: 'Reviewed and confirmed manually',
+        }),
+      });
+      const res = await invokeHandler(reconciliationItemsHandler, req);
+      expect(res.status).toBe(403);
+    });
+
+    it('reconciliation items PATCH: Super Admin resolves task successfully (200) and excludes from pending GET', async () => {
+      const taskId = randomUUID();
+      mockDbData.reconciliation_tasks.push({
+        id: taskId,
+        operation: 'storage_purge_failure',
+        status: 'pending',
+        reference_type: 'visitor_evidence',
+        reference_id: 'ev-123',
+        last_error_code: 'STORAGE_TIMEOUT',
+        created_at: new Date().toISOString(),
+      });
+
+      // Verify GET returns the task with status: 'pending'
+      const getReq = new Request('http://localhost/api/reconciliation-items', {
+        method: 'GET',
+        headers: { authorization: VALID_SUPERADMIN_BEARER },
+      });
+      const getRes = await invokeHandler(reconciliationItemsHandler, getReq);
+      expect(getRes.status).toBe(200);
+      const getJson = await getRes.json();
+      expect(getJson.items.some((i: any) => i.id === taskId && i.status === 'pending')).toBe(true);
+
+      // PATCH with resolution note
+      const patchReq = new Request('http://localhost/api/reconciliation-items', {
+        method: 'PATCH',
+        headers: {
+          authorization: VALID_SUPERADMIN_BEARER,
+          'content-type': 'application/json',
+        },
+        body: JSON.stringify({
+          taskId,
+          resolutionNote: 'Cleaned up orphaned storage object',
+        }),
+      });
+      const patchRes = await invokeHandler(reconciliationItemsHandler, patchReq);
+      expect(patchRes.status).toBe(200);
+      const patchJson = await patchRes.json();
+      expect(patchJson.ok).toBe(true);
+      expect(patchJson.resolved).toBe(true);
+      expect(patchJson.taskId).toBe(taskId);
+
+      // GET no longer returns the resolved task
+      const getAfterRes = await invokeHandler(reconciliationItemsHandler, getReq);
+      const getAfterJson = await getAfterRes.json();
+      expect(getAfterJson.items.some((i: any) => i.id === taskId)).toBe(false);
+    });
+
+    it('reconciliation items PATCH: rejects invalid resolution note with 400', async () => {
+      const patchReq = new Request('http://localhost/api/reconciliation-items', {
+        method: 'PATCH',
+        headers: {
+          authorization: VALID_SUPERADMIN_BEARER,
+          'content-type': 'application/json',
+        },
+        body: JSON.stringify({
+          taskId: randomUUID(),
+          resolutionNote: '   ',
+        }),
+      });
+      const patchRes = await invokeHandler(reconciliationItemsHandler, patchReq);
+      expect(patchRes.status).toBe(400);
+    });
+
+    it('reconciliation items PATCH: returns 404 for nonexistent task', async () => {
+      const nonexistentId = randomUUID();
+      const patchReq = new Request('http://localhost/api/reconciliation-items', {
+        method: 'PATCH',
+        headers: {
+          authorization: VALID_SUPERADMIN_BEARER,
+          'content-type': 'application/json',
+        },
+        body: JSON.stringify({
+          taskId: nonexistentId,
+          resolutionNote: 'Trying to resolve nonexistent',
+        }),
+      });
+      const patchRes = await invokeHandler(reconciliationItemsHandler, patchReq);
+      expect(patchRes.status).toBe(404);
+    });
+
+    it('rate limiter fail-closed: new portal request returns 503 abuse_control_unavailable when limiter fails', async () => {
+      mockRpcFailures['consume_rate_limit'] = { code: '500', message: 'Rate limiter unavailable' };
+      const req = new Request('http://localhost/api/passes/issue', {
+        method: 'POST',
+        headers: {
+          authorization: VALID_VISITOR_BEARER,
+          'content-type': 'application/json',
+        },
+        body: JSON.stringify({
+          requestId: randomUUID(),
+          source: 'portal',
+          visitor: {
+            firstName: 'Juan',
+            middleName: 'Dela',
+            lastName: 'Cruz',
+            contactNumber: '09123456789',
+            purpose: 'Meeting',
+            visitDate: '2026-10-25',
+          },
+          photoIntentId: randomUUID(),
+          idIntentId: randomUUID(),
+        }),
+      });
+      const res = await invokeHandler(issuePassHandler, req);
+      expect(res.status).toBe(503);
+      const json = await res.json();
+      expect(json.error).toBe('abuse_control_unavailable');
+      delete mockRpcFailures['consume_rate_limit'];
+    });
+
+    it('rate limiter fail-closed: existing committed request replays 200 even if rate limiter is down', async () => {
+      const TEST_SECRET = '01234567890123456789012345678901';
+      process.env.PASS_TOKEN_SECRET = TEST_SECRET;
+      const REPLAY_ID = randomUUID();
+      const photoIntentId = randomUUID();
+      const idIntentId = randomUUID();
+
+      const qrToken = createHmac('sha256', TEST_SECRET)
+        .update(`${VISITOR_OWNER_ID}:${REPLAY_ID}`)
+        .digest('base64url');
+      const tokenDigest = createHash('sha256').update(qrToken).digest('hex');
+
+      const existingPass = {
+        id: randomUUID(),
+        issue_request_id: REPLAY_ID,
+        public_reference: randomUUID(),
+        visitor_id: VISITOR_OWNER_ID,
+        token_digest: `\\x${tokenDigest}`,
+        source: 'portal',
+        status: 'issued',
+        valid_from: new Date(Date.now() - 3600000).toISOString(),
+        valid_until: new Date(Date.now() + 86400000).toISOString(),
+      };
+      mockDbData.passes.push(existingPass);
+      mockDbData.visitors.push({
+        id: VISITOR_OWNER_ID,
+        owner_id: VISITOR_OWNER_ID,
+        source: 'portal',
+        full_name: 'Juan Dela Cruz',
+        contact_number: '09123456789',
+        purpose: 'Meeting',
+        visit_date: '2026-10-25',
+      });
+      mockDbData.upload_intents.push(
+        { id: photoIntentId, kind: 'photo', status: 'claimed', visitor_id: VISITOR_OWNER_ID },
+        { id: idIntentId, kind: 'id', status: 'claimed', visitor_id: VISITOR_OWNER_ID }
+      );
+
+      mockRpcFailures['consume_rate_limit'] = { code: '500', message: 'Rate limiter unavailable' };
+
+      const req = new Request('http://localhost/api/passes/issue', {
+        method: 'POST',
+        headers: {
+          authorization: VALID_VISITOR_BEARER,
+          'content-type': 'application/json',
+        },
+        body: JSON.stringify({
+          requestId: REPLAY_ID,
+          source: 'portal',
+          visitor: {
+            firstName: 'Juan',
+            middleName: 'Dela',
+            lastName: 'Cruz',
+            contactNumber: '09123456789',
+            purpose: 'Meeting',
+            visitDate: '2026-10-25',
+          },
+          photoIntentId,
+          idIntentId,
+        }),
+      });
+      const res = await invokeHandler(issuePassHandler, req);
+      expect(res.status).toBe(200);
+      delete mockRpcFailures['consume_rate_limit'];
+    });
+
+    it('rate limiter: returns 429 rate_limit_exceeded when limit exceeded', async () => {
+      mockRpcOverrides['consume_rate_limit'] = { data: false, error: null };
+      const req = new Request('http://localhost/api/passes/issue', {
+        method: 'POST',
+        headers: {
+          authorization: VALID_VISITOR_BEARER,
+          'content-type': 'application/json',
+        },
+        body: JSON.stringify({
+          requestId: randomUUID(),
+          source: 'portal',
+          visitor: {
+            firstName: 'Juan',
+            middleName: 'Dela',
+            lastName: 'Cruz',
+            contactNumber: '09123456789',
+            purpose: 'Meeting',
+            visitDate: '2026-10-25',
+          },
+          photoIntentId: randomUUID(),
+          idIntentId: randomUUID(),
+        }),
+      });
+      const res = await invokeHandler(issuePassHandler, req);
+      expect(res.status).toBe(429);
+      const json = await res.json();
+      expect(json.error).toBe('rate_limit_exceeded');
+      delete mockRpcOverrides['consume_rate_limit'];
+    });
+
+    it('retention maintenance: cleans expired rate limit buckets and anonymizes free-text purpose containing PII', async () => {
+      const visitorWithPii = {
+        id: randomUUID(),
+        full_name: 'Maria Santos',
+        contact_number: '09198765432',
+        email: 'maria@example.com',
+        purpose: 'Personal appointment with Dr. Alexander Gomez regarding confidential medical records',
+        visit_date: '2026-05-01',
+        created_at: new Date(Date.now() - 400 * 86400000).toISOString(),
+        anonymized_at: null,
+      };
+      mockDbData.visitors.push(visitorWithPii);
+
+      const req = new Request('http://localhost/api/admin/retention-maintenance', {
+        method: 'POST',
+        headers: {
+          authorization: 'Bearer test_cron_secret_123',
+          'content-type': 'application/json',
+        },
+        body: JSON.stringify({ dryRun: false }),
+      });
+      const res = await invokeHandler(retentionMaintenanceHandler, req);
+      const json = await res.json();
+      expect(res.status).toBe(200);
+
+      // Verify rateLimitBucketsCleaned metric
+      expect(json.maintenance.rateLimitBucketsCleaned).toBeDefined();
+
+      // Verify purpose anonymization removes personal name Dr. Alexander Gomez and becomes '[Anonymized]'
+      expect(visitorWithPii.purpose).not.toContain('Dr. Alexander Gomez');
+      expect(visitorWithPii.purpose).toBe('[Anonymized]');
+      expect(visitorWithPii.full_name).not.toBe('Maria Santos');
+    });
+
+    it('purge images: returns truthful units where photo + ID counts evidenceDeleted=2, visitorsAffected=1', async () => {
+      const visitorId = randomUUID();
+      const evPhotoId = randomUUID();
+      const evIdId = randomUUID();
+
+      mockDbData.visitors.push({ id: visitorId, full_name: 'Test Visitor' });
+      mockDbData.visitor_evidence.push(
+        {
+          id: evPhotoId,
+          visitor_id: visitorId,
+          kind: 'photo',
+          bucket_id: 'visitor-photos',
+          object_path: `visitor-photos/${visitorId}/photo.webp`,
+          expires_at: new Date(Date.now() - 3600000).toISOString(),
+          purged_at: null,
+          verified_at: new Date(Date.now() - 86400000).toISOString(),
+        },
+        {
+          id: evIdId,
+          visitor_id: visitorId,
+          kind: 'id',
+          bucket_id: 'visitor-id-documents',
+          object_path: `visitor-id-documents/${visitorId}/id.webp`,
+          expires_at: new Date(Date.now() - 3600000).toISOString(),
+          purged_at: null,
+          verified_at: new Date(Date.now() - 86400000).toISOString(),
+        }
+      );
+
+      const req = new Request('http://localhost/api/purge-images', {
+        method: 'POST',
+        headers: {
+          authorization: VALID_SUPERADMIN_BEARER,
+          'content-type': 'application/json',
+        },
+        body: JSON.stringify({ limit: 10 }),
+      });
+      const res = await invokeHandler(purgeImagesHandler, req);
+      expect(res.status).toBe(200);
+      const json = await res.json();
+
+      expect(json.evidenceDeleted).toBe(2);
+      expect(json.visitorsAffected).toBe(1);
+      expect(json.failedEvidence).toBe(0);
+    });
+
+    it('purge images: starvation-free pagination reaches eligible record past protected records', async () => {
+      // 200 expired records belonging to protected visitors (under incident hold)
+      for (let i = 0; i < 200; i++) {
+        const vId = randomUUID();
+        const evId = `ev-${i.toString().padStart(4, '0')}`;
+        mockDbData.incident_holds.push({
+          id: randomUUID(),
+          visitor_id: vId,
+          active: true,
+        });
+        mockDbData.visitor_evidence.push({
+          id: evId,
+          visitor_id: vId,
+          kind: 'photo',
+          bucket_id: 'visitor-photos',
+          object_path: `visitor-photos/${vId}/photo.webp`,
+          expires_at: new Date(Date.now() - 3600000).toISOString(),
+          purged_at: null,
+          verified_at: new Date(Date.now() - 86400000).toISOString(),
+        });
+      }
+
+      // Record 201 is eligible with alphabetically greater id
+      const eligibleVisitorId = randomUUID();
+      const eligibleEvId = 'ev-0200';
+      mockDbData.visitor_evidence.push({
+        id: eligibleEvId,
+        visitor_id: eligibleVisitorId,
+        kind: 'photo',
+        bucket_id: 'visitor-photos',
+        object_path: `visitor-photos/${eligibleVisitorId}/photo.webp`,
+        expires_at: new Date(Date.now() - 3600000).toISOString(),
+        purged_at: null,
+        verified_at: new Date(Date.now() - 86400000).toISOString(),
+      });
+
+      const req = new Request('http://localhost/api/purge-images', {
+        method: 'POST',
+        headers: {
+          authorization: VALID_SUPERADMIN_BEARER,
+          'content-type': 'application/json',
+        },
+        body: JSON.stringify({ limit: 50 }),
+      });
+      const res = await invokeHandler(purgeImagesHandler, req);
+      expect(res.status).toBe(200);
+      const json = await res.json();
+      expect(json.evidenceDeleted).toBe(1);
+      expect(json.visitorsAffected).toBe(1);
     });
   });
 });

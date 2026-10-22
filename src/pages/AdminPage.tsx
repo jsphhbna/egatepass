@@ -35,16 +35,52 @@ export function AdminPage() {
   const triggerButtonRef = useRef<HTMLButtonElement>(null);
   const drawerRef = useRef<HTMLElement>(null);
 
+  const closeButtonRef = useRef<HTMLButtonElement>(null);
+
   useEffect(() => {
     if (!sidebarOpen) return;
+
+    // Move focus into the drawer when opened
+    const timer = setTimeout(() => {
+      closeButtonRef.current?.focus();
+    }, 50);
+
     function handleKeyDown(event: KeyboardEvent) {
       if (event.key === 'Escape') {
+        event.preventDefault();
         setSidebarOpen(false);
         triggerButtonRef.current?.focus();
+        return;
+      }
+
+      if (event.key === 'Tab' && drawerRef.current) {
+        const focusables = drawerRef.current.querySelectorAll<HTMLElement>(
+          'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])'
+        );
+        if (focusables.length === 0) return;
+        const first = focusables[0];
+        const last = focusables[focusables.length - 1];
+        if (!first || !last) return;
+
+        if (event.shiftKey) {
+          if (document.activeElement === first) {
+            event.preventDefault();
+            last.focus();
+          }
+        } else {
+          if (document.activeElement === last) {
+            event.preventDefault();
+            first.focus();
+          }
+        }
       }
     }
+
     window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
+    return () => {
+      clearTimeout(timer);
+      window.removeEventListener('keydown', handleKeyDown);
+    };
   }, [sidebarOpen]);
 
   const adminName = userData?.kind === 'staff' ? userData.name : 'Admin';
@@ -105,6 +141,7 @@ export function AdminPage() {
             <span className="text-sm font-bold text-white">EARIST E-GatePass</span>
           </div>
           <button
+            ref={closeButtonRef}
             type="button"
             onClick={() => {
               setSidebarOpen(false);
@@ -162,7 +199,7 @@ export function AdminPage() {
       />
 
       {/* Main content */}
-      <main id="main-content" className="min-w-0 flex-1 overflow-y-auto p-4 pt-20 md:p-6 lg:p-8">
+      <main id="main-content" aria-hidden={sidebarOpen ? 'true' : undefined} inert={sidebarOpen ? true : undefined} className="min-w-0 flex-1 overflow-y-auto p-4 pt-20 md:p-6 lg:p-8">
         <Outlet />
       </main>
     </div>

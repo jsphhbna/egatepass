@@ -116,6 +116,7 @@ async function handleRequest(request: Request): Promise<Response> {
       auditEventsCleaned: 0,
       reconciliationTasksCleaned: 0,
       verificationCodesCleaned: 0,
+      rateLimitBucketsCleaned: 0,
       errors: [] as string[],
     };
 
@@ -486,6 +487,7 @@ async function handleRequest(request: Request): Promise<Response> {
               full_name: '[Anonymized]',
               contact_number: '[Anonymized]',
               email: null,
+              purpose: '[Anonymized]',
               anonymized_at: now,
             })
             .eq('id', visitor.id)
@@ -595,6 +597,22 @@ async function handleRequest(request: Request): Promise<Response> {
     }
 
     // =========================================================================
+    // 6.5 EXPIRED RATE-LIMIT BUCKETS CLEANUP (via least-privilege RPC)
+    // =========================================================================
+    const { data: rlCleaned, error: rlErr } = await admin
+      .schema('api')
+      .rpc('cleanup_expired_rate_limit_buckets', {
+        requested_batch_size: 5000,
+        requested_dry_run: dryRun,
+      });
+
+    if (rlErr) {
+      metrics.errors.push(`rate_limit_cleanup_failed: ${rlErr.message}`);
+    } else {
+      metrics.rateLimitBucketsCleaned = typeof rlCleaned === 'number' ? rlCleaned : 0;
+    }
+
+    // =========================================================================
     // 7. RECORD AUDIT EVENT AND RETURN TRUTHFUL SEMANTICS (REPAIR K)
     // =========================================================================
     const hasWorkDone =
@@ -603,7 +621,8 @@ async function handleRequest(request: Request): Promise<Response> {
       metrics.visitorsAnonymized > 0 ||
       metrics.auditEventsCleaned > 0 ||
       metrics.reconciliationTasksCleaned > 0 ||
-      metrics.verificationCodesCleaned > 0;
+      metrics.verificationCodesCleaned > 0 ||
+      metrics.rateLimitBucketsCleaned > 0;
 
     let preAuditOutcome: 'success' | 'partial' | 'failure' =
       metrics.errors.length === 0 ? 'success' : (hasWorkDone ? 'partial' : 'failure');

@@ -4,6 +4,7 @@ import { getServerSupabaseClients } from '../../supabase.js';
 
 interface PurgeRequestBody {
   dryRun?: boolean;
+  cursor?: string;
 }
 
 interface ClaimResult {
@@ -96,34 +97,67 @@ async function handleRequest(request: Request): Promise<Response> {
     if (passesError) throw passesError;
     const activePassVisitorIds = new Set((activePasses || []).map((p) => p.visitor_id as string));
 
-    // 4. Fetch expired unpurged evidence
-    const { data: evidenceRows, error: evidenceError } = await admin
-      .from('visitor_evidence')
-      .select('id, visitor_id, bucket_id, object_path')
-      .is('purged_at', null)
-      .lte('expires_at', now)
-      .order('expires_at', { ascending: true })
-      .limit(200);
+    // 4. Fetch expired unpurged evidence with starvation-free cursor progression
+    let lastSeenId: string | null = body.cursor || null;
+    let eligibleItems: { id: string; visitor_id: string; bucket_id: string; object_path: string }[] = [];
+    let scannedCount = 0;
+    const MAX_SCAN = 1000;
+    let exhausted = false;
 
-    if (evidenceError) throw evidenceError;
+    while (eligibleItems.length < (body.dryRun ? 200 : BATCH_SIZE) && scannedCount < MAX_SCAN) {
+      let q = admin
+        .from('visitor_evidence')
+        .select('id, visitor_id, bucket_id, object_path, expires_at')
+        .is('purged_at', null)
+        .lte('expires_at', now)
+        .order('expires_at', { ascending: true })
+        .order('id', { ascending: true })
+        .limit(200);
 
-    const eligibleItems = (evidenceRows || []).filter(
-      (item) => !heldVisitorIds.has(item.visitor_id) && !activePassVisitorIds.has(item.visitor_id)
-    );
+      if (lastSeenId) {
+        q = q.gt('id', lastSeenId);
+      }
+
+      const { data: pageRows, error: pageErr } = await q;
+      if (pageErr) throw pageErr;
+      if (!pageRows || pageRows.length === 0) {
+        exhausted = true;
+        break;
+      }
+
+      const lastItem = pageRows[pageRows.length - 1];
+      if (!lastItem) break;
+      lastSeenId = lastItem.id;
+      scannedCount += pageRows.length;
+
+      for (const item of pageRows) {
+        
+        if (!heldVisitorIds.has(item.visitor_id) && !activePassVisitorIds.has(item.visitor_id)) {
+          eligibleItems.push(item);
+          if (eligibleItems.length >= (body.dryRun ? 200 : BATCH_SIZE)) break;
+        }
+      }
+
+      if (pageRows.length < 200) {
+        exhausted = true;
+        break;
+      }
+    }
 
     if (body.dryRun) {
       const distinctVisitors = new Set(eligibleItems.map((item) => item.visitor_id));
-      const capped = (evidenceRows || []).length >= 200;
       return jsonResponse(200, {
+        evidenceDeleted: 0,
         visitorsAffected: distinctVisitors.size,
         retentionDays,
-        hasMore: capped,
+        hasMore: !exhausted,
       });
     }
 
     const batch = eligibleItems.slice(0, BATCH_SIZE);
     let successCount = 0;
     let failedCount = 0;
+    const affectedVisitorIds = new Set<string>();
 
     for (const item of batch) {
       const claimId = crypto.randomUUID();
@@ -230,6 +264,7 @@ async function handleRequest(request: Request): Promise<Response> {
         );
       } else if (storageDeleted && finalizeData.purged === true) {
         successCount++;
+        affectedVisitorIds.add(item.visitor_id);
       } else {
         failedCount++;
       }
@@ -275,11 +310,14 @@ async function handleRequest(request: Request): Promise<Response> {
       result: opResult,
       auditPending,
       reconciliationRecorded,
+      evidenceDeleted: successCount,
+      visitorsAffected: affectedVisitorIds.size,
+      failedEvidence: failedCount,
       successCount,
       failedCount,
       orphanDeletedCount: 0,
       orphanFailedCount: 0,
-      hasMore,
+      hasMore: !exhausted || eligibleItems.length > batch.length,
     });
   } catch (error) {
     if (error instanceof HttpError) {

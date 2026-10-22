@@ -157,6 +157,52 @@ $$;
 revoke all on function api.consume_rate_limit(text, text, integer, integer) from public, anon, authenticated;
 grant execute on function api.consume_rate_limit(text, text, integer, integer) to service_role;
 
+create or replace function api.cleanup_expired_rate_limit_buckets(
+  requested_batch_size integer default 5000,
+  requested_dry_run boolean default false
+)
+returns integer
+language plpgsql
+volatile
+security definer
+set search_path = ''
+as $$
+declare
+  cleaned_count integer := 0;
+begin
+  if (select auth.role()) <> 'service_role' then
+    raise exception using errcode = '42501', message = 'service role required';
+  end if;
+
+  if requested_dry_run then
+    select count(*)::integer into cleaned_count
+    from (
+      select 1
+      from public.rate_limit_buckets
+      where expires_at < clock_timestamp()
+      limit least(coalesce(requested_batch_size, 5000), 10000)
+    ) s;
+  else
+    with deleted as (
+      delete from public.rate_limit_buckets
+      where ctid in (
+        select ctid
+        from public.rate_limit_buckets
+        where expires_at < clock_timestamp()
+        limit least(coalesce(requested_batch_size, 5000), 10000)
+      )
+      returning 1
+    )
+    select count(*)::integer into cleaned_count from deleted;
+  end if;
+
+  return cleaned_count;
+end;
+$$;
+
+revoke all on function api.cleanup_expired_rate_limit_buckets(integer, boolean) from public, anon, authenticated;
+grant execute on function api.cleanup_expired_rate_limit_buckets(integer, boolean) to service_role;
+
 -- 6. Super Admin Reconciliation Task Resolution RPC
 create or replace function api.resolve_reconciliation_task(
   requested_actor_id uuid,
@@ -225,7 +271,23 @@ $$;
 revoke all on function api.resolve_reconciliation_task(uuid, uuid, text, uuid) from public, anon, authenticated;
 grant execute on function api.resolve_reconciliation_task(uuid, uuid, text, uuid) to service_role;
 
--- 7. App Settings Update RPC: Peak Mode modification is Super Admin-only & separate retention days
+-- 7. App Settings Update RPC: Retire obsolete 13-argument overload and replace with authoritative 15-argument RPC
+drop function if exists api.update_app_settings(
+  uuid,
+  public.peak_mode_scope,
+  jsonb,
+  jsonb,
+  time,
+  time,
+  smallint,
+  smallint,
+  smallint,
+  smallint,
+  smallint,
+  boolean,
+  uuid
+);
+
 create or replace function api.update_app_settings(
   requested_actor_id uuid,
   requested_peak_mode public.peak_mode_scope,
@@ -240,8 +302,8 @@ create or replace function api.update_app_settings(
   requested_scheduling_days_ahead smallint,
   requested_automatic_cleanup_enabled boolean,
   requested_request_id uuid,
-  requested_photo_retention_days smallint default null,
-  requested_id_retention_days smallint default null
+  requested_photo_retention_days smallint,
+  requested_id_retention_days smallint
 )
 returns void language plpgsql volatile security definer set search_path = '' as $$
 declare

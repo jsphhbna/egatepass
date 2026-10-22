@@ -180,6 +180,8 @@ export function GuardPage() {
       toast.error('Select or type a rejection reason.');
       return;
     }
+    if (processingPassIds.has(pass.id)) return;
+    setProcessingPassIds((prev) => new Set(prev).add(pass.id));
 
     try {
       await recordDecision(pass.id, 'rejected', rejectReason);
@@ -188,9 +190,23 @@ export function GuardPage() {
       setRejectingId(null);
       setRejectReason('');
       setIsRejecting(false);
-    } catch (err) {
-      console.error('Reject error:', err);
-      toast.error('Failed to reject. Try again.');
+    } catch (err: any) {
+      if (err?.status === 409 || err?.message?.includes('409') || err?.message?.includes('concurrency')) {
+        toast.info('Pass was already processed by another guard.');
+        setPasses((prev) => prev.filter((p) => p.id !== pass.id));
+        setRejectingId(null);
+        setRejectReason('');
+        setIsRejecting(false);
+      } else {
+        console.error('Reject error:', err);
+        toast.error('Failed to reject. Try again.');
+      }
+    } finally {
+      setProcessingPassIds((prev) => {
+        const next = new Set(prev);
+        next.delete(pass.id);
+        return next;
+      });
     }
   }
 
@@ -454,6 +470,7 @@ export function GuardPage() {
                         </Button>
                         <Button
                           variant="destructive"
+                          disabled={processingPassIds.has(pass.id)}
                           onClick={() => {
                             setRejectingId(pass.id);
                             setIsRejecting(true);
@@ -581,10 +598,10 @@ export function GuardPage() {
                 const pass = passes.find(p => p.id === rejectingId);
                 if (pass) handleReject(pass);
               }}
-              disabled={!rejectReason}
+              disabled={!rejectReason || (rejectingId ? processingPassIds.has(rejectingId) : false)}
               className="w-full sm:w-auto"
             >
-              Confirm Reject
+              {rejectingId && processingPassIds.has(rejectingId) ? 'Rejecting...' : 'Confirm Reject'}
             </Button>
           </div>
         </div>

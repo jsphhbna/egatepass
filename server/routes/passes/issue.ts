@@ -65,6 +65,15 @@ async function inspectUpload(admin: ReturnType<typeof getServerSupabaseClients>[
   return { bytes: bytes.length, sha256: createHash('sha256').update(bytes).digest('hex') };
 }
 
+function getClientNetworkIdentifier(request: Request): string {
+  const forwarded = request.headers.get('x-forwarded-for');
+  const realIp = request.headers.get('x-real-ip');
+  const firstHop = forwarded ? forwarded.split(',')[0]?.trim() : null;
+  const rawIp = firstHop || realIp || '127.0.0.1';
+  const hmacKey = process.env.PASS_TOKEN_SECRET || process.env.CRON_SECRET || 'egatepass-rate-limit-secret';
+  return createHmac('sha256', hmacKey).update(`network:${rawIp}`).digest('hex');
+}
+
 async function handleRequest(request: Request): Promise<Response> {
   if (request.method !== 'POST') return jsonResponse(405, { error: 'method_not_allowed' }, { Allow: 'POST' });
   const token = readBearerToken(request);
@@ -176,20 +185,51 @@ async function handleRequest(request: Request): Promise<Response> {
     }
 
     if (parsed.data.source === 'portal') {
+      // 1. Anonymous Actor Bucket
       const actorKeyHex = createHash('sha256').update(`actor:${actorId}`).digest('hex');
-      const { data: allowed, error: rateLimitError } = await admin.schema('api').rpc('consume_rate_limit', {
+      const { data: actorAllowed, error: actorRlError } = await admin.schema('api').rpc('consume_rate_limit', {
         requested_key_hex: actorKeyHex,
         requested_action: 'portal.pass_issue',
         requested_max_requests: 3,
         requested_window_seconds: 3600,
       });
 
-      if (rateLimitError) {
-        console.error('Rate limit RPC error:', rateLimitError);
-      } else if (allowed === false) {
+      if (actorRlError) {
+        console.error('Rate limit actor RPC error:', actorRlError);
+        return jsonResponse(503, {
+          error: 'abuse_control_unavailable',
+          message: 'Pass issuance abuse protection is temporarily unavailable. Please try again shortly.',
+        });
+      }
+
+      if (actorAllowed === false) {
         return jsonResponse(429, {
           error: 'rate_limit_exceeded',
-          message: 'Too many pass issuance requests. Please wait before requesting another pass.',
+          message: 'Too many pass issuance requests for this session. Please wait before requesting another pass.',
+        });
+      }
+
+      // 2. Privacy-Preserving Stable Network Bucket (campus threshold: 10 per 10 minutes)
+      const networkKeyHex = getClientNetworkIdentifier(request);
+      const { data: netAllowed, error: netRlError } = await admin.schema('api').rpc('consume_rate_limit', {
+        requested_key_hex: networkKeyHex,
+        requested_action: 'portal.network_issue',
+        requested_max_requests: 10,
+        requested_window_seconds: 600,
+      });
+
+      if (netRlError) {
+        console.error('Rate limit network RPC error:', netRlError);
+        return jsonResponse(503, {
+          error: 'abuse_control_unavailable',
+          message: 'Pass issuance abuse protection is temporarily unavailable. Please try again shortly.',
+        });
+      }
+
+      if (netAllowed === false) {
+        return jsonResponse(429, {
+          error: 'rate_limit_exceeded',
+          message: 'Too many pass issuance requests from this network. Please wait before requesting another pass.',
         });
       }
     }

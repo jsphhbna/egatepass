@@ -171,6 +171,17 @@ describe('Permanent PostgreSQL Migration Chain & Schema Contracts (PGlite)', () 
     // 5. create_upload_intent signature
     expect(funcMap.has('create_upload_intent')).toBe(true);
 
+    // 6. update_app_settings exactly one signature without overload
+    const updateSettingsProcs = await db.query<{ regproc: string }>(`
+      select p.oid::regprocedure::text as regproc
+      from pg_proc p
+      join pg_namespace n on n.oid = p.pronamespace
+      where n.nspname = 'api'
+        and p.proname = 'update_app_settings';
+    `);
+    expect(updateSettingsProcs.rows.length).toBe(1);
+    expect(updateSettingsProcs.rows[0].regproc).toMatch(/api\.update_app_settings\(uuid,(public\.)?peak_mode_scope,jsonb,jsonb,time( without time zone)?,time( without time zone)?,smallint,smallint,smallint,smallint,smallint,boolean,uuid,smallint,smallint\)/);
+
     // 6. acknowledge_privacy return type is timestamptz (Repair 1A)
     const ackPrivacy = await db.query<{ typname: string }>(`
       select t.typname
@@ -373,6 +384,17 @@ describe('Permanent PostgreSQL Migration Chain & Schema Contracts (PGlite)', () 
       sql = sql.replace(/create extension if not exists pgcrypto[^;]*;/gi, '-- pgcrypto no-op');
       await expect(db.exec(sql)).resolves.toBeDefined();
     }
+
+    // Verify upgrade path also leaves exactly ONE update_app_settings procedure
+    const upgradeProcs = await db.query<{ regproc: string }>(`
+      select p.oid::regprocedure::text as regproc
+      from pg_proc p
+      join pg_namespace n on n.oid = p.pronamespace
+      where n.nspname = 'api'
+        and p.proname = 'update_app_settings';
+    `);
+    expect(upgradeProcs.rows.length).toBe(1);
+    expect(upgradeProcs.rows[0].regproc).toMatch(/api\.update_app_settings\(uuid,(public\.)?peak_mode_scope,jsonb,jsonb,time( without time zone)?,time( without time zone)?,smallint,smallint,smallint,smallint,smallint,boolean,uuid,smallint,smallint\)/);
   }, 30000);
 
   it('G. PGLITE/POSTGRES CONTRACT TEST: Device and anonymous credential mutation protection trigger (D1-D10)', async () => {

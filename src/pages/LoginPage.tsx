@@ -76,11 +76,19 @@ export function LoginPage() {
       return;
     }
 
+    const siteKey = (import.meta as any).env?.VITE_TURNSTILE_SITE_KEY?.trim();
+    const isProd = Boolean((import.meta as any).env?.PROD);
+    if (isProd && siteKey && !captchaToken) {
+      setError('Please complete the security challenge before signing in.');
+      return;
+    }
+
     setLoading(true);
     try {
       const { data, error: signInError } = await supabase.auth.signInWithPassword({
         email: normalized.email,
         password,
+        options: captchaToken ? { captchaToken } : undefined,
       });
       if (signInError) throw signInError;
       if (data.user && !data.user.is_anonymous && !data.user.email_confirmed_at && identity.includes('@')) {
@@ -99,6 +107,7 @@ export function LoginPage() {
         setError('Invalid email, device username, or password. Please try again.');
       }
     } finally {
+      resetTurnstile();
       setLoading(false);
     }
   }

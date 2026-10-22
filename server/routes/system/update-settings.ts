@@ -60,10 +60,29 @@ async function handleRequest(request: Request): Promise<Response> {
     const { admin } = getServerSupabaseClients();
     const actor = await requireStaffActor(admin, token, ['admin', 'superadmin']);
 
+    // Fetch current settings to verify if security-sensitive settings or peakMode changed
+    const { data: currentSettings } = await admin
+      .from('app_settings')
+      .select('peak_mode')
+      .eq('singleton', true)
+      .maybeSingle();
+
+    let peakModeScope: 'off' | 'portal' | 'kiosk' | 'both';
+    if (typeof parsed.data.peakMode === 'boolean') {
+      peakModeScope = parsed.data.peakMode ? 'both' : 'off';
+    } else {
+      peakModeScope = parsed.data.peakMode;
+    }
+
+    const peakModeChanged = currentSettings !== null && peakModeScope !== currentSettings.peak_mode;
+
     const changesSecuritySettings =
+      peakModeChanged ||
       parsed.data.retentionDays !== undefined ||
       parsed.data.visitorRetentionDays !== undefined ||
       parsed.data.imageRetentionDays !== undefined ||
+      parsed.data.photoRetentionDays !== undefined ||
+      parsed.data.idRetentionDays !== undefined ||
       parsed.data.auditRetentionDays !== undefined ||
       parsed.data.reconciliationRetentionDays !== undefined ||
       parsed.data.workingHours !== undefined ||
@@ -74,16 +93,11 @@ async function handleRequest(request: Request): Promise<Response> {
       throw new HttpError(403, 'Only Super Admins may change security-sensitive settings');
     }
 
-    let peakModeScope: 'off' | 'portal' | 'kiosk' | 'both';
-    if (typeof parsed.data.peakMode === 'boolean') {
-      peakModeScope = parsed.data.peakMode ? 'both' : 'off';
-    } else {
-      peakModeScope = parsed.data.peakMode;
-    }
-
     const startVal = parsed.data.workingHours?.start ?? null;
     const endVal = parsed.data.workingHours?.end ?? null;
     const imgRet = parsed.data.imageRetentionDays ?? null;
+    const photoRet = parsed.data.photoRetentionDays ?? null;
+    const idRet = parsed.data.idRetentionDays ?? null;
     const visRet = parsed.data.visitorRetentionDays ?? parsed.data.retentionDays ?? null;
     const audRet = parsed.data.auditRetentionDays ?? null;
     const recRet = parsed.data.reconciliationRetentionDays ?? null;
@@ -105,6 +119,8 @@ async function handleRequest(request: Request): Promise<Response> {
       requested_scheduling_days_ahead: schedDays,
       requested_automatic_cleanup_enabled: cleanupVal,
       requested_request_id: randomUUID(),
+      requested_photo_retention_days: photoRet,
+      requested_id_retention_days: idRet,
     });
 
     // P0-03: Zero direct table write fallback; fail closed on any RPC error
@@ -137,6 +153,10 @@ async function handleRequest(request: Request): Promise<Response> {
         working_hours_start: startVal,
         working_hours_end: endVal,
         image_retention_days: imgRet,
+        photo_retention_days: photoRet,
+        id_retention_days: idRet,
+        photoRetentionDays: photoRet,
+        idRetentionDays: idRet,
         visitor_retention_days: visRet,
         audit_retention_days: audRet,
         reconciliation_retention_days: recRet,

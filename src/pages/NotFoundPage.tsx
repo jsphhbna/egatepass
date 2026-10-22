@@ -18,9 +18,9 @@ export function NotFoundPage() {
               Return to Home
             </Button>
           </Link>
-          <Link to="/login">
+          <Link to="/get-pass">
             <Button variant="secondary" size="md">
-              Sign In
+              Get Gate Pass
             </Button>
           </Link>
         </div>
