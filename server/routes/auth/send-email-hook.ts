@@ -1,5 +1,5 @@
 import { jsonResponse } from '../../http.js';
-import { sendResendEmail } from '../../email.js';
+import { sendResendEmail, EmailDeliveryError } from '../../email.js';
 import {
   verifyStandardWebhookSignature,
   prepareAuthEmails,
@@ -60,7 +60,33 @@ async function handleRequest(request: Request): Promise<Response> {
     console.log(`[AUTH-EMAIL-HOOK] Dispatched ${preparedList.length} ${payload.email_data.email_action_type} email(s) for user ${payload.user.id.slice(0, 8)}...`);
     return jsonResponse(200, {});
   } catch (error) {
-    console.error('Failed to process auth email hook:', error instanceof Error ? error.message : 'unknown');
+    if (error instanceof EmailDeliveryError) {
+      // Safe logging: no recipient email address, no API keys, no verification tokens
+      console.error(
+        `[AUTH-EMAIL-HOOK] Delivery failed for action "${payload.email_data.email_action_type}": code=${error.code}, outcome=${error.outcome}`
+      );
+      if (error.code === 'email_sender_invalid') {
+        return jsonResponse(422, { error: 'email_sender_invalid' });
+      }
+      if (error.code === 'email_sender_unconfigured' || error.code === 'email_service_unconfigured') {
+        return jsonResponse(503, { error: error.code });
+      }
+      if (error.code === 'resend_rejected') {
+        return jsonResponse(502, { error: 'provider_rejected' });
+      }
+      if (error.code === 'resend_rate_limited') {
+        return jsonResponse(429, { error: 'provider_rate_limited' });
+      }
+      if (error.code === 'resend_server_error') {
+        return jsonResponse(502, { error: 'provider_server_error' });
+      }
+      return jsonResponse(502, { error: 'provider_delivery_failed', code: error.code });
+    }
+
+    console.error(
+      `[AUTH-EMAIL-HOOK] Unexpected failure for action "${payload.email_data.email_action_type}":`,
+      error instanceof Error ? error.message : 'unknown'
+    );
     return jsonResponse(500, { error: 'auth_email_processing_failed' });
   }
 }

@@ -6,13 +6,20 @@ import { SignupConfirmationEmail, type SignupConfirmationEmailProps } from './Si
 import { PasswordResetEmail, type PasswordResetEmailProps } from './PasswordResetEmail.js';
 import { StaffInviteEmail, type StaffInviteEmailProps } from './StaffInviteEmail.js';
 import { EmailChangeEmail, type EmailChangeEmailProps } from './EmailChangeEmail.js';
+import { MagicLinkEmail, type MagicLinkEmailProps } from './MagicLinkEmail.js';
+import { ReauthenticationEmail, type ReauthenticationEmailProps } from './ReauthenticationEmail.js';
+import { SecurityNotificationEmail, type SecurityNotificationEmailProps } from './SecurityNotificationEmail.js';
 
+export { EARIST_LOGO_URL } from './branding.js';
 export { VerificationCodeEmail, type VerificationCodeEmailProps } from './VerificationCodeEmail.js';
 export { PassIssuedEmail, type PassIssuedEmailProps } from './PassIssuedEmail.js';
 export { SignupConfirmationEmail, type SignupConfirmationEmailProps } from './SignupConfirmationEmail.js';
 export { PasswordResetEmail, type PasswordResetEmailProps } from './PasswordResetEmail.js';
 export { StaffInviteEmail, type StaffInviteEmailProps } from './StaffInviteEmail.js';
 export { EmailChangeEmail, type EmailChangeEmailProps } from './EmailChangeEmail.js';
+export { MagicLinkEmail, type MagicLinkEmailProps } from './MagicLinkEmail.js';
+export { ReauthenticationEmail, type ReauthenticationEmailProps } from './ReauthenticationEmail.js';
+export { SecurityNotificationEmail, type SecurityNotificationEmailProps, type SecurityNotificationType } from './SecurityNotificationEmail.js';
 
 export async function renderVerificationCodeEmail(props: VerificationCodeEmailProps): Promise<string> {
   return render(React.createElement(VerificationCodeEmail, props));
@@ -36,4 +43,16 @@ export async function renderStaffInviteEmail(props: StaffInviteEmailProps): Prom
 
 export async function renderEmailChangeEmail(props: EmailChangeEmailProps): Promise<string> {
   return render(React.createElement(EmailChangeEmail, props));
+}
+
+export async function renderMagicLinkEmail(props: MagicLinkEmailProps): Promise<string> {
+  return render(React.createElement(MagicLinkEmail, props));
+}
+
+export async function renderReauthenticationEmail(props: ReauthenticationEmailProps): Promise<string> {
+  return render(React.createElement(ReauthenticationEmail, props));
+}
+
+export async function renderSecurityNotificationEmail(props: SecurityNotificationEmailProps): Promise<string> {
+  return render(React.createElement(SecurityNotificationEmail, props));
 }

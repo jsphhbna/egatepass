@@ -132,9 +132,13 @@ export async function issueVisitorPass(
   });
   const body = await response.json().catch(() => null) as (IssuedPass & { error?: string }) | null;
   if (!response.ok || !body?.passId || !body.qrToken) {
-    throw new Error(body?.error === 'service_unavailable'
-      ? 'Pass service is temporarily unavailable.'
-      : 'Failed to create visitor pass.');
+    if (body?.error === 'visit_date_out_of_range') {
+      throw new Error('Visit date is outside the allowed scheduling window.');
+    }
+    if (body?.error === 'service_unavailable') {
+      throw new Error('Pass service is temporarily unavailable.');
+    }
+    throw new Error('Failed to create visitor pass.');
   }
   return body;
 }

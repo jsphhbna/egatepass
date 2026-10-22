@@ -4,6 +4,9 @@ import {
   renderPasswordResetEmail,
   renderStaffInviteEmail,
   renderEmailChangeEmail,
+  renderMagicLinkEmail,
+  renderReauthenticationEmail,
+  renderSecurityNotificationEmail,
 } from './templates/index.js';
 
 export type AuthEmailActionType =
@@ -185,27 +188,19 @@ export async function prepareAuthEmails(
 
     case 'invite': {
       const inviteUrl = buildAuthVerificationUrl(authBaseUrl, email_data.token_hash, 'invite', redirectTo);
-      const roleName = (user.user_metadata?.role as string) || 'Authorized Staff';
       const html = await renderStaffInviteEmail({
         email: user.email,
         inviteUrl,
-        roleName: roleName.toUpperCase(),
         displayName,
       });
       return [{
         to: user.email,
-        subject: 'Invitation to join EARIST E-GatePass as staff',
+        subject: 'EARIST E-GatePass Account Invitation',
         html,
       }];
     }
 
     case 'email_change': {
-      // Current Supabase Send Email Hook specification:
-      // Current email is on: user.email
-      // Requested new email is on: user.new_email
-      // When Secure Email Change is enabled, both token_hash_new and token_hash are sent:
-      // - token_hash_new must be sent to the CURRENT email (user.email)
-      // - token_hash must be sent to the NEW email (user.new_email)
       const emails: PreparedAuthEmail[] = [];
       const newEmail = user.new_email || user.email;
 
@@ -260,23 +255,23 @@ export async function prepareAuthEmails(
 
     case 'magiclink': {
       const magicUrl = buildAuthVerificationUrl(authBaseUrl, email_data.token_hash, 'magiclink', redirectTo);
-      const html = await renderSignupConfirmationEmail({
+      const html = await renderMagicLinkEmail({
         email: user.email,
-        confirmationUrl: magicUrl,
+        magicUrl,
         displayName,
       });
       return [{
         to: user.email,
-        subject: 'Your EARIST E-GatePass sign-in link',
+        subject: 'Sign in to EARIST E-GatePass',
         html,
       }];
     }
 
     case 'reauthentication': {
       const reauthUrl = buildAuthVerificationUrl(authBaseUrl, email_data.token_hash, 'reauthentication', redirectTo);
-      const html = await renderPasswordResetEmail({
+      const html = await renderReauthenticationEmail({
         email: user.email,
-        resetUrl: reauthUrl,
+        reauthUrl,
         displayName,
       });
       return [{
@@ -287,55 +282,108 @@ export async function prepareAuthEmails(
     }
 
     case 'password_changed_notification': {
+      const html = await renderSecurityNotificationEmail({
+        email: user.email,
+        actionType: 'password_changed_notification',
+        displayName,
+      });
       return [{
         to: user.email,
         subject: 'Security Alert: Your EARIST E-GatePass password was changed',
-        html: `<p>Hello ${displayName || 'Staff'},</p><p>The password for your EARIST E-GatePass staff account (${user.email}) was recently changed.</p><p>If you did not perform this action, please contact your Super Admin immediately to secure your account.</p>`,
+        html,
       }];
     }
 
     case 'email_changed_notification': {
+      const html = await renderSecurityNotificationEmail({
+        email: user.email,
+        actionType: 'email_changed_notification',
+        displayName,
+      });
       return [{
         to: user.email,
         subject: 'Security Alert: Your EARIST E-GatePass email address was changed',
-        html: `<p>Hello ${displayName || 'Staff'},</p><p>The email address associated with your EARIST E-GatePass account was changed.</p><p>If you did not authorize this change, please report this incident immediately to the administrator.</p>`,
+        html,
       }];
     }
 
     case 'phone_changed_notification': {
+      const html = await renderSecurityNotificationEmail({
+        email: user.email,
+        actionType: 'phone_changed_notification',
+        displayName,
+      });
       return [{
         to: user.email,
         subject: 'Security Alert: Phone number updated for EARIST E-GatePass',
-        html: `<p>Hello ${displayName || 'Staff'},</p><p>A phone number update was made to your account. If you did not make this change, please contact an administrator.</p>`,
+        html,
       }];
     }
 
-    case 'mfa_factor_enrolled_notification':
+    case 'mfa_factor_enrolled_notification': {
+      const html = await renderSecurityNotificationEmail({
+        email: user.email,
+        actionType: 'mfa_factor_enrolled_notification',
+        displayName,
+      });
+      return [{
+        to: user.email,
+        subject: 'Security Alert: Multi-factor authentication enrolled',
+        html,
+      }];
+    }
+
     case 'mfa_factor_unenrolled_notification': {
-      const isEnrolled = email_data.email_action_type === 'mfa_factor_enrolled_notification';
+      const html = await renderSecurityNotificationEmail({
+        email: user.email,
+        actionType: 'mfa_factor_unenrolled_notification',
+        displayName,
+      });
       return [{
         to: user.email,
-        subject: `Security Alert: Multi-factor authentication ${isEnrolled ? 'enrolled' : 'removed'}`,
-        html: `<p>Hello ${displayName || 'Staff'},</p><p>A multi-factor authentication factor was ${isEnrolled ? 'enrolled on' : 'removed from'} your EARIST E-GatePass account. If you did not perform this update, contact an administrator immediately.</p>`,
+        subject: 'Security Alert: Multi-factor authentication removed',
+        html,
       }];
     }
 
-    case 'identity_linked_notification':
-    case 'identity_unlinked_notification': {
-      const isLinked = email_data.email_action_type === 'identity_linked_notification';
+    case 'identity_linked_notification': {
+      const html = await renderSecurityNotificationEmail({
+        email: user.email,
+        actionType: 'identity_linked_notification',
+        displayName,
+      });
       return [{
         to: user.email,
-        subject: `Security Alert: External identity ${isLinked ? 'linked' : 'unlinked'}`,
-        html: `<p>Hello ${displayName || 'Staff'},</p><p>An identity provider was ${isLinked ? 'linked to' : 'unlinked from'} your EARIST E-GatePass account. If you did not authorize this, contact an administrator immediately.</p>`,
+        subject: 'Security Alert: External identity linked',
+        html,
+      }];
+    }
+
+    case 'identity_unlinked_notification': {
+      const html = await renderSecurityNotificationEmail({
+        email: user.email,
+        actionType: 'identity_unlinked_notification',
+        displayName,
+      });
+      return [{
+        to: user.email,
+        subject: 'Security Alert: External identity unlinked',
+        html,
       }];
     }
 
     case 'email': {
       const verifyUrl = buildAuthVerificationUrl(authBaseUrl, email_data.token_hash, 'email', redirectTo);
+      const html = await renderSecurityNotificationEmail({
+        email: user.email,
+        actionType: 'email',
+        displayName,
+        actionUrl: verifyUrl,
+      });
       return [{
         to: user.email,
         subject: 'Confirm your EARIST E-GatePass email',
-        html: `<p>Hello ${displayName || 'Staff'},</p><p>Please confirm your email by clicking the link below:</p><p><a href="${verifyUrl}">${verifyUrl}</a></p>`,
+        html,
       }];
     }
 

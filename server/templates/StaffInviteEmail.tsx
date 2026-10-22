@@ -10,12 +10,14 @@ import {
   Text,
   Button,
   Hr,
+  Img,
 } from '@react-email/components';
+import { EARIST_LOGO_URL } from './branding.js';
 
 export interface StaffInviteEmailProps {
   email: string;
   inviteUrl: string;
-  roleName: string;
+  roleName?: string;
   displayName?: string;
 }
 
@@ -39,6 +41,11 @@ const headerSection: React.CSSProperties = {
   borderBottom: '2px solid #800000',
   paddingBottom: '16px',
   marginBottom: '24px',
+};
+
+const logoStyle: React.CSSProperties = {
+  display: 'block',
+  margin: '0 0 12px 0',
 };
 
 const headerTitle: React.CSSProperties = {
@@ -134,7 +141,7 @@ const footerText: React.CSSProperties = {
 export function StaffInviteEmail({
   email: _email,
   inviteUrl,
-  roleName,
+  roleName: _roleName,
   displayName,
 }: StaffInviteEmailProps): React.JSX.Element {
   const greeting = displayName ? `Hello ${displayName},` : 'Hello,';
@@ -142,23 +149,32 @@ export function StaffInviteEmail({
   return (
     <Html lang="en">
       <Head />
-      <Preview>Invitation to join EARIST E-GatePass as staff</Preview>
+      <Preview>EARIST E-GatePass Account Invitation</Preview>
       <Body style={mainStyle}>
         <Container style={containerStyle}>
           <Section style={headerSection}>
+            <Img
+              src={EARIST_LOGO_URL}
+              alt="EARIST seal"
+              width="64"
+              height="64"
+              style={logoStyle}
+            />
             <Heading style={headerTitle}>EARIST E-GatePass</Heading>
             <Text style={headerSubtitle}>Eulogio "Amang" Rodriguez Institute of Science and Technology</Text>
           </Section>
 
           <Text style={greetingText}>{greeting}</Text>
           <Text style={bodyText}>
-            You have been invited to join the EARIST E-GatePass system as an authorized staff member (<strong>{roleName}</strong>).
-            Click the button below to accept the invitation and set up your institutional credentials:
+            You have been invited to accept an EARIST E-GatePass account invitation.
+          </Text>
+          <Text style={bodyText}>
+            Accepting this invitation verifies the authentication account. It does not by itself assign Guard, Admin, or Super Admin access. Application permissions are provisioned separately by an authorized E-GatePass administrator.
           </Text>
 
           <Section style={buttonContainer}>
             <Button style={actionButton} href={inviteUrl}>
-              Accept Staff Invitation
+              Accept E-GatePass Invitation
             </Button>
           </Section>
 
@@ -171,7 +187,7 @@ export function StaffInviteEmail({
           <Section style={noticeSection}>
             <Text style={noticeTitle}>Institutional Security Policy</Text>
             <Text style={noticeText}>
-              Staff credentials are strictly non-transferable. You will be required to establish a strong password and accept institutional privacy agreements upon first login.
+              Credentials are strictly non-transferable. You will be required to establish a strong password and accept institutional privacy agreements upon first login.
             </Text>
           </Section>
 

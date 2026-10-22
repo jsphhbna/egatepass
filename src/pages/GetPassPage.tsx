@@ -1,7 +1,7 @@
-import { useState, useRef, useEffect } from 'react';
+import { useState, useRef, useEffect, useMemo } from 'react';
 import { useForm } from 'react-hook-form';
-import { z } from 'zod';
 import { zodResolver } from '@hookform/resolvers/zod';
+import { z } from 'zod';
 import { useWebcam } from '@/hooks/useWebcam';
 import { compressImageToWebP } from '@/lib/imageProcessing';
 import { issueVisitorPass, loadRegistrationSettings } from '@/services/visitorRegistration';
@@ -9,12 +9,10 @@ import { TurnstileWidget } from '@/components/TurnstileWidget';
 import { toDataURL } from 'qrcode';
 import {
   Camera,
-  Upload,
   CheckCircle2,
   Download,
   ArrowLeft,
   ArrowRight,
-  AlertCircle,
   X,
   RotateCcw,
   ShieldCheck,
@@ -22,7 +20,6 @@ import {
   Share2,
 } from 'lucide-react';
 import { toast } from 'sonner';
-import { addDays, format } from 'date-fns';
 import { Link } from 'react-router-dom';
 import { Button, Card, Input, FormField, Stepper, PageShell } from '@/components/ui';
 import { EmailPassModal } from '@/components/EmailPassModal';
@@ -31,48 +28,62 @@ import { VisitPurposeField } from '@/components/VisitPurposeField';
 import { DEFAULT_VISIT_PURPOSES, normalizeVisitPurposes } from '@/lib/settingsDefaults';
 import type { VisitPurposeOption } from '@/types';
 import { DEFAULT_WORKING_HOURS, formatValidityWindow, formatWorkingHours, MAX_VISIT_ADVANCE_DAYS, normalizeWorkingHours } from '@/lib/workingHours';
+import { getManilaDateString, getLatestVisitDateString, validateVisitDate } from '@/lib/scheduling';
 
 // ============================================================
 // FORM SCHEMA (Zod)
 // ============================================================
 const nameRegex = /^[\p{L}\s\-'.]+$/u;
 
-const getPassSchema = z.object({
-  firstName: z
-    .string()
-    .trim()
-    .min(2, 'First name must be at least 2 characters')
-    .max(50, 'First name is too long')
-    .regex(nameRegex, 'Invalid characters in name'),
-  middleName: z
-    .string()
-    .trim()
-    .max(50, 'Middle name is too long')
-    .regex(nameRegex, 'Invalid characters in name')
-    .optional()
-    .or(z.literal('')),
-  lastName: z
-    .string()
-    .trim()
-    .min(2, 'Last name must be at least 2 characters')
-    .max(50, 'Last name is too long')
-    .regex(nameRegex, 'Invalid characters in name'),
-  contactNumber: z
-    .string()
-    .min(7, 'Contact number must be at least 7 digits')
-    .max(15, 'Contact number is too long')
-    .regex(/^[0-9+\-() ]+$/, 'Invalid contact number format'),
-  purpose: z
-    .string()
-    .min(3, 'Please describe your purpose')
-    .max(300, 'Purpose description is too long'),
-  visitDate: z.string().min(1, 'Please select a visit date'),
-  consent: z.literal(true, {
-    message: 'You must accept the Data Privacy Act notice to proceed',
-  }),
-});
+export function createGetPassSchema(schedulingDaysAhead: number = MAX_VISIT_ADVANCE_DAYS) {
+  return z.object({
+    firstName: z
+      .string()
+      .trim()
+      .min(2, 'First name must be at least 2 characters')
+      .max(50, 'First name is too long')
+      .regex(nameRegex, 'Invalid characters in name'),
+    middleName: z
+      .string()
+      .trim()
+      .max(50, 'Middle name is too long')
+      .regex(nameRegex, 'Invalid characters in name')
+      .optional()
+      .or(z.literal('')),
+    lastName: z
+      .string()
+      .trim()
+      .min(2, 'Last name must be at least 2 characters')
+      .max(50, 'Last name is too long')
+      .regex(nameRegex, 'Invalid characters in name'),
+    contactNumber: z
+      .string()
+      .min(7, 'Contact number must be at least 7 digits')
+      .max(15, 'Contact number is too long')
+      .regex(/^[0-9+\-() ]+$/, 'Invalid contact number format'),
+    purpose: z
+      .string()
+      .min(3, 'Please describe your purpose')
+      .max(300, 'Purpose description is too long'),
+    visitDate: z
+      .string()
+      .min(1, 'Please select a visit date')
+      .superRefine((val, ctx) => {
+        const res = validateVisitDate(val, new Date(), schedulingDaysAhead);
+        if (!res.valid && res.error) {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            message: res.error,
+          });
+        }
+      }),
+    consent: z.literal(true, {
+      message: 'You must accept the Data Privacy Act notice to proceed',
+    }),
+  });
+}
 
-type GetPassFormData = z.infer<typeof getPassSchema>;
+type GetPassFormData = z.infer<ReturnType<typeof createGetPassSchema>>;
 
 type Step = 'form' | 'photo' | 'id' | 'review' | 'generating' | 'done';
 
@@ -102,7 +113,6 @@ export function GetPassPage() {
   const [workingHours, setWorkingHours] = useState(DEFAULT_WORKING_HOURS);
   const [schedulingDaysAhead, setSchedulingDaysAhead] = useState(MAX_VISIT_ADVANCE_DAYS);
   const [issuedValidity, setIssuedValidity] = useState<string | null>(null);
-  const fileInputRef = useRef<HTMLInputElement>(null);
   const issueRequestId = useRef(crypto.randomUUID());
 
   useEffect(() => {
@@ -119,7 +129,20 @@ export function GetPassPage() {
     }).catch(() => undefined);
   }, []);
 
-  const webcam = useWebcam({ facingMode: 'user' });
+  const faceWebcam = useWebcam({ facingMode: 'user', width: 640, height: 480 });
+  const idWebcam = useWebcam({ facingMode: 'environment', width: 1280, height: 720 });
+
+  // Cleanup on unmount
+  useEffect(() => {
+    return () => {
+      faceWebcam.stop();
+      idWebcam.stop();
+      if (photoPreview) URL.revokeObjectURL(photoPreview);
+      if (idPreview) URL.revokeObjectURL(idPreview);
+    };
+  }, []);
+
+  const formSchema = useMemo(() => createGetPassSchema(schedulingDaysAhead), [schedulingDaysAhead]);
 
   const {
     register,
@@ -129,37 +152,38 @@ export function GetPassPage() {
     watch,
     formState: { errors, isValid },
   } = useForm<GetPassFormData>({
-    resolver: zodResolver(getPassSchema),
+    resolver: zodResolver(formSchema),
     mode: 'onChange',
     defaultValues: { purpose: '' },
   });
   const purpose = watch('purpose');
 
-  // Get today as min date
-  const today = format(new Date(), 'yyyy-MM-dd');
-  const latestVisitDate = format(addDays(new Date(), schedulingDaysAhead), 'yyyy-MM-dd');
+  // Manila-aware calendar date limits
+  const today = getManilaDateString();
+  const latestVisitDate = getLatestVisitDateString(today, schedulingDaysAhead);
 
   // ============================================================
   // STEP HANDLERS
   // ============================================================
 
   function onFormNext(data: GetPassFormData) {
-    // Form is valid, move to photo step
     void data;
     setStep('photo');
-    webcam.start();
+    faceWebcam.start();
   }
 
   function onCapturePhoto() {
-    const blob = webcam.capture();
+    const blob = faceWebcam.capture();
     if (blob) {
       setPhotoBlob(blob);
+      if (photoPreview) URL.revokeObjectURL(photoPreview);
       setPhotoPreview(URL.createObjectURL(blob));
-      webcam.stop();
+      faceWebcam.stop();
       if (isPeakMode) {
         setStep('review');
       } else {
         setStep('id');
+        idWebcam.start();
       }
     } else {
       toast.error('Failed to capture photo. Please try again.');
@@ -170,24 +194,36 @@ export function GetPassPage() {
     if (photoPreview) URL.revokeObjectURL(photoPreview);
     setPhotoBlob(null);
     setPhotoPreview(null);
+    faceWebcam.stop();
     setStep('photo');
-    webcam.start();
+    faceWebcam.start();
   }
 
-  async function onIdFileChange(e: React.ChangeEvent<HTMLInputElement>) {
-    const file = e.target.files?.[0];
-    if (!file) return;
-
-    try {
-      const compressed = await compressImageToWebP(file);
-      setIdBlob(compressed);
-      setIdPreview(URL.createObjectURL(compressed));
-    } catch {
-      toast.error('Failed to process ID image. Please try another file.');
+  async function onCaptureId() {
+    const blob = idWebcam.capture();
+    if (blob) {
+      try {
+        const compressed = await compressImageToWebP(blob);
+        if (idPreview) URL.revokeObjectURL(idPreview);
+        setIdBlob(compressed);
+        setIdPreview(URL.createObjectURL(compressed));
+        idWebcam.stop();
+      } catch {
+        toast.error('Failed to process ID image.');
+      }
+    } else {
+      toast.error('Failed to capture ID photo. Please try again.');
     }
   }
 
-
+  function onRetakeId() {
+    if (idPreview) URL.revokeObjectURL(idPreview);
+    setIdBlob(null);
+    setIdPreview(null);
+    idWebcam.stop();
+    setStep('id');
+    idWebcam.start();
+  }
 
   // ============================================================
   // SUBMIT — Anonymous Sign-in → Upload → Create Docs → QR
@@ -198,7 +234,7 @@ export function GetPassPage() {
       return;
     }
     if (!isPeakMode && !idBlob) {
-      toast.error('ID upload is required.');
+      toast.error('Valid ID capture is required.');
       return;
     }
 
@@ -237,77 +273,64 @@ export function GetPassPage() {
     }
   }
 
-  function downloadQR() {
+  // ============================================================
+  // DOWNLOAD QR
+  // ============================================================
+  function handleDownload() {
     if (!qrDataUrl || !passId) return;
     const link = document.createElement('a');
-    link.download = `EARIST-GatePass-${passId.slice(0, 8)}.png`;
+    link.download = `egatepass-${passId}.png`;
     link.href = qrDataUrl;
     link.click();
+    toast.success('QR code downloaded!');
   }
 
-  async function shareQR() {
+  // ============================================================
+  // SHARE (Web Share API)
+  // ============================================================
+  async function handleShare() {
     if (!passId) return;
-    try {
-      if (qrDataUrl && typeof navigator !== 'undefined' && navigator.canShare) {
-        const res = await fetch(qrDataUrl);
-        const blob = await res.blob();
-        const file = new File([blob], `earist-gatepass-${passId}.png`, { type: 'image/png' });
-        if (navigator.canShare({ files: [file] })) {
-          await navigator.share({
-            title: 'EARIST Gate Pass',
-            text: `EARIST Gate Pass (${passId}). Please present this QR code to the gate guard upon entry.`,
-            files: [file],
-          });
-          return;
-        }
-      }
-
-      if (navigator.share) {
+    if (navigator.share) {
+      try {
         await navigator.share({
-          title: 'EARIST Gate Pass',
-          text: `EARIST Gate Pass ID: ${passId}. Please present your downloaded QR code to the gate guard upon entry.`,
+          title: 'EARIST E-GatePass',
+          text: `My EARIST Visitor Gate Pass: ${passId}`,
+          url: window.location.href,
         });
-      } else {
-        downloadQR();
-        toast.info('QR image downloaded. Please save or forward this image to present at the gate.');
+      } catch {
+        // User cancelled share
       }
-    } catch (err: any) {
-      if (err?.name !== 'AbortError') {
-        console.error('Error sharing:', err);
-        downloadQR();
-      }
+    } else {
+      // Fallback: copy link
+      await navigator.clipboard.writeText(window.location.href);
+      toast.success('Pass link copied to clipboard!');
     }
   }
 
   // ============================================================
-  // RENDER
+  // STEP DEFINITIONS
   // ============================================================
   const steps = [
     { id: 'form', title: 'Details' },
     { id: 'photo', title: 'Photo' },
-    ...(!isPeakMode ? [{ id: 'id', title: 'Upload ID' }] : []),
+    ...(!isPeakMode ? [{ id: 'id', title: 'Capture ID' }] : []),
     { id: 'review', title: 'Review' },
   ];
 
-  const currentStepIndex = 
+  const currentStepIndex =
     step === 'done' || step === 'generating' ? steps.length :
-    steps.findIndex(s => s.id === step);
+    steps.findIndex((s) => s.id === step);
 
   return (
-    <PageShell
-      headerContent={
-        <Link to="/" className="text-sm font-semibold text-[var(--color-earist-maroon)] hover:underline">
-          Back to home
-        </Link>
-      }
-    >
-      <div className="mx-auto w-full max-w-xl">
+    <PageShell>
+      <div className="mx-auto max-w-xl">
         {/* Header */}
-        <div className="mb-8 text-center">
-          <BrandMark size="lg" className="mx-auto mb-4" />
-          <p className="mb-2 text-xs font-bold uppercase tracking-widest text-[var(--color-brand)]">EARIST visitor access</p>
-          <h1 className="text-3xl font-bold text-[var(--color-text-primary)]">
-            Get Gate Pass
+        <div className="text-center mb-6">
+          <Link to="/" className="inline-block mb-3">
+            <BrandMark size="md" />
+          </Link>
+          <h1 className="text-2xl font-bold tracking-tight text-[var(--color-text-primary)]">
+            Visitor Pass Registration
           </h1>
           <p className="mt-2 text-[var(--color-text-secondary)]">
             Fill in your details to generate a QR-coded gate pass
@@ -354,12 +377,12 @@ export function GetPassPage() {
                 </FormField>
               </div>
 
-              <FormField label="Contact Number" id="visitor-contact" error={errors.contactNumber?.message}>
+              <FormField label="Contact Number" id="visitor-phone" hint="Philippine mobile number" error={errors.contactNumber?.message}>
                 <Input
-                  id="visitor-contact"
+                  id="visitor-phone"
                   type="tel"
                   {...register('contactNumber')}
-                  placeholder="09171234567"
+                  placeholder="0917 123 4567"
                   error={!!errors.contactNumber}
                 />
               </FormField>
@@ -382,32 +405,50 @@ export function GetPassPage() {
                 />
               </FormField>
 
-              {/* Data Privacy Act Consent */}
-              <div className="rounded-xl border border-[var(--color-brand)]/20 bg-[var(--color-brand-light)] p-4">
-                <label className="flex items-start gap-3 cursor-pointer">
+              {/* Data Privacy Act Notice */}
+              <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] p-4 space-y-3">
+                <div className="flex items-start gap-2">
+                  <ShieldCheck className="h-5 w-5 text-[var(--color-brand)] shrink-0 mt-0.5" />
+                  <div className="text-xs text-[var(--color-text-secondary)] leading-relaxed space-y-1">
+                    <p className="font-semibold text-[var(--color-text-primary)]">
+                      Data Privacy Act of 2012 (RA 10173) Notice
+                    </p>
+                    <p>
+                      The Eulogio "Amang" Rodriguez Institute of Science and
+                      Technology (EARIST) collects your personal data (name, contact
+                      number, photo, ID image, and purpose of visit) solely for
+                      campus security, visitor tracking, and emergency response
+                      purposes.
+                    </p>
+                    <p>
+                      Your data is securely stored, retained only for the duration
+                      required by institutional policy, and never shared with
+                      unauthorized third parties. By checking the box below, you
+                      freely give your consent to this processing.
+                    </p>
+                  </div>
+                </div>
+
+                <label className="flex items-start gap-2.5 pt-2 border-t border-[var(--color-border)] cursor-pointer">
                   <input
                     type="checkbox"
                     {...register('consent')}
-                    className="mt-1 h-5 w-5 shrink-0 rounded border-[var(--color-border-strong)] text-[var(--color-brand)] focus:ring-[var(--color-brand)]"
+                    className="mt-0.5 h-4 w-4 rounded border-[var(--color-border-strong)] text-[var(--color-brand)] focus:ring-[var(--color-brand)]"
                   />
-                  <span className="text-sm text-[var(--color-text-primary)]">
-                    I consent to the collection and processing of my personal
-                    information in accordance with the{' '}
-                    <strong>Data Privacy Act of 2012 (RA 10173)</strong>. My
-                    data will be used solely for campus visitor management and
-                    security purposes.
+                  <span className="text-xs text-[var(--color-text-primary)] font-medium">
+                    I understand and agree to the collection and processing of my
+                    personal data in accordance with the EARIST Privacy Policy.
                   </span>
                 </label>
                 {errors.consent && (
-                  <p className="mt-2 flex items-center gap-1 text-xs text-[var(--color-danger)]" role="alert">
-                    <AlertCircle className="h-3 w-3" />
+                  <p className="text-xs text-[var(--color-danger)]">
                     {errors.consent.message}
                   </p>
                 )}
               </div>
 
-              <Button type="submit" disabled={!isValid} className="w-full" size="lg" icon={<ArrowRight className="h-4 w-4" />}>
-                Next: Take Photo
+              <Button type="submit" disabled={!isValid} className="w-full" icon={<ArrowRight className="h-4 w-4" />}>
+                Continue
               </Button>
             </form>
           )}
@@ -422,16 +463,25 @@ export function GetPassPage() {
                 </p>
               </div>
 
-              {webcam.error && (
+              {faceWebcam.error && (
                 <div className="rounded-md border border-[var(--color-danger)] bg-[var(--color-danger-light)] p-3 text-sm text-[var(--color-danger-dark)]" role="alert">
-                  {webcam.error}
+                  <p className="font-semibold mb-1">Camera access required</p>
+                  <p className="mb-2">{faceWebcam.error}</p>
+                  <Button
+                    size="sm"
+                    variant="secondary"
+                    onClick={() => faceWebcam.start()}
+                    icon={<RotateCcw className="h-4 w-4" />}
+                  >
+                    Retry Camera
+                  </Button>
                 </div>
               )}
 
               <div className="mx-auto w-full max-w-xs overflow-hidden rounded-xl border border-[var(--color-border)] shadow-sm bg-black aspect-[3/4] relative">
-                {webcam.videoRef && (
+                {faceWebcam.videoRef && (
                   <video
-                    ref={webcam.videoRef}
+                    ref={faceWebcam.videoRef}
                     autoPlay
                     playsInline
                     muted
@@ -445,7 +495,7 @@ export function GetPassPage() {
                 <Button 
                   variant="secondary"
                   onClick={() => {
-                    webcam.stop();
+                    faceWebcam.stop();
                     setStep('form');
                   }}
                   className="flex-1"
@@ -455,7 +505,7 @@ export function GetPassPage() {
                 </Button>
                 <Button 
                   onClick={onCapturePhoto}
-                  disabled={!webcam.isActive}
+                  disabled={!faceWebcam.isActive}
                   className="flex-1"
                   icon={<Camera className="h-4 w-4" />}
                 >
@@ -469,9 +519,9 @@ export function GetPassPage() {
           {step === 'id' && (
             <div className="space-y-6">
               <div className="text-center">
-                <h2 className="text-lg font-bold text-[var(--color-text-primary)]">Upload Valid ID</h2>
+                <h2 className="text-lg font-bold text-[var(--color-text-primary)]">Capture Valid ID</h2>
                 <p className="text-sm text-[var(--color-text-secondary)] mt-1">
-                  Take a photo or upload an image of your valid government-issued ID.
+                  Position your valid government, school, or company ID clearly in the camera frame.
                 </p>
               </div>
 
@@ -485,6 +535,7 @@ export function GetPassPage() {
                         if (idPreview) URL.revokeObjectURL(idPreview);
                         setIdBlob(null);
                         setIdPreview(null);
+                        idWebcam.start();
                       }}
                       className="absolute right-2 top-2 rounded-full p-1 text-white bg-black/60 hover:bg-black/80 transition-colors"
                       aria-label="Remove ID image"
@@ -493,8 +544,8 @@ export function GetPassPage() {
                     </button>
                   </div>
                   <div className="flex gap-3">
-                    <Button variant="secondary" onClick={onRetakePhoto} className="flex-1" icon={<RotateCcw className="h-4 w-4" />}>
-                      Retake Photo
+                    <Button variant="secondary" onClick={onRetakeId} className="flex-1" icon={<RotateCcw className="h-4 w-4" />}>
+                      Retake ID
                     </Button>
                     <Button onClick={() => setStep('review')} className="flex-1" icon={<ArrowRight className="h-4 w-4" />}>
                       Review
@@ -503,35 +554,56 @@ export function GetPassPage() {
                 </div>
               ) : (
                 <div className="space-y-4">
-                  <div
-                    className="flex aspect-[3/2] w-full cursor-pointer flex-col items-center justify-center rounded-xl border-2 border-dashed border-[var(--color-border-strong)] bg-[var(--color-canvas)] transition-colors hover:border-[var(--color-brand)] hover:bg-[var(--color-brand-light)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-brand)]"
-                    onClick={() => fileInputRef.current?.click()}
-                    role="button"
-                    tabIndex={0}
-                    onKeyDown={(e) => {
-                      if (e.key === 'Enter' || e.key === ' ') {
-                        fileInputRef.current?.click();
-                      }
-                    }}
-                  >
-                    <Upload className="mb-3 h-10 w-10 text-[var(--color-text-muted)]" />
-                    <span className="text-sm font-bold text-[var(--color-text-primary)]">
-                      Tap to upload or take a photo
-                    </span>
-                    <span className="text-xs text-[var(--color-text-muted)] mt-1">
-                      JPG, PNG, or WebP — max 5MB
-                    </span>
+                  {idWebcam.error && (
+                    <div className="rounded-md border border-[var(--color-danger)] bg-[var(--color-danger-light)] p-3 text-sm text-[var(--color-danger-dark)]" role="alert">
+                      <p className="font-semibold mb-1">Valid ID camera access is required.</p>
+                      <p className="mb-2">{idWebcam.error}</p>
+                      <Button
+                        size="sm"
+                        variant="secondary"
+                        onClick={() => idWebcam.start()}
+                        icon={<RotateCcw className="h-4 w-4" />}
+                      >
+                        Retry Camera
+                      </Button>
+                    </div>
+                  )}
+
+                  <div className="mx-auto w-full max-w-md overflow-hidden rounded-xl border-2 border-dashed border-[var(--color-brand)] shadow-sm bg-black aspect-[3/2] relative flex items-center justify-center">
+                    {idWebcam.videoRef && (
+                      <video
+                        ref={idWebcam.videoRef}
+                        autoPlay
+                        playsInline
+                        muted
+                        className="h-full w-full object-cover"
+                      />
+                    )}
                   </div>
-                  <input
-                    ref={fileInputRef}
-                    type="file"
-                    accept="image/*"
-                    capture="environment"
-                    onChange={onIdFileChange}
-                    className="hidden"
-                    aria-label="Upload valid ID"
-                  />
-                  <Button variant="ghost" onClick={onRetakePhoto} className="w-full" icon={<ArrowLeft className="h-4 w-4" />}>
+
+                  <div className="flex gap-3">
+                    <Button
+                      variant="secondary"
+                      onClick={() => {
+                        idWebcam.stop();
+                        setStep('photo');
+                        faceWebcam.start();
+                      }}
+                      className="flex-1"
+                      icon={<ArrowLeft className="h-4 w-4" />}
+                    >
+                      Back
+                    </Button>
+                    <Button
+                      onClick={onCaptureId}
+                      disabled={!idWebcam.isActive}
+                      className="flex-1"
+                      icon={<Camera className="h-4 w-4" />}
+                    >
+                      Capture ID
+                    </Button>
+                  </div>
+                  <Button variant="ghost" type="button" onClick={onRetakePhoto} className="w-full" icon={<RotateCcw className="h-4 w-4" />}>
                     Retake Selfie
                   </Button>
                 </div>
@@ -543,7 +615,7 @@ export function GetPassPage() {
           {step === 'review' && (
             <div className="space-y-6">
               <h2 className="text-center text-lg font-bold text-[var(--color-text-primary)]">
-                Review Your Pass
+                Review Your Details
               </h2>
 
               {submitError && (
@@ -552,77 +624,73 @@ export function GetPassPage() {
                 </div>
               )}
 
-              <div className="space-y-4">
-                {/* Info summary */}
-                <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-canvas)] p-4">
-                  <div className="grid grid-cols-2 gap-4">
-                    <div>
-                      <span className="text-xs font-semibold text-[var(--color-text-secondary)] uppercase tracking-wider">Name</span>
-                      <p className="font-bold text-[var(--color-text-primary)] mt-1">
-                        {[getValues('firstName'), getValues('middleName'), getValues('lastName')].filter(Boolean).join(' ')}
-                      </p>
-                    </div>
-                    <div>
-                      <span className="text-xs font-semibold text-[var(--color-text-secondary)] uppercase tracking-wider">Contact</span>
-                      <p className="font-semibold text-[var(--color-text-primary)] mt-1">{getValues('contactNumber')}</p>
-                    </div>
-                    <div className="col-span-2">
-                      <span className="text-xs font-semibold text-[var(--color-text-secondary)] uppercase tracking-wider">Purpose</span>
-                      <p className="font-semibold text-[var(--color-text-primary)] mt-1">{getValues('purpose')}</p>
-                    </div>
-                    <div className="col-span-2">
-                      <span className="text-xs font-semibold text-[var(--color-text-secondary)] uppercase tracking-wider">Visit Date</span>
-                      <p className="font-semibold text-[var(--color-text-primary)] mt-1">{getValues('visitDate')}</p>
-                    </div>
+              {/* Photos preview */}
+              <div className="flex gap-4 justify-center items-center py-2">
+                {photoPreview && (
+                  <div className="text-center">
+                    <p className="text-xs text-[var(--color-text-secondary)] mb-1">Face Photo</p>
+                    <img
+                      src={photoPreview}
+                      alt="Your photo"
+                      className="h-24 w-20 object-cover rounded-lg border border-[var(--color-border)] shadow-sm"
+                    />
                   </div>
-                </div>
+                )}
+                {idPreview && (
+                  <div className="text-center">
+                    <p className="text-xs text-[var(--color-text-secondary)] mb-1">Valid ID</p>
+                    <img
+                      src={idPreview}
+                      alt="Valid ID"
+                      className="h-24 w-36 object-cover rounded-lg border border-[var(--color-border)] shadow-sm"
+                    />
+                  </div>
+                )}
+              </div>
 
-                {/* Photo + ID thumbnails */}
-                <div className="flex gap-4">
-                  {photoPreview && (
-                    <div className="flex-1">
-                      <span className="mb-2 block text-xs font-semibold text-[var(--color-text-secondary)] uppercase tracking-wider">Your Photo</span>
-                      <img
-                        src={photoPreview}
-                        alt="Your photo"
-                        className="aspect-[3/4] w-full rounded-xl object-cover border border-[var(--color-border)] shadow-sm"
-                      />
-                    </div>
-                  )}
-                  {idPreview && (
-                    <div className="flex-1">
-                      <span className="mb-2 block text-xs font-semibold text-[var(--color-text-secondary)] uppercase tracking-wider">Valid ID</span>
-                      <img
-                        src={idPreview}
-                        alt="Valid ID"
-                        className="aspect-[3/4] w-full rounded-xl object-cover border border-[var(--color-border)] shadow-sm"
-                      />
-                    </div>
-                  )}
+              {/* Data summary */}
+              <div className="rounded-lg bg-[var(--color-surface)] p-4 text-sm divide-y divide-[var(--color-border)] border border-[var(--color-border)]">
+                <div className="pb-2">
+                  <span className="text-[var(--color-text-secondary)]">Name:</span>
+                  <p className="font-semibold text-[var(--color-text-primary)] mt-1">
+                    {[getValues('firstName'), getValues('middleName'), getValues('lastName')].filter(Boolean).join(' ')}
+                  </p>
+                </div>
+                <div className="py-2">
+                  <span className="text-[var(--color-text-secondary)]">Contact Number:</span>
+                  <p className="font-semibold text-[var(--color-text-primary)] mt-1">{getValues('contactNumber')}</p>
+                </div>
+                <div className="py-2">
+                  <span className="text-[var(--color-text-secondary)]">Purpose:</span>
+                  <p className="font-semibold text-[var(--color-text-primary)] mt-1">{getValues('purpose')}</p>
+                </div>
+                <div className="pt-2">
+                  <span className="text-[var(--color-text-secondary)]">Visit Date:</span>
+                  <p className="font-semibold text-[var(--color-text-primary)] mt-1">{getValues('visitDate')}</p>
                 </div>
               </div>
 
-              <TurnstileWidget
-                resetKey={turnstileKey}
-                onVerify={setCaptchaToken}
-                onExpire={() => setCaptchaToken(null)}
-                onError={() => {
-                  setCaptchaToken(null);
-                  toast.error('Verification challenge failed. Please verify and try again.');
-                }}
-              />
+              <TurnstileWidget key={turnstileKey} onVerify={setCaptchaToken} />
 
               <div className="flex gap-3">
-                <Button 
-                  variant="secondary" 
-                  onClick={() => setStep(isPeakMode ? 'photo' : 'id')} 
+                <Button
+                  variant="secondary"
+                  onClick={() => {
+                    if (isPeakMode) {
+                      setStep('photo');
+                      faceWebcam.start();
+                    } else {
+                      setStep('id');
+                      idWebcam.start();
+                    }
+                  }}
                   className="flex-1"
                   icon={<ArrowLeft className="h-4 w-4" />}
                 >
                   Back
                 </Button>
-                <Button 
-                  onClick={onSubmit} 
+                <Button
+                  onClick={onSubmit}
                   className="flex-1"
                   icon={<CheckCircle2 className="h-4 w-4" />}
                 >
@@ -632,101 +700,131 @@ export function GetPassPage() {
             </div>
           )}
 
-          {/* ============================== GENERATING ============================== */}
+          {/* ============================== STEP 5: GENERATING ============================== */}
           {step === 'generating' && (
-            <div className="flex flex-col items-center justify-center py-12 text-center">
-              <div className="mb-6 h-12 w-12 animate-spin rounded-full border-4 border-[var(--color-border)] border-t-[var(--color-brand)]" role="status" aria-label="Generating gate pass" />
-              <h2 className="text-xl font-bold text-[var(--color-text-primary)]">
-                Generating your gate pass…
+            <div className="py-12 text-center space-y-4">
+              <div className="mx-auto h-12 w-12 animate-spin rounded-full border-4 border-[var(--color-brand)] border-t-transparent" />
+              <h2 className="text-lg font-bold text-[var(--color-text-primary)]">
+                Generating Your Gate Pass...
               </h2>
-              <p className="mt-2 text-sm text-[var(--color-text-secondary)] max-w-[250px]">
-                Uploading photos and creating your secure QR code.
+              <p className="text-sm text-[var(--color-text-secondary)]">
+                Processing your details and generating your secure QR code.
               </p>
             </div>
           )}
 
-          {/* ============================== STEP 5: DONE ============================== */}
-          {step === 'done' && qrDataUrl && (
+          {/* ============================== STEP 6: DONE ============================== */}
+          {step === 'done' && (
             <div className="space-y-6 text-center">
-              <div className="mx-auto mb-2 flex h-16 w-16 items-center justify-center rounded-full bg-[var(--color-success-light)] text-[var(--color-success)]">
-                <CheckCircle2 className="h-8 w-8" />
+              <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-full bg-[var(--color-success-light)]">
+                <CheckCircle2 className="h-8 w-8 text-[var(--color-success)]" />
               </div>
 
               <div>
-                <h2 className="text-2xl font-bold text-[var(--color-text-primary)]">
+                <h2 className="text-xl font-bold text-[var(--color-text-primary)]">
                   Gate Pass Ready!
                 </h2>
-                <p className="mt-2 text-sm text-[var(--color-text-secondary)] max-w-[280px] mx-auto">
-                  Show this QR code at the entry scanner when you arrive at the gate.
+                <p className="text-sm text-[var(--color-text-secondary)] mt-1">
+                  Present this QR code to the security guard at the gate.
                 </p>
               </div>
 
-              <div className="mx-auto w-full max-w-sm overflow-hidden rounded-2xl border border-[var(--color-border)] bg-white text-left shadow-md">
-                <div className="flex items-center justify-between border-b border-[var(--color-border)] px-4 py-3">
-                  <div className="flex items-center gap-2">
-                    <BrandMark size="sm" />
-                    <div>
-                      <p className="text-sm font-extrabold text-[var(--color-brand)]">E-GatePass</p>
-                      <p className="text-xs text-[var(--color-text-muted)]">Digital visitor pass</p>
-                    </div>
-                  </div>
-                  <span className="rounded-full border border-[var(--color-success)] bg-[var(--color-success-light)] px-2.5 py-1 text-xs font-bold text-[var(--color-success-dark)]">QR ready</span>
+              {/* QR Code Container */}
+              {qrDataUrl && (
+                <div className="mx-auto w-64 rounded-xl border border-[var(--color-border)] bg-white p-4 shadow-xs">
+                  <img
+                    src={qrDataUrl}
+                    alt="Visitor Gate Pass QR Code"
+                    className="w-full aspect-square"
+                  />
+                  {passId && (
+                    <p className="mt-2 text-xs font-mono text-[var(--color-text-muted)]">
+                      {passId}
+                    </p>
+                  )}
+                  {issuedValidity && (
+                    <p className="mt-1 text-xs font-semibold text-[var(--color-brand)]">
+                      Valid: {issuedValidity}
+                    </p>
+                  )}
                 </div>
-                <div className="flex justify-center p-4">
-                  <img src={qrDataUrl} alt="Gate Pass QR Code" className="h-64 w-64 max-w-full" />
-                </div>
-                <div className="flex gap-2 border-t border-[var(--color-border)] bg-[var(--color-brand-light)] px-4 py-3 text-xs leading-relaxed text-[var(--color-text-secondary)]">
-                  <ShieldCheck className="mt-0.5 h-4 w-4 shrink-0 text-[var(--color-brand)]" aria-hidden="true" />
-                  <span>Campus security verifies this pass after it is scanned at the entry gate.</span>
-                </div>
-              </div>
+              )}
 
-              <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-canvas)] p-4 text-left text-sm">
-                <p className="mb-1">
-                  <span className="font-semibold text-[var(--color-text-secondary)]">Name:</span>{' '}
+              {/* Pass details summary */}
+              <div className="rounded-lg bg-[var(--color-surface)] p-3 text-xs text-[var(--color-text-secondary)] border border-[var(--color-border)]">
+                <p>
+                  Visitor:{' '}
                   <span className="font-bold text-[var(--color-text-primary)]">
                     {[getValues('firstName'), getValues('middleName'), getValues('lastName')].filter(Boolean).join(' ')}
                   </span>
                 </p>
-                <p className="mb-1">
-                  <span className="font-semibold text-[var(--color-text-secondary)]">Date:</span>{' '}
-                  <span className="font-bold text-[var(--color-text-primary)]">{getValues('visitDate')}</span>
-                </p>
-                <p>
-                  <span className="font-semibold text-[var(--color-text-secondary)]">Valid:</span>{' '}
-                  <span className="font-bold text-[var(--color-text-primary)]">{issuedValidity || formatWorkingHours(workingHours)}</span>
+                <p className="mt-0.5">
+                  Date:{' '}
+                  <span className="font-bold text-[var(--color-text-primary)]">
+                    {getValues('visitDate')}
+                  </span>
                 </p>
               </div>
 
-              <div className="flex flex-col sm:flex-row gap-3">
-                <Button variant="secondary" onClick={downloadQR} className="flex-1" icon={<Download className="h-4 w-4" />}>
+              {/* Action buttons */}
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                <Button
+                  onClick={handleDownload}
+                  className="w-full"
+                  icon={<Download className="h-4 w-4" />}
+                >
                   Download
                 </Button>
-                <Button onClick={() => setShowEmailModal(true)} className="flex-1" icon={<Mail className="h-4 w-4" />}>
-                  Email my QR code
+                <Button
+                  variant="secondary"
+                  onClick={() => setShowEmailModal(true)}
+                  className="w-full"
+                  icon={<Mail className="h-4 w-4" />}
+                >
+                  Email Pass
                 </Button>
-                <Button variant="secondary" onClick={shareQR} className="flex-1" icon={<Share2 className="h-4 w-4" />}>
+                <Button
+                  variant="secondary"
+                  onClick={handleShare}
+                  className="w-full"
+                  icon={<Share2 className="h-4 w-4" />}
+                >
                   Share
                 </Button>
               </div>
 
-              <p className="text-xs text-[var(--color-text-muted)]">
-                You can also take a screenshot of this page.
-              </p>
+              {/* Instructions */}
+              <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-canvas)] p-3 text-left text-xs text-[var(--color-text-muted)] space-y-1">
+                <p className="font-semibold text-[var(--color-text-secondary)]">Next Steps:</p>
+                <ol className="list-decimal list-inside space-y-0.5">
+                  <li>Save or screenshot this QR code.</li>
+                  <li>Show it to the guard at the EARIST gate entrance.</li>
+                  <li>Have your valid physical ID ready for inspection.</li>
+                </ol>
+              </div>
+
+              <div className="pt-2">
+                <Link
+                  to="/"
+                  className="text-sm font-medium text-[var(--color-brand)] hover:underline"
+                >
+                  Register Another Visitor
+                </Link>
+              </div>
             </div>
           )}
         </Card>
-
-        {showEmailModal && passId && rawQrToken && (
-          <EmailPassModal
-            isOpen={showEmailModal}
-            onClose={() => setShowEmailModal(false)}
-            passId={passId}
-            qrToken={rawQrToken}
-            source="portal"
-          />
-        )}
       </div>
+
+      {showEmailModal && rawQrToken && passId && (
+        <EmailPassModal
+          isOpen={showEmailModal}
+          onClose={() => setShowEmailModal(false)}
+          passId={passId}
+          qrToken={rawQrToken}
+          source="portal"
+        />
+      )}
     </PageShell>
   );
 }

@@ -155,4 +155,6 @@ export const SERVER_DIRECT_TABLE_OPERATIONS: DirectServerTableOperation[] = [
   { file: 'server/routes/system/purge-images.ts', table: 'visitor_evidence', operations: ['SELECT'], purpose: 'Query candidate evidence for purge' },
   { file: 'server/routes/system/purge-images.ts', table: 'audit_events', operations: ['INSERT'], purpose: 'Log image purge summary audit event' },
   { file: 'server/routes/system/reconciliation-items.ts', table: 'reconciliation_tasks', operations: ['SELECT'], purpose: 'Query pending reconciliation tasks for superadmin' },
+  { file: 'server/routes/system/create-user.ts', table: 'staff_profiles', operations: ['SELECT'], purpose: 'Check if existing Auth user already has a staff profile' },
+  { file: 'server/routes/system/create-user.ts', table: 'devices', operations: ['SELECT'], purpose: 'Check if existing Auth user is a registered device' },
 ];

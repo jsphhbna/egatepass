@@ -1,4 +1,5 @@
 import React from 'react';
+import { EARIST_LOGO_URL } from './branding.js';
 import {
   Html,
   Head,
@@ -9,6 +10,7 @@ import {
   Heading,
   Text,
   Hr,
+  Img,
 } from '@react-email/components';
 
 export interface PassIssuedEmailProps {
@@ -34,6 +36,11 @@ const containerStyle: React.CSSProperties = {
   maxWidth: '560px',
   margin: '0 auto',
   padding: '32px 28px',
+};
+
+const logoStyle: React.CSSProperties = {
+  display: 'block',
+  margin: '0 0 12px 0',
 };
 
 const headerSection: React.CSSProperties = {
@@ -128,6 +135,13 @@ export function PassIssuedEmail({
       <Body style={mainStyle}>
         <Container style={containerStyle}>
           <Section style={headerSection}>
+            <Img
+              src={EARIST_LOGO_URL}
+              alt="EARIST seal"
+              width="64"
+              height="64"
+              style={logoStyle}
+            />
             <Heading style={headerTitle}>EARIST E-GatePass</Heading>
             <Text style={headerSubtitle}>Official Campus Visitor Gate Pass</Text>
           </Section>

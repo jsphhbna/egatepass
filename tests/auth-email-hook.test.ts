@@ -245,7 +245,7 @@ describe('EMAIL-01: Supabase Auth Send Email Hook Infrastructure', () => {
       expect(prepared.html).toContain('Security Advisory');
     });
 
-    it('maps invite action to StaffInviteEmail with role name', async () => {
+    it('maps invite action to StaffInviteEmail with truthful invitation message', async () => {
       const payload: SupabaseAuthEmailPayload = {
         user: {
           id: 'user-0003',
@@ -262,9 +262,33 @@ describe('EMAIL-01: Supabase Auth Send Email Hook Infrastructure', () => {
 
       const prepared = await prepareAuthEmail(payload);
       expect(prepared.to).toBe('newguard@earist.edu.ph');
-      expect(prepared.subject).toContain('Invitation to join EARIST E-GatePass');
-      expect(prepared.html).toContain('GUARD');
+      expect(prepared.subject).toBe('EARIST E-GatePass Account Invitation');
+      // Must NOT render GUARD or AUTHORIZED STAFF based only on user_metadata
+      expect(prepared.html).not.toContain('GUARD');
+      expect(prepared.html).not.toContain('AUTHORIZED STAFF');
       expect(prepared.html).toContain('hash_invite_111');
+      expect(prepared.html).toContain('Accept E-GatePass Invitation');
+      expect(prepared.html).toContain('does not by itself assign Guard, Admin, or Super Admin access');
+    });
+
+    it('manual invite with malicious metadata escapes raw markup', async () => {
+      const payload: SupabaseAuthEmailPayload = {
+        user: {
+          id: 'user-0003b',
+          email: 'xss@earist.edu.ph',
+          user_metadata: { displayName: '<script>alert(1)</script>' },
+        },
+        email_data: {
+          token: '999888',
+          token_hash: 'hash_invite_xss',
+          email_action_type: 'invite',
+          site_url: 'https://egatepass.earist.edu.ph',
+        },
+      };
+
+      const prepared = await prepareAuthEmail(payload);
+      expect(prepared.html).not.toContain('<script>alert(1)</script>');
+      expect(prepared.html).toContain('&lt;script&gt;alert(1)&lt;/script&gt;');
     });
 
     it('handles current Supabase email_change action with Secure Email Change enabled (2 emails: user.new_email & user.email)', async () => {
@@ -355,7 +379,7 @@ describe('EMAIL-01: Supabase Auth Send Email Hook Infrastructure', () => {
       }
     });
 
-    it('handles magiclink and reauthentication actions', async () => {
+    it('handles magiclink and reauthentication actions with dedicated semantics', async () => {
       const { prepareAuthEmails } = await import('../server/auth-email-hook.js');
 
       const magicPayload: SupabaseAuthEmailPayload = {
@@ -364,7 +388,10 @@ describe('EMAIL-01: Supabase Auth Send Email Hook Infrastructure', () => {
       };
       const magicEmails = await prepareAuthEmails(magicPayload);
       expect(magicEmails[0].to).toBe('magic@earist.edu.ph');
-      expect(magicEmails[0].subject).toContain('sign-in link');
+      expect(magicEmails[0].subject).toContain('Sign in to EARIST E-GatePass');
+      expect(magicEmails[0].html).toContain('Sign In to E-GatePass');
+      expect(magicEmails[0].html).not.toContain('registered');
+      expect(magicEmails[0].html).not.toContain('Reset your password');
 
       const reauthPayload: SupabaseAuthEmailPayload = {
         user: { id: 'user-reauth', email: 'reauth@earist.edu.ph' },
@@ -372,7 +399,9 @@ describe('EMAIL-01: Supabase Auth Send Email Hook Infrastructure', () => {
       };
       const reauthEmails = await prepareAuthEmails(reauthPayload);
       expect(reauthEmails[0].to).toBe('reauth@earist.edu.ph');
-      expect(reauthEmails[0].subject).toContain('identity');
+      expect(reauthEmails[0].subject).toContain('Confirm your identity');
+      expect(reauthEmails[0].html).toContain('Confirm My Identity');
+      expect(reauthEmails[0].html).not.toContain('Reset your password');
     });
 
   });

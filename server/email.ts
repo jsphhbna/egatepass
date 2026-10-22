@@ -1,15 +1,14 @@
 import QRCode from 'qrcode';
 
-export interface EmailAttachment {
-  filename: string;
-  content: string; // base64 encoded
-}
-
 export interface SendEmailPayload {
   to: string;
   subject: string;
   html: string;
-  attachments?: EmailAttachment[];
+  attachments?: Array<{
+    filename: string;
+    content: string; // Base64 encoded
+    content_type?: string;
+  }>;
 }
 
 export interface SendEmailResult {
@@ -110,6 +109,43 @@ export function classifyResendHttpStatus(
   };
 }
 
+export function validateSenderEmail(
+  from: string | undefined | null,
+  isProduction: boolean = process.env.NODE_ENV === 'production' || process.env.VERCEL_ENV === 'production'
+): {
+  valid: boolean;
+  error?: 'email_sender_unconfigured' | 'email_sender_invalid';
+  email?: string;
+} {
+  const trimmed = from?.trim();
+  if (!trimmed) {
+    if (isProduction) {
+      return { valid: false, error: 'email_sender_unconfigured' };
+    }
+    return { valid: true, email: 'EARIST E-GatePass <onboarding@resend.dev>' };
+  }
+
+  // Reject malformed sender configurations such as API keys placed in the sender variable
+  if (trimmed.startsWith('re_') || trimmed.startsWith('re-')) {
+    return { valid: false, error: 'email_sender_invalid' };
+  }
+
+  // Sender format: either "Display Name <user@domain.tld>" or "user@domain.tld"
+  const angleMatch = trimmed.match(/^([^<]*?)<([^>]+)>$/);
+  let emailAddr = trimmed;
+  if (angleMatch) {
+    emailAddr = angleMatch[2]?.trim() ?? '';
+  }
+
+  // Strict email regex: no angle brackets, no spaces, valid domain
+  const emailRegex = /^[a-zA-Z0-9.!#$%&'*+/=?^_`{|}~-]+@[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?(?:\.[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)+$/;
+  if (!emailAddr || !emailRegex.test(emailAddr)) {
+    return { valid: false, error: 'email_sender_invalid' };
+  }
+
+  return { valid: true, email: trimmed };
+}
+
 export async function sendResendEmail(payload: SendEmailPayload): Promise<SendEmailResult> {
   if (customEmailSender) {
     return customEmailSender(payload);
@@ -120,7 +156,15 @@ export async function sendResendEmail(payload: SendEmailPayload): Promise<SendEm
     throw new EmailDeliveryError('email_service_unconfigured', 'definitive_rejection');
   }
 
-  const fromEmail = process.env.RESEND_FROM_EMAIL?.trim() || process.env.EMAIL_FROM?.trim() || 'EARIST E-GatePass <onboarding@resend.dev>';
+  const rawFrom = process.env.RESEND_FROM_EMAIL?.trim() || process.env.EMAIL_FROM?.trim();
+  const isProd = process.env.NODE_ENV === 'production' || process.env.VERCEL_ENV === 'production';
+
+  const validatedSender = validateSenderEmail(rawFrom, isProd);
+  if (!validatedSender.valid) {
+    throw new EmailDeliveryError(validatedSender.error!, 'definitive_rejection');
+  }
+
+  const fromEmail = validatedSender.email!;
 
   let response: Response;
   try {

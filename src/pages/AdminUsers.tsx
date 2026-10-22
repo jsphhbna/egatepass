@@ -114,7 +114,17 @@ export function AdminUsers() {
         body: JSON.stringify(data),
       });
       const result = await response.json().catch(() => null) as { error?: string; verificationEmailSent?: boolean } | null;
-      if (!response.ok) throw new Error(result?.error || 'Failed to create user');
+      if (!response.ok) {
+        if (result?.error === 'existing_auth_identity_unprovisioned') {
+          throw new Error(
+            'An authentication account already exists for this email but it has not been provisioned as an E-GatePass staff account. Resolve the existing Auth identity through the authorized account-recovery/bootstrap procedure before creating this staff account.'
+          );
+        }
+        if (result?.error === 'email_exists' || result?.error === 'user_already_exists') {
+          throw new Error('A staff account with this email address already exists.');
+        }
+        throw new Error(result?.error || 'Failed to create user');
+      }
       if (result?.verificationEmailSent) {
         toast.success(`${data.role} account created. Verification email sent!`);
       } else {

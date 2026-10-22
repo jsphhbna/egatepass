@@ -206,16 +206,27 @@ async function handleRequest(request: Request): Promise<Response> {
       validUntil: data.valid_until,
     });
   } catch (error) {
-    const code = error instanceof Error ? error.message : 'unknown_error';
-    console.error('Pass issuance failed.', code);
-    if (code === 'pass_token_secret_rotated') {
+    const errObj = typeof error === 'object' && error !== null ? error as Record<string, unknown> : {};
+    const errCode = typeof errObj.code === 'string' ? errObj.code : '';
+    const errMessage = typeof errObj.message === 'string' ? errObj.message : (error instanceof Error ? error.message : 'unknown_error');
+    console.error('Pass issuance failed.', errCode || errMessage);
+
+    // SQL 22023: visit date outside scheduling window
+    if (errCode === '22023' || errMessage.includes('outside scheduling window') || errMessage.includes('visit date outside scheduling window')) {
+      return jsonResponse(422, { error: 'visit_date_out_of_range' });
+    }
+    // Authorization / permission errors from Postgres / PostgREST (42501)
+    if (errCode === '42501' || errMessage.includes('permission denied')) {
+      return jsonResponse(403, { error: 'forbidden' });
+    }
+    if (errMessage === 'pass_token_secret_rotated') {
       return jsonResponse(409, { error: 'pass_token_secret_rotated' });
     }
-    if (code.startsWith('invalid_') || code === 'missing_uploaded_object' || code === 'pass_has_expired') {
-      return jsonResponse(422, { error: code });
+    if (errMessage.startsWith('invalid_') || errMessage === 'missing_uploaded_object' || errMessage === 'pass_has_expired') {
+      return jsonResponse(422, { error: errMessage });
     }
-    if (code === 'pass_token_secret_unavailable') {
-      return jsonResponse(503, { error: code });
+    if (errMessage === 'pass_token_secret_unavailable') {
+      return jsonResponse(503, { error: errMessage });
     }
     return jsonResponse(503, { error: 'service_unavailable' });
   }

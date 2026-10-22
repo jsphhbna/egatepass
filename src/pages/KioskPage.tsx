@@ -1,74 +1,89 @@
-import { useState, useRef, useEffect } from 'react';
+import { useState, useRef, useEffect, useMemo } from 'react';
 import { useForm } from 'react-hook-form';
-import { z } from 'zod';
 import { zodResolver } from '@hookform/resolvers/zod';
+import { z } from 'zod';
 import { useWebcam } from '@/hooks/useWebcam';
 import { compressImageToWebP } from '@/lib/imageProcessing';
 import { recognizeIdImage, terminateLocalOcrWorker } from '@/lib/ocr';
 import { issueVisitorPass, loadRegistrationSettings } from '@/services/visitorRegistration';
-import { requireSupabase } from '@/lib/supabase';
 import { toDataURL } from 'qrcode';
 import {
   Camera,
-  Upload,
   CheckCircle2,
-  Printer,
-  ArrowRight,
   ArrowLeft,
+  ArrowRight,
   AlertCircle,
   X,
   RotateCcw,
+  Printer,
   Mail,
   Scan,
 } from 'lucide-react';
 import { toast } from 'sonner';
-import { addDays, format } from 'date-fns';
 import { Button, Card, Input, FormField, Stepper } from '@/components/ui';
 import { EmailPassModal } from '@/components/EmailPassModal';
 import { BrandMark } from '@/components/BrandMark';
 import { VisitPurposeField } from '@/components/VisitPurposeField';
 import { DEFAULT_VISIT_PURPOSES, normalizeVisitPurposes } from '@/lib/settingsDefaults';
 import type { VisitPurposeOption } from '@/types';
-import { DEFAULT_WORKING_HOURS, formatValidityWindow, formatWorkingHours, MAX_VISIT_ADVANCE_DAYS, normalizeWorkingHours } from '@/lib/workingHours';
+import { DEFAULT_WORKING_HOURS, formatWorkingHours, MAX_VISIT_ADVANCE_DAYS, normalizeWorkingHours } from '@/lib/workingHours';
+import { requireSupabase } from '@/lib/supabase';
+import { getManilaDateString, getLatestVisitDateString, validateVisitDate } from '@/lib/scheduling';
 
+// ============================================================
+// FORM SCHEMA (Zod)
+// ============================================================
 const nameRegex = /^[\p{L}\s\-'.]+$/u;
 
-const kioskPassSchema = z.object({
-  firstName: z
-    .string()
-    .trim()
-    .min(2, 'First name must be at least 2 characters')
-    .max(50, 'First name is too long')
-    .regex(nameRegex, 'Invalid characters in name'),
-  middleName: z
-    .string()
-    .trim()
-    .max(50, 'Middle name is too long')
-    .regex(nameRegex, 'Invalid characters in name')
-    .optional()
-    .or(z.literal('')),
-  lastName: z
-    .string()
-    .trim()
-    .min(2, 'Last name must be at least 2 characters')
-    .max(50, 'Last name is too long')
-    .regex(nameRegex, 'Invalid characters in name'),
-  contactNumber: z
-    .string()
-    .min(7, 'Contact number must be at least 7 digits')
-    .max(15, 'Contact number is too long')
-    .regex(/^[0-9+\-() ]+$/, 'Invalid contact number format'),
-  purpose: z
-    .string()
-    .min(3, 'Please describe your purpose')
-    .max(300, 'Purpose description is too long'),
-  visitDate: z.string().min(1, 'Please select a visit date'),
-  consent: z.literal(true, {
-    message: 'You must accept the Data Privacy Act notice to proceed',
-  }),
-});
+export function createKioskPassSchema(schedulingDaysAhead: number = MAX_VISIT_ADVANCE_DAYS) {
+  return z.object({
+    firstName: z
+      .string()
+      .trim()
+      .min(2, 'First name must be at least 2 characters')
+      .max(50, 'First name is too long')
+      .regex(nameRegex, 'Invalid characters in name'),
+    middleName: z
+      .string()
+      .trim()
+      .max(50, 'Middle name is too long')
+      .regex(nameRegex, 'Invalid characters in name')
+      .optional()
+      .or(z.literal('')),
+    lastName: z
+      .string()
+      .trim()
+      .min(2, 'Last name must be at least 2 characters')
+      .max(50, 'Last name is too long')
+      .regex(nameRegex, 'Invalid characters in name'),
+    contactNumber: z
+      .string()
+      .min(7, 'Contact number must be at least 7 digits')
+      .max(15, 'Contact number is too long')
+      .regex(/^[0-9+\-() ]+$/, 'Invalid contact number format'),
+    purpose: z
+      .string()
+      .min(3, 'Please describe your purpose')
+      .max(300, 'Purpose description is too long'),
+    visitDate: z
+      .string()
+      .min(1, 'Please select a visit date')
+      .superRefine((val, ctx) => {
+        const res = validateVisitDate(val, new Date(), schedulingDaysAhead);
+        if (!res.valid && res.error) {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            message: res.error,
+          });
+        }
+      }),
+    consent: z.literal(true, {
+      message: 'Visitor must accept the Data Privacy Act notice to proceed',
+    }),
+  });
+}
 
-type KioskPassFormData = z.infer<typeof kioskPassSchema>;
+type KioskPassFormData = z.infer<ReturnType<typeof createKioskPassSchema>>;
 
 type Step = 'scan-intro' | 'scan-camera' | 'scan-processing' | 'form' | 'photo' | 'id' | 'review' | 'generating' | 'done';
 
@@ -90,8 +105,6 @@ export function KioskPage() {
   const [issuedValidity, setIssuedValidity] = useState<string | null>(null);
   const [ocrSuccessNotice, setOcrSuccessNotice] = useState(false);
 
-  const fileInputRef = useRef<HTMLInputElement>(null);
-  const manualIdInputRef = useRef<HTMLInputElement>(null);
   const issueRequestId = useRef(crypto.randomUUID());
 
   useEffect(() => {
@@ -122,6 +135,12 @@ export function KioskPage() {
     };
   }, []);
 
+  const formSchema = useMemo(() => createKioskPassSchema(schedulingDaysAhead), [schedulingDaysAhead]);
+
+  // Manila-aware calendar date limits
+  const today = getManilaDateString();
+  const latestVisitDate = getLatestVisitDateString(today, schedulingDaysAhead);
+
   const {
     register,
     handleSubmit,
@@ -131,28 +150,27 @@ export function KioskPage() {
     watch,
     formState: { errors, isValid },
   } = useForm<KioskPassFormData>({
-    resolver: zodResolver(kioskPassSchema),
+    resolver: zodResolver(formSchema),
     mode: 'onChange',
     defaultValues: {
-      visitDate: format(new Date(), 'yyyy-MM-dd'),
+      visitDate: today,
+      consent: true,
       purpose: '',
     },
   });
-  const purpose = watch('purpose');
 
-  const today = format(new Date(), 'yyyy-MM-dd');
-  const latestVisitDate = format(addDays(new Date(), schedulingDaysAhead), 'yyyy-MM-dd');
+  const purpose = watch('purpose');
 
   function startIdScan() {
     setStep('scan-camera');
     idWebcam.start();
   }
 
-  async function processIdImageAndOcr(blobOrFile: Blob | File) {
+  async function processIdImageAndOcr(blob: Blob) {
     idWebcam.stop();
     setStep('scan-processing');
     try {
-      const compressed = await compressImageToWebP(blobOrFile);
+      const compressed = await compressImageToWebP(blob);
       setIdBlob(compressed);
       if (idPreview) URL.revokeObjectURL(idPreview);
       const previewUrl = URL.createObjectURL(compressed);
@@ -199,13 +217,6 @@ export function KioskPage() {
     }
   }
 
-  function onIdScanFileChange(e: React.ChangeEvent<HTMLInputElement>) {
-    const file = e.target.files?.[0];
-    if (file) {
-      void processIdImageAndOcr(file);
-    }
-  }
-
   function onFormNext(data: KioskPassFormData) {
     void data;
     setStep('photo');
@@ -223,6 +234,7 @@ export function KioskPage() {
         setStep('review');
       } else {
         setStep('id');
+        idWebcam.start();
       }
     } else {
       toast.error('Failed to capture photo.');
@@ -233,22 +245,35 @@ export function KioskPage() {
     if (photoPreview) URL.revokeObjectURL(photoPreview);
     setPhotoBlob(null);
     setPhotoPreview(null);
+    faceWebcam.stop();
     setStep('photo');
     faceWebcam.start();
   }
 
-  async function onManualIdFileChange(e: React.ChangeEvent<HTMLInputElement>) {
-    const file = e.target.files?.[0];
-    if (!file) return;
-
-    try {
-      const compressed = await compressImageToWebP(file);
-      setIdBlob(compressed);
-      if (idPreview) URL.revokeObjectURL(idPreview);
-      setIdPreview(URL.createObjectURL(compressed));
-    } catch {
-      toast.error('Failed to process ID image.');
+  async function onCaptureManualId() {
+    const blob = idWebcam.capture();
+    if (blob) {
+      try {
+        const compressed = await compressImageToWebP(blob);
+        if (idPreview) URL.revokeObjectURL(idPreview);
+        setIdBlob(compressed);
+        setIdPreview(URL.createObjectURL(compressed));
+        idWebcam.stop();
+      } catch {
+        toast.error('Failed to process ID image.');
+      }
+    } else {
+      toast.error('Failed to capture ID image.');
     }
+  }
+
+  function onRetakeId() {
+    if (idPreview) URL.revokeObjectURL(idPreview);
+    setIdBlob(null);
+    setIdPreview(null);
+    idWebcam.stop();
+    setStep('id');
+    idWebcam.start();
   }
 
   async function onSubmit() {
@@ -257,7 +282,7 @@ export function KioskPage() {
       return;
     }
     if (!isPeakMode && !idBlob) {
-      toast.error('ID is required.');
+      toast.error('Valid ID capture is required.');
       return;
     }
 
@@ -277,14 +302,15 @@ export function KioskPage() {
       setPassId(result.passId);
       setRawQrToken(result.qrToken);
       setIssuedValidity(result.validFrom && result.validUntil
-        ? formatValidityWindow(result.validFrom, result.validUntil)
-        : formatWorkingHours(workingHours));
+        ? `${new Date(result.validFrom).toLocaleTimeString()} - ${new Date(result.validUntil).toLocaleTimeString()}`
+        : null);
       setStep('done');
-      toast.success('Pass generated!');
+      toast.success('Gate pass issued!');
     } catch (err) {
       console.error(err);
-      setSubmitError('Failed to generate pass.');
+      setSubmitError(err instanceof Error ? err.message : 'Failed to issue pass');
       setStep('review');
+      toast.error('Failed to issue gate pass');
     }
   }
 
@@ -317,7 +343,7 @@ export function KioskPage() {
     { id: 'scan-intro', title: 'Scan ID' },
     { id: 'form', title: 'Details' },
     { id: 'photo', title: 'Photo' },
-    ...(!isPeakMode && !idBlob ? [{ id: 'id', title: 'Upload ID' }] : []),
+    ...(!isPeakMode && !idBlob ? [{ id: 'id', title: 'Capture ID' }] : []),
     { id: 'review', title: 'Review' },
   ];
 
@@ -358,16 +384,16 @@ export function KioskPage() {
             </div>
             {/* Vertical Stepper for Landscape Desktop */}
             <div className="hidden lg:block w-full">
-              <Stepper steps={steps} currentStepIndex={currentStepIndex} className="w-full" orientation="vertical" />
+              <Stepper steps={steps} currentStepIndex={currentStepIndex} className="w-full pl-2" orientation="vertical" />
             </div>
           </div>
         )}
       </div>
 
-      {/* Right Column (Dynamic Content) */}
-      <div className="w-full max-w-lg lg:max-w-4xl flex-1 print:w-full print:max-w-none print:p-0">
-        {/* Card container */}
-        <Card className="border-t-4 border-t-[var(--color-brand)] print:border-0 print:bg-transparent print:p-0 print:shadow-none">
+      {/* Right Column (Dynamic Main Card) */}
+      <div className="w-full max-w-lg print:max-w-none print:w-full">
+        <Card className="border-t-4 border-t-[var(--color-brand)] print:border-0 print:shadow-none print:p-0">
+          
           {/* STEP 1: Scan ID Intro (Owner-Approved Default Screen) */}
           {step === 'scan-intro' && (
             <div className="space-y-6 text-center py-4">
@@ -415,7 +441,7 @@ export function KioskPage() {
             </div>
           )}
 
-          {/* STEP 2: Rear Camera ID Capture & Fallback */}
+          {/* STEP 2: Rear Camera ID Capture */}
           {step === 'scan-camera' && (
             <div className="space-y-6">
               <div className="text-center">
@@ -429,29 +455,22 @@ export function KioskPage() {
                 {idWebcam.error ? (
                   <div className="p-6 text-center text-white space-y-3">
                     <AlertCircle className="mx-auto h-8 w-8 text-[var(--color-danger)]" />
-                    <p className="text-sm">{idWebcam.error}</p>
+                    <p className="text-sm font-semibold">Valid ID camera access is required.</p>
+                    <p className="text-xs text-white/80">{idWebcam.error}</p>
                     <Button
                       type="button"
                       variant="secondary"
                       size="sm"
-                      onClick={() => fileInputRef.current?.click()}
-                      icon={<Upload className="h-4 w-4" />}
+                      onClick={() => idWebcam.start()}
+                      icon={<RotateCcw className="h-4 w-4" />}
                     >
-                      Upload ID Image Instead
+                      Retry Camera
                     </Button>
                   </div>
                 ) : (
                   <video ref={idWebcam.videoRef} autoPlay playsInline muted className="h-full w-full object-cover" />
                 )}
               </div>
-
-              <input
-                ref={fileInputRef}
-                type="file"
-                accept="image/*"
-                onChange={onIdScanFileChange}
-                className="hidden"
-              />
 
               <div className="flex flex-col gap-3 sm:flex-row">
                 <Button
@@ -465,16 +484,6 @@ export function KioskPage() {
                   icon={<ArrowLeft className="h-4 w-4" />}
                 >
                   Cancel
-                </Button>
-
-                <Button
-                  variant="secondary"
-                  type="button"
-                  onClick={() => fileInputRef.current?.click()}
-                  className="flex-1 min-h-[44px]"
-                  icon={<Upload className="h-4 w-4" />}
-                >
-                  Upload File
                 </Button>
 
                 <Button
@@ -509,24 +518,24 @@ export function KioskPage() {
               {ocrSuccessNotice && (
                 <div className="rounded-xl border border-[var(--color-brand)]/20 bg-[var(--color-brand-light)] p-3 text-xs text-[var(--color-brand)] flex items-center gap-2">
                   <CheckCircle2 className="h-4 w-4 shrink-0" />
-                  <span>Details automatically filled from your ID. Please review and complete any missing fields.</span>
+                  <span>ID information detected! Please double-check for accuracy before continuing.</span>
                 </div>
               )}
 
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+              <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
                 <FormField label="First Name" id="kiosk-first-name" error={errors.firstName?.message}>
-                  <Input id="kiosk-first-name" {...register('firstName')} placeholder="Juan" error={!!errors.firstName} />
+                  <Input id="kiosk-first-name" {...register('firstName')} error={!!errors.firstName} />
                 </FormField>
                 <FormField label="Middle Name" id="kiosk-middle-name" hint="Optional" error={errors.middleName?.message}>
-                  <Input id="kiosk-middle-name" {...register('middleName')} placeholder="Santos" error={!!errors.middleName} />
+                  <Input id="kiosk-middle-name" {...register('middleName')} error={!!errors.middleName} />
                 </FormField>
                 <FormField label="Last Name" id="kiosk-last-name" error={errors.lastName?.message}>
-                  <Input id="kiosk-last-name" {...register('lastName')} placeholder="Dela Cruz" error={!!errors.lastName} />
+                  <Input id="kiosk-last-name" {...register('lastName')} error={!!errors.lastName} />
                 </FormField>
               </div>
 
-              <FormField label="Contact Number" id="kiosk-contact" error={errors.contactNumber?.message}>
-                <Input id="kiosk-contact" type="tel" {...register('contactNumber')} placeholder="09171234567" error={!!errors.contactNumber} />
+              <FormField label="Contact Number" id="kiosk-phone" hint="Philippine mobile number" error={errors.contactNumber?.message}>
+                <Input id="kiosk-phone" type="tel" placeholder="0917 123 4567" {...register('contactNumber')} error={!!errors.contactNumber} />
               </FormField>
 
               <VisitPurposeField
@@ -540,59 +549,67 @@ export function KioskPage() {
                 <Input id="kiosk-date" type="date" {...register('visitDate')} min={today} max={latestVisitDate} error={!!errors.visitDate} />
               </FormField>
 
-              <div className="rounded-xl border border-[var(--color-brand)]/20 bg-[var(--color-brand-light)] p-4">
-                <label className="flex items-start gap-3 cursor-pointer">
-                  <input type="checkbox" {...register('consent')} className="mt-1 h-5 w-5 shrink-0 rounded border-[var(--color-border-strong)] text-[var(--color-brand)] focus:ring-[var(--color-brand)]" />
-                  <span className="text-sm text-[var(--color-text-primary)]">
-                    I consent to the collection and processing of my personal information in accordance with the Data Privacy Act of 2012 (RA 10173).
-                  </span>
+              {/* Data Privacy Agreement */}
+              <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-canvas)] p-4 text-xs text-[var(--color-text-secondary)] space-y-2">
+                <p className="font-semibold text-[var(--color-text-primary)]">Data Privacy Notice (RA 10173)</p>
+                <p>EARIST collects your photo and visitor information solely for security and campus safety. Information is handled in strict accordance with the Data Privacy Act.</p>
+                <label className="flex items-center gap-2 pt-2 border-t border-[var(--color-border)] cursor-pointer">
+                  <input type="checkbox" {...register('consent')} className="rounded border-[var(--color-border-strong)] text-[var(--color-brand)] focus:ring-[var(--color-brand)]" />
+                  <span className="font-medium text-[var(--color-text-primary)]">I agree to the collection and processing of my data.</span>
                 </label>
-                {errors.consent && (
-                  <p className="mt-2 flex items-center gap-1 text-xs text-[var(--color-danger)]" role="alert">
-                    <AlertCircle className="h-3 w-3" />
-                    {errors.consent.message}
-                  </p>
-                )}
+                {errors.consent && <p className="text-[var(--color-danger)] font-medium">{errors.consent.message}</p>}
               </div>
 
-              <div className="flex gap-3">
-                <Button
-                  variant="secondary"
-                  type="button"
-                  onClick={() => setStep('scan-intro')}
-                  className="min-h-[44px]"
-                  icon={<ArrowLeft className="h-4 w-4" />}
-                >
-                  Back
-                </Button>
-                <Button type="submit" disabled={!isValid} className="flex-1 min-h-[44px]" size="lg" icon={<ArrowRight className="h-4 w-4" />}>
-                  Next: Take Photo
-                </Button>
-              </div>
-            </form>
-          )}
-
-          {/* STEP 5: Mandatory Visitor Face Photo */}
-          {step === 'photo' && (
-            <div className="space-y-6">
-              <div className="text-center">
-                <h2 className="text-lg font-bold text-[var(--color-text-primary)]">Take Your Photo</h2>
-                <p className="text-xs text-[var(--color-text-secondary)] mt-1">Look directly into the camera.</p>
-              </div>
-              <div className="mx-auto w-full max-w-xs overflow-hidden rounded-xl border border-[var(--color-border)] shadow-sm bg-black aspect-[3/4] relative">
-                <video ref={faceWebcam.videoRef} autoPlay playsInline muted className="h-full w-full object-cover -scale-x-100" />
-              </div>
               <div className="flex gap-3">
                 <Button
                   variant="secondary"
                   type="button"
                   onClick={() => {
-                    faceWebcam.stop();
-                    setStep('form');
+                    setStep('scan-intro');
                   }}
                   className="flex-1 min-h-[44px]"
                   icon={<ArrowLeft className="h-4 w-4" />}
                 >
+                  Back
+                </Button>
+                <Button type="submit" disabled={!isValid} className="flex-1 min-h-[44px]" icon={<ArrowRight className="h-4 w-4" />}>
+                  Next
+                </Button>
+              </div>
+            </form>
+          )}
+
+          {/* STEP 5: Face Photo Capture */}
+          {step === 'photo' && (
+            <div className="space-y-6">
+              <div className="text-center">
+                <h2 className="text-lg font-bold text-[var(--color-text-primary)]">Take Visitor Photo</h2>
+                <p className="text-xs text-[var(--color-text-secondary)] mt-1">Look directly into the camera.</p>
+              </div>
+
+              {faceWebcam.error && (
+                <div className="rounded-md border border-[var(--color-danger)] bg-[var(--color-danger-light)] p-3 text-sm text-[var(--color-danger-dark)]" role="alert">
+                  <p className="font-semibold mb-1">Camera access required</p>
+                  <p className="mb-2">{faceWebcam.error}</p>
+                  <Button
+                    size="sm"
+                    variant="secondary"
+                    onClick={() => faceWebcam.start()}
+                    icon={<RotateCcw className="h-4 w-4" />}
+                  >
+                    Retry Camera
+                  </Button>
+                </div>
+              )}
+
+              <div className="mx-auto w-full max-w-xs overflow-hidden rounded-xl border border-[var(--color-border)] shadow-sm bg-black aspect-[3/4] relative">
+                {faceWebcam.videoRef && (
+                  <video ref={faceWebcam.videoRef} autoPlay playsInline muted className="h-full w-full object-cover" style={{ transform: 'scaleX(-1)' }} />
+                )}
+              </div>
+
+              <div className="flex gap-3">
+                <Button variant="secondary" type="button" onClick={() => { faceWebcam.stop(); setStep('form'); }} className="flex-1 min-h-[44px]" icon={<ArrowLeft className="h-4 w-4" />}>
                   Back
                 </Button>
                 <Button type="button" onClick={onCapturePhoto} disabled={!faceWebcam.isActive} className="flex-1 min-h-[44px]" icon={<Camera className="h-4 w-4" />}>
@@ -602,23 +619,34 @@ export function KioskPage() {
             </div>
           )}
 
-          {/* STEP 6: Manual ID Upload (Only shown on manual route when Peak Mode is OFF) */}
+          {/* STEP 6: Camera ID Capture (Only shown when Peak Mode is OFF and ID not yet captured) */}
           {step === 'id' && (
             <div className="space-y-6">
               <div className="text-center">
-                <h2 className="text-lg font-bold text-[var(--color-text-primary)]">Upload ID</h2>
+                <h2 className="text-lg font-bold text-[var(--color-text-primary)]">Capture Valid ID</h2>
+                <p className="text-xs text-[var(--color-text-secondary)] mt-1">Position your valid ID clearly in the camera frame.</p>
               </div>
               {idPreview ? (
                 <div className="space-y-4">
                   <div className="relative mx-auto max-w-xs overflow-hidden rounded-xl border border-[var(--color-border)] shadow-sm">
                     <img src={idPreview} alt="ID preview" className="w-full object-cover" />
-                    <button type="button" onClick={() => setIdPreview(null)} className="absolute right-2 top-2 flex min-h-11 min-w-11 items-center justify-center rounded-full bg-black/60 text-white transition-colors hover:bg-black/80" aria-label="Remove ID image">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (idPreview) URL.revokeObjectURL(idPreview);
+                        setIdBlob(null);
+                        setIdPreview(null);
+                        idWebcam.start();
+                      }}
+                      className="absolute right-2 top-2 flex min-h-11 min-w-11 items-center justify-center rounded-full bg-black/60 text-white transition-colors hover:bg-black/80"
+                      aria-label="Remove ID image"
+                    >
                       <X className="h-4 w-4" />
                     </button>
                   </div>
                   <div className="flex gap-3">
-                    <Button variant="secondary" type="button" onClick={onRetakePhoto} className="flex-1 min-h-[44px]" icon={<RotateCcw className="h-4 w-4" />}>
-                      Retake Photo
+                    <Button variant="secondary" type="button" onClick={onRetakeId} className="flex-1 min-h-[44px]" icon={<RotateCcw className="h-4 w-4" />}>
+                      Retake ID
                     </Button>
                     <Button type="button" onClick={() => setStep('review')} className="flex-1 min-h-[44px]" icon={<ArrowRight className="h-4 w-4" />}>
                       Review
@@ -627,19 +655,54 @@ export function KioskPage() {
                 </div>
               ) : (
                 <div className="space-y-4">
-                  <div
-                    className="flex aspect-[3/2] w-full cursor-pointer flex-col items-center justify-center rounded-xl border-2 border-dashed border-[var(--color-border-strong)] bg-[var(--color-canvas)] transition-colors hover:border-[var(--color-brand)] hover:bg-[var(--color-brand-light)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-brand)]"
-                    onClick={() => manualIdInputRef.current?.click()}
-                    role="button"
-                    tabIndex={0}
-                    onKeyDown={(event) => {
-                      if (event.key === 'Enter' || event.key === ' ') manualIdInputRef.current?.click();
-                    }}
-                  >
-                    <Upload className="mb-3 h-10 w-10 text-[var(--color-text-muted)]" />
-                    <span className="text-sm font-bold text-[var(--color-text-primary)]">Tap to upload ID</span>
+                  {idWebcam.error && (
+                    <div className="rounded-md border border-[var(--color-danger)] bg-[var(--color-danger-light)] p-3 text-sm text-[var(--color-danger-dark)]" role="alert">
+                      <p className="font-semibold mb-1">Valid ID camera access is required.</p>
+                      <p className="mb-2">{idWebcam.error}</p>
+                      <Button
+                        size="sm"
+                        variant="secondary"
+                        onClick={() => idWebcam.start()}
+                        icon={<RotateCcw className="h-4 w-4" />}
+                      >
+                        Retry Camera
+                      </Button>
+                    </div>
+                  )}
+
+                  <div className="mx-auto w-full max-w-md overflow-hidden rounded-xl border-2 border-dashed border-[var(--color-brand)] shadow-sm bg-black aspect-[3/2] relative flex items-center justify-center">
+                    {idWebcam.videoRef && (
+                      <video ref={idWebcam.videoRef} autoPlay playsInline muted className="h-full w-full object-cover" />
+                    )}
                   </div>
-                  <input ref={manualIdInputRef} type="file" accept="image/*" onChange={onManualIdFileChange} className="hidden" />
+
+                  <div className="flex gap-3">
+                    <Button
+                      variant="secondary"
+                      type="button"
+                      onClick={() => {
+                        idWebcam.stop();
+                        setStep('photo');
+                        faceWebcam.start();
+                      }}
+                      className="flex-1 min-h-[44px]"
+                      icon={<ArrowLeft className="h-4 w-4" />}
+                    >
+                      Back
+                    </Button>
+                    <Button
+                      type="button"
+                      onClick={onCaptureManualId}
+                      disabled={!idWebcam.isActive}
+                      className="flex-1 min-h-[44px]"
+                      icon={<Camera className="h-4 w-4" />}
+                    >
+                      Capture ID
+                    </Button>
+                  </div>
+                  <Button variant="ghost" type="button" onClick={onRetakePhoto} className="w-full min-h-[44px]" icon={<RotateCcw className="h-4 w-4" />}>
+                    Retake Selfie
+                  </Button>
                 </div>
               )}
             </div>
@@ -685,6 +748,7 @@ export function KioskPage() {
                       faceWebcam.start();
                     } else {
                       setStep('id');
+                      idWebcam.start();
                     }
                   }}
                   className="flex-1 min-h-[44px]"
@@ -755,4 +819,3 @@ export function KioskPage() {
     </main>
   );
 }
-export default KioskPage;
