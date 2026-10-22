@@ -32,10 +32,10 @@ describe('FIX GROUP C: Valid ID Camera Flow & Retake Isolation', () => {
     const body = onRetakeIdMatch![1];
 
     expect(body).toContain('setIdBlob(null)');
-    expect(body).toContain('setIdPreview(null)');
+    expect(body).toContain('idUrl.clear()');
     // Must NOT clear photo state
     expect(body).not.toContain('setPhotoBlob(null)');
-    expect(body).not.toContain('setPhotoPreview(null)');
+    expect(body).not.toContain('photoUrl.clear()');
   });
 
   it('implements dedicated onRetakeId in Kiosk that isolates ID from selfie state', () => {
@@ -47,15 +47,19 @@ describe('FIX GROUP C: Valid ID Camera Flow & Retake Isolation', () => {
     const body = onRetakeIdMatch![1];
 
     expect(body).toContain('setIdBlob(null)');
-    expect(body).toContain('setIdPreview(null)');
+    expect(body).toContain('idUrl.clear()');
     // Must NOT clear photo state
     expect(body).not.toContain('setPhotoBlob(null)');
-    expect(body).not.toContain('setPhotoPreview(null)');
+    expect(body).not.toContain('photoUrl.clear()');
   });
 
-  it('revokes object URLs when retaking ID or unmounting to prevent memory/security leaks', () => {
-    expect(getPassSrc).toContain('URL.revokeObjectURL(idPreview)');
-    expect(kioskSrc).toContain('URL.revokeObjectURL(idPreview)');
+  it('manages object URL lifecycles via useObjectUrl to guarantee revocation and prevent unmount leaks', () => {
+    expect(getPassSrc).toContain('useObjectUrl');
+    expect(kioskSrc).toContain('useObjectUrl');
+    expect(getPassSrc).toContain('photoUrl.clear()');
+    expect(kioskSrc).toContain('photoUrl.clear()');
+    expect(getPassSrc).toContain('idUrl.clear()');
+    expect(kioskSrc).toContain('idUrl.clear()');
   });
 
   it('preserves camera ID requirement when entering details manually unless Peak Mode authorizes omission', () => {

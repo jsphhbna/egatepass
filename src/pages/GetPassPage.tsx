@@ -3,6 +3,7 @@ import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
 import { useWebcam } from '@/hooks/useWebcam';
+import { useObjectUrl } from '@/hooks/useObjectUrl';
 import { compressImageToWebP } from '@/lib/imageProcessing';
 import { issueVisitorPass, loadRegistrationSettings } from '@/services/visitorRegistration';
 import { TurnstileWidget } from '@/components/TurnstileWidget';
@@ -93,9 +94,11 @@ type Step = 'form' | 'photo' | 'id' | 'review' | 'generating' | 'done';
 export function GetPassPage() {
   const [step, setStep] = useState<Step>('form');
   const [photoBlob, setPhotoBlob] = useState<Blob | null>(null);
-  const [photoPreview, setPhotoPreview] = useState<string | null>(null);
+  const photoUrl = useObjectUrl();
+  const photoPreview = photoUrl.url;
   const [idBlob, setIdBlob] = useState<Blob | null>(null);
-  const [idPreview, setIdPreview] = useState<string | null>(null);
+  const idUrl = useObjectUrl();
+  const idPreview = idUrl.url;
   const [captchaToken, setCaptchaToken] = useState<string | null>(null);
   const [turnstileKey, setTurnstileKey] = useState(0);
 
@@ -137,8 +140,6 @@ export function GetPassPage() {
     return () => {
       faceWebcam.stop();
       idWebcam.stop();
-      if (photoPreview) URL.revokeObjectURL(photoPreview);
-      if (idPreview) URL.revokeObjectURL(idPreview);
     };
   }, []);
 
@@ -176,8 +177,7 @@ export function GetPassPage() {
     const blob = faceWebcam.capture();
     if (blob) {
       setPhotoBlob(blob);
-      if (photoPreview) URL.revokeObjectURL(photoPreview);
-      setPhotoPreview(URL.createObjectURL(blob));
+      photoUrl.setFromBlob(blob);
       faceWebcam.stop();
       if (isPeakMode) {
         setStep('review');
@@ -191,9 +191,8 @@ export function GetPassPage() {
   }
 
   function onRetakePhoto() {
-    if (photoPreview) URL.revokeObjectURL(photoPreview);
+    photoUrl.clear();
     setPhotoBlob(null);
-    setPhotoPreview(null);
     faceWebcam.stop();
     setStep('photo');
     faceWebcam.start();
@@ -204,9 +203,8 @@ export function GetPassPage() {
     if (blob) {
       try {
         const compressed = await compressImageToWebP(blob);
-        if (idPreview) URL.revokeObjectURL(idPreview);
         setIdBlob(compressed);
-        setIdPreview(URL.createObjectURL(compressed));
+        idUrl.setFromBlob(compressed);
         idWebcam.stop();
       } catch {
         toast.error('Failed to process ID image.');
@@ -217,9 +215,8 @@ export function GetPassPage() {
   }
 
   function onRetakeId() {
-    if (idPreview) URL.revokeObjectURL(idPreview);
+    idUrl.clear();
     setIdBlob(null);
-    setIdPreview(null);
     idWebcam.stop();
     setStep('id');
     idWebcam.start();
@@ -532,9 +529,8 @@ export function GetPassPage() {
                     <button
                       type="button"
                       onClick={() => {
-                        if (idPreview) URL.revokeObjectURL(idPreview);
+                        idUrl.clear();
                         setIdBlob(null);
-                        setIdPreview(null);
                         idWebcam.start();
                       }}
                       className="absolute right-2 top-2 rounded-full p-1 text-white bg-black/60 hover:bg-black/80 transition-colors"

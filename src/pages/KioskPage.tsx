@@ -3,6 +3,7 @@ import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
 import { useWebcam } from '@/hooks/useWebcam';
+import { useObjectUrl } from '@/hooks/useObjectUrl';
 import { compressImageToWebP } from '@/lib/imageProcessing';
 import { recognizeIdImage, terminateLocalOcrWorker } from '@/lib/ocr';
 import { issueVisitorPass, loadRegistrationSettings } from '@/services/visitorRegistration';
@@ -90,9 +91,11 @@ type Step = 'scan-intro' | 'scan-camera' | 'scan-processing' | 'form' | 'photo' 
 export function KioskPage() {
   const [step, setStep] = useState<Step>('scan-intro');
   const [photoBlob, setPhotoBlob] = useState<Blob | null>(null);
-  const [photoPreview, setPhotoPreview] = useState<string | null>(null);
+  const photoUrl = useObjectUrl();
+  const photoPreview = photoUrl.url;
   const [idBlob, setIdBlob] = useState<Blob | null>(null);
-  const [idPreview, setIdPreview] = useState<string | null>(null);
+  const idUrl = useObjectUrl();
+  const idPreview = idUrl.url;
   const [qrDataUrl, setQrDataUrl] = useState<string | null>(null);
   const [passId, setPassId] = useState<string | null>(null);
   const [rawQrToken, setRawQrToken] = useState<string | null>(null);
@@ -130,8 +133,6 @@ export function KioskPage() {
       faceWebcam.stop();
       idWebcam.stop();
       void terminateLocalOcrWorker();
-      if (photoPreview) URL.revokeObjectURL(photoPreview);
-      if (idPreview) URL.revokeObjectURL(idPreview);
     };
   }, []);
 
@@ -172,9 +173,7 @@ export function KioskPage() {
     try {
       const compressed = await compressImageToWebP(blob);
       setIdBlob(compressed);
-      if (idPreview) URL.revokeObjectURL(idPreview);
-      const previewUrl = URL.createObjectURL(compressed);
-      setIdPreview(previewUrl);
+      idUrl.setFromBlob(compressed);
 
       // Offline OCR via self-hosted worker
       const parsed = await recognizeIdImage(compressed);
@@ -227,8 +226,7 @@ export function KioskPage() {
     const blob = faceWebcam.capture();
     if (blob) {
       setPhotoBlob(blob);
-      if (photoPreview) URL.revokeObjectURL(photoPreview);
-      setPhotoPreview(URL.createObjectURL(blob));
+      photoUrl.setFromBlob(blob);
       faceWebcam.stop();
       if (idBlob || isPeakMode) {
         setStep('review');
@@ -242,9 +240,8 @@ export function KioskPage() {
   }
 
   function onRetakePhoto() {
-    if (photoPreview) URL.revokeObjectURL(photoPreview);
+    photoUrl.clear();
     setPhotoBlob(null);
-    setPhotoPreview(null);
     faceWebcam.stop();
     setStep('photo');
     faceWebcam.start();
@@ -255,9 +252,8 @@ export function KioskPage() {
     if (blob) {
       try {
         const compressed = await compressImageToWebP(blob);
-        if (idPreview) URL.revokeObjectURL(idPreview);
         setIdBlob(compressed);
-        setIdPreview(URL.createObjectURL(compressed));
+        idUrl.setFromBlob(compressed);
         idWebcam.stop();
       } catch {
         toast.error('Failed to process ID image.');
@@ -268,9 +264,8 @@ export function KioskPage() {
   }
 
   function onRetakeId() {
-    if (idPreview) URL.revokeObjectURL(idPreview);
+    idUrl.clear();
     setIdBlob(null);
-    setIdPreview(null);
     idWebcam.stop();
     setStep('id');
     idWebcam.start();
@@ -325,11 +320,9 @@ export function KioskPage() {
     idWebcam.stop();
     void terminateLocalOcrWorker();
     setPhotoBlob(null);
-    if (photoPreview) URL.revokeObjectURL(photoPreview);
-    setPhotoPreview(null);
+    photoUrl.clear();
     setIdBlob(null);
-    if (idPreview) URL.revokeObjectURL(idPreview);
-    setIdPreview(null);
+    idUrl.clear();
     setQrDataUrl(null);
     setPassId(null);
     setRawQrToken(null);
@@ -633,9 +626,8 @@ export function KioskPage() {
                     <button
                       type="button"
                       onClick={() => {
-                        if (idPreview) URL.revokeObjectURL(idPreview);
+                        idUrl.clear();
                         setIdBlob(null);
-                        setIdPreview(null);
                         idWebcam.start();
                       }}
                       className="absolute right-2 top-2 flex min-h-11 min-w-11 items-center justify-center rounded-full bg-black/60 text-white transition-colors hover:bg-black/80"
