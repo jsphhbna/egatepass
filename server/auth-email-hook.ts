@@ -155,7 +155,11 @@ export async function prepareAuthEmails(
   const { user, email_data } = payload;
   const authBaseUrl = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL || 'https://nhoawvkfqblsgutdffie.supabase.co';
   const redirectTo = email_data.redirect_to || email_data.site_url || 'https://egatepass.tech';
-  const displayName = user.user_metadata?.displayName as string | undefined;
+  const rawDisplayName = user?.user_metadata?.displayName;
+  const displayName =
+    typeof rawDisplayName === 'string' && rawDisplayName.trim().length > 0
+      ? rawDisplayName.trim()
+      : undefined;
 
   switch (email_data.email_action_type) {
     case 'signup': {

@@ -5,6 +5,9 @@
   "description": "EARIST E-GatePass — Smart QR Code-Based Visitor Management System",
   "type": "module",
   "scripts": {
+    "build:templates": "node scripts/bundle-email-templates.mjs",
+    "prebuild": "npm run build:templates",
+    "pretest": "npm run build:templates",
     "dev": "vite",
     "build": "tsc && vite build",
     "preview": "vite preview",

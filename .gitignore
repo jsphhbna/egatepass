@@ -1,8 +1,12 @@
-# Dependencies
+﻿# Dependencies
 node_modules/
 
 # Build output
 dist/
+
+# Generated email templates bundle (generated at build time from authoritative TSX sources)
+server/templates/index.js
+server/templates/index.js.map
 
 # Environment variables (NEVER commit secrets)
 .env
@@ -41,5 +45,7 @@ test-results/
 # AI skills and rules
 .agents/
 GEMINI.md
-scripts/
+scripts/*
+!scripts/bundle-email-templates.mjs
+!scripts/run-startup-e2e.mjs
 v10/

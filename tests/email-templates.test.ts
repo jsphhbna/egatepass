@@ -12,6 +12,15 @@ import {
   ReauthenticationEmail,
   SecurityNotificationEmail,
   EARIST_LOGO_URL,
+  renderSignupConfirmationEmail,
+  renderPasswordResetEmail,
+  renderStaffInviteEmail,
+  renderEmailChangeEmail,
+  renderMagicLinkEmail,
+  renderReauthenticationEmail,
+  renderSecurityNotificationEmail,
+  renderVerificationCodeEmail,
+  renderPassIssuedEmail,
 } from '../server/templates/index.js';
 
 describe('EMAIL-ARCH-01: React Email Templates', () => {
@@ -80,7 +89,7 @@ describe('EMAIL-ARCH-01: React Email Templates', () => {
       {
         name: 'SignupConfirmationEmail',
         component: SignupConfirmationEmail,
-        props: { confirmUrl: 'https://supabase.co/verify?token=123', email: 'guard@earist.edu.ph', displayName: 'Guard Reyes' },
+        props: { confirmationUrl: 'https://supabase.co/verify?token=123', email: 'guard@earist.edu.ph', displayName: 'Guard Reyes' },
       },
       {
         name: 'PasswordResetEmail',
@@ -95,7 +104,7 @@ describe('EMAIL-ARCH-01: React Email Templates', () => {
       {
         name: 'EmailChangeEmail',
         component: EmailChangeEmail,
-        props: { confirmUrl: 'https://supabase.co/verify?token=abc', newEmail: 'new@earist.edu.ph', isCurrentAddressNotice: false },
+        props: { currentEmail: 'current@earist.edu.ph', newEmail: 'new@earist.edu.ph', changeUrl: 'https://supabase.co/verify?token=abc', targetAddress: 'new', displayName: 'Staff Cruz' },
       },
       {
         name: 'VerificationCodeEmail',
@@ -236,4 +245,73 @@ describe('EMAIL-ARCH-01: React Email Templates', () => {
       expect(html).toContain('&lt;script&gt;');
     });
   });
+  describe('Fix Group M: Shared Template Index Render Helpers', () => {
+    it('renders all 9 email templates through exported render functions without unexpected errors', async () => {
+      const signupHtml = await renderSignupConfirmationEmail({
+        email: 'user@earist.edu.ph',
+        confirmationUrl: 'https://supabase.co/verify?token=1',
+        displayName: 'Staff Juan',
+      });
+      expect(signupHtml).toContain('EARIST E-GatePass');
+      expect(signupHtml).toContain('https://egatepass.tech/earist-logo.png');
+
+      const resetHtml = await renderPasswordResetEmail({
+        email: 'user@earist.edu.ph',
+        resetUrl: 'https://supabase.co/verify?token=2',
+        displayName: 'Staff Maria',
+      });
+      expect(resetHtml).toContain('Reset My Password');
+
+      const inviteHtml = await renderStaffInviteEmail({
+        email: 'invited@earist.edu.ph',
+        inviteUrl: 'https://supabase.co/verify?token=3',
+        displayName: 'Prof Santos',
+      });
+      expect(inviteHtml).toContain('Account Invitation');
+      expect(inviteHtml).toContain('alt="EARIST seal"');
+
+      const emailChangeHtml = await renderEmailChangeEmail({
+        currentEmail: 'old@earist.edu.ph',
+        newEmail: 'new@earist.edu.ph',
+        changeUrl: 'https://supabase.co/verify?token=4',
+        targetAddress: 'new',
+      });
+      expect(emailChangeHtml).toContain('Verify New Email Address');
+
+      const magicHtml = await renderMagicLinkEmail({
+        email: 'magic@earist.edu.ph',
+        magicUrl: 'https://supabase.co/verify?token=5',
+      });
+      expect(magicHtml).toContain('Sign in to EARIST E-GatePass');
+
+      const reauthHtml = await renderReauthenticationEmail({
+        email: 'reauth@earist.edu.ph',
+        reauthUrl: 'https://supabase.co/verify?token=6',
+      });
+      expect(reauthHtml).toContain('Confirm your identity');
+
+      const secHtml = await renderSecurityNotificationEmail({
+        email: 'sec@earist.edu.ph',
+        actionType: 'password_changed_notification',
+        displayName: 'Sec User',
+      });
+      expect(secHtml).toContain('Security Alert');
+
+      const verifyCodeHtml = await renderVerificationCodeEmail({
+        fullName: 'Visitor Test',
+        code: '654321',
+        expiresInMinutes: 15,
+      });
+      expect(verifyCodeHtml).toContain('654321');
+
+      const passHtml = await renderPassIssuedEmail({
+        fullName: 'Visitor Test',
+        visitDate: '2026-10-22',
+        purpose: 'Meeting',
+        publicReference: 'ref-pass-999',
+      });
+      expect(passHtml).toContain('ref-pass-999');
+    });
+  });
+
 });

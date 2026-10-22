@@ -522,5 +522,98 @@ describe('EMAIL-01: Supabase Auth Send Email Hook Infrastructure', () => {
       process.env.NODE_ENV = prevEnv;
       if (prevResend) process.env.RESEND_API_KEY = prevResend;
     });
+
+    it('executes the production provider path for an invite action with mocked global fetch', async () => {
+      const prevEnv = process.env.NODE_ENV;
+      const prevVercelEnv = process.env.VERCEL_ENV;
+      const prevResend = process.env.RESEND_API_KEY;
+      const prevFrom = process.env.RESEND_FROM_EMAIL;
+      const prevSecret = process.env.SEND_EMAIL_HOOK_SECRET;
+
+      process.env.NODE_ENV = 'production';
+      process.env.VERCEL_ENV = 'production';
+      process.env.RESEND_API_KEY = 're_test_dummy_key_1234567890';
+      process.env.RESEND_FROM_EMAIL = 'EARIST E-GatePass <notifications@egatepass.tech>';
+      process.env.SEND_EMAIL_HOOK_SECRET = canonicalSecretA;
+
+      const capturedRequests: Array<{ url: string; init?: RequestInit }> = [];
+      const originalFetch = globalThis.fetch;
+      globalThis.fetch = vi.fn().mockImplementation(async (url: string | URL | Request, init?: RequestInit) => {
+        capturedRequests.push({ url: url.toString(), init });
+        return new Response(JSON.stringify({ id: 'resend_msg_test_invite_999' }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        });
+      });
+
+      try {
+        const msgId = 'msg_prod_invite_test_1';
+        const timestamp = Math.floor(Date.now() / 1000);
+        const payload: SupabaseAuthEmailPayload = {
+          user: {
+            id: 'user-invite-1234',
+            email: 'invited.guard@earist.edu.ph',
+            user_metadata: { displayName: 'Invited Staff' },
+          },
+          email_data: {
+            token: '654321',
+            token_hash: 'invite_hash_secure_abc',
+            email_action_type: 'invite',
+            site_url: 'https://egatepass.tech',
+            redirect_to: 'https://egatepass.tech/staff',
+          },
+        };
+        const rawBody = JSON.stringify(payload);
+        const signature = makeSignature(msgId, timestamp, rawBody);
+
+        const req = new Request('http://localhost:5173/api/auth/send-email-hook', {
+          method: 'POST',
+          headers: {
+            'webhook-id': msgId,
+            'webhook-timestamp': timestamp.toString(),
+            'webhook-signature': signature,
+            'content-type': 'application/json',
+          },
+          body: rawBody,
+        });
+
+        const res = await sendEmailHookHandler.fetch(req);
+        expect(res.status).toBe(200);
+        const json = await res.json();
+        expect(json).toEqual({});
+
+        // Assert fetch was called exactly once for Resend
+        expect(capturedRequests.length).toBe(1);
+        const [call] = capturedRequests;
+        expect(call.url).toBe('https://api.resend.com/emails');
+        expect(call.init?.method).toBe('POST');
+
+        const headers = call.init?.headers as Record<string, string>;
+        expect(headers?.Authorization).toBe('Bearer re_test_dummy_key_1234567890');
+
+        const resendPayload = JSON.parse(call.init?.body as string);
+        expect(resendPayload.to).toEqual(['invited.guard@earist.edu.ph']);
+        expect(resendPayload.from).toBe('EARIST E-GatePass <notifications@egatepass.tech>');
+        expect(resendPayload.subject).toBe('EARIST E-GatePass Account Invitation');
+
+        // Verify HTML contents
+        expect(resendPayload.html).toContain('EARIST E-GatePass');
+        expect(resendPayload.html).toContain('alt="EARIST seal"');
+        expect(resendPayload.html).toContain('https://egatepass.tech/earist-logo.png');
+        expect(resendPayload.html).toContain('invite_hash_secure_abc');
+        expect(resendPayload.html).toContain('Invited Staff');
+      } finally {
+        globalThis.fetch = originalFetch;
+        process.env.NODE_ENV = prevEnv;
+        if (prevVercelEnv !== undefined) process.env.VERCEL_ENV = prevVercelEnv;
+        else delete process.env.VERCEL_ENV;
+        if (prevResend !== undefined) process.env.RESEND_API_KEY = prevResend;
+        else delete process.env.RESEND_API_KEY;
+        if (prevFrom !== undefined) process.env.RESEND_FROM_EMAIL = prevFrom;
+        else delete process.env.RESEND_FROM_EMAIL;
+        if (prevSecret !== undefined) process.env.SEND_EMAIL_HOOK_SECRET = prevSecret;
+        else delete process.env.SEND_EMAIL_HOOK_SECRET;
+      }
+    });
   });
 });
