@@ -12,7 +12,7 @@ interface FormFieldProps {
 
 export function FormField({ label, error, hint, children, id, className = '' }: FormFieldProps) {
   return (
-    <div className={`space-y-1.5 ${className}`.trim()}>
+    <div className={`min-w-0 space-y-1.5 ${className}`.trim()}>
       <label htmlFor={id} className="block text-sm font-semibold text-[var(--color-text-primary)]">
         {label}
       </label>
