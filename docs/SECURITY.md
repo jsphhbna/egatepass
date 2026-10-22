@@ -368,6 +368,24 @@ sequenceDiagram
 
 ## 13. Cloudflare Turnstile Bot Protection & Abuse Controls
 
+### 13.1 Environment Isolation & Preview Safety
+To protect against hostname allowlist mismatches on dynamic Preview deployments, `VITE_TURNSTILE_SITE_KEY` is scoped strictly to the **Production** environment in Vercel. In Preview and local development environments where `import.meta.env.PROD` is false or the site key is unconfigured, the registration service safely permits developer flows without triggering hostname rejections from Cloudflare. In Production, the security challenge fails closed whenever the key or token is missing.
+
+### 13.2 Cryptographic Key Separation
+Network rate limiting utilizes a dedicated, high-entropy server secret (`RATE_LIMIT_HMAC_SECRET`) with a minimum of 256 bits of entropy. This completely decouples anonymous network bucket hashing from QR bearer issuance tokens (`PASS_TOKEN_SECRET`), preventing cross-protocol token substitution.
+
+### 13.3 Resend Delivery Webhook Observability
+Transactional email delivery is monitored via a dedicated Standard Webhooks endpoint (`/api/webhooks/resend` routed to the authenticated auth catch-all function). Webhook payloads are verified cryptographically via Svix / Standard Webhook signatures, rejected on tampering or expiration, processed idempotently by recording event identifiers in `audit_events`, and redact recipient identities to maintain privacy.
+
+### 13.4 Supabase Free-Tier Security Advisor Review
+Supabase Security Advisor reports `auth_leaked_password_protection` as disabled. This feature is restricted to paid Supabase tiers and is an accepted platform limitation on the current Free plan. In accordance with zero-cost architecture guidelines, password security is strictly enforced at the application boundary via mandatory 12+ character complexity, mixed-case, numbers, and symbols.
+
+### 13.5 Content Security Policy (CSP) Directives Justification
+The production CSP header enforces tight origins with explicit exemptions:
+- `wasm-unsafe-eval`: Authoritatively required for client-side Tesseract.js WebAssembly OCR compilation in browser web workers.
+- `style-src 'unsafe-inline'`: Required for dynamic toast notification styling (Sonner) and Radix UI dialog portal locking.
+- `script-src 'unsafe-inline'`: Required for Cloudflare Turnstile explicit widget execution.
+
 Cloudflare Turnstile protects public visitor registration, staff/device authentication, and password recovery from automated attacks:
 - **Public Visitor Portal**: Non-intrusive challenge required before issuing an anonymous session.
 - **Staff & Device Login (`/login`)**: Challenge verification token required for human staff credentials.

@@ -85,6 +85,10 @@
       "destination": "/api/system/reconciliation-items"
     },
     {
+      "source": "/api/webhooks/resend",
+      "destination": "/api/auth/resend-webhook"
+    },
+    {
       "source": "/((?!api/).*)",
       "destination": "/index.html"
     }

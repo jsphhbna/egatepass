@@ -1,10 +1,12 @@
 import { createGroupedRouter } from '../../server/router.js';
 import completePasswordChange from '../../server/routes/auth/complete-password-change.js';
+import resendWebhook from '../../server/routes/auth/resend-webhook.js';
 import resetPassword from '../../server/routes/auth/reset-password.js';
 import sendEmailHook from '../../server/routes/auth/send-email-hook.js';
 
 const router = createGroupedRouter('auth', {
   'complete-password-change': completePasswordChange,
+  'resend-webhook': resendWebhook,
   'reset-password': resetPassword,
   'send-email-hook': sendEmailHook,
 });

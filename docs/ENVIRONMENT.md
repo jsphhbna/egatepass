@@ -12,7 +12,7 @@ This document is the authoritative specification for all configuration and secre
 |---|---|---|---|---|---|
 | `VITE_SUPABASE_URL` | Browser & Vite Build | No | Client application (`src/lib/supabase.ts`) | **Yes** | `https://xyzproject.supabase.co` |
 | `VITE_SUPABASE_PUBLISHABLE_KEY` | Browser & Vite Build | No | Client application (`src/lib/supabase.ts`) | **Yes** | `eyJhbGciOiJIUzI1Ni...` (Supabase anonymous / publishable key) |
-| `VITE_TURNSTILE_SITE_KEY` | Browser & Vite Build | No | Visitor registration Turnstile widget | **Yes** in prod | `0x4AAAAAA...` (Cloudflare Turnstile site key) |
+| `VITE_TURNSTILE_SITE_KEY` | Browser & Vite Build | No | Visitor registration Turnstile widget | **Yes** in prod | `0x4AAAAAA...` (Cloudflare Turnstile site key; scoped strictly to Production in Vercel to isolate Preview environments) |
 | `SUPABASE_URL` | Vercel Serverless | No | Node.js API Functions (`server/supabase.ts`) | **Yes** | `https://xyzproject.supabase.co` |
 | `SUPABASE_SECRET_KEY` | Vercel Serverless | **Yes** | Server-side admin client (`server/supabase.ts`) | **Yes** | `eyJhbGciOiJIUzI1Ni...` (Supabase service-role secret; bypasses RLS) |
 | `PASS_TOKEN_SECRET` | Vercel Serverless | **Yes** | QR token derivation (`server/routes/passes/issue.ts`) | **Yes** | Random alphanumeric string, **minimum 32 characters** |
@@ -20,6 +20,8 @@ This document is the authoritative specification for all configuration and secre
 | `RESEND_FROM_EMAIL` | Vercel Serverless | No | Sender identity for transactional emails | **Yes** | `EARIST E-GatePass <notifications@egatepass.tech>` |
 | `SEND_EMAIL_HOOK_SECRET` | Vercel Serverless | **Yes** | Supabase Auth Send Email Hook verification | **Yes** | Shared secret configured in Supabase Auth Webhook settings |
 | `CRON_SECRET` | Vercel Serverless | **Yes** | Bearer auth for retention maintenance requests | **Yes** | Random alphanumeric string, **minimum 32 characters** |
+| `RATE_LIMIT_HMAC_SECRET` | Vercel Serverless | **Yes** | High-entropy key for privacy-preserving network rate-limit HMAC | **Yes** | Random hex/alphanumeric string, **minimum 32 characters** (separate from pass token) |
+| `RESEND_WEBHOOK_SECRET` | Vercel Serverless | **Yes** | Standard Webhook signature verification for delivery observability | **Yes** | `whsec_...` signing secret configured in Resend webhook dashboard |
 
 > **Turnstile Secret Key Note**: The Cloudflare Turnstile Secret Key is configured directly in the Supabase Dashboard under **Authentication > CAPTCHA / Bot & Abuse Protection**, as Supabase Auth performs token validation during `signInAnonymously`. It is not configured as an environment variable in Vercel.
 
@@ -98,3 +100,10 @@ CRON_SECRET=local-development-cron-secret-minimum-32-chars
 3. **`SUPABASE_SECRET_KEY`**:
    - Regenerate in the Supabase Dashboard under **Project Settings > API > JWT Secrets**.
    - Update in Vercel environment variables and redeploy immediately.
+
+
+---
+
+## 4. Node.js Production Runtime Policy
+
+The serverless platform policy enforces **Node.js 24.x** via `package.json` (`"engines": { "node": "24.x" }`). Vercel automatically deploys the latest secure security patch of the Node.js 24 runtime line (minimum `Node 24.22.1` verified).

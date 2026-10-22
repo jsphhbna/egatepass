@@ -267,3 +267,15 @@ Private storage assets are partitioned into two designated buckets:
 - **Access Delegation**: Staff access assets solely via `/api/evidence?id=<uuid>`, which evaluates caller roles (`guard`, `admin`, `superadmin`), pass states, and active incident holds before streaming the image.
 - **Ephemeral Upload Intents**: Upload intents expire within 15 minutes. Abandoned uploads are cleaned up during daily retention maintenance.
 - **Retention & Purge**: Expired assets are deleted from storage, and `visitor_evidence.purged_at` is stamped in PostgreSQL.
+
+
+---
+
+## 9. Performance & Referential Covering Indexes (Migration 20261023020000)
+
+To resolve unindexed foreign key warnings identified during performance reviews and eliminate table-level share locks during parent table mutations, migration `20261023020000_performance_covering_indexes.sql` introduces covering partial btree indexes on:
+- `passes(decided_by)`, `passes(entry_device_id)`, `passes(exit_device_id)`
+- `visit_events(visitor_id)`, `visit_events(guard_id)`, `visit_events(device_id)`
+- `upload_intents(visitor_id)`
+- `incident_holds(created_by)`, `incident_holds(released_by)`, `incident_holds(pass_id)`, `incident_holds(visitor_id)`
+- `visitors(created_by_device_id)`

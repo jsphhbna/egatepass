@@ -96,6 +96,13 @@ export const ROUTE_CONTRACT_MATRIX: readonly RouteContract[] = [
     allowedMethods: ['POST'],
     handlerModule: 'server/routes/auth/send-email-hook.ts',
   },
+  {
+    path: '/api/auth/resend-webhook',
+    group: 'auth',
+    subpath: 'resend-webhook',
+    allowedMethods: ['POST'],
+    handlerModule: 'server/routes/auth/resend-webhook.ts',
+  },
 
   // Passes Router (2 routes)
   {

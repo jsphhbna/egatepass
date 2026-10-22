@@ -20,7 +20,7 @@ function getPhysicalApiFiles(dir: string): string[] {
   return results;
 }
 
-const EXPECTED_26_ROUTES = [
+const EXPECTED_27_ROUTES = [
   // Admin (9)
   '/api/admin/activity',
   '/api/admin/dashboard',
@@ -31,8 +31,9 @@ const EXPECTED_26_ROUTES = [
   '/api/admin/retention-maintenance',
   '/api/admin/settings',
   '/api/admin/users',
-  // Auth (3)
+  // Auth (4: 3 historical + 1 delivery observability webhook)
   '/api/auth/complete-password-change',
+  '/api/auth/resend-webhook',
   '/api/auth/reset-password',
   '/api/auth/send-email-hook',
   // Passes (2)
@@ -78,16 +79,16 @@ describe('Vercel Hobby Plan Function Limit Architecture Regressions', () => {
   });
 
   describe('2. Route Contract Matrix Integrity (26 Preserved API Endpoints)', () => {
-    it('contains exactly 26 route contracts in the matrix', () => {
-      expect(ROUTE_CONTRACT_MATRIX.length).toBe(26);
+    it('contains exactly 27 route contracts in the matrix', () => {
+      expect(ROUTE_CONTRACT_MATRIX.length).toBe(27);
     });
 
     it('contains all 26 historical external API paths with no duplicates', () => {
       const paths = ROUTE_CONTRACT_MATRIX.map((r) => r.path);
       const uniquePaths = new Set(paths);
-      expect(uniquePaths.size).toBe(26);
+      expect(uniquePaths.size).toBe(27);
 
-      for (const expectedPath of EXPECTED_26_ROUTES) {
+      for (const expectedPath of EXPECTED_27_ROUTES) {
         expect(paths).toContain(expectedPath);
       }
     });
@@ -111,7 +112,7 @@ describe('Vercel Hobby Plan Function Limit Architecture Regressions', () => {
     it('allows lookup by path and by group', () => {
       expect(getRouteByPath('/api/admin/dashboard')?.subpath).toBe('dashboard');
       expect(getRouteByPath('/api/create-device')?.group).toBe('device');
-      expect(getRoutesByGroup('auth').length).toBe(3);
+      expect(getRoutesByGroup('auth').length).toBe(4);
       expect(getRoutesByGroup('passes').length).toBe(2);
       expect(getRoutesByGroup('device').length).toBe(4);
       expect(getRoutesByGroup('gate').length).toBe(3);
