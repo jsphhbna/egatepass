@@ -1,78 +1,144 @@
-# Environment and Scheduled Cleanup Handoff
+﻿# Automated Maintenance & Vercel Cron
 
-## `.env.example`
+This document describes the automated maintenance architecture, background cron execution, and security policies governing daily retention cleanup and cross-system reconciliation.
 
-`.env.example` is a tracked template of the variable names E-GatePass expects. It contains comments, names, and safe defaults only; it never contains real credentials. For local work, copy it to `.env` or `.env.local` and populate local values. `.env`, `.env.local`, and `.env.*.local` are ignored by Git; `.env.example` remains tracked.
+---
 
-Netlify Environment Variables may contain both configuration and secrets. A Netlify variable is not automatically a password: classify it by what it controls and who can safely see it.
+## 1. Automated Cron Architecture
 
-## Environment inventory
+E-GatePass utilizes **Vercel Cron Jobs** to trigger scheduled maintenance tasks. Unlike legacy scheduled functions, maintenance is triggered as an authenticated HTTPS POST request to our serverless endpoint:
 
-| Category | Variables | Handling |
-| --- | --- | --- |
-| Public browser Firebase configuration | `VITE_FIREBASE_API_KEY`, `VITE_FIREBASE_AUTH_DOMAIN`, `VITE_FIREBASE_PROJECT_ID`, `VITE_FIREBASE_APP_ID` | Included in the browser bundle. They identify the Firebase client project; Firebase Rules and server authorization protect data. |
-| Server configuration | `FIREBASE_PROJECT_ID`, `CLOUDINARY_CLOUD_NAME`, `CLOUDINARY_API_KEY` | Configure Netlify Functions only. Do not prefix with `VITE_`; `CLOUDINARY_API_KEY` is an identifier, not the destructive secret. |
-| Server secrets | `FIREBASE_PRIVATE_KEY`, `FIREBASE_CLIENT_EMAIL`, `CLOUDINARY_API_SECRET`, `CRON_SECRET` | Store only in Netlify/local ignored files. Treat the Firebase service-account email as credential material with its private key. Never put these in Git, documentation, or browser code. |
-| Build/runtime configuration | `AWS_LAMBDA_JS_RUNTIME`, `NODE_OPTIONS` | Non-secret compatibility settings source-controlled in `netlify.toml`. |
-| Development only | `VITE_USE_FIREBASE_EMULATORS`, `FIREBASE_AUTH_EMULATOR_HOST`, `FIRESTORE_EMULATOR_HOST`, `GCLOUD_PROJECT` | Local emulator/test configuration. Do not use emulator hosts in production. |
+```mermaid
+flowchart LR
+    VercelCron[Vercel Cron Scheduler<br/>Daily 02:00 Asia/Manila]
+    Endpoint[POST /api/cron/retention-maintenance]
+    AuthCheck{Bearer CRON_SECRET<br/>Valid?}
+    Engine[Retention Maintenance Engine<br/>server/routes/admin/retention-maintenance.ts]
+    DB[(Supabase DB)]
+    Storage[(Supabase Storage)]
 
-## Known-working runtime
+    VercelCron -->|HTTPS POST + Bearer Auth| Endpoint
+    Endpoint --> AuthCheck
+    AuthCheck -->|No / Invalid| Reject[401 Unauthorized]
+    AuthCheck -->|Yes| Engine
 
-E-GatePass production Functions use this tested combination:
+    Engine -->|1. Purge Expired Storage Files| Storage
+    Engine -->|2. Purge Expired Passes & Visitors| DB
+    Engine -->|3. Purge Non-Protected Audit Logs| DB
+    Engine -->|4. Purge Resolved Reconciliation| DB
+```
 
-- Node 24 through `AWS_LAMBDA_JS_RUNTIME=nodejs24.x`.
-- `firebase-admin@14.5.0`, `jwks-rsa@4.1.0`, and `jose@6.2.12`.
-- `NODE_OPTIONS=--experimental-require-module`.
+---
 
-`AWS_LAMBDA_JS_RUNTIME` forces Netlify Functions onto Node 24. `NODE_OPTIONS` is a Node runtime option required by the current Firebase Admin/module dependency combination. Neither is a credential, and both are safe to document, but neither should be casually removed or changed without the full Netlify build and runtime validation.
+## 2. Vercel Cron Configuration (`vercel.json`)
 
-Both values are already canonical in source-controlled `netlify.toml`. The Netlify UI can show duplicate values for operational visibility, but they must match the file; avoid conflicting UI overrides.
+Scheduled jobs are declared in `vercel.json` under the `crons` array:
 
-## Scheduled cleanup in plain language
+```json
+{
+  "crons": [
+    {
+      "path": "/api/cron/retention-maintenance",
+      "schedule": "0 18 * * *"
+    }
+  ]
+}
+```
+> *Note: UTC `18:00` corresponds to `02:00 AM` Asia/Manila Standard Time (UTC+8), ensuring maintenance executes during lowest gate traffic hours.*
 
-Cron means a scheduled automatic task. E-GatePass has a daily scheduled retention cleanup. It reads retention settings, finds expired eligible images/records, performs bounded cleanup, and records an audit result. It does not delete active visits, unresolved reconciliation work, or protected security history.
+---
 
-`CRON_SECRET` is a private machine-to-machine password for the protected cleanup path. It is not a Super Admin password, Firebase password, or user sign-in password. Netlify stores one configured value. Server code reads `process.env.CRON_SECRET`; the scheduled function passes that value only to the protected internal cleanup handler, which compares it in a timing-safe way with its configured value. A matching value allows the internal cleanup call; a missing or wrong value is denied. Browser sessions never receive it, including Super Admin sessions.
+## 3. Security & Invocation Authentication
 
-The secret can be random because it is a machine password. Do not use memorable text such as `cron123`, `egatepass`, or `school2026`; use a long, random, unguessable value.
+The maintenance endpoint is protected against unauthorized invocation using the `CRON_SECRET` environment variable:
 
-### Generate and configure `CRON_SECRET`
+```mermaid
+sequenceDiagram
+    participant Scheduler as Vercel Scheduler / Admin CLI
+    participant API as /api/cron/retention-maintenance
+    participant Engine as Maintenance Engine
 
-1. Open PowerShell. You may do this in the E-GatePass project folder for convenience; the folder does not affect the generated secret.
-2. Run:
+    Scheduler->>API: POST /api/cron/retention-maintenance<br/>Authorization: Bearer <CRON_SECRET>
+    API->>API: Constant-time compare Bearer token against process.env.CRON_SECRET
 
-   ```powershell
-   [Convert]::ToBase64String((1..48 | ForEach-Object { Get-Random -Maximum 256 }))
-   ```
+    alt Token Missing or Invalid
+        API-->>Scheduler: HTTP 401 Unauthorized
+    else Valid Token
+        API->>Engine: executeRetentionMaintenance()
+        Engine-->>API: Summary (purged counts, errors, duration)
+        API-->>Scheduler: HTTP 200 OK + JSON Summary
+    end
+```
 
-3. Copy the generated random string.
-4. In Netlify, open the E-GatePass project, then **Project configuration → Environment variables**.
-5. Add or replace `CRON_SECRET` with the generated value and save.
-6. Redeploy Functions/site if Netlify requires a deploy for the new environment value to be available.
-7. Verify the scheduled cleanup and inspect Netlify Function logs.
+---
 
-Generating a value does not upload it to Netlify. Generation and Netlify configuration are separate steps. A trusted password-manager generator, OpenSSL, or another cryptographically secure random generator are also acceptable.
+## 4. Maintenance Execution Logic & Policies
 
-### Rotate `CRON_SECRET`
+The retention engine processes records in bounded batches (up to 100 items per category) using deterministic server cursors.
 
-1. Generate a new random value.
-2. Replace `CRON_SECRET` in Netlify.
-3. Redeploy/restart Functions if required.
-4. Verify scheduled cleanup and Function logs.
-5. Treat the old value as invalid.
+```mermaid
+stateDiagram-v2
+    [*] --> CheckHold: Evaluate Record
 
-No application-code change is required for secret rotation.
+    CheckHold --> Preserved: incident_hold == true
+    CheckHold --> CheckStatus: incident_hold == false
 
-## Netlify secret scanning
+    CheckStatus --> Preserved: status in [pending_review, inside]
+    CheckStatus --> CheckExpiry: status in [issued] & expires_at > now()
+    CheckStatus --> Eligible: status in [exited, rejected, expired]
 
-Secret scanning stays enabled. `SECRETS_SCAN_OMIT_KEYS` is deliberately narrow and omits only the four public Firebase browser configuration keys listed above. It must never omit `FIREBASE_PRIVATE_KEY`, `FIREBASE_CLIENT_EMAIL`, `CLOUDINARY_API_SECRET`, `CRON_SECRET`, or any other server secret. The separate `.firebaserc` path omission applies only to that non-secret Firebase project-alias file.
+    CheckExpiry --> Preserved: Unexpired
+    CheckExpiry --> Eligible: Expired
 
-## School-IT ownership handoff
+    Eligible --> PurgeStorage: Storage file present
+    PurgeStorage --> PurgeDatabase: File deleted
+    PurgeDatabase --> [*]: Record removed
 
-The incoming school technician needs approved access to GitHub, Netlify, Firebase, and Cloudinary. During handoff:
+    Preserved --> [*]: Skipped
+```
 
-1. Review required variable names using `.env.example`; never copy real values into GitHub or documentation.
-2. Rotate secrets where policy requires, including generating a new `CRON_SECRET` and storing it in Netlify.
-3. Confirm `AWS_LAMBDA_JS_RUNTIME=nodejs24.x` and `NODE_OPTIONS=--experimental-require-module` still match `netlify.toml`.
-4. Redeploy if changed environment values require it.
-5. Verify scheduled retention cleanup, Firebase Admin Functions, Cloudinary Functions, and their logs.
+### Safety Rules Enforced:
+1. **Pass Status Protection**: No pass in `pending_review` or `inside` status is ever deleted.
+2. **Valid Passes**: Passes that are currently active and unexpired are never deleted.
+3. **Incident Holds**: Any visitor or pass tagged with `incident_hold = true` is indefinitely protected from deletion until an authorized administrator explicitly releases the hold.
+4. **Audit Trail Protection**: High-severity security events, role changes, privilege escalations, and system settings updates are categorized as protected actions and are never automatically deleted.
+
+---
+
+## 5. Manual Maintenance & Operator Diagnostics
+
+Administrators can manually trigger maintenance from the terminal or admin dashboard:
+
+```bash
+curl -X POST https://egatepass.tech/api/cron/retention-maintenance \
+  -H "Authorization: Bearer $CRON_SECRET" \
+  -H "Content-Type: application/json"
+```
+
+### Expected JSON Response:
+```json
+{
+  "status": "success",
+  "purged": {
+    "storageFiles": 14,
+    "gatePasses": 8,
+    "visitors": 8,
+    "auditLogs": 42,
+    "reconciliationTasks": 2
+  },
+  "protected": {
+    "incidentHoldsActive": 3,
+    "activeInsidePasses": 12
+  },
+  "durationMs": 420
+}
+```
+
+---
+
+## 6. Failure Handling & Reconciliation Tasks
+
+If storage deletion or database updates encounter network timeouts or partial provider errors:
+1. The error does not abort the entire maintenance run.
+2. The partial failure is inserted into the `reconciliation_tasks` table.
+3. Super Admins are notified on the admin dashboard to inspect, retry, or acknowledge the task.

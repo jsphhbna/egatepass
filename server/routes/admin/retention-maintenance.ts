@@ -16,7 +16,9 @@ interface CallerContext {
   role?: string;
 }
 
-const PROTECTED_AUDIT_ACTIONS = [
+export const CLOSED_PASS_STATUSES = new Set(['exited', 'rejected', 'expired']);
+
+export const PROTECTED_AUDIT_ACTIONS = [
   'initial_superadmin_bootstrapped',
   'superadmin_created',
   'admin_created',
@@ -33,6 +35,14 @@ const PROTECTED_AUDIT_ACTIONS = [
   'security_hold_created',
   'security_hold_released',
 ];
+
+export function isClosedPassStatus(status: unknown): boolean {
+  return typeof status === 'string' && CLOSED_PASS_STATUSES.has(status);
+}
+
+export function isProtectedAuditAction(action: unknown): boolean {
+  return typeof action === 'string' && PROTECTED_AUDIT_ACTIONS.includes(action);
+}
 
 async function authenticateMaintenance(request: Request, admin: any): Promise<CallerContext> {
   const authHeader = request.headers.get('authorization') || '';

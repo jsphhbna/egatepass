@@ -1,49 +1,116 @@
-# Image security and cleanup
+﻿# Evidence & Image Security Policy
 
-Cloudinary's API secret and all destructive operations remain in Netlify Functions. The browser receives only a short-lived upload signature, the public Cloudinary API key, the server-selected `authenticated` delivery type, and the exact server-generated public ID it must use. It never receives destructive credentials.
+This document defines the security architecture, privacy controls, and storage lifecycle governing visitor photos and valid ID captures in the EARIST E-GatePass platform.
 
-## Identifier and reference policy
+---
 
-- Current uploads use `e-gatepass/photos/<uploadId>` or `e-gatepass/ids/<uploadId>`, where the random upload ID is 16-128 URL-safe characters.
-- Older syntactically safe identifiers are treated as legacy candidates. They are usable only when an existing visitor or gate-pass document references the exact value.
-- Empty, oversized, traversal-like, or otherwise malformed identifiers are rejected before Cloudinary is contacted.
-- A well-formed but unreferenced identifier is not an authorization grant and returns not found.
-- New uploads use Cloudinary's `authenticated` delivery type. Knowing the public ID is insufficient to retrieve the original or a derived asset without a Cloudinary signature.
-- `/api/image` verifies the E-GatePass staff role/reference and fetches a signed authenticated Cloudinary URL server-side. The Cloudinary URL is not returned to the browser.
-- Records without delivery metadata are treated as legacy `upload` assets for compatibility until the controlled migration below converts them.
+## 1. Storage Architecture Overview
 
-The `imageUploads` collection is server-only. Each signature creates a 24-hour pending session bound to the authenticated visitor or active Kiosk identity and the exact public ID. Pass creation validates and atomically claims every upload session. Existing pass idempotency remains valid after a session has been claimed.
+All visitor evidence is stored exclusively in **private Supabase Storage buckets** protected by Row Level Security (RLS) and server-issued upload intents.
 
-`imageUploads.expiresAt` remains only the unclaimed-upload deadline. New visitors receive a creation-time `baseImagesExpireAt` and an effective `imagesExpireAt`. The effective deadline is the later of the configured image-retention deadline or the pass validity end plus a 24-hour safety margin. Rejected, expired-on-scan, and exited new passes return to the stored creation-time base deadline. Policy changes do not rewrite existing deadlines. Legacy records are not silently rewritten; purge independently protects pending, inside, and still-valid issued passes. Expired, missing, and temporarily unavailable images have distinct UI states while visitor/pass metadata remains readable.
+```mermaid
+flowchart TD
+    Browser[Visitor / Kiosk Browser]
+    Vercel[Vercel Serverless API]
+    Storage[(Private Supabase Storage<br/>visitor-evidence Bucket)]
+    DB[(PostgreSQL Database)]
 
-## Access matrix
+    Browser -->|1. Request Upload Intent| Vercel
+    Vercel -->|2. Verify Turnstile & Rate Limits| Vercel
+    Vercel -->|3. Generate Private File Path| Storage
+    Vercel -->>|4. Return Upload Intent| Browser
 
-| Actor | Pending operational image | Historical referenced image | Arbitrary/unreferenced image | Destructive access |
-| --- | --- | --- | --- | --- |
-| Guard | Allowed when an exact gate-pass reference is pending | Denied | Denied | None |
-| Admin | Allowed | Allowed when exactly referenced by an existing record | Denied | None |
-| Super Admin | Allowed | Allowed when exactly referenced by an existing record | Denied | Manual bounded purge only |
-| Visitor / Kiosk | No proxy access | No proxy access | No proxy access | Own unclaimed upload cleanup only |
+    Browser -->|5. Upload Image Directly| Storage
+    Browser -->|6. Submit Pass Registration| Vercel
 
-`AuthenticatedImage` sends its Firebase bearer token in an authorization header, reads the response into a temporary browser object URL, verifies that the response is an image, revokes old object URLs, and has no direct-Cloudinary fallback.
+    Vercel -->|7. Verify Magic Bytes & Size| Storage
+    Vercel -->|8. Record Evidence Metadata| DB
+```
 
-## Cleanup paths
+---
 
-Failed pass creation invokes `/api/cleanup-upload`. That endpoint accepts at most the two expected images and deletes only exact, current-format sessions owned by the caller that remain unclaimed. Claimed images cannot be removed through this path. A failed deletion is marked `cleanup_failed` and produces a server-only reconciliation task.
+## 2. Ingestion Controls & Anti-Abuse Measures
 
-Retention purge is separate. `/api/purge-images` accepts only an authenticated Super Admin or the timing-safe `CRON_SECRET` internal caller. It scans bounded deterministic legacy/current pages, skips active/future passes and pending reconciliation, destroys each asset using its recorded delivery type, and marks a visitor purged only after all referenced deletions succeed. Every visitor deletion failure creates a deterministic reconciliation item; cleanup cursors advance so one blocked record cannot starve later records and cycle back for later review.
+### 2.1 Camera-Only Capture Constraint
+- Valid ID and facial photos must be captured directly from a physical camera stream (MediaDevices API / WebRTC).
+- File upload pickers and photo gallery selection are disabled to prevent upload of pre-recorded, manipulated, or downloaded synthetic images.
 
-## Existing public-asset migration
+### 2.2 Server-Authorized Upload Intents
+- Clients cannot upload arbitrary files directly to Supabase Storage.
+- Before any file can be stored, the client must request an **Upload Intent** from `/api/passes/upload-intent`.
+- The server generates an isolated, unguessable path:
+  ```text
+  evidence/{visitor_id}/{timestamp}_{random_uuid}.jpg
+  ```
+- The intent is valid for a single upload and expires within 15 minutes.
 
-Do not mass-edit Cloudinary or Firestore directly. The `migrate-image-delivery` Function provides a bounded, Super Admin-only transition:
+### 2.3 Server-Side Content & Magic Bytes Validation
+When the pass registration is finalized, the server inspects the uploaded asset:
+- **Maximum File Size**: 5 MB.
+- **Allowed MIME Types**: `image/jpeg`, `image/png`.
+- **Magic Bytes Verification**: Inspects leading header bytes (`FF D8 FF` for JPEG, `89 50 4E 47` for PNG) to prevent disguised executable uploads.
 
-1. Deploy the compatibility code first so the proxy and purge understand both `upload` and `authenticated` assets.
-2. Call the endpoint with `{ "dryRun": true }`. It scans no more than five visitors and returns a `nextCursor`; it does not call Cloudinary or write an audit event.
-3. For an approved live batch, send `{ "dryRun": false, "confirmation": "MIGRATE LEGACY VISITOR IMAGES" }`, adding the returned cursor to the next request.
-4. The Function uses Cloudinary `rename` with `type: upload`, `to_type: authenticated`, and CDN invalidation, then updates the visitor and all bounded pass references.
-5. If Cloudinary and Firestore cannot both be finalized, a server-only reconciliation item identifies the visitor, image field, and required checks. The proxy tries the authenticated namespace for a legacy-metadata miss so a privacy-first partial migration remains viewable by authorized staff.
-6. Review the administrative audit and unresolved reconciliation list between batches. Verify representative migrated assets through `/api/image` and verify their unsigned `/image/authenticated/...` Cloudinary URL is denied.
+---
 
-Migration is required after deployment for existing public assets. No production migration is performed automatically by a deploy, retention run, or Settings change.
+## 3. Storage Privacy & Access Matrix
 
-There is intentionally no generic image DELETE endpoint and no unauthenticated or unrestricted cleanup endpoint. The daily Netlify retention wrapper delegates to the existing `CRON_SECRET`-protected bounded purge; an authorized Super Admin may also run it manually. Required indexes must be deployed before enabling scheduled cleanup.
+The `visitor-evidence` Supabase Storage bucket is marked **Private** (public read access is disabled).
+
+```mermaid
+sequenceDiagram
+    participant Guard as Guard Console
+    participant API as Vercel API
+    participant Storage as Supabase Storage
+
+    Guard->>API: GET /api/guard/evidence/{pass_id}
+    API->>API: Verify Guard Session & Assigned Gate
+    API->>Storage: Generate Short-Lived Signed URL (60 seconds)
+    Storage-->>API: Signed URL
+    API-->>Guard: Render Image in Guard Review Modal
+    Note over Guard: URL expires in 60 seconds; cannot be shared
+```
+
+| Actor | Read Evidence | Upload Intent | Delete Evidence | Authorization Mechanism |
+|---|---|---|---|---|
+| **Anonymous Public** | **DENIED** | Allowed (with Turnstile) | **DENIED** | No public read access |
+| **Visitor** | Self-preview only | Allowed (own pass) | **DENIED** | Session / Upload intent |
+| **Kiosk Device** | Immediate preview | Allowed (kiosk token) | **DENIED** | Device bearer token |
+| **Guard** | Allowed (Pending passes) | **DENIED** | **DENIED** | Short-lived signed URL |
+| **Admin** | Allowed (Audit / Review) | **DENIED** | **DENIED** | Admin session + Signed URL |
+| **Super Admin** | Allowed | **DENIED** | Manual Purge only | Super Admin session |
+| **Retention Cron** | **DENIED** | **DENIED** | Automatic Purge | Service-role cron engine |
+
+---
+
+## 4. Evidence Retention & Purge Lifecycle
+
+In adherence with the Philippine Data Privacy Act (Republic Act No. 10173), photographic evidence is retained only for the minimal operational window required for campus safety.
+
+```mermaid
+stateDiagram-v2
+    [*] --> ActiveEvidence: Uploaded & Linked to Pass
+
+    ActiveEvidence --> EligibleForPurge: Exceeds retention window (Default 7 days)
+
+    EligibleForPurge --> Held: Active incident_hold
+    EligibleForPurge --> Deleted: No incident_hold
+
+    Held --> EligibleForPurge: Incident hold released by Admin
+
+    Deleted --> [*]: Permanently erased from Storage & DB
+```
+
+### Retention Rules:
+1. **Configurable Window**: Super Admins configure photo retention between 1 to 90 days (Default: 7 days).
+2. **Safety Margin**: Active passes (`issued`, `pending_review`, `inside`) retain their evidence regardless of calendar age until formally closed (`exited` or `rejected`).
+3. **Incident Holds**: If a security incident occurs on campus, an Admin or Super Admin flags the record with an **Incident Hold**. Evidence with an active hold is completely immune to automated retention purge until formally released.
+
+---
+
+## 5. Storage Reconciliation & Orphan Cleanup
+
+If a visitor uploads an image but abandons the registration before pass issuance:
+- The upload intent expires after 15 minutes.
+- The daily retention cron identifies unreferenced files in the `evidence/` bucket prefix.
+- Orphaned files are automatically deleted during the 02:00 AM maintenance window.
+- Failed deletions are recorded in `reconciliation_tasks` for operator visibility.

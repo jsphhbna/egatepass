@@ -19,5 +19,5 @@
     "noFallthroughCasesInSwitch": true,
     "forceConsistentCasingInFileNames": true
   },
-  "include": ["vite.config.ts", "netlify"]
+  "include": ["vite.config.ts"]
 }

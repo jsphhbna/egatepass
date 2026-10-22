@@ -3,8 +3,9 @@ node_modules/
 
 # Build output
 dist/
+.vercel/
 
-# Generated email templates bundle (generated at build time from authoritative TSX sources)
+# Build-generated React Email runtime bundle (generated at build time from authoritative TSX sources)
 server/templates/index.js
 server/templates/index.js.map
 
@@ -14,15 +15,6 @@ server/templates/index.js.map
 .env.*.local
 .env.production
 .env.staging
-
-# Firebase
-.firebase/
-firebase-debug.log
-firestore-debug.log
-ui-debug.log
-
-# Netlify
-.netlify/
 
 # IDE
 .vscode/
@@ -42,10 +34,20 @@ npm-debug.log*
 playwright-report/
 test-results/
 
-# AI skills and rules
+# Local-only DevKit and AI working state (preserved locally, untracked in git)
+BUILD_PLAN.md
+PROJECT_STATE.md
+RECOVERY_STATE.md
+DECISIONS.md
+EVIDENCE_LEDGER.md
+DEVKIT_FINDINGS.md
+.devkit/
+.devkit-local/
 .agents/
 GEMINI.md
+AGENTS.md
+v9/
+v10/
 scripts/*
 !scripts/bundle-email-templates.mjs
 !scripts/run-startup-e2e.mjs
-v10/

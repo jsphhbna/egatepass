@@ -1,7 +1,7 @@
 import { defineConfig, devices } from '@playwright/test';
 
 export default defineConfig({
-  testDir: './tests/e2e',
+  testDir: './tests/startup',
   fullyParallel: false,
   forbidOnly: true,
   retries: 0,
@@ -39,11 +39,6 @@ export default defineConfig({
     timeout: 60_000,
     env: {
       ...process.env,
-      VITE_FIREBASE_API_KEY: 'synthetic-local-baseline-key',
-      VITE_FIREBASE_AUTH_DOMAIN: 'localhost',
-      VITE_FIREBASE_PROJECT_ID: 'e-gatepass-c1870',
-      VITE_FIREBASE_APP_ID: 'synthetic-local-baseline-app',
-      VITE_USE_FIREBASE_EMULATORS: 'true',
     },
   },
 });

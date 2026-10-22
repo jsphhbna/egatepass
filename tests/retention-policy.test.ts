@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { DEFAULT_RETENTION_POLICY, normalizeRetentionPolicy } from '../src/lib/retentionPolicy';
-import { isClosedPassStatus, isProtectedAuditAction } from '../netlify/functions/utils/retention-maintenance';
+import { isClosedPassStatus, isProtectedAuditAction } from '../server/routes/admin/retention-maintenance.js';
 
 describe('retention policy compatibility', () => {
   it('uses safe defaults for old empty settings', () => {

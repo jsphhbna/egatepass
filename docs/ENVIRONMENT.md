@@ -1,20 +1,103 @@
-# Environment Configuration
+﻿# Environment Variables Contract
 
-Never commit values. `.env.local` is ignored. Validate presence and format without echoing secrets.
+This document is the authoritative specification for all configuration and secrets across the client, serverless functions, and external integrations in the EARIST E-GatePass platform.
 
-| Name | Scope | Required for | Trust |
-|---|---|---|---|
-| `VITE_SUPABASE_URL` | Browser/build | Supabase client | Public project URL |
-| `VITE_SUPABASE_PUBLISHABLE_KEY` | Browser/build | Supabase client | Public publishable key; not authorization |
-| `VITE_TURNSTILE_SITE_KEY` | Browser/build | Cloudflare Turnstile CAPTCHA on Portal (optional in local dev) | Public site key; not authorization |
-| `SUPABASE_URL` | Vercel server | Privileged/admin operations | Server configuration |
-| `SUPABASE_SECRET_KEY` | Vercel server | Service-role/admin operations | Secret; bypasses RLS |
-| `PASS_TOKEN_SECRET` | Vercel server | HMAC derivation of retry-stable QR bearer values | Secret; minimum 32 characters; never browser-visible |
-| `RESEND_API_KEY` | Vercel server | App transactional email and Supabase Auth email hook | Secret |
-| `RESEND_FROM_EMAIL` | Vercel server | Approved sender identity (alias: `EMAIL_FROM`) | Non-secret address, server-owned |
-| `SEND_EMAIL_HOOK_SECRET` | Vercel server | Verification of Supabase Auth Send Email Hook payloads | Secret; minimum 32 characters |
-| `CRON_SECRET` | Vercel server/scheduler | Authorization for scheduled retention cleanup invocation | Secret |
+> **CRITICAL SECURITY RULE**: Never commit real secret values, credentials, or production tokens into version control. Local overrides belong in `.env.local`, which is strictly ignored by Git.
 
-Legacy Firebase/Cloudinary/Netlify names remain necessary only while their implementations remain active. Their presence does not authorize connecting the modernization target to production legacy resources.
+---
 
-S1 validation found both Supabase URL entries syntactically valid and matching after a private, value-free check. Connectivity, project identity, key validity, and environment ownership remain unverified.
+## 1. Complete Environment Variables Matrix
+
+| Variable | Scope | Secret? | Used By | Required? | Example Format / Notes |
+|---|---|---|---|---|---|
+| `VITE_SUPABASE_URL` | Browser & Vite Build | No | Client application (`src/lib/supabase.ts`) | **Yes** | `https://xyzproject.supabase.co` |
+| `VITE_SUPABASE_PUBLISHABLE_KEY` | Browser & Vite Build | No | Client application (`src/lib/supabase.ts`) | **Yes** | `eyJhbGciOiJIUzI1Ni...` (Supabase anonymous / publishable key) |
+| `VITE_TURNSTILE_SITE_KEY` | Browser & Vite Build | No | Visitor registration Turnstile widget | **Yes** in prod | `0x4AAAAAA...` (Cloudflare Turnstile site key) |
+| `SUPABASE_URL` | Vercel Serverless | No | Node.js API Functions (`server/supabase.ts`) | **Yes** | `https://xyzproject.supabase.co` |
+| `SUPABASE_SECRET_KEY` | Vercel Serverless | **Yes** | Server-side admin client (`server/supabase.ts`) | **Yes** | `eyJhbGciOiJIUzI1Ni...` (Supabase service-role secret; bypasses RLS) |
+| `PASS_TOKEN_SECRET` | Vercel Serverless | **Yes** | QR token generation & HMAC verification (`server/routes/passes/`) | **Yes** | Random alphanumeric string, **minimum 32 characters** |
+| `RESEND_API_KEY` | Vercel Serverless | **Yes** | Transactional email & Auth Email Hook (`server/email.ts`) | **Yes** | `re_abc123_xyz...` |
+| `RESEND_FROM_EMAIL` | Vercel Serverless | No | Sender identity for transactional emails | **Yes** | `EARIST E-GatePass <notifications@egatepass.tech>` |
+| `SEND_EMAIL_HOOK_SECRET` | Vercel Serverless | **Yes** | Supabase Auth Send Email Hook verification | **Yes** | Shared secret configured in Supabase Auth Webhook settings |
+| `CRON_SECRET` | Vercel Serverless | **Yes** | Bearer auth for automated retention maintenance cron | **Yes** | Random alphanumeric string, **minimum 32 characters** |
+| `TURNSTILE_SECRET_KEY` | Vercel Serverless | **Yes** | Server-side Turnstile verification endpoint | **Yes** in prod | `0x4AAAAAA...` (Cloudflare Turnstile server secret key) |
+
+---
+
+## 2. Environment Classification & Trust Boundaries
+
+```mermaid
+flowchart TD
+    subgraph BrowserSafe["Public Browser Environment (Vite Prefix)"]
+        V1[VITE_SUPABASE_URL]
+        V2[VITE_SUPABASE_PUBLISHABLE_KEY]
+        V3[VITE_TURNSTILE_SITE_KEY]
+    end
+
+    subgraph ServerProtected["Protected Server Boundary (Vercel Functions)"]
+        S1[SUPABASE_SECRET_KEY]
+        S2[PASS_TOKEN_SECRET]
+        S3[RESEND_API_KEY]
+        S4[SEND_EMAIL_HOOK_SECRET]
+        S5[CRON_SECRET]
+        S6[TURNSTILE_SECRET_KEY]
+    end
+
+    subgraph ThirdParty["External Services"]
+        Supabase[(Supabase)]
+        Resend[Resend API]
+        Turnstile[Cloudflare API]
+    end
+
+    BrowserSafe -.->|Embedded in JS bundle| Client[Client Browser]
+    ServerProtected -->|Injected at runtime| Vercel[Vercel Serverless Functions]
+
+    Vercel -->|Service-role query| Supabase
+    Vercel -->|POST /emails| Resend
+    Vercel -->|POST /siteverify| Turnstile
+```
+
+### 2.1 Browser-Visible Variables (`VITE_*`)
+- Variables prefixed with `VITE_` are bundled directly into the compiled JavaScript bundle by Vite.
+- They are accessible to anyone inspecting browser network traffic or HTML sources.
+- They must NEVER contain service-role keys, database passwords, or private signing secrets.
+
+### 2.2 Server-Only Secrets
+- Injected exclusively into Vercel Serverless Function execution containers.
+- They are completely invisible to the frontend and are omitted from client bundles.
+- They govern administrative database access, cryptographic signing, webhook authentication, and email dispatch.
+
+---
+
+## 3. Local Development Configuration (`.env.local`)
+
+For local development, create a `.env.local` file at the root of the repository:
+
+```env
+# Client Configuration
+VITE_SUPABASE_URL=http://127.0.0.1:54321
+VITE_SUPABASE_PUBLISHABLE_KEY=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.your-local-anon-key
+VITE_TURNSTILE_SITE_KEY=1x00000000000000000000AA
+
+# Server Configuration
+SUPABASE_URL=http://127.0.0.1:54321
+SUPABASE_SECRET_KEY=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.your-local-service-role-key
+PASS_TOKEN_SECRET=local-development-pass-token-secret-minimum-32-chars-long
+RESEND_API_KEY=re_local_dummy_key_for_testing
+RESEND_FROM_EMAIL="EARIST E-GatePass <notifications@egatepass.tech>"
+SEND_EMAIL_HOOK_SECRET=local-development-send-email-hook-secret-minimum-32-chars
+CRON_SECRET=local-development-cron-secret-minimum-32-chars
+TURNSTILE_SECRET_KEY=1x0000000000000000000000000000000AA
+```
+
+---
+
+## 4. Production Secret Rotation Guidelines
+
+1. **`PASS_TOKEN_SECRET`**:
+   - Because QR pass bearer tokens are hashed with HMAC, rotating this secret invalidates all unconsumed passes issued prior to rotation. Rotate only during scheduled maintenance windows.
+2. **`SEND_EMAIL_HOOK_SECRET`**:
+   - Update in Supabase Auth Webhook settings simultaneously with Vercel environment variables.
+3. **`SUPABASE_SECRET_KEY`**:
+   - Regenerate in the Supabase Dashboard under **Project Settings > API > JWT Secrets**.
+   - Update in Vercel environment variables and redeploy immediately.

@@ -1,44 +1,98 @@
-# First Super Admin Bootstrap
+﻿# First Super Admin Bootstrap Runbook
 
-E-GatePass intentionally has no public or application-accessible bootstrap endpoint. Establish the first Super Admin through authorized Firebase administration using one explicitly selected account. This is used for a fresh database, when no active Super Admin exists, or after an approved clean handoff.
+E-GatePass intentionally exposes no public registration or administrative promotion endpoint for the initial Super Admin. This runbook details the secure, one-time bootstrap procedure using the PostgreSQL `private.bootstrap_super_admin` RPC function in Supabase.
 
-## Preconditions
+---
 
-- You must be an authorized Firebase project owner or administrator.
-- Create or select one legitimate Firebase Authentication account and ensure it has a matching `users/{uid}` Firestore document.
-- Confirm the account is active and email-verified where required. When promoting an existing account, confirm its current role is exactly `admin`.
-- Do not promote every existing Admin.
+## 1. Lifecycle of the Bootstrap Process
 
-## One-time procedure
+```mermaid
+flowchart TD
+    Auth[1. Create Initial Auth User in Supabase Dashboard]
+    UUID[2. Copy User UUID from Authentication Tab]
+    Bootstrap[3. Run private.bootstrap_super_admin in SQL Editor]
+    BootstrapSA[4. Initial Bootstrap Super Admin Established]
+    Institution[5. Log in & Create Institutional Admin Profile]
+    Promote[6. Promote Institutional Admin to Super Admin]
+    Verify[7. Verify Institutional Super Admin Login]
+    Disable[8. Disable / Delete Developer Bootstrap Identity]
 
-1. Open the Firebase Console for the correct E-GatePass project.
-2. Open **Authentication > Users**, locate the chosen Admin by exact email address, and copy the account UID.
-3. Open **Firestore Database > Data > users > {copied UID}**.
-4. Verify all of the following before editing:
-   - The document ID exactly matches the Authentication UID.
-   - `email` matches the selected Authentication account.
-   - `active` is `true`.
-   - `role` is exactly `admin`.
-5. Edit only the `role` field, changing its string value from `admin` to `superadmin`, then save.
-6. Create one document with an automatically generated ID in `auditLogs` containing:
-   - `actorUid`: `manual-bootstrap`
-   - `actorRole`: `system`
-   - `targetUid`: the selected account UID
-   - `target`: `users/{selected account UID}`
-   - `previousRole`: `admin`
-   - `newRole`: `superadmin`
-   - `previousActive`: `true`
-   - `newActive`: `true`
-   - `action`: `initial_superadmin_bootstrapped`
-   - `details`: a short change-ticket or authorization reference; do not include passwords or secrets
-   - `timestamp`: the current Firestore timestamp
-7. Have the selected user sign out and sign in again, then verify that the Admin portal identifies the account as **Super Admin**.
-8. Verify that at least one active Super Admin remains before later demoting or deactivating any Super Admin.
+    Auth --> UUID
+    UUID --> Bootstrap
+    Bootstrap --> BootstrapSA
+    BootstrapSA --> Institution
+    Institution --> Promote
+    Promote --> Verify
+    Verify --> Disable
+```
 
-After this one-time bootstrap, use the protected user-management controls for role and activation changes. Direct browser writes are denied by Firestore rules, and the backend prevents removal of the final active Super Admin.
+---
 
-## Recovery
+## 2. Invariants & Security Boundaries
 
-If every Super Admin is accidentally lost through an out-of-band console change, repeat this manual procedure for one explicitly authorized active Admin and record a new bootstrap/recovery audit event. Never add a temporary public endpoint or client-side bypass.
+1. **Strict Table Boundary**:
+   - The `staff_profiles` table rejects direct client-side insertions of `superadmin` roles via RLS policies.
+   - Normal staff creation (`POST /api/admin/staff`) requires an existing active Super Admin session and can only create `admin` or `guard` accounts.
+2. **One-Time Bootstrap Constraint**:
+   - The PostgreSQL RPC `private.bootstrap_super_admin(target_user_id uuid, admin_name text)` contains an explicit defensive check:
+     ```sql
+     IF EXISTS (SELECT 1 FROM staff_profiles WHERE role = 'superadmin' AND is_active = true) THEN
+         RAISE EXCEPTION 'Active Super Admin already exists. Bootstrap procedure locked.';
+     END IF;
+     ```
+   - This ensures the bootstrap function cannot be abused to hijack an established production deployment.
+3. **Last Active Super Admin Protection**:
+   - Once established, the system strictly prevents demoting, deactivating, or deleting the last active Super Admin.
 
-Do not promote arbitrary users. After recovery, verify sign-in, ordinary Admin capabilities, Super Admin controls, and that at least one active Super Admin remains.
+---
+
+## 3. Step-by-Step Execution Guide
+
+### Step 1: Create Supabase Auth Account
+1. Open the **Supabase Dashboard** for the production project.
+2. Navigate to **Authentication > Users**.
+3. Click **Add User > Create User**.
+4. Enter the authorized administrative email (e.g. `sysadmin-bootstrap@earist.edu.ph`) and a strong, temporary password.
+5. Check **Auto Confirm User?** so email verification is immediately satisfied.
+6. Click **Create User**.
+
+### Step 2: Retrieve User UUID
+1. In the **Users** table, locate the newly created user.
+2. Click the copy icon next to the **User UID** column (e.g. `a1b2c3d4-e5f6-7890-abcd-ef1234567890`).
+
+### Step 3: Execute `private.bootstrap_super_admin` in SQL Editor
+1. In the Supabase Dashboard, open the **SQL Editor**.
+2. Run the following parameterised SQL query:
+
+```sql
+SELECT private.bootstrap_super_admin(
+    'a1b2c3d4-e5f6-7890-abcd-ef1234567890'::uuid,
+    'System Administrator (Initial Bootstrap)'
+);
+```
+
+3. Confirm the output:
+```text
+Success: User a1b2c3d4-e5f6-7890-abcd-ef1234567890 bootstrapped as Super Admin.
+```
+
+### Step 4: Log into Admin Portal & Verify Access
+1. Open `https://egatepass.tech/login`.
+2. Enter the bootstrap credentials.
+3. Confirm successful login and redirect to the **Super Admin Dashboard**.
+4. Verify full access to **Staff Management**, **Device Management**, and **System Settings**.
+
+### Step 5: Transfer Ownership to Institutional Staff
+1. In **Staff Management**, click **Add Staff Member**.
+2. Enter the official email of the permanent EARIST institutional administrator (e.g. `ict.director@earist.edu.ph`).
+3. Set role to `Admin` and send the invitation.
+4. Have the institutional owner complete their password setup.
+5. In **Staff Management**, promote the institutional account to `Super Admin`.
+6. Log out of the bootstrap account and log in with the new institutional Super Admin account.
+
+### Step 6: Decommission Bootstrap Account
+1. While logged in as the institutional Super Admin:
+   - Navigate to **Staff Management**.
+   - Deactivate the temporary bootstrap account (`sysadmin-bootstrap@earist.edu.ph`).
+2. In Supabase Dashboard > Authentication > Users, delete or disable the bootstrap auth user.
+3. The institutional team now maintains permanent, sovereign control of the system.

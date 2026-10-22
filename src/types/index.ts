@@ -37,7 +37,7 @@ export type VisitLogEvent =
   | 'scan_exit';
 
 /* ============================================================
-   FIRESTORE DOCUMENT TYPES
+   DOMAIN ENTITY TYPES
    ============================================================ */
 export interface Visitor {
   fullName: string;

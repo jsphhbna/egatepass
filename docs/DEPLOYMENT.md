@@ -1,56 +1,213 @@
-# Deployment Guide
+﻿# Production Deployment Guide
 
-## Before deployment
+This guide details the production deployment architecture and step-by-step procedures for the EARIST E-GatePass platform.
 
-Verify `git status`, the intended branch (`main` for production), `git rev-parse HEAD`, Netlify login/site link, and required environment variable names. Record the pre-release rollback commit and exclude `.tmp/` artifacts.
+---
 
-```bash
-npm test
-npm run build
-npx tsc --noEmit
-npm run typecheck:functions
-git diff --check
-npm audit
-npm ls firebase-admin jwks-rsa jose
+## 1. System Deployment Architecture
+
+EARIST E-GatePass runs entirely across four production platforms:
+- **Vercel**: Edge/Frontend CDN hosting and Node.js 24 Serverless API Functions.
+- **Supabase**: PostgreSQL database, Row Level Security (RLS), Supabase Auth, and private Object Storage.
+- **Resend**: Transactional email delivery service.
+- **Cloudflare**: DNS and Turnstile bot protection.
+
+```mermaid
+flowchart TD
+    Code[GitHub main Branch]
+    Vercel[Vercel CI/CD Build]
+    Templates[Step 1: Build React Email Bundle<br/>scripts/bundle-email-templates.mjs]
+    Frontend[Step 2: Build Vite Frontend<br/>dist/]
+    Functions[Step 3: Bundle Node 24 Functions<br/>api/ + server/]
+    Deploy[Production Deployment<br/>egatepass.tech]
+
+    DB[Supabase Migrations<br/>supabase/migrations/]
+    Auth[Supabase Auth Configuration<br/>Send Email Hook Webhook]
+    Resend[Resend Domain / Sender<br/>notifications@egatepass.tech]
+    Turnstile[Cloudflare Turnstile<br/>Site Key + Secret Key]
+
+    Code --> Vercel
+    Vercel --> Templates
+    Templates --> Functions
+    Vercel --> Frontend
+    Vercel --> Functions
+
+    Templates --> Deploy
+    Frontend --> Deploy
+    Functions --> Deploy
+
+    DB -.->|Schema Applied| Deploy
+    Auth -.->|Auth Hook Configured| Deploy
+    Resend -.->|Domain Verified| Deploy
+    Turnstile -.->|Keys Configured| Deploy
 ```
 
-Review audit findings; never run `npm audit fix --force`. Incompatible dependency changes require deliberate testing.
+---
 
-## Netlify production environment
+## 2. Pre-Deployment Checklist
 
-Use [Environment and Scheduled Cleanup Handoff](ENVIRONMENT_AND_CRON.md) for setup and rotation detail. Do not print or commit values.
+Before merging to `main` or triggering a production deployment:
 
-| Variable | Purpose | Classification | Required in production? | Where configured | Safe in browser? | Notes |
-| --- | --- | --- | --- | --- | --- | --- |
-| `VITE_FIREBASE_API_KEY` | Firebase client config | Public client config | Yes | Netlify environment | Yes | Deliberately browser-visible. |
-| `VITE_FIREBASE_AUTH_DOMAIN` | Firebase client config | Public client config | Yes | Netlify environment | Yes | Deliberately browser-visible. |
-| `VITE_FIREBASE_PROJECT_ID` | Firebase client config | Public client config | Yes | Netlify environment | Yes | Deliberately browser-visible. |
-| `VITE_FIREBASE_APP_ID` | Firebase client config | Public client config | Yes | Netlify environment | Yes | Deliberately browser-visible. |
-| `FIREBASE_PROJECT_ID` | Firebase Admin project selection | Server configuration | Yes | Netlify environment | No | Used by Functions. |
-| `FIREBASE_CLIENT_EMAIL` | Firebase Admin service account | Server credential material | Yes | Netlify environment | No | Keep with the private key. |
-| `FIREBASE_PRIVATE_KEY` | Firebase Admin credential | Server secret | Yes | Netlify environment | No | Never source-control. |
-| `CLOUDINARY_CLOUD_NAME` | Cloudinary account selection | Server configuration | Yes | Netlify environment | No | Not a destructive secret. |
-| `CLOUDINARY_API_KEY` | Cloudinary service identifier | Server configuration | Yes | Netlify environment | No | Not the destructive secret. |
-| `CLOUDINARY_API_SECRET` | Cloudinary destructive API credential | Server secret | Yes | Netlify environment | No | Never browser-visible. |
-| `CRON_SECRET` | Internal scheduled-cleanup authorization | Server secret | Yes, when automatic cleanup is enabled | Netlify environment | No | Rotate without code changes. |
-| `AWS_LAMBDA_JS_RUNTIME` | Function runtime | Build/runtime configuration | Yes | `netlify.toml` | N/A | Value: `nodejs24.x`; Netlify UI must not conflict. |
-| `NODE_OPTIONS` | Node compatibility option | Build/runtime configuration | Yes | `netlify.toml` | N/A | Value: `--experimental-require-module`; do not remove without testing. |
-| `VITE_USE_FIREBASE_EMULATORS` | Opt-in local client emulators | Development only | No | Local ignored file | No | Must be unset or `false` in production. |
-| `FIREBASE_AUTH_EMULATOR_HOST`, `FIRESTORE_EMULATOR_HOST`, `GCLOUD_PROJECT` | Local test/emulator setup | Development only | No | Test/local environment | No | Never use emulator hosts in production. |
+1. **Working Tree and Commit Status**:
+   - Ensure git working tree is clean.
+   - Verify `git status` and record the pre-release commit SHA:
+     ```bash
+     git rev-parse HEAD
+     ```
+2. **Local Validation**:
+   - Run typechecking and tests:
+     ```bash
+     npm run typecheck:api
+     npm run build
+     npm test
+     ```
+3. **Vercel Production Trace Simulation**:
+   - Verify file tracing and bundling succeed without missing modules:
+     ```bash
+     vercel build --prod
+     ```
+   - Confirm `.vercel/output/functions/api/auth/[...route].func/server/templates/index.js` was generated and contains all 9 templates.
 
-## Firestore and Netlify
+---
 
-Project: `e-gatepass-c1870`.
+## 3. Environment Variables Configuration
 
-```bash
-npx firebase-tools@13.10.0 deploy --only firestore:indexes --project e-gatepass-c1870
-npx firebase-tools@13.10.0 deploy --only firestore:rules --project e-gatepass-c1870
+Set these environment variables in your Vercel Project Settings (**Settings > Environment Variables**):
+
+| Variable | Scope | Secret? | Purpose / Value Description |
+|---|---|---|---|
+| `VITE_SUPABASE_URL` | Production, Preview, Dev | No | Supabase public API endpoint (e.g. `https://xyz.supabase.co`) |
+| `VITE_SUPABASE_PUBLISHABLE_KEY` | Production, Preview, Dev | No | Supabase publishable anonymous key |
+| `VITE_TURNSTILE_SITE_KEY` | Production, Preview, Dev | No | Cloudflare Turnstile public widget site key |
+| `SUPABASE_URL` | Production, Preview, Dev | No | Supabase server URL (same as `VITE_SUPABASE_URL`) |
+| `SUPABASE_SECRET_KEY` | Production, Preview | **Yes** | Supabase service-role key (bypasses RLS for privileged backend operations) |
+| `PASS_TOKEN_SECRET` | Production, Preview | **Yes** | Cryptographic secret (min 32 chars) for HMAC signing of QR pass bearers |
+| `RESEND_API_KEY` | Production, Preview | **Yes** | API key from Resend dashboard (`re_...`) |
+| `RESEND_FROM_EMAIL` | Production, Preview | No | Authoritative sender address: `EARIST E-GatePass <notifications@egatepass.tech>` |
+| `SEND_EMAIL_HOOK_SECRET` | Production, Preview | **Yes** | Secret for Supabase Auth Standard Webhook signature verification |
+| `CRON_SECRET` | Production, Preview | **Yes** | Shared bearer secret for authenticating automated cron maintenance tasks |
+
+---
+
+## 4. Supabase Database Migrations
+
+Database migrations are stored in `supabase/migrations/` and must be applied in sequential order.
+
+### Migration Order
+
+```mermaid
+flowchart TD
+    M1[20261020000001_core_schema.sql<br/>Initial Core Tables & Enums]
+    M2[20261020000002_rls_policies.sql<br/>Row Level Security Policies]
+    M3[20261020000003_storage_buckets.sql<br/>Private Storage Buckets & Policies]
+    M4[20261021000001_indexes_and_optimizations.sql<br/>Performance & Operational Indexes]
+    M5[20261021000002_bootstrap_super_admin.sql<br/>private.bootstrap_super_admin RPC]
+    M6[20261021155132_service_role_backend_table_grants.sql<br/>Backend Privileges & Grants]
+
+    M1 --> M2
+    M2 --> M3
+    M3 --> M4
+    M4 --> M5
+    M5 --> M6
 ```
 
-Deploy indexes first and wait for required indexes to be **READY**, including `imageUploads(status ASC, expiresAt ASC)`, `visitors(imagesPurgedAt ASC, imagesExpireAt ASC)`, and `reconciliationTasks(status ASC, createdAt ASC)`. Deploy rules near application cutover. Push the reviewed commit to `main` without force-pushing, then verify Netlify auto-deploy, build/functions, and runtime logs. Node 24 plus `NODE_OPTIONS=--experimental-require-module` and the known `firebase-admin@14.5.0` / `jwks-rsa@4.1.0` / `jose@6.2.12` chain are required. `CRON_SECRET` is required by scheduled retention. Secret scanning stays enabled; `SECRETS_SCAN_OMIT_KEYS` omits only the four public Firebase `VITE_*` values, never server secrets.
+### Applying Migrations
+- **Via Supabase CLI**:
+  ```bash
+  supabase db push
+  ```
+- **Via Supabase Dashboard**:
+  Execute SQL files sequentially in the **SQL Editor** of the production Supabase project.
 
-## Rollback and smoke test
+---
 
-Netlify can redeploy a prior successful deploy; Firestore rules can be redeployed from a reviewed prior commit. Index creation is asynchronous. Auth password changes, account deletion, and Cloudinary deletion are not generally reversible.
+## 5. Supabase Auth Send Email Hook Configuration
 
-Smoke test public flow, Admin, Super Admin, Guard, Kiosk, Entry, Exit, and one authorized controlled lifecycle: issue → entry → Guard decision → inside → exit. Inspect Netlify logs, Firestore permission errors, index status, and Cloudinary failures.
+The system uses a Supabase Auth Send Email Hook to route all system emails through Resend using our custom React Email templates.
+
+1. Navigate to **Authentication > Hooks** in the Supabase Dashboard.
+2. Select **Send Email** hook.
+3. Configure Hook details:
+   - **Hook Type**: `HTTP Webhook`
+   - **Endpoint URL**: `https://egatepass.tech/api/auth/send-email-hook`
+   - **HTTP Method**: `POST`
+   - **Secret**: Set to the exact same value as `SEND_EMAIL_HOOK_SECRET` configured in Vercel.
+4. Supabase Auth will sign all incoming webhook requests with standard webhook headers (`webhook-id`, `webhook-timestamp`, `webhook-signature`), which `server/auth-email-hook.ts` validates before dispatching.
+
+---
+
+## 6. Email Delivery & Sender Setup (Resend)
+
+1. Verify domain `egatepass.tech` in the Resend dashboard:
+   - Configure SPF, DKIM, and DMARC TXT records in Cloudflare DNS.
+   - Wait for domain status: **Verified**.
+2. Set sender email to:
+   ```text
+   EARIST E-GatePass <notifications@egatepass.tech>
+   ```
+3. Test delivery through automated tests or an administrative test invite.
+
+---
+
+## 7. Cloudflare Turnstile Configuration
+
+1. In the Cloudflare Dashboard, navigate to **Turnstile Sites**.
+2. Add `egatepass.tech` and localhost development origins.
+3. Choose **Managed** mode.
+4. Copy the **Site Key** to `VITE_TURNSTILE_SITE_KEY` and the **Secret Key** to `TURNSTILE_SECRET_KEY` in Vercel.
+
+---
+
+## 8. Post-Deployment Smoke Test Runbook
+
+Immediately after deployment:
+
+1. **Public Landing & Security Headers**:
+   - Visit `https://egatepass.tech`.
+   - Verify `Strict-Transport-Security`, `Content-Security-Policy`, and other security headers are returned.
+2. **Visitor Registration**:
+   - Register a visitor pass on the public portal.
+   - Complete Turnstile verification.
+   - Capture a photo and valid ID (camera-only).
+   - Confirm pass issuance displays the QR code.
+3. **Device / Staff Authentication**:
+   - Log into a scanner device account (e.g. Entry scanner).
+   - Log into an Admin account.
+4. **Auth Email Hook Test**:
+   - Send an admin invite or password reset.
+   - Verify recipient receives an email branded with EARIST logo within seconds.
+5. **Vercel Function Logs**:
+   - Check Vercel Function logs for `/api/auth/send-email-hook` and confirm HTTP 200 responses with zero `ERR_MODULE_NOT_FOUND` errors.
+
+---
+
+## 9. Rollback Procedure
+
+If a critical production defect is detected:
+
+```mermaid
+flowchart TD
+    Detect[Production Alert / Incident Detected]
+    Evaluate{Is DB schema backward compatible?}
+    VercelRollback[Promote Previous Vercel Deployment in Dashboard]
+    GitRevert[git revert HEAD + git push origin main]
+    DBRollback[Execute Targeted Reversal SQL Migration]
+
+    Detect --> Evaluate
+    Evaluate -->|Yes| VercelRollback
+    Evaluate -->|No| DBRollback
+    DBRollback --> VercelRollback
+    VercelRollback --> GitRevert
+```
+
+1. **Instant Frontend/API Rollback**:
+   - In the Vercel Dashboard, go to **Deployments**.
+   - Select the previous stable deployment and click **Redeploy / Assign Domain**. Instant traffic switchover takes < 5 seconds.
+2. **Git Synchronization**:
+   - Revert the problematic commit locally:
+     ```bash
+     git revert <bad-commit-sha>
+     git push origin main
+     ```
+3. **Database Safeguard**:
+   - Production migrations must always be written in a backward-compatible manner (expand-contract pattern) so older API versions continue to function.
