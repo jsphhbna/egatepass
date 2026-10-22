@@ -32,11 +32,11 @@ flowchart TD
 
 1. **Strict Table Boundary**:
    - The `staff_profiles` table rejects direct client-side insertions of `superadmin` roles via RLS policies.
-   - Normal staff creation (`POST /api/admin/staff`) requires an existing active Super Admin session and can only create `admin` or `guard` accounts.
+   - Normal staff creation (`POST /api/create-user`) requires an existing active Super Admin session and can only create `admin` or `guard` accounts.
 2. **One-Time Bootstrap Constraint**:
    - The PostgreSQL RPC `private.bootstrap_super_admin(target_user_id uuid, admin_name text)` contains an explicit defensive check:
      ```sql
-     IF EXISTS (SELECT 1 FROM staff_profiles WHERE role = 'superadmin' AND is_active = true) THEN
+     IF EXISTS (SELECT 1 FROM staff_profiles WHERE role = 'superadmin' AND active = true) THEN
          RAISE EXCEPTION 'Active Super Admin already exists. Bootstrap procedure locked.';
      END IF;
      ```
@@ -62,7 +62,7 @@ flowchart TD
 
 ### Step 3: Execute `private.bootstrap_super_admin` in SQL Editor
 1. In the Supabase Dashboard, open the **SQL Editor**.
-2. Run the following parameterised SQL query:
+2. Run the following parameterized SQL query:
 
 ```sql
 SELECT private.bootstrap_super_admin(

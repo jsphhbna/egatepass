@@ -25,21 +25,21 @@ flowchart TD
 ### 1.1 Staff Account Management
 
 #### Creating a Staff User
-1. Navigate to **Admin Dashboard > Staff Management**.
+1. Navigate to **Admin Dashboard > Staff Management** (`/admin/users`).
 2. Click **Add Staff Member**.
-3. Enter legal name, official EARIST email address, and select role (`Guard` or `Admin`).
-4. The server creates the Supabase Auth identity, inserts the `staff_profiles` row, and triggers an automated invite email via Resend.
+3. Enter legal name, official EARIST email address, and select role (`guard` or `admin`).
+4. The serverless route `POST /api/create-user` creates the Supabase Auth identity, inserts the `staff_profiles` row, and triggers an automated invite email via Resend.
 5. The staff member clicks the secure link in their email to set their initial password.
 
 #### Staff Deactivation & Re-activation
 - To suspend access, click **Deactivate** on the user row.
-- The server sets `staff_profiles.is_active = false`.
+- The serverless route `POST /api/update-user` sets `staff_profiles.active = false`.
 - Any subsequent API request by that user is immediately rejected with HTTP 403.
-- Historical audit and visit records remain attributed to the deactivated user.
+- Historical audit events and visit records remain attributed to the user.
 
 #### Super Admin Promotion & Last Super Admin Safeguard
 - Only an active Super Admin can promote an existing Admin to Super Admin.
-- The system enforces a strict invariant in `server/routes/admin/staff.ts`: **The last active Super Admin can NEVER be deactivated, demoted, or deleted**. Any attempt will be blocked with an explicit error.
+- The system enforces a strict invariant in `server/routes/admin/users.ts` and database triggers: **The last active Super Admin can NEVER be deactivated, demoted, or deleted**. Any attempt is blocked with an explicit error.
 
 ---
 
@@ -49,29 +49,29 @@ Dedicated gate hardware (Kiosks, Entry Scanners, Exit Scanners) run authenticate
 
 ```mermaid
 flowchart LR
-    Admin[Admin] -->|Register Device| API[Vercel API]
-    API -->|Generate Credentials| DB[(Supabase DB)]
+    Admin[Admin] -->|POST /api/create-device| API[Vercel API]
+    API -->|Insert Record| DB[(Supabase DB: devices)]
     DB -->|Device Record| Device[Physical Scanner / Tablet]
-    Admin -->|Revoke Device| API
-    API -->|Set is_active=false| DB
+    Admin -->|DELETE /api/delete-device| API
+    API -->|Set deleted_at = now()| DB
 ```
 
 #### Device Registration
-1. In **Admin Dashboard > Device Management**, click **Register New Device**.
+1. In **Admin Dashboard > Device Management** (`/admin/devices`), click **Register New Device**.
 2. Specify Device Name, Type (`entry`, `exit`, `kiosk`), and Gate identifier (e.g. `Main Gate`).
 3. Note the generated device credentials.
-4. On the physical device (e.g. Samsung tablet or scanner), log into `/device/login`.
+4. On the physical device (e.g. tablet or scanner), log into `/device/login`.
 
 #### Device Revocation
 - If a device is lost, stolen, or decommissioned, an Admin clicks **Revoke**.
-- The device status is set to `is_active = false`, instantly invalidating its session and preventing further scans.
+- The serverless endpoint `DELETE /api/delete-device` sets `deleted_at = now()` and updates status, instantly invalidating its session and preventing further scans.
 
 ---
 
 ## 2. Daily Visitor & Gate Workflows
 
 ### 2.1 Visitor Portal & Kiosk Registration
-- **Online Visitors**: Access `https://egatepass.tech`, solve Turnstile, fill out personal and visit details, capture camera-only photo and valid ID, and obtain an issued pass with a cryptographically signed QR code.
+- **Online Visitors**: Access `https://egatepass.tech`, solve Turnstile, fill out personal and visit details within the scheduling window (default 30 days ahead), capture camera-only photo and valid ID, and obtain an issued pass with a cryptographically signed QR code.
 - **Walk-in Visitors (Kiosk)**: Use the campus kiosk tablet. Rear camera captures the visitor's valid ID, local Tesseract OCR extracts information for review, front camera captures a selfie, and a QR pass is displayed and printed.
 
 ### 2.2 Gate Entry, Guard Review, and Exit Sequence
@@ -86,25 +86,27 @@ sequenceDiagram
     participant X as Exit Device
 
     V->>E: Present QR Code
-    E->>API: POST /api/passes/scan (type: entry)
-    API->>DB: Hash bearer & lookup digest
-    DB-->>API: Valid Issued Pass
-    API->>DB: Transition status -> pending_review
+    E->>API: POST /api/scan-pass (mode: entry)
+    API->>DB: RPC api.scan_pass (match token_digest & gate)
+    DB-->>API: Valid issued pass
+    API->>DB: Transition status -> pending
     API-->>E: Status: Pending Guard Review
 
-    G->>API: GET /api/guard/pending
-    API-->>G: Visitor details, photo, and ID evidence
-    G->>API: POST /api/passes/decide (approve / reject)
-    API->>DB: Atomic transition status -> inside (or rejected)
+    G->>DB: RPC api.guard_dashboard (fetch pending queue)
+    DB-->>G: Visitor details & evidence IDs
+    G->>API: GET /api/evidence?id=<evidence_id>
+    API-->>G: Stream photo evidence securely
+    G->>API: POST /api/decide-visit { passId, decision: 'approved' | 'rejected' }
+    API->>DB: RPC api.decide_visit (atomic transition to inside/rejected)
     DB-->>G: Decision confirmed
 
     Note over V,G: Visitor completes on-campus business
 
     V->>X: Present QR Code at gate exit
-    X->>API: POST /api/passes/scan (type: exit)
-    API->>DB: Verify status == inside
+    X->>API: POST /api/scan-pass (mode: exit)
+    API->>DB: RPC api.scan_pass (verify status == inside)
     API->>DB: Atomic transition status -> exited
-    DB-->>X: Exit approved. Gate opens.
+    DB-->>X: Exit verified. Gate opens.
 ```
 
 ---
@@ -116,29 +118,29 @@ In the event of an investigation, theft, or security incident on campus, securit
 ```mermaid
 flowchart TD
     Incident[Security Incident Occurs] --> Staff[Admin / Super Admin]
-    Staff -->|Select Visitor / Pass| HoldAction[Enable Incident Hold]
-    HoldAction --> DB[(visitor_holds Table)]
-    DB --> HoldStatus[incident_hold = true]
+    Staff -->|Select Visitor / Pass| HoldAction[Enable Incident Hold<br/>POST /api/admin/holds]
+    HoldAction --> DB[(public.incident_holds Table)]
+    DB --> HoldStatus[active = true]
 
-    RetentionCron[Daily Retention Cleanup] --> CheckHold{incident_hold == true?}
+    RetentionEngine[Retention Maintenance<br/>/api/admin/retention-maintenance] --> CheckHold{active hold exists?}
     CheckHold -->|Yes| Skip[Retain Evidence Indefinitely]
-    CheckHold -->|No| Purge[Purge Expired Storage & Metadata]
+    CheckHold -->|No| Purge[Purge Storage Object & Mark purged_at]
 
-    Staff -->|Investigation Closed| ReleaseHold[Release Incident Hold]
+    Staff -->|Investigation Closed| ReleaseHold[Release Incident Hold<br/>PATCH /api/admin/holds]
     ReleaseHold --> CheckHold
 ```
 
-1. Navigate to **Admin Dashboard > Visitor Records**.
+1. Navigate to **Admin Dashboard > Visitor Records** or **Incident Holds** (`/admin/holds`).
 2. Find the visitor or pass under investigation and click **Place Incident Hold**.
 3. Enter the official incident case number and reason.
-4. While the hold is active, automated retention cleanup is suspended for that visitor's records, photos, and ID evidence regardless of age.
-5. When cleared, click **Release Hold** to return the record to standard retention rules.
+4. While the hold is active (`active = true`), retention maintenance is suspended for that visitor's records, photos, and ID evidence regardless of age.
+5. When cleared, release the hold to return the record to standard retention rules.
 
 ---
 
 ## 4. Retention Maintenance Operations
 
-Retention policies comply with Philippine Data Privacy Act (DPA) requirements to minimize unnecessary storage of visitor personal data and biometric photos.
+Retention policies are designed to support data-minimization and retention practices relevant to the Philippine Data Privacy Act of 2012 (RA 10173).
 
 ### Configurable Retention Windows (Super Admin only):
 - **Visitor Records**: Default 30 days (Range: 7 to 365 days).
@@ -147,18 +149,23 @@ Retention policies comply with Philippine Data Privacy Act (DPA) requirements to
 - **Resolved Reconciliation Tasks**: Default 90 days (Range: 30 to 365 days).
 
 ### Running Retention Maintenance
-- **Automated**: Vercel Cron triggers daily with bearer `CRON_SECRET`.
-- **Manual Execution**:
-  A Super Admin can trigger immediate maintenance from the admin dashboard or via authenticated terminal command:
+- **Execution**: The endpoint `GET/POST /api/admin/retention-maintenance` supports invocation with `Authorization: Bearer <CRON_SECRET>` or an authorized Super Admin session.
+- **Manual Execution via Terminal**:
   ```bash
-  curl -X POST https://egatepass.tech/api/cron/retention-maintenance \
-    -H "Authorization: Bearer <CRON_SECRET>"
+  curl -X POST https://egatepass.tech/api/admin/retention-maintenance \
+    -H "Authorization: Bearer <CRON_SECRET>" \
+    -H "Content-Type: application/json" \
+    -d '{"batchSize": 50, "dryRun": false}'
   ```
 - **Safety Invariants**:
-  - Passes in status `pending_review` or `inside` are NEVER purged.
+  - Passes in status `pending` or `inside` are NEVER purged.
   - Active passes that have not expired are NEVER purged.
-  - Any record with an active `incident_hold` is NEVER purged.
-  - Protected audit events (security violations, role changes, credential updates) are NEVER automatically purged.
+  - Any record with an active row in `public.incident_holds` is NEVER purged.
+  - Protected audit events are NEVER automatically purged:
+    `initial_superadmin_bootstrapped`, `superadmin_created`, `admin_created`, `admin_deleted`,
+    `device_registered`, `device_deleted`, `settings_updated`, `device_credentials_updated`,
+    `user_role_and_status_changed`, `user_role_changed`, `user_reactivated`, `user_deactivated`,
+    `maintenance.retention_run`, `security_hold_created`, `security_hold_released`.
 
 ---
 
@@ -169,7 +176,7 @@ When an operation touches multiple external boundaries (e.g. Supabase Auth, Stor
 ```mermaid
 flowchart TD
     Err[Partial Failure Detected] --> Record[Insert into reconciliation_tasks]
-    Record --> SAView[Super Admin Reconciliation Console]
+    Record --> SAView[Super Admin Reconciliation View<br/>GET /api/reconciliation-items]
     SAView --> Inspect[Inspect Error Details]
     Inspect --> Action{Resolution Method}
     Action -->|Retry Action| Retry[Re-execute Task]
@@ -178,7 +185,7 @@ flowchart TD
 ```
 
 1. Open **Super Admin Dashboard > Reconciliation**.
-2. Review pending or failed tasks.
+2. Review pending or failed tasks via `GET /api/reconciliation-items`.
 3. Click **Details** to see the service boundary, payload reference, and error trace.
 4. Choose **Retry** to re-dispatch the external call, or **Resolve** once manual corrections are in place.
 
@@ -197,4 +204,4 @@ If a staff member or visitor reports non-receipt of an email:
 3. **Check Recipient Spam / Quarantine**:
    - Some institutional mail systems quarantine external notifications; ensure `notifications@egatepass.tech` is allowlisted.
 4. **Resend Delivery Activity**:
-   - Inspect the Resend Logs tab to view delivery status (Delivered, Bounced, or Complained).
+   - Inspect the Resend Logs tab to view delivery status (`Delivered`, `Bounced`, or `Complained`).

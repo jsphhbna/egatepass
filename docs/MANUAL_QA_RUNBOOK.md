@@ -14,17 +14,17 @@ This runbook provides complete step-by-step procedures for manual testing and pr
 5. Fill out visitor information: Full Name, Purpose of Visit, Department/Host.
 6. Select Visit Date:
    - Confirm past dates are disabled and rejected.
-   - Confirm dates beyond maximum allowed scheduling window (e.g. 14 days) are blocked.
-7. Capture Face Photo using webcam.
+   - Confirm dates beyond the configured scheduling window (default: 30 days) are blocked.
+7. Capture Face Photo using webcam (camera-only capture).
 8. Capture Valid ID using webcam (camera-only capture).
 9. Submit registration.
 10. **Expected Result**: Pass status displays `issued`. QR code renders clearly with visitor details.
 
-### 1.2 iPhone Safari Mobile Verification (Critical Mobile Fixes)
+### 1.2 iPhone Safari Mobile Verification (Critical Mobile Checks)
 1. Open Safari on an iPhone (e.g. iPhone 12/13/14/15/SE viewport).
 2. Navigate to `/get-pass`.
 3. **Check iOS Input Auto-Zoom**: Tap into each text input field.
-   - **Expected**: Screen DOES NOT zoom in unexpectedly (inputs use `16px` base font size).
+   - **Expected**: Screen DOES NOT zoom in unexpectedly (inputs enforce a minimum `16px` font size).
 4. **Check Native Date Input Overflow**:
    - Inspect the Visit Date picker input on narrow screens (< 375px width).
    - **Expected**: Date input does NOT overflow horizontally outside its form/card container.
@@ -32,10 +32,8 @@ This runbook provides complete step-by-step procedures for manual testing and pr
    - Tap **Capture Valid ID**.
    - **Expected**: Native camera launches directly; file/photo library picker is NOT invoked.
 6. **Independent Retake ID & Selfie**:
-   - Tap **Retake ID**.
-   - **Expected**: Only the ID preview is cleared; the face photo preview remains intact.
-   - Tap **Retake Photo**.
-   - **Expected**: Only the face photo is cleared; ID preview remains intact.
+   - Tap **Retake ID**: Only the ID preview is cleared; the face photo preview remains intact.
+   - Tap **Retake Photo**: Only the face photo is cleared; ID preview remains intact.
 7. **Object URL Lifecycle Cleanup**:
    - Switch tabs or navigate away after capturing photos.
    - **Expected**: No memory leaks or orphaned `blob:` URLs in browser memory.
@@ -67,41 +65,45 @@ This runbook provides complete step-by-step procedures for manual testing and pr
 
 ```mermaid
 stateDiagram-v2
-    [*] --> Issued: Visitor Registration
-    Issued --> PendingReview: Entry Scanner Scan
-    PendingReview --> Inside: Guard Approves
-    PendingReview --> Rejected: Guard Rejects
-    Inside --> Exited: Exit Scanner Scan
-    Rejected --> [*]
-    Exited --> [*]
+    [*] --> issued: Visitor Registration
+    issued --> pending: Entry Scanner Scan (POST /api/scan-pass)
+    pending --> inside: Guard Approves (POST /api/decide-visit)
+    pending --> rejected: Guard Rejects (POST /api/decide-visit)
+    inside --> exited: Exit Scanner Scan (POST /api/scan-pass)
+    rejected --> [*]
+    exited --> [*]
 ```
 
 ### 3.1 Entry Scanner Device
 1. Log in at `/device/login` using Entry Scanner credentials (assigned to `Main Gate`).
 2. Present an `issued` QR code pass to the scanner camera.
 3. **Expected State Transition**:
-   - Entry device displays: **Scan Accepted — Pending Guard Review**.
-   - Pass status transitions from `issued` to `pending_review`.
+   - Entry device calls `POST /api/scan-pass` (mode: `entry`).
+   - Scanner displays: **Scan Accepted — Pending Guard Review**.
+   - Database pass status transitions from `issued` to `pending`.
 4. Scan the same QR code again immediately.
-   - **Expected**: Scanner displays warning that pass is already under review.
+   - **Expected**: Scanner displays warning that pass is already pending review.
 
 ### 3.2 Guard Console Review
-1. Log in as `Guard` at `/login`.
+1. Log in as `guard` at `/login`.
 2. Navigate to **Guard Console** (`/guard`).
-3. Confirm the scanned pass appears in the **Pending Entry** queue.
-4. Inspect visitor selfie photo, captured valid ID, visit purpose, and destination.
-5. Click **Approve Entry**.
-   - **Expected State Transition**: Pass status transitions from `pending_review` to `inside`.
-6. Alternatively, click **Reject Entry** and provide a reason (e.g. "Invalid ID", "Dress Code Violation").
-   - **Expected State Transition**: Pass status transitions from `pending_review` to `rejected`.
+3. Confirm the scanned pass appears in the **Pending Entry** queue loaded via RPC `api.guard_dashboard`.
+4. Inspect visitor selfie photo, captured valid ID, visit purpose, and destination (streamed via `GET /api/evidence?id=<evidence_id>`).
+5. Click **Approve Entry**:
+   - Route `POST /api/decide-visit` executes with `decision: 'approved'`.
+   - **Expected State Transition**: Pass status transitions from `pending` to `inside`.
+6. Alternatively, click **Reject Entry** and provide a reason (e.g. "Invalid ID", "Dress Code Violation"):
+   - Route `POST /api/decide-visit` executes with `decision: 'rejected'`.
+   - **Expected State Transition**: Pass status transitions from `pending` to `rejected`.
 
 ### 3.3 Exit Scanner Device
 1. Log in at `/device/login` using Exit Scanner credentials.
 2. Present a pass currently in `inside` status.
 3. **Expected State Transition**:
-   - Exit device displays: **Exit Verified — Have a Safe Day**.
-   - Pass status transitions from `inside` to `exited`.
-4. Present an `exited` or `expired` pass.
+   - Exit device calls `POST /api/scan-pass` (mode: `exit`).
+   - Scanner displays: **Exit Verified — Have a Safe Day**.
+   - Database pass status transitions from `inside` to `exited`.
+4. Present an `exited` or `expired` pass:
    - **Expected**: Exit device displays: **Invalid or Already Exited Pass**.
 
 ---
@@ -109,25 +111,25 @@ stateDiagram-v2
 ## 4. Administrative & Governance QA
 
 ### 4.1 Admin Operations
-1. Log in as `Admin`.
-2. **Staff Creation**: Invite a new Guard with a valid email.
-   - Confirm Supabase user and `staff_profiles` row created.
+1. Log in as `admin`.
+2. **Staff Creation**: Invite a new Guard with a valid email via `POST /api/create-user`.
+   - Confirm Supabase Auth user and `staff_profiles` row created (`active = true`).
    - Confirm invite email delivered via Resend with EARIST branding.
-3. **Device Management**: Register an Entry scanner device for "East Gate".
+3. **Device Management**: Register an Entry scanner device for "East Gate" via `POST /api/create-device`.
    - Confirm device credentials generated.
-4. **Deactivation**: Deactivate a test guard account.
+4. **Deactivation**: Deactivate a test guard account via `POST /api/update-user`.
    - Confirm the test guard is instantly blocked from logging in.
 
 ### 4.2 Super Admin Governance
-1. Log in as `Super Admin`.
-2. **Settings**: Modify working hours or retention windows.
+1. Log in as `superadmin`.
+2. **Settings**: Modify working hours or retention windows via `POST /api/update-settings`.
    - Confirm changes persist to `system_settings` table.
 3. **Last Super Admin Demotion Protection**:
    - Attempt to deactivate or change the role of the only active Super Admin.
    - **Expected**: Action blocked with error message: *"Cannot demote or deactivate the last remaining Super Admin."*
 4. **Incident Hold**:
-   - Locate an active or exited pass and apply an **Incident Hold**.
-   - Confirm hold badge appears on visitor record.
+   - Locate an active or exited pass and apply an **Incident Hold** via `POST /api/admin/holds`.
+   - Confirm hold row created in `public.incident_holds` with `active = true`.
 
 ---
 
@@ -144,9 +146,10 @@ stateDiagram-v2
 
 ### 5.2 QR Pass Email Delivery
 1. On the issued pass screen, enter an email address to receive the QR pass.
-2. Verify one-time 6-digit verification code is delivered.
-3. Enter verification code.
-4. Verify follow-up email delivers the QR pass with full visitor details.
+2. Calls `POST /api/passes/email` with `action: 'request_code'`.
+3. Verify one-time 6-digit verification code is delivered.
+4. Enter verification code (`action: 'verify_and_send'`).
+5. Verify follow-up email delivers the QR pass with full visitor details.
 
 ---
 
@@ -155,11 +158,14 @@ stateDiagram-v2
 1. Create a test expired pass with expired photo evidence.
 2. Trigger retention maintenance:
    ```bash
-   curl -X POST https://egatepass.tech/api/cron/retention-maintenance \
-     -H "Authorization: Bearer <CRON_SECRET>"
+   curl -X POST https://egatepass.tech/api/admin/retention-maintenance \
+     -H "Authorization: Bearer <CRON_SECRET>" \
+     -H "Content-Type: application/json" \
+     -d '{"batchSize": 50, "dryRun": false}'
    ```
-3. Verify test photo is deleted from Supabase Storage bucket.
-4. Verify pass record with active `incident_hold` is preserved untouched.
+3. Verify test photo is deleted from Supabase Storage bucket (`visitor-photos`).
+4. Verify `visitor_evidence.purged_at` is stamped.
+5. Verify pass record with active `incident_holds` is preserved untouched.
 
 ---
 
@@ -167,10 +173,10 @@ stateDiagram-v2
 
 | Test Case | Procedure | Expected Outcome |
 |---|---|---|
-| **Role Spoofing** | Guard attempts to call `POST /api/admin/staff` | HTTP 403 Forbidden |
-| **Tampered QR Token** | Alter characters in scanned QR code string | HTTP 400 Invalid QR Token Digest |
-| **Expired Pass Entry** | Scan pass with `expires_at < now()` | HTTP 400 Pass Has Expired |
-| **Wrong Gate Exit** | Scan pass on Exit scanner before Entry scan | HTTP 400 Pass Not Inside Campus |
+| **Role Spoofing** | Guard attempts to call `POST /api/create-user` | HTTP 403 Forbidden |
+| **Tampered QR Token** | Alter characters in scanned QR code string | HTTP 404 Pass Not Found / Invalid Digest |
+| **Expired Pass Entry** | Scan pass with `valid_until < now()` | HTTP 409 Pass Has Expired |
+| **Wrong Gate Exit** | Scan pass on Exit scanner before Entry scan | HTTP 409 Pass is not inside |
 | **Forged Webhook** | Send mock POST to `/api/auth/send-email-hook` with invalid signature | HTTP 401 Unauthorized |
-| **Turnstile Bypass** | Post to `/api/passes` without `turnstileToken` | HTTP 400 Bot Verification Failed |
-| **Unauthenticated Cron** | Call `/api/cron/retention-maintenance` without Bearer secret | HTTP 401 Unauthorized |
+| **Recovery Session Confinement** | Attempt to call `/api/scan-pass` using a password recovery token | HTTP 403 Recovery Session Forbidden |
+| **Unauthenticated Maintenance** | Call `/api/admin/retention-maintenance` without Bearer secret | HTTP 401 Unauthorized |

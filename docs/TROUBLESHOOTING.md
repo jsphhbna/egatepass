@@ -17,8 +17,8 @@ flowchart TD
 
     HookCheck --> Resend[Check Resend Delivery Dashboard]
     GateCheck --> QR[Verify QR Pass Bearer & Expiry]
-    TurnstileCheck --> Storage[Check Supabase Storage Bucket Quota]
-    RLSCheck --> Profile[Inspect staff_profiles is_active Flag]
+    TurnstileCheck --> Storage[Check Supabase Storage Buckets]
+    RLSCheck --> Profile[Inspect staff_profiles active Flag]
 ```
 
 ---
@@ -37,7 +37,7 @@ flowchart TD
 - **How to Diagnose**:
   1. Inspect the production build output:
      ```bash
-     vercel build --prod
+     npx vercel build --prod
      ```
   2. Check `.vercel/output/functions/api/auth/[...route].func/server/templates/index.js`.
   3. If missing, `scripts/bundle-email-templates.mjs` was skipped during prebuild.
@@ -87,14 +87,14 @@ flowchart TD
 - **Symptom**:
   Entry or Exit scanner device cannot log in; displays "Invalid Device Identity" or "Device Inactive".
 - **Likely Cause**:
-  The device record in the `devices` table has `is_active = false`, or device type/gate mismatch.
+  The device record in the `devices` table has `status != 'active'` or `deleted_at IS NOT NULL`.
 - **How to Diagnose**:
   In Supabase SQL Editor:
   ```sql
-  SELECT id, device_name, device_type, gate, is_active FROM devices WHERE id = '<device_id>';
+  SELECT user_id, alias, name, type, gate, status, deleted_at FROM public.devices WHERE user_id = '<user_id>';
   ```
 - **Safe Resolution**:
-  Set `is_active = true` or re-register the device via the Admin console.
+  Ensure `status = 'active'` and `deleted_at IS NULL` or re-register the device via the Admin console.
 
 ---
 
@@ -106,13 +106,13 @@ flowchart TD
   PostgrestError: new row violates row-level security policy
   ```
 - **Likely Cause**:
-  The user exists in Supabase Auth, but lacks a corresponding active row in `staff_profiles`, or their role has expired.
+  The user exists in Supabase Auth, but lacks a corresponding active row in `staff_profiles` (`active = true`).
 - **How to Diagnose**:
   ```sql
-  SELECT * FROM staff_profiles WHERE id = auth.uid();
+  SELECT user_id, display_name, role, active FROM public.staff_profiles WHERE user_id = auth.uid();
   ```
 - **Safe Resolution**:
-  Ensure `staff_profiles` contains an active profile with valid role (`guard`, `admin`, or `superadmin`).
+  Ensure `staff_profiles` contains an active profile (`active = true`) with valid role (`guard`, `admin`, or `superadmin`).
 
 ---
 
@@ -121,14 +121,14 @@ flowchart TD
 - **Symptom**:
   Visitor submits registration on portal, but receives:
   ```text
-  Error: Security verification failed. Please try again.
+  Error: Visitor registration could not be started.
   ```
 - **Likely Cause**:
-  Turnstile secret key mismatch or visitor network blocked by Cloudflare risk rules.
+  Turnstile challenge failed or token rejected during `supabase.auth.signInAnonymously({ options: { captchaToken } })`.
 - **How to Diagnose**:
-  Check Vercel API logs for `/api/passes` response from `https://challenges.cloudflare.com/turnstile/v0/siteverify`.
+  Verify Turnstile configuration in Supabase Dashboard under **Authentication > Bot Protection / CAPTCHA**.
 - **Safe Resolution**:
-  Verify `TURNSTILE_SECRET_KEY` in Vercel environment variables. In local development, ensure dummy test site keys are used.
+  Ensure Cloudflare Turnstile Secret Key is properly set in the Supabase Dashboard and `VITE_TURNSTILE_SITE_KEY` is set in Vercel.
 
 ---
 
@@ -137,26 +137,26 @@ flowchart TD
 - **Symptom**:
   Visitor capture fails during ID/photo upload with HTTP 400 or HTTP 403.
 - **Likely Cause**:
-  Upload intent expired, file size exceeds 5MB limit, or MIME type is not `image/jpeg` or `image/png`.
+  Upload intent expired, file size exceeds 5MB limit, or MIME type is not `image/jpeg`, `image/png`, or `image/webp`.
 - **How to Diagnose**:
-  Inspect browser Network tab for `POST /storage/v1/object/visitor-evidence`.
+  Inspect browser Network tab for `POST /storage/v1/object/visitor-photos` or `visitor-ids`.
 - **Safe Resolution**:
-  Ensure user uploads a valid image under 5MB. Check that Supabase Storage bucket `visitor-evidence` RLS policies are applied.
+  Ensure user uploads a valid image under 5MB. Check that Supabase Storage buckets `visitor-photos` and `visitor-ids` exist and are accessible to authenticated upload intents.
 
 ---
 
 ### 2.8 QR Code Rejection at Gate Scanner
 
 - **Symptom**:
-  Entry device displays "Invalid QR Code Token".
+  Entry device displays "Pass is not eligible for entry" or "Invalid scan request".
 - **Likely Cause**:
-  1. `PASS_TOKEN_SECRET` was rotated while passes were unconsumed.
-  2. QR code was generated for a different campus gate.
-  3. Pass is expired.
+  1. Pass is expired (`valid_until < now()`).
+  2. Pass is already in `pending` or `inside` status.
+  3. Scanner assigned to a different physical gate than the pass constraint.
 - **How to Diagnose**:
   Query the pass by its SHA-256 digest in the database:
   ```sql
-  SELECT status, expires_at FROM gate_passes WHERE qr_token_hash = '<hash>';
+  SELECT id, status, valid_from, valid_until FROM public.passes WHERE token_digest = decode('<hex_digest>', 'hex');
   ```
 - **Safe Resolution**:
   If expired, instruct visitor to request a new gate pass.
@@ -190,13 +190,13 @@ flowchart TD
 
 ---
 
-### 2.11 Retention Cleanup Cron Failures
+### 2.11 Retention Maintenance Invocation Failures
 
 - **Symptom**:
-  Expired passes or storage files remain beyond the configured retention period.
+  Invocation of `/api/admin/retention-maintenance` returns HTTP 401 Unauthorized.
 - **Likely Cause**:
-  Vercel Cron not configured or `CRON_SECRET` mismatch.
+  Missing or mismatched `Authorization: Bearer <CRON_SECRET>` header.
 - **How to Diagnose**:
-  Inspect Vercel Dashboard > **Cron Jobs** tab for execution status and HTTP response code.
+  Verify `CRON_SECRET` in request header matches `process.env.CRON_SECRET` in Vercel.
 - **Safe Resolution**:
-  Verify `/api/cron/retention-maintenance` returns HTTP 200 when invoked with the configured `CRON_SECRET`.
+  Provide the correct bearer token when triggering maintenance.

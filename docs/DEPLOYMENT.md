@@ -6,9 +6,9 @@ This guide details the production deployment architecture and step-by-step proce
 
 ## 1. System Deployment Architecture
 
-EARIST E-GatePass runs entirely across four production platforms:
+EARIST E-GatePass runs across four production service providers:
 - **Vercel**: Edge/Frontend CDN hosting and Node.js 24 Serverless API Functions.
-- **Supabase**: PostgreSQL database, Row Level Security (RLS), Supabase Auth, and private Object Storage.
+- **Supabase**: PostgreSQL database, Row Level Security (RLS), Supabase Auth, and private Object Storage (`visitor-photos`, `visitor-ids`).
 - **Resend**: Transactional email delivery service.
 - **Cloudflare**: DNS and Turnstile bot protection.
 
@@ -24,7 +24,7 @@ flowchart TD
     DB[Supabase Migrations<br/>supabase/migrations/]
     Auth[Supabase Auth Configuration<br/>Send Email Hook Webhook]
     Resend[Resend Domain / Sender<br/>notifications@egatepass.tech]
-    Turnstile[Cloudflare Turnstile<br/>Site Key + Secret Key]
+    Turnstile[Cloudflare Turnstile<br/>Site Key + Supabase Bot Protection]
 
     Code --> Vercel
     Vercel --> Templates
@@ -64,7 +64,7 @@ Before merging to `main` or triggering a production deployment:
 3. **Vercel Production Trace Simulation**:
    - Verify file tracing and bundling succeed without missing modules:
      ```bash
-     vercel build --prod
+     npx vercel build --prod
      ```
    - Confirm `.vercel/output/functions/api/auth/[...route].func/server/templates/index.js` was generated and contains all 9 templates.
 
@@ -85,31 +85,15 @@ Set these environment variables in your Vercel Project Settings (**Settings > En
 | `RESEND_API_KEY` | Production, Preview | **Yes** | API key from Resend dashboard (`re_...`) |
 | `RESEND_FROM_EMAIL` | Production, Preview | No | Authoritative sender address: `EARIST E-GatePass <notifications@egatepass.tech>` |
 | `SEND_EMAIL_HOOK_SECRET` | Production, Preview | **Yes** | Secret for Supabase Auth Standard Webhook signature verification |
-| `CRON_SECRET` | Production, Preview | **Yes** | Shared bearer secret for authenticating automated cron maintenance tasks |
+| `CRON_SECRET` | Production, Preview | **Yes** | Shared bearer secret for authenticating retention maintenance requests |
+
+> **Note on Turnstile**: The Cloudflare Turnstile Secret Key is configured directly in the Supabase Dashboard under **Authentication > CAPTCHA / Bot & Abuse Protection**, where Supabase Auth verifies tokens. It is not an environment variable in Vercel.
 
 ---
 
 ## 4. Supabase Database Migrations
 
 Database migrations are stored in `supabase/migrations/` and must be applied in sequential order.
-
-### Migration Order
-
-```mermaid
-flowchart TD
-    M1[20261020000001_core_schema.sql<br/>Initial Core Tables & Enums]
-    M2[20261020000002_rls_policies.sql<br/>Row Level Security Policies]
-    M3[20261020000003_storage_buckets.sql<br/>Private Storage Buckets & Policies]
-    M4[20261021000001_indexes_and_optimizations.sql<br/>Performance & Operational Indexes]
-    M5[20261021000002_bootstrap_super_admin.sql<br/>private.bootstrap_super_admin RPC]
-    M6[20261021155132_service_role_backend_table_grants.sql<br/>Backend Privileges & Grants]
-
-    M1 --> M2
-    M2 --> M3
-    M3 --> M4
-    M4 --> M5
-    M5 --> M6
-```
 
 ### Applying Migrations
 - **Via Supabase CLI**:
@@ -123,7 +107,7 @@ flowchart TD
 
 ## 5. Supabase Auth Send Email Hook Configuration
 
-The system uses a Supabase Auth Send Email Hook to route all system emails through Resend using our custom React Email templates.
+The system uses a Supabase Auth Send Email Hook to route all system emails through Resend using our custom React Email templates:
 
 1. Navigate to **Authentication > Hooks** in the Supabase Dashboard.
 2. Select **Send Email** hook.
@@ -132,7 +116,7 @@ The system uses a Supabase Auth Send Email Hook to route all system emails throu
    - **Endpoint URL**: `https://egatepass.tech/api/auth/send-email-hook`
    - **HTTP Method**: `POST`
    - **Secret**: Set to the exact same value as `SEND_EMAIL_HOOK_SECRET` configured in Vercel.
-4. Supabase Auth will sign all incoming webhook requests with standard webhook headers (`webhook-id`, `webhook-timestamp`, `webhook-signature`), which `server/auth-email-hook.ts` validates before dispatching.
+4. Supabase Auth signs all incoming webhook requests with standard webhook headers (`webhook-id`, `webhook-timestamp`, `webhook-signature`), which `server/routes/auth/send-email-hook.ts` validates before dispatching.
 
 ---
 
@@ -154,7 +138,8 @@ The system uses a Supabase Auth Send Email Hook to route all system emails throu
 1. In the Cloudflare Dashboard, navigate to **Turnstile Sites**.
 2. Add `egatepass.tech` and localhost development origins.
 3. Choose **Managed** mode.
-4. Copy the **Site Key** to `VITE_TURNSTILE_SITE_KEY` and the **Secret Key** to `TURNSTILE_SECRET_KEY` in Vercel.
+4. Copy the **Site Key** to `VITE_TURNSTILE_SITE_KEY` in Vercel.
+5. In Supabase Dashboard, navigate to **Authentication > Bot Protection**, enable Turnstile, and save the Turnstile Secret Key.
 
 ---
 

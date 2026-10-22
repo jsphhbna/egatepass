@@ -15,12 +15,13 @@ This document is the authoritative specification for all configuration and secre
 | `VITE_TURNSTILE_SITE_KEY` | Browser & Vite Build | No | Visitor registration Turnstile widget | **Yes** in prod | `0x4AAAAAA...` (Cloudflare Turnstile site key) |
 | `SUPABASE_URL` | Vercel Serverless | No | Node.js API Functions (`server/supabase.ts`) | **Yes** | `https://xyzproject.supabase.co` |
 | `SUPABASE_SECRET_KEY` | Vercel Serverless | **Yes** | Server-side admin client (`server/supabase.ts`) | **Yes** | `eyJhbGciOiJIUzI1Ni...` (Supabase service-role secret; bypasses RLS) |
-| `PASS_TOKEN_SECRET` | Vercel Serverless | **Yes** | QR token generation & HMAC verification (`server/routes/passes/`) | **Yes** | Random alphanumeric string, **minimum 32 characters** |
+| `PASS_TOKEN_SECRET` | Vercel Serverless | **Yes** | QR token derivation (`server/routes/passes/issue.ts`) | **Yes** | Random alphanumeric string, **minimum 32 characters** |
 | `RESEND_API_KEY` | Vercel Serverless | **Yes** | Transactional email & Auth Email Hook (`server/email.ts`) | **Yes** | `re_abc123_xyz...` |
 | `RESEND_FROM_EMAIL` | Vercel Serverless | No | Sender identity for transactional emails | **Yes** | `EARIST E-GatePass <notifications@egatepass.tech>` |
 | `SEND_EMAIL_HOOK_SECRET` | Vercel Serverless | **Yes** | Supabase Auth Send Email Hook verification | **Yes** | Shared secret configured in Supabase Auth Webhook settings |
-| `CRON_SECRET` | Vercel Serverless | **Yes** | Bearer auth for automated retention maintenance cron | **Yes** | Random alphanumeric string, **minimum 32 characters** |
-| `TURNSTILE_SECRET_KEY` | Vercel Serverless | **Yes** | Server-side Turnstile verification endpoint | **Yes** in prod | `0x4AAAAAA...` (Cloudflare Turnstile server secret key) |
+| `CRON_SECRET` | Vercel Serverless | **Yes** | Bearer auth for retention maintenance requests | **Yes** | Random alphanumeric string, **minimum 32 characters** |
+
+> **Turnstile Secret Key Note**: The Cloudflare Turnstile Secret Key is configured directly in the Supabase Dashboard under **Authentication > CAPTCHA / Bot & Abuse Protection**, as Supabase Auth performs token validation during `signInAnonymously`. It is not configured as an environment variable in Vercel.
 
 ---
 
@@ -40,13 +41,11 @@ flowchart TD
         S3[RESEND_API_KEY]
         S4[SEND_EMAIL_HOOK_SECRET]
         S5[CRON_SECRET]
-        S6[TURNSTILE_SECRET_KEY]
     end
 
     subgraph ThirdParty["External Services"]
         Supabase[(Supabase)]
         Resend[Resend API]
-        Turnstile[Cloudflare API]
     end
 
     BrowserSafe -.->|Embedded in JS bundle| Client[Client Browser]
@@ -54,7 +53,6 @@ flowchart TD
 
     Vercel -->|Service-role query| Supabase
     Vercel -->|POST /emails| Resend
-    Vercel -->|POST /siteverify| Turnstile
 ```
 
 ### 2.1 Browser-Visible Variables (`VITE_*`)
@@ -87,7 +85,6 @@ RESEND_API_KEY=re_local_dummy_key_for_testing
 RESEND_FROM_EMAIL="EARIST E-GatePass <notifications@egatepass.tech>"
 SEND_EMAIL_HOOK_SECRET=local-development-send-email-hook-secret-minimum-32-chars
 CRON_SECRET=local-development-cron-secret-minimum-32-chars
-TURNSTILE_SECRET_KEY=1x0000000000000000000000000000000AA
 ```
 
 ---
@@ -95,7 +92,7 @@ TURNSTILE_SECRET_KEY=1x0000000000000000000000000000000AA
 ## 4. Production Secret Rotation Guidelines
 
 1. **`PASS_TOKEN_SECRET`**:
-   - Because QR pass bearer tokens are hashed with HMAC, rotating this secret invalidates all unconsumed passes issued prior to rotation. Rotate only during scheduled maintenance windows.
+   - Because QR pass bearer tokens are derived with HMAC, existing physical QR code verification relies on the stored digest `passes.token_digest`. Rotating this secret causes subsequent idempotent issuance replay attempts to detect a secret mismatch. Rotate during scheduled maintenance.
 2. **`SEND_EMAIL_HOOK_SECRET`**:
    - Update in Supabase Auth Webhook settings simultaneously with Vercel environment variables.
 3. **`SUPABASE_SECRET_KEY`**:

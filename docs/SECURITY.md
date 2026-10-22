@@ -1,163 +1,157 @@
-﻿# Canonical Security Architecture & Threat Model
+﻿# Security Architecture & Threat Model
 
-> Authoritative security specification for the EARIST E-GatePass Visitor Management System.
-
-This document establishes the trust boundaries, cryptographic invariants, identity verification lifecycles, and defense-in-depth controls enforced across the client, serverless API, and database layers of the EARIST E-GatePass platform.
+This document serves as the authoritative security specification, trust boundary definition, and threat-mitigation contract for the EARIST E-GatePass platform.
 
 ---
 
 ## 1. System Trust Boundaries
 
-E-GatePass treats all client environments—including visitor mobile browsers, administrative dashboards, and gate scanners—as **untrusted**. Client-side validation, UI navigation guards, and React role checks are solely user experience mechanisms. Authorization authority resides strictly within the privileged serverless boundary and database Row Level Security policies.
+EARIST E-GatePass enforces strict security perimeters across untrusted clients, privileged serverless execution containers, authoritative database layers, and third-party integrations.
 
-`mermaid
+```mermaid
 flowchart TB
     subgraph Untrusted["Untrusted Client Boundary"]
-        Browser[Visitor Browser / PWA]
-        StaffUI[Guard & Admin Portals]
-        DeviceUI[Kiosk & Gate Scanner Devices]
+        Browser[Public Visitor Browser]
+        Kiosk[Walk-In Kiosk Device]
+        StaffUI[Guard & Admin Consoles]
+        ScannerUI[Gate Scanner Devices]
     end
 
     subgraph Server["Privileged Server Boundary (Vercel Node.js 24)"]
-        API[API Handlers<br/>actors.ts & http.ts]
-        TemplateBundle[Precompiled React Email Bundle]
+        VercelAPI[Vercel Serverless Functions<br/>api/ and server/]
     end
 
-    subgraph Data["Authoritative Data Boundary (Supabase / PostgreSQL)"]
-        Auth[Supabase Auth Service]
-        DB[(PostgreSQL 15 Engine<br/>RLS + SECURITY DEFINER RPCs)]
-        Storage[(Private Storage Buckets<br/>visitor-id-documents / visitor-photos)]
+    subgraph Data["Authoritative Database Boundary (Supabase)"]
+        Auth[Supabase Auth Engine]
+        DB[(PostgreSQL + Row Level Security)]
+        Storage[(Private Storage Buckets<br/>visitor-photos & visitor-ids)]
     end
 
     subgraph External["External Services Boundary"]
-        Resend[Resend API (TLS)]
-        Turnstile[Cloudflare Turnstile API]
+        Resend[Resend Email Delivery]
+        Turnstile[Cloudflare Turnstile CAPTCHA]
     end
 
-    Browser -->|HTTPS Request| API
-    StaffUI -->|HTTPS + Bearer JWT| API
-    DeviceUI -->|HTTPS + Device Bearer| API
+    Browser -->|HTTPS / Anonymous JWT| VercelAPI
+    Kiosk -->|HTTPS / Device JWT| VercelAPI
+    StaffUI -->|HTTPS / Staff JWT| VercelAPI
+    ScannerUI -->|HTTPS / Device JWT| VercelAPI
 
-    Browser -->|Anonymous Auth| Auth
-    StaffUI -->|Session Auth| Auth
-    DeviceUI -->|Device Login| Auth
+    Browser -->|Turnstile Token & Anon Sign-In| Auth
+    Browser -.->|Complete Challenge| Turnstile
+    Auth -.->|Verify CAPTCHA| Turnstile
 
-    Browser -.->|Direct Signed Upload Intent| Storage
+    VercelAPI -->|JWT & Session Validation| Auth
+    VercelAPI -->|Service-Role & RPC Execution| DB
+    VercelAPI -->|Private Asset Validation & Download| Storage
+    VercelAPI -->|HTTPS REST API / Webhooks| Resend
+```
 
-    API -->|Validate Token / User| Auth
-    API -->|service_role Privileged RPCs| DB
-    API -->|Admin Signed URLs / Purge| Storage
-    API -->|REST API Key| Resend
-    API -->|Siteverify Secret| Turnstile
-
-    Browser -->|Widget Verification| Turnstile
-`
+> **CORE AUTHORIZATION PRINCIPLE**: All client-side UI restrictions, role state variables, and route guards are user-experience controls only. Authoritative security enforcement resides exclusively within serverless endpoint middleware, database Row Level Security (RLS) policies, and `SECURITY DEFINER` stored procedures.
 
 ---
 
-## 2. Authentication & Identity Resolution
+## 2. Multi-Actor Authentication
 
-Every authenticated mutation or query resolves caller authority through server-side token validation followed by database-backed role resolution.
+Incoming requests present Supabase Auth JSON Web Tokens (JWT) verified cryptographically against Supabase Auth public keys. The system resolves identity across three distinct actor classes:
 
-`mermaid
+```mermaid
 flowchart TD
-    Req[Incoming API Request]
-    AuthHeader{Authorization Header Present?}
-    JWT{Valid Supabase Auth JWT?}
+    Req[Incoming HTTP Request]
+    AuthHeader{Authorization Bearer Present?}
+    JWTValid{Cryptographically Valid Supabase JWT?}
+    IsRecovery{Is Recovery Session?}
+    ActorLookup{Identify Actor Class}
 
     Req --> AuthHeader
-    AuthHeader -->|No| AnonCheck{Public / Anon Endpoint?}
-    AuthHeader -->|Yes| JWT
+    AuthHeader -->|No| AnonVisitor[Anonymous Visitor Scope]
+    AuthHeader -->|Yes| JWTValid
+    JWTValid -->|No| Reject401[Reject: 401 Unauthorized]
+    JWTValid -->|Yes| IsRecovery
 
-    AnonCheck -->|Yes| AllowAnon[Execute with Anonymous Authority]
-    AnonCheck -->|No| Reject401[Reject: HTTP 401 Unauthorized]
+    IsRecovery -->|Yes| RecoveryScope[Recovery-Confined Scope<br/>Only /api/auth/complete-password-change]
+    IsRecovery -->|No| ActorLookup
 
-    JWT -->|Invalid / Expired| Reject401
-    JWT -->|Valid JWT| ResolveActor[Extract Supabase UID]
+    ActorLookup --> StaffCheck{Record in staff_profiles<br/>AND active == true?}
+    StaffCheck -->|Yes| StaffRole[Resolved Role: guard / admin / superadmin]
+    StaffCheck -->|No| DeviceCheck{Record in devices<br/>AND status == active<br/>AND deleted_at IS NULL?}
 
-    ResolveActor --> CheckStaff{Record in staff_profiles?}
-    CheckStaff -->|Active Staff Profile| ResolveStaffRole[Role: guard / admin / superadmin]
-    CheckStaff -->|No Profile| CheckDevice{Record in public.devices?}
+    DeviceCheck -->|Yes| DeviceRole[Resolved Device: entry / exit / kiosk<br/>Bound to Assigned Gate]
+    DeviceCheck -->|No| AnonVisitor
+```
 
-    CheckDevice -->|Active Device Record| ResolveDeviceRole[Device Type: kiosk / entry / exit<br/>Assigned Gate Scope]
-    CheckDevice -->|No Device| CheckVisitor{Anonymous Visitor Session?}
-
-    CheckVisitor -->|Valid Visitor ID| VisitorScope[Visitor Authority: Self-Owned Only]
-    CheckVisitor -->|Unrecognized| Reject403[Reject: HTTP 403 Forbidden]
-`
+### Identity Resolution Rules:
+1. **Anonymous Visitors**: Have valid Supabase Auth anonymous UIDs. Confined to requesting upload intents and submitting pass issuance.
+2. **Staff Members**: Identified by a matching row in `public.staff_profiles` where `active = true`. Roles: `guard`, `admin`, `superadmin`.
+3. **Managed Devices**: Identified by a matching row in `public.devices` where `status = 'active'` and `deleted_at IS NULL`. Types: `entry`, `exit`, `kiosk`.
+4. **Recovery Sessions**: Explicitly flagged when authenticated via recovery magic links. Confined strictly to password reset and blocked from scanner, guard, and admin operations (`recovery_session_forbidden`).
 
 ---
 
 ## 3. Server-Side Authorization Sequence
 
-No client interacts directly with arbitrary tables in PostgreSQL. Operations are funneled through privileged serverless endpoints that authenticate callers and invoke constrained database RPCs.
-
-`mermaid
+```mermaid
 sequenceDiagram
-    autonumber
-    actor Client as Client Browser / Scanner
-    participant API as Vercel Serverless Function
+    participant C as Client (Staff / Device)
+    participant API as Vercel API Endpoint
     participant Auth as Supabase Auth
     participant DB as PostgreSQL Database
 
-    Client->>API: HTTP Request + Bearer JWT
-    API->>Auth: supabase.auth.getUser(token)
-    Auth-->>API: Validated User Object (UID)
+    C->>API: HTTP Request + Bearer JWT
+    API->>Auth: Validate JWT Signature & Claims
+    Auth-->>API: Valid Session Claims (sub, email, is_anonymous)
+    API->>DB: Query staff_profiles / devices for Caller UID
+    DB-->>API: Active Actor Record & Role
+    API->>API: Evaluate Role & Permission for Requested Action
 
-    API->>DB: Query staff_profiles or devices by UID
-    DB-->>API: Active Profile (role, status, gate_id)
-
-    API->>API: Validate role against required operation permissions
-
-    alt Authorized
-        API->>DB: Execute SECURITY DEFINER RPC (e.g., api.decide_visit)
-        DB->>DB: Internal assertion of search_path = '' and row locks
-        DB-->>API: Transactional Result
-        API-->>Client: HTTP 200 + Sanitized JSON Response
-    else Unauthorized Role / Inactive Status
-        API-->>Client: HTTP 403 Forbidden { error: 'insufficient_privileges' }
+    alt Not Authorized
+        API-->>C: HTTP 403 Forbidden
+    else Authorized
+        API->>DB: Execute Parameterized RPC / Service-Role Query
+        DB-->>API: Query Result
+        API-->>C: HTTP 200 OK + Sanitized Response
     end
-`
+```
 
 ---
 
-## 4. Role & Capability Matrix
+## 4. Institutional Role & Permission Matrix
 
-| Capability / Action | Visitor | Kiosk | Entry Scanner | Exit Scanner | Campus Guard | Administrator | Super Admin |
-|:---|:---:|:---:|:---:|:---:|:---:|:---:|:---:|
-| **Self-Service Pre-Registration** | Yes | No | No | No | No | No | No |
-| **Walk-In Assisted Registration** | No | Yes | No | No | No | No | No |
-| **Request Evidence Upload Intent** | Yes | Yes | No | No | No | No | No |
-| **Issue Pass Record** | Yes | Yes | No | No | No | Yes | Yes |
-| **Scan QR at Entry (Pending)** | No | No | Yes | No | No | No | No |
-| **Review Evidence Queue** | No | No | No | No | Yes | Yes | Yes |
-| **Approve / Reject Pass (Inside)** | No | No | No | No | Yes | Yes | Yes |
-| **Scan QR at Exit (Exited)** | No | No | No | Yes | No | No | No |
-| **Emergency Evacuation Roster** | No | No | No | No | No | Yes | Yes |
-| **Manage Hardware Devices** | No | No | No | No | No | Yes | Yes |
-| **Create Incident Security Hold** | No | No | No | No | No | Yes | Yes |
-| **Release Incident Security Hold** | No | No | No | No | No | No | Yes |
-| **Run Retention Evidence Purge** | No | No | No | No | No | No | Yes |
-| **Provision Staff (Invite)** | No | No | No | No | No | No | Yes |
-| **Promote to Super Admin** | No | No | No | No | No | No | Yes |
+| Operation / Capability | Anonymous Visitor | Kiosk Device | Entry Scanner | Exit Scanner | Guard | Admin | Super Admin |
+|---|---|---|---|---|---|---|---|
+| **Register Visitor Pass** (`/api/passes/issue`) | Allowed | Allowed | Denied | Denied | Denied | Denied | Denied |
+| **Request Upload Intent** (`api.create_upload_intent`) | Allowed | Allowed | Denied | Denied | Denied | Denied | Denied |
+| **Request QR Code by Email** (`/api/passes/email`) | Allowed | Allowed | Denied | Denied | Denied | Denied | Denied |
+| **Scan Entry Pass** (`/api/scan-pass`, mode: `entry`) | Denied | Denied | **Allowed** | Denied | Denied | Denied | Denied |
+| **Scan Exit Pass** (`/api/scan-pass`, mode: `exit`) | Denied | Denied | Denied | **Allowed** | Denied | Denied | Denied |
+| **Guard Queue RPC** (`api.guard_dashboard`) | Denied | Denied | Denied | Denied | **Allowed** | **Allowed** | **Allowed** |
+| **Approve / Reject Pass** (`/api/decide-visit`) | Denied | Denied | Denied | Denied | **Allowed** | **Allowed** | **Allowed** |
+| **Stream Evidence Image** (`/api/evidence`) | Denied | Denied | Denied | Denied | **Allowed** (Pending) | **Allowed** | **Allowed** |
+| **Manage Staff Accounts** (`/api/admin/users`, `/api/create-user`) | Denied | Denied | Denied | Denied | Denied | **Allowed** | **Allowed** |
+| **Manage Hardware Devices** (`/api/admin/devices`, `/api/create-device`) | Denied | Denied | Denied | Denied | Denied | **Allowed** | **Allowed** |
+| **Manage Incident Holds** (`/api/admin/holds`) | Denied | Denied | Denied | Denied | Denied | **Allowed** | **Allowed** |
+| **Update System Settings** (`/api/update-settings`) | Denied | Denied | Denied | Denied | Denied | Denied | **Allowed** |
+| **Execute Retention Maintenance** (`/api/admin/retention-maintenance`) | Denied | Denied | Denied | Denied | Denied | Denied | **Allowed** / Cron |
+| **Review Reconciliation Tasks** (`/api/reconciliation-items`) | Denied | Denied | Denied | Denied | Denied | Denied | **Allowed** |
+| **Promote Admin to Super Admin** (`api.promote_to_superadmin`) | Denied | Denied | Denied | Denied | Denied | Denied | **Allowed** |
 
 ---
 
-## 5. Super Admin Bootstrap & Privileged Governance
+## 5. Super Admin Bootstrap & Privilege Protection
 
-To prevent account takeover and eliminate default hardcoded administrator accounts, E-GatePass enforces a zero-trust bootstrap lifecycle:
+To eliminate insecure public bootstrap endpoints, the initial Super Admin account is established through a database-level stored procedure:
 
-`mermaid
+```mermaid
 flowchart TD
-    A[Create Initial Supabase Auth Account via Dashboard / CLI]
-    B[Extract Auth User UUID]
-    C[Execute private.bootstrap_super_admin RPC in SQL Editor]
-    D[Primary Bootstrap Super Admin Profile Initialized]
-    E[Invite Institutional Administrator Account]
-    F[Institutional Administrator Accepts Invite & Sets Password]
-    G[Super Admin Promotes Institutional Admin to Super Admin]
-    H[Verify Institutional Super Admin Access]
-    I[Disable or Demote Initial Developer Bootstrap Account]
+    A[1. Create Supabase Auth Account in Dashboard]
+    B[2. Copy User UUID]
+    C[3. Execute private.bootstrap_super_admin RPC in SQL Editor]
+    D[4. Initial Super Admin Profile Activated]
+    E[5. Log in & Create Institutional Admin Profile]
+    F[6. Institutional Admin Completes Password Onboarding]
+    G[7. Super Admin Promotes Institutional Admin to Super Admin]
+    H[8. Verify Institutional Super Admin Access]
+    I[9. Deactivate / Decommission Developer Bootstrap Identity]
 
     A --> B
     B --> C
@@ -167,405 +161,310 @@ flowchart TD
     F --> G
     G --> H
     H --> I
-`
+```
 
-### Governance Protections
-
-1. **Bootstrap Lockout**: The private.bootstrap_super_admin function fails closed if **any** profile already exists in staff_profiles.
-2. **Last Super Admin Invariant**: Database triggers prevent deleting, deactivating, or demoting the last remaining active Super Admin profile.
-3. **No Role Spoofing in Metadata**: User roles are strictly stored in public.staff_profiles(role) and never inferred from mutable uth.users(raw_user_meta_data).
+### Safety Invariants:
+- **Locked After First Use**: `private.bootstrap_super_admin` checks if any active `superadmin` profile already exists. If found, it throws an unrecoverable exception, preventing takeover of existing databases.
+- **Last Super Admin Demotion Protection**: Stored procedures and `/api/admin/users` reject any attempt to deactivate, delete, or demote the last remaining active Super Admin.
 
 ---
 
-## 6. Cryptographic QR Pass Security
+## 6. QR Code Cryptographic Tokens & Digest Lookup
 
-QR passes use high-entropy bearer secrets generated on the server. Physical QR codes presented by visitors contain bearer tokens that are never stored directly in plaintext within the database.
+Gate passes use high-entropy cryptographically derived bearer tokens. Plaintext QR tokens are never stored in the database.
 
-`mermaid
+```mermaid
 flowchart LR
-    PassID[Pass Identifier UUID]
-    HMAC[HMAC-SHA256<br/>PASS_TOKEN_SECRET]
-    Bearer[64-Char High Entropy Bearer Token]
-    Digest[SHA-256 Hash Digest]
-    DB[(public.passes.qr_token_hash)]
+    Request[Issuance Request<br/>actorId + requestId]
+    Secret[PASS_TOKEN_SECRET<br/>Min 32 Characters]
+    HMAC[HMAC-SHA256<br/>base64url Encoded]
+    Bearer[Raw QR Bearer Token]
+    Digest[SHA-256 Hash<br/>32 Bytes Binary]
+    DB[(public.passes.token_digest)]
+    QR[Physical QR Code Display]
 
-    PassID --> HMAC
+    Request --> HMAC
+    Secret --> HMAC
     HMAC --> Bearer
-    Bearer -->|Encoded into QR Graphic| VisitorScreen[Visitor Screen / Paper Ticket]
     Bearer --> Digest
     Digest --> DB
-`
+    Bearer --> QR
+```
 
-### Invariants
-
-- **Storage Invariant**: Only the SHA-256 digest (qr_token_hash) is stored in PostgreSQL. Even a complete read compromise of the database does not reveal the bearer tokens needed to construct valid QR codes.
-- **Rotation Invariant**: Rotating PASS_TOKEN_SECRET does not invalidate existing issued passes because pass lookup is performed against the immutable digest stored at creation time.
+### Cryptographic Properties:
+1. **Derivation**: `qrToken = createHmac('sha256', PASS_TOKEN_SECRET).update(actorId + ':' + requestId).digest('base64url')`.
+2. **Digest Storage**: PostgreSQL stores only `SHA-256(qrToken)` in `public.passes.token_digest`. A database-only read compromise of token digests does not directly reveal the raw QR bearer, assuming the bearer retains sufficient entropy and `PASS_TOKEN_SECRET` remains uncompromised.
+3. **Secret Rotation**: Physical QR code verification relies on the stored digest. Idempotent issuance replay recomputes the bearer using the current secret and safely detects secret rotation without corrupting issued passes.
 
 ---
 
-## 7. Gate QR Verification & Scan Authorization
+## 7. Gate Device Scan Authorization Sequence
 
-`mermaid
+```mermaid
 sequenceDiagram
-    autonumber
-    actor Scanner as Managed Scanner Device
-    participant API as Vercel /api/gate/scan-pass
+    participant D as Scanner Hardware Device
+    participant API as Vercel API (/api/scan-pass)
     participant DB as PostgreSQL Database
 
-    Scanner->>API: POST /api/gate/scan-pass { qr_token, scan_type: 'entry' }<br/>Authorization: Bearer <device_jwt>
-    API->>API: Verify caller device type matches scan_type (e.g. entry device)
-    API->>API: Compute token_hash = sha256(qr_token)
+    D->>API: POST /api/scan-pass { passId: rawBearer, mode: 'entry' }<br/>Authorization: Bearer <device_jwt>
+    API->>API: Verify Device Session & Active Status
+    API->>API: Compute token_digest = SHA-256(rawBearer)
+    API->>DB: RPC api.scan_pass(token_digest, mode, device_id)
+    DB->>DB: Match passes.token_digest & Verify Status == 'issued'
+    DB->>DB: Atomic Update: status -> 'pending'<br/>Insert visit_events entry
 
-    API->>DB: Atomic RPC: api.scan_pass(token_hash, scan_type, gate_id)
-    DB->>DB: SELECT * FROM passes WHERE qr_token_hash = token_hash FOR UPDATE
-    
-    alt Pass Not Found
-        DB-->>API: Error: invalid_pass
-        API-->>Scanner: HTTP 404 Not Found
-    else Expired
-        DB-->>API: Error: pass_expired
-        API-->>Scanner: HTTP 422 Unprocessable Entity
-    else State Mismatch (e.g. Already inside)
-        DB-->>API: Error: invalid_state_transition
-        API-->>Scanner: HTTP 409 Conflict
-    else Valid Entry Transition
-        DB->>DB: UPDATE passes SET status = 'pending', entered_at = statement_timestamp()
-        DB->>DB: INSERT INTO visit_events (pass_id, event_type, gate_id, actor_id)
-        DB-->>API: Success { pass_id, visitor_name, status: 'pending' }
-        API-->>Scanner: HTTP 200 OK
+    alt Scan Valid & Accepted
+        DB-->>API: Status: 'pending', Gate: 'Main Gate'
+        API-->>D: HTTP 200 { status: 'pending', message: 'Pending Guard Review' }
+    else Invalid Status / Wrong Gate / Expired
+        DB-->>API: Error: pass_expired / invalid_status / gate_mismatch
+        API-->>D: HTTP 409 { error: 'Pass is not eligible for entry' }
     end
-`
+```
 
 ---
 
 ## 8. Pass State Machine Invariants
 
-`mermaid
+Pass lifecycle transitions are governed by database-enforced state checks:
+
+```mermaid
 stateDiagram-v2
-    [*] --> issued: Pass created via Portal or Kiosk
+    [*] --> issued: POST /api/passes/issue
 
-    issued --> pending: Valid Entry Scan at Assigned Gate
-    issued --> expired: valid_until timestamp exceeded
+    issued --> pending: Entry Scan (mode: entry)
+    issued --> expired: Validity Window Ends
 
-    pending --> inside: Campus Guard approves entry
-    pending --> rejected: Campus Guard denies entry
+    pending --> inside: Guard Approves (POST /api/decide-visit)
+    pending --> rejected: Guard Rejects (POST /api/decide-visit)
 
-    inside --> exited: Valid Exit Scan at Assigned Gate
+    inside --> exited: Exit Scan (mode: exit)
 
     rejected --> [*]
     exited --> [*]
     expired --> [*]
-`
-
-### Invariants Enforced in PostgreSQL
-
-- issued passes can only transition to pending (via entry scan) or expired (via time expiry).
-- pending passes can only transition to inside (via guard approval) or ejected (via guard denial).
-- inside passes can only transition to exited (via exit scan).
-- All transitions log an immutable row in public.visit_events.
+```
 
 ---
 
-## 9. Evidence Upload & Isolation Protocol
+## 9. Evidence Ingestion & Upload Intent Architecture
 
-Visitors upload face photos and government ID images directly to private Supabase Storage buckets using pre-authorized single-use upload intents.
+To prevent arbitrary file storage injection, clients cannot upload directly without pre-authorized intents:
 
-`mermaid
+```mermaid
 sequenceDiagram
-    autonumber
-    actor V as Visitor Browser
-    participant API as Vercel /api/passes/issue
+    participant C as Visitor / Kiosk Browser
+    participant API as Vercel API
     participant DB as PostgreSQL Database
-    participant Storage as Supabase Private Storage
+    participant Storage as Private Supabase Storage
 
-    V->>API: POST /api/passes/issue (visitor metadata, requested intents)
-    API->>DB: RPC: api.create_evidence_upload_intent(user_id, bucket, mime_type)
-    DB-->>API: Intent ID, object path, 10-minute expiry
-    API-->>V: Signed Upload Intent Credentials
+    C->>DB: RPC api.create_upload_intent(source, kind, content_type)
+    DB->>DB: Verify Actor Session & Rate Limits
+    DB-->>C: Returns { intent_id, bucket_id, object_path, max_bytes }
 
-    V->>Storage: Direct POST/PUT object to private bucket path
-    Storage-->>V: Upload HTTP 200 OK
+    C->>Storage: Direct Upload: storage.from(bucket_id).upload(object_path, blob)
+    Storage-->>C: Upload Acknowledged
 
-    V->>API: POST /api/passes/finalize-evidence { intent_id, object_path }
-    API->>Storage: HEAD object: verify size, content type
-    API->>DB: RPC: api.claim_evidence(intent_id)
-    DB->>DB: Mark intent claimed, create evidence record in public.evidence
-    DB-->>API: Evidence verified & claimed
-    API-->>V: Pass Issuance Complete
-`
-
----
-
-## 10. Valid ID Privacy & Retention Lifecycle
-
-Identity document images are protected under strict retention schedules and are scrubbed automatically once visits conclude.
-
-`mermaid
-flowchart TD
-    Camera[Live Camera ID Capture]
-    OCR[Local Client Tesseract OCR Engine]
-    UserReview[Visitor Reviews / Corrects Fields]
-    Upload[Private Storage: visitor-id-documents]
-    Evidence[Evidence Metadata Record]
-    Retention[Retention Expiry Window Reached]
-    HoldCheck{Active Incident Hold Applied?}
-    Purge[Permanent Deletion from Storage & Hash Redaction]
-    Retain[Preserve Evidence Until Security Hold Released]
-
-    Camera --> OCR
-    OCR --> UserReview
-    UserReview --> Upload
-    Upload --> Evidence
-    Evidence --> Retention
-    Retention --> HoldCheck
-    HoldCheck -->|No Active Hold| Purge
-    HoldCheck -->|Active Hold Present| Retain
-    Retain --> HoldCheck
-`
-
-> **Privacy Assertion**: OCR is strictly a text-extraction algorithm run inside the client's WebAssembly sandbox. E-GatePass does **not** perform automated facial recognition, remote biometric verification, or cross-referencing against external identity databases.
+    C->>API: POST /api/passes/issue { photoIntentId, idIntentId, visitor, requestId }
+    API->>DB: Query upload_intents (verify pending, owner, not expired)
+    API->>Storage: Download Private Object Server-Side
+    API->>API: Validate Magic Bytes (JPEG/PNG/WEBP), Max Size (5MB), Compute SHA-256
+    API->>DB: RPC api.issue_pass (commits visitor, visitor_evidence, pass atomically)
+    DB-->>API: Public Reference & Validity Window
+    API-->>C: HTTP 200 { passId, qrToken, validFrom, validUntil }
+```
 
 ---
 
-## 11. Transactional Email Security (Supabase Auth Hook)
+## 10. Evidence Retrieval & Viewing Security
 
-Supabase Auth sends email events as signed HTTP webhooks. The receiver verifies standard cryptographic webhook signatures before processing.
+Staff review visitor evidence strictly through an authenticated server proxy:
 
-`mermaid
+```mermaid
 sequenceDiagram
-    autonumber
-    participant SA as Supabase Auth
-    participant Hook as Vercel /api/auth/send-email-hook
-    participant Verify as StandardWebhooks Validator
-    participant Bundle as React Email Runtime Bundle
-    participant Resend as Resend API
+    participant G as Guard Console
+    participant API as /api/evidence?id=<uuid>
+    participant DB as PostgreSQL Database
+    participant Storage as Private Supabase Storage
 
-    SA->>Hook: POST /api/auth/send-email-hook (raw payload)<br/>Headers: webhook-id, webhook-timestamp, webhook-signature
-    Hook->>Verify: verify(rawBody, headers, SEND_EMAIL_HOOK_SECRET)
+    G->>API: GET /api/evidence?id=<evidence_id><br/>Authorization: Bearer <staff_jwt>
+    API->>DB: Query visitor_evidence metadata
+    DB-->>API: { visitor_id, bucket_id, object_path, content_type, expires_at, purged_at }
 
-    alt Signature Invalid or Timestamp Skewed (>5 min)
-        Verify-->>Hook: Invalid
-        Hook-->>SA: HTTP 401 Unauthorized { error: 'invalid_webhook_signature' }
-    else Signature Valid
-        Verify-->>Hook: Signature Verified
-        Hook->>Bundle: Render appropriate email template (e.g. StaffInviteEmail)
-        Bundle-->>Hook: Sanitized HTML markup
-        Hook->>Resend: POST https://api.resend.com/emails
-        Resend-->>Hook: HTTP 200 { id: 're_...' }
-        Hook-->>SA: HTTP 200 {}
+    alt Evidence Purged
+        API-->>G: HTTP 410 Gone (Evidence Expired)
+    else Evidence Expired but Under Hold
+        API->>DB: Query incident_holds for visitor_id / pass_id
+        alt Hold Active & Caller is Admin/SuperAdmin
+            API->>DB: Insert audit_events (action: 'evidence.review_held')
+            API->>Storage: Download Private Object
+            Storage-->>API: Binary Stream
+            API-->>G: HTTP 200 + Stream Image (Cache-Control: private, no-store)
+        else No Hold or Caller is Guard
+            API-->>G: HTTP 410 Gone
+        end
+    else Normal Active Evidence (Pending Queue)
+        API->>DB: Verify passes.status == 'pending' for Guard
+        API->>Storage: Download Private Object
+        Storage-->>API: Binary Stream
+        API-->>G: HTTP 200 + Stream Image (Sandbox CSP, nosniff)
     end
-`
+```
 
 ---
 
-## 12. Build-Time Email Supply Chain Architecture
+## 11. Transactional Email Security & Supply Chain
 
-To ensure total determinism across Vercel Functions and prevent runtime module resolution errors (ERR_MODULE_NOT_FOUND):
+### 11.1 Supabase Auth Webhook Verification
+Supabase Auth dispatches authentication events to `/api/auth/send-email-hook` using standard webhooks:
+- Each incoming request is verified using the `standardwebhooks` protocol and `SEND_EMAIL_HOOK_SECRET`.
+- Tampered headers, mismatched timestamps (> 5 min skew), or missing signatures are rejected with HTTP 401.
 
-`mermaid
+### 11.2 Email Build Supply Chain Architecture
+```mermaid
 flowchart LR
-    Source[server/templates/index.ts<br/>+ 9 TSX Templates]
-    Esbuild[scripts/bundle-email-templates.mjs<br/>esbuild Node compiler]
-    Artifact[server/templates/index.js<br/>precompiled JS bundle - git ignored]
-    NFT[Vercel Node File Trace]
-    Runtime[Production Node.js 24 Serverless Function]
+    TSX[Authoritative Source<br/>server/templates/*.tsx & index.ts]
+    Script[Build Script<br/>scripts/bundle-email-templates.mjs]
+    Bundle[Generated Runtime Artifact<br/>server/templates/index.js<br/>Ignored by Git]
+    Trace[Vercel File Tracer<br/>@vercel/nft]
+    Function[Production Auth Function<br/>api/auth/send-email-hook]
 
-    Source --> Esbuild
-    Esbuild --> Artifact
-    Artifact --> NFT
-    NFT --> Runtime
-`
+    TSX --> Script
+    Script --> Bundle
+    Bundle --> Trace
+    Trace --> Function
+```
 
 ---
 
-## 13. Self-Service QR Email Dispatch Verification
+## 12. QR Pass Email Verification Challenge
 
-To prevent email spam and unauthorized pass interception, sending a QR code via email requires a 6-digit challenge verification code:
+Visitors requesting their QR pass via email must satisfy an anti-abuse challenge:
 
-`mermaid
+```mermaid
 sequenceDiagram
-    autonumber
-    actor V as Visitor
-    participant API as Vercel API
+    participant V as Visitor Browser
+    participant API as POST /api/passes/email
     participant DB as PostgreSQL Database
     participant Resend as Resend API
 
-    V->>API: POST /api/passes/email/request-code { public_reference, email }
-    API->>DB: Atomic RPC: api.request_email_verification_code
-    DB->>DB: Enforce rate limit (max 5/hr/recipient, max 3/pass)
-    DB->>DB: Generate random 6-digit code with bcrypt-compatible hash
-    DB-->>API: 6-digit challenge code
-    API->>Resend: Send VerificationCodeEmail
-    Resend->>V: Delivery to visitor inbox
+    V->>API: Action: request_code { passId, qrToken, recipientEmail }
+    API->>DB: RPC api.request_qr_email_code
+    Note over DB: Enforces Rate Limits:<br/>3/pass/15m, 5/recipient/15m, 10/actor/15m
+    DB-->>API: verificationId & SHA-256 hashed 6-digit code
+    API->>Resend: Send 6-Digit Code Email
+    Resend-->>V: Deliver Code (10-minute expiry)
 
-    V->>API: POST /api/passes/email/verify-and-send { public_reference, code }
-    API->>DB: Atomic RPC: api.verify_and_claim_email_dispatch
-    DB->>DB: Verify code, expiry (5 min), and failed attempts (<5)
-    DB-->>API: Dispatch claim granted
-    API->>Resend: Send PassIssuedEmail with attached QR code
-    API->>DB: Atomic RPC: api.finalize_email_dispatch
-    DB-->>API: Status marked 'dispatched'
-    API-->>V: Success confirmed
-`
+    V->>API: Action: verify_and_send { verificationId, code, qrToken }
+    API->>DB: RPC api.claim_qr_email_dispatch
+    Note over DB: Checks code hash & attempt count (max 5)
+    DB-->>API: Authorized
+    API->>Resend: Send Email with Embedded Pass PNG
+    API->>DB: RPC api.finalize_qr_email_dispatch (record delivery status)
+    API-->>V: Success Confirmation
+```
 
 ---
 
-## 14. Password Recovery Authority Verification
+## 13. Cloudflare Turnstile Bot Protection
 
-A URL containing ?type=recovery alone does **not** grant password reset authorization. The frontend requires a verified Supabase Auth session event before allowing password modification.
+Cloudflare Turnstile protects public visitor registration from automated bots and scripted abuse:
 
-`mermaid
+```mermaid
 flowchart TD
-    URL[User Clicks Email Link]
-    ParamCheck{URL contains type=recovery?}
-    AuthListener[Supabase Auth State Change Listener]
-    EventCheck{PASSWORD_RECOVERY Event Emitted?}
-    SessionValid{Valid Authenticated Session Present?}
-    AllowReset[Render Password Reset Form]
-    DenyReset[Redirect to Login / Show Invalid Session Error]
+    Widget[Cloudflare Turnstile Widget on /get-pass]
+    Token[Visitor Solves Challenge -> captchaToken]
+    AnonSignIn[supabase.auth.signInAnonymously({ options: { captchaToken } })]
+    SupabaseAuth[Supabase Auth Service]
+    CloudflareAPI[Cloudflare Siteverify API]
+    Session[Anonymous Visitor Session Created]
 
-    URL --> ParamCheck
-    ParamCheck -->|No| DenyReset
-    ParamCheck -->|Yes| AuthListener
-    AuthListener --> EventCheck
-    EventCheck -->|No| DenyReset
-    EventCheck -->|Yes| SessionValid
-    SessionValid -->|Yes| AllowReset
-    SessionValid -->|No| DenyReset
-`
+    Widget --> Token
+    Token --> AnonSignIn
+    AnonSignIn --> SupabaseAuth
+    SupabaseAuth --> CloudflareAPI
+    CloudflareAPI -->|Valid Token| Session
+    CloudflareAPI -->|Invalid Token| Denied[Sign-In Rejected]
+```
 
----
-
-## 15. Cloudflare Turnstile Bot Deterrence Flow
-
-`mermaid
-sequenceDiagram
-    autonumber
-    actor V as Visitor Browser
-    participant T as Cloudflare Turnstile
-    participant API as Vercel API
-
-    V->>T: Load Turnstile widget & complete challenge
-    T-->>V: Ephemeral one-time Turnstile token
-    V->>API: POST /api/passes/issue { ...visitorData, turnstile_token }
-    API->>T: POST https://challenges.cloudflare.com/turnstile/v0/siteverify
-    T-->>API: Response { success: true/false }
-
-    alt Verification Passed
-        API->>API: Continue pass issuance
-    else Verification Failed
-        API-->>V: HTTP 403 Forbidden { error: 'bot_verification_failed' }
-    end
-`
+*Note: The Cloudflare Turnstile Secret Key is configured in the Supabase Dashboard under Authentication > CAPTCHA / Bot & Abuse Protection. Vercel server functions do not require `Turnstile server secret`.*
 
 ---
 
-## 16. Concurrency & Idempotency Controls
+## 14. Incident Holds & Evidence Retention
 
-All state-changing endpoints implement database-level concurrency fencing using PostgreSQL transactional advisory locks and partial unique indexes.
+Campus security investigations require evidence preservation beyond standard retention windows:
 
-`mermaid
-flowchart TD
-    Req[Incoming State Mutation Request]
-    ExtractKey[Extract Idempotency Key / Request ID]
-    Lock[Acquire Advisory Lock: pg_advisory_xact_lock]
-    CheckExisting{Existing Record with Request ID?}
-
-    Req --> ExtractKey
-    ExtractKey --> Lock
-    Lock --> CheckExisting
-
-    CheckExisting -->|Same Completed Request| ReturnCached[Return Idempotent Cached Result]
-    CheckExisting -->|Conflicting In-Flight Operation| ReturnConflict[Reject: HTTP 409 Conflict]
-    CheckExisting -->|Fresh Request| ExecuteTx[Execute Atomic State Transition]
-
-    ExecuteTx --> CommitTx[Commit Transaction & Release Lock]
-`
-
----
-
-## 17. Evidence Retention & Incident Holds
-
-`mermaid
+```mermaid
 stateDiagram-v2
-    [*] --> ActiveEvidence: Pass Issued & Evidence Recorded
+    [*] --> ActiveEvidence: Image Uploaded & Verified
 
-    ActiveEvidence --> EligibleForPurge: Retention Window Elapsed (e.g. 30 days)
+    ActiveEvidence --> EligibleForPurge: Retention Window Elapsed (Default 7 Days)
 
-    EligibleForPurge --> SuspendedUnderHold: Incident Hold Created by Admin
-    EligibleForPurge --> Purged: Retention Cleanup Job Runs (No Hold)
+    EligibleForPurge --> Held: Active row in incident_holds (active == true)
+    EligibleForPurge --> Purged: No Active Hold
 
-    SuspendedUnderHold --> EligibleForPurge: Incident Hold Released by Super Admin
+    Held --> EligibleForPurge: Hold Released by Admin (active = false)
 
-    Purged --> [*]
-`
-
----
-
-## 18. Cross-System Partial Failure Reconciliation
-
-When a workflow spans multiple autonomous systems (e.g., Supabase PostgreSQL and Resend), partial failures are captured in public.reconciliation_tasks for auditing and resolution.
-
-`mermaid
-flowchart TD
-    Step1[Step 1: Database Mutation Committed]
-    Step2[Step 2: External Provider Call (Resend / Storage)]
-    CheckResult{Provider Call Succeeded?}
-    Success[Operation Finalized]
-    Task[Insert Task into public.reconciliation_tasks]
-    AdminAlert[Flagged in Super Admin Dashboard]
-
-    Step1 --> Step2
-    Step2 --> CheckResult
-    CheckResult -->|Yes| Success
-    CheckResult -->|No / Network Timeout| Task
-    Task --> AdminAlert
-`
+    Purged --> [*]: Storage Object Erased, visitor_evidence.purged_at Marked
+```
 
 ---
 
-## 19. Browser Security Headers
+## 15. Cross-System Reconciliation
 
-Configured directly in ercel.json and applied to all outgoing responses:
-
-| Security Header | Configured Value | Purpose |
-|:---|:---|:---|
-| **Content-Security-Policy** | default-src 'self'; script-src 'self' 'unsafe-inline' 'wasm-unsafe-eval' https://challenges.cloudflare.com; worker-src 'self' blob:; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com data:; img-src 'self' data: blob: https://*.supabase.co; connect-src 'self' https://*.supabase.co wss://*.supabase.co https://challenges.cloudflare.com; frame-src https://challenges.cloudflare.com; media-src 'self' data: blob:; frame-ancestors 'none'; object-src 'none'; base-uri 'self'; form-action 'self'; | Prevents XSS, data exfiltration, clickjacking, and unauthorized third-party scripts. |
-| **Strict-Transport-Security** | max-age=31536000; includeSubDomains; preload | Enforces HTTPS connections and prevents SSL-stripping attacks. |
-| **X-Content-Type-Options** | 
-osniff | Prevents MIME-type sniffing by browsers. |
-| **X-Frame-Options** | DENY | Disallows rendering the application inside frames/iframes to eliminate clickjacking. |
-| **Referrer-Policy** | strict-origin-when-cross-origin | Strips path and query information from cross-origin referrer headers. |
-| **Permissions-Policy** | camera=(self), microphone=(), geolocation=(), browsing-topics=() | Restricts camera access strictly to the application origin; disables microphone and tracking APIs. |
+When an operation spans multiple systems (PostgreSQL, Storage, Resend) and encounters partial network failures:
+1. The error does not abort without a record.
+2. An entry is recorded in `public.reconciliation_tasks` with payload references and error details.
+3. Super Admins review, retry, or acknowledge pending reconciliation items via `GET /api/reconciliation-items`.
 
 ---
 
-## 20. Secret Classification Matrix
+## 16. Browser Security Headers (`vercel.json`)
 
-| Variable Name | Exposure Boundary | Secret? | Operational Role |
-|:---|:---|:---:|:---|
-| VITE_SUPABASE_URL | Public / Browser Bundle | No | Canonical Supabase project API gateway |
-| VITE_SUPABASE_PUBLISHABLE_KEY | Public / Browser Bundle | No | Public Supabase client key with RLS enforcement |
-| VITE_TURNSTILE_SITE_KEY | Public / Browser Bundle | No | Cloudflare Turnstile public challenge site key |
-| SUPABASE_SECRET_KEY | Vercel Serverless Runtime Only | **YES** | Privileged database access bypassing RLS |
-| PASS_TOKEN_SECRET | Vercel Serverless Runtime Only | **YES** | 32-byte secret key for HMAC-SHA256 QR generation |
-| RESEND_API_KEY | Vercel Serverless Runtime Only | **YES** | Resend API token for transactional email dispatch |
-| SEND_EMAIL_HOOK_SECRET | Vercel Serverless Runtime Only | **YES** | Standard Webhook secret for verifying Supabase Auth hooks |
-| CRON_SECRET | Vercel Serverless Runtime Only | **YES** | Bearer secret authenticating Vercel Cron maintenance tasks |
-| RESEND_FROM_EMAIL | Vercel Serverless Runtime Only | No | Verified institutional sender address |
+| Security Header | Directive / Value | Purpose |
+|---|---|---|
+| **Content-Security-Policy** | Strict origin policy with script, frame, and connect constraints | Mitigates XSS, data exfiltration, and unauthorized frame embedding |
+| **Strict-Transport-Security** | `max-age=31536000; includeSubDomains; preload` | Forces HTTPS and protects against SSL stripping |
+| **X-Frame-Options** | `DENY` | Prevents clickjacking by blocking iframe rendering |
+| **X-Content-Type-Options** | `nosniff` | Blocks MIME-type sniffing by browsers |
+| **Referrer-Policy** | `strict-origin-when-cross-origin` | Limits referrer leakage to third-party domains |
+| **Permissions-Policy** | `camera=(self), microphone=(), geolocation=()` | Restricts hardware API access to own origin |
 
 ---
 
-## 21. Threat & Mitigation Matrix
+## 17. Environment Secret Classification
 
-| Threat Description | Trust Boundary | Primary Mitigating Control | Enforcement Layer | Residual Risk |
-|:---|:---|:---|:---|:---|
-| **Client modifies own user role** | Client → Server | Roles stored in staff_profiles(role), never in JWT metadata. | Database RLS & API | Zero client write access to staff_profiles. |
-| **Visitor accesses another's evidence** | Client → Storage | Storage RLS permits access only if active signed upload intent matches caller. | Supabase Storage RLS | Low; signed URLs expire in 60 seconds. |
-| **Compromised QR database digest** | Data Boundary | Database stores only SHA-256 digest; QR bearer contains HMAC secret. | Server Cryptography | High entropy prevents rainbow table precomputation. |
-| **Replayed QR bearer token** | Gate Boundary | State machine allows entry only from issued state; transitions are atomic. | PostgreSQL Row Locks | Physical QR clone cannot be reused after entry. |
-| **Forged Auth Email Hook** | External → Server | Webhook HMAC-SHA256 signature and timestamp validated via standardwebhooks. | Vercel API Gateway | Zero unauthenticated webhook execution. |
-| **Password reset parameter tampering** | Client → Auth | 	ype=recovery query param verified against genuine Auth state change event. | React Auth Listener | Bypasses without email verification rejected. |
-| **Last Super Admin deleted/demoted** | Admin UI → Database | PostgreSQL trigger rejects any mutation that reduces active Super Admins to 0. | Database Trigger | Super Admin lockout programmatically impossible. |
-| **Evidence deleted during investigation** | Retention Cleanup | public.incident_holds table checked before any evidence purge. | SQL Retention Definer | Evidence remains protected until explicit release. |
-| **Turnstile verification bypass** | Visitor → API | Server-side validation against https://challenges.cloudflare.com/turnstile/v0/siteverify. | Vercel Serverless API | Single-use tokens prevent replay attacks. |
+### Browser-Safe Client Configuration (`VITE_*`)
+- `VITE_SUPABASE_URL`: Public Supabase API endpoint.
+- `VITE_SUPABASE_PUBLISHABLE_KEY`: Public anonymous API key (governed by RLS).
+- `VITE_TURNSTILE_SITE_KEY`: Public site key for Cloudflare Turnstile widget.
+
+### Protected Server Secrets (Vercel Functions Only)
+- `SUPABASE_SECRET_KEY`: Service-role key for backend operations; bypasses RLS.
+- `PASS_TOKEN_SECRET`: Cryptographic secret (minimum 32 characters) for HMAC QR tokens.
+- `RESEND_API_KEY`: API key for transactional email delivery.
+- `SEND_EMAIL_HOOK_SECRET`: Shared secret for Supabase Auth webhook verification.
+- `CRON_SECRET`: Bearer authentication token for maintenance endpoints.
+- `RESEND_FROM_EMAIL`: Non-secret server configuration (`EARIST E-GatePass <notifications@egatepass.tech>`).
+
+---
+
+## 18. Threat Model & Mitigation Matrix
+
+| Threat Scenario | Trust Boundary | Primary Mitigation Control | Enforcement Layer | Residual Risk |
+|---|---|---|---|---|
+| **Client Modifies User Role** | Untrusted Client | Roles stored in `staff_profiles`; client writes blocked | PostgreSQL RLS & Schema | Compromise of server service-role key |
+| **Visitor Reads Other IDs** | Untrusted Client | Private Storage buckets; access proxy verifies role | `server/routes/gate/evidence.ts` | Stolen staff credentials |
+| **Device Spoofs Device Type** | Managed Device | Hardware type bound to database `devices` row | Database device record | Physical compromise of scanner device |
+| **Scanner Used at Wrong Gate** | Scanner Device | Scans checked against device gate assignment | Stored procedure `api.scan_pass` | Human error in gate assignment |
+| **Stolen Token Digest** | Database Boundary | Raw token is HMAC-derived; only SHA-256 digest stored | PostgreSQL `passes.token_digest` | Weak secret or brute-force if secret leaked |
+| **Replayed QR Bearer** | Gate Scanner | Pass transitions to `pending` upon first scan | Database atomic transaction | Scanning before original visitor arrives |
+| **Concurrent Pass Issuance** | Visitor Registration | Idempotency key and unique token digest constraints | PostgreSQL unique constraints | Client timeout with unreturned token |
+| **Forged Storage Path** | Storage Ingestion | Pre-authorized upload intents with random paths | RPC `api.create_upload_intent` | Abandoned upload intent before expiry |
+| **Email Bombing / Spam** | External Integration | Tiered rate limits (pass, recipient, actor) | RPC `api.request_qr_email_code` | Distributed spam across multiple passes |
+| **Forged Email Webhook** | Auth Hook Endpoint | Standard Webhook HMAC signature verification | `/api/auth/send-email-hook` | Leaked webhook secret |
+| **Password Recovery Tampering** | Auth Workflow | Recovery session confined; blocked from admin/scanner | `getVerifiedSessionContext` | Attacker controls victim email inbox |
+| **Accidental Last Admin Removal** | Staff Governance | Defensive check blocks demoting last Super Admin | Stored procedure & API route | Database manual override via SQL editor |
+| **Evidence Deleted During Incident** | Retention Engine | Active `incident_holds` suspend automated purge | Stored procedures & cron handler | Failure of human officer to place hold |
+| **Turnstile Challenge Bypass** | Public Registration | Challenge verified by Supabase Auth before session | Supabase Auth CAPTCHA | Sophisticated CAPTCHA solving farms |

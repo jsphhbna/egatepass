@@ -1,269 +1,269 @@
-﻿# E-GatePass Technical Architecture
+﻿# System Architecture & Technical Specifications
 
-> Authoritative technical specification of subsystems, boundaries, data pipelines, and invariants.
-
-This document describes the runtime architecture, subsystem boundaries, database schema relationships, and state transitions of the **EARIST E-GatePass** platform.
+This document details the software architecture, relational data models, subsystem boundaries, and runtime execution pipelines of the EARIST E-GatePass platform.
 
 ---
 
-## 1. System Subsystems & Runtime Boundaries
+## 1. Subsystem Architecture
 
-`mermaid
-flowchart TB
-    subgraph ClientLayer["Frontend Application (React 19 + TypeScript + Vite)"]
-        PortalUI[Visitor Self-Service Portal]
-        KioskUI[Assisted Walk-in Kiosk UI]
-        GateUI[Entry & Exit Scanner Views]
-        GuardUI[Guard Approval Queue Dashboard]
-        AdminUI[Admin & Super Admin Consoles]
-    end
+EARIST E-GatePass is partitioned into four decoupled architecture tiers:
 
-    subgraph ServerLayer["Serverless Execution Layer (Vercel Functions - Node.js 24)"]
-        Gateway[Vercel Edge Gateway / Rewrites]
-        AuthHook[Auth Webhook Receiver /api/auth/*]
-        PassAPI[Pass Issuance & Scanning /api/passes/*]
-        GateAPI[Guard Decision & Evidence /api/gate/*]
-        AdminAPI[Staff, Devices & Settings /api/admin/*]
-        SystemAPI[Retention & Diagnostics /api/system/*]
-        EmailBundle[React Email Runtime Bundle]
-    end
-
-    subgraph DataLayer["Database & Storage Authority (Supabase / PostgreSQL 15)"]
-        AuthService[Supabase Auth Service]
-        PostgresDB[(PostgreSQL Database Engine)]
-        StorageVault[(Private Object Storage Vault)]
-    end
-
-    subgraph ExternalLayer["External Integrated Providers"]
-        ResendAPI[Resend Transactional Email Engine]
-        TurnstileAPI[Cloudflare Turnstile Bot Verification]
-    end
-
-    PortalUI --> Gateway
-    KioskUI --> Gateway
-    GateUI --> Gateway
-    GuardUI --> Gateway
-    AdminUI --> Gateway
-
-    PortalUI -.->|Direct Challenge| TurnstileAPI
-    PortalUI -.->|Direct Signed Upload| StorageVault
-    KioskUI -.->|Direct Signed Upload| StorageVault
-
-    Gateway --> AuthHook
-    Gateway --> PassAPI
-    Gateway --> GateAPI
-    Gateway --> AdminAPI
-    Gateway --> SystemAPI
-
-    AuthHook --> EmailBundle
-    EmailBundle --> ResendAPI
-    PassAPI --> ResendAPI
-
-    AuthHook --> AuthService
-    PassAPI --> PostgresDB
-    GateAPI --> PostgresDB
-    AdminAPI --> PostgresDB
-    SystemAPI --> PostgresDB
-    SystemAPI --> StorageVault
-`
-
----
-
-## 2. Core Database Schema & Relational Entities
-
-The PostgreSQL schema enforces strict foreign key integrity, temporal checks, and enum type constraints.
-
-`mermaid
-erDiagram
-    STAFF_PROFILES ||--o{ VISIT_EVENTS : records
-    STAFF_PROFILES ||--o{ INCIDENT_HOLDS : creates
-    DEVICES ||--o{ VISIT_EVENTS : scans
-    VISITORS ||--o{ PASSES : owns
-    VISITORS ||--o{ EVIDENCE : provides
-    PASSES ||--o{ VISIT_EVENTS : transitions
-    PASSES ||--o{ PASS_EMAIL_VERIFICATIONS : challenges
-    PASSES ||--o{ INCIDENT_HOLDS : holds
-
-    STAFF_PROFILES {
-        uuid id PK
-        string email
-        string full_name
-        string role
-        boolean is_active
-        boolean must_change_password
-        timestamp created_at
-    }
-
-    DEVICES {
-        uuid id PK
-        uuid user_id FK
-        string alias
-        string name
-        string type
-        string gate
-        string status
-        timestamp registered_at
-    }
-
-    VISITORS {
-        uuid id PK
-        uuid owner_id
-        string full_name
-        string contact_number
-        string email
-        string purpose
-        timestamp created_at
-    }
-
-    PASSES {
-        uuid id PK
-        uuid visitor_id FK
-        uuid public_reference UK
-        string status
-        string qr_token_hash UK
-        timestamp valid_from
-        timestamp valid_until
-        timestamp entered_at
-        timestamp exited_at
-    }
-
-    EVIDENCE {
-        uuid id PK
-        uuid visitor_id FK
-        uuid pass_id FK
-        string type
-        string storage_path
-        string mime_type
-        int file_size
-        string sha256_hash
-        timestamp created_at
-    }
-
-    VISIT_EVENTS {
-        uuid id PK
-        uuid pass_id FK
-        string event_type
-        uuid actor_id
-        string gate_id
-        timestamp occurred_at
-    }
-
-    PASS_EMAIL_VERIFICATIONS {
-        uuid id PK
-        uuid pass_id FK
-        string email
-        string code_hash
-        string status
-        int attempts
-        timestamp expires_at
-    }
-
-    INCIDENT_HOLDS {
-        uuid id PK
-        uuid pass_id FK
-        uuid visitor_id FK
-        uuid created_by FK
-        string reason
-        boolean is_active
-        timestamp created_at
-        timestamp released_at
-    }
-`
-
----
-
-## 3. Identity Model & Actor Resolution
-
-Actor authorization is determined dynamically on each request through server/actors.ts:
-
-1. **Staff Actors**: Authenticated via Supabase Auth session JWT. The UID is mapped against public.staff_profiles. The database row dictates the canonical role:
-   - superadmin: Institutional governance and staff management.
-   - dmin: Operations, reporting, device enrollment, and incident holds.
-   - guard: Stationed queue reviews and entry/exit decisions.
-2. **Device Actors**: Hardware terminals authenticate using device credentials mapped in public.devices. The database row dictates device capabilities:
-   - kiosk: Walk-in registration with rear document camera.
-   - entry: Inbound gate scanning; authorized to advance passes from issued to pending.
-   - exit: Outbound gate scanning; authorized to advance passes from inside to exited.
-3. **Visitor Actors**: Anonymous visitors authenticate using ephemeral Supabase anonymous sessions, scoped strictly to their own visitor and pass records.
-
----
-
-## 4. Pass Issuance & Scanning Pipeline
-
-`mermaid
-sequenceDiagram
-    autonumber
-    actor V as Visitor / Kiosk
-    participant API as Vercel API
-    participant DB as Supabase PostgreSQL
-    actor S as Gate Scanner
-    actor G as Campus Guard
-
-    V->>API: POST /api/passes/issue { visitorDetails, evidencePaths }
-    API->>API: Generate 64-char QR bearer token
-    API->>API: Compute token_hash = sha256(qr_token)
-    API->>DB: Atomic RPC: api.issue_pass(visitor_id, token_hash, valid_window)
-    DB-->>API: Pass Record (ID, public_reference, status: 'issued')
-    API-->>V: Render QR Code graphic (contains qr_token)
-
-    Note over V,S: Physical Entry at Campus Gate
-    V->>S: Scan QR Code
-    S->>API: POST /api/passes/scan { qr_token, scan_type: 'entry' }
-    API->>DB: RPC: api.scan_pass(sha256(qr_token), 'entry')
-    DB->>DB: Verify status == 'issued' -> Update status = 'pending'
-    DB-->>API: Pass 'pending' Guard Review
-    API-->>S: Display Visitor Info & 'Pending Guard Review'
-
-    G->>API: POST /api/passes/decide { pass_id, decision: 'approved' }
-    API->>DB: RPC: api.decide_visit(pass_id, 'approved', guard_id)
-    DB->>DB: Verify status == 'pending' -> Update status = 'inside'
-    DB-->>API: Decision confirmed
-    API-->>G: Visitor admitted to campus
-`
-
----
-
-## 5. Evidence & Storage Architecture
-
-All face photos and ID captures are uploaded directly to Supabase Private Storage:
-- **Bucket isitor-photos**: Visitor portrait photographs.
-- **Bucket isitor-id-documents**: Government or school identity document scans.
-
-### Upload Lifecycle
-
-1. **Pre-Authorization**: Client calls pi.create_evidence_upload_intent() to receive an authorized upload path and 10-minute expiry.
-2. **Direct Storage Upload**: Client uploads directly to Supabase Storage via signed intent headers.
-3. **Verification & Claim**: Client invokes pi.claim_evidence(). The server validates file metadata, MIME type, and byte headers before marking the evidence record active.
-
----
-
-## 6. Retention, Incident Holds & Purge Pipeline
-
-`mermaid
+```mermaid
 flowchart TD
-    Trigger[Vercel Scheduled Cron /api/system/retention-cleanup<br/>Bearer CRON_SECRET]
-    LoadSettings[Load app_settings: retention windows]
-    FetchEligible[Query passes with valid_until < cutoff AND status IN exited, rejected, expired]
-    CheckHolds{Is pass_id in active incident_holds?}
+    subgraph ClientTier["1. Client Tier (React 18 + TypeScript + Vite)"]
+        Portal[Visitor Portal<br/>Public Registration & QR Display]
+        Kiosk[Walk-In Kiosk View<br/>Self-Service & Local OCR]
+        GuardUI[Guard Console<br/>Verification & Queue Decision]
+        AdminUI[Admin Dashboard<br/>Staff, Devices & Settings]
+        ScannerUI[Gate Scanner Hardware<br/>Entry / Exit QR Readers]
+    end
 
-    Trigger --> LoadSettings
-    LoadSettings --> FetchEligible
-    FetchEligible --> CheckHolds
+    subgraph EdgeTier["2. Edge & Serverless Tier (Vercel)"]
+        EdgeCDN[Vercel Global Edge CDN<br/>Static Assets & SPA Routing]
+        API[Serverless API Functions<br/>Node.js 24 Execution Context]
+        AuthHook[Send Email Hook Endpoint<br/>Standard Webhook Verification]
+        EmailBundle[Build-Time React Email Bundle<br/>server/templates/index.js]
+    end
 
-    CheckHolds -->|Yes| Skip[Retain Record & Skip Storage Purge]
-    CheckHolds -->|No| PurgeStorage[Delete Assets from Private Storage]
+    subgraph DataTier["3. Data & Storage Tier (Supabase)"]
+        SupabaseAuth[Supabase Auth Service<br/>Anonymous & Authenticated JWTs]
+        Postgres[(Supabase PostgreSQL<br/>Authoritative Schema & RLS)]
+        Storage[(Supabase Object Storage<br/>Private: visitor-photos & visitor-ids)]
+    end
 
-    PurgeStorage --> RedactDB[Redact Evidence Hashes & Mark images_purged_at]
-    RedactDB --> LogAudit[Log audit_events: retention_purged]
-    Skip --> LogAudit
-`
+    subgraph ExternalTier["4. External Service Providers"]
+        ResendAPI[Resend REST API<br/>Transactional Email]
+        TurnstileAPI[Cloudflare Turnstile<br/>Bot Protection]
+    end
+
+    ClientTier -->|HTTPS Static Fetch| EdgeCDN
+    ClientTier -->|HTTPS API Requests| API
+    ClientTier -->|Auth Handshake & Session| SupabaseAuth
+    ClientTier -.->|Direct Image Upload via Intent| Storage
+    ClientTier -.->|Solve Challenge| TurnstileAPI
+
+    API -->|Service-Role & RPC Queries| Postgres
+    API -->|Validate & Stream Private Files| Storage
+    API -->|Send Notifications / Invites| ResendAPI
+    AuthHook --> EmailBundle
+    AuthHook --> ResendAPI
+```
 
 ---
 
-## 7. Cross-System Reconciliation Subsystem
+## 2. Authoritative Relational Data Model
 
-Network timeouts or provider downtime (e.g. Resend 5xx errors) trigger the creation of a durable task in public.reconciliation_tasks.
+The PostgreSQL database enforces relational integrity, unique constraints, and foreign-key cascading rules:
 
-1. **Detection**: If a database mutation commits but an external provider fails or returns an uncertain response (outcome_unknown), a reconciliation row is inserted.
-2. **Alerting**: Active reconciliation tasks appear in the Super Admin dashboard with error classification and timestamp.
-3. **Resolution**: Administrators can retry the failed side effect, mark the task resolved, or dismiss it after manual verification.
+```mermaid
+erDiagram
+    visitors ||--o{ passes : "receives"
+    visitors ||--o{ visitor_evidence : "owns"
+    visitors ||--o{ incident_holds : "subject_to"
+    passes ||--o{ visit_events : "generates"
+    passes ||--o{ incident_holds : "subject_to"
+    upload_intents ||--o| visitor_evidence : "materializes"
+    staff_profiles ||--o{ visit_events : "decides"
+    staff_profiles ||--o{ incident_holds : "manages"
+    devices ||--o{ visit_events : "records"
+
+    visitors {
+        uuid id PK
+        uuid owner_id FK
+        text full_name
+        text purpose
+        date visit_date
+        text status
+        timestamptz created_at
+    }
+
+    passes {
+        uuid id PK
+        uuid visitor_id FK
+        uuid public_reference
+        bytea token_digest
+        text source
+        text status
+        timestamptz valid_from
+        timestamptz valid_until
+        timestamptz issued_at
+    }
+
+    visitor_evidence {
+        uuid id PK
+        uuid visitor_id FK
+        uuid upload_intent_id FK
+        text kind
+        text bucket_id
+        text object_path
+        text content_type
+        bytea sha256
+        integer byte_size
+        timestamptz created_at
+        timestamptz purged_at
+    }
+
+    upload_intents {
+        uuid id PK
+        uuid owner_id FK
+        text source
+        text kind
+        text bucket_id
+        text object_path
+        text content_type
+        integer max_bytes
+        text status
+        timestamptz expires_at
+    }
+
+    staff_profiles {
+        uuid user_id PK
+        text display_name
+        text role
+        boolean active
+        boolean must_change_password
+        timestamptz created_at
+    }
+
+    devices {
+        uuid user_id PK
+        text alias
+        text name
+        text type
+        text gate
+        text status
+        timestamptz created_at
+        timestamptz deleted_at
+    }
+
+    incident_holds {
+        uuid id PK
+        uuid visitor_id FK
+        uuid pass_id FK
+        text reason
+        boolean active
+        uuid created_by FK
+        timestamptz created_at
+        uuid released_by FK
+        timestamptz released_at
+    }
+
+    audit_events {
+        bigint id PK
+        uuid actor_id
+        text actor_kind
+        text actor_role
+        text action
+        text target_type
+        text target_id
+        jsonb before_state
+        jsonb after_state
+        uuid request_id
+        text outcome
+        timestamptz occurred_at
+    }
+
+    visit_events {
+        bigint id PK
+        uuid pass_id FK
+        uuid visitor_id FK
+        text event
+        text reason
+        uuid device_id FK
+        text gate
+        uuid guard_id FK
+        timestamptz occurred_at
+    }
+```
+
+---
+
+## 3. Canonical API Route Architecture
+
+The platform's API surface is declared in `server/route-map.ts`. All endpoints run within Vercel Serverless Function instances:
+
+### 3.1 Admin Router (`/api/admin/*`)
+- `GET /api/admin/activity`: Historical audit event query for administrators.
+- `GET /api/admin/dashboard`: High-level operational metrics and active gate counters.
+- `GET /api/admin/devices`: Hardware scanner fleet inventory and status list.
+- `GET /api/admin/emergency`: Real-time campus population roll-call for safety evacuations.
+- `GET/POST/DELETE/PATCH /api/admin/holds`: Incident hold management on visitor records.
+- `GET /api/admin/records`: Paginated visitor pass log with filtering by date and gate.
+- `GET/POST /api/admin/retention-maintenance`: Manual or cron-authenticated retention engine.
+- `GET /api/admin/settings`: Institutional configuration (working hours, retention days).
+- `GET /api/admin/users`: Staff member list and profile state management.
+
+### 3.2 Gate Router (`/api/*`)
+- `POST /api/scan-pass`: Scanner endpoint for entry and exit events; verifies `token_digest` and gate.
+- `POST /api/decide-visit`: Guard console decision endpoint (approve or reject entry).
+- `GET /api/evidence`: Authenticated proxy for streaming private visitor photos and ID cards.
+
+### 3.3 Passes Router (`/api/passes/*`)
+- `POST /api/passes/issue`: Atomically validates evidence upload intents and issues QR gate passes.
+- `POST /api/passes/email`: Two-step verification challenge and dispatch of QR passes via email.
+
+### 3.4 Auth & System Router (`/api/*`)
+- `POST /api/auth/send-email-hook`: Supabase Auth standard webhook receiver.
+- `POST /api/auth/complete-password-change`: Password update handler.
+- `POST /api/auth/reset-password`: Trigger password reset email.
+- `POST /api/create-user`, `POST /api/update-user`: Staff management endpoints.
+- `POST /api/create-device`, `POST /api/update-device`, `DELETE /api/delete-device`: Device lifecycle.
+- `POST /api/update-settings`: Super Admin system settings update.
+- `POST /api/purge-images`: Super Admin manual image purge.
+- `GET /api/reconciliation-items`: Super Admin review of cross-system anomalies.
+
+---
+
+## 4. End-to-End Ingestion & Scan Architecture
+
+```mermaid
+sequenceDiagram
+    participant Browser as Client Browser
+    participant API as Vercel Functions
+    participant DB as PostgreSQL
+    participant Storage as Private Storage
+
+    Note over Browser,Storage: 1. Registration & Upload Phase
+    Browser->>DB: RPC api.create_upload_intent (request upload path)
+    DB-->>Browser: { intent_id, bucket_id, object_path, max_bytes }
+    Browser->>Storage: Direct upload to private bucket (visitor-photos / visitor-ids)
+    Storage-->>Browser: Upload complete
+
+    Note over Browser,DB: 2. Issuance Phase
+    Browser->>API: POST /api/passes/issue { photoIntentId, idIntentId, visitor, requestId }
+    API->>Storage: Download private file & validate magic bytes / size
+    API->>API: Derive HMAC-SHA256 bearer & SHA-256 token_digest
+    API->>DB: RPC api.issue_pass (commits visitor, visitor_evidence, pass atomically)
+    DB-->>API: Public Reference & Validity Window
+    API-->>Browser: HTTP 200 { passId, qrToken, validFrom, validUntil }
+
+    Note over Browser,DB: 3. Gate Verification Phase
+    Browser->>API: Present QR at Gate -> POST /api/scan-pass (mode: entry)
+    API->>DB: RPC api.scan_pass (match token_digest & update status -> pending)
+    DB-->>API: Accepted -> Status: Pending Guard Review
+    API-->>Browser: Scan Accepted
+
+    Note over Browser,DB: 4. Guard Review Phase
+    Browser->>DB: Guard Console invokes RPC api.guard_dashboard
+    DB-->>Browser: Pending passes list
+    Browser->>API: GET /api/evidence?id=<evidence_id>
+    API->>Storage: Download private file
+    API-->>Browser: Stream photo evidence
+    Browser->>API: POST /api/decide-visit { passId, decision: 'approved' }
+    API->>DB: RPC api.decide_visit (atomic transition status -> inside)
+    DB-->>Browser: Approved confirmed
+```
+
+---
+
+## 5. Storage Architecture & Privacy Policies
+
+Private storage assets are partitioned into two designated buckets:
+1. `visitor-photos`: Face photos captured by online visitors or kiosk cameras.
+2. `visitor-ids`: Scanned government or school ID documents.
+
+### Storage Invariants:
+- **Zero Public Access**: Buckets are marked private; public URL access is permanently disabled.
+- **Access Delegation**: Staff access assets solely via `/api/evidence?id=<uuid>`, which evaluates caller roles (`guard`, `admin`, `superadmin`), pass states, and active incident holds before streaming the image.
+- **Ephemeral Upload Intents**: Upload intents expire within 15 minutes. Abandoned uploads are cleaned up during daily retention maintenance.
+- **Retention & Purge**: Expired assets are deleted from storage, and `visitor_evidence.purged_at` is stamped in PostgreSQL.
