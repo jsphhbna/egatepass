@@ -1,3 +1,4 @@
+import { TurnstileWidget } from '@/components/TurnstileWidget';
 import { useEffect, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { Eye, EyeOff } from 'lucide-react';
@@ -18,6 +19,13 @@ export function LoginPage() {
   const [loading, setLoading] = useState(false);
   const [unverifiedEmail, setUnverifiedEmail] = useState('');
   const [resendCooldown, setResendCooldown] = useState(0);
+  const [captchaToken, setCaptchaToken] = useState<string | null>(null);
+  const [turnstileKey, setTurnstileKey] = useState(0);
+
+  function resetTurnstile() {
+    setCaptchaToken(null);
+    setTurnstileKey((k) => k + 1);
+  }
 
   useEffect(() => {
     if (resendCooldown <= 0) return;
@@ -37,13 +45,18 @@ export function LoginPage() {
     if (!supabase || resendCooldown > 0 || !unverifiedEmail) return;
     setLoading(true);
     try {
-      const { error: resendError } = await supabase.auth.resend({ type: 'signup', email: unverifiedEmail });
+      const { error: resendError } = await supabase.auth.resend({
+        type: 'signup',
+        email: unverifiedEmail,
+        options: captchaToken ? { captchaToken } : undefined,
+      });
       if (resendError) throw resendError;
       toast.success('Verification email resent. Please check your inbox.');
       setResendCooldown(60);
     } catch {
       toast.error('We could not resend the verification email. Please try again later.');
     } finally {
+      resetTurnstile();
       setLoading(false);
     }
   }
@@ -125,6 +138,7 @@ export function LoginPage() {
             </div>
           )}
           <div className="mt-2 flex justify-end"><Link to="/forgot-password" className="rounded-sm text-sm font-medium text-[var(--color-brand)] hover:underline">Forgot password?</Link></div>
+          <TurnstileWidget key={turnstileKey} onVerify={setCaptchaToken} onExpire={() => setCaptchaToken(null)} />
           <Button type="submit" disabled={loading || serviceStatus === 'unavailable'} className="w-full" size="lg">{loading ? 'Signing in...' : 'Sign In'}</Button>
         </form>
       </Card>

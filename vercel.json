@@ -88,5 +88,11 @@
       "source": "/((?!api/).*)",
       "destination": "/index.html"
     }
+  ],
+  "crons": [
+    {
+      "path": "/api/admin/retention-maintenance",
+      "schedule": "0 18 * * *"
+    }
   ]
 }

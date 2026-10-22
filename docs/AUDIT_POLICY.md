@@ -1,4 +1,4 @@
-﻿# Audit Logging & Sensitive Data Redaction Policy
+# Audit Logging & Sensitive Data Redaction Policy
 
 This document establishes the audit logging architecture, structured schema, sensitive data redaction standards, and retention guarantees for the EARIST E-GatePass platform.
 

@@ -58,9 +58,11 @@ async function authenticatedClient(
 ): Promise<{ client: SupabaseClient; token: string }> {
   const client = source === 'portal' ? requirePortalSupabase() : requireSupabase();
   let { data: { session } } = await client.auth.getSession();
-  if (source === 'portal' && session && !session.user.is_anonymous) {
-    await client.auth.signOut();
-    session = null;
+  if (source === 'portal') {
+    if (session) {
+      await client.auth.signOut();
+      session = null;
+    }
   }
   if (source === 'portal' && !session) {
     const siteKey = (import.meta as any).env?.VITE_TURNSTILE_SITE_KEY?.trim();
@@ -132,6 +134,9 @@ export async function issueVisitorPass(
   });
   const body = await response.json().catch(() => null) as (IssuedPass & { error?: string }) | null;
   if (!response.ok || !body?.passId || !body.qrToken) {
+    if (response.status === 429 || body?.error === 'rate_limit_exceeded') {
+      throw new Error('Too many pass requests from this visitor session. Please wait before requesting another pass.');
+    }
     if (body?.error === 'visit_date_out_of_range') {
       throw new Error('Visit date is outside the allowed scheduling window.');
     }

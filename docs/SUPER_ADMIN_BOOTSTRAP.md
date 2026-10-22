@@ -1,4 +1,4 @@
-﻿# First Super Admin Bootstrap Runbook
+# First Super Admin Bootstrap Runbook
 
 E-GatePass intentionally exposes no public registration or administrative promotion endpoint for the initial Super Admin. This runbook details the secure, one-time bootstrap procedure using the PostgreSQL `private.bootstrap_super_admin` RPC function in Supabase.
 

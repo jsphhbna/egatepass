@@ -150,10 +150,17 @@ export function AdminUsers() {
       },
       body: JSON.stringify({ targetUid, ...update }),
     });
-    const body = await response.json().catch(() => null) as { error?: string } | null;
+    const body = await response.json().catch(() => null) as {
+      ok?: boolean;
+      result?: 'success' | 'partial';
+      reconciliationRequired?: boolean;
+      error?: string;
+    } | null;
+
     if (!response.ok) {
       throw new Error(body?.error || 'Failed to update user account');
     }
+    return body;
   }
 
   function canManageAccount(user: AppUserWithId): boolean {
@@ -164,8 +171,12 @@ export function AdminUsers() {
   async function handleDeactivate(user: AppUserWithId) {
     setIsDeactivating(true);
     try {
-      await updateUserAccount(user.uid, { active: false });
-      toast.success('User deactivated successfully');
+      const res = await updateUserAccount(user.uid, { active: false });
+      if (res?.result === 'partial' || res?.reconciliationRequired) {
+        toast.warning('User profile deactivated, but Auth synchronization requires reconciliation.');
+      } else {
+        toast.success('User deactivated successfully');
+      }
       setDeactivatingUser(null);
       loadUsers();
     } catch (err) {
@@ -182,8 +193,12 @@ export function AdminUsers() {
     } else {
       // Reactivate instantly
       try {
-        await updateUserAccount(user.uid, { active: true });
-        toast.success('User activated successfully');
+        const res = await updateUserAccount(user.uid, { active: true });
+        if (res?.result === 'partial' || res?.reconciliationRequired) {
+          toast.warning('User profile activated, but Auth synchronization requires reconciliation.');
+        } else {
+          toast.success('User activated successfully');
+        }
         loadUsers();
       } catch (err) {
         console.error(err);

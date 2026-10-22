@@ -1,3 +1,4 @@
+import { TurnstileWidget } from '@/components/TurnstileWidget';
 import { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
 import { sendPasswordReset } from '@/services/auth';
@@ -9,6 +10,13 @@ export function ForgotPasswordPage() {
   const [email, setEmail] = useState('');
   const [loading, setLoading] = useState(false);
   const [countdown, setCountdown] = useState(0);
+  const [captchaToken, setCaptchaToken] = useState<string | null>(null);
+  const [turnstileKey, setTurnstileKey] = useState(0);
+
+  function resetTurnstile() {
+    setCaptchaToken(null);
+    setTurnstileKey((k) => k + 1);
+  }
 
   useEffect(() => {
     if (countdown <= 0) return;
@@ -33,9 +41,16 @@ export function ForgotPasswordPage() {
 
     if (countdown > 0) return;
 
+    const siteKey = (import.meta as any).env?.VITE_TURNSTILE_SITE_KEY?.trim();
+    const isProd = Boolean((import.meta as any).env?.PROD);
+    if (isProd && siteKey && !captchaToken) {
+      toast.error('Please complete the security challenge before requesting a password reset.');
+      return;
+    }
+
     setLoading(true);
     try {
-      await sendPasswordReset(email);
+      await sendPasswordReset(email, captchaToken || undefined);
       toast.success('If an account exists for this email, a password reset link has been sent.', {
         duration: 6000
       });
@@ -50,6 +65,7 @@ export function ForgotPasswordPage() {
         toast.error('Failed to send reset email. Please try again later.');
       }
     } finally {
+      resetTurnstile();
       setLoading(false);
     }
   }
@@ -86,6 +102,7 @@ export function ForgotPasswordPage() {
             Security note: For PKCE protection, please open the reset link in this same browser.
           </p>
 
+          <TurnstileWidget key={turnstileKey} onVerify={setCaptchaToken} onExpire={() => setCaptchaToken(null)} />
           <Button
             type="submit"
             disabled={loading || countdown > 0}

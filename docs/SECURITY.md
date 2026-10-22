@@ -1,4 +1,4 @@
-﻿# Security Architecture & Threat Model
+# Security Architecture & Threat Model
 
 This document serves as the authoritative security specification, trust boundary definition, and threat-mitigation contract for the EARIST E-GatePass platform.
 
@@ -129,7 +129,7 @@ sequenceDiagram
 | **Stream Evidence Image** (`/api/evidence`) | Denied | Denied | Denied | Denied | **Allowed** (Pending) | **Allowed** | **Allowed** |
 | **Manage Staff Accounts** (`/api/admin/users`, `/api/create-user`) | Denied | Denied | Denied | Denied | Denied | **Allowed** | **Allowed** |
 | **Manage Hardware Devices** (`/api/admin/devices`, `/api/create-device`) | Denied | Denied | Denied | Denied | Denied | **Allowed** | **Allowed** |
-| **Manage Incident Holds** (`/api/admin/holds`) | Denied | Denied | Denied | Denied | Denied | **Allowed** | **Allowed** |
+| **Manage Incident Holds** (`/api/admin/holds`) | Denied | Denied | Denied | Denied | Denied | View Only | **Allowed** (Create & Release) |
 | **Update System Settings** (`/api/update-settings`) | Denied | Denied | Denied | Denied | Denied | Denied | **Allowed** |
 | **Execute Retention Maintenance** (`/api/admin/retention-maintenance`) | Denied | Denied | Denied | Denied | Denied | Denied | **Allowed** / Cron |
 | **Review Reconciliation Tasks** (`/api/reconciliation-items`) | Denied | Denied | Denied | Denied | Denied | Denied | **Allowed** |
@@ -366,9 +366,13 @@ sequenceDiagram
 
 ---
 
-## 13. Cloudflare Turnstile Bot Protection
+## 13. Cloudflare Turnstile Bot Protection & Abuse Controls
 
-Cloudflare Turnstile protects public visitor registration from automated bots and scripted abuse:
+Cloudflare Turnstile protects public visitor registration, staff/device authentication, and password recovery from automated attacks:
+- **Public Visitor Portal**: Non-intrusive challenge required before issuing an anonymous session.
+- **Staff & Device Login (`/login`)**: Challenge verification token required for human staff credentials.
+- **Password Recovery (`/forgot-password`)**: Challenge verification token required before issuing password reset emails.
+- **Anonymous Pass Issuance Abuse Boundary**: Pass issuance is authoritative and concurrency-safe, rate limited by client bucket hex key via the `api.consume_rate_limit` database function on `public.rate_limit_buckets`. Idempotent replay of identical requests remains permitted.
 
 ```mermaid
 flowchart TD
@@ -399,7 +403,7 @@ Campus security investigations require evidence preservation beyond standard ret
 stateDiagram-v2
     [*] --> ActiveEvidence: Image Uploaded & Verified
 
-    ActiveEvidence --> EligibleForPurge: Retention Window Elapsed (Default 7 Days)
+    ActiveEvidence --> EligibleForPurge: Retention Window Elapsed (Photo: 7 Days, ID: 30 Days)
 
     EligibleForPurge --> Held: Active row in incident_holds (active == true)
     EligibleForPurge --> Purged: No Active Hold

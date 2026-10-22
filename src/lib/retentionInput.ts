@@ -4,6 +4,8 @@ import type { RetentionPolicy } from '@/lib/retentionPolicy';
 export const RETENTION_INPUT_FIELDS = [
   { field: 'visitorRetentionDays', label: 'Visitor / visit records', min: 7, max: 365 },
   { field: 'imageRetentionDays', label: 'Visitor images / valid IDs', min: 1, max: 90 },
+  { field: 'photoRetentionDays', label: 'Visitor face photos', min: 1, max: 90 },
+  { field: 'idRetentionDays', label: 'Valid ID images', min: 1, max: 90 },
   { field: 'auditRetentionDays', label: 'Audit logs', min: 90, max: 1095 },
   { field: 'reconciliationRetentionDays', label: 'Reconciliation records', min: 30, max: 365 },
 ] as const;
@@ -23,13 +25,30 @@ function createRetentionInputSchema({ label, min, max }: typeof RETENTION_INPUT_
 const retentionInputSchemas = {
   visitorRetentionDays: createRetentionInputSchema(RETENTION_INPUT_FIELDS[0]),
   imageRetentionDays: createRetentionInputSchema(RETENTION_INPUT_FIELDS[1]),
-  auditRetentionDays: createRetentionInputSchema(RETENTION_INPUT_FIELDS[2]),
-  reconciliationRetentionDays: createRetentionInputSchema(RETENTION_INPUT_FIELDS[3]),
+  photoRetentionDays: createRetentionInputSchema(RETENTION_INPUT_FIELDS[2]),
+  idRetentionDays: createRetentionInputSchema(RETENTION_INPUT_FIELDS[3]),
+  auditRetentionDays: createRetentionInputSchema(RETENTION_INPUT_FIELDS[4]),
+  reconciliationRetentionDays: createRetentionInputSchema(RETENTION_INPUT_FIELDS[5]),
 };
 
-export const retentionPolicyInputSchema = z.object(retentionInputSchemas);
+export const retentionPolicyInputSchema = z.object({
+  visitorRetentionDays: retentionInputSchemas.visitorRetentionDays,
+  imageRetentionDays: retentionInputSchemas.imageRetentionDays,
+  photoRetentionDays: retentionInputSchemas.photoRetentionDays.optional(),
+  idRetentionDays: retentionInputSchemas.idRetentionDays.optional(),
+  auditRetentionDays: retentionInputSchemas.auditRetentionDays,
+  reconciliationRetentionDays: retentionInputSchemas.reconciliationRetentionDays,
+});
 
-export type RetentionInputValues = z.input<typeof retentionPolicyInputSchema>;
+export type RetentionInputValues = {
+  visitorRetentionDays: string;
+  imageRetentionDays: string;
+  photoRetentionDays?: string;
+  idRetentionDays?: string;
+  auditRetentionDays: string;
+  reconciliationRetentionDays: string;
+};
+
 export type ValidatedRetentionInputValues = z.output<typeof retentionPolicyInputSchema>;
 export type RetentionInputErrors = Partial<Record<RetentionInputField, string>>;
 
@@ -37,13 +56,17 @@ export function createRetentionInputValues(policy: RetentionPolicy): RetentionIn
   return {
     visitorRetentionDays: String(policy.visitorRetentionDays),
     imageRetentionDays: String(policy.imageRetentionDays),
+    photoRetentionDays: String(policy.photoRetentionDays ?? policy.imageRetentionDays),
+    idRetentionDays: String(policy.idRetentionDays ?? 30),
     auditRetentionDays: String(policy.auditRetentionDays),
     reconciliationRetentionDays: String(policy.reconciliationRetentionDays),
   };
 }
 
 export function getRetentionInputError(field: RetentionInputField, value: string): string | undefined {
-  const result = retentionInputSchemas[field].safeParse(value);
+  const schema = retentionInputSchemas[field];
+  if (!schema) return undefined;
+  const result = schema.safeParse(value);
   return result.success ? undefined : result.error.issues[0]?.message;
 }
 

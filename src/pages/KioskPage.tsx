@@ -30,6 +30,9 @@ import type { VisitPurposeOption } from '@/types';
 import { DEFAULT_WORKING_HOURS, formatWorkingHours, MAX_VISIT_ADVANCE_DAYS, normalizeWorkingHours } from '@/lib/workingHours';
 import { requireSupabase } from '@/lib/supabase';
 import { getManilaDateString, getLatestVisitDateString, validateVisitDate } from '@/lib/scheduling';
+import { formatManilaTime } from '@/lib/manilaTime';
+import { LogOut } from 'lucide-react';
+import { Modal } from '@/components/ui';
 
 // ============================================================
 // FORM SCHEMA (Zod)
@@ -107,13 +110,18 @@ export function KioskPage() {
   const [schedulingDaysAhead, setSchedulingDaysAhead] = useState(MAX_VISIT_ADVANCE_DAYS);
   const [issuedValidity, setIssuedValidity] = useState<string | null>(null);
   const [ocrSuccessNotice, setOcrSuccessNotice] = useState(false);
+  const [showSignOutConfirm, setShowSignOutConfirm] = useState(false);
 
   const issueRequestId = useRef(crypto.randomUUID());
 
   useEffect(() => {
     loadRegistrationSettings('kiosk').then((data) => {
       if (!data) return;
-      setIsPeakMode(data.peak_mode === 'kiosk' || data.peak_mode === 'both');
+      const peakActive = data.peak_mode === 'kiosk' || data.peak_mode === 'both';
+      setIsPeakMode(peakActive);
+      if (peakActive) {
+        setStep((s) => (s === 'scan-intro' ? 'form' : s));
+      }
       setVisitPurposes(normalizeVisitPurposes(data.visit_purposes));
       setWorkingHours(normalizeWorkingHours({
         start: data.working_hours_start?.slice(0, 5),
@@ -155,7 +163,7 @@ export function KioskPage() {
     mode: 'onChange',
     defaultValues: {
       visitDate: today,
-      consent: true,
+      consent: false as unknown as true,
       purpose: '',
     },
   });
@@ -297,7 +305,7 @@ export function KioskPage() {
       setPassId(result.passId);
       setRawQrToken(result.qrToken);
       setIssuedValidity(result.validFrom && result.validUntil
-        ? `${new Date(result.validFrom).toLocaleTimeString()} - ${new Date(result.validUntil).toLocaleTimeString()}`
+        ? `${formatManilaTime(result.validFrom)} - ${formatManilaTime(result.validUntil)}`
         : null);
       setStep('done');
       toast.success('Gate pass issued!');
@@ -313,9 +321,17 @@ export function KioskPage() {
     window.print();
   }
 
-  function handleNextVisitor() {
+  function resetCurrentVisitor() {
     issueRequestId.current = crypto.randomUUID();
-    reset();
+    reset({
+      visitDate: today,
+      consent: false as unknown as true,
+      purpose: '',
+      firstName: '',
+      middleName: '',
+      lastName: '',
+      contactNumber: '',
+    });
     faceWebcam.stop();
     idWebcam.stop();
     void terminateLocalOcrWorker();
@@ -327,13 +343,41 @@ export function KioskPage() {
     setPassId(null);
     setRawQrToken(null);
     setShowEmailModal(false);
+    setSubmitError(null);
     setIssuedValidity(null);
     setOcrSuccessNotice(false);
-    setStep('scan-intro');
+    setStep(isPeakMode ? 'form' : 'scan-intro');
   }
 
+  function handleNextVisitor() {
+    resetCurrentVisitor();
+  }
+
+  // 120-second inactivity timeout to protect visitor PII from abandonment
+  useEffect(() => {
+    if (step === 'scan-intro' || step === 'done' || step === 'generating') return;
+
+    let timeoutId: NodeJS.Timeout;
+    function resetTimer() {
+      clearTimeout(timeoutId);
+      timeoutId = setTimeout(() => {
+        toast.info('Session reset due to inactivity.');
+        resetCurrentVisitor();
+      }, 120_000);
+    }
+
+    resetTimer();
+    const events = ['mousedown', 'mousemove', 'keypress', 'scroll', 'touchstart'];
+    events.forEach((ev) => window.addEventListener(ev, resetTimer, { passive: true }));
+
+    return () => {
+      clearTimeout(timeoutId);
+      events.forEach((ev) => window.removeEventListener(ev, resetTimer));
+    };
+  }, [step, isPeakMode]);
+
   const steps = [
-    { id: 'scan-intro', title: 'Scan ID' },
+    ...(!isPeakMode ? [{ id: 'scan-intro', title: 'Scan ID' }] : []),
     { id: 'form', title: 'Details' },
     { id: 'photo', title: 'Photo' },
     ...(!isPeakMode && !idBlob ? [{ id: 'id', title: 'Capture ID' }] : []),
@@ -352,14 +396,7 @@ export function KioskPage() {
         
         {/* Header */}
         <div className="mb-8 text-center lg:text-left w-full">
-          <div 
-            onDoubleClick={() => {
-              if (window.confirm('Admin: Sign out of this device?')) {
-                void requireSupabase().auth.signOut();
-              }
-            }}
-            className="inline-block cursor-default"
-          >
+          <div className="inline-block">
             <BrandMark size="lg" className="mx-auto lg:mx-0 mb-4" />
           </div>
           <h1 className="text-3xl font-bold text-[var(--color-text-primary)]">
@@ -381,6 +418,19 @@ export function KioskPage() {
             </div>
           </div>
         )}
+
+        {/* Accessible operator device session control */}
+        <div className="mt-6 pt-4 border-t border-[var(--color-border)]/40 w-full text-center lg:text-left print:hidden">
+          <button
+            type="button"
+            onClick={() => setShowSignOutConfirm(true)}
+            className="inline-flex items-center gap-1.5 text-xs text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)] rounded px-2 py-1 focus:outline-none focus:ring-2 focus:ring-[var(--color-brand)]"
+            aria-label="Kiosk device session options"
+          >
+            <LogOut className="h-3.5 w-3.5" />
+            <span>Device Session</span>
+          </button>
+        </div>
       </div>
 
       {/* Right Column (Dynamic Main Card) */}
@@ -470,8 +520,7 @@ export function KioskPage() {
                   variant="secondary"
                   type="button"
                   onClick={() => {
-                    idWebcam.stop();
-                    setStep('scan-intro');
+                    resetCurrentVisitor();
                   }}
                   className="flex-1 min-h-[44px]"
                   icon={<ArrowLeft className="h-4 w-4" />}
@@ -558,7 +607,7 @@ export function KioskPage() {
                   variant="secondary"
                   type="button"
                   onClick={() => {
-                    setStep('scan-intro');
+                    resetCurrentVisitor();
                   }}
                   className="flex-1 min-h-[44px]"
                   icon={<ArrowLeft className="h-4 w-4" />}
@@ -713,12 +762,19 @@ export function KioskPage() {
                     <img src={photoPreview} alt="Face photo" className="h-24 w-20 object-cover rounded-lg border border-[var(--color-border)] shadow-sm" />
                   </div>
                 )}
-                {idPreview && (
+                {idPreview ? (
                   <div className="text-center">
                     <p className="text-xs text-[var(--color-text-secondary)] mb-1">ID Card</p>
                     <img src={idPreview} alt="ID preview" className="h-24 w-36 object-cover rounded-lg border border-[var(--color-border)] shadow-sm" />
                   </div>
-                )}
+                ) : isPeakMode ? (
+                  <div className="text-center">
+                    <p className="text-xs text-[var(--color-text-secondary)] mb-1">ID Card</p>
+                    <div className="flex h-24 w-36 items-center justify-center rounded-lg border border-dashed border-[var(--color-border)] bg-[var(--color-canvas-subtle)] p-2 text-center text-xs text-[var(--color-text-secondary)]">
+                      No ID required (Peak Mode)
+                    </div>
+                  </div>
+                ) : null}
               </div>
 
               <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-canvas)] p-4 text-sm">
@@ -797,6 +853,32 @@ export function KioskPage() {
             </div>
           )}
         </Card>
+
+        <Modal
+          isOpen={showSignOutConfirm}
+          onClose={() => setShowSignOutConfirm(false)}
+          title="Sign Out of Kiosk?"
+        >
+          <div className="space-y-4">
+            <p className="text-sm text-[var(--color-text-secondary)]">
+              Are you sure you want to sign out this kiosk device? An administrator will need to sign in again to re-enable walk-in registrations.
+            </p>
+            <div className="flex justify-end gap-3 pt-2">
+              <Button variant="secondary" onClick={() => setShowSignOutConfirm(false)}>
+                Cancel
+              </Button>
+              <Button
+                variant="destructive"
+                onClick={() => {
+                  setShowSignOutConfirm(false);
+                  void requireSupabase().auth.signOut();
+                }}
+              >
+                Sign Out Device
+              </Button>
+            </div>
+          </div>
+        </Modal>
 
         {showEmailModal && passId && rawQrToken && (
           <EmailPassModal

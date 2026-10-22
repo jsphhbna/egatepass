@@ -1,3 +1,4 @@
+import { formatManilaDateTime } from '@/lib/manilaTime';
 import { useState, useEffect } from 'react';
 import { format } from 'date-fns';
 import { ClipboardList, Download, ShieldCheck } from 'lucide-react';
@@ -45,6 +46,31 @@ function describeChange(log: AdministrativeAuditItem): string {
 export function AdminAuditLogs() {
   const { role } = useAuth();
   const canViewReconciliation = isSuperAdmin(role);
+
+  async function handleResolveTask(taskId: string) {
+    const note = window.prompt('Enter resolution note for this reconciliation task:');
+    if (note === null) return;
+
+    try {
+      const token = await getAccessToken();
+      const res = await fetch('/api/reconciliation-items', {
+        method: 'PATCH',
+        headers: {
+          Authorization: `Bearer ${token}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ taskId, resolutionNote: note.trim() }),
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.error || 'Failed to resolve reconciliation task');
+      }
+      toast.success('Reconciliation task marked as resolved.');
+      reconciliation.refresh();
+    } catch (err: any) {
+      toast.error(err.message || 'Failed to resolve task');
+    }
+  }
   const [tab, setTab] = useState<AuditTab>('visitor');
   const [visitorEvent, setVisitorEvent] = useState('');
   const [administrativeRole, setAdministrativeRole] = useState('');
@@ -290,17 +316,27 @@ export function AdminAuditLogs() {
               <DataTableCell isHeader>Created</DataTableCell><DataTableCell isHeader>Type</DataTableCell>
               <DataTableCell isHeader>Affected Resource</DataTableCell><DataTableCell isHeader>Status</DataTableCell>
               <DataTableCell isHeader>Safe Description</DataTableCell>
+              <DataTableCell isHeader>Action</DataTableCell>
             </DataTableRow></DataTableHead>
             <tbody className="divide-y border-[var(--color-border)] text-xs">
               {reconciliation.loading ? <LoadingRow label="Loading reconciliation items" columns={5} />
                 : reconciliation.error ? <EmptyRow message={reconciliation.error} columns={5} />
                   : reconciliation.data.length === 0 ? <EmptyRow message="No unresolved reconciliation items." columns={5} />
                     : reconciliation.data.map((item) => <DataTableRow key={item.id}>
-                      <DataTableCell className="whitespace-nowrap">{item.createdAt ? format(new Date(item.createdAt), 'yyyy-MM-dd HH:mm:ss') : '—'}</DataTableCell>
+                      <DataTableCell className="whitespace-nowrap">{item.createdAt ? formatManilaDateTime(item.createdAt) : '—'}</DataTableCell>
                       <DataTableCell>{item.type.replace(/_/g, ' ')}</DataTableCell>
                       <DataTableCell>{item.targetType}: <span title={item.targetId}>{item.targetId.slice(0, 12)}…</span></DataTableCell>
                       <DataTableCell className="font-semibold text-[var(--color-warning-dark)]">{item.status}</DataTableCell>
                       <DataTableCell><div>{item.summary}</div>{item.requiredActions.length > 0 && <div className="mt-1 text-[var(--color-text-muted)]">Next: {item.requiredActions[0]}</div>}</DataTableCell>
+                      <DataTableCell>
+                        {(item.status === 'pending' || item.status === 'failed') && canViewReconciliation ? (
+                          <Button size="sm" variant="secondary" onClick={() => handleResolveTask(item.id)}>
+                            Mark Resolved
+                          </Button>
+                        ) : (
+                          <span className="text-[var(--color-text-muted)]">—</span>
+                        )}
+                      </DataTableCell>
                     </DataTableRow>)}
             </tbody>
           </DataTable>

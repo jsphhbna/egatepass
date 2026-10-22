@@ -196,6 +196,7 @@ export function useAdministrativeAudit(
 
 export interface PaginatedReconciliationState extends PaginatedQueryState<ReconciliationItem> {
   total: number;
+  refresh: () => void;
 }
 
 export function useReconciliationItems(enabled: boolean): PaginatedReconciliationState {
@@ -251,5 +252,5 @@ export function useReconciliationItems(enabled: boolean): PaginatedReconciliatio
     void loadPage(false);
   }, [enabled, loadPage]);
 
-  return { ...state, total, hasMore, loadingMore, loadMore: () => void loadPage(true) };
+  return { ...state, total, hasMore, loadingMore, loadMore: () => void loadPage(true), refresh: () => void loadPage(false) };
 }

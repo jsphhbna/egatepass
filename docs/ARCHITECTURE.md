@@ -1,4 +1,4 @@
-﻿# System Architecture & Technical Specifications
+# System Architecture & Technical Specifications
 
 This document details the software architecture, relational data models, subsystem boundaries, and runtime execution pipelines of the EARIST E-GatePass platform.
 

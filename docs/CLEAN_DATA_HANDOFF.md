@@ -1,4 +1,4 @@
-﻿# Institutional Ownership & Clean Data Handoff
+# Institutional Ownership & Clean Data Handoff
 
 This document defines the formal handover protocol for transferring administrative sovereignty, production infrastructure, and clean data state of the EARIST E-GatePass platform to the official EARIST administration.
 

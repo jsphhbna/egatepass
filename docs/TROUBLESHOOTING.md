@@ -1,4 +1,4 @@
-﻿# System Troubleshooting & Diagnostic Guide
+# System Troubleshooting & Diagnostic Guide
 
 This guide provides structured triage, root-cause diagnosis, and step-by-step remediation procedures for operational anomalies in the EARIST E-GatePass platform.
 

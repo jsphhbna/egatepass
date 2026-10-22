@@ -27,6 +27,8 @@ const settingsSchema = z.object({
   retentionDays: z.number().int().min(1).max(3650).optional(),
   visitorRetentionDays: z.number().int().min(7).max(730).optional(),
   imageRetentionDays: z.number().int().min(1).max(365).optional(),
+  photoRetentionDays: z.number().int().min(1).max(365).optional(),
+  idRetentionDays: z.number().int().min(1).max(365).optional(),
   auditRetentionDays: z.number().int().min(30).max(3650).optional(),
   reconciliationRetentionDays: z.number().int().min(30).max(3650).optional(),
   automaticCleanupEnabled: z.boolean().optional(),

@@ -5,16 +5,29 @@ import { Html5Qrcode } from 'html5-qrcode';
 import { toast } from 'sonner';
 import { LogOut as LogOutIcon, CheckCircle2, XCircle, AlertTriangle } from 'lucide-react';
 import { createOptimizedQrScanner, enableContinuousFocus, QR_SCAN_CONFIG } from '@/lib/qrScanner';
+import { RefreshCw, AlertCircle } from 'lucide-react';
+import { Modal, Button } from '@/components/ui';
 
 type ScanStatus = 'ready' | 'processing' | 'success' | 'warning' | 'error';
 
 export function ExitScanPage() {
   const { userData } = useAuth();
   const [status, setStatus] = useState<ScanStatus>('ready');
+  type CameraState = 'starting' | 'active' | 'permission_denied' | 'unavailable' | 'busy' | 'unsupported' | 'error';
+  const [cameraState, setCameraState] = useState<CameraState>('starting');
+  const [cameraError, setCameraError] = useState<string | null>(null);
+  const [showSignOutConfirm, setShowSignOutConfirm] = useState(false);
   const [statusMessage, setStatusMessage] = useState('Scan QR to exit');
   const scannerRef = useRef<Html5Qrcode | null>(null);
   const debounceRef = useRef(false);
   const resetTimerRef = useRef<NodeJS.Timeout | null>(null);
+
+  const [scannerKey, setScannerKey] = useState(0);
+  function retryCamera() {
+    setCameraState('starting');
+    setCameraError(null);
+    setScannerKey(k => k + 1);
+  }
 
   const device = userData?.kind === 'device' ? userData : null;
   const gate = device?.gate ?? 'Unknown Gate';
@@ -88,7 +101,7 @@ export function ExitScanPage() {
       scannerRef.current?.stop().catch(() => undefined);
       scannerRef.current = null;
     };
-  }, [processQR]);
+  }, [processQR, scannerKey]);
 
   const statusConfig = {
     ready: { bg: 'var(--color-brand-dark)', icon: <LogOutIcon className="h-8 w-8 text-white" /> },
@@ -119,6 +132,30 @@ export function ExitScanPage() {
 
       <div className="scanner-viewport relative mb-5 overflow-hidden rounded-2xl border border-[var(--color-accent)]/30 bg-black shadow-lg">
         <div id="exit-qr-reader" className="h-full w-full" />
+        {cameraState !== 'active' && (
+          <div className="absolute inset-0 z-20 flex flex-col items-center justify-center bg-black/90 p-4 text-center text-white space-y-3">
+            {cameraState === 'starting' ? (
+              <>
+                <div className="h-8 w-8 animate-spin rounded-full border-2 border-white/20 border-t-white" />
+                <p className="text-sm font-medium">Starting camera...</p>
+              </>
+            ) : (
+              <>
+                <AlertCircle className="h-8 w-8 text-amber-400" />
+                <p className="text-sm font-semibold text-white">{cameraError}</p>
+                <p className="text-xs text-white/60">Check device camera permissions and refresh.</p>
+                <Button
+                  size="sm"
+                  variant="secondary"
+                  onClick={retryCamera}
+                  icon={<RefreshCw className="h-3.5 w-3.5" />}
+                >
+                  Retry Camera
+                </Button>
+              </>
+            )}
+          </div>
+        )}
       </div>
 
       <div
@@ -135,6 +172,44 @@ export function ExitScanPage() {
           Device not registered. Contact admin.
         </div>
       )}
+      {/* Operator session button */}
+      <div className="mt-4">
+        <button
+          type="button"
+          onClick={() => setShowSignOutConfirm(true)}
+          className="inline-flex items-center gap-1.5 text-xs text-white/50 hover:text-white rounded px-2 py-1 focus:outline-none focus:ring-2 focus:ring-white/40"
+          aria-label="Device session options"
+        >
+          <LogOutIcon className="h-3.5 w-3.5" />
+          <span>Device Session</span>
+        </button>
+      </div>
+
+      <Modal
+        isOpen={showSignOutConfirm}
+        onClose={() => setShowSignOutConfirm(false)}
+        title="Sign Out Scanner Device?"
+      >
+        <div className="space-y-4">
+          <p className="text-sm text-[var(--color-text-secondary)]">
+            Are you sure you want to sign out this exit scanner? A staff administrator will need to sign in again to activate the gate scanner.
+          </p>
+          <div className="flex justify-end gap-3 pt-2">
+            <Button variant="secondary" onClick={() => setShowSignOutConfirm(false)}>
+              Cancel
+            </Button>
+            <Button
+              variant="destructive"
+              onClick={() => {
+                setShowSignOutConfirm(false);
+                void signOutCurrentActor();
+              }}
+            >
+              Sign Out Scanner
+            </Button>
+          </div>
+        </div>
+      </Modal>
     </main>
   );
 }

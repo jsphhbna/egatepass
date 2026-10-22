@@ -1,3 +1,4 @@
+import { formatManilaTime } from '@/lib/manilaTime';
 import { useEffect, useState, useRef } from 'react';
 import { useAuth } from '@/hooks/useAuth';
 import { getAccessToken, signOutCurrentActor } from '@/services/auth';
@@ -31,6 +32,7 @@ export function GuardPage() {
   const [queueError, setQueueError] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
   const [rejectingId, setRejectingId] = useState<string | null>(null);
+  const [processingPassIds, setProcessingPassIds] = useState<Set<string>>(new Set());
   const [rejectReason, setRejectReason] = useState('');
   const [rejectionReasons, setRejectionReasons] = useState<string[]>([]);
   const [isOnline, setIsOnline] = useState(navigator.onLine);
@@ -131,13 +133,25 @@ export function GuardPage() {
   // APPROVE
   // ============================================================
   async function handleApprove(pass: PassWithId) {
+    if (processingPassIds.has(pass.id)) return;
+    setProcessingPassIds((prev) => new Set(prev).add(pass.id));
+
     try {
       await recordDecision(pass.id, 'approved');
-
       toast.success(`${pass.visitorName} approved`);
-    } catch (err) {
-      console.error('Approve error:', err);
-      toast.error('Failed to approve. Try again.');
+    } catch (err: any) {
+      if (err?.status === 409 || err?.message?.includes('409') || err?.message?.includes('concurrency')) {
+        toast.info('Pass was already processed by another guard.');
+        setPasses((prev) => prev.filter((p) => p.id !== pass.id));
+      } else {
+        toast.error('Failed to approve. Try again.');
+      }
+    } finally {
+      setProcessingPassIds((prev) => {
+        const next = new Set(prev);
+        next.delete(pass.id);
+        return next;
+      });
     }
   }
 
@@ -354,7 +368,7 @@ export function GuardPage() {
                           <div className="flex items-center gap-2 text-sm text-[var(--color-text-muted)]">
                             <Clock className="h-4 w-4" />
                             <span>
-                              Scanned: {pass.scannedAt ? new Date(pass.scannedAt).toLocaleTimeString() : '—'}
+                              Scanned: {pass.scannedAt ? formatManilaTime(pass.scannedAt) : '—'}
                             </span>
                           </div>
                           {pass.gate && (
@@ -366,7 +380,7 @@ export function GuardPage() {
                           <div className="flex items-center gap-2 text-sm text-[var(--color-text-muted)]">
                             <CheckCircle2 className="h-4 w-4" />
                             <span>
-                              Valid: {new Date(pass.validFrom).toLocaleTimeString()} - {new Date(pass.validUntil).toLocaleTimeString()}
+                              Valid: {formatManilaTime(pass.validFrom)} - {formatManilaTime(pass.validUntil)}
                             </span>
                           </div>
                         </div>
@@ -431,7 +445,7 @@ export function GuardPage() {
                       <div className="mx-auto flex max-w-md flex-col gap-3 sm:flex-row md:max-w-none">
                         <Button
                           variant="success"
-                          onClick={() => handleApprove(pass)}
+                          disabled={processingPassIds.has(pass.id)} onClick={() => handleApprove(pass)}
                           className="flex-1"
                           size="lg"
                           icon={<CheckCircle2 className="h-5 w-5" />}
@@ -478,7 +492,7 @@ export function GuardPage() {
                       </p>
                       <div className="mt-2 flex items-center gap-1.5 text-xs font-medium text-[var(--color-text-muted)]">
                         <Clock className="h-3 w-3" />
-                        {pass.scannedAt ? new Date(pass.scannedAt).toLocaleTimeString() : '—'}
+                        {pass.scannedAt ? formatManilaTime(pass.scannedAt) : '—'}
                         {pass.gate && ` • ${pass.gate}`}
                       </div>
                     </div>
@@ -486,7 +500,7 @@ export function GuardPage() {
                   <div className="mt-4 flex gap-2">
                     <Button
                       variant="success"
-                      onClick={() => handleApprove(pass)}
+                      disabled={processingPassIds.has(pass.id)} onClick={() => handleApprove(pass)}
                       className="flex-1"
                       size="sm"
                       icon={<CheckCircle2 className="h-4 w-4" />}

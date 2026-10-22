@@ -1,4 +1,4 @@
-﻿# Maintenance Operations & Cron Readiness
+# Maintenance Operations & Cron Readiness
 
 This document describes the retention maintenance architecture, cron-ready invocation contracts, and security policies governing daily retention cleanup and cross-system reconciliation.
 

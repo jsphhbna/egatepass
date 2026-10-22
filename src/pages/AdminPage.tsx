@@ -15,7 +15,7 @@ import {
 } from 'lucide-react';
 import { BrandMark } from '@/components/BrandMark';
 import { ConfirmModal } from '@/components/ui';
-import { useState } from 'react';
+import { useState, useRef, useEffect } from 'react';
 import { formatUserRole, isSuperAdmin } from '@/lib/permissions';
 
 const navItems = [
@@ -32,6 +32,20 @@ export function AdminPage() {
   const { userData, role } = useAuth();
   const navigate = useNavigate();
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const triggerButtonRef = useRef<HTMLButtonElement>(null);
+  const drawerRef = useRef<HTMLElement>(null);
+
+  useEffect(() => {
+    if (!sidebarOpen) return;
+    function handleKeyDown(event: KeyboardEvent) {
+      if (event.key === 'Escape') {
+        setSidebarOpen(false);
+        triggerButtonRef.current?.focus();
+      }
+    }
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [sidebarOpen]);
 
   const adminName = userData?.kind === 'staff' ? userData.name : 'Admin';
   const adminRoleLabel = isSuperAdmin(role) ? formatUserRole('superadmin') : 'Admin';
@@ -54,10 +68,13 @@ export function AdminPage() {
     <div className="flex min-h-dvh bg-[var(--color-canvas)]">
       {/* Mobile hamburger */}
       <button
+        ref={triggerButtonRef}
         type="button"
         onClick={() => setSidebarOpen(true)}
         className="fixed left-3 top-3 z-40 flex min-h-11 min-w-11 items-center justify-center rounded-md border border-[var(--color-border)] bg-white text-[var(--color-text-primary)] shadow-sm md:hidden"
         aria-label="Open menu"
+        aria-expanded={sidebarOpen}
+        aria-controls="admin-navigation-drawer"
       >
         <Menu className="h-5 w-5" />
       </button>
@@ -72,6 +89,11 @@ export function AdminPage() {
 
       {/* Sidebar */}
       <aside
+        id="admin-navigation-drawer"
+        ref={drawerRef}
+        role={sidebarOpen ? 'dialog' : undefined}
+        aria-modal={sidebarOpen ? 'true' : undefined}
+        aria-label="Administrative navigation"
         className={`fixed inset-y-0 left-0 z-50 flex w-64 flex-col bg-[var(--color-brand-dark)] text-white shadow-md transition-transform duration-200 md:sticky md:top-0 md:h-dvh md:translate-x-0 ${
           sidebarOpen ? 'translate-x-0' : '-translate-x-full'
         }`}
@@ -84,7 +106,10 @@ export function AdminPage() {
           </div>
           <button
             type="button"
-            onClick={() => setSidebarOpen(false)}
+            onClick={() => {
+              setSidebarOpen(false);
+              triggerButtonRef.current?.focus();
+            }}
             className="flex min-h-11 min-w-11 items-center justify-center rounded-md text-white/70 hover:bg-white/10 hover:text-white md:hidden"
             aria-label="Close menu"
           >

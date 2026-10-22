@@ -286,22 +286,31 @@ export function GetPassPage() {
   // SHARE (Web Share API)
   // ============================================================
   async function handleShare() {
-    if (!passId) return;
-    if (navigator.share) {
-      try {
+    if (!passId || !qrDataUrl) return;
+
+    try {
+      const res = await fetch(qrDataUrl);
+      const blob = await res.blob();
+      const file = new File([blob], `egatepass-${passId}.png`, { type: 'image/png' });
+
+      if (navigator.canShare && navigator.canShare({ files: [file] })) {
         await navigator.share({
-          title: 'EARIST E-GatePass',
+          title: 'EARIST Gate Pass',
           text: `My EARIST Visitor Gate Pass: ${passId}`,
-          url: window.location.href,
+          files: [file],
         });
-      } catch {
-        // User cancelled share
+        return;
       }
-    } else {
-      // Fallback: copy link
-      await navigator.clipboard.writeText(window.location.href);
-      toast.success('Pass link copied to clipboard!');
+    } catch {
+      // User cancelled share or file sharing unsupported
     }
+
+    // Fallback: download QR image directly
+    const a = document.createElement('a');
+    a.href = qrDataUrl;
+    a.download = `egatepass-${passId}.png`;
+    a.click();
+    toast.success('QR Pass image downloaded! Save and present this image at the gate.');
   }
 
   // ============================================================

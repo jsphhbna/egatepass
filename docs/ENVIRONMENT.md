@@ -1,4 +1,4 @@
-﻿# Environment Variables Contract
+# Environment Variables Contract
 
 This document is the authoritative specification for all configuration and secrets across the client, serverless functions, and external integrations in the EARIST E-GatePass platform.
 

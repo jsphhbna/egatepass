@@ -1,3 +1,7 @@
+import { useAuth } from '@/hooks/useAuth';
+import { formatManilaDateTime } from '@/lib/manilaTime';
+import { listIncidentHolds, createIncidentHold, releaseIncidentHold, type IncidentHold } from '@/services/incidentHold';
+import { ShieldAlert, ShieldCheck } from 'lucide-react';
 import { useState, useEffect } from 'react';
 import { Download, Eye, Printer } from 'lucide-react';
 import { format } from 'date-fns';
@@ -38,6 +42,7 @@ interface SerializedRecordPass {
 const RECORDS_PAGE_SIZE = 50;
 
 export function AdminRecords() {
+  const { role } = useAuth();
   const [passes, setPasses] = useState<GatePassWithId[]>([]);
   const [loading, setLoading] = useState(true);
   const [dateFilter, setDateFilter] = useState('');
@@ -45,6 +50,13 @@ export function AdminRecords() {
   const [search, setSearch] = useState('');
   const [debouncedSearch, setDebouncedSearch] = useState('');
   const [selectedPass, setSelectedPass] = useState<GatePassWithId | null>(null);
+  const [activeHold, setActiveHold] = useState<IncidentHold | null>(null);
+  const [loadingHold, setLoadingHold] = useState(false);
+  const [showHoldModal, setShowHoldModal] = useState(false);
+  const [holdReason, setHoldReason] = useState('');
+  const [submittingHold, setSubmittingHold] = useState(false);
+  const [showReleaseModal, setShowReleaseModal] = useState(false);
+  const [releaseReason, setReleaseReason] = useState('');
   const [nextCursor, setNextCursor] = useState<string | null>(null);
   const [hasMore, setHasMore] = useState(false);
   const [loadingMore, setLoadingMore] = useState(false);
@@ -130,6 +142,57 @@ export function AdminRecords() {
   }, [dateFilter, statusFilter, debouncedSearch]);
 
   const filteredPasses = passes;
+
+  async function handleSelectPass(pass: GatePassWithId) {
+    setSelectedPass(pass);
+    setActiveHold(null);
+    setLoadingHold(true);
+    try {
+      const holds = await listIncidentHolds({ activeOnly: true, limit: 100 });
+      const found = holds.find((h) => h.passId === pass.id);
+      setActiveHold(found || null);
+    } catch {
+      setActiveHold(null);
+    } finally {
+      setLoadingHold(false);
+    }
+  }
+
+  async function handleCreateHold() {
+    if (!selectedPass || !holdReason.trim()) return;
+    setSubmittingHold(true);
+    try {
+      await createIncidentHold({
+        passId: selectedPass.id,
+        visitorId: selectedPass.visitorId || undefined,
+        reason: holdReason.trim(),
+      });
+      toast.success('Incident hold placed. Evidence is protected from retention deletion.');
+      setShowHoldModal(false);
+      setHoldReason('');
+      void handleSelectPass(selectedPass);
+    } catch (err: any) {
+      toast.error(err.message || 'Failed to place incident hold');
+    } finally {
+      setSubmittingHold(false);
+    }
+  }
+
+  async function handleReleaseHold() {
+    if (!activeHold) return;
+    setSubmittingHold(true);
+    try {
+      await releaseIncidentHold(activeHold.id, releaseReason.trim() || undefined);
+      toast.success('Incident hold released. Normal retention policy restored.');
+      setShowReleaseModal(false);
+      setReleaseReason('');
+      setActiveHold(null);
+    } catch (err: any) {
+      toast.error(err.message || 'Failed to release incident hold');
+    } finally {
+      setSubmittingHold(false);
+    }
+  }
 
   async function exportCSV() {
     setExporting(true);
@@ -299,7 +362,7 @@ export function AdminRecords() {
                     {pass.timeOut ? format(pass.timeOut.toMillis(), 'h:mm a') : '—'}
                   </DataTableCell>
                   <DataTableCell className="text-right print:hidden">
-                    <Button variant="ghost" size="sm" onClick={() => setSelectedPass(pass)} icon={<Eye className="h-4 w-4" aria-hidden="true" />}>
+                    <Button variant="ghost" size="sm" onClick={() => void handleSelectPass(pass)} icon={<Eye className="h-4 w-4" aria-hidden="true" />}>
                       View
                     </Button>
                   </DataTableCell>
@@ -345,8 +408,126 @@ export function AdminRecords() {
               <VerificationImage title="Visitor photo" publicId={selectedPass.photoPublicId} />
               <VerificationImage title="Valid ID" publicId={selectedPass.idImagePublicId} emptyText="No ID image was required for this pass." />
             </div>
+
+            {/* Incident Hold Section */}
+            <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-canvas-subtle)] p-4 space-y-3">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  {activeHold ? (
+                    <ShieldAlert className="h-5 w-5 text-[var(--color-danger)]" />
+                  ) : (
+                    <ShieldCheck className="h-5 w-5 text-[var(--color-success)]" />
+                  )}
+                  <h4 className="font-semibold text-sm text-[var(--color-text-primary)]">
+                    Evidence Retention Status: {activeHold ? 'Active Incident Hold' : 'Normal Retention'}
+                  </h4>
+                </div>
+                {role === 'superadmin' && (
+                  activeHold ? (
+                    <Button size="sm" variant="destructive" onClick={() => setShowReleaseModal(true)}>
+                      Release Hold
+                    </Button>
+                  ) : (
+                    <Button size="sm" variant="secondary" onClick={() => setShowHoldModal(true)}>
+                      Place Incident Hold
+                    </Button>
+                  )
+                )}
+              </div>
+              {loadingHold ? (
+                <p className="text-xs text-[var(--color-text-secondary)]">Checking hold status...</p>
+              ) : activeHold ? (
+                <div className="text-xs text-[var(--color-text-secondary)] space-y-1">
+                  <p><strong className="text-[var(--color-text-primary)]">Hold Reason:</strong> {activeHold.reason}</p>
+                  <p><strong className="text-[var(--color-text-primary)]">Placed:</strong> {formatManilaDateTime(activeHold.createdAt)}</p>
+                  <p className="text-[var(--color-danger)] font-medium">Automatic and manual evidence deletion is paused for this pass while hold is active.</p>
+                </div>
+              ) : (
+                <p className="text-xs text-[var(--color-text-secondary)]">
+                  Evidence will be cleaned up according to standard retention policy.
+                </p>
+              )}
+            </div>
           </div>
         )}
+      </Modal>
+
+      {/* Place Incident Hold Modal */}
+      <Modal
+        isOpen={showHoldModal}
+        onClose={() => setShowHoldModal(false)}
+        title="Place Incident Hold"
+      >
+        <div className="space-y-4">
+          <p className="text-sm text-[var(--color-text-secondary)]">
+            An incident hold protects this pass and visitor evidence (face photo, valid ID) from being purged by scheduled or manual retention cleanup.
+          </p>
+          <div>
+            <label htmlFor="hold-reason-input" className="block text-xs font-semibold text-[var(--color-text-primary)] mb-1">
+              Hold Reason (Required, min 5 chars)
+            </label>
+            <textarea
+              id="hold-reason-input"
+              rows={3}
+              value={holdReason}
+              onChange={(e) => setHoldReason(e.target.value)}
+              className="w-full rounded-lg border border-[var(--color-border)] p-2.5 text-sm"
+              placeholder="e.g. Investigation regarding unauthorized entry attempt at Gate 2"
+            />
+          </div>
+          <div className="flex justify-end gap-3 pt-2">
+            <Button variant="secondary" onClick={() => setShowHoldModal(false)}>
+              Cancel
+            </Button>
+            <Button
+              variant="destructive"
+              disabled={submittingHold || holdReason.trim().length < 5}
+              loading={submittingHold}
+              onClick={handleCreateHold}
+            >
+              Confirm Place Hold
+            </Button>
+          </div>
+        </div>
+      </Modal>
+
+      {/* Release Incident Hold Modal */}
+      <Modal
+        isOpen={showReleaseModal}
+        onClose={() => setShowReleaseModal(false)}
+        title="Release Incident Hold"
+      >
+        <div className="space-y-4">
+          <p className="text-sm text-[var(--color-text-secondary)]">
+            Releasing this hold will restore normal data retention rules for this visitor and pass.
+          </p>
+          <div>
+            <label htmlFor="release-reason-input" className="block text-xs font-semibold text-[var(--color-text-primary)] mb-1">
+              Release Note (Optional)
+            </label>
+            <textarea
+              id="release-reason-input"
+              rows={2}
+              value={releaseReason}
+              onChange={(e) => setReleaseReason(e.target.value)}
+              className="w-full rounded-lg border border-[var(--color-border)] p-2.5 text-sm"
+              placeholder="e.g. Investigation concluded; no violation found."
+            />
+          </div>
+          <div className="flex justify-end gap-3 pt-2">
+            <Button variant="secondary" onClick={() => setShowReleaseModal(false)}>
+              Cancel
+            </Button>
+            <Button
+              variant="destructive"
+              disabled={submittingHold}
+              loading={submittingHold}
+              onClick={handleReleaseHold}
+            >
+              Confirm Release
+            </Button>
+          </div>
+        </div>
       </Modal>
     </div>
   );

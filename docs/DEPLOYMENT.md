@@ -1,4 +1,4 @@
-﻿# Production Deployment Guide
+# Production Deployment Guide
 
 This guide details the production deployment architecture and step-by-step procedures for the EARIST E-GatePass platform.
 

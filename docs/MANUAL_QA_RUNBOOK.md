@@ -1,4 +1,4 @@
-﻿# Manual QA Runbook & Verification Matrix
+# Manual QA Runbook & Verification Matrix
 
 This runbook provides complete step-by-step procedures for manual testing and pre-release validation across all user roles, devices, and edge cases in the EARIST E-GatePass platform.
 

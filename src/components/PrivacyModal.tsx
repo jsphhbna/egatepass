@@ -58,7 +58,7 @@ export function PrivacyModal() {
           </li>
           <li className="flex gap-2">
             <span className="text-[var(--color-brand)]">•</span>
-            Understand that all actions and scans are permanently logged and audited.
+            Security-sensitive actions and scans are logged and audited according to the system's audit-retention policy.
           </li>
         </ul>
 

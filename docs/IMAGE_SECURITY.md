@@ -1,4 +1,4 @@
-﻿# Evidence & Image Security Policy
+# Evidence & Image Security Policy
 
 This document defines the security architecture, privacy controls, and storage lifecycle governing visitor photos and valid ID captures in the EARIST E-GatePass platform.
 
@@ -90,7 +90,7 @@ The platform is designed to support data-minimization and retention practices re
 stateDiagram-v2
     [*] --> ActiveEvidence: Uploaded & Linked to Pass
 
-    ActiveEvidence --> EligibleForPurge: Exceeds retention window (Default 7 days)
+    ActiveEvidence --> EligibleForPurge: Exceeds retention window (Photo: 7 days, ID: 30 days)
 
     EligibleForPurge --> Held: Active incident_holds row (active == true)
     EligibleForPurge --> Deleted: No active hold
@@ -101,7 +101,7 @@ stateDiagram-v2
 ```
 
 ### Retention Rules:
-1. **Configurable Window**: Super Admins configure photo retention between 1 to 90 days (Default: 7 days).
+1. **Configurable Window**: Super Admins configure separate photo retention (Default: 7 days) and valid ID retention (Default: 30 days).
 2. **Safety Margin**: Active passes (`issued`, `pending`, `inside`) retain their evidence regardless of calendar age until formally closed (`exited` or `rejected`).
 3. **Incident Holds**: If a security incident occurs on campus, an Admin or Super Admin flags the record with an **Incident Hold** (`public.incident_holds`). Evidence with an active hold is completely immune to retention purge until formally released.
 4. **Purge Semantics**: Retention maintenance deletes the binary asset from Supabase Storage and stamps `visitor_evidence.purged_at = now()`. Metadata is retained for audit traceability without storing personal biometric imagery.

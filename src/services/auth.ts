@@ -13,15 +13,16 @@ export async function signOutCurrentActor(): Promise<void> {
   if (error) throw error;
 }
 
-export async function sendPasswordReset(email: string): Promise<void> {
+export async function sendPasswordReset(email: string, captchaToken?: string): Promise<void> {
   const recoveryClient = requireRecoverySupabase();
   const { error } = await recoveryClient.auth.resetPasswordForEmail(email, {
     redirectTo: `${window.location.origin}/reset-password`,
+    captchaToken,
   });
   if (error) throw error;
 }
 
-export async function completeGuardPasswordChange(currentPassword: string, newPassword: string): Promise<void> {
+export async function completeStaffPasswordChange(currentPassword: string, newPassword: string): Promise<void> {
   const token = await getAccessToken();
   const response = await fetch('/api/auth/complete-password-change', {
     method: 'POST',
@@ -76,3 +77,4 @@ export async function resetPasswordWithRecoverySession(recoveryToken: string, ne
   }
   throw new Error('Password could not be updated. Please request a new reset link.');
 }
+export const completeGuardPasswordChange = completeStaffPasswordChange;

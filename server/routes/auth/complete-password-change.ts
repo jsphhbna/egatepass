@@ -44,7 +44,9 @@ async function handleRequest(request: Request): Promise<Response> {
       .eq('user_id', user.id)
       .maybeSingle();
     if (profileError) throw profileError;
-    if (!profile || profile.role !== 'guard' || !profile.active || !profile.must_change_password) {
+
+    // Human staff onboarding: guard, admin, and superadmin
+    if (!profile || (profile.role !== 'guard' && !['admin', 'superadmin'].includes(profile.role)) || !profile.active || !profile.must_change_password) {
       return jsonResponse(403, { error: 'password_change_not_allowed' });
     }
 
@@ -61,6 +63,7 @@ async function handleRequest(request: Request): Promise<Response> {
     });
     if (passwordError) throw passwordError;
 
+    // finalize_guard_password_change is generalized in migration to finalize_staff_password_change
     const { error: finalizeError } = await admin.schema('api').rpc('finalize_guard_password_change', {
       target_user_id: user.id,
     });
@@ -83,7 +86,7 @@ async function handleRequest(request: Request): Promise<Response> {
     await passwordVerifier.auth.signOut();
     return jsonResponse(200, { ok: true });
   } catch (error) {
-    console.error('Guard password change failed.', error instanceof Error ? error.message : 'unknown_error');
+    console.error('Staff password change failed.', error instanceof Error ? error.message : 'unknown_error');
     return jsonResponse(503, { error: 'service_unavailable' });
   }
 }

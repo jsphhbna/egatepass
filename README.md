@@ -1,4 +1,4 @@
-﻿# EARIST E-GatePass
+# EARIST E-GatePass
 
 Secure visitor access, digital pass issuance, and gate-management platform for the Eulogio "Amang" Rodriguez Institute of Science and Technology (EARIST).
 

@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { completeGuardPasswordChange } from '@/services/auth';
+import { completeStaffPasswordChange } from '@/services/auth';
 import { Button, Card, Input, FormField, Modal } from '@/components/ui';
 import { BrandMark } from '@/components/BrandMark';
 import { toast } from 'sonner';
@@ -37,7 +37,7 @@ export function ForcePasswordChange() {
 
     setLoading(true);
     try {
-      await completeGuardPasswordChange(currentPassword, newPassword);
+      await completeStaffPasswordChange(currentPassword, newPassword);
 
       toast.success('Password updated successfully. You can now continue using your account.');
       // After success, we want the app to reload or re-evaluate the auth state.

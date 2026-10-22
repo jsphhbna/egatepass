@@ -1,4 +1,4 @@
-﻿# Daily Operations & Administration Guide
+# Daily Operations & Administration Guide
 
 This runbook guides system administrators, Super Admins, and security officers in the routine management, incident response, and governance of EARIST E-GatePass.
 
@@ -29,7 +29,7 @@ flowchart TD
 2. Click **Add Staff Member**.
 3. Enter legal name, official EARIST email address, and select role (`guard` or `admin`).
 4. The serverless route `POST /api/create-user` creates the Supabase Auth identity, inserts the `staff_profiles` row, and triggers an automated invite email via Resend.
-5. The staff member clicks the secure link in their email to set their initial password.
+5. All newly created staff accounts (Guard, Admin, Super Admin) are flagged with `must_change_password = true`. Upon first login, staff are directed to the mandatory password replacement workflow (`/api/auth/complete-password-change`), which verifies current credentials, updates the password, and finalizes onboarding.
 
 #### Staff Deactivation & Re-activation
 - To suspend access, click **Deactivate** on the user row.

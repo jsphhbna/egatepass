@@ -175,6 +175,25 @@ async function handleRequest(request: Request): Promise<Response> {
       });
     }
 
+    if (parsed.data.source === 'portal') {
+      const actorKeyHex = createHash('sha256').update(`actor:${actorId}`).digest('hex');
+      const { data: allowed, error: rateLimitError } = await admin.schema('api').rpc('consume_rate_limit', {
+        requested_key_hex: actorKeyHex,
+        requested_action: 'portal.pass_issue',
+        requested_max_requests: 3,
+        requested_window_seconds: 3600,
+      });
+
+      if (rateLimitError) {
+        console.error('Rate limit RPC error:', rateLimitError);
+      } else if (allowed === false) {
+        return jsonResponse(429, {
+          error: 'rate_limit_exceeded',
+          message: 'Too many pass issuance requests. Please wait before requesting another pass.',
+        });
+      }
+    }
+
     const photo = await inspectUpload(admin, parsed.data.photoIntentId, actorId, parsed.data.source, 'photo');
     const identification = parsed.data.idIntentId
       ? await inspectUpload(admin, parsed.data.idIntentId, actorId, parsed.data.source, 'id')
