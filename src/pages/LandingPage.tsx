@@ -717,7 +717,7 @@ function EaristBuildingWatermark() {
   return (
     <div
       aria-hidden="true"
-      className="pointer-events-none absolute left-[5%] sm:left-[10%] lg:left-[14%] xl:left-[18%] top-2 sm:top-4 w-[340px] sm:w-[460px] lg:w-[540px] xl:w-[620px] opacity-[0.045] select-none mix-blend-multiply overflow-hidden"
+      className="pointer-events-none absolute left-[5%] sm:left-[10%] lg:left-[14%] xl:left-[18%] top-2 sm:top-4 w-[340px] sm:w-[460px] lg:w-[540px] xl:w-[620px] opacity-[0.11] sm:opacity-[0.13] lg:opacity-[0.14] select-none mix-blend-multiply overflow-hidden"
     >
       <img
         src="/earist-building-watermark.png"
