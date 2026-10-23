@@ -30,6 +30,11 @@ export function extractRouteKey(pathname: string, group: RouteGroup): string | n
     return parts[1] || null;
   }
 
+  // Webhook rewrite alias: /api/webhooks/resend -> resend-webhook for auth group
+  if (group === 'auth' && parts[1] === 'webhooks' && parts[2] === 'resend') {
+    return 'resend-webhook';
+  }
+
   return null;
 }
 

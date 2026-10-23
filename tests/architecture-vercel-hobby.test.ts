@@ -131,6 +131,7 @@ describe('Vercel Hobby Plan Function Limit Architecture Regressions', () => {
 
       // Top-level rewritten paths
       expect(extractRouteKey('/api/create-device', 'device')).toBe('create-device');
+      expect(extractRouteKey('/api/webhooks/resend', 'auth')).toBe('resend-webhook');
       expect(extractRouteKey('/api/device/create-device', 'device')).toBe('create-device');
       expect(extractRouteKey('/api/scan-pass', 'gate')).toBe('scan-pass');
       expect(extractRouteKey('/api/gate/scan-pass', 'gate')).toBe('scan-pass');
