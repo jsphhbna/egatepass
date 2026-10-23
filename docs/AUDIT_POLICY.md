@@ -84,8 +84,9 @@ flowchart LR
 |---|---|---|
 | **User Credentials** | Raw passwords, password hashes, password reset tokens | Log action with `target_id` only; zero password data |
 | **QR Pass Tokens** | Raw QR bearer token strings | Log only the SHA-256 digest hash (`passes.token_digest`) |
-| **API Keys & Secrets** | `SUPABASE_SECRET_KEY`, `RESEND_API_KEY`, `PASS_TOKEN_SECRET` | NEVER log values or partial keys; log provider name only |
-| **Webhook Secrets** | `SEND_EMAIL_HOOK_SECRET` | Log only webhook ID and signature status (`valid`/`invalid`) |
+| **API Keys & Secrets** | `SUPABASE_SECRET_KEY`, `RESEND_API_KEY`, `PASS_TOKEN_SECRET`, `RATE_LIMIT_HMAC_SECRET`, `CRON_SECRET` | NEVER log values or partial keys; log provider name only |
+| **Webhook Secrets** | `SEND_EMAIL_HOOK_SECRET`, `RESEND_WEBHOOK_SECRET` | Log only webhook ID and signature status (`valid`/`invalid`) |
+| **Email Recipient Identities** | Unmasked email addresses in delivery event audits | Mask recipient email address (`v***r@...`) before inserting into `audit_events` |
 | **Verification Codes** | 6-digit one-time email confirmation codes | Log verification challenge ID with hashed code |
 | **Service Tokens** | Authorization Bearer JWTs | Log resolved `actor_id` and `actor_role` |
 

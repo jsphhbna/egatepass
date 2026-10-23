@@ -200,3 +200,49 @@ flowchart TD
   Verify `CRON_SECRET` in request header matches `process.env.CRON_SECRET` in Vercel.
 - **Safe Resolution**:
   Provide the correct bearer token when triggering maintenance.
+
+---
+
+### 2.12 Rate Limiting HTTP 503 (`abuse_control_unavailable`)
+
+- **Symptom**:
+  Pass issuance fails with HTTP 503 error code `abuse_control_unavailable`.
+- **Likely Cause**:
+  In Production, the dedicated `RATE_LIMIT_HMAC_SECRET` environment variable is missing, blank, or fewer than 32 characters. The system strictly fails closed and refuses to fall back to other secrets.
+- **How to Diagnose**:
+  Check Vercel Production environment variables for `RATE_LIMIT_HMAC_SECRET`.
+- **Safe Resolution**:
+  Set a dedicated, cryptographically secure 256-bit (minimum 32-character) secret for `RATE_LIMIT_HMAC_SECRET` in Vercel Production scope and redeploy.
+
+---
+
+### 2.13 Resend Webhook HTTP 503 (`webhook_secret_unconfigured`) or 400 (`invalid_signature`)
+
+- **Symptom**:
+  Resend webhook delivery log displays failed delivery attempts to `https://egatepass.tech/api/webhooks/resend` with HTTP 503 or HTTP 400.
+- **Likely Cause**:
+  `RESEND_WEBHOOK_SECRET` is missing in Vercel Production scope (returns 503) or does not match the webhook signing secret from the Resend Dashboard (returns 400).
+- **How to Diagnose**:
+  Compare the signing secret (`whsec_...`) in Resend Dashboard (**Webhooks > Signing Secret**) with `RESEND_WEBHOOK_SECRET` in Vercel Production.
+- **Safe Resolution**:
+  Copy the authoritative signing secret from Resend to `RESEND_WEBHOOK_SECRET` in Vercel Production scope and redeploy.
+
+---
+
+### 2.14 Turnstile Fail-Closed Security Blocks on Login or Forgot Password
+
+- **Symptom**:
+  Staff login or password reset submission is blocked with:
+  ```text
+  Authentication blocked: security challenge required.
+  ```
+  or
+  ```text
+  Authentication blocked: missing security configuration.
+  ```
+- **Likely Cause**:
+  In Production, Turnstile fails closed if the user attempts form submission before completing the challenge, or if `VITE_TURNSTILE_SITE_KEY` is missing in the production bundle.
+- **How to Diagnose**:
+  Confirm the Turnstile challenge box is rendered and solved before clicking submit. Inspect browser console to confirm `VITE_TURNSTILE_SITE_KEY` is loaded.
+- **Safe Resolution**:
+  Ensure `VITE_TURNSTILE_SITE_KEY` is configured in Vercel Production and solve the Turnstile challenge before submitting.

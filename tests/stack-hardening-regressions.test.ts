@@ -3,6 +3,8 @@ import { join } from 'node:path';
 import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest';
 import { Webhook } from 'standardwebhooks';
 import { evaluateTurnstilePolicy } from '../src/services/visitorRegistration';
+import { evaluateAuthTurnstilePolicy } from '../src/services/auth';
+import issuePassHandler, { getClientNetworkIdentifier } from '../server/routes/passes/issue';
 import { handleRequest as handleResendWebhook } from '../server/routes/auth/resend-webhook';
 import { setServerSupabaseClientsForTest } from '../server/supabase';
 
@@ -63,31 +65,58 @@ describe('Stack Hardening & Recurring-Issue Regressions Suite', () => {
       const result = evaluateTurnstilePolicy('portal', false, undefined, null);
       expect(result.allowed).toBe(true);
     });
+
+    it('fails closed in production auth (login/forgot-password) if Turnstile token is missing', () => {
+      const result = evaluateAuthTurnstilePolicy(true, '0x4AAAAAAFeETebgPENH6hgH', null);
+      expect(result.allowed).toBe(false);
+      expect(result.error).toContain('security challenge');
+    });
+
+    it('fails closed in production auth if Turnstile site key is missing or blank', () => {
+      const result = evaluateAuthTurnstilePolicy(true, '', null);
+      expect(result.allowed).toBe(false);
+      expect(result.error).toContain('missing security configuration');
+    });
+
+    it('permits auth in production when Turnstile token is present', () => {
+      const result = evaluateAuthTurnstilePolicy(true, '0x4AAAAAAFeETebgPENH6hgH', 'valid-cf-token');
+      expect(result.allowed).toBe(true);
+    });
+
+    it('bypasses Turnstile auth challenge in preview/dev environments where isProd is false', () => {
+      const result = evaluateAuthTurnstilePolicy(false, undefined, null);
+      expect(result.allowed).toBe(true);
+    });
+
   });
 
   describe('3. Resend Delivery Observability Webhook Contract', () => {
     let insertedAudits: any[] = [];
     let existingAudits: any[] = [];
 
+    let claimedEvents: Set<string> = new Set();
+
     beforeEach(() => {
       process.env.RESEND_WEBHOOK_SECRET = TEST_WEBHOOK_SECRET;
       insertedAudits = [];
-      existingAudits = [];
+      claimedEvents = new Set();
 
       const mockClients = {
         admin: {
           from: (table: string) => {
+            if (table === 'resend_webhook_events') {
+              return {
+                insert: async (record: any) => {
+                  if (claimedEvents.has(record.provider_event_id)) {
+                    return { error: { code: '23505', message: 'duplicate key value violates unique constraint' } };
+                  }
+                  claimedEvents.add(record.provider_event_id);
+                  return { data: record, error: null };
+                },
+              };
+            }
             if (table === 'audit_events') {
               return {
-                select: () => ({
-                  eq: (_col1: string, _val1: string) => ({
-                    eq: (_col2: string, _val2: string) => ({
-                      contains: (_col3: string, _val3: any) => ({
-                        limit: async () => ({ data: existingAudits, error: null }),
-                      }),
-                    }),
-                  }),
-                }),
                 insert: async (record: any) => {
                   insertedAudits.push(record);
                   return { data: record, error: null };
@@ -187,9 +216,9 @@ describe('Stack Hardening & Recurring-Issue Regressions Suite', () => {
       expect(audit.after_state.recipientMasked).toBe('v***r@earist.edu.ph');
     });
 
-    it('idempotently handles duplicate delivery events without inserting duplicate audit rows', async () => {
-      // Simulate that this delivery event already exists in audit_events
-      existingAudits = [{ id: 'existing_audit_id' }];
+    it('idempotently handles duplicate delivery events using atomic provider event ID constraint', async () => {
+      // Pre-claim the provider event ID to simulate concurrent / duplicate webhook replay
+      claimedEvents.add('msg_dup_1');
 
       const wh = new Webhook(TEST_WEBHOOK_SECRET);
       const payload = JSON.stringify({
@@ -216,6 +245,7 @@ describe('Stack Hardening & Recurring-Issue Regressions Suite', () => {
       expect(body.ok).toBe(true);
       expect(body.status).toBe('already_processed');
       expect(body.duplicate).toBe(true);
+      expect(body.providerEventId).toBe('msg_dup_1');
       expect(insertedAudits).toHaveLength(0);
     });
   });
@@ -247,7 +277,46 @@ describe('Stack Hardening & Recurring-Issue Regressions Suite', () => {
       const issueRoute = readFileSync('server/routes/passes/issue.ts', 'utf8');
       expect(issueRoute).toContain('RATE_LIMIT_HMAC_SECRET');
       expect(issueRoute).not.toContain("'egatepass-rate-limit-secret'");
+      expect(issueRoute).not.toContain('fallbackSecret');
     });
+
+    it('behaviorally proves production pass issuance rate limiting fails closed with 503 if RATE_LIMIT_HMAC_SECRET is missing, even when PASS_TOKEN_SECRET is present', () => {
+      const savedVercelEnv = process.env.VERCEL_ENV;
+      const savedHmacSecret = process.env.RATE_LIMIT_HMAC_SECRET;
+      const savedPassSecret = process.env.PASS_TOKEN_SECRET;
+
+      try {
+        process.env.VERCEL_ENV = 'production';
+        process.env.PASS_TOKEN_SECRET = 'this-is-a-valid-pass-token-secret-at-least-32-chars!';
+        delete process.env.RATE_LIMIT_HMAC_SECRET;
+
+        const req = new Request('http://localhost/api/passes/issue', {
+          headers: { 'x-real-ip': '203.0.113.195' },
+        });
+
+        expect(() => getClientNetworkIdentifier(req)).toThrowError();
+        try {
+          getClientNetworkIdentifier(req);
+        } catch (err: any) {
+          expect(err.status).toBe(503);
+          expect(err.code).toBe('abuse_control_unavailable');
+        }
+      } finally {
+        process.env.VERCEL_ENV = savedVercelEnv;
+        process.env.RATE_LIMIT_HMAC_SECRET = savedHmacSecret;
+        process.env.PASS_TOKEN_SECRET = savedPassSecret;
+      }
+    });
+
+    it('verifies forward migration 20261023140000 defines resend_webhook_events table with unique provider_event_id', () => {
+      const migrationPath = join('supabase', 'migrations', '20261023140000_resend_webhook_idempotency.sql');
+      expect(existsSync(migrationPath)).toBe(true);
+      const content = readFileSync(migrationPath, 'utf8');
+      expect(content).toContain('resend_webhook_events');
+      expect(content).toContain('provider_event_id');
+      expect(content).toContain('resend_webhook_events_provider_id_unique UNIQUE (provider_event_id)');
+    });
+
 
     it('verifies visitor photos and visitor IDs buckets remain private and restricted', () => {
       const storageMigration = readFileSync('supabase/migrations/20261020000200_rls_and_storage.sql', 'utf8');

@@ -56,9 +56,9 @@ flowchart LR
 
 | Layer | Technology | Responsibility |
 |---|---|---|
-| **Frontend** | React, TypeScript, Vite | Single Page Application (SPA), responsive mobile/tablet interfaces |
+| **Frontend** | React 19, TypeScript, Vite 8 | Single Page Application (SPA), responsive mobile/tablet interfaces |
 | **Hosting & CDN** | Vercel | Global edge CDN delivery and frontend asset hosting |
-| **Serverless API** | Vercel Functions (Node.js 24) | Privileged API endpoints, verification, and cryptographic operations |
+| **Serverless API** | Vercel Functions (Node.js 24) | 27 canonical API endpoints across 6 route groups, verification, and cryptography |
 | **Database** | Supabase PostgreSQL | Authoritative relational data, Row Level Security (RLS), and RPCs |
 | **Authentication** | Supabase Auth | Anonymous visitor sessions, staff identities, and managed device credentials |
 | **Object Storage** | Supabase Storage (Private) | Private storage for visitor photos (`visitor-photos`) and IDs (`visitor-ids`) |
@@ -265,7 +265,36 @@ flowchart LR
 
 ---
 
-### 3.6 QR Pass Email Verification Flow
+
+---
+
+### 3.6 Resend Delivery Observability Webhook
+
+Email delivery events are asynchronously reported by Resend back to the platform via a signed standard webhook:
+
+```mermaid
+sequenceDiagram
+    participant Resend as Resend Delivery Network
+    participant API as POST /api/webhooks/resend<br/>(/api/auth/resend-webhook)
+    participant DB as Supabase PostgreSQL<br/>(public.resend_webhook_events)
+    participant Audit as Audit Trail<br/>(public.audit_events)
+
+    Resend->>API: POST /api/webhooks/resend (signed delivery event)
+    API->>API: Verify Signature (RESEND_WEBHOOK_SECRET)
+    API->>DB: Atomically insert provider_event_id
+    alt First delivery attempt
+        DB-->>API: 201 Created (new event)
+        API->>Audit: Record event with masked recipient (v***r@...)
+        API-->>Resend: HTTP 200 OK { status: 'processed' }
+    else Duplicate or replayed webhook
+        DB-->>API: 23505 Unique Constraint Violation
+        API-->>Resend: HTTP 200 OK { status: 'already_processed', duplicate: true }
+    end
+```
+
+> **CRITICAL ARCHITECTURAL NOTICE**: Neither `/api/auth/send-email-hook` nor `/api/webhooks/resend` functions as an inbound mailbox or email receiver. `notifications@egatepass.tech` does not process inbound user correspondence.
+
+### 3.7 QR Pass Email Verification Flow
 
 Visitors can request a copy of their issued pass via email through a secure two-step verification challenge handled by a single discriminated endpoint:
 
@@ -401,6 +430,11 @@ npx vercel build --prod
 ```
 
 ---
+
+
+### Environment & Secret Isolation Policy
+- **Production Scope**: Contains all privileged provider credentials (`SUPABASE_SECRET_KEY`, `PASS_TOKEN_SECRET`, `RATE_LIMIT_HMAC_SECRET`, `CRON_SECRET`, `RESEND_API_KEY`, `SEND_EMAIL_HOOK_SECRET`, `RESEND_WEBHOOK_SECRET`).
+- **Generic Preview Scope**: Protected by Vercel SSO; receives ONLY public frontend configuration (`VITE_SUPABASE_URL`, `VITE_SUPABASE_PUBLISHABLE_KEY`, `SUPABASE_URL`). Production privileged secrets are never copied into generic preview deployments.
 
 ## 8. Documentation Index
 

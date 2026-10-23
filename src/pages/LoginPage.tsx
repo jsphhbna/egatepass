@@ -5,6 +5,7 @@ import { Eye, EyeOff } from 'lucide-react';
 import { toast } from 'sonner';
 import { useAuth } from '@/hooks/useAuth';
 import { normalizeLoginIdentity } from '@/lib/identity';
+import { evaluateAuthTurnstilePolicy } from '@/services/auth';
 import { supabase } from '@/lib/supabase';
 import { BrandMark } from '@/components/BrandMark';
 import { Button, Card, FormField, Input } from '@/components/ui';
@@ -43,6 +44,13 @@ export function LoginPage() {
 
   async function handleResendVerification() {
     if (!supabase || resendCooldown > 0 || !unverifiedEmail) return;
+    const siteKey = (import.meta as any).env?.VITE_TURNSTILE_SITE_KEY?.trim();
+    const isProd = Boolean((import.meta as any).env?.PROD);
+    const policy = evaluateAuthTurnstilePolicy(isProd, siteKey, captchaToken);
+    if (!policy.allowed) {
+      toast.error(policy.error ?? 'Please complete the security challenge.');
+      return;
+    }
     setLoading(true);
     try {
       const { error: resendError } = await supabase.auth.resend({
@@ -78,8 +86,9 @@ export function LoginPage() {
 
     const siteKey = (import.meta as any).env?.VITE_TURNSTILE_SITE_KEY?.trim();
     const isProd = Boolean((import.meta as any).env?.PROD);
-    if (isProd && siteKey && !captchaToken) {
-      setError('Please complete the security challenge before signing in.');
+    const policy = evaluateAuthTurnstilePolicy(isProd, siteKey, captchaToken);
+    if (!policy.allowed) {
+      setError(policy.error ?? 'Please complete the security challenge before signing in.');
       return;
     }
 

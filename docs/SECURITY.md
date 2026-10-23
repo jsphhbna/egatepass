@@ -368,14 +368,28 @@ sequenceDiagram
 
 ## 13. Cloudflare Turnstile Bot Protection & Abuse Controls
 
-### 13.1 Environment Isolation & Preview Safety
-To protect against hostname allowlist mismatches on dynamic Preview deployments, `VITE_TURNSTILE_SITE_KEY` is scoped strictly to the **Production** environment in Vercel. In Preview and local development environments where `import.meta.env.PROD` is false or the site key is unconfigured, the registration service safely permits developer flows without triggering hostname rejections from Cloudflare. In Production, the security challenge fails closed whenever the key or token is missing.
+### 13.1 Generic Preview Isolation & Server Secret Boundary
+To maintain cryptographic boundaries and prevent experimental or pull-request builds from querying production databases or sending live emails:
+- **Server Privileged Secret Isolation**: All privileged server credentials (`SUPABASE_SECRET_KEY`, `PASS_TOKEN_SECRET`, `RATE_LIMIT_HMAC_SECRET`, `CRON_SECRET`, `RESEND_API_KEY`, `SEND_EMAIL_HOOK_SECRET`, `RESEND_WEBHOOK_SECRET`) are strictly restricted to the **Production** scope in Vercel. Generic Preview scopes receive ONLY public frontend configuration (`VITE_SUPABASE_URL`, `VITE_SUPABASE_PUBLISHABLE_KEY`, `SUPABASE_URL`).
+- **Zero Production Fallback**: Server functions executing in Preview never receive production service-role or signing credentials.
+- **SSO Deployment Protection**: Generic Preview deployments are protected by Vercel SSO deployment protection.
 
-### 13.2 Cryptographic Key Separation
-Network rate limiting utilizes a dedicated, high-entropy server secret (`RATE_LIMIT_HMAC_SECRET`) with a minimum of 256 bits of entropy. This completely decouples anonymous network bucket hashing from QR bearer issuance tokens (`PASS_TOKEN_SECRET`), preventing cross-protocol token substitution.
+### 13.2 Turnstile Fail-Closed Enforcement Across Protected Surfaces
+Cloudflare Turnstile is configured in Managed mode for authoritative bot protection:
+- `VITE_TURNSTILE_SITE_KEY` is scoped to Production in Vercel.
+- In Production, every protected human surface (**Visitor Portal**, **Staff Login**, **Forgot Password**) strictly fails closed: if the Turnstile site key is missing or the client omits a valid CAPTCHA response token, the action is blocked immediately at the client boundary with a security configuration error.
+- In preview/local environments where `import.meta.env.PROD` is false, developer flow bypass is safely permitted.
 
-### 13.3 Resend Delivery Webhook Observability
-Transactional email delivery is monitored via a dedicated Standard Webhooks endpoint (`/api/webhooks/resend` routed to the authenticated auth catch-all function). Webhook payloads are verified cryptographically via Svix / Standard Webhook signatures, rejected on tampering or expiration, processed idempotently by recording event identifiers in `audit_events`, and redact recipient identities to maintain privacy.
+### 13.3 Cryptographic Key Separation & Abuse Control Invariants
+- Pass issuance rate limiting uses a dedicated, high-entropy server secret (`RATE_LIMIT_HMAC_SECRET`) with a minimum of 32 characters (256 bits of entropy).
+- Cryptographic key separation is complete: the rate limiter NEVER falls back to `PASS_TOKEN_SECRET` or any other system secret. In Production, missing or undersized `RATE_LIMIT_HMAC_SECRET` immediately throws HTTP 503 `abuse_control_unavailable`.
+
+### 13.4 Resend Delivery Webhook Observability & Atomic Idempotency
+- Transactional email delivery outcomes are monitored via a dedicated Standard Webhooks receiver (`/api/webhooks/resend` rewritten to `/api/auth/resend-webhook`).
+- Webhook payloads are verified cryptographically via Svix / Standard Webhook signatures against `RESEND_WEBHOOK_SECRET`. In Production, missing secrets fail closed with HTTP 503 `webhook_secret_unconfigured`.
+- Replay and race protection is guaranteed at the database level via table `public.resend_webhook_events` (`provider_event_id UNIQUE`). Replays return HTTP 200 `already_processed` without duplicate audit logging.
+- Recipient email addresses are masked (`v***r@...`) in `audit_events` to preserve privacy.
+- **Neither webhook is an inbound email mailbox or reply processor.**
 
 ### 13.4 Supabase Free-Tier Security Advisor Review
 Supabase Security Advisor reports `auth_leaked_password_protection` as disabled. This feature is restricted to paid Supabase tiers and is an accepted platform limitation on the current Free plan. In accordance with zero-cost architecture guidelines, password security is strictly enforced at the application boundary via mandatory 12+ character complexity, mixed-case, numbers, and symbols.
@@ -462,12 +476,14 @@ When an operation spans multiple systems (PostgreSQL, Storage, Resend) and encou
 - `VITE_SUPABASE_PUBLISHABLE_KEY`: Public anonymous API key (governed by RLS).
 - `VITE_TURNSTILE_SITE_KEY`: Public site key for Cloudflare Turnstile widget.
 
-### Protected Server Secrets (Vercel Functions Only)
+### Protected Server Secrets (Vercel Functions Only — Production Scope)
 - `SUPABASE_SECRET_KEY`: Service-role key for backend operations; bypasses RLS.
 - `PASS_TOKEN_SECRET`: Cryptographic secret (minimum 32 characters) for HMAC QR tokens.
-- `RESEND_API_KEY`: API key for transactional email delivery.
-- `SEND_EMAIL_HOOK_SECRET`: Shared secret for Supabase Auth webhook verification.
+- `RATE_LIMIT_HMAC_SECRET`: Dedicated cryptographic key (minimum 32 characters) for network rate-limiting HMAC.
 - `CRON_SECRET`: Bearer authentication token for maintenance endpoints.
+- `RESEND_API_KEY`: API key for transactional email delivery.
+- `SEND_EMAIL_HOOK_SECRET`: Shared secret for Supabase Auth Send Email Hook verification.
+- `RESEND_WEBHOOK_SECRET`: Shared secret for Resend Delivery Webhook verification.
 - `RESEND_FROM_EMAIL`: Non-secret server configuration (`EARIST E-GatePass <notifications@egatepass.tech>`).
 
 ---

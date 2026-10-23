@@ -65,24 +65,23 @@ async function inspectUpload(admin: ReturnType<typeof getServerSupabaseClients>[
   return { bytes: bytes.length, sha256: createHash('sha256').update(bytes).digest('hex') };
 }
 
-function getClientNetworkIdentifier(request: Request): string {
+export function getClientNetworkIdentifier(request: Request): string {
   const forwarded = request.headers.get('x-forwarded-for');
   const realIp = request.headers.get('x-real-ip');
   const firstHop = forwarded ? forwarded.split(',')[0]?.trim() : null;
   const rawIp = firstHop || realIp || '127.0.0.1';
 
   const dedicatedSecret = process.env.RATE_LIMIT_HMAC_SECRET?.trim();
-  const fallbackSecret = process.env.PASS_TOKEN_SECRET?.trim();
   const isProd = process.env.NODE_ENV === 'production' || process.env.VERCEL_ENV === 'production';
 
-  const hmacKey = dedicatedSecret || fallbackSecret;
-  if (!hmacKey || hmacKey.length < 32) {
+  // Strict cryptographic key separation: RATE_LIMIT_HMAC_SECRET must NEVER fall back to PASS_TOKEN_SECRET or other secrets
+  if (!dedicatedSecret || dedicatedSecret.length < 32) {
     if (isProd) {
       throw new HttpError(503, 'abuse_control_unavailable');
     }
     return createHmac('sha256', 'test-rate-limit-secret-32-chars-minimum!').update(`network:${rawIp}`).digest('hex');
   }
-  return createHmac('sha256', hmacKey).update(`network:${rawIp}`).digest('hex');
+  return createHmac('sha256', dedicatedSecret).update(`network:${rawIp}`).digest('hex');
 }
 
 async function handleRequest(request: Request): Promise<Response> {

@@ -92,4 +92,17 @@ describe('target repository and Vercel routing contract', () => {
       expect(content.length).toBeGreaterThan(1000);
     }
   });
+  it('enforces canonical 27 API routes contract matrix in server/route-map.ts and vercel.json', () => {
+    const routeMap = readFileSync('server/route-map.ts', 'utf8');
+    expect(routeMap).toContain("path: '/api/reconciliation-items'");
+    expect(routeMap).toContain("allowedMethods: ['GET', 'PATCH']");
+    expect(routeMap).toContain("path: '/api/auth/resend-webhook'");
+    expect(routeMap).toContain("allowedMethods: ['POST']");
+
+    const vercelConfig = JSON.parse(readFileSync('vercel.json', 'utf8'));
+    const resendRewrite = vercelConfig.rewrites?.find(
+      (r) => r.source === '/api/webhooks/resend' && r.destination === '/api/auth/resend-webhook'
+    );
+    expect(resendRewrite).toBeDefined();
+  });
 });

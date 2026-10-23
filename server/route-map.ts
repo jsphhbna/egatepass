@@ -206,7 +206,7 @@ export const ROUTE_CONTRACT_MATRIX: readonly RouteContract[] = [
     path: '/api/reconciliation-items',
     group: 'system',
     subpath: 'reconciliation-items',
-    allowedMethods: ['GET'],
+    allowedMethods: ['GET', 'PATCH'],
     handlerModule: 'server/routes/system/reconciliation-items.ts',
   },
 ] as const;

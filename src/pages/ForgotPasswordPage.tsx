@@ -1,7 +1,7 @@
 import { TurnstileWidget } from '@/components/TurnstileWidget';
 import { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
-import { sendPasswordReset } from '@/services/auth';
+import { sendPasswordReset, evaluateAuthTurnstilePolicy } from '@/services/auth';
 import { Card, Button, Input, FormField } from '@/components/ui';
 import { BrandMark } from '@/components/BrandMark';
 import { toast } from 'sonner';
@@ -43,8 +43,9 @@ export function ForgotPasswordPage() {
 
     const siteKey = (import.meta as any).env?.VITE_TURNSTILE_SITE_KEY?.trim();
     const isProd = Boolean((import.meta as any).env?.PROD);
-    if (isProd && siteKey && !captchaToken) {
-      toast.error('Please complete the security challenge before requesting a password reset.');
+    const policy = evaluateAuthTurnstilePolicy(isProd, siteKey, captchaToken);
+    if (!policy.allowed) {
+      toast.error(policy.error ?? 'Please complete the security challenge before requesting a password reset.');
       return;
     }
 

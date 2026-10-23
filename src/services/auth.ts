@@ -78,3 +78,25 @@ export async function resetPasswordWithRecoverySession(recoveryToken: string, ne
   throw new Error('Password could not be updated. Please request a new reset link.');
 }
 export const completeGuardPasswordChange = completeStaffPasswordChange;
+
+export function evaluateAuthTurnstilePolicy(
+  isProd: boolean,
+  siteKey?: string | null,
+  captchaToken?: string | null,
+): { allowed: boolean; error?: string } {
+  if (isProd) {
+    if (!siteKey || siteKey.trim() === '') {
+      return {
+        allowed: false,
+        error: 'Authentication is temporarily unavailable due to missing security configuration.',
+      };
+    }
+    if (!captchaToken || captchaToken.trim() === '') {
+      return {
+        allowed: false,
+        error: 'Please complete the security challenge before continuing.',
+      };
+    }
+  }
+  return { allowed: true };
+}

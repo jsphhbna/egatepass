@@ -176,7 +176,7 @@ When an operation touches multiple external boundaries (e.g. Supabase Auth, Stor
 ```mermaid
 flowchart TD
     Err[Partial Failure Detected] --> Record[Insert into reconciliation_tasks]
-    Record --> SAView[Super Admin Reconciliation View<br/>GET /api/reconciliation-items]
+    Record --> SAView[Super Admin Reconciliation View<br/>GET, PATCH /api/reconciliation-items]
     SAView --> Inspect[Inspect Error Details]
     Inspect --> Action{Resolution Method}
     Action -->|Retry Action| Retry[Re-execute Task]
@@ -185,23 +185,27 @@ flowchart TD
 ```
 
 1. Open **Super Admin Dashboard > Reconciliation**.
-2. Review pending or failed tasks via `GET /api/reconciliation-items`.
+2. Review pending or failed tasks via `GET /api/reconciliation-items` and update task status via `PATCH /api/reconciliation-items`.
 3. Click **Details** to see the service boundary, payload reference, and error trace.
 4. Choose **Retry** to re-dispatch the external call, or **Resolve** once manual corrections are in place.
 
 ---
 
-## 6. Email Troubleshooting Operations
+## 6. Email Delivery & Webhook Operations
+
+The platform operates two separate, dedicated webhook flows:
+- **Outbound Auth Email Hook** (`POST /api/auth/send-email-hook`): Invoked by Supabase Auth to send transactional emails via React Email and Resend API.
+- **Inbound Delivery Observability Webhook** (`POST /api/webhooks/resend`): Invoked by Resend to notify E-GatePass of delivery status (`delivered`, `bounced`, `delayed`, `complained`). Events are recorded in `audit_events` with masked recipient addresses (`v***r@...`) and deduplicated via `resend_webhook_events`.
+
+> **CRITICAL NOTICE**: Neither webhook is an inbound email mailbox or interactive reply processor. `notifications@egatepass.tech` is a non-monitored transactional sender identity.
 
 If a staff member or visitor reports non-receipt of an email:
 
 1. **Verify Sender & Domain Status**:
-   - Check the Resend dashboard at `https://resend.com/domains` and verify `egatepass.tech` is verified.
-2. **Inspect Send Email Hook Function Logs**:
-   - In Vercel, open **Logs** for `/api/auth/send-email-hook`.
-   - Ensure the hook is receiving HTTP 200 responses.
-   - Verify that `scripts/bundle-email-templates.mjs` was executed in the deployment build.
-3. **Check Recipient Spam / Quarantine**:
-   - Some institutional mail systems quarantine external notifications; ensure `notifications@egatepass.tech` is allowlisted.
+   - In Resend Dashboard, verify `egatepass.tech` domain is verified with DKIM and SPF.
+2. **Inspect Outbound Send Email Hook Logs**:
+   - In Vercel Logs, filter by `/api/auth/send-email-hook`. Ensure HTTP 200 responses.
+3. **Inspect Inbound Resend Webhook Logs**:
+   - In Vercel Logs, filter by `/api/webhooks/resend`. Ensure incoming delivery events return HTTP 200.
 4. **Resend Delivery Activity**:
-   - Inspect the Resend Logs tab to view delivery status (`Delivered`, `Bounced`, or `Complained`).
+   - Inspect the Resend dashboard Logs tab to view delivery status (`Delivered`, `Bounced`, or `Complained`).

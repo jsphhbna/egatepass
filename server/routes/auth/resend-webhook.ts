@@ -18,16 +18,13 @@ export async function handleRequest(request: Request): Promise<Response> {
     return jsonResponse(405, { error: 'method_not_allowed' }, { Allow: 'POST' });
   }
 
-  const isProd = process.env.NODE_ENV === 'production' || process.env.VERCEL_ENV === 'production';
   const secret = process.env.RESEND_WEBHOOK_SECRET?.trim();
 
   if (!secret) {
-    if (isProd) {
-      return jsonResponse(503, {
-        error: 'webhook_secret_unconfigured',
-        message: 'Resend webhook secret is not configured in this environment.',
-      });
-    }
+    return jsonResponse(503, {
+      error: 'webhook_secret_unconfigured',
+      message: 'Resend webhook secret is not configured in this environment.',
+    });
   }
 
   // Extract raw text body for cryptographic signature verification
@@ -54,11 +51,10 @@ export async function handleRequest(request: Request): Promise<Response> {
     'webhook-signature': msgSignature,
   };
 
-  const effectiveSecret = secret || 'whsec_MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAE';
   let verifiedPayload: any;
 
   try {
-    const wh = new Webhook(effectiveSecret);
+    const wh = new Webhook(secret);
     verifiedPayload = wh.verify(rawBody, webhookHeaders);
   } catch (err: unknown) {
     if (err instanceof WebhookVerificationError) {
@@ -102,22 +98,37 @@ export async function handleRequest(request: Request): Promise<Response> {
 
   const { admin } = getServerSupabaseClients();
 
-  // Idempotency: verify if this exact delivery event has already been recorded
-  const { data: existingEvents } = await admin
-    .from('audit_events')
-    .select('id')
-    .eq('action', 'resend.delivery_event')
-    .eq('target_id', emailId)
-    .contains('after_state', { eventType })
-    .limit(1);
+  // Canonical idempotency: atomically claim the signed provider event ID in database
+  const { error: claimError } = await admin
+    .from('resend_webhook_events')
+    .insert({
+      provider_event_id: msgId,
+      event_type: eventType,
+      email_id: emailId,
+    });
 
-  if (existingEvents && existingEvents.length > 0) {
-    return jsonResponse(200, {
-      ok: true,
-      status: 'already_processed',
-      duplicate: true,
-      emailId,
-      eventType,
+  if (claimError) {
+    const isDuplicate =
+      claimError.code === '23505' ||
+      claimError.message?.includes('duplicate key') ||
+      claimError.message?.includes('unique') ||
+      claimError.message?.includes('resend_webhook_events_provider_id_unique');
+
+    if (isDuplicate) {
+      return jsonResponse(200, {
+        ok: true,
+        status: 'already_processed',
+        duplicate: true,
+        providerEventId: msgId,
+        emailId,
+        eventType,
+      });
+    }
+
+    console.error('Failed to claim webhook provider event ID:', claimError);
+    return jsonResponse(500, {
+      error: 'idempotency_claim_failed',
+      message: claimError.message,
     });
   }
 
