@@ -117,7 +117,8 @@ export function LandingPage() {
               backgroundSize: '24px 24px',
             }}
           />
-          <CampusWatermark />
+          {/* Subtle EARIST Building Architectural Watermark (from photo reference) */}
+          <EaristBuildingWatermark />
 
           <div className="relative mx-auto grid max-w-7xl 2xl:max-w-[1600px] items-center gap-10 lg:grid-cols-[1.1fr_0.9fr] xl:grid-cols-[1.05fr_0.95fr] lg:gap-12 xl:gap-16">
             {/* Left Column: Institutional Copy matching Reference */}
@@ -540,7 +541,7 @@ function HeroArtwork() {
             </div>
 
             <div className="sr-only">
-              EARIST Security Official Visitor Pass
+              EARIST Security Campus Visitor Pass
             </div>
           </div>
 
@@ -711,32 +712,21 @@ function BuildingFacadeGraphic() {
   );
 }
 
-{/* Faint Campus Tower / Architecture Watermark behind left text */}
-function CampusWatermark() {
+{/* Subtle EARIST Campus Entrance Building Watermark (derived directly from attached EARIST photo reference) */}
+function EaristBuildingWatermark() {
   return (
     <div
       aria-hidden="true"
-      className="pointer-events-none absolute left-[22%] sm:left-[28%] top-6 sm:top-10 w-[240px] sm:w-[320px] h-[360px] opacity-[0.045] select-none text-gray-700 hidden sm:block"
+      className="pointer-events-none absolute left-[5%] sm:left-[10%] lg:left-[14%] xl:left-[18%] top-2 sm:top-4 w-[340px] sm:w-[460px] lg:w-[540px] xl:w-[620px] opacity-[0.045] select-none mix-blend-multiply overflow-hidden"
     >
-      <svg viewBox="0 0 120 180" className="w-full h-full" fill="none" stroke="currentColor" strokeWidth="1.2">
-        {/* Tower roof and spire */}
-        <line x1="60" y1="5" x2="60" y2="25" />
-        <polygon points="60,25 45,45 75,45" />
-        {/* Tower clock level */}
-        <rect x="42" y="45" width="36" height="30" />
-        <circle cx="60" cy="60" r="7" />
-        {/* Tower main shaft */}
-        <rect x="38" y="75" width="44" height="60" />
-        <line x1="48" y1="85" x2="48" y2="120" />
-        <line x1="60" y1="85" x2="60" y2="120" />
-        <line x1="72" y1="85" x2="72" y2="120" />
-        {/* Base / Main Building Roof */}
-        <polygon points="60,135 10,150 110,150" />
-        <rect x="15" y="150" width="90" height="30" />
-        <rect x="30" y="158" width="10" height="18" />
-        <rect x="55" y="158" width="10" height="18" />
-        <rect x="80" y="158" width="10" height="18" />
-      </svg>
+      <img
+        src="/earist-building-watermark.png"
+        alt=""
+        className="w-full h-auto object-contain pointer-events-none"
+        loading="eager"
+        width="552"
+        height="368"
+      />
     </div>
   );
 }

@@ -274,7 +274,7 @@ describe('UI/UX QA, Responsive Institutional Redesign & Usability Regressions Su
     it('incorporates institutional HeroArtwork with digital phone QR pass and physical pass mockups', () => {
       expect(landingSrc).toContain('HeroArtwork');
       expect(landingSrc).toContain('EARIST Security');
-      expect(landingSrc).toContain('Official Visitor Pass');
+      expect(landingSrc).toContain('Campus Visitor Pass');
     });
 
     it('content file landing.ts retains 5-step process and 4 requirement items', () => {
