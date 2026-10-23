@@ -424,10 +424,10 @@ export function KioskPage() {
           <button
             type="button"
             onClick={() => setShowSignOutConfirm(true)}
-            className="inline-flex items-center gap-1.5 text-xs text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)] rounded px-2 py-1 focus:outline-none focus:ring-2 focus:ring-[var(--color-brand)]"
+            className="inline-flex min-h-11 items-center gap-2 text-xs text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)] rounded px-3 py-2 focus:outline-none focus:ring-2 focus:ring-[var(--color-brand)]"
             aria-label="Kiosk device session options"
           >
-            <LogOut className="h-3.5 w-3.5" />
+            <LogOut className="h-4 w-4" />
             <span>Device Session</span>
           </button>
         </div>
@@ -755,17 +755,33 @@ export function KioskPage() {
               <h2 className="text-center text-lg font-bold text-[var(--color-text-primary)]">Review Pass</h2>
               {submitError && <div className="rounded-md border border-[var(--color-danger)] bg-[var(--color-danger-light)] p-3 text-sm text-[var(--color-danger-dark)]" role="alert">{submitError}</div>}
               
-              <div className="flex gap-4 justify-center items-center py-2">
+              <div className="flex flex-wrap gap-6 justify-center items-center py-2">
                 {photoPreview && (
                   <div className="text-center">
                     <p className="text-xs text-[var(--color-text-secondary)] mb-1">Face Photo</p>
-                    <img src={photoPreview} alt="Face photo" className="h-24 w-20 object-cover rounded-lg border border-[var(--color-border)] shadow-sm" />
+                    <img src={photoPreview} alt="Face photo" className="h-24 w-20 object-cover rounded-lg border border-[var(--color-border)] shadow-sm mx-auto" />
+                    <button
+                      type="button"
+                      onClick={onRetakePhoto}
+                      className="mt-1.5 text-xs font-semibold text-[var(--color-brand)] hover:underline inline-flex items-center gap-1"
+                    >
+                      <RotateCcw className="h-3 w-3" />
+                      Retake Selfie
+                    </button>
                   </div>
                 )}
-                {idPreview ? (
+                {idPreview && !isPeakMode ? (
                   <div className="text-center">
                     <p className="text-xs text-[var(--color-text-secondary)] mb-1">ID Card</p>
-                    <img src={idPreview} alt="ID preview" className="h-24 w-36 object-cover rounded-lg border border-[var(--color-border)] shadow-sm" />
+                    <img src={idPreview} alt="ID preview" className="h-24 w-36 object-cover rounded-lg border border-[var(--color-border)] shadow-sm mx-auto" />
+                    <button
+                      type="button"
+                      onClick={onRetakeId}
+                      className="mt-1.5 text-xs font-semibold text-[var(--color-brand)] hover:underline inline-flex items-center gap-1"
+                    >
+                      <RotateCcw className="h-3 w-3" />
+                      Retake ID
+                    </button>
                   </div>
                 ) : isPeakMode ? (
                   <div className="text-center">
@@ -778,34 +794,40 @@ export function KioskPage() {
               </div>
 
               <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-canvas)] p-4 text-sm">
-                <p className="mb-2"><strong className="text-[var(--color-text-secondary)]">Name:</strong> {[getValues('firstName'), getValues('middleName'), getValues('lastName')].filter(Boolean).join(' ')}</p>
+                <div className="flex items-center justify-between mb-2">
+                  <p><strong className="text-[var(--color-text-secondary)]">Name:</strong> {[getValues('firstName'), getValues('middleName'), getValues('lastName')].filter(Boolean).join(' ')}</p>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      faceWebcam.stop();
+                      idWebcam.stop();
+                      setStep('form');
+                    }}
+                    className="text-xs font-semibold text-[var(--color-brand)] hover:underline"
+                  >
+                    Edit Details
+                  </button>
+                </div>
                 <p className="mb-2"><strong className="text-[var(--color-text-secondary)]">Visit Date:</strong> {getValues('visitDate')}</p>
                 <p><strong className="text-[var(--color-text-secondary)]">Purpose:</strong> {getValues('purpose')}</p>
               </div>
 
-              <div className="flex gap-3">
+              <div className="flex flex-col sm:flex-row gap-3">
                 <Button
                   variant="secondary"
                   type="button"
                   onClick={() => {
-                    if (idBlob) {
-                      setStep('photo');
-                      faceWebcam.start();
-                    } else if (isPeakMode) {
-                      setStep('photo');
-                      faceWebcam.start();
-                    } else {
-                      setStep('id');
-                      idWebcam.start();
-                    }
+                    faceWebcam.stop();
+                    idWebcam.stop();
+                    setStep('form');
                   }}
                   className="flex-1 min-h-[44px]"
                   icon={<ArrowLeft className="h-4 w-4" />}
                 >
-                  Back
+                  Edit Details
                 </Button>
                 <Button type="button" onClick={onSubmit} className="flex-1 min-h-[44px]" icon={<CheckCircle2 className="h-4 w-4" />}>
-                  Generate
+                  Generate Pass
                 </Button>
               </div>
             </div>

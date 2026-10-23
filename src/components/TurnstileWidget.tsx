@@ -72,6 +72,7 @@ export function TurnstileWidget({ onVerify, onExpire, onError, resetKey }: Turns
           if (mounted && onErrorRef.current) onErrorRef.current(err);
         },
         theme: 'light',
+        size: 'flexible',
       });
     }
 
@@ -115,8 +116,8 @@ export function TurnstileWidget({ onVerify, onExpire, onError, resetKey }: Turns
   if (!siteKey) return null;
 
   return (
-    <div className="my-3 flex justify-center">
-      <div ref={containerRef} />
+    <div className="my-3 flex justify-center w-full max-w-full overflow-hidden">
+      <div ref={containerRef} className="w-full max-w-full flex justify-center" />
     </div>
   );
 }

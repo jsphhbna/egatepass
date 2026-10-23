@@ -41,6 +41,7 @@ export function EmailPassModal({
   const [consent, setConsent] = useState(false);
   const [code, setCode] = useState('');
   const [verificationId, setVerificationId] = useState<string | null>(null);
+  const [resendCooldown, setResendCooldown] = useState(0);
   const [loading, setLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const requestCodeRequestIdRef = useRef(crypto.randomUUID());
@@ -131,6 +132,7 @@ export function EmailPassModal({
 
       setVerificationId(data.verificationId);
       setStep('verify');
+      setResendCooldown(60);
       toast.success('Verification code submitted to the email provider. Check your inbox.');
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Could not send verification code.';
@@ -280,10 +282,11 @@ export function EmailPassModal({
               id="verification-code"
               type="text"
               inputMode="numeric"
+              autoComplete="one-time-code"
               pattern="[0-9]*"
               maxLength={6}
               value={code}
-              onChange={(e) => setCode(e.target.value)}
+              onChange={(e) => setCode(e.target.value.replace(/\D/g, ''))}
               placeholder="123456"
               className="text-center text-lg font-mono tracking-widest"
               required
@@ -309,15 +312,16 @@ export function EmailPassModal({
             <button
               type="button"
               onClick={(e) => {
+                if (resendCooldown > 0) return;
                 requestCodeRequestIdRef.current = crypto.randomUUID();
                 sendRequestIdRef.current = crypto.randomUUID();
                 setVerificationId(null);
                 void handleRequestCode(e);
               }}
-              disabled={loading}
-              className="text-[var(--color-brand)] hover:underline disabled:opacity-50"
+              disabled={loading || resendCooldown > 0}
+              className="text-[var(--color-brand)] hover:underline disabled:opacity-50 disabled:no-underline font-medium"
             >
-              Resend code
+              {resendCooldown > 0 ? `Resend code in ${resendCooldown}s` : 'Resend code'}
             </button>
           </div>
 

@@ -1,10 +1,9 @@
 import { useAuth } from '@/hooks/useAuth';
-import { formatManilaDateTime } from '@/lib/manilaTime';
+import { formatManilaDateTime, formatManilaTime, formatManilaIso, formatManilaFileTimestamp } from '@/lib/manilaTime';
 import { listIncidentHolds, createIncidentHold, releaseIncidentHold, type IncidentHold } from '@/services/incidentHold';
 import { ShieldAlert, ShieldCheck } from 'lucide-react';
 import { useState, useEffect } from 'react';
 import { Download, Eye, Printer } from 'lucide-react';
-import { format } from 'date-fns';
 import { Card, Input, Select, Button, DataTable, DataTableHead, DataTableRow, DataTableCell, Modal, StatusBadge } from '@/components/ui';
 import { AuthenticatedImage } from '@/components/AuthenticatedImage';
 import type { GatePass, PassSource, PassStatus } from '@/types';
@@ -213,13 +212,13 @@ export function AdminRecords() {
       p.visitorName,
       p.purpose,
       p.status,
-      p.issuedAt ? format(p.issuedAt.toMillis(), 'yyyy-MM-dd HH:mm:ss') : '',
-      p.timeIn ? format(p.timeIn.toMillis(), 'yyyy-MM-dd HH:mm:ss') : '',
-      p.timeOut ? format(p.timeOut.toMillis(), 'yyyy-MM-dd HH:mm:ss') : '',
+      p.issuedAt ? formatManilaIso(p.issuedAt.toMillis()) : '',
+      p.timeIn ? formatManilaIso(p.timeIn.toMillis()) : '',
+      p.timeOut ? formatManilaIso(p.timeOut.toMillis()) : '',
       p.gate || '',
     ]);
 
-      downloadCsvFile(`gate_passes_${format(new Date(), 'yyyyMMdd_HHmmss')}.csv`, [headers, ...rows]);
+      downloadCsvFile(`gate_passes_${formatManilaFileTimestamp(new Date())}.csv`, [headers, ...rows]);
       if (exportResult.truncated) {
         toast.warning(`Export reached the ${EXPORT_MAX_ROWS.toLocaleString()} record safety limit. Narrow the filters for a complete file.`);
       } else {
@@ -267,7 +266,7 @@ export function AdminRecords() {
       <div className="hidden print:block mb-4">
         <h2 className="text-xl font-bold text-black">Visitor Records Report</h2>
         <p className="text-sm text-black">
-          Generated: {format(new Date(), 'PPpp')}
+          Generated: {formatManilaDateTime(new Date(), { month: 'short', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit', second: '2-digit', hour12: true })} (Asia/Manila)
         </p>
       </div>
 
@@ -353,13 +352,13 @@ export function AdminRecords() {
                     )}
                   </DataTableCell>
                   <DataTableCell className="whitespace-nowrap text-[var(--color-text-secondary)] print:px-2">
-                    {pass.issuedAt ? format(pass.issuedAt.toMillis(), 'MMM d, h:mm a') : '—'}
+                    {pass.issuedAt ? formatManilaDateTime(pass.issuedAt.toMillis(), { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit', hour12: true }) : '—'}
                   </DataTableCell>
                   <DataTableCell className="whitespace-nowrap text-[var(--color-text-secondary)] print:px-2">
-                    {pass.timeIn ? format(pass.timeIn.toMillis(), 'h:mm a') : '—'}
+                    {pass.timeIn ? formatManilaTime(pass.timeIn.toMillis()) : '—'}
                   </DataTableCell>
                   <DataTableCell className="whitespace-nowrap text-[var(--color-text-secondary)] print:px-2">
-                    {pass.timeOut ? format(pass.timeOut.toMillis(), 'h:mm a') : '—'}
+                    {pass.timeOut ? formatManilaTime(pass.timeOut.toMillis()) : '—'}
                   </DataTableCell>
                   <DataTableCell className="text-right print:hidden">
                     <Button variant="ghost" size="sm" onClick={() => void handleSelectPass(pass)} icon={<Eye className="h-4 w-4" aria-hidden="true" />}>
@@ -399,9 +398,9 @@ export function AdminRecords() {
 
             <dl className="grid gap-4 rounded-xl border border-[var(--color-border)] bg-[var(--color-canvas)] p-4 sm:grid-cols-2">
               <PassDetail label="Entry gate" value={selectedPass.gate || 'Not recorded'} />
-              <PassDetail label="Issued" value={selectedPass.issuedAt ? format(selectedPass.issuedAt.toMillis(), 'PPp') : 'Not recorded'} />
-              <PassDetail label="Time in" value={selectedPass.timeIn ? format(selectedPass.timeIn.toMillis(), 'PPp') : 'Not recorded'} />
-              <PassDetail label="Time out" value={selectedPass.timeOut ? format(selectedPass.timeOut.toMillis(), 'PPp') : 'Not recorded'} />
+              <PassDetail label="Issued" value={selectedPass.issuedAt ? formatManilaDateTime(selectedPass.issuedAt.toMillis()) : 'Not recorded'} />
+              <PassDetail label="Time in" value={selectedPass.timeIn ? formatManilaDateTime(selectedPass.timeIn.toMillis()) : 'Not recorded'} />
+              <PassDetail label="Time out" value={selectedPass.timeOut ? formatManilaDateTime(selectedPass.timeOut.toMillis()) : 'Not recorded'} />
             </dl>
 
             <div className="grid gap-5 sm:grid-cols-2">

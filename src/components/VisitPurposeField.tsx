@@ -87,7 +87,6 @@ export function VisitPurposeField({ purposes, value, error, onChange }: VisitPur
               maxLength={detailsMaxLength}
               placeholder={isCustom ? 'Briefly describe your purpose of visit' : 'Enter the requested details'}
               error={Boolean(detailsRequiredError || error)}
-              autoFocus
             />
           </div>
         )}

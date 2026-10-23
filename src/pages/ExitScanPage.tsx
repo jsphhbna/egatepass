@@ -177,6 +177,9 @@ export function ExitScanPage() {
       </div>
 
       <div
+        role="status"
+        aria-live="polite"
+        aria-atomic="true"
         className="flex min-h-16 w-[min(94vw,40rem)] items-center justify-center gap-3 rounded-xl px-5 py-3 text-center shadow-md sm:w-[min(94vw,64rem)]"
         style={{ backgroundColor: config.bg, borderRadius: 'var(--radius-lg)', transition: 'background-color 200ms ease' }}
       >
@@ -195,10 +198,10 @@ export function ExitScanPage() {
         <button
           type="button"
           onClick={() => setShowSignOutConfirm(true)}
-          className="inline-flex items-center gap-1.5 text-xs text-white/50 hover:text-white rounded px-2 py-1 focus:outline-none focus:ring-2 focus:ring-white/40"
+          className="inline-flex min-h-11 items-center gap-2 text-xs text-white/60 hover:text-white rounded px-3 py-2 focus:outline-none focus:ring-2 focus:ring-white/40"
           aria-label="Device session options"
         >
-          <LogOutIcon className="h-3.5 w-3.5" />
+          <LogOutIcon className="h-4 w-4" />
           <span>Device Session</span>
         </button>
       </div>

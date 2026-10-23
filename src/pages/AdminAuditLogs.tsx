@@ -1,9 +1,8 @@
-import { formatManilaDateTime } from '@/lib/manilaTime';
+import { formatManilaDateTime, formatManilaIso, formatManilaFileTimestamp } from '@/lib/manilaTime';
 import { useState, useEffect } from 'react';
-import { format } from 'date-fns';
 import { ClipboardList, Download, ShieldCheck } from 'lucide-react';
 import { toast } from 'sonner';
-import { Button, DataTable, DataTableHead, DataTableRow, DataTableCell, Input, Select } from '@/components/ui';
+import { Button, DataTable, DataTableHead, DataTableRow, DataTableCell, Input, Select, Modal, Textarea, FormField } from '@/components/ui';
 import { useAuth } from '@/hooks/useAuth';
 import { isSuperAdmin } from '@/lib/permissions';
 import { getAccessToken } from '@/services/auth';
@@ -47,10 +46,25 @@ export function AdminAuditLogs() {
   const { role } = useAuth();
   const canViewReconciliation = isSuperAdmin(role);
 
-  async function handleResolveTask(taskId: string) {
-    const note = window.prompt('Enter resolution note for this reconciliation task:');
-    if (note === null) return;
+  const [resolvingTaskId, setResolvingTaskId] = useState<string | null>(null);
+  const [resolutionNote, setResolutionNote] = useState('');
+  const [isResolving, setIsResolving] = useState(false);
 
+  function handleOpenResolveModal(taskId: string) {
+    setResolvingTaskId(taskId);
+    setResolutionNote('');
+  }
+
+  async function handleConfirmResolve(event: React.FormEvent) {
+    event.preventDefault();
+    if (!resolvingTaskId) return;
+    const note = resolutionNote.trim();
+    if (!note) {
+      toast.error('Resolution note is required');
+      return;
+    }
+
+    setIsResolving(true);
     try {
       const token = await getAccessToken();
       const res = await fetch('/api/reconciliation-items', {
@@ -59,16 +73,20 @@ export function AdminAuditLogs() {
           Authorization: `Bearer ${token}`,
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify({ taskId, resolutionNote: note.trim() }),
+        body: JSON.stringify({ taskId: resolvingTaskId, resolutionNote: note }),
       });
       if (!res.ok) {
         const err = await res.json().catch(() => ({}));
         throw new Error(err.error || 'Failed to resolve reconciliation task');
       }
       toast.success('Reconciliation task marked as resolved.');
+      setResolvingTaskId(null);
+      setResolutionNote('');
       reconciliation.refresh();
     } catch (err: any) {
       toast.error(err.message || 'Failed to resolve task');
+    } finally {
+      setIsResolving(false);
     }
   }
   const [tab, setTab] = useState<AuditTab>('visitor');
@@ -148,10 +166,10 @@ export function AdminAuditLogs() {
             timestamp: asAppTimestamp(raw.timestamp),
           }))
           .filter((item: VisitorActivityItem) => !visitorEvent || item.event === visitorEvent);
-        downloadCsvFile(`visitor_activity_${format(new Date(), 'yyyyMMdd_HHmmss')}.csv`, [
+        downloadCsvFile(`visitor_activity_${formatManilaFileTimestamp(new Date())}.csv`, [
           ['Time', 'Event', 'Gate', 'Guard UID', 'Device UID', 'Visitor UID', 'Reason'],
           ...items.map((item: VisitorActivityItem) => [
-            item.timestamp ? format(item.timestamp.toMillis(), 'yyyy-MM-dd HH:mm:ss') : '',
+            item.timestamp ? formatManilaIso(item.timestamp.toMillis()) : '',
             item.event,
             item.gate || '',
             item.guardUid || '',
@@ -166,10 +184,10 @@ export function AdminAuditLogs() {
           .map((raw) => normalizeAdministrativeAudit(raw))
           .filter((item) => (!administrativeRole || item.actorRole === administrativeRole)
             && (!actionSearch || item.action.toLocaleLowerCase().includes(actionSearch)));
-        downloadCsvFile(`administrative_activity_${format(new Date(), 'yyyyMMdd_HHmmss')}.csv`, [
+        downloadCsvFile(`administrative_activity_${formatManilaFileTimestamp(new Date())}.csv`, [
           ['Time', 'Action', 'Actor UID', 'Actor role', 'Target type', 'Target ID', 'Previous role', 'New role', 'Previous status', 'New status', 'Result'],
           ...items.map((item) => [
-            item.timestamp ? format(item.timestamp.toMillis(), 'yyyy-MM-dd HH:mm:ss') : '',
+            item.timestamp ? formatManilaIso(item.timestamp.toMillis()) : '',
             item.action,
             item.actorUid,
             item.actorRole,
@@ -268,7 +286,7 @@ export function AdminAuditLogs() {
               : visitor.error ? <EmptyRow message={visitor.error} columns={5} />
                 : visibleVisitor.length === 0 ? <EmptyRow message="No visitor activity found." columns={5} />
                   : visibleVisitor.map((log) => <DataTableRow key={log.id}>
-                    <DataTableCell className="whitespace-nowrap">{log.timestamp ? format(log.timestamp.toMillis(), 'yyyy-MM-dd HH:mm:ss') : '—'}</DataTableCell>
+                    <DataTableCell className="whitespace-nowrap">{log.timestamp ? formatManilaIso(log.timestamp.toMillis()) : '—'}</DataTableCell>
                     <DataTableCell className="font-semibold text-[var(--color-brand)]">{log.event.toUpperCase()}</DataTableCell>
                     <DataTableCell>{log.gate && <div>Gate: {log.gate}</div>}{log.guardName && <div>Guard: {log.guardName}</div>}{log.deviceId && <div>Device: {log.deviceId.slice(0, 8)}…</div>}</DataTableCell>
                     <DataTableCell><div className="font-semibold">{log.visitorName || 'Unknown visitor'}</div><div>Pass: {log.passToken?.slice(0, 8) || 'N/A'}…</div></DataTableCell>
@@ -293,7 +311,7 @@ export function AdminAuditLogs() {
               : administrative.error ? <EmptyRow message={administrative.error} columns={5} />
                 : visibleAdministrative.length === 0 ? <EmptyRow message="No administrative activity found." columns={5} />
                   : visibleAdministrative.map((log) => <DataTableRow key={log.id}>
-                    <DataTableCell className="whitespace-nowrap">{log.timestamp ? format(log.timestamp.toMillis(), 'yyyy-MM-dd HH:mm:ss') : '—'}</DataTableCell>
+                    <DataTableCell className="whitespace-nowrap">{log.timestamp ? formatManilaIso(log.timestamp.toMillis()) : '—'}</DataTableCell>
                     <DataTableCell className="font-semibold text-[var(--color-brand)]">{log.action.replace(/_/g, ' ')}</DataTableCell>
                     <DataTableCell>{log.actorRole}<div title={log.actorUid}>{log.actorUid.slice(0, 8)}…</div></DataTableCell>
                     <DataTableCell>{log.targetType}: <span title={log.targetId}>{log.targetId.slice(0, 12)}{log.targetId.length > 12 ? '…' : ''}</span></DataTableCell>
@@ -330,7 +348,7 @@ export function AdminAuditLogs() {
                       <DataTableCell><div>{item.summary}</div>{item.requiredActions.length > 0 && <div className="mt-1 text-[var(--color-text-muted)]">Next: {item.requiredActions[0]}</div>}</DataTableCell>
                       <DataTableCell>
                         {(item.status === 'pending' || item.status === 'failed') && canViewReconciliation ? (
-                          <Button size="sm" variant="secondary" onClick={() => handleResolveTask(item.id)}>
+                          <Button size="sm" variant="secondary" onClick={() => handleOpenResolveModal(item.id)}>
                             Mark Resolved
                           </Button>
                         ) : (
@@ -354,6 +372,56 @@ export function AdminAuditLogs() {
           )}
         </div>
       )}
+      <Modal
+        isOpen={resolvingTaskId !== null}
+        onClose={() => {
+          if (!isResolving) {
+            setResolvingTaskId(null);
+            setResolutionNote('');
+          }
+        }}
+        title="Resolve Reconciliation Item"
+        size="md"
+      >
+        <form onSubmit={handleConfirmResolve} className="space-y-4">
+          <p className="text-sm text-[var(--color-text-secondary)]">
+            Provide an operational resolution note for this reconciliation discrepancy. The note will be recorded in the audit trail.
+          </p>
+          <FormField id="resolution-note" label="Resolution Note">
+            <Textarea
+              id="resolution-note"
+              value={resolutionNote}
+              onChange={(e) => setResolutionNote(e.target.value)}
+              placeholder="Explain how this reconciliation discrepancy was reviewed or resolved…"
+              required
+              rows={3}
+              autoFocus
+            />
+          </FormField>
+          <div className="flex justify-end gap-3 pt-2">
+            <Button
+              type="button"
+              variant="secondary"
+              onClick={() => {
+                setResolvingTaskId(null);
+                setResolutionNote('');
+              }}
+              disabled={isResolving}
+            >
+              Cancel
+            </Button>
+            <Button
+              type="submit"
+              variant="primary"
+              loading={isResolving}
+              disabled={!resolutionNote.trim()}
+            >
+              Mark Resolved
+            </Button>
+          </div>
+        </form>
+      </Modal>
     </div>
   );
 }
+

@@ -1,10 +1,10 @@
+import { getManilaDateString, formatManilaTime } from '@/lib/manilaTime';
 import { useMemo } from 'react';
 import {
   eachDayOfInterval,
   endOfMonth,
   endOfWeek,
   format,
-  isSameDay,
   isSameMonth,
   isToday,
   startOfMonth,
@@ -61,8 +61,8 @@ function averageApprovalTime(passes: GatePass[]): string {
 export function AdminDashboard() {
   const dashboard = useAdminDashboardData();
   const metrics = useMemo(() => {
-    const today = new Date();
-    const todayPasses = dashboard.recentPasses.filter((pass) => isSameDay(pass.issuedAt.toDate(), today));
+    const todayManila = getManilaDateString();
+    const todayPasses = dashboard.recentPasses.filter((pass) => getManilaDateString(pass.issuedAt.toDate()) === todayManila);
     const rejectedToday = dashboard.decisionsTodayPasses.filter((pass) => pass.status === 'rejected');
     const counts = dashboard.counts;
 
@@ -140,7 +140,7 @@ export function AdminDashboard() {
             <span className="h-2 w-2 rounded-full bg-[var(--color-success)]" aria-hidden="true" />
             Live updates
             {dashboard.updatedAt && (
-              <span className="text-[var(--color-text-muted)]">· Updated {format(dashboard.updatedAt, 'h:mm a')}</span>
+              <span className="text-[var(--color-text-muted)]">· Updated {formatManilaTime(dashboard.updatedAt)}</span>
             )}
           </div>
           <DashboardExportActions passes={metrics.calendarPasses} summary={exportSummary} />
@@ -211,7 +211,7 @@ function IssuedPassesCalendar({ passes, calendarCounts }: { passes: GatePass[]; 
   passes.forEach((pass) => {
     const issuedDate = pass.issuedAt.toDate();
     if (!isSameMonth(issuedDate, month)) return;
-    const key = format(issuedDate, 'yyyy-MM-dd');
+    const key = getManilaDateString(issuedDate);
     countsByDate.set(key, (countsByDate.get(key) || 0) + 1);
   });
 
@@ -229,7 +229,7 @@ function IssuedPassesCalendar({ passes, calendarCounts }: { passes: GatePass[]; 
           </div>
         ))}
         {calendarDays.map((day) => {
-          const key = format(day, 'yyyy-MM-dd');
+          const key = getManilaDateString(day);
           const count = calendarCounts ? (calendarCounts[key] ?? 0) : (countsByDate.get(key) || 0);
           const inCurrentMonth = isSameMonth(day, month);
           const currentDay = isToday(day);

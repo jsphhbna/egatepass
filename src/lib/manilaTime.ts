@@ -92,3 +92,36 @@ export function formatManilaIso(input: DateInput): string {
   const get = (type: string) => parts.find((p) => p.type === type)?.value ?? '00';
   return `${get('year')}-${get('month')}-${get('day')} ${get('hour')}:${get('minute')}:${get('second')}`;
 }
+
+/**
+ * Returns today's calendar date in Asia/Manila as 'YYYY-MM-DD'.
+ */
+export function getManilaDateString(date: DateInput = new Date()): string {
+  const d = toDate(date) ?? new Date();
+  return new Intl.DateTimeFormat('en-CA', {
+    timeZone: MANILA_TIMEZONE,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).format(d);
+}
+
+/**
+ * Format a timestamp for file naming in Asia/Manila: "YYYYMMDD_HHmmss"
+ */
+export function formatManilaFileTimestamp(input: DateInput = new Date()): string {
+  const d = toDate(input) ?? new Date();
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone: MANILA_TIMEZONE,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    hour12: false,
+  }).formatToParts(d);
+
+  const get = (type: string) => parts.find((p) => p.type === type)?.value ?? '00';
+  return get('year') + get('month') + get('day') + '_' + get('hour') + get('minute') + get('second');
+}

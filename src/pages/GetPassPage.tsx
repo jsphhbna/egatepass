@@ -542,10 +542,10 @@ export function GetPassPage() {
                         setIdBlob(null);
                         idWebcam.start();
                       }}
-                      className="absolute right-2 top-2 rounded-full p-1 text-white bg-black/60 hover:bg-black/80 transition-colors"
+                      className="absolute right-2 top-2 inline-flex min-h-11 min-w-11 items-center justify-center rounded-full bg-black/60 text-white transition-colors hover:bg-black/80 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white"
                       aria-label="Remove ID image"
                     >
-                      <X className="h-4 w-4" />
+                      <X className="h-5 w-5" />
                     </button>
                   </div>
                   <div className="flex gap-3">
@@ -629,37 +629,66 @@ export function GetPassPage() {
                 </div>
               )}
 
-              {/* Photos preview */}
-              <div className="flex gap-4 justify-center items-center py-2">
+              {/* Photos preview with direct retake actions */}
+              <div className="flex flex-wrap gap-6 justify-center items-center py-2">
                 {photoPreview && (
                   <div className="text-center">
                     <p className="text-xs text-[var(--color-text-secondary)] mb-1">Face Photo</p>
                     <img
                       src={photoPreview}
                       alt="Your photo"
-                      className="h-24 w-20 object-cover rounded-lg border border-[var(--color-border)] shadow-sm"
+                      className="h-24 w-20 object-cover rounded-lg border border-[var(--color-border)] shadow-sm mx-auto"
                     />
+                    <button
+                      type="button"
+                      onClick={onRetakePhoto}
+                      className="mt-1.5 text-xs font-semibold text-[var(--color-brand)] hover:underline inline-flex items-center gap-1"
+                    >
+                      <RotateCcw className="h-3 w-3" />
+                      Retake Selfie
+                    </button>
                   </div>
                 )}
-                {idPreview && (
+                {idPreview && !isPeakMode && (
                   <div className="text-center">
                     <p className="text-xs text-[var(--color-text-secondary)] mb-1">Valid ID</p>
                     <img
                       src={idPreview}
                       alt="Valid ID"
-                      className="h-24 w-36 object-cover rounded-lg border border-[var(--color-border)] shadow-sm"
+                      className="h-24 w-36 object-cover rounded-lg border border-[var(--color-border)] shadow-sm mx-auto"
                     />
+                    <button
+                      type="button"
+                      onClick={onRetakeId}
+                      className="mt-1.5 text-xs font-semibold text-[var(--color-brand)] hover:underline inline-flex items-center gap-1"
+                    >
+                      <RotateCcw className="h-3 w-3" />
+                      Retake ID
+                    </button>
                   </div>
                 )}
               </div>
 
               {/* Data summary */}
               <div className="rounded-lg bg-[var(--color-surface)] p-4 text-sm divide-y divide-[var(--color-border)] border border-[var(--color-border)]">
-                <div className="pb-2">
-                  <span className="text-[var(--color-text-secondary)]">Name:</span>
-                  <p className="font-semibold text-[var(--color-text-primary)] mt-1">
-                    {[getValues('firstName'), getValues('middleName'), getValues('lastName')].filter(Boolean).join(' ')}
-                  </p>
+                <div className="flex items-center justify-between pb-2">
+                  <div>
+                    <span className="text-[var(--color-text-secondary)]">Name:</span>
+                    <p className="font-semibold text-[var(--color-text-primary)] mt-0.5">
+                      {[getValues('firstName'), getValues('middleName'), getValues('lastName')].filter(Boolean).join(' ')}
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      faceWebcam.stop();
+                      idWebcam.stop();
+                      setStep('form');
+                    }}
+                    className="text-xs font-semibold text-[var(--color-brand)] hover:underline"
+                  >
+                    Edit Details
+                  </button>
                 </div>
                 <div className="py-2">
                   <span className="text-[var(--color-text-secondary)]">Contact Number:</span>
@@ -677,22 +706,18 @@ export function GetPassPage() {
 
               <TurnstileWidget key={turnstileKey} onVerify={setCaptchaToken} />
 
-              <div className="flex gap-3">
+              <div className="flex flex-col sm:flex-row gap-3">
                 <Button
                   variant="secondary"
                   onClick={() => {
-                    if (isPeakMode) {
-                      setStep('photo');
-                      faceWebcam.start();
-                    } else {
-                      setStep('id');
-                      idWebcam.start();
-                    }
+                    faceWebcam.stop();
+                    idWebcam.stop();
+                    setStep('form');
                   }}
                   className="flex-1"
                   icon={<ArrowLeft className="h-4 w-4" />}
                 >
-                  Back
+                  Edit Details
                 </Button>
                 <Button
                   onClick={onSubmit}
@@ -707,8 +732,16 @@ export function GetPassPage() {
 
           {/* ============================== STEP 5: GENERATING ============================== */}
           {step === 'generating' && (
-            <div className="py-12 text-center space-y-4">
-              <div className="mx-auto h-12 w-12 animate-spin rounded-full border-4 border-[var(--color-brand)] border-t-transparent" />
+            <div
+              role="status"
+              aria-live="polite"
+              aria-label="Generating gate pass"
+              className="py-12 text-center space-y-4"
+            >
+              <div
+                aria-hidden="true"
+                className="mx-auto h-12 w-12 animate-spin rounded-full border-4 border-[var(--color-brand)] border-t-transparent"
+              />
               <h2 className="text-lg font-bold text-[var(--color-text-primary)]">
                 Generating Your Gate Pass...
               </h2>

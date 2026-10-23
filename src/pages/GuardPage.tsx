@@ -30,6 +30,7 @@ export function GuardPage() {
   const { userData } = useAuth();
   const [passes, setPasses] = useState<PassWithId[]>([]);
   const [queueError, setQueueError] = useState(false);
+  const [initialLoading, setInitialLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState('');
   const [rejectingId, setRejectingId] = useState<string | null>(null);
   const [processingPassIds, setProcessingPassIds] = useState<Set<string>>(new Set());
@@ -85,6 +86,7 @@ export function GuardPage() {
         console.error('Guard dashboard error:', error);
       } finally {
         loading = false;
+        if (active) setInitialLoading(false);
       }
     };
     void refresh();
@@ -114,6 +116,26 @@ export function GuardPage() {
       setLoadingMore(false);
     }
   }
+
+  async function handleLoadAll() {
+    if (loadingMore || !hasMore) return;
+    setLoadingMore(true);
+    try {
+      const remainingLimit = Math.min(200, pendingTotal);
+      const fullBatch = await fetchGuardDashboard({ limit: remainingLimit, offset: 0 });
+      setPasses(fullBatch.queue);
+      passesLengthRef.current = fullBatch.queue.length;
+      setPendingTotal(fullBatch.pendingTotal);
+      setHasMore(fullBatch.hasMore);
+      toast.success(`Loaded all ${fullBatch.queue.length} pending passes`);
+    } catch (err) {
+      console.error('Failed to load all pending passes:', err);
+      toast.error('Failed to load all passes');
+    } finally {
+      setLoadingMore(false);
+    }
+  }
+
 
   // ============================================================
   // ONLINE/OFFLINE DETECTION
@@ -292,16 +314,29 @@ export function GuardPage() {
           </div>
         </div>
 
-        <div className="flex flex-col gap-3 sm:items-end mt-2">
-          <div className="w-full sm:w-64">
+        <div className="flex flex-col gap-2 sm:items-end mt-2">
+          <div className="w-full sm:w-80">
             <Input
               type="search"
-              aria-label="Search by name or purpose"
-              placeholder="Search by name or purpose…"
+              aria-label="Search loaded visitors by name or purpose"
+              placeholder="Search loaded visitors by name or purpose…"
               value={searchTerm}
               onChange={(e) => setSearchTerm(e.target.value)}
             />
           </div>
+          {hasMore && searchTerm && (
+            <div className="flex items-center gap-2 text-xs text-[var(--color-text-secondary)]">
+              <span>Filtering loaded ({passes.length} of {pendingTotal} pending).</span>
+              <button
+                type="button"
+                onClick={handleLoadAll}
+                disabled={loadingMore}
+                className="font-bold text-[var(--color-brand)] underline hover:text-[var(--color-brand-dark)]"
+              >
+                Load all pending
+              </button>
+            </div>
+          )}
         </div>
       </div>
 
@@ -334,7 +369,12 @@ export function GuardPage() {
       </div>
 
       {/* Pass Cards */}
-      {queueError ? (
+      {initialLoading ? (
+        <Card className="min-h-64 flex flex-col items-center justify-center p-8 text-center">
+          <div className="h-10 w-10 animate-spin rounded-full border-4 border-[var(--color-brand)] border-t-transparent" />
+          <p className="mt-4 text-sm font-semibold text-[var(--color-text-secondary)]">Loading pending passes…</p>
+        </Card>
+      ) : queueError ? (
         <EmptyState
           icon={<WifiOff className="h-8 w-8" />}
           title="Queue unavailable"
@@ -344,8 +384,21 @@ export function GuardPage() {
       ) : filteredPasses.length === 0 ? (
         <EmptyState
           icon={<BrandMark size="sm" />}
-          title={searchTerm ? 'No matching visitors' : 'No pending passes'}
-          description={searchTerm ? 'Try a different name or purpose.' : 'New requests appear here after visitors scan at the entry gate.'}
+          title={searchTerm ? 'No matching visitors in loaded queue' : 'No pending passes'}
+          description={
+            searchTerm
+              ? hasMore
+                ? 'No matches in currently loaded queue. Try loading all pending passes.'
+                : 'Try a different name or purpose.'
+              : 'New requests appear here after visitors scan at the entry gate.'
+          }
+          action={
+            searchTerm && hasMore ? (
+              <Button variant="secondary" size="sm" onClick={handleLoadAll} loading={loadingMore}>
+                Load All Pending Passes ({pendingTotal})
+              </Button>
+            ) : undefined
+          }
           className="min-h-64"
         />
       ) : (

@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { AlertTriangle, Printer } from 'lucide-react';
-import { format } from 'date-fns';
+import { formatManilaDateTime, formatManilaTime } from '@/lib/manilaTime';
 import { Card, Input, Select, Button, DataTable, DataTableHead, DataTableRow, DataTableCell, StatusBadge } from '@/components/ui';
 import { getAccessToken } from '@/services/auth';
 
@@ -114,7 +114,7 @@ export function AdminEmergency() {
       <div className="hidden print:block mb-4">
         <h1 className="text-2xl font-bold text-black mb-1">EARIST Emergency Roll Call</h1>
         <p className="text-sm font-medium text-black">
-          Generated: {format(new Date(), 'PPpp')} (Asia/Manila)
+          Generated: {formatManilaDateTime(new Date(), { month: 'short', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit', second: '2-digit', hour12: true })} (Asia/Manila)
         </p>
         <p className="text-sm font-medium text-black">
           Total Visitors Listed Inside: {filteredPasses.length}
@@ -202,7 +202,7 @@ export function AdminEmergency() {
                 <DataTableRow key={pass.id as string} className="print:hover:bg-transparent">
                   <DataTableCell className="font-bold print:px-2">{pass.visitorName}</DataTableCell>
                   <DataTableCell className="print:px-2">
-                    {pass.timeIn ? format(new Date(pass.timeIn), 'h:mm a') : '—'}
+                    {pass.timeIn ? formatManilaTime(pass.timeIn) : '—'}
                   </DataTableCell>
                   <DataTableCell className="print:px-2">{pass.gate || 'Unknown'}</DataTableCell>
                   <DataTableCell className="print:px-2 print:text-black"><StatusBadge status="inside" label="Inside" /></DataTableCell>
