@@ -74,7 +74,7 @@ export const ROUTE_CONTRACT_MATRIX: readonly RouteContract[] = [
     handlerModule: 'server/routes/admin/users.ts',
   },
 
-  // Auth Router (3 routes)
+  // Auth Router (4 routes)
   {
     path: '/api/auth/complete-password-change',
     group: 'auth',

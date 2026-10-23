@@ -92,41 +92,94 @@ describe('Stack Hardening & Recurring-Issue Regressions Suite', () => {
 
   describe('3. Resend Delivery Observability Webhook Contract', () => {
     let insertedAudits: any[] = [];
-    let existingAudits: any[] = [];
-
     let claimedEvents: Set<string> = new Set();
+    let simulateAuditFailure = false;
 
     beforeEach(() => {
       process.env.RESEND_WEBHOOK_SECRET = TEST_WEBHOOK_SECRET;
       insertedAudits = [];
       claimedEvents = new Set();
+      simulateAuditFailure = false;
 
       const mockClients = {
         admin: {
-          from: (table: string) => {
-            if (table === 'resend_webhook_events') {
-              return {
-                insert: async (record: any) => {
-                  if (claimedEvents.has(record.provider_event_id)) {
-                    return { error: { code: '23505', message: 'duplicate key value violates unique constraint' } };
-                  }
-                  claimedEvents.add(record.provider_event_id);
-                  return { data: record, error: null };
-                },
-              };
-            }
-            if (table === 'audit_events') {
-              return {
-                insert: async (record: any) => {
-                  insertedAudits.push(record);
-                  return { data: record, error: null };
-                },
-              };
-            }
-            return {
-              select: () => ({ limit: async () => ({ data: [], error: null }) }),
-            };
-          },
+          schema: (schemaName: string) => ({
+            rpc: async (fnName: string, params: any) => {
+              if (schemaName === 'api' && fnName === 'record_resend_delivery_event') {
+                const {
+                  requested_provider_event_id,
+                  requested_event_type,
+                  requested_email_id,
+                  requested_outcome,
+                  requested_recipient_masked,
+                  requested_subject_sanitized,
+                  requested_occurred_at,
+                } = params;
+
+                if (claimedEvents.has(requested_provider_event_id)) {
+                  return {
+                    data: {
+                      ok: true,
+                      status: 'already_processed',
+                      duplicate: true,
+                      provider_event_id: requested_provider_event_id,
+                      event_type: requested_event_type,
+                      email_id: requested_email_id,
+                    },
+                    error: null,
+                  };
+                }
+
+                // If audit failure is simulated, the database transaction rolls back,
+                // so provider_event_id is NOT permanently consumed.
+                if (simulateAuditFailure) {
+                  return {
+                    data: null,
+                    error: {
+                      message: 'simulated audit_events insertion error (rolled back)',
+                      code: '23502',
+                    },
+                  };
+                }
+
+                claimedEvents.add(requested_provider_event_id);
+                const auditRecord = {
+                  action: 'resend.delivery_event',
+                  actor_kind: 'system',
+                  actor_role: 'webhook',
+                  target_type: 'email',
+                  target_id: requested_email_id,
+                  outcome: requested_outcome,
+                  after_state: {
+                    eventType: requested_event_type,
+                    emailId: requested_email_id,
+                    providerEventId: requested_provider_event_id,
+                    recipientMasked: requested_recipient_masked,
+                    subjectSanitized: requested_subject_sanitized,
+                    timestamp: requested_occurred_at || new Date().toISOString(),
+                  },
+                  occurred_at: requested_occurred_at || new Date().toISOString(),
+                };
+                insertedAudits.push(auditRecord);
+
+                return {
+                  data: {
+                    ok: true,
+                    status: 'processed',
+                    duplicate: false,
+                    provider_event_id: requested_provider_event_id,
+                    event_id: 'mock-event-uuid-1',
+                    audit_id: 1001,
+                    email_id: requested_email_id,
+                    event_type: requested_event_type,
+                    outcome: requested_outcome,
+                  },
+                  error: null,
+                };
+              }
+              return { data: null, error: { message: 'unknown_rpc', code: '42883' } };
+            },
+          }),
         },
       };
 
@@ -216,10 +269,7 @@ describe('Stack Hardening & Recurring-Issue Regressions Suite', () => {
       expect(audit.after_state.recipientMasked).toBe('v***r@earist.edu.ph');
     });
 
-    it('idempotently handles duplicate delivery events using atomic provider event ID constraint', async () => {
-      // Pre-claim the provider event ID to simulate concurrent / duplicate webhook replay
-      claimedEvents.add('msg_dup_1');
-
+    it('idempotently handles duplicate delivery events returning 200 already_processed with exactly one audit record', async () => {
       const wh = new Webhook(TEST_WEBHOOK_SECRET);
       const payload = JSON.stringify({
         type: 'email.delivered',
@@ -228,7 +278,7 @@ describe('Stack Hardening & Recurring-Issue Regressions Suite', () => {
       const timestamp = new Date();
       const sig = wh.sign('msg_dup_1', timestamp, payload);
 
-      const req = new Request('http://localhost/api/webhooks/resend', {
+      const reqInit = {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -237,16 +287,66 @@ describe('Stack Hardening & Recurring-Issue Regressions Suite', () => {
           'svix-signature': sig,
         },
         body: payload,
-      });
+      };
 
-      const res = await handleResendWebhook(req);
-      expect(res.status).toBe(200);
-      const body = await res.json();
-      expect(body.ok).toBe(true);
-      expect(body.status).toBe('already_processed');
-      expect(body.duplicate).toBe(true);
-      expect(body.providerEventId).toBe('msg_dup_1');
+      // First delivery: processes successfully
+      const res1 = await handleResendWebhook(new Request('http://localhost/api/webhooks/resend', reqInit));
+      expect(res1.status).toBe(200);
+      const body1 = await res1.json();
+      expect(body1.ok).toBe(true);
+      expect(body1.status).toBe('processed');
+      expect(insertedAudits).toHaveLength(1);
+
+      // Replayed delivery with exact same provider_event_id: returns 200 already_processed, no duplicate audit
+      const res2 = await handleResendWebhook(new Request('http://localhost/api/webhooks/resend', reqInit));
+      expect(res2.status).toBe(200);
+      const body2 = await res2.json();
+      expect(body2.ok).toBe(true);
+      expect(body2.status).toBe('already_processed');
+      expect(body2.duplicate).toBe(true);
+      expect(body2.providerEventId).toBe('msg_dup_1');
+      expect(insertedAudits).toHaveLength(1); // exactly one audit record
+    });
+
+    it('transactionally rolls back provider event claim when audit logging fails, allowing subsequent retry to succeed', async () => {
+      const wh = new Webhook(TEST_WEBHOOK_SECRET);
+      const payload = JSON.stringify({
+        type: 'email.sent',
+        data: { email_id: 'email_retry_test', to: ['retry@domain.com'], subject: 'Test' },
+      });
+      const timestamp = new Date();
+      const sig = wh.sign('msg_retry_100', timestamp, payload);
+
+      const reqInit = {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'svix-id': 'msg_retry_100',
+          'svix-timestamp': Math.floor(timestamp.getTime() / 1000).toString(),
+          'svix-signature': sig,
+        },
+        body: payload,
+      };
+
+      // 1. Simulate failure during audit insertion
+      simulateAuditFailure = true;
+      const failRes = await handleResendWebhook(new Request('http://localhost/api/webhooks/resend', reqInit));
+      expect(failRes.status).toBe(500);
+      const failBody = await failRes.json();
+      expect(failBody.error).toBe('delivery_recording_failed');
+      // Verify rollback: provider ID is NOT permanently claimed
+      expect(claimedEvents.has('msg_retry_100')).toBe(false);
       expect(insertedAudits).toHaveLength(0);
+
+      // 2. Resend retries after transient failure resolves
+      simulateAuditFailure = false;
+      const retryRes = await handleResendWebhook(new Request('http://localhost/api/webhooks/resend', reqInit));
+      expect(retryRes.status).toBe(200);
+      const retryBody = await retryRes.json();
+      expect(retryBody.ok).toBe(true);
+      expect(retryBody.status).toBe('processed');
+      expect(claimedEvents.has('msg_retry_100')).toBe(true);
+      expect(insertedAudits).toHaveLength(1);
     });
   });
 
@@ -317,6 +417,17 @@ describe('Stack Hardening & Recurring-Issue Regressions Suite', () => {
       expect(content).toContain('resend_webhook_events_provider_id_unique UNIQUE (provider_event_id)');
     });
 
+
+    it('verifies forward migration 20261023160000 defines transactional api.record_resend_delivery_event RPC', () => {
+      const migrationPath = join('supabase', 'migrations', '20261023160000_resend_webhook_transactional_rpc.sql');
+      expect(existsSync(migrationPath)).toBe(true);
+      const content = readFileSync(migrationPath, 'utf8');
+      expect(content).toContain('CREATE OR REPLACE FUNCTION api.record_resend_delivery_event');
+      expect(content).toContain('resend_webhook_events');
+      expect(content).toContain('audit_events');
+      expect(content).toContain('SECURITY DEFINER');
+      expect(content).toContain('GRANT EXECUTE ON FUNCTION api.record_resend_delivery_event');
+    });
 
     it('verifies visitor photos and visitor IDs buckets remain private and restricted', () => {
       const storageMigration = readFileSync('supabase/migrations/20261020000200_rls_and_storage.sql', 'utf8');

@@ -85,15 +85,25 @@ The platform utilizes two distinct, decoupled webhook flows:
 
 ---
 
-## 5. Legacy Resend SMTP Credential Notice
+## 5. Legacy Resend SMTP Credential Notice & Action
 
 The historical Resend SMTP API credential (`RESEND_SUPABASE_SMTP_KEY`) was created during initial setup prior to enabling the Supabase Auth Send Email Hook. In the current architecture:
 - Supabase Auth dispatches all authentication emails directly to the Send Email Hook via HTTPS.
 - SMTP is completely bypassed.
 - No application code consumes `RESEND_SUPABASE_SMTP_KEY`, and it has been retired from active configuration.
 
+> [!IMPORTANT]
+> **MANUAL OWNER ACTION REQUIRED**
+> - **Provider**: Resend
+> - **Resource**: API key named `egatepass-supabase-smtp`
+> - **Action**: Revoke/delete the legacy key in the Resend dashboard after verifying no SMTP fallback is intentionally retained.
+> - **Impact**: Current Send Email Hook + Resend REST API architecture remains unaffected.
+> - **Verification afterward**: Confirm Supabase Auth Send Email Hook still succeeds and test invitation/password-reset email delivers.
+
 ---
 
 ## 6. Node.js Production Runtime Policy
 
-The serverless platform policy enforces **Node.js 24.x** via `package.json` (`"engines": { "node": "24.x" }`). Vercel automatically deploys the latest secure security patch of the Node.js 24 runtime line (minimum `Node 24.22.1` verified).
+Production runtime policy: Node.js 24.x.
+
+Vercel manages patch-level runtime updates within the selected Node.js major line.

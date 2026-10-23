@@ -86,4 +86,31 @@ describe('Documentation Truthfulness & Formatting Contract', () => {
     expect(readme).toContain('Resend');
     expect(readme).toContain('Turnstile');
   });
+
+  it('ensures webhook schema documentation in docs/ARCHITECTURE.md reflects real live UUID PK schema', () => {
+    const arch = fs.readFileSync('docs/ARCHITECTURE.md', 'utf8');
+    expect(arch).toContain('resend_webhook_events');
+    expect(arch).toContain('uuid id PK');
+    expect(arch).not.toMatch(/resend_webhook_events\s*\{\s*bigint id PK/);
+  });
+
+  it('ensures authoritative DNS is documented as get.tech / Orderbox with Cloudflare as Turnstile-only', () => {
+    const deployment = fs.readFileSync('docs/DEPLOYMENT.md', 'utf8');
+    const handoff = fs.readFileSync('docs/CLEAN_DATA_HANDOFF.md', 'utf8');
+    
+    expect(deployment).toContain('get.tech');
+    expect(deployment).toContain('Orderbox');
+    expect(deployment).toContain('Turnstile');
+    expect(handoff).toContain('get.tech');
+    expect(handoff).toContain('Orderbox');
+
+    // Forbidden: Cloudflare managing authoritative DNS
+    expect(handoff).not.toContain('Ensure Cloudflare DNS records');
+  });
+
+  it('ensures no unproven exact Node.js patch version claims exist in docs/ENVIRONMENT.md', () => {
+    const envDoc = fs.readFileSync('docs/ENVIRONMENT.md', 'utf8');
+    expect(envDoc).not.toContain('24.22.1');
+    expect(envDoc).toContain('Production runtime policy: Node.js 24.x.');
+  });
 });

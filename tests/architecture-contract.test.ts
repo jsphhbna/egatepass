@@ -1,4 +1,5 @@
 import { readFileSync } from 'node:fs';
+import { ROUTE_CONTRACT_MATRIX } from '../server/route-map.js';
 import { describe, expect, it } from 'vitest';
 
 describe('target repository and Vercel routing contract', () => {
@@ -93,7 +94,28 @@ describe('target repository and Vercel routing contract', () => {
     }
   });
   it('enforces canonical 27 API routes contract matrix in server/route-map.ts and vercel.json', () => {
+    expect(ROUTE_CONTRACT_MATRIX.length).toBe(27);
+
+    const counts: Record<string, number> = {};
+    for (const route of ROUTE_CONTRACT_MATRIX) {
+      counts[route.group] = (counts[route.group] || 0) + 1;
+    }
+
+    expect(counts['admin']).toBe(9);
+    expect(counts['auth']).toBe(4);
+    expect(counts['passes']).toBe(2);
+    expect(counts['device']).toBe(4);
+    expect(counts['gate']).toBe(3);
+    expect(counts['system']).toBe(5);
+
     const routeMap = readFileSync('server/route-map.ts', 'utf8');
+    expect(routeMap).toContain('// Admin Router (9 routes)');
+    expect(routeMap).toContain('// Auth Router (4 routes)');
+    expect(routeMap).toContain('// Passes Router (2 routes)');
+    expect(routeMap).toContain('// Device Router (4 routes)');
+    expect(routeMap).toContain('// Gate Router (3 routes)');
+    expect(routeMap).toContain('// System Router (5 routes)');
+
     expect(routeMap).toContain("path: '/api/reconciliation-items'");
     expect(routeMap).toContain("allowedMethods: ['GET', 'PATCH']");
     expect(routeMap).toContain("path: '/api/auth/resend-webhook'");

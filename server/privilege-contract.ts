@@ -71,7 +71,7 @@ export const SERVICE_ROLE_TABLE_CONTRACT: Record<string, ServerTablePrivilegeCon
     table: 'resend_webhook_events',
     allowedPrivileges: ['SELECT', 'INSERT'],
     forbiddenPrivileges: ['UPDATE', 'DELETE'],
-    justification: 'Server inserts signed provider webhook event IDs to enforce atomic database-level idempotency and deduplication. UPDATE and DELETE are forbidden to preserve idempotency history.',
+    justification: 'Table provides atomic database-level idempotency and deduplication via api.record_resend_delivery_event RPC. Direct UPDATE and DELETE are forbidden to preserve idempotency history.',
   },
   reconciliation_tasks: {
     table: 'reconciliation_tasks',
@@ -164,6 +164,5 @@ export const SERVER_DIRECT_TABLE_OPERATIONS: DirectServerTableOperation[] = [
   { file: 'server/routes/system/reconciliation-items.ts', table: 'reconciliation_tasks', operations: ['SELECT'], purpose: 'Query pending reconciliation tasks for superadmin' },
   { file: 'server/routes/system/create-user.ts', table: 'staff_profiles', operations: ['SELECT'], purpose: 'Check if existing Auth user already has a staff profile' },
   { file: 'server/routes/system/create-user.ts', table: 'devices', operations: ['SELECT'], purpose: 'Check if existing Auth user is a registered device' },
-  { file: 'server/routes/auth/resend-webhook.ts', table: 'resend_webhook_events', operations: ['INSERT'], purpose: 'Atomically claim signed provider event ID for idempotency' },
-  { file: 'server/routes/auth/resend-webhook.ts', table: 'audit_events', operations: ['INSERT'], purpose: 'Record Resend delivery outcome audit event' },
+
 ];

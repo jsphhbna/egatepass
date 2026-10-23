@@ -281,14 +281,16 @@ sequenceDiagram
 
     Resend->>API: POST /api/webhooks/resend (signed delivery event)
     API->>API: Verify Signature (RESEND_WEBHOOK_SECRET)
-    API->>DB: Atomically insert provider_event_id
-    alt First delivery attempt
-        DB-->>API: 201 Created (new event)
-        API->>Audit: Record event with masked recipient (v***r@...)
+    API->>DB: RPC api.record_resend_delivery_event (atomic transaction)
+    alt First delivery attempt (claim + audit succeed)
+        DB-->>API: { ok: true, status: 'processed', duplicate: false }
         API-->>Resend: HTTP 200 OK { status: 'processed' }
     else Duplicate or replayed webhook
-        DB-->>API: 23505 Unique Constraint Violation
+        DB-->>API: { ok: true, status: 'already_processed', duplicate: true }
         API-->>Resend: HTTP 200 OK { status: 'already_processed', duplicate: true }
+    else Persistent or transient database failure
+        DB-->>API: Error (transaction rolls back, claim NOT persisted)
+        API-->>Resend: HTTP 500 (Resend retries delivery later)
     end
 ```
 

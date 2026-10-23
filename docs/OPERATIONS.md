@@ -195,7 +195,15 @@ flowchart TD
 
 The platform operates two separate, dedicated webhook flows:
 - **Outbound Auth Email Hook** (`POST /api/auth/send-email-hook`): Invoked by Supabase Auth to send transactional emails via React Email and Resend API.
-- **Inbound Delivery Observability Webhook** (`POST /api/webhooks/resend`): Invoked by Resend to notify E-GatePass of delivery status (`delivered`, `bounced`, `delayed`, `complained`). Events are recorded in `audit_events` with masked recipient addresses (`v***r@...`) and deduplicated via `resend_webhook_events`.
+- **Inbound Delivery Observability Webhook** (`POST /api/webhooks/resend`): **Verified operational** (real `email.sent` and `email.delivered` events observed). Invoked by Resend to notify E-GatePass of delivery status (`sent`, `delivered`, `delayed`, `bounced`, `complained`, `failed`). Atomic claim and audit logging executed via transactional RPC `api.record_resend_delivery_event` (Migrations `20261023140000` and `20261023160000`). Replays return HTTP 200 `already_processed`. If audit logging fails, transaction rolls back so provider retry can reprocess the event.
+- **Webhook Table Retention**: Classified as `OPTIONAL HARDENING ? retention period requires explicit policy`. `public.resend_webhook_events` volume is minimal and append-only deduplication remains active.
+- **Legacy SMTP Key Cleanup**:
+  > [!IMPORTANT]
+  > **MANUAL OWNER ACTION REQUIRED**
+  > - **Provider**: Resend
+  > - **Resource**: API key named `egatepass-supabase-smtp`
+  > - **Action**: Revoke/delete the legacy key in Resend dashboard after verifying no SMTP fallback is intentionally retained.
+  > - **Impact**: Current Send Email Hook + Resend REST API architecture remains unaffected.
 
 > **CRITICAL NOTICE**: Neither webhook is an inbound email mailbox or interactive reply processor. `notifications@egatepass.tech` is a non-monitored transactional sender identity.
 

@@ -96,72 +96,50 @@ export async function handleRequest(request: Request): Promise<Response> {
     });
   }
 
+  const recipient = Array.isArray(data.to) ? data.to[0] : (typeof data.to === 'string' ? data.to : null);
+  const outcome = (eventType === 'email.delivered' || eventType === 'email.sent') ? 'success' : 'failure';
+  const recipientMasked = recipient ? maskEmail(recipient) : null;
+  const subjectSanitized = data.subject ? String(data.subject).slice(0, 100) : null;
+
   const { admin } = getServerSupabaseClients();
 
-  // Canonical idempotency: atomically claim the signed provider event ID in database
-  const { error: claimError } = await admin
-    .from('resend_webhook_events')
-    .insert({
-      provider_event_id: msgId,
-      event_type: eventType,
-      email_id: emailId,
+  // Atomically claim provider event ID and insert audit event within a single database transaction
+  const { data: result, error: rpcError } = await admin
+    .schema('api')
+    .rpc('record_resend_delivery_event', {
+      requested_provider_event_id: msgId,
+      requested_event_type: eventType,
+      requested_email_id: emailId,
+      requested_outcome: outcome,
+      requested_recipient_masked: recipientMasked,
+      requested_subject_sanitized: subjectSanitized,
+      requested_occurred_at: new Date().toISOString(),
     });
 
-  if (claimError) {
-    const isDuplicate =
-      claimError.code === '23505' ||
-      claimError.message?.includes('duplicate key') ||
-      claimError.message?.includes('unique') ||
-      claimError.message?.includes('resend_webhook_events_provider_id_unique');
-
-    if (isDuplicate) {
-      return jsonResponse(200, {
-        ok: true,
-        status: 'already_processed',
-        duplicate: true,
-        providerEventId: msgId,
-        emailId,
-        eventType,
-      });
-    }
-
-    console.error('Failed to claim webhook provider event ID:', claimError);
+  if (rpcError) {
+    console.error('Failed to atomically record Resend webhook delivery event:', rpcError);
     return jsonResponse(500, {
-      error: 'idempotency_claim_failed',
-      message: claimError.message,
+      error: 'delivery_recording_failed',
+      message: rpcError.message,
     });
   }
 
-  const recipient = Array.isArray(data.to) ? data.to[0] : (typeof data.to === 'string' ? data.to : null);
-  const outcome = (eventType === 'email.delivered' || eventType === 'email.sent') ? 'success' : 'failure';
-
-  const { error: insertError } = await admin.from('audit_events').insert({
-    action: 'resend.delivery_event',
-    actor_kind: 'system',
-    actor_role: 'webhook',
-    target_type: 'email',
-    target_id: emailId,
-    outcome,
-    after_state: {
-      eventType,
+  if (result && typeof result === 'object' && (result as any).status === 'already_processed') {
+    return jsonResponse(200, {
+      ok: true,
+      status: 'already_processed',
+      duplicate: true,
+      providerEventId: msgId,
       emailId,
-      recipientMasked: recipient ? maskEmail(recipient) : null,
-      subjectSanitized: data.subject ? String(data.subject).slice(0, 100) : null,
-      timestamp: new Date().toISOString(),
-    },
-  });
-
-  if (insertError) {
-    console.error('Failed to log Resend webhook delivery audit:', insertError);
-    return jsonResponse(500, {
-      error: 'audit_logging_failed',
-      message: insertError.message,
+      eventType,
     });
   }
 
   return jsonResponse(200, {
     ok: true,
     status: 'processed',
+    duplicate: false,
+    providerEventId: msgId,
     emailId,
     eventType,
     outcome,

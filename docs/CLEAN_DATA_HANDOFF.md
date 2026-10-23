@@ -72,8 +72,15 @@ Before handing over to live institutional operations, transient test data genera
 1. Navigate to **Vercel Dashboard > Project Settings > Transfer Project**.
 2. Transfer project to the official institutional team scope.
 
-### 3.3 Domain & DNS Handover
-- Ensure Cloudflare DNS records for `egatepass.tech` and subdomains are managed within the institutional Cloudflare team account.
+### 3.3 Domain & Authoritative DNS Handover
+- **Domain registrar / DNS management**: `get.tech`
+- **Authoritative DNS infrastructure**: `Orderbox`
+- Ensure `get.tech` / Orderbox DNS credentials and management access are transferred to institutional IT administration.
+- Web routing: Apex `@ A 216.198.79.1` routes to Vercel production edge.
+- Mail authentication: Resend CNAMEs (`send`, `rsend`) and DKIM TXT (`resend._domainkey`) route to Resend.
+- DMARC: `_dmarc TXT "v=DMARC1; p=none;"` in monitoring mode.
+- Inbound Mail: Zero MX records (inbound email receiving disabled).
+- **Cloudflare Boundary**: Cloudflare's role is Turnstile bot protection ONLY. Cloudflare does NOT host authoritative DNS and does NOT proxy or CDN web traffic for `egatepass.tech`.
 
 ---
 

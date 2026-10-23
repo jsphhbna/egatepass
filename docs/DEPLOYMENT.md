@@ -10,7 +10,8 @@ EARIST E-GatePass runs across external production service providers:
 - **Vercel**: Edge/Frontend CDN hosting and Node.js 24 Serverless API Functions.
 - **Supabase**: PostgreSQL database, Row Level Security (RLS), Supabase Auth, and private Object Storage (`visitor-photos`, `visitor-ids`).
 - **Resend**: Transactional email delivery and delivery observability webhooks.
-- **Cloudflare**: Cloudflare Turnstile bot protection widget (Managed mode). Authoritative DNS for `egatepass.tech` is managed at the domain registrar / DNS provider with verified Resend DKIM and SPF records.
+- **Cloudflare**: Cloudflare Turnstile bot protection widget (Managed mode) ONLY. Cloudflare does NOT manage authoritative DNS or proxy web traffic.
+- **get.tech / Orderbox**: Authoritative DNS infrastructure and registrar for `egatepass.tech`. Apex routes to Vercel (`@ A 216.198.79.1`), mail authentication routes to Resend DKIM/SPF, DMARC monitoring mode (`p=none`), zero MX records.
 
 ```mermaid
 flowchart TD
@@ -123,7 +124,10 @@ The platform operates two distinct, single-purpose webhooks. **Neither webhook i
 - **Endpoint URL**: `https://egatepass.tech/api/webhooks/resend` (rewritten to `/api/auth/resend-webhook`)
 - **Method**: `POST`
 - **Verification**: Verified using Svix / Standard Webhook signatures with `RESEND_WEBHOOK_SECRET`.
-- **Idempotency**: Atomic database deduplication via `resend_webhook_events` (`provider_event_id UNIQUE`). Replays safely return HTTP 200 `already_processed`.
+- **Operational Status**: **Verified operational** (real `email.sent` and `email.delivered` provider events observed in production).
+- **Transactional Idempotency**: Atomic database claim and delivery audit logging via authoritative RPC `api.record_resend_delivery_event` (Migrations `20261023140000` and `20261023160000`).
+- **Atomic Rollback**: If delivery audit insertion fails, the entire transaction rolls back, leaving `provider_event_id` unconsumed so provider retry can re-dispatch safely.
+- **Replay**: Replays return HTTP 200 `already_processed` with no duplicate audit record.
 - **Privacy**: Recipient emails are masked (`v***r@...`) before storing in `audit_events`.
 - **Configuration**: Resend Dashboard > **Webhooks**.
 
@@ -138,8 +142,14 @@ The platform operates two distinct, single-purpose webhooks. **Neither webhook i
    ```text
    EARIST E-GatePass <notifications@egatepass.tech>
    ```
-3. **Legacy SMTP Credential**:
-   - The initial Resend SMTP API credential is not used by the Send Email Hook architecture and can be safely revoked in Resend without impacting production email dispatch.
+3. **Legacy SMTP Credential (Manual Action Required)**:
+   > [!IMPORTANT]
+   > **MANUAL OWNER ACTION REQUIRED**
+   > - **Provider**: Resend
+   > - **Resource**: API key named `egatepass-supabase-smtp`
+   > - **Action**: Revoke/delete the legacy key in Resend dashboard after verifying no SMTP fallback is intentionally retained.
+   > - **Impact**: Current Send Email Hook + Resend REST API architecture remains unaffected.
+   > - **Verification afterward**: Confirm Supabase Auth Send Email Hook still succeeds and test invitation/password-reset email delivers.
 
 ---
 

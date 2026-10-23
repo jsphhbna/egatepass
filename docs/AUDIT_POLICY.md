@@ -116,6 +116,12 @@ Certain audit actions are critical to the legal and security integrity of the ca
 
 ## 5. Audit Event Retention & Archiving
 
+### 5.1 Webhook Idempotency Event Retention
+- **Table**: `public.resend_webhook_events`
+- **Purpose**: Deduplication cache for inbound delivery event IDs (`provider_event_id`).
+- **Policy Classification**: `OPTIONAL HARDENING ? retention period requires explicit policy`.
+- **Operational Scope**: The table is append-only for deduplication. Bounded periodic cleanup (e.g. purging provider event IDs older than the maximum provider replay window of 7-30 days) may be implemented once an institutional retention policy is established. Table volume is negligible at present, and deduplication guarantees remain fully active.
+
 - **Standard Retention Window**: Configured between 90 to 1095 days (Default: 365 days / 1 year).
 - **Automated Pruning**: Non-protected audit events older than the configured window are pruned during retention maintenance.
 - **Permanent Archival**: Prior to automated purging, institutions requiring compliance records can export audit data via the Super Admin export tools.

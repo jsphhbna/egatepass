@@ -180,10 +180,11 @@ erDiagram
     }
 
     resend_webhook_events {
-        bigint id PK
+        uuid id PK
         text provider_event_id UK
         text event_type
-        timestamptz received_at
+        text email_id
+        timestamptz created_at
     }
 ```
 
@@ -328,8 +329,17 @@ To resolve unindexed foreign key warnings identified during performance reviews 
 
 ---
 
-## 8. Atomic Webhook Idempotency (Migration 20261023140000)
+## 8. Atomic Webhook Idempotency & Transactional RPC (Migrations 20261023140000 & 20261023160000)
 
-To eliminate race conditions during high-frequency Resend delivery webhook events across concurrent serverless instances, forward migration `20261023140000_resend_webhook_idempotency.sql` introduces the `resend_webhook_events` table:
-- Enforces database-level uniqueness on `provider_event_id` (`CONSTRAINT resend_webhook_events_provider_id_unique UNIQUE (provider_event_id)`).
-- Replays of already processed webhooks safely return HTTP 200 `already_processed` without inserting duplicate audit events.
+To eliminate race conditions and guarantee that delivery audit logs and deduplication claims persist atomically across concurrent serverless invocations:
+- Forward migration `20261023140000_resend_webhook_idempotency.sql` introduces the `public.resend_webhook_events` table (`id uuid PRIMARY KEY`, `provider_event_id text UNIQUE NOT NULL`, `event_type text NOT NULL`, `email_id text`, `created_at timestamptz NOT NULL`).
+- Forward migration `20261023160000_resend_webhook_transactional_rpc.sql` defines the authoritative PL/pgSQL function `api.record_resend_delivery_event`.
+- **Atomicity & Rollback Guarantees**:
+  - The provider event claim and the delivery audit entry are executed within a single database transaction.
+  - If audit insertion fails or encounters any transient error, the entire transaction rolls back, ensuring the `provider_event_id` is NOT consumed.
+  - The webhook handler responds with HTTP 500, enabling Resend's automatic retry policy to re-dispatch the event and achieve successful persistence.
+- **Replay / Duplicate Semantics**:
+  - If a previously processed `provider_event_id` is received, the unique constraint catches the duplicate and returns `{ ok: true, status: 'already_processed', duplicate: true }`.
+  - The webhook handler responds with HTTP 200 `already_processed` and no second audit event is created.
+- **Access Boundary**:
+  - Execution of `api.record_resend_delivery_event` is strictly revoked from `public`, `anon`, and `authenticated`, granted exclusively to `service_role` for serverless function use.

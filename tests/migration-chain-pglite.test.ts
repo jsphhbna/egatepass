@@ -1187,4 +1187,150 @@ describe('Permanent PostgreSQL Migration Chain & Schema Contracts (PGlite)', () 
       expect(authInsert.rows[0].has_priv, `authenticated must NOT have direct INSERT on public.${table}`).toBe(false);
     }
   }, 30000);
+  it('L. PGLITE/POSTGRES CONTRACT TEST: api.record_resend_delivery_event transactional atomicity & retry rollback', async () => {
+    const db = new PGlite();
+    await applyAllMigrations(db);
+
+    // 1. Verify EXECUTE privileges: service_role only, revoked from anon & authenticated
+    const fnSig = 'api.record_resend_delivery_event(text, text, text, text, text, text, timestamptz)';
+    const srPriv = await db.query<{ has_priv: boolean }>(
+      `select has_function_privilege('service_role', $1, 'EXECUTE') as has_priv;`,
+      [fnSig]
+    );
+    expect(srPriv.rows[0].has_priv).toBe(true);
+
+    const anonPriv = await db.query<{ has_priv: boolean }>(
+      `select has_function_privilege('anon', $1, 'EXECUTE') as has_priv;`,
+      [fnSig]
+    );
+    expect(anonPriv.rows[0].has_priv).toBe(false);
+
+    const authPriv = await db.query<{ has_priv: boolean }>(
+      `select has_function_privilege('authenticated', $1, 'EXECUTE') as has_priv;`,
+      [fnSig]
+    );
+    expect(authPriv.rows[0].has_priv).toBe(false);
+
+    // 2. Successful event processing: claim + audit both persist
+    const res1 = await db.query<{ result: any }>(`
+      select api.record_resend_delivery_event(
+        'msg_pglite_test_1',
+        'email.delivered',
+        'email_pglite_100',
+        'success',
+        'v***r@earist.edu.ph',
+        'Test Gate Pass Confirmation'
+      ) as result;
+    `);
+    const r1 = res1.rows[0].result;
+    expect(r1.ok).toBe(true);
+    expect(r1.status).toBe('processed');
+    expect(r1.duplicate).toBe(false);
+    expect(r1.provider_event_id).toBe('msg_pglite_test_1');
+
+    const claimCount1 = await db.query<{ count: string }>(
+      `select count(*)::text from public.resend_webhook_events where provider_event_id = 'msg_pglite_test_1';`
+    );
+    expect(claimCount1.rows[0].count).toBe('1');
+
+    const auditCount1 = await db.query<{ count: string }>(
+      `select count(*)::text from public.audit_events where action = 'resend.delivery_event' and target_id = 'email_pglite_100';`
+    );
+    expect(auditCount1.rows[0].count).toBe('1');
+
+    // 3. Duplicate event replay: returns already_processed, no duplicate audit
+    const res2 = await db.query<{ result: any }>(`
+      select api.record_resend_delivery_event(
+        'msg_pglite_test_1',
+        'email.delivered',
+        'email_pglite_100',
+        'success',
+        'v***r@earist.edu.ph',
+        'Test Gate Pass Confirmation'
+      ) as result;
+    `);
+    const r2 = res2.rows[0].result;
+    expect(r2.ok).toBe(true);
+    expect(r2.status).toBe('already_processed');
+    expect(r2.duplicate).toBe(true);
+
+    const auditCount2 = await db.query<{ count: string }>(
+      `select count(*)::text from public.audit_events where action = 'resend.delivery_event' and target_id = 'email_pglite_100';`
+    );
+    expect(auditCount2.rows[0].count).toBe('1'); // Still exactly 1
+
+    // 4. Transactional rollback test:
+    // If a temporary trigger on audit_events aborts the audit insertion,
+    // the provider_event_id insert must roll back completely, allowing retry to succeed.
+    await db.exec(`
+      create or replace function fail_resend_audit() returns trigger as $$
+      begin
+        if new.target_id = 'email_fail_rollback' then
+          raise exception 'simulated_audit_failure';
+        end if;
+        return new;
+      end;
+      $$ language plpgsql;
+
+      create trigger trg_fail_resend_audit
+      before insert on public.audit_events
+      for each row execute function fail_resend_audit();
+    `);
+
+    // Attempt processing when audit fails
+    let threw = false;
+    try {
+      await db.query(`
+        select api.record_resend_delivery_event(
+          'msg_rollback_test',
+          'email.sent',
+          'email_fail_rollback',
+          'success',
+          'u***r@earist.edu.ph',
+          'Will Fail Audit'
+        );
+      `);
+    } catch (err: any) {
+      threw = true;
+      expect(err.message).toContain('simulated_audit_failure');
+    }
+    expect(threw).toBe(true);
+
+    // Verify atomic rollback: provider_event_id was NOT committed!
+    const claimAfterFail = await db.query<{ count: string }>(
+      `select count(*)::text from public.resend_webhook_events where provider_event_id = 'msg_rollback_test';`
+    );
+    expect(claimAfterFail.rows[0].count).toBe('0');
+
+    // Remove the temporary failure trigger to simulate transient failure resolving
+    await db.exec(`
+      drop trigger trg_fail_resend_audit on public.audit_events;
+      drop function fail_resend_audit();
+    `);
+
+    // Retry with the EXACT same provider event ID: it must now succeed completely!
+    const resRetry = await db.query<{ result: any }>(`
+      select api.record_resend_delivery_event(
+        'msg_rollback_test',
+        'email.sent',
+        'email_fail_rollback',
+        'success',
+        'u***r@earist.edu.ph',
+        'Will Fail Audit'
+      ) as result;
+    `);
+    const rRetry = resRetry.rows[0].result;
+    expect(rRetry.ok).toBe(true);
+    expect(rRetry.status).toBe('processed');
+
+    const claimAfterRetry = await db.query<{ count: string }>(
+      `select count(*)::text from public.resend_webhook_events where provider_event_id = 'msg_rollback_test';`
+    );
+    expect(claimAfterRetry.rows[0].count).toBe('1');
+
+    const auditAfterRetry = await db.query<{ count: string }>(
+      `select count(*)::text from public.audit_events where action = 'resend.delivery_event' and target_id = 'email_fail_rollback';`
+    );
+    expect(auditAfterRetry.rows[0].count).toBe('1');
+  }, 30000);
 });
