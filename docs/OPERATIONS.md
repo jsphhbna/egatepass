@@ -195,8 +195,11 @@ flowchart TD
 
 The platform operates two separate, dedicated webhook flows:
 - **Outbound Auth Email Hook** (`POST /api/auth/send-email-hook`): Invoked by Supabase Auth to send transactional emails via React Email and Resend API.
-- **Inbound Delivery Observability Webhook** (`POST /api/webhooks/resend`): **Verified operational** (real `email.sent` and `email.delivered` events observed). Invoked by Resend to notify E-GatePass of delivery status (`sent`, `delivered`, `delayed`, `bounced`, `complained`, `failed`). Atomic claim and audit logging executed via transactional RPC `api.record_resend_delivery_event` (Migrations `20261023140000` and `20261023160000`). Replays return HTTP 200 `already_processed`. If audit logging fails, transaction rolls back so provider retry can reprocess the event.
-- **Webhook Table Retention**: Classified as `OPTIONAL HARDENING ? retention period requires explicit policy`. `public.resend_webhook_events` volume is minimal and append-only deduplication remains active.
+- **Inbound Delivery Observability Webhook** (`POST /api/webhooks/resend`): Invoked by Resend to notify E-GatePass of delivery status (`sent`, `delivered`, `delayed`, `bounced`, `complained`, `failed`).
+  - **Provider webhook/signature chain**: Verified operational (historical `email.sent` and `email.delivered` provider events observed in production).
+  - **Transactional webhook RPC (`api.record_resend_delivery_event`)**: Deployed and database/test verified. Awaiting first legitimate post-deployment provider event for live production execution proof.
+  - **Atomic Transaction & Replay**: Executed via transactional RPC `api.record_resend_delivery_event` (Migrations `20261023140000` and `20261023160000`). Replays return HTTP 200 `already_processed`. If audit logging fails, transaction rolls back so provider retry can reprocess the event.
+- **Webhook Table Retention**: Classified as `OPTIONAL HARDENING — retention period requires explicit policy`. `public.resend_webhook_events` volume is minimal and append-only deduplication remains active.
 - **Legacy SMTP Key Cleanup**:
   > [!IMPORTANT]
   > **MANUAL OWNER ACTION REQUIRED**

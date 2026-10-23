@@ -473,7 +473,7 @@ When an operation spans multiple systems (PostgreSQL, Storage, Resend) and encou
 
 ### Browser-Safe Client Configuration (`VITE_*`)
 - `VITE_SUPABASE_URL`: Public Supabase API endpoint.
-- `VITE_SUPABASE_PUBLISHABLE_KEY`: Public anonymous API key (governed by RLS).
+- `VITE_SUPABASE_PUBLISHABLE_KEY`: Supabase publishable browser key (`sb_publishable_...`; intentionally public and governed by RLS).
 - `VITE_TURNSTILE_SITE_KEY`: Public site key for Cloudflare Turnstile widget.
 
 ### Protected Server Secrets (Vercel Functions Only — Production Scope)

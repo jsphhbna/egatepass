@@ -11,7 +11,7 @@ This document is the authoritative specification for all configuration and secre
 | Variable | Scope | Secret? | Consumer / Used By | Production Required? | Purpose & Format Specification |
 |---|---|---|---|---|---|
 | `VITE_SUPABASE_URL` | Production, Preview, Local | No | Client application (`src/lib/supabase.ts`) | **Yes** | `https://<project-ref>.supabase.co` (Public Supabase API Gateway) |
-| `VITE_SUPABASE_PUBLISHABLE_KEY` | Production, Preview, Local | No | Client application (`src/lib/supabase.ts`) | **Yes** | `eyJhbGciOiJIUzI1Ni...` (Supabase public/anon publishable key) |
+| `VITE_SUPABASE_PUBLISHABLE_KEY` | Production, Preview, Local | No | Client application (`src/lib/supabase.ts`) | **Yes** | `sb_publishable_...` (Supabase publishable browser key; intentionally public and safe for browser use when RLS is correctly enforced) |
 | `VITE_TURNSTILE_SITE_KEY` | Production, Local | No | Cloudflare Turnstile widget (`src/pages/GetPassPage.tsx`, `LoginPage.tsx`) | **Yes** (Prod) | `0x4AAAAAA...` (Public Cloudflare Turnstile Managed widget site key; scoped to Production in Vercel) |
 | `SUPABASE_URL` | Production, Preview, Local | No | Serverless API Functions (`server/supabase.ts`) | **Yes** | `https://<project-ref>.supabase.co` (Backend Supabase endpoint) |
 | `SUPABASE_SECRET_KEY` | Production Only | **Yes** | Serverless admin client (`server/supabase.ts`) | **Yes** | High-privilege Supabase service-role secret; strictly isolated to Production |

@@ -59,7 +59,7 @@ flowchart TD
   ResendError: 'from' email address is not verified
   ```
 - **Likely Cause**:
-  The `RESEND_FROM_EMAIL` environment variable does not match the verified domain in Resend, or DNS records have not propagated.
+  The `RESEND_FROM_EMAIL` environment variable does not match the verified domain in Resend, or get.tech / Orderbox DNS records for Resend have not propagated.
 - **How to Diagnose**:
   1. Open Resend dashboard at `https://resend.com/domains`.
   2. Confirm status of `egatepass.tech` is **Verified** (Green).

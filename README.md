@@ -64,7 +64,8 @@ flowchart LR
 | **Object Storage** | Supabase Storage (Private) | Private storage for visitor photos (`visitor-photos`) and IDs (`visitor-ids`) |
 | **Transactional Email** | Resend | Dispatch of system notifications, auth invites, and QR pass delivery |
 | **Email Templates** | React Email | Type-safe, branded HTML templates built with TypeScript and TSX |
-| **Bot Protection** | Cloudflare Turnstile | Non-intrusive CAPTCHA for public visitor registration via Supabase Auth |
+| **Bot Protection** | Cloudflare Turnstile | Turnstile bot protection ONLY (not authoritative DNS, not CDN/proxy) |
+| **Authoritative DNS** | get.tech / Orderbox | Domain registrar and authoritative DNS management (@ A to Vercel, Resend DKIM/SPF) |
 | **Local OCR** | Tesseract.js | Client-side optical character recognition for kiosk ID capture |
 | **QR Security** | HMAC-SHA256 & SHA-256 | Cryptographic pass bearer tokens with database-stored SHA-256 digest lookup |
 | **Timezone Authority** | `Asia/Manila` (UTC+8) | Institutional schedule enforcement and daily audit boundaries |

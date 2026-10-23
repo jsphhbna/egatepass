@@ -78,7 +78,7 @@ Configure environment variables in your Vercel Project Settings (**Settings > En
 | Variable | Scope | Secret? | Purpose / Value Description |
 |---|---|---|---|
 | `VITE_SUPABASE_URL` | Production, Preview, Dev | No | Supabase public API endpoint (e.g. `https://xyz.supabase.co`) |
-| `VITE_SUPABASE_PUBLISHABLE_KEY` | Production, Preview, Dev | No | Supabase publishable anonymous key |
+| `VITE_SUPABASE_PUBLISHABLE_KEY` | Production, Preview, Dev | No | Supabase publishable browser key (current format uses `sb_publishable_...`; intentionally public and safe for browser use when RLS is enforced) |
 | `VITE_TURNSTILE_SITE_KEY` | Production, Dev | No | Cloudflare Turnstile public widget site key (Production-only in Vercel) |
 | `SUPABASE_URL` | Production, Preview, Dev | No | Supabase server URL (same as `VITE_SUPABASE_URL`) |
 | `SUPABASE_SECRET_KEY` | **Production Only** | **Yes** | Supabase service-role key (bypasses RLS for privileged backend operations) |
@@ -124,8 +124,9 @@ The platform operates two distinct, single-purpose webhooks. **Neither webhook i
 - **Endpoint URL**: `https://egatepass.tech/api/webhooks/resend` (rewritten to `/api/auth/resend-webhook`)
 - **Method**: `POST`
 - **Verification**: Verified using Svix / Standard Webhook signatures with `RESEND_WEBHOOK_SECRET`.
-- **Operational Status**: **Verified operational** (real `email.sent` and `email.delivered` provider events observed in production).
-- **Transactional Idempotency**: Atomic database claim and delivery audit logging via authoritative RPC `api.record_resend_delivery_event` (Migrations `20261023140000` and `20261023160000`).
+- **Provider Webhook / Signature Chain**: **Verified operational** (historical `email.sent` and `email.delivered` provider events observed in production).
+- **Transactional Webhook RPC (`api.record_resend_delivery_event`)**: Deployed and database/test verified. Awaiting first legitimate post-deployment provider event for live production execution proof.
+- **Transactional Idempotency & Rollback**: Atomic database claim and delivery audit logging via authoritative RPC `api.record_resend_delivery_event` (Migrations `20261023140000` and `20261023160000`). If delivery audit insertion fails, the entire transaction rolls back, leaving `provider_event_id` unconsumed so provider retry can re-dispatch safely. Replays return HTTP 200 `already_processed` with no duplicate audit record.
 - **Atomic Rollback**: If delivery audit insertion fails, the entire transaction rolls back, leaving `provider_event_id` unconsumed so provider retry can re-dispatch safely.
 - **Replay**: Replays return HTTP 200 `already_processed` with no duplicate audit record.
 - **Privacy**: Recipient emails are masked (`v***r@...`) before storing in `audit_events`.

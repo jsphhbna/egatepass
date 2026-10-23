@@ -28,7 +28,7 @@ describe('Documentation Truthfulness & Formatting Contract', () => {
   });
 
   it('ensures all active documents have zero encoding corruption or mojibake', () => {
-    const mojibakeRegex = /(\uFFFD|â€™|â€œ|â€|â€“|â€”|Â)/;
+    const mojibakeRegex = new RegExp('(\\uFFFD|\\u00C2|\\u00E2\\u20AC\\u2122|\\u00E2\\u20AC\\u0153|\\u00E2\\u20AC|\\u00E2\\u20AC\\u2013|\\u00E2\\u20AC\\u2014)');
     for (const filePath of activeDocFiles) {
       const content = fs.readFileSync(filePath, 'utf8');
       const match = content.match(mojibakeRegex);
@@ -91,26 +91,67 @@ describe('Documentation Truthfulness & Formatting Contract', () => {
     const arch = fs.readFileSync('docs/ARCHITECTURE.md', 'utf8');
     expect(arch).toContain('resend_webhook_events');
     expect(arch).toContain('uuid id PK');
+    expect(arch).toContain('text provider_event_id UK');
+    expect(arch).toContain('event_type text');
+    expect(arch).toContain('email_id text');
+    expect(arch).toContain('created_at timestamptz');
     expect(arch).not.toMatch(/resend_webhook_events\s*\{\s*bigint id PK/);
   });
 
   it('ensures authoritative DNS is documented as get.tech / Orderbox with Cloudflare as Turnstile-only', () => {
     const deployment = fs.readFileSync('docs/DEPLOYMENT.md', 'utf8');
     const handoff = fs.readFileSync('docs/CLEAN_DATA_HANDOFF.md', 'utf8');
+    const readme = fs.readFileSync('README.md', 'utf8');
     
     expect(deployment).toContain('get.tech');
     expect(deployment).toContain('Orderbox');
     expect(deployment).toContain('Turnstile');
     expect(handoff).toContain('get.tech');
     expect(handoff).toContain('Orderbox');
+    expect(readme).toContain('get.tech / Orderbox');
 
     // Forbidden: Cloudflare managing authoritative DNS
     expect(handoff).not.toContain('Ensure Cloudflare DNS records');
+    expect(deployment).not.toContain('Cloudflare managing authoritative DNS');
   });
 
   it('ensures no unproven exact Node.js patch version claims exist in docs/ENVIRONMENT.md', () => {
     const envDoc = fs.readFileSync('docs/ENVIRONMENT.md', 'utf8');
     expect(envDoc).not.toContain('24.22.1');
     expect(envDoc).toContain('Production runtime policy: Node.js 24.x.');
+  });
+
+  it('ensures Supabase publishable browser key uses modern sb_publishable_ format without requiring legacy eyJ format', () => {
+    const envDoc = fs.readFileSync('docs/ENVIRONMENT.md', 'utf8');
+    const deployDoc = fs.readFileSync('docs/DEPLOYMENT.md', 'utf8');
+    const secDoc = fs.readFileSync('docs/SECURITY.md', 'utf8');
+
+    expect(envDoc).not.toContain('eyJhbGciOiJIUzI1Ni');
+    expect(envDoc).toContain('sb_publishable_');
+    expect(deployDoc).toContain('sb_publishable_');
+    expect(secDoc).toContain('sb_publishable_');
+  });
+
+  it('ensures optional hardening labels use clean em-dash without malformed question mark encoding drift', () => {
+    for (const filePath of activeDocFiles) {
+      const content = fs.readFileSync(filePath, 'utf8');
+      expect(content, 'Malformed optional hardening typo in ' + filePath).not.toMatch(/OPTIONAL HARDENING\s*\?/i);
+    }
+  });
+
+  it('ensures transactional webhook RPC status is truthfully qualified and does not claim premature live verification', () => {
+    const deployment = fs.readFileSync('docs/DEPLOYMENT.md', 'utf8');
+    const ops = fs.readFileSync('docs/OPERATIONS.md', 'utf8');
+
+    expect(deployment).toContain('Awaiting first legitimate post-deployment provider event');
+    expect(ops).toContain('Awaiting first legitimate post-deployment provider event');
+    expect(deployment).not.toContain('transactional idempotency fully live-verified');
+  });
+
+  it('ensures documentation states canonical route counts matching route-map matrix', () => {
+    const arch = fs.readFileSync('docs/ARCHITECTURE.md', 'utf8');
+    expect(arch).toContain('All 27 endpoints');
+    expect(arch).toContain('Auth Router (4 routes');
+    expect(arch).not.toContain('Auth Router (3 routes');
   });
 });
