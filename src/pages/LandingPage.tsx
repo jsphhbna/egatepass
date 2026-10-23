@@ -717,16 +717,19 @@ function EaristBuildingWatermark() {
   return (
     <div
       aria-hidden="true"
-      className="pointer-events-none absolute left-[5%] sm:left-[10%] lg:left-[14%] xl:left-[18%] top-2 sm:top-4 w-[340px] sm:w-[460px] lg:w-[540px] xl:w-[620px] opacity-[0.11] sm:opacity-[0.13] lg:opacity-[0.14] select-none mix-blend-multiply overflow-hidden"
+      className="pointer-events-none absolute left-0 sm:left-[2%] lg:left-[4%] xl:left-[6%] top-2 sm:top-4 lg:top-6 w-[360px] sm:w-[500px] lg:w-[620px] xl:w-[720px] 2xl:w-[800px] opacity-[0.13] sm:opacity-[0.15] lg:opacity-[0.16] select-none mix-blend-multiply overflow-hidden"
     >
-      <img
-        src="/earist-building-watermark.png"
-        alt=""
-        className="w-full h-auto object-contain pointer-events-none"
-        loading="eager"
-        width="552"
-        height="368"
-      />
+      <picture>
+        <source srcSet="/earist-main-building.webp" type="image/webp" />
+        <img
+          src="/earist-main-building.png"
+          alt=""
+          className="w-full h-auto object-contain pointer-events-none"
+          loading="eager"
+          width="1104"
+          height="736"
+        />
+      </picture>
     </div>
   );
 }
