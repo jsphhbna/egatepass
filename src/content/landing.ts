@@ -13,7 +13,7 @@ export const LANDING_CONTENT = {
     eyebrow: 'Official Visitor Access System',
     title: 'E-GatePass',
     subtitle: 'Digital visitor registration for a safer, more organized campus.',
-    supportingText: 'Request your QR gate pass before arriving. Quick, convenient, and secure.',
+    supportingText: 'Request your QR gate pass before arriving. Quick, convenient, and secure. No visitor account is required.',
     trustIndicators: [
       'No visitor account needed',
       'Works on mobile or kiosk',
