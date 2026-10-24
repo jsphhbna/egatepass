@@ -1,10 +1,11 @@
 import { useEffect, useState, type MouseEvent } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import {
   ShieldCheck,
   Smartphone,
   CheckCircle2,
   ArrowRight,
+  Loader2,
   FileText,
   UserCheck,
   ScanLine,
@@ -23,8 +24,19 @@ const processIcons = [FileText, Camera, QrCode, UserCheck, ScanLine];
 const needIcons = [User, Camera, CreditCard, Clock];
 const verificationIcons = [ShieldCheck, UserCheck, ScanLine, Clock];
 
+type GatePassCtaSource = 'header' | 'hero' | 'final' | null;
+
 export function LandingPage() {
   const [isScrolled, setIsScrolled] = useState(false);
+  const [openingGatePassFrom, setOpeningGatePassFrom] = useState<GatePassCtaSource>(null);
+  const navigate = useNavigate();
+
+  function handleGetPassClick(event: MouseEvent<HTMLAnchorElement>, source: GatePassCtaSource) {
+    event.preventDefault();
+    if (openingGatePassFrom !== null) return;
+    setOpeningGatePassFrom(source);
+    navigate('/get-pass');
+  }
 
   useEffect(() => {
     function handleScroll() {
@@ -94,10 +106,24 @@ export function LandingPage() {
             </nav>
             <Link
               to="/get-pass"
-              className="inline-flex min-h-10 items-center justify-center rounded-full bg-[#a31d1d] hover:bg-[#850e12] px-5 sm:px-6 text-xs sm:text-sm font-bold text-white shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#a31d1d] focus-visible:ring-offset-2"
+              onClick={(e) => handleGetPassClick(e, 'header')}
+              aria-busy={openingGatePassFrom === 'header'}
+              aria-disabled={openingGatePassFrom !== null}
+              className={`inline-flex min-h-10 items-center justify-center rounded-full bg-[#a31d1d] px-5 sm:px-6 text-xs sm:text-sm font-bold text-white shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#a31d1d] focus-visible:ring-offset-2 ${
+                openingGatePassFrom !== null ? 'opacity-80 cursor-not-allowed' : 'hover:bg-[#850e12]'
+              }`}
             >
-              <span className="sm:hidden">Get Pass</span>
-              <span className="hidden sm:inline">Get Your Gate Pass</span>
+              {openingGatePassFrom === 'header' ? (
+                <span className="inline-flex items-center">
+                  <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin shrink-0" aria-hidden="true" />
+                  Opening…
+                </span>
+              ) : (
+                <>
+                  <span className="sm:hidden">Get Pass</span>
+                  <span className="hidden sm:inline">Get Your Gate Pass</span>
+                </>
+              )}
             </Link>
           </div>
         </div>
@@ -147,10 +173,24 @@ export function LandingPage() {
               <div className="mt-7 sm:mt-8 flex flex-col gap-3.5 sm:flex-row">
                 <Link
                   to="/get-pass"
-                  className="inline-flex min-h-12 items-center justify-center rounded-xl bg-[#a31d1d] hover:bg-[#850e12] px-7 text-sm sm:text-base font-bold text-white shadow-md transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#a31d1d] focus-visible:ring-offset-2"
+                  onClick={(e) => handleGetPassClick(e, 'hero')}
+                  aria-busy={openingGatePassFrom === 'hero'}
+                  aria-disabled={openingGatePassFrom !== null}
+                  className={`inline-flex min-h-12 items-center justify-center rounded-xl bg-[#a31d1d] px-7 text-sm sm:text-base font-bold text-white shadow-md transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#a31d1d] focus-visible:ring-offset-2 ${
+                    openingGatePassFrom !== null ? 'opacity-80 cursor-not-allowed' : 'hover:bg-[#850e12]'
+                  }`}
                 >
-                  Get Your Gate Pass
-                  <ArrowRight className="ml-2 h-4 w-4" aria-hidden="true" />
+                  {openingGatePassFrom === 'hero' ? (
+                    <span className="inline-flex items-center">
+                      <Loader2 className="mr-2 h-4 w-4 animate-spin shrink-0" aria-hidden="true" />
+                      Opening Gate Pass…
+                    </span>
+                  ) : (
+                    <>
+                      Get Your Gate Pass
+                      <ArrowRight className="ml-2 h-4 w-4" aria-hidden="true" />
+                    </>
+                  )}
                 </Link>
                 <a
                   href="#how-it-works"
@@ -444,10 +484,24 @@ export function LandingPage() {
             <div className="mt-8 flex justify-center">
               <Link
                 to="/get-pass"
-                className="inline-flex min-h-12 items-center justify-center rounded-xl bg-[var(--color-action)] px-8 text-base font-bold text-white shadow-lg transition-colors hover:bg-[var(--color-action-dark)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--color-institutional)]"
+                onClick={(e) => handleGetPassClick(e, 'final')}
+                aria-busy={openingGatePassFrom === 'final'}
+                aria-disabled={openingGatePassFrom !== null}
+                className={`inline-flex min-h-12 items-center justify-center rounded-xl bg-[var(--color-action)] px-8 text-base font-bold text-white shadow-lg transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--color-institutional)] ${
+                  openingGatePassFrom !== null ? 'opacity-80 cursor-not-allowed' : 'hover:bg-[var(--color-action-dark)]'
+                }`}
               >
-                Get Your Gate Pass
-                <ArrowRight className="ml-2 h-5 w-5" aria-hidden="true" />
+                {openingGatePassFrom === 'final' ? (
+                  <span className="inline-flex items-center">
+                    <Loader2 className="mr-2 h-5 w-5 animate-spin shrink-0" aria-hidden="true" />
+                    Opening Gate Pass…
+                  </span>
+                ) : (
+                  <>
+                    Get Your Gate Pass
+                    <ArrowRight className="ml-2 h-5 w-5" aria-hidden="true" />
+                  </>
+                )}
               </Link>
             </div>
           </div>

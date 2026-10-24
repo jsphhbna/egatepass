@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect, useMemo } from 'react';
+import { useState, useRef, useEffect, useMemo, useCallback } from 'react';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
@@ -19,6 +19,9 @@ import {
   ShieldCheck,
   Mail,
   Share2,
+  Loader2,
+  RefreshCw,
+  AlertCircle,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { Link } from 'react-router-dom';
@@ -111,6 +114,10 @@ export function GetPassPage() {
   const [rawQrToken, setRawQrToken] = useState<string | null>(null);
   const [showEmailModal, setShowEmailModal] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
+  type RegistrationConfigState = 'loading' | 'ready' | 'error';
+  const [configState, setConfigState] = useState<RegistrationConfigState>('loading');
+  const [isRetryingConfig, setIsRetryingConfig] = useState(false);
+
   const [isPeakMode, setIsPeakMode] = useState(false);
   const [visitPurposes, setVisitPurposes] = useState<VisitPurposeOption[]>(DEFAULT_VISIT_PURPOSES);
   const [workingHours, setWorkingHours] = useState(DEFAULT_WORKING_HOURS);
@@ -118,9 +125,14 @@ export function GetPassPage() {
   const [issuedValidity, setIssuedValidity] = useState<string | null>(null);
   const issueRequestId = useRef(crypto.randomUUID());
 
-  useEffect(() => {
-    loadRegistrationSettings('portal').then((data) => {
-      if (!data) return;
+  const [isProcessingId, setIsProcessingId] = useState(false);
+  const [isSharing, setIsSharing] = useState(false);
+
+  const loadConfig = useCallback(async (isRetry = false) => {
+    if (isRetry) setIsRetryingConfig(true);
+    else setConfigState('loading');
+    try {
+      const data = await loadRegistrationSettings('portal');
       setIsPeakMode(data.peak_mode === 'portal' || data.peak_mode === 'both');
       setVisitPurposes(normalizeVisitPurposes(data.visit_purposes));
       setWorkingHours(normalizeWorkingHours({
@@ -128,9 +140,21 @@ export function GetPassPage() {
         end: data.working_hours_end?.slice(0, 5),
         timezone: data.timezone,
       }));
-      if (Number.isInteger(data.scheduling_days_ahead)) setSchedulingDaysAhead(data.scheduling_days_ahead);
-    }).catch(() => undefined);
+      if (Number.isInteger(data.scheduling_days_ahead)) {
+        setSchedulingDaysAhead(data.scheduling_days_ahead!);
+      }
+      setConfigState('ready');
+    } catch (err) {
+      console.error('Failed to load portal registration settings:', err);
+      setConfigState('error');
+    } finally {
+      setIsRetryingConfig(false);
+    }
   }, []);
+
+  useEffect(() => {
+    void loadConfig();
+  }, [loadConfig]);
 
   const faceWebcam = useWebcam({ facingMode: 'user', width: 640, height: 480 });
   const idWebcam = useWebcam({ facingMode: 'environment', width: 1280, height: 720 });
@@ -199,18 +223,26 @@ export function GetPassPage() {
   }
 
   async function onCaptureId() {
+    if (isProcessingId) return;
     const blob = idWebcam.capture();
-    if (blob) {
-      try {
-        const compressed = await compressImageToWebP(blob);
-        setIdBlob(compressed);
-        idUrl.setFromBlob(compressed);
-        idWebcam.stop();
-      } catch {
-        toast.error('Failed to process ID image.');
-      }
-    } else {
+    if (!blob) {
       toast.error('Failed to capture ID photo. Please try again.');
+      return;
+    }
+
+    // Immediately stop camera and enter processing state
+    idWebcam.stop();
+    setIsProcessingId(true);
+
+    try {
+      const compressed = await compressImageToWebP(blob);
+      setIdBlob(compressed);
+      idUrl.setFromBlob(compressed);
+    } catch {
+      toast.error('Failed to process ID image.');
+      void idWebcam.start();
+    } finally {
+      setIsProcessingId(false);
     }
   }
 
@@ -286,7 +318,8 @@ export function GetPassPage() {
   // SHARE (Web Share API)
   // ============================================================
   async function handleShare() {
-    if (!passId || !qrDataUrl) return;
+    if (!passId || !qrDataUrl || isSharing) return;
+    setIsSharing(true);
 
     try {
       const res = await fetch(qrDataUrl);
@@ -303,6 +336,8 @@ export function GetPassPage() {
       }
     } catch {
       // User cancelled share or file sharing unsupported
+    } finally {
+      setIsSharing(false);
     }
 
     // Fallback: download QR image directly
@@ -344,13 +379,49 @@ export function GetPassPage() {
         </div>
 
         {/* Step Indicator */}
-        {step !== 'done' && step !== 'generating' && (
+        {configState === 'ready' && step !== 'done' && step !== 'generating' && (
           <Stepper steps={steps} currentStepIndex={currentStepIndex} className="mb-8 px-4" />
         )}
 
         {/* Card container */}
         <Card className="border-t-4 border-t-[var(--color-brand)]">
-          {/* ============================== STEP 1: FORM ============================== */}
+          {configState === 'loading' && (
+            <div className="flex flex-col items-center justify-center py-16 text-center" role="status" aria-live="polite">
+              <div className="h-8 w-8 animate-spin rounded-full border-4 border-[var(--color-border)] border-t-[var(--color-brand)]" aria-hidden="true" />
+              <h2 className="mt-4 text-base font-bold text-[var(--color-text-primary)]">
+                Preparing visitor registration…
+              </h2>
+              <p className="mt-1 text-sm text-[var(--color-text-secondary)]">
+                Loading visit options and campus schedule.
+              </p>
+            </div>
+          )}
+
+          {configState === 'error' && (
+            <div className="flex flex-col items-center justify-center py-12 text-center" role="alert">
+              <AlertCircle className="h-10 w-10 text-[var(--color-danger)]" aria-hidden="true" />
+              <h2 className="mt-4 text-lg font-bold text-[var(--color-text-primary)]">
+                Visitor registration unavailable
+              </h2>
+              <p className="mt-2 max-w-sm text-sm text-[var(--color-text-secondary)]">
+                Campus visit settings could not be loaded. Check your connection and try again.
+              </p>
+              <Button
+                type="button"
+                variant="primary"
+                onClick={() => loadConfig(true)}
+                disabled={isRetryingConfig}
+                className="mt-6 min-w-32"
+                icon={isRetryingConfig ? <Loader2 className="h-4 w-4 animate-spin shrink-0" aria-hidden="true" /> : <RefreshCw className="h-4 w-4" aria-hidden="true" />}
+              >
+                {isRetryingConfig ? 'Retrying…' : 'Try Again'}
+              </Button>
+            </div>
+          )}
+
+          {configState === 'ready' && (
+            <>
+              {/* ============================== STEP 1: FORM ============================== */}
           {step === 'form' && (
             <form onSubmit={handleSubmit(onFormNext)} className="space-y-5" noValidate>
               
@@ -477,14 +548,21 @@ export function GetPassPage() {
                     size="sm"
                     variant="secondary"
                     onClick={() => faceWebcam.start()}
-                    icon={<RotateCcw className="h-4 w-4" />}
+                    icon={faceWebcam.isStarting ? <Loader2 className="h-4 w-4 animate-spin" /> : <RotateCcw className="h-4 w-4" />}
+                    disabled={faceWebcam.isStarting}
                   >
-                    Retry Camera
+                    {faceWebcam.isStarting ? 'Starting…' : 'Retry Camera'}
                   </Button>
                 </div>
               )}
 
               <div className="mx-auto w-full max-w-xs overflow-hidden rounded-xl border border-[var(--color-border)] shadow-sm bg-black aspect-[3/4] relative">
+                {faceWebcam.isStarting && (
+                  <div className="absolute inset-0 z-10 flex flex-col items-center justify-center bg-black/80 text-white" role="status" aria-live="polite">
+                    <Loader2 className="h-8 w-8 animate-spin text-[var(--color-brand)] mb-2" aria-hidden="true" />
+                    <span className="text-sm font-medium">Starting camera…</span>
+                  </div>
+                )}
                 {faceWebcam.videoRef && (
                   <video
                     ref={faceWebcam.videoRef}
@@ -511,7 +589,7 @@ export function GetPassPage() {
                 </Button>
                 <Button 
                   onClick={onCapturePhoto}
-                  disabled={!faceWebcam.isActive}
+                  disabled={!faceWebcam.isActive || faceWebcam.isStarting}
                   className="flex-1"
                   icon={<Camera className="h-4 w-4" />}
                 >
@@ -557,6 +635,11 @@ export function GetPassPage() {
                     </Button>
                   </div>
                 </div>
+              ) : isProcessingId ? (
+                <div className="mx-auto flex w-full max-w-md flex-col items-center justify-center rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] aspect-[3/2] shadow-sm p-6 text-center" role="status" aria-live="polite">
+                  <Loader2 className="h-8 w-8 animate-spin text-[var(--color-brand)] mb-3" aria-hidden="true" />
+                  <p className="font-semibold text-[var(--color-text-primary)]">Processing ID image…</p>
+                </div>
               ) : (
                 <div className="space-y-4">
                   {idWebcam.error && (
@@ -567,14 +650,21 @@ export function GetPassPage() {
                         size="sm"
                         variant="secondary"
                         onClick={() => idWebcam.start()}
-                        icon={<RotateCcw className="h-4 w-4" />}
+                        icon={idWebcam.isStarting ? <Loader2 className="h-4 w-4 animate-spin" /> : <RotateCcw className="h-4 w-4" />}
+                        disabled={idWebcam.isStarting}
                       >
-                        Retry Camera
+                        {idWebcam.isStarting ? 'Starting…' : 'Retry Camera'}
                       </Button>
                     </div>
                   )}
 
                   <div className="mx-auto w-full max-w-md overflow-hidden rounded-xl border-2 border-dashed border-[var(--color-brand)] shadow-sm bg-black aspect-[3/2] relative flex items-center justify-center">
+                    {idWebcam.isStarting && (
+                      <div className="absolute inset-0 z-10 flex flex-col items-center justify-center bg-black/80 text-white" role="status" aria-live="polite">
+                        <Loader2 className="h-8 w-8 animate-spin text-[var(--color-brand)] mb-2" aria-hidden="true" />
+                        <span className="text-sm font-medium">Starting ID camera…</span>
+                      </div>
+                    )}
                     {idWebcam.videoRef && (
                       <video
                         ref={idWebcam.videoRef}
@@ -594,6 +684,7 @@ export function GetPassPage() {
                         setStep('photo');
                         faceWebcam.start();
                       }}
+                      disabled={isProcessingId}
                       className="flex-1"
                       icon={<ArrowLeft className="h-4 w-4" />}
                     >
@@ -601,14 +692,14 @@ export function GetPassPage() {
                     </Button>
                     <Button
                       onClick={onCaptureId}
-                      disabled={!idWebcam.isActive}
+                      disabled={!idWebcam.isActive || isProcessingId}
                       className="flex-1"
                       icon={<Camera className="h-4 w-4" />}
                     >
                       Capture ID
                     </Button>
                   </div>
-                  <Button variant="ghost" type="button" onClick={onRetakePhoto} className="w-full" icon={<RotateCcw className="h-4 w-4" />}>
+                  <Button variant="ghost" type="button" onClick={onRetakePhoto} disabled={isProcessingId} className="w-full" icon={<RotateCcw className="h-4 w-4" />}>
                     Retake Selfie
                   </Button>
                 </div>
@@ -824,10 +915,12 @@ export function GetPassPage() {
                 <Button
                   variant="secondary"
                   onClick={handleShare}
+                  loading={isSharing}
+                  disabled={isSharing}
                   className="w-full"
-                  icon={<Share2 className="h-4 w-4" />}
+                  icon={!isSharing ? <Share2 className="h-4 w-4" /> : undefined}
                 >
-                  Share
+                  {isSharing ? 'Opening Share…' : 'Share'}
                 </Button>
               </div>
 
@@ -850,6 +943,8 @@ export function GetPassPage() {
                 </Link>
               </div>
             </div>
+          )}
+            </>
           )}
         </Card>
       </div>

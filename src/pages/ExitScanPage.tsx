@@ -17,6 +17,18 @@ export function ExitScanPage() {
   const [cameraState, setCameraState] = useState<CameraState>('starting');
   const [cameraError, setCameraError] = useState<string | null>(null);
   const [showSignOutConfirm, setShowSignOutConfirm] = useState(false);
+  const [isSigningOut, setIsSigningOut] = useState(false);
+
+  async function handleSignOut() {
+    if (isSigningOut) return;
+    setIsSigningOut(true);
+    try {
+      await signOutCurrentActor();
+    } catch {
+      toast.error('Failed to sign out. Please try again.');
+      setIsSigningOut(false);
+    }
+  }
   const [statusMessage, setStatusMessage] = useState('Scan QR to exit');
   const scannerRef = useRef<Html5Qrcode | null>(null);
   const debounceRef = useRef(false);
@@ -208,7 +220,9 @@ export function ExitScanPage() {
 
       <Modal
         isOpen={showSignOutConfirm}
-        onClose={() => setShowSignOutConfirm(false)}
+        onClose={() => {
+          if (!isSigningOut) setShowSignOutConfirm(false);
+        }}
         title="Sign Out Scanner Device?"
       >
         <div className="space-y-4">
@@ -216,17 +230,20 @@ export function ExitScanPage() {
             Are you sure you want to sign out this exit scanner? A staff administrator will need to sign in again to activate the gate scanner.
           </p>
           <div className="flex justify-end gap-3 pt-2">
-            <Button variant="secondary" onClick={() => setShowSignOutConfirm(false)}>
+            <Button
+              variant="secondary"
+              onClick={() => setShowSignOutConfirm(false)}
+              disabled={isSigningOut}
+            >
               Cancel
             </Button>
             <Button
               variant="destructive"
-              onClick={() => {
-                setShowSignOutConfirm(false);
-                void signOutCurrentActor();
-              }}
+              onClick={handleSignOut}
+              loading={isSigningOut}
+              disabled={isSigningOut}
             >
-              Sign Out Scanner
+              {isSigningOut ? 'Signing out…' : 'Sign Out Scanner'}
             </Button>
           </div>
         </div>

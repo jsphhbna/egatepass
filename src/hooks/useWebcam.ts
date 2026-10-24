@@ -6,16 +6,31 @@ interface UseWebcamOptions {
   height?: number;
 }
 
-export function useWebcam(options: UseWebcamOptions = {}) {
+export interface UseWebcamResult {
+  videoRef: React.RefObject<HTMLVideoElement | null>;
+  isActive: boolean;
+  isStarting: boolean;
+  error: string | null;
+  start: () => Promise<void>;
+  stop: () => void;
+  capture: () => Blob | null;
+}
+
+export function useWebcam(options: UseWebcamOptions = {}): UseWebcamResult {
   const { facingMode = 'user', width = 640, height = 480 } = options;
   const videoRef = useRef<HTMLVideoElement>(null);
   const streamRef = useRef<MediaStream | null>(null);
+  const isStartingRef = useRef(false);
+  const [isStarting, setIsStarting] = useState(false);
   const [isActive, setIsActive] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const start = useCallback(async () => {
+    if (isStartingRef.current || isActive) return;
+    isStartingRef.current = true;
+    setIsStarting(true);
+    setError(null);
     try {
-      setError(null);
       const stream = await navigator.mediaDevices.getUserMedia({
         video: {
           facingMode,
@@ -40,10 +55,15 @@ export function useWebcam(options: UseWebcamOptions = {}) {
           : 'Failed to access camera. Please check your device.';
       setError(message);
       setIsActive(false);
+    } finally {
+      isStartingRef.current = false;
+      setIsStarting(false);
     }
   }, [facingMode, width, height]);
 
   const stop = useCallback(() => {
+    isStartingRef.current = false;
+    setIsStarting(false);
     if (streamRef.current) {
       streamRef.current.getTracks().forEach((track) => track.stop());
       streamRef.current = null;
@@ -88,11 +108,12 @@ export function useWebcam(options: UseWebcamOptions = {}) {
   // Cleanup on unmount
   useEffect(() => {
     return () => {
+      isStartingRef.current = false;
       if (streamRef.current) {
         streamRef.current.getTracks().forEach((track) => track.stop());
       }
     };
   }, []);
 
-  return { videoRef, isActive, error, start, stop, capture };
+  return { videoRef, isActive, isStarting, error, start, stop, capture };
 }

@@ -148,7 +148,16 @@ export async function issueVisitorPass(
   return body;
 }
 
-export async function loadRegistrationSettings(source: RegistrationSource) {
+export interface RegistrationSettingsData {
+  working_hours_start: string | null;
+  working_hours_end: string | null;
+  timezone: string | null;
+  scheduling_days_ahead: number | null;
+  peak_mode: string | null;
+  visit_purposes: unknown;
+}
+
+export async function loadRegistrationSettings(source: RegistrationSource): Promise<RegistrationSettingsData> {
   const client = source === 'portal' ? requirePortalSupabase() : requireSupabase();
   const { data, error } = await client
     .from('app_settings')
@@ -158,12 +167,16 @@ export async function loadRegistrationSettings(source: RegistrationSource) {
   if (error) {
     if (error.code === 'PGRST205' || error.code === 'PGRST202') {
       console.warn(
-        `[E-GatePass Diagnostic] Supabase schema migration required: table 'public.app_settings' was not found in schema cache (${error.code}). Default registration settings will be applied. Run migrations (starting with 20261020000100_core_schema.sql) on the Supabase project to persist custom settings.`
+        `[E-GatePass Diagnostic] Supabase schema migration required: table 'public.app_settings' was not found in schema cache (${error.code}). Run migrations on the Supabase project to persist custom settings.`
       );
     } else {
       console.warn('[E-GatePass Diagnostic] Could not load app_settings from Supabase:', error.message || error);
     }
-    return null;
+    throw new Error(error.message || 'Failed to load registration settings');
+  }
+
+  if (!data) {
+    throw new Error('No registration settings found in database');
   }
 
   return data;

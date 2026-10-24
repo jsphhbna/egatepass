@@ -1,34 +1,50 @@
 import { useState, useEffect } from 'react';
-import { AlertTriangle, Printer } from 'lucide-react';
-import { formatManilaDateTime, formatManilaTime } from '@/lib/manilaTime';
-import { Card, Input, Select, Button, DataTable, DataTableHead, DataTableRow, DataTableCell, StatusBadge } from '@/components/ui';
 import { getAccessToken } from '@/services/auth';
+import { formatManilaDateTime, formatManilaTime } from '@/lib/manilaTime';
+import { Button, Card, Input, Select, DataTable, DataTableHead, DataTableRow, DataTableCell, StatusBadge } from '@/components/ui';
+import {
+  AlertTriangle,
+  Printer,
+  Loader2,
+  RefreshCw,
+  AlertCircle,
+} from 'lucide-react';
 
 interface EmergencyEvacuationPass {
-  id: string;
-  visitorId: string;
+  id: string | number;
   visitorName: string;
-  purpose: string;
-  gate: string | null;
   timeIn: string | null;
-  issuedAt: string | null;
+  gate: string | null;
   status: 'inside';
 }
 
 export function AdminEmergency() {
-  const [passes, setPasses] = useState<EmergencyEvacuationPass[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [loadError, setLoadError] = useState<string | null>(null);
+  const [passes, setPasses] = useState<EmergencyEvacuationPass[] | null>(null);
+  const [initialLoading, setInitialLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
+  const [lastUpdatedAt, setLastUpdatedAt] = useState<Date | null>(null);
+  const [initialError, setInitialError] = useState<string | null>(null);
+  const [refreshError, setRefreshError] = useState<string | null>(null);
+  const [isRetrying, setIsRetrying] = useState(false);
   const [gateFilter, setGateFilter] = useState('');
   const [search, setSearch] = useState('');
   const [isTruncated, setIsTruncated] = useState(false);
 
   // Extract unique gates from passes
-  const gates = Array.from(new Set(passes.map((p) => p.gate).filter(Boolean))) as string[];
+  const currentPasses = passes ?? [];
+  const gates = Array.from(new Set(currentPasses.map((p) => p.gate).filter(Boolean))) as string[];
 
-  async function loadEmergencyPasses() {
+  async function loadEmergencyPasses(isManualRetry = false) {
+    if (isManualRetry) {
+      setIsRetrying(true);
+    } else if (passes === null) {
+      setInitialLoading(true);
+      setInitialError(null);
+    } else {
+      setRefreshing(true);
+    }
+
     try {
-      setLoadError(null);
       const token = await getAccessToken();
       const response = await fetch('/api/admin/emergency', {
         headers: { Authorization: `Bearer ${token}` },
@@ -38,12 +54,21 @@ export function AdminEmergency() {
 
       setPasses(data?.passes ?? []);
       setIsTruncated(Boolean(data?.truncated));
+      setLastUpdatedAt(new Date());
+      setInitialError(null);
+      setRefreshError(null);
     } catch (err) {
       const msg = err instanceof Error ? err.message : 'Failed to load evacuation list';
-      setLoadError(msg);
+      if (passes === null) {
+        setInitialError(msg);
+      } else {
+        setRefreshError(msg);
+      }
       console.error('Emergency load error:', err);
     } finally {
-      setLoading(false);
+      setInitialLoading(false);
+      setRefreshing(false);
+      setIsRetrying(false);
     }
   }
 
@@ -55,11 +80,30 @@ export function AdminEmergency() {
     return () => clearInterval(timer);
   }, []);
 
-  const filteredPasses = passes.filter((p) => {
+  const filteredPasses = currentPasses.filter((p) => {
     if (gateFilter && p.gate !== gateFilter) return false;
     if (search && !(p.visitorName ?? '').toLowerCase().includes(search.toLowerCase())) return false;
     return true;
   });
+
+  if (initialError && passes === null) {
+    return (
+      <Card className="mx-auto mt-12 max-w-lg text-center" role="alert">
+        <AlertCircle className="mx-auto h-10 w-10 text-[var(--color-danger)]" aria-hidden="true" />
+        <h1 className="mt-4 text-xl font-bold text-[var(--color-text-primary)]">Evacuation list unavailable</h1>
+        <p className="mt-2 text-sm text-[var(--color-text-secondary)]">{initialError}</p>
+        <Button
+          onClick={() => void loadEmergencyPasses(true)}
+          loading={isRetrying}
+          disabled={isRetrying}
+          icon={!isRetrying ? <RefreshCw className="h-4 w-4" /> : undefined}
+          className="mt-5"
+        >
+          {isRetrying ? 'Retrying…' : 'Try Again'}
+        </Button>
+      </Card>
+    );
+  }
 
   return (
     <div className="space-y-6 print:m-0 print:p-0">
@@ -74,9 +118,23 @@ export function AdminEmergency() {
           <p className="mt-2 max-w-2xl text-sm leading-relaxed text-[var(--color-text-secondary)]">
             Use this list during an emergency to see which visitors are still inside the premises. Search or filter the list, then print it to help account for everyone during evacuation.
           </p>
-          <p className="mt-1 text-sm font-medium text-[var(--color-danger)]">
-            Currently Inside: {passes.length} Visitors
-          </p>
+          <div className="mt-2 flex flex-wrap items-center gap-3 text-xs">
+            <p className="font-medium text-[var(--color-danger)]">
+              Currently Inside: {currentPasses.length} Visitors
+            </p>
+            {refreshing ? (
+              <span className="inline-flex items-center gap-1.5 text-[var(--color-brand)] font-medium" role="status" aria-live="polite">
+                <Loader2 className="h-3.5 w-3.5 animate-spin shrink-0" aria-hidden="true" />
+                Refreshing live list…
+              </span>
+            ) : refreshError && lastUpdatedAt ? (
+              <span className="text-[var(--color-warning-dark)] font-medium" role="status">
+                Refresh delayed — showing data from {formatManilaTime(lastUpdatedAt)}.
+              </span>
+            ) : lastUpdatedAt ? (
+              <span className="text-[var(--color-text-secondary)]">Updated {formatManilaTime(lastUpdatedAt)}</span>
+            ) : null}
+          </div>
         </div>
         <Button
           onClick={() => window.print()}
@@ -95,7 +153,7 @@ export function AdminEmergency() {
             <div>
               <h3 className="text-sm font-bold uppercase tracking-wide">Warning: Evacuation List Truncated</h3>
               <p className="mt-1 text-xs leading-relaxed">
-                The safety query ceiling (10,000 records) was reached. Showing the first {passes.length.toLocaleString()} inside visitors. Additional visitors may be inside the premises. Immediately check physical gate logs.
+                The safety query ceiling (10,000 records) was reached. Showing the first {currentPasses.length.toLocaleString()} inside visitors. Additional visitors may be inside the premises. Immediately check physical gate logs.
               </p>
             </div>
           </div>
@@ -103,10 +161,14 @@ export function AdminEmergency() {
       )}
 
       {/* Screen Load Error Banner (C-02) */}
-      {loadError && (
+      {refreshError && (
         <div className="rounded-lg border-2 border-red-500 bg-red-50 p-4 text-red-900 print:hidden" role="alert">
-          <p className="font-bold text-sm">Failed to refresh live evacuation list: {loadError}</p>
-          <p className="text-xs mt-1">Do not rely on stale evacuation counts during active incidents. Verify manual gate logs.</p>
+          <p className="font-bold text-sm">Failed to refresh live evacuation list: {refreshError}</p>
+          <p className="text-xs mt-1">
+            {lastUpdatedAt
+              ? `Refresh delayed — showing data from ${formatManilaTime(lastUpdatedAt)}. Do not rely on stale evacuation counts during active incidents. Verify manual gate logs.`
+              : 'Do not rely on stale evacuation counts during active incidents. Verify manual gate logs.'}
+          </p>
         </div>
       )}
 
@@ -134,13 +196,15 @@ export function AdminEmergency() {
       )}
 
       {/* Print Error Warning Banner (Visible only in print) */}
-      {loadError && (
+      {refreshError && (
         <div className="hidden print:block border-4 border-black p-3 mb-4 text-black bg-white">
           <p className="font-extrabold text-base uppercase tracking-wider">
             *** CRITICAL WARNING: DATA REFRESH FAILED — ROSTER MAY BE STALE ***
           </p>
           <p className="text-xs font-bold mt-1">
-            Error: {loadError}
+            {lastUpdatedAt
+              ? `Last successful update: ${formatManilaDateTime(lastUpdatedAt, { month: 'short', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit', second: '2-digit', hour12: true })} (Asia/Manila). Verify with manual gate logs.`
+              : `Error: ${refreshError}`}
           </p>
         </div>
       )}
@@ -185,10 +249,11 @@ export function AdminEmergency() {
             </DataTableRow>
           </DataTableHead>
           <tbody className="divide-y border-[var(--color-border)] print:divide-black/20">
-            {loading ? (
+            {initialLoading && passes === null ? (
               <tr className="print:hidden">
-                <td colSpan={5} className="py-12 text-center">
-                  <div className="mx-auto h-8 w-8 animate-spin rounded-full border-4 border-[var(--color-border)] border-t-[var(--color-danger)]" role="status" aria-label="Loading evacuation list" />
+                <td colSpan={5} className="py-12 text-center" role="status" aria-live="polite">
+                  <Loader2 className="mx-auto h-8 w-8 animate-spin text-[var(--color-brand)] mb-2" aria-hidden="true" />
+                  <span className="text-sm font-medium text-[var(--color-text-secondary)]">Loading evacuation list…</span>
                 </td>
               </tr>
             ) : filteredPasses.length === 0 ? (

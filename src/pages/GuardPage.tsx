@@ -17,6 +17,7 @@ import {
   X,
   ZoomIn,
   LogOut,
+  Loader2,
 } from 'lucide-react';
 import { Button, Card, EmptyState, Input, Select, StatCard, Modal, ConfirmModal } from '@/components/ui';
 import { BrandMark } from '@/components/BrandMark';
@@ -59,18 +60,27 @@ export function GuardPage() {
 
   const [showSignOutModal, setShowSignOutModal] = useState(false);
   const [isSigningOut, setIsSigningOut] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
+  const [lastUpdatedAt, setLastUpdatedAt] = useState<Date | null>(null);
+  const [refreshError, setRefreshError] = useState(false);
 
   useEffect(() => {
     let active = true;
     let loading = false;
+    let isInitial = true;
     const refresh = async () => {
       if (loading) return;
       loading = true;
+      if (!isInitial) {
+        setRefreshing(true);
+      }
       try {
         const fetchLimit = Math.max(50, passesLengthRef.current);
         const dashboard = await fetchGuardDashboard({ limit: fetchLimit, offset: 0 });
         if (!active) return;
         setQueueError(false);
+        setRefreshError(false);
+        setLastUpdatedAt(new Date());
         if (dashboard.pendingTotal > previousPendingCountRef.current && audioRef.current) {
           audioRef.current.play().catch(() => undefined);
         }
@@ -82,11 +92,21 @@ export function GuardPage() {
         setDailyStats(dashboard.stats);
         setRejectionReasons(dashboard.rejectionReasons);
       } catch (error) {
-        if (active) setQueueError(true);
+        if (active) {
+          if (isInitial) {
+            setQueueError(true);
+          } else {
+            setRefreshError(true);
+          }
+        }
         console.error('Guard dashboard error:', error);
       } finally {
         loading = false;
-        if (active) setInitialLoading(false);
+        isInitial = false;
+        if (active) {
+          setInitialLoading(false);
+          setRefreshing(false);
+        }
       }
     };
     void refresh();
@@ -301,6 +321,20 @@ export function GuardPage() {
               {pendingTotal} pending verification{pendingTotal !== 1 ? 's' : ''}
               {passes.length < pendingTotal ? ` (showing ${passes.length} of ${pendingTotal})` : ''}
             </p>
+            <div className="mt-1 flex items-center gap-2 text-xs">
+              {refreshing ? (
+                <span className="inline-flex items-center gap-1.5 text-[var(--color-brand)] font-medium" role="status" aria-live="polite">
+                  <Loader2 className="h-3.5 w-3.5 animate-spin shrink-0" aria-hidden="true" />
+                  Updating…
+                </span>
+              ) : refreshError && lastUpdatedAt ? (
+                <span className="text-[var(--color-warning-dark)] font-medium" role="status">
+                  Connection delayed — showing queue from {formatManilaTime(lastUpdatedAt)}.
+                </span>
+              ) : lastUpdatedAt ? (
+                <span className="text-[var(--color-text-secondary)]">Updated {formatManilaTime(lastUpdatedAt)}</span>
+              ) : null}
+            </div>
           </div>
 
           <div className="flex flex-wrap items-center gap-3">

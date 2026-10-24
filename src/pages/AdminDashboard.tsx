@@ -1,5 +1,5 @@
 import { getManilaDateString, formatManilaTime } from '@/lib/manilaTime';
-import { useMemo } from 'react';
+import { useMemo, useState } from 'react';
 import {
   eachDayOfInterval,
   endOfMonth,
@@ -12,6 +12,7 @@ import {
 } from 'date-fns';
 import {
   AlertCircle,
+  Loader2,
   ArrowLeftCircle,
   ArrowRightCircle,
   Ban,
@@ -60,6 +61,17 @@ function averageApprovalTime(passes: GatePass[]): string {
 
 export function AdminDashboard() {
   const dashboard = useAdminDashboardData();
+  const [retrying, setRetrying] = useState(false);
+
+  async function handleRetry() {
+    if (retrying) return;
+    setRetrying(true);
+    try {
+      await refreshAdminDashboardData();
+    } finally {
+      setRetrying(false);
+    }
+  }
   const metrics = useMemo(() => {
     const todayManila = getManilaDateString();
     const todayPasses = dashboard.recentPasses.filter((pass) => getManilaDateString(pass.issuedAt.toDate()) === todayManila);
@@ -119,8 +131,8 @@ export function AdminDashboard() {
         <AlertCircle className="mx-auto h-10 w-10 text-[var(--color-danger)]" aria-hidden="true" />
         <h1 className="mt-4 text-xl font-bold text-[var(--color-text-primary)]">Dashboard unavailable</h1>
         <p className="mt-2 text-sm text-[var(--color-text-secondary)]">{dashboard.error}</p>
-        <Button onClick={refreshAdminDashboardData} icon={<RefreshCw className="h-4 w-4" />} className="mt-5">
-          Try Again
+        <Button onClick={handleRetry} loading={retrying} disabled={retrying} icon={!retrying ? <RefreshCw className="h-4 w-4" /> : undefined} className="mt-5">
+          {retrying ? 'Retrying…' : 'Try Again'}
         </Button>
       </Card>
     );
@@ -136,11 +148,25 @@ export function AdminDashboard() {
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-3">
-          <div className="flex items-center gap-2 text-xs font-medium text-[var(--color-success)]" aria-live="polite">
-            <span className="h-2 w-2 rounded-full bg-[var(--color-success)]" aria-hidden="true" />
-            Live updates
-            {dashboard.updatedAt && (
-              <span className="text-[var(--color-text-muted)]">· Updated {formatManilaTime(dashboard.updatedAt)}</span>
+          <div className="flex items-center gap-2 text-xs font-medium" role="status" aria-live="polite">
+            {dashboard.refreshing ? (
+              <span className="flex items-center gap-1.5 text-[var(--color-text-secondary)]">
+                <Loader2 className="h-3.5 w-3.5 animate-spin text-[var(--color-brand)] shrink-0" aria-hidden="true" />
+                Updating…
+              </span>
+            ) : dashboard.refreshError && dashboard.updatedAt ? (
+              <span className="flex items-center gap-1.5 text-amber-700 font-semibold bg-amber-50 border border-amber-200 rounded px-2 py-0.5">
+                <AlertCircle className="h-3.5 w-3.5 text-amber-600 shrink-0" aria-hidden="true" />
+                Update delayed — showing data from {formatManilaTime(dashboard.updatedAt)}.
+              </span>
+            ) : (
+              <>
+                <span className="h-2 w-2 rounded-full bg-[var(--color-success)]" aria-hidden="true" />
+                <span className="text-[var(--color-success)]">Live updates</span>
+                {dashboard.updatedAt && (
+                  <span className="text-[var(--color-text-muted)]">· Updated {formatManilaTime(dashboard.updatedAt)}</span>
+                )}
+              </>
             )}
           </div>
           <DashboardExportActions passes={metrics.calendarPasses} summary={exportSummary} />

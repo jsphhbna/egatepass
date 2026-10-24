@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect, useMemo } from 'react';
+import { useState, useRef, useEffect, useMemo, useCallback } from 'react';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
@@ -19,6 +19,7 @@ import {
   Printer,
   Mail,
   Scan,
+  Loader2,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { Button, Card, Input, FormField, Stepper } from '@/components/ui';
@@ -28,7 +29,7 @@ import { VisitPurposeField } from '@/components/VisitPurposeField';
 import { DEFAULT_VISIT_PURPOSES, normalizeVisitPurposes } from '@/lib/settingsDefaults';
 import type { VisitPurposeOption } from '@/types';
 import { DEFAULT_WORKING_HOURS, formatWorkingHours, MAX_VISIT_ADVANCE_DAYS, normalizeWorkingHours } from '@/lib/workingHours';
-import { requireSupabase } from '@/lib/supabase';
+import { signOutCurrentActor } from '@/services/auth';
 import { getManilaDateString, getLatestVisitDateString, validateVisitDate } from '@/lib/scheduling';
 import { formatManilaTime } from '@/lib/manilaTime';
 import { LogOut } from 'lucide-react';
@@ -114,23 +115,41 @@ export function KioskPage() {
 
   const issueRequestId = useRef(crypto.randomUUID());
 
-  useEffect(() => {
-    loadRegistrationSettings('kiosk').then((data) => {
-      if (!data) return;
+  type KioskConfigState = 'loading' | 'ready' | 'error';
+  const [configState, setConfigState] = useState<KioskConfigState>('loading');
+  const [retryingConfig, setRetryingConfig] = useState(false);
+  const [isProcessingId, setIsProcessingId] = useState(false);
+  const [isSigningOut, setIsSigningOut] = useState(false);
+
+  const loadSettings = useCallback(async (isRetry = false) => {
+    if (isRetry) setRetryingConfig(true);
+    else setConfigState('loading');
+
+    try {
+      const data = await loadRegistrationSettings('kiosk');
       const peakActive = data.peak_mode === 'kiosk' || data.peak_mode === 'both';
       setIsPeakMode(peakActive);
-      if (peakActive) {
-        setStep((s) => (s === 'scan-intro' ? 'form' : s));
-      }
+      setStep(peakActive ? 'form' : 'scan-intro');
       setVisitPurposes(normalizeVisitPurposes(data.visit_purposes));
       setWorkingHours(normalizeWorkingHours({
         start: data.working_hours_start?.slice(0, 5),
         end: data.working_hours_end?.slice(0, 5),
         timezone: data.timezone,
       }));
-      if (Number.isInteger(data.scheduling_days_ahead)) setSchedulingDaysAhead(data.scheduling_days_ahead);
-    }).catch(() => undefined);
+      if (typeof data.scheduling_days_ahead === 'number') {
+        setSchedulingDaysAhead(data.scheduling_days_ahead);
+      }
+      setConfigState('ready');
+    } catch {
+      setConfigState('error');
+    } finally {
+      setRetryingConfig(false);
+    }
   }, []);
+
+  useEffect(() => {
+    void loadSettings();
+  }, [loadSettings]);
 
   const faceWebcam = useWebcam({ facingMode: 'user', width: 640, height: 480 });
   const idWebcam = useWebcam({ facingMode: 'environment', width: 1280, height: 720 });
@@ -256,18 +275,34 @@ export function KioskPage() {
   }
 
   async function onCaptureManualId() {
+    if (isProcessingId) return;
     const blob = idWebcam.capture();
     if (blob) {
+      setIsProcessingId(true);
+      idWebcam.stop();
       try {
         const compressed = await compressImageToWebP(blob);
         setIdBlob(compressed);
         idUrl.setFromBlob(compressed);
-        idWebcam.stop();
       } catch {
         toast.error('Failed to process ID image.');
+        idWebcam.start();
+      } finally {
+        setIsProcessingId(false);
       }
     } else {
       toast.error('Failed to capture ID image.');
+    }
+  }
+
+  async function handleSignOut() {
+    if (isSigningOut) return;
+    setIsSigningOut(true);
+    try {
+      await signOutCurrentActor();
+    } catch {
+      toast.error('Failed to sign out. Please try again.');
+      setIsSigningOut(false);
     }
   }
 
@@ -406,7 +441,7 @@ export function KioskPage() {
         </div>
 
         {/* Step Indicator */}
-        {step !== 'done' && step !== 'generating' && (
+        {configState === 'ready' && step !== 'done' && step !== 'generating' && (
           <div className="w-full">
             {/* Horizontal Stepper for Mobile/Portrait */}
             <div className="lg:hidden w-full mb-8">
@@ -436,7 +471,35 @@ export function KioskPage() {
       {/* Right Column (Dynamic Main Card) */}
       <div className="w-full max-w-lg print:max-w-none print:w-full">
         <Card className="border-t-4 border-t-[var(--color-brand)] print:border-0 print:shadow-none print:p-0">
-          
+          {configState === 'loading' && (
+            <div className="py-16 text-center" role="status" aria-live="polite">
+              <Loader2 className="mx-auto h-10 w-10 animate-spin text-[var(--color-brand)] mb-4" aria-hidden="true" />
+              <h2 className="text-lg font-bold text-[var(--color-text-primary)]">Preparing kiosk registration…</h2>
+              <p className="mt-1 text-sm text-[var(--color-text-secondary)]">Loading campus visit settings.</p>
+            </div>
+          )}
+
+          {configState === 'error' && (
+            <div className="py-12 text-center" role="alert">
+              <AlertCircle className="mx-auto h-10 w-10 text-[var(--color-danger)] mb-4" aria-hidden="true" />
+              <h2 className="text-lg font-bold text-[var(--color-text-primary)]">Kiosk configuration unavailable</h2>
+              <p className="mt-1 text-sm text-[var(--color-text-secondary)] max-w-sm mx-auto">
+                Campus visit settings could not be loaded. Check the kiosk connection and try again.
+              </p>
+              <Button
+                onClick={() => void loadSettings(true)}
+                loading={retryingConfig}
+                disabled={retryingConfig}
+                icon={!retryingConfig ? <RotateCcw className="h-4 w-4" /> : undefined}
+                className="mt-6"
+              >
+                {retryingConfig ? 'Retrying…' : 'Try Again'}
+              </Button>
+            </div>
+          )}
+
+          {configState === 'ready' && (
+            <>
           {/* STEP 1: Scan ID Intro (Owner-Approved Default Screen) */}
           {step === 'scan-intro' && (
             <div className="space-y-6 text-center py-4">
@@ -511,7 +574,15 @@ export function KioskPage() {
                     </Button>
                   </div>
                 ) : (
-                  <video ref={idWebcam.videoRef} autoPlay playsInline muted className="h-full w-full object-cover" />
+                  <>
+                    {idWebcam.isStarting && (
+                      <div className="absolute inset-0 z-10 flex flex-col items-center justify-center bg-black/80 text-white" role="status" aria-live="polite">
+                        <Loader2 className="h-8 w-8 animate-spin text-[var(--color-brand)] mb-2" aria-hidden="true" />
+                        <span className="text-sm font-medium">Starting ID camera…</span>
+                      </div>
+                    )}
+                    <video ref={idWebcam.videoRef} autoPlay playsInline muted className="h-full w-full object-cover" />
+                  </>
                 )}
               </div>
 
@@ -637,16 +708,25 @@ export function KioskPage() {
                     size="sm"
                     variant="secondary"
                     onClick={() => faceWebcam.start()}
-                    icon={<RotateCcw className="h-4 w-4" />}
+                    icon={faceWebcam.isStarting ? <Loader2 className="h-4 w-4 animate-spin" /> : <RotateCcw className="h-4 w-4" />}
+                    disabled={faceWebcam.isStarting}
                   >
-                    Retry Camera
+                    {faceWebcam.isStarting ? 'Starting…' : 'Retry Camera'}
                   </Button>
                 </div>
               )}
 
               <div className="mx-auto w-full max-w-xs overflow-hidden rounded-xl border border-[var(--color-border)] shadow-sm bg-black aspect-[3/4] relative">
                 {faceWebcam.videoRef && (
-                  <video ref={faceWebcam.videoRef} autoPlay playsInline muted className="h-full w-full object-cover" style={{ transform: 'scaleX(-1)' }} />
+                  <>
+                    {faceWebcam.isStarting && (
+                      <div className="absolute inset-0 z-10 flex flex-col items-center justify-center bg-black/80 text-white" role="status" aria-live="polite">
+                        <Loader2 className="h-8 w-8 animate-spin text-[var(--color-brand)] mb-2" aria-hidden="true" />
+                        <span className="text-sm font-medium">Starting camera…</span>
+                      </div>
+                    )}
+                    <video ref={faceWebcam.videoRef} autoPlay playsInline muted className="h-full w-full object-cover" style={{ transform: 'scaleX(-1)' }} />
+                  </>
                 )}
               </div>
 
@@ -694,6 +774,11 @@ export function KioskPage() {
                     </Button>
                   </div>
                 </div>
+              ) : isProcessingId ? (
+                <div className="mx-auto flex w-full max-w-md flex-col items-center justify-center rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] aspect-[3/2] shadow-sm p-6 text-center" role="status" aria-live="polite">
+                  <Loader2 className="h-8 w-8 animate-spin text-[var(--color-brand)] mb-3" aria-hidden="true" />
+                  <p className="font-semibold text-[var(--color-text-primary)]">Processing ID image…</p>
+                </div>
               ) : (
                 <div className="space-y-4">
                   {idWebcam.error && (
@@ -704,14 +789,21 @@ export function KioskPage() {
                         size="sm"
                         variant="secondary"
                         onClick={() => idWebcam.start()}
-                        icon={<RotateCcw className="h-4 w-4" />}
+                        icon={idWebcam.isStarting ? <Loader2 className="h-4 w-4 animate-spin" /> : <RotateCcw className="h-4 w-4" />}
+                        disabled={idWebcam.isStarting}
                       >
-                        Retry Camera
+                        {idWebcam.isStarting ? 'Starting…' : 'Retry Camera'}
                       </Button>
                     </div>
                   )}
 
                   <div className="mx-auto w-full max-w-md overflow-hidden rounded-xl border-2 border-dashed border-[var(--color-brand)] shadow-sm bg-black aspect-[3/2] relative flex items-center justify-center">
+                    {idWebcam.isStarting && (
+                      <div className="absolute inset-0 z-10 flex flex-col items-center justify-center bg-black/80 text-white" role="status" aria-live="polite">
+                        <Loader2 className="h-8 w-8 animate-spin text-[var(--color-brand)] mb-2" aria-hidden="true" />
+                        <span className="text-sm font-medium">Starting ID camera…</span>
+                      </div>
+                    )}
                     {idWebcam.videoRef && (
                       <video ref={idWebcam.videoRef} autoPlay playsInline muted className="h-full w-full object-cover" />
                     )}
@@ -726,6 +818,7 @@ export function KioskPage() {
                         setStep('photo');
                         faceWebcam.start();
                       }}
+                      disabled={isProcessingId}
                       className="flex-1 min-h-[44px]"
                       icon={<ArrowLeft className="h-4 w-4" />}
                     >
@@ -734,14 +827,14 @@ export function KioskPage() {
                     <Button
                       type="button"
                       onClick={onCaptureManualId}
-                      disabled={!idWebcam.isActive}
+                      disabled={!idWebcam.isActive || isProcessingId}
                       className="flex-1 min-h-[44px]"
                       icon={<Camera className="h-4 w-4" />}
                     >
                       Capture ID
                     </Button>
                   </div>
-                  <Button variant="ghost" type="button" onClick={onRetakePhoto} className="w-full min-h-[44px]" icon={<RotateCcw className="h-4 w-4" />}>
+                  <Button variant="ghost" type="button" onClick={onRetakePhoto} disabled={isProcessingId} className="w-full min-h-[44px]" icon={<RotateCcw className="h-4 w-4" />}>
                     Retake Selfie
                   </Button>
                 </div>
@@ -874,11 +967,15 @@ export function KioskPage() {
               </div>
             </div>
           )}
+            </>
+          )}
         </Card>
 
         <Modal
           isOpen={showSignOutConfirm}
-          onClose={() => setShowSignOutConfirm(false)}
+          onClose={() => {
+            if (!isSigningOut) setShowSignOutConfirm(false);
+          }}
           title="Sign Out of Kiosk?"
         >
           <div className="space-y-4">
@@ -886,17 +983,20 @@ export function KioskPage() {
               Are you sure you want to sign out this kiosk device? An administrator will need to sign in again to re-enable walk-in registrations.
             </p>
             <div className="flex justify-end gap-3 pt-2">
-              <Button variant="secondary" onClick={() => setShowSignOutConfirm(false)}>
+              <Button
+                variant="secondary"
+                onClick={() => setShowSignOutConfirm(false)}
+                disabled={isSigningOut}
+              >
                 Cancel
               </Button>
               <Button
                 variant="destructive"
-                onClick={() => {
-                  setShowSignOutConfirm(false);
-                  void requireSupabase().auth.signOut();
-                }}
+                onClick={handleSignOut}
+                loading={isSigningOut}
+                disabled={isSigningOut}
               >
-                Sign Out Device
+                {isSigningOut ? 'Signing out…' : 'Sign Out Device'}
               </Button>
             </div>
           </div>

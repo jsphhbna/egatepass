@@ -27,7 +27,18 @@ function renderBootstrapFailure() {
   );
 }
 
-root.render(<main className="min-h-dvh bg-[var(--color-canvas)]" aria-label="Loading E-GatePass" />);
+root.render(
+  <main className="flex min-h-dvh flex-col items-center justify-center bg-[var(--color-canvas)] px-4" role="status" aria-live="polite">
+    <div className="flex flex-col items-center text-center">
+      <img src="/earist-logo.png" alt="EARIST seal" className="h-16 w-16 object-contain" />
+      <span className="mt-4 text-xl font-black tracking-tight text-[#700f14]">E-GatePass</span>
+      <div className="mt-6 flex items-center gap-2.5 text-sm font-semibold text-[var(--color-text-secondary)]">
+        <div className="h-4 w-4 animate-spin rounded-full border-2 border-[var(--color-border)] border-t-[var(--color-brand)]" aria-hidden="true" />
+        <span>Loading E-GatePass…</span>
+      </div>
+    </div>
+  </main>,
+);
 
 void import('./App')
   .then(({ App }) => {

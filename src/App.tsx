@@ -6,11 +6,11 @@ import { ProtectedRoute } from '@/components/ProtectedRoute';
 import { LandingPage } from '@/pages/LandingPage';
 import { OfflineBanner } from '@/components/OfflineBanner';
 import { LoadingState } from '@/components/ui';
+import { PrivacyModal } from '@/components/PrivacyModal';
 
 const GetPassPage = lazy(() => import('@/pages/GetPassPage').then((module) => ({ default: module.GetPassPage })));
 const LoginPage = lazy(() => import('@/pages/LoginPage').then((module) => ({ default: module.LoginPage })));
 const AdminPage = lazy(() => import('@/pages/AdminPage').then((module) => ({ default: module.AdminPage })));
-const PrivacyModal = lazy(() => import('@/components/PrivacyModal').then((module) => ({ default: module.PrivacyModal })));
 const ForgotPasswordPage = lazy(() => import('@/pages/ForgotPasswordPage').then((module) => ({ default: module.ForgotPasswordPage })));
 const ResetPasswordPage = lazy(() => import('@/pages/ResetPasswordPage').then((module) => ({ default: module.ResetPasswordPage })));
 const KioskPage = lazy(() => import('@/pages/KioskPage').then((module) => ({ default: module.KioskPage })));
@@ -26,6 +26,21 @@ const EntryScanPage = lazy(() => import('@/pages/EntryScanPage').then((module) =
 const ExitScanPage = lazy(() => import('@/pages/ExitScanPage').then((module) => ({ default: module.ExitScanPage })));
 const NotFoundPage = lazy(() => import('@/pages/NotFoundPage').then((module) => ({ default: module.NotFoundPage })));
 
+function GetPassLoadingFallback() {
+  return (
+    <main id="main-content" className="flex min-h-[60vh] flex-col items-center justify-center bg-[var(--color-canvas)] px-4 py-16" role="status" aria-live="polite">
+      <div className="flex flex-col items-center text-center">
+        <img src="/earist-logo.png" alt="EARIST seal" className="h-12 w-12 object-contain" />
+        <span className="mt-3 text-lg font-black tracking-tight text-[#700f14]">E-GatePass</span>
+        <div className="mt-6 flex items-center gap-2.5 text-sm font-semibold text-[var(--color-text-secondary)]">
+          <div className="h-4 w-4 animate-spin rounded-full border-2 border-[var(--color-border)] border-t-[var(--color-brand)]" aria-hidden="true" />
+          <span>Opening visitor registration…</span>
+        </div>
+      </div>
+    </main>
+  );
+}
+
 function RouteLoadingFallback() {
   return (
     <main id="main-content" className="min-h-[40vh] bg-[var(--color-canvas)]">
@@ -37,7 +52,7 @@ function RouteLoadingFallback() {
 function AuthenticatedPrivacyGate() {
   const { status, role } = useAuth();
   if (status !== 'authenticated' || !['guard', 'admin', 'superadmin'].includes(role ?? '')) return null;
-  return <Suspense fallback={null}><PrivacyModal /></Suspense>;
+  return <PrivacyModal />;
 }
 
 export function App() {
@@ -54,7 +69,14 @@ export function App() {
           <Routes>
           {/* Public routes */}
           <Route path="/" element={<LandingPage />} />
-          <Route path="/get-pass" element={<GetPassPage />} />
+          <Route
+            path="/get-pass"
+            element={
+              <Suspense fallback={<GetPassLoadingFallback />}>
+                <GetPassPage />
+              </Suspense>
+            }
+          />
           <Route path="/login" element={<LoginPage />} />
           <Route path="/forgot-password" element={<ForgotPasswordPage />} />
           <Route path="/reset-password" element={<ResetPasswordPage />} />

@@ -61,7 +61,11 @@ export interface DashboardDataSnapshot {
   exitedTodayPasses: GatePass[];
   decisionsTodayPasses: GatePass[];
   loading: boolean;
+  initialLoading: boolean;
+  refreshing: boolean;
   error: string | null;
+  initialError: string | null;
+  refreshError: string | null;
   updatedAt: number | null;
 }
 
@@ -74,7 +78,11 @@ const initialSnapshot: DashboardDataSnapshot = {
   exitedTodayPasses: [],
   decisionsTodayPasses: [],
   loading: true,
+  initialLoading: true,
+  refreshing: false,
   error: null,
+  initialError: null,
+  refreshError: null,
   updatedAt: null,
 };
 
@@ -110,12 +118,24 @@ function emitChange() {
   subscribers.forEach((subscriber) => subscriber());
 }
 
-async function fetchDashboardData() {
+async function fetchDashboardData(isManualRetry = false) {
   if (activeFetchController) {
     activeFetchController.abort();
   }
   const controller = new AbortController();
   activeFetchController = controller;
+
+  const hasExistingData = currentSnapshot.updatedAt !== null || currentSnapshot.counts !== undefined;
+
+  currentSnapshot = {
+    ...currentSnapshot,
+    refreshing: hasExistingData,
+    initialLoading: !hasExistingData,
+    loading: !hasExistingData,
+    initialError: isManualRetry && !hasExistingData ? null : currentSnapshot.initialError,
+    refreshError: null,
+  };
+  emitChange();
 
   try {
     const token = await getAccessToken();
@@ -138,18 +158,42 @@ async function fetchDashboardData() {
       exitedTodayPasses: (data?.exitedTodayPasses ?? []).map(deserializePass),
       decisionsTodayPasses: (data?.decisionsTodayPasses ?? []).map(deserializePass),
       loading: false,
+      initialLoading: false,
+      refreshing: false,
       error: null,
+      initialError: null,
+      refreshError: null,
       updatedAt: Date.now(),
     };
     emitChange();
   } catch (error) {
     if (!controller.signal.aborted) {
       console.error('Dashboard data fetch error:', error);
-      currentSnapshot = {
-        ...currentSnapshot,
-        loading: false,
-        error: error instanceof Error ? error.message : 'The dashboard could not load visitor data.',
-      };
+      const errorMessage = error instanceof Error ? error.message : 'The dashboard could not load visitor data.';
+
+      if (hasExistingData) {
+        // Preserve existing data on background refresh failure
+        currentSnapshot = {
+          ...currentSnapshot,
+          loading: false,
+          initialLoading: false,
+          refreshing: false,
+          error: null, // do not block screen with error
+          initialError: null,
+          refreshError: errorMessage,
+        };
+      } else {
+        // Initial failure without existing data
+        currentSnapshot = {
+          ...currentSnapshot,
+          loading: false,
+          initialLoading: false,
+          refreshing: false,
+          error: errorMessage,
+          initialError: errorMessage,
+          refreshError: null,
+        };
+      }
       emitChange();
     }
   } finally {
@@ -159,50 +203,35 @@ async function fetchDashboardData() {
   }
 }
 
-function startPolling() {
-  stopPolling();
-  void fetchDashboardData();
-  pollTimer = setInterval(() => {
-    void fetchDashboardData();
-  }, 30_000);
-}
-
-function stopPolling() {
-  if (pollTimer) {
-    clearInterval(pollTimer);
-    pollTimer = null;
-  }
-  if (activeFetchController) {
-    activeFetchController.abort();
-    activeFetchController = null;
-  }
-}
-
 function subscribe(callback: () => void) {
   subscribers.add(callback);
   if (subscribers.size === 1) {
-    startPolling();
+    void fetchDashboardData();
+    pollTimer = setInterval(() => {
+      void fetchDashboardData();
+    }, 15000);
   }
 
   return () => {
     subscribers.delete(callback);
     if (subscribers.size === 0) {
-      stopPolling();
+      if (pollTimer) {
+        clearInterval(pollTimer);
+        pollTimer = null;
+      }
+      if (activeFetchController) {
+        activeFetchController.abort();
+        activeFetchController = null;
+      }
       currentSnapshot = initialSnapshot;
     }
   };
 }
 
-function getSnapshot() {
-  return currentSnapshot;
-}
-
 export function refreshAdminDashboardData() {
-  if (subscribers.size > 0) {
-    void fetchDashboardData();
-  }
+  return fetchDashboardData(true);
 }
 
-export function useAdminDashboardData(): DashboardDataSnapshot {
-  return useSyncExternalStore(subscribe, getSnapshot, () => initialSnapshot);
+export function useAdminDashboardData() {
+  return useSyncExternalStore(subscribe, () => currentSnapshot, () => initialSnapshot);
 }

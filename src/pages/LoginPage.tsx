@@ -17,7 +17,8 @@ export function LoginPage() {
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [loading, setLoading] = useState(false);
+  const [isSigningIn, setIsSigningIn] = useState(false);
+  const [isResendingVerification, setIsResendingVerification] = useState(false);
   const [unverifiedEmail, setUnverifiedEmail] = useState('');
   const [resendCooldown, setResendCooldown] = useState(0);
   const [captchaToken, setCaptchaToken] = useState<string | null>(null);
@@ -43,7 +44,7 @@ export function LoginPage() {
   }, [navigate, role, status]);
 
   async function handleResendVerification() {
-    if (!supabase || resendCooldown > 0 || !unverifiedEmail) return;
+    if (!supabase || resendCooldown > 0 || !unverifiedEmail || isSigningIn || isResendingVerification) return;
     const siteKey = (import.meta as any).env?.VITE_TURNSTILE_SITE_KEY?.trim();
     const isProd = Boolean((import.meta as any).env?.PROD);
     const policy = evaluateAuthTurnstilePolicy(isProd, siteKey, captchaToken);
@@ -51,7 +52,7 @@ export function LoginPage() {
       toast.error(policy.error ?? 'Please complete the security challenge.');
       return;
     }
-    setLoading(true);
+    setIsResendingVerification(true);
     try {
       const { error: resendError } = await supabase.auth.resend({
         type: 'signup',
@@ -65,12 +66,13 @@ export function LoginPage() {
       toast.error('We could not resend the verification email. Please try again later.');
     } finally {
       resetTurnstile();
-      setLoading(false);
+      setIsResendingVerification(false);
     }
   }
 
   async function handleSubmit(event: React.FormEvent) {
     event.preventDefault();
+    if (isSigningIn || isResendingVerification) return;
     setError(null);
     setUnverifiedEmail('');
     if (!supabase || serviceStatus === 'unavailable') {
@@ -92,7 +94,7 @@ export function LoginPage() {
       return;
     }
 
-    setLoading(true);
+    setIsSigningIn(true);
     try {
       const { data, error: signInError } = await supabase.auth.signInWithPassword({
         email: normalized.email,
@@ -117,7 +119,7 @@ export function LoginPage() {
       }
     } finally {
       resetTurnstile();
-      setLoading(false);
+      setIsSigningIn(false);
     }
   }
 
@@ -139,11 +141,11 @@ export function LoginPage() {
 
         <form onSubmit={handleSubmit} className="space-y-5">
           <FormField label="Email or Device Username" id="login-email">
-            <Input id="login-email" type="text" required autoComplete="username" value={identity} onChange={(event) => setIdentity(event.target.value)} placeholder="guard@earist.edu.ph or gate-kiosk-01" disabled={loading || serviceStatus === 'unavailable'} />
+            <Input id="login-email" type="text" required autoComplete="username" value={identity} onChange={(event) => setIdentity(event.target.value)} placeholder="guard@earist.edu.ph or gate-kiosk-01" disabled={isSigningIn || isResendingVerification || serviceStatus === 'unavailable'} />
           </FormField>
           <FormField label="Password" id="login-password">
             <div className="relative">
-              <Input id="login-password" type={showPassword ? 'text' : 'password'} required autoComplete="current-password" value={password} onChange={(event) => setPassword(event.target.value)} placeholder="••••••••" className="pr-10" disabled={loading || serviceStatus === 'unavailable'} />
+              <Input id="login-password" type={showPassword ? 'text' : 'password'} required autoComplete="current-password" value={password} onChange={(event) => setPassword(event.target.value)} placeholder="••••••••" className="pr-10" disabled={isSigningIn || isResendingVerification || serviceStatus === 'unavailable'} />
               <button type="button" onClick={() => setShowPassword((value) => !value)} className="absolute inset-y-0 right-0 flex min-w-11 items-center justify-center text-[var(--color-text-muted)] hover:text-[var(--color-brand)]" aria-label={showPassword ? 'Hide password' : 'Show password'}>
                 {showPassword ? <EyeOff className="h-5 w-5" /> : <Eye className="h-5 w-5" />}
               </button>
@@ -152,12 +154,12 @@ export function LoginPage() {
           {error && (
             <div className="flex flex-col gap-3 rounded-lg border border-[var(--color-danger)] bg-[var(--color-danger-light)] px-4 py-3 text-sm font-medium text-[var(--color-danger-dark)]">
               <p role="alert">{error}</p>
-              {unverifiedEmail && <Button type="button" variant="secondary" onClick={handleResendVerification} disabled={resendCooldown > 0 || loading} className="w-full">{resendCooldown > 0 ? `Resend available in ${resendCooldown}s` : 'Resend Verification Email'}</Button>}
+              {unverifiedEmail && <Button type="button" variant="secondary" onClick={handleResendVerification} loading={isResendingVerification} disabled={resendCooldown > 0 || isSigningIn || isResendingVerification} className="w-full">{isResendingVerification ? 'Sending…' : resendCooldown > 0 ? `Resend available in ${resendCooldown}s` : 'Resend Verification Email'}</Button>}
             </div>
           )}
           <div className="mt-2 flex justify-end"><Link to="/forgot-password" className="rounded-sm text-sm font-medium text-[var(--color-brand)] hover:underline">Forgot password?</Link></div>
           <TurnstileWidget key={turnstileKey} onVerify={setCaptchaToken} onExpire={() => setCaptchaToken(null)} />
-          <Button type="submit" disabled={loading || serviceStatus === 'unavailable'} className="w-full" size="lg">{loading ? 'Signing in...' : 'Sign In'}</Button>
+          <Button type="submit" loading={isSigningIn} disabled={isSigningIn || isResendingVerification || serviceStatus === 'unavailable'} className="w-full" size="lg">{isSigningIn ? 'Signing in…' : 'Sign In'}</Button>
         </form>
       </Card>
     </main>
