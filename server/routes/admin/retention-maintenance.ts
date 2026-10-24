@@ -19,20 +19,31 @@ interface CallerContext {
 export const CLOSED_PASS_STATUSES = new Set(['exited', 'rejected', 'expired']);
 
 export const PROTECTED_AUDIT_ACTIONS = [
+  // Canonical runtime actions (current vocabulary)
+  'superadmin.bootstrap',
+  'staff.create',
+  'staff.update',
+  'device.create',
+  'device.update',
+  'device.retire',
+  'device.password_update',
+  'settings_updated',
+  'maintenance.retention_run',
+  'security_hold_created',
+  'incident_hold.released',
+
+  // Backward-compatible legacy aliases (historical retention preservation)
   'initial_superadmin_bootstrapped',
   'superadmin_created',
   'admin_created',
   'admin_deleted',
   'device_registered',
   'device_deleted',
-  'settings_updated',
   'device_credentials_updated',
   'user_role_and_status_changed',
   'user_role_changed',
   'user_reactivated',
   'user_deactivated',
-  'maintenance.retention_run',
-  'security_hold_created',
   'security_hold_released',
 ];
 

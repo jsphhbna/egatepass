@@ -1333,4 +1333,147 @@ describe('Permanent PostgreSQL Migration Chain & Schema Contracts (PGlite)', () 
     );
     expect(auditAfterRetry.rows[0].count).toBe('1');
   }, 30000);
+
+  it('M. PGLITE/POSTGRES CONTRACT TEST: private.bootstrap_super_admin hardening and security invariants', async () => {
+    const db = new PGlite();
+    await applyAllMigrations(db);
+
+    const fnSig = 'private.bootstrap_super_admin(uuid, text)';
+
+    // 1. Verify EXECUTE privileges: revoked from public, anon, and authenticated
+    const anonPriv = await db.query<{ has_priv: boolean }>(
+      `select has_function_privilege('anon', $1, 'EXECUTE') as has_priv;`,
+      [fnSig]
+    );
+    expect(anonPriv.rows[0].has_priv).toBe(false);
+
+    const authPriv = await db.query<{ has_priv: boolean }>(
+      `select has_function_privilege('authenticated', $1, 'EXECUTE') as has_priv;`,
+      [fnSig]
+    );
+    expect(authPriv.rows[0].has_priv).toBe(false);
+
+    // 2. Setup test identities in auth.users
+    const validHumanId = '11111111-1111-1111-1111-111111111111';
+    const anonUserId = '22222222-2222-2222-2222-222222222222';
+    const unconfirmedUserId = '33333333-3333-3333-3333-333333333333';
+    const deviceUserId = '44444444-4444-4444-4444-444444444444';
+    const missingUserId = '55555555-5555-5555-5555-555555555555';
+    const secondValidId = '66666666-6666-6666-6666-666666666666';
+
+    await db.exec(`
+      insert into auth.users (id, email, email_confirmed_at, is_anonymous) values
+        ('${validHumanId}', 'superadmin@earist.edu.ph', now(), false),
+        ('${anonUserId}', 'anon@earist.edu.ph', now(), true),
+        ('${unconfirmedUserId}', 'unconfirmed@earist.edu.ph', null, false),
+        ('${deviceUserId}', 'kiosk-01@devices.egatepass.invalid', now(), false),
+        ('${secondValidId}', 'owner2@earist.edu.ph', now(), false);
+    `);
+
+    // Denial Test 1: missing Auth user -> denied
+    await expect(
+      db.query(`select private.bootstrap_super_admin('${missingUserId}'::uuid, 'Valid Name');`)
+    ).rejects.toThrow('Auth user does not exist');
+
+    // Denial Test 2: anonymous Auth user -> denied
+    await expect(
+      db.query(`select private.bootstrap_super_admin('${anonUserId}'::uuid, 'Valid Name');`)
+    ).rejects.toThrow('anonymous users cannot be bootstrapped as super admin');
+
+    // Denial Test 3: unconfirmed Auth user -> denied
+    await expect(
+      db.query(`select private.bootstrap_super_admin('${unconfirmedUserId}'::uuid, 'Valid Name');`)
+    ).rejects.toThrow('bootstrap target email must be confirmed');
+
+    // Denial Test 4: managed device identity -> denied
+    await expect(
+      db.query(`select private.bootstrap_super_admin('${deviceUserId}'::uuid, 'Valid Name');`)
+    ).rejects.toThrow('managed device identities cannot be bootstrapped as super admin');
+
+    // Denial Test 5: blank / invalid display name -> denied
+    await expect(
+      db.query(`select private.bootstrap_super_admin('${validHumanId}'::uuid, ' ');`)
+    ).rejects.toThrow('display name must be between 2 and 120 characters');
+
+    await expect(
+      db.query(`select private.bootstrap_super_admin('${validHumanId}'::uuid, 'A');`)
+    ).rejects.toThrow('display name must be between 2 and 120 characters');
+
+    // Denial Test 6: operator check (simulate non-operator role)
+    await db.exec(`
+      create role some_unprivileged_role;
+      grant usage on schema private to some_unprivileged_role;
+      grant execute on function private.bootstrap_super_admin(uuid, text) to some_unprivileged_role;
+      set role some_unprivileged_role;
+    `);
+    await expect(
+      db.query(`select private.bootstrap_super_admin('${validHumanId}'::uuid, 'Valid Name');`)
+    ).rejects.toThrow('bootstrap requires an authorized database operator');
+    await db.exec(`reset role;`);
+
+    // Denial Test 7: one existing Guard profile -> denied
+    await db.exec(`begin;`);
+    await db.exec(`
+      insert into public.staff_profiles (user_id, display_name, role, active, must_change_password)
+      values ('${validHumanId}', 'Existing Guard', 'guard', true, false);
+    `);
+    await expect(
+      db.query(`select private.bootstrap_super_admin('${secondValidId}'::uuid, 'Second Operator');`)
+    ).rejects.toThrow('bootstrap is allowed only before the first staff profile');
+    await db.exec(`rollback;`);
+
+    // Denial Test 8: one existing Admin profile -> denied
+    await db.exec(`begin;`);
+    await db.exec(`
+      insert into public.staff_profiles (user_id, display_name, role, active, must_change_password)
+      values ('${validHumanId}', 'Existing Admin', 'admin', true, false);
+    `);
+    await expect(
+      db.query(`select private.bootstrap_super_admin('${secondValidId}'::uuid, 'Second Operator');`)
+    ).rejects.toThrow('bootstrap is allowed only before the first staff profile');
+    await db.exec(`rollback;`);
+
+    // Success Test: authorized database operator + confirmed human Auth identity + zero staff profiles -> SUCCEEDS
+    await db.query(`select private.bootstrap_super_admin('${validHumanId}'::uuid, ' Institutional Super Admin ');`);
+
+    // Verify created staff profile state
+    const staffRow = await db.query<{
+      user_id: string;
+      display_name: string;
+      role: string;
+      active: boolean;
+      must_change_password: boolean;
+      created_by: string;
+    }>(
+      `select user_id, display_name, role, active, must_change_password, created_by from public.staff_profiles where user_id = '${validHumanId}';`
+    );
+    expect(staffRow.rows).toHaveLength(1);
+    expect(staffRow.rows[0].role).toBe('superadmin');
+    expect(staffRow.rows[0].active).toBe(true);
+    expect(staffRow.rows[0].must_change_password).toBe(true);
+    expect(staffRow.rows[0].display_name).toBe('Institutional Super Admin');
+    expect(staffRow.rows[0].created_by).toBe(validHumanId);
+
+    // Verify audit event
+    const auditRow = await db.query<{
+      actor_id: string;
+      action: string;
+      actor_kind: string;
+      actor_role: string;
+      target_type: string;
+      target_id: string;
+    }>(
+      `select actor_id, action, actor_kind, actor_role, target_type, target_id from public.audit_events where action = 'superadmin.bootstrap' and target_id = '${validHumanId}';`
+    );
+    expect(auditRow.rows).toHaveLength(1);
+    expect(auditRow.rows[0].action).toBe('superadmin.bootstrap');
+    expect(auditRow.rows[0].actor_kind).toBe('system');
+    expect(auditRow.rows[0].actor_role).toBe('bootstrap');
+
+    // Denial Test 9: second bootstrap attempt (with existing Super Admin profile) -> denied
+    await expect(
+      db.query(`select private.bootstrap_super_admin('${secondValidId}'::uuid, 'Second Super Admin');`)
+    ).rejects.toThrow('bootstrap is allowed only before the first staff profile');
+  }, 30000);
 });
+

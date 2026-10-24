@@ -82,7 +82,7 @@ flowchart TD
 
 ### Identity Resolution Rules:
 1. **Anonymous Visitors**: Have valid Supabase Auth anonymous UIDs. Confined to requesting upload intents and submitting pass issuance.
-2. **Staff Members**: Identified by a matching row in `public.staff_profiles` where `active = true`. Roles: `guard`, `admin`, `superadmin`.
+2. **Staff Members**: Identified by a matching row in `public.staff_profiles` where `active = true`. Full operational eligibility also requires a confirmed Auth email (`email_confirmed_at IS NOT NULL`), completed password onboarding (`must_change_password = false`), privacy acceptance (`privacy_accepted_at IS NOT NULL`), an unconfined session (not recovery-confined), and an authorized staff role (`guard`, `admin`, `superadmin`).
 3. **Managed Devices**: Identified by a matching row in `public.devices` where `status = 'active'` and `deleted_at IS NULL`. Types: `entry`, `exit`, `kiosk`.
 4. **Recovery Sessions**: Explicitly flagged when authenticated via recovery magic links. Confined strictly to password reset and blocked from scanner, guard, and admin operations (`recovery_session_forbidden`).
 
@@ -133,7 +133,7 @@ sequenceDiagram
 | **Update System Settings** (`/api/update-settings`) | Denied | Denied | Denied | Denied | Denied | Denied | **Allowed** |
 | **Execute Retention Maintenance** (`/api/admin/retention-maintenance`) | Denied | Denied | Denied | Denied | Denied | Denied | **Allowed** / Cron |
 | **Review Reconciliation Tasks** (`/api/reconciliation-items`) | Denied | Denied | Denied | Denied | Denied | Denied | **Allowed** |
-| **Promote Admin to Super Admin** (`api.promote_to_superadmin`) | Denied | Denied | Denied | Denied | Denied | Denied | **Allowed** |
+| **Promote Admin to Super Admin** (`POST /api/update-user` -> `api.update_staff_profile`) | Denied | Denied | Denied | Denied | Denied | Denied | **Allowed** |
 
 ---
 
@@ -151,7 +151,7 @@ flowchart TD
     F[6. Institutional Admin Completes Password Onboarding]
     G[7. Super Admin Promotes Institutional Admin to Super Admin]
     H[8. Verify Institutional Super Admin Access]
-    I[9. Deactivate / Decommission Developer Bootstrap Identity]
+    I[9. Deactivate & Ban Developer Bootstrap Identity]
 
     A --> B
     B --> C
@@ -164,8 +164,14 @@ flowchart TD
 ```
 
 ### Safety Invariants:
-- **Locked After First Use**: `private.bootstrap_super_admin` checks if any active `superadmin` profile already exists. If found, it throws an unrecoverable exception, preventing takeover of existing databases.
-- **Last Super Admin Demotion Protection**: Stored procedures and `/api/admin/users` reject any attempt to deactivate, delete, or demote the last remaining active Super Admin.
+- **One-Time Lock (Before First Staff Profile)**: Bootstrap is allowed only before the FIRST staff profile exists. Once any row exists in `public.staff_profiles` (whether Guard, Admin, or Super Admin), bootstrap is permanently locked.
+- **Confirmed Human Target Validation**: Database logic verifies the target user exists in `auth.users`, is non-anonymous (`is_anonymous = false`), has a confirmed email (`email_confirmed_at IS NOT NULL`), rejects managed device pseudo-identities (`@devices.egatepass.invalid`), and requires display name length between 2 and 120 characters.
+- **Database Operator Restriction**: Execution is restricted to authorized database operators (`postgres`, `supabase_admin`) and revoked from `public`, `anon`, and `authenticated`.
+- **Last Super Admin Demotion Protection**: Protection is enforced at three distinct layers:
+  1. **Database trigger**: `private.protect_last_superadmin` on `public.staff_profiles` blocks any UPDATE that would leave zero active Super Admins.
+  2. **Stored Procedure**: `api.update_staff_profile` enforces operator checks and translates trigger violations.
+  3. **API Layer**: `POST /api/update-user` translates trigger exception `23514` to HTTP 409 `cannot_remove_last_superadmin`, which the UI presents as *"Cannot demote or deactivate the last remaining Super Admin."*
+- **Safe Decommissioning**: Standard decommissioning consists of deactivating the staff profile via Staff Management and suspending the Auth account (`ban_duration: '876000h'`). Direct Auth user deletion in Supabase Dashboard is blocked by `ON DELETE RESTRICT` foreign key constraints on `staff_profiles.user_id`.
 
 ---
 

@@ -94,23 +94,38 @@ flowchart LR
 
 ## 4. Protected Audit Events
 
-Certain audit actions are critical to the legal and security integrity of the campus gate system. These events are classified as **Protected Audit Actions** and are permanently exempt from automated retention cleanup:
+Certain audit actions are critical to the legal and security integrity of the campus gate system. These events are classified as **Protected Audit Actions** and are permanently exempt from automated retention cleanup.
 
-1. `initial_superadmin_bootstrapped`
-2. `superadmin_created`
-3. `admin_created`
-4. `admin_deleted`
-5. `device_registered`
-6. `device_deleted`
-7. `settings_updated`
-8. `device_credentials_updated`
-9. `user_role_and_status_changed`
-10. `user_role_changed`
-11. `user_reactivated`
-12. `user_deactivated`
-13. `maintenance.retention_run`
-14. `security_hold_created`
-15. `security_hold_released`
+### 4.1 Current Canonical Protected Action Names
+The current application runtime emits these standardized governance identifiers:
+
+1. `superadmin.bootstrap`: Initial establishment of the Super Admin profile via `private.bootstrap_super_admin`
+2. `staff.create`: New staff identity provisioned via `api.create_staff_profile`
+3. `staff.update`: Staff role changes or status activation/deactivation via `api.update_staff_profile`
+4. `device.create`: Gate scanner or kiosk registration via `api.create_device_profile`
+5. `device.update`: Device configuration update via `api.update_device_profile`
+6. `device.retire`: Device retirement via `api.retire_device`
+7. `device.password_update`: Device credential rotation via `/api/device/update-auth`
+8. `settings_updated`: System settings and retention window changes via `POST /api/update-settings`
+9. `maintenance.retention_run`: Execution outcome of automated/manual retention sweeps via `/api/admin/retention-maintenance`
+10. `security_hold_created`: Creation of an investigation hold via `POST /api/admin/holds`
+11. `incident_hold.released`: Administrative release of an investigation hold via `POST /api/admin/holds`
+
+### 4.2 Backward-Compatible Legacy Aliases
+Historical deployments may contain legacy event names recorded prior to canonicalization. These aliases are permanently retained in `PROTECTED_AUDIT_ACTIONS` to guarantee historical records are never pruned:
+
+- `initial_superadmin_bootstrapped`
+- `superadmin_created`
+- `admin_created`
+- `admin_deleted`
+- `device_registered`
+- `device_deleted`
+- `device_credentials_updated`
+- `user_role_and_status_changed`
+- `user_role_changed`
+- `user_reactivated`
+- `user_deactivated`
+- `security_hold_released`
 
 ---
 

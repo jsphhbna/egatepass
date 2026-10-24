@@ -29,7 +29,12 @@ flowchart TD
 2. Click **Add Staff Member**.
 3. Enter legal name, official EARIST email address, and select role (`guard` or `admin`).
 4. The serverless route `POST /api/create-user` creates the Supabase Auth identity, inserts the `staff_profiles` row, and triggers an automated invite email via Resend.
-5. All newly created staff accounts (Guard, Admin, Super Admin) are flagged with `must_change_password = true`. Upon first login, staff are directed to the mandatory password replacement workflow (`/api/auth/complete-password-change`), which verifies current credentials, updates the password, and finalizes onboarding.
+5. **Password Onboarding Lifecycle**:
+   - **New Guard via `create-user`**: Flagged with `must_change_password = true`.
+   - **New Admin via `create-user`**: Flagged with `must_change_password = true`.
+   - **Initial bootstrap Super Admin**: Flagged with `must_change_password = true` via `private.bootstrap_super_admin`.
+   - **Existing onboarded Admin promoted to Super Admin**: Role updates through Staff Management (`POST /api/update-user` -> `api.update_staff_profile`). Promotion does NOT reset `must_change_password` for an account that has already completed onboarding.
+   - Upon initial login for flagged accounts, staff are directed to the mandatory password replacement workflow (`/api/auth/complete-password-change`), which verifies current credentials, updates the password, and finalizes onboarding.
 
 #### Staff Deactivation & Re-activation
 - To suspend access, click **Deactivate** on the user row.
@@ -39,7 +44,7 @@ flowchart TD
 
 #### Super Admin Promotion & Last Super Admin Safeguard
 - Only an active Super Admin can promote an existing Admin to Super Admin.
-- The system enforces a strict invariant in `server/routes/admin/users.ts` and database triggers: **The last active Super Admin can NEVER be deactivated, demoted, or deleted**. Any attempt is blocked with an explicit error.
+- The system enforces a strict invariant across database and API layers: **The last active Super Admin can NEVER be deactivated or demoted**. This is guarded by the database trigger `private.protect_last_superadmin` on `public.staff_profiles`, enforced by `api.update_staff_profile`, and surfaced by `POST /api/update-user` as HTTP 409 `cannot_remove_last_superadmin` (translated in the Staff Management UI as *"Cannot demote or deactivate the last remaining Super Admin."*).
 
 ---
 
@@ -162,10 +167,16 @@ Retention policies are designed to support data-minimization and retention pract
   - Active passes that have not expired are NEVER purged.
   - Any record with an active row in `public.incident_holds` is NEVER purged.
   - Protected audit events are NEVER automatically purged:
-    `initial_superadmin_bootstrapped`, `superadmin_created`, `admin_created`, `admin_deleted`,
-    `device_registered`, `device_deleted`, `settings_updated`, `device_credentials_updated`,
-    `user_role_and_status_changed`, `user_role_changed`, `user_reactivated`, `user_deactivated`,
-    `maintenance.retention_run`, `security_hold_created`, `security_hold_released`.
+    - **Current Canonical Actions**:
+      `superadmin.bootstrap`, `staff.create`, `staff.update`,
+      `device.create`, `device.update`, `device.retire`, `device.password_update`,
+      `settings_updated`, `maintenance.retention_run`,
+      `security_hold_created`, `incident_hold.released`
+    - **Backward-Compatible Legacy Aliases** (preserved for historical databases):
+      `initial_superadmin_bootstrapped`, `superadmin_created`, `admin_created`, `admin_deleted`,
+      `device_registered`, `device_deleted`, `device_credentials_updated`,
+      `user_role_and_status_changed`, `user_role_changed`, `user_reactivated`, `user_deactivated`,
+      `security_hold_released`
 
 ---
 

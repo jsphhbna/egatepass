@@ -23,7 +23,7 @@ flowchart TD
 | Phase | Task Description | Verification Criteria | Status |
 |---|---|---|---|
 | **Identity** | Establish institutional Super Admin | Institutional email logged in with role `superadmin` | [ ] COMPLETE |
-| **Security** | Decommission developer accounts | Developer bootstrap identity deactivated & deleted | [ ] COMPLETE |
+| **Security** | Decommission developer accounts | Developer bootstrap identity deactivated and Auth access revoked/banned. Permanent deletion performed only through separately authorized operator cleanup when required. | [ ] COMPLETE |
 | **Data Hygiene** | Review & purge known test records | Database contains only real institutional records | [ ] COMPLETE |
 | **Storage** | Purge test storage objects | Storage buckets contain no transient test artifacts | [ ] COMPLETE |
 | **Devices** | Re-enroll physical scanner hardware | Physical Entry/Exit tablets active with gate tags | [ ] COMPLETE |
@@ -37,7 +37,7 @@ flowchart TD
 
 Before handing over to live institutional operations, transient test data generated during user acceptance testing must be reviewed and removed safely.
 
-> **CRITICAL DATA INTEGRITY WARNING**: Never execute bulk wildcard deletion scripts or drop tables in production. Foreign-key relationships across `passes`, `visitors`, `visitor_evidence`, and `visit_events` must be respected.
+> **CRITICAL DATA INTEGRITY WARNING**: Never execute bulk wildcard deletion scripts or drop tables in production. Foreign-key relationships across `passes`, `visitors`, `visitor_evidence`, `visit_events`, and `staff_profiles` must be respected. Specifically, `public.staff_profiles.user_id` references `auth.users(id)` with `ON DELETE RESTRICT`; attempting to delete an Auth user in the dashboard while their staff profile exists will be rejected. Standard decommissioning is deactivation in Staff Management plus Auth access suspension (`ban_duration: '876000h'`).
 
 ### Recommended Procedural Order:
 1. **Identify Test Records**:

@@ -123,13 +123,46 @@ stateDiagram-v2
 ### 4.2 Super Admin Governance
 1. Log in as `superadmin`.
 2. **Settings**: Modify working hours or retention windows via `POST /api/update-settings`.
-   - Confirm changes persist to `system_settings` table.
+   - Confirm changes persist to `public.app_settings` table.
 3. **Last Super Admin Demotion Protection**:
    - Attempt to deactivate or change the role of the only active Super Admin.
-   - **Expected**: Action blocked with error message: *"Cannot demote or deactivate the last remaining Super Admin."*
+   - **Expected API Response**: HTTP 409 with body `{ error: 'cannot_remove_last_superadmin' }`.
+   - **Expected UI Toast**: *"Cannot demote or deactivate the last remaining Super Admin."*
 4. **Incident Hold**:
    - Locate an active or exited pass and apply an **Incident Hold** via `POST /api/admin/holds`.
    - Confirm hold row created in `public.incident_holds` with `active = true`.
+
+### 4.3 Isolated-Database Super Admin Bootstrap Contract QA
+
+> [!CAUTION]
+> **ISOLATED TEST DATABASE ONLY**: Never test destructive or one-time bootstrap failure scenarios against an established production database. Once any row exists in `public.staff_profiles`, bootstrap is permanently locked. Conduct this QA suite exclusively in an isolated staging or local test environment.
+
+#### Test Execution Protocol:
+1. **Valid Confirmed Human**:
+   - Create confirmed human Auth user (`email_confirmed_at IS NOT NULL`, `is_anonymous = false`, non-empty usable email).
+   - Execute `SELECT private.bootstrap_super_admin('<UUID>'::uuid, 'Initial Super Admin');`.
+   - **Expected**: Succeeded (returns `void`). Profile created in `public.staff_profiles` with `role = 'superadmin'`, `active = true`, `must_change_password = true`. Audit event recorded with `action = 'superadmin.bootstrap'`, `actor_kind = 'system'`, `actor_role = 'bootstrap'`.
+2. **Missing User**:
+   - Execute bootstrap with non-existent UUID.
+   - **Expected**: Failed with error code `23503`: *"Auth user does not exist"*.
+3. **Anonymous User**:
+   - Execute bootstrap targeting an anonymous Auth user (`is_anonymous = true`).
+   - **Expected**: Failed with error code `23514`: *"anonymous users cannot be bootstrapped as super admin"*.
+4. **Unconfirmed User**:
+   - Execute bootstrap targeting an unconfirmed user (`email_confirmed_at IS NULL`).
+   - **Expected**: Failed with error code `23514`: *"bootstrap target email must be confirmed"*.
+5. **Device Pseudo-User**:
+   - Execute bootstrap targeting an identity ending with `@devices.egatepass.invalid`.
+   - **Expected**: Failed with error code `23514`: *"managed device identities cannot be bootstrapped as super admin"*.
+6. **Invalid Display Name**:
+   - Execute bootstrap with blank display name or single-character display name.
+   - **Expected**: Failed with error code `23514`: *"display name must be between 2 and 120 characters"*.
+7. **Any Existing Staff Profile**:
+   - In a database containing an existing Guard, Admin, or Super Admin profile, attempt bootstrap.
+   - **Expected**: Failed with error code `23514`: *"bootstrap is allowed only before the first staff profile"*.
+8. **Second Bootstrap Attempt**:
+   - Immediately attempt a second bootstrap after successful initial bootstrap.
+   - **Expected**: Failed with error code `23514`: *"bootstrap is allowed only before the first staff profile"*.
 
 ---
 

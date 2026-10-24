@@ -158,6 +158,9 @@ export function AdminUsers() {
     } | null;
 
     if (!response.ok) {
+      if (body?.error === 'cannot_remove_last_superadmin') {
+        throw new Error('Cannot demote or deactivate the last remaining Super Admin.');
+      }
       throw new Error(body?.error || 'Failed to update user account');
     }
     return body;
@@ -181,7 +184,7 @@ export function AdminUsers() {
       loadUsers();
     } catch (err) {
       console.error(err);
-      toast.error('Failed to deactivate user');
+      toast.error(err instanceof Error ? err.message : 'Failed to deactivate user');
     } finally {
       setIsDeactivating(false);
     }
@@ -202,7 +205,7 @@ export function AdminUsers() {
         loadUsers();
       } catch (err) {
         console.error(err);
-        toast.error('Failed to update user status');
+        toast.error(err instanceof Error ? err.message : 'Failed to update user status');
       }
     }
   }

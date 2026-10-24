@@ -113,4 +113,18 @@ describe('Admin and Operations Runtime Migration (M4/S6)', () => {
     expect(updateSettingsApi).toContain("action: 'settings_updated'");
     expect(purgeImagesApi).toContain("action: 'image_purge'");
   });
+
+  it('translates machine-readable cannot_remove_last_superadmin error to friendly user message in Staff Management UI', () => {
+    // API contract preserves machine-readable error
+    expect(updateUserApi).toContain("error.code === '23514'");
+    expect(updateUserApi).toContain("error: 'cannot_remove_last_superadmin'");
+
+    // UI translates code to user-friendly message
+    expect(adminUsers).toContain("body?.error === 'cannot_remove_last_superadmin'");
+    expect(adminUsers).toContain("'Cannot demote or deactivate the last remaining Super Admin.'");
+
+    // Applied consistently to both deactivation and role change error handlers
+    expect(adminUsers).toContain("toast.error(err instanceof Error ? err.message : 'Failed to deactivate user')");
+    expect(adminUsers).toContain("toast.error(err instanceof Error ? err.message : 'Failed to change user role')");
+  });
 });

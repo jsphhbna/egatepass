@@ -64,6 +64,10 @@ describe('Documentation Truthfulness & Formatting Contract', () => {
       { pattern: /\bpending_review\b/i, label: 'pending_review status (database pass status is pending)' },
       { pattern: /PostgreSQL 15/i, label: 'PostgreSQL 15 (should be Supabase PostgreSQL / 17.x)' },
       { pattern: /permanently logged and audited/i, label: 'permanently logged and audited (retention policy governs audit logs)' },
+      { pattern: /api.promote_to_superadmin/i, label: 'api.promote_to_superadmin (promotions use POST /api/update-user calling api.update_staff_profile)' },
+      { pattern: /\bsystem_settings\b/i, label: 'system_settings table (should be public.app_settings)' },
+      { pattern: /Active Super Admin already exists\. Bootstrap procedure locked\./i, label: 'stale bootstrap lock claim (lock occurs when ANY row exists in public.staff_profiles)' },
+      { pattern: /Success: User .* bootstrapped as Super Admin\./i, label: 'fabricated bootstrap return output (function returns void)' },
     ];
 
     for (const filePath of activeDocFiles) {
@@ -153,5 +157,66 @@ describe('Documentation Truthfulness & Formatting Contract', () => {
     expect(arch).toContain('All 27 endpoints');
     expect(arch).toContain('Auth Router (4 routes');
     expect(arch).not.toContain('Auth Router (3 routes');
+  });
+
+  it('ensures docs/SUPER_ADMIN_BOOTSTRAP.md truthfully documents bootstrap invariants, verified SQL, and decommissioning', () => {
+    const bootstrapDoc = fs.readFileSync('docs/SUPER_ADMIN_BOOTSTRAP.md', 'utf8');
+
+    // Invariant truths
+    expect(bootstrapDoc).toContain('bootstrap is allowed only before the first staff profile');
+    expect(bootstrapDoc).toMatch(/confirmed human/i);
+    expect(bootstrapDoc).toContain('email_confirmed_at IS NOT NULL');
+    expect(bootstrapDoc).toContain('@devices.egatepass.invalid');
+    expect(bootstrapDoc).toContain('superadmin.bootstrap');
+
+    // Verification SQL truths
+    expect(bootstrapDoc).toContain('SELECT');
+    expect(bootstrapDoc).toContain('user_id');
+    expect(bootstrapDoc).toContain('display_name');
+    expect(bootstrapDoc).toContain('role');
+    expect(bootstrapDoc).toContain('active');
+    expect(bootstrapDoc).toContain('must_change_password');
+    expect(bootstrapDoc).toContain('public.staff_profiles');
+
+    // Decommissioning truth
+    expect(bootstrapDoc).toContain('ON DELETE RESTRICT');
+    expect(bootstrapDoc).toContain('POST /api/update-user');
+    expect(bootstrapDoc).not.toContain('Success: User');
+  });
+
+  it('ensures docs/SECURITY.md truthfully documents staff eligibility, promotion path, and bootstrap lock', () => {
+    const secDoc = fs.readFileSync('docs/SECURITY.md', 'utf8');
+
+    // Promotion path
+    expect(secDoc).toContain('POST /api/update-user');
+    expect(secDoc).toContain('api.update_staff_profile');
+    expect(secDoc).not.toContain('api.promote_to_superadmin');
+
+    // Full staff eligibility
+    expect(secDoc).toContain('email_confirmed_at IS NOT NULL');
+    expect(secDoc).toContain('must_change_password = false');
+    expect(secDoc).toContain('privacy_accepted_at IS NOT NULL');
+
+    // Bootstrap lock
+    expect(secDoc).toMatch(/bootstrap is allowed only before the FIRST staff profile exists/i);
+
+    // Last Super Admin protection layers
+    expect(secDoc).toContain('private.protect_last_superadmin');
+    expect(secDoc).toContain('cannot_remove_last_superadmin');
+  });
+
+  it('ensures docs/MANUAL_QA_RUNBOOK.md reflects public.app_settings, friendly last-superadmin handling, and isolated bootstrap QA', () => {
+    const qaDoc = fs.readFileSync('docs/MANUAL_QA_RUNBOOK.md', 'utf8');
+
+    expect(qaDoc).toContain('public.app_settings');
+    expect(qaDoc).not.toContain('system_settings');
+
+    // Last Super Admin API and UI layers
+    expect(qaDoc).toContain('cannot_remove_last_superadmin');
+    expect(qaDoc).toContain('Cannot demote or deactivate the last remaining Super Admin.');
+
+    // Isolated database warning and scenarios
+    expect(qaDoc).toContain('Never test destructive or one-time bootstrap failure scenarios against an established production database');
+    expect(qaDoc).toContain('superadmin.bootstrap');
   });
 });

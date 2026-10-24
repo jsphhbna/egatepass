@@ -105,14 +105,17 @@ stateDiagram-v2
 1. **Pass Status Protection**: Passes in status `pending` or `inside` are NEVER purged.
 2. **Active Passes**: Passes that are currently active and unexpired are NEVER purged.
 3. **Incident Holds**: Any visitor or pass with an active row in `public.incident_holds` is indefinitely protected from deletion until released by an administrator.
-4. **Protected Audit Events**: Security-critical actions are permanently preserved:
-   - `initial_superadmin_bootstrapped`
-   - `superadmin_created`, `admin_created`, `admin_deleted`
-   - `device_registered`, `device_deleted`, `device_credentials_updated`
-   - `settings_updated`
-   - `user_role_and_status_changed`, `user_role_changed`, `user_reactivated`, `user_deactivated`
-   - `maintenance.retention_run`
-   - `security_hold_created`, `security_hold_released`
+4. **Protected Audit Events**: Security-critical governance actions are permanently preserved:
+   - **Current Canonical Actions**:
+     `superadmin.bootstrap`, `staff.create`, `staff.update`,
+     `device.create`, `device.update`, `device.retire`, `device.password_update`,
+     `settings_updated`, `maintenance.retention_run`,
+     `security_hold_created`, `incident_hold.released`
+   - **Backward-Compatible Legacy Aliases**:
+     `initial_superadmin_bootstrapped`, `superadmin_created`, `admin_created`, `admin_deleted`,
+     `device_registered`, `device_deleted`, `device_credentials_updated`,
+     `user_role_and_status_changed`, `user_role_changed`, `user_reactivated`, `user_deactivated`,
+     `security_hold_released`
 
 ---
 
