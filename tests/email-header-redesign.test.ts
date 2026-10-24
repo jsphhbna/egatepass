@@ -1,13 +1,12 @@
-import { describe, expect, it } from 'vitest';
-import { existsSync, statSync, readFileSync, readdirSync } from 'node:fs';
-import { join } from 'node:path';
+import { describe, it, expect } from 'vitest';
+import { existsSync, statSync, readFileSync, readdirSync } from 'fs';
+import { join } from 'path';
 import React from 'react';
 import { render } from '@react-email/render';
 import {
   EARIST_LOGO_URL,
   EARIST_BUILDING_EMAIL_URL,
-} from '../server/templates/branding.js';
-import {
+  EARIST_EMAIL_HEADER_ART_URL,
   StaffInviteEmail,
   SignupConfirmationEmail,
   PasswordResetEmail,
@@ -25,54 +24,48 @@ describe('Institutional Transactional Email Header Redesign & Asset Optimization
   const templatesDir = join(root, 'server', 'templates');
 
   describe('1. Asset Contract & File-Size Budgets', () => {
-    const logoPath = join(publicDir, 'earist-logo-email.png');
-    const buildingPath = join(publicDir, 'earist-building-email-header.jpg');
+    const compositeArtPath = join(publicDir, 'earist-email-header-art.jpg');
+    const logoSourcePath = join(publicDir, 'earist-logo-email.png');
+    const buildingSourcePath = join(publicDir, 'earist-building-email-header.jpg');
 
-    it('earist-logo-email.png exists and complies with email delivery size budget (<= 60 KB)', () => {
-      expect(existsSync(logoPath)).toBe(true);
-      const stats = statSync(logoPath);
-      // Hard budget <= 60 KB, ideal <= 40 KB
-      expect(stats.size).toBeLessThanOrEqual(60 * 1024);
-      expect(stats.size).toBeGreaterThan(1000); // Non-empty valid image
+    it('earist-email-header-art.jpg exists and complies with email delivery size budget (<= 100 KB, preferred 40-80 KB)', () => {
+      expect(existsSync(compositeArtPath)).toBe(true);
+      const stats = statSync(compositeArtPath);
+      expect(stats.size).toBeLessThanOrEqual(100 * 1024);
+      expect(stats.size).toBeGreaterThan(10 * 1024);
     });
 
-    it('earist-building-email-header.jpg exists and complies with email delivery size budget (<= 120 KB)', () => {
-      expect(existsSync(buildingPath)).toBe(true);
-      const stats = statSync(buildingPath);
-      // Hard budget <= 120 KB, ideal <= 100 KB
-      expect(stats.size).toBeLessThanOrEqual(120 * 1024);
-      expect(stats.size).toBeGreaterThan(5000); // Non-empty photographic asset
+    it('preserves existing source assets earist-logo-email.png and earist-building-email-header.jpg without deletion', () => {
+      expect(existsSync(logoSourcePath)).toBe(true);
+      expect(existsSync(buildingSourcePath)).toBe(true);
+      const logoStats = statSync(logoSourcePath);
+      const buildingStats = statSync(buildingSourcePath);
+      expect(logoStats.size).toBeLessThanOrEqual(60 * 1024);
+      expect(buildingStats.size).toBeLessThanOrEqual(120 * 1024);
     });
 
-    it('combined decorative header payload is well within the 160 KB budget', () => {
-      const logoStats = statSync(logoPath);
-      const buildingStats = statSync(buildingPath);
-      const combined = logoStats.size + buildingStats.size;
-      expect(combined).toBeLessThanOrEqual(160 * 1024);
-    });
-
-    it('preserves the original website logo public/earist-logo.png without replacement', () => {
+    it('preserves the original website logo public/earist-logo.png without replacement or modification', () => {
       const origLogoPath = join(publicDir, 'earist-logo.png');
       expect(existsSync(origLogoPath)).toBe(true);
       const stats = statSync(origLogoPath);
-      expect(stats.size).toBeGreaterThan(500 * 1024); // Original high-res asset preserved
+      expect(stats.size).toBeGreaterThan(500 * 1024);
     });
   });
 
   describe('2. Branding Helper Contract', () => {
-    it('resolves EARIST_LOGO_URL to /earist-logo-email.png and NOT /earist-logo.png', () => {
-      expect(EARIST_LOGO_URL).toContain('/earist-logo-email.png');
-      expect(EARIST_LOGO_URL).not.toMatch(/\/earist-logo\.png$/);
+    it('resolves EARIST_EMAIL_HEADER_ART_URL to /earist-email-header-art.jpg', () => {
+      expect(EARIST_EMAIL_HEADER_ART_URL).toContain('/earist-email-header-art.jpg');
     });
 
-    it('resolves EARIST_BUILDING_EMAIL_URL to /earist-building-email-header.jpg', () => {
+    it('retains backward-compatible exports EARIST_LOGO_URL and EARIST_BUILDING_EMAIL_URL', () => {
+      expect(EARIST_LOGO_URL).toContain('/earist-logo-email.png');
       expect(EARIST_BUILDING_EMAIL_URL).toContain('/earist-building-email-header.jpg');
     });
 
-    it('source file branding.ts does not hardcode /earist-logo.png for transactional emails', () => {
+    it('source file branding.ts exposes EARIST_EMAIL_HEADER_ART_URL', () => {
       const brandingSrc = readFileSync(join(templatesDir, 'branding.ts'), 'utf8');
-      expect(brandingSrc).toContain('/earist-logo-email.png');
-      expect(brandingSrc).toContain('/earist-building-email-header.jpg');
+      expect(brandingSrc).toContain('/earist-email-header-art.jpg');
+      expect(brandingSrc).toContain('EARIST_EMAIL_HEADER_ART_URL');
       expect(brandingSrc).not.toContain('/earist-logo.png');
     });
   });
@@ -126,35 +119,31 @@ describe('Institutional Transactional Email Header Redesign & Asset Optimization
       },
     ];
 
-    it.each(templates)('renders $name with complete institutional header and authentic assets', async ({ component, props }) => {
+    it.each(templates)('renders $name with composite institutional header and real HTML typography', async ({ component, props }) => {
       const html = await render(React.createElement(component as any, props));
 
-      // 1. Logo
-      expect(html).toContain('earist-logo-email.png');
-      expect(html).toContain('alt="EARIST seal"');
+      // 1. Composite Header Artwork (contains seal + building + fade + swoosh)
+      expect(html).toContain('earist-email-header-art.jpg');
+      expect(html).toContain('alt="EARIST campus"');
 
-      // 2. Title & Subtitle
+      // 2. Explicit Dimensions
+      expect(html).toContain('width="504"');
+      expect(html).toContain('height="190"');
+
+      // 3. Real HTML Title & Subtitle (never baked into raster artwork)
       expect(html).toContain('EARIST E-GatePass');
       expect(html).toContain('Eulogio &quot;Amang&quot; Rodriguez Institute of Science and Technology');
 
-      // 3. Building photo
-      expect(html).toContain('earist-building-email-header.jpg');
-      expect(html).toContain('alt="EARIST Main Campus building"');
-
-      // 4. Dimensions to prevent layout jumps
-      expect(html).toContain('width="64"');
-      expect(html).toContain('height="64"');
-      expect(html).toContain('width="504"');
-      expect(html).toContain('height="155"');
-
-      // 5. Maroon divider
+      // 4. Maroon Divider (#800000)
       expect(html).toContain('#800000');
 
-      // 6. Never old logo
+      // 5. No duplicated standalone seal or standalone photo
+      expect(html).not.toContain('earist-logo-email.png');
+      expect(html).not.toContain('earist-building-email-header.jpg');
       expect(html).not.toContain('/earist-logo.png');
     });
 
-    it('verifies the building image is positioned inside the header section and ends before the body', async () => {
+    it('verifies the visual hierarchy: composite art -> real title -> real subtitle -> maroon divider -> body', async () => {
       const html = await render(React.createElement(StaffInviteEmail, {
         email: 'staff@earist.edu.ph',
         inviteUrl: 'https://egatepass.tech/invite?token=123',
@@ -164,22 +153,20 @@ describe('Institutional Transactional Email Header Redesign & Asset Optimization
       expect(headerStart).toBeGreaterThan(-1);
       const headerSnippet = html.slice(headerStart);
 
-      const logoIdx = headerSnippet.indexOf('earist-logo-email.png');
+      const headerArtIdx = headerSnippet.indexOf('earist-email-header-art.jpg');
       const titleIdx = headerSnippet.indexOf('EARIST E-GatePass');
       const subtitleIdx = headerSnippet.indexOf('Eulogio &quot;Amang&quot; Rodriguez Institute of Science and Technology');
-      const buildingIdx = headerSnippet.indexOf('earist-building-email-header.jpg');
-      const greetingIdx = headerSnippet.indexOf('Hello,');
+      const greetingIdx = html.indexOf('Hello,');
 
-      expect(logoIdx).toBeGreaterThan(-1);
-      expect(titleIdx).toBeGreaterThan(logoIdx);
+      expect(headerArtIdx).toBeGreaterThan(-1);
+      expect(titleIdx).toBeGreaterThan(headerArtIdx);
       expect(subtitleIdx).toBeGreaterThan(titleIdx);
-      expect(buildingIdx).toBeGreaterThan(subtitleIdx);
-      expect(greetingIdx).toBeGreaterThan(buildingIdx);
+      expect(greetingIdx).toBeGreaterThan(headerStart);
     });
   });
 
-  describe('4. Forbidden Background Treatment Defense', () => {
-    it('verifies that no template uses CSS backgroundImage or background-image for the building', () => {
+  describe('4. Forbidden Layering & Runtime CSS Defense', () => {
+    it('verifies that no template uses CSS backgroundImage or background-image', () => {
       const tsxFiles = readdirSync(templatesDir).filter(f => f.endsWith('.tsx'));
       for (const file of tsxFiles) {
         const src = readFileSync(join(templatesDir, file), 'utf8');
@@ -188,11 +175,13 @@ describe('Institutional Transactional Email Header Redesign & Asset Optimization
         expect(src).not.toContain('background: url');
       }
 
-      // Also check components/EmailHeader.tsx
       const headerSrc = readFileSync(join(templatesDir, 'components', 'EmailHeader.tsx'), 'utf8');
       expect(headerSrc).not.toContain('backgroundImage');
       expect(headerSrc).not.toContain('background-image');
       expect(headerSrc).not.toContain('background: url');
+      expect(headerSrc).not.toContain('position: absolute');
+      expect(headerSrc).not.toContain('position:absolute');
+      expect(headerSrc).not.toContain('z-index');
     });
   });
 });

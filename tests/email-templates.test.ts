@@ -138,12 +138,11 @@ describe('EMAIL-ARCH-01: React Email Templates', () => {
       },
     ];
 
-    it.each(sampleTemplates)('renders $name with EARIST E-GatePass, absolute seal URL, and alt="EARIST seal"', async ({ component, props }) => {
+    it.each(sampleTemplates)('renders $name with EARIST E-GatePass, absolute seal URL, and alt="EARIST campus"', async ({ component, props }) => {
       const html = await render(React.createElement(component as any, props));
       expect(html).toContain('EARIST E-GatePass');
-      expect(html).toContain('https://egatepass.tech/earist-logo-email.png');
-      expect(html).toContain('https://egatepass.tech/earist-building-email-header.jpg');
-      expect(html).toContain('alt="EARIST seal"');
+      expect(html).toContain('https://egatepass.tech/earist-email-header-art.jpg');
+      expect(html).toContain('alt="EARIST campus"');
       expect(html).not.toContain('src="/earist-logo.png"');
       expect(html).not.toContain('https://egatepass.tech/earist-logo.png'); // Never old oversized logo
     });
@@ -241,7 +240,7 @@ describe('EMAIL-ARCH-01: React Email Templates', () => {
       );
 
       expect(html).toContain('EARIST E-GatePass');
-      expect(html).toContain('alt="EARIST seal"');
+      expect(html).toContain('alt="EARIST campus"');
       expect(html).not.toContain('<script>malicious()</script>');
       expect(html).not.toContain('<b onmouseover=alert(1)>');
       expect(html).toContain('&lt;script&gt;');
@@ -255,8 +254,7 @@ describe('EMAIL-ARCH-01: React Email Templates', () => {
         displayName: 'Staff Juan',
       });
       expect(signupHtml).toContain('EARIST E-GatePass');
-      expect(signupHtml).toContain('https://egatepass.tech/earist-logo-email.png');
-      expect(signupHtml).toContain('https://egatepass.tech/earist-building-email-header.jpg');
+      expect(signupHtml).toContain('https://egatepass.tech/earist-email-header-art.jpg');
 
       const resetHtml = await renderPasswordResetEmail({
         email: 'user@earist.edu.ph',
@@ -271,7 +269,7 @@ describe('EMAIL-ARCH-01: React Email Templates', () => {
         displayName: 'Prof Santos',
       });
       expect(inviteHtml).toContain('Account Invitation');
-      expect(inviteHtml).toContain('alt="EARIST seal"');
+      expect(inviteHtml).toContain('alt="EARIST campus"');
 
       const emailChangeHtml = await renderEmailChangeEmail({
         currentEmail: 'old@earist.edu.ph',

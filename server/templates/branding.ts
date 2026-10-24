@@ -17,4 +17,9 @@ export function resolveBuildingEmailUrl(): string {
 }
 
 export const EARIST_LOGO_URL = resolveLogoUrl();
+export function resolveEmailHeaderArtUrl(): string {
+  return `${getBaseUrl()}/earist-email-header-art.jpg`;
+}
+
 export const EARIST_BUILDING_EMAIL_URL = resolveBuildingEmailUrl();
+export const EARIST_EMAIL_HEADER_ART_URL = resolveEmailHeaderArtUrl();
