@@ -599,7 +599,8 @@ describe('EMAIL-01: Supabase Auth Send Email Hook Infrastructure', () => {
         // Verify HTML contents
         expect(resendPayload.html).toContain('EARIST E-GatePass');
         expect(resendPayload.html).toContain('alt="EARIST seal"');
-        expect(resendPayload.html).toContain('https://egatepass.tech/earist-logo.png');
+        expect(resendPayload.html).toContain('https://egatepass.tech/earist-logo-email.png');
+        expect(resendPayload.html).toContain('https://egatepass.tech/earist-building-email-header.jpg');
         expect(resendPayload.html).toContain('invite_hash_secure_abc');
         expect(resendPayload.html).toContain('Invited Staff');
       } finally {

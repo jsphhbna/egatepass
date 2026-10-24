@@ -10,7 +10,8 @@ import { MagicLinkEmail, type MagicLinkEmailProps } from './MagicLinkEmail.js';
 import { ReauthenticationEmail, type ReauthenticationEmailProps } from './ReauthenticationEmail.js';
 import { SecurityNotificationEmail, type SecurityNotificationEmailProps } from './SecurityNotificationEmail.js';
 
-export { EARIST_LOGO_URL } from './branding.js';
+export { EARIST_LOGO_URL, EARIST_BUILDING_EMAIL_URL } from './branding.js';
+export { EmailHeader, type EmailHeaderProps } from './components/EmailHeader.js';
 export { VerificationCodeEmail, type VerificationCodeEmailProps } from './VerificationCodeEmail.js';
 export { PassIssuedEmail, type PassIssuedEmailProps } from './PassIssuedEmail.js';
 export { SignupConfirmationEmail, type SignupConfirmationEmailProps } from './SignupConfirmationEmail.js';

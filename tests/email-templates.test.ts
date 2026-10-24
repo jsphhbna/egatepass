@@ -141,9 +141,11 @@ describe('EMAIL-ARCH-01: React Email Templates', () => {
     it.each(sampleTemplates)('renders $name with EARIST E-GatePass, absolute seal URL, and alt="EARIST seal"', async ({ component, props }) => {
       const html = await render(React.createElement(component as any, props));
       expect(html).toContain('EARIST E-GatePass');
-      expect(html).toContain('https://egatepass.tech/earist-logo.png');
+      expect(html).toContain('https://egatepass.tech/earist-logo-email.png');
+      expect(html).toContain('https://egatepass.tech/earist-building-email-header.jpg');
       expect(html).toContain('alt="EARIST seal"');
-      expect(html).not.toContain('src="/earist-logo.png"'); // Never relative URL
+      expect(html).not.toContain('src="/earist-logo.png"');
+      expect(html).not.toContain('https://egatepass.tech/earist-logo.png'); // Never old oversized logo
     });
   });
 
@@ -253,7 +255,8 @@ describe('EMAIL-ARCH-01: React Email Templates', () => {
         displayName: 'Staff Juan',
       });
       expect(signupHtml).toContain('EARIST E-GatePass');
-      expect(signupHtml).toContain('https://egatepass.tech/earist-logo.png');
+      expect(signupHtml).toContain('https://egatepass.tech/earist-logo-email.png');
+      expect(signupHtml).toContain('https://egatepass.tech/earist-building-email-header.jpg');
 
       const resetHtml = await renderPasswordResetEmail({
         email: 'user@earist.edu.ph',

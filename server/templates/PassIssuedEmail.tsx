@@ -1,5 +1,5 @@
 import React from 'react';
-import { EARIST_LOGO_URL } from './branding.js';
+import { EmailHeader } from './components/EmailHeader.js';
 import {
   Html,
   Head,
@@ -10,7 +10,6 @@ import {
   Heading,
   Text,
   Hr,
-  Img,
 } from '@react-email/components';
 
 export interface PassIssuedEmailProps {
@@ -36,32 +35,6 @@ const containerStyle: React.CSSProperties = {
   maxWidth: '560px',
   margin: '0 auto',
   padding: '32px 28px',
-};
-
-const logoStyle: React.CSSProperties = {
-  display: 'block',
-  margin: '0 0 12px 0',
-};
-
-const headerSection: React.CSSProperties = {
-  borderBottom: '2px solid #800000',
-  paddingBottom: '16px',
-  marginBottom: '24px',
-};
-
-const headerTitle: React.CSSProperties = {
-  color: '#800000',
-  fontSize: '24px',
-  fontWeight: '700',
-  letterSpacing: '-0.5px',
-  margin: '0 0 4px 0',
-};
-
-const headerSubtitle: React.CSSProperties = {
-  color: '#71717a',
-  fontSize: '13px',
-  fontWeight: '500',
-  margin: '0',
 };
 
 const greetingText: React.CSSProperties = {
@@ -134,18 +107,11 @@ export function PassIssuedEmail({
       <Preview>Your EARIST Gate Pass QR Code — Ref: {publicReference}</Preview>
       <Body style={mainStyle}>
         <Container style={containerStyle}>
-          <Section style={headerSection}>
-            <Img
-              src={EARIST_LOGO_URL}
-              alt="EARIST seal"
-              width="64"
-              height="64"
-              style={logoStyle}
-            />
-            <Heading style={headerTitle}>EARIST E-GatePass</Heading>
-            <Text style={headerSubtitle}>Official Campus Visitor Gate Pass</Text>
-          </Section>
+          <EmailHeader />
           <Section>
+            <Heading as="h2" style={{ color: '#800000', fontSize: '18px', fontWeight: '700', margin: '0 0 16px 0' }}>
+              Official Campus Visitor Gate Pass
+            </Heading>
             <Text style={greetingText}>Hello <strong>{fullName}</strong>,</Text>
             <Text style={bodyText}>
               Your campus visitor pass has been issued. Your scannable entry QR code is attached to this email as an image file (<code>earist-gate-pass-qr.png</code>).
