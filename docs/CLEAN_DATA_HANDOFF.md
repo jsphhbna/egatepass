@@ -33,7 +33,79 @@ flowchart TD
 
 ---
 
-## 2. Safe Data Sanitization Protocol
+## 2. Institutional Handoff Ownership Matrix
+
+This matrix establishes formal institutional accountability across all operational categories. **Under no circumstances may plain-text passwords, tokens, or API secrets be written into this document.**
+
+| Operational Category | System Component | Current Owner | Institutional Owner | Handoff Status | Verification Method |
+|---|---|---|---|---|---|
+| **Git Repository** | Source code & configuration (`jsphhbna/egatepass`) | Modernization Lead | EARIST ICT Department | Ready for Transfer | Verify repository admin permissions granted to institutional GitHub organization. |
+| **Application Server** | Vercel production deployment & serverless runtime | Capstone Team Vercel Team | EARIST ICT Vercel Team | Ready for Transfer | Verify project transfer accepted in Vercel dashboard and custom domain active. |
+| **Database** | Supabase PostgreSQL 17.x relational instance | Capstone Supabase Org | EARIST ICT Supabase Org | Ready for Transfer | Verify project transfer accepted in Supabase dashboard and DB connection active. |
+| **Authentication** | Supabase Auth (GoTrue) service & user accounts | Capstone Supabase Org | EARIST ICT Supabase Org | Ready for Transfer | Verify institutional Super Admin can authenticate and manage staff accounts. |
+| **Private Storage** | Supabase Storage (`visitor-photos`, `visitor-ids`) | Capstone Supabase Org | EARIST ICT Supabase Org | Ready for Transfer | Verify bucket privacy (`public = false`) and authenticated image retrieval. |
+| **Domain Registrar** | Domain registration (`egatepass.tech`) | get.tech / Orderbox Account | EARIST ICT Domain Custodian | Ready for Transfer | Confirm account management transfer or domain authorization code transfer. |
+| **DNS Authority** | Authoritative DNS records (Apex, CNAME, TXT) | Orderbox DNS Manager | EARIST ICT DNS Manager | Ready for Transfer | Query `dig egatepass.tech +trace` to confirm authoritative nameservers. |
+| **TLS Certificates** | Edge HTTPS certificate lifecycle | Vercel Managed Let's Encrypt | EARIST ICT Webmaster | Maintained | Inspect SSL certificate chain in browser visiting `https://egatepass.tech`. |
+| **Transactional Email** | Resend sending domain & API account | Capstone Resend Account | EARIST ICT Systems Admin | Ready for Transfer | Verify invitation email dispatches with institutional DKIM/SPF passing. |
+| **Bot Protection** | Cloudflare Turnstile widget & managed challenge | Capstone Cloudflare Account | EARIST ICT Security Admin | Ready for Transfer | Verify Turnstile widget challenge completes on public `/get-pass` portal. |
+| **Backup Storage** | Off-site snapshots & database dumps | Capstone Team Storage | EARIST Data Center / ICT Vault | Ready for Provisioning | Verify first non-production restore drill completed in staging environment. |
+| **Monitoring & Telemetry** | Serverless function & database error logs | Vercel / Supabase Dashboards | EARIST ICT NOC / Operations | Ready for Transfer | Confirm institutional operations team has dashboard read/alert access. |
+| **Incident Response** | Campus security hold & incident escalation | Capstone Security Lead | EARIST Chief of Security / ICT | Ready for Transition | Execute test incident hold creation and release in Admin console. |
+| **Privacy & Data Governance** | Retention enforcement & audit trail custody | Capstone Compliance Lead | EARIST Data Protection Officer | Ready for Transition | Confirm daily retention maintenance runs and audit ledger non-repudiation. |
+| **Super Admin Custody** | First human Super Admin credentials | Bootstrap Operator | Director of ICT, EARIST | In Progress | Institutional Super Admin logs in, sets MFA, and confirms staff list access. |
+| **Device Credential Custody** | Gate scanner and kiosk tablet logins | Capstone Device Admin | EARIST Campus Security Guard Lead | Ready for Transition | Re-issue device passwords in Admin console and verify scanner login on gates. |
+
+---
+
+## 3. Deployment Manifest Template
+
+The deployment manifest captures the exact, non-secret state of the production environment at handoff. It serves as the baseline record for subsequent institutional operations and audits.
+
+```text
+================================================================================
+EARIST E-GATEPASS PRODUCTION DEPLOYMENT MANIFEST
+================================================================================
+Release Baseline Information:
+  Git Repository:              github.com/jsphhbna/egatepass
+  Git Commit SHA:              [ Commit SHA at handoff ]
+  Release Date:                [ ISO 8601 Date / Time ]
+  Tested Node.js Runtime:      Node.js 24.x
+  PostgreSQL Version:          Supabase PostgreSQL 17.x
+  Database Migration Head:     [ Latest applied migration filename ]
+
+Network & Domain Authority:
+  Canonical Application Origin: https://egatepass.tech
+  Authoritative Registrar:     get.tech
+  Authoritative DNS Engine:    Orderbox
+  Apex A Record:               216.198.79.1 (Vercel Edge)
+  TLS Certificate Issuer:      Let's Encrypt / Vercel Edge
+
+Storage & Data Plane:
+  Database Project ID:         [ Supabase Project Reference ]
+  Private Storage Buckets:     visitor-photos (private), visitor-ids (private)
+  Scheduled Maintenance:       Daily at 18:00 UTC (02:00 AM Asia/Manila) via /api/admin/retention-maintenance
+  Maintenance Batch Bound:     50 records per invocation
+
+External Integrations:
+  Transactional Email Sender:  EARIST E-GatePass <notifications@egatepass.tech>
+  Email Service Provider:      Resend (DKIM, SPF verified)
+  Bot Protection Provider:     Cloudflare Turnstile (Managed Challenge)
+  Auth Redirect URL Allowlist: https://egatepass.tech/reset-password, https://egatepass.tech/**
+
+Operational State & Governance:
+  Initial Super Admin State:   Bootstrapped and confirmed (public.staff_profiles locked)
+  Developer Accounts Status:   Deactivated and suspended
+  Active Scanner Devices:      [ Count of registered Gate and Kiosk devices ]
+  Known Operational Limits:    Browser-invoked printing via Print Pass; thermal printer direct integration planned
+  Latest Database Snapshot:    [ Timestamp of verified pre-handoff backup ]
+  Latest Restore Drill Date:   [ Timestamp of verified staging restore drill ]
+================================================================================
+```
+
+---
+
+## 4. Safe Data Sanitization Protocol
 
 Before handing over to live institutional operations, transient test data generated during user acceptance testing must be reviewed and removed safely.
 
@@ -60,19 +132,19 @@ Before handing over to live institutional operations, transient test data genera
 
 ---
 
-## 3. Infrastructure & Credentials Transfer
+## 5. Infrastructure & Credentials Transfer Procedures
 
-### 3.1 Supabase Project Ownership
+### 5.1 Supabase Project Ownership
 1. Go to **Supabase Dashboard > Project Settings > General**.
 2. Click **Transfer Project**.
 3. Enter the institutional administrator's Supabase account email (e.g. `ict.director@earist.edu.ph`).
 4. Institutional owner accepts the transfer.
 
-### 3.2 Vercel Project Team Ownership
+### 5.2 Vercel Project Team Ownership
 1. Navigate to **Vercel Dashboard > Project Settings > Transfer Project**.
 2. Transfer project to the official institutional team scope.
 
-### 3.3 Domain & Authoritative DNS Handover
+### 5.3 Domain & Authoritative DNS Handover
 - **Domain registrar / DNS management**: `get.tech`
 - **Authoritative DNS infrastructure**: `Orderbox`
 - Ensure `get.tech` / Orderbox DNS credentials and management access are transferred to institutional IT administration.
@@ -84,7 +156,7 @@ Before handing over to live institutional operations, transient test data genera
 
 ---
 
-## 4. Final Verification & Acceptance Sign-off
+## 6. Final Verification & Acceptance Sign-off
 
 Upon completion of the above steps, both the Lead Engineer and the EARIST Institutional Project Sponsor execute the sign-off record:
 

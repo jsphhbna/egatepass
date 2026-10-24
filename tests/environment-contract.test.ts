@@ -3,6 +3,7 @@ import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
 const REQUIRED_ACTIVE_RUNTIME_VARS = [
+  'APP_BASE_URL',
   'VITE_SUPABASE_URL',
   'VITE_SUPABASE_PUBLISHABLE_KEY',
   'VITE_TURNSTILE_SITE_KEY',

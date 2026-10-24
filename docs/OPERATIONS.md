@@ -77,7 +77,7 @@ flowchart LR
 
 ### 2.1 Visitor Portal & Kiosk Registration
 - **Online Visitors**: Access `https://egatepass.tech`, solve Turnstile, fill out personal and visit details within the scheduling window (default 30 days ahead), capture camera-only photo and valid ID, and obtain an issued pass with a cryptographically signed QR code.
-- **Walk-in Visitors (Kiosk)**: Use the campus kiosk tablet. Rear camera captures the visitor's valid ID, local Tesseract OCR extracts information for review, front camera captures a selfie, and a QR pass is displayed and printed.
+- **Walk-in Visitors (Kiosk)**: Use the campus kiosk tablet. Rear camera captures the visitor's valid ID, local Tesseract OCR extracts information for review, front camera captures a selfie, and a QR pass is displayed with a manual "Print Pass" control. (Note: Thermal printer device integration is a planned hardware enhancement. Current kiosk printing relies on the browser/operating-system print path invoked via the Print Pass action).
 
 ### 2.2 Gate Entry, Guard Review, and Exit Sequence
 
@@ -208,7 +208,7 @@ The platform operates two separate, dedicated webhook flows:
 - **Outbound Auth Email Hook** (`POST /api/auth/send-email-hook`): Invoked by Supabase Auth to send transactional emails via React Email and Resend API.
 - **Inbound Delivery Observability Webhook** (`POST /api/webhooks/resend`): Invoked by Resend to notify E-GatePass of delivery status (`sent`, `delivered`, `delayed`, `bounced`, `complained`, `failed`).
   - **Provider webhook/signature chain**: Verified operational (historical `email.sent` and `email.delivered` provider events observed in production).
-  - **Transactional webhook RPC (`api.record_resend_delivery_event`)**: Deployed and database/test verified. Awaiting first legitimate post-deployment provider event for live production execution proof.
+  - **Transactional webhook RPC (`api.record_resend_delivery_event`)**: Deployed, database/test verified, and production-verified with signed delivery events (including historical `email.sent` and `email.delivered` events). Operators should repeat the verification procedure after infrastructure migration.
   - **Atomic Transaction & Replay**: Executed via transactional RPC `api.record_resend_delivery_event` (Migrations `20261023140000` and `20261023160000`). Replays return HTTP 200 `already_processed`. If audit logging fails, transaction rolls back so provider retry can reprocess the event.
 - **Webhook Table Retention**: Classified as `OPTIONAL HARDENING — retention period requires explicit policy`. `public.resend_webhook_events` volume is minimal and append-only deduplication remains active.
 - **Legacy SMTP Key Cleanup**:

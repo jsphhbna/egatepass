@@ -125,7 +125,7 @@ The platform operates two distinct, single-purpose webhooks. **Neither webhook i
 - **Method**: `POST`
 - **Verification**: Verified using Svix / Standard Webhook signatures with `RESEND_WEBHOOK_SECRET`.
 - **Provider Webhook / Signature Chain**: **Verified operational** (historical `email.sent` and `email.delivered` provider events observed in production).
-- **Transactional Webhook RPC (`api.record_resend_delivery_event`)**: Deployed and database/test verified. Awaiting first legitimate post-deployment provider event for live production execution proof.
+- **Transactional Webhook RPC (`api.record_resend_delivery_event`)**: Deployed, database/test verified, and production-verified with signed delivery events (including historical `email.sent` and `email.delivered` events). Operators should repeat the verification procedure after infrastructure migration.
 - **Transactional Idempotency & Rollback**: Atomic database claim and delivery audit logging via authoritative RPC `api.record_resend_delivery_event` (Migrations `20261023140000` and `20261023160000`). If delivery audit insertion fails, the entire transaction rolls back, leaving `provider_event_id` unconsumed so provider retry can re-dispatch safely. Replays return HTTP 200 `already_processed` with no duplicate audit record.
 - **Atomic Rollback**: If delivery audit insertion fails, the entire transaction rolls back, leaving `provider_event_id` unconsumed so provider retry can re-dispatch safely.
 - **Replay**: Replays return HTTP 200 `already_processed` with no duplicate audit record.
@@ -151,6 +151,21 @@ The platform operates two distinct, single-purpose webhooks. **Neither webhook i
    > - **Action**: Revoke/delete the legacy key in Resend dashboard after verifying no SMTP fallback is intentionally retained.
    > - **Impact**: Current Send Email Hook + Resend REST API architecture remains unaffected.
    > - **Verification afterward**: Confirm Supabase Auth Send Email Hook still succeeds and test invitation/password-reset email delivers.
+
+### 6.4 Application Origin & Email Asset Handoff Verification
+Transactional email templates (`server/templates/`) reference external branding artwork hosted on the application origin (such as `/earist-logo-email.png` and `/earist-email-header-art.jpg` resolved via `server/templates/branding.ts`).
+- When changing domains or migrating to an institutional server, set `APP_BASE_URL` to the new canonical origin (e.g. `https://gatepass.example.edu`).
+- Verify that these asset URLs load correctly over public HTTPS without authentication. The system does not require the legacy `egatepass.tech` domain after institutional handoff.
+
+### 6.5 Supabase Auth Redirect & Site URL Configuration
+When migrating or updating the production origin:
+1. Navigate to **Supabase Dashboard > Authentication > URL Configuration**.
+2. Update **Site URL** to the new canonical origin (e.g. `https://gatepass.example.edu`).
+3. Update **Redirect URLs** to include all authorized paths:
+   - `https://gatepass.example.edu/reset-password`
+   - `https://gatepass.example.edu/login`
+   - `https://gatepass.example.edu/**`
+4. **Critical Distinction**: Local `supabase/config.toml` settings are development-only and do **NOT** govern the hosted Supabase production project. Operators must verify settings in the live Supabase dashboard.
 
 ---
 

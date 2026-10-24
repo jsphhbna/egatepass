@@ -1,16 +1,33 @@
-# Maintenance Operations & Cron Readiness
+# Maintenance Operations & Scheduled Cron Architecture
 
-This document describes the retention maintenance architecture, cron-ready invocation contracts, and security policies governing daily retention cleanup and cross-system reconciliation.
+This document describes the retention maintenance architecture, production cron configuration in `vercel.json`, self-hosted scheduler invocation contracts, and security policies governing daily retention cleanup and cross-system reconciliation.
 
 ---
 
-## 1. Cron Configuration Status & Reality
+## 1. Cron Configuration Status & Production Schedule
 
-> **IMPORTANT OPERATIONAL NOTE**: The repository does **NOT** currently configure an automatic schedule in `vercel.json`. Retention maintenance is **cron-ready** via its authenticated HTTP endpoint, but automated scheduling requires explicit institutional configuration by the platform owner.
+> **OPERATIONAL STATUS**: Scheduled retention maintenance is **configured and active** in `vercel.json`. It is not merely "cron-ready"—it executes automatically in production.
+
+### Production Schedule Specification:
+- **Configured Target**: `/api/admin/retention-maintenance`
+- **Schedule Expression**: `0 18 * * *`
+- **Cron Expression Timezone**: **UTC** (18:00 UTC)
+- **Local Time Equivalent**: Approximately **02:00 AM Asia/Manila** on the next calendar day (UTC+8).
+- **Configuration Source**: Committed in `vercel.json` under `crons`:
+  ```json
+  {
+    "crons": [
+      {
+        "path": "/api/admin/retention-maintenance",
+        "schedule": "0 18 * * *"
+      }
+    ]
+  }
+  ```
 
 ```mermaid
 flowchart LR
-    Scheduler[External Scheduler / Admin CLI<br/>Cron-Ready Caller]
+    Scheduler[Vercel Cron / Institutional Scheduler<br/>Active Schedule: 0 18 * * * UTC]
     Endpoint[POST /api/admin/retention-maintenance]
     AuthCheck{Bearer CRON_SECRET<br/>or Super Admin Session?}
     Engine[Retention Maintenance Engine<br/>server/routes/admin/retention-maintenance.ts]
@@ -41,7 +58,7 @@ GET  /api/admin/retention-maintenance
 
 ### 2.1 Authentication & Caller Authority
 The endpoint supports dual authentication mechanisms:
-1. **Machine-to-Machine (Cron)**: Requires `Authorization: Bearer <CRON_SECRET>`.
+1. **Machine-to-Machine (Cron / Scheduled Jobs)**: Requires HTTP header `Authorization: Bearer <CRON_SECRET>` where `<CRON_SECRET>` matches `process.env.CRON_SECRET`.
 2. **Interactive Super Admin**: Requires an active Supabase Auth session with `role = 'superadmin'`.
 
 ### 2.2 Request Parameters (JSON Body)
@@ -52,7 +69,7 @@ The endpoint supports dual authentication mechanisms:
 }
 ```
 - `dryRun` (boolean, default: `false`): When `true`, evaluates eligible records without performing storage deletions or database updates.
-- `batchSize` (integer, default: `50`, min: `1`, max: `200`): Bounded batch size to prevent serverless function timeouts.
+- `batchSize` (integer, default: `50`, min: `1`, max: `200`): Bounded batch size to prevent serverless function timeouts or excessive database transaction duration.
 
 ---
 
@@ -60,11 +77,11 @@ The endpoint supports dual authentication mechanisms:
 
 ```mermaid
 sequenceDiagram
-    participant Caller as Vercel Scheduler / Admin CLI
+    participant Caller as Scheduler / Admin CLI
     participant API as /api/admin/retention-maintenance
     participant Engine as Maintenance Engine
 
-    Caller->>API: POST /api/admin/retention-maintenance<br/>Authorization: Bearer <CRON_SECRET>
+    Caller->>API: POST /api/admin/retention-maintenance<br/>Authorization: Bearer $CRON_SECRET
     API->>API: Compare Bearer token against process.env.CRON_SECRET
 
     alt Token Missing or Invalid
@@ -104,7 +121,7 @@ stateDiagram-v2
 ### Safety Invariants Enforced:
 1. **Pass Status Protection**: Passes in status `pending` or `inside` are NEVER purged.
 2. **Active Passes**: Passes that are currently active and unexpired are NEVER purged.
-3. **Incident Holds**: Any visitor or pass with an active row in `public.incident_holds` is indefinitely protected from deletion until released by an administrator.
+3. **Incident Holds**: Any visitor or pass with an active row in `public.incident_holds` is indefinitely protected from deletion until explicitly released by an administrator.
 4. **Protected Audit Events**: Security-critical governance actions are permanently preserved:
    - **Current Canonical Actions**:
      `superadmin.bootstrap`, `staff.create`, `staff.update`,
@@ -119,18 +136,23 @@ stateDiagram-v2
 
 ---
 
-## 5. Manual Invocation & Operator Diagnostics
+## 5. Self-Hosted Scheduled Maintenance & Terminal Invocation
 
-Administrators can manually trigger maintenance from the terminal:
+For an institution-owned server or off-Vercel deployment, scheduled maintenance must be configured using an operating system scheduler (e.g. Linux cron, systemd timer) invoking `/api/admin/retention-maintenance`.
+
+### 5.1 Invocation Command Contract
+Administrators or scheduled system tasks invoke the endpoint with the machine secret:
 
 ```bash
-curl -X POST https://egatepass.tech/api/admin/retention-maintenance \
+curl -X POST https://gatepass.example.edu/api/admin/retention-maintenance \
   -H "Authorization: Bearer $CRON_SECRET" \
   -H "Content-Type: application/json" \
   -d '{"batchSize": 50, "dryRun": false}'
 ```
 
-### Expected Response:
+> **Security Rule**: Never expose `$CRON_SECRET` as a literal in shell scripts, cron tabs, or command histories. Always pass it via an environment variable loaded from a protected credential store.
+
+### 5.2 Expected JSON Response:
 ```json
 {
   "status": "success",
@@ -147,20 +169,8 @@ curl -X POST https://egatepass.tech/api/admin/retention-maintenance \
 }
 ```
 
----
-
-## 6. Enabling Scheduled Vercel Cron (Optional Post-Handoff Step)
-
-If the institutional owner wishes to enable automated daily cron execution, add the following to `vercel.json` and deploy:
-
-```json
-{
-  "crons": [
-    {
-      "path": "/api/admin/retention-maintenance",
-      "schedule": "0 18 * * *"
-    }
-  ]
-}
-```
-*(Note: 18:00 UTC corresponds to 02:00 AM Asia/Manila time. Do not add this configuration without institutional sign-off).*
+### 5.3 Operational Best Practices:
+- **Bounded Batches**: Processing runs in bounded batches (default 50). If a massive backlog exists, successive runs will progressively clear the backlog without table locks.
+- **Dry Run Verification**: Prior to policy adjustments or after database restorations, execute with `{"dryRun": true}` to preview candidates without executing physical deletes.
+- **Log Review**: Ensure scheduler logs redirect to a monitored log file (e.g. `/var/log/egatepass-maintenance.log`) and check for HTTP 200 responses.
+- **Retry Behavior**: If a maintenance run encounters a transient database or network error, it will exit with a non-zero status. Schedulers should log the alert and retry on the next regular daily cycle. Unfinished items remain eligible for subsequent runs.

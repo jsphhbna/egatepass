@@ -56,8 +56,9 @@ This runbook provides complete step-by-step procedures for manual testing and pr
    - Switch to front camera and take selfie.
 7. **Pass Generation & Printing**:
    - Click **Issue Gate Pass**.
-   - Confirm pass is issued and browser print dialog (`window.print()`) opens automatically with thermal receipt layout.
-   - Confirm optional **Email QR Pass** button is available.
+   - Confirm pass is issued and displays QR code along with visitor summary and action buttons.
+   - Click **Print Pass** and confirm browser print dialog (`window.print()`) is invoked. (Note: Thermal printer device integration is a planned hardware enhancement. Current kiosk printing relies on the browser/operating-system print path).
+   - Confirm optional **Email my QR code** and **Next Visitor** buttons are available and responsive.
 
 ---
 

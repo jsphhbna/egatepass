@@ -10,6 +10,7 @@ This document is the authoritative specification for all configuration and secre
 
 | Variable | Scope | Secret? | Consumer / Used By | Production Required? | Purpose & Format Specification |
 |---|---|---|---|---|---|
+| `APP_BASE_URL` | Production, Preview, Local | No | Transactional email template branding (`server/templates/branding.ts`) | **Yes** | `https://gatepass.example.edu` (Public canonical application origin used for externally loaded transactional-email branding assets) |
 | `VITE_SUPABASE_URL` | Production, Preview, Local | No | Client application (`src/lib/supabase.ts`) | **Yes** | `https://<project-ref>.supabase.co` (Public Supabase API Gateway) |
 | `VITE_SUPABASE_PUBLISHABLE_KEY` | Production, Preview, Local | No | Client application (`src/lib/supabase.ts`) | **Yes** | `sb_publishable_...` (Supabase publishable browser key; intentionally public and safe for browser use when RLS is correctly enforced) |
 | `VITE_TURNSTILE_SITE_KEY` | Production, Local | No | Cloudflare Turnstile widget (`src/pages/GetPassPage.tsx`, `LoginPage.tsx`) | **Yes** (Prod) | `0x4AAAAAA...` (Public Cloudflare Turnstile Managed widget site key; scoped to Production in Vercel) |
@@ -33,7 +34,7 @@ Generic Vercel Preview deployments are protected by Vercel Deployment Protection
 
 ```text
 Production Scope (egatepass.tech)
-├─ Public / Non-sensitive configuration (VITE_SUPABASE_URL, SUPABASE_URL, etc.)
+├─ Public / Non-sensitive configuration (APP_BASE_URL, VITE_SUPABASE_URL, SUPABASE_URL, etc.)
 └─ Full external provider credentials (SUPABASE_SECRET_KEY, RESEND_API_KEY, PASS_TOKEN_SECRET,
      CRON_SECRET, RATE_LIMIT_HMAC_SECRET, SEND_EMAIL_HOOK_SECRET, RESEND_WEBHOOK_SECRET)
 

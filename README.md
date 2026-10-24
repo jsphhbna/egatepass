@@ -135,7 +135,7 @@ flowchart TD
     Store[Upload to Private Storage Buckets]
     Issue[Submit Pass Issuance<br/>POST /api/passes/issue]
     QR[Generate Cryptographic QR Pass]
-    Print[Auto-Invoke Thermal Print Receipt]
+    Print[Invoke Browser Print Flow via Print Pass]
     Email[Optional Email QR Delivery]
 
     Start --> Auth
@@ -153,6 +153,8 @@ flowchart TD
 ```
 
 *Notice: OCR execution occurs entirely within the client browser memory. No unverified ID image is transmitted to third-party recognition APIs.*
+
+> **Hardware Notice**: Thermal printer device integration is a planned hardware enhancement. Current kiosk printing relies on the browser/operating-system print path invoked via the "Print Pass" control.
 
 ---
 
@@ -439,10 +441,27 @@ npx vercel build --prod
 - **Production Scope**: Contains all privileged provider credentials (`SUPABASE_SECRET_KEY`, `PASS_TOKEN_SECRET`, `RATE_LIMIT_HMAC_SECRET`, `CRON_SECRET`, `RESEND_API_KEY`, `SEND_EMAIL_HOOK_SECRET`, `RESEND_WEBHOOK_SECRET`).
 - **Generic Preview Scope**: Protected by Vercel SSO; receives ONLY public frontend configuration (`VITE_SUPABASE_URL`, `VITE_SUPABASE_PUBLISHABLE_KEY`, `SUPABASE_URL`). Production privileged secrets are never copied into generic preview deployments.
 
-## 8. Documentation Index
+---
+
+## 8. Institutional Deployment & Handoff
+
+EARIST E-GatePass is designed with clear architectural boundaries separating logical requirements from current cloud providers:
+- **Current Hosted Reference Deployment**: Operates on Vercel Serverless (Node.js 24.x), Supabase (PostgreSQL 17.x, Auth, Private Storage), Resend (transactional email), Cloudflare Turnstile (bot challenge), and get.tech / Orderbox (DNS).
+- **Institution-Controlled Deployment Options**: EARIST IT may choose to inherit the hosted environment (Model A), self-host the application tier behind an institutional reverse proxy (Model B), run a self-hosted Supabase stack (Model C), or migrate services.
+- **Supabase Dependency Boundary**: The application runtime directly consumes `@supabase/supabase-js`, Supabase Auth, Storage APIs, and `api` schema RPCs. Complete replacement of Supabase requires dedicated engineering adaptation.
+- **Detailed Specifications**:
+  - Architecture & Portability: [docs/INSTITUTIONAL_DEPLOYMENT.md](docs/INSTITUTIONAL_DEPLOYMENT.md)
+  - Disaster Recovery & Restore: [docs/BACKUP_AND_RECOVERY.md](docs/BACKUP_AND_RECOVERY.md)
+  - Kiosk Hardware & Printing: [docs/KIOSK_HARDWARE.md](docs/KIOSK_HARDWARE.md)
+  - Administrative Ownership Transfer: [docs/CLEAN_DATA_HANDOFF.md](docs/CLEAN_DATA_HANDOFF.md)
+
+## 9. Documentation Index
 
 | Document | Purpose |
 |---|---|
+| [docs/INSTITUTIONAL_DEPLOYMENT.md](docs/INSTITUTIONAL_DEPLOYMENT.md) | Institutional handoff models, self-hosting portability, reverse proxy contracts, and network matrix |
+| [docs/BACKUP_AND_RECOVERY.md](docs/BACKUP_AND_RECOVERY.md) | 4-class disaster recovery, restore ordering, RPO/RTO policy placeholders, and restore drills |
+| [docs/KIOSK_HARDWARE.md](docs/KIOSK_HARDWARE.md) | Kiosk hardware specs, tablet/camera requirements, browser printing, and future hardware boundary |
 | [docs/SECURITY.md](docs/SECURITY.md) | Canonical security contract, trust boundaries, actor resolution, and threat matrix |
 | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | In-depth engineering specifications, relational entity models, and data flows |
 | [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) | Vercel deployment, migration ordering, Send Email Hook setup, and rollback |

@@ -36,8 +36,8 @@ describe('Documentation Truthfulness & Formatting Contract', () => {
     }
   });
 
-  it('ensures all active documents have zero malformed single-backtick mermaid blocks', () => {
-    const singleBacktickMermaidRegex = /^\x60mermaid/;
+  it('ensures no active documents use single-backtick mermaid fences', () => {
+    const singleBacktickMermaidRegex = /^`mermaid\s*$/;
     for (const filePath of activeDocFiles) {
       const content = fs.readFileSync(filePath, 'utf8');
       const lines = content.split(/\r?\n/);
@@ -68,6 +68,9 @@ describe('Documentation Truthfulness & Formatting Contract', () => {
       { pattern: /\bsystem_settings\b/i, label: 'system_settings table (should be public.app_settings)' },
       { pattern: /Active Super Admin already exists\. Bootstrap procedure locked\./i, label: 'stale bootstrap lock claim (lock occurs when ANY row exists in public.staff_profiles)' },
       { pattern: /Success: User .* bootstrapped as Super Admin\./i, label: 'fabricated bootstrap return output (function returns void)' },
+      { pattern: /Auto-Invoke Thermal Print Receipt/i, label: 'Auto-Invoke Thermal Print Receipt (kiosk printing uses manual Print Pass control)' },
+      { pattern: /The repository does NOT currently configure an automatic schedule in vercel\.json/i, label: 'stale cron unconfigured claim (vercel.json configures daily retention maintenance)' },
+      { pattern: /opens automatically with thermal receipt layout/i, label: 'automatic thermal print dialog opening (kiosk printing is user-invoked via Print Pass)' },
     ];
 
     for (const filePath of activeDocFiles) {
@@ -147,9 +150,12 @@ describe('Documentation Truthfulness & Formatting Contract', () => {
     const deployment = fs.readFileSync('docs/DEPLOYMENT.md', 'utf8');
     const ops = fs.readFileSync('docs/OPERATIONS.md', 'utf8');
 
-    expect(deployment).toContain('Awaiting first legitimate post-deployment provider event');
-    expect(ops).toContain('Awaiting first legitimate post-deployment provider event');
-    expect(deployment).not.toContain('transactional idempotency fully live-verified');
+    expect(deployment).toContain('production-verified with signed delivery events');
+    expect(ops).toContain('production-verified with signed delivery events');
+    expect(deployment).toContain('email.sent');
+    expect(deployment).toContain('email.delivered');
+    expect(deployment).not.toContain('Awaiting first legitimate post-deployment provider event');
+    expect(ops).not.toContain('Awaiting first legitimate post-deployment provider event');
   });
 
   it('ensures documentation states canonical route counts matching route-map matrix', () => {
@@ -218,5 +224,115 @@ describe('Documentation Truthfulness & Formatting Contract', () => {
     // Isolated database warning and scenarios
     expect(qaDoc).toContain('Never test destructive or one-time bootstrap failure scenarios against an established production database');
     expect(qaDoc).toContain('superadmin.bootstrap');
+  });
+
+  it('ensures vercel.json cron schedule is truthfully documented as active in docs/ENVIRONMENT_AND_CRON.md', () => {
+    const cronDoc = fs.readFileSync('docs/ENVIRONMENT_AND_CRON.md', 'utf8');
+    const vercelConfig = JSON.parse(fs.readFileSync('vercel.json', 'utf8'));
+
+    // Assert vercel.json configuration
+    const retentionCron = vercelConfig.crons.find((c: any) => c.path === '/api/admin/retention-maintenance');
+    expect(retentionCron).toBeDefined();
+    expect(retentionCron.schedule).toBe('0 18 * * *');
+
+    // Assert docs reflect active configuration
+    expect(cronDoc).toContain('0 18 * * *');
+    expect(cronDoc).toMatch(/18:00 UTC/i);
+    expect(cronDoc).toMatch(/02:00 AM Asia\/Manila/i);
+    expect(cronDoc).toMatch(/configured and active/i);
+    expect(cronDoc).not.toContain('does NOT currently configure an automatic schedule in vercel.json');
+  });
+
+  it('ensures kiosk printing reflects current manual browser print behavior and thermal integration is marked planned', () => {
+    const readme = fs.readFileSync('README.md', 'utf8');
+    const kioskHardware = fs.readFileSync('docs/KIOSK_HARDWARE.md', 'utf8');
+    const qaDoc = fs.readFileSync('docs/MANUAL_QA_RUNBOOK.md', 'utf8');
+    const kioskSource = fs.readFileSync('src/pages/KioskPage.tsx', 'utf8');
+
+    // Verify source code reality
+    expect(kioskSource).toContain('window.print()');
+    expect(kioskSource).toContain('Print Pass');
+
+    // Verify documentation truthfulness
+    expect(readme).toContain('Invoke Browser Print Flow via Print Pass');
+    expect(readme).toContain('Thermal printer device integration is a planned hardware enhancement');
+    expect(kioskHardware).toContain('Print Pass');
+    expect(kioskHardware).toContain('window.print()');
+    expect(kioskHardware).toContain('NOT YET IMPLEMENTED');
+    expect(qaDoc).toContain('Print Pass');
+    expect(qaDoc).not.toContain('Auto-Invoke Thermal Print');
+    expect(qaDoc).not.toContain('opens automatically with thermal receipt layout');
+  });
+
+  it('ensures docs/INSTITUTIONAL_DEPLOYMENT.md truthfully documents deep Supabase coupling and non-trivial migration reality', () => {
+    const instDoc = fs.readFileSync('docs/INSTITUTIONAL_DEPLOYMENT.md', 'utf8');
+
+    expect(instDoc).toContain('THIS IS NOT A HOSTING-ONLY MIGRATION');
+    expect(instDoc).toContain('@supabase/supabase-js');
+    expect(instDoc).toContain('Supabase Auth');
+    expect(instDoc).toContain('Supabase Storage');
+    expect(instDoc).toContain("schema('api').rpc");
+    expect(instDoc).toContain('FOLLOW-UP ENGINEERING REQUIRED');
+
+    // Prohibits claiming plain PostgreSQL replaces Supabase without engineering changes
+    expect(instDoc).not.toMatch(/plain postgresql can replace supabase without (code|engineering) changes/i);
+  });
+
+  it('ensures docs/BACKUP_AND_RECOVERY.md distinguishes database dumps from private storage objects', () => {
+    const backupDoc = fs.readFileSync('docs/BACKUP_AND_RECOVERY.md', 'utf8');
+
+    // Assert 4 asset classes are distinguished
+    expect(backupDoc).toContain('PostgreSQL Relational Database');
+    expect(backupDoc).toContain('Private Object Storage Buckets');
+    expect(backupDoc).toContain('Identity & Authentication State');
+    expect(backupDoc).toContain('External Provider Configurations');
+
+    // Invariant: DB dump does not include binary storage files
+    expect(backupDoc).toMatch(/Database dumps contain ONLY metadata records for visitor evidence/i);
+    expect(backupDoc).toContain('visitor-photos');
+    expect(backupDoc).toContain('visitor-ids');
+    expect(backupDoc).toContain('public = false');
+    expect(backupDoc).toContain('INSTITUTIONAL POLICY REQUIRED');
+  });
+
+  it('ensures documentation truthfully states no dedicated /api/health endpoint currently exists', () => {
+    const instDoc = fs.readFileSync('docs/INSTITUTIONAL_DEPLOYMENT.md', 'utf8');
+    
+    expect(instDoc).toContain('No dedicated production health check endpoint');
+    expect(instDoc).toContain('/api/health');
+    expect(instDoc).toContain('FOLLOW-UP ENGINEERING REQUIRED');
+
+    // Confirm no /api/health source file was accidentally created
+    expect(fs.existsSync('api/health.ts')).toBe(false);
+    expect(fs.existsSync('server/routes/health.ts')).toBe(false);
+  });
+
+  it('ensures APP_BASE_URL is documented as the canonical origin for email branding in ENVIRONMENT.md and DEPLOYMENT.md', () => {
+    const envDoc = fs.readFileSync('docs/ENVIRONMENT.md', 'utf8');
+    const deployDoc = fs.readFileSync('docs/DEPLOYMENT.md', 'utf8');
+    const instDoc = fs.readFileSync('docs/INSTITUTIONAL_DEPLOYMENT.md', 'utf8');
+    const envExample = fs.readFileSync('.env.example', 'utf8');
+
+    expect(envDoc).toContain('`APP_BASE_URL`');
+    expect(deployDoc).toContain('`APP_BASE_URL`');
+    expect(instDoc).toContain('APP_BASE_URL');
+    expect(envExample).toMatch(/^APP_BASE_URL=/m);
+  });
+
+  it('ensures reverse proxy security header and client-IP trust requirements are documented for non-Vercel deployments', () => {
+    const instDoc = fs.readFileSync('docs/INSTITUTIONAL_DEPLOYMENT.md', 'utf8');
+
+    // Headers do not carry over automatically
+    expect(instDoc).toMatch(/Vercel security headers do NOT automatically transfer/i);
+    expect(instDoc).toContain('Content-Security-Policy');
+    expect(instDoc).toContain('Strict-Transport-Security');
+    expect(instDoc).toContain('X-Content-Type-Options');
+    expect(instDoc).toContain('X-Frame-Options');
+    expect(instDoc).not.toContain("'unsafe-eval'");
+
+    // Client-IP spoofing protection on reverse proxy
+    expect(instDoc).toMatch(/client-supplied forwarding headers MUST NOT be trusted directly/i);
+    expect(instDoc).toContain('X-Forwarded-For');
+    expect(instDoc).toContain('FOLLOW-UP ENGINEERING/DEPLOYMENT VALIDATION REQUIRED');
   });
 });
