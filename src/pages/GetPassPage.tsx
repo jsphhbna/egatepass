@@ -118,6 +118,7 @@ export function GetPassPage() {
   const [showEmailModal, setShowEmailModal] = useState(false);
   const [showSkipWarning, setShowSkipWarning] = useState(false);
   const [emailDeliverySecured, setEmailDeliverySecured] = useState(false);
+  const [emailOutcomeUnknown, setEmailOutcomeUnknown] = useState(false);
   const [emailSkipped, setEmailSkipped] = useState(false);
   const [isDownloaded, setIsDownloaded] = useState(false);
 
@@ -433,6 +434,11 @@ export function GetPassPage() {
         ? formatValidityWindow(result.validFrom, result.validUntil)
         : formatWorkingHours(workingHours));
       
+      setEmailDeliverySecured(false);
+      setEmailOutcomeUnknown(false);
+      setEmailSkipped(false);
+      setIsDownloaded(false);
+
       // Feature 4: Delivery Gate — Transition to delivery step
       setStep('delivery');
       setShowEmailModal(true);
@@ -1178,13 +1184,26 @@ export function GetPassPage() {
               </div>
 
               {/* Delivery notification status banner */}
-              {emailSkipped && !emailDeliverySecured && (
+              {emailSkipped && !emailDeliverySecured && !emailOutcomeUnknown && (
                 <div
                   className="rounded-lg border border-[var(--color-warning)] bg-[var(--color-warning-light)] p-3 text-xs text-[var(--color-warning-dark)] text-left space-y-1"
                   role="alert"
                 >
                   <p className="font-bold">Save your E-GatePass before leaving this page.</p>
                   <p>You chose not to provide a verified email, so a copy was not sent to you.</p>
+                </div>
+              )}
+
+              {emailOutcomeUnknown && !emailDeliverySecured && (
+                <div
+                  className="rounded-lg border border-[var(--color-warning)] bg-[var(--color-warning-light)] p-3 text-xs text-[var(--color-warning-dark)] text-left space-y-1"
+                  role="alert"
+                >
+                  <p className="font-bold">Email delivery could not be confirmed.</p>
+                  <p>
+                    Your E-GatePass is valid, but the email provider did not return a confirmed delivery result.
+                    Please download or save this QR before leaving this page.
+                  </p>
                 </div>
               )}
 
@@ -1455,9 +1474,18 @@ export function GetPassPage() {
           mode={step === 'delivery' ? 'delivery-gate' : 'modal'}
           onSuccess={() => {
             setEmailDeliverySecured(true);
+            setEmailOutcomeUnknown(false);
+            setEmailSkipped(false);
             setShowEmailModal(false);
             setStep('done');
             toast.success('A copy of your E-GatePass was sent to your verified email.');
+          }}
+          onUnknown={() => {
+            setEmailDeliverySecured(false);
+            setEmailOutcomeUnknown(true);
+            setEmailSkipped(false);
+            setShowEmailModal(false);
+            setStep('done');
           }}
           onSkip={() => {
             setShowSkipWarning(true);
@@ -1471,6 +1499,8 @@ export function GetPassPage() {
           onConfirmSkip={() => {
             setShowSkipWarning(false);
             setShowEmailModal(false);
+            setEmailDeliverySecured(false);
+            setEmailOutcomeUnknown(false);
             setEmailSkipped(true);
             setStep('done');
           }}

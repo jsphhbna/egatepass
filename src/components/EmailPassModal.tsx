@@ -18,6 +18,7 @@ interface EmailPassModalProps {
   source: 'portal' | 'kiosk';
   mode?: 'modal' | 'delivery-gate';
   onSuccess?: () => void;
+  onUnknown?: () => void;
   onSkip?: () => void;
   initialEmail?: string;
 }
@@ -30,6 +31,7 @@ export function EmailPassModal({
   source,
   mode = 'modal',
   onSuccess,
+  onUnknown,
   onSkip,
   initialEmail = '',
 }: EmailPassModalProps) {
@@ -418,8 +420,8 @@ export function EmailPassModal({
           </p>
           <Button
             onClick={() => {
-              if (onSuccess) {
-                onSuccess();
+              if (onUnknown) {
+                onUnknown();
               } else {
                 handleClose();
               }

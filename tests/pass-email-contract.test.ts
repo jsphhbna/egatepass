@@ -209,6 +209,14 @@ describe('CROSS-LAYER PASS EMAIL CONTRACT & DELIVERY CLOSURE', () => {
       expect(modalSrc).toContain("res.status === 202");
       expect(modalSrc).toContain("setStep('unknown')");
     });
+
+    it('verifies EmailPassModal invokes onUnknown rather than onSuccess when in step unknown', () => {
+      const unknownSection = modalSrc.match(/\{step === 'unknown' && \([\s\S]*?<\/Button>\s*<\/div>\s*\)\}/);
+      expect(unknownSection).toBeTruthy();
+      expect(unknownSection![0]).toContain('if (onUnknown) {');
+      expect(unknownSection![0]).toContain('onUnknown();');
+      expect(unknownSection![0]).not.toContain('onSuccess()');
+    });
   });
 
   describe('3. True Flow Simulation (Frontend Construction -> Shared Schema Validation)', () => {
