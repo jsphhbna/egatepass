@@ -35,7 +35,7 @@ This runbook provides complete step-by-step procedures for manual testing and pr
    - **Expected**: Date input does NOT overflow horizontally outside its form/card container.
 5. **Portal Valid ID (Camera OR Upload)**:
    - Tap **Take Photo** to use rear camera, or switch to **Upload ID** to select an image from gallery/files.
-   - Verify file picker allows selecting JPEG, PNG, or WebP images up to 10MB.
+   - Verify file picker allows selecting JPEG, PNG, or WebP images (uploaded ID images are locally processed and compressed to WebP before evidence upload, and the resulting evidence blob must satisfy the authoritative secure upload-intent limit of 5 MB).
    - Verify unsupported image formats trigger a clear warning message (`This image format is not supported. Please choose a JPEG, PNG, or WebP image.`).
    - Verify selecting the same file again after clearing works seamlessly.
 5b. **Optional Local OCR Autofill**:

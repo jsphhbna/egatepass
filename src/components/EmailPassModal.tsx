@@ -3,6 +3,12 @@ import { Mail, CheckCircle2, AlertCircle, ArrowLeft } from 'lucide-react';
 import { toast } from 'sonner';
 import { Modal, FormField, Input, Button } from '@/components/ui';
 import { requirePortalSupabase, requireSupabase } from '@/lib/supabase';
+import {
+  buildRequestCodePayload,
+  buildVerifyAndSendPayload,
+  type RequestCodePayload,
+  type VerifyAndSendPayload,
+} from '@/lib/passEmailContract';
 
 interface EmailPassModalProps {
   isOpen: boolean;
@@ -35,12 +41,20 @@ export function EmailPassModal({
       code_expired: 'That verification code has expired. Request a new code.',
       max_attempts_exceeded: 'Too many incorrect attempts. Request a new code.',
       too_many_requests: 'Too many email requests. Please wait before trying again.',
+      too_many_requests_recipient: 'Too many verification code requests for this email address. Please try again later.',
+      too_many_requests_actor: 'Too many verification requests from this device or session. Please wait before retrying.',
+      recipient_challenge_limit_exceeded: 'Too many verification code requests for this email address. Please try again later.',
+      actor_challenge_limit_exceeded: 'Too many verification requests from this device or session. Please wait before retrying.',
       email_service_unconfigured: 'Email delivery is currently unavailable.',
       email_state_unavailable: 'Email delivery state is temporarily unavailable. Your issued pass is unaffected.',
       recipient_mismatch: 'The email address no longer matches this verification request.',
       idempotency_key_mismatch: 'This email operation no longer matches the original request. Start again.',
       dispatch_in_progress: 'An email submission is already in progress. Please wait for confirmation.',
       dispatched_unknown_outcome: 'The email provider took too long to confirm. Your pass is issued and available.',
+      email_outcome_unknown: 'The email provider took too long to confirm. Your pass is issued and available.',
+      verification_delivery_unknown: 'The verification code delivery outcome is uncertain. Please wait before requesting another code.',
+      verification_finalization_conflict: 'Verification code delivery was interrupted. Please wait before retrying.',
+      email_finalization_conflict: 'Email delivery confirmation was interrupted. Your pass is issued and available.',
       database_unavailable: 'Database is currently unavailable. Your issued pass is unaffected.',
     };
     if (codeOrMessage && messages[codeOrMessage]) {
@@ -106,16 +120,18 @@ export function EmailPassModal({
         headers['Authorization'] = `Bearer ${session.access_token}`;
       }
 
+      const payload: RequestCodePayload = buildRequestCodePayload({
+        passId,
+        qrToken,
+        recipientEmail,
+        consent,
+        requestId: requestCodeRequestIdRef.current,
+      });
+
       const res = await fetch('/api/passes/email', {
         method: 'POST',
         headers,
-        body: JSON.stringify({
-          action: 'request_code',
-          passId,
-          recipientEmail: recipientEmail.trim(),
-          source,
-          requestId: requestCodeRequestIdRef.current,
-        }),
+        body: JSON.stringify(payload),
       });
 
       const data = await res.json().catch(() => null);
@@ -156,24 +172,31 @@ export function EmailPassModal({
         headers['Authorization'] = `Bearer ${session.access_token}`;
       }
 
+      const payload: VerifyAndSendPayload = buildVerifyAndSendPayload({
+        passId,
+        qrToken,
+        recipientEmail,
+        verificationId,
+        code,
+        requestId: sendRequestIdRef.current,
+      });
+
       const res = await fetch('/api/passes/email', {
         method: 'POST',
         headers,
-        body: JSON.stringify({
-          action: 'verify_and_send',
-          passId,
-          qrToken,
-          recipientEmail: recipientEmail.trim(),
-          verificationId,
-          code: code.trim(),
-          source,
-          requestId: sendRequestIdRef.current,
-        }),
+        body: JSON.stringify(payload),
       });
 
       const data = await res.json().catch(() => null);
 
-      if (res.status === 504 || data?.error === 'dispatched_unknown_outcome') {
+      if (
+        res.status === 504 ||
+        res.status === 202 ||
+        data?.status === 'outcome_unknown' ||
+        data?.error === 'email_outcome_unknown' ||
+        data?.error === 'dispatched_unknown_outcome' ||
+        data?.error === 'email_finalization_conflict'
+      ) {
         setStep('unknown');
         return;
       }
@@ -196,24 +219,15 @@ export function EmailPassModal({
   return (
     <Modal
       isOpen={isOpen}
-      onClose={isDeliveryGate && onSkip ? onSkip : handleClose}
+      onClose={handleClose}
       title={
-        step === 'sent'
-          ? (isDeliveryGate ? 'E-GatePass Emailed!' : 'QR Code Submitted')
-          : step === 'unknown'
-          ? 'Submission Pending Review'
-          : (isDeliveryGate ? 'Verify Email & Send My E-GatePass' : 'Email My QR Code')
-      }
-      description={
-        step === 'input'
-          ? (isDeliveryGate
-              ? 'Enter your email address to receive an official scannable copy of your digital pass.'
-              : 'Enter your email address to receive a secure copy of your digital pass.')
-          : step === 'verify'
-          ? 'Enter the 6-digit code submitted to the email provider to confirm your address.'
-          : step === 'sent'
-          ? 'Your pass QR code was submitted to the email provider. Check your inbox.'
-          : 'The provider outcome could not be confirmed. Your issued pass is still available below.'
+        isDeliveryGate
+          ? step === 'sent'
+            ? 'Delivery Secured'
+            : step === 'unknown'
+            ? 'Delivery Status Uncertain'
+            : 'Deliver Your E-GatePass'
+          : 'Email My E-GatePass QR Code'
       }
       size="sm"
       preventClose={loading || (isDeliveryGate && (step === 'input' || step === 'verify'))}

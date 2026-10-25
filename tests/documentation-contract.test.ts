@@ -335,4 +335,12 @@ describe('Documentation Truthfulness & Formatting Contract', () => {
     expect(instDoc).toContain('X-Forwarded-For');
     expect(instDoc).toContain('FOLLOW-UP ENGINEERING/DEPLOYMENT VALIDATION REQUIRED');
   });
+
+  it('ensures docs/MANUAL_QA_RUNBOOK.md reflects authoritative 5 MB evidence limit and contains no 10MB claims', () => {
+    const qaDoc = fs.readFileSync('docs/MANUAL_QA_RUNBOOK.md', 'utf8');
+    expect(qaDoc).not.toContain('10MB');
+    expect(qaDoc).not.toContain('10 MB');
+    expect(qaDoc).toContain('5 MB');
+    expect(qaDoc).toContain('compressed to WebP');
+  });
 });

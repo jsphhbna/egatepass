@@ -70,7 +70,7 @@ describe('FEATURE 4 CONTRACT: Online Pass Delivery Gate, Timed Skip Warning & Re
     expect(downloadMatch![0]).not.toContain('issueVisitorPass');
 
     // Email resend operates with its own separate idempotency key and does not re-issue pass
-    expect(modalSrc).toContain('action: \'verify_and_send\'');
+    expect(modalSrc).toContain('buildVerifyAndSendPayload');
     expect(modalSrc).toContain('passId,');
   });
 

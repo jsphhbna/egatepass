@@ -1,5 +1,4 @@
 import { createHash, randomInt, randomUUID, timingSafeEqual } from 'node:crypto';
-import { z } from 'zod';
 import { jsonResponse, readBearerToken } from '../../http.js';
 import { getServerSupabaseClients } from '../../supabase.js';
 import { getVerifiedSessionContext, HttpError, recordReconciliation } from '../../actors.js';
@@ -12,30 +11,12 @@ import {
   renderVerificationCodeEmail,
   renderPassIssuedEmail,
 } from '../../templates/index.js';
+import {
+  passEmailRequestSchema,
+  normalizeRecipientEmail,
+} from '../../../src/lib/passEmailContract.js';
 
-const passIdSchema = z.string().uuid();
-
-const requestCodeSchema = z.object({
-  action: z.literal('request_code'),
-  passId: passIdSchema,
-  qrToken: z.string().min(16).max(256),
-  recipientEmail: z.string().email().max(320),
-  consent: z.literal(true),
-  requestId: z.string().uuid(),
-});
-
-const verifyAndSendSchema = z.object({
-  action: z.literal('verify_and_send'),
-  passId: passIdSchema,
-  qrToken: z.string().min(16).max(256),
-  recipientEmail: z.string().email().max(320),
-  verificationId: z.string().uuid(),
-  code: z.string().trim().regex(/^\d{6}$/),
-  requestId: z.string().uuid(),
-});
-
-const schema = z.discriminatedUnion('action', [requestCodeSchema, verifyAndSendSchema]);
-
+// Validated public reference UUID: z.string().uuid() (governed by passEmailContract)
 interface PassWithVisitor {
   id: string;
   public_reference: string;
@@ -279,7 +260,7 @@ async function handleRequest(request: Request): Promise<Response> {
   if (request.method !== 'POST') return jsonResponse(405, { error: 'method_not_allowed' }, { Allow: 'POST' });
   const token = readBearerToken(request);
   if (!token) return jsonResponse(401, { error: 'authentication_required' });
-  const parsed = schema.safeParse(await request.json().catch(() => null));
+  const parsed = passEmailRequestSchema.safeParse(await request.json().catch(() => null));
   if (!parsed.success) return jsonResponse(400, { error: 'invalid_request', details: parsed.error.issues });
 
   try {
@@ -326,7 +307,7 @@ async function handleRequest(request: Request): Promise<Response> {
       return jsonResponse(403, { error: 'invalid_bearer_token' });
     }
 
-    const recipient = parsed.data.recipientEmail.trim().toLowerCase();
+    const recipient = normalizeRecipientEmail(parsed.data.recipientEmail);
 
     if (parsed.data.action === 'request_code') {
       const verificationId = randomUUID();

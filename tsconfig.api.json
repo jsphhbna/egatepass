@@ -10,5 +10,5 @@
     "skipLibCheck": true,
     "types": ["node"]
   },
-  "include": ["api/**/*.ts", "server/**/*.ts", "server/**/*.tsx"]
+  "include": ["api/**/*.ts", "server/**/*.ts", "server/**/*.tsx", "src/lib/passEmailContract.ts"]
 }
