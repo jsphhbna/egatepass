@@ -7,7 +7,7 @@ import { useObjectUrl } from '@/hooks/useObjectUrl';
 import { compressImageToWebP } from '@/lib/imageProcessing';
 import { recognizeIdImage, terminateLocalOcrWorker } from '@/lib/ocr';
 import { issueVisitorPass, loadRegistrationSettings } from '@/services/visitorRegistration';
-import { toDataURL } from 'qrcode';
+import { generateBrandedQrDataUrl } from '@/lib/brandedQr';
 import {
   Camera,
   CheckCircle2,
@@ -330,10 +330,8 @@ export function KioskPage() {
     try {
       const formData = getValues();
       const result = await issueVisitorPass('kiosk', formData, photoBlob, idBlob, issueRequestId.current);
-      const qrUrl = await toDataURL(result.qrToken, {
-        width: 300,
-        margin: 2,
-        color: { dark: '#000000', light: '#ffffff' },
+      const qrUrl = await generateBrandedQrDataUrl(result.qrToken, {
+        size: 360,
       });
 
       setQrDataUrl(qrUrl);

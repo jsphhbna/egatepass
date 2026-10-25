@@ -10,6 +10,10 @@ interface EmailPassModalProps {
   passId: string;
   qrToken: string;
   source: 'portal' | 'kiosk';
+  mode?: 'modal' | 'delivery-gate';
+  onSuccess?: () => void;
+  onSkip?: () => void;
+  initialEmail?: string;
 }
 
 export function EmailPassModal({
@@ -18,7 +22,13 @@ export function EmailPassModal({
   passId,
   qrToken,
   source,
+  mode = 'modal',
+  onSuccess,
+  onSkip,
+  initialEmail = '',
 }: EmailPassModalProps) {
+  const isDeliveryGate = mode === 'delivery-gate';
+
   function friendlyEmailError(codeOrMessage: string | undefined, fallback: string): string {
     const messages: Record<string, string> = {
       invalid_code: 'That verification code is incorrect.',
@@ -29,113 +39,102 @@ export function EmailPassModal({
       email_state_unavailable: 'Email delivery state is temporarily unavailable. Your issued pass is unaffected.',
       recipient_mismatch: 'The email address no longer matches this verification request.',
       idempotency_key_mismatch: 'This email operation no longer matches the original request. Start again.',
-      dispatch_in_progress: 'An email submission is already in progress. Do not submit again.',
-      verification_delivery_failed: 'The provider rejected the verification email. Try a new code request.',
-      email_delivery_failed: 'The provider rejected the QR email. Your issued pass is still available.',
+      dispatch_in_progress: 'An email submission is already in progress. Please wait for confirmation.',
+      dispatched_unknown_outcome: 'The email provider took too long to confirm. Your pass is issued and available.',
+      database_unavailable: 'Database is currently unavailable. Your issued pass is unaffected.',
     };
-    return codeOrMessage ? (messages[codeOrMessage] ?? codeOrMessage) : fallback;
+    if (codeOrMessage && messages[codeOrMessage]) {
+      return messages[codeOrMessage];
+    }
+    return fallback;
   }
 
   const [step, setStep] = useState<'input' | 'verify' | 'sent' | 'unknown'>('input');
-  const [recipientEmail, setRecipientEmail] = useState('');
-  const [consent, setConsent] = useState(false);
+  const [recipientEmail, setRecipientEmail] = useState(initialEmail);
   const [code, setCode] = useState('');
+  const [consent, setConsent] = useState(false);
   const [verificationId, setVerificationId] = useState<string | null>(null);
-  const [resendCooldown, setResendCooldown] = useState(0);
   const [loading, setLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
-  const requestCodeRequestIdRef = useRef(crypto.randomUUID());
-  const sendRequestIdRef = useRef(crypto.randomUUID());
+  const [resendCooldown, setResendCooldown] = useState(0);
+
+  const requestCodeRequestIdRef = useRef<string>(crypto.randomUUID());
+  const sendRequestIdRef = useRef<string>(crypto.randomUUID());
 
   useEffect(() => {
-    setStep('input');
-    setRecipientEmail('');
-    setConsent(false);
-    setCode('');
-    setVerificationId(null);
-    setLoading(false);
-    setErrorMessage(null);
-    requestCodeRequestIdRef.current = crypto.randomUUID();
-    sendRequestIdRef.current = crypto.randomUUID();
-  }, [passId, qrToken, source]);
+    if (initialEmail && !recipientEmail) {
+      setRecipientEmail(initialEmail);
+    }
+  }, [initialEmail]);
 
-  function resetState() {
-    setStep('input');
-    setRecipientEmail('');
-    setConsent(false);
-    setCode('');
-    setVerificationId(null);
-    setLoading(false);
-    setErrorMessage(null);
-    requestCodeRequestIdRef.current = crypto.randomUUID();
-    sendRequestIdRef.current = crypto.randomUUID();
-  }
+  useEffect(() => {
+    if (resendCooldown <= 0) return;
+    const timer = setInterval(() => {
+      setResendCooldown((prev) => (prev <= 1 ? 0 : prev - 1));
+    }, 1000);
+    return () => clearInterval(timer);
+  }, [resendCooldown]);
 
   function handleClose() {
-    resetState();
+    if (loading) return;
+    setStep('input');
+    setRecipientEmail(initialEmail);
+    setCode('');
+    setConsent(false);
+    setVerificationId(null);
+    setErrorMessage(null);
+    setResendCooldown(0);
+    requestCodeRequestIdRef.current = crypto.randomUUID();
+    sendRequestIdRef.current = crypto.randomUUID();
     onClose();
-  }
-
-  async function getClientToken(): Promise<string> {
-    const client = source === 'portal' ? requirePortalSupabase() : requireSupabase();
-    const { data: { session } } = await client.auth.getSession();
-    if (!session?.access_token) {
-      throw new Error('Your session has expired. Please refresh the page.');
-    }
-    return session.access_token;
   }
 
   async function handleRequestCode(e: React.FormEvent) {
     e.preventDefault();
+    if (!consent) {
+      setErrorMessage('You must consent to receive your pass by email.');
+      return;
+    }
+    setLoading(true);
     setErrorMessage(null);
 
-    const email = recipientEmail.trim().toLowerCase();
-    if (!email || !/^\S+@\S+\.\S+$/.test(email)) {
-      setErrorMessage('Please enter a valid email address.');
-      return;
-    }
-    if (!consent) {
-      setErrorMessage('Please confirm your consent to receive the pass via email.');
-      return;
-    }
-
-    setLoading(true);
     try {
-      const token = await getClientToken();
+      const supabase = source === 'portal' ? requirePortalSupabase() : requireSupabase();
+      const { data: { session } } = await supabase.auth.getSession();
+      const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+      if (session?.access_token) {
+        headers['Authorization'] = `Bearer ${session.access_token}`;
+      }
+
       const res = await fetch('/api/passes/email', {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${token}`,
-        },
+        headers,
         body: JSON.stringify({
           action: 'request_code',
           passId,
-          qrToken,
-          recipientEmail: email,
-          consent: true,
+          recipientEmail: recipientEmail.trim(),
+          source,
           requestId: requestCodeRequestIdRef.current,
         }),
       });
 
-      const data = await res.json().catch(() => null) as {
-        verificationId?: string;
-        error?: string;
-        message?: string;
-        status?: string;
-        retryAllowed?: boolean;
-      } | null;
-      if (!res.ok || !data?.verificationId) {
+      const data = await res.json().catch(() => null);
+
+      if (res.status === 429) {
+        setResendCooldown(60);
+        throw new Error(data?.message || friendlyEmailError('too_many_requests', 'Too many requests. Please wait before retrying.'));
+      }
+      if (!res.ok || !data?.success) {
         if (data?.retryAllowed) requestCodeRequestIdRef.current = crypto.randomUUID();
-        throw new Error(data?.message || friendlyEmailError(data?.error, 'Failed to send verification code.'));
+        throw new Error(data?.message || friendlyEmailError(data?.error, 'Failed to request verification code.'));
       }
 
       setVerificationId(data.verificationId);
       setStep('verify');
       setResendCooldown(60);
-      toast.success('Verification code submitted to the email provider. Check your inbox.');
+      toast.success('Verification code submitted. Check your inbox.');
     } catch (err) {
-      const message = err instanceof Error ? err.message : 'Could not send verification code.';
+      const message = err instanceof Error ? err.message : 'Failed to send code.';
       setErrorMessage(message);
       toast.error(message);
     } finally {
@@ -145,49 +144,37 @@ export function EmailPassModal({
 
   async function handleVerifyAndSend(e: React.FormEvent) {
     e.preventDefault();
+    if (!verificationId || code.trim().length !== 6) return;
+    setLoading(true);
     setErrorMessage(null);
 
-    const cleanCode = code.trim();
-    if (!cleanCode || !/^\d{6}$/.test(cleanCode)) {
-      setErrorMessage('Please enter the 6-digit verification code.');
-      return;
-    }
-    if (!verificationId) {
-      setErrorMessage('Verification session lost. Please request a new code.');
-      setStep('input');
-      return;
-    }
-
-    setLoading(true);
     try {
-      const token = await getClientToken();
+      const supabase = source === 'portal' ? requirePortalSupabase() : requireSupabase();
+      const { data: { session } } = await supabase.auth.getSession();
+      const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+      if (session?.access_token) {
+        headers['Authorization'] = `Bearer ${session.access_token}`;
+      }
+
       const res = await fetch('/api/passes/email', {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${token}`,
-        },
+        headers,
         body: JSON.stringify({
           action: 'verify_and_send',
           passId,
           qrToken,
-          recipientEmail: recipientEmail.trim().toLowerCase(),
+          recipientEmail: recipientEmail.trim(),
           verificationId,
-          code: cleanCode,
+          code: code.trim(),
+          source,
           requestId: sendRequestIdRef.current,
         }),
       });
 
-      const data = await res.json().catch(() => null) as {
-        success?: boolean;
-        error?: string;
-        message?: string;
-        status?: string;
-        retryAllowed?: boolean;
-      } | null;
-      if (res.status === 202 || data?.status === 'outcome_unknown') {
+      const data = await res.json().catch(() => null);
+
+      if (res.status === 504 || data?.error === 'dispatched_unknown_outcome') {
         setStep('unknown');
-        toast.error(data?.message || 'Email submission outcome is unknown. Do not retry automatically.');
         return;
       }
       if (!res.ok || !data?.success) {
@@ -209,11 +196,19 @@ export function EmailPassModal({
   return (
     <Modal
       isOpen={isOpen}
-      onClose={handleClose}
-      title={step === 'sent' ? 'QR Code Submitted' : step === 'unknown' ? 'Submission Pending Review' : 'Email My QR Code'}
+      onClose={isDeliveryGate && onSkip ? onSkip : handleClose}
+      title={
+        step === 'sent'
+          ? (isDeliveryGate ? 'E-GatePass Emailed!' : 'QR Code Submitted')
+          : step === 'unknown'
+          ? 'Submission Pending Review'
+          : (isDeliveryGate ? 'Verify Email & Send My E-GatePass' : 'Email My QR Code')
+      }
       description={
         step === 'input'
-          ? 'Enter your email address to receive a secure copy of your digital pass.'
+          ? (isDeliveryGate
+              ? 'Enter your email address to receive an official scannable copy of your digital pass.'
+              : 'Enter your email address to receive a secure copy of your digital pass.')
           : step === 'verify'
           ? 'Enter the 6-digit code submitted to the email provider to confirm your address.'
           : step === 'sent'
@@ -221,7 +216,7 @@ export function EmailPassModal({
           : 'The provider outcome could not be confirmed. Your issued pass is still available below.'
       }
       size="sm"
-      preventClose={loading}
+      preventClose={loading || (isDeliveryGate && (step === 'input' || step === 'verify'))}
     >
       {errorMessage && (
         <div className="mb-4 flex items-start gap-2.5 rounded-lg border border-[var(--color-danger)] bg-[var(--color-danger-light)] p-3 text-xs font-medium text-[var(--color-danger-dark)]" role="alert">
@@ -257,13 +252,21 @@ export function EmailPassModal({
           </label>
 
           <p className="text-xs text-[var(--color-text-muted)]">
-            Email delivery is optional. You can always download or save your pass directly.
+            {isDeliveryGate
+              ? 'Verifying your email ensures you have a permanent copy of your pass if you leave this page.'
+              : 'Email delivery is optional. You can always download or save your pass directly.'}
           </p>
 
           <div className="flex gap-2 pt-2">
-            <Button type="button" variant="secondary" onClick={handleClose} disabled={loading} className="flex-1">
-              Cancel
-            </Button>
+            {isDeliveryGate && onSkip ? (
+              <Button type="button" variant="secondary" onClick={onSkip} disabled={loading} className="flex-1">
+                Continue without email
+              </Button>
+            ) : (
+              <Button type="button" variant="secondary" onClick={handleClose} disabled={loading} className="flex-1">
+                Cancel
+              </Button>
+            )}
             <Button type="submit" loading={loading} disabled={loading || !consent} className="flex-1" icon={<Mail className="h-4 w-4" />}>
               Send Code
             </Button>
@@ -351,6 +354,18 @@ export function EmailPassModal({
               Verify &amp; Send
             </Button>
           </div>
+
+          {isDeliveryGate && onSkip && (
+            <div className="text-center pt-1">
+              <button
+                type="button"
+                onClick={onSkip}
+                className="text-xs text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)] hover:underline"
+              >
+                Continue without email
+              </button>
+            </div>
+          )}
         </form>
       )}
 
@@ -359,12 +374,23 @@ export function EmailPassModal({
           <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-full bg-[var(--color-success-light)] text-[var(--color-success)]">
             <CheckCircle2 className="h-8 w-8" />
           </div>
-          <h3 className="text-lg font-bold text-[var(--color-text-primary)]">Pass Submitted</h3>
+          <h3 className="text-lg font-bold text-[var(--color-text-primary)]">
+            {isDeliveryGate ? 'E-GatePass Emailed!' : 'Pass Submitted'}
+          </h3>
           <p className="text-xs leading-relaxed text-[var(--color-text-secondary)]">
             A scannable copy of your gate pass QR code was submitted to the email provider for <strong>{recipientEmail}</strong>. Check the inbox and spam folder.
           </p>
-          <Button onClick={handleClose} className="w-full">
-            Done
+          <Button
+            onClick={() => {
+              if (onSuccess) {
+                onSuccess();
+              } else {
+                handleClose();
+              }
+            }}
+            className="w-full"
+          >
+            {isDeliveryGate ? 'View My E-GatePass' : 'Done'}
           </Button>
         </div>
       )}
@@ -376,7 +402,18 @@ export function EmailPassModal({
           <p className="text-xs leading-relaxed text-[var(--color-text-secondary)]">
             The provider may have accepted the email, but confirmation was interrupted. To avoid sending the bearer QR twice, automatic retry is disabled. You can still download, print, or share the issued pass.
           </p>
-          <Button onClick={handleClose} className="w-full">Close</Button>
+          <Button
+            onClick={() => {
+              if (onSuccess) {
+                onSuccess();
+              } else {
+                handleClose();
+              }
+            }}
+            className="w-full"
+          >
+            {isDeliveryGate ? 'Continue to E-GatePass' : 'Close'}
+          </Button>
         </div>
       )}
     </Modal>

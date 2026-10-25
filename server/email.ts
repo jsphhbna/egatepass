@@ -1,4 +1,4 @@
-import QRCode from 'qrcode';
+import { generateBrandedQrPngBuffer } from './brandedQr.js';
 
 export interface SendEmailPayload {
   to: string;
@@ -50,15 +50,7 @@ export function escapeHtml(value: string | null | undefined): string {
 }
 
 export async function generateQrPngBuffer(qrToken: string): Promise<Buffer> {
-  return QRCode.toBuffer(qrToken, {
-    type: 'png',
-    width: 360,
-    margin: 2,
-    color: {
-      dark: '#800000', // EARIST maroon
-      light: '#FFFFFF',
-    },
-  });
+  return generateBrandedQrPngBuffer(qrToken);
 }
 
 export interface ResendClassification {

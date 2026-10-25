@@ -1,26 +1,47 @@
 import { describe, expect, it } from 'vitest';
 import { readFileSync } from 'node:fs';
 
-describe('FIX GROUP C: Valid ID Camera Flow & Retake Isolation', () => {
+describe('FEATURE 1 & REGRESSION CONTRACT: Valid ID Ingestion & Kiosk Enforcement', () => {
   const getPassSrc = readFileSync('src/pages/GetPassPage.tsx', 'utf8');
   const kioskSrc = readFileSync('src/pages/KioskPage.tsx', 'utf8');
 
-  it('prohibits type="file" inputs in both Portal and Kiosk registration pages', () => {
-    expect(getPassSrc).not.toContain('type="file"');
+  it('permits camera capture and file/gallery upload on Portal, while strictly prohibiting file upload on Kiosk', () => {
+    // Portal supports both camera and image file upload
+    expect(getPassSrc).toContain('type="file"');
+    expect(getPassSrc).toContain('accept="image/jpeg,image/png,image/webp"');
+
+    // Kiosk remains strictly camera-only
     expect(kioskSrc).not.toContain('type="file"');
   });
 
-  it('removes gallery/browse/file-picker pathways from valid ID evidence', () => {
+  it('removes gallery/browse/file-picker pathways from kiosk valid ID evidence', () => {
     expect(kioskSrc).not.toContain('Upload ID Image Instead');
     expect(kioskSrc).not.toContain('Upload File');
     expect(kioskSrc).not.toContain('fileInputRef');
     expect(kioskSrc).not.toContain('manualIdInputRef');
-    expect(getPassSrc).not.toContain('idFileInputRef');
   });
 
   it('configures rear/environment camera for ID capture in Portal and Kiosk', () => {
     expect(getPassSrc).toContain("facingMode: 'environment'");
     expect(kioskSrc).toContain("facingMode: 'environment'");
+  });
+
+  it('routes uploaded and camera-captured portal valid IDs into the same secure evidence path', () => {
+    // Both pathways set idBlob and idUrl
+    expect(getPassSrc).toContain('setIdBlob(compressed)');
+    expect(getPassSrc).toContain('idUrl.setFromBlob(compressed)');
+    expect(getPassSrc).toContain('issueVisitorPass(\'portal\', formData, photoBlob, idBlob');
+  });
+
+  it('validates supported image formats and fails safely on unsupported types in Portal', () => {
+    expect(getPassSrc).toContain('This image format is not supported. Please choose a JPEG, PNG, or WebP image.');
+    expect(getPassSrc).toContain("['image/jpeg', 'image/png', 'image/webp']");
+  });
+
+  it('prevents duplicate processing actions during ID compression in Portal', () => {
+    expect(getPassSrc).toContain('const [isProcessingId, setIsProcessingId] = useState(false);');
+    expect(getPassSrc).toContain('disabled={isProcessingId}');
+    expect(getPassSrc).toContain('Processing ID image…');
   });
 
   it('implements dedicated onRetakeId in Portal that isolates ID from selfie state', () => {

@@ -66,7 +66,7 @@ flowchart LR
 | **Email Templates** | React Email | Type-safe, branded HTML templates built with TypeScript and TSX |
 | **Bot Protection** | Cloudflare Turnstile | Turnstile bot protection ONLY (not authoritative DNS, not CDN/proxy) |
 | **Authoritative DNS** | get.tech / Orderbox | Domain registrar and authoritative DNS management (@ A to Vercel, Resend DKIM/SPF) |
-| **Local OCR** | Tesseract.js | Client-side optical character recognition for kiosk ID capture |
+| **Local OCR** | Tesseract.js | Client-side optical character recognition for kiosk ID capture and optional portal autofill |
 | **QR Security** | HMAC-SHA256 & SHA-256 | Cryptographic pass bearer tokens with database-stored SHA-256 digest lookup |
 | **Timezone Authority** | `Asia/Manila` (UTC+8) | Institutional schedule enforcement and daily audit boundaries |
 
@@ -76,7 +76,7 @@ flowchart LR
 
 ### 3.1 Visitor Registration Portal Flow
 
-Visitors register for campus entry online prior to arrival. Registration enforces camera-only facial and ID capture.
+Visitors register for campus entry online prior to arrival. Registration enforces camera-only facial selfie capture, flexible valid ID evidence (rear camera capture OR supported JPEG, PNG, or WebP upload), optional browser-local OCR autofill, EARIST-branded center logo QR generation, and a verified email delivery gate before pass reveal.
 
 ```mermaid
 flowchart TD
@@ -85,7 +85,7 @@ flowchart TD
     Session[Supabase Auth Anonymous Session]
     Details[Enter Visitor Information]
     Mode{Peak Mode Active?}
-    ID[Capture Valid ID<br/>Camera-Only]
+    OCR[Optional Browser OCR Autofill]<br/>    ID[Provide Valid ID<br/>Camera OR Image Upload]
     SkipID[ID Capture Bypassed]
     Face[Capture Face Photo<br/>Camera-Only]
     Intent[Request Upload Intents<br/>api.create_upload_intent RPC]
@@ -111,7 +111,8 @@ flowchart TD
     Validate -->|Valid| Commit
     Validate -->|Invalid| Correction[Prompt Correction]
     Correction --> Face
-    Commit --> QR
+    Commit --> Delivery[Verified Email Delivery Gate<br/>5s Timed Skip Option]
+    Delivery --> QR[Display Branded QR Pass<br/>Center EARIST Logo]
 ```
 
 > **Scheduling Note**: Visitors may schedule visits within the institutionally configured scheduling window. The current deployment default uses 30 days ahead.

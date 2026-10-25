@@ -16,9 +16,14 @@ This runbook provides complete step-by-step procedures for manual testing and pr
    - Confirm past dates are disabled and rejected.
    - Confirm dates beyond the configured scheduling window (default: 30 days) are blocked.
 7. Capture Face Photo using webcam (camera-only capture).
-8. Capture Valid ID using webcam (camera-only capture).
+8. Provide Valid ID using either rear camera capture OR file/gallery image upload (JPEG, PNG, WebP).
 9. Submit registration.
-10. **Expected Result**: Pass status displays `issued`. QR code renders clearly with visitor details.
+10. **Delivery Gate Verification**:
+    - Pass is issued, transitioning directly to the Delivery Gate before QR reveal.
+    - Strongly encourage verified email delivery (`Verify Email & Send My E-GatePass`).
+    - Alternatively, choose `Continue without email` to open the 5-second timed countdown warning dialog. Confirming after 5 seconds reveals the pass QR code with a persistent warning banner to save the pass before leaving.
+    - Confirm `beforeunload` browser prompt warns against accidental page refresh or closing until email is verified or pass is downloaded.
+11. **Expected Result**: Pass status displays `issued`. QR code renders with the EARIST logo centered inside (error correction level H) without reducing scanner reliability.
 
 ### 1.2 iPhone Safari Mobile Verification (Critical Mobile Checks)
 1. Open Safari on an iPhone (e.g. iPhone 12/13/14/15/SE viewport).
@@ -28,9 +33,17 @@ This runbook provides complete step-by-step procedures for manual testing and pr
 4. **Check Native Date Input Overflow**:
    - Inspect the Visit Date picker input on narrow screens (< 375px width).
    - **Expected**: Date input does NOT overflow horizontally outside its form/card container.
-5. **Camera-Only ID Capture**:
-   - Tap **Capture Valid ID**.
-   - **Expected**: Native camera launches directly; file/photo library picker is NOT invoked.
+5. **Portal Valid ID (Camera OR Upload)**:
+   - Tap **Take Photo** to use rear camera, or switch to **Upload ID** to select an image from gallery/files.
+   - Verify file picker allows selecting JPEG, PNG, or WebP images up to 10MB.
+   - Verify unsupported image formats trigger a clear warning message (`This image format is not supported. Please choose a JPEG, PNG, or WebP image.`).
+   - Verify selecting the same file again after clearing works seamlessly.
+5b. **Optional Local OCR Autofill**:
+   - In Step 1 (Details), tap **Autofill from ID**.
+   - Take photo or upload valid ID; confirm OCR runs locally in browser memory without sending image to external services.
+   - Confirm extracted names prefill empty fields while preserving existing user-entered values.
+   - Confirm form NEVER auto-submits upon OCR completion, allowing visitor to review and edit all fields.
+   - Confirm the ID image used during OCR is retained as valid ID evidence for Step 3.
 6. **Independent Retake ID & Selfie**:
    - Tap **Retake ID**: Only the ID preview is cleared; the face photo preview remains intact.
    - Tap **Retake Photo**: Only the face photo is cleared; ID preview remains intact.
