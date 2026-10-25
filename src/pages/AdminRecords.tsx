@@ -1,9 +1,8 @@
 import { useAuth } from '@/hooks/useAuth';
 import { formatManilaDateTime, formatManilaTime, formatManilaIso, formatManilaFileTimestamp } from '@/lib/manilaTime';
-import { listIncidentHolds, createIncidentHold, releaseIncidentHold, type IncidentHold } from '@/services/incidentHold';
-import { ShieldAlert, ShieldCheck } from 'lucide-react';
+import { getActiveIncidentHoldsForRecord, createIncidentHold, releaseIncidentHold, type IncidentHold } from '@/services/incidentHold';
+import { AlertTriangle, Download, Eye, Printer, ShieldAlert, ShieldCheck } from 'lucide-react';
 import { useState, useEffect } from 'react';
-import { Download, Eye, Printer } from 'lucide-react';
 import { Card, Input, Select, Button, DataTable, DataTableHead, DataTableRow, DataTableCell, Modal, StatusBadge } from '@/components/ui';
 import { AuthenticatedImage } from '@/components/AuthenticatedImage';
 import type { GatePass, PassSource, PassStatus } from '@/types';
@@ -11,6 +10,12 @@ import { toast } from 'sonner';
 import { collectCursorPages, downloadCsvFile, EXPORT_MAX_ROWS } from '@/lib/completeExport';
 import { asAppTimestamp } from '@/lib/timestamp';
 import { getAccessToken } from '@/services/auth';
+
+export type HoldLookupState =
+  | { status: 'loading' }
+  | { status: 'protected'; holds: IncidentHold[] }
+  | { status: 'unprotected' }
+  | { status: 'error' };
 
 interface GatePassWithId extends GatePass {
   id: string;
@@ -49,8 +54,7 @@ export function AdminRecords() {
   const [search, setSearch] = useState('');
   const [debouncedSearch, setDebouncedSearch] = useState('');
   const [selectedPass, setSelectedPass] = useState<GatePassWithId | null>(null);
-  const [activeHold, setActiveHold] = useState<IncidentHold | null>(null);
-  const [loadingHold, setLoadingHold] = useState(false);
+  const [holdLookupState, setHoldLookupState] = useState<HoldLookupState>({ status: 'unprotected' });
   const [showHoldModal, setShowHoldModal] = useState(false);
   const [holdReason, setHoldReason] = useState('');
   const [submittingHold, setSubmittingHold] = useState(false);
@@ -144,21 +148,28 @@ export function AdminRecords() {
 
   async function handleSelectPass(pass: GatePassWithId) {
     setSelectedPass(pass);
-    setActiveHold(null);
-    setLoadingHold(true);
+    setHoldLookupState({ status: 'loading' });
     try {
-      const holds = await listIncidentHolds({ activeOnly: true, limit: 100 });
-      const found = holds.find((h) => h.passId === pass.id);
-      setActiveHold(found || null);
+      const holds = await getActiveIncidentHoldsForRecord({
+        passId: pass.id,
+        visitorId: pass.visitorId,
+      });
+      if (holds.length > 0) {
+        setHoldLookupState({ status: 'protected', holds });
+      } else {
+        setHoldLookupState({ status: 'unprotected' });
+      }
     } catch {
-      setActiveHold(null);
-    } finally {
-      setLoadingHold(false);
+      setHoldLookupState({ status: 'error' });
     }
   }
 
   async function handleCreateHold() {
     if (!selectedPass || !holdReason.trim()) return;
+    if (holdLookupState.status === 'loading' || holdLookupState.status === 'error') {
+      toast.error('Retention protection status unavailable. Authoritative lookup required before placing hold.');
+      return;
+    }
     setSubmittingHold(true);
     try {
       await createIncidentHold({
@@ -178,14 +189,18 @@ export function AdminRecords() {
   }
 
   async function handleReleaseHold() {
-    if (!activeHold) return;
+    if (holdLookupState.status !== 'protected' || holdLookupState.holds.length === 0) return;
+    const holdToRelease = holdLookupState.holds[0];
+    if (!holdToRelease) return;
     setSubmittingHold(true);
     try {
-      await releaseIncidentHold(activeHold.id, releaseReason.trim() || undefined);
+      await releaseIncidentHold(holdToRelease.id, releaseReason.trim() || undefined);
       toast.success('Incident hold released. Normal retention policy restored.');
       setShowReleaseModal(false);
       setReleaseReason('');
-      setActiveHold(null);
+      if (selectedPass) {
+        void handleSelectPass(selectedPass);
+      }
     } catch (err: any) {
       toast.error(err.message || 'Failed to release incident hold');
     } finally {
@@ -412,34 +427,58 @@ export function AdminRecords() {
             <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-canvas-subtle)] p-4 space-y-3">
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-2">
-                  {activeHold ? (
+                  {holdLookupState.status === 'protected' ? (
                     <ShieldAlert className="h-5 w-5 text-[var(--color-danger)]" />
+                  ) : holdLookupState.status === 'error' ? (
+                    <AlertTriangle className="h-5 w-5 text-[var(--color-warning)]" />
                   ) : (
                     <ShieldCheck className="h-5 w-5 text-[var(--color-success)]" />
                   )}
                   <h4 className="font-semibold text-sm text-[var(--color-text-primary)]">
-                    Evidence Retention Status: {activeHold ? 'Active Incident Hold' : 'Normal Retention'}
+                    Evidence Retention Status:{' '}
+                    {holdLookupState.status === 'loading'
+                      ? 'Checking retention protection…'
+                      : holdLookupState.status === 'protected'
+                        ? 'Active Incident Hold'
+                        : holdLookupState.status === 'error'
+                          ? 'Retention Protection Status Unavailable'
+                          : 'Normal Retention'}
                   </h4>
                 </div>
                 {role === 'superadmin' && (
-                  activeHold ? (
+                  holdLookupState.status === 'protected' ? (
                     <Button size="sm" variant="destructive" onClick={() => setShowReleaseModal(true)}>
                       Release Hold
                     </Button>
                   ) : (
-                    <Button size="sm" variant="secondary" onClick={() => setShowHoldModal(true)}>
+                    <Button
+                      size="sm"
+                      variant="secondary"
+                      disabled={holdLookupState.status === 'loading' || holdLookupState.status === 'error'}
+                      onClick={() => setShowHoldModal(true)}
+                    >
                       Place Incident Hold
                     </Button>
                   )
                 )}
               </div>
-              {loadingHold ? (
-                <p className="text-xs text-[var(--color-text-secondary)]">Checking hold status...</p>
-              ) : activeHold ? (
+              {holdLookupState.status === 'loading' ? (
+                <p className="text-xs text-[var(--color-text-secondary)]">Checking retention protection…</p>
+              ) : holdLookupState.status === 'protected' && holdLookupState.holds[0] ? (
                 <div className="text-xs text-[var(--color-text-secondary)] space-y-1">
-                  <p><strong className="text-[var(--color-text-primary)]">Hold Reason:</strong> {activeHold.reason}</p>
-                  <p><strong className="text-[var(--color-text-primary)]">Placed:</strong> {formatManilaDateTime(activeHold.createdAt)}</p>
+                  <p><strong className="text-[var(--color-text-primary)]">Hold Reason:</strong> {holdLookupState.holds[0].reason}</p>
+                  <p><strong className="text-[var(--color-text-primary)]">Placed:</strong> {formatManilaDateTime(holdLookupState.holds[0].createdAt)}</p>
+                  {holdLookupState.holds.length > 1 && (
+                    <p className="text-xs font-medium text-[var(--color-text-secondary)]">
+                      ({holdLookupState.holds.length} active holds protecting this record)
+                    </p>
+                  )}
                   <p className="text-[var(--color-danger)] font-medium">Automatic and manual evidence deletion is paused for this pass while hold is active.</p>
+                </div>
+              ) : holdLookupState.status === 'error' ? (
+                <div className="text-xs text-[var(--color-danger)] space-y-1">
+                  <p className="font-medium">Retention protection status unavailable.</p>
+                  <p>Do not assume this record is unprotected.</p>
                 </div>
               ) : (
                 <p className="text-xs text-[var(--color-text-secondary)]">

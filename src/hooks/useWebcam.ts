@@ -21,12 +21,16 @@ export function useWebcam(options: UseWebcamOptions = {}): UseWebcamResult {
   const videoRef = useRef<HTMLVideoElement>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const isStartingRef = useRef(false);
+  const generationRef = useRef(0);
+  const mountedRef = useRef(true);
+
   const [isStarting, setIsStarting] = useState(false);
   const [isActive, setIsActive] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const start = useCallback(async () => {
     if (isStartingRef.current || isActive) return;
+    const generation = ++generationRef.current;
     isStartingRef.current = true;
     setIsStarting(true);
     setError(null);
@@ -40,15 +44,25 @@ export function useWebcam(options: UseWebcamOptions = {}): UseWebcamResult {
         audio: false,
       });
 
+      if (!mountedRef.current || generation !== generationRef.current) {
+        stream.getTracks().forEach((track) => track.stop());
+        return;
+      }
+
       streamRef.current = stream;
 
       if (videoRef.current) {
         videoRef.current.srcObject = stream;
-        await videoRef.current.play();
+        await videoRef.current.play().catch(() => undefined);
       }
 
-      setIsActive(true);
+      if (mountedRef.current && generation === generationRef.current) {
+        setIsActive(true);
+      }
     } catch (err) {
+      if (!mountedRef.current || generation !== generationRef.current) {
+        return;
+      }
       const message =
         err instanceof DOMException && err.name === 'NotAllowedError'
           ? 'Camera access denied. Please allow camera access in your browser settings.'
@@ -56,12 +70,15 @@ export function useWebcam(options: UseWebcamOptions = {}): UseWebcamResult {
       setError(message);
       setIsActive(false);
     } finally {
-      isStartingRef.current = false;
-      setIsStarting(false);
+      if (mountedRef.current && generation === generationRef.current) {
+        isStartingRef.current = false;
+        setIsStarting(false);
+      }
     }
-  }, [facingMode, width, height]);
+  }, [facingMode, width, height, isActive]);
 
   const stop = useCallback(() => {
+    generationRef.current += 1;
     isStartingRef.current = false;
     setIsStarting(false);
     if (streamRef.current) {
@@ -107,10 +124,17 @@ export function useWebcam(options: UseWebcamOptions = {}): UseWebcamResult {
 
   // Cleanup on unmount
   useEffect(() => {
+    mountedRef.current = true;
     return () => {
+      mountedRef.current = false;
+      generationRef.current += 1;
       isStartingRef.current = false;
       if (streamRef.current) {
         streamRef.current.getTracks().forEach((track) => track.stop());
+        streamRef.current = null;
+      }
+      if (videoRef.current) {
+        videoRef.current.srcObject = null;
       }
     };
   }, []);

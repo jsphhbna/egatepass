@@ -19,7 +19,7 @@ describe('FEATURE 2 CONTRACT: Optional Portal OCR & Kiosk Boundary', () => {
   });
 
   it('uses browser-local recognizeIdImage without third-party cloud OCR services', () => {
-    expect(getPassSrc).toContain("import { recognizeIdImage } from '@/lib/ocr';");
+    expect(getPassSrc).toMatch(/import\s*\{[^}]*recognizeIdImage[^}]*\}\s*from\s*'@\/lib\/ocr'/);
     expect(getPassSrc).toContain('await recognizeIdImage(compressed)');
     // Preserves local privacy boundary
     expect(getPassSrc).not.toContain('google-cloud-vision');
@@ -67,5 +67,29 @@ describe('FEATURE 2 CONTRACT: Optional Portal OCR & Kiosk Boundary', () => {
     expect(kioskSrc).toContain('recognizeIdImage');
     expect(kioskSrc).toContain('Scan My ID');
     expect(kioskSrc).toContain('Position Your ID in the Frame');
+  });
+
+  it('PATCH 7: terminates OCR worker on unmount and reset, and prevents stale writes with generation check', () => {
+    // 7A: imports terminateLocalOcrWorker
+    expect(getPassSrc).toMatch(/import\s*\{[^}]*terminateLocalOcrWorker[^}]*\}\s*from\s*'@\/lib\/ocr'/);
+
+    // 7B: unmount cleanup
+    expect(getPassSrc).toContain('void terminateLocalOcrWorker()');
+
+    // 7D: ocrGenerationRef tracking and stale write guard
+    expect(getPassSrc).toContain('const ocrGenerationRef = useRef(0)');
+    expect(getPassSrc).toContain('const generation = ++ocrGenerationRef.current');
+    expect(getPassSrc).toContain('if (generation !== ocrGenerationRef.current) return');
+
+    // Reset and ID invalidation increment generation
+    expect(getPassSrc).toContain('function resetRegistrationFlow()');
+  });
+
+  it('PATCH 11: rejects raw ID upload files larger than 10 MiB before decode/compression', () => {
+    expect(getPassSrc).toContain('const MAX_RAW_ID_FILE_BYTES = 10 * 1024 * 1024');
+    expect(getPassSrc).toContain('file.size > MAX_RAW_ID_FILE_BYTES');
+    expect(getPassSrc).toContain(
+      'This image is too large to process safely. Please choose an image 10 MB or smaller.',
+    );
   });
 });

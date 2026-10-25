@@ -788,6 +788,9 @@ describe('Behavioral Mocked-Handler Tests [PASS (MOCKED HANDLER)]', () => {
               error: null,
             };
           }
+          if (fn === 'expire_stale_passes') {
+            return { data: 0, error: null };
+          }
           return { data: null, error: new Error(`Unknown RPC: ${fn}`) };
         },
       }),

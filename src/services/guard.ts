@@ -1,5 +1,18 @@
 import { z } from 'zod';
 import { requireSupabase } from '@/lib/supabase';
+import { getAccessToken } from '@/services/auth';
+
+export class GuardApiError extends Error {
+  status: number;
+  code?: string;
+
+  constructor(message: string, status: number, code?: string) {
+    super(message);
+    this.name = 'GuardApiError';
+    this.status = status;
+    this.code = code;
+  }
+}
 
 export interface GuardQueuePass {
   id: string;
@@ -105,4 +118,30 @@ export function subscribeToPassChanges(onChange: () => void): () => void {
     .on('postgres_changes', { event: '*', schema: 'public', table: 'passes' }, onChange)
     .subscribe();
   return () => { void client.removeChannel(channel); };
+}
+
+export async function recordDecision(
+  passId: string,
+  decision: 'approved' | 'rejected',
+  reason: string | null = null,
+): Promise<{ status: string }> {
+  const token = await getAccessToken();
+
+  const response = await fetch('/api/decide-visit', {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${token}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ passId, decision, reason }),
+  });
+  const body = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    throw new GuardApiError(
+      body?.error || 'Decision could not be recorded',
+      response.status,
+      body?.code,
+    );
+  }
+  return body;
 }

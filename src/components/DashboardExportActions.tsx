@@ -1,7 +1,11 @@
 import { Download, Printer } from 'lucide-react';
-import { format, isSameMonth } from 'date-fns';
 import { Button } from '@/components/ui';
 import { escapeCsvCell } from '@/lib/completeExport';
+import {
+  formatManilaDateTime,
+  formatManilaMonthYear,
+  getManilaMonthKey,
+} from '@/lib/manilaTime';
 import type { GatePass } from '@/types';
 
 export interface DashboardReportSummary {
@@ -38,7 +42,7 @@ const reportColumns = [
 ] as const;
 
 function formatTimestamp(timestamp: GatePass['issuedAt'] | null): string {
-  return timestamp ? format(timestamp.toDate(), 'MMM d, yyyy h:mm a') : 'Not recorded';
+  return timestamp ? formatManilaDateTime(timestamp.toDate()) : 'Not recorded';
 }
 
 function formatLabel(value: string): string {
@@ -62,8 +66,9 @@ function reportRows(passes: GatePass[]): string[][] {
     ]);
 }
 
-function passesForMonth(passes: GatePass[], month: Date): GatePass[] {
-  return passes.filter((pass) => isSameMonth(pass.issuedAt.toDate(), month));
+function passesForMonth(passes: GatePass[], reportDate: Date): GatePass[] {
+  const targetKey = getManilaMonthKey(reportDate);
+  return passes.filter((pass) => getManilaMonthKey(pass.issuedAt.toDate()) === targetKey);
 }
 
 function escapeHtml(value: string): string {
@@ -78,13 +83,13 @@ function escapeHtml(value: string): string {
 
 function downloadCsv(passes: GatePass[], summary: DashboardReportSummary) {
   const exportedAt = new Date();
-  const monthLabel = format(exportedAt, 'MMMM yyyy');
+  const monthLabel = formatManilaMonthYear(exportedAt);
   const monthlyPasses = passesForMonth(passes, exportedAt);
   const totalCount = summary.monthTotal ?? monthlyPasses.length;
   const summaryRows = [
     ['E-GatePass Dashboard Report'],
     ['Reporting month', monthLabel],
-    ['Downloaded on', format(exportedAt, 'MMMM d, yyyy h:mm a')],
+    ['Downloaded on', formatManilaDateTime(exportedAt)],
     ['Total passes issued this month (authoritative)', String(totalCount)],
     [],
     ['Dashboard Summary', 'Value'],
@@ -118,7 +123,7 @@ function downloadCsv(passes: GatePass[], summary: DashboardReportSummary) {
   const url = URL.createObjectURL(blob);
   const link = document.createElement('a');
   link.href = url;
-  link.download = `e-gatepass-${format(exportedAt, 'yyyy-MM')}-report.csv`;
+  link.download = `e-gatepass-${getManilaMonthKey(exportedAt)}-report.csv`;
   document.body.appendChild(link);
   link.click();
   link.remove();
@@ -127,7 +132,7 @@ function downloadCsv(passes: GatePass[], summary: DashboardReportSummary) {
 
 function printReport(passes: GatePass[], summary: DashboardReportSummary) {
   const printedAt = new Date();
-  const monthLabel = format(printedAt, 'MMMM yyyy');
+  const monthLabel = formatManilaMonthYear(printedAt);
   const monthlyPasses = passesForMonth(passes, printedAt);
   const rows = reportRows(monthlyPasses)
     .map((row) => `<tr>${row.map((cell) => `<td>${escapeHtml(cell)}</td>`).join('')}</tr>`)
@@ -152,7 +157,7 @@ function printReport(passes: GatePass[], summary: DashboardReportSummary) {
   const totalCount = summary.monthTotal ?? monthlyPasses.length;
   const reportHtml = `<!doctype html><html><head><title>E-GatePass Dashboard Report</title><style>
     @page { size: landscape; margin: 14mm; } body { color: #172033; font: 12px Arial, sans-serif; } h1 { margin: 0; font-size: 24px; } h2 { font-size: 16px; margin: 22px 0 10px; } .meta { color: #59657a; margin: 6px 0 20px; } .summary { display: grid; grid-template-columns: repeat(5, 1fr); gap: 10px; } .summary-item, .insight { border: 1px solid #d8dee8; border-radius: 6px; padding: 10px; } .summary-item span, .insight span { display: block; color: #59657a; font-size: 10px; margin-bottom: 5px; } .insights { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; } .insight h3 { color: #8c1515; font-size: 11px; margin: 0 0 8px; } .insight strong { display: block; font-size: 16px; margin-bottom: 4px; } .insight p { color: #59657a; font-size: 10px; line-height: 1.4; margin: 8px 0 0; } table { border-collapse: collapse; width: 100%; } th { background: #8c1515; color: white; text-align: left; } th, td { border: 1px solid #d8dee8; padding: 7px; vertical-align: top; } td { word-break: break-word; } @media print { body { print-color-adjust: exact; -webkit-print-color-adjust: exact; } tr, .summary-item, .insight { break-inside: avoid; } }
-  </style></head><body><h1>E-GatePass Dashboard Report</h1><p class="meta"><strong>Reporting month:</strong> ${escapeHtml(monthLabel)}<br><strong>Printed on:</strong> ${escapeHtml(format(printedAt, 'MMMM d, yyyy h:mm a'))}<br><strong>Total issued this month:</strong> ${totalCount}<br><strong>Detailed rows shown:</strong> recent sample ${monthlyPasses.length} of ${totalCount} (use Visitor Records for full historical export)</p><section class="summary">${summaryMarkup}</section><h2>Today's Insights</h2><section class="insights">${insightsMarkup}</section><h2>${escapeHtml(monthLabel)} Pass Details (Recent Sample)</h2><table><thead><tr>${reportColumns.map((column) => `<th>${escapeHtml(column)}</th>`).join('')}</tr></thead><tbody>${rows || `<tr><td colspan="${reportColumns.length}">No passes were issued in ${escapeHtml(monthLabel)}.</td></tr>`}</tbody></table></body></html>`;
+  </style></head><body><h1>E-GatePass Dashboard Report</h1><p class="meta"><strong>Reporting month:</strong> ${escapeHtml(monthLabel)}<br><strong>Printed on:</strong> ${escapeHtml(formatManilaDateTime(printedAt))}<br><strong>Total issued this month:</strong> ${totalCount}<br><strong>Detailed rows shown:</strong> recent sample ${monthlyPasses.length} of ${totalCount} (use Visitor Records for full historical export)</p><section class="summary">${summaryMarkup}</section><h2>Today's Insights</h2><section class="insights">${insightsMarkup}</section><h2>${escapeHtml(monthLabel)} Pass Details (Recent Sample)</h2><table><thead><tr>${reportColumns.map((column) => `<th>${escapeHtml(column)}</th>`).join('')}</tr></thead><tbody>${rows || `<tr><td colspan="${reportColumns.length}">No passes were issued in ${escapeHtml(monthLabel)}.</td></tr>`}</tbody></table></body></html>`;
 
   const printFrame = document.createElement('iframe');
   printFrame.title = 'Printable E-GatePass dashboard report';

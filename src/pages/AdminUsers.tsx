@@ -153,9 +153,20 @@ export function AdminUsers() {
     const body = await response.json().catch(() => null) as {
       ok?: boolean;
       result?: 'success' | 'partial';
+      profileUpdated?: boolean;
+      authSynchronized?: boolean;
       reconciliationRequired?: boolean;
       error?: string;
+      message?: string;
     } | null;
+
+    if (
+      body?.result === 'partial' &&
+      body.profileUpdated === true &&
+      body.reconciliationRequired === true
+    ) {
+      return body;
+    }
 
     if (!response.ok) {
       if (body?.error === 'cannot_remove_last_superadmin') {
@@ -175,8 +186,10 @@ export function AdminUsers() {
     setIsDeactivating(true);
     try {
       const res = await updateUserAccount(user.uid, { active: false });
-      if (res?.result === 'partial' || res?.reconciliationRequired) {
-        toast.warning('User profile deactivated, but Auth synchronization requires reconciliation.');
+      if (res?.result === 'partial' && res.profileUpdated && res.reconciliationRequired) {
+        toast.warning(
+          res.message || 'Profile updated, but authentication synchronization needs reconciliation. Refreshing authoritative account status.'
+        );
       } else {
         toast.success('User deactivated successfully');
       }
@@ -197,8 +210,10 @@ export function AdminUsers() {
       // Reactivate instantly
       try {
         const res = await updateUserAccount(user.uid, { active: true });
-        if (res?.result === 'partial' || res?.reconciliationRequired) {
-          toast.warning('User profile activated, but Auth synchronization requires reconciliation.');
+        if (res?.result === 'partial' && res.profileUpdated && res.reconciliationRequired) {
+          toast.warning(
+            res.message || 'Profile updated, but authentication synchronization needs reconciliation. Refreshing authoritative account status.'
+          );
         } else {
           toast.success('User activated successfully');
         }
@@ -214,8 +229,14 @@ export function AdminUsers() {
     if (!roleChange) return;
     setIsChangingRole(true);
     try {
-      await updateUserAccount(roleChange.user.uid, { role: roleChange.newRole });
-      toast.success(`${roleChange.user.name} is now ${formatUserRole(roleChange.newRole)}`);
+      const res = await updateUserAccount(roleChange.user.uid, { role: roleChange.newRole });
+      if (res?.result === 'partial' && res.profileUpdated && res.reconciliationRequired) {
+        toast.warning(
+          res.message || 'Profile updated, but authentication synchronization needs reconciliation. Refreshing authoritative account status.'
+        );
+      } else {
+        toast.success(`${roleChange.user.name} is now ${formatUserRole(roleChange.newRole)}`);
+      }
       setRoleChange(null);
       await loadUsers();
     } catch (err) {

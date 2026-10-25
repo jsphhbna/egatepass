@@ -106,7 +106,7 @@ export function AdminDashboard() {
         title: 'Top Visit Purpose',
         value: metrics.topPurpose.label,
         count: metrics.topPurpose.count,
-        description: 'Most common reason visitors gave when requesting a pass.',
+        description: 'Most common visit purpose among passes created today.',
       },
       {
         title: 'Top Rejection Reason',
@@ -191,7 +191,7 @@ export function AdminDashboard() {
           <p className="text-sm text-[var(--color-text-secondary)]">The most common activity recorded today.</p>
         </div>
         <div className="grid gap-4 md:grid-cols-3">
-          <InsightCard icon={<MessageSquareText className="h-5 w-5" />} title="Top Visit Purpose" insight={metrics.topPurpose} description="Most common reason visitors gave when requesting a pass." />
+          <InsightCard icon={<MessageSquareText className="h-5 w-5" />} title="Top Visit Purpose" insight={metrics.topPurpose} description="Most common visit purpose among passes created today." />
           <InsightCard icon={<Ban className="h-5 w-5" />} title="Top Rejection Reason" insight={metrics.topRejection} description="Most common reason among visitors scanned today who were rejected." />
           <InsightCard icon={<MapPin className="h-5 w-5" />} title="Busiest Entry Gate" insight={metrics.busiestGate} description="Gate with the most visitor scans recorded today." />
         </div>

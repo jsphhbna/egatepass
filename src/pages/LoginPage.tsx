@@ -36,7 +36,7 @@ export function LoginPage() {
   }, [resendCooldown]);
 
   useEffect(() => {
-    if (status !== 'authenticated' || !role) return;
+    if ((status !== 'authenticated' && status !== 'requires_password_change') || !role) return;
     const redirectMap: Record<string, string> = {
       admin: '/admin', superadmin: '/admin', guard: '/guard', entry: '/scan/entry', exit: '/scan/exit', kiosk: '/kiosk',
     };

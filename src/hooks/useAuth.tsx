@@ -14,6 +14,7 @@ const initialState: AuthState = {
   userData: null,
   serviceStatus: supabase ? 'available' : 'unavailable',
   serviceMessage: unavailableMessage,
+  refresh: async () => {},
 };
 
 const AuthContext = createContext<AuthState>(initialState);
@@ -125,9 +126,9 @@ export function AuthProvider({ children }: AuthProviderProps) {
           return;
         }
 
-        const requiresPasswordChange = role === 'guard'
-          && userData?.kind === 'staff'
-          && userData.mustChangePassword;
+        const requiresPasswordChange =
+          userData?.kind === 'staff' &&
+          userData.mustChangePassword === true;
 
         if (active) {
           setState({
@@ -137,6 +138,7 @@ export function AuthProvider({ children }: AuthProviderProps) {
             userData,
             serviceStatus: 'available',
             serviceMessage: null,
+            refresh,
           });
         }
       } catch (error) {
@@ -147,10 +149,17 @@ export function AuthProvider({ children }: AuthProviderProps) {
             status: 'unauthenticated',
             serviceStatus: 'unavailable',
             serviceMessage: 'Staff and device services are temporarily unavailable. Please try again later.',
+            refresh,
           });
         }
       }
     }
+
+    const refresh = async () => {
+      if (!supabase) return;
+      const { data } = await supabase.auth.getSession();
+      await applyUser(data.session?.user ?? null);
+    };
 
     void supabase.auth.getSession().then(({ data, error }) => {
       if (error) {

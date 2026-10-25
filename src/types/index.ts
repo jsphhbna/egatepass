@@ -150,6 +150,7 @@ export interface AuthState {
   userData: AuthActor | null;
   serviceStatus: 'available' | 'unavailable';
   serviceMessage: string | null;
+  refresh?: () => Promise<void>;
 }
 
 export interface StaffAuthActor {

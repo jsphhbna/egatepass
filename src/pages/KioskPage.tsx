@@ -153,10 +153,12 @@ export function KioskPage() {
 
   const faceWebcam = useWebcam({ facingMode: 'user', width: 640, height: 480 });
   const idWebcam = useWebcam({ facingMode: 'environment', width: 1280, height: 720 });
+  const ocrGenerationRef = useRef(0);
 
   // Cleanup on unmount
   useEffect(() => {
     return () => {
+      ocrGenerationRef.current += 1;
       faceWebcam.stop();
       idWebcam.stop();
       void terminateLocalOcrWorker();
@@ -195,15 +197,19 @@ export function KioskPage() {
   }
 
   async function processIdImageAndOcr(blob: Blob) {
+    const generation = ++ocrGenerationRef.current;
     idWebcam.stop();
     setStep('scan-processing');
     try {
       const compressed = await compressImageToWebP(blob);
+      if (generation !== ocrGenerationRef.current) return;
       setIdBlob(compressed);
       idUrl.setFromBlob(compressed);
 
       // Offline OCR via self-hosted worker
       const parsed = await recognizeIdImage(compressed);
+      if (generation !== ocrGenerationRef.current) return;
+
       let filledCount = 0;
 
       if (parsed.firstName) {
@@ -226,11 +232,14 @@ export function KioskPage() {
         toast.info('Could not clearly read names. Please review and enter details manually.');
       }
     } catch (err) {
+      if (generation !== ocrGenerationRef.current) return;
       console.warn('Local OCR warning:', err);
       setOcrSuccessNotice(false);
       toast.info('Automatic reading skipped. Please enter your details manually.');
     } finally {
-      setStep('form');
+      if (generation === ocrGenerationRef.current) {
+        setStep('form');
+      }
     }
   }
 
@@ -355,6 +364,7 @@ export function KioskPage() {
   }
 
   function resetCurrentVisitor() {
+    ocrGenerationRef.current += 1;
     issueRequestId.current = crypto.randomUUID();
     reset({
       visitDate: today,

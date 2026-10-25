@@ -1,9 +1,9 @@
 import { formatManilaTime } from '@/lib/manilaTime';
 import { useEffect, useState, useRef } from 'react';
 import { useAuth } from '@/hooks/useAuth';
-import { getAccessToken, signOutCurrentActor } from '@/services/auth';
+import { signOutCurrentActor } from '@/services/auth';
 import { AuthenticatedImage } from '@/components/AuthenticatedImage';
-import { fetchGuardDashboard, subscribeToPassChanges, type GuardQueuePass } from '@/services/guard';
+import { fetchGuardDashboard, subscribeToPassChanges, recordDecision, GuardApiError, type GuardQueuePass } from '@/services/guard';
 import {
   CheckCircle2,
   XCircle,
@@ -141,13 +141,45 @@ export function GuardPage() {
     if (loadingMore || !hasMore) return;
     setLoadingMore(true);
     try {
-      const remainingLimit = Math.min(200, pendingTotal);
-      const fullBatch = await fetchGuardDashboard({ limit: remainingLimit, offset: 0 });
-      setPasses(fullBatch.queue);
-      passesLengthRef.current = fullBatch.queue.length;
-      setPendingTotal(fullBatch.pendingTotal);
-      setHasMore(fullBatch.hasMore);
-      toast.success(`Loaded all ${fullBatch.queue.length} pending passes`);
+      const pageSize = 200;
+      const SAFETY_CEILING = 5000;
+      let offset = 0;
+      let more = true;
+      let latestPendingTotal = pendingTotal;
+      let reachedCeiling = false;
+      const accumulated: GuardQueuePass[] = [];
+      const seenIds = new Set<string>();
+
+      while (more) {
+        const batch = await fetchGuardDashboard({ limit: pageSize, offset });
+        latestPendingTotal = batch.pendingTotal;
+        for (const item of batch.queue) {
+          if (!seenIds.has(item.id)) {
+            seenIds.add(item.id);
+            accumulated.push(item);
+          }
+        }
+        offset += batch.queue.length;
+        more = batch.hasMore && batch.queue.length > 0;
+
+        if (accumulated.length >= SAFETY_CEILING && more) {
+          reachedCeiling = true;
+          break;
+        }
+      }
+
+      setPasses(accumulated);
+      passesLengthRef.current = accumulated.length;
+      setPendingTotal(latestPendingTotal);
+      setHasMore(reachedCeiling ? true : more);
+
+      if (reachedCeiling) {
+        toast.info(
+          'Loaded the first 5,000 pending passes. Narrow the search or continue using paginated queue controls.'
+        );
+      } else {
+        toast.success(`Loaded all ${accumulated.length} pending passes.`);
+      }
     } catch (err) {
       console.error('Failed to load all pending passes:', err);
       toast.error('Failed to load all passes');
@@ -171,6 +203,29 @@ export function GuardPage() {
     };
   }, []);
 
+  const refreshQueue = async () => {
+    try {
+      const fetchLimit = Math.max(50, passesLengthRef.current);
+      const dashboard = await fetchGuardDashboard({ limit: fetchLimit, offset: 0 });
+      setQueueError(false);
+      setRefreshError(false);
+      setLastUpdatedAt(new Date());
+      if (dashboard.pendingTotal > previousPendingCountRef.current && audioRef.current) {
+        audioRef.current.play().catch(() => undefined);
+      }
+      previousPendingCountRef.current = dashboard.pendingTotal;
+      setPasses(dashboard.queue);
+      passesLengthRef.current = dashboard.queue.length;
+      setPendingTotal(dashboard.pendingTotal);
+      setHasMore(dashboard.hasMore);
+      setDailyStats(dashboard.stats);
+      setRejectionReasons(dashboard.rejectionReasons);
+    } catch (error) {
+      console.error('Guard dashboard refresh error:', error);
+      setRefreshError(true);
+    }
+  };
+
   // ============================================================
   // APPROVE
   // ============================================================
@@ -181,36 +236,31 @@ export function GuardPage() {
     try {
       await recordDecision(pass.id, 'approved');
       toast.success(`${pass.visitorName} approved`);
-    } catch (err: any) {
-      if (err?.status === 409 || err?.message?.includes('409') || err?.message?.includes('concurrency')) {
-        toast.info('Pass was already processed by another guard.');
-        setPasses((prev) => prev.filter((p) => p.id !== pass.id));
-      } else {
-        toast.error('Failed to approve. Try again.');
+      void refreshQueue();
+    } catch (err: unknown) {
+      if (err instanceof GuardApiError) {
+        if (err.status === 409) {
+          toast.info('This visitor was already processed by another guard.');
+          void refreshQueue();
+          return;
+        }
+        if (err.status === 422) {
+          toast.info('This pass has expired and can no longer be approved.');
+          void refreshQueue();
+          return;
+        }
+        if (err.status === 401 || err.status === 403) {
+          toast.error(err.message || 'Authentication or permissions error');
+          return;
+        }
       }
+      toast.error('Failed to approve. Try again.');
     } finally {
       setProcessingPassIds((prev) => {
         const next = new Set(prev);
         next.delete(pass.id);
         return next;
       });
-    }
-  }
-
-  async function recordDecision(passId: string, decision: 'approved' | 'rejected', reason: string | null = null) {
-    const token = await getAccessToken();
-
-    const response = await fetch('/api/decide-visit', {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${token}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({ passId, decision, reason }),
-    });
-    const responseBody = await response.json().catch(() => ({}));
-    if (!response.ok) {
-      throw new Error(responseBody.error || 'Failed to record the visitor decision');
     }
   }
 
@@ -227,22 +277,33 @@ export function GuardPage() {
 
     try {
       await recordDecision(pass.id, 'rejected', rejectReason);
-
       toast.success(`${pass.visitorName} rejected`);
       setRejectingId(null);
       setRejectReason('');
       setIsRejecting(false);
-    } catch (err: any) {
-      if (err?.status === 409 || err?.message?.includes('409') || err?.message?.includes('concurrency')) {
-        toast.info('Pass was already processed by another guard.');
-        setPasses((prev) => prev.filter((p) => p.id !== pass.id));
-        setRejectingId(null);
-        setRejectReason('');
-        setIsRejecting(false);
-      } else {
-        console.error('Reject error:', err);
-        toast.error('Failed to reject. Try again.');
+      void refreshQueue();
+    } catch (err: unknown) {
+      setRejectingId(null);
+      setRejectReason('');
+      setIsRejecting(false);
+      if (err instanceof GuardApiError) {
+        if (err.status === 409) {
+          toast.info('This visitor was already processed by another guard.');
+          void refreshQueue();
+          return;
+        }
+        if (err.status === 422) {
+          toast.info('This pass has expired and can no longer be approved.');
+          void refreshQueue();
+          return;
+        }
+        if (err.status === 401 || err.status === 403) {
+          toast.error(err.message || 'Authentication or permissions error');
+          return;
+        }
       }
+      console.error('Reject error:', err);
+      toast.error('Failed to reject. Try again.');
     } finally {
       setProcessingPassIds((prev) => {
         const next = new Set(prev);
@@ -377,11 +438,6 @@ export function GuardPage() {
       {/* Daily Report Summary */}
       <div className="mb-8 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
         <StatCard
-          title="Total Issued"
-          value={dailyStats.total}
-          icon={<BarChart2 className="h-5 w-5 text-[var(--color-text-secondary)]" />}
-        />
-        <StatCard
           title="Currently Inside"
           value={dailyStats.inside}
           icon={<UserCheck className="h-5 w-5 text-[var(--color-success)]" />}
@@ -389,14 +445,19 @@ export function GuardPage() {
           trendUp={true}
         />
         <StatCard
-          title="Exited"
+          title="Scanned Today"
+          value={dailyStats.total}
+          icon={<BarChart2 className="h-5 w-5 text-[var(--color-text-secondary)]" />}
+        />
+        <StatCard
+          title="Exited Today"
           value={dailyStats.exited}
           icon={<UserCheck className="h-5 w-5 text-[var(--color-text-secondary)]" />}
           trend={`${dailyStats.exited} left campus`}
           trendUp={false}
         />
         <StatCard
-          title="Rejected"
+          title="Rejected Today"
           value={dailyStats.rejected}
           icon={<X className="h-5 w-5 text-[var(--color-danger)]" />}
         />

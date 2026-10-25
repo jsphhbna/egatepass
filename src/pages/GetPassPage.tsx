@@ -8,7 +8,7 @@ import { compressImageToWebP } from '@/lib/imageProcessing';
 import { issueVisitorPass, loadRegistrationSettings } from '@/services/visitorRegistration';
 import { TurnstileWidget } from '@/components/TurnstileWidget';
 import { generateBrandedQrDataUrl } from '@/lib/brandedQr';
-import { recognizeIdImage } from '@/lib/ocr';
+import { recognizeIdImage, terminateLocalOcrWorker } from '@/lib/ocr';
 import {
   Camera,
   CheckCircle2,
@@ -36,6 +36,8 @@ import { DEFAULT_VISIT_PURPOSES, normalizeVisitPurposes } from '@/lib/settingsDe
 import type { VisitPurposeOption } from '@/types';
 import { DEFAULT_WORKING_HOURS, formatValidityWindow, formatWorkingHours, MAX_VISIT_ADVANCE_DAYS, normalizeWorkingHours } from '@/lib/workingHours';
 import { getManilaDateString, getLatestVisitDateString, validateVisitDate } from '@/lib/scheduling';
+
+const MAX_RAW_ID_FILE_BYTES = 10 * 1024 * 1024;
 
 // ============================================================
 // FORM SCHEMA (Zod)
@@ -141,11 +143,20 @@ export function GetPassPage() {
   const idFileInputRef = useRef<HTMLInputElement>(null);
 
   // Optional OCR State
+  const ocrGenerationRef = useRef(0);
   const [showOcrModal, setShowOcrModal] = useState(false);
   const [ocrInputMode, setOcrInputMode] = useState<'camera' | 'upload'>('upload');
   const [isProcessingOcr, setIsProcessingOcr] = useState(false);
   const [ocrUploadError, setOcrUploadError] = useState<string | null>(null);
   const ocrFileInputRef = useRef<HTMLInputElement>(null);
+
+  // Unmount cleanup for OCR worker
+  useEffect(() => {
+    return () => {
+      ocrGenerationRef.current += 1;
+      void terminateLocalOcrWorker();
+    };
+  }, []);
 
   const [isSharing, setIsSharing] = useState(false);
 
@@ -214,6 +225,7 @@ export function GetPassPage() {
     getValues,
     setValue,
     watch,
+    reset,
     formState: { errors, isValid },
   } = useForm<GetPassFormData>({
     resolver: zodResolver(formSchema),
@@ -265,6 +277,7 @@ export function GetPassPage() {
 
   async function onCaptureId() {
     if (isProcessingId) return;
+    ocrGenerationRef.current += 1;
     const blob = idWebcam.capture();
     if (!blob) {
       toast.error('Failed to capture ID photo. Please try again.');
@@ -301,6 +314,14 @@ export function GetPassPage() {
       return;
     }
 
+    if (file.size > MAX_RAW_ID_FILE_BYTES) {
+      const msg = 'This image is too large to process safely. Please choose an image 10 MB or smaller.';
+      setIdUploadError(msg);
+      toast.error(msg);
+      return;
+    }
+
+    ocrGenerationRef.current += 1;
     idWebcam.stop();
     setIsProcessingId(true);
 
@@ -319,6 +340,7 @@ export function GetPassPage() {
   }
 
   function onRetakeId() {
+    ocrGenerationRef.current += 1;
     idUrl.clear();
     setIdBlob(null);
     idWebcam.stop();
@@ -332,6 +354,7 @@ export function GetPassPage() {
   // OPTIONAL OCR PROCESSING
   // ============================================================
   async function processOcrImage(source: Blob | File) {
+    const generation = ++ocrGenerationRef.current;
     setIsProcessingOcr(true);
     setOcrUploadError(null);
     ocrWebcam.stop();
@@ -339,11 +362,13 @@ export function GetPassPage() {
     try {
       // 1. Process & compress image for storage evidence
       const compressed = await compressImageToWebP(source);
+      if (generation !== ocrGenerationRef.current) return;
       setIdBlob(compressed);
       idUrl.setFromBlob(compressed);
 
       // 2. Perform local OCR recognition in browser memory
       const parsed = await recognizeIdImage(compressed);
+      if (generation !== ocrGenerationRef.current) return;
 
       // 3. Prefill empty fields, preserving user-entered values
       const currentValues = getValues();
@@ -370,11 +395,14 @@ export function GetPassPage() {
         toast.info("We couldn't read all details automatically. Please enter them manually.");
       }
     } catch (err) {
+      if (generation !== ocrGenerationRef.current) return;
       console.warn('OCR processing failure:', err);
       toast.info("We couldn't read all details automatically. Please enter them manually.");
     } finally {
-      setIsProcessingOcr(false);
-      setShowOcrModal(false);
+      if (generation === ocrGenerationRef.current) {
+        setIsProcessingOcr(false);
+        setShowOcrModal(false);
+      }
     }
   }
 
@@ -392,6 +420,13 @@ export function GetPassPage() {
       return;
     }
 
+    if (file.size > MAX_RAW_ID_FILE_BYTES) {
+      const msg = 'This image is too large to process safely. Please choose an image 10 MB or smaller.';
+      setOcrUploadError(msg);
+      toast.error(msg);
+      return;
+    }
+
     await processOcrImage(file);
   }
 
@@ -402,6 +437,27 @@ export function GetPassPage() {
       return;
     }
     await processOcrImage(blob);
+  }
+
+  function resetRegistrationFlow() {
+    ocrGenerationRef.current += 1;
+    void terminateLocalOcrWorker();
+    setStep('form');
+    setPhotoBlob(null);
+    photoUrl.clear();
+    setIdBlob(null);
+    idUrl.clear();
+    setQrDataUrl(null);
+    setPassId(null);
+    setRawQrToken(null);
+    setEmailDeliverySecured(false);
+    setEmailOutcomeUnknown(false);
+    setEmailSkipped(false);
+    setIsDownloaded(false);
+    setSubmitError(null);
+    reset();
+    resetTurnstile();
+    issueRequestId.current = crypto.randomUUID();
   }
 
   // ============================================================
@@ -1282,13 +1338,20 @@ export function GetPassPage() {
                 </Button>
               </div>
 
-              <div className="pt-2">
+              <div className="pt-2 flex items-center justify-between">
                 <Link
                   to="/"
                   className="text-xs text-[var(--color-text-muted)] hover:text-[var(--color-brand)] transition-colors inline-block"
                 >
                   Back to Home
                 </Link>
+                <button
+                  type="button"
+                  onClick={resetRegistrationFlow}
+                  className="text-xs text-[var(--color-brand)] hover:underline transition-colors inline-block cursor-pointer"
+                >
+                  Register Another Pass
+                </button>
               </div>
             </div>
           )}

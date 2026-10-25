@@ -117,6 +117,11 @@ async function handleRequest(request: Request): Promise<Response> {
     const { admin } = getServerSupabaseClients();
     await requireStaffActor(admin, token, ['admin', 'superadmin']);
 
+    const expireRes = await admin.schema('api').rpc('expire_stale_passes');
+    if (expireRes.error) {
+      throw new HttpError(503, 'service_unavailable');
+    }
+
     const now = new Date();
     const manilaDateString = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Manila' }).format(now);
     const startToday = `${manilaDateString}T00:00:00+08:00`;

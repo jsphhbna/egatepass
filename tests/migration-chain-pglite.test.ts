@@ -1048,29 +1048,31 @@ describe('Permanent PostgreSQL Migration Chain & Schema Contracts (PGlite)', () 
     expect(dPage2.queue[1].id).toBe(PASS_4_TIE);
 
     // 7. Test Daily Stats contract and Asia/Manila boundary enforcement
-    // Today's Manila passes:
-    // 4 pending (issued today Manila) + 1 inside + 1 exited + 1 rejected = 7 total
-    // Yesterday and tomorrow passes excluded.
+    // Truthful metric semantics:
+    // inside: 3 (all passes currently with status 'inside', regardless of issue date)
+    // exited: 1 (exited today Manila)
+    // rejected: 1 (rejected today Manila)
+    // total: 4 (entry scans recorded today Manila: PASS_1, PASS_2, PASS_3, PASS_4_TIE)
     expect(dFull.stats).toHaveProperty('inside');
     expect(dFull.stats).toHaveProperty('exited');
     expect(dFull.stats).toHaveProperty('rejected');
     expect(dFull.stats).toHaveProperty('total');
     expect(dFull.stats).not.toHaveProperty('pending');
 
-    expect(dFull.stats.inside).toBe(1);
+    expect(dFull.stats.inside).toBe(3);
     expect(dFull.stats.exited).toBe(1);
     expect(dFull.stats.rejected).toBe(1);
-    expect(dFull.stats.total).toBe(7);
+    expect(dFull.stats.total).toBe(4);
 
     // 8. TIMEZONE INVARIANCE TEST: Session time zone changed to UTC
     await db.exec("SET TIME ZONE 'UTC';");
     const resUtc = await db.query<{ guard_dashboard: any }>('select api.guard_dashboard(10, 0) as guard_dashboard;');
     const dUtc = resUtc.rows[0].guard_dashboard;
 
-    expect(dUtc.stats.inside).toBe(1);
+    expect(dUtc.stats.inside).toBe(3);
     expect(dUtc.stats.exited).toBe(1);
     expect(dUtc.stats.rejected).toBe(1);
-    expect(dUtc.stats.total).toBe(7);
+    expect(dUtc.stats.total).toBe(4);
     expect(dUtc.pendingTotal).toBe(4);
     expect(dUtc.queue[0].id).toBe(PASS_1);
     expect(dUtc.queue[1].id).toBe(PASS_2);
@@ -1082,10 +1084,10 @@ describe('Permanent PostgreSQL Migration Chain & Schema Contracts (PGlite)', () 
     const resNy = await db.query<{ guard_dashboard: any }>('select api.guard_dashboard(10, 0) as guard_dashboard;');
     const dNy = resNy.rows[0].guard_dashboard;
 
-    expect(dNy.stats.inside).toBe(1);
+    expect(dNy.stats.inside).toBe(3);
     expect(dNy.stats.exited).toBe(1);
     expect(dNy.stats.rejected).toBe(1);
-    expect(dNy.stats.total).toBe(7);
+    expect(dNy.stats.total).toBe(4);
     expect(dNy.pendingTotal).toBe(4);
     expect(dNy.queue[0].id).toBe(PASS_1);
     expect(dNy.queue[1].id).toBe(PASS_2);

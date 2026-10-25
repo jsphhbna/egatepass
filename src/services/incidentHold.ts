@@ -38,6 +38,27 @@ export async function listIncidentHolds(activeOrOptions?: boolean | { active?: b
   return (data.holds || []) as IncidentHold[];
 }
 
+export async function getActiveIncidentHoldsForRecord(params: {
+  passId?: string | null;
+  visitorId?: string | null;
+}): Promise<IncidentHold[]> {
+  const token = await getAccessToken();
+  const url = new URL('/api/admin/holds', window.location.origin);
+  url.searchParams.set('active', 'true');
+  url.searchParams.set('activeOnly', 'true');
+  if (params.passId) url.searchParams.set('passId', params.passId);
+  if (params.visitorId) url.searchParams.set('visitorId', params.visitorId);
+
+  const response = await fetch(url.toString(), {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  if (!response.ok) {
+    throw new Error('Failed to load incident holds for record');
+  }
+  const data = await response.json().catch(() => ({}));
+  return (data.holds || []) as IncidentHold[];
+}
+
 export async function createIncidentHold(params: {
   visitorId?: string | null;
   passId?: string | null;

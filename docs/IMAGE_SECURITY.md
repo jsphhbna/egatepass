@@ -49,6 +49,10 @@ When the pass registration is finalized via `POST /api/passes/issue`, the server
 - **Allowed MIME Types**: `image/jpeg`, `image/png`, `image/webp`.
 - **Magic Bytes Verification**: Inspects leading header bytes (`FF D8 FF` for JPEG, `89 50 4E 47` for PNG, `RIFF...WEBP` for WebP) to prevent disguised executable uploads.
 
+### 2.4 Client Image Decoding & Upload Limits
+- **Client Decoding Safety Limit**: Raw uploaded files selected on the client are capped at 10 MiB (`MAX_RAW_ID_FILE_BYTES = 10 * 1024 * 1024`) as a client decoding safety limit before decoding/compression to protect browser memory and prevent client exhaustion.
+- **Authoritative Storage & Evidence Limit**: Compressed output evidence committed to storage and validated by upload intents remains strictly capped at 5 MiB (`5242880` bytes).
+
 ---
 
 ## 3. Storage Privacy & Access Delegation

@@ -125,3 +125,33 @@ export function formatManilaFileTimestamp(input: DateInput = new Date()): string
   const get = (type: string) => parts.find((p) => p.type === type)?.value ?? '00';
   return get('year') + get('month') + get('day') + '_' + get('hour') + get('minute') + get('second');
 }
+
+/**
+ * Format a month and year in Asia/Manila: e.g. "October 2026"
+ */
+export function formatManilaMonthYear(input: DateInput): string {
+  const d = toDate(input);
+  if (!d) return '—';
+  return new Intl.DateTimeFormat('en-US', {
+    timeZone: MANILA_TIMEZONE,
+    month: 'long',
+    year: 'numeric',
+  }).format(d);
+}
+
+/**
+ * Returns the month key in Asia/Manila: e.g. "2026-10"
+ */
+export function getManilaMonthKey(input: DateInput): string {
+  const d = toDate(input);
+  if (!d) return '';
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone: MANILA_TIMEZONE,
+    year: 'numeric',
+    month: '2-digit',
+  }).formatToParts(d);
+  const year = parts.find((p) => p.type === 'year')?.value ?? '1970';
+  const month = parts.find((p) => p.type === 'month')?.value ?? '01';
+  return `${year}-${month}`;
+}
+

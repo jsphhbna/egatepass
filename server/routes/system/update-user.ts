@@ -29,7 +29,14 @@ async function handleRequest(request: Request): Promise<Response> {
       });
       if (authUpdate.error) {
         await recordReconciliation(admin, 'staff.auth_status', 'staff_profile', parsed.data.targetUid, authUpdate.error.code ?? 'auth_update_failed', { active: parsed.data.active });
-        return jsonResponse(503, { error: 'profile_updated_auth_reconciliation_required' });
+        return jsonResponse(503, {
+          error: 'profile_updated_auth_reconciliation_required',
+          result: 'partial',
+          profileUpdated: true,
+          authSynchronized: false,
+          reconciliationRequired: true,
+          message: 'The staff profile was updated, but authentication synchronization requires reconciliation.',
+        });
       }
     }
     return jsonResponse(200, { ok: true });

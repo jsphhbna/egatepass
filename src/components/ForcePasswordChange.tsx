@@ -5,9 +5,12 @@ import { BrandMark } from '@/components/BrandMark';
 import { toast } from 'sonner';
 import { getPasswordPolicyError, PASSWORD_MIN_LENGTH } from '@/lib/passwordPolicy';
 
+import { useAuth } from '@/hooks/useAuth';
+import { supabase } from '@/lib/supabase';
 import { Eye, EyeOff } from 'lucide-react';
 
 export function ForcePasswordChange() {
+  const { refresh } = useAuth();
   const [showForm, setShowForm] = useState(false);
   const [currentPassword, setCurrentPassword] = useState('');
   const [newPassword, setNewPassword] = useState('');
@@ -39,10 +42,30 @@ export function ForcePasswordChange() {
     try {
       await completeStaffPasswordChange(currentPassword, newPassword);
 
+      if (supabase) {
+        await supabase.auth.refreshSession();
+        const { data: { user } } = await supabase.auth.getUser();
+        if (user) {
+          const { data: profile, error } = await supabase
+            .from('staff_profiles')
+            .select('must_change_password')
+            .eq('user_id', user.id)
+            .maybeSingle();
+          if (error || (profile && profile.must_change_password !== false)) {
+            throw new Error('Password change verification failed. Please try signing in again.');
+          }
+        }
+      }
+
       toast.success('Password updated successfully. You can now continue using your account.');
-      // After success, we want the app to reload or re-evaluate the auth state.
-      // useAuth won't automatically re-run resolveRole unless we force it or reload the page.
-      window.location.reload();
+      if (refresh) {
+        await refresh();
+      }
+      try {
+        window.location.reload();
+      } catch {
+        // Safe for test environments where window.location.reload is not implemented
+      }
     } catch (err: any) {
       console.error(err);
       toast.error(err instanceof Error ? err.message : 'Failed to update password');

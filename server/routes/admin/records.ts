@@ -76,6 +76,11 @@ async function handleRequest(request: Request): Promise<Response> {
     const { admin } = getServerSupabaseClients();
     await requireStaffActor(admin, token, ['admin', 'superadmin']);
 
+    const expireRes = await admin.schema('api').rpc('expire_stale_passes');
+    if (expireRes.error) {
+      throw new HttpError(503, 'service_unavailable');
+    }
+
     let query = admin
       .from('passes')
       .select(`
