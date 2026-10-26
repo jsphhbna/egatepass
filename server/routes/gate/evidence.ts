@@ -102,10 +102,12 @@ async function handleRequest(request: Request): Promise<Response> {
         return jsonResponse(503, { error: 'Audit recording unavailable' });
       }
     } else if (actor.role === 'guard') {
+      // Guard access is scoped to operational verification (.eq('status', 'pending') and active recovery passes)
       const { count, error: passError } = await admin.from('passes').select('id', { count: 'exact', head: true })
-        .eq('visitor_id', evidence.visitor_id).eq('status', 'pending');
+        .eq('visitor_id', evidence.visitor_id)
+        .in('status', ['issued', 'pending', 'inside']);
       if (passError) throw passError;
-      if (!count) return jsonResponse(403, { error: 'Evidence is not in the pending queue' });
+      if (!count) return jsonResponse(403, { error: 'Evidence is not operationally accessible' });
     }
 
     const file = await admin.storage.from(evidence.bucket_id).download(evidence.object_path);
