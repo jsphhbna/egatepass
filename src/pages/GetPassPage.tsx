@@ -42,6 +42,8 @@ import { DEFAULT_VISIT_PURPOSES, normalizeVisitPurposes } from '@/lib/settingsDe
 import type { VisitPurposeOption } from '@/types';
 import { DEFAULT_WORKING_HOURS, formatValidityWindow, formatWorkingHours, MAX_VISIT_ADVANCE_DAYS, normalizeWorkingHours } from '@/lib/workingHours';
 import { getManilaDateString, getLatestVisitDateString, validateVisitDate } from '@/lib/scheduling';
+import { createPassPresentation, type PassPresentation, renderPassCardToDataUrl } from '@/lib/passPresentation';
+import { InstitutionalPassCard } from '@/components/InstitutionalPassCard';
 
 const MAX_RAW_ID_FILE_BYTES = 10 * 1024 * 1024;
 
@@ -122,6 +124,7 @@ export function GetPassPage() {
   }
   const [qrDataUrl, setQrDataUrl] = useState<string | null>(null);
   const [passId, setPassId] = useState<string | null>(null);
+  const [passPresentation, setPassPresentation] = useState<PassPresentation | null>(null);
   const [rawQrToken, setRawQrToken] = useState<string | null>(null);
   const [showEmailModal, setShowEmailModal] = useState(false);
   const [showSkipWarning, setShowSkipWarning] = useState(false);
@@ -468,6 +471,7 @@ export function GetPassPage() {
     idUrl.clear();
     setQrDataUrl(null);
     setPassId(null);
+    setPassPresentation(null);
     setRawQrToken(null);
     setEmailDeliverySecured(false);
     setEmailOutcomeUnknown(false);
@@ -515,9 +519,22 @@ export function GetPassPage() {
       setQrDataUrl(qrUrl);
       setPassId(result.passId);
       setRawQrToken(result.qrToken);
-      setIssuedValidity(result.validFrom && result.validUntil
+      const validity = result.validFrom && result.validUntil
         ? formatValidityWindow(result.validFrom, result.validUntil)
-        : formatWorkingHours(workingHours));
+        : formatWorkingHours(workingHours);
+      setIssuedValidity(validity);
+
+      const presentation = createPassPresentation({
+        firstName: formData.firstName,
+        middleName: formData.middleName,
+        lastName: formData.lastName,
+        visitDate: formData.visitDate,
+        passReference: result.passId,
+        qrToken: result.qrToken,
+        validityWindow: validity,
+        purpose: formData.purpose,
+      });
+      setPassPresentation(presentation);
       
       setEmailDeliverySecured(false);
       setEmailOutcomeUnknown(false);
@@ -555,14 +572,31 @@ export function GetPassPage() {
   // ============================================================
   // DOWNLOAD QR
   // ============================================================
-  function handleDownload() {
+  async function handleDownload() {
     if (!qrDataUrl || !passId) return;
-    const link = document.createElement('a');
-    link.download = `egatepass-${passId}.png`;
-    link.href = qrDataUrl;
-    link.click();
-    setIsDownloaded(true);
-    toast.success('QR code downloaded!');
+    try {
+      if (passPresentation) {
+        const passCardDataUrl = await renderPassCardToDataUrl(passPresentation, { qrDataUrl });
+        const link = document.createElement('a');
+        link.download = `egatepass-${passPresentation.passReference}.png`;
+        link.href = passCardDataUrl;
+        link.click();
+      } else {
+        const link = document.createElement('a');
+        link.download = `egatepass-${passId}.png`;
+        link.href = qrDataUrl;
+        link.click();
+      }
+      setIsDownloaded(true);
+      toast.success('Official gate pass downloaded!');
+    } catch {
+      const link = document.createElement('a');
+      link.download = `egatepass-${passId}.png`;
+      link.href = qrDataUrl;
+      link.click();
+      setIsDownloaded(true);
+      toast.success('QR code downloaded!');
+    }
   }
 
   // ============================================================
@@ -573,14 +607,18 @@ export function GetPassPage() {
     setIsSharing(true);
 
     try {
-      const res = await fetch(qrDataUrl);
+      const cardDataUrl = passPresentation
+        ? await renderPassCardToDataUrl(passPresentation, { qrDataUrl }).catch(() => qrDataUrl)
+        : qrDataUrl;
+      const res = await fetch(cardDataUrl);
       const blob = await res.blob();
-      const file = new File([blob], `egatepass-${passId}.png`, { type: 'image/png' });
+      const filename = passPresentation ? `egatepass-${passPresentation.passReference}.png` : `egatepass-${passId}.png`;
+      const file = new File([blob], filename, { type: 'image/png' });
 
       if (navigator.canShare && navigator.canShare({ files: [file] })) {
         await navigator.share({
           title: 'EARIST Gate Pass',
-          text: `My EARIST Visitor Gate Pass: ${passId}`,
+          text: `My EARIST Visitor Gate Pass: ${passPresentation?.passReference || passId}`,
           files: [file],
         });
         return;
@@ -591,13 +629,8 @@ export function GetPassPage() {
       setIsSharing(false);
     }
 
-    // Fallback: download QR image directly
-    const a = document.createElement('a');
-    a.href = qrDataUrl;
-    a.download = `egatepass-${passId}.png`;
-    a.click();
-    setIsDownloaded(true);
-    toast.success('QR Pass image downloaded! Save and present this image at the gate.');
+    // Fallback: download complete pass card directly
+    await handleDownload();
   }
 
   // ============================================================
@@ -1352,8 +1385,14 @@ export function GetPassPage() {
                 </div>
               )}
 
-              {/* QR Code Container */}
-              {qrDataUrl && (
+              {/* Institutional Pass Visual Presentation (Phase 1.1 - 1.3) */}
+              {qrDataUrl && passPresentation ? (
+                <InstitutionalPassCard
+                  presentation={passPresentation}
+                  qrDataUrl={qrDataUrl}
+                  showRecoveryGuidance={true}
+                />
+              ) : qrDataUrl && (
                 <div className="mx-auto w-64 rounded-xl border border-[var(--color-border)] bg-white p-4 shadow-xs">
                   <img
                     src={qrDataUrl}
@@ -1372,22 +1411,6 @@ export function GetPassPage() {
                   )}
                 </div>
               )}
-
-              {/* Pass details summary */}
-              <div className="rounded-lg bg-[var(--color-surface)] p-3 text-xs text-[var(--color-text-secondary)] border border-[var(--color-border)]">
-                <p>
-                  Visitor:{' '}
-                  <span className="font-bold text-[var(--color-text-primary)]">
-                    {[getValues('firstName'), getValues('middleName'), getValues('lastName')].filter(Boolean).join(' ')}
-                  </span>
-                </p>
-                <p className="mt-0.5">
-                  Date:{' '}
-                  <span className="font-bold text-[var(--color-text-primary)]">
-                    {getValues('visitDate')}
-                  </span>
-                </p>
-              </div>
 
               {/* Action buttons */}
               <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
