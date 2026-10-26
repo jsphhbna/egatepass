@@ -65,6 +65,75 @@ export const guardDashboardWireSchema = z.object({
   hasMore: z.boolean(),
 });
 
+export interface GuardQueueCursor {
+  scannedAt: string | null;
+  id: string;
+}
+
+export const guardQueueCursorSchema = z.object({
+  scannedAt: z.string().nullable(),
+  id: z.string().uuid(),
+});
+
+export interface GuardDashboardPageData extends GuardDashboardData {
+  nextCursor: GuardQueueCursor | null;
+}
+
+export const guardDashboardPageWireSchema = z.object({
+  queue: z.array(guardQueueItemSchema),
+  stats: guardStatsSchema,
+  rejectionReasons: z.array(z.string()),
+  pendingTotal: z.number().int().nonnegative(),
+  hasMore: z.boolean(),
+  nextCursor: guardQueueCursorSchema.nullable(),
+});
+
+export async function fetchGuardDashboardPage(options?: {
+  limit?: number;
+  cursor?: GuardQueueCursor | null;
+}): Promise<GuardDashboardPageData> {
+  const limit = Math.min(options?.limit ?? 50, 200);
+  const { data: rawData, error } = await requireSupabase()
+    .schema('api')
+    .rpc('guard_dashboard_page', {
+      requested_limit: limit,
+      after_scanned_at: options?.cursor?.scannedAt ?? null,
+      after_id: options?.cursor?.id ?? null,
+    });
+  if (error || !rawData) throw error ?? new Error('Guard dashboard page unavailable');
+
+  const parsed = guardDashboardPageWireSchema.safeParse(rawData);
+  if (!parsed.success) {
+    const issueSummary = parsed.error.issues
+      .map((i) => `${i.path.join('.')}: ${i.message}`)
+      .join(', ');
+    throw new Error(`api.guard_dashboard_page contract violation: ${issueSummary}`);
+  }
+
+  const data = parsed.data;
+
+  return {
+    queue: data.queue.map((item) => ({
+      id: item.id,
+      visitorName: item.visitorName,
+      purpose: item.purpose,
+      source: item.source,
+      status: item.status,
+      validFrom: item.validFrom,
+      validUntil: item.validUntil,
+      scannedAt: item.scannedAt,
+      gate: item.gate,
+      photoPublicId: item.photoEvidenceId,
+      idImagePublicId: item.idEvidenceId,
+    })),
+    stats: data.stats,
+    rejectionReasons: data.rejectionReasons,
+    pendingTotal: data.pendingTotal,
+    hasMore: data.hasMore,
+    nextCursor: data.nextCursor,
+  };
+}
+
 export async function fetchGuardDashboard(options?: {
   limit?: number;
   offset?: number;
@@ -114,6 +183,7 @@ export async function fetchGuardDashboard(options?: {
 
 export interface GuardDashboardWindowResult extends GuardDashboardData {
   reachedSafetyCeiling: boolean;
+  queueChangedDuringPaging: boolean;
 }
 
 export async function fetchGuardDashboardWindow(options: {
@@ -121,44 +191,70 @@ export async function fetchGuardDashboardWindow(options: {
   pageSize?: number;
   safetyCeiling?: number;
 }): Promise<GuardDashboardWindowResult> {
-  const pageSize = options.pageSize ?? 200;
   const safetyCeiling = options.safetyCeiling ?? 5000;
   const targetCount = Math.min(
     Math.max(options.desiredCount, 50),
     safetyCeiling
   );
 
-  const accumulated: GuardQueuePass[] = [];
-  const seenIds = new Set<string>();
+  let attempts = 0;
+  let finalAccumulated: GuardQueuePass[] = [];
+  let finalLatestDashboard: GuardDashboardPageData | null = null;
+  let finalQueueChanged = false;
 
-  let offset = 0;
-  let hasMore = true;
-  let latestDashboard: GuardDashboardData | null = null;
+  while (attempts < 2) {
+    attempts++;
+    const accumulated: GuardQueuePass[] = [];
+    const seenIds = new Set<string>();
 
-  while (hasMore && accumulated.length < targetCount) {
-    const remaining = targetCount - accumulated.length;
-    const limit = Math.min(Math.min(pageSize, 200), remaining);
+    let cursor: GuardQueueCursor | null = null;
+    let hasMore = true;
+    let latestDashboard: GuardDashboardPageData | null = null;
+    let firstPendingTotal: number | null = null;
+    let queueChangedDuringPaging = false;
 
-    const batch = await fetchGuardDashboard({
-      limit,
-      offset,
-    });
+    while (hasMore && accumulated.length < targetCount) {
+      const remaining = targetCount - accumulated.length;
+      const page = await fetchGuardDashboardPage({
+        limit: Math.min(200, remaining),
+        cursor,
+      });
 
-    latestDashboard = batch;
+      latestDashboard = page;
 
-    for (const pass of batch.queue) {
-      if (!seenIds.has(pass.id)) {
-        seenIds.add(pass.id);
-        accumulated.push(pass);
+      if (firstPendingTotal === null) {
+        firstPendingTotal = page.pendingTotal;
+      } else if (page.pendingTotal !== firstPendingTotal) {
+        queueChangedDuringPaging = true;
+      }
+
+      for (const pass of page.queue) {
+        if (!seenIds.has(pass.id)) {
+          seenIds.add(pass.id);
+          accumulated.push(pass);
+        }
+      }
+
+      hasMore = page.hasMore;
+      cursor = page.nextCursor;
+
+      if (page.hasMore && page.nextCursor === null) {
+        throw new Error(
+          'guard_dashboard_page contract violation: hasMore without nextCursor'
+        );
       }
     }
 
-    offset += batch.queue.length;
+    finalAccumulated = accumulated;
+    finalLatestDashboard = latestDashboard;
+    finalQueueChanged = queueChangedDuringPaging;
 
-    hasMore = batch.hasMore && batch.queue.length > 0;
+    if (!queueChangedDuringPaging || attempts >= 2) {
+      break;
+    }
   }
 
-  if (!latestDashboard) {
+  if (!finalLatestDashboard) {
     return {
       queue: [],
       stats: { inside: 0, exited: 0, rejected: 0, total: 0 },
@@ -166,20 +262,22 @@ export async function fetchGuardDashboardWindow(options: {
       pendingTotal: 0,
       hasMore: false,
       reachedSafetyCeiling: false,
+      queueChangedDuringPaging: false,
     };
   }
 
   const reachedSafetyCeiling =
-    accumulated.length >= safetyCeiling &&
-    latestDashboard.hasMore;
+    finalAccumulated.length >= safetyCeiling &&
+    finalLatestDashboard.hasMore;
 
   return {
-    queue: accumulated,
-    stats: latestDashboard.stats,
-    rejectionReasons: latestDashboard.rejectionReasons,
-    pendingTotal: latestDashboard.pendingTotal,
-    hasMore,
+    queue: finalAccumulated,
+    stats: finalLatestDashboard.stats,
+    rejectionReasons: finalLatestDashboard.rejectionReasons,
+    pendingTotal: finalLatestDashboard.pendingTotal,
+    hasMore: finalLatestDashboard.hasMore,
     reachedSafetyCeiling,
+    queueChangedDuringPaging: finalQueueChanged,
   };
 }
 

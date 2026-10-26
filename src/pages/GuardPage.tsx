@@ -3,7 +3,7 @@ import { useEffect, useState, useRef } from 'react';
 import { useAuth } from '@/hooks/useAuth';
 import { signOutCurrentActor } from '@/services/auth';
 import { AuthenticatedImage } from '@/components/AuthenticatedImage';
-import { fetchGuardDashboard, fetchGuardDashboardWindow, subscribeToPassChanges, recordDecision, GuardApiError, type GuardQueuePass } from '@/services/guard';
+import { fetchGuardDashboardWindow, subscribeToPassChanges, recordDecision, GuardApiError, type GuardQueuePass, type GuardDashboardWindowResult } from '@/services/guard';
 import {
   CheckCircle2,
   XCircle,
@@ -46,8 +46,9 @@ export function GuardPage() {
   const [pendingTotal, setPendingTotal] = useState(0);
   const [hasMore, setHasMore] = useState(false);
   const [loadingMore, setLoadingMore] = useState(false);
-  const passesLengthRef = useRef(50);
-  const refreshGenerationRef = useRef(0);
+  const desiredQueueSizeRef = useRef(50);
+  const queueGenerationRef = useRef(0);
+  const mountedRef = useRef(true);
 
   // Daily Report stats
   const [dailyStats, setDailyStats] = useState({
@@ -65,113 +66,148 @@ export function GuardPage() {
   const [lastUpdatedAt, setLastUpdatedAt] = useState<Date | null>(null);
   const [refreshError, setRefreshError] = useState(false);
 
+  // ============================================================
+  // MOUNT / UNMOUNT LIFECYCLE FENCING
+  // ============================================================
   useEffect(() => {
-    let active = true;
-    let loading = false;
-    let isInitial = true;
-    const refresh = async () => {
-      if (loading) return;
-      loading = true;
-      if (!isInitial) {
-        setRefreshing(true);
-      }
-      const generation = ++refreshGenerationRef.current;
-      try {
-        const desiredCount = Math.max(50, passesLengthRef.current);
-        const dashboard = await fetchGuardDashboardWindow({ desiredCount });
-        if (!active || generation !== refreshGenerationRef.current) return;
-        setQueueError(false);
-        setRefreshError(false);
-        setLastUpdatedAt(new Date());
-        if (dashboard.pendingTotal > previousPendingCountRef.current && audioRef.current) {
-          audioRef.current.play().catch(() => undefined);
-        }
-        previousPendingCountRef.current = dashboard.pendingTotal;
-        setPasses(dashboard.queue);
-        passesLengthRef.current = dashboard.queue.length;
-        setPendingTotal(dashboard.pendingTotal);
-        setHasMore(dashboard.hasMore);
-        setDailyStats(dashboard.stats);
-        setRejectionReasons(dashboard.rejectionReasons);
-      } catch (error) {
-        if (active && generation === refreshGenerationRef.current) {
-          if (isInitial) {
-            setQueueError(true);
-          } else {
-            setRefreshError(true);
-          }
-        }
-        console.error('Guard dashboard error:', error);
-      } finally {
-        loading = false;
-        isInitial = false;
-        if (active && generation === refreshGenerationRef.current) {
-          setInitialLoading(false);
-          setRefreshing(false);
-        }
-      }
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+      queueGenerationRef.current += 1;
     };
-    void refresh();
-    const stopRealtime = subscribeToPassChanges(() => { void refresh(); });
-    const poll = window.setInterval(() => { void refresh(); }, 5000);
-    return () => { active = false; stopRealtime(); window.clearInterval(poll); };
   }, []);
 
-  async function handleLoadMore() {
-    if (loadingMore || !hasMore) return;
-    setLoadingMore(true);
-    try {
-      const nextBatch = await fetchGuardDashboard({ limit: 50, offset: passes.length });
-      setPasses((prev) => {
-        const existingIds = new Set(prev.map((p) => p.id));
-        const newItems = nextBatch.queue.filter((p) => !existingIds.has(p.id));
-        const combined = [...prev, ...newItems];
-        passesLengthRef.current = combined.length;
-        return combined;
-      });
-      refreshGenerationRef.current += 1;
-      setPendingTotal(nextBatch.pendingTotal);
-      setHasMore(nextBatch.hasMore);
-    } catch (err) {
-      console.error('Failed to load more queue passes:', err);
-      toast.error('Failed to load more passes');
-    } finally {
-      setLoadingMore(false);
+  // ============================================================
+  // CENTRAL AUTHORITATIVE REFRESH STATE MACHINE
+  // ============================================================
+  async function refreshGuardQueueWindow(options?: {
+    showRefreshing?: boolean;
+  }): Promise<{
+    committed: boolean;
+    dashboard?: GuardDashboardWindowResult;
+  }> {
+    if (options?.showRefreshing) {
+      setRefreshing(true);
     }
-  }
+    const generation = ++queueGenerationRef.current;
+    const desiredCount = desiredQueueSizeRef.current;
 
-  async function handleLoadAll() {
-    if (loadingMore || !hasMore) return;
-    setLoadingMore(true);
     try {
       const dashboard = await fetchGuardDashboardWindow({
-        desiredCount: 5000,
+        desiredCount,
         safetyCeiling: 5000,
       });
 
+      if (!mountedRef.current || generation !== queueGenerationRef.current) {
+        return { committed: false };
+      }
+
+      setQueueError(false);
+      setRefreshError(false);
+      setLastUpdatedAt(new Date());
+
+      if (dashboard.pendingTotal > previousPendingCountRef.current && audioRef.current) {
+        audioRef.current.play().catch(() => undefined);
+      }
+      previousPendingCountRef.current = dashboard.pendingTotal;
+
       setPasses(dashboard.queue);
-      passesLengthRef.current = dashboard.queue.length;
-      refreshGenerationRef.current += 1;
       setPendingTotal(dashboard.pendingTotal);
       setHasMore(dashboard.hasMore);
       setDailyStats(dashboard.stats);
       setRejectionReasons(dashboard.rejectionReasons);
 
-      if (dashboard.reachedSafetyCeiling) {
-        toast.info(
-          'Loaded the first 5,000 pending passes. Narrow the search or continue using paginated queue controls.'
-        );
-      } else {
-        toast.success(`Loaded all ${dashboard.queue.length} pending passes.`);
+      // Normalize desired target when queue shrinks
+      if (dashboard.hasMore === false) {
+        desiredQueueSizeRef.current = Math.max(50, dashboard.queue.length);
+      }
+
+      return { committed: true, dashboard };
+    } catch (error) {
+      if (mountedRef.current && generation === queueGenerationRef.current) {
+        if (initialLoading) {
+          setQueueError(true);
+        } else {
+          setRefreshError(true);
+        }
+      }
+      console.error('Guard dashboard error:', error);
+      return { committed: false };
+    } finally {
+      if (mountedRef.current && generation === queueGenerationRef.current) {
+        setInitialLoading(false);
+        setRefreshing(false);
+      }
+    }
+  }
+
+  // ============================================================
+  // INITIAL LOAD, REALTIME & 5-SECOND POLLING
+  // ============================================================
+  useEffect(() => {
+    void refreshGuardQueueWindow();
+    const stopRealtime = subscribeToPassChanges(() => {
+      void refreshGuardQueueWindow({ showRefreshing: true });
+    });
+    const poll = window.setInterval(() => {
+      void refreshGuardQueueWindow({ showRefreshing: true });
+    }, 5000);
+    return () => {
+      stopRealtime();
+      window.clearInterval(poll);
+    };
+  }, []);
+
+  // ============================================================
+  // LOAD MORE: TARGET INCREASE VIA CENTRAL WRITER (NO APPEND)
+  // ============================================================
+  async function handleLoadMore() {
+    if (loadingMore || !hasMore) return;
+    setLoadingMore(true);
+
+    desiredQueueSizeRef.current = Math.min(
+      Math.max(desiredQueueSizeRef.current, 50) + 50,
+      5000
+    );
+
+    try {
+      await refreshGuardQueueWindow();
+    } finally {
+      if (mountedRef.current) {
+        setLoadingMore(false);
+      }
+    }
+  }
+
+  // ============================================================
+  // LOAD ALL: TARGET EXPANSION VIA CENTRAL WRITER
+  // ============================================================
+  async function handleLoadAll() {
+    if (loadingMore || !hasMore) return;
+    setLoadingMore(true);
+
+    desiredQueueSizeRef.current = 5000;
+
+    try {
+      const result = await refreshGuardQueueWindow();
+      if (result.committed && result.dashboard) {
+        if (result.dashboard.reachedSafetyCeiling) {
+          toast.info(
+            'Loaded the first 5,000 pending passes. Narrow the search or continue using paginated queue controls.'
+          );
+        } else {
+          toast.success(`Loaded all ${result.dashboard.queue.length} pending passes.`);
+        }
       }
     } catch (err) {
       console.error('Failed to load all pending passes:', err);
       toast.error('Failed to load all passes');
     } finally {
-      setLoadingMore(false);
+      if (mountedRef.current) {
+        setLoadingMore(false);
+      }
     }
   }
-
 
   // ============================================================
   // ONLINE/OFFLINE DETECTION
@@ -187,31 +223,9 @@ export function GuardPage() {
     };
   }, []);
 
+  // Central refresh alias for decision post-processing
   const refreshQueue = async () => {
-    const generation = ++refreshGenerationRef.current;
-    try {
-      const desiredCount = Math.max(50, passesLengthRef.current);
-      const dashboard = await fetchGuardDashboardWindow({ desiredCount });
-      if (generation !== refreshGenerationRef.current) return;
-      setQueueError(false);
-      setRefreshError(false);
-      setLastUpdatedAt(new Date());
-      if (dashboard.pendingTotal > previousPendingCountRef.current && audioRef.current) {
-        audioRef.current.play().catch(() => undefined);
-      }
-      previousPendingCountRef.current = dashboard.pendingTotal;
-      setPasses(dashboard.queue);
-      passesLengthRef.current = dashboard.queue.length;
-      setPendingTotal(dashboard.pendingTotal);
-      setHasMore(dashboard.hasMore);
-      setDailyStats(dashboard.stats);
-      setRejectionReasons(dashboard.rejectionReasons);
-    } catch (error) {
-      if (generation === refreshGenerationRef.current) {
-        console.error('Guard dashboard refresh error:', error);
-        setRefreshError(true);
-      }
-    }
+    await refreshGuardQueueWindow();
   };
 
   // ============================================================

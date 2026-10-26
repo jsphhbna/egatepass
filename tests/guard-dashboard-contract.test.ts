@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { fetchGuardDashboard } from '@/services/guard';
+import { fetchGuardDashboard, fetchGuardDashboardPage } from '@/services/guard';
 import * as supabaseLib from '@/lib/supabase';
 
 describe('Guard Dashboard Frontend Contract Regression (fetchGuardDashboard)', () => {
@@ -208,5 +208,130 @@ describe('Guard Dashboard Frontend Contract Regression (fetchGuardDashboard)', (
       message: 'permission denied',
       code: '42501',
     });
+  });
+});
+
+describe('Guard Dashboard Page Keyset Contract (fetchGuardDashboardPage)', () => {
+  beforeEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  const validPageItem = {
+    id: '11111111-1111-4111-8111-111111111111',
+    visitorName: 'Juan Dela Cruz',
+    purpose: 'Official Business',
+    source: 'portal' as const,
+    status: 'pending' as const,
+    validFrom: '2026-10-21T08:00:00Z',
+    validUntil: '2026-10-21T17:00:00Z',
+    scannedAt: '2026-10-21T09:00:00Z',
+    gate: 'Gate 1',
+    photoEvidenceId: '22222222-2222-4222-8222-222222222222',
+    idEvidenceId: '33333333-3333-4333-8333-333333333333',
+  };
+
+  const validPagePayload = {
+    queue: [validPageItem],
+    stats: {
+      inside: 12,
+      exited: 25,
+      rejected: 3,
+      total: 40,
+    },
+    rejectionReasons: ['Expired Pass', 'No Valid ID'],
+    pendingTotal: 10,
+    hasMore: true,
+    nextCursor: {
+      scannedAt: '2026-10-21T09:00:00Z',
+      id: '11111111-1111-4111-8111-111111111111',
+    },
+  };
+
+  function mockRpcReturn(payload: unknown, error: unknown = null) {
+    const mockRpc = vi.fn().mockResolvedValue({
+      data: payload,
+      error,
+    });
+    vi.spyOn(supabaseLib, 'requireSupabase').mockReturnValue({
+      schema: vi.fn().mockReturnValue({
+        rpc: mockRpc,
+      }),
+    } as any);
+    return mockRpc;
+  }
+
+  it('1. Maps canonical guard_dashboard_page payload to GuardDashboardPageData with cursor', async () => {
+    const mockRpc = mockRpcReturn(validPagePayload);
+
+    const result = await fetchGuardDashboardPage({
+      limit: 50,
+      cursor: { scannedAt: '2026-10-21T08:30:00Z', id: '00000000-0000-4000-8000-000000000001' },
+    });
+
+    expect(mockRpc).toHaveBeenCalledWith('guard_dashboard_page', {
+      requested_limit: 50,
+      after_scanned_at: '2026-10-21T08:30:00Z',
+      after_id: '00000000-0000-4000-8000-000000000001',
+    });
+
+    expect(result.queue).toHaveLength(1);
+    expect(result.queue[0].photoPublicId).toBe('22222222-2222-4222-8222-222222222222');
+    expect(result.queue[0].idImagePublicId).toBe('33333333-3333-4333-8333-333333333333');
+    expect(result.hasMore).toBe(true);
+    expect(result.nextCursor).toEqual({
+      scannedAt: '2026-10-21T09:00:00Z',
+      id: '11111111-1111-4111-8111-111111111111',
+    });
+    expect(result.pendingTotal).toBe(10);
+  });
+
+  it('2. Accepts nextCursor: null when hasMore: false', async () => {
+    const payload = {
+      ...validPagePayload,
+      hasMore: false,
+      nextCursor: null,
+    };
+    mockRpcReturn(payload);
+
+    const result = await fetchGuardDashboardPage();
+    expect(result.hasMore).toBe(false);
+    expect(result.nextCursor).toBeNull();
+  });
+
+  it('3. Enforces 200 maximum page cap in RPC invocation', async () => {
+    const mockRpc = mockRpcReturn(validPagePayload);
+
+    await fetchGuardDashboardPage({ limit: 500 });
+
+    expect(mockRpc).toHaveBeenCalledWith('guard_dashboard_page', {
+      requested_limit: 200,
+      after_scanned_at: null,
+      after_id: null,
+    });
+  });
+
+  it('4. Rejects payload when nextCursor has invalid UUID format', async () => {
+    const badPayload = {
+      ...validPagePayload,
+      nextCursor: {
+        scannedAt: '2026-10-21T09:00:00Z',
+        id: 'not-a-uuid',
+      },
+    };
+    mockRpcReturn(badPayload);
+
+    await expect(fetchGuardDashboardPage()).rejects.toThrow(
+      /api.guard_dashboard_page contract violation: nextCursor.id/
+    );
+  });
+
+  it('5. Rejects payload when photoEvidenceId is missing or null', async () => {
+    const badItem: any = { ...validPageItem };
+    delete badItem.photoEvidenceId;
+    mockRpcReturn({ ...validPagePayload, queue: [badItem] });
+
+    await expect(fetchGuardDashboardPage()).rejects.toThrow(
+      /api.guard_dashboard_page contract violation: queue.0.photoEvidenceId/
+    );
   });
 });
