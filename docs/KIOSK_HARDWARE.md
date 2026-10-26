@@ -57,49 +57,74 @@ The kiosk workflow relies on client-side camera captures for visitor verificatio
 
 ---
 
-## 3. Current Printing Workflow & Behavioral Truth
+## 3. MXW01 Direct Thermal Printing & Workflow Specification
 
 > [!IMPORTANT]
-> **CURRENT PRINTING BEHAVIOR SPECIFICATION**
-> Current kiosk printing relies strictly on the standard **browser and operating-system print subsystem** initiated by human interaction with the **Print Pass** button.
-> The application does **NOT** automatically print receipts immediately upon pass issuance.
+> **MXW01 DIRECT HARDWARE THERMAL PRINTING SPECIFICATION**
+> Direct thermal receipt printing is implemented for the **MXW01 portable Bluetooth thermal printer** (384px native width, 48mm printable area).
+> **Single Printer Architecture**: There is exactly **ONE physical printer** in the deployment, owned exclusively by the **kiosk tablet browser**. Guards do NOT possess a separate thermal printer.
+> **Fail-Safe Printing Invariant**: Print failures **NEVER roll back pass issuance**. Once an authoritative pass is issued, failure to connect or print to the physical hardware renders a notification with "Print Again" and "Browser Print" fallbacks without generating duplicate passes.
 
 ```mermaid
 sequenceDiagram
-    actor Visitor as Visitor / Kiosk Operator
-    participant UI as Kiosk UI (/kiosk)
-    participant Browser as Browser Window (window.print)
-    participant OS as OS Print Manager / System Printer
+    actor Visitor as Walk-in Visitor
+    participant Kiosk as Kiosk Tablet Browser (/kiosk)
+    participant MXW01 as MXW01 Thermal Printer (Web Bluetooth)
+    participant Browser as Browser Print Dialog (window.print)
+    participant Server as E-GatePass API
 
-    Visitor->>UI: Completes ID Capture, OCR Review, and Selfie
-    Visitor->>UI: Taps "Issue Gate Pass"
-    UI->>UI: Issuance succeeds -> Renders QR code and summary
-    Note over UI,Visitor: Step 9 (Done): UI displays QR and action buttons
-    Visitor->>UI: Taps "Print Pass" button
-    UI->>Browser: handlePrint() invokes window.print()
-    Browser->>OS: Opens OS print preview / dialog
-    OS->>OS: Dispatches print job to configured default printer
+    Visitor->>Kiosk: Completes Walk-in Registration
+    Kiosk->>Server: Issue Pass (Authoritative)
+    Server-->>Kiosk: Pass Created Successfully
+    alt MXW01 Connected & Auto-Print Enabled
+        Kiosk->>MXW01: Send 384px Monochrome Raster Bitmap
+        MXW01-->>Visitor: Eject Printed Institutional Pass
+    else MXW01 Disconnected / Print Error
+        Kiosk-->>Visitor: Displays Pass + "Printer Unavailable" Notice
+        opt Manual Retry or Fallback
+            Visitor->>Kiosk: Taps "Print Again" or "Browser Print"
+            Kiosk->>Browser: Fallback to standard window.print()
+        end
+    end
 ```
 
-### Current Print Execution Details:
-1. **Pass Display**: Upon successful issuance, the kiosk displays the pass QR code, visitor full name, visit date, purpose, and validity window.
-2. **Action Controls**: The UI presents three explicit action controls:
-   - **Print Pass** (invokes `handlePrint()` -> `window.print()`)
-   - **Email my QR code** (opens modal for visitor email delivery)
-   - **Next Visitor** (resets kiosk wizard for the next visitor)
-3. **Print Styling**: The page applies `@media print` CSS rules in `src/pages/KioskPage.tsx` to hide navigation headers, cards, and buttons, rendering a clean pass layout suitable for standard desktop, thermal, or PDF printers configured in the operating system.
+### 3.1 Device Specifications & Browser Compatibility
+- **Hardware Model**: MXW01 / PeriPage / Fun Print compatible 58mm Bluetooth BLE thermal printers.
+- **Print Width**: Native 384 pixels (48mm printable area at 203 DPI / 8 dots/mm).
+- **Driver/Ecosystem**: `mxw01-thermal-printer` (MIT licensed, zero external runtime dependencies) utilizing standard Web Bluetooth GATT service.
+- **Browser Requirement**: Chromium-based browser (Google Chrome, Microsoft Edge) running over secure **HTTPS**.
+- **Platform Compatibility**: Android Tablet (Target deployment), ChromeOS, or Windows tablet. Apple iOS/iPadOS Safari does not support Web Bluetooth and automatically defaults to the system `window.print()` path.
+
+### 3.2 Bluetooth Pairing & Safe Reconnection Lifecycle
+1. **Initial Pairing**:
+   - The kiosk operator opens **Device Settings** (protected by operator PIN).
+   - Tapping **Connect MXW01** initiates `navigator.bluetooth.requestDevice()` filtering for MXW01 GATT services.
+   - User grants permission in the browser Bluetooth device picker.
+2. **Session Reconnection**:
+   - On subsequent launches, the kiosk invokes `navigator.bluetooth.getDevices()` to attempt zero-interaction reconnection to a previously authorized printer.
+   - If permissions expire or device is powered off, the UI safely falls back to disconnected state without crashing the registration wizard.
+
+### 3.3 Protected Device Settings & Controls
+Kiosk device settings (`/kiosk` > Gear Icon) are strictly protected by the Kiosk Operator PIN (default `123456`) to prevent visitors from tampering with hardware configuration:
+- **Connection Status**: Real-time indicator (`connected`, `connecting`, `disconnected`, `error`).
+- **Connect / Disconnect**: Explicit Bluetooth lifecycle controls.
+- **Auto-Print Toggle**: Enables or disables immediate printing upon pass issuance.
+- **Print Darkness / Intensity**: High-contrast monochrome rendering tuning.
+- **Test Print**: Dispatches an official 384px EARIST diagnostic ticket verifying alignment, cutter, and feed.
+
+### 3.4 Fallback Printing Subsystem
+If Web Bluetooth is unsupported by the browser, disabled in hardware, or the printer runs out of thermal paper:
+- The kiosk registration flow continues smoothly without blocking.
+- A prominent **Print Pass** button triggers standard `window.print()` with `@media print` CSS rules tailored for receipt rolls or standard paper.
 
 ---
 
-## 4. Future Thermal Printer Integration (Boundary & Status)
+## 4. Multi-Device / PC Print Server Architecture Boundary
 
 ### Integration Status: `NOT YET IMPLEMENTED`
-Dedicated direct-to-hardware thermal receipt printing (such as portable Bluetooth mini thermal printers like the MXW01 / Fun Print series, ESC/POS byte streaming, or raw USB serial printing) is a **planned hardware enhancement**.
+The current production architecture strictly deploys a **single physical MXW01 printer owned exclusively by the kiosk tablet browser via Web Bluetooth**.
+Device-to-device WebRTC printing, local LAN print servers, PC-hosted print queues, or Guard-station receipt printers are explicitly excluded from this deployment boundary:
+- **Status**: `NOT YET IMPLEMENTED` / Intentionally Rejected.
+- **Architectural Boundary**: Guard stations do not operate thermal printers; walk-in printing is exclusive to the kiosk tablet.
 
-### Engineering & Verification Boundaries:
-- **No Direct Bluetooth Printing in Current Code**: The current codebase does not implement Web Bluetooth API pairing, ESC/POS command generation, or direct byte streaming to proprietary thermal printer hardware.
-- **Hardware Integration Requirement**: Device-specific thermal printer integration requires:
-  1. Driver/SDK evaluation for targeted thermal printing hardware.
-  2. Protocol implementation (e.g. ESC/POS, raster bitmap, or Web Bluetooth).
-  3. Physical testing on actual campus hardware verifying paper width, print density, QR code readability by gate scanners, and reconnect behavior.
-- **Documentation Boundary**: Detailed hardware pairing, baud rates, and printer-specific configurations will be authored and ratified in this document only **AFTER** physical implementation and testing are complete.
+

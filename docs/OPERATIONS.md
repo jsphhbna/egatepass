@@ -236,3 +236,112 @@ If a staff member or visitor reports non-receipt of an email:
    - In Vercel Logs, filter by `/api/webhooks/resend`. Ensure incoming delivery events return HTTP 200.
 4. **Resend Delivery Activity**:
    - Inspect the Resend dashboard Logs tab to view delivery status (`Delivered`, `Bounced`, or `Complained`).
+
+---
+
+## 7. MXW01 Thermal Printing Operations
+
+The kiosk station operates a single dedicated **MXW01 Bluetooth thermal receipt printer** (384px print width) for printing paper passes for walk-in visitors:
+
+### 7.1 Single Printer Architecture
+- **Kiosk-Only Ownership**: The single physical MXW01 printer is paired and controlled exclusively by the **kiosk tablet browser** via Web Bluetooth.
+- **No Guard Printer**: Gate guards do not maintain physical printers. All printed passes originate at the kiosk station.
+
+### 7.2 Initial Setup & Pairing Procedure
+1. Power on the MXW01 printer (hold power button until blue LED flashes).
+2. On the kiosk tablet, open the `/kiosk` page.
+3. Tap the **Gear Icon** in the top-right corner to open **Device Settings**.
+4. Enter the Kiosk Operator PIN (default `123456`).
+5. In the Thermal Printer section, tap **Connect MXW01**.
+6. The Chromium Bluetooth device picker will appear. Select the MXW01 / PeriPage device and tap **Pair**.
+7. Confirm status changes to **Connected** (Green badge).
+8. Tap **Test Print** to verify paper alignment, darkness, and cutter feed.
+
+### 7.3 Daily Operation & Maintenance
+- **Auto-Print**: When enabled, the kiosk automatically sends the 384px raster print job to the printer immediately upon successful pass creation.
+- **Fail-Safe Invariant**: If the printer disconnects, runs out of paper, or suffers a Bluetooth timeout, the pass is **NOT** cancelled or rolled back. The visitor is presented with a clear notice, and the operator or visitor can tap **Print Again** or **Browser Print** (falling back to the standard system print dialog).
+- **Paper Roll Replacement**: Use standard 57mm × 30mm thermal receipt rolls. Ensure the thermal-coated side faces the thermal head (paper feeds from underneath).
+
+---
+
+## 8. Super Admin Thermal Template Management
+
+Super Admins configure and publish the visual layout of printed thermal tickets via the built-in layout editor at `/admin/templates`:
+
+### 8.1 Authorization & Access Control
+- **Super Admin Exclusive**: Only users with the `superadmin` role may create, edit, publish, or restore thermal templates.
+- **Guards and Admins**: Have zero access to template editing.
+- **Kiosk Devices**: Only retrieve the active published template for rendering.
+
+### 8.2 Template Invariants & Validation
+- **Canvas Width**: Fixed at native 384 pixels.
+- **Mandatory Elements**: The template schema enforces the permanent existence of:
+  - Institution Logo (`institution_logo`)
+  - Institution Name (`institution_name`)
+  - Visitor Full Name (`visitor_name`)
+  - Visit Date (`visit_date`)
+  - Opaque Pass QR Code (`qr_code`)
+  - Pass Reference (`pass_reference`)
+- Mandatory elements cannot be deleted from a publishable template.
+- **Security Validation**: All template layouts are validated against a strict server-side Zod schema. Remote URLs, scripts, and arbitrary HTML are rejected.
+- **Bundled Fallback**: If network connectivity fails or remote template data cannot be parsed, the kiosk automatically falls back to an embedded known-good default template.
+
+---
+
+## 9. Guard Visitor Recovery Operations
+
+When a registered visitor arrives at the gate but cannot present their QR code (e.g. lost phone, dead battery, misplaced email):
+
+### 9.1 Recovery Search Scope
+1. On the **Guard Console** (`/guard`), tap the **Visitor Recovery** tab.
+2. The search scope is strictly bounded to **today's date in Asia/Manila** and active passes (`issued`, `pending`, `inside`).
+3. Search by **Visitor Full Name**, **Contact Number**, or **Pass Reference** (`EG-XXXXXXXX`).
+
+### 9.2 Identity Verification & Evidence Review
+1. Tap on the matching visitor record to expand details.
+2. Review the visitor's registration photo selfie and captured valid ID streamed securely via `GET /api/evidence?id=<evidence_id>`.
+3. Require the visitor to present a physical government ID and physically verify identity against the displayed evidence.
+
+### 9.3 Manual Operational Actions
+- **Approve Entry**: If the visitor is in `issued` or `pending` status and identity is verified, tap **Approve Entry**. The pass status transitions to `inside` and the audit event records `action = 'approve_entry'`, `source = 'visitor_recovery'`.
+- **Reject Entry**: If identity or credentials fail physical verification, tap **Reject Entry** and record the reason.
+- **Record Exit**: If an un-exited visitor is leaving and cannot present their QR code, the Guard verifies the record and taps **Record Exit** to transition the pass to `exited`.
+
+---
+
+## 10. Guard Offline Operations & Connectivity Outage Procedures
+
+In the event of an institutional network outage, fiber cut, or cloud service disruption:
+
+### 10.1 System-Wide Fail-Closed Invariants
+- **Kiosk Station**: Immediately disables visitor registration. The screen displays:
+  ```text
+  SERVICE TEMPORARILY UNAVAILABLE
+  Visitor registration is currently unavailable.
+  Please proceed directly to the Guard for registration and verification.
+  ```
+- **Entry & Exit Scanners**: Scan submissions fail closed. The scanner displays a prominent network failure notice directing the visitor to the Guard. The scanner does **NOT** falsely report the QR code as invalid, expired, or forged.
+
+### 10.2 Guard Operational Fallback
+The Guard tablet serves as the sole operational access authority during an outage:
+1. **Offline Banner**: When the backend cannot be reached, the Guard Console displays a yellow/red offline banner indicating offline operation and the count of un-synchronized outbox records.
+2. **Offline Recovery of Existing Visitors**:
+   - The Guard searches the local IndexedDB cache (automatically populated with today's operational passes while online).
+   - The Guard performs physical identity verification using cached visitor evidence.
+   - Guard taps **Approve Entry** or **Record Exit**.
+   - The action is appended to the local IndexedDB event outbox with an immutable UUID `eventId`.
+3. **Offline Walk-in Intake**:
+   - For unregistered walk-in visitors, the Guard opens the **Offline Registration** tab.
+   - The Guard physically inspects the visitor's physical government ID.
+   - The Guard enters visitor name, contact, purpose, and captures a live facial photo and valid ID photo using the tablet camera.
+   - The Guard taps **Approve Entry** (recording Time-In automatically) or **Reject Entry**.
+   - An immutable UUID `offlineRegistrationId` is stamped, and the record is stored locally in IndexedDB.
+
+### 10.3 Automatic Reconnection Synchronization
+When cloud connectivity returns:
+1. The Guard Console detects connectivity and initiates background synchronization via `guardSyncManager.ts`.
+2. Offline walk-in registrations synchronize first via `api.sync_offline_registration` (uploading evidence photos, creating canonical visitor and pass records).
+3. Queued lifecycle events synchronize via `api.sync_offline_event` (evaluating prior state, locking rows with `FOR UPDATE`, and transitioning pass status).
+4. Synchronized entries are acknowledged and safely purged from the local device store.
+5. In the rare event of a state conflict (e.g. visitor was already rejected online prior to outage), a reconciliation record is logged in `public.reconciliation_tasks` for administrative review without overwriting data.
+

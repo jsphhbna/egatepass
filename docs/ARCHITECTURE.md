@@ -343,3 +343,95 @@ To eliminate race conditions and guarantee that delivery audit logs and deduplic
   - The webhook handler responds with HTTP 200 `already_processed` and no second audit event is created.
 - **Access Boundary**:
   - Execution of `api.record_resend_delivery_event` is strictly revoked from `public`, `anon`, and `authenticated`, granted exclusively to `service_role` for serverless function use.
+
+---
+
+## 9. Institutional Pass Visual Contract & Shared Presentation Architecture
+
+Every visitor pass across all system surfaces adheres to a unified presentation contract:
+
+```text
+Pass Presentation Data Flow
+  Pass Entity (DB)
+        │
+        ▼
+  createPassPresentation()
+        │
+        ├── visitorName      (Formatted First, Middle Initial, Last Name)
+        ├── visitDate        (Formatted in Asia/Manila, e.g. "October 27, 2026")
+        ├── passReference    (Canonical Reference format "EG-XXXXXXXX")
+        └── qrToken          (Opaque bearer pass token digest)
+        │
+        ├──> Online Pass View (InstitutionalPassCard.tsx)
+        ├──> Pass Card PNG Download (renderPassCardToDataUrl)
+        ├──> Transactional Pass Email (PassNotificationEmail.tsx)
+        ├──> Kiosk Display (KioskPage.tsx)
+        └──> MXW01 Thermal Print (thermalRenderer.ts)
+```
+
+### Critical Security & Cryptographic Boundary:
+- **Opaque Token Invariant**: The QR payload consists exclusively of the opaque, cryptographically verified bearer pass token.
+- **Zero PII in QR Payload**: Visitor name, contact number, email, purpose, and date are strictly **NEVER** embedded into the QR payload. All identifiable metadata is rendered visually around the QR code on the institutional card or thermal print.
+
+---
+
+## 10. MXW01 Thermal Printing & Super Admin Template Engine
+
+The physical thermal printing subsystem is designed around hardware reality and strict authority separation:
+
+```text
+Thermal Subsystem Architecture
+  Super Admin Template Editor (/admin/templates)
+        │ (Publish Template)
+        ▼
+  api.publish_thermal_template (PostgreSQL RPC)
+        │
+        ▼ (Stores version in public.thermal_print_templates)
+  Kiosk Tablet Browser (/kiosk)
+        │
+        ├── Fetches active published template (falls back to bundled known-good default)
+        ├── Interprets elements (384px canvas, high-contrast monochrome raster)
+        └── Dispatches print job via Web Bluetooth (mxw01Manager.ts)
+                │
+                ▼
+            MXW01 Bluetooth Thermal Printer (Native 384px width, 48mm printable)
+```
+
+### Core Architecture Invariants:
+1. **Single Physical Printer**: Exactly **ONE physical printer** exists in the entire deployment. It is paired and owned exclusively by the **kiosk tablet browser**. Guards do NOT possess a separate thermal printer.
+2. **Fail-Safe Printing**: Print failures **NEVER** undo or roll back authoritative pass issuance. If Web Bluetooth disconnects or paper runs out, the pass remains valid and the kiosk presents manual "Print Again" and "Browser Print" controls.
+3. **Template Security & Schema Allowlist**: Templates use a strict Zod allowlist schema (`thermalTemplateLayoutSchema`) enforcing a 384px width, bounding coordinates, locked mandatory fields (`institution_logo`, `institution_name`, `visitor_name`, `visit_date`, `qr_code`, `pass_reference`), and strictly rejecting remote URLs, executable scripts, or raw HTML.
+4. **Draft & Versioning**: Templates are versioned immutably. Restoring an earlier template creates a new published version rather than mutating history.
+
+---
+
+## 11. Outage Architecture, Guard Recovery & Offline Synchronization
+
+When cloud or internet connectivity is lost, the platform enforces an intentional, fail-closed operational fallback:
+
+```text
+Outage Architecture & Authority Delegation
+  Cloud Network Failure
+        │
+        ├── KIOSK DEVICE   ──> FAIL CLOSED (Registration disabled, display Guard notice)
+        ├── ENTRY SCANNER  ──> FAIL CLOSED (Scan rejected with network notice, redirect to Guard)
+        ├── EXIT SCANNER   ──> FAIL CLOSED (Scan rejected with network notice, redirect to Guard)
+        │
+        └── GUARD TABLET   ──> ACTIVE OPERATIONAL FALLBACK
+                │
+                ├── Local IndexedDB Store (egatepass_guard_offline)
+                │     ├── Operational Cache: Today's Manila issued/pending/inside passes
+                │     ├── Offline Registrations: Walk-in records captured by Guard
+                │     └── Offline Event Outbox: Queued entry, exit, and rejection events
+                │
+                └── Connectivity Restored: Reconnection Sync
+                      ├── api.sync_offline_registration (Idempotent new visitor creation)
+                      └── api.sync_offline_event (Row-locked atomic lifecycle transition)
+```
+
+### Architectural Guarantees:
+- **No Client Secrets**: The IndexedDB store contains strictly operational visitor metadata. No server secrets, service-role keys, or signing keys are ever stored client-side.
+- **Idempotent Synchronization**: Each offline registration possesses an immutable UUID `offlineRegistrationId`. Each offline event possesses an immutable UUID `eventId`. Interrupted or replayed sync requests return the existing canonical records without duplication.
+- **Row-Level Locking & Conflict Detection**: Server-side sync RPCs lock affected pass rows (`FOR UPDATE`) and verify expected prior statuses. Conflicting server states (e.g. pass already cancelled or exited) are routed to `public.reconciliation_tasks` for administrative audit rather than blindly overwriting authoritative state.
+- **Daily Retention Purge**: The local IndexedDB database purges operational caches and processed event receipts daily to ensure client devices do not accumulate a shadow database.
+

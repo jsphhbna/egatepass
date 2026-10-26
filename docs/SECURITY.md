@@ -513,3 +513,44 @@ When an operation spans multiple systems (PostgreSQL, Storage, Resend) and encou
 | **Accidental Last Admin Removal** | Staff Governance | Defensive check blocks demoting last Super Admin | Stored procedure & API route | Database manual override via SQL editor |
 | **Evidence Deleted During Incident** | Retention Engine | Active `incident_holds` suspend automated purge | Stored procedures & cron handler | Failure of human officer to place hold |
 | **Turnstile Challenge Bypass** | Public Registration | Challenge verified by Supabase Auth before session | Supabase Auth CAPTCHA | Sophisticated CAPTCHA solving farms |
+
+---
+
+## 19. Thermal Print Template Security Model
+
+The thermal print template subsystem introduces a dynamic layout engine for physical ticket rendering. To prevent arbitrary code injection, cross-site scripting (XSS), or malicious image exfiltration:
+
+### 19.1 Strict Allowlist Schema Enforcement
+- **Client & Server Schema Validation**: All template JSON payloads are validated using the strict Zod schema `thermalTemplateLayoutSchema`.
+- **Allowed Element Types**: Only explicit primitives are recognized: `institution_logo`, `institution_name`, `visitor_name`, `visit_date`, `qr_code`, `pass_reference`, `static_text`, `divider`, `rectangle`.
+- **Rejection of Arbitrary Markup**: Any unexpected properties, script tags, HTML tags, or remote resource URLs (`http://`, `https://`) are strictly rejected.
+- **Canvas Bounds**: Fixed at 384px width with bounded coordinates (`0 <= x <= 384`, `y >= 0`, `height <= 1200`). Coordinate overflow or oversized dimensions trigger immediate schema rejection.
+
+### 19.2 Role Authorization
+- **Super Admin Exclusive**: Only authenticated sessions with `staff_profiles.role = 'superadmin'` are authorized to call `api.save_thermal_template_draft` and `api.publish_thermal_template`.
+- **Tamper Resistance**: Mandatory elements (`institution_name`, `visitor_name`, `visit_date`, `qr_code`, `pass_reference`) cannot be removed from a published template.
+
+---
+
+## 20. Guard Offline Operations & Device Storage Threat Model
+
+During connectivity outages, operational access authority delegates to the Guard tablet. This section defines the localized storage threat model, retention invariants, and synchronization security controls:
+
+### 20.1 Client Storage Threat Model & Honest Boundaries
+- **Storage Technology**: Browser IndexedDB (`egatepass_guard_offline`).
+- **Storage Boundary**: Data is isolated by browser Same-Origin Policy (`https://egatepass.tech`) and protected by the physical device screen lock.
+- **Honest Security Boundary**: Browser IndexedDB is **NOT** a tamper-proof hardware security module (HSM) or hardware-backed TPM. Physical extraction from an unlocked device or rooted OS is possible.
+- **Zero Server Secrets**: No server service-role keys, database passwords, or signing secrets are EVER written to browser local storage, IndexedDB, or client cookies.
+
+### 20.2 Operational Cache Scoping & Daily Purge Policy
+- **Minimal Operational Footprint**: The tablet only caches operationally relevant passes: today's date in `Asia/Manila` in `issued`, `pending`, or `inside` status. Historical passes are excluded.
+- **Local Data Retention**:
+  - Daily automatic purge clears previous calendar days' cached visitor records.
+  - Successfully synchronized event outbox entries and offline registration records are purged upon receipt acknowledgment from the server.
+  - Staff logout or session invalidation purges all sensitive local caches.
+
+### 20.3 Server Synchronization & Conflict Defense
+- **Immutable Provenance**: Every offline event carries an immutable random UUID `eventId` and `actorId`. Offline walk-in registrations carry an immutable UUID `offlineRegistrationId`.
+- **No Blind Overwrite**: The server RPC `api.sync_offline_event` locks target pass rows (`FOR UPDATE`), evaluates `expected_status`, and verifies legitimate lifecycle transitions.
+- **Conflict Handling**: If a pass was modified on the server during the outage (e.g. cancelled or exited remotely), the sync engine refuses to overwrite the record and writes a conflict record to `public.reconciliation_tasks` for administrative triage.
+

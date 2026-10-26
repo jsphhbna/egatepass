@@ -161,7 +161,7 @@ flowchart TD
 
 *Notice: OCR execution occurs entirely within the client browser memory. No unverified ID image is transmitted to third-party recognition APIs.*
 
-> **Hardware Notice**: Thermal printer device integration is a planned hardware enhancement. Current kiosk printing relies on the browser/operating-system print path invoked via the "Print Pass" control.
+> **Hardware Notice**: Thermal printer device integration is a planned hardware enhancement. Current kiosk printing integrates direct Web Bluetooth thermal printing targeting the **MXW01 portable Bluetooth thermal printer** (384px native monochrome raster) with fail-safe issuance and seamless fallback to the browser/operating-system print path invoked via the "Print Pass" control.
 
 ---
 
@@ -336,6 +336,61 @@ sequenceDiagram
 
 ---
 
+### 3.8 Institutional Pass Presentation & MXW01 Thermal Printing Subsystem
+
+Normal visitor passes use a unified visual presentation contract containing:
+- Institution identity (`EARIST E-GATEPASS`)
+- Visitor Name
+- Visit Date (`Asia/Manila`)
+- High-contrast QR Code (encoding the opaque cryptographic pass token; strictly free of visitor PII)
+- Canonical Pass Reference (`Ref: EG-XXXXXXXX`)
+
+This visual contract is shared identically across online registration result, downloadable pass card, transactional email, kiosk display, and the physical MXW01 thermal print.
+
+```text
+Unified Pass Presentation Model (createPassPresentation)
+   │
+   ├── Online Pass View (InstitutionalPassCard)
+   ├── Pass Card Download (renderPassCardToDataUrl)
+   ├── Transactional Email (Branded Pass Details)
+   └── Kiosk Issuance View (Auto-Print & Manual Retry)
+           │
+           ▼ (Web Bluetooth)
+       MXW01 Bluetooth Thermal Printer (384px Native Monochrome Raster)
+```
+
+- **Single Physical Printer**: Exactly ONE MXW01 printer exists in deployment, owned exclusively by the kiosk tablet browser via Web Bluetooth.
+- **Fail-Safe Printing Invariant**: Print errors never roll back authoritative pass issuance. Kiosk offers "Print Again" and fallback standard browser print.
+- **Super Admin Template Editor**: Super Admins design 384px thermal layouts with locked mandatory elements, strict Zod server schema validation, and versioned rollback. Kiosks fall back to a bundled known-good default if remote template retrieval fails.
+
+---
+
+### 3.9 Guard Visitor Recovery & Offline Outage Operations
+
+When network connectivity or cloud services are temporarily unavailable, campus access control enforces fail-closed edge boundaries with Guard operational authority:
+
+```text
+Cloud Connectivity Outage
+   │
+   ├── KIOSK         ──> UNAVAILABLE (Proceed to Guard Notice)
+   ├── ENTRY SCANNER ──> UNAVAILABLE (Proceed to Guard Notice)
+   ├── EXIT SCANNER  ──> UNAVAILABLE (Proceed to Guard Notice)
+   │
+   └── GUARD TABLET  ──> OFFLINE OPERATIONAL FALLBACK
+           │
+           ├── Visitor Recovery (Search Local Manila Cache)
+           ├── Offline Intake (Manual Details, Photo & ID)
+           ├── Local Outbox (IndexedDB Event Queue)
+           └── Reconnection Sync (Atomic Idempotent RPCs)
+```
+
+- **Fail-Closed Scanner Behavior**: Kiosks and gate scanners refuse registrations and scans during network outages, clearly directing visitors to the Guard rather than falsely labeling passes as invalid or forged.
+- **Guard Recovery**: For registered visitors without a QR code (dead phone, lost email), Guards search today's active Manila passes by name, contact, or reference, review protected evidence, and manually record entry or exit.
+- **Offline Registration & Storage**: Guards perform physical walk-in intake offline, capturing visitor details, photo selfie, and ID evidence into a client-side IndexedDB store. Zero server secrets or raw signing keys are stored client-side.
+- **Safe Reconciliation**: Upon reconnection, offline registrations and event outbox entries synchronize idempotently via database row locking (`FOR UPDATE`) and conflict detection (`reconciliation_tasks`).
+
+---
+
 ## 4. Institutional Roles & Security
 
 | Actor | Primary Responsibility | Authentication Mechanism |
@@ -347,6 +402,20 @@ sequenceDiagram
 | **Exit Scanner** | Verifies exiting visitors at gate barriers | Authenticated scanner device bound to gate identifier |
 | **Admin** | Manages staff accounts, hardware devices, and visitor logs | Authenticated staff account (`role = 'admin'`) |
 | **Super Admin** | Configures system settings, retention windows, promotes admins | Authenticated staff account (`role = 'superadmin'`) |
+
+### Capability Authority Matrix
+
+| Capability | Guard | Admin | Super Admin | Kiosk Device |
+|---|:---:|:---:|:---:|:---:|
+| Normal gate entry decisions | ✅ | Existing policy | Existing policy | ❌ |
+| Visitor Recovery (Manual Entry/Exit) | ✅ | Existing policy | ✅ | ❌ |
+| Offline visitor registration | ✅ | ❌ | ✅ (Emergency) | ❌ |
+| Offline approve/reject | ✅ | ❌ | ✅ | ❌ |
+| Offline time-in/time-out | ✅ | ❌ | ✅ | ❌ |
+| MXW01 Bluetooth connection | ❌ | ❌ | ❌ | ✅ |
+| Printer test | ❌ | ❌ | Preview only | ✅ |
+| Edit thermal template | ❌ | ❌ | ✅ | ❌ |
+| Publish thermal template | ❌ | ❌ | ✅ | ❌ |
 
 ---
 

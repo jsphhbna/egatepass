@@ -228,3 +228,128 @@ stateDiagram-v2
 | **Forged Webhook** | Send mock POST to `/api/auth/send-email-hook` with invalid signature | HTTP 401 Unauthorized |
 | **Recovery Session Confinement** | Attempt to call `/api/scan-pass` using a password recovery token | HTTP 403 Recovery Session Forbidden |
 | **Unauthenticated Maintenance** | Call `/api/admin/retention-maintenance` without Bearer secret | HTTP 401 Unauthorized |
+
+---
+
+## 8. Institutional Pass Visual Presentation QA
+
+1. **Online Pass Presentation**:
+   - Register a visitor online at `/get-pass`.
+   - Verify pass card renders:
+     - Institution header: `EARIST E-GATEPASS`
+     - Visitor Name: Formatted as `FIRSTNAME M. LASTNAME`
+     - Visit Date: `Asia/Manila` date (e.g. `October 27, 2026`)
+     - High-contrast centered QR code
+     - Canonical Pass Reference: `Ref: EG-XXXXXXXX`
+     - Recovery guidance note: `Lost access to your QR? Present a valid ID to the Guard for recovery.`
+   - Confirm raw cryptographic QR token string is **NEVER** displayed as visible text.
+2. **Download Pass Card**:
+   - Click **Download Pass**.
+   - Verify downloaded PNG file contains the complete institutional card (Name, Date, QR, Reference, Institution header), not just the isolated QR square.
+3. **Email Pass Presentation**:
+   - Verify transactional email contains the institutional card formatting with Visitor Name, Visit Date, Pass Reference, and QR image.
+4. **Kiosk Presentation Contract**:
+   - Complete walk-in registration at `/kiosk`.
+   - Verify the displayed pass matches the canonical institutional pass card presentation.
+
+---
+
+## 9. MXW01 Kiosk Direct Bluetooth Thermal Printing QA
+
+1. **Hardware Preparation**:
+   - Ensure MXW01 thermal printer is charged and loaded with 57mm thermal roll.
+   - Power on the printer.
+2. **Device Settings & Pairing**:
+   - On the Kiosk tablet (`/kiosk`), tap the Gear icon in the header.
+   - Enter Operator PIN `123456`.
+   - Tap **Connect MXW01**.
+   - In the browser device picker, select the MXW01 device and click **Pair**.
+   - Confirm status badge updates to **Connected**.
+3. **Test Print**:
+   - Tap **Test Print**.
+   - Verify printer feeds and prints an official 384px EARIST diagnostic slip.
+4. **Issuance & Printing**:
+   - Complete a walk-in registration.
+   - Verify thermal pass prints automatically if auto-print is enabled, or prints upon tapping **Print Thermal Pass**.
+   - Verify printed paper ticket:
+     - Header: `EARIST E-GATEPASS`
+     - Visitor Name and Visit Date are clearly legible.
+     - Printed QR code scans cleanly on physical gate scanners.
+     - Reference `Ref: EG-XXXXXXXX` is printed at the bottom.
+5. **Print Failure Issuance Immunity (Critical)**:
+   - Power off the MXW01 printer.
+   - Complete a kiosk pass issuance.
+   - **Expected**: Pass creation succeeds completely. The UI displays the valid pass alongside a clear "Printer Unavailable" notice with **Print Again** and **Browser Print** buttons. The pass is NEVER rolled back or duplicated.
+6. **Browser Print Fallback**:
+   - Tap **Browser Print**.
+   - Verify the browser's native `window.print()` dialog opens with styled print media layout.
+
+---
+
+## 10. Super Admin Thermal Template Editor QA
+
+1. **Access Control**:
+   - Log in as `guard` or `admin` and attempt to navigate to `/admin/templates`.
+   - Verify access is blocked.
+   - Log in as `superadmin` and navigate to **Print Templates** in the sidebar.
+2. **Template Layout Canvas**:
+   - Verify 384px thermal canvas preview.
+   - Test dragging elements, adjusting font size, alignment, canvas height, and QR size.
+3. **Mandatory Elements Locking**:
+   - Attempt to delete mandatory elements (`visitor_name`, `visit_date`, `qr_code`, `pass_reference`).
+   - Confirm delete button is disabled or blocked for mandatory components.
+4. **Save Draft & Publishing**:
+   - Make a styling change and tap **Save Draft**.
+   - Tap **Publish Template**.
+   - Confirm success toast and verify active published version increments.
+5. **Rollback / Version History**:
+   - Open version history and select an earlier template version.
+   - Tap **Restore This Version**.
+   - Confirm a new published version is created with the restored layout without corrupting history.
+
+---
+
+## 11. Guard Visitor Recovery QA
+
+1. **Lost QR Scenario**:
+   - Locate an active pass issued for today's date in `Asia/Manila`.
+   - Assume visitor lost phone or has no email access.
+2. **Recovery Search**:
+   - On the Guard Console (`/guard`), tap **Visitor Recovery**.
+   - Search by visitor last name, contact number, or `EG-XXXXXXXX` reference.
+   - Confirm search matches only today's operationally active passes (`issued`, `pending`, `inside`).
+3. **Evidence Inspection**:
+   - Tap on the visitor card to expand.
+   - Confirm visitor registration photo selfie and valid ID image are rendered securely via `GET /api/evidence`.
+   - Compare physical ID presented by the visitor to the on-screen evidence.
+4. **Manual Gate Actions**:
+   - If visitor is entering: tap **Approve Entry** (or **Reject Entry** if unverified).
+   - If visitor is leaving without QR: tap **Record Exit**.
+   - Confirm database audit log records `source = 'visitor_recovery'` and attributes action to the guard actor.
+
+---
+
+## 12. Fail-Closed Outage & Guard Offline Operations QA
+
+1. **Network Disconnect Simulation**:
+   - Disconnect internet / Wi-Fi on the test kiosk, scanner, and guard tablets.
+2. **Kiosk Fail-Closed Test**:
+   - On `/kiosk`, attempt walk-in registration.
+   - Confirm screen displays: **SERVICE TEMPORARILY UNAVAILABLE — Please proceed directly to the Guard for registration and verification.**
+   - Confirm normal intake is disabled and no partial passes are issued.
+3. **Entry & Exit Scanner Fail-Closed Test**:
+   - Present a QR code to the offline Entry scanner.
+   - Confirm scanner displays: **NETWORK UNAVAILABLE — Entry verification is temporarily unavailable. Please proceed directly to the Guard for manual verification.**
+   - Confirm scanner does **NOT** falsely label the pass as invalid, expired, or forged.
+4. **Guard Offline Operations**:
+   - On the Guard tablet (`/guard`), observe the prominent yellow/red Offline Banner showing pending records count.
+   - **Offline Recovery**: Search for a previously cached visitor; tap **Approve Entry**. Confirm event is saved to the local IndexedDB outbox.
+   - **Offline Registration**: Open **Offline Registration** tab. Enter walk-in visitor details, capture selfie, capture ID image. Tap **Approve Entry**. Confirm Time-In is recorded automatically and record is stored locally in IndexedDB with an immutable `offlineRegistrationId`.
+   - **Page Reload Test**: Refresh the Guard page while completely offline. Confirm application shell reloads and all offline outbox records remain intact in IndexedDB.
+5. **Reconnection & Synchronization**:
+   - Re-enable Wi-Fi / internet connectivity.
+   - Confirm the Guard sync manager triggers background synchronization.
+   - Confirm offline registrations upload photo/ID evidence and generate canonical server passes without duplication.
+   - Confirm outbox events execute server-side row locking and transition passes to `inside` or `exited`.
+   - Confirm local outbox records are acknowledged and cleared from the tablet store.
+

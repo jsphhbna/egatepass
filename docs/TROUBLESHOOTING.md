@@ -246,3 +246,109 @@ flowchart TD
   Confirm the Turnstile challenge box is rendered and solved before clicking submit. Inspect browser console to confirm `VITE_TURNSTILE_SITE_KEY` is loaded.
 - **Safe Resolution**:
   Ensure `VITE_TURNSTILE_SITE_KEY` is configured in Vercel Production and solve the Turnstile challenge before submitting.
+
+---
+
+### 2.15 MXW01 Bluetooth Thermal Printer Fails to Connect
+
+- **Symptom**:
+  Kiosk operator taps **Connect MXW01**, but the browser displays:
+  ```text
+  Bluetooth adapter not available or Web Bluetooth disabled.
+  ```
+  or the browser device picker fails to appear.
+- **Likely Cause**:
+  1. Tablet Bluetooth radio is turned off.
+  2. Kiosk page is not accessed over a secure HTTPS origin (`navigator.bluetooth` requires HTTPS).
+  3. Browser is not Chromium-based (e.g. Safari on iOS does not support Web Bluetooth).
+  4. Device permissions were previously blocked for the origin.
+- **How to Diagnose**:
+  1. Verify the tablet's system Bluetooth toggle is ON.
+  2. In Chrome on Android, check `chrome://flags/#enable-web-bluetooth`.
+  3. Ensure URL is `https://...` (not `http://`).
+- **Safe Resolution**:
+  Enable Bluetooth in Android settings, ensure HTTPS is active, and select the printer in the device picker. If on iOS/Safari, use the standard browser print fallback (`window.print()`).
+
+---
+
+### 2.16 MXW01 Printer Powers Off or Disconnects Mid-Print
+
+- **Symptom**:
+  Walk-in pass issuance completes successfully, but the printer does not output a ticket or stops printing halfway through.
+- **Likely Cause**:
+  1. Printer battery depleted or powered off.
+  2. Printer ran out of thermal paper roll.
+  3. Bluetooth range exceeded.
+- **How to Diagnose**:
+  Inspect MXW01 status LED (red indicates paper out or low battery; blinking blue indicates pairing mode).
+- **Safe Resolution**:
+  - Remember the **Pass Issuance Immunity Invariant**: the visitor's pass is authoritative and **ALREADY ISSUED**.
+  - Reload paper roll or plug into USB-C charger and power on.
+  - In Kiosk UI, tap **Reconnect Printer** or **Print Again**.
+  - Alternatively, tap **Browser Print** to print immediately using the tablet's system printer.
+
+---
+
+### 2.17 Thermal Template Corrupted or Fails to Load
+
+- **Symptom**:
+  Kiosk displays warning:
+  ```text
+  Failed to load remote thermal template. Falling back to bundled default.
+  ```
+- **Likely Cause**:
+  Network connectivity lost during kiosk startup, or remote template JSON was modified outside schema boundaries.
+- **How to Diagnose**:
+  Inspect browser console logs for `[useThermalPrinter] Template fetch error`.
+- **Safe Resolution**:
+  The system automatically activates the bundled known-good default template. Printing continues normally. Super Admin can review and republish the template at `/admin/templates`.
+
+---
+
+### 2.18 Visitor Cannot Be Found in Guard Visitor Recovery
+
+- **Symptom**:
+  Visitor claims to have registered online, but Guard searches by name or reference and receives 0 results.
+- **Likely Cause**:
+  1. The visit was scheduled for a different calendar date (recovery search strictly filters for today's date in `Asia/Manila`).
+  2. The pass is already in `exited` or `expired` status.
+  3. Typo in name or contact number search.
+- **How to Diagnose**:
+  Search by reference number (`EG-XXXXXXXX`) or broad last name. Check the visitor's email confirmation to verify their selected Visit Date.
+- **Safe Resolution**:
+  If the visitor scheduled for a future or past date, direct them to register a new pass or perform walk-in intake.
+
+---
+
+### 2.19 Scanner Displays Network Unavailable During Outage
+
+- **Symptom**:
+  Visitor presents a valid QR code at Entry or Exit scanner during an internet outage, and scanner displays:
+  ```text
+  NETWORK UNAVAILABLE
+  Entry verification is temporarily unavailable.
+  Please proceed directly to the Guard for manual verification.
+  ```
+- **Likely Cause**:
+  Scanner tablet cannot reach Supabase or Vercel serverless backend.
+- **Truthful Behavior**:
+  This is the intentional fail-closed outage behavior. The scanner differentiates network unreachable from an invalid QR code.
+- **Safe Resolution**:
+  Direct visitor to the Guard console station for offline recovery or walk-in intake.
+
+---
+
+### 2.20 Offline Outbox Synchronization Conflicts
+
+- **Symptom**:
+  Guard tablet displays:
+  ```text
+  1 conflict logged in reconciliation tasks.
+  ```
+- **Likely Cause**:
+  An offline action conflicted with server state recorded before the outage (e.g. an offline approval was queued for a pass that was already rejected on the server).
+- **How to Diagnose**:
+  In Super Admin Dashboard, navigate to **Reconciliation Tasks** (`/admin/reconciliation`).
+- **Safe Resolution**:
+  Inspect the conflicting payload and prior state. The server intentionally did NOT overwrite data. The administrator reviews and marks the task resolved.
+
