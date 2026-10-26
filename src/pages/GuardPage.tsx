@@ -3,7 +3,7 @@ import { useEffect, useState, useRef } from 'react';
 import { useAuth } from '@/hooks/useAuth';
 import { signOutCurrentActor } from '@/services/auth';
 import { AuthenticatedImage } from '@/components/AuthenticatedImage';
-import { fetchGuardDashboard, subscribeToPassChanges, recordDecision, GuardApiError, type GuardQueuePass } from '@/services/guard';
+import { fetchGuardDashboard, fetchGuardDashboardWindow, subscribeToPassChanges, recordDecision, GuardApiError, type GuardQueuePass } from '@/services/guard';
 import {
   CheckCircle2,
   XCircle,
@@ -47,6 +47,7 @@ export function GuardPage() {
   const [hasMore, setHasMore] = useState(false);
   const [loadingMore, setLoadingMore] = useState(false);
   const passesLengthRef = useRef(50);
+  const refreshGenerationRef = useRef(0);
 
   // Daily Report stats
   const [dailyStats, setDailyStats] = useState({
@@ -74,10 +75,11 @@ export function GuardPage() {
       if (!isInitial) {
         setRefreshing(true);
       }
+      const generation = ++refreshGenerationRef.current;
       try {
-        const fetchLimit = Math.max(50, passesLengthRef.current);
-        const dashboard = await fetchGuardDashboard({ limit: fetchLimit, offset: 0 });
-        if (!active) return;
+        const desiredCount = Math.max(50, passesLengthRef.current);
+        const dashboard = await fetchGuardDashboardWindow({ desiredCount });
+        if (!active || generation !== refreshGenerationRef.current) return;
         setQueueError(false);
         setRefreshError(false);
         setLastUpdatedAt(new Date());
@@ -92,7 +94,7 @@ export function GuardPage() {
         setDailyStats(dashboard.stats);
         setRejectionReasons(dashboard.rejectionReasons);
       } catch (error) {
-        if (active) {
+        if (active && generation === refreshGenerationRef.current) {
           if (isInitial) {
             setQueueError(true);
           } else {
@@ -103,7 +105,7 @@ export function GuardPage() {
       } finally {
         loading = false;
         isInitial = false;
-        if (active) {
+        if (active && generation === refreshGenerationRef.current) {
           setInitialLoading(false);
           setRefreshing(false);
         }
@@ -127,6 +129,7 @@ export function GuardPage() {
         passesLengthRef.current = combined.length;
         return combined;
       });
+      refreshGenerationRef.current += 1;
       setPendingTotal(nextBatch.pendingTotal);
       setHasMore(nextBatch.hasMore);
     } catch (err) {
@@ -141,44 +144,25 @@ export function GuardPage() {
     if (loadingMore || !hasMore) return;
     setLoadingMore(true);
     try {
-      const pageSize = 200;
-      const SAFETY_CEILING = 5000;
-      let offset = 0;
-      let more = true;
-      let latestPendingTotal = pendingTotal;
-      let reachedCeiling = false;
-      const accumulated: GuardQueuePass[] = [];
-      const seenIds = new Set<string>();
+      const dashboard = await fetchGuardDashboardWindow({
+        desiredCount: 5000,
+        safetyCeiling: 5000,
+      });
 
-      while (more) {
-        const batch = await fetchGuardDashboard({ limit: pageSize, offset });
-        latestPendingTotal = batch.pendingTotal;
-        for (const item of batch.queue) {
-          if (!seenIds.has(item.id)) {
-            seenIds.add(item.id);
-            accumulated.push(item);
-          }
-        }
-        offset += batch.queue.length;
-        more = batch.hasMore && batch.queue.length > 0;
+      setPasses(dashboard.queue);
+      passesLengthRef.current = dashboard.queue.length;
+      refreshGenerationRef.current += 1;
+      setPendingTotal(dashboard.pendingTotal);
+      setHasMore(dashboard.hasMore);
+      setDailyStats(dashboard.stats);
+      setRejectionReasons(dashboard.rejectionReasons);
 
-        if (accumulated.length >= SAFETY_CEILING && more) {
-          reachedCeiling = true;
-          break;
-        }
-      }
-
-      setPasses(accumulated);
-      passesLengthRef.current = accumulated.length;
-      setPendingTotal(latestPendingTotal);
-      setHasMore(reachedCeiling ? true : more);
-
-      if (reachedCeiling) {
+      if (dashboard.reachedSafetyCeiling) {
         toast.info(
           'Loaded the first 5,000 pending passes. Narrow the search or continue using paginated queue controls.'
         );
       } else {
-        toast.success(`Loaded all ${accumulated.length} pending passes.`);
+        toast.success(`Loaded all ${dashboard.queue.length} pending passes.`);
       }
     } catch (err) {
       console.error('Failed to load all pending passes:', err);
@@ -204,9 +188,11 @@ export function GuardPage() {
   }, []);
 
   const refreshQueue = async () => {
+    const generation = ++refreshGenerationRef.current;
     try {
-      const fetchLimit = Math.max(50, passesLengthRef.current);
-      const dashboard = await fetchGuardDashboard({ limit: fetchLimit, offset: 0 });
+      const desiredCount = Math.max(50, passesLengthRef.current);
+      const dashboard = await fetchGuardDashboardWindow({ desiredCount });
+      if (generation !== refreshGenerationRef.current) return;
       setQueueError(false);
       setRefreshError(false);
       setLastUpdatedAt(new Date());
@@ -221,8 +207,10 @@ export function GuardPage() {
       setDailyStats(dashboard.stats);
       setRejectionReasons(dashboard.rejectionReasons);
     } catch (error) {
-      console.error('Guard dashboard refresh error:', error);
-      setRefreshError(true);
+      if (generation === refreshGenerationRef.current) {
+        console.error('Guard dashboard refresh error:', error);
+        setRefreshError(true);
+      }
     }
   };
 

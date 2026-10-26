@@ -112,6 +112,77 @@ export async function fetchGuardDashboard(options?: {
   };
 }
 
+export interface GuardDashboardWindowResult extends GuardDashboardData {
+  reachedSafetyCeiling: boolean;
+}
+
+export async function fetchGuardDashboardWindow(options: {
+  desiredCount: number;
+  pageSize?: number;
+  safetyCeiling?: number;
+}): Promise<GuardDashboardWindowResult> {
+  const pageSize = options.pageSize ?? 200;
+  const safetyCeiling = options.safetyCeiling ?? 5000;
+  const targetCount = Math.min(
+    Math.max(options.desiredCount, 50),
+    safetyCeiling
+  );
+
+  const accumulated: GuardQueuePass[] = [];
+  const seenIds = new Set<string>();
+
+  let offset = 0;
+  let hasMore = true;
+  let latestDashboard: GuardDashboardData | null = null;
+
+  while (hasMore && accumulated.length < targetCount) {
+    const remaining = targetCount - accumulated.length;
+    const limit = Math.min(Math.min(pageSize, 200), remaining);
+
+    const batch = await fetchGuardDashboard({
+      limit,
+      offset,
+    });
+
+    latestDashboard = batch;
+
+    for (const pass of batch.queue) {
+      if (!seenIds.has(pass.id)) {
+        seenIds.add(pass.id);
+        accumulated.push(pass);
+      }
+    }
+
+    offset += batch.queue.length;
+
+    hasMore = batch.hasMore && batch.queue.length > 0;
+  }
+
+  if (!latestDashboard) {
+    return {
+      queue: [],
+      stats: { inside: 0, exited: 0, rejected: 0, total: 0 },
+      rejectionReasons: [],
+      pendingTotal: 0,
+      hasMore: false,
+      reachedSafetyCeiling: false,
+    };
+  }
+
+  const reachedSafetyCeiling =
+    accumulated.length >= safetyCeiling &&
+    latestDashboard.hasMore;
+
+  return {
+    queue: accumulated,
+    stats: latestDashboard.stats,
+    rejectionReasons: latestDashboard.rejectionReasons,
+    pendingTotal: latestDashboard.pendingTotal,
+    hasMore,
+    reachedSafetyCeiling,
+  };
+}
+
 export function subscribeToPassChanges(onChange: () => void): () => void {
   const client = requireSupabase();
   const channel = client.channel('guard-pending-pass-changes')

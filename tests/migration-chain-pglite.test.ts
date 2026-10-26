@@ -935,7 +935,7 @@ describe('Permanent PostgreSQL Migration Chain & Schema Contracts (PGlite)', () 
           id, visitor_id, token_digest, source, status, valid_from, valid_until, entry_scanned_at, gate, issued_at
         ) values (
           '${PASS_1}', '${VISITOR_1}', decode('0101010101010101010101010101010101010101010101010101010101010101', 'hex'), 'portal', 'pending',
-          v_day_start + interval '1 hour', v_day_start + interval '8 hours', v_day_start + interval '1 hour 10 minutes', 'Gate 1', v_day_start + interval '1 hour'
+          v_day_start + interval '1 hour', v_day_end - interval '1 minute', v_day_start + interval '1 hour 10 minutes', 'Gate 1', v_day_start + interval '1 hour'
         );
 
         -- Pending 2: scanned second (v_day_start + 2h)
@@ -943,7 +943,7 @@ describe('Permanent PostgreSQL Migration Chain & Schema Contracts (PGlite)', () 
           id, visitor_id, token_digest, source, status, valid_from, valid_until, entry_scanned_at, gate, issued_at
         ) values (
           '${PASS_2}', '${VISITOR_2}', decode('0202020202020202020202020202020202020202020202020202020202020202', 'hex'), 'portal', 'pending',
-          v_day_start + interval '2 hours', v_day_start + interval '8 hours', v_day_start + interval '2 hours 20 minutes', 'Gate 2', v_day_start + interval '2 hours'
+          v_day_start + interval '2 hours', v_day_end - interval '1 minute', v_day_start + interval '2 hours 20 minutes', 'Gate 2', v_day_start + interval '2 hours'
         );
 
         -- Pending 3 & Pending 4: EXACT SAME entry_scanned_at (v_day_start + 3h 30m) to test deterministic UUID tie-breaker
@@ -951,27 +951,27 @@ describe('Permanent PostgreSQL Migration Chain & Schema Contracts (PGlite)', () 
           id, visitor_id, token_digest, source, status, valid_from, valid_until, entry_scanned_at, gate, issued_at
         ) values (
           '${PASS_3}', '${VISITOR_3}', decode('0303030303030303030303030303030303030303030303030303030303030303', 'hex'), 'portal', 'pending',
-          v_day_start + interval '3 hours', v_day_start + interval '8 hours', v_day_start + interval '3 hours 30 minutes', 'Gate 1', v_day_start + interval '3 hours'
+          v_day_start + interval '3 hours', v_day_end - interval '1 minute', v_day_start + interval '3 hours 30 minutes', 'Gate 1', v_day_start + interval '3 hours'
         );
 
         insert into public.passes (
           id, visitor_id, token_digest, source, status, valid_from, valid_until, entry_scanned_at, gate, issued_at
         ) values (
           '${PASS_4_TIE}', '${VISITOR_4}', decode('0404040404040404040404040404040404040404040404040404040404040404', 'hex'), 'portal', 'pending',
-          v_day_start + interval '3 hours 15 minutes', v_day_start + interval '8 hours', v_day_start + interval '3 hours 30 minutes', 'Gate 2', v_day_start + interval '3 hours 15 minutes'
+          v_day_start + interval '3 hours 15 minutes', v_day_end - interval '1 minute', v_day_start + interval '3 hours 30 minutes', 'Gate 2', v_day_start + interval '3 hours 15 minutes'
         );
 
         -- Today Manila: status inside
         insert into public.passes (id, visitor_id, token_digest, source, status, valid_from, valid_until, issued_at)
-        values (gen_random_uuid(), '${VISITOR_5}', decode('0505050505050505050505050505050505050505050505050505050505050505', 'hex'), 'portal', 'inside', v_day_start + interval '4 hours', v_day_start + interval '8 hours', v_day_start + interval '4 hours');
+        values (gen_random_uuid(), '${VISITOR_5}', decode('0505050505050505050505050505050505050505050505050505050505050505', 'hex'), 'portal', 'inside', v_day_start + interval '4 hours', v_day_end - interval '1 minute', v_day_start + interval '4 hours');
 
         -- Today Manila: status exited
         insert into public.passes (id, visitor_id, token_digest, source, status, valid_from, valid_until, issued_at, time_out)
-        values (gen_random_uuid(), '${VISITOR_6}', decode('0606060606060606060606060606060606060606060606060606060606060606', 'hex'), 'portal', 'exited', v_day_start + interval '5 hours', v_day_start + interval '8 hours', v_day_start + interval '5 hours', v_day_start + interval '7 hours');
+        values (gen_random_uuid(), '${VISITOR_6}', decode('0606060606060606060606060606060606060606060606060606060606060606', 'hex'), 'portal', 'exited', v_day_start + interval '5 hours', v_day_end - interval '1 minute', v_day_start + interval '5 hours', v_day_start + interval '7 hours');
 
         -- Today Manila: status rejected
         insert into public.passes (id, visitor_id, token_digest, source, status, valid_from, valid_until, issued_at, decided_at, rejection_reason)
-        values (gen_random_uuid(), '${VISITOR_7}', decode('0707070707070707070707070707070707070707070707070707070707070707', 'hex'), 'portal', 'rejected', v_day_start + interval '6 hours', v_day_start + interval '8 hours', v_day_start + interval '6 hours', v_day_start + interval '6 hours', 'Security Hold');
+        values (gen_random_uuid(), '${VISITOR_7}', decode('0707070707070707070707070707070707070707070707070707070707070707', 'hex'), 'portal', 'rejected', v_day_start + interval '6 hours', v_day_end - interval '1 minute', v_day_start + interval '6 hours', v_day_start + interval '6 hours', 'Security Hold');
 
         -- Yesterday (outside Manila today boundary: BEFORE v_day_start)
         insert into public.passes (id, visitor_id, token_digest, source, status, valid_from, valid_until, issued_at)
