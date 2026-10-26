@@ -48,6 +48,13 @@ class MockIDBObjectStore {
     return req;
   }
 
+  clear(): MockIDBRequest {
+    const req = new MockIDBRequest();
+    this.data.clear();
+    setTimeout(() => req.triggerSuccess(undefined), 0);
+    return req;
+  }
+
   getAll(): MockIDBRequest {
     const req = new MockIDBRequest();
     const all = Array.from(this.data.values());

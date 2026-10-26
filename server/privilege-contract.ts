@@ -166,5 +166,5 @@ export const SERVER_DIRECT_TABLE_OPERATIONS: DirectServerTableOperation[] = [
   { file: 'server/routes/system/reconciliation-items.ts', table: 'reconciliation_tasks', operations: ['SELECT'], purpose: 'Query pending reconciliation tasks for superadmin' },
   { file: 'server/routes/system/create-user.ts', table: 'staff_profiles', operations: ['SELECT'], purpose: 'Check if existing Auth user already has a staff profile' },
   { file: 'server/routes/system/create-user.ts', table: 'devices', operations: ['SELECT'], purpose: 'Check if existing Auth user is a registered device' },
-
+  { file: 'server/upload-inspection.ts', table: 'upload_intents', operations: ['SELECT'], purpose: 'Inspect upload intent metadata and expiration' },
 ];

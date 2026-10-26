@@ -93,8 +93,8 @@ describe('target repository and Vercel routing contract', () => {
       expect(content.length).toBeGreaterThan(1000);
     }
   });
-  it('enforces canonical 27 API routes contract matrix in server/route-map.ts and vercel.json', () => {
-    expect(ROUTE_CONTRACT_MATRIX.length).toBe(27);
+  it('enforces canonical 28 API routes contract matrix in server/route-map.ts and vercel.json', () => {
+    expect(ROUTE_CONTRACT_MATRIX.length).toBe(28);
 
     const counts: Record<string, number> = {};
     for (const route of ROUTE_CONTRACT_MATRIX) {
@@ -105,7 +105,7 @@ describe('target repository and Vercel routing contract', () => {
     expect(counts['auth']).toBe(4);
     expect(counts['passes']).toBe(2);
     expect(counts['device']).toBe(4);
-    expect(counts['gate']).toBe(3);
+    expect(counts['gate']).toBe(4);
     expect(counts['system']).toBe(5);
 
     const routeMap = readFileSync('server/route-map.ts', 'utf8');
@@ -113,7 +113,7 @@ describe('target repository and Vercel routing contract', () => {
     expect(routeMap).toContain('// Auth Router (4 routes)');
     expect(routeMap).toContain('// Passes Router (2 routes)');
     expect(routeMap).toContain('// Device Router (4 routes)');
-    expect(routeMap).toContain('// Gate Router (3 routes)');
+    expect(routeMap).toContain('// Gate Router (4 routes)');
     expect(routeMap).toContain('// System Router (5 routes)');
 
     expect(routeMap).toContain("path: '/api/reconciliation-items'");

@@ -17,6 +17,7 @@ const DB_VERSION = 1;
 
 export interface CachedVisitorPass {
   id: string; // passId
+  publicReference?: string;
   visitorId: string;
   visitorName: string;
   contactNumber: string;
@@ -31,7 +32,10 @@ export interface CachedVisitorPass {
   gate?: string | null;
   photoEvidenceId?: string | null;
   idEvidenceId?: string | null;
+  photoBlob?: Blob | null;
+  idBlob?: Blob | null;
   cachedAt: string;
+  version?: number;
 }
 
 export interface OfflineRegistrationRecord {
@@ -61,6 +65,7 @@ export interface OfflineEventRecord {
   visitorName: string;
   action: 'approve_entry' | 'reject_entry' | 'record_exit';
   expectedStatus: 'issued' | 'pending' | 'inside';
+  expectedVersion?: number;
   occurredAt: string; // ISO string
   reason?: string | null;
   syncStatus: 'pending' | 'syncing' | 'synced' | 'conflict';
@@ -231,6 +236,25 @@ export async function saveCachedVisitors(visitors: CachedVisitorPass[]): Promise
   });
 }
 
+/**
+ * Atomically replaces the entire cached_visitors store with new snapshot records.
+ * If any step fails, the transaction is rolled back and the previous snapshot remains intact.
+ */
+export async function atomicReplaceCachedVisitors(visitors: CachedVisitorPass[]): Promise<void> {
+  const db = await openDatabase();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction('cached_visitors', 'readwrite');
+    const store = tx.objectStore('cached_visitors');
+    store.clear();
+    for (const v of visitors) {
+      store.put(v);
+    }
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => reject(tx.error);
+    tx.onabort = () => reject(tx.error || new Error('Transaction aborted'));
+  });
+}
+
 export async function searchCachedVisitors(query: string): Promise<CachedVisitorPass[]> {
   const db = await openDatabase();
   const clean = query.trim().toLowerCase();
@@ -245,13 +269,23 @@ export async function searchCachedVisitors(query: string): Promise<CachedVisitor
       if (!clean) {
         return resolve(all);
       }
-      const matches = all.filter(
-        (v) =>
-          v.visitorName.toLowerCase().includes(clean) ||
-          v.contactNumber.toLowerCase().includes(clean) ||
-          v.passReference.toLowerCase().includes(clean) ||
-          v.id.toLowerCase().startsWith(clean)
-      );
+      const cleanNoPrefix = clean.replace(/^ref:?\s*/i, '').replace(/-/g, '');
+      const matches = all.filter((v) => {
+        const nameMatch = v.visitorName.toLowerCase().includes(clean);
+        const contactMatch = v.contactNumber.toLowerCase().includes(clean);
+        const refMatch = v.passReference.toLowerCase().includes(clean);
+        const idMatch = v.id.toLowerCase().startsWith(clean);
+        const publicRefMatch = v.publicReference ? v.publicReference.toLowerCase().includes(clean) : false;
+        const refNoPrefix = v.passReference.replace(/^ref:?\s*/i, '').replace(/-/g, '').toLowerCase();
+        return (
+          nameMatch ||
+          contactMatch ||
+          refMatch ||
+          idMatch ||
+          publicRefMatch ||
+          (cleanNoPrefix.length >= 3 && refNoPrefix.includes(cleanNoPrefix))
+        );
+      });
       resolve(matches);
     };
 
@@ -388,6 +422,31 @@ export async function updateOfflineEventStatus(
     };
 
     tx.oncomplete = () => resolve();
+    tx.onerror = () => reject(tx.error);
+  });
+}
+
+export async function resolvePendingEventsPassId(oldPassId: string, canonicalPassId: string): Promise<number> {
+  const db = await openDatabase();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction('offline_events', 'readwrite');
+    const store = tx.objectStore('offline_events');
+    const req = store.openCursor();
+    let updatedCount = 0;
+
+    req.onsuccess = (e) => {
+      const cursor = (e.target as IDBRequest<IDBCursorWithValue>).result;
+      if (cursor) {
+        const item = cursor.value as OfflineEventRecord;
+        if (item.passId === oldPassId) {
+          cursor.update({ ...item, passId: canonicalPassId });
+          updatedCount++;
+        }
+        cursor.continue();
+      }
+    };
+
+    tx.oncomplete = () => resolve(updatedCount);
     tx.onerror = () => reject(tx.error);
   });
 }

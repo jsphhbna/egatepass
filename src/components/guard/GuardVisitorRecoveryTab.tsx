@@ -39,7 +39,7 @@ export function GuardVisitorRecoveryTab({
   const [processingId, setProcessingId] = useState<string | null>(null);
   const [rejectingPass, setRejectingPass] = useState<any | null>(null);
   const [rejectReason, setRejectReason] = useState('');
-  const [zoomImage, setZoomImage] = useState<string | null>(null);
+  const [zoomImage, setZoomImage] = useState<{ publicId?: string | null; blob?: Blob | null } | null>(null);
 
   const performSearch = useCallback(
     async (queryText: string) => {
@@ -308,7 +308,8 @@ export function GuardVisitorRecoveryTab({
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
         {results.map((pass) => {
           const isProcessing = processingId === pass.id;
-          const refDisplay = formatPassReference(pass.passReference || pass.id);
+          const canonicalRef = pass.publicReference || pass.passReference || pass.id;
+          const refDisplay = formatPassReference(canonicalRef);
 
           return (
             <Card key={pass.id} className="p-5 flex flex-col justify-between space-y-4">
@@ -335,19 +336,20 @@ export function GuardVisitorRecoveryTab({
                   </span>
                 </div>
 
-                {/* Evidence Photos (Protected API) */}
+                {/* Evidence Photos (Protected API / Offline Blobs) */}
                 <div className="my-3 flex items-center justify-center gap-4 py-1">
-                  {pass.photoEvidenceId && (
+                  {(pass.photoEvidenceId || pass.photoBlob) && (
                     <div className="text-center">
                       <p className="text-[10px] text-[var(--color-text-muted)] mb-1 font-semibold uppercase">
                         Selfie Photo
                       </p>
                       <div
                         className="relative cursor-pointer group h-24 w-20 overflow-hidden rounded-lg border border-[var(--color-border)] shadow-xs"
-                        onClick={() => setZoomImage(pass.photoEvidenceId)}
+                        onClick={() => setZoomImage({ publicId: pass.photoEvidenceId, blob: pass.photoBlob })}
                       >
                         <AuthenticatedImage
                           publicId={pass.photoEvidenceId}
+                          blob={pass.photoBlob}
                           alt={`${pass.visitorName} Photo`}
                           className="h-full w-full object-cover"
                         />
@@ -358,17 +360,18 @@ export function GuardVisitorRecoveryTab({
                     </div>
                   )}
 
-                  {pass.idEvidenceId && (
+                  {(pass.idEvidenceId || pass.idBlob) ? (
                     <div className="text-center">
                       <p className="text-[10px] text-[var(--color-text-muted)] mb-1 font-semibold uppercase">
                         Presented ID
                       </p>
                       <div
                         className="relative cursor-pointer group h-24 w-36 overflow-hidden rounded-lg border border-[var(--color-border)] shadow-xs"
-                        onClick={() => setZoomImage(pass.idEvidenceId)}
+                        onClick={() => setZoomImage({ publicId: pass.idEvidenceId, blob: pass.idBlob })}
                       >
                         <AuthenticatedImage
                           publicId={pass.idEvidenceId}
+                          blob={pass.idBlob}
                           alt={`${pass.visitorName} ID`}
                           className="h-full w-full object-cover"
                         />
@@ -376,6 +379,11 @@ export function GuardVisitorRecoveryTab({
                           <ZoomIn className="h-5 w-5 text-white" />
                         </div>
                       </div>
+                    </div>
+                  ) : (
+                    <div className="text-center flex flex-col items-center justify-center h-24 w-36 rounded-lg border border-dashed border-[var(--color-border)] text-[10px] text-[var(--color-text-muted)] p-2">
+                      <p className="font-semibold uppercase mb-0.5">ID Evidence</p>
+                      <p>Unavailable</p>
                     </div>
                   )}
                 </div>
@@ -490,7 +498,12 @@ export function GuardVisitorRecoveryTab({
           onClick={() => setZoomImage(null)}
         >
           <div className="relative max-h-[90vh] max-w-[90vw] overflow-hidden rounded-2xl bg-black">
-            <AuthenticatedImage publicId={zoomImage} alt="Enlarged verification evidence" className="max-h-[85vh] max-w-[85vw] object-contain" />
+            <AuthenticatedImage
+              publicId={zoomImage.publicId}
+              blob={zoomImage.blob}
+              alt="Enlarged verification evidence"
+              className="max-h-[85vh] max-w-[85vw] object-contain"
+            />
             <button
               onClick={() => setZoomImage(null)}
               className="absolute top-4 right-4 rounded-full bg-black/70 p-2 text-white hover:bg-black"

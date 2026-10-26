@@ -192,7 +192,7 @@ erDiagram
 
 ## 3. Canonical API Route Architecture
 
-The platform's API surface is declared in `server/route-map.ts`. All 27 endpoints execute within Vercel Serverless Function instances:
+The platform's API surface is declared in `server/route-map.ts`. All 28 endpoints execute within Vercel Serverless Function instances:
 
 ### 3.1 Admin Router (9 routes: `/api/admin/*`)
 - `GET /api/admin/activity`: Historical audit event query for administrators.
@@ -221,10 +221,11 @@ The platform's API surface is declared in `server/route-map.ts`. All 27 endpoint
 - `POST /api/update-device`: Update device display name, gate binding, or type.
 - `POST /api/update-device-auth`: Rotate device login credentials.
 
-### 3.5 Gate Router (3 routes: `/api/*`)
+### 3.5 Gate Router (4 routes: `/api/*`)
 - `POST /api/scan-pass`: Scanner endpoint for entry and exit events; verifies `token_digest` and gate.
 - `POST /api/decide-visit`: Guard console decision endpoint (approve or reject entry).
 - `GET /api/evidence`: Authenticated proxy for streaming private visitor photos and ID cards.
+- `POST /api/sync-offline-registration`: Guard offline registration synchronization endpoint with trusted server-side byte inspection and transactional receipt generation.
 
 ### 3.6 System Router (5 routes: `/api/*`)
 - `POST /api/create-user`: Provision staff account.
@@ -359,8 +360,8 @@ Pass Presentation Data Flow
         │
         ├── visitorName      (Formatted First, Middle Initial, Last Name)
         ├── visitDate        (Formatted in Asia/Manila, e.g. "October 27, 2026")
-        ├── passReference    (Canonical Reference format "EG-XXXXXXXX")
-        └── qrToken          (Opaque bearer pass token digest)
+        ├── passReference    (Canonical Reference format "EG-XXXXXXXX", derived strictly from passes.public_reference)
+        └── qrToken          (Raw opaque HMAC-derived bearer token)
         │
         ├──> Online Pass View (InstitutionalPassCard.tsx)
         ├──> Pass Card PNG Download (renderPassCardToDataUrl)
@@ -370,7 +371,7 @@ Pass Presentation Data Flow
 ```
 
 ### Critical Security & Cryptographic Boundary:
-- **Opaque Token Invariant**: The QR payload consists exclusively of the opaque, cryptographically verified bearer pass token.
+- **Opaque Token Invariant**: The QR payload consists exclusively of the raw opaque, HMAC-derived bearer pass token required for scanning. PostgreSQL stores only `SHA-256(raw QR bearer)` in `public.passes.token_digest`. A database compromise never directly leaks the raw scanning QR tokens.
 - **Zero PII in QR Payload**: Visitor name, contact number, email, purpose, and date are strictly **NEVER** embedded into the QR payload. All identifiable metadata is rendered visually around the QR code on the institutional card or thermal print.
 
 ---
@@ -386,7 +387,7 @@ Thermal Subsystem Architecture
         ▼
   api.publish_thermal_template (PostgreSQL RPC)
         │
-        ▼ (Stores version in public.thermal_print_templates)
+        ▼ (Stores version in public.thermal_templates)
   Kiosk Tablet Browser (/kiosk)
         │
         ├── Fetches active published template (falls back to bundled known-good default)

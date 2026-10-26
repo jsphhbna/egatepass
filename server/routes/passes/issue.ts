@@ -20,6 +20,16 @@ const requestSchema = z.object({
   idIntentId: z.string().uuid().nullable(),
 });
 
+function validMagic(bytes: Uint8Array, contentType: string): boolean {
+  if (contentType === 'image/jpeg') return bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff;
+  if (contentType === 'image/png') return bytes.slice(0, 8).every((value, index) => value === [137, 80, 78, 71, 13, 10, 26, 10][index]);
+  if (contentType === 'image/webp') {
+    return new TextDecoder().decode(bytes.slice(0, 4)) === 'RIFF'
+      && new TextDecoder().decode(bytes.slice(8, 12)) === 'WEBP';
+  }
+  return false;
+}
+
 interface IntentRow {
   id: string;
   owner_id: string;
@@ -33,36 +43,43 @@ interface IntentRow {
   expires_at: string;
 }
 
+interface InspectedUpload {
+  bytes: number;
+  sha256: string;
+}
+
 interface IssueResult {
   public_reference: string;
   valid_from: string;
   valid_until: string;
 }
 
-function validMagic(bytes: Uint8Array, contentType: string): boolean {
-  if (contentType === 'image/jpeg') return bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff;
-  if (contentType === 'image/png') return bytes.slice(0, 8).every((value, index) => value === [137, 80, 78, 71, 13, 10, 26, 10][index]);
-  if (contentType === 'image/webp') {
-    return new TextDecoder().decode(bytes.slice(0, 4)) === 'RIFF'
-      && new TextDecoder().decode(bytes.slice(8, 12)) === 'WEBP';
-  }
-  return false;
-}
-
-async function inspectUpload(admin: ReturnType<typeof getServerSupabaseClients>['admin'], id: string, actorId: string, source: 'portal' | 'kiosk', kind: 'photo' | 'id') {
+async function inspectUpload(admin: ReturnType<typeof getServerSupabaseClients>['admin'], id: string, actorId: string, source: 'portal' | 'kiosk', kind: 'photo' | 'id'): Promise<InspectedUpload> {
   const { data, error } = await admin.from('upload_intents').select('*').eq('id', id).maybeSingle<IntentRow>();
   if (error) throw error;
-  if (!data || data.owner_id !== actorId || data.source !== source || data.kind !== kind
-    || data.status !== 'pending' || new Date(data.expires_at).getTime() <= Date.now()) {
+  if (
+    !data ||
+    data.owner_id !== actorId ||
+    data.source !== source ||
+    data.kind !== kind ||
+    data.status !== 'pending' ||
+    new Date(data.expires_at).getTime() <= Date.now()
+  ) {
     throw new Error('invalid_upload_intent');
   }
+
   const downloaded = await admin.storage.from(data.bucket_id).download(data.object_path);
   if (downloaded.error) throw new Error('missing_uploaded_object');
+
   const bytes = new Uint8Array(await downloaded.data.arrayBuffer());
   if (bytes.length < 12 || bytes.length > data.max_bytes || !validMagic(bytes, data.content_type)) {
     throw new Error('invalid_uploaded_content');
   }
-  return { bytes: bytes.length, sha256: createHash('sha256').update(bytes).digest('hex') };
+
+  return {
+    bytes: bytes.length,
+    sha256: createHash('sha256').update(bytes).digest('hex'),
+  };
 }
 
 export function getClientNetworkIdentifier(request: Request): string {
@@ -188,6 +205,7 @@ async function handleRequest(request: Request): Promise<Response> {
       // Return existing pass with 200 OK (idempotent replay)
       return jsonResponse(200, {
         passId: existingPass.public_reference,
+        publicReference: existingPass.public_reference,
         qrToken,
         validFrom: existingPass.valid_from,
         validUntil: existingPass.valid_until,
@@ -270,6 +288,7 @@ async function handleRequest(request: Request): Promise<Response> {
 
     return jsonResponse(201, {
       passId: data.public_reference,
+      publicReference: data.public_reference,
       qrToken,
       validFrom: data.valid_from,
       validUntil: data.valid_until,

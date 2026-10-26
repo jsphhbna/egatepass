@@ -529,7 +529,7 @@ export function GetPassPage() {
         middleName: formData.middleName,
         lastName: formData.lastName,
         visitDate: formData.visitDate,
-        passReference: result.passId,
+        passReference: result.publicReference || result.passId,
         qrToken: result.qrToken,
         validityWindow: validity,
         purpose: formData.purpose,

@@ -161,7 +161,7 @@ describe('Documentation Truthfulness & Formatting Contract', () => {
 
   it('ensures documentation states canonical route counts matching route-map matrix', () => {
     const arch = fs.readFileSync('docs/ARCHITECTURE.md', 'utf8');
-    expect(arch).toContain('All 27 endpoints');
+    expect(arch).toContain('All 28 endpoints');
     expect(arch).toContain('Auth Router (4 routes');
     expect(arch).not.toContain('Auth Router (3 routes');
   });

@@ -55,7 +55,7 @@ describe('Phase 1: Institutional Visitor Pass Presentation Contract', () => {
     expect(presentation.passReference).toMatch(/^EG-[A-Z0-9]{8}$/);
   });
 
-  it('1.6. Invariant: QR payload contains only opaque token digest, no visitor PII', () => {
+  it('1.6. Invariant: QR payload contains only raw opaque bearer token, no visitor PII', () => {
     const presentation = createPassPresentation(samplePass);
     // Ensure the QR payload is the opaque token
     expect(presentation.qrToken).not.toContain(samplePass.visitorName);

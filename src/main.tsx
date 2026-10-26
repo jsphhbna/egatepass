@@ -52,9 +52,18 @@ void import('./App')
 
     if (typeof window !== 'undefined' && 'serviceWorker' in navigator && import.meta.env.PROD) {
       window.addEventListener('load', () => {
-        navigator.serviceWorker.register('/sw.js').catch((err) => {
-          console.warn('App shell service worker registration failed:', err);
-        });
+        navigator.serviceWorker
+          .register('/sw.js')
+          .then((reg) => {
+            const assets = Array.from(document.querySelectorAll('script[src], link[rel="stylesheet"][href]'))
+              .map((el) => el.getAttribute('src') || el.getAttribute('href'))
+              .filter((url): url is string => Boolean(url && (url.startsWith('/assets/') || url.startsWith('/'))));
+            const target = reg.active || reg.installing || navigator.serviceWorker.controller;
+            target?.postMessage({ type: 'PRECACHE_ASSETS', assets });
+          })
+          .catch((err) => {
+            console.warn('App shell service worker registration failed:', err);
+          });
       });
     }
   })

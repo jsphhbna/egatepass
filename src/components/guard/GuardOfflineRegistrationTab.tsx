@@ -102,7 +102,7 @@ export function GuardOfflineRegistrationTab({
     setCaptureMode('none');
   }
 
-  function validateForm(): boolean {
+  function validateForm(isApproval = false): boolean {
     if (!firstName.trim() || !lastName.trim()) {
       toast.error('Visitor first and last name are required');
       return false;
@@ -119,11 +119,15 @@ export function GuardOfflineRegistrationTab({
       toast.error('Visitor selfie photo is required');
       return false;
     }
+    if (isApproval && !idBlob) {
+      toast.error('Valid government or institutional ID capture is strictly required to approve entry');
+      return false;
+    }
     return true;
   }
 
   async function handleApproveEntry() {
-    if (!validateForm()) return;
+    if (!validateForm(true)) return;
 
     setSaving(true);
     const offlineRegistrationId = crypto.randomUUID();

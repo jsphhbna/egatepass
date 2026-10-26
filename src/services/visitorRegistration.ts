@@ -14,6 +14,7 @@ export interface VisitorRegistration {
 
 export interface IssuedPass {
   passId: string;
+  publicReference?: string;
   qrToken: string;
   validFrom: string;
   validUntil: string;

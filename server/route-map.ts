@@ -150,7 +150,7 @@ export const ROUTE_CONTRACT_MATRIX: readonly RouteContract[] = [
     handlerModule: 'server/routes/device/update-device-auth.ts',
   },
 
-  // Gate Router (3 routes)
+  // Gate Router (4 routes)
   {
     path: '/api/scan-pass',
     group: 'gate',
@@ -171,6 +171,13 @@ export const ROUTE_CONTRACT_MATRIX: readonly RouteContract[] = [
     subpath: 'evidence',
     allowedMethods: ['GET'],
     handlerModule: 'server/routes/gate/evidence.ts',
+  },
+  {
+    path: '/api/sync-offline-registration',
+    group: 'gate',
+    subpath: 'sync-offline-registration',
+    allowedMethods: ['POST'],
+    handlerModule: 'server/routes/gate/sync-offline-registration.ts',
   },
 
   // System Router (5 routes)

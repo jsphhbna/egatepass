@@ -9,6 +9,7 @@ import {
   Sliders,
   ShieldLock,
 } from 'lucide-react';
+import { requireSupabase } from '@/lib/supabase';
 import { toast } from 'sonner';
 
 export interface KioskPrinterSettingsModalProps {
@@ -32,18 +33,44 @@ export function KioskPrinterSettingsModal({ isOpen, onClose }: KioskPrinterSetti
 
   const [pin, setPin] = useState('');
   const [isAuthenticated, setIsAuthenticated] = useState(false);
+  const [isVerifyingPin, setIsVerifyingPin] = useState(false);
   const [isTesting, setIsTesting] = useState(false);
   const [isConnecting, setIsConnecting] = useState(false);
 
-  // Kiosk device setup PIN to prevent visitors from tampering with settings
-  function handleVerifyPin(e: React.FormEvent) {
+  // Kiosk device operator PIN verified via secure server RPC against salted hash
+  async function handleVerifyPin(e: React.FormEvent) {
     e.preventDefault();
-    // Default institutional kiosk setup pin
-    if (pin === '1904' || pin === '0000' || pin.length >= 4) {
-      setIsAuthenticated(true);
-      setPin('');
-    } else {
-      toast.error('Invalid device security PIN');
+    const trimmed = pin.trim();
+    if (!/^\d{6,12}$/.test(trimmed)) {
+      toast.error('Operator PIN must be between 6 and 12 numeric digits');
+      return;
+    }
+
+    setIsVerifyingPin(true);
+    try {
+      const client = requireSupabase();
+      const { data, error } = await client.rpc('verify_kiosk_operator_pin', {
+        requested_pin: trimmed,
+      });
+
+      if (error) {
+        toast.error('Unable to verify operator credentials. Please check your connection.');
+        return;
+      }
+
+      if (data?.verified === true) {
+        setIsAuthenticated(true);
+        setPin('');
+        toast.success('Operator settings unlocked');
+      } else if (data?.locked === true) {
+        toast.error(`Verification locked due to excessive failed attempts. Retry in ${data.retry_after_seconds}s.`);
+      } else {
+        toast.error('Invalid operator PIN');
+      }
+    } catch (err: unknown) {
+      toast.error('Verification request failed. Please check network connectivity.');
+    } finally {
+      setIsVerifyingPin(false);
     }
   }
 
@@ -114,19 +141,19 @@ export function KioskPrinterSettingsModal({ isOpen, onClose }: KioskPrinterSetti
             <Input
               type="password"
               inputMode="numeric"
-              maxLength={8}
+              maxLength={12}
               value={pin}
-              onChange={(e) => setPin(e.target.value)}
-              placeholder="Enter PIN (e.g. 1904)"
+              onChange={(e) => setPin(e.target.value.replace(/\D/g, ''))}
+              placeholder="Enter operator PIN"
               autoFocus
             />
           </div>
           <div className="flex justify-end gap-2 pt-2">
-            <Button type="button" variant="secondary" onClick={onClose}>
+            <Button type="button" variant="secondary" onClick={onClose} disabled={isVerifyingPin}>
               Cancel
             </Button>
-            <Button type="submit" disabled={!pin.trim()}>
-              Unlock Settings
+            <Button type="submit" disabled={pin.trim().length < 6 || isVerifyingPin}>
+              {isVerifyingPin ? 'Verifying…' : 'Unlock Settings'}
             </Button>
           </div>
         </form>

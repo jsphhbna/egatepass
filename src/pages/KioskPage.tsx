@@ -360,7 +360,7 @@ export function KioskPage() {
       const presentation = createPassPresentation({
         visitorName: [formData.firstName, formData.middleName, formData.lastName].filter(Boolean).join(' '),
         visitDate: formData.visitDate,
-        passReference: result.passId,
+        passReference: result.publicReference || result.passId,
         qrToken: result.qrToken,
       });
 

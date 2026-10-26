@@ -65,6 +65,10 @@
       "destination": "/api/gate/evidence"
     },
     {
+      "source": "/api/sync-offline-registration",
+      "destination": "/api/gate/sync-offline-registration"
+    },
+    {
       "source": "/api/create-user",
       "destination": "/api/system/create-user"
     },

@@ -4,10 +4,11 @@ import { ImageOff } from 'lucide-react';
 
 interface AuthenticatedImageProps extends React.ImgHTMLAttributes<HTMLImageElement> {
   publicId?: string | null;
+  blob?: Blob | null;
   fallbackText?: string;
 }
 
-export function AuthenticatedImage({ publicId, fallbackText = 'Image unavailable', className = '', ...props }: AuthenticatedImageProps) {
+export function AuthenticatedImage({ publicId, blob, fallbackText = 'Image unavailable', className = '', ...props }: AuthenticatedImageProps) {
   const [objectUrl, setObjectUrl] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [state, setState] = useState<'loading' | 'ready' | 'expired' | 'missing' | 'temporary'>('loading');
@@ -22,6 +23,24 @@ export function AuthenticatedImage({ publicId, fallbackText = 'Image unavailable
         setLoading(true);
         setState('loading');
         setObjectUrl(null);
+
+        if (blob) {
+          url = URL.createObjectURL(blob);
+          if (active) {
+            setObjectUrl(url);
+            setLoading(false);
+            setState('ready');
+          }
+          return;
+        }
+
+        if (!publicId) {
+          if (active) {
+            setState('missing');
+            setLoading(false);
+          }
+          return;
+        }
         
         const token = await getAccessToken();
         const response = await fetch(`/api/evidence?id=${encodeURIComponent(publicId || '')}`, {
@@ -43,11 +62,11 @@ export function AuthenticatedImage({ publicId, fallbackText = 'Image unavailable
           throw new Error(`Failed to fetch image: ${response.status}`);
         }
 
-        const blob = await response.blob();
-        if (!blob.type.toLocaleLowerCase().startsWith('image/')) throw new Error('Image response had an invalid content type');
+        const fetchedBlob = await response.blob();
+        if (!fetchedBlob.type.toLocaleLowerCase().startsWith('image/')) throw new Error('Image response had an invalid content type');
         
         if (active) {
-          url = URL.createObjectURL(blob);
+          url = URL.createObjectURL(fetchedBlob);
           setObjectUrl(url);
           setLoading(false);
           setState('ready');

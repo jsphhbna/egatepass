@@ -20,7 +20,7 @@ function getPhysicalApiFiles(dir: string): string[] {
   return results;
 }
 
-const EXPECTED_27_ROUTES = [
+const EXPECTED_28_ROUTES = [
   // Admin (9)
   '/api/admin/activity',
   '/api/admin/dashboard',
@@ -44,10 +44,11 @@ const EXPECTED_27_ROUTES = [
   '/api/delete-device',
   '/api/update-device',
   '/api/update-device-auth',
-  // Gate (3)
+  // Gate (4)
   '/api/scan-pass',
   '/api/decide-visit',
   '/api/evidence',
+  '/api/sync-offline-registration',
   // System (5)
   '/api/create-user',
   '/api/update-user',
@@ -78,17 +79,17 @@ describe('Vercel Hobby Plan Function Limit Architecture Regressions', () => {
     });
   });
 
-  describe('2. Route Contract Matrix Integrity (26 Preserved API Endpoints)', () => {
-    it('contains exactly 27 route contracts in the matrix', () => {
-      expect(ROUTE_CONTRACT_MATRIX.length).toBe(27);
+  describe('2. Route Contract Matrix Integrity (28 Preserved API Endpoints)', () => {
+    it('contains exactly 28 route contracts in the matrix', () => {
+      expect(ROUTE_CONTRACT_MATRIX.length).toBe(28);
     });
 
-    it('contains all 26 historical external API paths with no duplicates', () => {
+    it('contains all 28 historical external API paths with no duplicates', () => {
       const paths = ROUTE_CONTRACT_MATRIX.map((r) => r.path);
       const uniquePaths = new Set(paths);
-      expect(uniquePaths.size).toBe(27);
+      expect(uniquePaths.size).toBe(28);
 
-      for (const expectedPath of EXPECTED_27_ROUTES) {
+      for (const expectedPath of EXPECTED_28_ROUTES) {
         expect(paths).toContain(expectedPath);
       }
     });
@@ -115,7 +116,7 @@ describe('Vercel Hobby Plan Function Limit Architecture Regressions', () => {
       expect(getRoutesByGroup('auth').length).toBe(4);
       expect(getRoutesByGroup('passes').length).toBe(2);
       expect(getRoutesByGroup('device').length).toBe(4);
-      expect(getRoutesByGroup('gate').length).toBe(3);
+      expect(getRoutesByGroup('gate').length).toBe(4);
       expect(getRoutesByGroup('system').length).toBe(5);
       expect(getRoutesByGroup('admin').length).toBe(9);
     });
@@ -135,6 +136,8 @@ describe('Vercel Hobby Plan Function Limit Architecture Regressions', () => {
       expect(extractRouteKey('/api/device/create-device', 'device')).toBe('create-device');
       expect(extractRouteKey('/api/scan-pass', 'gate')).toBe('scan-pass');
       expect(extractRouteKey('/api/gate/scan-pass', 'gate')).toBe('scan-pass');
+      expect(extractRouteKey('/api/sync-offline-registration', 'gate')).toBe('sync-offline-registration');
+      expect(extractRouteKey('/api/gate/sync-offline-registration', 'gate')).toBe('sync-offline-registration');
       expect(extractRouteKey('/api/purge-images', 'system')).toBe('purge-images');
       expect(extractRouteKey('/api/system/purge-images', 'system')).toBe('purge-images');
 
@@ -214,12 +217,12 @@ describe('Vercel Hobby Plan Function Limit Architecture Regressions', () => {
   });
 
   describe('4. Vercel Configuration Rewrites for Legacy Top-Level Paths', () => {
-    it('contains all 12 top-level API rewrites in vercel.json preceding the SPA fallback', () => {
+    it('contains all 13 top-level API rewrites in vercel.json preceding the SPA fallback', () => {
       const config = JSON.parse(readFileSync('vercel.json', 'utf8')) as {
         rewrites: Array<{ source: string; destination: string }>;
       };
 
-      const topLevel12 = [
+      const topLevel13 = [
         { source: '/api/create-device', destination: '/api/device/create-device' },
         { source: '/api/delete-device', destination: '/api/device/delete-device' },
         { source: '/api/update-device', destination: '/api/device/update-device' },
@@ -227,6 +230,7 @@ describe('Vercel Hobby Plan Function Limit Architecture Regressions', () => {
         { source: '/api/scan-pass', destination: '/api/gate/scan-pass' },
         { source: '/api/decide-visit', destination: '/api/gate/decide-visit' },
         { source: '/api/evidence', destination: '/api/gate/evidence' },
+        { source: '/api/sync-offline-registration', destination: '/api/gate/sync-offline-registration' },
         { source: '/api/create-user', destination: '/api/system/create-user' },
         { source: '/api/update-user', destination: '/api/system/update-user' },
         { source: '/api/update-settings', destination: '/api/system/update-settings' },
@@ -234,7 +238,7 @@ describe('Vercel Hobby Plan Function Limit Architecture Regressions', () => {
         { source: '/api/reconciliation-items', destination: '/api/system/reconciliation-items' },
       ];
 
-      for (const expectedRewrite of topLevel12) {
+      for (const expectedRewrite of topLevel13) {
         expect(config.rewrites).toContainEqual(expectedRewrite);
       }
 

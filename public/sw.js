@@ -18,10 +18,52 @@ const STATIC_SHELL = [
 
 self.addEventListener('install', (event) => {
   event.waitUntil(
-    caches.open(CACHE_NAME).then((cache) => {
-      return cache.addAll(STATIC_SHELL);
+    caches.open(CACHE_NAME).then(async (cache) => {
+      await cache.addAll(STATIC_SHELL);
+      try {
+        const res = await fetch('/index.html');
+        if (res.ok) {
+          const html = await res.text();
+          // Extract /assets/*.js and /assets/*.css script/link tags
+          const assetMatches = Array.from(html.matchAll(/(?:src|href)="(\/assets\/[^"]+)"/g)).map((m) => m[1]);
+          if (assetMatches.length > 0) {
+            await Promise.all(
+              assetMatches.map((assetUrl) =>
+                fetch(assetUrl)
+                  .then((assetRes) => {
+                    if (assetRes.ok) return cache.put(assetUrl, assetRes);
+                  })
+                  .catch(() => undefined)
+              )
+            );
+          }
+        }
+      } catch (err) {
+        console.warn('App-shell asset discovery during install:', err);
+      }
     }).then(() => self.skipWaiting())
   );
+});
+
+self.addEventListener('message', (event) => {
+  if (event.data && event.data.type === 'PRECACHE_ASSETS' && Array.isArray(event.data.assets)) {
+    event.waitUntil(
+      caches.open(CACHE_NAME).then(async (cache) => {
+        for (const assetUrl of event.data.assets) {
+          if (typeof assetUrl === 'string' && (assetUrl.startsWith('/assets/') || assetUrl.startsWith('/'))) {
+            const match = await cache.match(assetUrl);
+            if (!match) {
+              fetch(assetUrl)
+                .then((res) => {
+                  if (res.ok) cache.put(assetUrl, res);
+                })
+                .catch(() => undefined);
+            }
+          }
+        }
+      })
+    );
+  }
 });
 
 self.addEventListener('activate', (event) => {
