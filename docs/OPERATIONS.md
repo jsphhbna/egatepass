@@ -172,11 +172,16 @@ Retention policies are designed to support data-minimization and retention pract
       `device.create`, `device.update`, `device.retire`, `device.password_update`,
       `settings_updated`, `maintenance.retention_run`,
       `security_hold_created`, `incident_hold.released`
-    - **Backward-Compatible Legacy Aliases** (preserved for historical databases):
+    - Backward-Compatible Legacy Aliases (preserved for historical databases):
       `initial_superadmin_bootstrapped`, `superadmin_created`, `admin_created`, `admin_deleted`,
       `device_registered`, `device_deleted`, `device_credentials_updated`,
       `user_role_and_status_changed`, `user_role_changed`, `user_reactivated`, `user_deactivated`,
       `security_hold_released`
+  - **Anonymous Auth Cleanup**:
+    - Cleanup is conservative and targets only aged anonymous Auth identities older than 7 days.
+    - Auth users are enumerated with server-side pagination beyond 1,000 users.
+    - Destructive candidate deletion strictly respects the configured `batchSize` ceiling per run.
+    - Protection lookups (`visitors`, `upload_intents`, `staff_profiles`, `devices`) fail closed: any lookup failure immediately aborts candidate deletion for that batch, deleting zero users.
 
 ---
 

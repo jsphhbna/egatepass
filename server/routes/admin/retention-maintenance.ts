@@ -627,21 +627,37 @@ async function handleRequest(request: Request): Promise<Response> {
     }
 
     // =========================================================================
-    // 6.6 ORPHAN ANONYMOUS AUTH USER CLEANUP
+    // =========================================================================
+    // 6.6 ORPHAN ANONYMOUS AUTH USER CLEANUP (REPAIR R1 & R2)
     // =========================================================================
     try {
       const ANONYMOUS_AUTH_RETENTION_MS = 24 * 60 * 60 * 1000; // 24-hour safety buffer
       const anonCutoff = Date.now() - ANONYMOUS_AUTH_RETENTION_MS;
+      let page = 1;
+      const perPage = 1000;
+      let hasMorePages = true;
+      let totalDeleteFailures = 0;
+      let totalDeleted = 0;
+      const allEligibleUsers: any[] = [];
 
-      const { data: authData, error: authListError } = await admin.auth.admin.listUsers({
-        page: 1,
-        perPage: 1000,
-      });
+      while (hasMorePages) {
+        const { data: authData, error: authListError } = await admin.auth.admin.listUsers({
+          page,
+          perPage,
+        });
 
-      if (authListError) {
-        metrics.errors.push(`anonymous_auth_list_failed: ${authListError.message}`);
-      } else {
-        const candidateUsers = (authData?.users ?? []).filter((u: any) => {
+        if (authListError) {
+          metrics.errors.push(`anonymous_auth_list_failed_page_${page}: ${authListError.message}`);
+          // Fail closed safely: abort further pagination/cleanup when enumeration fails
+          break;
+        }
+
+        const users = authData?.users ?? [];
+        if (users.length === 0) {
+          break;
+        }
+
+        const candidateUsers = users.filter((u: any) => {
           if (!u.is_anonymous && u.app_metadata?.provider !== 'anonymous') return false;
           const createdAt = new Date(u.created_at).getTime();
           return Number.isFinite(createdAt) && createdAt <= anonCutoff;
@@ -651,68 +667,91 @@ async function handleRequest(request: Request): Promise<Response> {
           const candidateIds = candidateUsers.map((u: any) => u.id);
 
           // Find IDs referenced by visitors
-          const { data: referencedVisitors } = await admin
+          const { data: referencedVisitors, error: visitorRefErr } = await admin
             .from('visitors')
             .select('owner_id')
             .in('owner_id', candidateIds);
-          const visitorOwnerIds = new Set((referencedVisitors ?? []).map((v: any) => v.owner_id));
 
           // Find IDs referenced by upload_intents
-          const { data: referencedIntents } = await admin
+          const { data: referencedIntents, error: intentRefErr } = await admin
             .from('upload_intents')
             .select('owner_id')
             .in('owner_id', candidateIds);
-          const intentOwnerIds = new Set((referencedIntents ?? []).map((i: any) => i.owner_id));
 
           // Exclude staff_profiles
-          const { data: staffRows } = await admin
+          const { data: staffRows, error: staffRefErr } = await admin
             .from('staff_profiles')
             .select('user_id')
             .in('user_id', candidateIds);
-          const staffUserIds = new Set((staffRows ?? []).map((s: any) => s.user_id));
 
           // Exclude devices
-          const { data: deviceRows } = await admin
+          const { data: deviceRows, error: deviceRefErr } = await admin
             .from('devices')
             .select('user_id')
             .in('user_id', candidateIds);
-          const deviceUserIds = new Set((deviceRows ?? []).map((d: any) => d.user_id));
 
-          // Retain only strictly unreferenced, old orphan anonymous accounts
-          const eligibleUsers = candidateUsers.filter(
-            (u: any) =>
-              !visitorOwnerIds.has(u.id) &&
-              !intentOwnerIds.has(u.id) &&
-              !staffUserIds.has(u.id) &&
-              !deviceUserIds.has(u.id)
-          );
+          // REPAIR R1: FAIL CLOSED ON ANY PROTECTION QUERY FAILURE
+          if (visitorRefErr || intentRefErr || staffRefErr || deviceRefErr) {
+            if (visitorRefErr) metrics.errors.push(`anonymous_auth_protection_visitor_failed: ${visitorRefErr.message}`);
+            if (intentRefErr) metrics.errors.push(`anonymous_auth_protection_intent_failed: ${intentRefErr.message}`);
+            if (staffRefErr) metrics.errors.push(`anonymous_auth_protection_staff_failed: ${staffRefErr.message}`);
+            if (deviceRefErr) metrics.errors.push(`anonymous_auth_protection_device_failed: ${deviceRefErr.message}`);
+            // Unsafe batch: do NOT add any users from this batch to eligible!
+          } else {
+            const visitorOwnerIds = new Set((referencedVisitors ?? []).map((v: any) => v.owner_id));
+            const intentOwnerIds = new Set((referencedIntents ?? []).map((i: any) => i.owner_id));
+            const staffUserIds = new Set((staffRows ?? []).map((s: any) => s.user_id));
+            const deviceUserIds = new Set((deviceRows ?? []).map((d: any) => d.user_id));
 
-          metrics.anonymousAuthEligible = eligibleUsers.length;
-          const usersToClean = eligibleUsers.slice(0, batchSize);
+            // Retain only strictly unreferenced, old orphan anonymous accounts
+            const eligibleUsers = candidateUsers.filter(
+              (u: any) =>
+                !visitorOwnerIds.has(u.id) &&
+                !intentOwnerIds.has(u.id) &&
+                !staffUserIds.has(u.id) &&
+                !deviceUserIds.has(u.id)
+            );
 
-          if (!dryRun && usersToClean.length > 0) {
-            for (const user of usersToClean) {
-              const { error: delErr } = await admin.auth.admin.deleteUser(user.id);
-              if (delErr) {
-                metrics.anonymousAuthDeleteFailures++;
-                metrics.errors.push(`anonymous_auth_delete_failed for user ${user.id}: ${delErr.message}`);
-                await recordReconciliation(
-                  admin,
-                  'maintenance.anonymous_auth_delete_failed',
-                  'auth.users',
-                  user.id,
-                  delErr.message || 'auth_delete_failed',
-                  { userId: user.id }
-                ).catch(() => undefined);
-              } else {
-                metrics.anonymousAuthDeleted++;
-              }
-            }
-          } else if (dryRun) {
-            metrics.anonymousAuthDeleted = 0;
+            allEligibleUsers.push(...eligibleUsers);
+          }
+        }
+
+        if (users.length < perPage) {
+          hasMorePages = false;
+        } else {
+          page++;
+          if (page > 100) {
+            // Defensive ceiling to prevent infinite loops
+            break;
           }
         }
       }
+
+      metrics.anonymousAuthEligible = allEligibleUsers.length;
+
+      if (!dryRun && allEligibleUsers.length > 0) {
+        const usersToClean = allEligibleUsers.slice(0, batchSize);
+        for (const user of usersToClean) {
+          const { error: delErr } = await admin.auth.admin.deleteUser(user.id);
+          if (delErr) {
+            totalDeleteFailures++;
+            metrics.errors.push(`anonymous_auth_delete_failed for user ${user.id}: ${delErr.message}`);
+            await recordReconciliation(
+              admin,
+              'maintenance.anonymous_auth_delete_failed',
+              'auth.users',
+              user.id,
+              delErr.message || 'auth_delete_failed',
+              { userId: user.id }
+            ).catch(() => undefined);
+          } else {
+            totalDeleted++;
+          }
+        }
+      }
+
+      metrics.anonymousAuthDeleted = dryRun ? 0 : totalDeleted;
+      metrics.anonymousAuthDeleteFailures = totalDeleteFailures;
     } catch (anonErr) {
       const msg = anonErr instanceof Error ? anonErr.message : 'anonymous_auth_cleanup_exception';
       metrics.errors.push(`anonymous_auth_cleanup_exception: ${msg}`);

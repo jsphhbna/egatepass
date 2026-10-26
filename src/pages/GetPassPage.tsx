@@ -10,6 +10,7 @@ import {
   loadRegistrationSettings,
   createPortalIssueTransaction,
   type PortalIssueTransaction,
+  PassIssuanceError,
 } from '@/services/visitorRegistration';
 import { TurnstileWidget } from '@/components/TurnstileWidget';
 import { generateBrandedQrDataUrl } from '@/lib/brandedQr';
@@ -274,6 +275,9 @@ export function GetPassPage() {
   }
 
   function onRetakePhoto() {
+    if (portalTransactionRef.current && portalTransactionRef.current.phase === 'editable') {
+      portalTransactionRef.current.photoIntentId = null;
+    }
     photoUrl.clear();
     setPhotoBlob(null);
     faceWebcam.stop();
@@ -296,6 +300,9 @@ export function GetPassPage() {
 
     try {
       const compressed = await compressImageToWebP(blob);
+      if (portalTransactionRef.current && portalTransactionRef.current.phase === 'editable') {
+        portalTransactionRef.current.idIntentId = null;
+      }
       setIdBlob(compressed);
       idUrl.setFromBlob(compressed);
     } catch {
@@ -333,6 +340,9 @@ export function GetPassPage() {
 
     try {
       const compressed = await compressImageToWebP(file);
+      if (portalTransactionRef.current && portalTransactionRef.current.phase === 'editable') {
+        portalTransactionRef.current.idIntentId = null;
+      }
       setIdBlob(compressed);
       idUrl.setFromBlob(compressed);
       toast.success('Valid ID uploaded successfully.');
@@ -346,13 +356,16 @@ export function GetPassPage() {
   }
 
   function onRetakeId() {
-    ocrGenerationRef.current += 1;
     idUrl.clear();
     setIdBlob(null);
+    ocrGenerationRef.current += 1;
     idWebcam.stop();
     setStep('id');
     if (idMode === 'camera') {
       idWebcam.start();
+    }
+    if (portalTransactionRef.current && portalTransactionRef.current.phase === 'editable') {
+      portalTransactionRef.current.idIntentId = null;
     }
   }
 
@@ -467,6 +480,11 @@ export function GetPassPage() {
     portalTransactionRef.current = null;
   }
 
+  function handleStartOver() {
+    resetRegistrationFlow();
+    toast.info('Registration reset. You can enter details and capture fresh evidence.');
+  }
+
   // ============================================================
   // SUBMIT — Anonymous Sign-in → Upload → Create Docs → QR
   // ============================================================
@@ -514,8 +532,18 @@ export function GetPassPage() {
       console.error('Pass generation error:', err);
       const errMsg = err instanceof Error ? err.message : 'An unexpected error occurred.';
       setSubmitError(errMsg);
-      if (errMsg.includes('conflict')) {
+      if (err instanceof PassIssuanceError) {
+        if (err.outcome === 'rejected_requires_new_transaction' || errMsg.includes('conflict')) {
+          portalTransactionRef.current = null;
+          issueRequestId.current = crypto.randomUUID();
+        } else if (err.outcome === 'rejected_correctable_field') {
+          if (portalTransactionRef.current) {
+            issueRequestId.current = portalTransactionRef.current.requestId as ReturnType<typeof crypto.randomUUID>;
+          }
+        }
+      } else if (errMsg.includes('conflict')) {
         portalTransactionRef.current = null;
+        issueRequestId.current = crypto.randomUUID();
       }
       setStep('review');
       toast.error('Failed to generate pass. Please try again.');
@@ -1077,11 +1105,24 @@ export function GetPassPage() {
                 Review Your Details
               </h2>
 
-              {submitError && (
+              {portalTransactionRef.current?.phase === 'ambiguous' ? (
+                <div className="rounded-lg border border-amber-300 bg-amber-50 dark:border-amber-700/60 dark:bg-amber-950/40 p-4 space-y-2 text-sm text-amber-900 dark:text-amber-200" role="alert">
+                  <div className="flex items-center gap-2 font-semibold text-amber-950 dark:text-amber-100">
+                    <AlertCircle className="h-5 w-5 text-amber-600 dark:text-amber-400 shrink-0" />
+                    <span>Generation result could not be confirmed</span>
+                  </div>
+                  <p>
+                    A network interruption occurred while processing your pass. To prevent duplicate passes, please retry your exact submission, or start over.
+                  </p>
+                  <p className="text-xs text-amber-800 dark:text-amber-300">
+                    Retry Exact Submission resubmits the exact previous attempt without altering your identity or evidence.
+                  </p>
+                </div>
+              ) : submitError ? (
                 <div className="rounded-md border border-[var(--color-danger)] bg-[var(--color-danger-light)] p-3 text-sm text-[var(--color-danger-dark)]" role="alert">
                   {submitError}
                 </div>
-              )}
+              ) : null}
 
               {/* Photos preview with direct retake actions */}
               <div className="flex flex-wrap gap-6 justify-center items-center py-2">
@@ -1093,14 +1134,16 @@ export function GetPassPage() {
                       alt="Your photo"
                       className="h-24 w-20 object-cover rounded-lg border border-[var(--color-border)] shadow-sm mx-auto"
                     />
-                    <button
-                      type="button"
-                      onClick={onRetakePhoto}
-                      className="mt-1.5 text-xs font-semibold text-[var(--color-brand)] hover:underline inline-flex items-center gap-1"
-                    >
-                      <RotateCcw className="h-3 w-3" />
-                      Retake Selfie
-                    </button>
+                    {portalTransactionRef.current?.phase !== 'ambiguous' && (
+                      <button
+                        type="button"
+                        onClick={onRetakePhoto}
+                        className="mt-1.5 text-xs font-semibold text-[var(--color-brand)] hover:underline inline-flex items-center gap-1"
+                      >
+                        <RotateCcw className="h-3 w-3" />
+                        Retake Selfie
+                      </button>
+                    )}
                   </div>
                 )}
                 {idPreview && !isPeakMode && (
@@ -1111,14 +1154,16 @@ export function GetPassPage() {
                       alt="Valid ID"
                       className="h-24 w-36 object-cover rounded-lg border border-[var(--color-border)] shadow-sm mx-auto"
                     />
-                    <button
-                      type="button"
-                      onClick={onRetakeId}
-                      className="mt-1.5 text-xs font-semibold text-[var(--color-brand)] hover:underline inline-flex items-center gap-1"
-                    >
-                      <RotateCcw className="h-3 w-3" />
-                      Retake ID
-                    </button>
+                    {portalTransactionRef.current?.phase !== 'ambiguous' && (
+                      <button
+                        type="button"
+                        onClick={onRetakeId}
+                        className="mt-1.5 text-xs font-semibold text-[var(--color-brand)] hover:underline inline-flex items-center gap-1"
+                      >
+                        <RotateCcw className="h-3 w-3" />
+                        Retake ID
+                      </button>
+                    )}
                   </div>
                 )}
               </div>
@@ -1132,17 +1177,19 @@ export function GetPassPage() {
                       {[getValues('firstName'), getValues('middleName'), getValues('lastName')].filter(Boolean).join(' ')}
                     </p>
                   </div>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      faceWebcam.stop();
-                      idWebcam.stop();
-                      setStep('form');
-                    }}
-                    className="text-xs font-semibold text-[var(--color-brand)] hover:underline"
-                  >
-                    Edit Details
-                  </button>
+                  {portalTransactionRef.current?.phase !== 'ambiguous' && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        faceWebcam.stop();
+                        idWebcam.stop();
+                        setStep('form');
+                      }}
+                      className="text-xs font-semibold text-[var(--color-brand)] hover:underline"
+                    >
+                      Edit Details
+                    </button>
+                  )}
                 </div>
                 <div className="py-2">
                   <span className="text-[var(--color-text-secondary)]">Contact Number:</span>
@@ -1160,27 +1207,47 @@ export function GetPassPage() {
 
               <TurnstileWidget key={turnstileKey} onVerify={setCaptchaToken} />
 
-              <div className="flex flex-col sm:flex-row gap-3">
-                <Button
-                  variant="secondary"
-                  onClick={() => {
-                    faceWebcam.stop();
-                    idWebcam.stop();
-                    setStep('form');
-                  }}
-                  className="flex-1"
-                  icon={<ArrowLeft className="h-4 w-4" />}
-                >
-                  Edit Details
-                </Button>
-                <Button
-                  onClick={onSubmit}
-                  className="flex-1"
-                  icon={<CheckCircle2 className="h-4 w-4" />}
-                >
-                  Generate Pass
-                </Button>
-              </div>
+              {portalTransactionRef.current?.phase === 'ambiguous' ? (
+                <div className="flex flex-col sm:flex-row gap-3">
+                  <Button
+                    variant="secondary"
+                    onClick={handleStartOver}
+                    className="flex-1"
+                    icon={<RotateCcw className="h-4 w-4" />}
+                  >
+                    Start Over
+                  </Button>
+                  <Button
+                    onClick={onSubmit}
+                    className="flex-1"
+                    icon={<RefreshCw className="h-4 w-4" />}
+                  >
+                    Retry Exact Submission
+                  </Button>
+                </div>
+              ) : (
+                <div className="flex flex-col sm:flex-row gap-3">
+                  <Button
+                    variant="secondary"
+                    onClick={() => {
+                      faceWebcam.stop();
+                      idWebcam.stop();
+                      setStep('form');
+                    }}
+                    className="flex-1"
+                    icon={<ArrowLeft className="h-4 w-4" />}
+                  >
+                    Edit Details
+                  </Button>
+                  <Button
+                    onClick={onSubmit}
+                    className="flex-1"
+                    icon={<CheckCircle2 className="h-4 w-4" />}
+                  >
+                    Generate Pass
+                  </Button>
+                </div>
+              )}
             </div>
           )}
 

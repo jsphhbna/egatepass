@@ -52,12 +52,37 @@ export function evaluateTurnstilePolicy(
   return { allowed: true };
 }
 
+export type PortalIssueTransactionPhase =
+  | 'editable'
+  | 'dispatched'
+  | 'ambiguous'
+  | 'committed';
+
+export type SubmissionOutcomeType =
+  | 'committed'
+  | 'ambiguous'
+  | 'rejected_correctable_field'
+  | 'rejected_requires_new_transaction';
+
+export class PassIssuanceError extends Error {
+  readonly code: string;
+  readonly outcome: SubmissionOutcomeType;
+
+  constructor(message: string, code: string, outcome: SubmissionOutcomeType) {
+    super(message);
+    this.name = 'PassIssuanceError';
+    this.code = code;
+    this.outcome = outcome;
+  }
+}
+
 export interface PortalIssueTransaction {
   requestId: string;
   actorId: string;
   token: string;
   photoIntentId: string | null;
   idIntentId: string | null;
+  phase: PortalIssueTransactionPhase;
   submittedPayload?: {
     visitor: VisitorRegistration;
   } | null;
@@ -95,6 +120,7 @@ export async function createPortalIssueTransaction(captchaToken?: string): Promi
     token: session.access_token,
     photoIntentId: null,
     idIntentId: null,
+    phase: 'editable',
     submittedPayload: null,
   };
 }
@@ -192,43 +218,124 @@ export async function issueVisitorPass(
     }
   }
 
-  // If transaction had previously submitted a payload, preserve the exact payload for replay safety
-  const effectiveVisitor = (transaction?.submittedPayload?.visitor) ? transaction.submittedPayload.visitor : visitor;
+  // If transaction had previously submitted a payload in an ambiguous attempt, preserve the exact payload for replay safety
+  const effectiveVisitor = (transaction?.phase === 'ambiguous' && transaction?.submittedPayload?.visitor)
+    ? transaction.submittedPayload.visitor
+    : visitor;
 
-  // Record submitted payload on transaction before network dispatch
-  if (transaction && !transaction.submittedPayload) {
+  // Record submitted payload and transition to 'dispatched' immediately before network dispatch
+  if (transaction) {
     transaction.submittedPayload = { visitor: { ...effectiveVisitor } };
+    transaction.phase = 'dispatched';
   }
 
-  const response = await fetch('/api/passes/issue', {
-    method: 'POST',
-    headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      requestId: effectiveRequestId,
-      source,
-      visitor: effectiveVisitor,
-      photoIntentId,
-      idIntentId,
-    }),
-  });
+  let response: Response;
+  try {
+    response = await fetch('/api/passes/issue', {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        requestId: effectiveRequestId,
+        source,
+        visitor: effectiveVisitor,
+        photoIntentId,
+        idIntentId,
+      }),
+    });
+  } catch (networkErr) {
+    if (transaction) {
+      transaction.phase = 'ambiguous';
+    }
+    throw new PassIssuanceError(
+      'Generation result could not be confirmed due to a network interruption. Please retry your submission.',
+      'network_interruption',
+      'ambiguous'
+    );
+  }
+
   const body = await response.json().catch(() => null) as (IssuedPass & { error?: string }) | null;
   if (!response.ok || !body?.passId || !body.qrToken) {
-    if (response.status === 429 || body?.error === 'rate_limit_exceeded') {
-      throw new Error('Too many pass requests from this visitor session. Please wait before requesting another pass.');
+    const errCode = body?.error || 'issue_failed';
+
+    // 1. Authoritative pre-commit rejection: visit_date_out_of_range
+    if (errCode === 'visit_date_out_of_range') {
+      if (transaction) {
+        transaction.phase = 'editable';
+        transaction.submittedPayload = null; // Unfreeze so visitor can edit visit date and re-submit with new date!
+      }
+      throw new PassIssuanceError(
+        'Visit date is outside the allowed scheduling window.',
+        errCode,
+        'rejected_correctable_field'
+      );
     }
-    if (body?.error === 'visit_date_out_of_range') {
-      throw new Error('Visit date is outside the allowed scheduling window.');
+
+    // 2. Authoritative pre-commit rejection: rate limit
+    if (response.status === 429 || errCode === 'rate_limit_exceeded') {
+      if (transaction) {
+        transaction.phase = 'editable';
+        transaction.submittedPayload = null;
+      }
+      throw new PassIssuanceError(
+        'Too many pass requests from this visitor session. Please wait before requesting another pass.',
+        'rate_limit_exceeded',
+        'rejected_correctable_field'
+      );
     }
-    if (body?.error === 'service_unavailable') {
-      throw new Error('Pass service is temporarily unavailable.');
+
+    // 3. Authoritative pre-commit rejection: abuse control or temporary service unavailable
+    if (errCode === 'abuse_control_unavailable' || errCode === 'service_unavailable') {
+      if (transaction) {
+        transaction.phase = 'editable';
+        transaction.submittedPayload = null;
+      }
+      throw new PassIssuanceError(
+        'Pass service is temporarily unavailable.',
+        errCode,
+        'rejected_correctable_field'
+      );
     }
-    if (body?.error === 'cross_actor_replay') {
-      throw new Error('Pass request session conflict. Please start a new pass registration.');
+
+    // 4. Session conflict requiring fresh transaction
+    if (errCode === 'cross_actor_replay') {
+      if (transaction) {
+        transaction.phase = 'editable';
+        transaction.submittedPayload = null;
+      }
+      throw new PassIssuanceError(
+        'Pass request session conflict. Please start a new pass registration.',
+        errCode,
+        'rejected_requires_new_transaction'
+      );
     }
-    if (body?.error === 'intent_mismatch') {
-      throw new Error('Pass evidence verification conflict. Please retry your request.');
+
+    // 5. Ambiguous / Server errors where outcome may be unconfirmed
+    if (response.status >= 500 || errCode === 'intent_mismatch' || errCode === 'payload_mismatch') {
+      if (transaction) {
+        transaction.phase = 'ambiguous';
+      }
+      throw new PassIssuanceError(
+        errCode === 'intent_mismatch'
+          ? 'Pass evidence verification conflict. Please retry your request.'
+          : 'Generation result could not be confirmed. Please retry your submission.',
+        errCode,
+        'ambiguous'
+      );
     }
-    throw new Error('Failed to create visitor pass.');
+
+    // Fallback: mark ambiguous to prevent silent mutations of unconfirmed state
+    if (transaction) {
+      transaction.phase = 'ambiguous';
+    }
+    throw new PassIssuanceError(
+      'Failed to create visitor pass.',
+      errCode,
+      'ambiguous'
+    );
+  }
+
+  if (transaction) {
+    transaction.phase = 'committed';
   }
   return body;
 }

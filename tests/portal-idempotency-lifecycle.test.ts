@@ -38,7 +38,7 @@ vi.mock('../src/lib/supabase', () => {
             return {
               data: {
                 intent_id: intentId,
-                bucket_id: 'visitor-evidence',
+                bucket_id: args.requested_kind === 'photo' ? 'visitor-photos' : 'visitor-ids',
                 object_path: `intents/${intentId}.webp`,
                 max_bytes: 5 * 1024 * 1024,
               },
@@ -267,5 +267,204 @@ describe('Repair Group 1: Portal Issuance Transaction Identity & Idempotent Retr
     expect(tx2.photoIntentId).toBeNull();
     expect(tx2.idIntentId).toBeNull();
     expect(tx2.submittedPayload).toBeNull();
+  });
+
+  it('Portal B: Ambiguous submission locks payload, sets phase to ambiguous, and disallows silent modification on replay', async () => {
+    let receivedPayloads: any[] = [];
+    const globalFetch = vi.fn(async (url: string, init?: any) => {
+      if (url.includes('/api/passes/issue')) {
+        const body = JSON.parse(init?.body || '{}');
+        receivedPayloads.push(body);
+        if (receivedPayloads.length === 1) {
+          // Transport drop / ambiguous outcome
+          throw new TypeError('Failed to fetch');
+        }
+        return {
+          ok: true,
+          json: async () => ({ passId: 'pass-locked-1', qrToken: 'qr-locked-1' }),
+        };
+      }
+      return { ok: true, json: async () => ({}) };
+    });
+    vi.stubGlobal('fetch', globalFetch);
+
+    const transaction = await createPortalIssueTransaction();
+    expect(transaction.phase).toBe('editable');
+
+    const originalVisitor = { ...dummyVisitor, firstName: 'OriginalFirst' };
+
+    // 1. Initial attempt fails ambiguously
+    await expect(
+      issueVisitorPass('portal', originalVisitor, photoBlob, idBlob, transaction.requestId, undefined, transaction)
+    ).rejects.toThrow('Generation result could not be confirmed');
+
+    // Invariant: Transaction transitioned to ambiguous state and froze submitted payload
+    expect(transaction.phase).toBe('ambiguous');
+    expect(transaction.submittedPayload?.visitor.firstName).toBe('OriginalFirst');
+
+    // 2. An adversarial attempt to pass altered payload while transaction is ambiguous
+    const silentlyAlteredVisitor = { ...dummyVisitor, firstName: 'TamperedFirst' };
+    const result = await issueVisitorPass(
+      'portal',
+      silentlyAlteredVisitor,
+      photoBlob,
+      idBlob,
+      transaction.requestId,
+      undefined,
+      transaction
+    );
+
+    // Invariant: The server request truthfully resent the frozen original payload!
+    expect(result.passId).toBe('pass-locked-1');
+    expect(receivedPayloads).toHaveLength(2);
+    expect(receivedPayloads[0].visitor.firstName).toBe('OriginalFirst');
+    expect(receivedPayloads[1].visitor.firstName).toBe('OriginalFirst'); // NOT TamperedFirst!
+
+    // 3. UI contract verification: GetPassPage hides/disables Edit Details, Retake Selfie, and Retake ID when phase === 'ambiguous'
+    const { readFileSync } = await import('node:fs');
+    const getPassSrc = readFileSync('src/pages/GetPassPage.tsx', 'utf8');
+
+    // Ambiguous banner is shown
+    expect(getPassSrc).toContain("portalTransactionRef.current?.phase === 'ambiguous'");
+    expect(getPassSrc).toContain('Generation result could not be confirmed');
+
+    // Retake and Edit Details buttons are guarded behind phase !== 'ambiguous'
+    expect(getPassSrc).toContain("portalTransactionRef.current?.phase !== 'ambiguous' && (");
+    expect(getPassSrc).toContain('Retry Exact Submission');
+    expect(getPassSrc).toContain('Start Over');
+  });
+
+  it('Portal C: Ambiguous submission -> Start Over establishes completely fresh transaction', async () => {
+    const globalFetch = vi.fn(async (url: string) => {
+      if (url.includes('/api/passes/issue')) {
+        throw new TypeError('Failed to fetch');
+      }
+      return { ok: true, json: async () => ({}) };
+    });
+    vi.stubGlobal('fetch', globalFetch);
+
+    const tx1 = await createPortalIssueTransaction();
+    await expect(
+      issueVisitorPass('portal', dummyVisitor, photoBlob, idBlob, tx1.requestId, undefined, tx1)
+    ).rejects.toThrow('Generation result could not be confirmed');
+
+    expect(tx1.phase).toBe('ambiguous');
+
+    // Visitor chooses Start Over
+    const tx2 = await createPortalIssueTransaction();
+    expect(tx2.actorId).not.toBe(tx1.actorId);
+    expect(tx2.requestId).not.toBe(tx1.requestId);
+    expect(tx2.phase).toBe('editable');
+    expect(tx2.photoIntentId).toBeNull();
+    expect(tx2.idIntentId).toBeNull();
+    expect(tx2.submittedPayload).toBeNull();
+  });
+
+  it('Portal D: visit_date_out_of_range authoritative rejection unfreezes payload, allows visitor to change date D1 to D2, and succeeds', async () => {
+    let receivedPayloads: any[] = [];
+    const globalFetch = vi.fn(async (url: string, init?: any) => {
+      if (url.includes('/api/passes/issue')) {
+        const body = JSON.parse(init?.body || '{}');
+        receivedPayloads.push(body);
+        if (body.visitor.visitDate === '2026-10-20') {
+          return {
+            status: 422,
+            ok: false,
+            json: async () => ({ error: 'visit_date_out_of_range' }),
+          };
+        }
+        return {
+          status: 201,
+          ok: true,
+          json: async () => ({ passId: 'pass-corrected-d2', qrToken: 'qr-d2' }),
+        };
+      }
+      return { ok: true, json: async () => ({}) };
+    });
+    vi.stubGlobal('fetch', globalFetch);
+
+    const transaction = await createPortalIssueTransaction();
+    const visitorD1 = { ...dummyVisitor, visitDate: '2026-10-20' };
+
+    // 1. Submit with out-of-range date D1
+    await expect(
+      issueVisitorPass('portal', visitorD1, photoBlob, idBlob, transaction.requestId, undefined, transaction)
+    ).rejects.toThrow('Visit date is outside the allowed scheduling window.');
+
+    // Invariant: Authoritative pre-commit rejection resets phase to editable and unfreezes payload
+    expect(transaction.phase).toBe('editable');
+    expect(transaction.submittedPayload).toBeNull();
+
+    // 2. Visitor changes date to valid D2 and resubmits
+    const visitorD2 = { ...dummyVisitor, visitDate: '2026-10-28' };
+    const result = await issueVisitorPass(
+      'portal',
+      visitorD2,
+      photoBlob,
+      idBlob,
+      transaction.requestId,
+      undefined,
+      transaction
+    );
+
+    expect(result.passId).toBe('pass-corrected-d2');
+    expect(receivedPayloads).toHaveLength(2);
+    expect(receivedPayloads[0].visitor.visitDate).toBe('2026-10-20');
+    expect(receivedPayloads[1].visitor.visitDate).toBe('2026-10-28');
+  });
+
+  it('Portal E & F: Start Over with Photo A -> Photo B creates fresh upload intent B without leaking Photo Intent A or Payload 1', async () => {
+    let receivedPayloads: any[] = [];
+    const globalFetch = vi.fn(async (url: string, init?: any) => {
+      if (url.includes('/api/passes/issue')) {
+        const body = JSON.parse(init?.body || '{}');
+        receivedPayloads.push(body);
+        if (receivedPayloads.length === 1) {
+          throw new TypeError('Network connection reset');
+        }
+        return {
+          status: 201,
+          ok: true,
+          json: async () => ({ passId: 'pass-fresh-tx2', qrToken: 'qr-tx2' }),
+        };
+      }
+      return { ok: true, json: async () => ({}) };
+    });
+    vi.stubGlobal('fetch', globalFetch);
+
+    // Transaction 1 with Photo A
+    const tx1 = await createPortalIssueTransaction();
+    const photoBlobA = new Blob(['photo-A'], { type: 'image/webp' });
+    const visitor1 = { ...dummyVisitor, purpose: 'Interview A' };
+
+    await expect(
+      issueVisitorPass('portal', visitor1, photoBlobA, idBlob, tx1.requestId, undefined, tx1)
+    ).rejects.toThrow('Generation result could not be confirmed');
+
+    expect(tx1.phase).toBe('ambiguous');
+    const photoIntentA = tx1.photoIntentId;
+    expect(photoIntentA).toBeTruthy();
+
+    // Explicit Start Over: create fresh transaction 2 with Photo B and Visitor 2
+    const tx2 = await createPortalIssueTransaction();
+    expect(tx2.actorId).not.toBe(tx1.actorId);
+    expect(tx2.requestId).not.toBe(tx1.requestId);
+    expect(tx2.photoIntentId).toBeNull();
+    expect(tx2.submittedPayload).toBeNull();
+
+    const photoBlobB = new Blob(['photo-B'], { type: 'image/webp' });
+    const visitor2 = { ...dummyVisitor, purpose: 'Official Visit B' };
+
+    const result = await issueVisitorPass('portal', visitor2, photoBlobB, idBlob, tx2.requestId, undefined, tx2);
+
+    expect(result.passId).toBe('pass-fresh-tx2');
+    expect(tx2.photoIntentId).not.toBe(photoIntentA); // Fresh upload intent B!
+    expect(receivedPayloads).toHaveLength(2);
+    // Assert Portal F: No stale payload from transaction 1 leaks into transaction 2
+    expect(receivedPayloads[0].visitor.purpose).toBe('Interview A');
+    expect(receivedPayloads[1].visitor.purpose).toBe('Official Visit B');
+    expect(receivedPayloads[0].photoIntentId).toBe(photoIntentA);
+    expect(receivedPayloads[1].photoIntentId).toBe(tx2.photoIntentId);
+    expect(receivedPayloads[1].photoIntentId).not.toBe(receivedPayloads[0].photoIntentId);
   });
 });

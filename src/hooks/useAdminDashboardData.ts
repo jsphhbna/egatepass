@@ -88,11 +88,22 @@ const initialSnapshot: DashboardDataSnapshot = {
 
 let currentSnapshot = initialSnapshot;
 let pollTimer: ReturnType<typeof setInterval> | null = null;
-let activeFetchController: AbortController | null = null;
+let activeRequest: {
+  id: number;
+  epoch: number;
+  controller: AbortController;
+} | null = null;
 let isFetching = false;
 let queuedFollowUp = false;
 let latestIntent = 0;
+let storeEpoch = 0;
 const subscribers = new Set<() => void>();
+
+interface QueuedRetryDeferred {
+  resolve: () => void;
+  reject: (err: unknown) => void;
+}
+let pendingManualResolvers: QueuedRetryDeferred[] = [];
 
 function deserializePass(p: SerializedPass): GatePass {
   return {
@@ -121,18 +132,26 @@ function emitChange() {
   subscribers.forEach((subscriber) => subscriber());
 }
 
-async function fetchDashboardData(isManualRetry = false) {
-  if (isFetching) {
+function fetchDashboardData(isManualRetry = false): Promise<void> {
+  if (isFetching || activeRequest !== null) {
     if (isManualRetry) {
       queuedFollowUp = true;
+      return new Promise<void>((resolve, reject) => {
+        pendingManualResolvers.push({ resolve, reject });
+      });
     }
-    return;
+    return Promise.resolve();
   }
 
   isFetching = true;
   const currentIntent = ++latestIntent;
+  const requestEpoch = storeEpoch;
   const controller = new AbortController();
-  activeFetchController = controller;
+  activeRequest = {
+    id: currentIntent,
+    epoch: requestEpoch,
+    controller,
+  };
 
   const hasExistingData = currentSnapshot.updatedAt !== null || currentSnapshot.counts !== undefined;
 
@@ -146,83 +165,103 @@ async function fetchDashboardData(isManualRetry = false) {
   };
   emitChange();
 
-  try {
-    const token = await getAccessToken();
-    const response = await fetch('/api/admin/dashboard', {
-      headers: { Authorization: `Bearer ${token}` },
-      signal: controller.signal,
-    });
+  return (async () => {
+    try {
+      const token = await getAccessToken();
+      const response = await fetch('/api/admin/dashboard', {
+        headers: { Authorization: `Bearer ${token}` },
+        signal: controller.signal,
+      });
 
-    const data = await response.json().catch(() => null) as DashboardApiResponse | null;
-    if (controller.signal.aborted || currentIntent !== latestIntent) {
-      return;
-    }
-    if (!response.ok) {
-      throw new Error(data?.error || 'Failed to load dashboard data');
-    }
-
-    currentSnapshot = {
-      counts: data?.counts,
-      insights: data?.insights,
-      calendarCounts: data?.calendarCounts,
-      recentPasses: (data?.recentPasses ?? []).map(deserializePass),
-      insidePasses: (data?.insidePasses ?? []).map(deserializePass),
-      exitedTodayPasses: (data?.exitedTodayPasses ?? []).map(deserializePass),
-      decisionsTodayPasses: (data?.decisionsTodayPasses ?? []).map(deserializePass),
-      loading: false,
-      initialLoading: false,
-      refreshing: false,
-      error: null,
-      initialError: null,
-      refreshError: null,
-      updatedAt: Date.now(),
-    };
-    emitChange();
-  } catch (error) {
-    if (!controller.signal.aborted && currentIntent === latestIntent) {
-      console.error('Dashboard data fetch error:', error);
-      const errorMessage = error instanceof Error ? error.message : 'The dashboard could not load visitor data.';
-
-      if (hasExistingData) {
-        // Preserve existing data on background refresh failure
-        currentSnapshot = {
-          ...currentSnapshot,
-          loading: false,
-          initialLoading: false,
-          refreshing: false,
-          error: null, // do not block screen with error
-          initialError: null,
-          refreshError: errorMessage,
-        };
-      } else {
-        // Initial failure without existing data
-        currentSnapshot = {
-          ...currentSnapshot,
-          loading: false,
-          initialLoading: false,
-          refreshing: false,
-          error: errorMessage,
-          initialError: errorMessage,
-          refreshError: null,
-        };
+      const data = await response.json().catch(() => null) as DashboardApiResponse | null;
+      if (controller.signal.aborted || currentIntent !== latestIntent || requestEpoch !== storeEpoch) {
+        return;
       }
+      if (!response.ok) {
+        throw new Error(data?.error || 'Failed to load dashboard data');
+      }
+
+      currentSnapshot = {
+        counts: data?.counts,
+        insights: data?.insights,
+        calendarCounts: data?.calendarCounts,
+        recentPasses: (data?.recentPasses ?? []).map(deserializePass),
+        insidePasses: (data?.insidePasses ?? []).map(deserializePass),
+        exitedTodayPasses: (data?.exitedTodayPasses ?? []).map(deserializePass),
+        decisionsTodayPasses: (data?.decisionsTodayPasses ?? []).map(deserializePass),
+        loading: false,
+        initialLoading: false,
+        refreshing: false,
+        error: null,
+        initialError: null,
+        refreshError: null,
+        updatedAt: Date.now(),
+      };
       emitChange();
+    } catch (error) {
+      if (!controller.signal.aborted && currentIntent === latestIntent && requestEpoch === storeEpoch) {
+        console.error('Dashboard data fetch error:', error);
+        const errorMessage = error instanceof Error ? error.message : 'The dashboard could not load visitor data.';
+
+        if (hasExistingData) {
+          // Preserve existing data on background refresh failure
+          currentSnapshot = {
+            ...currentSnapshot,
+            loading: false,
+            initialLoading: false,
+            refreshing: false,
+            error: null, // do not block screen with error
+            initialError: null,
+            refreshError: errorMessage,
+          };
+        } else {
+          // Initial failure without existing data
+          currentSnapshot = {
+            ...currentSnapshot,
+            loading: false,
+            initialLoading: false,
+            refreshing: false,
+            error: errorMessage,
+            initialError: errorMessage,
+            refreshError: null,
+          };
+        }
+        emitChange();
+      }
+    } finally {
+      // Authoritative request ownership check: only the active request owner for this epoch may release the slot
+      if (activeRequest && activeRequest.id === currentIntent && activeRequest.epoch === requestEpoch) {
+        activeRequest = null;
+        isFetching = false;
+
+        if (queuedFollowUp && subscribers.size > 0 && storeEpoch === requestEpoch) {
+          queuedFollowUp = false;
+          const currentResolvers = pendingManualResolvers;
+          pendingManualResolvers = [];
+
+          void fetchDashboardData(true).then(
+            () => {
+              currentResolvers.forEach((r) => r.resolve());
+            },
+            (err) => {
+              currentResolvers.forEach((r) => r.reject(err));
+            }
+          );
+        } else {
+          queuedFollowUp = false;
+          const currentResolvers = pendingManualResolvers;
+          pendingManualResolvers = [];
+          currentResolvers.forEach((r) => r.resolve());
+        }
+      }
     }
-  } finally {
-    if (activeFetchController === controller) {
-      activeFetchController = null;
-    }
-    isFetching = false;
-    if (queuedFollowUp && subscribers.size > 0) {
-      queuedFollowUp = false;
-      void fetchDashboardData(true);
-    }
-  }
+  })();
 }
 
 function subscribe(callback: () => void) {
   subscribers.add(callback);
   if (subscribers.size === 1) {
+    storeEpoch++;
     void fetchDashboardData();
     pollTimer = setInterval(() => {
       void fetchDashboardData();
@@ -232,25 +271,49 @@ function subscribe(callback: () => void) {
   return () => {
     subscribers.delete(callback);
     if (subscribers.size === 0) {
+      storeEpoch++;
       if (pollTimer) {
         clearInterval(pollTimer);
         pollTimer = null;
       }
-      if (activeFetchController) {
-        activeFetchController.abort();
-        activeFetchController = null;
+      if (activeRequest) {
+        activeRequest.controller.abort();
+        activeRequest = null;
       }
       isFetching = false;
       queuedFollowUp = false;
+      const resolvers = pendingManualResolvers;
+      pendingManualResolvers = [];
+      resolvers.forEach((r) => r.resolve());
       currentSnapshot = initialSnapshot;
     }
   };
 }
 
-export function refreshAdminDashboardData() {
+export function refreshAdminDashboardData(): Promise<void> {
   return fetchDashboardData(true);
 }
 
 export function useAdminDashboardData() {
   return useSyncExternalStore(subscribe, () => currentSnapshot, () => initialSnapshot);
+}
+
+export function _resetDashboardStoreForTesting() {
+  if (pollTimer) {
+    clearInterval(pollTimer);
+    pollTimer = null;
+  }
+  if (activeRequest) {
+    activeRequest.controller.abort();
+    activeRequest = null;
+  }
+  isFetching = false;
+  queuedFollowUp = false;
+  const resolvers = pendingManualResolvers;
+  pendingManualResolvers = [];
+  resolvers.forEach((r) => r.resolve());
+  subscribers.clear();
+  currentSnapshot = initialSnapshot;
+  latestIntent = 0;
+  storeEpoch = 0;
 }
