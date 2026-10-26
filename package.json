@@ -46,6 +46,7 @@
     "date-fns": "^4.4.0",
     "html5-qrcode": "^2.3.8",
     "lucide-react": "^1.49.0",
+    "mxw01-thermal-printer": "^0.1.0",
     "qrcode": "^1.5.4",
     "react": "^19.3.0",
     "react-dom": "^19.3.0",

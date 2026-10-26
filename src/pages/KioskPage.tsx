@@ -20,9 +20,10 @@ import {
   Mail,
   Scan,
   Loader2,
+  LogOut,
 } from 'lucide-react';
 import { toast } from 'sonner';
-import { Button, Card, Input, FormField, Stepper } from '@/components/ui';
+import { Button, Card, Input, FormField, Stepper, Modal } from '@/components/ui';
 import { EmailPassModal } from '@/components/EmailPassModal';
 import { BrandMark } from '@/components/BrandMark';
 import { VisitPurposeField } from '@/components/VisitPurposeField';
@@ -32,8 +33,10 @@ import { DEFAULT_WORKING_HOURS, formatWorkingHours, MAX_VISIT_ADVANCE_DAYS, norm
 import { signOutCurrentActor } from '@/services/auth';
 import { getManilaDateString, getLatestVisitDateString, validateVisitDate } from '@/lib/scheduling';
 import { formatManilaTime } from '@/lib/manilaTime';
-import { LogOut } from 'lucide-react';
-import { Modal } from '@/components/ui';
+import { useThermalPrinter } from '@/printer/hooks/useThermalPrinter';
+import { KioskPrinterSettingsModal } from '@/components/KioskPrinterSettingsModal';
+import { InstitutionalPassCard } from '@/components/InstitutionalPassCard';
+import { createPassPresentation, type PassPresentation } from '@/lib/passPresentation';
 
 // ============================================================
 // FORM SCHEMA (Zod)
@@ -112,6 +115,17 @@ export function KioskPage() {
   const [issuedValidity, setIssuedValidity] = useState<string | null>(null);
   const [ocrSuccessNotice, setOcrSuccessNotice] = useState(false);
   const [showSignOutConfirm, setShowSignOutConfirm] = useState(false);
+  const [currentPassPresentation, setCurrentPassPresentation] = useState<PassPresentation | null>(null);
+  const [showPrinterSettings, setShowPrinterSettings] = useState(false);
+  const [printFailed, setPrintFailed] = useState(false);
+
+  const {
+    status: printerStatus,
+    config: printerConfig,
+    printPass,
+  } = useThermalPrinter();
+  const isPrinting = printerStatus === 'printing';
+  const isAutoPrintEnabled = printerConfig.autoPrint;
 
   const issueRequestId = useRef(crypto.randomUUID());
 
@@ -343,6 +357,14 @@ export function KioskPage() {
         size: 360,
       });
 
+      const presentation = createPassPresentation({
+        visitorName: [formData.firstName, formData.middleName, formData.lastName].filter(Boolean).join(' '),
+        visitDate: formData.visitDate,
+        passReference: result.passId,
+        qrToken: result.qrToken,
+      });
+
+      setCurrentPassPresentation(presentation);
       setQrDataUrl(qrUrl);
       setPassId(result.passId);
       setRawQrToken(result.qrToken);
@@ -351,6 +373,19 @@ export function KioskPage() {
         : null);
       setStep('done');
       toast.success('Gate pass issued!');
+
+      // Critical invariant: PRINT FAILURE MUST NEVER ROLL BACK PASS ISSUANCE.
+      if (isAutoPrintEnabled && printerStatus === 'connected') {
+        try {
+          await printPass(presentation);
+          setPrintFailed(false);
+          toast.success('Pass printed via MXW01');
+        } catch (printErr) {
+          console.warn('Auto print failed:', printErr);
+          setPrintFailed(true);
+          toast.error('Direct thermal print failed. Printer unavailable.');
+        }
+      }
     } catch (err) {
       console.error(err);
       setSubmitError(err instanceof Error ? err.message : 'Failed to issue pass');
@@ -359,8 +394,21 @@ export function KioskPage() {
     }
   }
 
-  function handlePrint() {
-    window.print();
+  async function handlePrint() {
+    if (currentPassPresentation && printerStatus === 'connected') {
+      try {
+        await printPass(currentPassPresentation);
+        setPrintFailed(false);
+        toast.success('Pass printed via MXW01');
+      } catch (printErr) {
+        console.warn('Direct print failed, falling back to browser print:', printErr);
+        setPrintFailed(true);
+        toast.error('Direct thermal printing unavailable. Opening browser print.');
+        window.print();
+      }
+    } else {
+      window.print();
+    }
   }
 
   function resetCurrentVisitor() {
@@ -385,6 +433,8 @@ export function KioskPage() {
     setQrDataUrl(null);
     setPassId(null);
     setRawQrToken(null);
+    setCurrentPassPresentation(null);
+    setPrintFailed(false);
     setShowEmailModal(false);
     setSubmitError(null);
     setIssuedValidity(null);
@@ -462,8 +512,17 @@ export function KioskPage() {
           </div>
         )}
 
-        {/* Accessible operator device session control */}
-        <div className="mt-6 pt-4 border-t border-[var(--color-border)]/40 w-full text-center lg:text-left print:hidden">
+        {/* Accessible operator device session and printer controls */}
+        <div className="mt-6 pt-4 border-t border-[var(--color-border)]/40 w-full text-center lg:text-left print:hidden flex flex-wrap gap-2">
+          <button
+            type="button"
+            onClick={() => setShowPrinterSettings(true)}
+            className="inline-flex min-h-11 items-center gap-2 text-xs text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)] rounded px-3 py-2 focus:outline-none focus:ring-2 focus:ring-[var(--color-brand)]"
+            aria-label="Thermal printer settings"
+          >
+            <Printer className="h-4 w-4" />
+            <span>Printer ({printerStatus === 'connected' ? 'Ready' : 'Offline'})</span>
+          </button>
           <button
             type="button"
             onClick={() => setShowSignOutConfirm(true)}
@@ -489,11 +548,20 @@ export function KioskPage() {
 
           {configState === 'error' && (
             <div className="py-12 text-center" role="alert">
-              <AlertCircle className="mx-auto h-10 w-10 text-[var(--color-danger)] mb-4" aria-hidden="true" />
-              <h2 className="text-lg font-bold text-[var(--color-text-primary)]">Kiosk configuration unavailable</h2>
+              <AlertCircle className="mx-auto h-12 w-12 text-[var(--color-danger)] mb-4" aria-hidden="true" />
+              <h2 className="text-xl font-bold text-[var(--color-text-primary)]">
+                Kiosk configuration unavailable
+              </h2>
               <p className="mt-1 text-sm text-[var(--color-text-secondary)] max-w-sm mx-auto">
                 Campus visit settings could not be loaded. Check the kiosk connection and try again.
               </p>
+              <div className="mt-4 p-4 rounded-xl border border-amber-500/30 bg-amber-500/10 text-amber-900 dark:text-amber-200 text-sm font-medium max-w-sm mx-auto">
+                <p className="font-bold text-xs uppercase tracking-wider mb-1 text-amber-800 dark:text-amber-300">
+                  ⚠ SERVICE TEMPORARILY UNAVAILABLE
+                </p>
+                <p className="text-xs mb-1">Visitor registration is currently unavailable.</p>
+                <p>Please proceed directly to the Guard for registration and verification.</p>
+              </div>
               <Button
                 onClick={() => void loadSettings(true)}
                 loading={retryingConfig}
@@ -942,29 +1010,51 @@ export function KioskPage() {
             </div>
           )}
 
-          {/* STEP 9: Done / QR Display */}
-          {step === 'done' && qrDataUrl && (
+          {/* STEP 9: Done / Pass Card Display */}
+          {step === 'done' && currentPassPresentation && qrDataUrl && (
             <div className="space-y-6 text-center print:text-left print:m-0 print:space-y-2">
               <div className="mx-auto mb-2 flex h-16 w-16 items-center justify-center rounded-full bg-[var(--color-success-light)] text-[var(--color-success)] print:hidden">
                 <CheckCircle2 className="h-8 w-8" />
               </div>
               
-              <h2 className="text-2xl font-bold text-[var(--color-text-primary)] print:text-xl">Gate Pass (Walk-in)</h2>
+              <h2 className="text-2xl font-bold text-[var(--color-text-primary)] print:hidden">Gate Pass Created</h2>
 
-              <div className="mx-auto inline-block rounded-2xl border border-[var(--color-border)] bg-white p-4 shadow-md print:mx-0 print:border-0 print:p-0 print:shadow-none">
-                <img src={qrDataUrl} alt="QR Code" className="h-64 w-64 print:h-48 print:w-48" />
+              {printFailed && (
+                <div className="rounded-xl border border-[var(--color-warning)] bg-[var(--color-warning-light)] p-4 text-sm text-[var(--color-warning-dark)] print:hidden flex flex-col sm:flex-row items-center justify-between gap-3 text-left">
+                  <div className="flex items-center gap-2">
+                    <AlertCircle className="h-5 w-5 shrink-0" />
+                    <span>Thermal printer unavailable. Pass was successfully created.</span>
+                  </div>
+                  <div className="flex gap-2">
+                    <Button size="sm" variant="secondary" onClick={() => void handlePrint()}>
+                      Print Again
+                    </Button>
+                    <Button size="sm" variant="secondary" onClick={() => window.print()}>
+                      Browser Print
+                    </Button>
+                  </div>
+                </div>
+              )}
+
+              <div className="flex justify-center">
+                <InstitutionalPassCard pass={currentPassPresentation} qrDataUrl={qrDataUrl} />
               </div>
 
-              <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-canvas)] p-4 text-left text-sm print:border-0 print:bg-transparent print:p-0">
-                <p className="mb-1"><strong className="text-[var(--color-text-secondary)]">Name:</strong> {[getValues('firstName'), getValues('middleName'), getValues('lastName')].filter(Boolean).join(' ')}</p>
-                <p className="mb-1"><strong className="text-[var(--color-text-secondary)]">Date:</strong> {getValues('visitDate')}</p>
+              <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-canvas)] p-4 text-left text-sm print:hidden">
                 <p className="mb-1"><strong className="text-[var(--color-text-secondary)]">Purpose:</strong> {getValues('purpose')}</p>
                 <p><strong className="text-[var(--color-text-secondary)]">Valid:</strong> {issuedValidity || formatWorkingHours(workingHours)}</p>
               </div>
 
-              <div className="flex gap-3 print:hidden">
-                <Button variant="secondary" type="button" onClick={handlePrint} className="flex-1 min-h-[44px]" icon={<Printer className="h-4 w-4" />}>
-                  Print Pass
+              <div className="flex flex-wrap gap-3 print:hidden">
+                <Button
+                  variant="secondary"
+                  type="button"
+                  onClick={() => void handlePrint()}
+                  disabled={isPrinting}
+                  className="flex-1 min-h-[44px]"
+                  icon={<Printer className="h-4 w-4" />}
+                >
+                  {isPrinting ? 'Printing…' : printerStatus === 'connected' ? 'Print Pass (MXW01)' : 'Print Pass'}
                 </Button>
                 <Button variant="secondary" type="button" onClick={() => setShowEmailModal(true)} className="flex-1 min-h-[44px]" icon={<Mail className="h-4 w-4" />}>
                   Email my QR code
@@ -1019,6 +1109,11 @@ export function KioskPage() {
             source="kiosk"
           />
         )}
+
+        <KioskPrinterSettingsModal
+          isOpen={showPrinterSettings}
+          onClose={() => setShowPrinterSettings(false)}
+        />
       </div>
     </main>
   );
