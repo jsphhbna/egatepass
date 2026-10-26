@@ -49,6 +49,14 @@ void import('./App')
         </ErrorBoundary>
       </StrictMode>,
     );
+
+    if (typeof window !== 'undefined' && 'serviceWorker' in navigator && import.meta.env.PROD) {
+      window.addEventListener('load', () => {
+        navigator.serviceWorker.register('/sw.js').catch((err) => {
+          console.warn('App shell service worker registration failed:', err);
+        });
+      });
+    }
   })
   .catch((error: unknown) => {
     console.error('E-GatePass bootstrap failed.', error);

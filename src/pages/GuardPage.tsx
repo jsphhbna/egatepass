@@ -19,14 +19,30 @@ import {
   ZoomIn,
   LogOut,
   Loader2,
+  RotateCcw,
+  RefreshCw,
+  Trash2,
 } from 'lucide-react';
 import { Button, Card, EmptyState, Input, Select, StatCard, Modal, ConfirmModal } from '@/components/ui';
 import { BrandMark } from '@/components/BrandMark';
 import { toast } from 'sonner';
 import { GuardAccountMenu } from '@/components/GuardAccountMenu';
 import { GuardPasswordResetModal } from '@/components/GuardPasswordResetModal';
+import { GuardVisitorRecoveryTab } from '@/components/guard/GuardVisitorRecoveryTab';
+import { GuardOfflineRegistrationTab } from '@/components/guard/GuardOfflineRegistrationTab';
+import {
+  getPendingSyncCount,
+  getOfflineRegistrations,
+  getOfflineEvents,
+  purgeStaleLocalData,
+  type OfflineRegistrationRecord,
+  type OfflineEventRecord,
+} from '@/lib/offline/guardIndexedDb';
+import { syncAllPending, refreshOperationalCache } from '@/lib/offline/guardSyncManager';
+import { getManilaDateString } from '@/lib/scheduling';
 
 type PassWithId = GuardQueuePass;
+type GuardTab = 'queue' | 'recovery' | 'offline_reg' | 'outbox';
 
 export function GuardPage() {
   const { userData } = useAuth();
@@ -67,6 +83,70 @@ export function GuardPage() {
   const [showPasswordReset, setShowPasswordReset] = useState(false);
   const [showSignOutModal, setShowSignOutModal] = useState(false);
   const [isSigningOut, setIsSigningOut] = useState(false);
+
+  // Tab navigation & offline synchronization state
+  const [activeTab, setActiveTab] = useState<GuardTab>('queue');
+  const [pendingSyncCount, setPendingSyncCount] = useState({ registrations: 0, events: 0, total: 0 });
+  const [isSyncing, setIsSyncing] = useState(false);
+  const [outboxRegistrations, setOutboxRegistrations] = useState<OfflineRegistrationRecord[]>([]);
+  const [outboxEvents, setOutboxEvents] = useState<OfflineEventRecord[]>([]);
+
+  // Function to refresh local IndexedDB outbox counts
+  const refreshPendingCounts = async () => {
+    try {
+      const counts = await getPendingSyncCount();
+      setPendingSyncCount(counts);
+      const [regs, evts] = await Promise.all([
+        getOfflineRegistrations(),
+        getOfflineEvents(),
+      ]);
+      setOutboxRegistrations(regs);
+      setOutboxEvents(evts);
+    } catch (e) {
+      console.warn('Could not read offline outbox count:', e);
+    }
+  };
+
+  useEffect(() => {
+    void refreshPendingCounts();
+    if (isOnline && !queueError) {
+      void refreshOperationalCache();
+      void syncAllPending().then(() => refreshPendingCounts());
+    }
+  }, [isOnline, queueError, activeTab]);
+
+  const handleSyncNow = async () => {
+    setIsSyncing(true);
+    try {
+      const summary = await syncAllPending();
+      if (summary.errors > 0) {
+        toast.error(`Sync completed with ${summary.errors} error(s). Review outbox.`);
+      } else if (summary.conflicts > 0) {
+        toast.warning(`Sync completed. ${summary.conflicts} record(s) flagged for reconciliation.`);
+      } else if (summary.registrationsSynced + summary.eventsSynced > 0) {
+        toast.success(`Synced ${summary.registrationsSynced} registration(s) and ${summary.eventsSynced} event(s)!`);
+      } else {
+        toast.info('All offline records are already synchronized.');
+      }
+      await refreshPendingCounts();
+      void refreshQueue();
+    } catch (err: any) {
+      toast.error(err.message || 'Synchronization failed');
+    } finally {
+      setIsSyncing(false);
+    }
+  };
+
+  const handlePurgeSynced = async () => {
+    try {
+      const today = getManilaDateString();
+      const res = await purgeStaleLocalData(today);
+      toast.success(`Purged ${res.purgedVisitors} stale visitor(s) and ${res.purgedEvents} synced event(s).`);
+      await refreshPendingCounts();
+    } catch (err: any) {
+      toast.error('Failed to purge stale local data');
+    }
+  };
 
   // ============================================================
   // INITIAL LOAD, REALTIME & 5-SECOND POLLING (PATCH 4, 53, 54)
@@ -299,78 +379,356 @@ export function GuardPage() {
         />
       </audio>
 
-      {/* Offline Banner */}
-      {!isOnline && (
-        <div className="mb-4 flex items-center justify-center gap-2 rounded-md bg-[var(--color-danger)] px-4 py-2 text-sm font-semibold text-white" role="status">
-          <WifiOff className="h-4 w-4" />
-          Connection lost — data may be stale
+      {/* Phase 5.6 Offline Banner */}
+      {(!isOnline || !!queueError) && (
+        <div className="mb-4 rounded-xl border border-amber-500/50 bg-amber-50 dark:bg-amber-950/30 p-4 text-amber-900 dark:text-amber-200 shadow-sm" role="status">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+            <div className="flex items-start gap-3">
+              <WifiOff className="h-5 w-5 mt-0.5 shrink-0 text-amber-600 dark:text-amber-400" />
+              <div>
+                <h2 className="text-sm font-bold uppercase tracking-wide flex items-center gap-2">
+                  <span>⚠ OFFLINE OPERATIONS</span>
+                  {!isOnline && (
+                    <span className="text-xs font-normal opacity-80">(Connection lost — data may be stale)</span>
+                  )}
+                </h2>
+                <p className="text-sm font-medium mt-0.5">
+                  Cloud services are unavailable. Visitor actions are being stored securely on this device.
+                </p>
+                {pendingSyncCount.total > 0 && (
+                  <p className="text-xs font-bold mt-1 text-[#800000] dark:text-amber-300">
+                    {pendingSyncCount.total} {pendingSyncCount.total === 1 ? 'record' : 'records'} awaiting synchronization
+                  </p>
+                )}
+              </div>
+            </div>
+            {isOnline && (
+              <Button
+                variant="secondary"
+                size="sm"
+                onClick={handleSyncNow}
+                disabled={isSyncing}
+                icon={isSyncing ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RotateCcw className="h-3.5 w-3.5" />}
+              >
+                {isSyncing ? 'Syncing…' : 'Sync Now'}
+              </Button>
+            )}
+          </div>
         </div>
       )}
 
-      {/* Header & Search */}
-      <div className="mb-6 flex flex-col gap-4">
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-          <div>
-            <p className="mb-1 text-xs font-bold uppercase tracking-widest text-[var(--color-brand)]">Campus security</p>
-            <h1 className="text-2xl font-bold text-[var(--color-text-primary)]">
-              Guard Queue
-            </h1>
-            <p className="mt-1 text-sm text-[var(--color-text-secondary)]">
-              {pendingTotal} pending verification{pendingTotal !== 1 ? 's' : ''}
-              {passes.length < pendingTotal ? ` (showing ${passes.length} of ${pendingTotal})` : ''}
-            </p>
-            <div className="mt-1 flex items-center gap-2 text-xs">
-              {refreshing ? (
-                <span className="inline-flex items-center gap-1.5 text-[var(--color-brand)] font-medium" role="status" aria-live="polite">
-                  <Loader2 className="h-3.5 w-3.5 animate-spin shrink-0" aria-hidden="true" />
-                  Updating…
-                </span>
-              ) : refreshError && lastUpdatedAt ? (
-                <span className="text-[var(--color-warning-dark)] font-medium" role="status">
-                  Connection delayed — showing queue from {formatManilaTime(lastUpdatedAt)}.
-                </span>
-              ) : lastUpdatedAt ? (
-                <span className="text-[var(--color-text-secondary)]">Updated {formatManilaTime(lastUpdatedAt)}</span>
-              ) : null}
-            </div>
-          </div>
-
-          <div className="flex flex-wrap items-center gap-3">
-            <GuardAccountMenu
-              name={userData && 'name' in userData ? userData.name : 'Guard'}
-              onResetPassword={() => setShowPasswordReset(true)}
-            />
-            <Button variant="destructive-outline" size="sm" onClick={() => setShowSignOutModal(true)} icon={<LogOut className="w-4 h-4" />}>
-              Sign Out
-            </Button>
+      {/* Header */}
+      <div className="mb-4 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+        <div>
+          <p className="mb-1 text-xs font-bold uppercase tracking-widest text-[var(--color-brand)]">Campus security</p>
+          <h1 className="text-2xl font-bold text-[var(--color-text-primary)]">
+            Guard Operations
+          </h1>
+          <p className="mt-1 text-sm text-[var(--color-text-secondary)]">
+            {pendingTotal} pending verification{pendingTotal !== 1 ? 's' : ''}
+            {passes.length < pendingTotal ? ` (showing ${passes.length} of ${pendingTotal})` : ''}
+          </p>
+          <div className="mt-1 flex items-center gap-2 text-xs">
+            {refreshing ? (
+              <span className="inline-flex items-center gap-1.5 text-[var(--color-brand)] font-medium" role="status" aria-live="polite">
+                <Loader2 className="h-3.5 w-3.5 animate-spin shrink-0" aria-hidden="true" />
+                Updating…
+              </span>
+            ) : refreshError && lastUpdatedAt ? (
+              <span className="text-[var(--color-warning-dark)] font-medium" role="status">
+                Connection delayed — showing queue from {formatManilaTime(lastUpdatedAt)}.
+              </span>
+            ) : lastUpdatedAt ? (
+              <span className="text-[var(--color-text-secondary)]">Updated {formatManilaTime(lastUpdatedAt)}</span>
+            ) : null}
           </div>
         </div>
 
-        <div className="flex flex-col gap-2 sm:items-end mt-2">
-          <div className="w-full sm:w-80">
-            <Input
-              type="search"
-              aria-label="Search loaded visitors by name or purpose"
-              placeholder="Search loaded visitors by name or purpose…"
-              value={searchTerm}
-              onChange={(e) => setSearchTerm(e.target.value)}
-            />
-          </div>
-          {hasMore && searchTerm && (
-            <div className="flex items-center gap-2 text-xs text-[var(--color-text-secondary)]">
-              <span>Filtering loaded ({passes.length} of {pendingTotal} pending).</span>
-              <button
-                type="button"
-                onClick={handleLoadAll}
-                disabled={loadingMore}
-                className="font-bold text-[var(--color-brand)] underline hover:text-[var(--color-brand-dark)]"
-              >
-                Load all pending
-              </button>
-            </div>
-          )}
+        <div className="flex flex-wrap items-center gap-3">
+          <GuardAccountMenu
+            name={userData && 'name' in userData ? userData.name : 'Guard'}
+            onResetPassword={() => setShowPasswordReset(true)}
+          />
+          <Button variant="destructive-outline" size="sm" onClick={() => setShowSignOutModal(true)} icon={<LogOut className="w-4 h-4" />}>
+            Sign Out
+          </Button>
         </div>
       </div>
+
+      {/* Navigation Tabs (Phases 4, 5, 6, 7) */}
+      <div className="mb-6 flex flex-wrap items-center gap-2 border-b border-[var(--color-border)] pb-3">
+        <button
+          type="button"
+          onClick={() => setActiveTab('queue')}
+          className={`flex items-center gap-2 rounded-lg px-3.5 py-2 text-sm font-semibold transition-all ${
+            activeTab === 'queue'
+              ? 'bg-[#800000] text-white shadow-sm'
+              : 'text-[var(--color-text-secondary)] hover:bg-[var(--color-surface-hover)] hover:text-[var(--color-text-primary)]'
+          }`}
+        >
+          <Clock className="h-4 w-4" />
+          <span>Pending Queue</span>
+          {pendingTotal > 0 && (
+            <span
+              className={`rounded-full px-2 py-0.5 text-xs font-bold ${
+                activeTab === 'queue'
+                  ? 'bg-white text-[#800000]'
+                  : 'bg-[var(--color-brand)] text-white'
+              }`}
+            >
+              {pendingTotal}
+            </span>
+          )}
+        </button>
+
+        <button
+          type="button"
+          onClick={() => setActiveTab('recovery')}
+          className={`flex items-center gap-2 rounded-lg px-3.5 py-2 text-sm font-semibold transition-all ${
+            activeTab === 'recovery'
+              ? 'bg-[#800000] text-white shadow-sm'
+              : 'text-[var(--color-text-secondary)] hover:bg-[var(--color-surface-hover)] hover:text-[var(--color-text-primary)]'
+          }`}
+        >
+          <UserCheck className="h-4 w-4" />
+          <span>Visitor Recovery</span>
+        </button>
+
+        <button
+          type="button"
+          onClick={() => setActiveTab('offline_reg')}
+          className={`flex items-center gap-2 rounded-lg px-3.5 py-2 text-sm font-semibold transition-all ${
+            activeTab === 'offline_reg'
+              ? 'bg-[#800000] text-white shadow-sm'
+              : 'text-[var(--color-text-secondary)] hover:bg-[var(--color-surface-hover)] hover:text-[var(--color-text-primary)]'
+          }`}
+        >
+          <User className="h-4 w-4" />
+          <span>Offline Registration</span>
+        </button>
+
+        <button
+          type="button"
+          onClick={() => setActiveTab('outbox')}
+          className={`flex items-center gap-2 rounded-lg px-3.5 py-2 text-sm font-semibold transition-all ${
+            activeTab === 'outbox'
+              ? 'bg-[#800000] text-white shadow-sm'
+              : 'text-[var(--color-text-secondary)] hover:bg-[var(--color-surface-hover)] hover:text-[var(--color-text-primary)]'
+          }`}
+        >
+          <RotateCcw className="h-4 w-4" />
+          <span>Offline Outbox</span>
+          {pendingSyncCount.total > 0 && (
+            <span className="rounded-full bg-amber-500 text-white px-2 py-0.5 text-xs font-bold">
+              {pendingSyncCount.total}
+            </span>
+          )}
+        </button>
+      </div>
+
+      {activeTab === 'recovery' && (
+        <GuardVisitorRecoveryTab
+          isBackendOnline={isOnline && !queueError}
+          onActionComplete={refreshPendingCounts}
+        />
+      )}
+
+      {activeTab === 'offline_reg' && (
+        <GuardOfflineRegistrationTab
+          isBackendOnline={isOnline && !queueError}
+          onRegistered={refreshPendingCounts}
+        />
+      )}
+
+      {activeTab === 'outbox' && (
+        <div className="space-y-6">
+          <Card className="p-6">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-[var(--color-border)] pb-4">
+              <div>
+                <h2 className="text-lg font-bold text-[var(--color-text-primary)] flex items-center gap-2">
+                  <RotateCcw className="h-5 w-5 text-[#800000]" />
+                  <span>Offline Synchronization Outbox</span>
+                </h2>
+                <p className="mt-1 text-xs text-[var(--color-text-secondary)]">
+                  Actions and registrations created while disconnected are queued here and safely synced using idempotent row-locking when online.
+                </p>
+              </div>
+
+              <div className="flex flex-wrap items-center gap-2">
+                <Button
+                  onClick={handleSyncNow}
+                  disabled={isSyncing || !isOnline}
+                  loading={isSyncing}
+                  size="sm"
+                  className="bg-[#800000] hover:bg-[#660000]"
+                  icon={<RefreshCw className="h-4 w-4" />}
+                >
+                  Sync All Pending ({pendingSyncCount.total})
+                </Button>
+                <Button
+                  onClick={handlePurgeSynced}
+                  variant="secondary"
+                  size="sm"
+                  icon={<Trash2 className="h-4 w-4" />}
+                >
+                  Purge Synced
+                </Button>
+              </div>
+            </div>
+
+            {/* Offline Registrations */}
+            <div className="mt-6">
+              <h3 className="text-sm font-bold text-[var(--color-text-primary)] mb-3 uppercase tracking-wide">
+                Offline New Visitor Registrations ({outboxRegistrations.length})
+              </h3>
+              {outboxRegistrations.length === 0 ? (
+                <p className="text-xs text-[var(--color-text-muted)] italic py-2">
+                  No offline registrations currently queued.
+                </p>
+              ) : (
+                <div className="overflow-x-auto">
+                  <table className="w-full text-left text-xs">
+                    <thead className="border-b border-[var(--color-border)] text-[var(--color-text-secondary)] uppercase">
+                      <tr>
+                        <th className="py-2 px-3">Visitor Name</th>
+                        <th className="py-2 px-3">Purpose</th>
+                        <th className="py-2 px-3">Decision</th>
+                        <th className="py-2 px-3">Time</th>
+                        <th className="py-2 px-3">Sync Status</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-[var(--color-border)]">
+                      {outboxRegistrations.map((reg) => (
+                        <tr key={reg.offlineRegistrationId} className="hover:bg-[var(--color-surface-hover)]">
+                          <td className="py-2.5 px-3 font-semibold text-[var(--color-text-primary)]">
+                            {reg.visitor.firstName} {reg.visitor.lastName}
+                          </td>
+                          <td className="py-2.5 px-3 text-[var(--color-text-secondary)]">{reg.visitor.purpose}</td>
+                          <td className="py-2.5 px-3">
+                            <span
+                              className={`rounded-full px-2 py-0.5 text-[10px] font-bold ${
+                                reg.action === 'approved'
+                                  ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300'
+                                  : 'bg-rose-100 text-rose-800 dark:bg-rose-950 dark:text-rose-300'
+                              }`}
+                            >
+                              {reg.action.toUpperCase()}
+                            </span>
+                          </td>
+                          <td className="py-2.5 px-3 text-[var(--color-text-muted)]">
+                            {new Date(reg.occurredAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                          </td>
+                          <td className="py-2.5 px-3">
+                            <span
+                              className={`rounded-full px-2 py-0.5 text-[10px] font-bold ${
+                                reg.syncStatus === 'synced'
+                                  ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300'
+                                  : reg.syncStatus === 'conflict'
+                                  ? 'bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300'
+                                  : 'bg-zinc-100 text-zinc-800 dark:bg-zinc-800 dark:text-zinc-300'
+                              }`}
+                            >
+                              {reg.syncStatus.toUpperCase()}
+                            </span>
+                            {reg.conflictReason && (
+                              <p className="mt-0.5 text-[10px] text-amber-600">{reg.conflictReason}</p>
+                            )}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+
+            {/* Offline Gate Events */}
+            <div className="mt-8 border-t border-[var(--color-border)] pt-6">
+              <h3 className="text-sm font-bold text-[var(--color-text-primary)] mb-3 uppercase tracking-wide">
+                Offline Gate Decisions & Exits ({outboxEvents.length})
+              </h3>
+              {outboxEvents.length === 0 ? (
+                <p className="text-xs text-[var(--color-text-muted)] italic py-2">
+                  No offline gate events queued.
+                </p>
+              ) : (
+                <div className="overflow-x-auto">
+                  <table className="w-full text-left text-xs">
+                    <thead className="border-b border-[var(--color-border)] text-[var(--color-text-secondary)] uppercase">
+                      <tr>
+                        <th className="py-2 px-3">Pass ID</th>
+                        <th className="py-2 px-3">Action</th>
+                        <th className="py-2 px-3">Expected Prior Status</th>
+                        <th className="py-2 px-3">Occurred At</th>
+                        <th className="py-2 px-3">Sync Status</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-[var(--color-border)]">
+                      {outboxEvents.map((evt) => (
+                        <tr key={evt.eventId} className="hover:bg-[var(--color-surface-hover)]">
+                          <td className="py-2.5 px-3 font-mono text-[var(--color-text-primary)]">
+                            {evt.passId.slice(0, 8)}…
+                          </td>
+                          <td className="py-2.5 px-3 font-semibold text-[var(--color-text-primary)]">
+                            {evt.action.replace('_', ' ').toUpperCase()}
+                          </td>
+                          <td className="py-2.5 px-3 text-[var(--color-text-muted)]">{evt.expectedStatus}</td>
+                          <td className="py-2.5 px-3 text-[var(--color-text-muted)]">
+                            {new Date(evt.occurredAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                          </td>
+                          <td className="py-2.5 px-3">
+                            <span
+                              className={`rounded-full px-2 py-0.5 text-[10px] font-bold ${
+                                evt.syncStatus === 'synced'
+                                  ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300'
+                                  : evt.syncStatus === 'conflict'
+                                  ? 'bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300'
+                                  : 'bg-zinc-100 text-zinc-800 dark:bg-zinc-800 dark:text-zinc-300'
+                              }`}
+                            >
+                              {evt.syncStatus.toUpperCase()}
+                            </span>
+                            {evt.conflictReason && (
+                              <p className="mt-0.5 text-[10px] text-amber-600">{evt.conflictReason}</p>
+                            )}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+          </Card>
+        </div>
+      )}
+
+      {activeTab === 'queue' && (
+        <>
+          <div className="mb-6 flex flex-col gap-2 sm:items-end">
+            <div className="w-full sm:w-80">
+              <Input
+                type="search"
+                aria-label="Search loaded visitors by name or purpose"
+                placeholder="Search loaded visitors by name or purpose…"
+                value={searchTerm}
+                onChange={(e) => setSearchTerm(e.target.value)}
+              />
+            </div>
+            {hasMore && searchTerm && (
+              <div className="flex items-center gap-2 text-xs text-[var(--color-text-secondary)]">
+                <span>Filtering loaded ({passes.length} of {pendingTotal} pending).</span>
+                <button
+                  type="button"
+                  onClick={handleLoadAll}
+                  disabled={loadingMore}
+                  className="font-bold text-[var(--color-brand)] underline hover:text-[var(--color-brand-dark)]"
+                >
+                  Load all pending
+                </button>
+              </div>
+            )}
+          </div>
 
       {/* Daily Report Summary */}
       <div className="mb-8 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
@@ -639,6 +997,8 @@ export function GuardPage() {
             </div>
           )}
         </div>
+      )}
+      </>
       )}
       {/* Reject Modal */}
       <Modal
