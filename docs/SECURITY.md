@@ -124,7 +124,7 @@ sequenceDiagram
 | **Request QR Code by Email** (`/api/passes/email`) | Allowed | Allowed | Denied | Denied | Denied | Denied | Denied |
 | **Scan Entry Pass** (`/api/scan-pass`, mode: `entry`) | Denied | Denied | **Allowed** | Denied | Denied | Denied | Denied |
 | **Scan Exit Pass** (`/api/scan-pass`, mode: `exit`) | Denied | Denied | Denied | **Allowed** | Denied | Denied | Denied |
-| **Guard Queue RPC** (`api.guard_dashboard`) | Denied | Denied | Denied | Denied | **Allowed** | **Allowed** | **Allowed** |
+| **Guard Queue RPC** (`api.guard_dashboard_page`) | Denied | Denied | Denied | Denied | **Allowed** | **Allowed** | **Allowed** |
 | **Approve / Reject Pass** (`/api/decide-visit`) | Denied | Denied | Denied | Denied | **Allowed** | **Allowed** | **Allowed** |
 | **Stream Evidence Image** (`/api/evidence`) | Denied | Denied | Denied | Denied | **Allowed** (Pending) | **Allowed** | **Allowed** |
 | **Manage Staff Accounts** (`/api/admin/users`, `/api/create-user`) | Denied | Denied | Denied | Denied | Denied | **Allowed** | **Allowed** |

@@ -97,7 +97,7 @@ sequenceDiagram
     API->>DB: Transition status -> pending
     API-->>E: Status: Pending Guard Review
 
-    G->>DB: RPC api.guard_dashboard (fetch pending queue)
+    G->>DB: RPC api.guard_dashboard_page (fetch pending queue page)
     DB-->>G: Visitor details & evidence IDs
     G->>API: GET /api/evidence?id={evidence_id}
     API-->>G: Stream photo evidence securely

@@ -214,7 +214,7 @@ sequenceDiagram
     DB-->>API: Valid issued pass
     API-->>E: Scan Accepted (Status: Pending Guard Review)
 
-    G->>DB: RPC api.guard_dashboard (fetch pending queue)
+    G->>DB: RPC api.guard_dashboard_page (snapshot/keyset queue page)
     DB-->>G: Visitor details & photo evidence references
     G->>API: GET /api/evidence?id={uuid}
     API-->>G: Stream photo evidence securely

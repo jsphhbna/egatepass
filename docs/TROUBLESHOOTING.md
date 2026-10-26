@@ -180,7 +180,7 @@ flowchart TD
 ### 2.10 Local Tesseract OCR Parsing Failures
 
 - **Symptom**:
-  Kiosk fails to extract name or ID number; text output is garbled or empty.
+  Kiosk fails to recognize visitor name fields, or OCR text is garbled/empty.
 - **Likely Cause**:
   Low lighting, glare on laminated ID card, or unaligned text.
 - **How to Diagnose**:

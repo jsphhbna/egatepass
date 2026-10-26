@@ -57,7 +57,7 @@ describe('Documentation Truthfulness & Formatting Contract', () => {
       { pattern: /visitor-id-documents/i, label: 'visitor-id-documents (should be visitor-ids)' },
       { pattern: /\/api\/passes\/scan/i, label: '/api/passes/scan (should be /api/scan-pass)' },
       { pattern: /\/api\/passes\/decide/i, label: '/api/passes/decide (should be /api/decide-visit)' },
-      { pattern: /\/api\/guard\/pending/i, label: '/api/guard/pending (should be api.guard_dashboard RPC)' },
+      { pattern: /\/api\/guard\/pending/i, label: '/api/guard/pending (should use api.guard_dashboard_page through the Guard queue service)' },
       { pattern: /\/api\/cron\/retention-maintenance/i, label: '/api/cron/retention-maintenance (should be /api/admin/retention-maintenance)' },
       { pattern: /\/api\/passes\/email\/request-code/i, label: '/api/passes/email/request-code (should be /api/passes/email with action request_code)' },
       { pattern: /\/api\/passes\/email\/verify-and-send/i, label: '/api/passes/email/verify-and-send (should be /api/passes/email with action verify_and_send)' },
@@ -555,6 +555,97 @@ describe('Mermaid Rendering & Documentation Truthfulness Contract', () => {
 
     // Reject false overclaims in diagram
     expect(diagramCode).not.toContain('Extract Name, ID Type, and ID Number');
+  });
+
+  it('ensures active documentation uses api.guard_dashboard_page for current Guard queue behavior', () => {
+    const readme = fs.readFileSync('README.md', 'utf8');
+    const arch = fs.readFileSync('docs/ARCHITECTURE.md', 'utf8');
+    const ops = fs.readFileSync('docs/OPERATIONS.md', 'utf8');
+    const sec = fs.readFileSync('docs/SECURITY.md', 'utf8');
+    const qa = fs.readFileSync('docs/MANUAL_QA_RUNBOOK.md', 'utf8');
+
+    // Verify all 5 core active documents contain api.guard_dashboard_page
+    expect(readme).toContain('api.guard_dashboard_page');
+    expect(arch).toContain('api.guard_dashboard_page');
+    expect(ops).toContain('api.guard_dashboard_page');
+    expect(sec).toContain('api.guard_dashboard_page');
+    expect(qa).toContain('api.guard_dashboard_page');
+
+    // Ensure active docs do not claim api.guard_dashboard is the current live queue fetcher
+    for (const filePath of activeFiles) {
+      const content = fs.readFileSync(filePath, 'utf8');
+      expect(content, `Found stale api.guard_dashboard queue fetch RPC in ${filePath}`).not.toMatch(
+        /RPC\s+api\.guard_dashboard\b/i
+      );
+      expect(content, `Found stale api.guard_dashboard role matrix reference in ${filePath}`).not.toMatch(
+        /Guard Queue RPC.*api\.guard_dashboard\b/i
+      );
+    }
+  });
+
+  it('derives source truth from code contracts before asserting documentation claims', () => {
+    // 1. Guard service source contract: uses guard_dashboard_page for queue page fetching
+    const guardServiceSource = fs.readFileSync('src/services/guard.ts', 'utf8');
+    expect(guardServiceSource).toContain(".rpc('guard_dashboard_page'");
+    expect(guardServiceSource).toContain('fetchGuardDashboardPage');
+
+    // 2. OCR lib source contract: ParsedIdNames includes name fields and NOT idType or idNumber
+    const ocrLibSource = fs.readFileSync('src/lib/ocr.ts', 'utf8');
+    const interfaceMatch = ocrLibSource.match(/export\s+interface\s+ParsedIdNames\s*\{([\s\S]*?)\}/);
+    expect(interfaceMatch, 'ParsedIdNames interface must exist in src/lib/ocr.ts').not.toBeNull();
+    const interfaceBody = interfaceMatch![1];
+    expect(interfaceBody).toContain('firstName: string;');
+    expect(interfaceBody).toContain('middleName: string;');
+    expect(interfaceBody).toContain('lastName: string;');
+    expect(interfaceBody).toContain('confidence: number;');
+    expect(interfaceBody).not.toMatch(/idType/i);
+    expect(interfaceBody).not.toMatch(/idNumber/i);
+
+    // 3. KioskPage UI source contract: autofills only name fields from OCR
+    const kioskSource = fs.readFileSync('src/pages/KioskPage.tsx', 'utf8');
+    expect(kioskSource).toContain("setValue('firstName'");
+    expect(kioskSource).toContain("setValue('middleName'");
+    expect(kioskSource).toContain("setValue('lastName'");
+    expect(kioskSource).not.toMatch(/setValue\(\s*['"]idType['"]/);
+    expect(kioskSource).not.toMatch(/setValue\(\s*['"]idNumber['"]/);
+  });
+
+  it('ensures no active documentation overclaims OCR extracting ID type or ID number', () => {
+    // Prohibit claims that OCR extracts/parses/autofills ID type or ID number
+    const forbiddenOcrOverclaims = [
+      /ocr\s+(?:parses?|extracts?|autofills?|reads?)\s+.*id\s*type/i,
+      /ocr\s+(?:parses?|extracts?|autofills?|reads?)\s+.*id\s*number/i,
+      /(?:extract|parse|autofill)\s+.*id\s*number.*via\s+ocr/i,
+      /fails\s+to\s+extract\s+name\s+or\s+id\s*number/i,
+    ];
+
+    for (const filePath of activeFiles) {
+      const content = fs.readFileSync(filePath, 'utf8');
+      for (const pattern of forbiddenOcrOverclaims) {
+        expect(content, `Forbidden OCR overclaim matching ${pattern} found in ${filePath}`).not.toMatch(pattern);
+      }
+    }
+  });
+
+  it('ensures docs/MANUAL_QA_RUNBOOK.md truthfully documents local name extraction and manual info completion', () => {
+    const qaDoc = fs.readFileSync('docs/MANUAL_QA_RUNBOOK.md', 'utf8');
+
+    // Truthful wording
+    expect(qaDoc).toContain('Confirm OCR attempts to extract visitor name fields locally');
+    expect(qaDoc).toContain('first name, middle name when available, and last name');
+    expect(qaDoc).toContain('browser memory without server transmission');
+    expect(qaDoc).toContain('Confirm the visitor reviews and completes remaining required information manually');
+
+    // Reject obsolete claim
+    expect(qaDoc).not.toContain('Full Name, ID Type, and ID Number');
+  });
+
+  it('ensures docs/TROUBLESHOOTING.md does not claim OCR extracts ID number and reflects name recognition failure', () => {
+    const troubleDoc = fs.readFileSync('docs/TROUBLESHOOTING.md', 'utf8');
+
+    expect(troubleDoc).toContain('Kiosk fails to recognize visitor name fields, or OCR text is garbled/empty');
+    expect(troubleDoc).not.toMatch(/fails\s+to\s+extract\s+.*id\s*number/i);
+    expect(troubleDoc).not.toMatch(/ocr\s+extracts?\s+.*id\s*number/i);
   });
 });
 

@@ -262,7 +262,7 @@ sequenceDiagram
     DB-->>API: Status: Pending Guard Review
     API-->>Browser: Hold visitor at barrier
 
-    Browser->>DB: RPC api.guard_dashboard (Guard fetches pending queue)
+    Browser->>DB: RPC api.guard_dashboard_page (snapshot-bound keyset queue pages)
     DB-->>Browser: Queue items with evidence IDs
     Browser->>API: GET /api/evidence?id={evidence_id}
     API->>Storage: Stream private photo object

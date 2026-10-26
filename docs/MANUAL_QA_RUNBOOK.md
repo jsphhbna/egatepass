@@ -62,7 +62,8 @@ This runbook provides complete step-by-step procedures for manual testing and pr
    - Tap capture.
 4. **Local Tesseract OCR Extraction**:
    - Observe the scanning indicator.
-   - Confirm OCR parses Full Name, ID Type, and ID Number locally in the browser without server transmission.
+   - Confirm OCR attempts to extract visitor name fields locally (first name, middle name when available, and last name) in browser memory without server transmission.
+   - Confirm the visitor reviews and completes remaining required information manually.
 5. **Visitor Review / Correction**:
    - Allow visitor to edit/correct any misread characters.
 6. **Capture Visitor Selfie (Front Camera)**:
@@ -101,7 +102,7 @@ stateDiagram-v2
 ### 3.2 Guard Console Review
 1. Log in as `guard` at `/login`.
 2. Navigate to **Guard Console** (`/guard`).
-3. Confirm the scanned pass appears in the **Pending Entry** queue loaded via RPC `api.guard_dashboard`.
+3. Confirm the scanned pass appears in the **Pending Entry** queue loaded via RPC `api.guard_dashboard_page` (snapshot/keyset queue paging).
 4. Inspect visitor selfie photo, captured valid ID, visit purpose, and destination (streamed via `GET /api/evidence?id=<evidence_id>`).
 5. Click **Approve Entry**:
    - Route `POST /api/decide-visit` executes with `decision: 'approved'`.
