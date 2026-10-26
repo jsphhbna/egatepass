@@ -5,8 +5,11 @@ import {
   type GuardDashboardWindowResult,
 } from '@/services/guard';
 
+export type GuardRefreshReason = 'initial' | 'poll' | 'realtime' | 'intent';
+
 export interface GuardRefreshResult {
   committed: boolean;
+  skipped?: boolean;
   dashboard?: GuardDashboardWindowResult;
   error?: unknown;
 }
@@ -161,13 +164,26 @@ export function useGuardQueue(options?: UseGuardQueueOptions) {
   }, [commitDashboard]);
 
   // ============================================================
-  // SINGLE AUTHORITATIVE REFRESH CONTROLLER (PATCH 24)
+  // SINGLE AUTHORITATIVE REFRESH CONTROLLER (PATCH 24, 53)
   // ============================================================
   const requestGuardQueueRefresh = useCallback((refreshOptions?: {
+    reason?: GuardRefreshReason;
     showRefreshing?: boolean;
   }): Promise<GuardRefreshResult> => {
     if (!mountedRef.current) {
       return Promise.resolve({ committed: false });
+    }
+
+    const reason = refreshOptions?.reason ?? 'intent';
+
+    // CLASS 1: Opportunistic Poll
+    // If a traversal is already in-flight, DROP THE POLL immediately.
+    // Do NOT set refreshQueuedRef=true, do NOT modify epoch/target.
+    if (reason === 'poll' && refreshInFlightRef.current !== null) {
+      return Promise.resolve({
+        committed: false,
+        skipped: true,
+      });
     }
 
     if (refreshOptions?.showRefreshing) {

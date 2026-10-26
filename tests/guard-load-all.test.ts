@@ -473,15 +473,13 @@ describe('useGuardQueue Hook: Stale-Closure, Controller Identity & Lifecycle Tes
       });
 
       useEffect(() => {
-        void requestGuardQueueRefresh();
+        void requestGuardQueueRefresh({ reason: 'initial' });
         const stopRealtime = guardService.subscribeToPassChanges(() => {
-          queueIntentEpochRef.current += 1;
           refreshQueuedRef.current = true;
-          void requestGuardQueueRefresh({ showRefreshing: true });
+          void requestGuardQueueRefresh({ reason: 'realtime', showRefreshing: true });
         });
         const poll = window.setInterval(() => {
-          refreshQueuedRef.current = true;
-          void requestGuardQueueRefresh({ showRefreshing: true });
+          void requestGuardQueueRefresh({ reason: 'poll', showRefreshing: true });
         }, 5000);
         return () => {
           stopRealtime();
@@ -544,15 +542,13 @@ describe('useGuardQueue Hook: Stale-Closure, Controller Identity & Lifecycle Tes
       });
 
       useEffect(() => {
-        void requestGuardQueueRefresh();
+        void requestGuardQueueRefresh({ reason: 'initial' });
         const stopRealtime = guardService.subscribeToPassChanges(() => {
-          queueIntentEpochRef.current += 1;
           refreshQueuedRef.current = true;
-          void requestGuardQueueRefresh({ showRefreshing: true });
+          void requestGuardQueueRefresh({ reason: 'realtime', showRefreshing: true });
         });
         const poll = window.setInterval(() => {
-          refreshQueuedRef.current = true;
-          void requestGuardQueueRefresh({ showRefreshing: true });
+          void requestGuardQueueRefresh({ reason: 'poll', showRefreshing: true });
         }, 5000);
         return () => {
           stopRealtime();
@@ -1080,15 +1076,13 @@ describe('useGuardQueue Hook: Stale-Closure, Controller Identity & Lifecycle Tes
       });
 
       useEffect(() => {
-        void requestGuardQueueRefresh();
+        void requestGuardQueueRefresh({ reason: 'initial' });
         const stopRealtime = guardService.subscribeToPassChanges(() => {
-          queueIntentEpochRef.current += 1;
           refreshQueuedRef.current = true;
-          void requestGuardQueueRefresh({ showRefreshing: true });
+          void requestGuardQueueRefresh({ reason: 'realtime', showRefreshing: true });
         });
         const poll = window.setInterval(() => {
-          refreshQueuedRef.current = true;
-          void requestGuardQueueRefresh({ showRefreshing: true });
+          void requestGuardQueueRefresh({ reason: 'poll', showRefreshing: true });
         }, 5000);
         return () => {
           stopRealtime();
@@ -1365,5 +1359,854 @@ describe('useGuardQueue Hook: Stale-Closure, Controller Identity & Lifecycle Tes
       const res = await refreshPromise;
       expect(res.committed).toBe(false);
     });
+  });
+});
+
+describe('Guard Queue Refresh Liveness, Poll Dropping & Realtime Coalescing Test Suite', () => {
+  beforeEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it('REQUIRED TEST 1. Slow poll starvation: 12-second refresh with 5-second polling drops recurring polls and finishes cleanly', async () => {
+    vi.useFakeTimers();
+    const pool = generatePassPool(10);
+    const mockState = mockSupabaseRpc(pool, { delayMs: 12000 });
+
+    const { result, unmount } = renderGuardQueueHook();
+
+    // t = 0: refresh starts
+    let p!: Promise<any>;
+    act(() => {
+      p = result.current.requestGuardQueueRefresh({ reason: 'initial', showRefreshing: true });
+    });
+
+    expect(result.current.refreshing).toBe(true);
+
+    // t = 5000: poll fires while busy -> must be dropped
+    let poll1Result: any = null;
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(5000);
+      poll1Result = await result.current.requestGuardQueueRefresh({ reason: 'poll', showRefreshing: true });
+    });
+    expect(poll1Result).toEqual({ committed: false, skipped: true });
+    expect(result.current.refreshQueuedRef.current).toBe(false);
+
+    // t = 10000: second poll fires while busy -> must be dropped
+    let poll2Result: any = null;
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(5000);
+      poll2Result = await result.current.requestGuardQueueRefresh({ reason: 'poll', showRefreshing: true });
+    });
+    expect(poll2Result).toEqual({ committed: false, skipped: true });
+    expect(result.current.refreshQueuedRef.current).toBe(false);
+
+    // t = 12000: refresh finishes
+    let finalResult: any = null;
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(2000);
+      finalResult = await p;
+    });
+
+    expect(finalResult?.committed).toBe(true);
+    expect(mockState.rpcCalls).toHaveLength(1);
+    expect(result.current.refreshQueuedRef.current).toBe(false);
+    expect(result.current.refreshing).toBe(false);
+
+    unmount();
+    vi.useRealTimers();
+  });
+
+  it('REQUIRED TEST 2. Repeated slow polls: 30-second refresh skips recurring polls, subsequent idle poll starts new traversal', async () => {
+    vi.useFakeTimers();
+    const pool = generatePassPool(10);
+    const mockState = mockSupabaseRpc(pool, { delayMs: 30000 });
+
+    const { result, unmount } = renderGuardQueueHook();
+
+    let p!: Promise<any>;
+    act(() => {
+      p = result.current.requestGuardQueueRefresh({ reason: 'initial', showRefreshing: true });
+    });
+
+    // Polls at 5s, 10s, 15s, 20s, 25s
+    for (let t = 5000; t <= 25000; t += 5000) {
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(5000);
+        const res = await result.current.requestGuardQueueRefresh({ reason: 'poll', showRefreshing: true });
+        expect(res).toEqual({ committed: false, skipped: true });
+      });
+      expect(result.current.refreshQueuedRef.current).toBe(false);
+      expect(mockState.rpcCalls).toHaveLength(1);
+    }
+
+    // Advance to 30s to finish initial traversal
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(5000);
+      await p;
+    });
+
+    expect(mockState.rpcCalls).toHaveLength(1);
+    expect(result.current.refreshing).toBe(false);
+    expect(result.current.refreshInFlightRef.current).toBeNull();
+
+    // Now idle at t = 35000: next scheduled poll executes cleanly
+    let idlePollPromise!: Promise<any>;
+    act(() => {
+      idlePollPromise = result.current.requestGuardQueueRefresh({ reason: 'poll', showRefreshing: true });
+    });
+
+    expect(result.current.refreshing).toBe(true);
+    expect(mockState.rpcCalls).toHaveLength(2);
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(30000);
+      const res = await idlePollPromise;
+      expect(res.committed).toBe(true);
+    });
+
+    expect(result.current.refreshing).toBe(false);
+
+    unmount();
+    vi.useRealTimers();
+  });
+
+  it('REQUIRED TEST 3. Realtime during long refresh: does not invalidate snapshot, executes exactly 1 follow-up', async () => {
+    let callCount = 0;
+    const pool = generatePassPool(10);
+    let resolveFirstRpc!: () => void;
+    let resolveSecondRpc!: () => void;
+
+    vi.spyOn(supabaseLib, 'requireSupabase').mockReturnValue({
+      schema: vi.fn().mockReturnValue({
+        rpc: vi.fn(async () => {
+          callCount++;
+          if (callCount === 1) {
+            return new Promise((r) => {
+              resolveFirstRpc = () =>
+                r({
+                  data: {
+                    queue: pool.slice(0, 5).map((p) => ({
+                      ...p,
+                      status: 'pending',
+                      purpose: 'Official Business',
+                      source: 'portal',
+                      validFrom: '2026-10-21T08:00:00Z',
+                      validUntil: '2026-10-21T17:00:00Z',
+                      gate: 'Gate 1',
+                      photoEvidenceId: '22222222-2222-4222-8222-222222222222',
+                      idEvidenceId: null,
+                    })),
+                    stats: { inside: 0, exited: 0, rejected: 0, total: 0 },
+                    rejectionReasons: [],
+                    pendingTotal: 5,
+                    snapshotPendingTotal: 5,
+                    snapshotAt: '2026-10-21T09:00:00.000000Z',
+                    hasMore: false,
+                    nextCursor: null,
+                  },
+                  error: null,
+                });
+            });
+          }
+          return new Promise((r) => {
+            resolveSecondRpc = () =>
+              r({
+                data: {
+                  queue: pool.map((p) => ({
+                    ...p,
+                    status: 'pending',
+                    purpose: 'Official Business',
+                    source: 'portal',
+                    validFrom: '2026-10-21T08:00:00Z',
+                    validUntil: '2026-10-21T17:00:00Z',
+                    gate: 'Gate 1',
+                    photoEvidenceId: '22222222-2222-4222-8222-222222222222',
+                    idEvidenceId: null,
+                  })),
+                  stats: { inside: 0, exited: 0, rejected: 0, total: 0 },
+                  rejectionReasons: [],
+                  pendingTotal: 10,
+                  snapshotPendingTotal: 10,
+                  snapshotAt: '2026-10-21T09:01:00.000000Z',
+                  hasMore: false,
+                  nextCursor: null,
+                },
+                error: null,
+              });
+          });
+        }),
+      }),
+    } as any);
+
+    const { result, unmount } = renderGuardQueueHook();
+
+    let p!: Promise<any>;
+    act(() => {
+      p = result.current.requestGuardQueueRefresh({ reason: 'initial', showRefreshing: true });
+    });
+
+    const initialEpoch = result.current.queueIntentEpochRef.current;
+
+    // Fire 20 Realtime events during initial in-flight traversal
+    act(() => {
+      for (let i = 0; i < 20; i++) {
+        result.current.refreshQueuedRef.current = true;
+        void result.current.requestGuardQueueRefresh({ reason: 'realtime', showRefreshing: true });
+      }
+    });
+
+    // Realtime must NOT change epoch
+    expect(result.current.queueIntentEpochRef.current).toBe(initialEpoch);
+    expect(result.current.refreshQueuedRef.current).toBe(true);
+
+    // Resolve first RPC: it must commit its consistent snapshot
+    await act(async () => {
+      resolveFirstRpc();
+      await Promise.resolve();
+    });
+
+    expect(result.current.passes).toHaveLength(5);
+    expect(callCount).toBe(2); // Second iteration started
+
+    // Resolve second RPC: commits fresh state
+    await act(async () => {
+      resolveSecondRpc();
+      await p;
+    });
+
+    expect(result.current.passes).toHaveLength(10);
+    expect(callCount).toBe(2); // Total traversals = 2, NOT 21!
+    expect(result.current.refreshing).toBe(false);
+
+    unmount();
+  });
+
+  it('REQUIRED TEST 4. Realtime does not change epoch: queueIntentEpochRef remains stable across bursts', async () => {
+    const pool = generatePassPool(5);
+    mockSupabaseRpc(pool);
+
+    const { result, unmount } = renderGuardQueueHook();
+
+    await act(async () => {
+      await result.current.requestGuardQueueRefresh({ reason: 'initial' });
+    });
+
+    const epochBefore = result.current.queueIntentEpochRef.current;
+
+    act(() => {
+      for (let i = 0; i < 20; i++) {
+        result.current.refreshQueuedRef.current = true;
+        void result.current.requestGuardQueueRefresh({ reason: 'realtime', showRefreshing: true });
+      }
+    });
+
+    expect(result.current.queueIntentEpochRef.current).toBe(epochBefore);
+
+    unmount();
+  });
+
+  it('REQUIRED TEST 5. Load More still invalidates: obsolete smaller traversal discarded, replacement commits intended target', async () => {
+    let callCount = 0;
+    const pool = generatePassPool(300);
+    let resolveRpc1!: () => void;
+    let resolveRpc2!: () => void;
+
+    vi.spyOn(supabaseLib, 'requireSupabase').mockReturnValue({
+      schema: vi.fn().mockReturnValue({
+        rpc: vi.fn(async (_fn: string, params: any) => {
+          callCount++;
+          if (callCount === 1) {
+            return new Promise((r) => {
+              resolveRpc1 = () =>
+                r({
+                  data: {
+                    queue: pool.slice(0, 50).map((p) => ({
+                      ...p,
+                      status: 'pending',
+                      purpose: 'Official Business',
+                      source: 'portal',
+                      validFrom: '2026-10-21T08:00:00Z',
+                      validUntil: '2026-10-21T17:00:00Z',
+                      gate: 'Gate 1',
+                      photoEvidenceId: '22222222-2222-4222-8222-222222222222',
+                      idEvidenceId: null,
+                    })),
+                    stats: { inside: 0, exited: 0, rejected: 0, total: 0 },
+                    rejectionReasons: [],
+                    pendingTotal: 300,
+                    snapshotPendingTotal: 300,
+                    snapshotAt: '2026-10-21T09:00:00.000000Z',
+                    hasMore: false,
+                    nextCursor: null,
+                  },
+                  error: null,
+                });
+            });
+          }
+          return {
+            data: {
+              queue: pool.slice(0, Math.min(params.requested_limit, 300)).map((p) => ({
+                ...p,
+                status: 'pending',
+                purpose: 'Official Business',
+                source: 'portal',
+                validFrom: '2026-10-21T08:00:00Z',
+                validUntil: '2026-10-21T17:00:00Z',
+                gate: 'Gate 1',
+                photoEvidenceId: '22222222-2222-4222-8222-222222222222',
+                idEvidenceId: null,
+              })),
+              stats: { inside: 0, exited: 0, rejected: 0, total: 0 },
+              rejectionReasons: [],
+              pendingTotal: 300,
+              snapshotPendingTotal: 300,
+              snapshotAt: '2026-10-21T09:00:00.000000Z',
+              hasMore: false,
+              nextCursor: null,
+            },
+            error: null,
+          };
+        }),
+      }),
+    } as any);
+
+    const { result, unmount } = renderGuardQueueHook();
+
+    // 1. Initial traversal starts for 50
+    let p1!: Promise<any>;
+    act(() => {
+      p1 = result.current.requestGuardQueueRefresh({ reason: 'initial' });
+    });
+
+    // 2. User presses Load More: desired=100, epoch increments, queued=true
+    let pLoadMore!: Promise<any>;
+    act(() => {
+      result.current.desiredQueueSizeRef.current = 100;
+      result.current.queueIntentEpochRef.current += 1;
+      result.current.refreshQueuedRef.current = true;
+      pLoadMore = result.current.requestGuardQueueRefresh({ reason: 'intent' });
+    });
+
+    // 3. Resolve Rpc 1 (it is now obsolete) and await replacement
+    let finalRes: any = null;
+    await act(async () => {
+      resolveRpc1();
+      finalRes = await pLoadMore;
+    });
+
+    expect(finalRes.committed).toBe(true);
+    expect(result.current.passes.length).toBeGreaterThan(0);
+    unmount();
+  });
+
+  it('REQUIRED TEST 6. Load All still invalidates: background traversal discarded, replacement uses target=5000', async () => {
+    let callCount = 0;
+    const pool = generatePassPool(10);
+    let resolveRpc1!: () => void;
+
+    vi.spyOn(supabaseLib, 'requireSupabase').mockReturnValue({
+      schema: vi.fn().mockReturnValue({
+        rpc: vi.fn(async () => {
+          callCount++;
+          if (callCount === 1) {
+            return new Promise((r) => {
+              resolveRpc1 = () =>
+                r({
+                  data: {
+                    queue: pool.slice(0, 5).map((p) => ({
+                      ...p,
+                      status: 'pending',
+                      purpose: 'Official Business',
+                      source: 'portal',
+                      validFrom: '2026-10-21T08:00:00Z',
+                      validUntil: '2026-10-21T17:00:00Z',
+                      gate: 'Gate 1',
+                      photoEvidenceId: '22222222-2222-4222-8222-222222222222',
+                      idEvidenceId: null,
+                    })),
+                    stats: { inside: 0, exited: 0, rejected: 0, total: 0 },
+                    rejectionReasons: [],
+                    pendingTotal: 10,
+                    snapshotPendingTotal: 10,
+                    snapshotAt: '2026-10-21T09:00:00.000000Z',
+                    hasMore: false,
+                    nextCursor: null,
+                  },
+                  error: null,
+                });
+            });
+          }
+          return {
+            data: {
+              queue: pool.map((p) => ({
+                ...p,
+                status: 'pending',
+                purpose: 'Official Business',
+                source: 'portal',
+                validFrom: '2026-10-21T08:00:00Z',
+                validUntil: '2026-10-21T17:00:00Z',
+                gate: 'Gate 1',
+                photoEvidenceId: '22222222-2222-4222-8222-222222222222',
+                idEvidenceId: null,
+              })),
+              stats: { inside: 0, exited: 0, rejected: 0, total: 0 },
+              rejectionReasons: [],
+              pendingTotal: 10,
+              snapshotPendingTotal: 10,
+              snapshotAt: '2026-10-21T09:00:00.000000Z',
+              hasMore: false,
+              nextCursor: null,
+            },
+            error: null,
+          };
+        }),
+      }),
+    } as any);
+
+    const { result, unmount } = renderGuardQueueHook();
+
+    let p1!: Promise<any>;
+    act(() => {
+      p1 = result.current.requestGuardQueueRefresh({ reason: 'initial' });
+    });
+
+    let pLoadAll!: Promise<any>;
+    act(() => {
+      result.current.desiredQueueSizeRef.current = 5000;
+      result.current.queueIntentEpochRef.current += 1;
+      result.current.refreshQueuedRef.current = true;
+      pLoadAll = result.current.requestGuardQueueRefresh({ reason: 'intent' });
+    });
+
+    let res: any = null;
+    await act(async () => {
+      resolveRpc1();
+      res = await pLoadAll;
+    });
+
+    expect(res.committed).toBe(true);
+    expect(result.current.passes).toHaveLength(10);
+    unmount();
+  });
+
+  it('REQUIRED TEST 7. Realtime + Load All: Traversal A becomes obsolete due to Load All, exactly 1 replacement at 5000', async () => {
+    let callCount = 0;
+    const pool = generatePassPool(10);
+    let resolveRpc1!: () => void;
+
+    vi.spyOn(supabaseLib, 'requireSupabase').mockReturnValue({
+      schema: vi.fn().mockReturnValue({
+        rpc: vi.fn(async () => {
+          callCount++;
+          if (callCount === 1) {
+            return new Promise((r) => {
+              resolveRpc1 = () =>
+                r({
+                  data: {
+                    queue: pool.slice(0, 5).map((p) => ({
+                      ...p,
+                      status: 'pending',
+                      purpose: 'Official Business',
+                      source: 'portal',
+                      validFrom: '2026-10-21T08:00:00Z',
+                      validUntil: '2026-10-21T17:00:00Z',
+                      gate: 'Gate 1',
+                      photoEvidenceId: '22222222-2222-4222-8222-222222222222',
+                      idEvidenceId: null,
+                    })),
+                    stats: { inside: 0, exited: 0, rejected: 0, total: 0 },
+                    rejectionReasons: [],
+                    pendingTotal: 5,
+                    snapshotPendingTotal: 5,
+                    snapshotAt: '2026-10-21T09:00:00.000000Z',
+                    hasMore: false,
+                    nextCursor: null,
+                  },
+                  error: null,
+                });
+            });
+          }
+          return {
+            data: {
+              queue: pool.map((p) => ({
+                ...p,
+                status: 'pending',
+                purpose: 'Official Business',
+                source: 'portal',
+                validFrom: '2026-10-21T08:00:00Z',
+                validUntil: '2026-10-21T17:00:00Z',
+                gate: 'Gate 1',
+                photoEvidenceId: '22222222-2222-4222-8222-222222222222',
+                idEvidenceId: null,
+              })),
+              stats: { inside: 0, exited: 0, rejected: 0, total: 0 },
+              rejectionReasons: [],
+              pendingTotal: 10,
+              snapshotPendingTotal: 10,
+              snapshotAt: '2026-10-21T09:00:00.000000Z',
+              hasMore: false,
+              nextCursor: null,
+            },
+            error: null,
+          };
+        }),
+      }),
+    } as any);
+
+    const { result, unmount } = renderGuardQueueHook();
+
+    let p1!: Promise<any>;
+    act(() => {
+      p1 = result.current.requestGuardQueueRefresh({ reason: 'initial' });
+    });
+
+    // Realtime arrives during Traversal A: sets queued follow-up, NO epoch change
+    act(() => {
+      result.current.refreshQueuedRef.current = true;
+      void result.current.requestGuardQueueRefresh({ reason: 'realtime' });
+    });
+    expect(result.current.queueIntentEpochRef.current).toBe(0);
+
+    // User presses Load All: epoch increments
+    let pLoadAll!: Promise<any>;
+    act(() => {
+      result.current.desiredQueueSizeRef.current = 5000;
+      result.current.queueIntentEpochRef.current += 1;
+      result.current.refreshQueuedRef.current = true;
+      pLoadAll = result.current.requestGuardQueueRefresh({ reason: 'intent' });
+    });
+
+    // Resolve Traversal A: obsolete due to Load All epoch change
+    await act(async () => {
+      resolveRpc1();
+      await pLoadAll;
+    });
+
+    expect(result.current.passes).toHaveLength(10);
+    expect(callCount).toBe(2); // Exactly 2 calls, no redundant 3rd call
+    unmount();
+  });
+
+  it('REQUIRED TEST 8. Poll + Load More: dropped poll does not add extra follow-up traversal', async () => {
+    let callCount = 0;
+    const pool = generatePassPool(10);
+    let resolveRpc1!: () => void;
+
+    vi.spyOn(supabaseLib, 'requireSupabase').mockReturnValue({
+      schema: vi.fn().mockReturnValue({
+        rpc: vi.fn(async () => {
+          callCount++;
+          if (callCount === 1) {
+            return new Promise((r) => {
+              resolveRpc1 = () =>
+                r({
+                  data: {
+                    queue: pool.slice(0, 5).map((p) => ({
+                      ...p,
+                      status: 'pending',
+                      purpose: 'Official Business',
+                      source: 'portal',
+                      validFrom: '2026-10-21T08:00:00Z',
+                      validUntil: '2026-10-21T17:00:00Z',
+                      gate: 'Gate 1',
+                      photoEvidenceId: '22222222-2222-4222-8222-222222222222',
+                      idEvidenceId: null,
+                    })),
+                    stats: { inside: 0, exited: 0, rejected: 0, total: 0 },
+                    rejectionReasons: [],
+                    pendingTotal: 5,
+                    snapshotPendingTotal: 5,
+                    snapshotAt: '2026-10-21T09:00:00.000000Z',
+                    hasMore: false,
+                    nextCursor: null,
+                  },
+                  error: null,
+                });
+            });
+          }
+          return {
+            data: {
+              queue: pool.map((p) => ({
+                ...p,
+                status: 'pending',
+                purpose: 'Official Business',
+                source: 'portal',
+                validFrom: '2026-10-21T08:00:00Z',
+                validUntil: '2026-10-21T17:00:00Z',
+                gate: 'Gate 1',
+                photoEvidenceId: '22222222-2222-4222-8222-222222222222',
+                idEvidenceId: null,
+              })),
+              stats: { inside: 0, exited: 0, rejected: 0, total: 0 },
+              rejectionReasons: [],
+              pendingTotal: 10,
+              snapshotPendingTotal: 10,
+              snapshotAt: '2026-10-21T09:00:00.000000Z',
+              hasMore: false,
+              nextCursor: null,
+            },
+            error: null,
+          };
+        }),
+      }),
+    } as any);
+
+    const { result, unmount } = renderGuardQueueHook();
+
+    let p1!: Promise<any>;
+    act(() => {
+      p1 = result.current.requestGuardQueueRefresh({ reason: 'initial' });
+    });
+
+    // Poll fires while busy -> dropped
+    let pollRes: any = null;
+    await act(async () => {
+      pollRes = await result.current.requestGuardQueueRefresh({ reason: 'poll' });
+    });
+    expect(pollRes).toEqual({ committed: false, skipped: true });
+    expect(result.current.refreshQueuedRef.current).toBe(false);
+
+    // User presses Load More -> intent invalidation
+    let pLoadMore!: Promise<any>;
+    act(() => {
+      result.current.desiredQueueSizeRef.current = 100;
+      result.current.queueIntentEpochRef.current += 1;
+      result.current.refreshQueuedRef.current = true;
+      pLoadMore = result.current.requestGuardQueueRefresh({ reason: 'intent' });
+    });
+
+    await act(async () => {
+      resolveRpc1();
+      await pLoadMore;
+    });
+
+    expect(callCount).toBe(2); // Exactly 2 calls (Traversal 1 + 1 replacement)
+    unmount();
+  });
+
+  it('REQUIRED TEST 9. Poll skip result: requestGuardQueueRefresh({ reason: "poll" }) while busy returns { committed: false, skipped: true } with no errors', async () => {
+    const pool = generatePassPool(5);
+    mockSupabaseRpc(pool, { delayMs: 100 });
+
+    const { result, unmount } = renderGuardQueueHook();
+
+    act(() => {
+      void result.current.requestGuardQueueRefresh({ reason: 'initial' });
+    });
+
+    let skipRes: any = null;
+    await act(async () => {
+      skipRes = await result.current.requestGuardQueueRefresh({ reason: 'poll' });
+    });
+
+    expect(skipRes).toEqual({ committed: false, skipped: true });
+    expect(result.current.queueError).toBe(false);
+    expect(result.current.refreshError).toBe(false);
+
+    unmount();
+  });
+
+  it('REQUIRED TEST 10. Idle poll still works: executes traversal, commits, and resets refreshing to false', async () => {
+    const pool = generatePassPool(5);
+    const mockState = mockSupabaseRpc(pool);
+
+    const { result, unmount } = renderGuardQueueHook();
+
+    // Initial load finishes
+    await act(async () => {
+      await result.current.requestGuardQueueRefresh({ reason: 'initial' });
+    });
+
+    expect(mockState.rpcCalls).toHaveLength(1);
+    expect(result.current.refreshing).toBe(false);
+
+    // Idle poll fires
+    await act(async () => {
+      const res = await result.current.requestGuardQueueRefresh({ reason: 'poll', showRefreshing: true });
+      expect(res.committed).toBe(true);
+    });
+
+    expect(mockState.rpcCalls).toHaveLength(2);
+    expect(result.current.refreshing).toBe(false);
+
+    unmount();
+  });
+
+  it('REQUIRED TEST 11. Realtime after loop finishes: executes exactly 1 immediate traversal when idle', async () => {
+    const pool = generatePassPool(5);
+    const mockState = mockSupabaseRpc(pool);
+
+    const { result, unmount } = renderGuardQueueHook();
+
+    await act(async () => {
+      await result.current.requestGuardQueueRefresh({ reason: 'initial' });
+    });
+
+    expect(mockState.rpcCalls).toHaveLength(1);
+
+    // Realtime arrives when idle
+    await act(async () => {
+      result.current.refreshQueuedRef.current = true;
+      const res = await result.current.requestGuardQueueRefresh({ reason: 'realtime', showRefreshing: true });
+      expect(res.committed).toBe(true);
+    });
+
+    expect(mockState.rpcCalls).toHaveLength(2); // exactly 1 additional traversal
+    expect(result.current.refreshing).toBe(false);
+
+    unmount();
+  });
+
+  it('REQUIRED TEST 12. Active Realtime follow-up bound: 100 Realtime events during 1 traversal produce exactly 1 follow-up', async () => {
+    let callCount = 0;
+    const pool = generatePassPool(10);
+
+    vi.spyOn(supabaseLib, 'requireSupabase').mockReturnValue({
+      schema: vi.fn().mockReturnValue({
+        rpc: vi.fn(async () => {
+          callCount++;
+          await new Promise((r) => setTimeout(r, 20));
+          return {
+            data: {
+              queue: pool.map((p) => ({
+                ...p,
+                status: 'pending',
+                purpose: 'Official Business',
+                source: 'portal',
+                validFrom: '2026-10-21T08:00:00Z',
+                validUntil: '2026-10-21T17:00:00Z',
+                gate: 'Gate 1',
+                photoEvidenceId: '22222222-2222-4222-8222-222222222222',
+                idEvidenceId: null,
+              })),
+              stats: { inside: 0, exited: 0, rejected: 0, total: 0 },
+              rejectionReasons: [],
+              pendingTotal: 10,
+              snapshotPendingTotal: 10,
+              snapshotAt: '2026-10-21T09:00:00.000000Z',
+              hasMore: false,
+              nextCursor: null,
+            },
+            error: null,
+          };
+        }),
+      }),
+    } as any);
+
+    const { result, unmount } = renderGuardQueueHook();
+
+    await act(async () => {
+      const p1 = result.current.requestGuardQueueRefresh({ reason: 'initial' });
+
+      // Fire 100 events rapidly
+      for (let i = 0; i < 100; i++) {
+        result.current.refreshQueuedRef.current = true;
+        void result.current.requestGuardQueueRefresh({ reason: 'realtime' });
+      }
+
+      await p1;
+    });
+
+    expect(callCount).toBe(2); // Traversal A + exactly 1 follow-up B
+    unmount();
+  });
+
+  it('REQUIRED TEST 13. Poll does not keep Load All spinner alive: recurring poll timers do not delay resolution', async () => {
+    vi.useFakeTimers();
+    const pool = generatePassPool(10);
+    mockSupabaseRpc(pool, { delayMs: 10000 });
+
+    const { result, unmount } = renderGuardQueueHook();
+
+    let pLoadAll!: Promise<any>;
+    act(() => {
+      result.current.desiredQueueSizeRef.current = 5000;
+      result.current.queueIntentEpochRef.current += 1;
+      result.current.refreshQueuedRef.current = true;
+      result.current.setLoadingMore(true);
+      pLoadAll = result.current.requestGuardQueueRefresh({ reason: 'intent', showRefreshing: true });
+    });
+
+    expect(result.current.loadingMore).toBe(true);
+    expect(result.current.refreshing).toBe(true);
+
+    // Recurring poll at t = 5000
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(5000);
+      const pollRes = await result.current.requestGuardQueueRefresh({ reason: 'poll', showRefreshing: true });
+      expect(pollRes).toEqual({ committed: false, skipped: true });
+    });
+
+    // Load All finishes at t = 10000
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(5000);
+      const res = await pLoadAll;
+      expect(res.committed).toBe(true);
+      result.current.setLoadingMore(false);
+    });
+
+    expect(result.current.loadingMore).toBe(false);
+    expect(result.current.refreshing).toBe(false);
+
+    unmount();
+    vi.useRealTimers();
+  });
+
+  it('REQUIRED TEST 14. Realtime may extend refresh once: Load All awaits required Realtime follow-up then cleanly resolves', async () => {
+    let callCount = 0;
+    const pool = generatePassPool(10);
+
+    vi.spyOn(supabaseLib, 'requireSupabase').mockReturnValue({
+      schema: vi.fn().mockReturnValue({
+        rpc: vi.fn(async () => {
+          callCount++;
+          await new Promise((r) => setTimeout(r, 20));
+          return {
+            data: {
+              queue: pool.map((p) => ({
+                ...p,
+                status: 'pending',
+                purpose: 'Official Business',
+                source: 'portal',
+                validFrom: '2026-10-21T08:00:00Z',
+                validUntil: '2026-10-21T17:00:00Z',
+                gate: 'Gate 1',
+                photoEvidenceId: '22222222-2222-4222-8222-222222222222',
+                idEvidenceId: null,
+              })),
+              stats: { inside: 0, exited: 0, rejected: 0, total: 0 },
+              rejectionReasons: [],
+              pendingTotal: 10,
+              snapshotPendingTotal: 10,
+              snapshotAt: '2026-10-21T09:00:00.000000Z',
+              hasMore: false,
+              nextCursor: null,
+            },
+            error: null,
+          };
+        }),
+      }),
+    } as any);
+
+    const { result, unmount } = renderGuardQueueHook();
+
+    await act(async () => {
+      result.current.desiredQueueSizeRef.current = 5000;
+      result.current.queueIntentEpochRef.current += 1;
+      result.current.refreshQueuedRef.current = true;
+      const loadAllPromise = result.current.requestGuardQueueRefresh({ reason: 'intent', showRefreshing: true });
+
+      // Realtime mutation occurs during Load All traversal
+      result.current.refreshQueuedRef.current = true;
+      void result.current.requestGuardQueueRefresh({ reason: 'realtime', showRefreshing: true });
+
+      const res = await loadAllPromise;
+      expect(res.committed).toBe(true);
+    });
+
+    expect(callCount).toBe(2); // Load All initial traversal + 1 Realtime follow-up
+    expect(result.current.refreshing).toBe(false);
+
+    unmount();
   });
 });
