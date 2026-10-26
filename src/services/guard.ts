@@ -22,7 +22,7 @@ export interface GuardQueuePass {
   status: 'pending';
   validFrom: string;
   validUntil: string;
-  scannedAt: string;
+  scannedAt: string | null;
   gate: string | null;
   photoPublicId: string;
   idImagePublicId: string | null;
@@ -44,7 +44,7 @@ export const guardQueueItemSchema = z.object({
   status: z.literal('pending'),
   validFrom: z.string(),
   validUntil: z.string(),
-  scannedAt: z.string(),
+  scannedAt: z.string().nullable(),
   gate: z.string().nullable(),
   photoEvidenceId: z.string().uuid(),
   idEvidenceId: z.string().uuid().nullable(),
@@ -77,6 +77,8 @@ export const guardQueueCursorSchema = z.object({
 
 export interface GuardDashboardPageData extends GuardDashboardData {
   nextCursor: GuardQueueCursor | null;
+  snapshotAt: string;
+  snapshotPendingTotal: number;
 }
 
 export const guardDashboardPageWireSchema = z.object({
@@ -84,6 +86,8 @@ export const guardDashboardPageWireSchema = z.object({
   stats: guardStatsSchema,
   rejectionReasons: z.array(z.string()),
   pendingTotal: z.number().int().nonnegative(),
+  snapshotPendingTotal: z.number().int().nonnegative(),
+  snapshotAt: z.string(),
   hasMore: z.boolean(),
   nextCursor: guardQueueCursorSchema.nullable(),
 });
@@ -91,14 +95,19 @@ export const guardDashboardPageWireSchema = z.object({
 export async function fetchGuardDashboardPage(options?: {
   limit?: number;
   cursor?: GuardQueueCursor | null;
+  snapshotAt?: string | null;
 }): Promise<GuardDashboardPageData> {
-  const limit = Math.min(options?.limit ?? 50, 200);
+  const normalizedLimit = Math.min(
+    Math.max(options?.limit ?? 50, 1),
+    200
+  );
   const { data: rawData, error } = await requireSupabase()
     .schema('api')
     .rpc('guard_dashboard_page', {
-      requested_limit: limit,
+      requested_limit: normalizedLimit,
       after_scanned_at: options?.cursor?.scannedAt ?? null,
       after_id: options?.cursor?.id ?? null,
+      queue_snapshot_at: options?.snapshotAt ?? null,
     });
   if (error || !rawData) throw error ?? new Error('Guard dashboard page unavailable');
 
@@ -129,6 +138,8 @@ export async function fetchGuardDashboardPage(options?: {
     stats: data.stats,
     rejectionReasons: data.rejectionReasons,
     pendingTotal: data.pendingTotal,
+    snapshotPendingTotal: data.snapshotPendingTotal,
+    snapshotAt: data.snapshotAt,
     hasMore: data.hasMore,
     nextCursor: data.nextCursor,
   };
@@ -184,6 +195,8 @@ export async function fetchGuardDashboard(options?: {
 export interface GuardDashboardWindowResult extends GuardDashboardData {
   reachedSafetyCeiling: boolean;
   queueChangedDuringPaging: boolean;
+  snapshotAt?: string;
+  snapshotPendingTotal?: number;
 }
 
 export async function fetchGuardDashboardWindow(options: {
@@ -195,6 +208,10 @@ export async function fetchGuardDashboardWindow(options: {
   const targetCount = Math.min(
     Math.max(options.desiredCount, 50),
     safetyCeiling
+  );
+  const pageSize = Math.min(
+    Math.max(options.pageSize ?? 200, 1),
+    200
   );
 
   let attempts = 0;
@@ -208,24 +225,36 @@ export async function fetchGuardDashboardWindow(options: {
     const seenIds = new Set<string>();
 
     let cursor: GuardQueueCursor | null = null;
+    let previousCursor: GuardQueueCursor | null = null;
     let hasMore = true;
     let latestDashboard: GuardDashboardPageData | null = null;
-    let firstPendingTotal: number | null = null;
+    let snapshotAt: string | null = null;
+    let snapshotPendingTotal: number | null = null;
     let queueChangedDuringPaging = false;
 
     while (hasMore && accumulated.length < targetCount) {
       const remaining = targetCount - accumulated.length;
+      const limit = Math.min(pageSize, remaining);
       const page = await fetchGuardDashboardPage({
-        limit: Math.min(200, remaining),
+        limit,
         cursor,
+        snapshotAt,
       });
 
       latestDashboard = page;
 
-      if (firstPendingTotal === null) {
-        firstPendingTotal = page.pendingTotal;
-      } else if (page.pendingTotal !== firstPendingTotal) {
-        queueChangedDuringPaging = true;
+      if (snapshotAt === null) {
+        snapshotAt = page.snapshotAt;
+        snapshotPendingTotal = page.snapshotPendingTotal;
+      } else {
+        if (page.snapshotAt !== snapshotAt) {
+          throw new Error(
+            'guard_dashboard_page contract violation: snapshotAt mismatch during traversal'
+          );
+        }
+        if (page.snapshotPendingTotal !== snapshotPendingTotal) {
+          queueChangedDuringPaging = true;
+        }
       }
 
       for (const pass of page.queue) {
@@ -238,11 +267,33 @@ export async function fetchGuardDashboardWindow(options: {
       hasMore = page.hasMore;
       cursor = page.nextCursor;
 
-      if (page.hasMore && page.nextCursor === null) {
-        throw new Error(
-          'guard_dashboard_page contract violation: hasMore without nextCursor'
-        );
+      if (hasMore) {
+        if (cursor === null) {
+          throw new Error(
+            'guard_dashboard_page contract violation: hasMore without nextCursor'
+          );
+        }
+        if (page.queue.length === 0) {
+          throw new Error(
+            'guard_dashboard_page contract violation: hasMore with empty queue'
+          );
+        }
+        if (
+          previousCursor &&
+          cursor.id === previousCursor.id &&
+          cursor.scannedAt === previousCursor.scannedAt
+        ) {
+          throw new Error(
+            'guard_dashboard_page contract violation: nextCursor did not progress'
+          );
+        }
       }
+      previousCursor = cursor;
+    }
+
+    // Final snapshot count check: if traversal reaches hasMore = false, accumulated count must equal snapshotPendingTotal
+    if (!hasMore && snapshotPendingTotal !== null && accumulated.length !== snapshotPendingTotal) {
+      queueChangedDuringPaging = true;
     }
 
     finalAccumulated = accumulated;
@@ -278,6 +329,8 @@ export async function fetchGuardDashboardWindow(options: {
     hasMore: finalLatestDashboard.hasMore,
     reachedSafetyCeiling,
     queueChangedDuringPaging: finalQueueChanged,
+    snapshotAt: finalLatestDashboard.snapshotAt,
+    snapshotPendingTotal: finalLatestDashboard.snapshotPendingTotal,
   };
 }
 

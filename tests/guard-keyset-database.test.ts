@@ -458,4 +458,202 @@ describe('Guard Keyset Pagination Database Contracts & Mutation Invariants (PGli
       db.query('select api.guard_dashboard_page(50, null, null);')
     ).rejects.toThrow(/recovery_session_forbidden/);
   }, 60000);
+
+  it('PATCH 39. Equal-Count Mutation Test: approve one visitor from page 1 + scan new visitor after snapshot preserves live pendingTotal but snapshotPendingTotal drops (detects mutation)', async () => {
+    const db = new PGlite();
+    await applyAllMigrations(db);
+
+    await setupGuardAndOwner(db, 'keyset-guard5@example.com');
+
+    // Seed 450 passes
+    await db.exec(`
+      do $$
+      declare
+        v_day_start timestamptz := date_trunc('day', statement_timestamp() at time zone 'Asia/Manila') at time zone 'Asia/Manila';
+        v_day_end timestamptz := (date_trunc('day', statement_timestamp() at time zone 'Asia/Manila') + interval '1 day') at time zone 'Asia/Manila';
+        i integer;
+        hex text;
+        v_vis_id uuid;
+        v_pass_id uuid;
+      begin
+        for i in 1..450 loop
+          hex := lpad(to_hex(i), 12, '0');
+          v_vis_id := ('00000000-0000-4000-a000-' || hex)::uuid;
+          v_pass_id := ('00000000-0000-4000-d000-' || hex)::uuid;
+
+          insert into public.visitors (id, owner_id, source, full_name, contact_number, email, purpose, visit_date, consent_accepted_at)
+          values (v_vis_id, '${VISITOR_OWNER}', 'portal', 'Visitor ' || i, '09123456789', 'v' || i || '@test.com', 'Meeting', (v_day_start at time zone 'Asia/Manila')::date, now());
+
+          insert into public.passes (id, visitor_id, token_digest, source, status, valid_from, valid_until, entry_scanned_at, gate, issued_at)
+          values (
+            v_pass_id,
+            v_vis_id,
+            decode(lpad(to_hex(i), 64, '0'), 'hex'),
+            'portal',
+            'pending',
+            v_day_start + interval '1 hour',
+            v_day_end - interval '1 minute',
+            v_day_start + (i * interval '10 seconds'),
+            'Gate 1',
+            v_day_start + interval '1 hour'
+          );
+        end loop;
+      end $$;
+    `);
+
+    await asGuard(db);
+
+    // Fetch page 1 (200 rows) with queue_snapshot_at = null
+    const res1 = await db.query<{ guard_dashboard_page: any }>(
+      'select api.guard_dashboard_page(200, null, null, null) as guard_dashboard_page;'
+    );
+    const p1 = res1.rows[0].guard_dashboard_page;
+    expect(p1.queue).toHaveLength(200);
+    expect(p1.pendingTotal).toBe(450);
+    expect(p1.snapshotPendingTotal).toBe(450);
+    const snapshotAt = p1.snapshotAt;
+    const cursor = p1.nextCursor;
+
+    // Mutate queue concurrently:
+    // 1. Approve pass #1 from page 1 (status becomes 'inside')
+    const pass1Id = '00000000-0000-4000-d000-000000000001';
+    await db.exec(`
+      reset role;
+      update public.passes
+      set status = 'inside', time_in = now(), updated_at = now()
+      where id = '${pass1Id}';
+
+      -- 2. Scan a NEW pass (visitor 451) AFTER the snapshot timestamp
+      insert into public.visitors (id, owner_id, source, full_name, contact_number, email, purpose, visit_date, consent_accepted_at)
+      values ('00000000-0000-4000-a000-000000000451', '${VISITOR_OWNER}', 'portal', 'Visitor 451', '09123456789', 'v451@test.com', 'Meeting', now()::date, now());
+
+      insert into public.passes (id, visitor_id, token_digest, source, status, valid_from, valid_until, entry_scanned_at, gate, issued_at)
+      values (
+        '00000000-0000-4000-d000-000000000451',
+        '00000000-0000-4000-a000-000000000451',
+        decode(lpad(to_hex(451), 64, '0'), 'hex'),
+        'portal',
+        'pending',
+        now(),
+        now() + interval '1 day',
+        '${snapshotAt}'::timestamptz + interval '1 second',
+        'Gate 1',
+        now()
+      );
+    `);
+
+    await asGuard(db);
+
+    // Fetch page 2 using cursor and pinning snapshotAt
+    const res2 = await db.query<{ guard_dashboard_page: any }>(
+      `select api.guard_dashboard_page(200, '${cursor.scannedAt}'::timestamptz, '${cursor.id}'::uuid, '${snapshotAt}'::timestamptz) as guard_dashboard_page;`
+    );
+    const p2 = res2.rows[0].guard_dashboard_page;
+
+    // Live pendingTotal remains 450 (450 - 1 + 1 = 450)!
+    expect(p2.pendingTotal).toBe(450);
+
+    // BUT snapshotPendingTotal drops to 449 because the newly scanned pass was after snapshot!
+    expect(p2.snapshotPendingTotal).toBe(449);
+    // Equal-count mutation is authoritatively detected by snapshotPendingTotal!
+    expect(p2.snapshotPendingTotal).not.toBe(p1.snapshotPendingTotal);
+  }, 60000);
+
+  it('PATCH 40. Snapshot Insert Test: Pass inserted after snapshotAt is excluded from current traversal, but appears on next fresh traversal', async () => {
+    const db = new PGlite();
+    await applyAllMigrations(db);
+
+    await setupGuardAndOwner(db, 'keyset-guard6@example.com');
+
+    // Seed 5 passes
+    await db.exec(`
+      do $$
+      declare
+        v_day_start timestamptz := date_trunc('day', statement_timestamp() at time zone 'Asia/Manila') at time zone 'Asia/Manila';
+        v_day_end timestamptz := (date_trunc('day', statement_timestamp() at time zone 'Asia/Manila') + interval '1 day') at time zone 'Asia/Manila';
+        i integer;
+        hex text;
+      begin
+        for i in 1..5 loop
+          hex := lpad(to_hex(i), 12, '0');
+          insert into public.visitors (id, owner_id, source, full_name, contact_number, email, purpose, visit_date, consent_accepted_at)
+          values (('00000000-0000-4000-a000-' || hex)::uuid, '${VISITOR_OWNER}', 'portal', 'V ' || i, '09123456789', 'v' || i || '@test.com', 'Meeting', (v_day_start at time zone 'Asia/Manila')::date, now());
+
+          insert into public.passes (id, visitor_id, token_digest, source, status, valid_from, valid_until, entry_scanned_at, gate, issued_at)
+          values (
+            ('00000000-0000-4000-d000-' || hex)::uuid,
+            ('00000000-0000-4000-a000-' || hex)::uuid,
+            decode(lpad(to_hex(i), 64, '0'), 'hex'),
+            'portal',
+            'pending',
+            v_day_start + interval '1 hour',
+            v_day_end - interval '1 minute',
+            v_day_start + (i * interval '1 minute'),
+            'Gate 1',
+            v_day_start + interval '1 hour'
+          );
+        end loop;
+      end $$;
+    `);
+
+    await asGuard(db);
+
+    // Fetch page 1 (limit 2) with queue_snapshot_at pinned to minute 5.5
+    const res1 = await db.query<{ guard_dashboard_page: any }>(
+      `select api.guard_dashboard_page(2, null, null, (date_trunc('day', statement_timestamp() at time zone 'Asia/Manila') at time zone 'Asia/Manila' + interval '5 minutes 30 seconds')::timestamptz) as guard_dashboard_page;`
+    );
+    const p1 = res1.rows[0].guard_dashboard_page;
+    expect(p1.queue).toHaveLength(2);
+    const snapshotAt = p1.snapshotAt;
+    const cursor = p1.nextCursor;
+
+    // Insert pass #6 scanned at minute 6 (which is AFTER snapshotAt at 5.5 minutes, but before statement_timestamp)
+    const PASS6_ID = '00000000-0000-4000-d000-000000000006';
+    await db.exec(`
+      reset role;
+      do $$
+      declare
+        v_day_start timestamptz := date_trunc('day', statement_timestamp() at time zone 'Asia/Manila') at time zone 'Asia/Manila';
+        v_day_end timestamptz := (date_trunc('day', statement_timestamp() at time zone 'Asia/Manila') + interval '1 day') at time zone 'Asia/Manila';
+      begin
+        insert into public.visitors (id, owner_id, source, full_name, contact_number, email, purpose, visit_date, consent_accepted_at)
+        values ('00000000-0000-4000-a000-000000000006', '${VISITOR_OWNER}', 'portal', 'V 6 Post-Snapshot', '09123456789', 'v6@test.com', 'Meeting', now()::date, now());
+
+        insert into public.passes (id, visitor_id, token_digest, source, status, valid_from, valid_until, entry_scanned_at, gate, issued_at)
+        values (
+          '${PASS6_ID}',
+          '00000000-0000-4000-a000-000000000006',
+          decode(lpad(to_hex(6), 64, '0'), 'hex'),
+          'portal',
+          'pending',
+          v_day_start + interval '1 hour',
+          v_day_end - interval '1 minute',
+          v_day_start + interval '6 minutes',
+          'Gate 1',
+          v_day_start + interval '1 hour'
+        );
+      end $$;
+    `);
+
+    await asGuard(db);
+
+    // Fetch page 2 (limit 10) pinning snapshotAt
+    const res2 = await db.query<{ guard_dashboard_page: any }>(
+      `select api.guard_dashboard_page(10, '${cursor.scannedAt}'::timestamptz, '${cursor.id}'::uuid, '${snapshotAt}'::timestamptz) as guard_dashboard_page;`
+    );
+    const p2 = res2.rows[0].guard_dashboard_page;
+
+    // Page 2 contains passes 3, 4, 5 (3 passes). Pass #6 must NOT appear!
+    expect(p2.queue).toHaveLength(3);
+    expect(p2.queue.some((p: any) => p.id === PASS6_ID)).toBe(false);
+
+    // Now start a fresh traversal with queue_snapshot_at = null
+    const resFresh = await db.query<{ guard_dashboard_page: any }>(
+      'select api.guard_dashboard_page(10, null, null, null) as guard_dashboard_page;'
+    );
+    const pFresh = resFresh.rows[0].guard_dashboard_page;
+    // On fresh traversal, Pass #6 DOES appear!
+    expect(pFresh.queue.some((p: any) => p.id === PASS6_ID)).toBe(true);
+    expect(pFresh.pendingTotal).toBe(6);
+  }, 60000);
 });

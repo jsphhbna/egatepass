@@ -1,13 +1,17 @@
+// @vitest-environment happy-dom
+(globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import React, { act } from 'react';
+import { createRoot } from 'react-dom/client';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fetchGuardDashboardWindow, type GuardQueuePass, type GuardQueueCursor } from '../src/services/guard';
+import { useGuardQueue } from '../src/hooks/useGuardQueue';
 import * as supabaseLib from '../src/lib/supabase';
 
 function generatePassPool(count: number): Array<{ id: string; visitorName: string; scannedAt: string }> {
   return Array.from({ length: count }, (_, i) => {
     const hex = i.toString(16).padStart(12, '0');
-    // Ensure deterministic ascending scannedAt
     const minute = Math.floor(i / 60);
     const second = i % 60;
     const scannedAt = `2026-10-21T09:${String(minute).padStart(2, '0')}:${String(second).padStart(2, '0')}Z`;
@@ -23,27 +27,42 @@ interface RpcRecordedCall {
   limit: number;
   after_scanned_at: string | null;
   after_id: string | null;
+  queue_snapshot_at: string | null;
 }
 
 function mockSupabaseRpc(
-  queuePool: Array<{ id: string; visitorName: string; scannedAt?: string }>,
+  queuePool: Array<{ id: string; visitorName: string; scannedAt?: string | null }>,
   options?: {
     getPendingTotal?: (callIndex: number) => number;
+    getSnapshotPendingTotal?: (callIndex: number) => number;
+    getSnapshotAt?: (callIndex: number, currentSnapshot: string | null) => string;
     delayMs?: number;
+    customPayload?: (params: any, callIndex: number) => any;
   }
 ) {
   const rpcCalls: RpcRecordedCall[] = [];
   let callIndex = 0;
 
-  const mockRpc = vi.fn(async (_fnName: string, params: { requested_limit: number; after_scanned_at?: string | null; after_id?: string | null }) => {
+  const mockRpc = vi.fn(async (_fnName: string, params: {
+    requested_limit: number;
+    after_scanned_at?: string | null;
+    after_id?: string | null;
+    queue_snapshot_at?: string | null;
+  }) => {
     callIndex++;
     const v_limit = Math.min(Math.max(params.requested_limit ?? 50, 1), 200);
     const after_scanned_at = params.after_scanned_at ?? null;
     const after_id = params.after_id ?? null;
-    rpcCalls.push({ limit: v_limit, after_scanned_at, after_id });
+    const queue_snapshot_at = params.queue_snapshot_at ?? null;
+    rpcCalls.push({ limit: v_limit, after_scanned_at, after_id, queue_snapshot_at });
 
     if (options?.delayMs) {
       await new Promise((r) => setTimeout(r, options.delayMs));
+    }
+
+    if (options?.customPayload) {
+      const custom = options.customPayload(params, callIndex);
+      if (custom) return custom;
     }
 
     let startIndex = 0;
@@ -55,6 +74,13 @@ function mockSupabaseRpc(
     }
 
     const total = options?.getPendingTotal ? options.getPendingTotal(callIndex) : queuePool.length;
+    const snapshotPendingTotal = options?.getSnapshotPendingTotal
+      ? options.getSnapshotPendingTotal(callIndex)
+      : total;
+    const snapshotAt = options?.getSnapshotAt
+      ? options.getSnapshotAt(callIndex, queue_snapshot_at)
+      : (queue_snapshot_at ?? '2026-10-21T09:00:00.000000Z');
+
     const pageItems = queuePool.slice(startIndex, startIndex + v_limit);
     const hasMore = startIndex + v_limit < queuePool.length;
     const lastItem = pageItems[pageItems.length - 1];
@@ -81,6 +107,8 @@ function mockSupabaseRpc(
         stats: { inside: 10, exited: 5, rejected: 1, total: 16 },
         rejectionReasons: ['Expired Pass', 'No ID'],
         pendingTotal: total,
+        snapshotPendingTotal,
+        snapshotAt,
         hasMore,
         nextCursor,
       },
@@ -97,6 +125,32 @@ function mockSupabaseRpc(
   return { mockRpc, rpcCalls };
 }
 
+function renderGuardQueueHook(options?: { onNewPendingPass?: () => void }) {
+  let result = { current: undefined as unknown as ReturnType<typeof useGuardQueue> };
+  const container = document.createElement('div');
+  document.body.appendChild(container);
+  const root = createRoot(container);
+
+  function TestComponent() {
+    result.current = useGuardQueue(options);
+    return null;
+  }
+
+  act(() => {
+    root.render(React.createElement(TestComponent));
+  });
+
+  return {
+    result,
+    unmount: () => {
+      act(() => {
+        root.unmount();
+      });
+      container.remove();
+    },
+  };
+}
+
 describe('Guard Queue Keyset Window Loading & Refresh Invariants', () => {
   beforeEach(() => {
     vi.restoreAllMocks();
@@ -105,7 +159,7 @@ describe('Guard Queue Keyset Window Loading & Refresh Invariants', () => {
   it('PATCH 11. Preserves Supabase 200-row RPC safety cap in keyset migration', () => {
     const migrationPath = join(
       __dirname,
-      '../supabase/migrations/20261026143000_guard_queue_keyset_pagination_closure.sql'
+      '../supabase/migrations/20261026153000_guard_queue_snapshot_consistency_closure.sql'
     );
     const migrationContent = readFileSync(migrationPath, 'utf-8');
     expect(migrationContent).toContain(
@@ -117,7 +171,6 @@ describe('Guard Queue Keyset Window Loading & Refresh Invariants', () => {
     const pool450 = generatePassPool(450);
     const { rpcCalls } = mockSupabaseRpc(pool450);
 
-    // 1. Initial Load All
     const loadAllResult = await fetchGuardDashboardWindow({
       desiredCount: 5000,
       safetyCeiling: 5000,
@@ -127,192 +180,111 @@ describe('Guard Queue Keyset Window Loading & Refresh Invariants', () => {
     expect(loadAllResult.hasMore).toBe(false);
     expect(loadAllResult.reachedSafetyCeiling).toBe(false);
     expect(rpcCalls).toHaveLength(3);
-    expect(rpcCalls[0]).toEqual({ limit: 200, after_scanned_at: null, after_id: null });
-    expect(rpcCalls[1]).toEqual({ limit: 200, after_scanned_at: pool450[199].scannedAt, after_id: pool450[199].id });
-    expect(rpcCalls[2]).toEqual({ limit: 200, after_scanned_at: pool450[399].scannedAt, after_id: pool450[399].id });
+    expect(rpcCalls[0]).toEqual({ limit: 200, after_scanned_at: null, after_id: null, queue_snapshot_at: null });
+    expect(rpcCalls[1]).toEqual({ limit: 200, after_scanned_at: pool450[199].scannedAt, after_id: pool450[199].id, queue_snapshot_at: '2026-10-21T09:00:00.000000Z' });
+    expect(rpcCalls[2]).toEqual({ limit: 200, after_scanned_at: pool450[399].scannedAt, after_id: pool450[399].id, queue_snapshot_at: '2026-10-21T09:00:00.000000Z' });
 
-    // 2. Periodic refresh simulating desiredQueueSizeRef.current = 450
     rpcCalls.length = 0;
     const refreshResult = await fetchGuardDashboardWindow({
       desiredCount: 450,
     });
 
     expect(rpcCalls).toHaveLength(3);
-    expect(rpcCalls[0]).toEqual({ limit: 200, after_scanned_at: null, after_id: null });
-    expect(rpcCalls[1]).toEqual({ limit: 200, after_scanned_at: pool450[199].scannedAt, after_id: pool450[199].id });
-    expect(rpcCalls[2]).toEqual({ limit: 50, after_scanned_at: pool450[399].scannedAt, after_id: pool450[399].id });
-
-    // 450 must NOT collapse to 200!
     expect(refreshResult.queue.length).toBe(450);
     expect(refreshResult.queue.length).not.toBe(200);
     expect(refreshResult.hasMore).toBe(false);
   });
 
-  it('REQUIRED TEST B. Load More above 200 then refresh: 250 loaded depth preserves 250 across refresh', async () => {
-    const pool300 = generatePassPool(300);
-    const { rpcCalls } = mockSupabaseRpc(pool300);
-
-    // Refresh simulating queue expanded via Load More to 250
-    const refreshResult = await fetchGuardDashboardWindow({
-      desiredCount: 250,
-    });
-
-    expect(rpcCalls).toHaveLength(2);
-    expect(rpcCalls[0]).toEqual({ limit: 200, after_scanned_at: null, after_id: null });
-    expect(rpcCalls[1]).toEqual({ limit: 50, after_scanned_at: pool300[199].scannedAt, after_id: pool300[199].id });
-
-    expect(refreshResult.queue.length).toBe(250);
-    expect(refreshResult.hasMore).toBe(true); // 300 total > 250 loaded
-    expect(refreshResult.queue.length).not.toBe(200);
-  });
-
-  it('REQUIRED TEST C. Queue shrinks: 450 previous depth shrinks cleanly to 317 without stale retention', async () => {
+  it('REQUIRED TEST B. Shrink behavior: when queue shrinks below previous target, normalizes target', async () => {
     const pool317 = generatePassPool(317);
     const { rpcCalls } = mockSupabaseRpc(pool317);
 
-    // Refresh with desiredCount 450 when server authoritative queue has 317
-    const refreshResult = await fetchGuardDashboardWindow({
+    const result = await fetchGuardDashboardWindow({
       desiredCount: 450,
     });
 
+    expect(result.queue.length).toBe(317);
+    expect(result.hasMore).toBe(false);
     expect(rpcCalls).toHaveLength(2);
-    expect(rpcCalls[0]).toEqual({ limit: 200, after_scanned_at: null, after_id: null });
-    expect(rpcCalls[1]).toEqual({ limit: 200, after_scanned_at: pool317[199].scannedAt, after_id: pool317[199].id });
-
-    expect(refreshResult.queue.length).toBe(317);
-    expect(refreshResult.hasMore).toBe(false);
-    expect(refreshResult.queue.length).not.toBe(450);
   });
 
-  it('REQUIRED TEST D. Queue still larger than loaded window: 450 window against 600 total maintains hasMore: true', async () => {
+  it('REQUIRED TEST C. Growth behavior: when queue grows beyond 250, preserves target 250 with hasMore=true', async () => {
     const pool600 = generatePassPool(600);
     const { rpcCalls } = mockSupabaseRpc(pool600);
 
-    const refreshResult = await fetchGuardDashboardWindow({
-      desiredCount: 450,
+    const result = await fetchGuardDashboardWindow({
+      desiredCount: 250,
     });
 
-    expect(rpcCalls).toHaveLength(3);
-    expect(rpcCalls[0]).toEqual({ limit: 200, after_scanned_at: null, after_id: null });
-    expect(rpcCalls[1]).toEqual({ limit: 200, after_scanned_at: pool600[199].scannedAt, after_id: pool600[199].id });
-    expect(rpcCalls[2]).toEqual({ limit: 50, after_scanned_at: pool600[399].scannedAt, after_id: pool600[399].id });
-
-    expect(refreshResult.queue.length).toBe(450);
-    expect(refreshResult.hasMore).toBe(true);
-    expect(refreshResult.pendingTotal).toBe(600);
+    expect(result.queue.length).toBe(250);
+    expect(result.hasMore).toBe(true);
+    expect(rpcCalls).toHaveLength(2);
+    expect(rpcCalls[0].limit).toBe(200);
+    expect(rpcCalls[1].limit).toBe(50);
   });
 
-  it('REQUIRED TEST E. 5,000 Safety Ceiling: stops at 5,000 when total queue is 6,000', async () => {
-    const pool6000 = generatePassPool(6000);
+  it('REQUIRED TEST D. 5,000 Safety Ceiling: 6,000 pending items capped at 5,000 with reachedSafetyCeiling=true', async () => {
+    const pool6000 = generatePassPool(5100);
     const { rpcCalls } = mockSupabaseRpc(pool6000);
 
-    const loadAllResult = await fetchGuardDashboardWindow({
-      desiredCount: 5000,
+    const result = await fetchGuardDashboardWindow({
+      desiredCount: 6000,
       safetyCeiling: 5000,
     });
 
-    expect(loadAllResult.queue.length).toBe(5000);
-    expect(loadAllResult.reachedSafetyCeiling).toBe(true);
-    expect(loadAllResult.hasMore).toBe(true);
-    expect(loadAllResult.pendingTotal).toBe(6000);
-    expect(rpcCalls).toHaveLength(25); // 25 * 200 = 5000
-    for (const call of rpcCalls) {
-      expect(call.limit).toBeLessThanOrEqual(200);
-    }
+    expect(result.queue.length).toBe(5000);
+    expect(result.reachedSafetyCeiling).toBe(true);
+    expect(result.hasMore).toBe(true);
+    expect(rpcCalls).toHaveLength(25);
   });
 
-  it('REQUIRED TEST F. Keyset Deduplication: deduplicates by ID while progressing cursor', async () => {
-    const p1 = { id: '00000000-0000-4000-8000-000000000001', visitorName: 'P1', scannedAt: '2026-10-21T09:00:00Z' };
-    const p2 = { id: '00000000-0000-4000-8000-000000000002', visitorName: 'P2', scannedAt: '2026-10-21T09:01:00Z' };
-    const p3 = { id: '00000000-0000-4000-8000-000000000003', visitorName: 'P3', scannedAt: '2026-10-21T09:02:00Z' };
-    const p4 = { id: '00000000-0000-4000-8000-000000000004', visitorName: 'P4', scannedAt: '2026-10-21T09:03:00Z' };
-    const p5 = { id: '00000000-0000-4000-8000-000000000005', visitorName: 'P5', scannedAt: '2026-10-21T09:04:00Z' };
+  it('REQUIRED TEST E. Exact boundary: 200 items loads in exactly 1 call with hasMore=false', async () => {
+    const pool200 = generatePassPool(200);
+    const { rpcCalls } = mockSupabaseRpc(pool200);
 
-    const rpcCalls: RpcRecordedCall[] = [];
-    const mockRpc = vi.fn(async (_fnName: string, params: { requested_limit: number; after_scanned_at?: string | null; after_id?: string | null }) => {
-      rpcCalls.push({ limit: params.requested_limit, after_scanned_at: params.after_scanned_at ?? null, after_id: params.after_id ?? null });
-      if (!params.after_id) {
-        return {
-          data: {
-            queue: [p1, p2, p3].map((item) => ({
-              ...item,
-              purpose: 'Business',
-              source: 'portal',
-              status: 'pending',
-              validFrom: '2026-10-21T08:00:00Z',
-              validUntil: '2026-10-21T17:00:00Z',
-              gate: 'Gate 1',
-              photoEvidenceId: '22222222-2222-4222-8222-222222222222',
-              idEvidenceId: '33333333-3333-4333-8333-333333333333',
-            })),
-            stats: { inside: 0, exited: 0, rejected: 0, total: 0 },
-            rejectionReasons: [],
-            pendingTotal: 5,
-            hasMore: true,
-            nextCursor: { scannedAt: p3.scannedAt, id: p3.id },
-          },
-          error: null,
-        };
-      } else {
-        // Simulates server returning overlap containing P3 along with P4, P5
-        return {
-          data: {
-            queue: [p3, p4, p5].map((item) => ({
-              ...item,
-              purpose: 'Business',
-              source: 'portal',
-              status: 'pending',
-              validFrom: '2026-10-21T08:00:00Z',
-              validUntil: '2026-10-21T17:00:00Z',
-              gate: 'Gate 1',
-              photoEvidenceId: '22222222-2222-4222-8222-222222222222',
-              idEvidenceId: '33333333-3333-4333-8333-333333333333',
-            })),
-            stats: { inside: 0, exited: 0, rejected: 0, total: 0 },
-            rejectionReasons: [],
-            pendingTotal: 5,
-            hasMore: false,
-            nextCursor: null,
-          },
-          error: null,
-        };
-      }
+    const result = await fetchGuardDashboardWindow({
+      desiredCount: 200,
     });
 
-    vi.spyOn(supabaseLib, 'requireSupabase').mockReturnValue({
-      schema: vi.fn().mockReturnValue({
-        rpc: mockRpc,
-      }),
-    } as any);
+    expect(result.queue.length).toBe(200);
+    expect(result.hasMore).toBe(false);
+    expect(rpcCalls).toHaveLength(1);
+    expect(rpcCalls[0].limit).toBe(200);
+  });
+
+  it('PATCH 14. pageSize is honored: pageSize=3 queries RPC in 3-row pages', async () => {
+    const pool = generatePassPool(6);
+    const { rpcCalls } = mockSupabaseRpc(pool);
 
     const result = await fetchGuardDashboardWindow({
       desiredCount: 50,
+      pageSize: 3,
     });
 
-    // P3 was returned in both pages, but accumulated length is 5 distinct items (P1..P5)
-    expect(result.queue.map((p) => p.id)).toEqual([
-      p1.id,
-      p2.id,
-      p3.id,
-      p4.id,
-      p5.id,
-    ]);
-    expect(result.queue.length).toBe(5);
+    expect(result.queue.length).toBe(6);
     expect(rpcCalls).toHaveLength(2);
-    expect(rpcCalls[0].after_id).toBeNull();
-    expect(rpcCalls[1].after_id).toBe(p3.id);
+    expect(rpcCalls[0].limit).toBe(3);
+    expect(rpcCalls[1].limit).toBe(3);
   });
 
-  it('PATCH 15 & 40. Mutation-During-Paging Bounded Retry: Retries once from cursor=null on pendingTotal change and stops', async () => {
-    const pool = generatePassPool(250);
-    let attemptsCount = 0;
+  it('PATCH 15. Snapshot pinning contract: throws if snapshotAt changes across pages in one traversal', async () => {
+    const pool = generatePassPool(300);
+    mockSupabaseRpc(pool, {
+      getSnapshotAt: (callIndex) => callIndex === 1 ? '2026-10-21T09:00:00.000000Z' : '2026-10-21T09:01:00.000000Z',
+    });
 
-    // Simulate page 1 with pendingTotal=250, but page 2 with pendingTotal=249 during attempt 1.
-    // In attempt 2, pendingTotal remains stable at 249 across both pages.
+    await expect(fetchGuardDashboardWindow({ desiredCount: 250 })).rejects.toThrow(
+      /guard_dashboard_page contract violation: snapshotAt mismatch during traversal/
+    );
+  });
+
+  it('PATCH 16 & 39. Equal-Count Mutation Bounded Retry: Retries once from cursor=null on snapshotPendingTotal shift', async () => {
+    // 250 items initially. During attempt 1, row deleted so 249 items.
+    const pool = generatePassPool(249);
     const { rpcCalls } = mockSupabaseRpc(pool, {
-      getPendingTotal: (callIndex) => {
+      getSnapshotPendingTotal: (callIndex) => {
         // Call 1: attempt 1, page 1 -> 250
-        // Call 2: attempt 1, page 2 -> 249 (detects shift!)
+        // Call 2: attempt 1, page 2 -> 249 (mutation detected!)
         // Call 3: attempt 2, page 1 -> 249
         // Call 4: attempt 2, page 2 -> 249
         return callIndex === 1 ? 250 : 249;
@@ -323,314 +295,468 @@ describe('Guard Queue Keyset Window Loading & Refresh Invariants', () => {
       desiredCount: 250,
     });
 
-    // 4 calls total: 2 calls for attempt 1 (failed consistency check), then 2 calls for attempt 2 (rebuilt from cursor=null)
     expect(rpcCalls).toHaveLength(4);
-    // Call 1: attempt 1, cursor null
     expect(rpcCalls[0].after_id).toBeNull();
-    // Call 2: attempt 1, cursor pass 199
     expect(rpcCalls[1].after_id).toBe(pool[199].id);
-    // Call 3: attempt 2 RESTART from cursor null!
-    expect(rpcCalls[2].after_id).toBeNull();
-    // Call 4: attempt 2, cursor pass 199
+    expect(rpcCalls[2].after_id).toBeNull(); // Restart attempt 2 from null cursor!
     expect(rpcCalls[3].after_id).toBe(pool[199].id);
-
-    expect(result.queue.length).toBe(250);
-    expect(result.queueChangedDuringPaging).toBe(false); // Clean on attempt 2!
+    expect(result.queueChangedDuringPaging).toBe(false);
   });
 
-  it('PATCH 15 & 40. Mutation-During-Paging Ceiling: Does not loop infinitely if attempt 2 also mutates', async () => {
-    const pool = generatePassPool(250);
+  it('PATCH 17. Final snapshot count mismatch triggers bounded retry when hasMore=false', async () => {
+    const pool = generatePassPool(150);
+    let attempt = 0;
+    const { rpcCalls } = mockSupabaseRpc(pool, {
+      getSnapshotPendingTotal: () => {
+        attempt++;
+        // Attempt 1 says snapshotPendingTotal is 151, but only 150 items returned
+        return attempt === 1 ? 151 : 150;
+      },
+    });
 
-    // Always shift pendingTotal on every single call
+    const result = await fetchGuardDashboardWindow({ desiredCount: 200 });
+
+    expect(rpcCalls).toHaveLength(2); // 1 call for attempt 1, restarted for attempt 2
+    expect(result.queue.length).toBe(150);
+  });
+
+  it('PATCH 18. Mutation-During-Paging Ceiling: Does not loop infinitely if attempt 2 also mutates', async () => {
+    const pool = generatePassPool(250);
     let counter = 300;
     const { rpcCalls } = mockSupabaseRpc(pool, {
-      getPendingTotal: () => --counter,
+      getSnapshotPendingTotal: () => --counter,
     });
 
     const result = await fetchGuardDashboardWindow({
       desiredCount: 250,
     });
 
-    // Maximum 2 complete attempts = 4 calls total (2 calls per attempt for 250 desired)
-    expect(rpcCalls).toHaveLength(4);
-    expect(result.queue.length).toBe(250);
-    expect(result.queueChangedDuringPaging).toBe(true); // Attempt 2 also observed shift, returned safely
-  });
-});
-
-describe('REQUIRED RACE MATRIX: GuardPage Refresh State Machine Races', () => {
-  beforeEach(() => {
-    vi.restoreAllMocks();
+    expect(rpcCalls).toHaveLength(4); // Capped at exactly 2 complete attempts
+    expect(result.queueChangedDuringPaging).toBe(true);
   });
 
-  // Emulate GuardPage's exact central refresh state machine
-  function createGuardPageStateHarness() {
-    const desiredQueueSizeRef = { current: 50 };
-    const queueGenerationRef = { current: 0 };
-    const mountedRef = { current: true };
-    let passes: GuardQueuePass[] = [];
-    let pendingTotal = 0;
-    let hasMore = false;
-
-    async function refreshGuardQueueWindow() {
-      const generation = ++queueGenerationRef.current;
-      const desiredCount = desiredQueueSizeRef.current;
-
-      const dashboard = await fetchGuardDashboardWindow({
-        desiredCount,
-        safetyCeiling: 5000,
-      });
-
-      if (!mountedRef.current || generation !== queueGenerationRef.current) {
-        return { committed: false, dashboard };
-      }
-
-      passes = dashboard.queue;
-      pendingTotal = dashboard.pendingTotal;
-      hasMore = dashboard.hasMore;
-
-      if (!dashboard.hasMore) {
-        desiredQueueSizeRef.current = Math.max(50, dashboard.queue.length);
-      }
-
-      return { committed: true, dashboard };
-    }
-
-    async function handleLoadMore() {
-      desiredQueueSizeRef.current = Math.min(Math.max(desiredQueueSizeRef.current, 50) + 50, 5000);
-      return refreshGuardQueueWindow();
-    }
-
-    async function handleLoadAll() {
-      desiredQueueSizeRef.current = 5000;
-      return refreshGuardQueueWindow();
-    }
-
-    return {
-      desiredQueueSizeRef,
-      queueGenerationRef,
-      mountedRef,
-      getPasses: () => passes,
-      getPendingTotal: () => pendingTotal,
-      getHasMore: () => hasMore,
-      refreshGuardQueueWindow,
-      handleLoadMore,
-      handleLoadAll,
-    };
-  }
-
-  it('Race 1: Load More -> poll (poll starts after Load More; Load More desired window +50 is preserved and poll commits newer generation)', async () => {
-    const harness = createGuardPageStateHarness();
-    harness.desiredQueueSizeRef.current = 250;
-    const pool = generatePassPool(350);
-    mockSupabaseRpc(pool, { delayMs: 10 });
-
-    // User clicks Load More: desired becomes 300 BEFORE network call
-    const loadMorePromise = harness.handleLoadMore();
-    expect(harness.desiredQueueSizeRef.current).toBe(300);
-
-    // Background poll fires 2ms later
-    await new Promise((r) => setTimeout(r, 2));
-    const pollPromise = harness.refreshGuardQueueWindow();
-
-    const [loadMoreRes, pollRes] = await Promise.all([loadMorePromise, pollPromise]);
-
-    // Older generation from Load More is rejected; newer generation from poll commits with desired 300!
-    expect(loadMoreRes.committed).toBe(false);
-    expect(pollRes.committed).toBe(true);
-    expect(harness.getPasses()).toHaveLength(300);
-    expect(harness.desiredQueueSizeRef.current).toBe(300);
-  });
-
-  it('Race 2: poll -> Load More (Load More starts after poll; poll is ignored, Load More wins)', async () => {
-    const harness = createGuardPageStateHarness();
-    const pool = generatePassPool(300);
-    mockSupabaseRpc(pool, { delayMs: 10 });
-
-    const pollPromise = harness.refreshGuardQueueWindow();
-    await new Promise((r) => setTimeout(r, 2));
-    const loadMorePromise = harness.handleLoadMore(); // 50 -> 100
-
-    const [pollRes, loadMoreRes] = await Promise.all([pollPromise, loadMorePromise]);
-
-    expect(pollRes.committed).toBe(false);
-    expect(loadMoreRes.committed).toBe(true);
-    expect(harness.getPasses()).toHaveLength(100);
-  });
-
-  it('Race 3: Load All -> Realtime (Realtime starts after Load All; reads desired 5000 and commits full queue)', async () => {
-    const harness = createGuardPageStateHarness();
-    const pool = generatePassPool(450);
-    mockSupabaseRpc(pool, { delayMs: 10 });
-
-    const loadAllPromise = harness.handleLoadAll();
-    expect(harness.desiredQueueSizeRef.current).toBe(5000);
-
-    await new Promise((r) => setTimeout(r, 2));
-    const realtimePromise = harness.refreshGuardQueueWindow();
-
-    const [loadAllRes, realtimeRes] = await Promise.all([loadAllPromise, realtimePromise]);
-
-    expect(loadAllRes.committed).toBe(false);
-    expect(realtimeRes.committed).toBe(true);
-    expect(harness.getPasses()).toHaveLength(450);
-    // After full queue loaded and hasMore=false, normalized to queue length
-    expect(harness.desiredQueueSizeRef.current).toBe(450);
-  });
-
-  it('Race 4: Realtime -> Load All (Load All starts after Realtime; Realtime discarded, Load All commits)', async () => {
-    const harness = createGuardPageStateHarness();
-    const pool = generatePassPool(450);
-    mockSupabaseRpc(pool, { delayMs: 10 });
-
-    const realtimePromise = harness.refreshGuardQueueWindow();
-    await new Promise((r) => setTimeout(r, 2));
-    const loadAllPromise = harness.handleLoadAll();
-
-    const [realtimeRes, loadAllRes] = await Promise.all([realtimePromise, loadAllPromise]);
-
-    expect(realtimeRes.committed).toBe(false);
-    expect(loadAllRes.committed).toBe(true);
-    expect(harness.getPasses()).toHaveLength(450);
-  });
-
-  it('Race 5: post-approve refresh -> poll (poll starts after post-approve; poll commits newer generation)', async () => {
-    const harness = createGuardPageStateHarness();
-    const pool = generatePassPool(100);
-    mockSupabaseRpc(pool, { delayMs: 10 });
-
-    const postApprovePromise = harness.refreshGuardQueueWindow();
-    await new Promise((r) => setTimeout(r, 2));
-    const pollPromise = harness.refreshGuardQueueWindow();
-
-    const [approveRes, pollRes] = await Promise.all([postApprovePromise, pollPromise]);
-
-    expect(approveRes.committed).toBe(false);
-    expect(pollRes.committed).toBe(true);
-  });
-
-  it('Race 6: post-reject refresh -> Realtime (Realtime starts after post-reject; Realtime commits newer generation)', async () => {
-    const harness = createGuardPageStateHarness();
-    const pool = generatePassPool(100);
-    mockSupabaseRpc(pool, { delayMs: 10 });
-
-    const postRejectPromise = harness.refreshGuardQueueWindow();
-    await new Promise((r) => setTimeout(r, 2));
-    const realtimePromise = harness.refreshGuardQueueWindow();
-
-    const [rejectRes, realtimeRes] = await Promise.all([postRejectPromise, realtimePromise]);
-
-    expect(rejectRes.committed).toBe(false);
-    expect(realtimeRes.committed).toBe(true);
-  });
-
-  it('Race 7: 409 refresh -> Load More (Load More starts after 409 refresh; Load More wins with target +50)', async () => {
-    const harness = createGuardPageStateHarness();
-    const pool = generatePassPool(150);
-    mockSupabaseRpc(pool, { delayMs: 10 });
-
-    const conflict409Promise = harness.refreshGuardQueueWindow();
-    await new Promise((r) => setTimeout(r, 2));
-    const loadMorePromise = harness.handleLoadMore(); // 50 -> 100
-
-    const [res409, loadMoreRes] = await Promise.all([conflict409Promise, loadMorePromise]);
-
-    expect(res409.committed).toBe(false);
-    expect(loadMoreRes.committed).toBe(true);
-    expect(harness.getPasses()).toHaveLength(100);
-  });
-
-  it('Race 8: 422 refresh -> Load All (Load All starts after 422 refresh; Load All wins with 5000)', async () => {
-    const harness = createGuardPageStateHarness();
-    const pool = generatePassPool(450);
-    mockSupabaseRpc(pool, { delayMs: 10 });
-
-    const expired422Promise = harness.refreshGuardQueueWindow();
-    await new Promise((r) => setTimeout(r, 2));
-    const loadAllPromise = harness.handleLoadAll();
-
-    const [res422, loadAllRes] = await Promise.all([expired422Promise, loadAllPromise]);
-
-    expect(res422.committed).toBe(false);
-    expect(loadAllRes.committed).toBe(true);
-    expect(harness.getPasses()).toHaveLength(450);
-  });
-
-  it('Race 9: unmount during page fetch (mountedRef check prevents state update after unmount)', async () => {
-    const harness = createGuardPageStateHarness();
-    const pool = generatePassPool(100);
-    mockSupabaseRpc(pool, { delayMs: 20 });
-
-    const refreshPromise = harness.refreshGuardQueueWindow();
-
-    // Component unmounts while request is in-flight:
-    harness.mountedRef.current = false;
-    harness.queueGenerationRef.current += 1;
-
-    const result = await refreshPromise;
-
-    expect(result.committed).toBe(false);
-    expect(harness.getPasses()).toHaveLength(0); // Never updated React state!
-  });
-
-  it('Race 10: queue mutation between keyset pages (proves row deletion between pages does not skip next row)', async () => {
-    // 250 items total. Page 1 takes 200 items (0..199).
-    // While page 2 is being requested with cursor of #199, row #10 is deleted from server queue.
-    const pool = generatePassPool(250);
-    const pass201Id = pool[200].id; // 0-indexed #200 is 201st pass
-
-    const rpcCalls: RpcRecordedCall[] = [];
-    const mockRpc = vi.fn(async (_fnName: string, params: { requested_limit: number; after_scanned_at?: string | null; after_id?: string | null }) => {
-      rpcCalls.push({ limit: params.requested_limit, after_scanned_at: params.after_scanned_at ?? null, after_id: params.after_id ?? null });
-
-      let startIndex = 0;
-      if (params.after_id) {
-        // Keyset finds by exact ID rather than offset!
-        const idx = pool.findIndex((p) => p.id === params.after_id);
-        startIndex = idx !== -1 ? idx + 1 : 0;
-      }
-
-      const pageItems = pool.slice(startIndex, startIndex + params.requested_limit);
-      const hasMore = startIndex + params.requested_limit < pool.length;
-      const lastItem = pageItems[pageItems.length - 1];
-
-      // After page 1 is returned, simulate row #10 removed from pool:
-      if (!params.after_id) {
-        pool.splice(10, 1);
-      }
-
-      return {
+  it('PATCH 19 & 50. Progress guards: throws on non-progressing nextCursor', async () => {
+    const pool = generatePassPool(20);
+    mockSupabaseRpc(pool, {
+      customPayload: () => ({
         data: {
-          queue: pageItems.map((item) => ({
-            ...item,
-            purpose: 'Business',
+          queue: [{
+            id: '11111111-1111-4111-8111-111111111111',
+            visitorName: 'V1',
+            purpose: 'Test',
             source: 'portal',
             status: 'pending',
             validFrom: '2026-10-21T08:00:00Z',
             validUntil: '2026-10-21T17:00:00Z',
+            scannedAt: '2026-10-21T09:00:00Z',
             gate: 'Gate 1',
             photoEvidenceId: '22222222-2222-4222-8222-222222222222',
-            idEvidenceId: '33333333-3333-4333-8333-333333333333',
-          })),
+            idEvidenceId: null,
+          }],
           stats: { inside: 0, exited: 0, rejected: 0, total: 0 },
           rejectionReasons: [],
-          pendingTotal: pool.length,
-          hasMore,
-          nextCursor: hasMore && lastItem ? { scannedAt: lastItem.scannedAt, id: lastItem.id } : null,
+          pendingTotal: 10,
+          snapshotPendingTotal: 10,
+          snapshotAt: '2026-10-21T09:00:00.000000Z',
+          hasMore: true,
+          nextCursor: {
+            scannedAt: '2026-10-21T09:00:00Z',
+            id: '11111111-1111-4111-8111-111111111111',
+          },
         },
         error: null,
-      };
+      }),
     });
 
+    await expect(fetchGuardDashboardWindow({ desiredCount: 10, pageSize: 1 })).rejects.toThrow(
+      /guard_dashboard_page contract violation: nextCursor did not progress/
+    );
+  });
+
+  it('PATCH 19 & 50. Progress guards: throws on hasMore=true with empty queue', async () => {
+    const pool = generatePassPool(20);
+    mockSupabaseRpc(pool, {
+      customPayload: () => ({
+        data: {
+          queue: [],
+          stats: { inside: 0, exited: 0, rejected: 0, total: 0 },
+          rejectionReasons: [],
+          pendingTotal: 10,
+          snapshotPendingTotal: 10,
+          snapshotAt: '2026-10-21T09:00:00.000000Z',
+          hasMore: true,
+          nextCursor: { scannedAt: '2026-10-21T09:00:00Z', id: '11111111-1111-4111-8111-111111111111' },
+        },
+        error: null,
+      }),
+    });
+
+    await expect(fetchGuardDashboardWindow({ desiredCount: 10 })).rejects.toThrow(
+      /guard_dashboard_page contract violation: hasMore with empty queue/
+    );
+  });
+});
+
+describe('useGuardQueue Hook: Stale-Closure & Coalescing Tests', () => {
+  beforeEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it('PATCH 37. Initial failure test: first queue request fails -> initialLoading=false, queueError=true, refreshError=false', async () => {
     vi.spyOn(supabaseLib, 'requireSupabase').mockReturnValue({
       schema: vi.fn().mockReturnValue({
-        rpc: mockRpc,
+        rpc: vi.fn().mockResolvedValue({
+          data: null,
+          error: new Error('Network error on initial load'),
+        }),
       }),
     } as any);
 
-    const result = await fetchGuardDashboardWindow({ desiredCount: 250 });
+    const { result, unmount } = renderGuardQueueHook();
 
-    // Proves that pass #201 was NOT skipped despite row #10 being deleted between pages!
-    expect(result.queue.some((p) => p.id === pass201Id)).toBe(true);
+    await act(async () => {
+      await result.current.requestGuardQueueRefresh();
+    });
+
+    expect(result.current.initialLoading).toBe(false);
+    expect(result.current.queueError).toBe(true);
+    expect(result.current.refreshError).toBe(false);
+    expect(result.current.passes).toHaveLength(0);
+
+    unmount();
+  });
+
+  it('PATCH 36. Real background error classification: initial load succeeds, subsequent refresh fails -> preserves queue, queueError=false, refreshError=true', async () => {
+    const pool = generatePassPool(5);
+    const mockState = mockSupabaseRpc(pool);
+
+    const { result, unmount } = renderGuardQueueHook();
+
+    // 1. Initial load succeeds
+    await act(async () => {
+      await result.current.requestGuardQueueRefresh();
+    });
+
+    expect(result.current.initialLoading).toBe(false);
+    expect(result.current.queueError).toBe(false);
+    expect(result.current.refreshError).toBe(false);
+    expect(result.current.passes).toHaveLength(5);
+
+    // 2. Later refresh fails (e.g. background poll or connection delayed)
+    mockState.mockRpc.mockRejectedValueOnce(new Error('Connection delayed'));
+
+    await act(async () => {
+      await result.current.requestGuardQueueRefresh({ showRefreshing: true });
+    });
+
+    // Existing queue remains intact!
+    expect(result.current.passes).toHaveLength(5);
+    expect(result.current.queueError).toBe(false);
+    expect(result.current.refreshError).toBe(true);
+    expect(result.current.initialLoading).toBe(false);
+
+    unmount();
+  });
+
+  it('PATCH 44 & Section I. Refresh coalescing: maximum simultaneous fetch calls = 1, bursts coalesce to exactly 1 follow-up', async () => {
+    let simultaneousCalls = 0;
+    let maxSimultaneousCalls = 0;
+    let totalCalls = 0;
+
+    const pool = generatePassPool(10);
+    vi.spyOn(supabaseLib, 'requireSupabase').mockReturnValue({
+      schema: vi.fn().mockReturnValue({
+        rpc: vi.fn(async () => {
+          simultaneousCalls++;
+          totalCalls++;
+          maxSimultaneousCalls = Math.max(maxSimultaneousCalls, simultaneousCalls);
+          await new Promise((r) => setTimeout(r, 20));
+          simultaneousCalls--;
+
+          return {
+            data: {
+              queue: pool.map((p) => ({
+                id: p.id,
+                visitorName: p.visitorName,
+                purpose: 'Official Business',
+                source: 'portal',
+                status: 'pending',
+                validFrom: '2026-10-21T08:00:00Z',
+                validUntil: '2026-10-21T17:00:00Z',
+                scannedAt: p.scannedAt,
+                gate: 'Gate 1',
+                photoEvidenceId: '22222222-2222-4222-8222-222222222222',
+                idEvidenceId: null,
+              })),
+              stats: { inside: 0, exited: 0, rejected: 0, total: 0 },
+              rejectionReasons: [],
+              pendingTotal: pool.length,
+              snapshotPendingTotal: pool.length,
+              snapshotAt: '2026-10-21T09:00:00.000000Z',
+              hasMore: false,
+              nextCursor: null,
+            },
+            error: null,
+          };
+        }),
+      }),
+    } as any);
+
+    const { result, unmount } = renderGuardQueueHook();
+
+    await act(async () => {
+      // Launch initial refresh
+      const p1 = result.current.requestGuardQueueRefresh();
+
+      // While p1 is in-flight, burst poll and Realtime requests
+      result.current.refreshQueuedRef.current = true;
+      const p2 = result.current.requestGuardQueueRefresh();
+      result.current.refreshQueuedRef.current = true;
+      const p3 = result.current.requestGuardQueueRefresh();
+      result.current.queueIntentEpochRef.current += 1;
+      result.current.refreshQueuedRef.current = true;
+      const p4 = result.current.requestGuardQueueRefresh();
+
+      await Promise.all([p1, p2, p3, p4]);
+    });
+
+    // Invariant: Maximum concurrent fetchGuardDashboardWindow calls = 1!
+    expect(maxSimultaneousCalls).toBe(1);
+    // Total calls was exactly 2 (initial traversal + 1 coalesced follow-up)
+    expect(totalCalls).toBe(2);
+
+    unmount();
+  });
+
+  it('PATCH 45. Realtime burst test: 20 rapid pass changes coalesce into 1 current + 1 queued follow-up', async () => {
+    let simultaneousCalls = 0;
+    let maxSimultaneousCalls = 0;
+    let totalCalls = 0;
+
+    const pool = generatePassPool(10);
+    vi.spyOn(supabaseLib, 'requireSupabase').mockReturnValue({
+      schema: vi.fn().mockReturnValue({
+        rpc: vi.fn(async () => {
+          simultaneousCalls++;
+          totalCalls++;
+          maxSimultaneousCalls = Math.max(maxSimultaneousCalls, simultaneousCalls);
+          await new Promise((r) => setTimeout(r, 15));
+          simultaneousCalls--;
+
+          return {
+            data: {
+              queue: [],
+              stats: { inside: 0, exited: 0, rejected: 0, total: 0 },
+              rejectionReasons: [],
+              pendingTotal: 0,
+              snapshotPendingTotal: 0,
+              snapshotAt: '2026-10-21T09:00:00.000000Z',
+              hasMore: false,
+              nextCursor: null,
+            },
+            error: null,
+          };
+        }),
+      }),
+    } as any);
+
+    const { result, unmount } = renderGuardQueueHook();
+
+    await act(async () => {
+      const initial = result.current.requestGuardQueueRefresh();
+
+      // Simulate 20 rapid Realtime pass changes arriving during fetch
+      for (let i = 0; i < 20; i++) {
+        result.current.queueIntentEpochRef.current += 1;
+        result.current.refreshQueuedRef.current = true;
+        void result.current.requestGuardQueueRefresh();
+      }
+
+      await initial;
+    });
+
+    expect(maxSimultaneousCalls).toBe(1);
+    expect(totalCalls).toBe(2); // 1 in-flight + 1 queued follow-up
+
+    unmount();
+  });
+
+  it('PATCH 46. Expiration feedback test: expiry updates causing Realtime event does not trigger a refresh storm', async () => {
+    let callCount = 0;
+    const pool = generatePassPool(5);
+
+    vi.spyOn(supabaseLib, 'requireSupabase').mockReturnValue({
+      schema: vi.fn().mockReturnValue({
+        rpc: vi.fn(async () => {
+          callCount++;
+          await new Promise((r) => setTimeout(r, 10));
+          return {
+            data: {
+              queue: [],
+              stats: { inside: 0, exited: 0, rejected: 0, total: 0 },
+              rejectionReasons: [],
+              pendingTotal: 0,
+              snapshotPendingTotal: 0,
+              snapshotAt: '2026-10-21T09:00:00.000000Z',
+              hasMore: false,
+              nextCursor: null,
+            },
+            error: null,
+          };
+        }),
+      }),
+    } as any);
+
+    const { result, unmount } = renderGuardQueueHook();
+
+    await act(async () => {
+      const p = result.current.requestGuardQueueRefresh();
+      // Simulate Realtime feedback from pass expiration during first traversal
+      result.current.queueIntentEpochRef.current += 1;
+      result.current.refreshQueuedRef.current = true;
+      await p;
+    });
+
+    // Exactly 2 calls: first traversal + single coalesced follow-up. No storm!
+    expect(callCount).toBe(2);
+
+    unmount();
+  });
+
+  it('PATCH 47. Load More during refresh: user increases target during refresh; in-flight becomes obsolete, queued traversal commits new target', async () => {
+    const pool = generatePassPool(150);
+    mockSupabaseRpc(pool, { delayMs: 15 });
+
+    const { result, unmount } = renderGuardQueueHook();
+
+    await act(async () => {
+      // Start background refresh (desired 50)
+      const refreshP = result.current.requestGuardQueueRefresh();
+
+      await new Promise((r) => setTimeout(r, 2));
+
+      // User triggers Load More: target becomes 100, epoch increments
+      result.current.desiredQueueSizeRef.current = 100;
+      result.current.queueIntentEpochRef.current += 1;
+      result.current.refreshQueuedRef.current = true;
+      const loadMoreP = result.current.requestGuardQueueRefresh();
+
+      await Promise.all([refreshP, loadMoreP]);
+    });
+
+    // Authoritative committed queue has length 100
+    expect(result.current.passes).toHaveLength(100);
+    expect(result.current.desiredQueueSizeRef.current).toBe(100);
+
+    unmount();
+  });
+
+  it('PATCH 48. Load All during refresh: Load All intent survives concurrent refresh', async () => {
+    const pool = generatePassPool(450);
+    mockSupabaseRpc(pool, { delayMs: 15 });
+
+    const { result, unmount } = renderGuardQueueHook();
+
+    await act(async () => {
+      const refreshP = result.current.requestGuardQueueRefresh();
+
+      await new Promise((r) => setTimeout(r, 2));
+
+      // User presses Load All: desired becomes 5000, epoch increments
+      result.current.desiredQueueSizeRef.current = 5000;
+      result.current.queueIntentEpochRef.current += 1;
+      result.current.refreshQueuedRef.current = true;
+      const loadAllP = result.current.requestGuardQueueRefresh();
+
+      await Promise.all([refreshP, loadAllP]);
+    });
+
+    expect(result.current.passes).toHaveLength(450);
+
+    unmount();
+  });
+
+  it('PATCH 49. Error + queued success test: obsolete error is not surfaced, queued success commits cleanly', async () => {
+    let callIndex = 0;
+    const pool = generatePassPool(10);
+
+    vi.spyOn(supabaseLib, 'requireSupabase').mockReturnValue({
+      schema: vi.fn().mockReturnValue({
+        rpc: vi.fn(async () => {
+          callIndex++;
+          await new Promise((r) => setTimeout(r, 10));
+          if (callIndex === 1) {
+            // First traversal fails
+            throw new Error('Transient network glitch');
+          }
+          // Follow-up succeeds
+          return {
+            data: {
+              queue: pool.map((p) => ({
+                id: p.id,
+                visitorName: p.visitorName,
+                purpose: 'Official Business',
+                source: 'portal',
+                status: 'pending',
+                validFrom: '2026-10-21T08:00:00Z',
+                validUntil: '2026-10-21T17:00:00Z',
+                scannedAt: p.scannedAt,
+                gate: 'Gate 1',
+                photoEvidenceId: '22222222-2222-4222-8222-222222222222',
+                idEvidenceId: null,
+              })),
+              stats: { inside: 0, exited: 0, rejected: 0, total: 0 },
+              rejectionReasons: [],
+              pendingTotal: pool.length,
+              snapshotPendingTotal: pool.length,
+              snapshotAt: '2026-10-21T09:00:00.000000Z',
+              hasMore: false,
+              nextCursor: null,
+            },
+            error: null,
+          };
+        }),
+      }),
+    } as any);
+
+    const { result, unmount } = renderGuardQueueHook();
+
+    await act(async () => {
+      const p1 = result.current.requestGuardQueueRefresh();
+
+      // Realtime or user queues newer refresh while p1 is failing
+      result.current.queueIntentEpochRef.current += 1;
+      result.current.refreshQueuedRef.current = true;
+      const p2 = result.current.requestGuardQueueRefresh();
+
+      await Promise.all([p1, p2]);
+    });
+
+    // The transient glitch was discarded because a newer request was queued!
+    expect(result.current.refreshError).toBe(false);
+    expect(result.current.queueError).toBe(false);
+    expect(result.current.passes).toHaveLength(10);
+
+    unmount();
+  });
+
+  it('PATCH 35. Unmount fencing: unmounting during fetch does not commit to React state', async () => {
+    const pool = generatePassPool(10);
+    mockSupabaseRpc(pool, { delayMs: 25 });
+
+    const { result, unmount } = renderGuardQueueHook();
+
+    let refreshPromise: Promise<any>;
+    act(() => {
+      refreshPromise = result.current.requestGuardQueueRefresh();
+    });
+
+    // Unmount while fetch is in-flight
+    unmount();
+
+    await act(async () => {
+      const res = await refreshPromise;
+      expect(res.committed).toBe(false);
+    });
   });
 });

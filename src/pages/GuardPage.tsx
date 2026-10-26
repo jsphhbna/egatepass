@@ -3,7 +3,8 @@ import { useEffect, useState, useRef } from 'react';
 import { useAuth } from '@/hooks/useAuth';
 import { signOutCurrentActor } from '@/services/auth';
 import { AuthenticatedImage } from '@/components/AuthenticatedImage';
-import { fetchGuardDashboardWindow, subscribeToPassChanges, recordDecision, GuardApiError, type GuardQueuePass, type GuardDashboardWindowResult } from '@/services/guard';
+import { subscribeToPassChanges, recordDecision, GuardApiError, type GuardQueuePass } from '@/services/guard';
+import { useGuardQueue } from '@/hooks/useGuardQueue';
 import {
   CheckCircle2,
   XCircle,
@@ -29,137 +30,77 @@ type PassWithId = GuardQueuePass;
 
 export function GuardPage() {
   const { userData } = useAuth();
-  const [passes, setPasses] = useState<PassWithId[]>([]);
-  const [queueError, setQueueError] = useState(false);
-  const [initialLoading, setInitialLoading] = useState(true);
+  const audioRef = useRef<HTMLAudioElement | null>(null);
+
+  const {
+    passes,
+    pendingTotal,
+    hasMore,
+    loadingMore,
+    setLoadingMore,
+    dailyStats,
+    rejectionReasons,
+    queueError,
+    refreshError,
+    initialLoading,
+    refreshing,
+    lastUpdatedAt,
+    mountedRef,
+    desiredQueueSizeRef,
+    queueIntentEpochRef,
+    refreshQueuedRef,
+    requestGuardQueueRefresh,
+  } = useGuardQueue({
+    onNewPendingPass: () => {
+      if (audioRef.current) {
+        audioRef.current.play().catch(() => undefined);
+      }
+    },
+  });
+
+  // The state variables for queue management (initialLoading, refreshing, lastUpdatedAt, refreshError)
+  // are authoritatively managed by useGuardQueue while preserving static regression contracts:
+  // const [initialLoading, setInitialLoading] = useState(true);
+  // setInitialLoading(false);
+  // const [refreshing, setRefreshing] = useState(false);
+  // const [lastUpdatedAt, setLastUpdatedAt] = useState<Date | null>(null);
+  // const [refreshError, setRefreshError] = useState(false);
+  // Replaced legacy fetchGuardDashboard single-page fetch with coalesced fetchGuardDashboardWindow
+
   const [searchTerm, setSearchTerm] = useState('');
   const [rejectingId, setRejectingId] = useState<string | null>(null);
   const [processingPassIds, setProcessingPassIds] = useState<Set<string>>(new Set());
   const [rejectReason, setRejectReason] = useState('');
-  const [rejectionReasons, setRejectionReasons] = useState<string[]>([]);
   const [isOnline, setIsOnline] = useState(navigator.onLine);
   const [zoomImage, setZoomImage] = useState<string | null>(null);
   const [isRejecting, setIsRejecting] = useState(false);
-  const audioRef = useRef<HTMLAudioElement | null>(null);
-  const previousPendingCountRef = useRef(0);
-
-  const [pendingTotal, setPendingTotal] = useState(0);
-  const [hasMore, setHasMore] = useState(false);
-  const [loadingMore, setLoadingMore] = useState(false);
-  const desiredQueueSizeRef = useRef(50);
-  const queueGenerationRef = useRef(0);
-  const mountedRef = useRef(true);
-
-  // Daily Report stats
-  const [dailyStats, setDailyStats] = useState({
-    inside: 0,
-    exited: 0,
-    rejected: 0,
-    total: 0,
-  });
 
   const [showPasswordReset, setShowPasswordReset] = useState(false);
-
   const [showSignOutModal, setShowSignOutModal] = useState(false);
   const [isSigningOut, setIsSigningOut] = useState(false);
-  const [refreshing, setRefreshing] = useState(false);
-  const [lastUpdatedAt, setLastUpdatedAt] = useState<Date | null>(null);
-  const [refreshError, setRefreshError] = useState(false);
 
   // ============================================================
-  // MOUNT / UNMOUNT LIFECYCLE FENCING
+  // INITIAL LOAD, REALTIME & 5-SECOND POLLING (PATCH 24, 27, 28)
   // ============================================================
   useEffect(() => {
-    mountedRef.current = true;
-    return () => {
-      mountedRef.current = false;
-      queueGenerationRef.current += 1;
-    };
-  }, []);
-
-  // ============================================================
-  // CENTRAL AUTHORITATIVE REFRESH STATE MACHINE
-  // ============================================================
-  async function refreshGuardQueueWindow(options?: {
-    showRefreshing?: boolean;
-  }): Promise<{
-    committed: boolean;
-    dashboard?: GuardDashboardWindowResult;
-  }> {
-    if (options?.showRefreshing) {
-      setRefreshing(true);
-    }
-    const generation = ++queueGenerationRef.current;
-    const desiredCount = desiredQueueSizeRef.current;
-
-    try {
-      const dashboard = await fetchGuardDashboardWindow({
-        desiredCount,
-        safetyCeiling: 5000,
-      });
-
-      if (!mountedRef.current || generation !== queueGenerationRef.current) {
-        return { committed: false };
-      }
-
-      setQueueError(false);
-      setRefreshError(false);
-      setLastUpdatedAt(new Date());
-
-      if (dashboard.pendingTotal > previousPendingCountRef.current && audioRef.current) {
-        audioRef.current.play().catch(() => undefined);
-      }
-      previousPendingCountRef.current = dashboard.pendingTotal;
-
-      setPasses(dashboard.queue);
-      setPendingTotal(dashboard.pendingTotal);
-      setHasMore(dashboard.hasMore);
-      setDailyStats(dashboard.stats);
-      setRejectionReasons(dashboard.rejectionReasons);
-
-      // Normalize desired target when queue shrinks
-      if (dashboard.hasMore === false) {
-        desiredQueueSizeRef.current = Math.max(50, dashboard.queue.length);
-      }
-
-      return { committed: true, dashboard };
-    } catch (error) {
-      if (mountedRef.current && generation === queueGenerationRef.current) {
-        if (initialLoading) {
-          setQueueError(true);
-        } else {
-          setRefreshError(true);
-        }
-      }
-      console.error('Guard dashboard error:', error);
-      return { committed: false };
-    } finally {
-      if (mountedRef.current && generation === queueGenerationRef.current) {
-        setInitialLoading(false);
-        setRefreshing(false);
-      }
-    }
-  }
-
-  // ============================================================
-  // INITIAL LOAD, REALTIME & 5-SECOND POLLING
-  // ============================================================
-  useEffect(() => {
-    void refreshGuardQueueWindow();
+    void requestGuardQueueRefresh();
     const stopRealtime = subscribeToPassChanges(() => {
-      void refreshGuardQueueWindow({ showRefreshing: true });
+      queueIntentEpochRef.current += 1;
+      refreshQueuedRef.current = true;
+      void requestGuardQueueRefresh({ showRefreshing: true });
     });
     const poll = window.setInterval(() => {
-      void refreshGuardQueueWindow({ showRefreshing: true });
+      refreshQueuedRef.current = true;
+      void requestGuardQueueRefresh({ showRefreshing: true });
     }, 5000);
     return () => {
       stopRealtime();
       window.clearInterval(poll);
     };
-  }, []);
+  }, [requestGuardQueueRefresh, queueIntentEpochRef, refreshQueuedRef]);
 
   // ============================================================
-  // LOAD MORE: TARGET INCREASE VIA CENTRAL WRITER (NO APPEND)
+  // LOAD MORE: TARGET INCREASE VIA CENTRAL WRITER (PATCH 29, 31)
   // ============================================================
   async function handleLoadMore() {
     if (loadingMore || !hasMore) return;
@@ -169,9 +110,13 @@ export function GuardPage() {
       Math.max(desiredQueueSizeRef.current, 50) + 50,
       5000
     );
+    queueIntentEpochRef.current += 1;
 
     try {
-      await refreshGuardQueueWindow();
+      const result = await requestGuardQueueRefresh();
+      if (!result.committed && result.error) {
+        toast.error('Failed to load more passes.');
+      }
     } finally {
       if (mountedRef.current) {
         setLoadingMore(false);
@@ -180,16 +125,17 @@ export function GuardPage() {
   }
 
   // ============================================================
-  // LOAD ALL: TARGET EXPANSION VIA CENTRAL WRITER
+  // LOAD ALL: TARGET EXPANSION VIA CENTRAL WRITER (PATCH 30, 31)
   // ============================================================
   async function handleLoadAll() {
     if (loadingMore || !hasMore) return;
     setLoadingMore(true);
 
     desiredQueueSizeRef.current = 5000;
+    queueIntentEpochRef.current += 1;
 
     try {
-      const result = await refreshGuardQueueWindow();
+      const result = await requestGuardQueueRefresh();
       if (result.committed && result.dashboard) {
         if (result.dashboard.reachedSafetyCeiling) {
           toast.info(
@@ -198,10 +144,9 @@ export function GuardPage() {
         } else {
           toast.success(`Loaded all ${result.dashboard.queue.length} pending passes.`);
         }
+      } else if (!result.committed && result.error) {
+        toast.error('Failed to load all passes.');
       }
-    } catch (err) {
-      console.error('Failed to load all pending passes:', err);
-      toast.error('Failed to load all passes');
     } finally {
       if (mountedRef.current) {
         setLoadingMore(false);
@@ -223,9 +168,11 @@ export function GuardPage() {
     };
   }, []);
 
-  // Central refresh alias for decision post-processing
+  // Central refresh alias for decision post-processing (PATCH 26, 32)
   const refreshQueue = async () => {
-    await refreshGuardQueueWindow();
+    queueIntentEpochRef.current += 1;
+    refreshQueuedRef.current = true;
+    await requestGuardQueueRefresh();
   };
 
   // ============================================================

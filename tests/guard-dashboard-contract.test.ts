@@ -240,6 +240,8 @@ describe('Guard Dashboard Page Keyset Contract (fetchGuardDashboardPage)', () =>
     },
     rejectionReasons: ['Expired Pass', 'No Valid ID'],
     pendingTotal: 10,
+    snapshotPendingTotal: 10,
+    snapshotAt: '2026-10-21T09:00:00.000000Z',
     hasMore: true,
     nextCursor: {
       scannedAt: '2026-10-21T09:00:00Z',
@@ -260,18 +262,20 @@ describe('Guard Dashboard Page Keyset Contract (fetchGuardDashboardPage)', () =>
     return mockRpc;
   }
 
-  it('1. Maps canonical guard_dashboard_page payload to GuardDashboardPageData with cursor', async () => {
+  it('1. Maps canonical guard_dashboard_page payload to GuardDashboardPageData with cursor and snapshot', async () => {
     const mockRpc = mockRpcReturn(validPagePayload);
 
     const result = await fetchGuardDashboardPage({
       limit: 50,
       cursor: { scannedAt: '2026-10-21T08:30:00Z', id: '00000000-0000-4000-8000-000000000001' },
+      snapshotAt: '2026-10-21T08:30:00.000000Z',
     });
 
     expect(mockRpc).toHaveBeenCalledWith('guard_dashboard_page', {
       requested_limit: 50,
       after_scanned_at: '2026-10-21T08:30:00Z',
       after_id: '00000000-0000-4000-8000-000000000001',
+      queue_snapshot_at: '2026-10-21T08:30:00.000000Z',
     });
 
     expect(result.queue).toHaveLength(1);
@@ -283,6 +287,8 @@ describe('Guard Dashboard Page Keyset Contract (fetchGuardDashboardPage)', () =>
       id: '11111111-1111-4111-8111-111111111111',
     });
     expect(result.pendingTotal).toBe(10);
+    expect(result.snapshotPendingTotal).toBe(10);
+    expect(result.snapshotAt).toBe('2026-10-21T09:00:00.000000Z');
   });
 
   it('2. Accepts nextCursor: null when hasMore: false', async () => {
@@ -307,6 +313,7 @@ describe('Guard Dashboard Page Keyset Contract (fetchGuardDashboardPage)', () =>
       requested_limit: 200,
       after_scanned_at: null,
       after_id: null,
+      queue_snapshot_at: null,
     });
   });
 
@@ -332,6 +339,30 @@ describe('Guard Dashboard Page Keyset Contract (fetchGuardDashboardPage)', () =>
 
     await expect(fetchGuardDashboardPage()).rejects.toThrow(
       /api.guard_dashboard_page contract violation: queue.0.photoEvidenceId/
+    );
+  });
+
+  it('6. Accepts null scannedAt end-to-end (PATCH 12 & 38)', async () => {
+    const nullScannedItem = {
+      ...validPageItem,
+      scannedAt: null,
+    };
+    mockRpcReturn({
+      ...validPagePayload,
+      queue: [nullScannedItem],
+    });
+
+    const result = await fetchGuardDashboardPage();
+    expect(result.queue[0].scannedAt).toBeNull();
+  });
+
+  it('7. Rejects payload when snapshotPendingTotal or snapshotAt is missing (PATCH 11)', async () => {
+    const missingSnapshot: any = { ...validPagePayload };
+    delete missingSnapshot.snapshotPendingTotal;
+    mockRpcReturn(missingSnapshot);
+
+    await expect(fetchGuardDashboardPage()).rejects.toThrow(
+      /api.guard_dashboard_page contract violation: snapshotPendingTotal/
     );
   });
 });
