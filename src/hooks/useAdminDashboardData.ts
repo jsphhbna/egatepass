@@ -89,6 +89,9 @@ const initialSnapshot: DashboardDataSnapshot = {
 let currentSnapshot = initialSnapshot;
 let pollTimer: ReturnType<typeof setInterval> | null = null;
 let activeFetchController: AbortController | null = null;
+let isFetching = false;
+let queuedFollowUp = false;
+let latestIntent = 0;
 const subscribers = new Set<() => void>();
 
 function deserializePass(p: SerializedPass): GatePass {
@@ -119,9 +122,15 @@ function emitChange() {
 }
 
 async function fetchDashboardData(isManualRetry = false) {
-  if (activeFetchController) {
-    activeFetchController.abort();
+  if (isFetching) {
+    if (isManualRetry) {
+      queuedFollowUp = true;
+    }
+    return;
   }
+
+  isFetching = true;
+  const currentIntent = ++latestIntent;
   const controller = new AbortController();
   activeFetchController = controller;
 
@@ -145,6 +154,9 @@ async function fetchDashboardData(isManualRetry = false) {
     });
 
     const data = await response.json().catch(() => null) as DashboardApiResponse | null;
+    if (controller.signal.aborted || currentIntent !== latestIntent) {
+      return;
+    }
     if (!response.ok) {
       throw new Error(data?.error || 'Failed to load dashboard data');
     }
@@ -167,7 +179,7 @@ async function fetchDashboardData(isManualRetry = false) {
     };
     emitChange();
   } catch (error) {
-    if (!controller.signal.aborted) {
+    if (!controller.signal.aborted && currentIntent === latestIntent) {
       console.error('Dashboard data fetch error:', error);
       const errorMessage = error instanceof Error ? error.message : 'The dashboard could not load visitor data.';
 
@@ -200,6 +212,11 @@ async function fetchDashboardData(isManualRetry = false) {
     if (activeFetchController === controller) {
       activeFetchController = null;
     }
+    isFetching = false;
+    if (queuedFollowUp && subscribers.size > 0) {
+      queuedFollowUp = false;
+      void fetchDashboardData(true);
+    }
   }
 }
 
@@ -223,6 +240,8 @@ function subscribe(callback: () => void) {
         activeFetchController.abort();
         activeFetchController = null;
       }
+      isFetching = false;
+      queuedFollowUp = false;
       currentSnapshot = initialSnapshot;
     }
   };

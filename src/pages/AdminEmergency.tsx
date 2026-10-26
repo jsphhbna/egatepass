@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { getAccessToken } from '@/services/auth';
 import { formatManilaDateTime, formatManilaTime } from '@/lib/manilaTime';
 import { Button, Card, Input, Select, DataTable, DataTableHead, DataTableRow, DataTableCell, StatusBadge } from '@/components/ui';
@@ -29,15 +29,35 @@ export function AdminEmergency() {
   const [gateFilter, setGateFilter] = useState('');
   const [search, setSearch] = useState('');
   const [isTruncated, setIsTruncated] = useState(false);
+  const [snapshotTotal, setSnapshotTotal] = useState(0);
+  const [snapshotAt, setSnapshotAt] = useState<string | null>(null);
+  const [printMode, setPrintMode] = useState<'full' | 'filtered'>('full');
+
+  // Serialization and lifecycle fencing refs
+  const hasLoadedOnceRef = useRef(false);
+  const isFetchingRef = useRef(false);
+  const queuedFollowUpRef = useRef(false);
+  const latestIntentRef = useRef(0);
+  const mountedRef = useRef(true);
 
   // Extract unique gates from passes
   const currentPasses = passes ?? [];
   const gates = Array.from(new Set(currentPasses.map((p) => p.gate).filter(Boolean))) as string[];
 
-  async function loadEmergencyPasses(isManualRetry = false) {
+  const loadEmergencyPasses = useCallback(async (isManualRetry = false) => {
+    if (isFetchingRef.current) {
+      if (isManualRetry) {
+        queuedFollowUpRef.current = true;
+      }
+      return;
+    }
+
+    isFetchingRef.current = true;
+    const intentId = ++latestIntentRef.current;
+
     if (isManualRetry) {
       setIsRetrying(true);
-    } else if (passes === null) {
+    } else if (!hasLoadedOnceRef.current) {
       setInitialLoading(true);
       setInitialError(null);
     } else {
@@ -49,42 +69,76 @@ export function AdminEmergency() {
       const response = await fetch('/api/admin/emergency', {
         headers: { Authorization: `Bearer ${token}` },
       });
-      const data = await response.json().catch(() => null) as { passes?: EmergencyEvacuationPass[]; truncated?: boolean; error?: string } | null;
-      if (!response.ok) throw new Error(data?.error || 'Failed to load evacuation list');
+      const data = await response.json().catch(() => null) as {
+        passes?: EmergencyEvacuationPass[];
+        total?: number;
+        snapshotTotal?: number;
+        snapshotAt?: string;
+        truncated?: boolean;
+        error?: string;
+      } | null;
+
+      if (!mountedRef.current || intentId !== latestIntentRef.current) {
+        return;
+      }
+
+      if (!response.ok) {
+        throw new Error(data?.error || 'Failed to load evacuation list');
+      }
 
       setPasses(data?.passes ?? []);
+      setSnapshotTotal(data?.snapshotTotal ?? (data?.passes?.length ?? 0));
+      setSnapshotAt(data?.snapshotAt ?? null);
       setIsTruncated(Boolean(data?.truncated));
       setLastUpdatedAt(new Date());
+      hasLoadedOnceRef.current = true;
       setInitialError(null);
       setRefreshError(null);
     } catch (err) {
+      if (!mountedRef.current || intentId !== latestIntentRef.current) {
+        return;
+      }
       const msg = err instanceof Error ? err.message : 'Failed to load evacuation list';
-      if (passes === null) {
+      if (!hasLoadedOnceRef.current) {
         setInitialError(msg);
       } else {
         setRefreshError(msg);
       }
       console.error('Emergency load error:', err);
     } finally {
-      setInitialLoading(false);
-      setRefreshing(false);
-      setIsRetrying(false);
+      if (mountedRef.current && intentId === latestIntentRef.current) {
+        setInitialLoading(false);
+        setRefreshing(false);
+        setIsRetrying(false);
+      }
+      isFetchingRef.current = false;
+      if (queuedFollowUpRef.current && mountedRef.current) {
+        queuedFollowUpRef.current = false;
+        void loadEmergencyPasses(true);
+      }
     }
-  }
+  }, []);
 
   useEffect(() => {
+    mountedRef.current = true;
     void loadEmergencyPasses();
     const timer = setInterval(() => {
       void loadEmergencyPasses();
     }, 15_000);
-    return () => clearInterval(timer);
-  }, []);
+    return () => {
+      mountedRef.current = false;
+      clearInterval(timer);
+    };
+  }, [loadEmergencyPasses]);
 
   const filteredPasses = currentPasses.filter((p) => {
     if (gateFilter && p.gate !== gateFilter) return false;
     if (search && !(p.visitorName ?? '').toLowerCase().includes(search.toLowerCase())) return false;
     return true;
   });
+
+  const hasActiveFilters = Boolean(search.trim() || gateFilter);
+  const printPasses = printMode === 'filtered' ? filteredPasses : currentPasses;
 
   if (initialError && passes === null) {
     return (
@@ -136,13 +190,30 @@ export function AdminEmergency() {
             ) : null}
           </div>
         </div>
-        <Button
-          onClick={() => window.print()}
-          variant="secondary"
-          icon={<Printer className="h-4 w-4" />}
-        >
-          Print Roll Call
-        </Button>
+        <div className="flex items-center gap-2">
+          {hasActiveFilters && (
+            <Button
+              onClick={() => {
+                setPrintMode('filtered');
+                setTimeout(() => window.print(), 20);
+              }}
+              variant="ghost"
+              icon={<Printer className="h-4 w-4" />}
+            >
+              Print Filtered View
+            </Button>
+          )}
+          <Button
+            onClick={() => {
+              setPrintMode('full');
+              setTimeout(() => window.print(), 20);
+            }}
+            variant="secondary"
+            icon={<Printer className="h-4 w-4" />}
+          >
+            Print Roll Call
+          </Button>
+        </div>
       </div>
 
       {/* Screen Incompleteness Alert Banner (C-02) */}
@@ -174,23 +245,32 @@ export function AdminEmergency() {
 
       {/* Print Header (Visible only in print) */}
       <div className="hidden print:block mb-4">
-        <h1 className="text-2xl font-bold text-black mb-1">EARIST Emergency Roll Call</h1>
+        <h1 className="text-2xl font-bold text-black mb-1">
+          {printMode === 'filtered' ? 'EARIST Emergency Roll Call (FILTERED VIEW)' : 'EARIST Emergency Roll Call'}
+        </h1>
         <p className="text-sm font-medium text-black">
-          Generated: {formatManilaDateTime(new Date(), { month: 'short', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit', second: '2-digit', hour12: true })} (Asia/Manila)
+          Snapshot Generated: {snapshotAt ? formatManilaDateTime(new Date(snapshotAt), { month: 'short', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit', second: '2-digit', hour12: true }) : formatManilaDateTime(new Date(), { month: 'short', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit', second: '2-digit', hour12: true })} (Asia/Manila)
         </p>
         <p className="text-sm font-medium text-black">
-          Total Visitors Listed Inside: {filteredPasses.length}
+          {printMode === 'filtered'
+            ? `FILTERED ROLL CALL: ${filteredPasses.length} of ${currentPasses.length} visitors shown (Snapshot total: ${snapshotTotal})`
+            : `Total Visitors Listed Inside: ${currentPasses.length} / ${snapshotTotal} snapshot total`}
         </p>
+        {printMode === 'filtered' && (
+          <p className="text-xs font-bold text-black mt-1">
+            Active Filters: {search ? `Search="${search}" ` : ''}{gateFilter ? `Gate="${gateFilter}"` : ''}
+          </p>
+        )}
       </div>
 
       {/* Print Incompleteness Warning Banner (Visible only in print) */}
       {isTruncated && (
         <div className="hidden print:block border-4 border-black p-3 mb-4 text-black bg-white">
           <p className="font-extrabold text-base uppercase tracking-wider">
-            *** CRITICAL WARNING: EVACUATION LIST INCOMPLETE / TRUNCATED ***
+            *** CRITICAL — ROSTER INCOMPLETE / TRUNCATED ***
           </p>
           <p className="text-xs font-bold mt-1">
-            Safety ceiling of 10,000 records reached. Do NOT assume all visitors are listed. Reconcile with manual gate logs immediately.
+            Safety ceiling of 10,000 records reached. Showing {currentPasses.length} of {snapshotTotal} inside visitors. Do NOT assume all visitors are listed. Reconcile with manual gate logs immediately.
           </p>
         </div>
       )}
@@ -199,7 +279,7 @@ export function AdminEmergency() {
       {refreshError && (
         <div className="hidden print:block border-4 border-black p-3 mb-4 text-black bg-white">
           <p className="font-extrabold text-base uppercase tracking-wider">
-            *** CRITICAL WARNING: DATA REFRESH FAILED — ROSTER MAY BE STALE ***
+            *** CRITICAL — DATA REFRESH FAILED / ROSTER MAY BE STALE ***
           </p>
           <p className="text-xs font-bold mt-1">
             {lastUpdatedAt
@@ -236,8 +316,53 @@ export function AdminEmergency() {
         </div>
       </Card>
 
-      {/* Table */}
-      <div className="print:border-none print:shadow-none print:m-0 print:p-0">
+      {/* Screen Table (Hidden when printing) */}
+      <div className="print:hidden">
+        <DataTable>
+          <DataTableHead>
+            <DataTableRow>
+              <DataTableCell isHeader>Visitor Name</DataTableCell>
+              <DataTableCell isHeader>Time In</DataTableCell>
+              <DataTableCell isHeader>Entry Gate</DataTableCell>
+              <DataTableCell isHeader>Status</DataTableCell>
+              <DataTableCell isHeader className="w-20">Accounted</DataTableCell>
+            </DataTableRow>
+          </DataTableHead>
+          <tbody className="divide-y border-[var(--color-border)]">
+            {initialLoading && passes === null ? (
+              <tr>
+                <td colSpan={5} className="py-12 text-center" role="status" aria-live="polite">
+                  <Loader2 className="mx-auto h-8 w-8 animate-spin text-[var(--color-brand)] mb-2" aria-hidden="true" />
+                  <span className="text-sm font-medium text-[var(--color-text-secondary)]">Loading evacuation list…</span>
+                </td>
+              </tr>
+            ) : filteredPasses.length === 0 ? (
+              <tr>
+                <td colSpan={5} className="py-8 text-center text-[var(--color-text-muted)]">
+                  No visitors currently inside.
+                </td>
+              </tr>
+            ) : (
+              filteredPasses.map((pass) => (
+                <DataTableRow key={pass.id as string}>
+                  <DataTableCell className="font-bold">{pass.visitorName}</DataTableCell>
+                  <DataTableCell>
+                    {pass.timeIn ? formatManilaTime(pass.timeIn) : '—'}
+                  </DataTableCell>
+                  <DataTableCell>{pass.gate || 'Unknown'}</DataTableCell>
+                  <DataTableCell><StatusBadge status="inside" label="Inside" /></DataTableCell>
+                  <DataTableCell>
+                    <div className="h-6 w-6 rounded border-2 border-[var(--color-border)]" />
+                  </DataTableCell>
+                </DataTableRow>
+              ))
+            )}
+          </tbody>
+        </DataTable>
+      </div>
+
+      {/* Dedicated Print Table (Visible ONLY in print) */}
+      <div className="hidden print:block print:border-none print:shadow-none print:m-0 print:p-0">
         <DataTable>
           <DataTableHead>
             <DataTableRow>
@@ -248,32 +373,24 @@ export function AdminEmergency() {
               <DataTableCell isHeader className="print:w-20 print:text-black">Accounted</DataTableCell>
             </DataTableRow>
           </DataTableHead>
-          <tbody className="divide-y border-[var(--color-border)] print:divide-black/20">
-            {initialLoading && passes === null ? (
-              <tr className="print:hidden">
-                <td colSpan={5} className="py-12 text-center" role="status" aria-live="polite">
-                  <Loader2 className="mx-auto h-8 w-8 animate-spin text-[var(--color-brand)] mb-2" aria-hidden="true" />
-                  <span className="text-sm font-medium text-[var(--color-text-secondary)]">Loading evacuation list…</span>
-                </td>
-              </tr>
-            ) : filteredPasses.length === 0 ? (
+          <tbody className="divide-y print:divide-black/20">
+            {printPasses.length === 0 ? (
               <tr>
-                <td colSpan={5} className="py-8 text-center text-[var(--color-text-muted)] print:text-black">
+                <td colSpan={5} className="py-8 text-center print:text-black">
                   No visitors currently inside.
                 </td>
               </tr>
             ) : (
-              filteredPasses.map((pass) => (
+              printPasses.map((pass) => (
                 <DataTableRow key={pass.id as string} className="print:hover:bg-transparent">
-                  <DataTableCell className="font-bold print:px-2">{pass.visitorName}</DataTableCell>
-                  <DataTableCell className="print:px-2">
+                  <DataTableCell className="font-bold print:px-2 print:text-black">{pass.visitorName}</DataTableCell>
+                  <DataTableCell className="print:px-2 print:text-black">
                     {pass.timeIn ? formatManilaTime(pass.timeIn) : '—'}
                   </DataTableCell>
-                  <DataTableCell className="print:px-2">{pass.gate || 'Unknown'}</DataTableCell>
+                  <DataTableCell className="print:px-2 print:text-black">{pass.gate || 'Unknown'}</DataTableCell>
                   <DataTableCell className="print:px-2 print:text-black"><StatusBadge status="inside" label="Inside" /></DataTableCell>
                   <DataTableCell className="print:px-2">
-                    {/* Checkbox for physical printout marking */}
-                    <div className="h-6 w-6 rounded border-2 border-[var(--color-border)] print:border-black" />
+                    <div className="h-6 w-6 rounded border-2 border-black" />
                   </DataTableCell>
                 </DataTableRow>
               ))

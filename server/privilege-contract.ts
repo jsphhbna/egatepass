@@ -137,6 +137,8 @@ export const SERVER_DIRECT_TABLE_OPERATIONS: DirectServerTableOperation[] = [
   { file: 'server/routes/admin/retention-maintenance.ts', table: 'passes', operations: ['SELECT'], purpose: 'Check active passes blocking visitor anonymization' },
   { file: 'server/routes/admin/retention-maintenance.ts', table: 'reconciliation_tasks', operations: ['SELECT', 'DELETE'], purpose: 'Scan and purge resolved reconciliation tasks' },
   { file: 'server/routes/admin/retention-maintenance.ts', table: 'pass_email_verifications', operations: ['DELETE'], purpose: 'Purge expired pass email verification codes' },
+  { file: 'server/routes/admin/retention-maintenance.ts', table: 'staff_profiles', operations: ['SELECT'], purpose: 'Exclude staff accounts from anonymous auth retention cleanup' },
+  { file: 'server/routes/admin/retention-maintenance.ts', table: 'devices', operations: ['SELECT'], purpose: 'Exclude device accounts from anonymous auth retention cleanup' },
   { file: 'server/routes/admin/settings.ts', table: 'app_settings', operations: ['SELECT'], purpose: 'Read current settings' },
   { file: 'server/routes/admin/users.ts', table: 'staff_profiles', operations: ['SELECT'], purpose: 'List staff users' },
   { file: 'server/routes/auth/complete-password-change.ts', table: 'staff_profiles', operations: ['SELECT'], purpose: 'Verify staff role before completing password change' },

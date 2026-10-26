@@ -1,13 +1,9 @@
-import { getManilaDateString, formatManilaTime } from '@/lib/manilaTime';
+import { getManilaDateString, formatManilaTime, formatManilaMonthYear, getManilaDateParts, type DateInput } from '@/lib/manilaTime';
 import { useMemo, useState } from 'react';
 import {
   eachDayOfInterval,
-  endOfMonth,
   endOfWeek,
   format,
-  isSameMonth,
-  isToday,
-  startOfMonth,
   startOfWeek,
 } from 'date-fns';
 import {
@@ -224,30 +220,40 @@ function InsightCard({ icon, title, insight, description }: { icon: React.ReactN
   );
 }
 
-function IssuedPassesCalendar({ passes, calendarCounts }: { passes: GatePass[]; calendarCounts?: Record<string, number> }) {
-  const month = new Date();
-  const monthStart = startOfMonth(month);
-  const monthEnd = endOfMonth(month);
+export function IssuedPassesCalendar({
+  passes,
+  calendarCounts,
+  referenceDate,
+}: {
+  passes: GatePass[];
+  calendarCounts?: Record<string, number>;
+  referenceDate?: DateInput;
+}) {
+  const manilaNow = getManilaDateParts(referenceDate);
+  const firstDayOfMonth = new Date(manilaNow.year, manilaNow.month - 1, 1, 12, 0, 0);
+  const lastDayOfMonth = new Date(manilaNow.year, manilaNow.month, 0, 12, 0, 0);
+
   const calendarDays = eachDayOfInterval({
-    start: startOfWeek(monthStart),
-    end: endOfWeek(monthEnd),
+    start: startOfWeek(firstDayOfMonth),
+    end: endOfWeek(lastDayOfMonth),
   });
   const countsByDate = new Map<string, number>();
 
   passes.forEach((pass) => {
-    const issuedDate = pass.issuedAt.toDate();
-    if (!isSameMonth(issuedDate, month)) return;
-    const key = getManilaDateString(issuedDate);
-    countsByDate.set(key, (countsByDate.get(key) || 0) + 1);
+    const issuedKey = getManilaDateString(pass.issuedAt.toDate());
+    if (!issuedKey.startsWith(manilaNow.monthKey)) return;
+    countsByDate.set(issuedKey, (countsByDate.get(issuedKey) || 0) + 1);
   });
+
+  const monthLabel = formatManilaMonthYear(firstDayOfMonth);
 
   return (
     <Card className="p-6">
       <h2 className="text-xl font-bold text-[var(--color-text-primary)]">Passes Issued Calendar</h2>
       <p className="mt-1 text-sm text-[var(--color-text-secondary)]">
-        {format(month, 'MMMM yyyy')} — each day shows the number of visitor passes created.
+        {monthLabel} — each day shows the number of visitor passes created.
       </p>
-      <div className="mt-5 grid grid-cols-7 gap-1" role="grid" aria-label={`Visitor passes issued in ${format(month, 'MMMM yyyy')}`}>
+      <div className="mt-5 grid grid-cols-7 gap-1" role="grid" aria-label={`Visitor passes issued in ${monthLabel}`}>
         {['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'].map((day) => (
           <div key={day} role="columnheader" className="pb-1 text-center text-xs font-bold uppercase tracking-wide text-[var(--color-text-muted)]">
             <span className="sm:hidden">{day.charAt(0)}</span>
@@ -255,10 +261,13 @@ function IssuedPassesCalendar({ passes, calendarCounts }: { passes: GatePass[]; 
           </div>
         ))}
         {calendarDays.map((day) => {
-          const key = getManilaDateString(day);
+          const year = day.getFullYear();
+          const month = day.getMonth() + 1;
+          const date = day.getDate();
+          const key = `${year}-${String(month).padStart(2, '0')}-${String(date).padStart(2, '0')}`;
           const count = calendarCounts ? (calendarCounts[key] ?? 0) : (countsByDate.get(key) || 0);
-          const inCurrentMonth = isSameMonth(day, month);
-          const currentDay = isToday(day);
+          const inCurrentMonth = year === manilaNow.year && month === manilaNow.month;
+          const currentDay = key === manilaNow.dateString;
 
           return (
             <div
@@ -270,7 +279,7 @@ function IssuedPassesCalendar({ passes, calendarCounts }: { passes: GatePass[]; 
               } ${currentDay ? 'ring-2 ring-[var(--color-brand)] ring-offset-1' : ''}`}
             >
               <span className={`text-xs font-bold sm:text-sm ${inCurrentMonth ? 'text-[var(--color-text-primary)]' : 'text-[var(--color-text-muted)]'}`}>
-                {format(day, 'd')}
+                {date}
               </span>
               <span className={`mt-auto rounded px-1 py-0.5 text-center text-xs font-semibold ${
                 count > 0 && inCurrentMonth ? 'bg-[var(--color-brand-light)] text-[var(--color-brand)]' : 'text-[var(--color-text-muted)]'

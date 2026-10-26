@@ -128,6 +128,9 @@ async function handleRequest(request: Request): Promise<Response> {
       reconciliationTasksCleaned: 0,
       verificationCodesCleaned: 0,
       rateLimitBucketsCleaned: 0,
+      anonymousAuthEligible: 0,
+      anonymousAuthDeleted: 0,
+      anonymousAuthDeleteFailures: 0,
       errors: [] as string[],
     };
 
@@ -624,6 +627,98 @@ async function handleRequest(request: Request): Promise<Response> {
     }
 
     // =========================================================================
+    // 6.6 ORPHAN ANONYMOUS AUTH USER CLEANUP
+    // =========================================================================
+    try {
+      const ANONYMOUS_AUTH_RETENTION_MS = 24 * 60 * 60 * 1000; // 24-hour safety buffer
+      const anonCutoff = Date.now() - ANONYMOUS_AUTH_RETENTION_MS;
+
+      const { data: authData, error: authListError } = await admin.auth.admin.listUsers({
+        page: 1,
+        perPage: 1000,
+      });
+
+      if (authListError) {
+        metrics.errors.push(`anonymous_auth_list_failed: ${authListError.message}`);
+      } else {
+        const candidateUsers = (authData?.users ?? []).filter((u: any) => {
+          if (!u.is_anonymous && u.app_metadata?.provider !== 'anonymous') return false;
+          const createdAt = new Date(u.created_at).getTime();
+          return Number.isFinite(createdAt) && createdAt <= anonCutoff;
+        });
+
+        if (candidateUsers.length > 0) {
+          const candidateIds = candidateUsers.map((u: any) => u.id);
+
+          // Find IDs referenced by visitors
+          const { data: referencedVisitors } = await admin
+            .from('visitors')
+            .select('owner_id')
+            .in('owner_id', candidateIds);
+          const visitorOwnerIds = new Set((referencedVisitors ?? []).map((v: any) => v.owner_id));
+
+          // Find IDs referenced by upload_intents
+          const { data: referencedIntents } = await admin
+            .from('upload_intents')
+            .select('owner_id')
+            .in('owner_id', candidateIds);
+          const intentOwnerIds = new Set((referencedIntents ?? []).map((i: any) => i.owner_id));
+
+          // Exclude staff_profiles
+          const { data: staffRows } = await admin
+            .from('staff_profiles')
+            .select('user_id')
+            .in('user_id', candidateIds);
+          const staffUserIds = new Set((staffRows ?? []).map((s: any) => s.user_id));
+
+          // Exclude devices
+          const { data: deviceRows } = await admin
+            .from('devices')
+            .select('user_id')
+            .in('user_id', candidateIds);
+          const deviceUserIds = new Set((deviceRows ?? []).map((d: any) => d.user_id));
+
+          // Retain only strictly unreferenced, old orphan anonymous accounts
+          const eligibleUsers = candidateUsers.filter(
+            (u: any) =>
+              !visitorOwnerIds.has(u.id) &&
+              !intentOwnerIds.has(u.id) &&
+              !staffUserIds.has(u.id) &&
+              !deviceUserIds.has(u.id)
+          );
+
+          metrics.anonymousAuthEligible = eligibleUsers.length;
+          const usersToClean = eligibleUsers.slice(0, batchSize);
+
+          if (!dryRun && usersToClean.length > 0) {
+            for (const user of usersToClean) {
+              const { error: delErr } = await admin.auth.admin.deleteUser(user.id);
+              if (delErr) {
+                metrics.anonymousAuthDeleteFailures++;
+                metrics.errors.push(`anonymous_auth_delete_failed for user ${user.id}: ${delErr.message}`);
+                await recordReconciliation(
+                  admin,
+                  'maintenance.anonymous_auth_delete_failed',
+                  'auth.users',
+                  user.id,
+                  delErr.message || 'auth_delete_failed',
+                  { userId: user.id }
+                ).catch(() => undefined);
+              } else {
+                metrics.anonymousAuthDeleted++;
+              }
+            }
+          } else if (dryRun) {
+            metrics.anonymousAuthDeleted = 0;
+          }
+        }
+      }
+    } catch (anonErr) {
+      const msg = anonErr instanceof Error ? anonErr.message : 'anonymous_auth_cleanup_exception';
+      metrics.errors.push(`anonymous_auth_cleanup_exception: ${msg}`);
+    }
+
+    // =========================================================================
     // 7. RECORD AUDIT EVENT AND RETURN TRUTHFUL SEMANTICS (REPAIR K)
     // =========================================================================
     const hasWorkDone =
@@ -633,7 +728,8 @@ async function handleRequest(request: Request): Promise<Response> {
       metrics.auditEventsCleaned > 0 ||
       metrics.reconciliationTasksCleaned > 0 ||
       metrics.verificationCodesCleaned > 0 ||
-      metrics.rateLimitBucketsCleaned > 0;
+      metrics.rateLimitBucketsCleaned > 0 ||
+      metrics.anonymousAuthDeleted > 0;
 
     let preAuditOutcome: 'success' | 'partial' | 'failure' =
       metrics.errors.length === 0 ? 'success' : (hasWorkDone ? 'partial' : 'failure');

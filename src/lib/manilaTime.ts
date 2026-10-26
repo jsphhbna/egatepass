@@ -155,3 +155,30 @@ export function getManilaMonthKey(input: DateInput): string {
   return `${year}-${month}`;
 }
 
+/**
+ * Returns deconstructed date parts in Asia/Manila (year, month 1-12, day, YYYY-MM-DD string, YYYY-MM monthKey).
+ */
+export function getManilaDateParts(input: DateInput = new Date()): {
+  year: number;
+  month: number;
+  day: number;
+  dateString: string;
+  monthKey: string;
+} {
+  const d = toDate(input) ?? new Date();
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone: MANILA_TIMEZONE,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).formatToParts(d);
+
+  const year = parseInt(parts.find((p) => p.type === 'year')?.value ?? '1970', 10);
+  const month = parseInt(parts.find((p) => p.type === 'month')?.value ?? '1', 10);
+  const day = parseInt(parts.find((p) => p.type === 'day')?.value ?? '1', 10);
+  const dateString = `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+  const monthKey = `${year}-${String(month).padStart(2, '0')}`;
+
+  return { year, month, day, dateString, monthKey };
+}
+

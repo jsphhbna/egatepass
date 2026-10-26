@@ -398,7 +398,7 @@ export function KioskPage() {
 
   // 120-second inactivity timeout to protect visitor PII from abandonment
   useEffect(() => {
-    if (step === 'scan-intro' || step === 'done' || step === 'generating') return;
+    if (step === 'scan-intro' || step === 'generating') return;
 
     let timeoutId: NodeJS.Timeout;
     function resetTimer() {

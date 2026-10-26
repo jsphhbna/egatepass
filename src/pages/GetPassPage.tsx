@@ -5,7 +5,12 @@ import { z } from 'zod';
 import { useWebcam } from '@/hooks/useWebcam';
 import { useObjectUrl } from '@/hooks/useObjectUrl';
 import { compressImageToWebP } from '@/lib/imageProcessing';
-import { issueVisitorPass, loadRegistrationSettings } from '@/services/visitorRegistration';
+import {
+  issueVisitorPass,
+  loadRegistrationSettings,
+  createPortalIssueTransaction,
+  type PortalIssueTransaction,
+} from '@/services/visitorRegistration';
 import { TurnstileWidget } from '@/components/TurnstileWidget';
 import { generateBrandedQrDataUrl } from '@/lib/brandedQr';
 import { recognizeIdImage, terminateLocalOcrWorker } from '@/lib/ocr';
@@ -135,6 +140,7 @@ export function GetPassPage() {
   const [schedulingDaysAhead, setSchedulingDaysAhead] = useState(MAX_VISIT_ADVANCE_DAYS);
   const [issuedValidity, setIssuedValidity] = useState<string | null>(null);
   const issueRequestId = useRef(crypto.randomUUID());
+  const portalTransactionRef = useRef<PortalIssueTransaction | null>(null);
 
   // Valid ID Capture vs Upload
   const [idMode, setIdMode] = useState<'camera' | 'upload'>('camera');
@@ -458,6 +464,7 @@ export function GetPassPage() {
     reset();
     resetTurnstile();
     issueRequestId.current = crypto.randomUUID();
+    portalTransactionRef.current = null;
   }
 
   // ============================================================
@@ -478,7 +485,11 @@ export function GetPassPage() {
 
     try {
       const formData = getValues();
-      const result = await issueVisitorPass('portal', formData, photoBlob, idBlob, issueRequestId.current, captchaToken ?? undefined);
+      if (!portalTransactionRef.current) {
+        portalTransactionRef.current = await createPortalIssueTransaction(captchaToken ?? undefined);
+        issueRequestId.current = portalTransactionRef.current.requestId as ReturnType<typeof crypto.randomUUID>;
+      }
+      const result = await issueVisitorPass('portal', formData, photoBlob, idBlob, issueRequestId.current, captchaToken ?? undefined, portalTransactionRef.current);
       
       // Feature 3: Branded QR with centered EARIST logo
       const qrUrl = await generateBrandedQrDataUrl(result.qrToken, { size: 360 });
@@ -501,9 +512,11 @@ export function GetPassPage() {
       toast.success('Gate pass generated successfully!');
     } catch (err) {
       console.error('Pass generation error:', err);
-      setSubmitError(
-        err instanceof Error ? err.message : 'An unexpected error occurred.'
-      );
+      const errMsg = err instanceof Error ? err.message : 'An unexpected error occurred.';
+      setSubmitError(errMsg);
+      if (errMsg.includes('conflict')) {
+        portalTransactionRef.current = null;
+      }
       setStep('review');
       toast.error('Failed to generate pass. Please try again.');
     } finally {

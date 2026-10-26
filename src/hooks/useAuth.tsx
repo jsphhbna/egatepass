@@ -1,4 +1,4 @@
-import { createContext, useContext, useEffect, useState, type ReactNode } from 'react';
+import { createContext, useContext, useEffect, useState, useRef, type ReactNode } from 'react';
 import type { User } from '@supabase/supabase-js';
 import { toast } from 'sonner';
 import { getSupabaseAvailabilityMessage, supabase } from '@/lib/supabase';
@@ -100,13 +100,14 @@ interface AuthProviderProps {
 
 export function AuthProvider({ children }: AuthProviderProps) {
   const [state, setState] = useState<AuthState>(initialState);
+  const authGenerationRef = useRef(0);
 
   useEffect(() => {
     if (!supabase) return;
     let active = true;
 
-    async function applyUser(user: User | null) {
-      if (!active) return;
+    async function applyUser(user: User | null, generation: number) {
+      if (!active || generation !== authGenerationRef.current) return;
       if (!user) {
         setState({ ...initialState, status: 'unauthenticated' });
         return;
@@ -114,15 +115,22 @@ export function AuthProvider({ children }: AuthProviderProps) {
 
       try {
         const { role, userData } = await resolveRole(user);
+        if (!active || generation !== authGenerationRef.current) return;
+
         if (!role) {
           await supabase!.auth.signOut();
-          if (active) setState({ ...initialState, status: 'unauthenticated' });
+          if (active && generation === authGenerationRef.current) {
+            setState({ ...initialState, status: 'unauthenticated' });
+          }
           return;
         }
 
         if ((role === 'admin' || role === 'superadmin' || role === 'guard') && !user.email_confirmed_at) {
           await supabase!.auth.signOut();
-          toast.error('Account not verified. Please verify your email first. Check your inbox, spam, or trash folder for the verification email.', { id: 'unverified-toast' });
+          if (active && generation === authGenerationRef.current) {
+            toast.error('Account not verified. Please verify your email first. Check your inbox, spam, or trash folder for the verification email.', { id: 'unverified-toast' });
+            setState({ ...initialState, status: 'unauthenticated' });
+          }
           return;
         }
 
@@ -130,7 +138,7 @@ export function AuthProvider({ children }: AuthProviderProps) {
           userData?.kind === 'staff' &&
           userData.mustChangePassword === true;
 
-        if (active) {
+        if (active && generation === authGenerationRef.current) {
           setState({
             status: requiresPasswordChange ? 'requires_password_change' : 'authenticated',
             uid: user.id,
@@ -143,7 +151,7 @@ export function AuthProvider({ children }: AuthProviderProps) {
         }
       } catch (error) {
         console.error('Failed to resolve the signed-in identity.', error);
-        if (active) {
+        if (active && generation === authGenerationRef.current) {
           setState({
             ...initialState,
             status: 'unauthenticated',
@@ -157,25 +165,30 @@ export function AuthProvider({ children }: AuthProviderProps) {
 
     const refresh = async () => {
       if (!supabase) return;
+      const generation = ++authGenerationRef.current;
       const { data } = await supabase.auth.getSession();
-      await applyUser(data.session?.user ?? null);
+      await applyUser(data.session?.user ?? null, generation);
     };
 
+    const initialGeneration = ++authGenerationRef.current;
     void supabase.auth.getSession().then(({ data, error }) => {
+      if (!active || initialGeneration !== authGenerationRef.current) return;
       if (error) {
         console.error('Unable to restore the sign-in session.', error);
-        if (active) setState({ ...initialState, status: 'unauthenticated' });
+        setState({ ...initialState, status: 'unauthenticated' });
         return;
       }
-      void applyUser(data.session?.user ?? null);
+      void applyUser(data.session?.user ?? null, initialGeneration);
     });
 
     const { data: listener } = supabase.auth.onAuthStateChange((_event, session) => {
-      window.setTimeout(() => void applyUser(session?.user ?? null), 0);
+      const generation = ++authGenerationRef.current;
+      window.setTimeout(() => void applyUser(session?.user ?? null, generation), 0);
     });
 
     return () => {
       active = false;
+      authGenerationRef.current++;
       listener.subscription.unsubscribe();
     };
   }, []);

@@ -54,6 +54,9 @@ export function TurnstileWidget({ onVerify, onExpire, onError, resetKey }: Turns
     if (!siteKey || !containerRef.current) return;
 
     let mounted = true;
+    let intervalId: NodeJS.Timeout | null = null;
+    let timeoutId: NodeJS.Timeout | null = null;
+
     setStatus('loading');
 
     function renderWidget() {
@@ -105,35 +108,58 @@ export function TurnstileWidget({ onVerify, onExpire, onError, resetKey }: Turns
     if (window.turnstile) {
       renderWidget();
     } else {
-      const existingScript = document.querySelector('script[src*="turnstile/v0/api.js"]');
+      let existingScript = document.querySelector('script[src*="turnstile/v0/api.js"]');
+      if (existingScript && retryCount > 0 && !window.turnstile) {
+        existingScript.remove();
+        existingScript = null;
+      }
+
       if (!existingScript) {
         const script = document.createElement('script');
         script.src = 'https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit';
         script.async = true;
         script.defer = true;
         script.onload = () => {
-          if (mounted) renderWidget();
+          if (mounted && window.turnstile) {
+            if (intervalId) clearInterval(intervalId);
+            if (timeoutId) clearTimeout(timeoutId);
+            renderWidget();
+          }
         };
         script.onerror = () => {
           if (mounted) {
+            if (intervalId) clearInterval(intervalId);
+            if (timeoutId) clearTimeout(timeoutId);
             setStatus('error');
             if (onErrorRef.current) onErrorRef.current('script_load_failed');
           }
         };
         document.head.appendChild(script);
-      } else {
-        const interval = setInterval(() => {
-          if (window.turnstile) {
-            clearInterval(interval);
-            if (mounted) renderWidget();
-          }
-        }, 100);
-        return () => clearInterval(interval);
       }
+
+      intervalId = setInterval(() => {
+        if (window.turnstile) {
+          if (intervalId) clearInterval(intervalId);
+          intervalId = null;
+          if (timeoutId) clearTimeout(timeoutId);
+          if (mounted) renderWidget();
+        }
+      }, 100);
+
+      timeoutId = setTimeout(() => {
+        if (intervalId) clearInterval(intervalId);
+        intervalId = null;
+        if (mounted && !window.turnstile) {
+          setStatus('error');
+          if (onErrorRef.current) onErrorRef.current('turnstile_initialization_timeout');
+        }
+      }, 12_000);
     }
 
     return () => {
       mounted = false;
+      if (intervalId) clearInterval(intervalId);
+      if (timeoutId) clearTimeout(timeoutId);
       if (widgetIdRef.current && window.turnstile) {
         try {
           window.turnstile.remove(widgetIdRef.current);

@@ -52,35 +52,83 @@ export function evaluateTurnstilePolicy(
   return { allowed: true };
 }
 
+export interface PortalIssueTransaction {
+  requestId: string;
+  actorId: string;
+  token: string;
+  photoIntentId: string | null;
+  idIntentId: string | null;
+  submittedPayload?: {
+    visitor: VisitorRegistration;
+  } | null;
+}
+
+export async function createPortalIssueTransaction(captchaToken?: string): Promise<PortalIssueTransaction> {
+  const client = requirePortalSupabase();
+  const siteKey = (import.meta as any).env?.VITE_TURNSTILE_SITE_KEY?.trim();
+  const isProd = Boolean((import.meta as any).env?.PROD);
+
+  const policy = evaluateTurnstilePolicy('portal', isProd, siteKey, captchaToken);
+  if (!policy.allowed) {
+    throw new Error(policy.error);
+  }
+
+  // Rotate/sign out any stale portal anonymous session once when establishing a NEW transaction
+  const { data: { session: existingSession } } = await client.auth.getSession();
+  if (existingSession) {
+    await client.auth.signOut();
+  }
+
+  const signInOptions = captchaToken ? { options: { captchaToken } } : undefined;
+  const result = signInOptions
+    ? await client.auth.signInAnonymously(signInOptions)
+    : await client.auth.signInAnonymously();
+
+  if (result.error || !result.data.session) {
+    throw new Error('Visitor registration could not be started.');
+  }
+
+  const session = result.data.session;
+  return {
+    requestId: crypto.randomUUID(),
+    actorId: session.user.id,
+    token: session.access_token,
+    photoIntentId: null,
+    idIntentId: null,
+    submittedPayload: null,
+  };
+}
+
 async function authenticatedClient(
   source: RegistrationSource,
   captchaToken?: string,
+  existingTransaction?: PortalIssueTransaction | null,
 ): Promise<{ client: SupabaseClient; token: string }> {
-  const client = source === 'portal' ? requirePortalSupabase() : requireSupabase();
-  let { data: { session } } = await client.auth.getSession();
   if (source === 'portal') {
-    if (session) {
-      await client.auth.signOut();
-      session = null;
-    }
-  }
-  if (source === 'portal' && !session) {
-    const siteKey = (import.meta as any).env?.VITE_TURNSTILE_SITE_KEY?.trim();
-    const isProd = Boolean((import.meta as any).env?.PROD);
-
-    const policy = evaluateTurnstilePolicy(source, isProd, siteKey, captchaToken);
-    if (!policy.allowed) {
-      throw new Error(policy.error);
+    const client = requirePortalSupabase();
+    if (existingTransaction?.token && existingTransaction?.actorId) {
+      // Reuse existing transaction session
+      const { data: { session } } = await client.auth.getSession();
+      if (session && session.user.id === existingTransaction.actorId) {
+        return { client, token: session.access_token };
+      }
+      return { client, token: existingTransaction.token };
     }
 
-    const signInOptions = captchaToken ? { options: { captchaToken } } : undefined;
-    const result = signInOptions
-      ? await client.auth.signInAnonymously(signInOptions)
-      : await client.auth.signInAnonymously();
-    if (result.error) throw new Error('Visitor registration could not be started.');
-    session = result.data.session;
+    const newTx = await createPortalIssueTransaction(captchaToken);
+    if (existingTransaction) {
+      existingTransaction.requestId = newTx.requestId;
+      existingTransaction.actorId = newTx.actorId;
+      existingTransaction.token = newTx.token;
+      existingTransaction.photoIntentId = newTx.photoIntentId;
+      existingTransaction.idIntentId = newTx.idIntentId;
+    }
+    return { client, token: newTx.token };
   }
-  if (!session) throw new Error(source === 'kiosk' ? 'Kiosk device not authenticated.' : 'Visitor session unavailable.');
+
+  const client = requireSupabase();
+  const { data: { session } } = await client.auth.getSession();
+  if (!session) throw new Error('Kiosk device not authenticated.');
   return { client, token: session.access_token };
 }
 
@@ -112,22 +160,53 @@ export async function issueVisitorPass(
   visitor: VisitorRegistration,
   photo: Blob,
   identification: Blob | null,
-  requestId = crypto.randomUUID(),
+  requestId: string = crypto.randomUUID(),
   captchaToken?: string,
+  transaction?: PortalIssueTransaction | null,
 ): Promise<IssuedPass> {
-  const { client, token } = await authenticatedClient(source, captchaToken);
-  const [photoIntentId, idIntentId] = await Promise.all([
-    uploadEvidence(client, source, 'photo', photo),
-    identification ? uploadEvidence(client, source, 'id', identification) : Promise.resolve(null),
-  ]);
+  const { client, token } = await authenticatedClient(source, captchaToken, transaction);
+
+  const effectiveRequestId = (source === 'portal' && transaction?.requestId) ? transaction.requestId : requestId;
+
+  // Upload photo intent if not already created
+  let photoIntentId: string;
+  if (transaction?.photoIntentId) {
+    photoIntentId = transaction.photoIntentId;
+  } else {
+    photoIntentId = await uploadEvidence(client, source, 'photo', photo);
+    if (transaction) {
+      transaction.photoIntentId = photoIntentId;
+    }
+  }
+
+  // Upload id intent if not already created
+  let idIntentId: string | null = null;
+  if (identification) {
+    if (transaction?.idIntentId) {
+      idIntentId = transaction.idIntentId;
+    } else {
+      idIntentId = await uploadEvidence(client, source, 'id', identification);
+      if (transaction) {
+        transaction.idIntentId = idIntentId;
+      }
+    }
+  }
+
+  // If transaction had previously submitted a payload, preserve the exact payload for replay safety
+  const effectiveVisitor = (transaction?.submittedPayload?.visitor) ? transaction.submittedPayload.visitor : visitor;
+
+  // Record submitted payload on transaction before network dispatch
+  if (transaction && !transaction.submittedPayload) {
+    transaction.submittedPayload = { visitor: { ...effectiveVisitor } };
+  }
 
   const response = await fetch('/api/passes/issue', {
     method: 'POST',
     headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
     body: JSON.stringify({
-      requestId,
+      requestId: effectiveRequestId,
       source,
-      visitor,
+      visitor: effectiveVisitor,
       photoIntentId,
       idIntentId,
     }),
@@ -142,6 +221,12 @@ export async function issueVisitorPass(
     }
     if (body?.error === 'service_unavailable') {
       throw new Error('Pass service is temporarily unavailable.');
+    }
+    if (body?.error === 'cross_actor_replay') {
+      throw new Error('Pass request session conflict. Please start a new pass registration.');
+    }
+    if (body?.error === 'intent_mismatch') {
+      throw new Error('Pass evidence verification conflict. Please retry your request.');
     }
     throw new Error('Failed to create visitor pass.');
   }

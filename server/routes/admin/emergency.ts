@@ -34,11 +34,31 @@ async function handleRequest(request: Request): Promise<Response> {
 
     const PAGE_SIZE = 1000;
     const MAX_EMERGENCY_RECORDS = 10000;
-    let offset = 0;
+    const snapshotAt = new Date().toISOString();
     const allRows: RawEmergencyPassRow[] = [];
     let truncated = false;
 
+    // Authoritative snapshot total of visitors physically inside at snapshotAt
+    let countQuery = admin
+      .from('passes')
+      .select('id', { count: 'exact', head: true })
+      .lte('time_in', snapshotAt)
+      .or(`time_out.is.null,time_out.gt.${snapshotAt}`);
+
+    if (gateParam) {
+      countQuery = countQuery.eq('gate', gateParam);
+    }
+
+    const { count, error: countError } = await countQuery;
+    if (countError) throw countError;
+    const snapshotTotal = count ?? 0;
+
+    let cursorTimeIn: string | null = null;
+    let cursorId: string | null = null;
+    let previousCursorKey: string | null = null;
+
     while (allRows.length < MAX_EMERGENCY_RECORDS) {
+      const remainingLimit = Math.min(PAGE_SIZE, MAX_EMERGENCY_RECORDS - allRows.length);
       let query = admin
         .from('passes')
         .select(`
@@ -55,28 +75,55 @@ async function handleRequest(request: Request): Promise<Response> {
             purpose
           )
         `)
-        .eq('status', 'inside')
+        .lte('time_in', snapshotAt)
+        .or(`time_out.is.null,time_out.gt.${snapshotAt}`)
         .order('time_in', { ascending: false })
-        .order('id', { ascending: false });
+        .order('id', { ascending: false })
+        .limit(remainingLimit);
 
       if (gateParam) {
         query = query.eq('gate', gateParam);
       }
 
-      const { data: pageRows, error } = await query.range(offset, offset + PAGE_SIZE - 1);
+      if (cursorTimeIn !== null && cursorId !== null) {
+        query = query.or(`time_in.lt.${cursorTimeIn},and(time_in.eq.${cursorTimeIn},id.lt.${cursorId})`);
+      }
+
+      const { data: pageRows, error } = await query;
       if (error) throw error;
 
       const rows = (pageRows ?? []) as unknown as RawEmergencyPassRow[];
+      if (rows.length === 0) {
+        break;
+      }
+
       allRows.push(...rows);
 
-      if (rows.length < PAGE_SIZE) {
+      if (rows.length < remainingLimit) {
         break;
       }
-      offset += PAGE_SIZE;
+
+      const lastRow = rows[rows.length - 1];
+      if (!lastRow || !lastRow.time_in) {
+        break;
+      }
+      const nextCursorKey = `${lastRow.time_in}_${lastRow.id}`;
+      // Progress guard: stop if cursor fails to advance
+      if (nextCursorKey === previousCursorKey) {
+        console.warn('Emergency keyset pagination cursor failed to advance. Stopping.');
+        break;
+      }
+      previousCursorKey = nextCursorKey;
+      cursorTimeIn = lastRow.time_in;
+      cursorId = lastRow.id;
+
       if (allRows.length >= MAX_EMERGENCY_RECORDS) {
-        truncated = true;
         break;
       }
+    }
+
+    if (snapshotTotal > allRows.length) {
+      truncated = true;
     }
 
     const passes = allRows.map((row) => ({
@@ -92,7 +139,13 @@ async function handleRequest(request: Request): Promise<Response> {
       status: row.status,
     }));
 
-    return jsonResponse(200, { passes, total: passes.length, truncated });
+    return jsonResponse(200, {
+      passes,
+      total: passes.length,
+      snapshotTotal,
+      snapshotAt,
+      truncated,
+    });
   } catch (error) {
     if (error instanceof HttpError) return jsonResponse(error.status, { error: error.code });
     console.error('Emergency evacuation pass load failed.', error instanceof Error ? error.message : 'unknown_error');
