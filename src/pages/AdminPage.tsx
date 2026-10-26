@@ -12,6 +12,7 @@ import {
   LogOut,
   Menu,
   X,
+  Printer,
 } from 'lucide-react';
 import { BrandMark } from '@/components/BrandMark';
 import { ConfirmModal } from '@/components/ui';
@@ -156,7 +157,13 @@ export function AdminPage() {
 
         {/* Nav */}
         <nav className="flex-1 overflow-y-auto px-3 py-4" aria-label="Admin navigation">
-          {navItems.map((item) => (
+          {[
+            ...navItems.slice(0, 6),
+            ...(isSuperAdmin(role)
+              ? [{ to: '/admin/templates', icon: Printer, label: 'Print Templates', end: false }]
+              : []),
+            ...navItems.slice(6),
+          ].map((item) => (
             <NavLink
               key={item.to}
               to={item.to}

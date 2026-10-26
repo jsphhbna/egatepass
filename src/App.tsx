@@ -21,6 +21,7 @@ const AdminRecords = lazy(() => import('@/pages/AdminRecords').then((module) => 
 const AdminSettings = lazy(() => import('@/pages/AdminSettings').then((module) => ({ default: module.AdminSettings })));
 const AdminEmergency = lazy(() => import('@/pages/AdminEmergency').then((module) => ({ default: module.AdminEmergency })));
 const AdminAuditLogs = lazy(() => import('@/pages/AdminAuditLogs').then((module) => ({ default: module.AdminAuditLogs })));
+const AdminPrintTemplatesPage = lazy(() => import('@/pages/AdminPrintTemplatesPage').then((module) => ({ default: module.AdminPrintTemplatesPage })));
 const DevicesPage = lazy(() => import('@/pages/DevicesPage').then((module) => ({ default: module.DevicesPage })));
 const EntryScanPage = lazy(() => import('@/pages/EntryScanPage').then((module) => ({ default: module.EntryScanPage })));
 const ExitScanPage = lazy(() => import('@/pages/ExitScanPage').then((module) => ({ default: module.ExitScanPage })));
@@ -108,6 +109,7 @@ export function App() {
               <Route path="users" element={<AdminUsers />} />
               <Route path="emergency" element={<AdminEmergency />} />
               <Route path="audit" element={<AdminAuditLogs />} />
+              <Route path="templates" element={<AdminPrintTemplatesPage />} />
               <Route path="settings" element={<AdminSettings />} />
             </Route>
           </Route>
