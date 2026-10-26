@@ -327,7 +327,7 @@ describe('Guard Keyset Pagination Database Contracts & Mutation Invariants (PGli
       declare
         v_day_start timestamptz := date_trunc('day', statement_timestamp() at time zone 'Asia/Manila') at time zone 'Asia/Manila';
         v_day_end timestamptz := (date_trunc('day', statement_timestamp() at time zone 'Asia/Manila') + interval '1 day') at time zone 'Asia/Manila';
-        v_ts timestamptz := v_day_start + interval '2 hours';
+        v_ts timestamptz := statement_timestamp() - interval '1 minute';
       begin
         insert into public.visitors (id, owner_id, source, full_name, contact_number, email, purpose, visit_date, consent_accepted_at)
         values
@@ -338,10 +338,10 @@ describe('Guard Keyset Pagination Database Contracts & Mutation Invariants (PGli
 
         insert into public.passes (id, visitor_id, token_digest, source, status, valid_from, valid_until, entry_scanned_at, gate, issued_at)
         values
-          ('${ID_D}', '00000000-0000-4000-a000-000000000004', decode(repeat('44', 32), 'hex'), 'portal', 'pending', v_day_start + interval '1 hour', v_day_end - interval '1 minute', v_ts, 'Gate 1', v_day_start + interval '1 hour'),
-          ('${ID_B}', '00000000-0000-4000-a000-000000000002', decode(repeat('22', 32), 'hex'), 'portal', 'pending', v_day_start + interval '1 hour', v_day_end - interval '1 minute', v_ts, 'Gate 1', v_day_start + interval '1 hour'),
-          ('${ID_A}', '00000000-0000-4000-a000-000000000001', decode(repeat('11', 32), 'hex'), 'portal', 'pending', v_day_start + interval '1 hour', v_day_end - interval '1 minute', v_ts, 'Gate 1', v_day_start + interval '1 hour'),
-          ('${ID_C}', '00000000-0000-4000-a000-000000000003', decode(repeat('33', 32), 'hex'), 'portal', 'pending', v_day_start + interval '1 hour', v_day_end - interval '1 minute', v_ts, 'Gate 1', v_day_start + interval '1 hour');
+          ('${ID_D}', '00000000-0000-4000-a000-000000000004', decode(repeat('44', 32), 'hex'), 'portal', 'pending', statement_timestamp() - interval '1 hour', v_day_end - interval '1 minute', v_ts, 'Gate 1', statement_timestamp() - interval '1 hour'),
+          ('${ID_B}', '00000000-0000-4000-a000-000000000002', decode(repeat('22', 32), 'hex'), 'portal', 'pending', statement_timestamp() - interval '1 hour', v_day_end - interval '1 minute', v_ts, 'Gate 1', statement_timestamp() - interval '1 hour'),
+          ('${ID_A}', '00000000-0000-4000-a000-000000000001', decode(repeat('11', 32), 'hex'), 'portal', 'pending', statement_timestamp() - interval '1 hour', v_day_end - interval '1 minute', v_ts, 'Gate 1', statement_timestamp() - interval '1 hour'),
+          ('${ID_C}', '00000000-0000-4000-a000-000000000003', decode(repeat('33', 32), 'hex'), 'portal', 'pending', statement_timestamp() - interval '1 hour', v_day_end - interval '1 minute', v_ts, 'Gate 1', statement_timestamp() - interval '1 hour');
       end $$;
     `);
 
@@ -396,9 +396,9 @@ describe('Guard Keyset Pagination Database Contracts & Mutation Invariants (PGli
 
         insert into public.passes (id, visitor_id, token_digest, source, status, valid_from, valid_until, entry_scanned_at, gate, issued_at)
         values
-          ('${ID_NULL_2}', '00000000-0000-4000-a000-000000000003', decode(repeat('33', 32), 'hex'), 'portal', 'pending', v_day_start + interval '1 hour', v_day_end - interval '1 minute', null, null, v_day_start + interval '1 hour'),
-          ('${ID_SCANNED}', '00000000-0000-4000-a000-000000000001', decode(repeat('11', 32), 'hex'), 'portal', 'pending', v_day_start + interval '1 hour', v_day_end - interval '1 minute', v_day_start + interval '1 hour', 'Gate 1', v_day_start + interval '1 hour'),
-          ('${ID_NULL_1}', '00000000-0000-4000-a000-000000000002', decode(repeat('22', 32), 'hex'), 'portal', 'pending', v_day_start + interval '1 hour', v_day_end - interval '1 minute', null, null, v_day_start + interval '1 hour');
+          ('${ID_NULL_2}', '00000000-0000-4000-a000-000000000003', decode(repeat('33', 32), 'hex'), 'portal', 'pending', statement_timestamp() - interval '1 hour', v_day_end - interval '1 minute', null, null, statement_timestamp() - interval '1 hour'),
+          ('${ID_SCANNED}', '00000000-0000-4000-a000-000000000001', decode(repeat('11', 32), 'hex'), 'portal', 'pending', statement_timestamp() - interval '1 hour', v_day_end - interval '1 minute', statement_timestamp() - interval '1 minute', 'Gate 1', statement_timestamp() - interval '1 hour'),
+          ('${ID_NULL_1}', '00000000-0000-4000-a000-000000000002', decode(repeat('22', 32), 'hex'), 'portal', 'pending', statement_timestamp() - interval '1 hour', v_day_end - interval '1 minute', null, null, statement_timestamp() - interval '1 hour');
       end $$;
     `);
 
@@ -491,11 +491,11 @@ describe('Guard Keyset Pagination Database Contracts & Mutation Invariants (PGli
             decode(lpad(to_hex(i), 64, '0'), 'hex'),
             'portal',
             'pending',
-            v_day_start + interval '1 hour',
+            statement_timestamp() - interval '1 hour',
             v_day_end - interval '1 minute',
-            v_day_start + (i * interval '10 seconds'),
+            statement_timestamp() - ((451 - i) * interval '2 seconds'),
             'Gate 1',
-            v_day_start + interval '1 hour'
+            statement_timestamp() - interval '1 hour'
           );
         end loop;
       end $$;

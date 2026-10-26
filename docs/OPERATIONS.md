@@ -178,10 +178,10 @@ Retention policies are designed to support data-minimization and retention pract
       `user_role_and_status_changed`, `user_role_changed`, `user_reactivated`, `user_deactivated`,
       `security_hold_released`
   - **Anonymous Auth Cleanup**:
-    - Cleanup is conservative and targets only aged anonymous Auth identities older than 7 days.
+    - Anonymous Auth cleanup conservatively targets orphan anonymous identities older than 24 hours.
     - Auth users are enumerated with server-side pagination beyond 1,000 users.
     - Destructive candidate deletion strictly respects the configured `batchSize` ceiling per run.
-    - Protection lookups (`visitors`, `upload_intents`, `staff_profiles`, `devices`) fail closed: any lookup failure immediately aborts candidate deletion for that batch, deleting zero users.
+    - Protection lookups (`visitors`, `upload_intents`, `staff_profiles`, `devices`) fail closed: any lookup failure immediately aborts candidate deletion for the entire run, deleting zero users.
 
 ---
 

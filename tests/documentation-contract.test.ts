@@ -647,5 +647,11 @@ describe('Mermaid Rendering & Documentation Truthfulness Contract', () => {
     expect(troubleDoc).not.toMatch(/fails\s+to\s+extract\s+.*id\s*number/i);
     expect(troubleDoc).not.toMatch(/ocr\s+extracts?\s+.*id\s*number/i);
   });
+
+  it('ensures docs/OPERATIONS.md truthfully documents the 24-hour anonymous Auth orphan retention threshold', () => {
+    const ops = fs.readFileSync('docs/OPERATIONS.md', 'utf8');
+    expect(ops).toContain('older than 24 hours');
+    expect(ops).not.toMatch(/anonymous.*older than 7 days/i);
+  });
 });
 

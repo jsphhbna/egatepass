@@ -639,6 +639,7 @@ async function handleRequest(request: Request): Promise<Response> {
       let totalDeleteFailures = 0;
       let totalDeleted = 0;
       const allEligibleUsers: any[] = [];
+      let anonymousCleanupUnsafe = false;
 
       while (hasMorePages) {
         const { data: authData, error: authListError } = await admin.auth.admin.listUsers({
@@ -647,8 +648,9 @@ async function handleRequest(request: Request): Promise<Response> {
         });
 
         if (authListError) {
+          anonymousCleanupUnsafe = true;
           metrics.errors.push(`anonymous_auth_list_failed_page_${page}: ${authListError.message}`);
-          // Fail closed safely: abort further pagination/cleanup when enumeration fails
+          // Fail closed safely: abort enumeration immediately on any page failure
           break;
         }
 
@@ -690,13 +692,15 @@ async function handleRequest(request: Request): Promise<Response> {
             .select('user_id')
             .in('user_id', candidateIds);
 
-          // REPAIR R1: FAIL CLOSED ON ANY PROTECTION QUERY FAILURE
+          // REPAIR R1: FAIL CLOSED ON ANY PROTECTION QUERY FAILURE FOR ENTIRE RUN
           if (visitorRefErr || intentRefErr || staffRefErr || deviceRefErr) {
+            anonymousCleanupUnsafe = true;
             if (visitorRefErr) metrics.errors.push(`anonymous_auth_protection_visitor_failed: ${visitorRefErr.message}`);
             if (intentRefErr) metrics.errors.push(`anonymous_auth_protection_intent_failed: ${intentRefErr.message}`);
             if (staffRefErr) metrics.errors.push(`anonymous_auth_protection_staff_failed: ${staffRefErr.message}`);
             if (deviceRefErr) metrics.errors.push(`anonymous_auth_protection_device_failed: ${deviceRefErr.message}`);
-            // Unsafe batch: do NOT add any users from this batch to eligible!
+            // Incomplete/unreliable protection data -> halt entire cleanup run
+            break;
           } else {
             const visitorOwnerIds = new Set((referencedVisitors ?? []).map((v: any) => v.owner_id));
             const intentOwnerIds = new Set((referencedIntents ?? []).map((i: any) => i.owner_id));
@@ -722,39 +726,52 @@ async function handleRequest(request: Request): Promise<Response> {
           page++;
           if (page > 100) {
             // Defensive ceiling to prevent infinite loops
+            anonymousCleanupUnsafe = true;
+            metrics.errors.push('anonymous_auth_pagination_ceiling_exceeded');
             break;
           }
         }
       }
 
-      metrics.anonymousAuthEligible = allEligibleUsers.length;
+      if (anonymousCleanupUnsafe) {
+        // Run-level fail-closed: ANY enumeration or protection failure prohibits destructive deletion
+        allEligibleUsers.length = 0;
+        metrics.anonymousAuthEligible = 0;
+        metrics.anonymousAuthDeleted = 0;
+        metrics.anonymousAuthDeleteFailures = 0;
+      } else {
+        metrics.anonymousAuthEligible = allEligibleUsers.length;
 
-      if (!dryRun && allEligibleUsers.length > 0) {
-        const usersToClean = allEligibleUsers.slice(0, batchSize);
-        for (const user of usersToClean) {
-          const { error: delErr } = await admin.auth.admin.deleteUser(user.id);
-          if (delErr) {
-            totalDeleteFailures++;
-            metrics.errors.push(`anonymous_auth_delete_failed for user ${user.id}: ${delErr.message}`);
-            await recordReconciliation(
-              admin,
-              'maintenance.anonymous_auth_delete_failed',
-              'auth.users',
-              user.id,
-              delErr.message || 'auth_delete_failed',
-              { userId: user.id }
-            ).catch(() => undefined);
-          } else {
-            totalDeleted++;
+        if (!dryRun && allEligibleUsers.length > 0) {
+          const usersToClean = allEligibleUsers.slice(0, batchSize);
+          for (const user of usersToClean) {
+            const { error: delErr } = await admin.auth.admin.deleteUser(user.id);
+            if (delErr) {
+              totalDeleteFailures++;
+              metrics.errors.push(`anonymous_auth_delete_failed for user ${user.id}: ${delErr.message}`);
+              await recordReconciliation(
+                admin,
+                'maintenance.anonymous_auth_delete_failed',
+                'auth.users',
+                user.id,
+                delErr.message || 'auth_delete_failed',
+                { userId: user.id }
+              ).catch(() => undefined);
+            } else {
+              totalDeleted++;
+            }
           }
         }
-      }
 
-      metrics.anonymousAuthDeleted = dryRun ? 0 : totalDeleted;
-      metrics.anonymousAuthDeleteFailures = totalDeleteFailures;
+        metrics.anonymousAuthDeleted = dryRun ? 0 : totalDeleted;
+        metrics.anonymousAuthDeleteFailures = totalDeleteFailures;
+      }
     } catch (anonErr) {
       const msg = anonErr instanceof Error ? anonErr.message : 'anonymous_auth_cleanup_exception';
       metrics.errors.push(`anonymous_auth_cleanup_exception: ${msg}`);
+      metrics.anonymousAuthEligible = 0;
+      metrics.anonymousAuthDeleted = 0;
+      metrics.anonymousAuthDeleteFailures = 0;
     }
 
     // =========================================================================

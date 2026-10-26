@@ -67,6 +67,7 @@ vi.mock('../src/lib/supabase', () => {
 import {
   createPortalIssueTransaction,
   issueVisitorPass,
+  classifySubmissionOutcome,
 } from '../src/services/visitorRegistration';
 import type { VisitorRegistration } from '../src/types';
 
@@ -466,5 +467,131 @@ describe('Repair Group 1: Portal Issuance Transaction Identity & Idempotent Retr
     expect(receivedPayloads[0].photoIntentId).toBe(photoIntentA);
     expect(receivedPayloads[1].photoIntentId).toBe(tx2.photoIntentId);
     expect(receivedPayloads[1].photoIntentId).not.toBe(receivedPayloads[0].photoIntentId);
+  });
+
+  it('R2-A & Outcome Classification: Generic 503 service_unavailable is classified as ambiguous and locks transaction for exact replay', async () => {
+    // Assert classification helper truthfulness
+    expect(classifySubmissionOutcome(422, 'visit_date_out_of_range')).toBe('rejected_correctable_field');
+    expect(classifySubmissionOutcome(429, 'rate_limit_exceeded')).toBe('rejected_correctable_field');
+    expect(classifySubmissionOutcome(503, 'abuse_control_unavailable')).toBe('rejected_correctable_field');
+    expect(classifySubmissionOutcome(503, 'service_unavailable')).toBe('ambiguous');
+    expect(classifySubmissionOutcome(500, 'issue_failed')).toBe('ambiguous');
+    expect(classifySubmissionOutcome(500, 'internal_error')).toBe('ambiguous');
+
+    let receivedPayloads: any[] = [];
+    const globalFetch = vi.fn(async (url: string, init?: any) => {
+      if (url.includes('/api/passes/issue')) {
+        const body = JSON.parse(init?.body || '{}');
+        receivedPayloads.push(body);
+        if (receivedPayloads.length === 1) {
+          // Server returns HTTP 503 service_unavailable (ambiguous because issue_pass may have committed)
+          return {
+            status: 503,
+            ok: false,
+            json: async () => ({ error: 'service_unavailable' }),
+          };
+        }
+        // Retry returns committed pass
+        return {
+          status: 200,
+          ok: true,
+          json: async () => ({ passId: 'pass-503-retry', qrToken: 'qr-503' }),
+        };
+      }
+      return { ok: true, json: async () => ({}) };
+    });
+    vi.stubGlobal('fetch', globalFetch);
+
+    const transaction = await createPortalIssueTransaction();
+    const originalActor = transaction.actorId;
+    const originalRequestId = transaction.requestId;
+    const originalVisitor = { ...dummyVisitor, firstName: 'OriginalPayloadV' };
+
+    // 1. First attempt fails with 503 service_unavailable
+    await expect(
+      issueVisitorPass('portal', originalVisitor, photoBlob, idBlob, transaction.requestId, undefined, transaction)
+    ).rejects.toThrow('Generation result could not be confirmed. Please retry your submission.');
+
+    // Invariant: phase is ambiguous, submittedPayload is preserved, intents are preserved
+    expect(transaction.phase).toBe('ambiguous');
+    expect(transaction.submittedPayload?.visitor.firstName).toBe('OriginalPayloadV');
+    expect(transaction.actorId).toBe(originalActor);
+    expect(transaction.requestId).toBe(originalRequestId);
+    expect(transaction.photoIntentId).toBe('intent-photo-1');
+    expect(transaction.idIntentId).toBe('intent-id-2');
+
+    // 2. Retry with altered input: network request MUST still send original frozen payload V
+    const alteredVisitor = { ...dummyVisitor, firstName: 'AlteredInputNotPermitted' };
+    const result = await issueVisitorPass(
+      'portal',
+      alteredVisitor,
+      photoBlob,
+      idBlob,
+      transaction.requestId,
+      undefined,
+      transaction
+    );
+
+    expect(result.passId).toBe('pass-503-retry');
+    expect(receivedPayloads).toHaveLength(2);
+    expect(receivedPayloads[0].visitor.firstName).toBe('OriginalPayloadV');
+    expect(receivedPayloads[1].visitor.firstName).toBe('OriginalPayloadV'); // Must NOT be AlteredInputNotPermitted!
+    expect(receivedPayloads[1].requestId).toBe(originalRequestId);
+    expect(receivedPayloads[1].photoIntentId).toBe('intent-photo-1');
+    expect(receivedPayloads[1].idIntentId).toBe('intent-id-2');
+  });
+
+  it('R2-B: abuse_control_unavailable is an authoritative pre-commit rejection and safely unfreezes transaction to editable', async () => {
+    let receivedPayloads: any[] = [];
+    const globalFetch = vi.fn(async (url: string, init?: any) => {
+      if (url.includes('/api/passes/issue')) {
+        const body = JSON.parse(init?.body || '{}');
+        receivedPayloads.push(body);
+        if (receivedPayloads.length === 1) {
+          // Known pre-commit error: abuse control unavailable
+          return {
+            status: 503,
+            ok: false,
+            json: async () => ({ error: 'abuse_control_unavailable' }),
+          };
+        }
+        return {
+          status: 201,
+          ok: true,
+          json: async () => ({ passId: 'pass-abuse-recovered', qrToken: 'qr-abuse' }),
+        };
+      }
+      return { ok: true, json: async () => ({}) };
+    });
+    vi.stubGlobal('fetch', globalFetch);
+
+    const transaction = await createPortalIssueTransaction();
+    const visitorAttempt1 = { ...dummyVisitor, firstName: 'FirstName1' };
+
+    // 1. Initial attempt fails with abuse_control_unavailable
+    await expect(
+      issueVisitorPass('portal', visitorAttempt1, photoBlob, idBlob, transaction.requestId, undefined, transaction)
+    ).rejects.toThrow('Pass service is temporarily unavailable.');
+
+    // Invariant: Authoritative pre-commit rejection resets phase to editable and unfreezes payload
+    expect(transaction.phase).toBe('editable');
+    expect(transaction.submittedPayload).toBeNull();
+
+    // 2. Visitor can correct/update information and submit fresh attempt
+    const visitorAttempt2 = { ...dummyVisitor, firstName: 'FirstNameCorrected' };
+    const result = await issueVisitorPass(
+      'portal',
+      visitorAttempt2,
+      photoBlob,
+      idBlob,
+      transaction.requestId,
+      undefined,
+      transaction
+    );
+
+    expect(result.passId).toBe('pass-abuse-recovered');
+    expect(receivedPayloads).toHaveLength(2);
+    expect(receivedPayloads[0].visitor.firstName).toBe('FirstName1');
+    expect(receivedPayloads[1].visitor.firstName).toBe('FirstNameCorrected');
   });
 });

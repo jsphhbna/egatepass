@@ -15,6 +15,7 @@ describe('Repair Group 10 & R1/R2: Orphan Anonymous Auth User Retention', () => 
   let reconciliationTasks: any[] = [];
   let failDeleteUserIds = new Set<string>();
   let mockTableErrors: Record<string, any> = {};
+  let mockTableErrorOnInPredicate: Record<string, (vals: any[]) => boolean> = {};
   let mockListUsersErrorOnPage: number | null = null;
   let deleteUserCallCount = 0;
 
@@ -28,6 +29,7 @@ describe('Repair Group 10 & R1/R2: Orphan Anonymous Auth User Retention', () => 
     reconciliationTasks = [];
     failDeleteUserIds.clear();
     mockTableErrors = {};
+    mockTableErrorOnInPredicate = {};
     mockListUsersErrorOnPage = null;
     deleteUserCallCount = 0;
 
@@ -68,6 +70,8 @@ describe('Repair Group 10 & R1/R2: Orphan Anonymous Auth User Retention', () => 
         let limitVal: number | null = null;
         let isDelete = false;
 
+        let inPredicateError: any = null;
+
         const chain: any = {
           select: () => chain,
           eq: (col: string, val: any) => {
@@ -92,6 +96,9 @@ describe('Repair Group 10 & R1/R2: Orphan Anonymous Auth User Retention', () => 
           },
           in: (col: string, vals: any[]) => {
             filters.push((row) => vals.includes(row[col]));
+            if (mockTableErrorOnInPredicate[table]?.(vals)) {
+              inPredicateError = new Error(`Simulated error for ${table} on matching in predicate`);
+            }
             return chain;
           },
           not: () => chain,
@@ -105,8 +112,8 @@ describe('Repair Group 10 & R1/R2: Orphan Anonymous Auth User Retention', () => 
             return chain;
           },
           maybeSingle: async () => {
-            if (mockTableErrors[table]) {
-              return { data: null, error: mockTableErrors[table] };
+            if (inPredicateError || mockTableErrors[table]) {
+              return { data: null, error: inPredicateError || mockTableErrors[table] };
             }
             let data: any[] = [];
             if (table === 'app_settings') {
@@ -117,8 +124,8 @@ describe('Repair Group 10 & R1/R2: Orphan Anonymous Auth User Retention', () => 
             return { data: data[0] ?? null, error: null };
           },
           single: async () => {
-            if (mockTableErrors[table]) {
-              return { data: null, error: mockTableErrors[table] };
+            if (inPredicateError || mockTableErrors[table]) {
+              return { data: null, error: inPredicateError || mockTableErrors[table] };
             }
             let data: any[] = [];
             if (table === 'app_settings') {
@@ -139,8 +146,8 @@ describe('Repair Group 10 & R1/R2: Orphan Anonymous Auth User Retention', () => 
             return { data: null, error: null };
           },
           then: (resolve: any) => {
-            if (mockTableErrors[table]) {
-              return resolve({ data: null, count: 0, error: mockTableErrors[table] });
+            if (inPredicateError || mockTableErrors[table]) {
+              return resolve({ data: null, count: 0, error: inPredicateError || mockTableErrors[table] });
             }
             let data: any[] = [];
             if (table === 'app_settings') {
@@ -440,9 +447,58 @@ describe('Repair Group 10 & R1/R2: Orphan Anonymous Auth User Retention', () => 
     const res = await retentionMaintenanceHandler.fetch(req);
     const json = await res.json();
 
+    // Invariant: Entire run fails closed: 0 deletions, 0 reported eligible
+    expect(deleteUserCallCount).toBe(0);
+    expect(json.maintenance.anonymousAuthDeleted).toBe(0);
+    expect(json.maintenance.anonymousAuthEligible).toBe(0);
     expect(json.maintenance.errors).toContainEqual(
       expect.stringContaining('anonymous_auth_list_failed_page_2')
     );
+    // Page 1 candidates were not deleted
+    expect(authUsers.length).toBe(1200);
+  });
+
+  it('Test H: later-page protection lookup failure fails closed for the entire run (0 deletes across all pages)', async () => {
+    // Page 1: 1,000 old orphan candidates
+    for (let i = 0; i < 1000; i++) {
+      authUsers.push({
+        id: `anon-page1-${i}`,
+        is_anonymous: true,
+        created_at: OLD_TIME,
+      });
+    }
+
+    // Page 2: 200 old orphan candidates
+    for (let i = 0; i < 200; i++) {
+      authUsers.push({
+        id: `anon-page2-${i}`,
+        is_anonymous: true,
+        created_at: OLD_TIME,
+      });
+    }
+
+    // Simulate upload_intents protection query failing on page 2
+    mockTableErrorOnInPredicate['upload_intents'] = (vals) =>
+      vals.some((v) => typeof v === 'string' && v.startsWith('anon-page2-'));
+
+    const req = new Request('http://localhost/api/admin/retention-maintenance', {
+      method: 'POST',
+      headers: { authorization: `Bearer ${CRON_SECRET}`, 'content-type': 'application/json' },
+      body: JSON.stringify({ dryRun: false, batchSize: 50 }),
+    });
+
+    const res = await retentionMaintenanceHandler.fetch(req);
+    const json = await res.json();
+
+    // Required invariant: ZERO deletion from page 1 and ZERO deletion from page 2
+    expect(deleteUserCallCount).toBe(0);
+    expect(json.maintenance.anonymousAuthDeleted).toBe(0);
+    expect(json.maintenance.anonymousAuthEligible).toBe(0);
+    expect(json.maintenance.errors).toContainEqual(
+      expect.stringContaining('anonymous_auth_protection_intent_failed')
+    );
+    // All 1,200 users remain safe in authUsers
+    expect(authUsers.length).toBe(1200);
   });
 
   it('Partial Auth delete failure records reconciliation and reflects failure truthfully in metrics', async () => {

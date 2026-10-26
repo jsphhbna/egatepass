@@ -64,6 +64,32 @@ export type SubmissionOutcomeType =
   | 'rejected_correctable_field'
   | 'rejected_requires_new_transaction';
 
+export function classifySubmissionOutcome(status: number, errCode?: string): SubmissionOutcomeType {
+  // 1. Authoritative pre-commit rejections
+  if (errCode === 'visit_date_out_of_range') {
+    return 'rejected_correctable_field';
+  }
+  if (status === 429 || errCode === 'rate_limit_exceeded') {
+    return 'rejected_correctable_field';
+  }
+  if (errCode === 'abuse_control_unavailable') {
+    return 'rejected_correctable_field';
+  }
+  if (errCode === 'cross_actor_replay') {
+    return 'rejected_requires_new_transaction';
+  }
+  // 2. Ambiguous outcomes: generic 5xx, service_unavailable, mismatch, or unknown server failure
+  if (
+    status >= 500 ||
+    errCode === 'service_unavailable' ||
+    errCode === 'intent_mismatch' ||
+    errCode === 'payload_mismatch'
+  ) {
+    return 'ambiguous';
+  }
+  return 'ambiguous';
+}
+
 export class PassIssuanceError extends Error {
   readonly code: string;
   readonly outcome: SubmissionOutcomeType;
@@ -256,48 +282,25 @@ export async function issueVisitorPass(
   const body = await response.json().catch(() => null) as (IssuedPass & { error?: string }) | null;
   if (!response.ok || !body?.passId || !body.qrToken) {
     const errCode = body?.error || 'issue_failed';
+    const outcome = classifySubmissionOutcome(response.status, errCode);
 
-    // 1. Authoritative pre-commit rejection: visit_date_out_of_range
-    if (errCode === 'visit_date_out_of_range') {
+    if (outcome === 'rejected_correctable_field') {
       if (transaction) {
         transaction.phase = 'editable';
-        transaction.submittedPayload = null; // Unfreeze so visitor can edit visit date and re-submit with new date!
+        transaction.submittedPayload = null; // Unfreeze so visitor can edit and re-submit
       }
-      throw new PassIssuanceError(
-        'Visit date is outside the allowed scheduling window.',
-        errCode,
-        'rejected_correctable_field'
-      );
+      let message = 'Failed to create visitor pass.';
+      if (errCode === 'visit_date_out_of_range') {
+        message = 'Visit date is outside the allowed scheduling window.';
+      } else if (response.status === 429 || errCode === 'rate_limit_exceeded') {
+        message = 'Too many pass requests from this visitor session. Please wait before requesting another pass.';
+      } else if (errCode === 'abuse_control_unavailable') {
+        message = 'Pass service is temporarily unavailable.';
+      }
+      throw new PassIssuanceError(message, errCode, outcome);
     }
 
-    // 2. Authoritative pre-commit rejection: rate limit
-    if (response.status === 429 || errCode === 'rate_limit_exceeded') {
-      if (transaction) {
-        transaction.phase = 'editable';
-        transaction.submittedPayload = null;
-      }
-      throw new PassIssuanceError(
-        'Too many pass requests from this visitor session. Please wait before requesting another pass.',
-        'rate_limit_exceeded',
-        'rejected_correctable_field'
-      );
-    }
-
-    // 3. Authoritative pre-commit rejection: abuse control or temporary service unavailable
-    if (errCode === 'abuse_control_unavailable' || errCode === 'service_unavailable') {
-      if (transaction) {
-        transaction.phase = 'editable';
-        transaction.submittedPayload = null;
-      }
-      throw new PassIssuanceError(
-        'Pass service is temporarily unavailable.',
-        errCode,
-        'rejected_correctable_field'
-      );
-    }
-
-    // 4. Session conflict requiring fresh transaction
-    if (errCode === 'cross_actor_replay') {
+    if (outcome === 'rejected_requires_new_transaction') {
       if (transaction) {
         transaction.phase = 'editable';
         transaction.submittedPayload = null;
@@ -305,33 +308,21 @@ export async function issueVisitorPass(
       throw new PassIssuanceError(
         'Pass request session conflict. Please start a new pass registration.',
         errCode,
-        'rejected_requires_new_transaction'
+        outcome
       );
     }
 
-    // 5. Ambiguous / Server errors where outcome may be unconfirmed
-    if (response.status >= 500 || errCode === 'intent_mismatch' || errCode === 'payload_mismatch') {
-      if (transaction) {
-        transaction.phase = 'ambiguous';
-      }
-      throw new PassIssuanceError(
-        errCode === 'intent_mismatch'
-          ? 'Pass evidence verification conflict. Please retry your request.'
-          : 'Generation result could not be confirmed. Please retry your submission.',
-        errCode,
-        'ambiguous'
-      );
-    }
-
-    // Fallback: mark ambiguous to prevent silent mutations of unconfirmed state
+    // Ambiguous outcomes (generic 500/503, service_unavailable, intent_mismatch, payload_mismatch, etc.):
+    // Preserve actor, requestId, submittedPayload, photoIntentId, idIntentId for exact replay
     if (transaction) {
       transaction.phase = 'ambiguous';
     }
-    throw new PassIssuanceError(
-      'Failed to create visitor pass.',
-      errCode,
-      'ambiguous'
-    );
+    const message =
+      errCode === 'intent_mismatch'
+        ? 'Pass evidence verification conflict. Please retry your request.'
+        : 'Generation result could not be confirmed. Please retry your submission.';
+
+    throw new PassIssuanceError(message, errCode, 'ambiguous');
   }
 
   if (transaction) {
