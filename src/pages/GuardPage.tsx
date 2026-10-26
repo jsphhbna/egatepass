@@ -47,8 +47,6 @@ export function GuardPage() {
     lastUpdatedAt,
     mountedRef,
     desiredQueueSizeRef,
-    queueIntentEpochRef,
-    refreshQueuedRef,
     requestGuardQueueRefresh,
   } = useGuardQueue({
     onNewPendingPass: () => {
@@ -71,12 +69,11 @@ export function GuardPage() {
   const [isSigningOut, setIsSigningOut] = useState(false);
 
   // ============================================================
-  // INITIAL LOAD, REALTIME & 5-SECOND POLLING (PATCH 4, 53)
+  // INITIAL LOAD, REALTIME & 5-SECOND POLLING (PATCH 4, 53, 54)
   // ============================================================
   useEffect(() => {
     void requestGuardQueueRefresh({ reason: 'initial' });
     const stopRealtime = subscribeToPassChanges(() => {
-      refreshQueuedRef.current = true;
       void requestGuardQueueRefresh({
         reason: 'realtime',
         showRefreshing: true,
@@ -95,7 +92,7 @@ export function GuardPage() {
   }, [requestGuardQueueRefresh]);
 
   // ============================================================
-  // LOAD MORE: TARGET INCREASE VIA CENTRAL WRITER (PATCH 29, 31, 53)
+  // LOAD MORE: TARGET INCREASE VIA CENTRAL WRITER (PATCH 29, 31, 53, 54)
   // ============================================================
   async function handleLoadMore() {
     if (loadingMore || !hasMore) return;
@@ -105,8 +102,6 @@ export function GuardPage() {
       Math.max(desiredQueueSizeRef.current, 50) + 50,
       5000
     );
-    queueIntentEpochRef.current += 1;
-    refreshQueuedRef.current = true;
 
     try {
       const result = await requestGuardQueueRefresh({ reason: 'intent' });
@@ -121,15 +116,13 @@ export function GuardPage() {
   }
 
   // ============================================================
-  // LOAD ALL: TARGET EXPANSION VIA CENTRAL WRITER (PATCH 30, 31, 53)
+  // LOAD ALL: TARGET EXPANSION VIA CENTRAL WRITER (PATCH 30, 31, 53, 54)
   // ============================================================
   async function handleLoadAll() {
     if (loadingMore || !hasMore) return;
     setLoadingMore(true);
 
     desiredQueueSizeRef.current = 5000;
-    queueIntentEpochRef.current += 1;
-    refreshQueuedRef.current = true;
 
     try {
       const result = await requestGuardQueueRefresh({ reason: 'intent' });
@@ -165,10 +158,8 @@ export function GuardPage() {
     };
   }, []);
 
-  // Central refresh alias for decision post-processing (PATCH 26, 32, 53)
+  // Central refresh alias for decision post-processing (PATCH 26, 32, 53, 54)
   const refreshQueue = async () => {
-    queueIntentEpochRef.current += 1;
-    refreshQueuedRef.current = true;
     await requestGuardQueueRefresh({ reason: 'intent' });
   };
 

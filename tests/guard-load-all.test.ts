@@ -468,14 +468,13 @@ describe('useGuardQueue Hook: Stale-Closure, Controller Identity & Lifecycle Tes
 
     // Harness matching GuardPage effect and inline options
     function GuardHarness() {
-      const { requestGuardQueueRefresh, queueIntentEpochRef, refreshQueuedRef } = useGuardQueue({
+      const { requestGuardQueueRefresh } = useGuardQueue({
         onNewPendingPass: () => {},
       });
 
       useEffect(() => {
         void requestGuardQueueRefresh({ reason: 'initial' });
         const stopRealtime = guardService.subscribeToPassChanges(() => {
-          refreshQueuedRef.current = true;
           void requestGuardQueueRefresh({ reason: 'realtime', showRefreshing: true });
         });
         const poll = window.setInterval(() => {
@@ -537,14 +536,13 @@ describe('useGuardQueue Hook: Stale-Closure, Controller Identity & Lifecycle Tes
       const [search, setLocalSearch] = useState('');
       setSearch = setLocalSearch;
 
-      const { requestGuardQueueRefresh, queueIntentEpochRef, refreshQueuedRef } = useGuardQueue({
+      const { requestGuardQueueRefresh } = useGuardQueue({
         onNewPendingPass: () => {},
       });
 
       useEffect(() => {
         void requestGuardQueueRefresh({ reason: 'initial' });
         const stopRealtime = guardService.subscribeToPassChanges(() => {
-          refreshQueuedRef.current = true;
           void requestGuardQueueRefresh({ reason: 'realtime', showRefreshing: true });
         });
         const poll = window.setInterval(() => {
@@ -770,11 +768,9 @@ describe('useGuardQueue Hook: Stale-Closure, Controller Identity & Lifecycle Tes
       p1 = hookResult.requestGuardQueueRefresh();
     });
 
-    // 2. Realtime event occurs while traversal 1 is in-flight: epoch increments
+    // 2. Realtime/intent event occurs while traversal 1 is in-flight: epoch increments
     act(() => {
-      hookResult.queueIntentEpochRef.current += 1;
-      hookResult.refreshQueuedRef.current = true;
-      hookResult.requestGuardQueueRefresh();
+      hookResult.requestGuardQueueRefresh({ reason: 'intent' });
     });
 
     // 3. Resolve traversal 1 (it is now obsolete)
@@ -878,9 +874,7 @@ describe('useGuardQueue Hook: Stale-Closure, Controller Identity & Lifecycle Tes
 
     // 2. Realtime queues newer intent before traversal 1 rejects
     act(() => {
-      hookResult.queueIntentEpochRef.current += 1;
-      hookResult.refreshQueuedRef.current = true;
-      hookResult.requestGuardQueueRefresh();
+      hookResult.requestGuardQueueRefresh({ reason: 'intent' });
     });
 
     // 3. Traversal 1 rejects
@@ -1022,13 +1016,9 @@ describe('useGuardQueue Hook: Stale-Closure, Controller Identity & Lifecycle Tes
       const p1 = result.current.requestGuardQueueRefresh();
 
       // While p1 is in-flight, burst poll and Realtime requests
-      result.current.refreshQueuedRef.current = true;
-      const p2 = result.current.requestGuardQueueRefresh();
-      result.current.refreshQueuedRef.current = true;
-      const p3 = result.current.requestGuardQueueRefresh();
-      result.current.queueIntentEpochRef.current += 1;
-      result.current.refreshQueuedRef.current = true;
-      const p4 = result.current.requestGuardQueueRefresh();
+      const p2 = result.current.requestGuardQueueRefresh({ reason: 'poll' });
+      const p3 = result.current.requestGuardQueueRefresh({ reason: 'realtime' });
+      const p4 = result.current.requestGuardQueueRefresh({ reason: 'intent' });
 
       await Promise.all([p1, p2, p3, p4]);
     });
@@ -1071,14 +1061,13 @@ describe('useGuardQueue Hook: Stale-Closure, Controller Identity & Lifecycle Tes
 
     function FullGuardHarness() {
       const [, setTick] = useState(0);
-      const { requestGuardQueueRefresh, queueIntentEpochRef, refreshQueuedRef } = useGuardQueue({
+      const { requestGuardQueueRefresh } = useGuardQueue({
         onNewPendingPass: () => {},
       });
 
       useEffect(() => {
         void requestGuardQueueRefresh({ reason: 'initial' });
         const stopRealtime = guardService.subscribeToPassChanges(() => {
-          refreshQueuedRef.current = true;
           void requestGuardQueueRefresh({ reason: 'realtime', showRefreshing: true });
         });
         const poll = window.setInterval(() => {
@@ -1168,9 +1157,7 @@ describe('useGuardQueue Hook: Stale-Closure, Controller Identity & Lifecycle Tes
 
       // Simulate 20 rapid Realtime pass changes arriving during fetch
       for (let i = 0; i < 20; i++) {
-        result.current.queueIntentEpochRef.current += 1;
-        result.current.refreshQueuedRef.current = true;
-        void result.current.requestGuardQueueRefresh();
+        void result.current.requestGuardQueueRefresh({ reason: 'realtime', showRefreshing: true });
       }
 
       await initial;
@@ -1213,8 +1200,7 @@ describe('useGuardQueue Hook: Stale-Closure, Controller Identity & Lifecycle Tes
     await act(async () => {
       const p = result.current.requestGuardQueueRefresh();
       // Simulate Realtime feedback from pass expiration during first traversal
-      result.current.queueIntentEpochRef.current += 1;
-      result.current.refreshQueuedRef.current = true;
+      void result.current.requestGuardQueueRefresh({ reason: 'realtime' });
       await p;
     });
 
@@ -1238,9 +1224,7 @@ describe('useGuardQueue Hook: Stale-Closure, Controller Identity & Lifecycle Tes
 
       // User triggers Load More: target becomes 100, epoch increments
       result.current.desiredQueueSizeRef.current = 100;
-      result.current.queueIntentEpochRef.current += 1;
-      result.current.refreshQueuedRef.current = true;
-      const loadMoreP = result.current.requestGuardQueueRefresh();
+      const loadMoreP = result.current.requestGuardQueueRefresh({ reason: 'intent' });
 
       await Promise.all([refreshP, loadMoreP]);
     });
@@ -1265,9 +1249,7 @@ describe('useGuardQueue Hook: Stale-Closure, Controller Identity & Lifecycle Tes
 
       // User presses Load All: desired becomes 5000, epoch increments
       result.current.desiredQueueSizeRef.current = 5000;
-      result.current.queueIntentEpochRef.current += 1;
-      result.current.refreshQueuedRef.current = true;
-      const loadAllP = result.current.requestGuardQueueRefresh();
+      const loadAllP = result.current.requestGuardQueueRefresh({ reason: 'intent' });
 
       await Promise.all([refreshP, loadAllP]);
     });
@@ -1326,9 +1308,7 @@ describe('useGuardQueue Hook: Stale-Closure, Controller Identity & Lifecycle Tes
       const p1 = result.current.requestGuardQueueRefresh();
 
       // Realtime or user queues newer refresh while p1 is failing
-      result.current.queueIntentEpochRef.current += 1;
-      result.current.refreshQueuedRef.current = true;
-      const p2 = result.current.requestGuardQueueRefresh();
+      const p2 = result.current.requestGuardQueueRefresh({ reason: 'intent' });
 
       await Promise.all([p1, p2]);
     });
@@ -1389,7 +1369,7 @@ describe('Guard Queue Refresh Liveness, Poll Dropping & Realtime Coalescing Test
       poll1Result = await result.current.requestGuardQueueRefresh({ reason: 'poll', showRefreshing: true });
     });
     expect(poll1Result).toEqual({ committed: false, skipped: true });
-    expect(result.current.refreshQueuedRef.current).toBe(false);
+    expect(result.current.realtimeDirtyRef.current).toBe(false);
 
     // t = 10000: second poll fires while busy -> must be dropped
     let poll2Result: any = null;
@@ -1398,7 +1378,7 @@ describe('Guard Queue Refresh Liveness, Poll Dropping & Realtime Coalescing Test
       poll2Result = await result.current.requestGuardQueueRefresh({ reason: 'poll', showRefreshing: true });
     });
     expect(poll2Result).toEqual({ committed: false, skipped: true });
-    expect(result.current.refreshQueuedRef.current).toBe(false);
+    expect(result.current.realtimeDirtyRef.current).toBe(false);
 
     // t = 12000: refresh finishes
     let finalResult: any = null;
@@ -1409,7 +1389,7 @@ describe('Guard Queue Refresh Liveness, Poll Dropping & Realtime Coalescing Test
 
     expect(finalResult?.committed).toBe(true);
     expect(mockState.rpcCalls).toHaveLength(1);
-    expect(result.current.refreshQueuedRef.current).toBe(false);
+    expect(result.current.realtimeDirtyRef.current).toBe(false);
     expect(result.current.refreshing).toBe(false);
 
     unmount();
@@ -1435,7 +1415,7 @@ describe('Guard Queue Refresh Liveness, Poll Dropping & Realtime Coalescing Test
         const res = await result.current.requestGuardQueueRefresh({ reason: 'poll', showRefreshing: true });
         expect(res).toEqual({ committed: false, skipped: true });
       });
-      expect(result.current.refreshQueuedRef.current).toBe(false);
+      expect(result.current.realtimeDirtyRef.current).toBe(false);
       expect(mockState.rpcCalls).toHaveLength(1);
     }
 
@@ -1550,14 +1530,13 @@ describe('Guard Queue Refresh Liveness, Poll Dropping & Realtime Coalescing Test
     // Fire 20 Realtime events during initial in-flight traversal
     act(() => {
       for (let i = 0; i < 20; i++) {
-        result.current.refreshQueuedRef.current = true;
         void result.current.requestGuardQueueRefresh({ reason: 'realtime', showRefreshing: true });
       }
     });
 
     // Realtime must NOT change epoch
     expect(result.current.queueIntentEpochRef.current).toBe(initialEpoch);
-    expect(result.current.refreshQueuedRef.current).toBe(true);
+    expect(result.current.realtimeDirtyRef.current).toBe(true);
 
     // Resolve first RPC: it must commit its consistent snapshot
     await act(async () => {
@@ -1595,7 +1574,6 @@ describe('Guard Queue Refresh Liveness, Poll Dropping & Realtime Coalescing Test
 
     act(() => {
       for (let i = 0; i < 20; i++) {
-        result.current.refreshQueuedRef.current = true;
         void result.current.requestGuardQueueRefresh({ reason: 'realtime', showRefreshing: true });
       }
     });
@@ -1609,7 +1587,6 @@ describe('Guard Queue Refresh Liveness, Poll Dropping & Realtime Coalescing Test
     let callCount = 0;
     const pool = generatePassPool(300);
     let resolveRpc1!: () => void;
-    let resolveRpc2!: () => void;
 
     vi.spyOn(supabaseLib, 'requireSupabase').mockReturnValue({
       schema: vi.fn().mockReturnValue({
@@ -1673,17 +1650,14 @@ describe('Guard Queue Refresh Liveness, Poll Dropping & Realtime Coalescing Test
     const { result, unmount } = renderGuardQueueHook();
 
     // 1. Initial traversal starts for 50
-    let p1!: Promise<any>;
     act(() => {
-      p1 = result.current.requestGuardQueueRefresh({ reason: 'initial' });
+      void result.current.requestGuardQueueRefresh({ reason: 'initial' });
     });
 
-    // 2. User presses Load More: desired=100, epoch increments, queued=true
+    // 2. User presses Load More: desired=100, reason='intent'
     let pLoadMore!: Promise<any>;
     act(() => {
       result.current.desiredQueueSizeRef.current = 100;
-      result.current.queueIntentEpochRef.current += 1;
-      result.current.refreshQueuedRef.current = true;
       pLoadMore = result.current.requestGuardQueueRefresh({ reason: 'intent' });
     });
 
@@ -1765,16 +1739,13 @@ describe('Guard Queue Refresh Liveness, Poll Dropping & Realtime Coalescing Test
 
     const { result, unmount } = renderGuardQueueHook();
 
-    let p1!: Promise<any>;
     act(() => {
-      p1 = result.current.requestGuardQueueRefresh({ reason: 'initial' });
+      void result.current.requestGuardQueueRefresh({ reason: 'initial' });
     });
 
     let pLoadAll!: Promise<any>;
     act(() => {
       result.current.desiredQueueSizeRef.current = 5000;
-      result.current.queueIntentEpochRef.current += 1;
-      result.current.refreshQueuedRef.current = true;
       pLoadAll = result.current.requestGuardQueueRefresh({ reason: 'intent' });
     });
 
@@ -1855,14 +1826,12 @@ describe('Guard Queue Refresh Liveness, Poll Dropping & Realtime Coalescing Test
 
     const { result, unmount } = renderGuardQueueHook();
 
-    let p1!: Promise<any>;
     act(() => {
-      p1 = result.current.requestGuardQueueRefresh({ reason: 'initial' });
+      void result.current.requestGuardQueueRefresh({ reason: 'initial' });
     });
 
-    // Realtime arrives during Traversal A: sets queued follow-up, NO epoch change
+    // Realtime arrives during Traversal A: sets dirty signal, NO epoch change
     act(() => {
-      result.current.refreshQueuedRef.current = true;
       void result.current.requestGuardQueueRefresh({ reason: 'realtime' });
     });
     expect(result.current.queueIntentEpochRef.current).toBe(0);
@@ -1871,8 +1840,6 @@ describe('Guard Queue Refresh Liveness, Poll Dropping & Realtime Coalescing Test
     let pLoadAll!: Promise<any>;
     act(() => {
       result.current.desiredQueueSizeRef.current = 5000;
-      result.current.queueIntentEpochRef.current += 1;
-      result.current.refreshQueuedRef.current = true;
       pLoadAll = result.current.requestGuardQueueRefresh({ reason: 'intent' });
     });
 
@@ -1953,9 +1920,8 @@ describe('Guard Queue Refresh Liveness, Poll Dropping & Realtime Coalescing Test
 
     const { result, unmount } = renderGuardQueueHook();
 
-    let p1!: Promise<any>;
     act(() => {
-      p1 = result.current.requestGuardQueueRefresh({ reason: 'initial' });
+      void result.current.requestGuardQueueRefresh({ reason: 'initial' });
     });
 
     // Poll fires while busy -> dropped
@@ -1964,14 +1930,12 @@ describe('Guard Queue Refresh Liveness, Poll Dropping & Realtime Coalescing Test
       pollRes = await result.current.requestGuardQueueRefresh({ reason: 'poll' });
     });
     expect(pollRes).toEqual({ committed: false, skipped: true });
-    expect(result.current.refreshQueuedRef.current).toBe(false);
+    expect(result.current.realtimeDirtyRef.current).toBe(false);
 
     // User presses Load More -> intent invalidation
     let pLoadMore!: Promise<any>;
     act(() => {
       result.current.desiredQueueSizeRef.current = 100;
-      result.current.queueIntentEpochRef.current += 1;
-      result.current.refreshQueuedRef.current = true;
       pLoadMore = result.current.requestGuardQueueRefresh({ reason: 'intent' });
     });
 
@@ -2046,7 +2010,6 @@ describe('Guard Queue Refresh Liveness, Poll Dropping & Realtime Coalescing Test
 
     // Realtime arrives when idle
     await act(async () => {
-      result.current.refreshQueuedRef.current = true;
       const res = await result.current.requestGuardQueueRefresh({ reason: 'realtime', showRefreshing: true });
       expect(res.committed).toBe(true);
     });
@@ -2100,7 +2063,6 @@ describe('Guard Queue Refresh Liveness, Poll Dropping & Realtime Coalescing Test
 
       // Fire 100 events rapidly
       for (let i = 0; i < 100; i++) {
-        result.current.refreshQueuedRef.current = true;
         void result.current.requestGuardQueueRefresh({ reason: 'realtime' });
       }
 
@@ -2121,8 +2083,6 @@ describe('Guard Queue Refresh Liveness, Poll Dropping & Realtime Coalescing Test
     let pLoadAll!: Promise<any>;
     act(() => {
       result.current.desiredQueueSizeRef.current = 5000;
-      result.current.queueIntentEpochRef.current += 1;
-      result.current.refreshQueuedRef.current = true;
       result.current.setLoadingMore(true);
       pLoadAll = result.current.requestGuardQueueRefresh({ reason: 'intent', showRefreshing: true });
     });
@@ -2192,12 +2152,9 @@ describe('Guard Queue Refresh Liveness, Poll Dropping & Realtime Coalescing Test
 
     await act(async () => {
       result.current.desiredQueueSizeRef.current = 5000;
-      result.current.queueIntentEpochRef.current += 1;
-      result.current.refreshQueuedRef.current = true;
       const loadAllPromise = result.current.requestGuardQueueRefresh({ reason: 'intent', showRefreshing: true });
 
       // Realtime mutation occurs during Load All traversal
-      result.current.refreshQueuedRef.current = true;
       void result.current.requestGuardQueueRefresh({ reason: 'realtime', showRefreshing: true });
 
       const res = await loadAllPromise;
@@ -2209,4 +2166,1150 @@ describe('Guard Queue Refresh Liveness, Poll Dropping & Realtime Coalescing Test
 
     unmount();
   });
+
+  it('REQUIRED TEST 15 (Section 31). Realtime event during follow-up: Traversal A -> Realtime -> Follow-up B -> Realtime during B -> chain ENDS at 2 traversals (NO C)', async () => {
+    let callCount = 0;
+    const pool = generatePassPool(10);
+    let resolveA!: () => void;
+    let resolveB!: () => void;
+
+    vi.spyOn(supabaseLib, 'requireSupabase').mockReturnValue({
+      schema: vi.fn().mockReturnValue({
+        rpc: vi.fn(async () => {
+          callCount++;
+          if (callCount === 1) {
+            return new Promise((r) => {
+              resolveA = () =>
+                r({
+                  data: {
+                    queue: pool.slice(0, 5).map((p) => ({
+                      ...p,
+                      status: 'pending',
+                      purpose: 'Official Business',
+                      source: 'portal',
+                      validFrom: '2026-10-21T08:00:00Z',
+                      validUntil: '2026-10-21T17:00:00Z',
+                      gate: 'Gate 1',
+                      photoEvidenceId: '22222222-2222-4222-8222-222222222222',
+                      idEvidenceId: null,
+                    })),
+                    stats: { inside: 0, exited: 0, rejected: 0, total: 0 },
+                    rejectionReasons: [],
+                    pendingTotal: 5,
+                    snapshotPendingTotal: 5,
+                    snapshotAt: '2026-10-21T09:00:00.000000Z',
+                    hasMore: false,
+                    nextCursor: null,
+                  },
+                  error: null,
+                });
+            });
+          }
+          if (callCount === 2) {
+            return new Promise((r) => {
+              resolveB = () =>
+                r({
+                  data: {
+                    queue: pool.map((p) => ({
+                      ...p,
+                      status: 'pending',
+                      purpose: 'Official Business',
+                      source: 'portal',
+                      validFrom: '2026-10-21T08:00:00Z',
+                      validUntil: '2026-10-21T17:00:00Z',
+                      gate: 'Gate 1',
+                      photoEvidenceId: '22222222-2222-4222-8222-222222222222',
+                      idEvidenceId: null,
+                    })),
+                    stats: { inside: 0, exited: 0, rejected: 0, total: 0 },
+                    rejectionReasons: [],
+                    pendingTotal: 10,
+                    snapshotPendingTotal: 10,
+                    snapshotAt: '2026-10-21T09:01:00.000000Z',
+                    hasMore: false,
+                    nextCursor: null,
+                  },
+                  error: null,
+                });
+            });
+          }
+          throw new Error('UNEXPECTED TRAVERSAL C! Refresh chain failed to terminate!');
+        }),
+      }),
+    } as any);
+
+    const { result, unmount } = renderGuardQueueHook();
+
+    let pChain!: Promise<any>;
+    act(() => {
+      pChain = result.current.requestGuardQueueRefresh({ reason: 'initial', showRefreshing: true });
+    });
+
+    // Realtime event during Traversal A
+    act(() => {
+      void result.current.requestGuardQueueRefresh({ reason: 'realtime', showRefreshing: true });
+    });
+    expect(result.current.realtimeDirtyRef.current).toBe(true);
+
+    // Resolve A -> commits A -> begins follow-up B
+    await act(async () => {
+      resolveA();
+      await Promise.resolve();
+    });
+
+    expect(callCount).toBe(2); // Follow-up B running
+
+    // Realtime event during follow-up B -> dirty signal set again
+    act(() => {
+      void result.current.requestGuardQueueRefresh({ reason: 'realtime', showRefreshing: true });
+    });
+    expect(result.current.realtimeDirtyRef.current).toBe(true);
+
+    // Resolve B -> commits B -> loop terminates because realtimeFollowupUsed === true!
+    await act(async () => {
+      resolveB();
+      await pChain;
+    });
+
+    expect(callCount).toBe(2); // Exactly 2 traversals, NO Traversal C!
+    expect(result.current.refreshing).toBe(false);
+    expect(result.current.refreshInFlightRef.current).toBeNull();
+    expect(result.current.realtimeDirtyRef.current).toBe(false);
+
+    unmount();
+  });
+
+  it('REQUIRED TEST 16 (Section 32). Continuous Realtime stream: continuous events during A and B cap at 2 traversals and settle promise', async () => {
+    let callCount = 0;
+    const pool = generatePassPool(10);
+    let resolveA!: () => void;
+    let resolveB!: () => void;
+
+    vi.spyOn(supabaseLib, 'requireSupabase').mockReturnValue({
+      schema: vi.fn().mockReturnValue({
+        rpc: vi.fn(async () => {
+          callCount++;
+          if (callCount === 1) {
+            return new Promise((r) => {
+              resolveA = () =>
+                r({
+                  data: {
+                    queue: pool.slice(0, 5).map((p) => ({
+                      ...p,
+                      status: 'pending',
+                      purpose: 'Official Business',
+                      source: 'portal',
+                      validFrom: '2026-10-21T08:00:00Z',
+                      validUntil: '2026-10-21T17:00:00Z',
+                      gate: 'Gate 1',
+                      photoEvidenceId: '22222222-2222-4222-8222-222222222222',
+                      idEvidenceId: null,
+                    })),
+                    stats: { inside: 0, exited: 0, rejected: 0, total: 0 },
+                    rejectionReasons: [],
+                    pendingTotal: 5,
+                    snapshotPendingTotal: 5,
+                    snapshotAt: '2026-10-21T09:00:00.000000Z',
+                    hasMore: false,
+                    nextCursor: null,
+                  },
+                  error: null,
+                });
+            });
+          }
+          if (callCount === 2) {
+            return new Promise((r) => {
+              resolveB = () =>
+                r({
+                  data: {
+                    queue: pool.map((p) => ({
+                      ...p,
+                      status: 'pending',
+                      purpose: 'Official Business',
+                      source: 'portal',
+                      validFrom: '2026-10-21T08:00:00Z',
+                      validUntil: '2026-10-21T17:00:00Z',
+                      gate: 'Gate 1',
+                      photoEvidenceId: '22222222-2222-4222-8222-222222222222',
+                      idEvidenceId: null,
+                    })),
+                    stats: { inside: 0, exited: 0, rejected: 0, total: 0 },
+                    rejectionReasons: [],
+                    pendingTotal: 10,
+                    snapshotPendingTotal: 10,
+                    snapshotAt: '2026-10-21T09:01:00.000000Z',
+                    hasMore: false,
+                    nextCursor: null,
+                  },
+                  error: null,
+                });
+            });
+          }
+          throw new Error('Unbounded refresh chain! Extra traversal executed under continuous stream!');
+        }),
+      }),
+    } as any);
+
+    const { result, unmount } = renderGuardQueueHook();
+
+    let pChain!: Promise<any>;
+    act(() => {
+      pChain = result.current.requestGuardQueueRefresh({ reason: 'initial', showRefreshing: true });
+    });
+
+    // Stream 50 events while A is in flight
+    act(() => {
+      for (let i = 0; i < 50; i++) {
+        void result.current.requestGuardQueueRefresh({ reason: 'realtime', showRefreshing: true });
+      }
+    });
+
+    // Resolve A -> B starts
+    await act(async () => {
+      resolveA();
+      await Promise.resolve();
+    });
+
+    expect(callCount).toBe(2);
+
+    // Stream 50 more events while B is in flight
+    act(() => {
+      for (let i = 0; i < 50; i++) {
+        void result.current.requestGuardQueueRefresh({ reason: 'realtime', showRefreshing: true });
+      }
+    });
+
+    // Resolve B -> loop must terminate despite dirty signal
+    await act(async () => {
+      resolveB();
+      const finalRes = await pChain;
+      expect(finalRes.committed).toBe(true);
+    });
+
+    expect(callCount).toBe(2);
+    expect(result.current.refreshInFlightRef.current).toBeNull();
+    expect(result.current.refreshing).toBe(false);
+
+    unmount();
+  });
+
+  it('REQUIRED TEST 17 (Section 33). Next idle poll reconciles deferred change: deferred Realtime during follow-up is picked up by next 5s poll', async () => {
+    let callCount = 0;
+    const pool = generatePassPool(15);
+
+    vi.spyOn(supabaseLib, 'requireSupabase').mockReturnValue({
+      schema: vi.fn().mockReturnValue({
+        rpc: vi.fn(async () => {
+          callCount++;
+          const passSlice = pool.slice(0, callCount * 5);
+          return {
+            data: {
+              queue: passSlice.map((p) => ({
+                ...p,
+                status: 'pending',
+                purpose: 'Official Business',
+                source: 'portal',
+                validFrom: '2026-10-21T08:00:00Z',
+                validUntil: '2026-10-21T17:00:00Z',
+                gate: 'Gate 1',
+                photoEvidenceId: '22222222-2222-4222-8222-222222222222',
+                idEvidenceId: null,
+              })),
+              stats: { inside: 0, exited: 0, rejected: 0, total: 0 },
+              rejectionReasons: [],
+              pendingTotal: passSlice.length,
+              snapshotPendingTotal: passSlice.length,
+              snapshotAt: `2026-10-21T09:0${callCount}:00.000000Z`,
+              hasMore: false,
+              nextCursor: null,
+            },
+            error: null,
+          };
+        }),
+      }),
+    } as any);
+
+    const { result, unmount } = renderGuardQueueHook();
+
+    // Traversal A
+    await act(async () => {
+      const p1 = result.current.requestGuardQueueRefresh({ reason: 'initial', showRefreshing: true });
+      // Realtime during A triggers B
+      void result.current.requestGuardQueueRefresh({ reason: 'realtime', showRefreshing: true });
+      // Realtime during B deferred
+      void result.current.requestGuardQueueRefresh({ reason: 'realtime', showRefreshing: true });
+      await p1;
+    });
+
+    expect(callCount).toBe(2);
+    expect(result.current.passes).toHaveLength(10);
+    expect(result.current.refreshInFlightRef.current).toBeNull();
+
+    // Now idle: 5s poll arrives and reconciles the deferred Realtime state
+    await act(async () => {
+      const pollRes = await result.current.requestGuardQueueRefresh({ reason: 'poll', showRefreshing: true });
+      expect(pollRes.committed).toBe(true);
+    });
+
+    expect(callCount).toBe(3); // Traversal C executed cleanly
+    expect(result.current.passes).toHaveLength(15);
+    expect(result.current.refreshing).toBe(false);
+
+    unmount();
+  });
+
+  it('REQUIRED TEST 18 (Section 34). Idle Realtime after chain: after A+B chain terminates, a new Realtime event starts a fresh chain immediately', async () => {
+    let callCount = 0;
+    const pool = generatePassPool(10);
+
+    vi.spyOn(supabaseLib, 'requireSupabase').mockReturnValue({
+      schema: vi.fn().mockReturnValue({
+        rpc: vi.fn(async () => {
+          callCount++;
+          return {
+            data: {
+              queue: pool.map((p) => ({
+                ...p,
+                status: 'pending',
+                purpose: 'Official Business',
+                source: 'portal',
+                validFrom: '2026-10-21T08:00:00Z',
+                validUntil: '2026-10-21T17:00:00Z',
+                gate: 'Gate 1',
+                photoEvidenceId: '22222222-2222-4222-8222-222222222222',
+                idEvidenceId: null,
+              })),
+              stats: { inside: 0, exited: 0, rejected: 0, total: 0 },
+              rejectionReasons: [],
+              pendingTotal: 10,
+              snapshotPendingTotal: 10,
+              snapshotAt: '2026-10-21T09:00:00.000000Z',
+              hasMore: false,
+              nextCursor: null,
+            },
+            error: null,
+          };
+        }),
+      }),
+    } as any);
+
+    const { result, unmount } = renderGuardQueueHook();
+
+    // First chain A + follow-up B
+    await act(async () => {
+      const p1 = result.current.requestGuardQueueRefresh({ reason: 'initial' });
+      void result.current.requestGuardQueueRefresh({ reason: 'realtime' });
+      await p1;
+    });
+
+    expect(callCount).toBe(2);
+    expect(result.current.refreshInFlightRef.current).toBeNull();
+
+    // Now idle: brand new Realtime event arrives
+    await act(async () => {
+      const res = await result.current.requestGuardQueueRefresh({ reason: 'realtime', showRefreshing: true });
+      expect(res.committed).toBe(true);
+    });
+
+    expect(callCount).toBe(3); // Fresh chain executed immediately
+    expect(result.current.refreshing).toBe(false);
+
+    unmount();
+  });
+
+  it('REQUIRED TEST 19 (Section 35). Intent during Realtime follow-up: Load All during follow-up B discards B and runs authoritative C (desiredCount=5000), allowing one D follow-up', async () => {
+    let callCount = 0;
+    const pool = generatePassPool(10);
+    let resolveA!: () => void;
+    let resolveB!: () => void;
+    let resolveC!: () => void;
+    let resolveD!: () => void;
+
+    vi.spyOn(supabaseLib, 'requireSupabase').mockReturnValue({
+      schema: vi.fn().mockReturnValue({
+        rpc: vi.fn(async (_fn: string, params: any) => {
+          callCount++;
+          if (callCount === 1) {
+            return new Promise((r) => {
+              resolveA = () =>
+                r({
+                  data: {
+                    queue: pool.slice(0, 5).map((p) => ({ ...p, status: 'pending', purpose: 'Official Business', source: 'portal', validFrom: '2026-10-21T08:00:00Z', validUntil: '2026-10-21T17:00:00Z', gate: 'Gate 1', photoEvidenceId: '22222222-2222-4222-8222-222222222222', idEvidenceId: null })),
+                    stats: { inside: 0, exited: 0, rejected: 0, total: 0 },
+                    rejectionReasons: [],
+                    pendingTotal: 5,
+                    snapshotPendingTotal: 5,
+                    snapshotAt: '2026-10-21T09:00:00.000000Z',
+                    hasMore: false,
+                    nextCursor: null,
+                  },
+                  error: null,
+                });
+            });
+          }
+          if (callCount === 2) {
+            return new Promise((r) => {
+              resolveB = () =>
+                r({
+                  data: {
+                    queue: pool.slice(0, 5).map((p) => ({ ...p, status: 'pending', purpose: 'Official Business', source: 'portal', validFrom: '2026-10-21T08:00:00Z', validUntil: '2026-10-21T17:00:00Z', gate: 'Gate 1', photoEvidenceId: '22222222-2222-4222-8222-222222222222', idEvidenceId: null })),
+                    stats: { inside: 0, exited: 0, rejected: 0, total: 0 },
+                    rejectionReasons: [],
+                    pendingTotal: 5,
+                    snapshotPendingTotal: 5,
+                    snapshotAt: '2026-10-21T09:01:00.000000Z',
+                    hasMore: false,
+                    nextCursor: null,
+                  },
+                  error: null,
+                });
+            });
+          }
+          if (callCount === 3) {
+            expect(params.requested_limit).toBe(200); // desiredCount=5000 -> requested_limit capped at 200
+            return new Promise((r) => {
+              resolveC = () =>
+                r({
+                  data: {
+                    queue: pool.map((p) => ({ ...p, status: 'pending', purpose: 'Official Business', source: 'portal', validFrom: '2026-10-21T08:00:00Z', validUntil: '2026-10-21T17:00:00Z', gate: 'Gate 1', photoEvidenceId: '22222222-2222-4222-8222-222222222222', idEvidenceId: null })),
+                    stats: { inside: 0, exited: 0, rejected: 0, total: 0 },
+                    rejectionReasons: [],
+                    pendingTotal: 10,
+                    snapshotPendingTotal: 10,
+                    snapshotAt: '2026-10-21T09:02:00.000000Z',
+                    hasMore: false,
+                    nextCursor: null,
+                  },
+                  error: null,
+                });
+            });
+          }
+          if (callCount === 4) {
+            return new Promise((r) => {
+              resolveD = () =>
+                r({
+                  data: {
+                    queue: pool.map((p) => ({ ...p, status: 'pending', purpose: 'Official Business', source: 'portal', validFrom: '2026-10-21T08:00:00Z', validUntil: '2026-10-21T17:00:00Z', gate: 'Gate 1', photoEvidenceId: '22222222-2222-4222-8222-222222222222', idEvidenceId: null })),
+                    stats: { inside: 0, exited: 0, rejected: 0, total: 0 },
+                    rejectionReasons: [],
+                    pendingTotal: 10,
+                    snapshotPendingTotal: 10,
+                    snapshotAt: '2026-10-21T09:03:00.000000Z',
+                    hasMore: false,
+                    nextCursor: null,
+                  },
+                  error: null,
+                });
+            });
+          }
+          throw new Error('Unexpected 5th traversal! Chain failed to bound after follow-up D.');
+        }),
+      }),
+    } as any);
+
+    const { result, unmount } = renderGuardQueueHook();
+
+    // 1. Initial traversal A starts
+    act(() => {
+      void result.current.requestGuardQueueRefresh({ reason: 'initial', showRefreshing: true });
+    });
+
+    // Realtime arrives during A -> queues follow-up B
+    act(() => {
+      void result.current.requestGuardQueueRefresh({ reason: 'realtime' });
+    });
+
+    // 2. Resolve A -> commits A -> follow-up B starts
+    await act(async () => {
+      resolveA();
+      await Promise.resolve();
+    });
+
+    expect(callCount).toBe(2);
+
+    // 3. User triggers Load All during B -> intent increments epoch
+    let pLoadAll!: Promise<any>;
+    act(() => {
+      result.current.desiredQueueSizeRef.current = 5000;
+      pLoadAll = result.current.requestGuardQueueRefresh({ reason: 'intent', showRefreshing: true });
+    });
+
+    // 4. Resolve B -> obsolete because epoch changed -> discarded!
+    // B does not consume the follow-up budget of the new intent sequence.
+    await act(async () => {
+      resolveB();
+      await Promise.resolve();
+    });
+
+    expect(callCount).toBe(3); // Traversal C started with limit 200
+
+    // 5. Realtime arrives during C -> dirty=true
+    act(() => {
+      void result.current.requestGuardQueueRefresh({ reason: 'realtime' });
+    });
+
+    // 6. Resolve C -> commits C -> one Realtime follow-up D permitted
+    await act(async () => {
+      resolveC();
+      await Promise.resolve();
+    });
+
+    expect(callCount).toBe(4); // Follow-up D started
+
+    // 7. Resolve D -> commits D -> chain stops
+    await act(async () => {
+      resolveD();
+      const res = await pLoadAll;
+      expect(res.committed).toBe(true);
+    });
+
+    expect(callCount).toBe(4);
+    expect(result.current.refreshing).toBe(false);
+    expect(result.current.refreshInFlightRef.current).toBeNull();
+
+    unmount();
+  });
+
+  it('REQUIRED TEST 20 (Section 36). Load More during follow-up: Load More during B discards B and runs replacement C with new target', async () => {
+    let callCount = 0;
+    const pool = generatePassPool(100);
+    let resolveA!: () => void;
+    let resolveB!: () => void;
+
+    vi.spyOn(supabaseLib, 'requireSupabase').mockReturnValue({
+      schema: vi.fn().mockReturnValue({
+        rpc: vi.fn(async (_fn: string, params: any) => {
+          callCount++;
+          if (callCount === 1) {
+            return new Promise((r) => {
+              resolveA = () =>
+                r({
+                  data: {
+                    queue: pool.slice(0, 50).map((p) => ({ ...p, status: 'pending', purpose: 'Official Business', source: 'portal', validFrom: '2026-10-21T08:00:00Z', validUntil: '2026-10-21T17:00:00Z', gate: 'Gate 1', photoEvidenceId: '22222222-2222-4222-8222-222222222222', idEvidenceId: null })),
+                    stats: { inside: 0, exited: 0, rejected: 0, total: 0 },
+                    rejectionReasons: [],
+                    pendingTotal: 100,
+                    snapshotPendingTotal: 100,
+                    snapshotAt: '2026-10-21T09:00:00.000000Z',
+                    hasMore: true,
+                    nextCursor: { scannedAt: pool[49].scannedAt, id: pool[49].id },
+                  },
+                  error: null,
+                });
+            });
+          }
+          if (callCount === 2) {
+            return new Promise((r) => {
+              resolveB = () =>
+                r({
+                  data: {
+                    queue: pool.slice(0, 50).map((p) => ({ ...p, status: 'pending', purpose: 'Official Business', source: 'portal', validFrom: '2026-10-21T08:00:00Z', validUntil: '2026-10-21T17:00:00Z', gate: 'Gate 1', photoEvidenceId: '22222222-2222-4222-8222-222222222222', idEvidenceId: null })),
+                    stats: { inside: 0, exited: 0, rejected: 0, total: 0 },
+                    rejectionReasons: [],
+                    pendingTotal: 100,
+                    snapshotPendingTotal: 100,
+                    snapshotAt: '2026-10-21T09:01:00.000000Z',
+                    hasMore: true,
+                    nextCursor: { scannedAt: pool[49].scannedAt, id: pool[49].id },
+                  },
+                  error: null,
+                });
+            });
+          }
+          return {
+            data: {
+              queue: pool.slice(0, Math.min(params.requested_limit, 100)).map((p) => ({ ...p, status: 'pending', purpose: 'Official Business', source: 'portal', validFrom: '2026-10-21T08:00:00Z', validUntil: '2026-10-21T17:00:00Z', gate: 'Gate 1', photoEvidenceId: '22222222-2222-4222-8222-222222222222', idEvidenceId: null })),
+              stats: { inside: 0, exited: 0, rejected: 0, total: 0 },
+              rejectionReasons: [],
+              pendingTotal: 100,
+              snapshotPendingTotal: 100,
+              snapshotAt: '2026-10-21T09:02:00.000000Z',
+              hasMore: false,
+              nextCursor: null,
+            },
+            error: null,
+          };
+        }),
+      }),
+    } as any);
+
+    const { result, unmount } = renderGuardQueueHook();
+
+    // A starts
+    act(() => {
+      void result.current.requestGuardQueueRefresh({ reason: 'initial' });
+    });
+    // Realtime arrives during A
+    act(() => {
+      void result.current.requestGuardQueueRefresh({ reason: 'realtime' });
+    });
+    // A resolves -> B starts
+    await act(async () => {
+      resolveA();
+      await Promise.resolve();
+    });
+
+    expect(callCount).toBe(2);
+
+    // User triggers Load More during B
+    let pLoadMore!: Promise<any>;
+    act(() => {
+      result.current.desiredQueueSizeRef.current = 100;
+      pLoadMore = result.current.requestGuardQueueRefresh({ reason: 'intent' });
+    });
+
+    // Resolve B -> discarded due to epoch change -> replacement C runs with target 100
+    await act(async () => {
+      resolveB();
+      const res = await pLoadMore;
+      expect(res.committed).toBe(true);
+    });
+
+    expect(callCount).toBe(3); // A, B (discarded), C
+    expect(result.current.passes).toHaveLength(100);
+    expect(result.current.refreshing).toBe(false);
+
+    unmount();
+  });
+
+  it('REQUIRED TEST 21 (Section 37). Approve during follow-up: decision intent during B discards B and authoritatively reflects backend change', async () => {
+    let callCount = 0;
+    const pool = generatePassPool(5);
+    let resolveA!: () => void;
+    let resolveB!: () => void;
+
+    vi.spyOn(supabaseLib, 'requireSupabase').mockReturnValue({
+      schema: vi.fn().mockReturnValue({
+        rpc: vi.fn(async () => {
+          callCount++;
+          if (callCount === 1) {
+            return new Promise((r) => {
+              resolveA = () =>
+                r({
+                  data: {
+                    queue: pool.map((p) => ({ ...p, status: 'pending', purpose: 'Official Business', source: 'portal', validFrom: '2026-10-21T08:00:00Z', validUntil: '2026-10-21T17:00:00Z', gate: 'Gate 1', photoEvidenceId: '22222222-2222-4222-8222-222222222222', idEvidenceId: null })),
+                    stats: { inside: 0, exited: 0, rejected: 0, total: 0 },
+                    rejectionReasons: [],
+                    pendingTotal: 5,
+                    snapshotPendingTotal: 5,
+                    snapshotAt: '2026-10-21T09:00:00.000000Z',
+                    hasMore: false,
+                    nextCursor: null,
+                  },
+                  error: null,
+                });
+            });
+          }
+          if (callCount === 2) {
+            return new Promise((r) => {
+              resolveB = () =>
+                r({
+                  data: {
+                    queue: pool.map((p) => ({ ...p, status: 'pending', purpose: 'Official Business', source: 'portal', validFrom: '2026-10-21T08:00:00Z', validUntil: '2026-10-21T17:00:00Z', gate: 'Gate 1', photoEvidenceId: '22222222-2222-4222-8222-222222222222', idEvidenceId: null })),
+                    stats: { inside: 0, exited: 0, rejected: 0, total: 0 },
+                    rejectionReasons: [],
+                    pendingTotal: 5,
+                    snapshotPendingTotal: 5,
+                    snapshotAt: '2026-10-21T09:01:00.000000Z',
+                    hasMore: false,
+                    nextCursor: null,
+                  },
+                  error: null,
+                });
+            });
+          }
+          // After approval, visitor 0 is removed: pool size 4
+          return {
+            data: {
+              queue: pool.slice(1).map((p) => ({ ...p, status: 'pending', purpose: 'Official Business', source: 'portal', validFrom: '2026-10-21T08:00:00Z', validUntil: '2026-10-21T17:00:00Z', gate: 'Gate 1', photoEvidenceId: '22222222-2222-4222-8222-222222222222', idEvidenceId: null })),
+              stats: { inside: 1, exited: 0, rejected: 0, total: 0 },
+              rejectionReasons: [],
+              pendingTotal: 4,
+              snapshotPendingTotal: 4,
+              snapshotAt: '2026-10-21T09:02:00.000000Z',
+              hasMore: false,
+              nextCursor: null,
+            },
+            error: null,
+          };
+        }),
+      }),
+    } as any);
+
+    const { result, unmount } = renderGuardQueueHook();
+
+    // A starts
+    act(() => {
+      void result.current.requestGuardQueueRefresh({ reason: 'initial' });
+    });
+    // Realtime during A
+    act(() => {
+      void result.current.requestGuardQueueRefresh({ reason: 'realtime' });
+    });
+    // A resolves -> commits 5 passes -> B starts
+    await act(async () => {
+      resolveA();
+      await Promise.resolve();
+    });
+
+    expect(callCount).toBe(2);
+    expect(result.current.passes).toHaveLength(5);
+
+    // Guard approves visitor 0 during B: refreshQueue triggers intent
+    let pApproveRefresh!: Promise<any>;
+    act(() => {
+      pApproveRefresh = result.current.requestGuardQueueRefresh({ reason: 'intent' });
+    });
+
+    // Resolve B -> discarded due to intent epoch change -> replacement C runs
+    await act(async () => {
+      resolveB();
+      const res = await pApproveRefresh;
+      expect(res.committed).toBe(true);
+    });
+
+    expect(callCount).toBe(3);
+    expect(result.current.passes).toHaveLength(4);
+    expect(result.current.passes.find((p) => p.id === pool[0].id)).toBeUndefined(); // visitor 0 gone!
+    expect(result.current.refreshing).toBe(false);
+
+    unmount();
+  });
+
+  it('REQUIRED TEST 22 (Section 38). Polls during A and B: recurring 5s polls during slow A and slow B are dropped, chain stops after B', async () => {
+    vi.useFakeTimers();
+    let callCount = 0;
+    const pool = generatePassPool(10);
+
+    vi.spyOn(supabaseLib, 'requireSupabase').mockReturnValue({
+      schema: vi.fn().mockReturnValue({
+        rpc: vi.fn(async () => {
+          callCount++;
+          await new Promise((r) => setTimeout(r, 6000)); // Each traversal takes 6s
+          return {
+            data: {
+              queue: pool.map((p) => ({ ...p, status: 'pending', purpose: 'Official Business', source: 'portal', validFrom: '2026-10-21T08:00:00Z', validUntil: '2026-10-21T17:00:00Z', gate: 'Gate 1', photoEvidenceId: '22222222-2222-4222-8222-222222222222', idEvidenceId: null })),
+              stats: { inside: 0, exited: 0, rejected: 0, total: 0 },
+              rejectionReasons: [],
+              pendingTotal: 10,
+              snapshotPendingTotal: 10,
+              snapshotAt: '2026-10-21T09:00:00.000000Z',
+              hasMore: false,
+              nextCursor: null,
+            },
+            error: null,
+          };
+        }),
+      }),
+    } as any);
+
+    const { result, unmount } = renderGuardQueueHook();
+
+    // t = 0: A starts
+    let pChain!: Promise<any>;
+    act(() => {
+      pChain = result.current.requestGuardQueueRefresh({ reason: 'initial', showRefreshing: true });
+    });
+
+    // Realtime occurs during A
+    act(() => {
+      void result.current.requestGuardQueueRefresh({ reason: 'realtime' });
+    });
+
+    // t = 5000: poll fires during A -> dropped
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(5000);
+      const poll1 = await result.current.requestGuardQueueRefresh({ reason: 'poll' });
+      expect(poll1).toEqual({ committed: false, skipped: true });
+    });
+
+    // t = 6000: A finishes, commits, B starts
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1000);
+    });
+
+    expect(callCount).toBe(2);
+
+    // t = 10000: poll fires during B (4s into B) -> dropped
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(4000);
+      const poll2 = await result.current.requestGuardQueueRefresh({ reason: 'poll' });
+      expect(poll2).toEqual({ committed: false, skipped: true });
+    });
+
+    // t = 12000: B finishes, commits, chain stops
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(2000);
+      const res = await pChain;
+      expect(res.committed).toBe(true);
+    });
+
+    expect(callCount).toBe(2); // exactly 2 traversals, no poll-created C
+    expect(result.current.refreshing).toBe(false);
+    expect(result.current.refreshInFlightRef.current).toBeNull();
+
+    unmount();
+    vi.useRealTimers();
+  });
+
+  it('REQUIRED TEST 23 (Section 39). Promise liveness: Load All promise settles and flags reset even under sustained Realtime events', async () => {
+    let callCount = 0;
+    const pool = generatePassPool(10);
+
+    vi.spyOn(supabaseLib, 'requireSupabase').mockReturnValue({
+      schema: vi.fn().mockReturnValue({
+        rpc: vi.fn(async () => {
+          callCount++;
+          await new Promise((r) => setTimeout(r, 20));
+          return {
+            data: {
+              queue: pool.map((p) => ({ ...p, status: 'pending', purpose: 'Official Business', source: 'portal', validFrom: '2026-10-21T08:00:00Z', validUntil: '2026-10-21T17:00:00Z', gate: 'Gate 1', photoEvidenceId: '22222222-2222-4222-8222-222222222222', idEvidenceId: null })),
+              stats: { inside: 0, exited: 0, rejected: 0, total: 0 },
+              rejectionReasons: [],
+              pendingTotal: 10,
+              snapshotPendingTotal: 10,
+              snapshotAt: '2026-10-21T09:00:00.000000Z',
+              hasMore: false,
+              nextCursor: null,
+            },
+            error: null,
+          };
+        }),
+      }),
+    } as any);
+
+    const { result, unmount } = renderGuardQueueHook();
+
+    await act(async () => {
+      result.current.desiredQueueSizeRef.current = 5000;
+      result.current.setLoadingMore(true);
+      const pLoadAll = result.current.requestGuardQueueRefresh({ reason: 'intent', showRefreshing: true });
+
+      // Sustained burst of Realtime events
+      for (let i = 0; i < 30; i++) {
+        void result.current.requestGuardQueueRefresh({ reason: 'realtime', showRefreshing: true });
+      }
+
+      const res = await pLoadAll;
+      expect(res.committed).toBe(true);
+      result.current.setLoadingMore(false);
+    });
+
+    expect(callCount).toBe(2); // Capped at initial + 1 follow-up
+    expect(result.current.loadingMore).toBe(false);
+    expect(result.current.refreshing).toBe(false);
+    expect(result.current.refreshInFlightRef.current).toBeNull();
+
+    unmount();
+  });
+
+  it('REQUIRED TEST 24 (Section 40). Resource bounds: max simultaneous traversal = 1, max Realtime follow-ups = 1, max busy poll follow-ups = 0', async () => {
+    let simultaneous = 0;
+    let maxSimultaneous = 0;
+    let totalCalls = 0;
+    const pool = generatePassPool(10);
+
+    vi.spyOn(supabaseLib, 'requireSupabase').mockReturnValue({
+      schema: vi.fn().mockReturnValue({
+        rpc: vi.fn(async () => {
+          simultaneous++;
+          maxSimultaneous = Math.max(maxSimultaneous, simultaneous);
+          totalCalls++;
+          await new Promise((r) => setTimeout(r, 25));
+          simultaneous--;
+          return {
+            data: {
+              queue: pool.map((p) => ({ ...p, status: 'pending', purpose: 'Official Business', source: 'portal', validFrom: '2026-10-21T08:00:00Z', validUntil: '2026-10-21T17:00:00Z', gate: 'Gate 1', photoEvidenceId: '22222222-2222-4222-8222-222222222222', idEvidenceId: null })),
+              stats: { inside: 0, exited: 0, rejected: 0, total: 0 },
+              rejectionReasons: [],
+              pendingTotal: 10,
+              snapshotPendingTotal: 10,
+              snapshotAt: '2026-10-21T09:00:00.000000Z',
+              hasMore: false,
+              nextCursor: null,
+            },
+            error: null,
+          };
+        }),
+      }),
+    } as any);
+
+    const { result, unmount } = renderGuardQueueHook();
+
+    await act(async () => {
+      const p = result.current.requestGuardQueueRefresh({ reason: 'initial', showRefreshing: true });
+
+      // Polls while busy -> 0 follow-ups
+      const poll1 = await result.current.requestGuardQueueRefresh({ reason: 'poll' });
+      const poll2 = await result.current.requestGuardQueueRefresh({ reason: 'poll' });
+      expect(poll1.skipped).toBe(true);
+      expect(poll2.skipped).toBe(true);
+
+      // 50 Realtime events -> max 1 follow-up
+      for (let i = 0; i < 50; i++) {
+        void result.current.requestGuardQueueRefresh({ reason: 'realtime' });
+      }
+
+      await p;
+    });
+
+    expect(maxSimultaneous).toBe(1); // Bound 1: maximum simultaneous traversal = 1
+    expect(totalCalls).toBe(2); // Bound 2: max Realtime follow-up = 1 (1 initial + 1 follow-up)
+    // Bound 3: busy poll follow-ups = 0 verified via poll1.skipped && poll2.skipped
+
+    unmount();
+  });
+
+  it('REQUIRED TEST 25 (Section 41). 100 events during A and 100 during B produce exactly 2 traversals', async () => {
+    let callCount = 0;
+    const pool = generatePassPool(10);
+    let resolveA!: () => void;
+    let resolveB!: () => void;
+
+    vi.spyOn(supabaseLib, 'requireSupabase').mockReturnValue({
+      schema: vi.fn().mockReturnValue({
+        rpc: vi.fn(async () => {
+          callCount++;
+          if (callCount === 1) {
+            return new Promise((r) => {
+              resolveA = () =>
+                r({
+                  data: {
+                    queue: pool.map((p) => ({ ...p, status: 'pending', purpose: 'Official Business', source: 'portal', validFrom: '2026-10-21T08:00:00Z', validUntil: '2026-10-21T17:00:00Z', gate: 'Gate 1', photoEvidenceId: '22222222-2222-4222-8222-222222222222', idEvidenceId: null })),
+                    stats: { inside: 0, exited: 0, rejected: 0, total: 0 },
+                    rejectionReasons: [],
+                    pendingTotal: 10,
+                    snapshotPendingTotal: 10,
+                    snapshotAt: '2026-10-21T09:00:00.000000Z',
+                    hasMore: false,
+                    nextCursor: null,
+                  },
+                  error: null,
+                });
+            });
+          }
+          if (callCount === 2) {
+            return new Promise((r) => {
+              resolveB = () =>
+                r({
+                  data: {
+                    queue: pool.map((p) => ({ ...p, status: 'pending', purpose: 'Official Business', source: 'portal', validFrom: '2026-10-21T08:00:00Z', validUntil: '2026-10-21T17:00:00Z', gate: 'Gate 1', photoEvidenceId: '22222222-2222-4222-8222-222222222222', idEvidenceId: null })),
+                    stats: { inside: 0, exited: 0, rejected: 0, total: 0 },
+                    rejectionReasons: [],
+                    pendingTotal: 10,
+                    snapshotPendingTotal: 10,
+                    snapshotAt: '2026-10-21T09:01:00.000000Z',
+                    hasMore: false,
+                    nextCursor: null,
+                  },
+                  error: null,
+                });
+            });
+          }
+          throw new Error('FAILED: Traversal C created!');
+        }),
+      }),
+    } as any);
+
+    const { result, unmount } = renderGuardQueueHook();
+
+    let pChain!: Promise<any>;
+    act(() => {
+      pChain = result.current.requestGuardQueueRefresh({ reason: 'initial', showRefreshing: true });
+    });
+
+    // 100 events during A
+    act(() => {
+      for (let i = 0; i < 100; i++) {
+        void result.current.requestGuardQueueRefresh({ reason: 'realtime' });
+      }
+    });
+
+    // Resolve A -> B starts
+    await act(async () => {
+      resolveA();
+      await Promise.resolve();
+    });
+
+    expect(callCount).toBe(2);
+
+    // 100 more events during B
+    act(() => {
+      for (let i = 0; i < 100; i++) {
+        void result.current.requestGuardQueueRefresh({ reason: 'realtime' });
+      }
+    });
+
+    // Resolve B -> loop ends
+    await act(async () => {
+      resolveB();
+      const res = await pChain;
+      expect(res.committed).toBe(true);
+    });
+
+    expect(callCount).toBe(2); // Exact regression gate: total traversals = 2!
+    expect(result.current.refreshing).toBe(false);
+    expect(result.current.refreshInFlightRef.current).toBeNull();
+
+    unmount();
+  });
+
+  it('REQUIRED TEST 26 (Section 42). Authoritative error during follow-up: A succeeds, B fails, Realtime during B does not create C, previous queue preserved, refreshError=true', async () => {
+    let callCount = 0;
+    const pool = generatePassPool(5);
+    let resolveA!: () => void;
+    let rejectB!: (err: any) => void;
+
+    vi.spyOn(supabaseLib, 'requireSupabase').mockReturnValue({
+      schema: vi.fn().mockReturnValue({
+        rpc: vi.fn(async () => {
+          callCount++;
+          if (callCount === 1) {
+            return new Promise((r) => {
+              resolveA = () =>
+                r({
+                  data: {
+                    queue: pool.map((p) => ({ ...p, status: 'pending', purpose: 'Official Business', source: 'portal', validFrom: '2026-10-21T08:00:00Z', validUntil: '2026-10-21T17:00:00Z', gate: 'Gate 1', photoEvidenceId: '22222222-2222-4222-8222-222222222222', idEvidenceId: null })),
+                    stats: { inside: 0, exited: 0, rejected: 0, total: 0 },
+                    rejectionReasons: [],
+                    pendingTotal: 5,
+                    snapshotPendingTotal: 5,
+                    snapshotAt: '2026-10-21T09:00:00.000000Z',
+                    hasMore: false,
+                    nextCursor: null,
+                  },
+                  error: null,
+                });
+            });
+          }
+          if (callCount === 2) {
+            return new Promise((_, rej) => {
+              rejectB = () => rej(new Error('Network failure during follow-up B'));
+            });
+          }
+          throw new Error('FAILED: Traversal C created after follow-up error!');
+        }),
+      }),
+    } as any);
+
+    const { result, unmount } = renderGuardQueueHook();
+
+    let pChain!: Promise<any>;
+    act(() => {
+      pChain = result.current.requestGuardQueueRefresh({ reason: 'initial', showRefreshing: true });
+    });
+
+    // Realtime during A
+    act(() => {
+      void result.current.requestGuardQueueRefresh({ reason: 'realtime' });
+    });
+
+    // Resolve A -> commits 5 items -> B starts
+    await act(async () => {
+      resolveA();
+      await Promise.resolve();
+    });
+
+    expect(callCount).toBe(2);
+    expect(result.current.passes).toHaveLength(5);
+
+    // Fire more Realtime events during failing B
+    act(() => {
+      for (let i = 0; i < 10; i++) {
+        void result.current.requestGuardQueueRefresh({ reason: 'realtime' });
+      }
+    });
+
+    // Reject B
+    await act(async () => {
+      rejectB(new Error('Network failure during follow-up B'));
+      const res = await pChain;
+      expect(res.committed).toBe(false);
+    });
+
+    expect(callCount).toBe(2); // NO C!
+    expect(result.current.passes).toHaveLength(5); // previous good queue preserved
+    expect(result.current.refreshError).toBe(true);
+    expect(result.current.queueError).toBe(false);
+    expect(result.current.refreshing).toBe(false);
+    expect(result.current.refreshInFlightRef.current).toBeNull();
+
+    unmount();
+  });
+
+  it('REQUIRED TEST 27 (Section 43). Initial load + follow-up failure: initial A succeeds, Realtime queues B, B fails -> A queue remains displayed, initialLoading=false, queueError=false, refreshError=true', async () => {
+    let callCount = 0;
+    const pool = generatePassPool(8);
+    let resolveA!: () => void;
+    let rejectB!: (err: any) => void;
+
+    vi.spyOn(supabaseLib, 'requireSupabase').mockReturnValue({
+      schema: vi.fn().mockReturnValue({
+        rpc: vi.fn(async () => {
+          callCount++;
+          if (callCount === 1) {
+            return new Promise((r) => {
+              resolveA = () =>
+                r({
+                  data: {
+                    queue: pool.map((p) => ({ ...p, status: 'pending', purpose: 'Official Business', source: 'portal', validFrom: '2026-10-21T08:00:00Z', validUntil: '2026-10-21T17:00:00Z', gate: 'Gate 1', photoEvidenceId: '22222222-2222-4222-8222-222222222222', idEvidenceId: null })),
+                    stats: { inside: 0, exited: 0, rejected: 0, total: 0 },
+                    rejectionReasons: [],
+                    pendingTotal: 8,
+                    snapshotPendingTotal: 8,
+                    snapshotAt: '2026-10-21T09:00:00.000000Z',
+                    hasMore: false,
+                    nextCursor: null,
+                  },
+                  error: null,
+                });
+            });
+          }
+          if (callCount === 2) {
+            return new Promise((_, rej) => {
+              rejectB = () => rej(new Error('Supabase 500 in follow-up'));
+            });
+          }
+          throw new Error('FAILED: Unbounded retry after follow-up failure!');
+        }),
+      }),
+    } as any);
+
+    const { result, unmount } = renderGuardQueueHook();
+
+    expect(result.current.initialLoading).toBe(true);
+
+    let pChain!: Promise<any>;
+    act(() => {
+      pChain = result.current.requestGuardQueueRefresh({ reason: 'initial', showRefreshing: true });
+    });
+
+    act(() => {
+      void result.current.requestGuardQueueRefresh({ reason: 'realtime' });
+    });
+
+    await act(async () => {
+      resolveA();
+      await Promise.resolve();
+    });
+
+    expect(result.current.initialLoading).toBe(false); // Cleared by A's authoritative commit
+    expect(result.current.passes).toHaveLength(8);
+
+    await act(async () => {
+      rejectB(new Error('Supabase 500 in follow-up'));
+      const res = await pChain;
+      expect(res.committed).toBe(false);
+    });
+
+    expect(callCount).toBe(2);
+    expect(result.current.passes).toHaveLength(8); // A's committed queue remains displayed
+    expect(result.current.initialLoading).toBe(false);
+    expect(result.current.queueError).toBe(false);
+    expect(result.current.refreshError).toBe(true);
+    expect(result.current.refreshing).toBe(false);
+
+    unmount();
+  });
 });
+

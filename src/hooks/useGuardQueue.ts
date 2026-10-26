@@ -39,8 +39,8 @@ export function useGuardQueue(options?: UseGuardQueueOptions) {
   const mountedRef = useRef(true);
   const desiredQueueSizeRef = useRef(50);
   const queueIntentEpochRef = useRef(0);
+  const realtimeDirtyRef = useRef(false);
   const refreshInFlightRef = useRef<Promise<GuardRefreshResult> | null>(null);
-  const refreshQueuedRef = useRef(false);
   const hasLoadedOnceRef = useRef(false);
   const previousPendingCountRef = useRef(0);
 
@@ -63,7 +63,7 @@ export function useGuardQueue(options?: UseGuardQueueOptions) {
     return () => {
       mountedRef.current = false;
       queueIntentEpochRef.current += 1;
-      refreshQueuedRef.current = false;
+      realtimeDirtyRef.current = false;
     };
   }, []);
 
@@ -95,14 +95,15 @@ export function useGuardQueue(options?: UseGuardQueueOptions) {
   }, []);
 
   // ============================================================
-  // COALESCED SERIALIZED REFRESH LOOP (PATCH 3, 5, 6)
+  // BOUNDED SERIALIZED REFRESH CHAIN LOOP (PATCH 3, 5, 6, 54)
   // ============================================================
   const runRefreshLoop = useCallback(async (): Promise<GuardRefreshResult> => {
+    let realtimeFollowupUsed = false;
     let lastResult: GuardRefreshResult = { committed: false };
 
     try {
       while (mountedRef.current) {
-        refreshQueuedRef.current = false;
+        realtimeDirtyRef.current = false;
         const epochBeforeFetch = queueIntentEpochRef.current;
         const desiredCount = desiredQueueSizeRef.current;
 
@@ -118,14 +119,30 @@ export function useGuardQueue(options?: UseGuardQueueOptions) {
           }
 
           if (epochBeforeFetch !== queueIntentEpochRef.current) {
-            // Traversal became obsolete: epoch changed while request was in-flight
+            // Traversal became obsolete: explicit intent occurred while fetch was in-flight
             lastResult = { committed: false, dashboard };
-            // Ensure follow-up loop iteration runs for the newly intended state
-            refreshQueuedRef.current = true;
+            realtimeFollowupUsed = false;
+            continue;
+          }
+
+          // Epoch is current: commit authoritatively to state
+          commitDashboard(dashboard);
+          lastResult = { committed: true, dashboard };
+
+          const realtimeChangedDuringTraversal = realtimeDirtyRef.current;
+
+          if (realtimeChangedDuringTraversal) {
+            if (!realtimeFollowupUsed) {
+              // Permit exactly one Realtime freshness follow-up per refresh chain
+              realtimeFollowupUsed = true;
+              continue;
+            } else {
+              // Realtime during follow-up is deferred to next poll or idle event; terminate chain
+              realtimeDirtyRef.current = false;
+              break;
+            }
           } else {
-            // Epoch is current: commit authoritatively to state
-            commitDashboard(dashboard);
-            lastResult = { committed: true, dashboard };
+            break;
           }
         } catch (err) {
           if (!mountedRef.current) {
@@ -136,20 +153,27 @@ export function useGuardQueue(options?: UseGuardQueueOptions) {
           console.error('Guard dashboard error:', err);
           lastResult = { committed: false, error: err };
 
-          // Patch 5: Initial loading ends only on authoritative outcome
-          if (!refreshQueuedRef.current && epochBeforeFetch === queueIntentEpochRef.current) {
-            setInitialLoading(false);
-            if (!hasLoadedOnceRef.current) {
-              setQueueError(true);
-              setRefreshError(false);
-            } else {
-              setQueueError(false);
-              setRefreshError(true);
-            }
+          if (epochBeforeFetch !== queueIntentEpochRef.current) {
+            // Obsolete error: newer intent exists
+            realtimeFollowupUsed = false;
+            continue;
           }
-        }
 
-        if (!refreshQueuedRef.current) {
+          if (realtimeDirtyRef.current && !realtimeFollowupUsed) {
+            // Allow one fresh attempt on failure if Realtime changed
+            realtimeFollowupUsed = true;
+            continue;
+          }
+
+          // Authoritative failure
+          setInitialLoading(false);
+          if (!hasLoadedOnceRef.current) {
+            setQueueError(true);
+            setRefreshError(false);
+          } else {
+            setQueueError(false);
+            setRefreshError(true);
+          }
           break;
         }
       }
@@ -164,7 +188,7 @@ export function useGuardQueue(options?: UseGuardQueueOptions) {
   }, [commitDashboard]);
 
   // ============================================================
-  // SINGLE AUTHORITATIVE REFRESH CONTROLLER (PATCH 24, 53)
+  // SINGLE AUTHORITATIVE REFRESH CONTROLLER (PATCH 24, 53, 54)
   // ============================================================
   const requestGuardQueueRefresh = useCallback((refreshOptions?: {
     reason?: GuardRefreshReason;
@@ -176,9 +200,13 @@ export function useGuardQueue(options?: UseGuardQueueOptions) {
 
     const reason = refreshOptions?.reason ?? 'intent';
 
+    // Intent invalidation: increments epoch before in-flight checks
+    if (reason === 'intent') {
+      queueIntentEpochRef.current += 1;
+    }
+
     // CLASS 1: Opportunistic Poll
     // If a traversal is already in-flight, DROP THE POLL immediately.
-    // Do NOT set refreshQueuedRef=true, do NOT modify epoch/target.
     if (reason === 'poll' && refreshInFlightRef.current !== null) {
       return Promise.resolve({
         committed: false,
@@ -186,12 +214,21 @@ export function useGuardQueue(options?: UseGuardQueueOptions) {
       });
     }
 
+    // CLASS 2: Realtime mutation during active refresh chain
+    // Mark dirty flag and coalesce into current refresh promise.
+    if (reason === 'realtime' && refreshInFlightRef.current !== null) {
+      realtimeDirtyRef.current = true;
+      if (refreshOptions?.showRefreshing) {
+        setRefreshing(true);
+      }
+      return refreshInFlightRef.current;
+    }
+
     if (refreshOptions?.showRefreshing) {
       setRefreshing(true);
     }
 
     if (refreshInFlightRef.current !== null) {
-      refreshQueuedRef.current = true;
       return refreshInFlightRef.current;
     }
 
@@ -216,8 +253,8 @@ export function useGuardQueue(options?: UseGuardQueueOptions) {
     mountedRef,
     desiredQueueSizeRef,
     queueIntentEpochRef,
+    realtimeDirtyRef,
     refreshInFlightRef,
-    refreshQueuedRef,
     hasLoadedOnceRef,
     previousPendingCountRef,
     requestGuardQueueRefresh,
