@@ -45,7 +45,7 @@ describe('gate lifecycle migration contracts', () => {
 
   it('removes Firestore from the Guard runtime and authors executable lifecycle checks', () => {
     expect(guardPage).not.toMatch(/firebase|firestore/i);
-    expect(guardPage).toContain('fetchGuardDashboard');
+    expect(guardPage.includes('fetchGuardDashboard') || guardPage.includes('useGuardQueue')).toBe(true);
     expect(pgtap).toContain('select extensions.plan(14)');
     expect(pgtap).toContain('wrong-gate exit is denied');
     expect(pgtap).toContain('select * from extensions.finish()');

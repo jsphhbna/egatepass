@@ -42,6 +42,17 @@ export function useGuardQueue(options?: UseGuardQueueOptions) {
   const previousPendingCountRef = useRef(0);
 
   // ============================================================
+  // CALLBACK REF: PRESERVE STABLE CONTROLLER IDENTITY (PATCH 1, 3)
+  // ============================================================
+  const onNewPendingPassRef = useRef<UseGuardQueueOptions['onNewPendingPass']>(
+    options?.onNewPendingPass
+  );
+
+  useEffect(() => {
+    onNewPendingPassRef.current = options?.onNewPendingPass;
+  }, [options?.onNewPendingPass]);
+
+  // ============================================================
   // MOUNT / UNMOUNT LIFECYCLE FENCING (PATCH 35)
   // ============================================================
   useEffect(() => {
@@ -54,16 +65,17 @@ export function useGuardQueue(options?: UseGuardQueueOptions) {
   }, []);
 
   // ============================================================
-  // ONE AUTHORITATIVE QUEUE COMMIT PATH (PATCH 33 & 34)
+  // ONE AUTHORITATIVE QUEUE COMMIT PATH (PATCH 2, 3, 5)
   // ============================================================
   const commitDashboard = useCallback((dashboard: GuardDashboardWindowResult) => {
     hasLoadedOnceRef.current = true;
+    setInitialLoading(false);
     setQueueError(false);
     setRefreshError(false);
     setLastUpdatedAt(new Date());
 
     if (dashboard.pendingTotal > previousPendingCountRef.current) {
-      options?.onNewPendingPass?.();
+      onNewPendingPassRef.current?.();
     }
     previousPendingCountRef.current = dashboard.pendingTotal;
 
@@ -77,10 +89,10 @@ export function useGuardQueue(options?: UseGuardQueueOptions) {
     if (dashboard.hasMore === false) {
       desiredQueueSizeRef.current = Math.max(50, dashboard.queue.length);
     }
-  }, [options]);
+  }, []);
 
   // ============================================================
-  // COALESCED SERIALIZED REFRESH LOOP (PATCH 24 & 25)
+  // COALESCED SERIALIZED REFRESH LOOP (PATCH 3, 5, 6)
   // ============================================================
   const runRefreshLoop = useCallback(async (): Promise<GuardRefreshResult> => {
     let lastResult: GuardRefreshResult = { committed: false };
@@ -121,8 +133,9 @@ export function useGuardQueue(options?: UseGuardQueueOptions) {
           console.error('Guard dashboard error:', err);
           lastResult = { committed: false, error: err };
 
-          // Section 49: If a newer intent was already queued, do not surface obsolete failure
+          // Patch 5: Initial loading ends only on authoritative outcome
           if (!refreshQueuedRef.current && epochBeforeFetch === queueIntentEpochRef.current) {
+            setInitialLoading(false);
             if (!hasLoadedOnceRef.current) {
               setQueueError(true);
               setRefreshError(false);
@@ -130,10 +143,6 @@ export function useGuardQueue(options?: UseGuardQueueOptions) {
               setQueueError(false);
               setRefreshError(true);
             }
-          }
-        } finally {
-          if (mountedRef.current) {
-            setInitialLoading(false);
           }
         }
 

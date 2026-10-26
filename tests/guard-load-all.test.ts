@@ -1,10 +1,11 @@
 // @vitest-environment happy-dom
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import React, { act } from 'react';
+import React, { act, useState, useEffect } from 'react';
 import { createRoot } from 'react-dom/client';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
+import * as guardService from '../src/services/guard';
 import { fetchGuardDashboardWindow, type GuardQueuePass, type GuardQueueCursor } from '../src/services/guard';
 import { useGuardQueue } from '../src/hooks/useGuardQueue';
 import * as supabaseLib from '../src/lib/supabase';
@@ -132,7 +133,12 @@ function renderGuardQueueHook(options?: { onNewPendingPass?: () => void }) {
   const root = createRoot(container);
 
   function TestComponent() {
-    result.current = useGuardQueue(options);
+    // Deliberately construct a brand-new options object and callback on every render to ensure
+    // production hook is immune to inline object recreations:
+    const inlineOptions = {
+      onNewPendingPass: options?.onNewPendingPass ?? (() => {}),
+    };
+    result.current = useGuardQueue(inlineOptions);
     return null;
   }
 
@@ -397,12 +403,523 @@ describe('Guard Queue Keyset Window Loading & Refresh Invariants', () => {
   });
 });
 
-describe('useGuardQueue Hook: Stale-Closure & Coalescing Tests', () => {
+describe('useGuardQueue Hook: Stale-Closure, Controller Identity & Lifecycle Tests', () => {
   beforeEach(() => {
     vi.restoreAllMocks();
   });
 
-  it('PATCH 37. Initial failure test: first queue request fails -> initialLoading=false, queueError=true, refreshError=false', async () => {
+  it('REQUIRED TEST 1. Inline options must not change controller identity across renders', () => {
+    let capturedController1: any = null;
+    let capturedController2: any = null;
+    let forceRerender: (() => void) | null = null;
+
+    function TestComponent() {
+      const [, setTick] = useState(0);
+      forceRerender = () => setTick((t) => t + 1);
+
+      // Deliberately inline new callback every render!
+      const controller = useGuardQueue({
+        onNewPendingPass: () => {},
+      });
+
+      if (!capturedController1) {
+        capturedController1 = controller.requestGuardQueueRefresh;
+      } else {
+        capturedController2 = controller.requestGuardQueueRefresh;
+      }
+      return null;
+    }
+
+    const container = document.createElement('div');
+    document.body.appendChild(container);
+    const root = createRoot(container);
+
+    act(() => {
+      root.render(React.createElement(TestComponent));
+    });
+
+    expect(capturedController1).not.toBeNull();
+
+    // Force unrelated render with newly instantiated options object
+    act(() => {
+      forceRerender?.();
+    });
+
+    expect(capturedController2).not.toBeNull();
+    // Invariant: Controller identity must remain strictly identical
+    expect(Object.is(capturedController1, capturedController2)).toBe(true);
+
+    act(() => {
+      root.unmount();
+    });
+    container.remove();
+  });
+
+  it('REQUIRED TEST 2. GuardPage effect does not loop: exactly 1 initial refresh, and exactly 1 poll after 5s', async () => {
+    vi.useFakeTimers();
+    const pool = generatePassPool(5);
+    const mockState = mockSupabaseRpc(pool);
+
+    let subscribeCallCount = 0;
+    vi.spyOn(guardService, 'subscribeToPassChanges').mockImplementation(() => {
+      subscribeCallCount++;
+      return () => {};
+    });
+
+    // Harness matching GuardPage effect and inline options
+    function GuardHarness() {
+      const { requestGuardQueueRefresh, queueIntentEpochRef, refreshQueuedRef } = useGuardQueue({
+        onNewPendingPass: () => {},
+      });
+
+      useEffect(() => {
+        void requestGuardQueueRefresh();
+        const stopRealtime = guardService.subscribeToPassChanges(() => {
+          queueIntentEpochRef.current += 1;
+          refreshQueuedRef.current = true;
+          void requestGuardQueueRefresh({ showRefreshing: true });
+        });
+        const poll = window.setInterval(() => {
+          refreshQueuedRef.current = true;
+          void requestGuardQueueRefresh({ showRefreshing: true });
+        }, 5000);
+        return () => {
+          stopRealtime();
+          window.clearInterval(poll);
+        };
+      }, [requestGuardQueueRefresh]);
+
+      return null;
+    }
+
+    const container = document.createElement('div');
+    document.body.appendChild(container);
+    const root = createRoot(container);
+
+    await act(async () => {
+      root.render(React.createElement(GuardHarness));
+    });
+
+    // Wait beyond React commit & microtasks, but < 5000ms
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1000);
+    });
+
+    // Invariant: exactly 1 RPC call on initial load! (NO render-loop extra refreshes)
+    expect(mockState.rpcCalls).toHaveLength(1);
+
+    // Now advance timer by 5000ms to trigger scheduled poll
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(5000);
+    });
+
+    // Exactly 2 total RPC calls (1 initial + 1 scheduled poll)!
+    expect(mockState.rpcCalls).toHaveLength(2);
+
+    act(() => {
+      root.unmount();
+    });
+    container.remove();
+    vi.useRealTimers();
+  });
+
+  it('REQUIRED TEST 3. Unrelated component render does not trigger extra queue refreshes or subscription churn', async () => {
+    const pool = generatePassPool(5);
+    const mockState = mockSupabaseRpc(pool);
+
+    let subscribeCallCount = 0;
+    vi.spyOn(guardService, 'subscribeToPassChanges').mockImplementation(() => {
+      subscribeCallCount++;
+      return () => {};
+    });
+
+    let setSearch: ((v: string) => void) | null = null;
+
+    function SearchHarness() {
+      const [search, setLocalSearch] = useState('');
+      setSearch = setLocalSearch;
+
+      const { requestGuardQueueRefresh, queueIntentEpochRef, refreshQueuedRef } = useGuardQueue({
+        onNewPendingPass: () => {},
+      });
+
+      useEffect(() => {
+        void requestGuardQueueRefresh();
+        const stopRealtime = guardService.subscribeToPassChanges(() => {
+          queueIntentEpochRef.current += 1;
+          refreshQueuedRef.current = true;
+          void requestGuardQueueRefresh({ showRefreshing: true });
+        });
+        const poll = window.setInterval(() => {
+          refreshQueuedRef.current = true;
+          void requestGuardQueueRefresh({ showRefreshing: true });
+        }, 5000);
+        return () => {
+          stopRealtime();
+          window.clearInterval(poll);
+        };
+      }, [requestGuardQueueRefresh]);
+
+      return null;
+    }
+
+    const container = document.createElement('div');
+    document.body.appendChild(container);
+    const root = createRoot(container);
+
+    await act(async () => {
+      root.render(React.createElement(SearchHarness));
+    });
+
+    expect(mockState.rpcCalls).toHaveLength(1);
+    expect(subscribeCallCount).toBe(1);
+
+    // User types search term triggering re-render
+    await act(async () => {
+      setSearch?.('visitor');
+    });
+
+    // Zero extra queue refreshes or subscription churn!
+    expect(mockState.rpcCalls).toHaveLength(1);
+    expect(subscribeCallCount).toBe(1);
+
+    act(() => {
+      root.unmount();
+    });
+    container.remove();
+  });
+
+  it('REQUIRED TEST 4. Latest callback ref is invoked when pendingTotal increases without changing controller identity', async () => {
+    const pool5 = generatePassPool(5);
+    const pool10 = generatePassPool(10);
+    let activePool = pool5;
+
+    mockSupabaseRpc(pool5, {
+      customPayload: () => {
+        return {
+          data: {
+            queue: activePool.map((p) => ({
+              id: p.id,
+              visitorName: p.visitorName,
+              purpose: 'Official Business',
+              source: 'portal',
+              status: 'pending',
+              validFrom: '2026-10-21T08:00:00Z',
+              validUntil: '2026-10-21T17:00:00Z',
+              scannedAt: p.scannedAt,
+              gate: 'Gate 1',
+              photoEvidenceId: '22222222-2222-4222-8222-222222222222',
+              idEvidenceId: null,
+            })),
+            stats: { inside: 0, exited: 0, rejected: 0, total: 0 },
+            rejectionReasons: [],
+            pendingTotal: activePool.length,
+            snapshotPendingTotal: activePool.length,
+            snapshotAt: '2026-10-21T09:00:00.000000Z',
+            hasMore: false,
+            nextCursor: null,
+          },
+          error: null,
+        };
+      },
+    });
+
+    const callback1 = vi.fn();
+    const callback2 = vi.fn();
+    let setCb: ((cb: () => void) => void) | null = null;
+    let hookResult: any = null;
+
+    function CallbackHarness() {
+      const [currentCb, setCurrentCb] = useState<() => void>(() => callback1);
+      setCb = (cb) => setCurrentCb(() => cb);
+
+      hookResult = useGuardQueue({
+        onNewPendingPass: currentCb,
+      });
+      return null;
+    }
+
+    const container = document.createElement('div');
+    document.body.appendChild(container);
+    const root = createRoot(container);
+
+    await act(async () => {
+      root.render(React.createElement(CallbackHarness));
+    });
+
+    const controllerBefore = hookResult.requestGuardQueueRefresh;
+
+    // Initial load: 5 passes
+    await act(async () => {
+      await hookResult.requestGuardQueueRefresh();
+    });
+
+    expect(callback1).toHaveBeenCalledTimes(1);
+    expect(callback2).not.toHaveBeenCalled();
+
+    // Update to callback2
+    act(() => {
+      setCb?.(callback2);
+    });
+
+    // Controller identity MUST remain identical
+    expect(Object.is(controllerBefore, hookResult.requestGuardQueueRefresh)).toBe(true);
+
+    // New pending passes arrive: pendingTotal increases from 5 to 10
+    activePool = pool10;
+
+    await act(async () => {
+      await hookResult.requestGuardQueueRefresh();
+    });
+
+    // Latest callback was executed! Old callback was NOT called again.
+    expect(callback1).toHaveBeenCalledTimes(1);
+    expect(callback2).toHaveBeenCalledTimes(1);
+
+    act(() => {
+      root.unmount();
+    });
+    container.remove();
+  });
+
+  it('REQUIRED TEST 5. Initial load invalidated by Realtime: initialLoading remains true while replacement runs, no false empty-state', async () => {
+    let rpcCallCount = 0;
+    let resolveRpc1: ((value: any) => void) | null = null;
+    let resolveRpc2: ((value: any) => void) | null = null;
+    const pool = generatePassPool(5);
+
+    vi.spyOn(supabaseLib, 'requireSupabase').mockReturnValue({
+      schema: vi.fn().mockReturnValue({
+        rpc: vi.fn(async () => {
+          rpcCallCount++;
+          if (rpcCallCount === 1) {
+            // Pause RPC 1
+            return new Promise((resolve) => {
+              resolveRpc1 = () =>
+                resolve({
+                  data: {
+                    queue: pool.map((p) => ({
+                      ...p,
+                      status: 'pending',
+                      purpose: 'Official Business',
+                      source: 'portal',
+                      validFrom: '2026-10-21T08:00:00Z',
+                      validUntil: '2026-10-21T17:00:00Z',
+                      gate: 'Gate 1',
+                      photoEvidenceId: '22222222-2222-4222-8222-222222222222',
+                      idEvidenceId: null,
+                    })),
+                    stats: { inside: 0, exited: 0, rejected: 0, total: 0 },
+                    rejectionReasons: [],
+                    pendingTotal: pool.length,
+                    snapshotPendingTotal: pool.length,
+                    snapshotAt: '2026-10-21T09:00:00.000000Z',
+                    hasMore: false,
+                    nextCursor: null,
+                  },
+                  error: null,
+                });
+            });
+          }
+          // RPC 2 (replacement) - also paused so we can assert intermediate in-flight state
+          return new Promise((resolve) => {
+            resolveRpc2 = () =>
+              resolve({
+                data: {
+                  queue: pool.map((p) => ({
+                    ...p,
+                    status: 'pending',
+                    purpose: 'Official Business',
+                    source: 'portal',
+                    validFrom: '2026-10-21T08:00:00Z',
+                    validUntil: '2026-10-21T17:00:00Z',
+                    gate: 'Gate 1',
+                    photoEvidenceId: '22222222-2222-4222-8222-222222222222',
+                    idEvidenceId: null,
+                  })),
+                  stats: { inside: 0, exited: 0, rejected: 0, total: 0 },
+                  rejectionReasons: [],
+                  pendingTotal: pool.length,
+                  snapshotPendingTotal: pool.length,
+                  snapshotAt: '2026-10-21T09:00:00.000000Z',
+                  hasMore: false,
+                  nextCursor: null,
+                },
+                error: null,
+              });
+          });
+        }),
+      }),
+    } as any);
+
+    let hookResult: any = null;
+    function TestHarness() {
+      hookResult = useGuardQueue({ onNewPendingPass: () => {} });
+      return null;
+    }
+
+    const container = document.createElement('div');
+    document.body.appendChild(container);
+    const root = createRoot(container);
+
+    act(() => {
+      root.render(React.createElement(TestHarness));
+    });
+
+    expect(hookResult.initialLoading).toBe(true);
+
+    // 1. Initial traversal begins
+    let p1: Promise<any>;
+    act(() => {
+      p1 = hookResult.requestGuardQueueRefresh();
+    });
+
+    // 2. Realtime event occurs while traversal 1 is in-flight: epoch increments
+    act(() => {
+      hookResult.queueIntentEpochRef.current += 1;
+      hookResult.refreshQueuedRef.current = true;
+      hookResult.requestGuardQueueRefresh();
+    });
+
+    // 3. Resolve traversal 1 (it is now obsolete)
+    await act(async () => {
+      resolveRpc1?.(null);
+      await Promise.resolve();
+    });
+
+    // While replacement traversal is in-flight: initialLoading MUST REMAIN TRUE!
+    expect(hookResult.initialLoading).toBe(true);
+    expect(hookResult.queueError).toBe(false);
+
+    // 4. Resolve replacement traversal
+    await act(async () => {
+      resolveRpc2?.(null);
+      await Promise.resolve();
+    });
+
+    // 5. Await complete resolution of refresh
+    await act(async () => {
+      await p1;
+    });
+
+    // Replacement traversal completed and committed!
+    expect(hookResult.initialLoading).toBe(false);
+    expect(hookResult.queueError).toBe(false);
+    expect(hookResult.passes).toHaveLength(5);
+
+    act(() => {
+      root.unmount();
+    });
+    container.remove();
+  });
+
+  it('REQUIRED TEST 6. Obsolete initial failure: obsolete failure does not show Queue unavailable if newer refresh queued', async () => {
+    let rpcCallCount = 0;
+    let rejectRpc1: ((err: any) => void) | null = null;
+    let resolveRpc2: ((value: any) => void) | null = null;
+    const pool = generatePassPool(5);
+
+    vi.spyOn(supabaseLib, 'requireSupabase').mockReturnValue({
+      schema: vi.fn().mockReturnValue({
+        rpc: vi.fn(async () => {
+          rpcCallCount++;
+          if (rpcCallCount === 1) {
+            // Traversal 1 fails after delay
+            return new Promise((_, reject) => {
+              rejectRpc1 = () => reject(new Error('Flaky initial connection'));
+            });
+          }
+          // Traversal 2 (replacement) succeeds
+          return new Promise((resolve) => {
+            resolveRpc2 = () =>
+              resolve({
+                data: {
+                  queue: pool.map((p) => ({
+                    ...p,
+                    status: 'pending',
+                    purpose: 'Official Business',
+                    source: 'portal',
+                    validFrom: '2026-10-21T08:00:00Z',
+                    validUntil: '2026-10-21T17:00:00Z',
+                    gate: 'Gate 1',
+                    photoEvidenceId: '22222222-2222-4222-8222-222222222222',
+                    idEvidenceId: null,
+                  })),
+                  stats: { inside: 0, exited: 0, rejected: 0, total: 0 },
+                  rejectionReasons: [],
+                  pendingTotal: pool.length,
+                  snapshotPendingTotal: pool.length,
+                  snapshotAt: '2026-10-21T09:00:00.000000Z',
+                  hasMore: false,
+                  nextCursor: null,
+                },
+                error: null,
+              });
+          });
+        }),
+      }),
+    } as any);
+
+    let hookResult: any = null;
+    function TestHarness() {
+      hookResult = useGuardQueue({ onNewPendingPass: () => {} });
+      return null;
+    }
+
+    const container = document.createElement('div');
+    document.body.appendChild(container);
+    const root = createRoot(container);
+
+    act(() => {
+      root.render(React.createElement(TestHarness));
+    });
+
+    // 1. Initial traversal begins
+    let p1: Promise<any>;
+    act(() => {
+      p1 = hookResult.requestGuardQueueRefresh();
+    });
+
+    // 2. Realtime queues newer intent before traversal 1 rejects
+    act(() => {
+      hookResult.queueIntentEpochRef.current += 1;
+      hookResult.refreshQueuedRef.current = true;
+      hookResult.requestGuardQueueRefresh();
+    });
+
+    // 3. Traversal 1 rejects
+    await act(async () => {
+      rejectRpc1?.(null);
+      await Promise.resolve();
+    });
+
+    // Obsolete failure does NOT surface Queue unavailable while replacement is in flight!
+    expect(hookResult.queueError).toBe(false);
+    expect(hookResult.initialLoading).toBe(true);
+
+    // 4. Resolve replacement traversal
+    await act(async () => {
+      resolveRpc2?.(null);
+      await Promise.resolve();
+    });
+
+    // 5. Await replacement
+    await act(async () => {
+      await p1;
+    });
+
+    expect(hookResult.initialLoading).toBe(false);
+    expect(hookResult.queueError).toBe(false);
+    expect(hookResult.refreshError).toBe(false);
+    expect(hookResult.passes).toHaveLength(5);
+
+    act(() => {
+      root.unmount();
+    });
+    container.remove();
+  });
+
+  it('REQUIRED TEST 7 & PATCH 37. True initial failure: first queue request fails with no replacement -> initialLoading=false, queueError=true, refreshError=false', async () => {
     vi.spyOn(supabaseLib, 'requireSupabase').mockReturnValue({
       schema: vi.fn().mockReturnValue({
         rpc: vi.fn().mockResolvedValue({
@@ -426,7 +943,7 @@ describe('useGuardQueue Hook: Stale-Closure & Coalescing Tests', () => {
     unmount();
   });
 
-  it('PATCH 36. Real background error classification: initial load succeeds, subsequent refresh fails -> preserves queue, queueError=false, refreshError=true', async () => {
+  it('REQUIRED TEST 8 & PATCH 36. Background failure: initial load succeeds, subsequent refresh fails -> preserves queue, queueError=false, refreshError=true', async () => {
     const pool = generatePassPool(5);
     const mockState = mockSupabaseRpc(pool);
 
@@ -458,7 +975,7 @@ describe('useGuardQueue Hook: Stale-Closure & Coalescing Tests', () => {
     unmount();
   });
 
-  it('PATCH 44 & Section I. Refresh coalescing: maximum simultaneous fetch calls = 1, bursts coalesce to exactly 1 follow-up', async () => {
+  it('REQUIRED TEST 9 & PATCH 44. Coalescing still works: bursts coalesce to exactly 1 in-flight and 1 queued follow-up', async () => {
     let simultaneousCalls = 0;
     let maxSimultaneousCalls = 0;
     let totalCalls = 0;
@@ -526,6 +1043,96 @@ describe('useGuardQueue Hook: Stale-Closure & Coalescing Tests', () => {
     expect(totalCalls).toBe(2);
 
     unmount();
+  });
+
+  it('REQUIRED TEST 10. Subscription count: exactly 1 Realtime subscription and 1 poll interval active across multiple commits/rerenders', async () => {
+    let subscribeCount = 0;
+    let unsubscribeCount = 0;
+    vi.spyOn(guardService, 'subscribeToPassChanges').mockImplementation(() => {
+      subscribeCount++;
+      return () => {
+        unsubscribeCount++;
+      };
+    });
+
+    const originalSetInterval = window.setInterval;
+    const originalClearInterval = window.clearInterval;
+    let intervalsStarted = 0;
+    let intervalsCleared = 0;
+
+    window.setInterval = vi.fn((fn, ms) => {
+      intervalsStarted++;
+      return originalSetInterval(fn, ms);
+    }) as any;
+
+    window.clearInterval = vi.fn((id) => {
+      intervalsCleared++;
+      return originalClearInterval(id);
+    }) as any;
+
+    const pool = generatePassPool(5);
+    mockSupabaseRpc(pool);
+
+    function FullGuardHarness() {
+      const [, setTick] = useState(0);
+      const { requestGuardQueueRefresh, queueIntentEpochRef, refreshQueuedRef } = useGuardQueue({
+        onNewPendingPass: () => {},
+      });
+
+      useEffect(() => {
+        void requestGuardQueueRefresh();
+        const stopRealtime = guardService.subscribeToPassChanges(() => {
+          queueIntentEpochRef.current += 1;
+          refreshQueuedRef.current = true;
+          void requestGuardQueueRefresh({ showRefreshing: true });
+        });
+        const poll = window.setInterval(() => {
+          refreshQueuedRef.current = true;
+          void requestGuardQueueRefresh({ showRefreshing: true });
+        }, 5000);
+        return () => {
+          stopRealtime();
+          window.clearInterval(poll);
+        };
+      }, [requestGuardQueueRefresh]);
+
+      return React.createElement(
+        'button',
+        { onClick: () => setTick((t) => t + 1) },
+        'Rerender'
+      );
+    }
+
+    const container = document.createElement('div');
+    document.body.appendChild(container);
+    const root = createRoot(container);
+
+    await act(async () => {
+      root.render(React.createElement(FullGuardHarness));
+    });
+
+    // Trigger multiple parent / state re-renders
+    const button = container.querySelector('button');
+    await act(async () => {
+      button?.click();
+      button?.click();
+      button?.click();
+    });
+
+    // Invariant: active subscriptions = 1, active intervals = 1
+    expect(subscribeCount - unsubscribeCount).toBe(1);
+    expect(intervalsStarted - intervalsCleared).toBe(1);
+
+    act(() => {
+      root.unmount();
+    });
+    container.remove();
+
+    expect(subscribeCount - unsubscribeCount).toBe(0);
+    expect(intervalsStarted - intervalsCleared).toBe(0);
+
+    window.setInterval = originalSetInterval;
+    window.clearInterval = originalClearInterval;
   });
 
   it('PATCH 45. Realtime burst test: 20 rapid pass changes coalesce into 1 current + 1 queued follow-up', async () => {

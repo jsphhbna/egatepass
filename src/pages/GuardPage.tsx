@@ -58,15 +58,6 @@ export function GuardPage() {
     },
   });
 
-  // The state variables for queue management (initialLoading, refreshing, lastUpdatedAt, refreshError)
-  // are authoritatively managed by useGuardQueue while preserving static regression contracts:
-  // const [initialLoading, setInitialLoading] = useState(true);
-  // setInitialLoading(false);
-  // const [refreshing, setRefreshing] = useState(false);
-  // const [lastUpdatedAt, setLastUpdatedAt] = useState<Date | null>(null);
-  // const [refreshError, setRefreshError] = useState(false);
-  // Replaced legacy fetchGuardDashboard single-page fetch with coalesced fetchGuardDashboardWindow
-
   const [searchTerm, setSearchTerm] = useState('');
   const [rejectingId, setRejectingId] = useState<string | null>(null);
   const [processingPassIds, setProcessingPassIds] = useState<Set<string>>(new Set());
@@ -80,7 +71,7 @@ export function GuardPage() {
   const [isSigningOut, setIsSigningOut] = useState(false);
 
   // ============================================================
-  // INITIAL LOAD, REALTIME & 5-SECOND POLLING (PATCH 24, 27, 28)
+  // INITIAL LOAD, REALTIME & 5-SECOND POLLING (PATCH 4)
   // ============================================================
   useEffect(() => {
     void requestGuardQueueRefresh();
@@ -97,7 +88,7 @@ export function GuardPage() {
       stopRealtime();
       window.clearInterval(poll);
     };
-  }, [requestGuardQueueRefresh, queueIntentEpochRef, refreshQueuedRef]);
+  }, [requestGuardQueueRefresh]);
 
   // ============================================================
   // LOAD MORE: TARGET INCREASE VIA CENTRAL WRITER (PATCH 29, 31)

@@ -15,10 +15,12 @@ describe('UI/UX QA, Responsive Institutional Redesign & Usability Regressions Su
   // --------------------------------------------------------------------------
   describe('Fix Groups 11 & 12: Guard Queue State Truthfulness & Pagination Search Authority', () => {
     const guardSrc = readFileSync('src/pages/GuardPage.tsx', 'utf8');
+    const hookSrc = readFileSync('src/hooks/useGuardQueue.ts', 'utf8');
 
     it('initializes initialLoading to true to prevent false empty queue state on mount', () => {
-      expect(guardSrc).toContain('const [initialLoading, setInitialLoading] = useState(true);');
-      expect(guardSrc).toContain('setInitialLoading(false);');
+      expect(hookSrc).toContain('const [initialLoading, setInitialLoading] = useState(true);');
+      expect(hookSrc).toContain('setInitialLoading(false);');
+      expect(guardSrc).toContain('initialLoading');
     });
 
     it('renders a loading skeleton / spinner while initialLoading is true', () => {

@@ -246,11 +246,13 @@ describe('Async Feedback, Slow-Network Resilience, and State-Truthfulness Regres
   // ==========================================================================
   describe('FIX 13: Guard Queue Background Refresh Truthfulness', () => {
     const guardSrc = readSrc('src/pages/GuardPage.tsx');
+    const hookSrc = readSrc('src/hooks/useGuardQueue.ts');
 
     it('tracks refreshing, lastUpdatedAt, and refreshError without clearing queue', () => {
-      expect(guardSrc).toContain('const [refreshing, setRefreshing] = useState(false);');
-      expect(guardSrc).toContain('const [lastUpdatedAt, setLastUpdatedAt] = useState<Date | null>(null);');
-      expect(guardSrc).toContain('const [refreshError, setRefreshError] = useState(false);');
+      expect(hookSrc).toContain('const [refreshing, setRefreshing] = useState(false);');
+      expect(hookSrc).toContain('const [lastUpdatedAt, setLastUpdatedAt] = useState<Date | null>(null);');
+      expect(hookSrc).toContain('const [refreshError, setRefreshError] = useState(false);');
+      expect(guardSrc).toContain('useGuardQueue(');
     });
 
     it('shows "Updating…" in status header during poll without disabling actions', () => {
