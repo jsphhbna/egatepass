@@ -71,6 +71,8 @@ export const LANDING_CONTENT = {
       { q: 'How long is my QR code valid?', a: 'Your gate pass is valid only on the scheduled visit date during designated university visiting hours.' },
       { q: 'What happens after I scan at the campus entrance?', a: 'Your pass appears in the guard queue for immediate verification and formal entry decision.' },
       { q: 'Why must I scan when leaving the campus?', a: 'Scanning out records your departure and keeps the university emergency roll call accurate.' },
+      { q: 'What if I lose my QR code or forget to save/download it?', a: 'Go directly to the Guard at the entrance. They can recover your visitor record and verify your identity using the information you provided during registration.' },
+      { q: 'What happens if E-GatePass is temporarily offline?', a: 'Please proceed directly to the Guard. Authorized Guard personnel can register and verify visitors manually, record entry and exit times, and synchronize the records once connectivity is restored.' },
       { q: 'What if the digital system or scanner is temporarily unavailable?', a: 'Follow security officer instructions. Manual visitor sign-in procedures will be conducted by campus personnel.' },
     ],
   },
