@@ -53,13 +53,27 @@ export function ExitScanPage() {
     setStatus('processing');
     setStatusMessage('Verifying…');
 
+    let isNetworkError = false;
+
     try {
-      const token = await getAccessToken();
-      const response = await fetch('/api/scan-pass', {
-        method: 'POST',
-        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ passId, mode: 'exit' }),
-      });
+      let response: Response;
+      try {
+        const token = await getAccessToken();
+        response = await fetch('/api/scan-pass', {
+          method: 'POST',
+          headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+          body: JSON.stringify({ passId, mode: 'exit' }),
+        });
+      } catch (netErr) {
+        isNetworkError = true;
+        throw new Error('network_unavailable');
+      }
+
+      if (response.status >= 502) {
+        isNetworkError = true;
+        throw new Error('network_unavailable');
+      }
+
       const result = await response.json().catch(() => null) as { code?: string; error?: string; message?: string } | null;
       if (!response.ok) {
         throw { code: result?.code || 'scan_failed', message: result?.error || 'Scan failed' };
@@ -68,18 +82,24 @@ export function ExitScanPage() {
       setStatusMessage(result?.message || 'Exit recorded. Goodbye!');
       toast.success('Exit recorded successfully');
     } catch (error: unknown) {
-      const scanError = error as { code?: string; message?: string };
-      const message = scanError.message ?? 'Scan failed';
-      const warningCodes = ['not_entered', 'pending', 'already_exited'];
-      setStatus(warningCodes.includes(scanError.code || '') ? 'warning' : 'error');
-      setStatusMessage(message);
-      toast.error(message);
+      if (isNetworkError || (typeof error === 'object' && error !== null && 'code' in error && (error as any).code === 'network_unavailable')) {
+        setStatus('error');
+        setStatusMessage('Exit recording is temporarily unavailable. Please proceed directly to the Guard to record your departure.');
+        toast.error('Network unavailable. Proceed to Guard to record departure.');
+      } else {
+        const scanError = error as { code?: string; message?: string };
+        const message = scanError.message ?? 'Scan failed';
+        const warningCodes = ['not_entered', 'pending', 'already_exited'];
+        setStatus(warningCodes.includes(scanError.code || '') ? 'warning' : 'error');
+        setStatusMessage(message);
+        toast.error(message);
+      }
     } finally {
       resetTimerRef.current = setTimeout(() => {
         setStatus('ready');
         setStatusMessage('Scan QR to exit');
         debounceRef.current = false;
-      }, 3000);
+      }, isNetworkError ? 5000 : 3000);
     }
   }, []);
 
