@@ -10,25 +10,25 @@ E-GatePass provides an end-to-end access management pipeline designed to support
 
 ```mermaid
 flowchart LR
-    Visitor[Visitor]
-    Kiosk[Kiosk Device]
-    Entry[Entry Scanner]
-    Guard[Guard Console]
-    Exit[Exit Scanner]
-    Admin[Admin]
-    SuperAdmin[Super Admin]
+    Visitor["Visitor"]
+    Kiosk["Kiosk Device"]
+    Entry["Entry Scanner"]
+    Guard["Guard Console"]
+    Exit["Exit Scanner"]
+    Admin["Admin"]
+    SuperAdmin["Super Admin"]
 
-    UI[React + TypeScript + Vite<br/>Frontend Application]
+    UI["React + TypeScript + Vite<br>Frontend Application"]
 
-    API[Vercel Serverless Functions<br/>Node.js 24 API]
+    API["Vercel Serverless Functions<br>Node.js 24 API"]
 
-    Auth[Supabase Auth<br/>Identity & Sessions]
-    DB[(Supabase PostgreSQL<br/>Relational Data & RLS)]
-    Storage[(Private Supabase Storage<br/>visitor-photos & visitor-ids)]
+    Auth["Supabase Auth<br>Identity & Sessions"]
+    DB[("Supabase PostgreSQL<br>Relational Data & RLS")]
+    Storage[("Private Supabase Storage<br>visitor-photos & visitor-ids")]
 
-    Resend[Resend<br/>Transactional Email]
-    Turnstile[Cloudflare Turnstile<br/>Bot Protection]
-    OCR[Tesseract.js<br/>Browser Local OCR]
+    Resend["Resend<br>Transactional Email"]
+    Turnstile["Cloudflare Turnstile<br>Bot Protection"]
+    OCR["Tesseract.js<br>Browser Local OCR"]
 
     Visitor --> UI
     Kiosk --> UI
@@ -80,39 +80,45 @@ Visitors register for campus entry online prior to arrival. Registration enforce
 
 ```mermaid
 flowchart TD
-    Start[Open Visitor Portal]
-    Bot[Cloudflare Turnstile Challenge]
-    Session[Supabase Auth Anonymous Session]
-    Details[Enter Visitor Information]
-    Mode{Peak Mode Active?}
-    OCR[Optional Browser OCR Autofill]<br/>    ID[Provide Valid ID<br/>Camera OR Image Upload]
-    SkipID[ID Capture Bypassed]
-    Face[Capture Face Photo<br/>Camera-Only]
-    Intent[Request Upload Intents<br/>api.create_upload_intent RPC]
-    Store[Upload Directly to Private Storage<br/>visitor-photos & visitor-ids]
-    Issue[Issue Pass Request<br/>POST /api/passes/issue]
-    Validate[Server Validates Intent,<br/>Magic Bytes, Size & SHA-256]
-    Commit[Commit Pass & Token Digest<br/>api.issue_pass RPC]
-    QR[Display Issued QR Pass]
+    Start["Open Visitor Portal"]
+    Bot["Cloudflare Turnstile Challenge"]
+    Session["Supabase Auth Anonymous Session"]
+    Details["Enter Visitor Information"]
+    OCR["Optional Browser OCR Autofill"]
+    Face["Capture Face Photo<br>Camera-Only"]
+    Mode{"Peak Mode Active?"}
+    ID["Provide Valid ID<br>Camera OR Image Upload"]
+    SkipID["ID Capture Bypassed"]
+    Intent["Request Upload Intents<br>api.create_upload_intent RPC"]
+    Store["Upload Directly to Private Storage<br>visitor-photos & visitor-ids"]
+    Issue["Issue Pass Request<br>POST /api/passes/issue"]
+    Validate["Server Validates Intent,<br>Magic Bytes, Size & SHA-256"]
+    Commit["Commit Pass & Token Digest<br>api.issue_pass RPC"]
+    QR["Display Branded QR Pass<br>Center EARIST Logo"]
+    Reject["Reject Session"]
+    Correction["Prompt Correction"]
+    Delivery["Verified Email Delivery Gate<br>5s Timed Skip Option"]
 
     Start --> Bot
     Bot -->|Verified| Session
-    Bot -->|Failed| Reject[Reject Session]
+    Bot -->|Failed| Reject
     Session --> Details
-    Details --> Mode
+    Details -.->|Optional Autofill| OCR
+    OCR -.->|Prefill Names & Stage ID| Details
+    Details --> Face
+    Face --> Mode
     Mode -->|Standard Mode| ID
     Mode -->|Peak Mode| SkipID
-    ID --> Face
-    SkipID --> Face
-    Face --> Intent
+    ID --> Intent
+    SkipID --> Intent
     Intent --> Store
     Store --> Issue
     Issue --> Validate
     Validate -->|Valid| Commit
-    Validate -->|Invalid| Correction[Prompt Correction]
+    Validate -->|Invalid| Correction
     Correction --> Face
-    Commit --> Delivery[Verified Email Delivery Gate<br/>5s Timed Skip Option]
-    Delivery --> QR[Display Branded QR Pass<br/>Center EARIST Logo]
+    Commit --> Delivery
+    Delivery --> QR
 ```
 
 > **Scheduling Note**: Visitors may schedule visits within the institutionally configured scheduling window. The current deployment default uses 30 days ahead.
@@ -125,19 +131,19 @@ Kiosk devices located at campus entrances allow walk-in visitors to scan their g
 
 ```mermaid
 flowchart TD
-    Start[Visitor Approaches Kiosk]
-    Auth[Authenticated Kiosk Device Session]
-    CaptureID[Rear Camera Captures Valid ID]
-    OCR[Local Tesseract.js Runs in Browser]
-    Extract[Extract Name, ID Type, and ID Number]
-    Review[Visitor Reviews & Corrects Fields]
-    Selfie[Front Camera Captures Visitor Selfie]
-    Intent[Request Upload Intents<br/>api.create_upload_intent]
-    Store[Upload to Private Storage Buckets]
-    Issue[Submit Pass Issuance<br/>POST /api/passes/issue]
-    QR[Generate Cryptographic QR Pass]
-    Print[Invoke Browser Print Flow via Print Pass]
-    Email[Optional Email QR Delivery]
+    Start["Visitor Approaches Kiosk"]
+    Auth["Authenticated Kiosk Device Session"]
+    CaptureID["Rear Camera Captures Valid ID"]
+    OCR["Local Tesseract.js Runs in Browser"]
+    Extract["Extract Visitor Name Fields"]
+    Review["Visitor Reviews and Completes Remaining Information"]
+    Selfie["Front Camera Captures Visitor Selfie"]
+    Intent["Request Upload Intents<br>api.create_upload_intent"]
+    Store["Upload to Private Storage Buckets"]
+    Issue["Submit Pass Issuance<br>POST /api/passes/issue"]
+    QR["Generate Cryptographic QR Pass"]
+    Print["Invoke Browser Print Flow via Print Pass"]
+    Email["Optional Email QR Delivery"]
 
     Start --> Auth
     Auth --> CaptureID
@@ -210,7 +216,7 @@ sequenceDiagram
 
     G->>DB: RPC api.guard_dashboard (fetch pending queue)
     DB-->>G: Visitor details & photo evidence references
-    G->>API: GET /api/evidence?id=<uuid>
+    G->>API: GET /api/evidence?id={uuid}
     API-->>G: Stream photo evidence securely
     G->>API: POST /api/decide-visit (decision: approved / rejected)
     API->>DB: RPC api.decide_visit (atomic transition to inside/rejected)
@@ -235,11 +241,11 @@ System emails (invitations, password resets, email confirmations) are routed thr
 sequenceDiagram
     participant SA as Supabase Auth
     participant Hook as /api/auth/send-email-hook
-    participant Bundle as React Email Runtime Bundle<br/>(server/templates/index.js)
+    participant Bundle as React Email Runtime Bundle (server/templates/index.js)
     participant Resend as Resend API
     participant User as Recipient Mailbox
 
-    SA->>Hook: POST /api/auth/send-email-hook<br/>(Signed Standard Webhook)
+    SA->>Hook: POST /api/auth/send-email-hook (Signed Standard Webhook)
     Hook->>Hook: Verify Webhook Signature (SEND_EMAIL_HOOK_SECRET)
     Hook->>Bundle: Render Branded Action Template (e.g., StaffInviteEmail)
     Bundle-->>Hook: Compiled HTML Output
@@ -255,11 +261,11 @@ To ensure Vercel's Node File Tracer (`@vercel/nft`) packages all React Email tem
 
 ```mermaid
 flowchart LR
-    Source[Authoritative Source<br/>server/templates/*.tsx + index.ts]
-    Script[Build Script<br/>scripts/bundle-email-templates.mjs]
-    Bundle[Generated Runtime Bundle<br/>server/templates/index.js<br/>Ignored by Git]
-    Trace[Vercel Node File Trace<br/>@vercel/nft]
-    Func[Production Auth Hook Function<br/>api/auth/send-email-hook]
+    Source["Authoritative Source<br>server/templates/*.tsx + index.ts"]
+    Script["Build Script<br>scripts/bundle-email-templates.mjs"]
+    Bundle["Generated Runtime Bundle<br>server/templates/index.js (Git-Ignored)"]
+    Trace["Vercel Node File Trace<br>@vercel/nft"]
+    Func["Production Auth Hook Function<br>api/auth/send-email-hook"]
 
     Source --> Script
     Script --> Bundle
@@ -279,9 +285,9 @@ Email delivery events are asynchronously reported by Resend back to the platform
 ```mermaid
 sequenceDiagram
     participant Resend as Resend Delivery Network
-    participant API as POST /api/webhooks/resend<br/>(/api/auth/resend-webhook)
-    participant DB as Supabase PostgreSQL<br/>(public.resend_webhook_events)
-    participant Audit as Audit Trail<br/>(public.audit_events)
+    participant API as /api/webhooks/resend (/api/auth/resend-webhook)
+    participant DB as Supabase DB (resend_webhook_events)
+    participant Audit as Audit Trail (audit_events)
 
     Resend->>API: POST /api/webhooks/resend (signed delivery event)
     API->>API: Verify Signature (RESEND_WEBHOOK_SECRET)
@@ -313,14 +319,14 @@ sequenceDiagram
     participant Resend as Resend API
 
     V->>UI: Enter Email & Click Send Code
-    UI->>API: POST /api/passes/email<br/>{ action: 'request_code', passId, qrToken, recipientEmail }
+    UI->>API: POST /api/passes/email (action: request_code)
     API->>DB: RPC api.request_qr_email_code (rate limits, generate 6-digit code)
     DB-->>API: verificationId & SHA-256 hashed code
     API->>Resend: Send Verification Code Email
     Resend-->>V: Deliver 6-digit code
 
     V->>UI: Enter 6-digit code
-    UI->>API: POST /api/passes/email<br/>{ action: 'verify_and_send', verificationId, code, qrToken }
+    UI->>API: POST /api/passes/email (action: verify_and_send)
     API->>DB: RPC api.claim_qr_email_dispatch (verify code, lock attempts)
     DB-->>API: Authorized
     API->>Resend: Send Pass Email with Embedded QR PNG
@@ -348,14 +354,14 @@ sequenceDiagram
 
 ```mermaid
 flowchart LR
-    Capture[Camera Capture<br/>Selfie & ID]
-    Intent[Upload Intent<br/>api.create_upload_intent]
-    Private[Private Supabase Storage<br/>visitor-photos & visitor-ids]
-    Validate[Server Validation<br/>POST /api/passes/issue]
-    Record[visitor_evidence Row Created]
-    HoldCheck{Active Incident Hold?}
-    Retention[Retention Cleanup<br/>Purge Storage & Mark purged_at]
-    Preserved[Preserved Until Hold Released]
+    Capture["Camera Capture<br>Selfie & ID"]
+    Intent["Upload Intent<br>api.create_upload_intent"]
+    Private["Private Supabase Storage<br>visitor-photos & visitor-ids"]
+    Validate["Server Validation<br>POST /api/passes/issue"]
+    Record["visitor_evidence Row Created"]
+    HoldCheck{"Active Incident Hold?"}
+    Retention["Retention Cleanup<br>Purge Storage & Mark purged_at"]
+    Preserved["Preserved Until Hold Released"]
 
     Capture --> Intent
     Intent --> Private

@@ -11,18 +11,18 @@ A complete institutional disaster recovery strategy must account for **four dist
 ```mermaid
 flowchart TD
     subgraph DataPlane[Data Plane]
-        DB[(1. PostgreSQL Database<br/>Relational Schema, Tables, RPCs, RLS)]
-        Storage[(2. Private Object Storage<br/>visitor-photos, visitor-ids)]
+        DB[("1. PostgreSQL Database<br>Relational Schema, Tables, RPCs, RLS")]
+        Storage[("2. Private Object Storage<br>visitor-photos, visitor-ids")]
     end
 
     subgraph IdentityPlane[Identity & Auth Plane]
-        Auth[(3. Supabase Auth<br/>auth.users, Credentials, Sessions)]
-        Profiles[(public.staff_profiles<br/>App-Level Roles & Links)]
+        Auth[("3. Supabase Auth<br>auth.users, Credentials, Sessions")]
+        Profiles[("public.staff_profiles<br>App-Level Roles & Links")]
         Auth -.->|Foreign Key Link| Profiles
     end
 
     subgraph IntegrationPlane[External Integration Plane]
-        Config[4. Provider Configurations<br/>DNS, Turnstile, Resend, Webhook Secrets, Cron]
+        Config["4. Provider Configurations<br>DNS, Turnstile, Resend, Webhook Secrets, Cron"]
     end
 ```
 

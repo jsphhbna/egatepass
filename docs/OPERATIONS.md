@@ -54,11 +54,11 @@ Dedicated gate hardware (Kiosks, Entry Scanners, Exit Scanners) run authenticate
 
 ```mermaid
 flowchart LR
-    Admin[Admin] -->|POST /api/create-device| API[Vercel API]
-    API -->|Insert Record| DB[(Supabase DB: devices)]
-    DB -->|Device Record| Device[Physical Scanner / Tablet]
-    Admin -->|DELETE /api/delete-device| API
-    API -->|Set deleted_at = now()| DB
+    Admin["Admin"] -->|"POST /api/create-device"| API["Vercel API"]
+    API -->|"Insert Record"| DB[("Supabase DB: devices")]
+    DB -->|"Device Record"| Device["Physical Scanner / Tablet"]
+    Admin -->|"DELETE /api/delete-device"| API
+    API -->|"Set deleted_at = now()"| DB
 ```
 
 #### Device Registration
@@ -99,7 +99,7 @@ sequenceDiagram
 
     G->>DB: RPC api.guard_dashboard (fetch pending queue)
     DB-->>G: Visitor details & evidence IDs
-    G->>API: GET /api/evidence?id=<evidence_id>
+    G->>API: GET /api/evidence?id={evidence_id}
     API-->>G: Stream photo evidence securely
     G->>API: POST /api/decide-visit { passId, decision: 'approved' | 'rejected' }
     API->>DB: RPC api.decide_visit (atomic transition to inside/rejected)
@@ -122,16 +122,16 @@ In the event of an investigation, theft, or security incident on campus, securit
 
 ```mermaid
 flowchart TD
-    Incident[Security Incident Occurs] --> Staff[Admin / Super Admin]
-    Staff -->|Select Visitor / Pass| HoldAction[Enable Incident Hold<br/>POST /api/admin/holds]
-    HoldAction --> DB[(public.incident_holds Table)]
-    DB --> HoldStatus[active = true]
+    Incident["Security Incident Occurs"] --> Staff["Admin / Super Admin"]
+    Staff -->|"Select Visitor / Pass"| HoldAction["Enable Incident Hold<br>POST /api/admin/holds"]
+    HoldAction --> DB[("public.incident_holds Table")]
+    DB --> HoldStatus["active = true"]
 
-    RetentionEngine[Retention Maintenance<br/>/api/admin/retention-maintenance] --> CheckHold{active hold exists?}
-    CheckHold -->|Yes| Skip[Retain Evidence Indefinitely]
-    CheckHold -->|No| Purge[Purge Storage Object & Mark purged_at]
+    RetentionEngine["Retention Maintenance<br>/api/admin/retention-maintenance"] --> CheckHold{"active hold exists?"}
+    CheckHold -->|Yes| Skip["Retain Evidence Indefinitely"]
+    CheckHold -->|No| Purge["Purge Storage Object & Mark purged_at"]
 
-    Staff -->|Investigation Closed| ReleaseHold[Release Incident Hold<br/>PATCH /api/admin/holds]
+    Staff -->|"Investigation Closed"| ReleaseHold["Release Incident Hold<br>PATCH /api/admin/holds"]
     ReleaseHold --> CheckHold
 ```
 
@@ -186,13 +186,13 @@ When an operation touches multiple external boundaries (e.g. Supabase Auth, Stor
 
 ```mermaid
 flowchart TD
-    Err[Partial Failure Detected] --> Record[Insert into reconciliation_tasks]
-    Record --> SAView[Super Admin Reconciliation View<br/>GET, PATCH /api/reconciliation-items]
-    SAView --> Inspect[Inspect Error Details]
-    Inspect --> Action{Resolution Method}
-    Action -->|Retry Action| Retry[Re-execute Task]
-    Action -->|Compensate| Comp[Revert Local State]
-    Action -->|Manual Fix| Manual[Acknowledge & Mark Resolved]
+    Err["Partial Failure Detected"] --> Record["Insert into reconciliation_tasks"]
+    Record --> SAView["Super Admin Reconciliation View<br>GET, PATCH /api/reconciliation-items"]
+    SAView --> Inspect["Inspect Error Details"]
+    Inspect --> Action{"Resolution Method"}
+    Action -->|Retry Action| Retry["Re-execute Task"]
+    Action -->|Compensate| Comp["Revert Local State"]
+    Action -->|Manual Fix| Manual["Acknowledge & Mark Resolved"]
 ```
 
 1. Open **Super Admin Dashboard > Reconciliation**.

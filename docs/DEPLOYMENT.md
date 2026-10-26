@@ -15,17 +15,17 @@ EARIST E-GatePass runs across external production service providers:
 
 ```mermaid
 flowchart TD
-    Code[GitHub main Branch]
-    Vercel[Vercel CI/CD Build]
-    Templates[Step 1: Build React Email Bundle<br/>scripts/bundle-email-templates.mjs]
-    Frontend[Step 2: Build Vite Frontend<br/>dist/]
-    Functions[Step 3: Bundle Node 24 Functions<br/>api/ + server/]
-    Deploy[Production Deployment<br/>egatepass.tech]
+    Code["GitHub main Branch"]
+    Vercel["Vercel CI/CD Build"]
+    Templates["Step 1: Build React Email Bundle<br>scripts/bundle-email-templates.mjs"]
+    Frontend["Step 2: Build Vite Frontend<br>dist/"]
+    Functions["Step 3: Bundle Node 24 Functions<br>api/ + server/"]
+    Deploy["Production Deployment<br>egatepass.tech"]
 
-    DB[Supabase Migrations<br/>supabase/migrations/]
-    Auth[Supabase Auth Configuration<br/>Send Email Hook Webhook]
-    Resend[Resend Domain / Sender<br/>notifications@egatepass.tech]
-    Turnstile[Cloudflare Turnstile<br/>Site Key + Supabase Bot Protection]
+    DB["Supabase Migrations<br>supabase/migrations/"]
+    Auth["Supabase Auth Configuration<br>Send Email Hook Webhook"]
+    Resend["Resend Domain / Sender<br>notifications@egatepass.tech"]
+    Turnstile["Cloudflare Turnstile<br>Site Key + Supabase Bot Protection"]
 
     Code --> Vercel
     Vercel --> Templates

@@ -27,16 +27,17 @@ This document describes the retention maintenance architecture, production cron 
 
 ```mermaid
 flowchart LR
-    Scheduler[Vercel Cron / Institutional Scheduler<br/>Active Schedule: 0 18 * * * UTC]
-    Endpoint[POST /api/admin/retention-maintenance]
-    AuthCheck{Bearer CRON_SECRET<br/>or Super Admin Session?}
-    Engine[Retention Maintenance Engine<br/>server/routes/admin/retention-maintenance.ts]
-    DB[(Supabase DB)]
-    Storage[(Supabase Storage)]
+    Scheduler["Vercel Cron / Institutional Scheduler<br>Active Schedule: 0 18 * * * UTC"]
+    Endpoint["POST /api/admin/retention-maintenance"]
+    AuthCheck{"Bearer CRON_SECRET<br>or Super Admin Session?"}
+    Engine["Retention Maintenance Engine<br>server/routes/admin/retention-maintenance.ts"]
+    DB[("Supabase DB")]
+    Storage[("Supabase Storage")]
+    Reject["401 Unauthorized"]
 
     Scheduler -->|HTTPS POST + Bearer Auth| Endpoint
     Endpoint --> AuthCheck
-    AuthCheck -->|No / Invalid| Reject[401 Unauthorized]
+    AuthCheck -->|No / Invalid| Reject
     AuthCheck -->|Yes| Engine
 
     Engine -->|1. Purge Expired Storage Files| Storage
@@ -81,7 +82,7 @@ sequenceDiagram
     participant API as /api/admin/retention-maintenance
     participant Engine as Maintenance Engine
 
-    Caller->>API: POST /api/admin/retention-maintenance<br/>Authorization: Bearer $CRON_SECRET
+    Caller->>API: POST /api/admin/retention-maintenance (Bearer $CRON_SECRET)
     API->>API: Compare Bearer token against process.env.CRON_SECRET
 
     alt Token Missing or Invalid

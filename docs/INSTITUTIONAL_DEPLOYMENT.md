@@ -36,28 +36,28 @@ Four deployment models are viable for EARIST institutional handoff, ranging from
 
 ```mermaid
 flowchart TD
-    subgraph ModelA[Model A: Hosted Ownership Transfer]
-        VercelA[Vercel Pro/Team] --> SupabaseA[Supabase Hosted Project]
-        SupabaseA --> ResendA[Resend Account]
-        VercelA --> TurnstileA[Cloudflare Turnstile]
+    subgraph ModelA["Model A: Hosted Ownership Transfer"]
+        VercelA["Vercel Pro/Team"] --> SupabaseA["Supabase Hosted Project"]
+        SupabaseA --> ResendA["Resend Account"]
+        VercelA --> TurnstileA["Cloudflare Turnstile"]
     end
 
-    subgraph ModelB[Model B: EARIST App Server + Hosted Services]
-        ProxyB[EARIST HTTPS Reverse Proxy<br/>Nginx / Caddy] --> NodeB[EARIST Supervised Node.js Runtime<br/>SPA Static Files + API Adapter]
-        NodeB --> SupabaseB[Current / Managed Supabase Project]
-        NodeB --> ResendB[Resend / Institution Email]
+    subgraph ModelB["Model B: EARIST App Server + Hosted Services"]
+        ProxyB["EARIST HTTPS Reverse Proxy<br>Nginx / Caddy"] --> NodeB["EARIST Supervised Node.js Runtime<br>SPA Static Files + API Adapter"]
+        NodeB --> SupabaseB["Current / Managed Supabase Project"]
+        NodeB --> ResendB["Resend / Institution Email"]
     end
 
-    subgraph ModelC[Model C: Institution-Controlled Supabase]
-        AppC[EARIST Application Host] --> SupabaseSelf[Self-Hosted Supabase Stack<br/>PostgreSQL, Auth, Storage, PostgREST]
-        SupabaseSelf --> EmailC[Transactional Email Gateway]
+    subgraph ModelC["Model C: Institution-Controlled Supabase"]
+        AppC["EARIST Application Host"] --> SupabaseSelf["Self-Hosted Supabase Stack<br>PostgreSQL, Auth, Storage, PostgREST"]
+        SupabaseSelf --> EmailC["Transactional Email Gateway"]
     end
 
-    subgraph ModelD[Model D: Complete Supabase Replacement]
-        AppD[Application Code Rewrite Required<br/>FOLLOW-UP ENGINEERING REQUIRED]
-        AppD --> PlainPG[Plain PostgreSQL]
-        AppD --> CustomAuth[Custom Identity / OAuth]
-        AppD --> CustomS3[MinIO / S3 Storage]
+    subgraph ModelD["Model D: Complete Supabase Replacement"]
+        AppD["Application Code Rewrite Required<br>FOLLOW-UP ENGINEERING REQUIRED"]
+        AppD --> PlainPG["Plain PostgreSQL"]
+        AppD --> CustomAuth["Custom Identity / OAuth"]
+        AppD --> CustomS3["MinIO / S3 Storage"]
     end
 ```
 

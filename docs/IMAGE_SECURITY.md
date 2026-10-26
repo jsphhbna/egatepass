@@ -10,19 +10,19 @@ All visitor evidence is stored exclusively in **private Supabase Storage buckets
 
 ```mermaid
 flowchart TD
-    Browser[Visitor / Kiosk Browser]
-    Vercel[Vercel Serverless API]
-    Storage[(Private Supabase Storage<br/>visitor-photos & visitor-ids)]
-    DB[(PostgreSQL Database)]
+    Browser["Visitor / Kiosk Browser"]
+    Vercel["Vercel Serverless API"]
+    Storage[("Private Supabase Storage<br>visitor-photos & visitor-ids")]
+    DB[("PostgreSQL Database")]
 
-    Browser -->|1. Request Upload Intent<br/>api.create_upload_intent RPC| DB
-    DB -->>|2. Return intent_id, bucket_id, object_path| Browser
+    Browser -->|"1. Request Upload Intent<br>api.create_upload_intent RPC"| DB
+    DB -->|"2. Return intent_id, bucket_id, object_path"| Browser
 
-    Browser -->|3. Upload Image Directly<br/>storage.from(bucket).upload| Storage
-    Browser -->|4. Submit Pass Registration<br/>POST /api/passes/issue| Vercel
+    Browser -->|"3. Upload Image Directly<br>storage.from(bucket).upload"| Storage
+    Browser -->|"4. Submit Pass Registration<br>POST /api/passes/issue"| Vercel
 
-    Vercel -->|5. Verify Magic Bytes & Size| Storage
-    Vercel -->|6. Commit Evidence Record<br/>api.issue_pass RPC| DB
+    Vercel -->|"5. Verify Magic Bytes & Size"| Storage
+    Vercel -->|"6. Commit Evidence Record<br>api.issue_pass RPC"| DB
 ```
 
 ---
@@ -66,7 +66,7 @@ sequenceDiagram
     participant DB as PostgreSQL Database
     participant Storage as Private Supabase Storage
 
-    Guard->>API: GET /api/evidence?id=<evidence_uuid><br/>Authorization: Bearer <staff_jwt>
+    Guard->>API: GET /api/evidence?id={evidence_uuid} (Bearer {staff_jwt})
     API->>DB: Query visitor_evidence metadata
     API->>DB: Verify Guard Session & Pending Pass Queue (status == 'pending')
     API->>Storage: Download Private Object Server-Side

@@ -10,10 +10,10 @@ The campus walk-in kiosk interface (`/kiosk`) is engineered as a responsive web 
 
 ```mermaid
 flowchart TD
-    KioskDevice[Kiosk Station Tablet<br/>Android 10+ / iPadOS 15+ / ChromeOS]
-    RearCam[Rear-Facing Camera<br/>ID Card Capture & OCR]
-    FrontCam[Front-Facing Camera<br/>Visitor Selfie Capture]
-    OSPrint[Operating System / Browser Print Subsystem<br/>Print Pass Action]
+    KioskDevice["Kiosk Station Tablet<br>Android 10+ / iPadOS 15+ / ChromeOS"]
+    RearCam["Rear-Facing Camera<br>ID Card Capture & OCR"]
+    FrontCam["Front-Facing Camera<br>Visitor Selfie Capture"]
+    OSPrint["Operating System / Browser Print Subsystem<br>Print Pass Action"]
 
     KioskDevice --> RearCam
     KioskDevice --> FrontCam

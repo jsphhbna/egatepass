@@ -11,31 +11,31 @@ EARIST E-GatePass is partitioned into four decoupled architecture tiers:
 ```mermaid
 flowchart TD
     subgraph ClientTier["1. Client Tier (React 19 + TypeScript + Vite 8)"]
-        Portal[Visitor Portal<br/>Public Registration & QR Display]
-        Kiosk[Walk-In Kiosk View<br/>Self-Service & Local OCR]
-        GuardUI[Guard Console<br/>Verification & Queue Decision]
-        AdminUI[Admin Dashboard<br/>Staff, Devices & Settings]
-        ScannerUI[Gate Scanner Hardware<br/>Entry / Exit QR Readers]
+        Portal["Visitor Portal<br>Public Registration & QR Display"]
+        Kiosk["Walk-In Kiosk View<br>Self-Service & Local OCR"]
+        GuardUI["Guard Console<br>Verification & Queue Decision"]
+        AdminUI["Admin Dashboard<br>Staff, Devices & Settings"]
+        ScannerUI["Gate Scanner Hardware<br>Entry / Exit QR Readers"]
     end
 
     subgraph EdgeTier["2. Edge & Serverless Tier (Vercel)"]
-        EdgeCDN[Vercel Global Edge CDN<br/>Static Assets & SPA Routing]
-        API[Serverless API Functions<br/>Node.js 24 Execution Context]
-        AuthHook[Send Email Hook Endpoint<br/>Standard Webhook Verification]
-        ResendHook[Resend Delivery Webhook<br/>Standard Webhook Verification]
-        EmailBundle[Build-Time React Email Bundle<br/>server/templates/index.js]
+        EdgeCDN["Vercel Global Edge CDN<br>Static Assets & SPA Routing"]
+        API["Serverless API Functions<br>Node.js 24 Execution Context"]
+        AuthHook["Send Email Hook Endpoint<br>Standard Webhook Verification"]
+        ResendHook["Resend Delivery Webhook<br>Standard Webhook Verification"]
+        EmailBundle["Build-Time React Email Bundle<br>server/templates/index.js"]
     end
 
     subgraph DataTier["3. Data & Storage Tier (Supabase)"]
-        SupabaseAuth[Supabase Auth Service<br/>Anonymous & Authenticated JWTs]
-        Postgres[(Supabase PostgreSQL<br/>Authoritative Schema & RLS)]
-        Storage[(Supabase Object Storage<br/>Private: visitor-photos & visitor-ids)]
+        SupabaseAuth["Supabase Auth Service<br>Anonymous & Authenticated JWTs"]
+        Postgres[("Supabase PostgreSQL<br>Authoritative Schema & RLS")]
+        Storage[("Supabase Object Storage<br>Private: visitor-photos & visitor-ids")]
     end
 
     subgraph ExternalTier["4. External Service Providers"]
-        ResendAPI[Resend REST API<br/>Transactional Email]
-        ResendEvents[Resend Webhooks<br/>Delivery Events]
-        TurnstileAPI[Cloudflare Turnstile<br/>Bot Protection]
+        ResendAPI["Resend REST API<br>Transactional Email"]
+        ResendEvents["Resend Webhooks<br>Delivery Events"]
+        TurnstileAPI["Cloudflare Turnstile<br>Bot Protection"]
     end
 
     ClientTier -->|HTTPS Static Fetch| EdgeCDN
@@ -264,7 +264,7 @@ sequenceDiagram
 
     Browser->>DB: RPC api.guard_dashboard (Guard fetches pending queue)
     DB-->>Browser: Queue items with evidence IDs
-    Browser->>API: GET /api/evidence?id=<evidence_id>
+    Browser->>API: GET /api/evidence?id={evidence_id}
     API->>Storage: Stream private photo object
     API-->>Browser: Stream photo evidence
     Browser->>API: POST /api/decide-visit { passId, decision: 'approved' }

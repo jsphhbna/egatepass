@@ -11,25 +11,25 @@ EARIST E-GatePass enforces strict security perimeters across untrusted clients, 
 ```mermaid
 flowchart TB
     subgraph Untrusted["Untrusted Client Boundary"]
-        Browser[Public Visitor Browser]
-        Kiosk[Walk-In Kiosk Device]
-        StaffUI[Guard & Admin Consoles]
-        ScannerUI[Gate Scanner Devices]
+        Browser["Public Visitor Browser"]
+        Kiosk["Walk-In Kiosk Device"]
+        StaffUI["Guard & Admin Consoles"]
+        ScannerUI["Gate Scanner Devices"]
     end
 
     subgraph Server["Privileged Server Boundary (Vercel Node.js 24)"]
-        VercelAPI[Vercel Serverless Functions<br/>api/ and server/]
+        VercelAPI["Vercel Serverless Functions<br>api/ and server/"]
     end
 
     subgraph Data["Authoritative Database Boundary (Supabase)"]
-        Auth[Supabase Auth Engine]
-        DB[(PostgreSQL + Row Level Security)]
-        Storage[(Private Storage Buckets<br/>visitor-photos & visitor-ids)]
+        Auth["Supabase Auth Engine"]
+        DB[("PostgreSQL + Row Level Security")]
+        Storage[("Private Storage Buckets<br>visitor-photos & visitor-ids")]
     end
 
     subgraph External["External Services Boundary"]
-        Resend[Resend Email Delivery]
-        Turnstile[Cloudflare Turnstile CAPTCHA]
+        Resend["Resend Email Delivery"]
+        Turnstile["Cloudflare Turnstile CAPTCHA"]
     end
 
     Browser -->|HTTPS / Anonymous JWT| VercelAPI
@@ -57,26 +57,26 @@ Incoming requests present Supabase Auth JSON Web Tokens (JWT) verified cryptogra
 
 ```mermaid
 flowchart TD
-    Req[Incoming HTTP Request]
-    AuthHeader{Authorization Bearer Present?}
-    JWTValid{Cryptographically Valid Supabase JWT?}
-    IsRecovery{Is Recovery Session?}
-    ActorLookup{Identify Actor Class}
+    Req["Incoming HTTP Request"]
+    AuthHeader{"Authorization Bearer Present?"}
+    JWTValid{"Cryptographically Valid Supabase JWT?"}
+    IsRecovery{"Is Recovery Session?"}
+    ActorLookup{"Identify Actor Class"}
 
     Req --> AuthHeader
-    AuthHeader -->|No| AnonVisitor[Anonymous Visitor Scope]
+    AuthHeader -->|No| AnonVisitor["Anonymous Visitor Scope"]
     AuthHeader -->|Yes| JWTValid
-    JWTValid -->|No| Reject401[Reject: 401 Unauthorized]
+    JWTValid -->|No| Reject401["Reject: 401 Unauthorized"]
     JWTValid -->|Yes| IsRecovery
 
-    IsRecovery -->|Yes| RecoveryScope[Recovery-Confined Scope<br/>Only /api/auth/complete-password-change]
+    IsRecovery -->|Yes| RecoveryScope["Recovery-Confined Scope<br>Only /api/auth/complete-password-change"]
     IsRecovery -->|No| ActorLookup
 
-    ActorLookup --> StaffCheck{Record in staff_profiles<br/>AND active == true?}
-    StaffCheck -->|Yes| StaffRole[Resolved Role: guard / admin / superadmin]
-    StaffCheck -->|No| DeviceCheck{Record in devices<br/>AND status == active<br/>AND deleted_at IS NULL?}
+    ActorLookup --> StaffCheck{"Record in staff_profiles<br>AND active == true?"}
+    StaffCheck -->|Yes| StaffRole["Resolved Role: guard / admin / superadmin"]
+    StaffCheck -->|No| DeviceCheck{"Record in devices<br>AND status == active<br>AND deleted_at IS NULL?"}
 
-    DeviceCheck -->|Yes| DeviceRole[Resolved Device: entry / exit / kiosk<br/>Bound to Assigned Gate]
+    DeviceCheck -->|Yes| DeviceRole["Resolved Device: entry / exit / kiosk<br>Bound to Assigned Gate"]
     DeviceCheck -->|No| AnonVisitor
 ```
 
@@ -181,13 +181,13 @@ Gate passes use high-entropy cryptographically derived bearer tokens. Plaintext 
 
 ```mermaid
 flowchart LR
-    Request[Issuance Request<br/>actorId + requestId]
-    Secret[PASS_TOKEN_SECRET<br/>Min 32 Characters]
-    HMAC[HMAC-SHA256<br/>base64url Encoded]
-    Bearer[Raw QR Bearer Token]
-    Digest[SHA-256 Hash<br/>32 Bytes Binary]
-    DB[(public.passes.token_digest)]
-    QR[Physical QR Code Display]
+    Request["Issuance Request<br>actorId + requestId"]
+    Secret["PASS_TOKEN_SECRET<br>Min 32 Characters"]
+    HMAC["HMAC-SHA256<br>base64url Encoded"]
+    Bearer["Raw QR Bearer Token"]
+    Digest["SHA-256 Hash<br>32 Bytes Binary"]
+    DB[("public.passes.token_digest")]
+    QR["Physical QR Code Display"]
 
     Request --> HMAC
     Secret --> HMAC
@@ -213,12 +213,12 @@ sequenceDiagram
     participant API as Vercel API (/api/scan-pass)
     participant DB as PostgreSQL Database
 
-    D->>API: POST /api/scan-pass { passId: rawBearer, mode: 'entry' }<br/>Authorization: Bearer <device_jwt>
+    D->>API: POST /api/scan-pass { passId: rawBearer, mode: 'entry' } (Bearer {device_jwt})
     API->>API: Verify Device Session & Active Status
     API->>API: Compute token_digest = SHA-256(rawBearer)
     API->>DB: RPC api.scan_pass(token_digest, mode, device_id)
     DB->>DB: Match passes.token_digest & Verify Status == 'issued'
-    DB->>DB: Atomic Update: status -> 'pending'<br/>Insert visit_events entry
+    DB->>DB: Atomic Update: status -> 'pending', insert visit_events
 
     alt Scan Valid & Accepted
         DB-->>API: Status: 'pending', Gate: 'Main Gate'
@@ -290,11 +290,11 @@ Staff review visitor evidence strictly through an authenticated server proxy:
 ```mermaid
 sequenceDiagram
     participant G as Guard Console
-    participant API as /api/evidence?id=<uuid>
+    participant API as /api/evidence?id={uuid}
     participant DB as PostgreSQL Database
     participant Storage as Private Supabase Storage
 
-    G->>API: GET /api/evidence?id=<evidence_id><br/>Authorization: Bearer <staff_jwt>
+    G->>API: GET /api/evidence?id={evidence_id} (Bearer {staff_jwt})
     API->>DB: Query visitor_evidence metadata
     DB-->>API: { visitor_id, bucket_id, object_path, content_type, expires_at, purged_at }
 
@@ -330,11 +330,11 @@ Supabase Auth dispatches authentication events to `/api/auth/send-email-hook` us
 ### 11.2 Email Build Supply Chain Architecture
 ```mermaid
 flowchart LR
-    TSX[Authoritative Source<br/>server/templates/*.tsx & index.ts]
-    Script[Build Script<br/>scripts/bundle-email-templates.mjs]
-    Bundle[Generated Runtime Artifact<br/>server/templates/index.js<br/>Ignored by Git]
-    Trace[Vercel File Tracer<br/>@vercel/nft]
-    Function[Production Auth Function<br/>api/auth/send-email-hook]
+    TSX["Authoritative Source<br>server/templates/*.tsx & index.ts"]
+    Script["Build Script<br>scripts/bundle-email-templates.mjs"]
+    Bundle["Generated Runtime Artifact<br>server/templates/index.js (Git-Ignored)"]
+    Trace["Vercel File Tracer<br>@vercel/nft"]
+    Function["Production Auth Function<br>api/auth/send-email-hook"]
 
     TSX --> Script
     Script --> Bundle
@@ -357,7 +357,7 @@ sequenceDiagram
 
     V->>API: Action: request_code { passId, qrToken, recipientEmail }
     API->>DB: RPC api.request_qr_email_code
-    Note over DB: Enforces Rate Limits:<br/>3/pass/15m, 5/recipient/15m, 10/actor/15m
+    Note over DB: Rate limits: 3/pass/15m, 5/recipient/15m, 10/actor/15m
     DB-->>API: verificationId & SHA-256 hashed 6-digit code
     API->>Resend: Send 6-Digit Code Email
     Resend-->>V: Deliver Code (10-minute expiry)
@@ -415,19 +415,19 @@ Cloudflare Turnstile protects public visitor registration, staff/device authenti
 
 ```mermaid
 flowchart TD
-    Widget[Cloudflare Turnstile Widget on /get-pass]
-    Token[Visitor Solves Challenge -> captchaToken]
-    AnonSignIn[supabase.auth.signInAnonymously({ options: { captchaToken } })]
-    SupabaseAuth[Supabase Auth Service]
-    CloudflareAPI[Cloudflare Siteverify API]
-    Session[Anonymous Visitor Session Created]
+    Widget["Cloudflare Turnstile Widget on /get-pass"]
+    Token["Visitor Solves Challenge -> captchaToken"]
+    AnonSignIn["supabase.auth.signInAnonymously({ options: { captchaToken } })"]
+    SupabaseAuth["Supabase Auth Service"]
+    CloudflareAPI["Cloudflare Siteverify API"]
+    Session["Anonymous Visitor Session Created"]
 
     Widget --> Token
     Token --> AnonSignIn
     AnonSignIn --> SupabaseAuth
     SupabaseAuth --> CloudflareAPI
     CloudflareAPI -->|Valid Token| Session
-    CloudflareAPI -->|Invalid Token| Denied[Sign-In Rejected]
+    CloudflareAPI -->|Invalid Token| Denied["Sign-In Rejected"]
 ```
 
 *Note: The Cloudflare Turnstile Secret Key is configured in the Supabase Dashboard under Authentication > CAPTCHA / Bot & Abuse Protection. Vercel server functions do not require `Turnstile server secret`.*

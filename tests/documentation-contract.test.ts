@@ -1,6 +1,7 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, beforeAll } from 'vitest';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
+import { GlobalWindow } from 'happy-dom';
 
 describe('Documentation Truthfulness & Formatting Contract', () => {
   const activeDocFiles = [
@@ -344,3 +345,216 @@ describe('Documentation Truthfulness & Formatting Contract', () => {
     expect(qaDoc).toContain('compressed to WebP');
   });
 });
+
+describe('Mermaid Rendering & Documentation Truthfulness Contract', () => {
+  interface MermaidBlock {
+    filePath: string;
+    blockIndex: number;
+    startLine: number;
+    code: string;
+  }
+
+  function findMarkdownFiles(dir: string, excludeDirs: string[] = []): string[] {
+    let results: string[] = [];
+    const entries = fs.readdirSync(dir, { withFileTypes: true });
+    for (const entry of entries) {
+      const fullPath = path.join(dir, entry.name);
+      const relPath = fullPath.replace(/\\/g, '/');
+      if (entry.isDirectory()) {
+        if (!excludeDirs.some((ex) => relPath.includes(ex))) {
+          results = results.concat(findMarkdownFiles(fullPath, excludeDirs));
+        }
+      } else if (entry.isFile() && entry.name.endsWith('.md')) {
+        results.push(relPath);
+      }
+    }
+    return results.sort();
+  }
+
+  const activeFiles = [
+    'README.md',
+    ...findMarkdownFiles('docs', ['docs/archive']),
+    ...findMarkdownFiles('supabase'),
+  ].sort();
+
+  const archiveFiles = findMarkdownFiles('docs/archive');
+
+  function getMermaidBlocks(filePath: string): MermaidBlock[] {
+    const content = fs.readFileSync(filePath, 'utf8');
+    const blocks: MermaidBlock[] = [];
+    const lines = content.split(/\r?\n/);
+    let inMermaid = false;
+    let currentCode: string[] = [];
+    let blockStartLine = 0;
+    let blockIndex = 0;
+
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i];
+      if (!inMermaid && line.trim() === '```mermaid') {
+        inMermaid = true;
+        currentCode = [];
+        blockStartLine = i + 1;
+        blockIndex++;
+      } else if (inMermaid && line.trim() === '```') {
+        inMermaid = false;
+        blocks.push({
+          filePath,
+          blockIndex,
+          startLine: blockStartLine,
+          code: currentCode.join('\n'),
+        });
+      } else if (inMermaid) {
+        currentCode.push(line);
+      }
+    }
+    return blocks;
+  }
+
+  const allActiveBlocks: MermaidBlock[] = activeFiles.flatMap(getMermaidBlocks);
+  const allArchiveBlocks: MermaidBlock[] = archiveFiles.flatMap(getMermaidBlocks);
+  const filesWithMermaid = activeFiles.filter((file) => getMermaidBlocks(file).length > 0);
+
+  let mermaid: any;
+
+  beforeAll(async () => {
+    if (typeof globalThis.window === 'undefined') {
+      const window = new GlobalWindow();
+      globalThis.window = window as unknown as Window & typeof globalThis;
+      globalThis.document = window.document as unknown as Document;
+    }
+    const mermaidModule = await import('mermaid');
+    mermaid = mermaidModule.default || mermaidModule;
+    mermaid.initialize({ startOnLoad: false, suppressErrorRendering: true });
+  });
+
+  it('verifies exact inventory of active markdown files, files containing mermaid, and active mermaid blocks', () => {
+    expect(activeFiles.length, 'Expected exactly 19 active Markdown files').toBe(19);
+    expect(archiveFiles.length, 'Expected exactly 12 archive Markdown files').toBe(12);
+    expect(filesWithMermaid.length, 'Expected exactly 15 active Markdown files with Mermaid').toBe(15);
+    expect(allActiveBlocks.length, 'Expected exactly 50 active Mermaid blocks').toBe(50);
+    expect(allArchiveBlocks.length, 'Expected 0 archive Mermaid blocks').toBe(0);
+  });
+
+  it('parses and validates every active Mermaid block with the real Mermaid compiler', async () => {
+    expect(allActiveBlocks.length).toBe(50);
+
+    for (const block of allActiveBlocks) {
+      try {
+        const result = await mermaid.parse(block.code);
+        expect(result, `Mermaid block failed validation: ${block.filePath} block #${block.blockIndex}`).toBeTruthy();
+      } catch (err: any) {
+        const diagnostic = [
+          'Mermaid parse failed:',
+          `  File: ${block.filePath}`,
+          `  Block: #${block.blockIndex}`,
+          `  Line: around line ${block.startLine}`,
+          `  Error: ${err?.message || String(err)}`,
+        ].join('\n');
+        throw new Error(diagnostic);
+      }
+    }
+  });
+
+  it('enforces static guard against malformed joined node declarations with raw HTML tags', () => {
+    // Guards against patterns like OCR[...]<br/> ID[...] where a raw break tag joins two declarations outside quotes
+    const joinedTagRegex = /\]\s*<br\s*\/?>\s*[A-Za-z0-9_]+\[/i;
+
+    for (const block of allActiveBlocks) {
+      const lines = block.code.split(/\r?\n/);
+      lines.forEach((line, idx) => {
+        const match = line.match(joinedTagRegex);
+        expect(
+          match,
+          `Malformed joined node declaration with raw HTML break at ${block.filePath}:${block.startLine + idx + 1}: "${line}"`
+        ).toBeNull();
+      });
+    }
+  });
+
+  it('enforces static guard against pseudo-HTML angle-bracket placeholders inside Mermaid blocks', () => {
+    // Inside Mermaid, angle-bracket placeholders like <uuid>, <evidence_id>, etc. cause renderer ambiguity.
+    // They must use neutral braces like {uuid}, {evidence_id}, {staff_jwt}, {device_jwt}.
+    const forbiddenPlaceholders = [
+      /<uuid>/i,
+      /<evidence_id>/i,
+      /<evidence_uuid>/i,
+      /<staff_jwt>/i,
+      /<device_jwt>/i,
+    ];
+
+    const generalPlaceholderRegex = /<[a-z0-9_]{3,}>/i;
+
+    for (const block of allActiveBlocks) {
+      const lines = block.code.split(/\r?\n/);
+      lines.forEach((line, idx) => {
+        // Strip legitimate HTML tags like <br> or <br/> from consideration
+        const lineWithoutHtml = line.replace(/<br\s*\/?>/gi, '');
+
+        for (const pattern of forbiddenPlaceholders) {
+          expect(
+            line,
+            `Forbidden pseudo-HTML placeholder found in Mermaid at ${block.filePath}:${block.startLine + idx + 1}: "${line}"`
+          ).not.toMatch(pattern);
+        }
+
+        expect(
+          lineWithoutHtml,
+          `Pseudo-HTML angle-bracket placeholder found in Mermaid at ${block.filePath}:${block.startLine + idx + 1}: "${line}"`
+        ).not.toMatch(generalPlaceholderRegex);
+      });
+    }
+  });
+
+  it('enforces static guard for Mermaid fence integrity across all active Markdown files', () => {
+    for (const filePath of activeFiles) {
+      const content = fs.readFileSync(filePath, 'utf8');
+      const lines = content.split(/\r?\n/);
+      let inFence = false;
+      let openLine = 0;
+
+      lines.forEach((line, index) => {
+        const trimmed = line.trim();
+        if (trimmed === '```mermaid') {
+          expect(
+            inFence,
+            `Nested Mermaid fence detected at ${filePath}:${index + 1} (opened at line ${openLine})`
+          ).toBe(false);
+          inFence = true;
+          openLine = index + 1;
+        } else if (trimmed === '```' && inFence) {
+          inFence = false;
+        }
+      });
+
+      expect(inFence, `Unterminated Mermaid fence in ${filePath} opened at line ${openLine}`).toBe(false);
+    }
+  });
+
+  it('ensures README.md visitor registration flow connects the optional OCR node truthfully to the actual flow', () => {
+    const readme = fs.readFileSync('README.md', 'utf8');
+    const visitorFlowMatch = readme.match(/### 3\.1 Visitor Registration Portal Flow[\s\S]*?```mermaid([\s\S]*?)```/);
+    expect(visitorFlowMatch, 'Visitor Registration flow diagram must be present in README.md').not.toBeNull();
+    const diagramCode = visitorFlowMatch![1];
+
+    // Assert OCR node exists and is connected
+    expect(diagramCode).toContain('OCR["Optional Browser OCR Autofill');
+    expect(diagramCode).toContain('Details -.->|Optional Autofill| OCR');
+    expect(diagramCode).toContain('OCR -.->|Prefill Names & Stage ID| Details');
+    expect(diagramCode).not.toMatch(/OCR\[.*?\]\s*<br\s*\/?>/);
+  });
+
+  it('ensures README.md kiosk OCR flow truthfully documents extraction of visitor name fields only', () => {
+    const readme = fs.readFileSync('README.md', 'utf8');
+    const kioskFlowMatch = readme.match(/### 3\.2 Walk-in Kiosk ID OCR Flow[\s\S]*?```mermaid([\s\S]*?)```/);
+    expect(kioskFlowMatch, 'Kiosk OCR flow diagram must be present in README.md').not.toBeNull();
+    const diagramCode = kioskFlowMatch![1];
+
+    // Assert truthful extraction wording
+    expect(diagramCode).toContain('Extract["Extract Visitor Name Fields"]');
+    expect(diagramCode).toContain('Review["Visitor Reviews and Completes Remaining Information"]');
+
+    // Reject false overclaims in diagram
+    expect(diagramCode).not.toContain('Extract Name, ID Type, and ID Number');
+  });
+});
+
