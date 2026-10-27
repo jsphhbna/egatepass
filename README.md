@@ -142,7 +142,7 @@ flowchart TD
     Store["Upload to Private Storage Buckets"]
     Issue["Submit Pass Issuance<br>POST /api/passes/issue"]
     QR["Generate Cryptographic QR Pass"]
-    Print["Invoke Browser Print Flow via Print Pass"]
+    Print["Direct MXW01 Thermal Print<br>with Browser Print Fallback"]
     Email["Optional Email QR Delivery"]
 
     Start --> Auth
@@ -161,7 +161,7 @@ flowchart TD
 
 *Notice: OCR execution occurs entirely within the client browser memory. No unverified ID image is transmitted to third-party recognition APIs.*
 
-> **Hardware Notice**: Thermal printer device integration is a planned hardware enhancement. Current kiosk printing integrates direct Web Bluetooth thermal printing targeting the **MXW01 portable Bluetooth thermal printer** (384px native monochrome raster) with fail-safe issuance and seamless fallback to the browser/operating-system print path invoked via the "Print Pass" control.
+> **Hardware Notice**: Kiosk printing supports direct Web Bluetooth thermal printing targeting the **MXW01 portable Bluetooth thermal printer** (Android/Chromium-compatible Web Bluetooth, 384px native monochrome raster) with fail-safe issuance and seamless fallback to the browser/operating-system print path. Note: Physical MXW01 hardware integration was verified via software emulation; live physical hardware acceptance remains pending on-site manual QA.
 
 ---
 

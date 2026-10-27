@@ -403,7 +403,9 @@ export function AdminSettings() {
                 </label>
                 <Select
                   value={settings.peakMode}
+                  disabled={!canManageSecuritySettings}
                   onChange={(e) => {
+                    if (!canManageSecuritySettings) return;
                     const newScope = e.target.value as PeakModeScope;
                     if (newScope !== 'off' && settings.peakMode === 'off') {
                       setPendingPeakMode(newScope);
@@ -419,6 +421,11 @@ export function AdminSettings() {
                   <option value="kiosk">Kiosk Devices Only</option>
                   <option value="both">Both (Portal & Kiosk)</option>
                 </Select>
+                {!canManageSecuritySettings && (
+                  <p className="mt-1 text-xs text-[var(--color-text-muted)]">
+                    Controlled by Super Admin.
+                  </p>
+                )}
               </div>
             </div>
           </Card>
@@ -657,7 +664,7 @@ export function AdminSettings() {
         onConfirm={() => {
           if (pendingPeakMode) {
             setSettings({ ...settings, peakMode: pendingPeakMode });
-            toast.success(`Peak Mode enabled for ${pendingPeakMode}`);
+            toast.info('Peak Mode change staged. Press Save Settings to apply.');
           }
           setShowPeakModeConfirm(false);
           setPendingPeakMode(null);

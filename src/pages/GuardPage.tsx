@@ -40,6 +40,8 @@ import {
 } from '@/lib/offline/guardIndexedDb';
 import { syncAllPending, refreshOperationalCache } from '@/lib/offline/guardSyncManager';
 import { getManilaDateString } from '@/lib/scheduling';
+import { computeBackendAvailability } from '@/lib/offline/backendAvailability';
+import { RequestTimeoutError } from '@/lib/fetchWithTimeout';
 
 type PassWithId = GuardQueuePass;
 type GuardTab = 'queue' | 'recovery' | 'offline_reg' | 'outbox';
@@ -107,13 +109,27 @@ export function GuardPage() {
     }
   };
 
+  const isBackendOnline = computeBackendAvailability({
+    isBrowserOnline: isOnline,
+    queueError,
+    refreshError,
+    lastRequestFailed: false,
+  });
+
+  const prevBackendOnlineRef = useRef(isBackendOnline);
+  const initialSyncAttemptedRef = useRef(false);
+
   useEffect(() => {
     void refreshPendingCounts();
-    if (isOnline && !queueError) {
+    const becameAvailable = !prevBackendOnlineRef.current && isBackendOnline;
+    prevBackendOnlineRef.current = isBackendOnline;
+
+    if (becameAvailable || (!initialSyncAttemptedRef.current && isBackendOnline)) {
+      initialSyncAttemptedRef.current = true;
       void refreshOperationalCache();
       void syncAllPending().then(() => refreshPendingCounts());
     }
-  }, [isOnline, queueError, activeTab]);
+  }, [isBackendOnline]);
 
   const handleSyncNow = async () => {
     setIsSyncing(true);
@@ -255,6 +271,11 @@ export function GuardPage() {
       toast.success(`${pass.visitorName} approved`);
       void refreshQueue();
     } catch (err: unknown) {
+      if (err instanceof RequestTimeoutError) {
+        toast.error('Approval request timed out. Outcome may be ambiguous; refreshing queue.');
+        void refreshQueue();
+        return;
+      }
       if (err instanceof GuardApiError) {
         if (err.status === 409) {
           toast.info('This visitor was already processed by another guard.');
@@ -303,6 +324,11 @@ export function GuardPage() {
       setRejectingId(null);
       setRejectReason('');
       setIsRejecting(false);
+      if (err instanceof RequestTimeoutError) {
+        toast.error('Rejection request timed out. Outcome may be ambiguous; refreshing queue.');
+        void refreshQueue();
+        return;
+      }
       if (err instanceof GuardApiError) {
         if (err.status === 409) {
           toast.info('This visitor was already processed by another guard.');
@@ -380,7 +406,7 @@ export function GuardPage() {
       </audio>
 
       {/* Phase 5.6 Offline Banner */}
-      {(!isOnline || !!queueError) && (
+      {!isBackendOnline && (
         <div className="mb-4 rounded-xl border border-amber-500/50 bg-amber-50 dark:bg-amber-950/30 p-4 text-amber-900 dark:text-amber-200 shadow-sm" role="status">
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
             <div className="flex items-start gap-3">
@@ -393,7 +419,7 @@ export function GuardPage() {
                   )}
                 </h2>
                 <p className="text-sm font-medium mt-0.5">
-                  Cloud services are unavailable. Visitor actions are being stored securely on this device.
+                  Cloud services are unavailable. Visitor actions are being stored on this device pending synchronization.
                 </p>
                 {pendingSyncCount.total > 0 && (
                   <p className="text-xs font-bold mt-1 text-[#800000] dark:text-amber-300">
@@ -407,7 +433,7 @@ export function GuardPage() {
                 variant="secondary"
                 size="sm"
                 onClick={handleSyncNow}
-                disabled={isSyncing}
+                disabled={isSyncing || !isBackendOnline}
                 icon={isSyncing ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RotateCcw className="h-3.5 w-3.5" />}
               >
                 {isSyncing ? 'Syncing…' : 'Sync Now'}
@@ -528,14 +554,14 @@ export function GuardPage() {
 
       {activeTab === 'recovery' && (
         <GuardVisitorRecoveryTab
-          isBackendOnline={isOnline && !queueError}
+          isBackendOnline={isBackendOnline}
           onActionComplete={refreshPendingCounts}
         />
       )}
 
       {activeTab === 'offline_reg' && (
         <GuardOfflineRegistrationTab
-          isBackendOnline={isOnline && !queueError}
+          isBackendOnline={isBackendOnline}
           onRegistered={refreshPendingCounts}
         />
       )}

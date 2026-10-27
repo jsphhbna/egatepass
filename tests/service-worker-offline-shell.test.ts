@@ -73,4 +73,9 @@ describe('Section I: Service Worker & Offline App Shell Reliability', () => {
     expect(mainContent).toContain(".register('/sw.js')");
     expect(mainContent).toContain("type: 'PRECACHE_ASSETS'");
   });
+
+  it('I.6: successful same-origin online navigation updates cached /index.html with fresh network response clone', () => {
+    expect(swSource).toContain("if (networkResponse && networkResponse.status === 200 && url.origin === self.location.origin)");
+    expect(swSource).toContain("cache.put('/index.html', clone)");
+  });
 });

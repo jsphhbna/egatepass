@@ -18,9 +18,9 @@ import {
 import { toast } from 'sonner';
 import {
   searchCachedVisitors,
-  updateCachedVisitorStatus,
-  queueOfflineEvent,
+  queueOfflineVisitorAction,
 } from '@/lib/offline/guardIndexedDb';
+import { isTransportOrNetworkError } from '@/lib/offline/errorClassification';
 import { formatPassReference } from '@/lib/passPresentation';
 
 export interface GuardVisitorRecoveryTabProps {
@@ -56,7 +56,7 @@ export function GuardVisitorRecoveryTab({
       if (isBackendOnline) {
         try {
           const client = requireSupabase();
-          const { data, error } = await client.rpc('guard_search_recovery_visitors', {
+          const { data, error } = await client.schema('api').rpc('guard_search_recovery_visitors', {
             query: clean,
             requested_limit: 20,
           });
@@ -107,7 +107,7 @@ export function GuardVisitorRecoveryTab({
     if (isBackendOnline) {
       try {
         const client = requireSupabase();
-        const { error } = await client.rpc('guard_recover_pass_action', {
+        const { error } = await client.schema('api').rpc('guard_recover_pass_action', {
           requested_pass_id: passId,
           requested_action: 'approve_entry',
           requested_reason: 'visitor_recovery',
@@ -118,8 +118,13 @@ export function GuardVisitorRecoveryTab({
         await performSearch(searchQuery);
         onActionComplete?.();
       } catch (err: any) {
-        console.warn('Online recovery action failed, queueing offline event:', err);
-        await queueOfflineApproval(pass, occurredAt);
+        if (isTransportOrNetworkError(err)) {
+          console.warn('Online recovery action network failure, queueing offline event:', err);
+          await queueOfflineApproval(pass, occurredAt);
+        } else {
+          console.error('Authoritative server refusal for recovery action:', err);
+          toast.error(err.message || 'Server refused pass action');
+        }
       } finally {
         setProcessingId(null);
       }
@@ -130,29 +135,19 @@ export function GuardVisitorRecoveryTab({
   }
 
   async function queueOfflineApproval(pass: any, occurredAt: string) {
-    if (pass.version == null) {
-      toast.error('Visitor record is not ready for safe offline action. Refresh while online.');
-      return;
-    }
     try {
-      await queueOfflineEvent({
-        eventId: crypto.randomUUID(),
+      await queueOfflineVisitorAction({
         passId: pass.id,
-        visitorName: pass.visitorName,
         action: 'approve_entry',
-        expectedStatus: pass.status,
-        expectedVersion: pass.version,
-        occurredAt,
         reason: 'visitor_recovery',
-        syncStatus: 'pending',
+        occurredAt,
       });
-      await updateCachedVisitorStatus(pass.id, 'inside');
-      toast.success(`Entry approved offline for ${pass.visitorName} (Stored on device)`);
+      toast.success(`Entry approved offline for ${pass.visitorName} (Stored on this device pending synchronization)`);
       await performSearch(searchQuery);
       onActionComplete?.();
     } catch (offlineErr: any) {
       console.error('Queue offline approval failed:', offlineErr);
-      toast.error('Failed to store offline approval');
+      toast.error(offlineErr.message || 'Failed to store offline approval');
     }
   }
 
@@ -167,7 +162,7 @@ export function GuardVisitorRecoveryTab({
     if (isBackendOnline) {
       try {
         const client = requireSupabase();
-        const { error } = await client.rpc('guard_recover_pass_action', {
+        const { error } = await client.schema('api').rpc('guard_recover_pass_action', {
           requested_pass_id: passId,
           requested_action: 'reject_entry',
           requested_reason: reason,
@@ -180,8 +175,13 @@ export function GuardVisitorRecoveryTab({
         await performSearch(searchQuery);
         onActionComplete?.();
       } catch (err: any) {
-        console.warn('Online recovery reject failed, queueing offline event:', err);
-        await queueOfflineRejection(pass, reason, occurredAt);
+        if (isTransportOrNetworkError(err)) {
+          console.warn('Online recovery reject network failure, queueing offline event:', err);
+          await queueOfflineRejection(pass, reason, occurredAt);
+        } else {
+          console.error('Authoritative server refusal for rejection:', err);
+          toast.error(err.message || 'Server refused pass rejection');
+        }
       } finally {
         setProcessingId(null);
       }
@@ -192,30 +192,21 @@ export function GuardVisitorRecoveryTab({
   }
 
   async function queueOfflineRejection(pass: any, reason: string, occurredAt: string) {
-    if (pass.version == null) {
-      toast.error('Visitor record is not ready for safe offline action. Refresh while online.');
-      return;
-    }
     try {
-      await queueOfflineEvent({
-        eventId: crypto.randomUUID(),
+      await queueOfflineVisitorAction({
         passId: pass.id,
-        visitorName: pass.visitorName,
         action: 'reject_entry',
-        expectedStatus: pass.status,
-        expectedVersion: pass.version,
-        occurredAt,
         reason,
-        syncStatus: 'pending',
+        occurredAt,
       });
       setRejectingPass(null);
       setRejectReason('');
-      toast.success(`Pass rejected offline for ${pass.visitorName} (Stored on device)`);
+      toast.success(`Pass rejected offline for ${pass.visitorName} (Stored on this device pending synchronization)`);
       await performSearch(searchQuery);
       onActionComplete?.();
     } catch (offlineErr: any) {
       console.error('Queue offline reject failed:', offlineErr);
-      toast.error('Failed to store offline rejection');
+      toast.error(offlineErr.message || 'Failed to store offline rejection');
     }
   }
 
@@ -227,7 +218,7 @@ export function GuardVisitorRecoveryTab({
     if (isBackendOnline) {
       try {
         const client = requireSupabase();
-        const { error } = await client.rpc('guard_recover_pass_action', {
+        const { error } = await client.schema('api').rpc('guard_recover_pass_action', {
           requested_pass_id: passId,
           requested_action: 'record_exit',
           requested_reason: 'visitor_recovery_exit',
@@ -238,8 +229,13 @@ export function GuardVisitorRecoveryTab({
         await performSearch(searchQuery);
         onActionComplete?.();
       } catch (err: any) {
-        console.warn('Online recovery exit failed, queueing offline event:', err);
-        await queueOfflineExit(pass, occurredAt);
+        if (isTransportOrNetworkError(err)) {
+          console.warn('Online recovery exit network failure, queueing offline event:', err);
+          await queueOfflineExit(pass, occurredAt);
+        } else {
+          console.error('Authoritative server refusal for exit:', err);
+          toast.error(err.message || 'Server refused pass exit');
+        }
       } finally {
         setProcessingId(null);
       }
@@ -250,28 +246,19 @@ export function GuardVisitorRecoveryTab({
   }
 
   async function queueOfflineExit(pass: any, occurredAt: string) {
-    if (pass.version == null) {
-      toast.error('Visitor record is not ready for safe offline action. Refresh while online.');
-      return;
-    }
     try {
-      await queueOfflineEvent({
-        eventId: crypto.randomUUID(),
+      await queueOfflineVisitorAction({
         passId: pass.id,
-        visitorName: pass.visitorName,
         action: 'record_exit',
-        expectedStatus: 'inside',
-        expectedVersion: pass.version,
-        occurredAt,
         reason: 'visitor_recovery_exit',
-        syncStatus: 'pending',
+        occurredAt,
       });
-      toast.success(`Exit recorded offline for ${pass.visitorName} (Stored on device)`);
+      toast.success(`Exit recorded offline for ${pass.visitorName} (Stored on this device pending synchronization)`);
       await performSearch(searchQuery);
       onActionComplete?.();
     } catch (offlineErr: any) {
       console.error('Queue offline exit failed:', offlineErr);
-      toast.error('Failed to store offline exit');
+      toast.error(offlineErr.message || 'Failed to store offline exit');
     }
   }
 

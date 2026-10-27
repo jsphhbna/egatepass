@@ -146,8 +146,12 @@ export function DevicesPage() {
     } else {
       // Reactivate instantly
       try {
-        await updateDeviceStatus(device.id, 'active');
-        toast.success(`Device "${device.name}" reactivated`);
+        const res = await updateDeviceStatus(device.id, 'active');
+        if (res.result === 'partial' || res.reconciliationRequired) {
+          toast.warning(res.message || 'Device status updated in database, but authentication sync requires reconciliation.');
+        } else {
+          toast.success(`Device "${device.name}" reactivated`);
+        }
         await loadDevices();
       } catch (err) {
         console.error('Reactivate device error:', err);
@@ -159,8 +163,12 @@ export function DevicesPage() {
   async function handleRevoke(device: DeviceWithId) {
     setIsRevoking(true);
     try {
-      await updateDeviceStatus(device.id, 'revoked');
-      toast.success(`Device "${device.name}" revoked`);
+      const res = await updateDeviceStatus(device.id, 'revoked');
+      if (res.result === 'partial' || res.reconciliationRequired) {
+        toast.warning(res.message || 'Device status updated in database, but authentication sync requires reconciliation.');
+      } else {
+        toast.success(`Device "${device.name}" revoked`);
+      }
       setRevokingDevice(null);
       await loadDevices();
     } catch (err) {
@@ -285,15 +293,29 @@ export function DevicesPage() {
     }
   }
 
-  async function updateDeviceStatus(targetUid: string, status: 'active' | 'revoked') {
+  interface UpdateDeviceStatusResult {
+    ok?: boolean;
+    result?: 'success' | 'partial';
+    deviceUpdated?: boolean;
+    authSynchronized?: boolean;
+    reconciliationRequired?: boolean;
+    message?: string;
+    error?: string;
+  }
+
+  async function updateDeviceStatus(targetUid: string, status: 'active' | 'revoked'): Promise<UpdateDeviceStatusResult> {
     const token = await getAccessToken();
     const response = await fetch('/api/update-device', {
       method: 'POST',
       headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
       body: JSON.stringify({ targetUid, status }),
     });
-    const result = await response.json().catch(() => null) as { error?: string } | null;
+    const result = await response.json().catch(() => null) as UpdateDeviceStatusResult | null;
+    if (result?.result === 'partial' || result?.reconciliationRequired) {
+      return result;
+    }
     if (!response.ok) throw new Error(result?.error || 'Failed to update device status');
+    return result ?? { ok: true, result: 'success' };
   }
 
 

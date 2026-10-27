@@ -77,7 +77,7 @@ flowchart LR
 
 ### 2.1 Visitor Portal & Kiosk Registration
 - **Online Visitors**: Access `https://egatepass.tech`, solve Turnstile, fill out personal and visit details manually or via optional browser-local OCR autofill, capture camera-only facial selfie and valid ID via rear camera or supported image upload (JPEG, PNG, WebP), obtain an issued pass with an EARIST-branded center logo QR code (error correction level H), and secure pass delivery through the verified email delivery gate (or intentionally continue without email after a 5-second timed warning).
-- **Walk-in Visitors (Kiosk)**: Use the campus kiosk tablet. Rear camera captures the visitor's valid ID, local Tesseract OCR extracts information for review, front camera captures a selfie, and a QR pass is displayed with a manual "Print Pass" control. (Note: Thermal printer device integration is a planned hardware enhancement. Current kiosk printing relies on the browser/operating-system print path invoked via the Print Pass action).
+- **Walk-in Visitors (Kiosk)**: Use the campus kiosk tablet. Rear camera captures the visitor's valid ID, local Tesseract OCR extracts information for review, front camera captures a selfie, and a QR pass is displayed. Kiosk printing supports direct Web Bluetooth thermal printing via MXW01 with fail-safe issuance and browser/operating-system print fallback. (Physical hardware testing was not performed in software repairs and requires on-site manual QA).
 
 ### 2.2 Gate Entry, Guard Review, and Exit Sequence
 

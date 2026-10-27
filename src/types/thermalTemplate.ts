@@ -48,7 +48,6 @@ export const MANDATORY_ELEMENT_TYPES: string[] = [
 export interface ThermalTemplateLayout {
   width: typeof THERMAL_CANVAS_WIDTH;
   height: number;
-  canvasHeight?: number;
   elements: ThermalTemplateElement[];
 }
 

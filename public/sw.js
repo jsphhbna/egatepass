@@ -93,14 +93,24 @@ self.addEventListener('fetch', (event) => {
     return;
   }
 
-  // Navigation requests: Network-first, fallback to /index.html for SPA offline loading
+  // Navigation requests: Network-first, refresh cached /index.html on success, fallback to cached /index.html for SPA offline loading
   if (event.request.mode === 'navigate') {
     event.respondWith(
-      fetch(event.request).catch(() => {
-        return caches.match('/index.html').then((response) => {
-          return response || fetch(event.request);
-        });
-      })
+      fetch(event.request)
+        .then((networkResponse) => {
+          if (networkResponse && networkResponse.status === 200 && url.origin === self.location.origin) {
+            const clone = networkResponse.clone();
+            caches.open(CACHE_NAME).then((cache) => {
+              cache.put('/index.html', clone);
+            });
+          }
+          return networkResponse;
+        })
+        .catch(() => {
+          return caches.match('/index.html').then((response) => {
+            return response || fetch(event.request);
+          });
+        })
     );
     return;
   }

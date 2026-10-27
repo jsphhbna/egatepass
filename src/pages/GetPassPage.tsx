@@ -14,6 +14,7 @@ import {
 } from '@/services/visitorRegistration';
 import { TurnstileWidget } from '@/components/TurnstileWidget';
 import { generateBrandedQrDataUrl } from '@/lib/brandedQr';
+import QRCode from 'qrcode';
 import { recognizeIdImage, terminateLocalOcrWorker } from '@/lib/ocr';
 import {
   Camera,
@@ -261,6 +262,9 @@ export function GetPassPage() {
   function onCapturePhoto() {
     const blob = faceWebcam.capture();
     if (blob) {
+      if (portalTransactionRef.current && portalTransactionRef.current.phase === 'editable') {
+        portalTransactionRef.current.photoIntentId = null;
+      }
       setPhotoBlob(blob);
       photoUrl.setFromBlob(blob);
       faceWebcam.stop();
@@ -385,6 +389,9 @@ export function GetPassPage() {
       // 1. Process & compress image for storage evidence
       const compressed = await compressImageToWebP(source);
       if (generation !== ocrGenerationRef.current) return;
+      if (portalTransactionRef.current && portalTransactionRef.current.phase === 'editable') {
+        portalTransactionRef.current.idIntentId = null;
+      }
       setIdBlob(compressed);
       idUrl.setFromBlob(compressed);
 
@@ -513,16 +520,28 @@ export function GetPassPage() {
       }
       const result = await issueVisitorPass('portal', formData, photoBlob, idBlob, issueRequestId.current, captchaToken ?? undefined, portalTransactionRef.current);
       
-      // Feature 3: Branded QR with centered EARIST logo
-      const qrUrl = await generateBrandedQrDataUrl(result.qrToken, { size: 360 });
-
-      setQrDataUrl(qrUrl);
+      // Phase A: Authoritative issuance committed
       setPassId(result.passId);
       setRawQrToken(result.qrToken);
       const validity = result.validFrom && result.validUntil
         ? formatValidityWindow(result.validFrom, result.validUntil)
         : formatWorkingHours(workingHours);
       setIssuedValidity(validity);
+
+      // Phase B: Presentation generation
+      let qrUrl: string | null = null;
+      try {
+        qrUrl = await generateBrandedQrDataUrl(result.qrToken, { size: 360 });
+      } catch (qrErr) {
+        console.warn('Branded QR generation failed, falling back to standard QR:', qrErr);
+        try {
+          qrUrl = await QRCode.toDataURL(result.qrToken, { width: 360, margin: 2, errorCorrectionLevel: 'H' });
+        } catch (fallbackErr) {
+          console.error('Standard QR generation fallback failed:', fallbackErr);
+        }
+      }
+
+      setQrDataUrl(qrUrl);
 
       const presentation = createPassPresentation({
         firstName: formData.firstName,
@@ -616,20 +635,30 @@ export function GetPassPage() {
       const file = new File([blob], filename, { type: 'image/png' });
 
       if (navigator.canShare && navigator.canShare({ files: [file] })) {
-        await navigator.share({
-          title: 'EARIST Gate Pass',
-          text: `My EARIST Visitor Gate Pass: ${passPresentation?.passReference || passId}`,
-          files: [file],
-        });
-        return;
+        try {
+          await navigator.share({
+            title: 'EARIST Gate Pass',
+            text: `My EARIST Visitor Gate Pass: ${passPresentation?.passReference || passId}`,
+            files: [file],
+          });
+          return;
+        } catch (shareErr) {
+          if (
+            (shareErr instanceof DOMException && shareErr.name === 'AbortError') ||
+            (shareErr && typeof shareErr === 'object' && (shareErr as any).name === 'AbortError')
+          ) {
+            return;
+          }
+          console.warn('Web Share failed with non-abort error:', shareErr);
+        }
       }
     } catch {
-      // User cancelled share or file sharing unsupported
+      // Image preparation error
     } finally {
       setIsSharing(false);
     }
 
-    // Fallback: download complete pass card directly
+    // Fallback: download complete pass card directly when sharing unsupported or genuine error
     await handleDownload();
   }
 

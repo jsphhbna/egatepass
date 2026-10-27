@@ -9,6 +9,7 @@ import { BrandMark } from '@/components/BrandMark';
 import { createOptimizedQrScanner, enableContinuousFocus, QR_SCAN_CONFIG } from '@/lib/qrScanner';
 import { RefreshCw, AlertCircle } from 'lucide-react';
 import { Modal, Button } from '@/components/ui';
+import { fetchWithTimeout, RequestTimeoutError } from '@/lib/fetchWithTimeout';
 
 type ScanStatus = 'ready' | 'processing' | 'pending' | 'warning' | 'error';
 
@@ -56,17 +57,22 @@ export function EntryScanPage() {
     setStatusMessage('Verifying…');
 
     let isNetworkError = false;
+    let isTimeout = false;
 
     try {
       let response: Response;
       try {
         const token = await getAccessToken();
-        response = await fetch('/api/scan-pass', {
+        response = await fetchWithTimeout('/api/scan-pass', {
           method: 'POST',
           headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
           body: JSON.stringify({ passId, mode: 'entry' }),
-        });
+        }, 8000);
       } catch (netErr) {
+        if (netErr instanceof RequestTimeoutError) {
+          isTimeout = true;
+          throw new Error('request_timeout');
+        }
         isNetworkError = true;
         throw new Error('network_unavailable');
       }
@@ -84,7 +90,11 @@ export function EntryScanPage() {
       setStatusMessage(result?.message || 'Scanned! Waiting for guard approval…');
       toast.success('Pass scanned — pending guard approval');
     } catch (error: unknown) {
-      if (isNetworkError || (typeof error === 'object' && error !== null && 'code' in error && (error as any).code === 'network_unavailable')) {
+      if (isTimeout) {
+        setStatus('error');
+        setStatusMessage('Scan verification timed out. Result could not be confirmed. Please try scanning again.');
+        toast.error('Scan request timed out. Result could not be confirmed.');
+      } else if (isNetworkError || (typeof error === 'object' && error !== null && 'code' in error && (error as any).code === 'network_unavailable')) {
         setStatus('error');
         setStatusMessage('Entry verification is temporarily unavailable. Please proceed directly to the Guard for manual verification.');
         toast.error('Network unavailable. Proceed to Guard for manual entry.');
@@ -101,7 +111,7 @@ export function EntryScanPage() {
         setStatus('ready');
         setStatusMessage('Scan a QR code');
         debounceRef.current = false;
-      }, isNetworkError ? 5000 : 3000);
+      }, isTimeout ? 3000 : (isNetworkError ? 5000 : 3000));
     }
   }, []);
 

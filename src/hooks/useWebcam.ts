@@ -6,12 +6,16 @@ interface UseWebcamOptions {
   height?: number;
 }
 
+export interface UseWebcamStartOptions {
+  facingMode?: 'user' | 'environment';
+}
+
 export interface UseWebcamResult {
   videoRef: React.RefObject<HTMLVideoElement | null>;
   isActive: boolean;
   isStarting: boolean;
   error: string | null;
-  start: () => Promise<void>;
+  start: (startOptions?: UseWebcamStartOptions) => Promise<void>;
   stop: () => void;
   capture: () => Blob | null;
 }
@@ -28,16 +32,17 @@ export function useWebcam(options: UseWebcamOptions = {}): UseWebcamResult {
   const [isActive, setIsActive] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const start = useCallback(async () => {
+  const start = useCallback(async (startOptions?: UseWebcamStartOptions) => {
     if (isStartingRef.current || isActive) return;
     const generation = ++generationRef.current;
     isStartingRef.current = true;
     setIsStarting(true);
     setError(null);
+    const targetFacingMode = startOptions?.facingMode ?? facingMode;
     try {
       const stream = await navigator.mediaDevices.getUserMedia({
         video: {
-          facingMode,
+          facingMode: targetFacingMode,
           width: { ideal: width },
           height: { ideal: height },
         },

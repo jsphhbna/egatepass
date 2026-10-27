@@ -97,7 +97,7 @@ Operational State & Governance:
   Initial Super Admin State:   Bootstrapped and confirmed (public.staff_profiles locked)
   Developer Accounts Status:   Deactivated and suspended
   Active Scanner Devices:      [ Count of registered Gate and Kiosk devices ]
-  Known Operational Limits:    Browser-invoked printing via Print Pass; thermal printer direct integration planned
+  Known Operational Limits:    MXW01 Web Bluetooth direct printing supported on Android/Chromium with browser print fallback; physical hardware acceptance pending on-site testing
   Latest Database Snapshot:    [ Timestamp of verified pre-handoff backup ]
   Latest Restore Drill Date:   [ Timestamp of verified staging restore drill ]
 ================================================================================

@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { requireSupabase } from '@/lib/supabase';
 import { getAccessToken } from '@/services/auth';
+import { fetchWithTimeout } from '@/lib/fetchWithTimeout';
 
 export class GuardApiError extends Error {
   status: number;
@@ -349,14 +350,14 @@ export async function recordDecision(
 ): Promise<{ status: string }> {
   const token = await getAccessToken();
 
-  const response = await fetch('/api/decide-visit', {
+  const response = await fetchWithTimeout('/api/decide-visit', {
     method: 'POST',
     headers: {
       Authorization: `Bearer ${token}`,
       'Content-Type': 'application/json',
     },
     body: JSON.stringify({ passId, decision, reason }),
-  });
+  }, 10000);
   const body = await response.json().catch(() => ({}));
   if (!response.ok) {
     throw new GuardApiError(

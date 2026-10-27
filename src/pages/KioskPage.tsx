@@ -6,8 +6,9 @@ import { useWebcam } from '@/hooks/useWebcam';
 import { useObjectUrl } from '@/hooks/useObjectUrl';
 import { compressImageToWebP } from '@/lib/imageProcessing';
 import { recognizeIdImage, terminateLocalOcrWorker } from '@/lib/ocr';
-import { issueVisitorPass, loadRegistrationSettings } from '@/services/visitorRegistration';
+import { issueVisitorPass, loadRegistrationSettings, type IssueTransaction, type IssuedPass } from '@/services/visitorRegistration';
 import { generateBrandedQrDataUrl } from '@/lib/brandedQr';
+import QRCode from 'qrcode';
 import {
   Camera,
   CheckCircle2,
@@ -127,7 +128,13 @@ export function KioskPage() {
   const isPrinting = printerStatus === 'printing';
   const isAutoPrintEnabled = printerConfig.autoPrint;
 
-  const issueRequestId = useRef(crypto.randomUUID());
+  const kioskTransactionRef = useRef<IssueTransaction>({
+    requestId: crypto.randomUUID(),
+    photoIntentId: null,
+    idIntentId: null,
+    phase: 'editable',
+  });
+  const issueRequestId = useRef(kioskTransactionRef.current.requestId as ReturnType<typeof crypto.randomUUID>);
 
   type KioskConfigState = 'loading' | 'ready' | 'error';
   const [configState, setConfigState] = useState<KioskConfigState>('loading');
@@ -217,6 +224,8 @@ export function KioskPage() {
     try {
       const compressed = await compressImageToWebP(blob);
       if (generation !== ocrGenerationRef.current) return;
+      kioskTransactionRef.current.idIntentId = null;
+      kioskTransactionRef.current.phase = 'editable';
       setIdBlob(compressed);
       idUrl.setFromBlob(compressed);
 
@@ -275,6 +284,8 @@ export function KioskPage() {
   function onCapturePhoto() {
     const blob = faceWebcam.capture();
     if (blob) {
+      kioskTransactionRef.current.photoIntentId = null;
+      kioskTransactionRef.current.phase = 'editable';
       setPhotoBlob(blob);
       photoUrl.setFromBlob(blob);
       faceWebcam.stop();
@@ -290,6 +301,8 @@ export function KioskPage() {
   }
 
   function onRetakePhoto() {
+    kioskTransactionRef.current.photoIntentId = null;
+    kioskTransactionRef.current.phase = 'editable';
     photoUrl.clear();
     setPhotoBlob(null);
     faceWebcam.stop();
@@ -305,6 +318,8 @@ export function KioskPage() {
       idWebcam.stop();
       try {
         const compressed = await compressImageToWebP(blob);
+        kioskTransactionRef.current.idIntentId = null;
+        kioskTransactionRef.current.phase = 'editable';
         setIdBlob(compressed);
         idUrl.setFromBlob(compressed);
       } catch {
@@ -330,6 +345,8 @@ export function KioskPage() {
   }
 
   function onRetakeId() {
+    kioskTransactionRef.current.idIntentId = null;
+    kioskTransactionRef.current.phase = 'editable';
     idUrl.clear();
     setIdBlob(null);
     idWebcam.stop();
@@ -350,47 +367,74 @@ export function KioskPage() {
     setStep('generating');
     setSubmitError(null);
 
+    let result: IssuedPass;
+    const formData = getValues();
     try {
-      const formData = getValues();
-      const result = await issueVisitorPass('kiosk', formData, photoBlob, idBlob, issueRequestId.current);
-      const qrUrl = await generateBrandedQrDataUrl(result.qrToken, {
-        size: 360,
-      });
-
-      const presentation = createPassPresentation({
-        visitorName: [formData.firstName, formData.middleName, formData.lastName].filter(Boolean).join(' '),
-        visitDate: formData.visitDate,
-        passReference: result.publicReference || result.passId,
-        qrToken: result.qrToken,
-      });
-
-      setCurrentPassPresentation(presentation);
-      setQrDataUrl(qrUrl);
-      setPassId(result.passId);
-      setRawQrToken(result.qrToken);
-      setIssuedValidity(result.validFrom && result.validUntil
-        ? `${formatManilaTime(result.validFrom)} - ${formatManilaTime(result.validUntil)}`
-        : null);
-      setStep('done');
-      toast.success('Gate pass issued!');
-
-      // Critical invariant: PRINT FAILURE MUST NEVER ROLL BACK PASS ISSUANCE.
-      if (isAutoPrintEnabled && printerStatus === 'connected') {
-        try {
-          await printPass(presentation);
-          setPrintFailed(false);
-          toast.success('Pass printed via MXW01');
-        } catch (printErr) {
-          console.warn('Auto print failed:', printErr);
-          setPrintFailed(true);
-          toast.error('Direct thermal print failed. Printer unavailable.');
-        }
-      }
+      result = await issueVisitorPass(
+        'kiosk',
+        formData,
+        photoBlob,
+        idBlob,
+        kioskTransactionRef.current.requestId,
+        undefined,
+        kioskTransactionRef.current
+      );
     } catch (err) {
       console.error(err);
       setSubmitError(err instanceof Error ? err.message : 'Failed to issue pass');
       setStep('review');
       toast.error('Failed to issue gate pass');
+      return;
+    }
+
+    // Phase A — authoritative issuance committed
+    setPassId(result.passId);
+    setRawQrToken(result.qrToken);
+    const validity = result.validFrom && result.validUntil
+      ? `${formatManilaTime(result.validFrom)} - ${formatManilaTime(result.validUntil)}`
+      : null;
+    setIssuedValidity(validity);
+
+    // Phase B — presentation generation
+    let qrUrl: string | null = null;
+    try {
+      qrUrl = await generateBrandedQrDataUrl(result.qrToken, {
+        size: 360,
+      });
+    } catch (qrErr) {
+      console.warn('Branded QR generation failed, falling back to standard QR:', qrErr);
+      try {
+        qrUrl = await QRCode.toDataURL(result.qrToken, { width: 360, margin: 2, errorCorrectionLevel: 'H' });
+      } catch (fallbackErr) {
+        console.error('Standard QR rendering fallback failed:', fallbackErr);
+      }
+    }
+
+    const presentation = createPassPresentation({
+      visitorName: [formData.firstName, formData.middleName, formData.lastName].filter(Boolean).join(' '),
+      visitDate: formData.visitDate,
+      passReference: result.publicReference || result.passId,
+      qrToken: result.qrToken,
+      purpose: formData.purpose,
+      validityWindow: validity ?? undefined,
+    });
+
+    setCurrentPassPresentation(presentation);
+    setQrDataUrl(qrUrl);
+    setStep('done');
+    toast.success('Gate pass issued!');
+
+    // Critical invariant: PRINT FAILURE MUST NEVER ROLL BACK PASS ISSUANCE.
+    if (isAutoPrintEnabled && printerStatus === 'connected') {
+      try {
+        await printPass(presentation);
+        setPrintFailed(false);
+        toast.success('Pass printed via MXW01');
+      } catch (printErr) {
+        console.warn('Auto print failed:', printErr);
+        setPrintFailed(true);
+        toast.error('Direct thermal print failed. Printer unavailable.');
+      }
     }
   }
 
@@ -413,7 +457,13 @@ export function KioskPage() {
 
   function resetCurrentVisitor() {
     ocrGenerationRef.current += 1;
-    issueRequestId.current = crypto.randomUUID();
+    kioskTransactionRef.current = {
+      requestId: crypto.randomUUID(),
+      photoIntentId: null,
+      idIntentId: null,
+      phase: 'editable',
+    };
+    issueRequestId.current = kioskTransactionRef.current.requestId as ReturnType<typeof crypto.randomUUID>;
     reset({
       visitDate: today,
       consent: false as unknown as true,
@@ -445,6 +495,19 @@ export function KioskPage() {
   function handleNextVisitor() {
     resetCurrentVisitor();
   }
+
+  // Hard safety ceiling during 'generating' to prevent indefinite PII retention if network stalls
+  useEffect(() => {
+    if (step !== 'generating') return;
+    const safetyCeilingTimer = setTimeout(() => {
+      console.warn('Kiosk generation safety ceiling reached.');
+      toast.error('Pass generation timed out. Please review details and try again.');
+      setSubmitError('Generation timed out. Your information is preserved; please retry.');
+      setStep('review');
+    }, 20_000);
+
+    return () => clearTimeout(safetyCeilingTimer);
+  }, [step]);
 
   // 120-second inactivity timeout to protect visitor PII from abandonment
   useEffect(() => {

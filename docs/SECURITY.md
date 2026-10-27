@@ -542,12 +542,14 @@ During connectivity outages, operational access authority delegates to the Guard
 - **Honest Security Boundary**: Browser IndexedDB is **NOT** a tamper-proof hardware security module (HSM) or hardware-backed TPM. Physical extraction from an unlocked device or rooted OS is possible.
 - **Zero Server Secrets**: No server service-role keys, database passwords, or signing secrets are EVER written to browser local storage, IndexedDB, or client cookies.
 
-### 20.2 Operational Cache Scoping & Daily Purge Policy
+### 20.2 Operational Cache Scoping, Retention & Evidence Stripping
 - **Minimal Operational Footprint**: The tablet only caches operationally relevant passes: today's date in `Asia/Manila` in `issued`, `pending`, or `inside` status. Historical passes are excluded.
-- **Local Data Retention**:
+- **Truthful Storage Framing**: UI messaging and documentation state "Stored on this device pending synchronization" rather than misleading claims of hardware-backed tamper-proof storage.
+- **Local Data Retention & Evidence Stripping**:
   - Daily automatic purge clears previous calendar days' cached visitor records.
-  - Successfully synchronized event outbox entries and offline registration records are purged upon receipt acknowledgment from the server.
-  - Staff logout or session invalidation purges all sensitive local caches.
+  - Terminal Evidence Stripping: Upon reaching a terminal state (either successful synchronization or terminal conflict), sensitive local binary blobs (`photoBlob` and `idBlob`) are stripped immediately from IndexedDB while preserving metadata necessary for audit and administrative reconciliation.
+  - Absolute Retention Ceiling: Enforcing the institutional 7-day evidence retention policy, any offline registration older than 7 days that fails to synchronize is treated as expired/conflicted and purged of all sensitive binary evidence blobs.
+  - Staff logout or session invalidation clears all sensitive local caches.
 
 ### 20.3 Server Synchronization & Conflict Defense
 - **Immutable Provenance**: Every offline event carries an immutable random UUID `eventId` and `actorId`. Offline walk-in registrations carry an immutable UUID `offlineRegistrationId`.

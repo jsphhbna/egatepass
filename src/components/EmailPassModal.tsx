@@ -9,6 +9,7 @@ import {
   type RequestCodePayload,
   type VerifyAndSendPayload,
 } from '@/lib/passEmailContract';
+import { fetchWithTimeout, RequestTimeoutError } from '@/lib/fetchWithTimeout';
 
 interface EmailPassModalProps {
   isOpen: boolean;
@@ -105,8 +106,7 @@ export function EmailPassModal({
     onClose();
   }
 
-  async function handleRequestCode(e: React.FormEvent) {
-    e.preventDefault();
+  async function executeRequestCode(isResend: boolean) {
     if (!consent) {
       setErrorMessage('You must consent to receive your pass by email.');
       return;
@@ -130,11 +130,19 @@ export function EmailPassModal({
         requestId: requestCodeRequestIdRef.current,
       });
 
-      const res = await fetch('/api/passes/email', {
-        method: 'POST',
-        headers,
-        body: JSON.stringify(payload),
-      });
+      let res: Response;
+      try {
+        res = await fetchWithTimeout('/api/passes/email', {
+          method: 'POST',
+          headers,
+          body: JSON.stringify(payload),
+        }, 10000);
+      } catch (netErr) {
+        if (netErr instanceof RequestTimeoutError) {
+          throw new Error('Verification code request timed out. Please try again.');
+        }
+        throw netErr;
+      }
 
       const data = await res.json().catch(() => null);
 
@@ -147,7 +155,12 @@ export function EmailPassModal({
         throw new Error(data?.message || friendlyEmailError(data?.error, 'Failed to request verification code.'));
       }
 
+      // Only replace verificationId after a successful response
       setVerificationId(data.verificationId);
+      if (isResend) {
+        // Clear/reset entered OTP only after the new challenge is successfully created
+        setCode('');
+      }
       setStep('verify');
       setResendCooldown(60);
       toast.success('Verification code submitted. Check your inbox.');
@@ -158,6 +171,11 @@ export function EmailPassModal({
     } finally {
       setLoading(false);
     }
+  }
+
+  async function handleRequestCode(e: React.FormEvent) {
+    e.preventDefault();
+    await executeRequestCode(false);
   }
 
   async function handleVerifyAndSend(e: React.FormEvent) {
@@ -183,11 +201,22 @@ export function EmailPassModal({
         requestId: sendRequestIdRef.current,
       });
 
-      const res = await fetch('/api/passes/email', {
-        method: 'POST',
-        headers,
-        body: JSON.stringify(payload),
-      });
+      let res: Response;
+      try {
+        res = await fetchWithTimeout('/api/passes/email', {
+          method: 'POST',
+          headers,
+          body: JSON.stringify(payload),
+        }, 15000);
+      } catch (netErr) {
+        if (netErr instanceof RequestTimeoutError) {
+          // If final email dispatch times out after provider submission may have occurred:
+          // use the existing outcome_unknown semantics, do not automatically send a duplicate bearer QR.
+          setStep('unknown');
+          return;
+        }
+        throw netErr;
+      }
 
       const data = await res.json().catch(() => null);
 
@@ -330,12 +359,11 @@ export function EmailPassModal({
             </button>
             <button
               type="button"
-              onClick={(e) => {
+              onClick={() => {
                 if (resendCooldown > 0) return;
                 requestCodeRequestIdRef.current = crypto.randomUUID();
                 sendRequestIdRef.current = crypto.randomUUID();
-                setVerificationId(null);
-                void handleRequestCode(e);
+                void executeRequestCode(true);
               }}
               disabled={loading || resendCooldown > 0}
               className="text-[var(--color-brand)] hover:underline disabled:opacity-50 disabled:no-underline font-medium"

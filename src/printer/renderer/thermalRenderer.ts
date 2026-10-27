@@ -103,10 +103,62 @@ function renderElement(
 
     if (!text.trim()) return;
 
+    const hasClipping = typeof ctx.save === 'function' && typeof ctx.clip === 'function';
+    if (hasClipping) {
+      ctx.save();
+      // Clip strictly to element bounding box so text never renders outside bounds or over QR
+      ctx.beginPath();
+      ctx.rect(el.x, el.y, el.width, el.height);
+      ctx.clip();
+    }
+
     ctx.fillStyle = '#000000';
     const weight = el.fontWeight === 'bold' ? 'bold ' : '';
     const size = el.fontSize ?? 14;
     ctx.font = `${weight}${size}px "Segoe UI", Roboto, Arial, sans-serif`;
+
+    const maxWidth = el.width;
+    const lineHeight = Math.max(size * 1.2, 14);
+    const maxLines = Math.max(1, Math.floor(el.height / lineHeight));
+
+    // Word wrap & ellipsis within element bounds
+    const words = text.split(/\s+/);
+    const lines: string[] = [];
+    let currentLine = '';
+
+    for (const word of words) {
+      if (!word) continue;
+      const testLine = currentLine ? `${currentLine} ${word}` : word;
+      const metrics = ctx.measureText(testLine);
+      if (metrics.width <= maxWidth) {
+        currentLine = testLine;
+      } else {
+        if (currentLine) {
+          lines.push(currentLine);
+          currentLine = word;
+        } else {
+          // Word itself exceeds maxWidth: truncate with ellipsis
+          let truncated = word;
+          while (truncated.length > 1 && ctx.measureText(truncated + '…').width > maxWidth) {
+            truncated = truncated.slice(0, -1);
+          }
+          lines.push(truncated + '…');
+          currentLine = '';
+        }
+        if (lines.length >= maxLines) break;
+      }
+    }
+
+    if (currentLine && lines.length < maxLines) {
+      lines.push(currentLine);
+    } else if (lines.length > 0 && lines.length >= maxLines && currentLine) {
+      const lastIndex = lines.length - 1;
+      let last = lines[lastIndex] ?? '';
+      while (last.length > 1 && ctx.measureText(last + '…').width > maxWidth) {
+        last = last.slice(0, -1);
+      }
+      lines[lastIndex] = last.endsWith('…') ? last : last + '…';
+    }
 
     let textX = el.x;
     if (el.align === 'center') {
@@ -119,11 +171,19 @@ function renderElement(
       ctx.textAlign = 'left';
     }
 
-    // Vertically center in the element bounding box
-    ctx.textBaseline = 'middle';
-    const textY = el.y + el.height / 2;
+    const totalTextHeight = lines.length * lineHeight;
+    const startY = el.y + Math.max(0, (el.height - totalTextHeight) / 2) + lineHeight / 2;
 
-    ctx.fillText(text, textX, textY);
+    ctx.textBaseline = 'middle';
+    for (let i = 0; i < lines.length; i++) {
+      const lineText = lines[i];
+      if (lineText) {
+        ctx.fillText(lineText, textX, startY + i * lineHeight);
+      }
+    }
+    if (hasClipping && typeof ctx.restore === 'function') {
+      ctx.restore();
+    }
   }
 }
 

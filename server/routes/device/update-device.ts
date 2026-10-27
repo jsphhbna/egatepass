@@ -23,7 +23,14 @@ async function handleRequest(request: Request): Promise<Response> {
         authUpdate.error.message || 'auth_ban_failed',
         { targetStatus: parsed.data.status }
       );
-      return jsonResponse(503, { error: 'device_updated_auth_reconciliation_required' });
+      return jsonResponse(503, {
+        error: 'device_updated_auth_reconciliation_required',
+        result: 'partial',
+        deviceUpdated: true,
+        authSynchronized: false,
+        reconciliationRequired: true,
+        message: 'The device was updated in the database, but authentication synchronization requires reconciliation.',
+      });
     }
     return jsonResponse(200, { ok: true });
   } catch (error) { if (error instanceof HttpError) return jsonResponse(error.status, { error: error.code }); console.error('Device update failed.', error instanceof Error ? error.message : 'unknown_error'); return jsonResponse(503, { error: 'service_unavailable' }); }

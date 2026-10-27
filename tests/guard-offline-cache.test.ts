@@ -12,16 +12,23 @@ import {
 import { refreshOperationalCache } from '@/lib/offline/guardSyncManager';
 
 // Mock dependencies for guardSyncManager
-const mockRpc = vi.fn();
-const mockGetSession = vi.fn();
-vi.mock('@/lib/supabase', () => ({
-  requireSupabase: () => ({
+const { mockRpc, mockGetSession } = vi.hoisted(() => ({
+  mockRpc: vi.fn(),
+  mockGetSession: vi.fn(),
+}));
+
+vi.mock('@/lib/supabase', () => {
+  const client: any = {
     auth: {
       getSession: mockGetSession,
     },
     rpc: mockRpc,
-  }),
-}));
+    schema: () => client,
+  };
+  return {
+    requireSupabase: () => client,
+  };
+});
 
 // Mock global fetch for evidence blob retrieval
 const mockFetch = vi.fn();

@@ -53,11 +53,15 @@ export function evaluateTurnstilePolicy(
   return { allowed: true };
 }
 
-export type PortalIssueTransactionPhase =
+import { fetchWithTimeout } from '@/lib/fetchWithTimeout';
+
+export type IssueTransactionPhase =
   | 'editable'
   | 'dispatched'
   | 'ambiguous'
   | 'committed';
+
+export type PortalIssueTransactionPhase = IssueTransactionPhase;
 
 export type SubmissionOutcomeType =
   | 'committed'
@@ -103,17 +107,19 @@ export class PassIssuanceError extends Error {
   }
 }
 
-export interface PortalIssueTransaction {
+export interface IssueTransaction {
   requestId: string;
-  actorId: string;
-  token: string;
+  actorId?: string;
+  token?: string;
   photoIntentId: string | null;
   idIntentId: string | null;
-  phase: PortalIssueTransactionPhase;
+  phase: IssueTransactionPhase;
   submittedPayload?: {
     visitor: VisitorRegistration;
   } | null;
 }
+
+export type PortalIssueTransaction = IssueTransaction;
 
 export async function createPortalIssueTransaction(captchaToken?: string): Promise<PortalIssueTransaction> {
   const client = requirePortalSupabase();
@@ -176,6 +182,9 @@ async function authenticatedClient(
       existingTransaction.photoIntentId = newTx.photoIntentId;
       existingTransaction.idIntentId = newTx.idIntentId;
     }
+    if (!newTx.token) {
+      throw new Error('Visitor registration session token missing.');
+    }
     return { client, token: newTx.token };
   }
 
@@ -215,11 +224,11 @@ export async function issueVisitorPass(
   identification: Blob | null,
   requestId: string = crypto.randomUUID(),
   captchaToken?: string,
-  transaction?: PortalIssueTransaction | null,
+  transaction?: IssueTransaction | null,
 ): Promise<IssuedPass> {
   const { client, token } = await authenticatedClient(source, captchaToken, transaction);
 
-  const effectiveRequestId = (source === 'portal' && transaction?.requestId) ? transaction.requestId : requestId;
+  const effectiveRequestId = transaction?.requestId ? transaction.requestId : requestId;
 
   // Upload photo intent if not already created
   let photoIntentId: string;
@@ -258,7 +267,7 @@ export async function issueVisitorPass(
 
   let response: Response;
   try {
-    response = await fetch('/api/passes/issue', {
+    response = await fetchWithTimeout('/api/passes/issue', {
       method: 'POST',
       headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -268,7 +277,7 @@ export async function issueVisitorPass(
         photoIntentId,
         idIntentId,
       }),
-    });
+    }, 15000);
   } catch (networkErr) {
     if (transaction) {
       transaction.phase = 'ambiguous';

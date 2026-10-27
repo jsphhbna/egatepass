@@ -72,6 +72,10 @@ describe('Documentation Truthfulness & Formatting Contract', () => {
       { pattern: /Auto-Invoke Thermal Print Receipt/i, label: 'Auto-Invoke Thermal Print Receipt (kiosk printing uses manual Print Pass control)' },
       { pattern: /The repository does NOT currently configure an automatic schedule in vercel\.json/i, label: 'stale cron unconfigured claim (vercel.json configures daily retention maintenance)' },
       { pattern: /opens automatically with thermal receipt layout/i, label: 'automatic thermal print dialog opening (kiosk printing is user-invoked via Print Pass)' },
+      { pattern: /thermal printer (?:device )?integration is a planned/i, label: 'obsolete planned thermal printer integration claim' },
+      { pattern: /thermal printer direct integration planned/i, label: 'obsolete planned thermal integration claim' },
+      { pattern: /current kiosk printing relies on the browser\/operating-system/i, label: 'obsolete kiosk printing relies on browser print only' },
+      { pattern: /stored securely on (?:this )?device/i, label: 'overclaimed stored securely on device (should be stored on this device pending synchronization)' },
     ];
 
     for (const filePath of activeDocFiles) {
@@ -244,7 +248,7 @@ describe('Documentation Truthfulness & Formatting Contract', () => {
     expect(cronDoc).not.toContain('does NOT currently configure an automatic schedule in vercel.json');
   });
 
-  it('ensures kiosk printing reflects current manual browser print behavior and thermal integration is marked planned', () => {
+  it('ensures kiosk printing truthfully reflects MXW01 Web Bluetooth primary path and browser print fallback', () => {
     const readme = fs.readFileSync('README.md', 'utf8');
     const kioskHardware = fs.readFileSync('docs/KIOSK_HARDWARE.md', 'utf8');
     const qaDoc = fs.readFileSync('docs/MANUAL_QA_RUNBOOK.md', 'utf8');
@@ -252,16 +256,17 @@ describe('Documentation Truthfulness & Formatting Contract', () => {
 
     // Verify source code reality
     expect(kioskSource).toContain('window.print()');
-    expect(kioskSource).toContain('Print Pass');
+    expect(kioskSource).toContain('useThermalPrinter');
+    expect(kioskSource).toContain('printPass');
 
-    // Verify documentation truthfulness
-    expect(readme).toContain('Invoke Browser Print Flow via Print Pass');
-    expect(readme).toContain('Thermal printer device integration is a planned hardware enhancement');
-    expect(kioskHardware).toContain('Print Pass');
-    expect(kioskHardware).toContain('window.print()');
-    expect(kioskHardware).toContain('NOT YET IMPLEMENTED');
-    expect(qaDoc).toContain('Print Pass');
-    expect(qaDoc).not.toContain('Auto-Invoke Thermal Print');
+    // Verify documentation truthfulness: primary MXW01 Web Bluetooth with browser fallback
+    expect(readme).toContain('MXW01 portable Bluetooth thermal printer');
+    expect(readme).toContain('fallback to the browser/operating-system print path');
+    expect(readme).not.toContain('Thermal printer device integration is a planned hardware enhancement');
+    expect(kioskHardware).toContain('MXW01 Thermal Printer (Web Bluetooth)');
+    expect(kioskHardware).toContain('Fallback Printing Subsystem');
+    expect(qaDoc).toContain('Print Thermal Pass');
+    expect(qaDoc).not.toContain('Auto-Invoke Thermal Print Receipt');
     expect(qaDoc).not.toContain('opens automatically with thermal receipt layout');
   });
 

@@ -160,9 +160,7 @@ export class MXW01Manager {
         lastDeviceName: this.activeDeviceName || undefined,
       });
 
-      this.client.on('disconnected', () => {
-        this.notify('disconnected');
-      });
+      this.registerClientLifecycle(this.client);
 
       this.notify('connected');
       return { success: true, deviceName: this.activeDeviceName || undefined };
@@ -171,6 +169,15 @@ export class MXW01Manager {
       this.notify('disconnected', errMsg.includes('User cancelled') ? null : errMsg);
       return { success: false, error: errMsg };
     }
+  }
+
+  private registerClientLifecycle(client: ThermalPrinterClient): void {
+    client.on('disconnected', () => {
+      this.activeDeviceName = null;
+      this.client = null;
+      this.adapter = null;
+      this.notify('disconnected');
+    });
   }
 
   /**
@@ -195,6 +202,7 @@ export class MXW01Manager {
             (this.adapter as any).device = target;
             this.client = new ThermalPrinterClient(this.adapter);
             await this.client.connect();
+            this.registerClientLifecycle(this.client);
             this.activeDeviceName = target.name || 'MXW01 Printer';
             this.notify('connected');
             return true;

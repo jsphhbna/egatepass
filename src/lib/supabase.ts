@@ -34,6 +34,18 @@ export function requireSupabase(): SupabaseClient {
   return supabase;
 }
 
+/**
+ * Executes an application RPC explicitly within the 'api' schema.
+ * Supabase client defaults to 'public', but all application RPCs reside in 'api'.
+ */
+export function apiRpc(
+  client: SupabaseClient,
+  fn: string,
+  args?: Record<string, unknown>
+) {
+  return client.schema('api').rpc(fn, args);
+}
+
 export function requirePortalSupabase(): SupabaseClient {
   if (!browserRuntimeConfig.ok) {
     throw new Error('E-GatePass visitor services are not configured.');

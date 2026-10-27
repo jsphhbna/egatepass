@@ -17,6 +17,7 @@ const DB_VERSION = 1;
 
 export interface CachedVisitorPass {
   id: string; // passId
+  passId?: string;
   publicReference?: string;
   visitorId: string;
   visitorName: string;
@@ -50,8 +51,8 @@ export interface OfflineRegistrationRecord {
   };
   action: 'approved' | 'rejected';
   occurredAt: string; // ISO string with client timestamp
-  photoBlob: Blob;
-  idBlob: Blob | null;
+  photoBlob?: Blob | null;
+  idBlob?: Blob | null;
   rejectionReason: string | null;
   syncStatus: 'pending' | 'syncing' | 'synced' | 'conflict';
   conflictReason?: string | null;
@@ -142,7 +143,69 @@ export async function getMeta<T = any>(key: string): Promise<T | null> {
  * 2. Synced offline registrations have their large evidence blobs freed.
  * 3. Synced events older than 24 hours are removed.
  */
-export async function purgeStaleLocalData(currentManilaDay: string): Promise<{ purgedVisitors: number; purgedEvents: number }> {
+/**
+ * Strips sensitive biometric/ID Blobs from terminal offline registrations (synced or conflict)
+ * and enforces the 7-day evidence retention ceiling (Root Cause 14).
+ */
+export async function stripTerminalOfflineEvidence(): Promise<{ strippedBlobs: number; expiredPurged: number }> {
+  const db = await openDatabase();
+  let strippedBlobs = 0;
+  let expiredPurged = 0;
+  const sevenDaysAgo = Date.now() - 7 * 24 * 60 * 60 * 1000;
+
+  await new Promise<void>((resolve, reject) => {
+    const tx = db.transaction('offline_registrations', 'readwrite');
+    const store = tx.objectStore('offline_registrations');
+    const req = store.openCursor();
+
+    req.onsuccess = (e) => {
+      const cursor = (e.target as IDBRequest<IDBCursorWithValue>).result;
+      if (cursor) {
+        const item = cursor.value as OfflineRegistrationRecord;
+        const recordTime = new Date(item.occurredAt).getTime();
+
+        // 1. Terminal states: synced or conflict
+        if (item.syncStatus === 'synced' || item.syncStatus === 'conflict') {
+          if (item.photoBlob || item.idBlob) {
+            const updated = { ...item };
+            delete updated.photoBlob;
+            delete updated.idBlob;
+            cursor.update(updated);
+            strippedBlobs++;
+          }
+        }
+        // 2. Absolute 7-day retention ceiling:
+        else if (recordTime < sevenDaysAgo) {
+          // If pending/syncing but exceeded 7 days, mark conflict and strip blobs
+          const updated = {
+            ...item,
+            syncStatus: 'conflict' as const,
+            conflictReason: 'expired_local_evidence_exceeded_policy',
+          };
+          delete updated.photoBlob;
+          delete updated.idBlob;
+          cursor.update(updated);
+          expiredPurged++;
+          strippedBlobs++;
+        }
+        cursor.continue();
+      }
+    };
+
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => reject(tx.error);
+  });
+
+  return { strippedBlobs, expiredPurged };
+}
+
+/**
+ * Enforces local data retention policy (Phase 15 & Root Cause 14):
+ * 1. Stale operational visitor cache from prior days is purged.
+ * 2. Terminal (synced & conflicted) offline registrations have sensitive evidence blobs stripped.
+ * 3. Synced events older than 24 hours are removed.
+ */
+export async function purgeStaleLocalData(currentManilaDay: string): Promise<{ purgedVisitors: number; purgedEvents: number; strippedBlobs: number }> {
   const db = await openDatabase();
   let purgedVisitors = 0;
   let purgedEvents = 0;
@@ -169,29 +232,8 @@ export async function purgeStaleLocalData(currentManilaDay: string): Promise<{ p
     tx.onerror = () => reject(tx.error);
   });
 
-  // 2. Free blobs from synced offline registrations
-  await new Promise<void>((resolve, reject) => {
-    const tx = db.transaction('offline_registrations', 'readwrite');
-    const store = tx.objectStore('offline_registrations');
-    const req = store.openCursor();
-
-    req.onsuccess = (e) => {
-      const cursor = (e.target as IDBRequest<IDBCursorWithValue>).result;
-      if (cursor) {
-        const item = cursor.value as OfflineRegistrationRecord;
-        if (item.syncStatus === 'synced') {
-          // Keep metadata for audit trail but drop evidence blob objects to protect disk
-          if (item.photoBlob || item.idBlob) {
-            cursor.update({ ...item, photoBlob: null as any, idBlob: null });
-          }
-        }
-        cursor.continue();
-      }
-    };
-
-    tx.oncomplete = () => resolve();
-    tx.onerror = () => reject(tx.error);
-  });
+  // 2. Free blobs from terminal offline registrations (synced AND conflict) + 7-day ceiling
+  const { strippedBlobs } = await stripTerminalOfflineEvidence();
 
   // 3. Purge synced events older than 24 hours
   const cutoff = Date.now() - 24 * 60 * 60 * 1000;
@@ -216,7 +258,7 @@ export async function purgeStaleLocalData(currentManilaDay: string): Promise<{ p
     tx.onerror = () => reject(tx.error);
   });
 
-  return { purgedVisitors, purgedEvents };
+  return { purgedVisitors, purgedEvents, strippedBlobs };
 }
 
 // =============================================================================
@@ -237,18 +279,48 @@ export async function saveCachedVisitors(visitors: CachedVisitorPass[]): Promise
 }
 
 /**
- * Atomically replaces the entire cached_visitors store with new snapshot records.
- * If any step fails, the transaction is rolled back and the previous snapshot remains intact.
+ * Atomically replaces the server snapshot visitors while strictly preserving
+ * unsynchronized local visitors belonging to registrations still pending or syncing (Root Cause 3.1).
+ * If any step fails, the transaction aborts and previous cached data remains untouched.
  */
 export async function atomicReplaceCachedVisitors(visitors: CachedVisitorPass[]): Promise<void> {
   const db = await openDatabase();
   return new Promise((resolve, reject) => {
-    const tx = db.transaction('cached_visitors', 'readwrite');
-    const store = tx.objectStore('cached_visitors');
-    store.clear();
-    for (const v of visitors) {
-      store.put(v);
-    }
+    const tx = db.transaction(['cached_visitors', 'offline_registrations'], 'readwrite');
+    const visitorStore = tx.objectStore('cached_visitors');
+    const regStore = tx.objectStore('offline_registrations');
+
+    const regReq = regStore.getAll();
+    regReq.onsuccess = () => {
+      const registrations = (regReq.result as OfflineRegistrationRecord[]) || [];
+      // Identify active unsynchronized local registration IDs (pending or syncing approved visitors)
+      const unsyncedRegIds = new Set(
+        registrations
+          .filter((r) => r.action === 'approved' && (r.syncStatus === 'pending' || r.syncStatus === 'syncing'))
+          .map((r) => r.offlineRegistrationId)
+      );
+
+      // Read current cache so we can preserve active unsynced local visitors
+      const currentReq = visitorStore.getAll();
+      currentReq.onsuccess = () => {
+        const currentCached = (currentReq.result as CachedVisitorPass[]) || [];
+        const preservedLocalVisitors = currentCached.filter((v) => unsyncedRegIds.has(v.id));
+
+        // Clear store and re-populate with preserved local visitors + new server snapshot
+        visitorStore.clear();
+
+        for (const localV of preservedLocalVisitors) {
+          visitorStore.put(localV);
+        }
+
+        for (const serverV of visitors) {
+          visitorStore.put(serverV);
+        }
+      };
+      currentReq.onerror = () => tx.abort();
+    };
+    regReq.onerror = () => tx.abort();
+
     tx.oncomplete = () => resolve();
     tx.onerror = () => reject(tx.error);
     tx.onabort = () => reject(tx.error || new Error('Transaction aborted'));
@@ -271,12 +343,13 @@ export async function searchCachedVisitors(query: string): Promise<CachedVisitor
       }
       const cleanNoPrefix = clean.replace(/^ref:?\s*/i, '').replace(/-/g, '');
       const matches = all.filter((v) => {
-        const nameMatch = v.visitorName.toLowerCase().includes(clean);
-        const contactMatch = v.contactNumber.toLowerCase().includes(clean);
-        const refMatch = v.passReference.toLowerCase().includes(clean);
-        const idMatch = v.id.toLowerCase().startsWith(clean);
+        const nameMatch = (v.visitorName || '').toLowerCase().includes(clean);
+        const contactMatch = (v.contactNumber || '').toLowerCase().includes(clean);
+        const refStr = v.passReference || v.publicReference || '';
+        const refMatch = refStr.toLowerCase().includes(clean);
+        const idMatch = (v.id || '').toLowerCase().startsWith(clean);
         const publicRefMatch = v.publicReference ? v.publicReference.toLowerCase().includes(clean) : false;
-        const refNoPrefix = v.passReference.replace(/^ref:?\s*/i, '').replace(/-/g, '').toLowerCase();
+        const refNoPrefix = refStr.replace(/^ref:?\s*/i, '').replace(/-/g, '').toLowerCase();
         return (
           nameMatch ||
           contactMatch ||
@@ -461,4 +534,194 @@ export async function getPendingSyncCount(): Promise<{ registrations: number; ev
     events: evts.length,
     total: regs.length + evts.length,
   };
+}
+
+/**
+ * Atomically saves an offline registration and, if approved, inserts its projected
+ * local cached visitor in ONE transaction across 'offline_registrations' and 'cached_visitors' (Root Causes 2.2 and 2.3).
+ *
+ * An approved visitor starts with status 'inside' and projected version 1.
+ */
+export async function saveOfflineRegistrationWithCache(
+  record: OfflineRegistrationRecord
+): Promise<CachedVisitorPass | null> {
+  const db = await openDatabase();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(['offline_registrations', 'cached_visitors'], 'readwrite');
+    const regStore = tx.objectStore('offline_registrations');
+    const visitorStore = tx.objectStore('cached_visitors');
+
+    const normalizedRecord = {
+      ...record,
+      syncStatus: (record as any).syncStatus || 'pending',
+    };
+    regStore.put(normalizedRecord);
+
+    let cached: CachedVisitorPass | null = null;
+    if (record.action === 'approved') {
+      const fullName = [record.visitor.firstName, record.visitor.middleName, record.visitor.lastName]
+        .filter(Boolean)
+        .join(' ');
+
+      cached = {
+        id: record.offlineRegistrationId,
+        publicReference: record.offlineRegistrationId,
+        visitorId: record.offlineRegistrationId,
+        visitorName: fullName,
+        contactNumber: record.visitor.contactNumber,
+        purpose: record.visitor.purpose,
+        visitDate: record.visitor.visitDate,
+        status: 'inside',
+        passReference: `EG-${record.offlineRegistrationId.slice(0, 8).toUpperCase()}`,
+        validFrom: new Date(record.occurredAt).toISOString(),
+        validUntil: new Date(new Date(record.occurredAt).getTime() + 24 * 60 * 60 * 1000).toISOString(),
+        timeIn: record.occurredAt,
+        gate: 'Offline Gate',
+        photoBlob: record.photoBlob,
+        idBlob: record.idBlob,
+        cachedAt: new Date().toISOString(),
+        version: 1, // Canonical offline registration creates pass at version 1!
+      };
+      visitorStore.put(cached);
+    }
+
+    tx.oncomplete = () => resolve(cached);
+    tx.onerror = () => reject(tx.error);
+    tx.onabort = () => reject(tx.error || new Error('Transaction aborted'));
+  });
+}
+
+/**
+ * Atomically validates and transitions local visitor state while enqueuing an
+ * offline outbox event in ONE transaction across 'cached_visitors' and 'offline_events' (Root Cause 2.1).
+ *
+ * Projected version behavior:
+ * - Approve entry: expected = N, projected = N + 1, status = inside
+ * - Record exit: requires projected inside; expected = N, locally evicted from actionable cache
+ * - Reject: expected = N, locally evicted from actionable cache
+ */
+export async function queueOfflineVisitorAction(params: {
+  passId: string;
+  action: 'approve_entry' | 'reject_entry' | 'record_exit';
+  reason?: string | null;
+  occurredAt?: string;
+}): Promise<{ event: OfflineEventRecord; projectedVisitor: CachedVisitorPass | null }> {
+  const db = await openDatabase();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(['cached_visitors', 'offline_events'], 'readwrite');
+    const visitorStore = tx.objectStore('cached_visitors');
+    const eventsStore = tx.objectStore('offline_events');
+
+    const getReq = visitorStore.get(params.passId);
+
+    getReq.onsuccess = () => {
+      const visitor = getReq.result as CachedVisitorPass | undefined;
+      if (!visitor) {
+        tx.abort();
+        return reject(new Error(`Visitor pass '${params.passId}' not found in operational cache`));
+      }
+
+      // Legal state transition checks
+      if (params.action === 'approve_entry') {
+        if (visitor.status !== 'pending' && visitor.status !== 'issued') {
+          tx.abort();
+          return reject(new Error(`Cannot approve entry: visitor is currently '${visitor.status}'`));
+        }
+      } else if (params.action === 'record_exit') {
+        if (visitor.status !== 'inside') {
+          tx.abort();
+          return reject(new Error(`Cannot record exit: visitor is not inside (status: '${visitor.status}')`));
+        }
+      } else if (params.action === 'reject_entry') {
+        if (visitor.status !== 'pending' && visitor.status !== 'issued') {
+          tx.abort();
+          return reject(new Error(`Cannot reject entry: visitor is currently '${visitor.status}'`));
+        }
+      }
+
+      const expectedStatus = visitor.status;
+      const expectedVersion = visitor.version ?? 1;
+      const occurredAt = params.occurredAt || new Date().toISOString();
+      const eventId = crypto.randomUUID();
+
+      const event: OfflineEventRecord = {
+        eventId,
+        passId: visitor.id,
+        visitorName: visitor.visitorName,
+        action: params.action,
+        expectedStatus,
+        expectedVersion,
+        occurredAt,
+        reason: params.reason ?? null,
+        syncStatus: 'pending',
+      };
+      eventsStore.put(event);
+
+      let projectedVisitor: CachedVisitorPass | null = null;
+      if (params.action === 'approve_entry') {
+        projectedVisitor = {
+          ...visitor,
+          status: 'inside',
+          version: expectedVersion + 1,
+          timeIn: occurredAt,
+        };
+        visitorStore.put(projectedVisitor);
+      } else if (params.action === 'record_exit') {
+        // Exited visitor is terminal: removed from actionable recovery cache so cannot be exited again
+        visitorStore.delete(visitor.id);
+        projectedVisitor = null;
+      } else if (params.action === 'reject_entry') {
+        // Rejected visitor is terminal: removed from actionable recovery cache
+        visitorStore.delete(visitor.id);
+        projectedVisitor = null;
+      }
+
+      tx.oncomplete = () => resolve({ event, projectedVisitor });
+    };
+
+    getReq.onerror = () => {
+      tx.abort();
+      reject(getReq.error);
+    };
+
+    tx.onerror = () => reject(tx.error);
+    tx.onabort = () => reject(tx.error || new Error('Transaction aborted'));
+  });
+}
+
+/**
+ * Remaps an offline-created visitor pass in cached_visitors from local registration ID
+ * to canonical pass ID returned by server synchronization (Root Cause 3.1).
+ */
+export async function remapCachedVisitorPassId(
+  oldId: string,
+  canonicalPassId: string,
+  canonicalRef?: string
+): Promise<void> {
+  const db = await openDatabase();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction('cached_visitors', 'readwrite');
+    const store = tx.objectStore('cached_visitors');
+    const getReq = store.get(oldId);
+
+    getReq.onsuccess = () => {
+      const visitor = getReq.result as CachedVisitorPass | undefined;
+      if (visitor) {
+        store.delete(oldId);
+        const updated: CachedVisitorPass = {
+          ...visitor,
+          id: canonicalPassId,
+          passId: canonicalPassId,
+          publicReference: canonicalRef || visitor.publicReference,
+          passReference: canonicalRef
+            ? `EG-${canonicalRef.slice(0, 8).toUpperCase()}`
+            : `EG-${canonicalPassId.slice(0, 8).toUpperCase()}`,
+        };
+        store.put(updated);
+      }
+    };
+
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => reject(tx.error);
+  });
 }

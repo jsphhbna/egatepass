@@ -73,6 +73,10 @@ class MockIDBObjectStore {
         const cursor = {
           value: v,
           key: k,
+          update: (newVal: any) => {
+            this.data.set(k, newVal);
+            cursor.value = newVal;
+          },
           delete: () => {
             this.data.delete(k);
           },
@@ -105,6 +109,11 @@ class MockIDBTransaction {
 
   objectStore(name: string) {
     return this.db.getStore(name);
+  }
+
+  abort() {
+    this.error = new Error('Transaction aborted');
+    if (this.onerror) this.onerror({ target: this });
   }
 }
 

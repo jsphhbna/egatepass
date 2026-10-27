@@ -1,17 +1,16 @@
 /**
  * Guard Offline Synchronization Manager
  *
- * Implements safe, idempotent synchronization with the backend when
- * network connectivity is restored (Phases 10.1 - 10.6).
+ * Implements safe, serialized, idempotent synchronization with the backend when
+ * network connectivity is restored.
  *
- * Invariants:
- * - Never blindly overwrites backend state.
- * - Server-side row-locking and expected-state validation detect conflicts.
- * - Idempotent eventId and offlineRegistrationId ensure retrying never duplicates records.
- * - Clock skew detection detects anomalous timestamps.
- * - Canonical pass ID resolution ensures offline-created visitor exits resolve accurately.
- * - Dedicated paginated snapshot API fetches 100% of today's operational passes with evidence blobs.
- * - Atomic IndexedDB transaction ensures failed refresh never corrupts previous snapshot.
+ * Invariants (Root Causes 1, 2, 3, 14):
+ * - Single serialized coordinator/mutex prevents overlapping sync and cache refresh.
+ * - All application RPCs explicitly target the 'api' schema.
+ * - Registrations and events are synchronized in strict chronological order.
+ * - Dependent lifecycle events for conflicted passes are blocked.
+ * - Unsynchronized local visitors are strictly preserved across server cache snapshots.
+ * - Terminal evidence blobs (synced or conflict) are stripped locally.
  */
 
 import { requireSupabase } from '@/lib/supabase';
@@ -21,20 +20,42 @@ import {
   updateOfflineRegistrationStatus,
   updateOfflineEventStatus,
   resolvePendingEventsPassId,
+  remapCachedVisitorPassId,
   atomicReplaceCachedVisitors,
   purgeStaleLocalData,
+  stripTerminalOfflineEvidence,
   setMeta,
   type CachedVisitorPass,
 } from './guardIndexedDb';
 import { getManilaDateString } from '@/lib/scheduling';
-
-let isSyncRunning = false;
 
 export interface SyncSummary {
   registrationsSynced: number;
   eventsSynced: number;
   conflicts: number;
   errors: number;
+}
+
+// =============================================================================
+// SERIALIZED COORDINATOR MUTEX (ROOT CAUSE 3)
+// =============================================================================
+let isCoordinatorBusy = false;
+const coordinatorQueue: Array<() => void> = [];
+
+export function isCoordinatorLocked(): boolean {
+  return isCoordinatorBusy;
+}
+
+export async function acquireCoordinatorLock(): Promise<() => void> {
+  while (isCoordinatorBusy) {
+    await new Promise<void>((resolve) => coordinatorQueue.push(resolve));
+  }
+  isCoordinatorBusy = true;
+  return () => {
+    isCoordinatorBusy = false;
+    const next = coordinatorQueue.shift();
+    if (next) next();
+  };
 }
 
 async function fetchEvidenceBlob(evidenceId: string, token: string): Promise<Blob | null> {
@@ -51,13 +72,10 @@ async function fetchEvidenceBlob(evidenceId: string, token: string): Promise<Blo
 }
 
 /**
- * Synchronizes all pending registrations and outbox events to the server.
+ * Synchronizes all pending registrations and outbox events to the server in strict serialized order.
  */
 export async function syncAllPending(): Promise<SyncSummary> {
-  if (isSyncRunning) {
-    return { registrationsSynced: 0, eventsSynced: 0, conflicts: 0, errors: 0 };
-  }
-  isSyncRunning = true;
+  const releaseLock = await acquireCoordinatorLock();
 
   const summary: SyncSummary = {
     registrationsSynced: 0,
@@ -71,15 +89,24 @@ export async function syncAllPending(): Promise<SyncSummary> {
     const sessionRes = await client.auth.getSession();
     const token = sessionRes.data.session?.access_token;
 
-    // 1. Synchronize Pending Offline Registrations FIRST (R08)
+    // 1. Synchronize Pending Offline Registrations FIRST in chronological order (Root Cause 2.4 & 3)
     const pendingRegs = await getOfflineRegistrations('pending');
+    pendingRegs.sort((a, b) => {
+      const tDiff = new Date(a.occurredAt).getTime() - new Date(b.occurredAt).getTime();
+      if (tDiff !== 0) return tDiff;
+      return a.offlineRegistrationId.localeCompare(b.offlineRegistrationId);
+    });
 
     for (const reg of pendingRegs) {
       try {
         await updateOfflineRegistrationStatus(reg.offlineRegistrationId, 'syncing');
 
-        // Step A: Upload photo evidence via upload intent
-        const photoIntentRes = await client.rpc('create_upload_intent', {
+        if (!reg.photoBlob) {
+          throw new Error('Photo blob missing for offline registration sync');
+        }
+
+        // Step A: Upload photo evidence via upload intent (using API schema)
+        const photoIntentRes = await client.schema('api').rpc('create_upload_intent', {
           requested_source: 'guard_offline',
           requested_kind: 'photo',
           requested_content_type: 'image/webp',
@@ -101,10 +128,10 @@ export async function syncAllPending(): Promise<SyncSummary> {
           throw new Error(`Photo upload error: ${photoUpload.error.message}`);
         }
 
-        // Step B: Upload ID evidence if captured
+        // Step B: Upload ID evidence if captured (using API schema)
         let idIntentId: string | null = null;
         if (reg.idBlob) {
-          const idIntentRes = await client.rpc('create_upload_intent', {
+          const idIntentRes = await client.schema('api').rpc('create_upload_intent', {
             requested_source: 'guard_offline',
             requested_kind: 'id',
             requested_content_type: 'image/webp',
@@ -128,7 +155,7 @@ export async function syncAllPending(): Promise<SyncSummary> {
           idIntentId = idIntent.intent_id;
         }
 
-        // Step C: Execute authenticated server sync route (R04: server byte/MIME/magic inspection)
+        // Step C: Execute authenticated server sync route (or client API schema fallback)
         let syncData: any;
         if (token) {
           const res = await fetch('/api/sync-offline-registration', {
@@ -155,13 +182,14 @@ export async function syncAllPending(): Promise<SyncSummary> {
                 conflictReason: syncData?.reason || 'Server fingerprint conflict',
                 syncedAt: new Date().toISOString(),
               });
+              await stripTerminalOfflineEvidence();
               continue;
             }
             throw new Error(syncData?.error || `HTTP ${res.status}`);
           }
         } else {
-          // Fallback to client RPC if token is unavailable in edge test runtime
-          const ingestRes = await client.rpc('guard_sync_offline_registration', {
+          // Fallback to client RPC via explicit API schema
+          const ingestRes = await client.schema('api').rpc('guard_sync_offline_registration', {
             requested_registration_id: reg.offlineRegistrationId,
             requested_visitor: reg.visitor,
             requested_action: reg.action,
@@ -182,6 +210,7 @@ export async function syncAllPending(): Promise<SyncSummary> {
               conflictReason: syncData.reason || 'Server fingerprint conflict',
               syncedAt: new Date().toISOString(),
             });
+            await stripTerminalOfflineEvidence();
             continue;
           }
         }
@@ -193,8 +222,9 @@ export async function syncAllPending(): Promise<SyncSummary> {
           canonicalPassId,
         });
 
-        // Step D (R08): Resolve queued offline events referencing offlineRegistrationId to canonical passId
+        // Step D: Remap local cache visitor identity and dependent queued offline events to canonical passId
         if (canonicalPassId) {
+          await remapCachedVisitorPassId(reg.offlineRegistrationId, canonicalPassId, syncData.publicReference);
           await resolvePendingEventsPassId(reg.offlineRegistrationId, canonicalPassId);
         }
 
@@ -208,14 +238,31 @@ export async function syncAllPending(): Promise<SyncSummary> {
       }
     }
 
-    // 2. Synchronize Pending Offline Lifecycle Events (R05 & R08)
+    // 2. Synchronize Pending Offline Lifecycle Events in chronological order (Root Cause 2.4)
     const pendingEvents = await getOfflineEvents('pending');
+    pendingEvents.sort((a, b) => {
+      const tDiff = new Date(a.occurredAt).getTime() - new Date(b.occurredAt).getTime();
+      if (tDiff !== 0) return tDiff;
+      return a.eventId.localeCompare(b.eventId);
+    });
+
+    const conflictedPassIds = new Set<string>();
 
     for (const evt of pendingEvents) {
+      // If a preceding event for this pass encountered a conflict, do NOT submit dependent later events
+      if (conflictedPassIds.has(evt.passId)) {
+        await updateOfflineEventStatus(evt.eventId, 'conflict', {
+          conflictReason: 'preceding_event_conflicted',
+          syncedAt: new Date().toISOString(),
+        });
+        summary.conflicts++;
+        continue;
+      }
+
       try {
         await updateOfflineEventStatus(evt.eventId, 'syncing');
 
-        const eventRes = await client.rpc('guard_sync_offline_event', {
+        const eventRes = await client.schema('api').rpc('guard_sync_offline_event', {
           requested_event_id: evt.eventId,
           requested_pass_id: evt.passId,
           requested_action: evt.action,
@@ -231,6 +278,7 @@ export async function syncAllPending(): Promise<SyncSummary> {
 
         const resData = eventRes.data;
         if (resData.status === 'conflict') {
+          conflictedPassIds.add(evt.passId);
           summary.conflicts++;
           await updateOfflineEventStatus(evt.eventId, 'conflict', {
             conflictReason: resData.reason || 'Server status conflict',
@@ -254,21 +302,23 @@ export async function syncAllPending(): Promise<SyncSummary> {
     // Record last successful sync timestamp
     await setMeta('last_successful_sync_at', new Date().toISOString());
 
-    // Enforce local data purge
+    // Enforce local sensitive evidence retention and data purge
     const today = getManilaDateString();
     await purgeStaleLocalData(today);
   } finally {
-    isSyncRunning = false;
+    releaseLock();
   }
 
   return summary;
 }
 
 /**
- * Downloads and caches today's operationally relevant passes and evidence Blobs into IndexedDB (R10 & R11).
- * Uses unbounded keyset pagination and fail-safe atomic transaction.
+ * Downloads and caches today's operationally relevant passes and evidence Blobs into IndexedDB.
+ * Serialized via coordinator lock and preserves unsynchronized local visitors.
  */
 export async function refreshOperationalCache(): Promise<number> {
+  const releaseLock = await acquireCoordinatorLock();
+
   try {
     const client = requireSupabase();
     const sessionRes = await client.auth.getSession();
@@ -282,9 +332,9 @@ export async function refreshOperationalCache(): Promise<number> {
     let cursor: string | null = null;
     let hasMore = true;
 
-    // R10: Paginated snapshot loop until all records are retrieved
+    // Paginated snapshot loop using API schema
     while (hasMore) {
-      const pageRes = await client.rpc('guard_offline_snapshot_page', {
+      const pageRes = await client.schema('api').rpc('guard_offline_snapshot_page', {
         requested_cursor: cursor,
         requested_limit: 50,
       });
@@ -298,7 +348,7 @@ export async function refreshOperationalCache(): Promise<number> {
       hasMore = Boolean(pageData.hasMore && cursor);
     }
 
-    // R11: Download evidence blobs for visual offline verification
+    // Download evidence blobs for visual offline verification
     const passesToCache: CachedVisitorPass[] = [];
     for (const item of allItems) {
       let photoBlob: Blob | null = null;
@@ -308,7 +358,6 @@ export async function refreshOperationalCache(): Promise<number> {
         try {
           photoBlob = await fetchEvidenceBlob(item.photoEvidenceId, token);
         } catch (downloadErr) {
-          // If download fails due to network, fail the refresh so last known good snapshot is preserved!
           throw new Error(`Evidence download failed for visitor ${item.visitorName}: ${String(downloadErr)}`);
         }
       }
@@ -344,12 +393,14 @@ export async function refreshOperationalCache(): Promise<number> {
       });
     }
 
-    // R11: Atomic replace in IndexedDB transaction - replaces only after 100% complete download
+    // Atomic replace in IndexedDB transaction - preserves unsynchronized local visitors
     await atomicReplaceCachedVisitors(passesToCache);
     await setMeta('last_cache_refresh_at', new Date().toISOString());
     return passesToCache.length;
   } catch (err) {
     console.warn('Could not refresh operational cache from server:', err);
     throw err;
+  } finally {
+    releaseLock();
   }
 }

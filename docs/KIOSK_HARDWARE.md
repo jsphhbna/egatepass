@@ -115,7 +115,9 @@ Kiosk device settings (`/kiosk` > Gear Icon) are strictly protected by the Kiosk
 ### 3.4 Fallback Printing Subsystem
 If Web Bluetooth is unsupported by the browser, disabled in hardware, or the printer runs out of thermal paper:
 - The kiosk registration flow continues smoothly without blocking.
-- A prominent **Print Pass** button triggers standard `window.print()` with `@media print` CSS rules tailored for receipt rolls or standard paper.
+- If direct Bluetooth printing is unavailable, disabled, or fails, a fallback **Browser Print** / **Print Pass** button triggers standard `window.print()` with `@media print` CSS rules tailored for receipt rolls or standard paper.
+
+> **Hardware Testing Boundary Note**: Software emulation, unit tests, and layout bounding tests verify the driver, rendering bounds, and fail-safe error boundaries. Physical MXW01 Bluetooth hardware acceptance requires on-site manual QA on the physical Android tablet.
 
 ---
 

@@ -70,8 +70,7 @@ This runbook provides complete step-by-step procedures for manual testing and pr
    - Switch to front camera and take selfie.
 7. **Pass Generation & Printing**:
    - Click **Issue Gate Pass**.
-   - Confirm pass is issued and displays QR code along with visitor summary and action buttons.
-   - Click **Print Pass** and confirm browser print dialog (`window.print()`) is invoked. (Note: Thermal printer device integration is a planned hardware enhancement. Current kiosk printing relies on the browser/operating-system print path).
+   - Click **Print Pass** / **Print Thermal Pass**. If MXW01 Bluetooth is connected, confirm direct thermal printing triggers. If disconnected or unsupported, confirm browser print fallback opens.
    - Confirm optional **Email my QR code** and **Next Visitor** buttons are available and responsive.
 
 ---
@@ -352,4 +351,110 @@ stateDiagram-v2
    - Confirm offline registrations upload photo/ID evidence and generate canonical server passes without duplication.
    - Confirm outbox events execute server-side row locking and transition passes to `inside` or `exited`.
    - Confirm local outbox records are acknowledged and cleared from the tablet store.
+
+---
+
+## 13. Root-Cause Closure & Deep Dive Acceptance Scenarios
+
+### 13.1 Guard Offline Lifecycle
+1. **Pre-Cache Visitor**:
+   - While online on `/guard`, ensure operational cache is populated with an issued visitor pass at version `N`.
+2. **Lose Backend & Approve Visitor**:
+   - Simulate backend outage (disconnect Wi-Fi / block API).
+   - Locate cached visitor in Visitor Recovery, tap **Approve Entry**.
+   - Verify pass locally transitions to `inside` at projected version `N + 1`, and outbox queues approval expecting `issued` / version `N`.
+3. **Exit Visitor Before Reconnect**:
+   - While still offline, search the same visitor in Visitor Recovery.
+   - Tap **Record Exit**.
+   - Verify pass transitions to terminal exited state locally, and outbox queues exit event expecting `inside` / projected version `N + 1`.
+4. **Reconnect & Chronological Synchronization**:
+   - Restore backend connectivity. Trigger or await synchronization.
+   - Verify approval syncs first (server becomes `inside` / version `N + 1`), then exit syncs (server becomes `exited` / version `N + 2`).
+   - Confirm zero version conflict or state error occurs on server.
+
+### 13.2 Offline-Created Visitor Lifecycle (Exit Before Reconnect)
+1. **Disconnect & Register Offline**:
+   - With backend offline, navigate to **Offline Registration**.
+   - Enter visitor details, capture selfie and ID, tap **Approve Entry**.
+   - Confirm registration is saved with local projected status `inside` and version `1`.
+2. **Record Exit While Still Offline**:
+   - In Visitor Recovery, search for the offline-created visitor.
+   - Tap **Record Exit**.
+   - Verify local pass transitions to exited, queuing exit event expecting `inside` / version `1`.
+3. **Reconnect & Canonical Remapping**:
+   - Re-enable connectivity.
+   - Confirm sync coordinator syncs registration first, creating canonical server pass at version `1`.
+   - Confirm sync coordinator remaps local registration ID to canonical pass ID in cached pass and queued exit event.
+   - Confirm exit event syncs cleanly against canonical pass, resulting in `exited` status on server.
+
+### 13.3 Authoritative Server Rejection (No Offline Bypass)
+1. **Trigger Server Refusal**:
+   - With network online, attempt an action on a pass that triggers an authoritative server error (e.g., 403 Forbidden, 409 Conflict, expired pass, or status mismatch).
+2. **Verify Truthful Error Handling**:
+   - Confirm the UI displays the truthful server refusal error message.
+   - Confirm the client does NOT misclassify the server error as transport failure.
+   - Confirm NO offline approval or exit action is queued in IndexedDB.
+
+### 13.4 Cache Preservation During Snapshot Refresh
+1. **Create Unsynchronized Local Visitor**:
+   - While offline, create an approved offline registration.
+2. **Reconnect & Refresh Snapshot**:
+   - Restore backend connectivity while a full authoritative server snapshot refresh executes.
+3. **Verify Preservation**:
+   - Confirm `atomicReplaceCachedVisitors()` does NOT wipe the pending/syncing local offline visitor.
+   - Confirm local visitor remains actionable and present until canonical sync finishes.
+
+### 13.5 MXW01 Bluetooth Lifecycle & Fallback
+1. **Pair & Test Ticket**:
+   - On Kiosk tablet settings, tap **Connect MXW01** and pair printer.
+   - Tap **Test Print**; confirm diagnostic ticket prints.
+2. **Successful Direct Print**:
+   - Issue a kiosk pass. Confirm thermal pass prints and status confirms direct print.
+3. **Forced Failure & Browser Fallback**:
+   - Turn off printer power or allow paper to run out.
+   - Issue a kiosk pass.
+   - Confirm pass issuance succeeds authoritatively and UI displays **Printer Unavailable** with fallback **Browser Print** button.
+   - Confirm UI NEVER displays "Pass printed via MXW01" on failure.
+   - Tap **Browser Print**; verify native `window.print()` dialog opens.
+4. **Reconnect & Disconnect Verification**:
+   - Power printer back on; verify automatic reconnection via `reconnect()`.
+   - Power printer off again; verify disconnect event triggers React status transition to `disconnected`.
+
+### 13.6 Thermal Template Update on Open Kiosks
+1. **Open Kiosk**:
+   - Keep `/kiosk` open in an active browser tab.
+2. **Publish New Template**:
+   - In Super Admin `/admin/templates`, modify layout (e.g. adjust element position or label) and tap **Publish Template**.
+3. **Print Without Full Page Reload**:
+   - On the open kiosk, complete a walk-in pass issuance and trigger print.
+   - Verify `refreshPublishedTemplate()` fetches the new published template immediately prior to rasterization without requiring a manual page refresh.
+
+### 13.7 Pass Issuance Replay & Evidence Invalidation
+1. **Simulate Lost Response on Issue**:
+   - On kiosk or portal, complete registration.
+   - Simulate a network disconnect immediately after `POST /api/passes/issue` commits on the server.
+2. **Idempotent Retry**:
+   - Tap retry.
+   - Confirm client resubmits the exact same `requestId`, `photoIntentId`, and `idIntentId`.
+   - Confirm server returns existing canonical pass without `intent_mismatch` or duplicate evidence uploads.
+3. **Evidence Replacement Invalidation**:
+   - If ID or photo is retaken / replaced (or re-scanned with OCR), confirm previously stored intent IDs are cleared.
+
+### 13.8 Native Web Share Cancellation
+1. **Open Share Sheet**:
+   - On issued pass screen, tap **Share**.
+2. **Cancel Sheet**:
+   - Dismiss or cancel the native OS share sheet (throws `AbortError`).
+3. **Verify Clean Exit**:
+   - Confirm zero error toasts are displayed.
+   - Confirm NO automatic pass download is triggered.
+
+### 13.9 Password Reset CAPTCHA Consistency
+1. **Public Reset**:
+   - Navigate to `/forgot-password`, solve Turnstile challenge, submit reset request. Confirm valid token is sent.
+2. **Authenticated Staff Reset (PasswordResetCard)**:
+   - On staff profile/settings, trigger password reset. Confirm Turnstile challenge is solved and token is sent to `sendPasswordReset()`.
+3. **Guard Password Reset Modal**:
+   - On `/guard`, open reset password modal. Confirm Turnstile widget is present, solved, and verified before email dispatch.
+
 

@@ -61,7 +61,7 @@ export function AdminPrintTemplatesPage() {
   const canvasRef = useRef<HTMLDivElement>(null);
 
   // 1. Load templates from Supabase
-  async function loadTemplates() {
+  async function loadTemplates(preferVersion?: number) {
     setLoading(true);
     try {
       const client = requireSupabase();
@@ -74,15 +74,17 @@ export function AdminPrintTemplatesPage() {
 
       if (data && data.length > 0) {
         setVersions(data as TemplateVersionRecord[]);
-        // Find current published or latest draft
-        const published = data.find((t) => t.status === 'published') || data[0];
-        setTemplateName(published.name);
-        setCurrentVersion(published.version);
-        setCurrentStatus(published.status as any);
-        if (published.layout && typeof published.layout === 'object' && published.layout.width === 384) {
-          const valResult = validateThermalTemplateLayout(published.layout);
+        // Find preferred version, published version, or latest record
+        const target = (preferVersion !== undefined ? data.find((t) => t.version === preferVersion) : null)
+          || data.find((t) => t.status === 'published')
+          || data[0];
+        setTemplateName(target.name);
+        setCurrentVersion(target.version);
+        setCurrentStatus(target.status as any);
+        if (target.layout && typeof target.layout === 'object' && target.layout.width === 384) {
+          const valResult = validateThermalTemplateLayout(target.layout);
           if (valResult.success) {
-            setLayout(published.layout);
+            setLayout(target.layout);
           } else {
             setLayout(BUNDLED_DEFAULT_THERMAL_TEMPLATE);
             toast.info('This historical template uses an older format. A current compatible template is loaded for editing.');
@@ -139,9 +141,9 @@ export function AdminPrintTemplatesPage() {
       newElement = {
         id: newId,
         type: 'divider',
-        x: 20,
-        y: Math.min(layout.height, 200),
-        width: 344,
+        x: 16,
+        y: Math.min(layout.height - 10, 200),
+        width: 352,
         height: 1,
         isMandatory: false,
       };
@@ -149,9 +151,9 @@ export function AdminPrintTemplatesPage() {
       newElement = {
         id: newId,
         type: 'rectangle',
-        x: 20,
-        y: Math.min(layout.height, 200),
-        width: 344,
+        x: 16,
+        y: Math.min(layout.height - 70, 200),
+        width: 352,
         height: 60,
         isMandatory: false,
       };
@@ -160,9 +162,9 @@ export function AdminPrintTemplatesPage() {
         id: newId,
         type: 'text',
         field: 'custom',
-        x: 192,
-        y: Math.min(layout.height, 200),
-        width: 200,
+        x: 16,
+        y: Math.min(layout.height - 30, 200),
+        width: 352,
         height: 24,
         fontSize: 11,
         fontWeight: 'normal',
@@ -200,13 +202,13 @@ export function AdminPrintTemplatesPage() {
     if (selectedElementId === id) setSelectedElementId(null);
   }
 
-  // Canvas height update
+  // Canvas height update (canonical 400..1600 range, no undeclared canvasHeight)
   function handleCanvasHeightChange(newHeight: number) {
-    const bounded = Math.max(300, Math.min(800, newHeight));
-    setLayout((prev) => ({ ...prev, height: bounded, canvasHeight: bounded }));
+    const bounded = Math.max(400, Math.min(1600, newHeight));
+    setLayout((prev) => ({ ...prev, height: bounded }));
   }
 
-  // Save Draft RPC
+  // Save Draft RPC via API schema
   async function handleSaveDraft() {
     const valResult = validateThermalTemplateLayout(layout);
     if (!valResult.success) {
@@ -217,7 +219,7 @@ export function AdminPrintTemplatesPage() {
     setSaving(true);
     try {
       const client = requireSupabase();
-      const { data, error } = await client.rpc('admin_save_thermal_template', {
+      const { data, error } = await client.schema('api').rpc('admin_save_thermal_template', {
         requested_name: templateName,
         requested_layout: layout,
         requested_version: currentStatus === 'draft' ? currentVersion : null,
@@ -225,7 +227,8 @@ export function AdminPrintTemplatesPage() {
 
       if (error) throw error;
       toast.success(`Draft saved (v${data.version})`);
-      await loadTemplates();
+      // Keep saved draft selected
+      await loadTemplates(data.version);
     } catch (err: any) {
       console.error('Save draft error:', err);
       toast.error(err.message || 'Failed to save draft template');
@@ -234,7 +237,7 @@ export function AdminPrintTemplatesPage() {
     }
   }
 
-  // Publish Template RPC
+  // Publish Template RPC via API schema
   async function handlePublish() {
     const valResult = validateThermalTemplateLayout(layout);
     if (!valResult.success) {
@@ -246,7 +249,7 @@ export function AdminPrintTemplatesPage() {
     try {
       const client = requireSupabase();
       // Ensure draft is saved first
-      const saveRes = await client.rpc('admin_save_thermal_template', {
+      const saveRes = await client.schema('api').rpc('admin_save_thermal_template', {
         requested_name: templateName,
         requested_layout: layout,
         requested_version: currentStatus === 'draft' ? currentVersion : null,
@@ -254,13 +257,13 @@ export function AdminPrintTemplatesPage() {
       if (saveRes.error) throw saveRes.error;
 
       const targetVer = saveRes.data.version;
-      const pubRes = await client.rpc('admin_publish_thermal_template', {
+      const pubRes = await client.schema('api').rpc('admin_publish_thermal_template', {
         requested_version: targetVer,
       });
       if (pubRes.error) throw pubRes.error;
 
       toast.success(`Template v${targetVer} published successfully! Active on kiosks.`);
-      await loadTemplates();
+      await loadTemplates(targetVer);
     } catch (err: any) {
       console.error('Publish error:', err);
       toast.error(err.message || 'Failed to publish thermal template');
@@ -269,17 +272,17 @@ export function AdminPrintTemplatesPage() {
     }
   }
 
-  // Restore previous version RPC
+  // Restore previous version RPC via API schema
   async function handleRestoreVersion(versionNum: number) {
     setRestoring(true);
     try {
       const client = requireSupabase();
-      const { data, error } = await client.rpc('admin_restore_thermal_template', {
+      const { data, error } = await client.schema('api').rpc('admin_restore_thermal_template', {
         source_version: versionNum,
       });
       if (error) throw error;
       toast.success(`Restored from v${versionNum} (Published as v${data.version})`);
-      await loadTemplates();
+      await loadTemplates(data.version);
       setActiveTab('editor');
     } catch (err: any) {
       console.error('Restore error:', err);
@@ -424,8 +427,8 @@ export function AdminPrintTemplatesPage() {
                 </label>
                 <input
                   type="range"
-                  min="320"
-                  max="700"
+                  min="400"
+                  max="1600"
                   step="20"
                   value={layout.height}
                   onChange={(e) => handleCanvasHeightChange(Number(e.target.value))}
@@ -774,7 +777,8 @@ export function AdminPrintTemplatesPage() {
                     style={{
                       left: `${el.x}px`,
                       top: `${el.y}px`,
-                      transform: el.align === 'center' && el.fontSize ? 'translateX(-50%)' : undefined,
+                      width: el.width !== undefined ? `${el.width}px` : undefined,
+                      height: el.height !== undefined ? `${el.height}px` : undefined,
                     }}
                   >
                     {content}

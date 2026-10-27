@@ -13,8 +13,7 @@ import {
 } from 'lucide-react';
 import { toast } from 'sonner';
 import {
-  saveOfflineRegistration,
-  saveCachedVisitors,
+  saveOfflineRegistrationWithCache,
   type OfflineRegistrationRecord,
 } from '@/lib/offline/guardIndexedDb';
 import { syncAllPending } from '@/lib/offline/guardSyncManager';
@@ -37,7 +36,6 @@ export function GuardOfflineRegistrationTab({
   const [lastName, setLastName] = useState('');
   const [contactNumber, setContactNumber] = useState('');
   const [purpose, setPurpose] = useState('');
-  const [visitDate, setVisitDate] = useState(today);
 
   const [captureMode, setCaptureMode] = useState<'none' | 'photo' | 'id'>('none');
   const [photoBlob, setPhotoBlob] = useState<Blob | null>(null);
@@ -64,12 +62,12 @@ export function GuardOfflineRegistrationTab({
 
   function startPhotoCapture() {
     setCaptureMode('photo');
-    webcam.start();
+    webcam.start({ facingMode: 'user' });
   }
 
   function startIdCapture() {
     setCaptureMode('id');
-    webcam.start();
+    webcam.start({ facingMode: 'environment' });
   }
 
   async function handleCapture() {
@@ -141,7 +139,7 @@ export function GuardOfflineRegistrationTab({
         lastName: lastName.trim(),
         contactNumber: contactNumber.trim(),
         purpose: purpose.trim(),
-        visitDate,
+        visitDate: today,
       },
       action: 'approved',
       occurredAt,
@@ -152,29 +150,11 @@ export function GuardOfflineRegistrationTab({
     };
 
     try {
-      await saveOfflineRegistration(record);
-
-      // Add to local cache so Guard can record exit later offline (Phase 8)
-      const fullName = [firstName.trim(), middleName.trim(), lastName.trim()].filter(Boolean).join(' ');
-      await saveCachedVisitors([
-        {
-          id: offlineRegistrationId,
-          visitorId: offlineRegistrationId,
-          visitorName: fullName,
-          contactNumber: contactNumber.trim(),
-          purpose: purpose.trim(),
-          visitDate,
-          status: 'inside',
-          passReference: `OFF-${offlineRegistrationId.slice(0, 8).toUpperCase()}`,
-          validFrom: occurredAt,
-          validUntil: new Date(Date.now() + 12 * 60 * 60 * 1000).toISOString(),
-          timeIn: formatManilaTime(occurredAt),
-          cachedAt: occurredAt,
-        },
-      ]);
+      // Atomic registration + projected visitor cache insert (Root Causes 2.2 and 2.3)
+      await saveOfflineRegistrationWithCache(record);
 
       setCompletedRecord(record);
-      toast.success('Visitor entry approved offline');
+      toast.success('Visitor entry approved offline (Stored on this device pending synchronization)');
       onRegistered?.();
 
       // Trigger background sync if online
@@ -205,7 +185,7 @@ export function GuardOfflineRegistrationTab({
         lastName: lastName.trim(),
         contactNumber: contactNumber.trim(),
         purpose: purpose.trim(),
-        visitDate,
+        visitDate: today,
       },
       action: 'rejected',
       occurredAt,
@@ -216,10 +196,10 @@ export function GuardOfflineRegistrationTab({
     };
 
     try {
-      await saveOfflineRegistration(record);
+      await saveOfflineRegistrationWithCache(record);
       setShowRejectModal(false);
       setCompletedRecord(record);
-      toast.success('Visitor rejection recorded offline');
+      toast.success('Visitor rejection recorded offline (Stored on this device pending synchronization)');
       onRegistered?.();
 
       if (isBackendOnline) {
@@ -239,7 +219,6 @@ export function GuardOfflineRegistrationTab({
     setLastName('');
     setContactNumber('');
     setPurpose('');
-    setVisitDate(today);
     setPhotoBlob(null);
     photoUrl.clear();
     setIdBlob(null);
@@ -288,7 +267,7 @@ export function GuardOfflineRegistrationTab({
         <div className="rounded-xl border border-amber-500/30 bg-amber-500/10 p-4 text-xs font-medium text-amber-900 dark:text-amber-200 text-left space-y-1">
           <p className="font-bold flex items-center gap-1.5">
             <AlertTriangle className="h-4 w-4 shrink-0 text-amber-600" />
-            <span>Stored Securely on Device (Pending Synchronization)</span>
+            <span>Stored on this device pending synchronization</span>
           </p>
           <p>Registration ID: {completedRecord.offlineRegistrationId}</p>
           <p>This record will automatically synchronize as soon as cloud connectivity returns.</p>
@@ -398,13 +377,14 @@ export function GuardOfflineRegistrationTab({
             </div>
             <div>
               <label className="block text-xs font-semibold text-[var(--color-text-secondary)] mb-1">
-                Visit Date (Manila)
+                Visit Date (Current Manila Date)
               </label>
               <input
                 type="date"
-                value={visitDate}
-                onChange={(e) => setVisitDate(e.target.value)}
-                className="w-full rounded-lg border border-[var(--color-border)] bg-[var(--color-canvas)] px-3 py-2 text-sm"
+                value={today}
+                disabled
+                readOnly
+                className="w-full rounded-lg border border-[var(--color-border)] bg-[var(--color-surface-hover)] px-3 py-2 text-sm cursor-not-allowed text-[var(--color-text-secondary)]"
               />
             </div>
           </div>

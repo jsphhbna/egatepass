@@ -1,7 +1,8 @@
 import { useEffect, useState } from 'react';
 import { Mail } from 'lucide-react';
-import { sendPasswordReset } from '@/services/auth';
+import { sendPasswordReset, evaluateAuthTurnstilePolicy } from '@/services/auth';
 import { Button, Modal } from '@/components/ui';
+import { TurnstileWidget } from '@/components/TurnstileWidget';
 import { toast } from 'sonner';
 
 const RESEND_COOLDOWN_MS = 60_000;
@@ -26,6 +27,8 @@ export function GuardPasswordResetModal({ isOpen, email, onClose }: GuardPasswor
   const [sending, setSending] = useState(false);
   const [lastSentAt, setLastSentAt] = useState(() => storedLastSentAt(email));
   const [now, setNow] = useState(Date.now());
+  const [captchaToken, setCaptchaToken] = useState<string | null>(null);
+  const [turnstileKey, setTurnstileKey] = useState(0);
   const secondsRemaining = Math.max(0, Math.ceil((lastSentAt + RESEND_COOLDOWN_MS - now) / 1000));
 
   useEffect(() => {
@@ -39,11 +42,26 @@ export function GuardPasswordResetModal({ isOpen, email, onClose }: GuardPasswor
     return () => window.clearInterval(timer);
   }, [secondsRemaining]);
 
+  function handleClose() {
+    setCaptchaToken(null);
+    setTurnstileKey((k) => k + 1);
+    onClose();
+  }
+
   async function handleSendResetLink() {
     if (!email || secondsRemaining > 0) return;
+
+    const siteKey = (import.meta as any).env?.VITE_TURNSTILE_SITE_KEY?.trim();
+    const isProd = Boolean((import.meta as any).env?.PROD);
+    const policy = evaluateAuthTurnstilePolicy(isProd, siteKey, captchaToken);
+    if (!policy.allowed) {
+      toast.error(policy.error ?? 'Please complete the security challenge before requesting a password reset.');
+      return;
+    }
+
     setSending(true);
     try {
-      await sendPasswordReset(email);
+      await sendPasswordReset(email, captchaToken || undefined);
       const sentAt = Date.now();
       window.localStorage.setItem(storageKeyFor(email), String(sentAt));
       setLastSentAt(sentAt);
@@ -53,6 +71,8 @@ export function GuardPasswordResetModal({ isOpen, email, onClose }: GuardPasswor
       console.error('Password reset email failed:', error);
       toast.error('We could not send the reset link. Please try again.');
     } finally {
+      setCaptchaToken(null);
+      setTurnstileKey((k) => k + 1);
       setSending(false);
     }
   }
@@ -60,7 +80,7 @@ export function GuardPasswordResetModal({ isOpen, email, onClose }: GuardPasswor
   return (
     <Modal
       isOpen={isOpen}
-      onClose={onClose}
+      onClose={handleClose}
       title="Reset Password"
       description="Send a secure password reset link to your account email"
       size="sm"
@@ -79,6 +99,16 @@ export function GuardPasswordResetModal({ isOpen, email, onClose }: GuardPasswor
             Your current password stays active until you complete the reset from the email.
           </p>
         </div>
+
+        <div className="py-2">
+          <TurnstileWidget
+            resetKey={turnstileKey}
+            onVerify={(token: string) => setCaptchaToken(token)}
+            onExpire={() => setCaptchaToken(null)}
+            onError={() => setCaptchaToken(null)}
+          />
+        </div>
+
         <Button
           type="button"
           onClick={handleSendResetLink}
