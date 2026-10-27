@@ -21,19 +21,19 @@ import {
   updateOfflineRegistrationCheckpoint,
   clearOfflineRegistrationCheckpoints,
   type CachedVisitorPass,
-} from '@/lib/offline/guardIndexedDb';
+} from '../src/lib/offline/guardIndexedDb';
 import {
   acquireCoordinatorLock,
   isCoordinatorLocked,
   runOfflineMaintenance,
-} from '@/lib/offline/guardSyncManager';
+} from '../src/lib/offline/guardSyncManager';
 import {
   isAuthoritativeServerError,
   isTransportOrNetworkError,
-} from '@/lib/offline/errorClassification';
-import { computeBackendAvailability } from '@/lib/offline/backendAvailability';
-import { fetchWithTimeout, RequestTimeoutError } from '@/lib/fetchWithTimeout';
-import { getManilaDayValidityWindow } from '@/lib/scheduling';
+} from '../src/lib/offline/errorClassification';
+import { computeBackendAvailability } from '../src/lib/offline/backendAvailability';
+import { fetchWithTimeout, RequestTimeoutError } from '../src/lib/fetchWithTimeout';
+import { getManilaDayValidityWindow } from '../src/lib/scheduling';
 import {
   classifySubmissionOutcome,
   uploadCheckpointedEvidence,
@@ -42,18 +42,18 @@ import {
   issueVisitorPass,
   PassIssuanceError,
   shouldReuseUploadedIntentForIssue,
-} from '@/services/visitorRegistration';
-import { createPassPresentation } from '@/lib/passPresentation';
-import { requireSupabase } from '@/lib/supabase';
-import { thermalTemplateLayoutSchema } from '@/types/thermalTemplate';
-import { renderThermalPass } from '@/printer/renderer/thermalRenderer';
-import { MXW01Manager, mxw01PrinterManager } from '@/printer/mxw01/mxw01Manager';
+} from '../src/services/visitorRegistration';
+import { createPassPresentation } from '../src/lib/passPresentation';
+import { requireSupabase } from '../src/lib/supabase';
+import { thermalTemplateLayoutSchema } from '../src/types/thermalTemplate';
+import { renderThermalPass } from '../src/printer/renderer/thermalRenderer';
+import { MXW01Manager, mxw01PrinterManager } from '../src/printer/mxw01/mxw01Manager';
 import { PGlite } from '@electric-sql/pglite';
 
 // Mock dependencies for guardSyncManager and supabase services
-const { mockRpc, mockGetSession, mockStorageFrom } = vi.hoisted(() => ({
-  mockRpc: vi.fn(),
-  mockGetSession: vi.fn().mockResolvedValue({
+const { mockRpc, mockGetSession, mockStorageFrom, createMockSupabase } = vi.hoisted(() => {
+  const mockRpc = vi.fn();
+  const mockGetSession = vi.fn().mockResolvedValue({
     data: {
       session: {
         access_token: 'valid-test-token',
@@ -61,47 +61,52 @@ const { mockRpc, mockGetSession, mockStorageFrom } = vi.hoisted(() => ({
       },
     },
     error: null,
-  }),
-  mockStorageFrom: vi.fn(),
-}));
+  });
+  const mockStorageFrom = vi.fn();
 
-vi.mock('@/lib/supabase', () => {
-  const client: any = {
-    auth: {
-      getSession: mockGetSession,
-      signOut: vi.fn().mockResolvedValue({}),
-      signInAnonymously: vi.fn().mockResolvedValue({
-        data: {
-          session: {
-            access_token: 'portal-anon-token',
-            user: { id: 'portal-user-1' },
+  const createMockSupabase = () => {
+    const client: any = {
+      auth: {
+        getSession: mockGetSession,
+        signOut: vi.fn().mockResolvedValue({}),
+        signInAnonymously: vi.fn().mockResolvedValue({
+          data: {
+            session: {
+              access_token: 'portal-anon-token',
+              user: { id: 'portal-user-1' },
+            },
           },
-        },
-        error: null,
-      }),
-    },
-    rpc: (...args: any[]) => {
-      const getResult = () => Promise.resolve(mockRpc(...args));
-      const builder: any = {
-        abortSignal: vi.fn().mockImplementation(() => builder),
-        single: vi.fn().mockImplementation(() => getResult()),
-        then: (onfulfilled: any, onrejected: any) => getResult().then(onfulfilled, onrejected),
-        catch: (onrejected: any) => getResult().catch(onrejected),
-      };
-      return builder;
-    },
-    schema: () => client,
-    storage: {
-      from: mockStorageFrom,
-    },
+          error: null,
+        }),
+      },
+      rpc: (...args: any[]) => {
+        const getResult = () => Promise.resolve(mockRpc(...args));
+        const builder: any = {
+          abortSignal: vi.fn().mockImplementation(() => builder),
+          single: vi.fn().mockImplementation(() => getResult()),
+          then: (onfulfilled: any, onrejected: any) => getResult().then(onfulfilled, onrejected),
+          catch: (onrejected: any) => getResult().catch(onrejected),
+        };
+        return builder;
+      },
+      schema: () => client,
+      storage: {
+        from: mockStorageFrom,
+      },
+    };
+    return {
+      supabase: client,
+      requireSupabase: () => client,
+      requirePortalSupabase: () => client,
+      apiRpc: (c: any, fn: string, args: any) => client.schema('api').rpc(fn, args),
+    };
   };
-  return {
-    supabase: client,
-    requireSupabase: () => client,
-    requirePortalSupabase: () => client,
-    apiRpc: (c: any, fn: string, args: any) => client.schema('api').rpc(fn, args),
-  };
+
+  return { mockRpc, mockGetSession, mockStorageFrom, createMockSupabase };
 });
+
+vi.mock('@/lib/supabase', () => createMockSupabase());
+vi.mock('../src/lib/supabase', () => createMockSupabase());
 
 // Setup Supabase Emulation for PGlite testing matching migration-chain-pglite.test.ts
 async function setupSupabaseEmulation(db: PGlite) {
@@ -458,7 +463,7 @@ describe('Deep Dive 1 + Deep Dive 2 Root-Cause Closure Test Suite', () => {
       expect(isCoordinatorLocked()).toBe(true);
 
       let caller2Executed = false;
-      const caller2Promise = acquireCoordinatorLock().then((unlock2) => {
+      const caller2Promise = acquireCoordinatorLock().then((unlock2: any) => {
         caller2Executed = true;
         unlock2();
       });
@@ -560,7 +565,7 @@ describe('Deep Dive 1 + Deep Dive 2 Root-Cause Closure Test Suite', () => {
       expect(searchBefore.length).toBe(1);
       expect(searchBefore[0]?.id).toBe(localId);
       const eventsBefore = await getOfflineEvents();
-      expect(eventsBefore.find((e) => e.passId === localId)).toBeDefined();
+      expect(eventsBefore.find((e: any) => e.passId === localId)).toBeDefined();
 
       // Execute ONE atomic transaction
       await finalizeOfflineRegistrationSync({
@@ -573,7 +578,7 @@ describe('Deep Dive 1 + Deep Dive 2 Root-Cause Closure Test Suite', () => {
       // Verify after state:
       // 1. Registration is synced, has canonicalPassId, local blobs stripped
       const regs = await getOfflineRegistrations();
-      const reg = regs.find((r) => r.offlineRegistrationId === localId);
+      const reg = regs.find((r: any) => r.offlineRegistrationId === localId);
       expect(reg?.syncStatus).toBe('synced');
       expect(reg?.canonicalPassId).toBe(canonicalPassId);
       expect(reg?.photoBlob).toBeUndefined();
@@ -849,7 +854,7 @@ describe('Deep Dive 1 + Deep Dive 2 Root-Cause Closure Test Suite', () => {
 
       // Verify blobs are stripped while metadata remains
       const regs = await getOfflineRegistrations();
-      const strippedReg = regs.find((r) => r.offlineRegistrationId === regId);
+      const strippedReg = regs.find((r: any) => r.offlineRegistrationId === regId);
       expect(strippedReg).toBeDefined();
       expect(strippedReg?.photoBlob).toBeFalsy();
       expect(strippedReg?.idBlob).toBeFalsy();
@@ -1022,7 +1027,7 @@ describe('Deep Dive 1 + Deep Dive 2 Root-Cause Closure Test Suite', () => {
 
       // Assert registration is synced with canonicalPassId
       const regs = await getOfflineRegistrations();
-      const syncedReg = regs.find((r) => r.offlineRegistrationId === regId);
+      const syncedReg = regs.find((r: any) => r.offlineRegistrationId === regId);
       expect(syncedReg?.syncStatus).toBe('synced');
       expect(syncedReg?.canonicalPassId).toBe(canonicalPassId);
 
@@ -1100,11 +1105,11 @@ describe('Deep Dive 1 + Deep Dive 2 Root-Cause Closure Test Suite', () => {
 
       // Registration remains pending
       const regs = await getOfflineRegistrations();
-      expect(regs.find((r) => r.offlineRegistrationId === regId)?.syncStatus).toBe('pending');
+      expect(regs.find((r: any) => r.offlineRegistrationId === regId)?.syncStatus).toBe('pending');
 
       // Dependent event remains pending
       const events = await getOfflineEvents();
-      expect(events.find((e) => e.passId === regId)?.syncStatus).toBe('pending');
+      expect(events.find((e: any) => e.passId === regId)?.syncStatus).toBe('pending');
 
       // Event RPC was NEVER called
       expect(rpcCalls).not.toContain('guard_sync_offline_event');
@@ -1175,11 +1180,11 @@ describe('Deep Dive 1 + Deep Dive 2 Root-Cause Closure Test Suite', () => {
 
       // Registration is marked conflict
       const regs = await getOfflineRegistrations();
-      expect(regs.find((r) => r.offlineRegistrationId === regId)?.syncStatus).toBe('conflict');
+      expect(regs.find((r: any) => r.offlineRegistrationId === regId)?.syncStatus).toBe('conflict');
 
       // Dependent event marked conflict with reason 'registration_sync_conflicted'
       const events = await getOfflineEvents();
-      const depEvent = events.find((e) => e.passId === regId);
+      const depEvent = events.find((e: any) => e.passId === regId);
       expect(depEvent?.syncStatus).toBe('conflict');
       expect(depEvent?.conflictReason).toBe('registration_sync_conflicted');
 
@@ -1223,7 +1228,7 @@ describe('Deep Dive 1 + Deep Dive 2 Root-Cause Closure Test Suite', () => {
 
       // Verify they are durable 'syncing'
       const strandedRegs = await getOfflineRegistrations();
-      expect(strandedRegs.find((r) => r.offlineRegistrationId === regId)?.syncStatus).toBe('syncing');
+      expect(strandedRegs.find((r: any) => r.offlineRegistrationId === regId)?.syncStatus).toBe('syncing');
       const strandedEvents = await getOfflineEvents();
       expect(strandedEvents[0]?.syncStatus).toBe('syncing');
 
@@ -1270,7 +1275,7 @@ describe('Deep Dive 1 + Deep Dive 2 Root-Cause Closure Test Suite', () => {
 
       // Both should have recovered to pending and then progressed to synced
       const recoveredRegs = await getOfflineRegistrations();
-      expect(recoveredRegs.find((r) => r.offlineRegistrationId === regId)?.syncStatus).toBe('synced');
+      expect(recoveredRegs.find((r: any) => r.offlineRegistrationId === regId)?.syncStatus).toBe('synced');
       const recoveredEvents = await getOfflineEvents();
       expect(recoveredEvents[0]?.syncStatus).toBe('synced');
     });
@@ -1853,7 +1858,7 @@ describe('Deep Dive 1 + Deep Dive 2 Root-Cause Closure Test Suite', () => {
       expect(res1.summary.errors).toBe(1);
 
       let regs = await getOfflineRegistrations();
-      let regRecord = regs.find((r) => r.offlineRegistrationId === regId);
+      let regRecord = regs.find((r: any) => r.offlineRegistrationId === regId);
       expect(regRecord?.syncStatus).toBe('pending');
       expect(regRecord?.photoUploadCheckpoint).toBeUndefined(); // Checkpoint cleared!
       expect(regRecord?.photoBlob).toBeDefined(); // Local blob retained!
@@ -1864,7 +1869,7 @@ describe('Deep Dive 1 + Deep Dive 2 Root-Cause Closure Test Suite', () => {
       expect(res2.summary.registrationsSynced).toBe(1);
 
       regs = await getOfflineRegistrations();
-      regRecord = regs.find((r) => r.offlineRegistrationId === regId);
+      regRecord = regs.find((r: any) => r.offlineRegistrationId === regId);
       expect(regRecord?.syncStatus).toBe('synced');
       expect(regRecord?.canonicalPassId).toBe('pass-recovered-24');
     });
@@ -1926,7 +1931,7 @@ describe('Deep Dive 1 + Deep Dive 2 Root-Cause Closure Test Suite', () => {
       expect(res.summary.conflicts).toBe(1);
 
       const regs = await getOfflineRegistrations();
-      const reg = regs.find((r) => r.offlineRegistrationId === regId);
+      const reg = regs.find((r: any) => r.offlineRegistrationId === regId);
       expect(reg?.syncStatus).toBe('conflict');
       expect(reg?.conflictReason).toBe('invalid_visitor_data_format');
 
@@ -2003,8 +2008,8 @@ describe('Deep Dive 1 + Deep Dive 2 Root-Cause Closure Test Suite', () => {
       expect(calledEventsCycle1).not.toContain(eventBId);
 
       let events = await getOfflineEvents();
-      expect(events.find((e) => e.eventId === eventAId)?.syncStatus).toBe('pending');
-      expect(events.find((e) => e.eventId === eventBId)?.syncStatus).toBe('pending');
+      expect(events.find((e: any) => e.eventId === eventAId)?.syncStatus).toBe('pending');
+      expect(events.find((e: any) => e.eventId === eventBId)?.syncStatus).toBe('pending');
 
       // Cycle 2: Event A replays and receives applied receipt, then Event B submits
       cycle = 2;
@@ -2027,8 +2032,8 @@ describe('Deep Dive 1 + Deep Dive 2 Root-Cause Closure Test Suite', () => {
 
       expect(calledEventsCycle2).toEqual([eventAId, eventBId]);
       events = await getOfflineEvents();
-      expect(events.find((e) => e.eventId === eventAId)?.syncStatus).toBe('synced');
-      expect(events.find((e) => e.eventId === eventBId)?.syncStatus).toBe('synced');
+      expect(events.find((e: any) => e.eventId === eventAId)?.syncStatus).toBe('synced');
+      expect(events.find((e: any) => e.eventId === eventBId)?.syncStatus).toBe('synced');
     });
 
     it('Scenario 8: Kiosk ambiguous state freezes all mutation controls and displays amber warning banner', () => {

@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { fetchGuardDashboard, fetchGuardDashboardPage } from '@/services/guard';
-import * as supabaseLib from '@/lib/supabase';
+import { fetchGuardDashboard, fetchGuardDashboardPage } from '../src/services/guard';
+import * as supabaseLib from '../src/lib/supabase';
 
 describe('Guard Dashboard Frontend Contract Regression (fetchGuardDashboard)', () => {
   beforeEach(() => {

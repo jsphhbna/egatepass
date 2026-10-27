@@ -69,8 +69,8 @@ import {
   createPortalIssueTransaction,
   issueVisitorPass,
   classifySubmissionOutcome,
+  type VisitorRegistration,
 } from '../src/services/visitorRegistration';
-import type { VisitorRegistration } from '../src/types';
 
 describe('Repair Group 1: Portal Issuance Transaction Identity & Idempotent Retry', () => {
   const dummyVisitor: VisitorRegistration = {
