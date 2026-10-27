@@ -41,6 +41,7 @@ vi.mock('../src/lib/supabase', () => {
                 bucket_id: args.requested_kind === 'photo' ? 'visitor-photos' : 'visitor-ids',
                 object_path: `intents/${intentId}.webp`,
                 max_bytes: 5 * 1024 * 1024,
+                expires_at: new Date(Date.now() + 15 * 60 * 1000).toISOString(),
               },
               error: null,
             };

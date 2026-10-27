@@ -60,9 +60,34 @@ export type IssueTransactionPhase =
   | 'editable'
   | 'dispatched'
   | 'ambiguous'
-  | 'committed';
+  | 'committed'
+  | 'existing_pass_conflict';
 
 export type PortalIssueTransactionPhase = IssueTransactionPhase;
+
+export function shouldReuseUploadedIntentForIssue(
+  transaction: IssueTransaction | null | undefined,
+  checkpoint: UploadCheckpoint | null | undefined,
+  intentId: string | null | undefined
+): boolean {
+  if (!checkpoint || !intentId || !checkpoint.uploaded) {
+    return false;
+  }
+  // Case A — Ambiguous transaction: reuse original intent for exact replay
+  // even if local expiresAt has passed (server may already have committed the original pass).
+  if (transaction?.phase === 'ambiguous') {
+    return true;
+  }
+  // Case B — Normal/editable transaction: only reuse when checkpoint has a valid future expiresAt.
+  if (
+    checkpoint.expiresAt &&
+    !Number.isNaN(new Date(checkpoint.expiresAt).getTime()) &&
+    new Date(checkpoint.expiresAt).getTime() > Date.now()
+  ) {
+    return true;
+  }
+  return false;
+}
 
 export type SubmissionOutcomeType =
   | 'committed'
@@ -382,8 +407,8 @@ export async function issueVisitorPass(
 
   // Upload photo intent with retry-safe checkpointing (Section 8)
   let photoIntentId: string;
-  if (transaction?.photoCheckpoint?.uploaded && transaction?.photoIntentId) {
-    photoIntentId = transaction.photoIntentId;
+  if (shouldReuseUploadedIntentForIssue(transaction, transaction?.photoCheckpoint, transaction?.photoIntentId)) {
+    photoIntentId = transaction!.photoIntentId!;
   } else {
     const photoRes = await uploadCheckpointedEvidence(client, source, 'photo', photo, transaction);
     photoIntentId = photoRes.intentId;
@@ -392,8 +417,8 @@ export async function issueVisitorPass(
   // Upload id intent with retry-safe checkpointing if provided (Section 8)
   let idIntentId: string | null = null;
   if (identification) {
-    if (transaction?.idCheckpoint?.uploaded && transaction?.idIntentId) {
-      idIntentId = transaction.idIntentId;
+    if (shouldReuseUploadedIntentForIssue(transaction, transaction?.idCheckpoint, transaction?.idIntentId)) {
+      idIntentId = transaction!.idIntentId!;
     } else {
       const idRes = await uploadCheckpointedEvidence(client, source, 'id', identification, transaction);
       idIntentId = idRes.intentId;
@@ -459,6 +484,9 @@ export async function issueVisitorPass(
     if (outcome === 'existing_pass_replay_conflict') {
       // Do NOT rotate requestId, do NOT clear existing request, do NOT issue a second pass.
       // Preserve transaction state for operator/recovery handling.
+      if (transaction) {
+        transaction.phase = 'existing_pass_conflict';
+      }
       throw new PassIssuanceError(
         'An existing pass was already created for this request, but this retry does not match the recorded details. Please consult the guard station.',
         errCode,

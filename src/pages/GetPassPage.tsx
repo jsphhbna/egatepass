@@ -511,6 +511,10 @@ export function GetPassPage() {
   // SUBMIT — Anonymous Sign-in → Upload → Create Docs → QR
   // ============================================================
   async function onSubmit() {
+    if (portalTransactionRef.current?.phase === 'existing_pass_conflict') {
+      toast.error('An existing pass was already created for this request. Please ask the Guard for assistance.');
+      return;
+    }
     if (!photoBlob) {
       toast.error('Photo is required.');
       return;
@@ -1187,7 +1191,17 @@ export function GetPassPage() {
                 Review Your Details
               </h2>
 
-              {portalTransactionRef.current?.phase === 'ambiguous' ? (
+              {portalTransactionRef.current?.phase === 'existing_pass_conflict' ? (
+                <div className="rounded-lg border border-amber-300 bg-amber-50 dark:border-amber-700/60 dark:bg-amber-950/40 p-4 space-y-2 text-sm text-amber-900 dark:text-amber-200" role="alert">
+                  <div className="flex items-center gap-2 font-semibold text-amber-950 dark:text-amber-100">
+                    <AlertCircle className="h-5 w-5 text-amber-600 dark:text-amber-400 shrink-0" />
+                    <span>Existing Pass Detected</span>
+                  </div>
+                  <p>
+                    An existing pass was already created for this request, but the local retry no longer matches it. Do not create another pass. Please ask the Guard for assistance.
+                  </p>
+                </div>
+              ) : portalTransactionRef.current?.phase === 'ambiguous' ? (
                 <div className="rounded-lg border border-amber-300 bg-amber-50 dark:border-amber-700/60 dark:bg-amber-950/40 p-4 space-y-2 text-sm text-amber-900 dark:text-amber-200" role="alert">
                   <div className="flex items-center gap-2 font-semibold text-amber-950 dark:text-amber-100">
                     <AlertCircle className="h-5 w-5 text-amber-600 dark:text-amber-400 shrink-0" />
@@ -1216,15 +1230,17 @@ export function GetPassPage() {
                       alt="Your photo"
                       className="h-24 w-20 object-cover rounded-lg border border-[var(--color-border)] shadow-sm mx-auto"
                     />
-                    {portalTransactionRef.current?.phase !== 'ambiguous' && (
-                      <button
-                        type="button"
-                        onClick={onRetakePhoto}
-                        className="mt-1.5 text-xs font-semibold text-[var(--color-brand)] hover:underline inline-flex items-center gap-1"
-                      >
-                        <RotateCcw className="h-3 w-3" />
-                        Retake Selfie
-                      </button>
+                    {portalTransactionRef.current?.phase !== 'existing_pass_conflict' && (
+                      portalTransactionRef.current?.phase !== 'ambiguous' && (
+                        <button
+                          type="button"
+                          onClick={onRetakePhoto}
+                          className="mt-1.5 text-xs font-semibold text-[var(--color-brand)] hover:underline inline-flex items-center gap-1"
+                        >
+                          <RotateCcw className="h-3 w-3" />
+                          Retake Selfie
+                        </button>
+                      )
                     )}
                   </div>
                 )}
@@ -1236,15 +1252,17 @@ export function GetPassPage() {
                       alt="Valid ID"
                       className="h-24 w-36 object-cover rounded-lg border border-[var(--color-border)] shadow-sm mx-auto"
                     />
-                    {portalTransactionRef.current?.phase !== 'ambiguous' && (
-                      <button
-                        type="button"
-                        onClick={onRetakeId}
-                        className="mt-1.5 text-xs font-semibold text-[var(--color-brand)] hover:underline inline-flex items-center gap-1"
-                      >
-                        <RotateCcw className="h-3 w-3" />
-                        Retake ID
-                      </button>
+                    {portalTransactionRef.current?.phase !== 'existing_pass_conflict' && (
+                      portalTransactionRef.current?.phase !== 'ambiguous' && (
+                        <button
+                          type="button"
+                          onClick={onRetakeId}
+                          className="mt-1.5 text-xs font-semibold text-[var(--color-brand)] hover:underline inline-flex items-center gap-1"
+                        >
+                          <RotateCcw className="h-3 w-3" />
+                          Retake ID
+                        </button>
+                      )
                     )}
                   </div>
                 )}
@@ -1259,18 +1277,20 @@ export function GetPassPage() {
                       {[getValues('firstName'), getValues('middleName'), getValues('lastName')].filter(Boolean).join(' ')}
                     </p>
                   </div>
-                  {portalTransactionRef.current?.phase !== 'ambiguous' && (
-                    <button
-                      type="button"
-                      onClick={() => {
-                        faceWebcam.stop();
-                        idWebcam.stop();
-                        setStep('form');
-                      }}
-                      className="text-xs font-semibold text-[var(--color-brand)] hover:underline"
-                    >
-                      Edit Details
-                    </button>
+                  {portalTransactionRef.current?.phase !== 'existing_pass_conflict' && (
+                    portalTransactionRef.current?.phase !== 'ambiguous' && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          faceWebcam.stop();
+                          idWebcam.stop();
+                          setStep('form');
+                        }}
+                        className="text-xs font-semibold text-[var(--color-brand)] hover:underline"
+                      >
+                        Edit Details
+                      </button>
+                    )
                   )}
                 </div>
                 <div className="py-2">
@@ -1289,7 +1309,18 @@ export function GetPassPage() {
 
               <TurnstileWidget key={turnstileKey} onVerify={setCaptchaToken} />
 
-              {portalTransactionRef.current?.phase === 'ambiguous' ? (
+              {portalTransactionRef.current?.phase === 'existing_pass_conflict' ? (
+                <div className="flex flex-col gap-3">
+                  <Button
+                    variant="secondary"
+                    onClick={handleAmbiguousCancelAndAskGuard}
+                    className="w-full text-amber-700 dark:text-amber-300 border-amber-300 dark:border-amber-700"
+                    icon={<AlertCircle className="h-4 w-4" />}
+                  >
+                    Cancel & Ask Guard
+                  </Button>
+                </div>
+              ) : portalTransactionRef.current?.phase === 'ambiguous' ? (
                 <div className="flex flex-col sm:flex-row gap-3">
                   <Button
                     variant="secondary"

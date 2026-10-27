@@ -371,6 +371,10 @@ export function KioskPage() {
 
   async function onSubmit() {
     if (isSubmittingRef.current) return;
+    if (kioskTransactionRef.current?.phase === 'existing_pass_conflict') {
+      toast.error('An existing pass was already created for this request. Please ask the Guard for assistance.');
+      return;
+    }
     if (!photoBlob) {
       toast.error('Photo is required.');
       return;
@@ -1033,7 +1037,17 @@ export function KioskPage() {
           {step === 'review' && (
             <div className="space-y-6">
               <h2 className="text-center text-lg font-bold text-[var(--color-text-primary)]">Review Pass</h2>
-              {kioskTransactionRef.current?.phase === 'ambiguous' ? (
+              {kioskTransactionRef.current?.phase === 'existing_pass_conflict' ? (
+                <div className="rounded-lg border border-amber-300 bg-amber-50 dark:border-amber-700/60 dark:bg-amber-950/40 p-4 space-y-2 text-sm text-amber-900 dark:text-amber-200" role="alert">
+                  <div className="flex items-center gap-2 font-semibold text-amber-950 dark:text-amber-100">
+                    <AlertCircle className="h-5 w-5 text-amber-600 dark:text-amber-400 shrink-0" />
+                    <span>Existing Pass Detected</span>
+                  </div>
+                  <p>
+                    An existing pass was already created for this request, but the local retry no longer matches it. Do not create another pass. Please ask the Guard for assistance.
+                  </p>
+                </div>
+              ) : kioskTransactionRef.current?.phase === 'ambiguous' ? (
                 <div className="rounded-lg border border-amber-300 bg-amber-50 dark:border-amber-700/60 dark:bg-amber-950/40 p-4 space-y-2 text-sm text-amber-900 dark:text-amber-200" role="alert">
                   <div className="flex items-center gap-2 font-semibold text-amber-950 dark:text-amber-100">
                     <AlertCircle className="h-5 w-5 text-amber-600 dark:text-amber-400 shrink-0" />
@@ -1055,7 +1069,7 @@ export function KioskPage() {
                   <div className="text-center">
                     <p className="text-xs text-[var(--color-text-secondary)] mb-1">Face Photo</p>
                     <img src={photoPreview} alt="Face photo" className="h-24 w-20 object-cover rounded-lg border border-[var(--color-border)] shadow-sm mx-auto" />
-                    {kioskTransactionRef.current?.phase !== 'ambiguous' && (
+                    {kioskTransactionRef.current?.phase !== 'ambiguous' && kioskTransactionRef.current?.phase !== 'existing_pass_conflict' && (
                       <button
                         type="button"
                         onClick={onRetakePhoto}
@@ -1071,7 +1085,7 @@ export function KioskPage() {
                   <div className="text-center">
                     <p className="text-xs text-[var(--color-text-secondary)] mb-1">ID Card</p>
                     <img src={idPreview} alt="ID preview" className="h-24 w-36 object-cover rounded-lg border border-[var(--color-border)] shadow-sm mx-auto" />
-                    {kioskTransactionRef.current?.phase !== 'ambiguous' && (
+                    {kioskTransactionRef.current?.phase !== 'ambiguous' && kioskTransactionRef.current?.phase !== 'existing_pass_conflict' && (
                       <button
                         type="button"
                         onClick={onRetakeId}
@@ -1095,7 +1109,7 @@ export function KioskPage() {
               <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-canvas)] p-4 text-sm">
                 <div className="flex items-center justify-between mb-2">
                   <p><strong className="text-[var(--color-text-secondary)]">Name:</strong> {[getValues('firstName'), getValues('middleName'), getValues('lastName')].filter(Boolean).join(' ')}</p>
-                  {kioskTransactionRef.current?.phase !== 'ambiguous' && (
+                  {kioskTransactionRef.current?.phase !== 'ambiguous' && kioskTransactionRef.current?.phase !== 'existing_pass_conflict' && (
                     <button
                       type="button"
                       onClick={() => {
@@ -1113,7 +1127,19 @@ export function KioskPage() {
                 <p><strong className="text-[var(--color-text-secondary)]">Purpose:</strong> {getValues('purpose')}</p>
               </div>
 
-              {kioskTransactionRef.current?.phase === 'ambiguous' ? (
+              {kioskTransactionRef.current?.phase === 'existing_pass_conflict' ? (
+                <div className="flex flex-col gap-3">
+                  <Button
+                    variant="secondary"
+                    type="button"
+                    onClick={handleAmbiguousCancelAndAskGuard}
+                    className="w-full min-h-[44px] text-amber-700 dark:text-amber-300 border-amber-300 dark:border-amber-700"
+                    icon={<AlertCircle className="h-4 w-4" />}
+                  >
+                    Cancel & Ask Guard
+                  </Button>
+                </div>
+              ) : kioskTransactionRef.current?.phase === 'ambiguous' ? (
                 <div className="flex flex-col sm:flex-row gap-3">
                   <Button
                     variant="secondary"

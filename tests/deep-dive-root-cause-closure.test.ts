@@ -41,6 +41,7 @@ import {
   createPortalIssueTransaction,
   issueVisitorPass,
   PassIssuanceError,
+  shouldReuseUploadedIntentForIssue,
 } from '@/services/visitorRegistration';
 import { createPassPresentation } from '@/lib/passPresentation';
 import { requireSupabase } from '@/lib/supabase';
@@ -2040,7 +2041,7 @@ describe('Deep Dive 1 + Deep Dive 2 Root-Cause Closure Test Suite', () => {
       expect(kioskSrc).toContain('Cancel & Ask Guard');
 
       // Mutation controls are strictly guarded behind phase !== 'ambiguous'
-      expect(kioskSrc).toContain("kioskTransactionRef.current?.phase !== 'ambiguous' && (");
+      expect(kioskSrc).toContain("kioskTransactionRef.current?.phase !== 'ambiguous'");
       expect(kioskSrc).toContain('Retake Selfie');
       expect(kioskSrc).toContain('Retake ID');
     });
@@ -2254,6 +2255,392 @@ describe('Deep Dive 1 + Deep Dive 2 Root-Cause Closure Test Suite', () => {
       expect(tx.requestId).toBe(origRequestId);
       expect(tx.submittedPayload).not.toBeNull();
       expect(tx.photoIntentId).toBe('intent-bob-1');
+      // Gap 1: phase must transition to existing_pass_conflict!
+      expect(tx.phase).toBe('existing_pass_conflict');
+
+      // Also test payload_mismatch
+      const tx2 = await createPortalIssueTransaction();
+      const origRequestId2 = tx2.requestId;
+      tx2.photoIntentId = 'intent-payload-1';
+      tx2.photoCheckpoint = {
+        intentId: 'intent-payload-1',
+        bucketId: 'visitor-photos',
+        objectPath: 'passes/photo-payload.jpg',
+        contentType: 'image/jpeg',
+        maxBytes: 1048576,
+        expiresAt: new Date(Date.now() + 600000).toISOString(),
+        uploaded: true,
+      };
+      tx2.submittedPayload = {
+        source: 'portal',
+        visitor: {
+          firstName: 'Charlie',
+          lastName: 'Brown',
+          contactNumber: '09171234568',
+          purpose: 'Meeting',
+          visitDate: '2026-10-27',
+        },
+        photoIntentId: 'intent-payload-1',
+        idIntentId: null,
+      };
+
+      globalThis.fetch = vi.fn().mockImplementation((url: string) => {
+        if (String(url).includes('/api/passes/issue')) {
+          return Promise.resolve(new Response(JSON.stringify({ error: 'payload_mismatch' }), { status: 409 }));
+        }
+        return Promise.resolve(new Response('{}', { status: 200 }));
+      });
+
+      let caughtErr2: any = null;
+      try {
+        await issueVisitorPass(
+          'portal',
+          tx2.submittedPayload.visitor,
+          new Blob(['photo']),
+          undefined,
+          tx2.requestId,
+          undefined,
+          tx2
+        );
+      } catch (err) {
+        caughtErr2 = err;
+      }
+
+      expect(caughtErr2).toBeInstanceOf(PassIssuanceError);
+      expect(caughtErr2.outcome).toBe('existing_pass_replay_conflict');
+      expect(tx2.requestId).toBe(origRequestId2);
+      expect(tx2.submittedPayload).not.toBeNull();
+      expect(tx2.phase).toBe('existing_pass_conflict');
+    });
+
+    it('Scenario 16: Terminal existing_pass_conflict state freezes mutation controls and provides safe Cancel & Ask Guard exit', () => {
+      const kioskSrc = fs.readFileSync('src/pages/KioskPage.tsx', 'utf8');
+      const getPassSrc = fs.readFileSync('src/pages/GetPassPage.tsx', 'utf8');
+
+      // 1. Kiosk Page UI assertions
+      expect(kioskSrc).toContain("kioskTransactionRef.current?.phase === 'existing_pass_conflict'");
+      expect(kioskSrc).toContain('Existing Pass Detected');
+      expect(kioskSrc).toContain('An existing pass was already created for this request, but the local retry no longer matches it. Do not create another pass. Please ask the Guard for assistance.');
+      expect(kioskSrc).toContain("kioskTransactionRef.current?.phase !== 'existing_pass_conflict'");
+      expect(kioskSrc).toContain("if (kioskTransactionRef.current?.phase === 'existing_pass_conflict')");
+
+      // 2. Portal Page UI assertions
+      expect(getPassSrc).toContain("portalTransactionRef.current?.phase === 'existing_pass_conflict'");
+      expect(getPassSrc).toContain('Existing Pass Detected');
+      expect(getPassSrc).toContain('An existing pass was already created for this request, but the local retry no longer matches it. Do not create another pass. Please ask the Guard for assistance.');
+      expect(getPassSrc).toContain("portalTransactionRef.current?.phase !== 'existing_pass_conflict'");
+      expect(getPassSrc).toContain("if (portalTransactionRef.current?.phase === 'existing_pass_conflict')");
+    });
+
+    it('Scenario 17: shouldReuseUploadedIntentForIssue predicate contract tests', () => {
+      const expiredTime = new Date(Date.now() - 60000).toISOString();
+      const futureTime = new Date(Date.now() + 600000).toISOString();
+
+      const expiredCheckpoint = {
+        intentId: 'intent-exp',
+        bucketId: 'visitor-photos',
+        objectPath: 'passes/photo.jpg',
+        contentType: 'image/jpeg',
+        maxBytes: 1048576,
+        expiresAt: expiredTime,
+        uploaded: true,
+      };
+
+      const validCheckpoint = {
+        ...expiredCheckpoint,
+        expiresAt: futureTime,
+      };
+
+      const notUploadedCheckpoint = {
+        ...validCheckpoint,
+        uploaded: false,
+      };
+
+      // Ambiguous transaction: reuses uploaded intent even if locally expired
+      const ambiguousTx = {
+        requestId: 'req-1',
+        photoIntentId: 'intent-exp',
+        idIntentId: null,
+        phase: 'ambiguous' as const,
+      };
+      expect(shouldReuseUploadedIntentForIssue(ambiguousTx, expiredCheckpoint, 'intent-exp')).toBe(true);
+      expect(shouldReuseUploadedIntentForIssue(ambiguousTx, notUploadedCheckpoint, 'intent-exp')).toBe(false);
+      expect(shouldReuseUploadedIntentForIssue(ambiguousTx, expiredCheckpoint, null)).toBe(false);
+
+      // Editable transaction: does NOT reuse expired checkpoint
+      const editableTx = {
+        requestId: 'req-2',
+        photoIntentId: 'intent-exp',
+        idIntentId: null,
+        phase: 'editable' as const,
+      };
+      expect(shouldReuseUploadedIntentForIssue(editableTx, expiredCheckpoint, 'intent-exp')).toBe(false);
+      expect(shouldReuseUploadedIntentForIssue(editableTx, validCheckpoint, 'intent-exp')).toBe(true);
+      expect(shouldReuseUploadedIntentForIssue(editableTx, { ...validCheckpoint, expiresAt: undefined }, 'intent-exp')).toBe(false);
+    });
+
+    it('Scenario 18: Editable transaction + uploaded but expired photo checkpoint allocates fresh intent', async () => {
+      const tx = await createPortalIssueTransaction();
+      tx.phase = 'editable';
+      tx.photoIntentId = 'intent-expired-photo';
+      tx.photoCheckpoint = {
+        intentId: 'intent-expired-photo',
+        bucketId: 'visitor-photos',
+        objectPath: 'passes/photo-expired.jpg',
+        contentType: 'image/jpeg',
+        maxBytes: 1048576,
+        expiresAt: new Date(Date.now() - 60000).toISOString(), // Expired!
+        uploaded: true,
+      };
+
+      let createUploadIntentCalled = false;
+      mockRpc.mockImplementation((name: string) => {
+        if (name === 'create_upload_intent') {
+          createUploadIntentCalled = true;
+          return Promise.resolve({
+            data: {
+              intent_id: 'intent-fresh-photo-100',
+              bucket_id: 'visitor-photos',
+              object_path: 'passes/fresh-photo.jpg',
+              expires_at: new Date(Date.now() + 600000).toISOString(),
+              max_bytes: 1048576,
+            },
+            error: null,
+          });
+        }
+        return Promise.resolve({ data: null, error: null });
+      });
+
+      mockStorageFrom.mockReturnValue({
+        upload: vi.fn().mockResolvedValue({ data: { path: 'passes/fresh-photo.jpg' }, error: null }),
+      });
+
+      globalThis.fetch = vi.fn().mockImplementation((url: string) => {
+        if (String(url).includes('/api/passes/issue')) {
+          return Promise.resolve(
+            new Response(
+              JSON.stringify({
+                passId: 'pass-fresh-100',
+                qrToken: 'qr-fresh-100',
+                validFrom: '2026-10-27T08:00:00Z',
+                validUntil: '2026-10-27T17:00:00Z',
+              }),
+              { status: 200 }
+            )
+          );
+        }
+        return Promise.resolve(new Response('{}', { status: 200 }));
+      });
+
+      const res = await issueVisitorPass(
+        'portal',
+        { firstName: 'Alice', lastName: 'Fresh', contactNumber: '09171234567', purpose: 'Visit', visitDate: '2026-10-27' },
+        new Blob(['photo']),
+        undefined,
+        tx.requestId,
+        undefined,
+        tx
+      );
+
+      expect(createUploadIntentCalled).toBe(true);
+      expect(tx.photoIntentId).toBe('intent-fresh-photo-100');
+      expect(res.passId).toBe('pass-fresh-100');
+    });
+
+    it('Scenario 19: Editable transaction + uploaded but expired ID checkpoint allocates fresh intent', async () => {
+      const tx = await createPortalIssueTransaction();
+      tx.phase = 'editable';
+      // Valid unexpired photo checkpoint
+      tx.photoIntentId = 'intent-valid-photo';
+      tx.photoCheckpoint = {
+        intentId: 'intent-valid-photo',
+        bucketId: 'visitor-photos',
+        objectPath: 'passes/photo-valid.jpg',
+        contentType: 'image/jpeg',
+        maxBytes: 1048576,
+        expiresAt: new Date(Date.now() + 600000).toISOString(),
+        uploaded: true,
+      };
+
+      // Expired ID checkpoint
+      tx.idIntentId = 'intent-expired-id';
+      tx.idCheckpoint = {
+        intentId: 'intent-expired-id',
+        bucketId: 'visitor-ids',
+        objectPath: 'passes/id-expired.jpg',
+        contentType: 'image/jpeg',
+        maxBytes: 1048576,
+        expiresAt: new Date(Date.now() - 60000).toISOString(), // Expired!
+        uploaded: true,
+      };
+
+      const requestedKinds: string[] = [];
+      mockRpc.mockImplementation((name: string, args: any) => {
+        if (name === 'create_upload_intent') {
+          requestedKinds.push(args?.requested_kind);
+          return Promise.resolve({
+            data: {
+              intent_id: 'intent-fresh-id-200',
+              bucket_id: 'visitor-ids',
+              object_path: 'passes/fresh-id.jpg',
+              expires_at: new Date(Date.now() + 600000).toISOString(),
+              max_bytes: 1048576,
+            },
+            error: null,
+          });
+        }
+        return Promise.resolve({ data: null, error: null });
+      });
+
+      mockStorageFrom.mockReturnValue({
+        upload: vi.fn().mockResolvedValue({ data: { path: 'passes/fresh-id.jpg' }, error: null }),
+      });
+
+      globalThis.fetch = vi.fn().mockImplementation((url: string) => {
+        if (String(url).includes('/api/passes/issue')) {
+          return Promise.resolve(
+            new Response(
+              JSON.stringify({
+                passId: 'pass-fresh-id-200',
+                qrToken: 'qr-fresh-id-200',
+                validFrom: '2026-10-27T08:00:00Z',
+                validUntil: '2026-10-27T17:00:00Z',
+              }),
+              { status: 200 }
+            )
+          );
+        }
+        return Promise.resolve(new Response('{}', { status: 200 }));
+      });
+
+      const res = await issueVisitorPass(
+        'portal',
+        { firstName: 'Alice', lastName: 'FreshID', contactNumber: '09171234567', purpose: 'Visit', visitDate: '2026-10-27' },
+        new Blob(['photo']),
+        new Blob(['id']),
+        tx.requestId,
+        undefined,
+        tx
+      );
+
+      // Assert only ID requested fresh intent, photo intent was safely reused!
+      expect(requestedKinds).toEqual(['id']);
+      expect(tx.photoIntentId).toBe('intent-valid-photo');
+      expect(tx.idIntentId).toBe('intent-fresh-id-200');
+      expect(res.passId).toBe('pass-fresh-id-200');
+    });
+
+    it('Scenario 20: Editable transaction + uploaded valid checkpoint skips re-upload', async () => {
+      const tx = await createPortalIssueTransaction();
+      tx.phase = 'editable';
+      tx.photoIntentId = 'intent-valid-photo-300';
+      tx.photoCheckpoint = {
+        intentId: 'intent-valid-photo-300',
+        bucketId: 'visitor-photos',
+        objectPath: 'passes/photo-valid-300.jpg',
+        contentType: 'image/jpeg',
+        maxBytes: 1048576,
+        expiresAt: new Date(Date.now() + 600000).toISOString(),
+        uploaded: true,
+      };
+
+      let rpcCallCount = 0;
+      mockRpc.mockImplementation((name: string) => {
+        if (name === 'create_upload_intent') {
+          rpcCallCount++;
+        }
+        return Promise.resolve({ data: null, error: null });
+      });
+
+      globalThis.fetch = vi.fn().mockImplementation((url: string) => {
+        if (String(url).includes('/api/passes/issue')) {
+          return Promise.resolve(
+            new Response(
+              JSON.stringify({
+                passId: 'pass-valid-300',
+                qrToken: 'qr-valid-300',
+                validFrom: '2026-10-27T08:00:00Z',
+                validUntil: '2026-10-27T17:00:00Z',
+              }),
+              { status: 200 }
+            )
+          );
+        }
+        return Promise.resolve(new Response('{}', { status: 200 }));
+      });
+
+      const res = await issueVisitorPass(
+        'portal',
+        { firstName: 'Alice', lastName: 'ValidCheck', contactNumber: '09171234567', purpose: 'Visit', visitDate: '2026-10-27' },
+        new Blob(['photo']),
+        undefined,
+        tx.requestId,
+        undefined,
+        tx
+      );
+
+      // create_upload_intent should NOT have been called!
+      expect(rpcCallCount).toBe(0);
+      expect(tx.photoIntentId).toBe('intent-valid-photo-300');
+      expect(res.passId).toBe('pass-valid-300');
+    });
+
+    it('Scenario 21: Ambiguous transaction + expired uploaded original checkpoint preserves original intent for idempotent replay', async () => {
+      const tx = await createPortalIssueTransaction();
+      tx.phase = 'ambiguous';
+      tx.photoIntentId = 'intent-ambiguous-original';
+      tx.photoCheckpoint = {
+        intentId: 'intent-ambiguous-original',
+        bucketId: 'visitor-photos',
+        objectPath: 'passes/photo-ambiguous-original.jpg',
+        contentType: 'image/jpeg',
+        maxBytes: 1048576,
+        expiresAt: new Date(Date.now() - 60000).toISOString(), // Expired locally, but server may already have committed!
+        uploaded: true,
+      };
+
+      let createUploadIntentCalled = false;
+      mockRpc.mockImplementation((name: string) => {
+        if (name === 'create_upload_intent') {
+          createUploadIntentCalled = true;
+        }
+        return Promise.resolve({ data: null, error: null });
+      });
+
+      let submittedBody: any = null;
+      globalThis.fetch = vi.fn().mockImplementation((url: string, init?: any) => {
+        if (String(url).includes('/api/passes/issue')) {
+          submittedBody = JSON.parse(init.body);
+          return Promise.resolve(
+            new Response(
+              JSON.stringify({
+                passId: 'pass-idempotent-replay',
+                qrToken: 'qr-idempotent-replay',
+                validFrom: '2026-10-27T08:00:00Z',
+                validUntil: '2026-10-27T17:00:00Z',
+              }),
+              { status: 200 }
+            )
+          );
+        }
+        return Promise.resolve(new Response('{}', { status: 200 }));
+      });
+
+      const res = await issueVisitorPass(
+        'portal',
+        { firstName: 'Alice', lastName: 'Replay', contactNumber: '09171234567', purpose: 'Visit', visitDate: '2026-10-27' },
+        new Blob(['photo']),
+        undefined,
+        tx.requestId,
+        undefined,
+        tx
+      );
+
+      // Invariant: Ambiguous exact replay must NOT allocate replacement evidence before attempting exact replay!
+      expect(createUploadIntentCalled).toBe(false);
+      expect(submittedBody.photoIntentId).toBe('intent-ambiguous-original');
+      expect(res.passId).toBe('pass-idempotent-replay');
+      expect(tx.phase).toBe('committed');
     });
 
     it('Scenario 12: Portal ambiguous state cannot issue a brand-new pass through Start Over', () => {
