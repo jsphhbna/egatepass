@@ -12,8 +12,20 @@
  * - Stored data is bounded strictly to operational needs and purged daily.
  */
 
+import { getManilaDayValidityWindow } from '@/lib/scheduling';
+
 const DB_NAME = 'egatepass_guard_offline';
 const DB_VERSION = 1;
+
+export interface UploadCheckpoint {
+  intentId: string;
+  bucketId: string;
+  objectPath: string;
+  contentType: string;
+  maxBytes: number;
+  expiresAt?: string;
+  uploaded: boolean;
+}
 
 export interface CachedVisitorPass {
   id: string; // passId
@@ -58,6 +70,8 @@ export interface OfflineRegistrationRecord {
   conflictReason?: string | null;
   syncedAt?: string | null;
   canonicalPassId?: string | null;
+  photoUploadCheckpoint?: UploadCheckpoint | null;
+  idUploadCheckpoint?: UploadCheckpoint | null;
 }
 
 export interface OfflineEventRecord {
@@ -563,6 +577,8 @@ export async function saveOfflineRegistrationWithCache(
         .filter(Boolean)
         .join(' ');
 
+      const { validFrom, validUntil } = getManilaDayValidityWindow(record.occurredAt);
+
       cached = {
         id: record.offlineRegistrationId,
         publicReference: record.offlineRegistrationId,
@@ -573,8 +589,8 @@ export async function saveOfflineRegistrationWithCache(
         visitDate: record.visitor.visitDate,
         status: 'inside',
         passReference: `EG-${record.offlineRegistrationId.slice(0, 8).toUpperCase()}`,
-        validFrom: new Date(record.occurredAt).toISOString(),
-        validUntil: new Date(new Date(record.occurredAt).getTime() + 24 * 60 * 60 * 1000).toISOString(),
+        validFrom,
+        validUntil,
         timeIn: record.occurredAt,
         gate: 'Offline Gate',
         photoBlob: record.photoBlob,
@@ -723,5 +739,217 @@ export async function remapCachedVisitorPassId(
 
     tx.oncomplete = () => resolve();
     tx.onerror = () => reject(tx.error);
+  });
+}
+
+export interface FinalizeOfflineRegistrationParams {
+  offlineRegistrationId: string;
+  canonicalPassId: string;
+  canonicalReference?: string | null;
+  publicReference?: string | null;
+  syncedAt?: string;
+}
+
+/**
+ * Atomically canonicalizes an offline-created registration in ONE IndexedDB transaction
+ * across 'offline_registrations', 'cached_visitors', and 'offline_events' (Section 1).
+ *
+ * Invariant:
+ * 1. Loads offline registration.
+ * 2. If cached visitor exists under temporary registration ID:
+ *    - deletes temporary key
+ *    - inserts canonical key with preserved status/version/timeIn/validity
+ *    - updates publicReference/passReference
+ * 3. Remaps every still-unsynchronized lifecycle event whose passId equals temporary registration ID to canonical pass ID.
+ * 4. Updates registration: syncStatus = 'synced', canonicalPassId, syncedAt, clears conflictReason, clears blobs & checkpoints.
+ * 5. Commits ONLY in this same transaction. If aborted, NONE persist.
+ */
+export async function finalizeOfflineRegistrationSync(
+  params: FinalizeOfflineRegistrationParams
+): Promise<void> {
+  const db = await openDatabase();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(
+      ['offline_registrations', 'cached_visitors', 'offline_events'],
+      'readwrite'
+    );
+    const regStore = tx.objectStore('offline_registrations');
+    const visitorStore = tx.objectStore('cached_visitors');
+    const eventsStore = tx.objectStore('offline_events');
+
+    const regReq = regStore.get(params.offlineRegistrationId);
+
+    regReq.onsuccess = () => {
+      const reg = regReq.result as OfflineRegistrationRecord | undefined;
+      if (!reg) {
+        tx.abort();
+        return reject(
+          new Error(
+            `Offline registration '${params.offlineRegistrationId}' not found for canonicalization`
+          )
+        );
+      }
+
+      // Step 2: Remap cached visitor if present
+      const visitorReq = visitorStore.get(params.offlineRegistrationId);
+      visitorReq.onsuccess = () => {
+        const visitor = visitorReq.result as CachedVisitorPass | undefined;
+        if (visitor) {
+          visitorStore.delete(params.offlineRegistrationId);
+          const canonicalRef =
+            params.publicReference ||
+            params.canonicalReference ||
+            (params.canonicalPassId ? `EG-${params.canonicalPassId.slice(0, 8).toUpperCase()}` : visitor.publicReference);
+          const updatedVisitor: CachedVisitorPass = {
+            ...visitor,
+            id: params.canonicalPassId,
+            passId: params.canonicalPassId,
+            publicReference: canonicalRef || undefined,
+            passReference: canonicalRef
+              ? (canonicalRef.startsWith('EG-') ? canonicalRef : `EG-${canonicalRef.slice(0, 8).toUpperCase()}`)
+              : `EG-${params.canonicalPassId.slice(0, 8).toUpperCase()}`,
+          };
+          visitorStore.put(updatedVisitor);
+        }
+
+        // Step 3: Remap unsynchronized events whose passId equals temporary ID
+        const evtReq = eventsStore.openCursor();
+        evtReq.onsuccess = (e) => {
+          const cursor = (e.target as IDBRequest<IDBCursorWithValue>).result;
+          if (cursor) {
+            const evt = cursor.value as OfflineEventRecord;
+            if (evt.passId === params.offlineRegistrationId && evt.syncStatus !== 'synced') {
+              cursor.update({
+                ...evt,
+                passId: params.canonicalPassId,
+              });
+            }
+            cursor.continue();
+          } else {
+            // Step 4: Update the registration to synced and clean up evidence/checkpoints
+            const syncedAt = params.syncedAt || new Date().toISOString();
+            const updatedReg: OfflineRegistrationRecord = {
+              ...reg,
+              syncStatus: 'synced',
+              canonicalPassId: params.canonicalPassId,
+              syncedAt,
+              conflictReason: null,
+            };
+            delete updatedReg.photoBlob;
+            delete updatedReg.idBlob;
+            delete updatedReg.photoUploadCheckpoint;
+            delete updatedReg.idUploadCheckpoint;
+            regStore.put(updatedReg);
+          }
+        };
+
+        evtReq.onerror = () => {
+          tx.abort();
+          reject(evtReq.error);
+        };
+      };
+
+      visitorReq.onerror = () => {
+        tx.abort();
+        reject(visitorReq.error);
+      };
+    };
+
+    regReq.onerror = () => {
+      tx.abort();
+      reject(regReq.error);
+    };
+
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => reject(tx.error);
+    tx.onabort = () => reject(tx.error || new Error('Transaction aborted'));
+  });
+}
+
+/**
+ * Recovers records left in transient 'syncing' state due to previous crash or ungraceful termination (Section 2).
+ * Resets them to 'pending' so they become eligible for synchronization again.
+ */
+export async function recoverInterruptedSyncStates(): Promise<{
+  recoveredRegistrations: number;
+  recoveredEvents: number;
+}> {
+  const db = await openDatabase();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(['offline_registrations', 'offline_events'], 'readwrite');
+    const regStore = tx.objectStore('offline_registrations');
+    const evtStore = tx.objectStore('offline_events');
+    let recoveredRegistrations = 0;
+    let recoveredEvents = 0;
+
+    const regReq = regStore.openCursor();
+    regReq.onsuccess = (e) => {
+      const cursor = (e.target as IDBRequest<IDBCursorWithValue>).result;
+      if (cursor) {
+        const item = cursor.value as OfflineRegistrationRecord;
+        if (item.syncStatus === 'syncing') {
+          cursor.update({ ...item, syncStatus: 'pending' });
+          recoveredRegistrations++;
+        }
+        cursor.continue();
+      }
+    };
+
+    const evtReq = evtStore.openCursor();
+    evtReq.onsuccess = (e) => {
+      const cursor = (e.target as IDBRequest<IDBCursorWithValue>).result;
+      if (cursor) {
+        const item = cursor.value as OfflineEventRecord;
+        if (item.syncStatus === 'syncing') {
+          cursor.update({ ...item, syncStatus: 'pending' });
+          recoveredEvents++;
+        }
+        cursor.continue();
+      }
+    };
+
+    tx.oncomplete = () => resolve({ recoveredRegistrations, recoveredEvents });
+    tx.onerror = () => reject(tx.error);
+    tx.onabort = () => reject(tx.error || new Error('Transaction aborted'));
+  });
+}
+
+/**
+ * Updates or clears an upload checkpoint on an offline registration record (Section 5).
+ */
+export async function updateOfflineRegistrationCheckpoint(
+  offlineRegistrationId: string,
+  type: 'photo' | 'id',
+  checkpoint: UploadCheckpoint | null
+): Promise<void> {
+  const db = await openDatabase();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction('offline_registrations', 'readwrite');
+    const store = tx.objectStore('offline_registrations');
+    const req = store.get(offlineRegistrationId);
+
+    req.onsuccess = () => {
+      if (req.result) {
+        const updated = { ...req.result };
+        if (type === 'photo') {
+          if (checkpoint) {
+            updated.photoUploadCheckpoint = checkpoint;
+          } else {
+            delete updated.photoUploadCheckpoint;
+          }
+        } else {
+          if (checkpoint) {
+            updated.idUploadCheckpoint = checkpoint;
+          } else {
+            delete updated.idUploadCheckpoint;
+          }
+        }
+        store.put(updated);
+      }
+    };
+
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => reject(tx.error);
+    tx.onabort = () => reject(tx.error || new Error('Transaction aborted'));
   });
 }

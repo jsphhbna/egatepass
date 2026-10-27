@@ -53,7 +53,7 @@ export function evaluateTurnstilePolicy(
   return { allowed: true };
 }
 
-import { fetchWithTimeout } from '@/lib/fetchWithTimeout';
+import { fetchWithTimeout, createBoundedAbortSignal, withTimeout } from '@/lib/fetchWithTimeout';
 
 export type IssueTransactionPhase =
   | 'editable'
@@ -69,27 +69,48 @@ export type SubmissionOutcomeType =
   | 'rejected_correctable_field'
   | 'rejected_requires_new_transaction';
 
-export function classifySubmissionOutcome(status: number, errCode?: string): SubmissionOutcomeType {
+export function classifySubmissionOutcome(
+  statusOrErr: number | { status?: number; message?: string; error?: string; code?: string } | any,
+  errCode?: string
+): SubmissionOutcomeType {
+  let status = 0;
+  let code = errCode;
+
+  if (typeof statusOrErr === 'number') {
+    status = statusOrErr;
+  } else if (statusOrErr && typeof statusOrErr === 'object') {
+    status = statusOrErr.status ?? 0;
+    if (!code) {
+      code = statusOrErr.code || statusOrErr.error || statusOrErr.message;
+    }
+  }
+
   // 1. Authoritative pre-commit rejections
-  if (errCode === 'visit_date_out_of_range') {
+  if (code === 'visit_date_out_of_range') {
     return 'rejected_correctable_field';
   }
-  if (status === 429 || errCode === 'rate_limit_exceeded') {
+  if (status === 429 || code === 'rate_limit_exceeded') {
     return 'rejected_correctable_field';
   }
-  if (errCode === 'abuse_control_unavailable') {
+  if (code === 'abuse_control_unavailable') {
     return 'rejected_correctable_field';
   }
-  if (errCode === 'cross_actor_replay') {
+
+  // 2. Authoritative replay consistency / session mismatches / expiration (Section 10)
+  if (
+    code === 'cross_actor_replay' ||
+    code === 'source_mismatch' ||
+    code === 'payload_mismatch' ||
+    code === 'intent_mismatch' ||
+    code === 'pass_has_expired' ||
+    status === 409 ||
+    status === 422
+  ) {
     return 'rejected_requires_new_transaction';
   }
-  // 2. Ambiguous outcomes: generic 5xx, service_unavailable, mismatch, or unknown server failure
-  if (
-    status >= 500 ||
-    errCode === 'service_unavailable' ||
-    errCode === 'intent_mismatch' ||
-    errCode === 'payload_mismatch'
-  ) {
+
+  // 3. Ambiguous outcomes: generic 5xx, service_unavailable, network timeout, unknown server failure
+  if (status >= 500 || code === 'service_unavailable' || code === 'network_interruption') {
     return 'ambiguous';
   }
   return 'ambiguous';
@@ -107,16 +128,39 @@ export class PassIssuanceError extends Error {
   }
 }
 
+export interface UploadCheckpoint {
+  intentId: string;
+  bucketId: string;
+  objectPath: string;
+  contentType: string;
+  maxBytes: number;
+  expiresAt?: string;
+  uploaded: boolean;
+}
+
 export interface IssueTransaction {
   requestId: string;
   actorId?: string;
   token?: string;
   photoIntentId: string | null;
   idIntentId: string | null;
+  photoCheckpoint?: UploadCheckpoint | null;
+  idCheckpoint?: UploadCheckpoint | null;
   phase: IssueTransactionPhase;
   submittedPayload?: {
     visitor: VisitorRegistration;
   } | null;
+}
+
+export function createIssueTransaction(_source: 'kiosk' | 'portal' = 'kiosk'): IssueTransaction {
+  return {
+    requestId: crypto.randomUUID(),
+    photoIntentId: null,
+    idIntentId: null,
+    photoCheckpoint: null,
+    idCheckpoint: null,
+    phase: 'editable',
+  };
 }
 
 export type PortalIssueTransaction = IssueTransaction;
@@ -194,27 +238,121 @@ async function authenticatedClient(
   return { client, token: session.access_token };
 }
 
-async function uploadEvidence(
+export async function uploadCheckpointedEvidence(
   client: SupabaseClient,
   source: RegistrationSource,
   kind: 'photo' | 'id',
   blob: Blob,
-): Promise<string> {
-  const contentType = blob.type || 'image/jpeg';
-  const { data, error } = await client.schema('api').rpc('create_upload_intent', {
-    requested_source: source,
-    requested_kind: kind,
-    requested_content_type: contentType,
-  }).single<UploadIntent>();
-  if (error || !data) throw new Error('Image upload could not be authorized.');
-  if (blob.size < 1 || blob.size > data.max_bytes) throw new Error('Image exceeds the 5 MB upload limit.');
+  transaction?: IssueTransaction | null,
+): Promise<{ intentId: string; checkpoint: UploadCheckpoint }> {
+  const existingCheckpoint =
+    kind === 'photo' ? transaction?.photoCheckpoint : transaction?.idCheckpoint;
 
-  const uploaded = await client.storage.from(data.bucket_id).upload(data.object_path, blob, {
-    contentType,
-    upsert: false,
-  });
-  if (uploaded.error) throw new Error('Image upload failed. Please try again.');
-  return data.intent_id;
+  let checkpoint: UploadCheckpoint;
+
+  if (
+    existingCheckpoint &&
+    (!existingCheckpoint.expiresAt || new Date(existingCheckpoint.expiresAt).getTime() > Date.now())
+  ) {
+    checkpoint = { ...existingCheckpoint };
+  } else {
+    const contentType = blob.type || 'image/jpeg';
+    const rpcCall = client
+      .schema('api')
+      .rpc('create_upload_intent', {
+        requested_source: source,
+        requested_kind: kind,
+        requested_content_type: contentType,
+      });
+    const boundedRpc = typeof (rpcCall as any).abortSignal === 'function'
+      ? (rpcCall as any).abortSignal(createBoundedAbortSignal(10000))
+      : rpcCall;
+
+    const { data, error } = (await boundedRpc.single()) as { data: UploadIntent | null; error: any };
+
+    if (error || !data) {
+      throw new Error('Image upload could not be authorized.');
+    }
+    if (blob.size < 1 || blob.size > data.max_bytes) {
+      throw new Error('Image exceeds the 5 MB upload limit.');
+    }
+
+    checkpoint = {
+      intentId: data.intent_id,
+      bucketId: data.bucket_id,
+      objectPath: data.object_path,
+      contentType,
+      maxBytes: data.max_bytes,
+      uploaded: false,
+    };
+
+    // Store intent descriptor in transaction immediately after authorization succeeds (Section 8)
+    if (transaction) {
+      if (kind === 'photo') {
+        transaction.photoCheckpoint = checkpoint;
+        transaction.photoIntentId = checkpoint.intentId;
+      } else {
+        transaction.idCheckpoint = checkpoint;
+        transaction.idIntentId = checkpoint.intentId;
+      }
+    }
+  }
+
+  // Upload to Storage with 15s deadline if not already marked uploaded
+  if (!checkpoint.uploaded) {
+    try {
+      const data = { bucket_id: checkpoint.bucketId, object_path: checkpoint.objectPath };
+      const uploadRes = await withTimeout(
+        client.storage.from(data.bucket_id).upload(data.object_path, blob, {
+          contentType: checkpoint.contentType,
+          upsert: false,
+        }),
+        15000,
+        'Image upload timed out after 15s'
+      );
+
+      if (uploadRes.error) {
+        const errMsg = uploadRes.error.message?.toLowerCase() || '';
+        const statusCode = (uploadRes.error as any).statusCode || (uploadRes.error as any).status;
+        if (
+          statusCode === 409 ||
+          errMsg.includes('already exists') ||
+          errMsg.includes('duplicate') ||
+          errMsg.includes('resourcealreadyexists')
+        ) {
+          checkpoint.uploaded = true;
+        } else {
+          throw new Error('Image upload failed. Please try again.');
+        }
+      } else {
+        checkpoint.uploaded = true;
+      }
+    } catch (err: any) {
+      const errMsg = err?.message?.toLowerCase() || '';
+      if (
+        errMsg.includes('already exists') ||
+        errMsg.includes('resourcealreadyexists') ||
+        errMsg.includes('409')
+      ) {
+        checkpoint.uploaded = true;
+      } else {
+        throw err;
+      }
+    }
+
+    // Persist updated uploaded state in transaction
+    if (transaction) {
+      if (kind === 'photo') {
+        transaction.photoCheckpoint = checkpoint;
+        transaction.photoIntentId = checkpoint.intentId;
+      } else {
+        transaction.idCheckpoint = checkpoint;
+        transaction.idIntentId = checkpoint.intentId;
+      }
+    }
+  }
+
+  return { intentId: checkpoint.intentId, checkpoint };
 }
 
 export async function issueVisitorPass(
@@ -230,27 +368,23 @@ export async function issueVisitorPass(
 
   const effectiveRequestId = transaction?.requestId ? transaction.requestId : requestId;
 
-  // Upload photo intent if not already created
+  // Upload photo intent with retry-safe checkpointing (Section 8)
   let photoIntentId: string;
-  if (transaction?.photoIntentId) {
+  if (transaction?.photoCheckpoint?.uploaded && transaction?.photoIntentId) {
     photoIntentId = transaction.photoIntentId;
   } else {
-    photoIntentId = await uploadEvidence(client, source, 'photo', photo);
-    if (transaction) {
-      transaction.photoIntentId = photoIntentId;
-    }
+    const photoRes = await uploadCheckpointedEvidence(client, source, 'photo', photo, transaction);
+    photoIntentId = photoRes.intentId;
   }
 
-  // Upload id intent if not already created
+  // Upload id intent with retry-safe checkpointing if provided (Section 8)
   let idIntentId: string | null = null;
   if (identification) {
-    if (transaction?.idIntentId) {
+    if (transaction?.idCheckpoint?.uploaded && transaction?.idIntentId) {
       idIntentId = transaction.idIntentId;
     } else {
-      idIntentId = await uploadEvidence(client, source, 'id', identification);
-      if (transaction) {
-        transaction.idIntentId = idIntentId;
-      }
+      const idRes = await uploadCheckpointedEvidence(client, source, 'id', identification, transaction);
+      idIntentId = idRes.intentId;
     }
   }
 
@@ -312,6 +446,11 @@ export async function issueVisitorPass(
 
     if (outcome === 'rejected_requires_new_transaction') {
       if (transaction) {
+        transaction.requestId = crypto.randomUUID();
+        transaction.photoIntentId = null;
+        transaction.idIntentId = null;
+        transaction.photoCheckpoint = null;
+        transaction.idCheckpoint = null;
         transaction.phase = 'editable';
         transaction.submittedPayload = null;
       }
@@ -322,7 +461,7 @@ export async function issueVisitorPass(
       );
     }
 
-    // Ambiguous outcomes (generic 500/503, service_unavailable, intent_mismatch, payload_mismatch, etc.):
+    // Ambiguous outcomes (generic 500/503, service_unavailable, etc.):
     // Preserve actor, requestId, submittedPayload, photoIntentId, idIntentId for exact replay
     if (transaction) {
       transaction.phase = 'ambiguous';

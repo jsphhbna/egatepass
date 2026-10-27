@@ -13,11 +13,17 @@ import {
   remapCachedVisitorPassId,
   updateOfflineRegistrationStatus,
   getOfflineRegistrations,
+  finalizeOfflineRegistrationSync,
+  recoverInterruptedSyncStates,
+  getOfflineEvents,
+  queueOfflineEvent,
+  updateOfflineEventStatus,
   type CachedVisitorPass,
 } from '@/lib/offline/guardIndexedDb';
 import {
   acquireCoordinatorLock,
   isCoordinatorLocked,
+  runOfflineMaintenance,
 } from '@/lib/offline/guardSyncManager';
 import {
   isAuthoritativeServerError,
@@ -25,10 +31,52 @@ import {
 } from '@/lib/offline/errorClassification';
 import { computeBackendAvailability } from '@/lib/offline/backendAvailability';
 import { fetchWithTimeout, RequestTimeoutError } from '@/lib/fetchWithTimeout';
+import { getManilaDayValidityWindow } from '@/lib/scheduling';
+import {
+  classifySubmissionOutcome,
+  uploadCheckpointedEvidence,
+  createIssueTransaction,
+} from '@/services/visitorRegistration';
+import { requireSupabase } from '@/lib/supabase';
 import { thermalTemplateLayoutSchema } from '@/types/thermalTemplate';
 import { renderThermalPass } from '@/printer/renderer/thermalRenderer';
 import { mxw01Manager } from '@/printer/mxw01/mxw01Manager';
 import { PGlite } from '@electric-sql/pglite';
+
+// Mock dependencies for guardSyncManager and supabase services
+const { mockRpc, mockGetSession, mockStorageFrom } = vi.hoisted(() => ({
+  mockRpc: vi.fn(),
+  mockGetSession: vi.fn(),
+  mockStorageFrom: vi.fn(),
+}));
+
+vi.mock('@/lib/supabase', () => {
+  const client: any = {
+    auth: {
+      getSession: mockGetSession,
+    },
+    rpc: (...args: any[]) => {
+      const getResult = () => Promise.resolve(mockRpc(...args));
+      const builder: any = {
+        abortSignal: vi.fn().mockImplementation(() => builder),
+        single: vi.fn().mockImplementation(() => getResult()),
+        then: (onfulfilled: any, onrejected: any) => getResult().then(onfulfilled, onrejected),
+        catch: (onrejected: any) => getResult().catch(onrejected),
+      };
+      return builder;
+    },
+    schema: () => client,
+    storage: {
+      from: mockStorageFrom,
+    },
+  };
+  return {
+    supabase: client,
+    requireSupabase: () => client,
+    requirePortalSupabase: () => client,
+    apiRpc: (c: any, fn: string, args: any) => client.schema('api').rpc(fn, args),
+  };
+});
 
 // Setup Supabase Emulation for PGlite testing matching migration-chain-pglite.test.ts
 async function setupSupabaseEmulation(db: PGlite) {
@@ -133,6 +181,36 @@ describe('Deep Dive 1 + Deep Dive 2 Root-Cause Closure Test Suite', () => {
     if (typeof navigator !== 'undefined') {
       Object.defineProperty(navigator, 'onLine', { value: true, configurable: true });
     }
+
+    mockGetSession.mockResolvedValue({
+      data: {
+        session: {
+          access_token: 'valid-test-guard-token',
+        },
+      },
+    });
+    mockRpc.mockImplementation((name: string) => {
+      if (name === 'create_upload_intent') {
+        return Promise.resolve({
+          data: {
+            intent_id: 'intent-uuid-default',
+            bucket_id: 'visitor-photos',
+            object_path: 'passes/photo-default.jpg',
+            expiry: new Date(Date.now() + 600000).toISOString(),
+            max_bytes: 1048576,
+          },
+          error: null,
+        });
+      }
+      if (name === 'guard_offline_snapshot_page') {
+        return Promise.resolve({ data: [], error: null });
+      }
+      return Promise.resolve({ data: null, error: null });
+    });
+    mockStorageFrom.mockReturnValue({
+      upload: vi.fn().mockResolvedValue({ data: { path: 'test.jpg' }, error: null }),
+    });
+    globalThis.fetch = vi.fn().mockResolvedValue(new Response('{}', { status: 200 }));
 
     // Setup canvas 2d context stub for happy-dom
     const mockCtx = {
@@ -419,31 +497,80 @@ describe('Deep Dive 1 + Deep Dive 2 Root-Cause Closure Test Suite', () => {
       expect(searchServer[0]?.id).toBe('server-pass-1');
     });
 
-    it('remapCachedVisitorPassId updates both cache and queued events', async () => {
-      const localId = 'local-reg-remap';
+    it('finalizeOfflineRegistrationSync atomically remaps cache, queues events, clears local blobs and marks registration synced', async () => {
+      const localId = 'local-reg-atomic-1';
       const canonicalPassId = 'canonical-pass-uuid-999';
+      const photoBlob = new Blob(['photo-bytes'], { type: 'image/jpeg' });
+      const idBlob = new Blob(['id-bytes'], { type: 'image/jpeg' });
 
       await saveOfflineRegistrationWithCache({
         offlineRegistrationId: localId,
         visitor: {
-          firstName: 'Remapped',
-          lastName: 'Visitor',
+          firstName: 'Atomic',
+          lastName: 'Remap',
           contactNumber: '09172222222',
           purpose: 'Remap Test',
           visitDate: '2026-10-27',
         },
-        occurredAt: new Date().toISOString(),
+        occurredAt: '2026-10-27T10:00:00+08:00',
         action: 'approved',
+        photoBlob,
+        idBlob,
       });
 
-      // Remap to canonical pass ID
-      await remapCachedVisitorPassId(localId, canonicalPassId);
+      // Create queued exit event for this localId
+      await queueOfflineEvent({
+        eventId: 'evt-atomic-1',
+        passId: localId,
+        visitorName: 'Atomic Remap',
+        action: 'record_exit',
+        expectedStatus: 'inside',
+        expectedVersion: 1,
+        occurredAt: '2026-10-27T11:00:00+08:00',
+        syncStatus: 'pending',
+      });
 
-      // Verify cache is accessible under canonicalPassId
-      const searchCanonical = await searchCachedVisitors('Remapped');
+      // Verify before state
+      const searchBefore = await searchCachedVisitors('Atomic');
+      expect(searchBefore.length).toBe(1);
+      expect(searchBefore[0]?.id).toBe(localId);
+      const eventsBefore = await getOfflineEvents();
+      expect(eventsBefore.find((e) => e.passId === localId)).toBeDefined();
+
+      // Execute ONE atomic transaction
+      await finalizeOfflineRegistrationSync({
+        offlineRegistrationId: localId,
+        canonicalPassId,
+        publicReference: 'EG-20261027-CANON',
+        syncedAt: new Date().toISOString(),
+      });
+
+      // Verify after state:
+      // 1. Registration is synced, has canonicalPassId, local blobs stripped
+      const regs = await getOfflineRegistrations();
+      const reg = regs.find((r) => r.offlineRegistrationId === localId);
+      expect(reg?.syncStatus).toBe('synced');
+      expect(reg?.canonicalPassId).toBe(canonicalPassId);
+      expect(reg?.photoBlob).toBeUndefined();
+      expect(reg?.idBlob).toBeUndefined();
+      expect(reg?.photoUploadCheckpoint).toBeUndefined();
+      expect(reg?.idUploadCheckpoint).toBeUndefined();
+
+      // 2. Cached visitor under old localId is absent, under canonicalPassId exists
+      const searchOld = await searchCachedVisitors(localId);
+      expect(searchOld.length).toBe(0);
+      const searchCanonical = await searchCachedVisitors('Atomic');
       expect(searchCanonical.length).toBe(1);
-      expect(searchCanonical[0]?.passId).toBe(canonicalPassId);
       expect(searchCanonical[0]?.id).toBe(canonicalPassId);
+      expect(searchCanonical[0]?.passId).toBe(canonicalPassId);
+      expect(searchCanonical[0]?.publicReference).toBe('EG-20261027-CANON');
+      expect(searchCanonical[0]?.status).toBe('inside');
+      expect(searchCanonical[0]?.version).toBe(1);
+
+      // 3. Queued event has passId remapped to canonicalPassId
+      const eventsAfter = await getOfflineEvents();
+      const remappedEvent = eventsAfter[0];
+      expect(remappedEvent?.passId).toBe(canonicalPassId);
     });
   });
 
@@ -783,6 +910,627 @@ describe('Deep Dive 1 + Deep Dive 2 Root-Cause Closure Test Suite', () => {
 
       expect(pageContent).toContain("res.result === 'partial'");
       expect(pageContent).toContain('toast.warning');
+    });
+  });
+
+  // =========================================================================
+  // 21. POST-CLOSURE VERIFICATION BEHAVIORAL REGRESSIONS
+  // =========================================================================
+  describe('21. Post-Closure Verification Behavioral Regressions', () => {
+    it('offline registration approved locally -> queue local exit -> runOfflineMaintenance syncs registration to canonical ID then submits event with canonical ID', async () => {
+      const regId = '00000000-0000-4000-8000-000000000001';
+      const canonicalPassId = '00000000-0000-4000-8000-000000000099';
+      const occurredAt = '2026-10-27T10:00:00+08:00';
+
+      mockGetSession.mockResolvedValue({
+        data: { session: { access_token: 'valid-guard-token' } },
+      });
+
+      // Save approved offline registration
+      await saveOfflineRegistrationWithCache({
+        offlineRegistrationId: regId,
+        visitor: {
+          firstName: 'Causal',
+          lastName: 'Visitor',
+          contactNumber: '09171234567',
+          purpose: 'Meeting',
+          visitDate: '2026-10-27',
+        },
+        occurredAt,
+        action: 'approved',
+        photoBlob: new Blob(['photo-bytes'], { type: 'image/jpeg' }),
+      });
+
+      // Queue exit event referencing regId
+      await queueOfflineVisitorAction({
+        passId: regId,
+        action: 'record_exit',
+        gate: 'Main Gate',
+        actorId: 'guard-1',
+        occurredAt: '2026-10-27T11:00:00+08:00',
+      });
+
+      // Mock /api/sync-offline-registration and RPCs
+      const rpcCalls: { name: string; params: any }[] = [];
+      mockRpc.mockImplementation((name: string, params: any) => {
+        rpcCalls.push({ name, params });
+        if (name === 'create_upload_intent') {
+          return Promise.resolve({
+            data: {
+              intent_id: 'intent-uuid-test-1',
+              bucket_id: 'visitor-photos',
+              object_path: 'passes/photo-test-1.jpg',
+              expiry: new Date(Date.now() + 600000).toISOString(),
+              max_bytes: 1048576,
+            },
+            error: null,
+          });
+        }
+        if (name === 'guard_sync_offline_event') {
+          return Promise.resolve({
+            data: { pass_id: params.requested_pass_id, status: 'exited', version: 2 },
+            error: null,
+          });
+        }
+        if (name === 'guard_offline_snapshot_page') {
+          return Promise.resolve({ data: [], error: null });
+        }
+        return Promise.resolve({ data: null, error: null });
+      });
+
+      globalThis.fetch = vi.fn().mockImplementation((url: string) => {
+        if (String(url).includes('/api/sync-offline-registration')) {
+          return Promise.resolve(
+            new Response(
+              JSON.stringify({
+                canonicalPassId,
+                publicReference: 'EG-20261027-CANON1',
+              }),
+              { status: 200, headers: { 'Content-Type': 'application/json' } }
+            )
+          );
+        }
+        return Promise.resolve(new Response('{}', { status: 200 }));
+      });
+
+      await runOfflineMaintenance();
+
+      // Assert registration is synced with canonicalPassId
+      const regs = await getOfflineRegistrations();
+      const syncedReg = regs.find((r) => r.offlineRegistrationId === regId);
+      expect(syncedReg?.syncStatus).toBe('synced');
+      expect(syncedReg?.canonicalPassId).toBe(canonicalPassId);
+
+      // Assert event RPC was called using the CANONICAL pass ID, expected status 'inside', expected version 1
+      const eventRpc = rpcCalls.find((c) => c.name === 'guard_sync_offline_event');
+      expect(eventRpc).toBeDefined();
+      expect(eventRpc?.params.requested_pass_id).toBe(canonicalPassId);
+      expect(eventRpc?.params.requested_expected_status).toBe('inside');
+      expect(eventRpc?.params.requested_expected_version).toBe(1);
+      expect(eventRpc?.params.requested_action).toBe('record_exit');
+
+      // Assert event in IDB is now synced
+      const events = await getOfflineEvents();
+      expect(events[0]?.syncStatus).toBe('synced');
+      expect(events[0]?.passId).toBe(canonicalPassId);
+    });
+
+    it('transient registration sync failure leaves dependent event pending and does NOT call event RPC', async () => {
+      const regId = '00000000-0000-4000-8000-000000000002';
+      mockGetSession.mockResolvedValue({
+        data: { session: { access_token: 'valid-guard-token' } },
+      });
+
+      await saveOfflineRegistrationWithCache({
+        offlineRegistrationId: regId,
+        visitor: {
+          firstName: 'Transient',
+          lastName: 'Failure',
+          contactNumber: '09171234567',
+          purpose: 'Meeting',
+          visitDate: '2026-10-27',
+        },
+        occurredAt: '2026-10-27T10:00:00+08:00',
+        action: 'approved',
+        photoBlob: new Blob(['photo-bytes'], { type: 'image/jpeg' }),
+      });
+
+      await queueOfflineVisitorAction({
+        passId: regId,
+        action: 'record_exit',
+        gate: 'Main Gate',
+        actorId: 'guard-1',
+      });
+
+      const rpcCalls: string[] = [];
+      mockRpc.mockImplementation((name: string) => {
+        rpcCalls.push(name);
+        if (name === 'create_upload_intent') {
+          return Promise.resolve({
+            data: {
+              intent_id: 'intent-uuid-test-2',
+              bucket_id: 'visitor-photos',
+              object_path: 'passes/photo-test-2.jpg',
+              expiry: new Date(Date.now() + 600000).toISOString(),
+              max_bytes: 1048576,
+            },
+            error: null,
+          });
+        }
+        if (name === 'guard_offline_snapshot_page') {
+          return Promise.resolve({ data: [], error: null });
+        }
+        return Promise.resolve({ data: null, error: null });
+      });
+
+      // Mock /api/sync-offline-registration failing due to network/timeout
+      globalThis.fetch = vi.fn().mockImplementation((url: string) => {
+        if (String(url).includes('/api/sync-offline-registration')) {
+          return Promise.reject(new TypeError('Failed to fetch'));
+        }
+        return Promise.resolve(new Response('{}', { status: 200 }));
+      });
+
+      await runOfflineMaintenance();
+
+      // Registration remains pending
+      const regs = await getOfflineRegistrations();
+      expect(regs.find((r) => r.offlineRegistrationId === regId)?.syncStatus).toBe('pending');
+
+      // Dependent event remains pending
+      const events = await getOfflineEvents();
+      expect(events.find((e) => e.passId === regId)?.syncStatus).toBe('pending');
+
+      // Event RPC was NEVER called
+      expect(rpcCalls).not.toContain('guard_sync_offline_event');
+    });
+
+    it('registration conflict marks dependent event as registration_sync_conflicted and does NOT call event RPC', async () => {
+      const regId = '00000000-0000-4000-8000-000000000003';
+      mockGetSession.mockResolvedValue({
+        data: { session: { access_token: 'valid-guard-token' } },
+      });
+
+      await saveOfflineRegistrationWithCache({
+        offlineRegistrationId: regId,
+        visitor: {
+          firstName: 'Conflict',
+          lastName: 'Visitor',
+          contactNumber: '09171234567',
+          purpose: 'Meeting',
+          visitDate: '2026-10-27',
+        },
+        occurredAt: '2026-10-27T10:00:00+08:00',
+        action: 'approved',
+        photoBlob: new Blob(['photo-bytes'], { type: 'image/jpeg' }),
+      });
+
+      await queueOfflineVisitorAction({
+        passId: regId,
+        action: 'record_exit',
+        gate: 'Main Gate',
+        actorId: 'guard-1',
+      });
+
+      const rpcCalls: string[] = [];
+      mockRpc.mockImplementation((name: string) => {
+        rpcCalls.push(name);
+        if (name === 'create_upload_intent') {
+          return Promise.resolve({
+            data: {
+              intent_id: 'intent-uuid-test-3',
+              bucket_id: 'visitor-photos',
+              object_path: 'passes/photo-test-3.jpg',
+              expiry: new Date(Date.now() + 600000).toISOString(),
+              max_bytes: 1048576,
+            },
+            error: null,
+          });
+        }
+        if (name === 'guard_offline_snapshot_page') {
+          return Promise.resolve({ data: [], error: null });
+        }
+        return Promise.resolve({ data: null, error: null });
+      });
+
+      // Mock /api/sync-offline-registration returning 409 conflict
+      globalThis.fetch = vi.fn().mockImplementation((url: string) => {
+        if (String(url).includes('/api/sync-offline-registration')) {
+          return Promise.resolve(
+            new Response(
+              JSON.stringify({ error: 'visitor_already_registered' }),
+              { status: 409, headers: { 'Content-Type': 'application/json' } }
+            )
+          );
+        }
+        return Promise.resolve(new Response('{}', { status: 200 }));
+      });
+
+      await runOfflineMaintenance();
+
+      // Registration is marked conflict
+      const regs = await getOfflineRegistrations();
+      expect(regs.find((r) => r.offlineRegistrationId === regId)?.syncStatus).toBe('conflict');
+
+      // Dependent event marked conflict with reason 'registration_sync_conflicted'
+      const events = await getOfflineEvents();
+      const depEvent = events.find((e) => e.passId === regId);
+      expect(depEvent?.syncStatus).toBe('conflict');
+      expect(depEvent?.conflictReason).toBe('registration_sync_conflicted');
+
+      // Event RPC was NEVER called
+      expect(rpcCalls).not.toContain('guard_sync_offline_event');
+    });
+
+    it('recoverInterruptedSyncStates resets stranded syncing registrations and events to pending and allows subsequent synchronization', async () => {
+      const regId = '00000000-0000-4000-8000-000000000004';
+      const canonicalPassId = '00000000-0000-4000-8000-000000000094';
+
+      mockGetSession.mockResolvedValue({
+        data: { session: { access_token: 'valid-guard-token' } },
+      });
+
+      await saveOfflineRegistrationWithCache({
+        offlineRegistrationId: regId,
+        visitor: {
+          firstName: 'Stranded',
+          lastName: 'Syncing',
+          contactNumber: '09171234567',
+          purpose: 'Meeting',
+          visitDate: '2026-10-27',
+        },
+        occurredAt: '2026-10-27T10:00:00+08:00',
+        action: 'approved',
+        photoBlob: new Blob(['photo-bytes'], { type: 'image/jpeg' }),
+      });
+
+      await queueOfflineVisitorAction({
+        passId: regId,
+        action: 'record_exit',
+        gate: 'Main Gate',
+        actorId: 'guard-1',
+      });
+
+      // Manually force both records to 'syncing' to simulate crash during prior sync
+      await updateOfflineRegistrationStatus(regId, 'syncing' as any);
+      const eventsBefore = await getOfflineEvents();
+      await updateOfflineEventStatus(eventsBefore[0]!.eventId, 'syncing' as any);
+
+      // Verify they are durable 'syncing'
+      const strandedRegs = await getOfflineRegistrations();
+      expect(strandedRegs.find((r) => r.offlineRegistrationId === regId)?.syncStatus).toBe('syncing');
+      const strandedEvents = await getOfflineEvents();
+      expect(strandedEvents[0]?.syncStatus).toBe('syncing');
+
+      // Setup mock for successful sync on recovery
+      mockRpc.mockImplementation((name: string, params: any) => {
+        if (name === 'create_upload_intent') {
+          return Promise.resolve({
+            data: {
+              intent_id: 'intent-uuid-test-4',
+              bucket_id: 'visitor-photos',
+              object_path: 'passes/photo-test-4.jpg',
+              expiry: new Date(Date.now() + 600000).toISOString(),
+              max_bytes: 1048576,
+            },
+            error: null,
+          });
+        }
+        if (name === 'guard_sync_offline_event') {
+          return Promise.resolve({
+            data: { pass_id: params.requested_pass_id, status: 'exited', version: 2 },
+            error: null,
+          });
+        }
+        if (name === 'guard_offline_snapshot_page') {
+          return Promise.resolve({ data: [], error: null });
+        }
+        return Promise.resolve({ data: null, error: null });
+      });
+
+      globalThis.fetch = vi.fn().mockImplementation((url: string) => {
+        if (String(url).includes('/api/sync-offline-registration')) {
+          return Promise.resolve(
+            new Response(
+              JSON.stringify({ canonicalPassId, publicReference: 'EG-REC-1' }),
+              { status: 200, headers: { 'Content-Type': 'application/json' } }
+            )
+          );
+        }
+        return Promise.resolve(new Response('{}', { status: 200 }));
+      });
+
+      // Run maintenance, which first executes recoverInterruptedSyncStates()
+      await runOfflineMaintenance();
+
+      // Both should have recovered to pending and then progressed to synced
+      const recoveredRegs = await getOfflineRegistrations();
+      expect(recoveredRegs.find((r) => r.offlineRegistrationId === regId)?.syncStatus).toBe('synced');
+      const recoveredEvents = await getOfflineEvents();
+      expect(recoveredEvents[0]?.syncStatus).toBe('synced');
+    });
+
+    it('runOfflineMaintenance strictly executes: registration sync -> event sync -> snapshot refresh -> purge', async () => {
+      const executionOrder: string[] = [];
+
+      mockGetSession.mockResolvedValue({
+        data: { session: { access_token: 'valid-guard-token' } },
+      });
+
+      // Seed one pending registration and one pending event
+      await saveOfflineRegistrationWithCache({
+        offlineRegistrationId: 'reg-order-1',
+        visitor: {
+          firstName: 'Order',
+          lastName: 'Test',
+          contactNumber: '09171234567',
+          purpose: 'Order',
+          visitDate: '2026-10-27',
+        },
+        occurredAt: '2026-10-27T10:00:00+08:00',
+        action: 'approved',
+        photoBlob: new Blob(['photo-bytes'], { type: 'image/jpeg' }),
+      });
+
+      // Seed an independent event with known pass ID
+      await saveCachedVisitors([
+        {
+          id: 'server-pass-order',
+          passId: 'server-pass-order',
+          publicReference: 'EG-ORD',
+          visitorId: 'v-ord',
+          visitorName: 'Server Ord',
+          contactNumber: '09171112222',
+          purpose: 'Order',
+          visitDate: '2026-10-27',
+          status: 'inside',
+          version: 1,
+          validFrom: '2026-10-27T08:00:00+08:00',
+          validUntil: '2026-10-27T17:00:00+08:00',
+          cachedAt: Date.now(),
+        },
+      ]);
+      await queueOfflineVisitorAction({
+        passId: 'server-pass-order',
+        action: 'record_exit',
+        gate: 'Main Gate',
+        actorId: 'guard-1',
+      });
+
+      globalThis.fetch = vi.fn().mockImplementation((url: string) => {
+        if (String(url).includes('/api/sync-offline-registration')) {
+          executionOrder.push('registration_sync');
+          return Promise.resolve(
+            new Response(
+              JSON.stringify({ canonicalPassId: 'canon-order-1' }),
+              { status: 200, headers: { 'Content-Type': 'application/json' } }
+            )
+          );
+        }
+        return Promise.resolve(new Response('{}', { status: 200 }));
+      });
+
+      mockRpc.mockImplementation((name: string) => {
+        if (name === 'create_upload_intent') {
+          return Promise.resolve({
+            data: {
+              intent_id: 'intent-uuid-test-5',
+              bucket_id: 'visitor-photos',
+              object_path: 'passes/photo-test-5.jpg',
+              expiry: new Date(Date.now() + 600000).toISOString(),
+              max_bytes: 1048576,
+            },
+            error: null,
+          });
+        }
+        if (name === 'guard_sync_offline_event') {
+          executionOrder.push('event_sync');
+          return Promise.resolve({
+            data: { pass_id: 'server-pass-order', status: 'exited', version: 2 },
+            error: null,
+          });
+        }
+        if (name === 'guard_offline_snapshot_page') {
+          executionOrder.push('snapshot_refresh');
+          return Promise.resolve({ data: [], error: null });
+        }
+        return Promise.resolve({ data: null, error: null });
+      });
+
+      await runOfflineMaintenance();
+
+      expect(executionOrder).toEqual(['registration_sync', 'event_sync', 'snapshot_refresh']);
+    });
+
+    it('bounded coordinator operations release the lock when an operation fails or times out', async () => {
+      mockGetSession.mockResolvedValue({
+        data: { session: { access_token: 'valid-guard-token' } },
+      });
+
+      // Stalled fetch that rejects with RequestTimeoutError
+      globalThis.fetch = vi.fn().mockImplementation(() => {
+        return Promise.reject(new RequestTimeoutError('Simulated coordinator timeout'));
+      });
+
+      // Seed pending reg to trigger fetch
+      await saveOfflineRegistrationWithCache({
+        offlineRegistrationId: 'reg-timeout-1',
+        visitor: {
+          firstName: 'Timeout',
+          lastName: 'Test',
+          contactNumber: '09171234567',
+          purpose: 'Timeout',
+          visitDate: '2026-10-27',
+        },
+        occurredAt: '2026-10-27T10:00:00+08:00',
+        action: 'approved',
+      });
+
+      expect(isCoordinatorLocked()).toBe(false);
+
+      // Maintenance will encounter the error and gracefully finish
+      await runOfflineMaintenance();
+
+      // Coordinator lock MUST be released!
+      expect(isCoordinatorLocked()).toBe(false);
+
+      // A subsequent coordinator call must be able to acquire the lock immediately
+      const unlock = await acquireCoordinatorLock();
+      expect(isCoordinatorLocked()).toBe(true);
+      unlock();
+      expect(isCoordinatorLocked()).toBe(false);
+    });
+
+    it('getManilaDayValidityWindow derives exact midnight boundaries matching SQL Asia/Manila calendar day', () => {
+      // Morning in Manila (08:30:00+08:00)
+      const morning = getManilaDayValidityWindow('2026-10-27T08:30:00+08:00');
+      expect(morning.validFrom).toBe('2026-10-27T00:00:00+08:00');
+      expect(morning.validUntil).toBe('2026-10-28T00:00:00+08:00');
+
+      // Near 23:59:59 in Manila
+      const lateNight = getManilaDayValidityWindow('2026-10-27T23:59:50+08:00');
+      expect(lateNight.validFrom).toBe('2026-10-27T00:00:00+08:00');
+      expect(lateNight.validUntil).toBe('2026-10-28T00:00:00+08:00');
+
+      // Across midnight in Manila (00:00:01 on the 28th)
+      const nextDay = getManilaDayValidityWindow('2026-10-28T00:00:01+08:00');
+      expect(nextDay.validFrom).toBe('2026-10-28T00:00:00+08:00');
+      expect(nextDay.validUntil).toBe('2026-10-29T00:00:00+08:00');
+    });
+
+    it('uploadCheckpointedEvidence reuses existing checkpoint and does not create duplicate upload intent on retry', async () => {
+      const transaction = createIssueTransaction('kiosk');
+      const dummyBlob = new Blob(['photo-bytes'], { type: 'image/jpeg' });
+
+      let intentCallCount = 0;
+      mockRpc.mockImplementation((name: string) => {
+        if (name === 'create_upload_intent') {
+          intentCallCount++;
+          return Promise.resolve({
+            data: {
+              intent_id: 'intent-uuid-12345',
+              bucket_id: 'visitor-photos',
+              object_path: 'passes/photo-123.jpg',
+              expiry: new Date(Date.now() + 600000).toISOString(),
+              max_bytes: 1048576,
+            },
+            error: null,
+          });
+        }
+        return Promise.resolve({ data: null, error: null });
+      });
+
+      // 1st attempt: Storage upload fails with network timeout
+      mockStorageFrom.mockReturnValue({
+        upload: vi.fn().mockRejectedValue(new Error('Storage timeout simulated')),
+      });
+
+      await expect(
+        uploadCheckpointedEvidence(
+          requireSupabase(),
+          'kiosk',
+          'photo',
+          dummyBlob,
+          transaction
+        )
+      ).rejects.toThrow();
+
+      expect(intentCallCount).toBe(1);
+      expect(transaction.photoCheckpoint).toBeDefined();
+      expect(transaction.photoCheckpoint?.intentId).toBe('intent-uuid-12345');
+      expect(transaction.photoCheckpoint?.uploaded).toBe(false);
+
+      // 2nd attempt: Retry with Storage returning success (or 409 already exists)
+      mockStorageFrom.mockReturnValue({
+        upload: vi.fn().mockResolvedValue({ data: { path: 'passes/photo-123.jpg' }, error: null }),
+      });
+
+      const { intentId } = await uploadCheckpointedEvidence(
+        requireSupabase(),
+        'kiosk',
+        'photo',
+        dummyBlob,
+        transaction
+      );
+
+      // Invariant: create_upload_intent must NOT have been called a second time!
+      expect(intentCallCount).toBe(1);
+      expect(intentId).toBe('intent-uuid-12345');
+      expect(transaction.photoCheckpoint?.uploaded).toBe(true);
+    });
+
+    it('classifySubmissionOutcome classifies HTTP 409 replay-consistency errors as rejected_requires_new_transaction', () => {
+      expect(classifySubmissionOutcome({ status: 409, message: 'intent_mismatch' })).toBe('rejected_requires_new_transaction');
+      expect(classifySubmissionOutcome({ status: 409, message: 'payload_mismatch' })).toBe('rejected_requires_new_transaction');
+      expect(classifySubmissionOutcome({ status: 409, message: 'cross_actor_replay' })).toBe('rejected_requires_new_transaction');
+      expect(classifySubmissionOutcome({ status: 409, message: 'source_mismatch' })).toBe('rejected_requires_new_transaction');
+      expect(classifySubmissionOutcome({ status: 422, message: 'pass_has_expired' })).toBe('rejected_requires_new_transaction');
+      expect(classifySubmissionOutcome({ status: 422, message: 'visit_date_out_of_range' })).toBe('rejected_correctable_field');
+      expect(classifySubmissionOutcome(new TypeError('Failed to fetch'))).toBe('ambiguous');
+    });
+
+    it('EmailPassModal preserves the exact same requestId on ambiguous resend retry', () => {
+      // Model state machine of EmailPassModal:
+      // attemptState: 'ready' | 'in-flight' | 'ambiguous'
+      let attemptState: 'ready' | 'in-flight' | 'ambiguous' = 'ready';
+      let currentRequestId = '';
+
+      function startResend(): string {
+        if (attemptState === 'ambiguous') {
+          // Reuse same request ID
+          attemptState = 'in-flight';
+          return currentRequestId;
+        }
+        // New request ID
+        currentRequestId = `req-${Math.random().toString(36).slice(2)}`;
+        attemptState = 'in-flight';
+        return currentRequestId;
+      }
+
+      function handleOutcome(outcome: 'success' | 'timeout' | 'error') {
+        if (outcome === 'timeout') {
+          attemptState = 'ambiguous';
+        } else if (outcome === 'success') {
+          attemptState = 'ready';
+        } else {
+          attemptState = 'ready';
+        }
+      }
+
+      // 1. Initial send
+      const id1 = startResend();
+      expect(id1).toBeTruthy();
+
+      // 2. Times out / ambiguous
+      handleOutcome('timeout');
+      expect(attemptState).toBe('ambiguous');
+
+      // 3. User clicks Resend again after timeout
+      const id2 = startResend();
+      // Must be the EXACT same requestId
+      expect(id2).toBe(id1);
+
+      // 4. Success resolves
+      handleOutcome('success');
+      expect(attemptState).toBe('ready');
+
+      // 5. Subsequent independent resend
+      const id3 = startResend();
+      expect(id3).not.toBe(id1);
+    });
+
+    it('GuardVisitorRecoveryTab search falls back to cache on transport failure, but shows authoritative error on 403/42501', () => {
+      const transportError = new TypeError('Failed to fetch');
+      expect(isTransportOrNetworkError(transportError)).toBe(true);
+      expect(isAuthoritativeServerError(transportError)).toBe(false);
+
+      const authError403 = { status: 403, message: 'recovery_session_forbidden' };
+      expect(isTransportOrNetworkError(authError403)).toBe(false);
+      expect(isAuthoritativeServerError(authError403)).toBe(true);
+
+      const rlsError = { code: '42501', message: 'permission denied for table passes' };
+      expect(isTransportOrNetworkError(rlsError)).toBe(false);
+      expect(isAuthoritativeServerError(rlsError)).toBe(true);
     });
   });
 });

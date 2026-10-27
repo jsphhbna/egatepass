@@ -4,30 +4,44 @@
  * Implements safe, serialized, idempotent synchronization with the backend when
  * network connectivity is restored.
  *
- * Invariants (Root Causes 1, 2, 3, 14):
- * - Single serialized coordinator/mutex prevents overlapping sync and cache refresh.
- * - All application RPCs explicitly target the 'api' schema.
- * - Registrations and events are synchronized in strict chronological order.
- * - Dependent lifecycle events for conflicted passes are blocked.
- * - Unsynchronized local visitors are strictly preserved across server cache snapshots.
- * - Terminal evidence blobs (synced or conflict) are stripped locally.
+ * Invariants (Post-Closure Verification Repair Pass):
+ * 1. Single unified coordinator pipeline: runOfflineMaintenance() executes in strict order:
+ *    - recoverInterruptedSyncStates()
+ *    - synchronize pending registrations
+ *    - atomic canonicalization (finalizeOfflineRegistrationSync)
+ *    - synchronize eligible lifecycle events (causal dependencies enforced)
+ *    - refresh authoritative operational snapshot (sync before snapshot)
+ *    - local retention & purge
+ * 2. Never persist transient 'syncing' as durable state; maintain in-memory tracking under lock.
+ * 3. Enforce registration -> event causal dependency:
+ *    - pending registration holds dependent event pending
+ *    - conflict registration marks dependent event registration_sync_conflicted
+ *    - preceding event conflict marks subsequent events preceding_event_conflicted
+ * 4. Bound every network operation (createBoundedAbortSignal for PostgREST/RPC, fetchWithTimeout, withTimeout for Storage).
+ * 5. Retry-safe upload checkpointing on offline registrations.
+ * 6. Remove broken tokenless registration fallback with fake hashes.
  */
 
 import { requireSupabase } from '@/lib/supabase';
+import type { SupabaseClient } from '@supabase/supabase-js';
 import {
   getOfflineRegistrations,
   getOfflineEvents,
   updateOfflineRegistrationStatus,
   updateOfflineEventStatus,
-  resolvePendingEventsPassId,
-  remapCachedVisitorPassId,
   atomicReplaceCachedVisitors,
   purgeStaleLocalData,
   stripTerminalOfflineEvidence,
   setMeta,
+  finalizeOfflineRegistrationSync,
+  recoverInterruptedSyncStates,
+  updateOfflineRegistrationCheckpoint,
   type CachedVisitorPass,
+  type OfflineRegistrationRecord,
+  type UploadCheckpoint,
 } from './guardIndexedDb';
 import { getManilaDateString } from '@/lib/scheduling';
+import { fetchWithTimeout, createBoundedAbortSignal, withTimeout } from '@/lib/fetchWithTimeout';
 
 export interface SyncSummary {
   registrationsSynced: number;
@@ -36,8 +50,17 @@ export interface SyncSummary {
   errors: number;
 }
 
+export interface MaintenanceResult {
+  summary: SyncSummary;
+  refreshedPasses: number;
+  recoveredRecords: {
+    recoveredRegistrations: number;
+    recoveredEvents: number;
+  };
+}
+
 // =============================================================================
-// SERIALIZED COORDINATOR MUTEX (ROOT CAUSE 3)
+// SERIALIZED COORDINATOR MUTEX
 // =============================================================================
 let isCoordinatorBusy = false;
 const coordinatorQueue: Array<() => void> = [];
@@ -59,9 +82,9 @@ export async function acquireCoordinatorLock(): Promise<() => void> {
 }
 
 async function fetchEvidenceBlob(evidenceId: string, token: string): Promise<Blob | null> {
-  const res = await fetch(`/api/evidence?id=${encodeURIComponent(evidenceId)}`, {
+  const res = await fetchWithTimeout(`/api/evidence?id=${encodeURIComponent(evidenceId)}`, {
     headers: { Authorization: `Bearer ${token}` },
-  });
+  }, 10000);
   if (res.status === 404 || res.status === 410) {
     return null;
   }
@@ -72,9 +95,207 @@ async function fetchEvidenceBlob(evidenceId: string, token: string): Promise<Blo
 }
 
 /**
- * Synchronizes all pending registrations and outbox events to the server in strict serialized order.
+ * Uploads evidence with bounded timeout and retry-safe checkpointing.
  */
-export async function syncAllPending(): Promise<SyncSummary> {
+async function uploadRegistrationEvidence(
+  client: SupabaseClient,
+  regId: string,
+  kind: 'photo' | 'id',
+  blob: Blob,
+  existingCheckpoint?: UploadCheckpoint | null
+): Promise<UploadCheckpoint> {
+  let checkpoint: UploadCheckpoint;
+
+  // 1. Reuse existing non-expired checkpoint if present
+  if (
+    existingCheckpoint &&
+    (!existingCheckpoint.expiresAt || new Date(existingCheckpoint.expiresAt).getTime() > Date.now())
+  ) {
+    checkpoint = { ...existingCheckpoint };
+  } else {
+    // Create new upload intent via bounded RPC
+    const rpcCall = client
+      .schema('api')
+      .rpc('create_upload_intent', {
+        requested_source: 'guard_offline',
+        requested_kind: kind,
+        requested_content_type: 'image/webp',
+      });
+    const intentRes = await (typeof (rpcCall as any).abortSignal === 'function'
+      ? (rpcCall as any).abortSignal(createBoundedAbortSignal(10000))
+      : rpcCall);
+
+    if (intentRes.error) {
+      throw new Error(`${kind} intent error: ${intentRes.error.message}`);
+    }
+    const intentData = Array.isArray(intentRes.data) ? intentRes.data[0] : intentRes.data;
+    if (!intentData?.intent_id) {
+      throw new Error(`Failed to allocate ${kind} upload intent`);
+    }
+
+    checkpoint = {
+      intentId: intentData.intent_id,
+      bucketId: intentData.bucket_id,
+      objectPath: intentData.object_path,
+      contentType: 'image/webp',
+      maxBytes: intentData.max_bytes || 5242880,
+      uploaded: false,
+    };
+
+    // Persist checkpoint BEFORE initiating Storage upload
+    await updateOfflineRegistrationCheckpoint(regId, kind, checkpoint);
+  }
+
+  // 2. Upload to Storage if not already confirmed uploaded
+  if (!checkpoint.uploaded) {
+    try {
+      const uploadRes = await withTimeout(
+        client.storage.from(checkpoint.bucketId).upload(checkpoint.objectPath, blob, {
+          contentType: checkpoint.contentType,
+          upsert: false,
+        }),
+        15000,
+        `${kind} upload timed out after 15s`
+      );
+
+      if (uploadRes.error) {
+        const errMsg = uploadRes.error.message?.toLowerCase() || '';
+        const statusCode = (uploadRes.error as any).statusCode || (uploadRes.error as any).status;
+        if (
+          statusCode === 409 ||
+          errMsg.includes('already exists') ||
+          errMsg.includes('duplicate') ||
+          errMsg.includes('resourcealreadyexists')
+        ) {
+          // Object already committed from a prior attempt
+          checkpoint.uploaded = true;
+          await updateOfflineRegistrationCheckpoint(regId, kind, checkpoint);
+        } else {
+          throw new Error(`${kind} upload error: ${uploadRes.error.message}`);
+        }
+      } else {
+        checkpoint.uploaded = true;
+        await updateOfflineRegistrationCheckpoint(regId, kind, checkpoint);
+      }
+    } catch (err: any) {
+      const errMsg = err?.message?.toLowerCase() || '';
+      if (
+        errMsg.includes('already exists') ||
+        errMsg.includes('resourcealreadyexists') ||
+        errMsg.includes('409')
+      ) {
+        checkpoint.uploaded = true;
+        await updateOfflineRegistrationCheckpoint(regId, kind, checkpoint);
+      } else {
+        throw err;
+      }
+    }
+  }
+
+  return checkpoint;
+}
+
+/**
+ * Internal unlocked helper: Refreshes the operational cache snapshot from the server.
+ * Precondition: caller holds coordinator lock.
+ */
+async function internalRefreshOperationalCache(
+  client: SupabaseClient,
+  token: string | undefined
+): Promise<number> {
+  if (!token) {
+    console.warn('Session token unavailable for recovery cache refresh');
+    return 0;
+  }
+
+  const allItems: any[] = [];
+  let cursor: string | null = null;
+  let hasMore = true;
+
+  // Paginated snapshot loop using API schema with bounded AbortSignal (10s per page)
+  while (hasMore) {
+    const rpcCall = client
+      .schema('api')
+      .rpc('guard_offline_snapshot_page', {
+        requested_cursor: cursor,
+        requested_limit: 50,
+      });
+    const pageRes = await (typeof (rpcCall as any).abortSignal === 'function'
+      ? (rpcCall as any).abortSignal(createBoundedAbortSignal(10000))
+      : rpcCall);
+
+    if (pageRes.error) throw pageRes.error;
+    const pageData = pageRes.data as { items?: any[]; nextCursor?: string | null; hasMore?: boolean } | null;
+    if (!pageData || !Array.isArray(pageData.items)) break;
+
+    allItems.push(...pageData.items);
+    cursor = pageData.nextCursor ?? null;
+    hasMore = Boolean(pageData.hasMore && cursor);
+  }
+
+  // Download evidence blobs for visual offline verification (bounded 10s per fetch)
+  const passesToCache: CachedVisitorPass[] = [];
+  for (const item of allItems) {
+    let photoBlob: Blob | null = null;
+    let idBlob: Blob | null = null;
+
+    if (item.photoEvidenceId) {
+      try {
+        photoBlob = await fetchEvidenceBlob(item.photoEvidenceId, token);
+      } catch (downloadErr) {
+        throw new Error(`Evidence download failed for visitor ${item.visitorName}: ${String(downloadErr)}`);
+      }
+    }
+
+    if (item.idEvidenceId) {
+      try {
+        idBlob = await fetchEvidenceBlob(item.idEvidenceId, token);
+      } catch (downloadErr) {
+        throw new Error(`ID evidence download failed for visitor ${item.visitorName}: ${String(downloadErr)}`);
+      }
+    }
+
+    passesToCache.push({
+      id: item.passId,
+      publicReference: item.publicReference,
+      visitorId: item.visitorId,
+      visitorName: item.visitorName,
+      contactNumber: item.contactNumber,
+      purpose: item.purpose,
+      visitDate: item.visitDate || getManilaDateString(),
+      status: item.status,
+      passReference: item.publicReference ? `EG-${item.publicReference.slice(0, 8).toUpperCase()}` : item.passId,
+      validFrom: item.validFrom,
+      validUntil: item.validUntil,
+      timeIn: item.timeIn,
+      gate: item.gate,
+      photoEvidenceId: item.photoEvidenceId,
+      idEvidenceId: item.idEvidenceId,
+      photoBlob,
+      idBlob,
+      cachedAt: new Date().toISOString(),
+      version: item.version,
+    });
+  }
+
+  // Atomic replace in IndexedDB transaction - preserves unsynchronized local visitors
+  await atomicReplaceCachedVisitors(passesToCache);
+  await setMeta('last_cache_refresh_at', new Date().toISOString());
+  return passesToCache.length;
+}
+
+/**
+ * Single, unified offline maintenance pipeline (Section 4).
+ * Holds coordinator lock once and executes:
+ * 1. recoverInterruptedSyncStates()
+ * 2. synchronize pending offline registrations (do not persist durable 'syncing')
+ * 3. atomically canonicalize successful registrations (finalizeOfflineRegistrationSync)
+ * 4. synchronize eligible lifecycle events in chronological/per-pass causal order
+ * 5. refresh authoritative operational snapshot (sync-before-snapshot)
+ * 6. local retention & evidence cleanup
+ * 7. releases lock
+ */
+export async function runOfflineMaintenance(): Promise<MaintenanceResult> {
   const releaseLock = await acquireCoordinatorLock();
 
   const summary: SyncSummary = {
@@ -83,13 +304,18 @@ export async function syncAllPending(): Promise<SyncSummary> {
     conflicts: 0,
     errors: 0,
   };
+  let refreshedPasses = 0;
+  let recoveredRecords = { recoveredRegistrations: 0, recoveredEvents: 0 };
 
   try {
+    // Step 1: Recover any records stranded in 'syncing' by a previous crash (Section 2)
+    recoveredRecords = await recoverInterruptedSyncStates();
+
     const client = requireSupabase();
     const sessionRes = await client.auth.getSession();
     const token = sessionRes.data.session?.access_token;
 
-    // 1. Synchronize Pending Offline Registrations FIRST in chronological order (Root Cause 2.4 & 3)
+    // Step 2 & 3: Synchronize Pending Offline Registrations FIRST in chronological order
     const pendingRegs = await getOfflineRegistrations('pending');
     pendingRegs.sort((a, b) => {
       const tDiff = new Date(a.occurredAt).getTime() - new Date(b.occurredAt).getTime();
@@ -98,67 +324,47 @@ export async function syncAllPending(): Promise<SyncSummary> {
     });
 
     for (const reg of pendingRegs) {
-      try {
-        await updateOfflineRegistrationStatus(reg.offlineRegistrationId, 'syncing');
+      // If Guard session has no usable access token, leave pending (Section 6)
+      if (!token) {
+        console.warn('Guard session token unavailable for registration sync. Leaving pending.');
+        summary.errors++;
+        await updateOfflineRegistrationStatus(reg.offlineRegistrationId, 'pending', {
+          conflictReason: 'Guard session unavailable: authentication required to sync registration',
+        });
+        continue;
+      }
 
+      try {
         if (!reg.photoBlob) {
           throw new Error('Photo blob missing for offline registration sync');
         }
 
-        // Step A: Upload photo evidence via upload intent (using API schema)
-        const photoIntentRes = await client.schema('api').rpc('create_upload_intent', {
-          requested_source: 'guard_offline',
-          requested_kind: 'photo',
-          requested_content_type: 'image/webp',
-        });
+        // Upload photo evidence with retry-safe checkpointing (Section 5)
+        const photoCheckpoint = await uploadRegistrationEvidence(
+          client,
+          reg.offlineRegistrationId,
+          'photo',
+          reg.photoBlob,
+          reg.photoUploadCheckpoint
+        );
 
-        if (photoIntentRes.error) {
-          throw new Error(`Photo intent error: ${photoIntentRes.error.message}`);
-        }
-        const photoIntent = photoIntentRes.data[0];
-
-        const photoUpload = await client.storage
-          .from(photoIntent.bucket_id)
-          .upload(photoIntent.object_path, reg.photoBlob, {
-            contentType: 'image/webp',
-            upsert: true,
-          });
-
-        if (photoUpload.error) {
-          throw new Error(`Photo upload error: ${photoUpload.error.message}`);
-        }
-
-        // Step B: Upload ID evidence if captured (using API schema)
+        // Upload ID evidence if captured with retry-safe checkpointing
         let idIntentId: string | null = null;
         if (reg.idBlob) {
-          const idIntentRes = await client.schema('api').rpc('create_upload_intent', {
-            requested_source: 'guard_offline',
-            requested_kind: 'id',
-            requested_content_type: 'image/webp',
-          });
-
-          if (idIntentRes.error) {
-            throw new Error(`ID intent error: ${idIntentRes.error.message}`);
-          }
-          const idIntent = idIntentRes.data[0];
-
-          const idUpload = await client.storage
-            .from(idIntent.bucket_id)
-            .upload(idIntent.object_path, reg.idBlob, {
-              contentType: 'image/webp',
-              upsert: true,
-            });
-
-          if (idUpload.error) {
-            throw new Error(`ID upload error: ${idUpload.error.message}`);
-          }
-          idIntentId = idIntent.intent_id;
+          const idCheckpoint = await uploadRegistrationEvidence(
+            client,
+            reg.offlineRegistrationId,
+            'id',
+            reg.idBlob,
+            reg.idUploadCheckpoint
+          );
+          idIntentId = idCheckpoint.intentId;
         }
 
-        // Step C: Execute authenticated server sync route (or client API schema fallback)
-        let syncData: any;
-        if (token) {
-          const res = await fetch('/api/sync-offline-registration', {
+        // Call authoritative server sync route with 15s bounded timeout
+        const res = await fetchWithTimeout(
+          '/api/sync-offline-registration',
+          {
             method: 'POST',
             headers: {
               'Content-Type': 'application/json',
@@ -169,76 +375,57 @@ export async function syncAllPending(): Promise<SyncSummary> {
               visitor: reg.visitor,
               action: reg.action,
               occurredAt: reg.occurredAt,
-              photoIntentId: photoIntent.intent_id,
-              idIntentId: idIntentId,
+              photoIntentId: photoCheckpoint.intentId,
+              idIntentId,
               rejectionReason: reg.rejectionReason,
             }),
-          });
-          syncData = await res.json().catch(() => null);
-          if (!res.ok) {
-            if (res.status === 409) {
-              summary.conflicts++;
-              await updateOfflineRegistrationStatus(reg.offlineRegistrationId, 'conflict', {
-                conflictReason: syncData?.reason || 'Server fingerprint conflict',
-                syncedAt: new Date().toISOString(),
-              });
-              await stripTerminalOfflineEvidence();
-              continue;
-            }
-            throw new Error(syncData?.error || `HTTP ${res.status}`);
-          }
-        } else {
-          // Fallback to client RPC via explicit API schema
-          const ingestRes = await client.schema('api').rpc('guard_sync_offline_registration', {
-            requested_registration_id: reg.offlineRegistrationId,
-            requested_visitor: reg.visitor,
-            requested_action: reg.action,
-            requested_occurred_at: reg.occurredAt,
-            requested_photo_intent_id: photoIntent.intent_id,
-            requested_photo_byte_size: reg.photoBlob.size,
-            requested_photo_sha256: 'client-pending',
-            requested_id_intent_id: idIntentId,
-            requested_id_byte_size: reg.idBlob ? reg.idBlob.size : null,
-            requested_id_sha256: reg.idBlob ? 'client-pending' : null,
-            requested_rejection_reason: reg.rejectionReason,
-          });
-          if (ingestRes.error) throw ingestRes.error;
-          syncData = ingestRes.data;
-          if (syncData?.status === 'conflict') {
+          },
+          15000
+        );
+
+        const syncData = await res.json().catch(() => null);
+
+        if (!res.ok) {
+          if (res.status === 409) {
             summary.conflicts++;
             await updateOfflineRegistrationStatus(reg.offlineRegistrationId, 'conflict', {
-              conflictReason: syncData.reason || 'Server fingerprint conflict',
+              conflictReason: syncData?.reason || 'Server fingerprint conflict',
               syncedAt: new Date().toISOString(),
             });
             await stripTerminalOfflineEvidence();
             continue;
           }
+          throw new Error(syncData?.error || `HTTP ${res.status}`);
         }
 
-        const canonicalPassId = syncData.passId;
+        const canonicalPassId = syncData?.canonicalPassId || syncData?.passId || syncData?.pass_id;
+        if (!canonicalPassId) {
+          throw new Error('Registration sync succeeded but did not return canonical passId');
+        }
 
-        await updateOfflineRegistrationStatus(reg.offlineRegistrationId, 'synced', {
-          syncedAt: new Date().toISOString(),
+        const canonicalRef =
+          syncData?.canonicalReference || syncData?.publicReference || syncData?.public_reference;
+
+        // Step 3: Atomic canonicalization across registrations, cached_visitors, and offline_events (Section 1)
+        await finalizeOfflineRegistrationSync({
+          offlineRegistrationId: reg.offlineRegistrationId,
           canonicalPassId,
+          canonicalReference: canonicalRef,
+          syncedAt: new Date().toISOString(),
         });
-
-        // Step D: Remap local cache visitor identity and dependent queued offline events to canonical passId
-        if (canonicalPassId) {
-          await remapCachedVisitorPassId(reg.offlineRegistrationId, canonicalPassId, syncData.publicReference);
-          await resolvePendingEventsPassId(reg.offlineRegistrationId, canonicalPassId);
-        }
 
         summary.registrationsSynced++;
       } catch (regErr: any) {
         console.error('Offline registration sync failed:', regErr);
         summary.errors++;
+        // Keep durable record as pending (Section 2)
         await updateOfflineRegistrationStatus(reg.offlineRegistrationId, 'pending', {
           conflictReason: regErr.message || 'Sync failed',
         });
       }
     }
 
-    // 2. Synchronize Pending Offline Lifecycle Events in chronological order (Root Cause 2.4)
+    // Step 4: Synchronize Pending Offline Lifecycle Events in chronological order (Section 3)
     const pendingEvents = await getOfflineEvents('pending');
     pendingEvents.sort((a, b) => {
       const tDiff = new Date(a.occurredAt).getTime() - new Date(b.occurredAt).getTime();
@@ -246,11 +433,45 @@ export async function syncAllPending(): Promise<SyncSummary> {
       return a.eventId.localeCompare(b.eventId);
     });
 
+    // Build lookup of current registrations to check parent status
+    const currentRegs = await getOfflineRegistrations();
+    const regById = new Map<string, OfflineRegistrationRecord>(
+      currentRegs.map((r) => [r.offlineRegistrationId, r])
+    );
+
     const conflictedPassIds = new Set<string>();
 
     for (const evt of pendingEvents) {
-      // If a preceding event for this pass encountered a conflict, do NOT submit dependent later events
-      if (conflictedPassIds.has(evt.passId)) {
+      let targetPassId = evt.passId;
+
+      // Check if event refers to an offline-created registration
+      if (regById.has(evt.passId)) {
+        const parentReg = regById.get(evt.passId)!;
+
+        if (parentReg.syncStatus === 'pending' || parentReg.syncStatus === 'syncing') {
+          // Parent registration is still pending due to network/transient failure:
+          // DO NOT call lifecycle RPC; leave event pending for next cycle (Section 3)
+          continue;
+        }
+
+        if (parentReg.syncStatus === 'conflict') {
+          // Parent registration is in conflict: DO NOT call lifecycle RPC; mark event conflict
+          await updateOfflineEventStatus(evt.eventId, 'conflict', {
+            conflictReason: 'registration_sync_conflicted',
+            syncedAt: new Date().toISOString(),
+          });
+          conflictedPassIds.add(evt.passId);
+          summary.conflicts++;
+          continue;
+        }
+
+        if (parentReg.syncStatus === 'synced' && parentReg.canonicalPassId) {
+          targetPassId = parentReg.canonicalPassId;
+        }
+      }
+
+      // Check per-pass causal conflict rule
+      if (conflictedPassIds.has(targetPassId) || conflictedPassIds.has(evt.passId)) {
         await updateOfflineEventStatus(evt.eventId, 'conflict', {
           conflictReason: 'preceding_event_conflicted',
           syncedAt: new Date().toISOString(),
@@ -260,17 +481,20 @@ export async function syncAllPending(): Promise<SyncSummary> {
       }
 
       try {
-        await updateOfflineEventStatus(evt.eventId, 'syncing');
-
-        const eventRes = await client.schema('api').rpc('guard_sync_offline_event', {
-          requested_event_id: evt.eventId,
-          requested_pass_id: evt.passId,
-          requested_action: evt.action,
-          requested_expected_status: evt.expectedStatus,
-          requested_expected_version: evt.expectedVersion ?? null,
-          requested_occurred_at: evt.occurredAt,
-          requested_reason: evt.reason ?? null,
-        });
+        const rpcCall = client
+          .schema('api')
+          .rpc('guard_sync_offline_event', {
+            requested_event_id: evt.eventId,
+            requested_pass_id: targetPassId,
+            requested_action: evt.action,
+            requested_expected_status: evt.expectedStatus,
+            requested_expected_version: evt.expectedVersion ?? null,
+            requested_occurred_at: evt.occurredAt,
+            requested_reason: evt.reason ?? null,
+          });
+        const eventRes = await (typeof (rpcCall as any).abortSignal === 'function'
+          ? (rpcCall as any).abortSignal(createBoundedAbortSignal(10000))
+          : rpcCall);
 
         if (eventRes.error) {
           throw eventRes.error;
@@ -278,7 +502,7 @@ export async function syncAllPending(): Promise<SyncSummary> {
 
         const resData = eventRes.data;
         if (resData.status === 'conflict') {
-          conflictedPassIds.add(evt.passId);
+          conflictedPassIds.add(targetPassId);
           summary.conflicts++;
           await updateOfflineEventStatus(evt.eventId, 'conflict', {
             conflictReason: resData.reason || 'Server status conflict',
@@ -293,114 +517,43 @@ export async function syncAllPending(): Promise<SyncSummary> {
       } catch (evtErr: any) {
         console.error('Offline event sync error:', evtErr);
         summary.errors++;
+        // Leave durable record as pending (Section 2)
         await updateOfflineEventStatus(evt.eventId, 'pending', {
           conflictReason: evtErr.message || 'Event sync failed',
         });
       }
     }
 
-    // Record last successful sync timestamp
-    await setMeta('last_successful_sync_at', new Date().toISOString());
+    // Step 5: Refresh authoritative operational snapshot (sync before snapshot - Section 4)
+    refreshedPasses = await internalRefreshOperationalCache(client, token);
 
-    // Enforce local sensitive evidence retention and data purge
+    // Step 6: Local retention & evidence cleanup
     const today = getManilaDateString();
     await purgeStaleLocalData(today);
+    await setMeta('last_successful_sync_at', new Date().toISOString());
   } finally {
     releaseLock();
   }
 
-  return summary;
+  return {
+    summary,
+    refreshedPasses,
+    recoveredRecords,
+  };
 }
 
 /**
- * Downloads and caches today's operationally relevant passes and evidence Blobs into IndexedDB.
- * Serialized via coordinator lock and preserves unsynchronized local visitors.
+ * Backward-compatible export: synchronizes pending items via the unified maintenance pipeline.
+ */
+export async function syncAllPending(): Promise<SyncSummary> {
+  const result = await runOfflineMaintenance();
+  return result.summary;
+}
+
+/**
+ * Backward-compatible export: refreshes cache via the unified maintenance pipeline.
  */
 export async function refreshOperationalCache(): Promise<number> {
-  const releaseLock = await acquireCoordinatorLock();
-
-  try {
-    const client = requireSupabase();
-    const sessionRes = await client.auth.getSession();
-    const token = sessionRes.data.session?.access_token;
-    if (!token) {
-      console.warn('Session token unavailable for recovery cache refresh');
-      return 0;
-    }
-
-    const allItems: any[] = [];
-    let cursor: string | null = null;
-    let hasMore = true;
-
-    // Paginated snapshot loop using API schema
-    while (hasMore) {
-      const pageRes = await client.schema('api').rpc('guard_offline_snapshot_page', {
-        requested_cursor: cursor,
-        requested_limit: 50,
-      });
-
-      if (pageRes.error) throw pageRes.error;
-      const pageData = pageRes.data as { items?: any[]; nextCursor?: string | null; hasMore?: boolean } | null;
-      if (!pageData || !Array.isArray(pageData.items)) break;
-
-      allItems.push(...pageData.items);
-      cursor = pageData.nextCursor ?? null;
-      hasMore = Boolean(pageData.hasMore && cursor);
-    }
-
-    // Download evidence blobs for visual offline verification
-    const passesToCache: CachedVisitorPass[] = [];
-    for (const item of allItems) {
-      let photoBlob: Blob | null = null;
-      let idBlob: Blob | null = null;
-
-      if (item.photoEvidenceId) {
-        try {
-          photoBlob = await fetchEvidenceBlob(item.photoEvidenceId, token);
-        } catch (downloadErr) {
-          throw new Error(`Evidence download failed for visitor ${item.visitorName}: ${String(downloadErr)}`);
-        }
-      }
-
-      if (item.idEvidenceId) {
-        try {
-          idBlob = await fetchEvidenceBlob(item.idEvidenceId, token);
-        } catch (downloadErr) {
-          throw new Error(`ID evidence download failed for visitor ${item.visitorName}: ${String(downloadErr)}`);
-        }
-      }
-
-      passesToCache.push({
-        id: item.passId,
-        publicReference: item.publicReference,
-        visitorId: item.visitorId,
-        visitorName: item.visitorName,
-        contactNumber: item.contactNumber,
-        purpose: item.purpose,
-        visitDate: item.visitDate || getManilaDateString(),
-        status: item.status,
-        passReference: item.publicReference ? `EG-${item.publicReference.slice(0, 8).toUpperCase()}` : item.passId,
-        validFrom: item.validFrom,
-        validUntil: item.validUntil,
-        timeIn: item.timeIn,
-        gate: item.gate,
-        photoEvidenceId: item.photoEvidenceId,
-        idEvidenceId: item.idEvidenceId,
-        photoBlob,
-        idBlob,
-        cachedAt: new Date().toISOString(),
-        version: item.version,
-      });
-    }
-
-    // Atomic replace in IndexedDB transaction - preserves unsynchronized local visitors
-    await atomicReplaceCachedVisitors(passesToCache);
-    await setMeta('last_cache_refresh_at', new Date().toISOString());
-    return passesToCache.length;
-  } catch (err) {
-    console.warn('Could not refresh operational cache from server:', err);
-    throw err;
-  } finally {
-    releaseLock();
-  }
+  const result = await runOfflineMaintenance();
+  return result.refreshedPasses;
 }

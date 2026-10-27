@@ -59,3 +59,42 @@ export async function fetchWithTimeout(
     clearTimeout(timeoutId);
   }
 }
+
+/**
+ * Creates an AbortSignal that automatically aborts after the specified timeoutMs.
+ * Compatible with Supabase PostgREST / RPC .abortSignal() modifier.
+ */
+export function createBoundedAbortSignal(timeoutMs: number): AbortSignal {
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => {
+    controller.abort(new RequestTimeoutError(`Operation timed out after ${timeoutMs}ms`, timeoutMs));
+  }, timeoutMs);
+  if (typeof timeoutId === 'object' && timeoutId !== null && typeof (timeoutId as any).unref === 'function') {
+    (timeoutId as any).unref();
+  }
+  return controller.signal;
+}
+
+/**
+ * Generic deadline wrapper for promises (e.g. Supabase Storage uploads that do not support AbortSignal).
+ */
+export async function withTimeout<T>(
+  promise: Promise<T>,
+  timeoutMs: number,
+  errorMessage = `Operation timed out after ${timeoutMs}ms`
+): Promise<T> {
+  let timer: any;
+  const timeoutPromise = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => {
+      reject(new RequestTimeoutError(errorMessage, timeoutMs));
+    }, timeoutMs);
+    if (typeof timer === 'object' && timer !== null && typeof timer.unref === 'function') {
+      timer.unref();
+    }
+  });
+  try {
+    return await Promise.race([promise, timeoutPromise]);
+  } finally {
+    clearTimeout(timer);
+  }
+}

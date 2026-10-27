@@ -5,9 +5,13 @@ import { z } from 'zod';
 import { useWebcam } from '@/hooks/useWebcam';
 import { useObjectUrl } from '@/hooks/useObjectUrl';
 import { compressImageToWebP } from '@/lib/imageProcessing';
-import { recognizeIdImage, terminateLocalOcrWorker } from '@/lib/ocr';
-import { issueVisitorPass, loadRegistrationSettings, type IssueTransaction, type IssuedPass } from '@/services/visitorRegistration';
-import { generateBrandedQrDataUrl } from '@/lib/brandedQr';
+import {
+  issueVisitorPass,
+  loadRegistrationSettings,
+  PassIssuanceError,
+  type IssueTransaction,
+  type IssuedPass,
+} from '@/services/visitorRegistration';
 import QRCode from 'qrcode';
 import {
   Camera,
@@ -38,6 +42,8 @@ import { useThermalPrinter } from '@/printer/hooks/useThermalPrinter';
 import { KioskPrinterSettingsModal } from '@/components/KioskPrinterSettingsModal';
 import { InstitutionalPassCard } from '@/components/InstitutionalPassCard';
 import { createPassPresentation, type PassPresentation } from '@/lib/passPresentation';
+import { recognizeIdImage, terminateLocalOcrWorker } from '@/lib/ocr';
+import { generateBrandedQrDataUrl } from '@/lib/brandedQr';
 
 // ============================================================
 // FORM SCHEMA (Zod)
@@ -132,9 +138,12 @@ export function KioskPage() {
     requestId: crypto.randomUUID(),
     photoIntentId: null,
     idIntentId: null,
+    photoCheckpoint: null,
+    idCheckpoint: null,
     phase: 'editable',
   });
   const issueRequestId = useRef(kioskTransactionRef.current.requestId as ReturnType<typeof crypto.randomUUID>);
+  const isSubmittingRef = useRef(false);
 
   type KioskConfigState = 'loading' | 'ready' | 'error';
   const [configState, setConfigState] = useState<KioskConfigState>('loading');
@@ -225,6 +234,7 @@ export function KioskPage() {
       const compressed = await compressImageToWebP(blob);
       if (generation !== ocrGenerationRef.current) return;
       kioskTransactionRef.current.idIntentId = null;
+      kioskTransactionRef.current.idCheckpoint = null;
       kioskTransactionRef.current.phase = 'editable';
       setIdBlob(compressed);
       idUrl.setFromBlob(compressed);
@@ -285,6 +295,7 @@ export function KioskPage() {
     const blob = faceWebcam.capture();
     if (blob) {
       kioskTransactionRef.current.photoIntentId = null;
+      kioskTransactionRef.current.photoCheckpoint = null;
       kioskTransactionRef.current.phase = 'editable';
       setPhotoBlob(blob);
       photoUrl.setFromBlob(blob);
@@ -302,6 +313,7 @@ export function KioskPage() {
 
   function onRetakePhoto() {
     kioskTransactionRef.current.photoIntentId = null;
+    kioskTransactionRef.current.photoCheckpoint = null;
     kioskTransactionRef.current.phase = 'editable';
     photoUrl.clear();
     setPhotoBlob(null);
@@ -319,6 +331,7 @@ export function KioskPage() {
       try {
         const compressed = await compressImageToWebP(blob);
         kioskTransactionRef.current.idIntentId = null;
+        kioskTransactionRef.current.idCheckpoint = null;
         kioskTransactionRef.current.phase = 'editable';
         setIdBlob(compressed);
         idUrl.setFromBlob(compressed);
@@ -346,6 +359,7 @@ export function KioskPage() {
 
   function onRetakeId() {
     kioskTransactionRef.current.idIntentId = null;
+    kioskTransactionRef.current.idCheckpoint = null;
     kioskTransactionRef.current.phase = 'editable';
     idUrl.clear();
     setIdBlob(null);
@@ -355,6 +369,7 @@ export function KioskPage() {
   }
 
   async function onSubmit() {
+    if (isSubmittingRef.current) return;
     if (!photoBlob) {
       toast.error('Photo is required.');
       return;
@@ -364,6 +379,7 @@ export function KioskPage() {
       return;
     }
 
+    isSubmittingRef.current = true;
     setStep('generating');
     setSubmitError(null);
 
@@ -381,10 +397,34 @@ export function KioskPage() {
       );
     } catch (err) {
       console.error(err);
-      setSubmitError(err instanceof Error ? err.message : 'Failed to issue pass');
+      if (err instanceof PassIssuanceError) {
+        if (err.outcome === 'rejected_requires_new_transaction') {
+          // Reset kiosk transaction: new request ID, no old intents/checkpoints, phase editable (Section 10)
+          kioskTransactionRef.current = {
+            requestId: crypto.randomUUID(),
+            photoIntentId: null,
+            idIntentId: null,
+            photoCheckpoint: null,
+            idCheckpoint: null,
+            phase: 'editable',
+            submittedPayload: null,
+          };
+          issueRequestId.current = kioskTransactionRef.current.requestId as ReturnType<typeof crypto.randomUUID>;
+          setSubmitError(err.message || 'Pass registration conflict. Tap Retry to generate a new pass.');
+        } else if (err.outcome === 'rejected_correctable_field') {
+          setSubmitError(err.message);
+        } else {
+          // Ambiguous outcome: preserve exact transaction/checkpoints and show truthful retry wording
+          setSubmitError('Generation result could not be confirmed. Tap Retry to check status.');
+        }
+      } else {
+        setSubmitError(err instanceof Error ? err.message : 'Failed to issue pass');
+      }
       setStep('review');
       toast.error('Failed to issue gate pass');
       return;
+    } finally {
+      isSubmittingRef.current = false;
     }
 
     // Phase A — authoritative issuance committed
@@ -461,7 +501,10 @@ export function KioskPage() {
       requestId: crypto.randomUUID(),
       photoIntentId: null,
       idIntentId: null,
+      photoCheckpoint: null,
+      idCheckpoint: null,
       phase: 'editable',
+      submittedPayload: null,
     };
     issueRequestId.current = kioskTransactionRef.current.requestId as ReturnType<typeof crypto.randomUUID>;
     reset({
@@ -495,19 +538,6 @@ export function KioskPage() {
   function handleNextVisitor() {
     resetCurrentVisitor();
   }
-
-  // Hard safety ceiling during 'generating' to prevent indefinite PII retention if network stalls
-  useEffect(() => {
-    if (step !== 'generating') return;
-    const safetyCeilingTimer = setTimeout(() => {
-      console.warn('Kiosk generation safety ceiling reached.');
-      toast.error('Pass generation timed out. Please review details and try again.');
-      setSubmitError('Generation timed out. Your information is preserved; please retry.');
-      setStep('review');
-    }, 20_000);
-
-    return () => clearTimeout(safetyCeilingTimer);
-  }, [step]);
 
   // 120-second inactivity timeout to protect visitor PII from abandonment
   useEffect(() => {

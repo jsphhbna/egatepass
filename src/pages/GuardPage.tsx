@@ -38,7 +38,7 @@ import {
   type OfflineRegistrationRecord,
   type OfflineEventRecord,
 } from '@/lib/offline/guardIndexedDb';
-import { syncAllPending, refreshOperationalCache } from '@/lib/offline/guardSyncManager';
+import { runOfflineMaintenance } from '@/lib/offline/guardSyncManager';
 import { getManilaDateString } from '@/lib/scheduling';
 import { computeBackendAvailability } from '@/lib/offline/backendAvailability';
 import { RequestTimeoutError } from '@/lib/fetchWithTimeout';
@@ -126,15 +126,18 @@ export function GuardPage() {
 
     if (becameAvailable || (!initialSyncAttemptedRef.current && isBackendOnline)) {
       initialSyncAttemptedRef.current = true;
-      void refreshOperationalCache();
-      void syncAllPending().then(() => refreshPendingCounts());
+      void runOfflineMaintenance()
+        .then(() => refreshPendingCounts())
+        .catch((err) => {
+          console.warn('Initial offline maintenance failed:', err);
+        });
     }
   }, [isBackendOnline]);
 
   const handleSyncNow = async () => {
     setIsSyncing(true);
     try {
-      const summary = await syncAllPending();
+      const { summary } = await runOfflineMaintenance();
       if (summary.errors > 0) {
         toast.error(`Sync completed with ${summary.errors} error(s). Review outbox.`);
       } else if (summary.conflicts > 0) {

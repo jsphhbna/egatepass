@@ -36,6 +36,8 @@ export function GuardVisitorRecoveryTab({
   const [results, setResults] = useState<any[]>([]);
   const [searching, setSearching] = useState(false);
   const [hasSearched, setHasSearched] = useState(false);
+  const [isCachedResults, setIsCachedResults] = useState(false);
+  const [searchError, setSearchError] = useState<string | null>(null);
   const [processingId, setProcessingId] = useState<string | null>(null);
   const [rejectingPass, setRejectingPass] = useState<any | null>(null);
   const [rejectReason, setRejectReason] = useState('');
@@ -47,11 +49,15 @@ export function GuardVisitorRecoveryTab({
       if (clean.length < 2) {
         setResults([]);
         setHasSearched(false);
+        setSearchError(null);
+        setIsCachedResults(false);
         return;
       }
 
       setSearching(true);
       setHasSearched(true);
+      setSearchError(null);
+      setIsCachedResults(false);
 
       if (isBackendOnline) {
         try {
@@ -63,10 +69,24 @@ export function GuardVisitorRecoveryTab({
 
           if (error) throw error;
           setResults(Array.isArray(data) ? data : []);
+          setIsCachedResults(false);
         } catch (err: any) {
-          console.warn('Online recovery search failed, falling back to local cache:', err);
-          const cached = await searchCachedVisitors(clean);
-          setResults(cached);
+          if (isTransportOrNetworkError(err)) {
+            console.warn('Online recovery search transport failure, falling back to local cache:', err);
+            const cached = await searchCachedVisitors(clean);
+            setResults(cached);
+            setIsCachedResults(true);
+            toast.info('Showing cached offline visitor results due to network issue.');
+          } else {
+            // Authoritative server error (403, 42501, invalid parameter, etc.):
+            // Invariant: DO NOT silently fall back to cached PII on authoritative rejection (Section 12)
+            console.error('Authoritative server error for recovery search:', err);
+            setResults([]);
+            setIsCachedResults(false);
+            const errorMsg = err.message || 'Server error occurred while searching visitors.';
+            setSearchError(errorMsg);
+            toast.error(errorMsg);
+          }
         } finally {
           setSearching(false);
         }
@@ -75,6 +95,7 @@ export function GuardVisitorRecoveryTab({
         try {
           const cached = await searchCachedVisitors(clean);
           setResults(cached);
+          setIsCachedResults(true);
         } catch (err) {
           console.error('Offline recovery search error:', err);
           toast.error('Local visitor cache search failed');
@@ -294,8 +315,29 @@ export function GuardVisitorRecoveryTab({
         </div>
       </Card>
 
+      {/* Authoritative Error State (Section 12) */}
+      {searchError && (
+        <Card className="p-6 border-red-300 bg-red-50 dark:bg-red-950/20 text-center">
+          <AlertCircle className="mx-auto h-8 w-8 text-red-600 mb-2" />
+          <h3 className="text-base font-bold text-red-900 dark:text-red-200">
+            Search Unavailable
+          </h3>
+          <p className="mt-1 text-sm text-red-700 dark:text-red-300 max-w-md mx-auto">
+            {searchError}
+          </p>
+        </Card>
+      )}
+
+      {/* Cached Offline Results Notice (Section 12) */}
+      {isCachedResults && results.length > 0 && (
+        <div className="flex items-center gap-2 rounded-lg bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800/40 px-4 py-2.5 text-xs text-amber-800 dark:text-amber-200">
+          <AlertCircle className="h-4 w-4 shrink-0 text-amber-600" />
+          <span>Showing cached offline visitor results from device storage.</span>
+        </div>
+      )}
+
       {/* Results List */}
-      {hasSearched && results.length === 0 && !searching && (
+      {hasSearched && results.length === 0 && !searching && !searchError && (
         <Card className="p-12 text-center">
           <AlertCircle className="mx-auto h-10 w-10 text-[var(--color-text-muted)] mb-3" />
           <h3 className="text-base font-semibold text-[var(--color-text-primary)]">

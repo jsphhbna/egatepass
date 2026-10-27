@@ -24,46 +24,72 @@ class MockIDBRequest {
 }
 
 class MockIDBObjectStore {
-  constructor(public name: string, public data: Map<string, any>, public keyPath: string = 'id') {}
+  constructor(
+    public name: string,
+    public data: Map<string, any>,
+    public keyPath: string = 'id',
+    public tx?: MockIDBTransaction
+  ) {}
 
   put(val: any): MockIDBRequest {
     const req = new MockIDBRequest();
+    if (this.tx) this.tx.addPending();
     const key = val[this.keyPath] || val.key || val.id;
     this.data.set(key, val);
-    setTimeout(() => req.triggerSuccess(key), 0);
+    setTimeout(() => {
+      req.triggerSuccess(key);
+      if (this.tx) this.tx.donePending();
+    }, 0);
     return req;
   }
 
   get(key: string): MockIDBRequest {
     const req = new MockIDBRequest();
+    if (this.tx) this.tx.addPending();
     const val = this.data.get(key);
-    setTimeout(() => req.triggerSuccess(val), 0);
+    setTimeout(() => {
+      req.triggerSuccess(val);
+      if (this.tx) this.tx.donePending();
+    }, 0);
     return req;
   }
 
   delete(key: string): MockIDBRequest {
     const req = new MockIDBRequest();
+    if (this.tx) this.tx.addPending();
     this.data.delete(key);
-    setTimeout(() => req.triggerSuccess(undefined), 0);
+    setTimeout(() => {
+      req.triggerSuccess(undefined);
+      if (this.tx) this.tx.donePending();
+    }, 0);
     return req;
   }
 
   clear(): MockIDBRequest {
     const req = new MockIDBRequest();
+    if (this.tx) this.tx.addPending();
     this.data.clear();
-    setTimeout(() => req.triggerSuccess(undefined), 0);
+    setTimeout(() => {
+      req.triggerSuccess(undefined);
+      if (this.tx) this.tx.donePending();
+    }, 0);
     return req;
   }
 
   getAll(): MockIDBRequest {
     const req = new MockIDBRequest();
+    if (this.tx) this.tx.addPending();
     const all = Array.from(this.data.values());
-    setTimeout(() => req.triggerSuccess(all), 0);
+    setTimeout(() => {
+      req.triggerSuccess(all);
+      if (this.tx) this.tx.donePending();
+    }, 0);
     return req;
   }
 
   openCursor(): MockIDBRequest {
     const req = new MockIDBRequest();
+    if (this.tx) this.tx.addPending();
     const items = Array.from(this.data.entries());
     let idx = 0;
 
@@ -88,6 +114,7 @@ class MockIDBObjectStore {
         req.triggerSuccess(cursor);
       } else {
         req.triggerSuccess(null);
+        if (this.tx) this.tx.donePending();
       }
     };
 
@@ -100,18 +127,41 @@ class MockIDBTransaction {
   public oncomplete: (() => void) | null = null;
   public onerror: (() => void) | null = null;
   public error: any = null;
+  private pendingRequests = 0;
+  private timer: any = null;
 
   constructor(public db: MockIDBDatabase, public storeNames: string[], public mode: string) {
-    setTimeout(() => {
-      if (this.oncomplete) this.oncomplete();
-    }, 5);
+    this.scheduleCheck();
+  }
+
+  addPending() {
+    this.pendingRequests++;
+    if (this.timer) {
+      clearTimeout(this.timer);
+      this.timer = null;
+    }
+  }
+
+  donePending() {
+    this.pendingRequests--;
+    this.scheduleCheck();
+  }
+
+  scheduleCheck() {
+    if (this.timer) clearTimeout(this.timer);
+    this.timer = setTimeout(() => {
+      if (this.pendingRequests <= 0) {
+        if (this.oncomplete) this.oncomplete();
+      }
+    }, 15);
   }
 
   objectStore(name: string) {
-    return this.db.getStore(name);
+    return new MockIDBObjectStore(name, this.db.getStoreMap(name), this.db.keyPaths.get(name) || 'id', this);
   }
 
   abort() {
+    if (this.timer) clearTimeout(this.timer);
     this.error = new Error('Transaction aborted');
     if (this.onerror) this.onerror({ target: this });
   }
@@ -129,12 +179,16 @@ class MockIDBDatabase {
     return new MockIDBObjectStore(name, this.stores.get(name)!, options?.keyPath || 'id');
   }
 
-  getStore(name: string) {
+  getStoreMap(name: string) {
     if (!this.stores.has(name)) {
       this.stores.set(name, new Map());
     }
+    return this.stores.get(name)!;
+  }
+
+  getStore(name: string) {
     const keyPath = this.keyPaths.get(name) || 'id';
-    return new MockIDBObjectStore(name, this.stores.get(name)!, keyPath);
+    return new MockIDBObjectStore(name, this.getStoreMap(name), keyPath);
   }
 
   transaction(storeNames: string | string[], mode: string = 'readonly') {

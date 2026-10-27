@@ -75,6 +75,8 @@ export function EmailPassModal({
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [resendCooldown, setResendCooldown] = useState(0);
 
+  type CodeRequestAttemptState = 'ready' | 'in-flight' | 'ambiguous';
+  const requestCodeAttemptStateRef = useRef<CodeRequestAttemptState>('ready');
   const requestCodeRequestIdRef = useRef<string>(crypto.randomUUID());
   const sendRequestIdRef = useRef<string>(crypto.randomUUID());
 
@@ -101,6 +103,7 @@ export function EmailPassModal({
     setVerificationId(null);
     setErrorMessage(null);
     setResendCooldown(0);
+    requestCodeAttemptStateRef.current = 'ready';
     requestCodeRequestIdRef.current = crypto.randomUUID();
     sendRequestIdRef.current = crypto.randomUUID();
     onClose();
@@ -113,6 +116,12 @@ export function EmailPassModal({
     }
     setLoading(true);
     setErrorMessage(null);
+
+    // If ready for a new attempt, rotate request ID; if ambiguous after timeout, reuse SAME request ID (Section 11)
+    if (requestCodeAttemptStateRef.current === 'ready') {
+      requestCodeRequestIdRef.current = crypto.randomUUID();
+    }
+    requestCodeAttemptStateRef.current = 'in-flight';
 
     try {
       const supabase = source === 'portal' ? requirePortalSupabase() : requireSupabase();
@@ -138,6 +147,8 @@ export function EmailPassModal({
           body: JSON.stringify(payload),
         }, 10000);
       } catch (netErr) {
+        // Simulated or real timeout: mark attempt ambiguous so the NEXT resend reuses the SAME request ID
+        requestCodeAttemptStateRef.current = 'ambiguous';
         if (netErr instanceof RequestTimeoutError) {
           throw new Error('Verification code request timed out. Please try again.');
         }
@@ -147,15 +158,17 @@ export function EmailPassModal({
       const data = await res.json().catch(() => null);
 
       if (res.status === 429) {
+        requestCodeAttemptStateRef.current = 'ready';
         setResendCooldown(60);
         throw new Error(data?.message || friendlyEmailError('too_many_requests', 'Too many requests. Please wait before retrying.'));
       }
       if (!res.ok || !data?.success) {
-        if (data?.retryAllowed) requestCodeRequestIdRef.current = crypto.randomUUID();
+        requestCodeAttemptStateRef.current = 'ready';
         throw new Error(data?.message || friendlyEmailError(data?.error, 'Failed to request verification code.'));
       }
 
-      // Only replace verificationId after a successful response
+      // Definitive success: store new verificationId and mark ready for future resends
+      requestCodeAttemptStateRef.current = 'ready';
       setVerificationId(data.verificationId);
       if (isResend) {
         // Clear/reset entered OTP only after the new challenge is successfully created
@@ -350,6 +363,7 @@ export function EmailPassModal({
                 setCode('');
                 setErrorMessage(null);
                 setVerificationId(null);
+                requestCodeAttemptStateRef.current = 'ready';
                 requestCodeRequestIdRef.current = crypto.randomUUID();
                 sendRequestIdRef.current = crypto.randomUUID();
               }}
@@ -361,7 +375,6 @@ export function EmailPassModal({
               type="button"
               onClick={() => {
                 if (resendCooldown > 0) return;
-                requestCodeRequestIdRef.current = crypto.randomUUID();
                 sendRequestIdRef.current = crypto.randomUUID();
                 void executeRequestCode(true);
               }}
@@ -379,6 +392,7 @@ export function EmailPassModal({
               onClick={() => {
                 setStep('input');
                 setVerificationId(null);
+                requestCodeAttemptStateRef.current = 'ready';
                 requestCodeRequestIdRef.current = crypto.randomUUID();
                 sendRequestIdRef.current = crypto.randomUUID();
               }}

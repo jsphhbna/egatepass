@@ -161,7 +161,7 @@ flowchart TD
 
 *Notice: OCR execution occurs entirely within the client browser memory. No unverified ID image is transmitted to third-party recognition APIs.*
 
-> **Hardware Notice**: Kiosk printing supports direct Web Bluetooth thermal printing targeting the **MXW01 portable Bluetooth thermal printer** (Android/Chromium-compatible Web Bluetooth, 384px native monochrome raster) with fail-safe issuance and seamless fallback to the browser/operating-system print path. Note: Physical MXW01 hardware integration was verified via software emulation; live physical hardware acceptance remains pending on-site manual QA.
+> **Hardware Notice**: Kiosk printing supports direct Web Bluetooth thermal printing targeting the **MXW01 portable Bluetooth thermal printer** via the `mxw01-thermal-printer` library (384px native monochrome raster) with fail-safe issuance and seamless fallback to the browser/operating-system print path (`window.print()`). The MXW01 software integration path is covered by automated tests; physical MXW01 hardware acceptance remains pending on-site testing (**PHYSICAL MXW01 ACCEPTANCE: NOT YET TESTED**). Physical protocol/service discovery and actual paper output remain subject to validation on the deployed MXW01 hardware.
 
 ---
 

@@ -89,7 +89,7 @@ sequenceDiagram
 ```
 
 ### 3.1 Device Specifications & Browser Compatibility
-- **Hardware Model**: MXW01 / PeriPage / Fun Print compatible 58mm Bluetooth BLE thermal printers.
+- **Hardware Model**: MXW01 portable 58mm Bluetooth BLE thermal printer (delegating physical protocol to `mxw01-thermal-printer`).
 - **Print Width**: Native 384 pixels (48mm printable area at 203 DPI / 8 dots/mm).
 - **Driver/Ecosystem**: `mxw01-thermal-printer` (MIT licensed, zero external runtime dependencies) utilizing standard Web Bluetooth GATT service.
 - **Browser Requirement**: Chromium-based browser (Google Chrome, Microsoft Edge) running over secure **HTTPS**.
@@ -117,7 +117,7 @@ If Web Bluetooth is unsupported by the browser, disabled in hardware, or the pri
 - The kiosk registration flow continues smoothly without blocking.
 - If direct Bluetooth printing is unavailable, disabled, or fails, a fallback **Browser Print** / **Print Pass** button triggers standard `window.print()` with `@media print` CSS rules tailored for receipt rolls or standard paper.
 
-> **Hardware Testing Boundary Note**: Software emulation, unit tests, and layout bounding tests verify the driver, rendering bounds, and fail-safe error boundaries. Physical MXW01 Bluetooth hardware acceptance requires on-site manual QA on the physical Android tablet.
+> **Hardware Testing Boundary Note**: E-GatePass integrates the MXW01 through the `mxw01-thermal-printer` Web Bluetooth library and renders a 384px monochrome raster. The software integration path is covered by automated tests. Physical protocol/service discovery and actual paper output remain subject to validation on the deployed MXW01 hardware (**PHYSICAL MXW01 ACCEPTANCE: NOT YET TESTED**).
 
 ---
 

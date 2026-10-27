@@ -253,7 +253,7 @@ The kiosk station operates a single dedicated **MXW01 Bluetooth thermal receipt 
 3. Tap the **Gear Icon** in the top-right corner to open **Device Settings**.
 4. Re-enter this kiosk device's password when prompted to unlock settings.
 5. In the Thermal Printer section, tap **Connect MXW01**.
-6. The Chromium Bluetooth device picker will appear. Select the MXW01 / PeriPage device and tap **Pair**.
+6. The Chromium Bluetooth device picker will appear. Select the MXW01 device and tap **Pair** (Note: Physical protocol discovery and paper output remain subject to on-site testing: **PHYSICAL MXW01 ACCEPTANCE: NOT YET TESTED**).
 7. Confirm status changes to **Connected** (Green badge).
 8. Tap **Test Print** to verify paper alignment, darkness, and cutter feed.
 

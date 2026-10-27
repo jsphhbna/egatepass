@@ -58,3 +58,30 @@ export function validateVisitDate(
   }
   return { valid: true };
 }
+
+/**
+ * Returns the Manila calendar-day validity window for a given occurrence timestamp.
+ * Invariant (Migration 33 SQL):
+ * validFrom: start of occurrence's Manila calendar day (00:00:00+08:00)
+ * validUntil: start of following Manila calendar day (00:00:00+08:00)
+ */
+export function getManilaDayValidityWindow(occurredAt: Date | string = new Date()): {
+  manilaDate: string;
+  validFrom: string;
+  validUntil: string;
+} {
+  const date = typeof occurredAt === 'string' ? new Date(occurredAt) : occurredAt;
+  const manilaDate = getManilaDateString(date);
+  const [yearStr, monthStr, dayStr] = manilaDate.split('-');
+  const year = Number(yearStr);
+  const month = Number(monthStr);
+  const day = Number(dayStr);
+  const nextDate = new Date(Date.UTC(year, month - 1, day + 1));
+  const ny = nextDate.getUTCFullYear();
+  const nm = String(nextDate.getUTCMonth() + 1).padStart(2, '0');
+  const nd = String(nextDate.getUTCDate()).padStart(2, '0');
+  const nextManilaDate = `${ny}-${nm}-${nd}`;
+  const validFrom = `${manilaDate}T00:00:00+08:00`;
+  const validUntil = `${nextManilaDate}T00:00:00+08:00`;
+  return { manilaDate, validFrom, validUntil };
+}
