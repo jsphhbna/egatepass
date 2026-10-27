@@ -8,7 +8,8 @@
  * - Sensitive operational data is managed strictly in IndexedDB.
  */
 
-const CACHE_NAME = 'egatepass-shell-v1';
+const BUILD_ID = new URL(self.location.href).searchParams.get('v') || 'v1';
+const CACHE_NAME = `egatepass-shell-${BUILD_ID}`;
 const STATIC_SHELL = [
   '/',
   '/index.html',
@@ -49,18 +50,23 @@ self.addEventListener('message', (event) => {
   if (event.data && event.data.type === 'PRECACHE_ASSETS' && Array.isArray(event.data.assets)) {
     event.waitUntil(
       caches.open(CACHE_NAME).then(async (cache) => {
-        for (const assetUrl of event.data.assets) {
-          if (typeof assetUrl === 'string' && (assetUrl.startsWith('/assets/') || assetUrl.startsWith('/'))) {
-            const match = await cache.match(assetUrl);
-            if (!match) {
-              fetch(assetUrl)
-                .then((res) => {
-                  if (res.ok) cache.put(assetUrl, res);
-                })
-                .catch(() => undefined);
+        await Promise.all(
+          event.data.assets.map(async (assetUrl) => {
+            if (typeof assetUrl === 'string' && (assetUrl.startsWith('/assets/') || assetUrl.startsWith('/'))) {
+              try {
+                const match = await cache.match(assetUrl);
+                if (!match) {
+                  const res = await fetch(assetUrl);
+                  if (res && res.ok) {
+                    await cache.put(assetUrl, res);
+                  }
+                }
+              } catch {
+                // One failed optional asset must not crash the whole service worker
+              }
             }
-          }
-        }
+          })
+        );
       })
     );
   }
@@ -71,7 +77,7 @@ self.addEventListener('activate', (event) => {
     caches.keys().then((keys) => {
       return Promise.all(
         keys.map((key) => {
-          if (key !== CACHE_NAME) {
+          if (key.startsWith('egatepass-shell-') && key !== CACHE_NAME) {
             return caches.delete(key);
           }
         })

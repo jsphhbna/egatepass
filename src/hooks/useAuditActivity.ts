@@ -59,38 +59,115 @@ export interface PaginatedQueryState<T> extends QueryState<T> {
 
 const ACTIVITY_PAGE_SIZE = 100;
 
-function mapRawVisitorItem(raw: any): VisitorActivityItem {
+export function mapRawVisitorItem(raw: any): VisitorActivityItem {
+  if (
+    !raw ||
+    (typeof raw.id !== 'string' && typeof raw.id !== 'number') ||
+    typeof raw.event !== 'string' ||
+    typeof raw.passToken !== 'string'
+  ) {
+    throw new Error('invalid_visitor_activity_item');
+  }
+  const idStr = String(raw.id).trim();
+  const eventStr = raw.event.trim();
+  const passTokenStr = raw.passToken.trim();
+  if (!idStr || !eventStr || !passTokenStr) {
+    throw new Error('invalid_visitor_activity_item');
+  }
+
   return {
-    id: String(raw.id),
+    id: idStr,
     timestamp: asAppTimestamp(raw.timestamp),
-    event: raw.event,
-    passToken: raw.passToken,
-    visitorId: raw.visitorId ?? null,
-    reason: raw.reason ?? null,
-    deviceId: raw.deviceId ?? null,
-    gate: raw.gate ?? null,
-    guardUid: raw.guardUid ?? null,
-    guardName: raw.guardName ?? null,
-    visitorName: raw.visitorName ?? null,
+    event: eventStr,
+    passToken: passTokenStr,
+    visitorId: raw.visitorId != null ? String(raw.visitorId) : null,
+    reason: raw.reason != null ? String(raw.reason) : null,
+    deviceId: raw.deviceId != null ? String(raw.deviceId) : null,
+    gate: raw.gate != null ? String(raw.gate) : null,
+    guardUid: raw.guardUid != null ? String(raw.guardUid) : null,
+    guardName: raw.guardName != null ? String(raw.guardName) : null,
+    visitorName: raw.visitorName != null ? String(raw.visitorName) : null,
   };
 }
 
-function mapRawAdministrativeItem(raw: any): AdministrativeAuditItem {
+export function mapRawAdministrativeItem(raw: any): AdministrativeAuditItem {
+  if (
+    !raw ||
+    (typeof raw.id !== 'string' && typeof raw.id !== 'number') ||
+    typeof raw.action !== 'string' ||
+    typeof raw.actorUid !== 'string' ||
+    typeof raw.actorRole !== 'string' ||
+    typeof raw.targetType !== 'string' ||
+    typeof raw.targetId !== 'string' ||
+    typeof raw.result !== 'string'
+  ) {
+    throw new Error('invalid_administrative_audit_item');
+  }
+  const idStr = String(raw.id).trim();
+  const actionStr = raw.action.trim();
+  const actorUidStr = raw.actorUid.trim();
+  const actorRoleStr = raw.actorRole.trim();
+  const targetTypeStr = raw.targetType.trim();
+  const targetIdStr = raw.targetId.trim();
+  const resultStr = raw.result.trim();
+
+  if (!idStr || !actionStr || !actorUidStr || !actorRoleStr || !targetTypeStr || !targetIdStr || !resultStr) {
+    throw new Error('invalid_administrative_audit_item');
+  }
+
   return {
-    id: String(raw.id),
+    id: idStr,
     timestamp: asAppTimestamp(raw.timestamp),
-    action: raw.action,
-    actorUid: raw.actorUid,
-    actorRole: raw.actorRole,
-    targetType: raw.targetType,
-    targetId: raw.targetId,
-    targetUid: raw.targetUid,
-    previousRole: raw.previousRole,
-    newRole: raw.newRole,
-    previousStatus: raw.previousStatus,
-    newStatus: raw.newStatus,
-    result: raw.result,
-    metadata: raw.metadata,
+    action: actionStr,
+    actorUid: actorUidStr,
+    actorRole: actorRoleStr,
+    targetType: targetTypeStr,
+    targetId: targetIdStr,
+    targetUid: raw.targetUid != null ? String(raw.targetUid) : undefined,
+    previousRole: raw.previousRole != null ? String(raw.previousRole) : null,
+    newRole: raw.newRole != null ? String(raw.newRole) : null,
+    previousStatus: raw.previousStatus != null ? raw.previousStatus : null,
+    newStatus: raw.newStatus != null ? raw.newStatus : null,
+    result: resultStr,
+    metadata: typeof raw.metadata === 'object' && raw.metadata !== null ? (raw.metadata as Record<string, unknown>) : undefined,
+  };
+}
+
+export function mapRawReconciliationItem(raw: any): ReconciliationItem {
+  if (
+    !raw ||
+    (typeof raw.id !== 'string' && typeof raw.id !== 'number') ||
+    typeof raw.type !== 'string' ||
+    typeof raw.status !== 'string' ||
+    typeof raw.targetType !== 'string' ||
+    typeof raw.targetId !== 'string' ||
+    typeof raw.summary !== 'string' ||
+    !Array.isArray(raw.requiredActions) ||
+    !raw.requiredActions.every((a: any) => typeof a === 'string') ||
+    (raw.createdAt != null && typeof raw.createdAt !== 'string')
+  ) {
+    throw new Error('invalid_reconciliation_item');
+  }
+  const idStr = String(raw.id).trim();
+  const summaryStr = raw.summary.trim();
+  const typeStr = raw.type.trim();
+  const statusStr = raw.status.trim();
+  const targetTypeStr = raw.targetType.trim();
+  const targetIdStr = raw.targetId.trim();
+
+  if (!idStr || !summaryStr || !typeStr || !statusStr || !targetTypeStr || !targetIdStr) {
+    throw new Error('invalid_reconciliation_item');
+  }
+
+  return {
+    id: idStr,
+    type: typeStr,
+    status: statusStr,
+    targetType: targetTypeStr,
+    targetId: targetIdStr,
+    summary: summaryStr,
+    requiredActions: raw.requiredActions,
+    createdAt: raw.createdAt ?? null,
   };
 }
 
@@ -226,7 +303,8 @@ export function useReconciliationItems(enabled: boolean): PaginatedReconciliatio
         error?: string;
       } | null;
       if (!response.ok) throw new Error(body?.error || 'Reconciliation items could not be loaded.');
-      const items = body?.items || [];
+      const rawItems = Array.isArray(body?.items) ? body.items : [];
+      const items = rawItems.map(mapRawReconciliationItem);
       cursorRef.current = body?.nextCursor ?? null;
       setHasMore(Boolean(body?.hasMore));
       setTotal(body?.total ?? items.length);

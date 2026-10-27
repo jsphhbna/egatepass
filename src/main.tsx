@@ -40,6 +40,26 @@ root.render(
   </main>,
 );
 
+if (typeof window !== 'undefined') {
+  window.addEventListener('vite:preloadError', (event: Event) => {
+    if (typeof navigator !== 'undefined' && !navigator.onLine) {
+      return;
+    }
+    const recoveryKey = 'egatepass_preload_recovery_at';
+    try {
+      const lastRecovery = window.sessionStorage.getItem(recoveryKey);
+      const now = Date.now();
+      if (!lastRecovery || now - parseInt(lastRecovery, 10) > 30000) {
+        event.preventDefault();
+        window.sessionStorage.setItem(recoveryKey, String(now));
+        window.location.reload();
+      }
+    } catch {
+      // If sessionStorage is unavailable, avoid unhandled throws
+    }
+  });
+}
+
 void import('./App')
   .then(({ App }) => {
     root.render(
@@ -52,8 +72,11 @@ void import('./App')
 
     if (typeof window !== 'undefined' && 'serviceWorker' in navigator && import.meta.env.PROD) {
       window.addEventListener('load', () => {
+        const swUrl = typeof __EGATEPASS_BUILD_ID__ !== 'undefined'
+          ? `/sw.js?v=${encodeURIComponent(__EGATEPASS_BUILD_ID__)}`
+          : '/sw.js';
         navigator.serviceWorker
-          .register('/sw.js')
+          .register(swUrl)
           .then((reg) => {
             const assets = Array.from(document.querySelectorAll('script[src], link[rel="stylesheet"][href]'))
               .map((el) => el.getAttribute('src') || el.getAttribute('href'))

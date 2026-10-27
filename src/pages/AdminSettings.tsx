@@ -27,6 +27,9 @@ export function AdminSettings() {
   const [loadError, setLoadError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [purging, setPurging] = useState(false);
+  const [calculatingPurge, setCalculatingPurge] = useState(false);
+
+  const settingsBusy = saving || purging || calculatingPurge;
   
   const [settings, setSettings] = useState({
     ...DEFAULT_RETENTION_POLICY,
@@ -47,7 +50,6 @@ export function AdminSettings() {
   const [showPurgeConfirm, setShowPurgeConfirm] = useState(false);
   const [purgeEligibleCount, setPurgeEligibleCount] = useState<number | null>(null);
   const [purgeRetentionDays, setPurgeRetentionDays] = useState<number | null>(null);
-  const [calculatingPurge, setCalculatingPurge] = useState(false);
 
   async function loadSettings() {
     setLoading(true);
@@ -94,6 +96,7 @@ export function AdminSettings() {
   }, []);
 
   async function handleSave() {
+    if (settingsBusy) return;
     const retentionValidation = canManageSecuritySettings
       ? validateRetentionInputs(retentionInputs)
       : null;
@@ -136,7 +139,6 @@ export function AdminSettings() {
       });
       const result = await response.json().catch(() => null) as { error?: string } | null;
       if (!response.ok) throw new Error(result?.error || 'Failed to save settings');
-      setSettings((current) => ({ ...current, ...settingsToSave }));
       toast.success('Settings saved successfully');
     } catch (err) {
       console.error(err);
@@ -147,7 +149,7 @@ export function AdminSettings() {
   }
 
   function addReason() {
-    if (!newReason.trim()) return;
+    if (settingsBusy || !newReason.trim()) return;
     if (settings.rejectionReasons.includes(newReason.trim())) {
       toast.error('Reason already exists');
       return;
@@ -160,6 +162,7 @@ export function AdminSettings() {
   }
 
   function removeReason(reason: string) {
+    if (settingsBusy) return;
     setSettings((prev) => ({
       ...prev,
       rejectionReasons: prev.rejectionReasons.filter((r) => r !== reason),
@@ -167,6 +170,7 @@ export function AdminSettings() {
   }
 
   function addPurpose() {
+    if (settingsBusy) return;
     const purpose = newPurpose.trim();
     if (!purpose) return;
     if (purpose.length < 3) {
@@ -185,6 +189,7 @@ export function AdminSettings() {
   }
 
   function removePurpose(purpose: string) {
+    if (settingsBusy) return;
     setSettings((previous) => ({
       ...previous,
       visitPurposes: previous.visitPurposes.filter((item) => item.label !== purpose),
@@ -192,6 +197,7 @@ export function AdminSettings() {
   }
 
   function togglePurposeDetails(label: string) {
+    if (settingsBusy) return;
     setSettings((previous) => ({
       ...previous,
       visitPurposes: previous.visitPurposes.map((purpose) => purpose.label === label
@@ -207,6 +213,7 @@ export function AdminSettings() {
   }
 
   function updatePurposePrompt(label: string, detailPrompt: string) {
+    if (settingsBusy) return;
     setSettings((previous) => ({
       ...previous,
       visitPurposes: previous.visitPurposes.map((purpose) => purpose.label === label
@@ -219,6 +226,7 @@ export function AdminSettings() {
   // PURGE IMAGES
   // ============================================================
   async function handlePurgeClick() {
+    if (settingsBusy) return;
     setCalculatingPurge(true);
     try {
       const token = await getAccessToken();
@@ -250,6 +258,7 @@ export function AdminSettings() {
   }
 
   async function executePurge() {
+    if (settingsBusy) return;
     setPurging(true);
     try {
       const token = await getAccessToken();
@@ -327,7 +336,8 @@ export function AdminSettings() {
         </div>
         <Button
           onClick={handleSave}
-          disabled={saving}
+          disabled={settingsBusy}
+          loading={saving}
           icon={<Save className="h-4 w-4" />}
         >
           {saving ? 'Saving...' : 'Save Settings'}
@@ -348,7 +358,7 @@ export function AdminSettings() {
                 id="working-hours-start"
                 type="time"
                 value={settings.workingHours.start}
-                disabled={!canManageSecuritySettings}
+                disabled={!canManageSecuritySettings || settingsBusy}
                 onChange={(event) => setSettings((current) => ({
                   ...current,
                   workingHours: { ...current.workingHours, start: event.target.value },
@@ -361,7 +371,7 @@ export function AdminSettings() {
                 id="working-hours-end"
                 type="time"
                 value={settings.workingHours.end}
-                disabled={!canManageSecuritySettings}
+                disabled={!canManageSecuritySettings || settingsBusy}
                 onChange={(event) => setSettings((current) => ({
                   ...current,
                   workingHours: { ...current.workingHours, end: event.target.value },
@@ -403,9 +413,9 @@ export function AdminSettings() {
                 </label>
                 <Select
                   value={settings.peakMode}
-                  disabled={!canManageSecuritySettings}
+                  disabled={!canManageSecuritySettings || settingsBusy}
                   onChange={(e) => {
-                    if (!canManageSecuritySettings) return;
+                    if (!canManageSecuritySettings || settingsBusy) return;
                     const newScope = e.target.value as PeakModeScope;
                     if (newScope !== 'off' && settings.peakMode === 'off') {
                       setPendingPeakMode(newScope);
@@ -447,19 +457,21 @@ export function AdminSettings() {
                       <button
                         type="button"
                         onClick={() => togglePurposeDetails(purpose.label)}
+                        disabled={settingsBusy}
                         aria-pressed={purpose.requiresDetails}
                         className={`rounded-full border px-3 py-1.5 text-xs font-semibold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-brand)] ${
                           purpose.requiresDetails
                             ? 'border-[var(--color-brand)] bg-[var(--color-brand-light)] text-[var(--color-brand)]'
                             : 'border-[var(--color-border)] bg-white text-[var(--color-text-secondary)] hover:bg-[var(--color-canvas)]'
-                        }`}
+                        } ${settingsBusy ? 'opacity-50 cursor-not-allowed' : ''}`}
                       >
                         {purpose.requiresDetails ? 'Details required' : 'Require details'}
                       </button>
                       <button
                         type="button"
                         onClick={() => removePurpose(purpose.label)}
-                        className="rounded-md p-1.5 text-[var(--color-danger)] transition-colors hover:bg-[var(--color-danger-light)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-brand)]"
+                        disabled={settingsBusy}
+                        className={`rounded-md p-1.5 text-[var(--color-danger)] transition-colors hover:bg-[var(--color-danger-light)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-brand)] ${settingsBusy ? 'opacity-50 cursor-not-allowed' : ''}`}
                         aria-label={`Remove ${purpose.label}`}
                       >
                         <Trash2 className="h-4 w-4" aria-hidden="true" />
@@ -474,6 +486,7 @@ export function AdminSettings() {
                       <Input
                         id={`purpose-prompt-${index}`}
                         value={purpose.detailPrompt}
+                        disabled={settingsBusy}
                         onChange={(event) => updatePurposePrompt(purpose.label, event.target.value)}
                         maxLength={160}
                         placeholder="e.g. Who is your appointment with?"
@@ -491,6 +504,7 @@ export function AdminSettings() {
                   <Input
                     type="text"
                     value={newPurpose}
+                    disabled={settingsBusy}
                     onChange={(event) => setNewPurpose(event.target.value)}
                     placeholder="Add visit purpose..."
                     maxLength={100}
@@ -503,7 +517,7 @@ export function AdminSettings() {
                     }}
                   />
                 </div>
-                <Button onClick={addPurpose} variant="secondary" icon={<Plus className="h-4 w-4" />}>
+                <Button onClick={addPurpose} disabled={settingsBusy} variant="secondary" icon={<Plus className="h-4 w-4" />}>
                   Add
                 </Button>
               </li>
@@ -528,6 +542,7 @@ export function AdminSettings() {
                   min={min}
                   max={max}
                   value={retentionInputs[field]}
+                  disabled={settingsBusy}
                   error={Boolean(retentionErrors[field])}
                   aria-describedby={retentionErrors[field] ? `${field}-error` : undefined}
                   onChange={(event) => {
@@ -553,7 +568,12 @@ export function AdminSettings() {
               </div>)}
             </div>
             <label className="mb-8 flex items-center gap-3 text-sm font-medium text-[var(--color-text-primary)]">
-              <input type="checkbox" checked={settings.automaticCleanupEnabled} onChange={(event) => setSettings((current) => ({ ...current, automaticCleanupEnabled: event.target.checked }))} />
+              <input
+                type="checkbox"
+                checked={settings.automaticCleanupEnabled}
+                disabled={settingsBusy}
+                onChange={(event) => setSettings((current) => ({ ...current, automaticCleanupEnabled: event.target.checked }))}
+              />
               Enable automatic daily cleanup
             </label>
 
@@ -568,7 +588,7 @@ export function AdminSettings() {
                   <Button
                     variant="destructive"
                     onClick={handlePurgeClick}
-                    disabled={purging || calculatingPurge}
+                    disabled={settingsBusy}
                     loading={calculatingPurge}
                     className="mt-4"
                     icon={<Trash2 className="h-4 w-4" />}
@@ -591,7 +611,8 @@ export function AdminSettings() {
                 <button
                   type="button"
                   onClick={() => removeReason(reason)}
-                  className="rounded-md p-1.5 text-[var(--color-danger)] hover:bg-[var(--color-danger-light)] transition-colors"
+                  disabled={settingsBusy}
+                  className={`rounded-md p-1.5 text-[var(--color-danger)] hover:bg-[var(--color-danger-light)] transition-colors ${settingsBusy ? 'opacity-50 cursor-not-allowed' : ''}`}
                   aria-label="Remove reason"
                 >
                   <Trash2 className="h-4 w-4" />
@@ -607,6 +628,7 @@ export function AdminSettings() {
                 <Input
                   type="text"
                   value={newReason}
+                  disabled={settingsBusy}
                   onChange={(e) => setNewReason(e.target.value)}
                   placeholder="Add new reason..."
                   aria-label="New rejection reason"
@@ -620,6 +642,7 @@ export function AdminSettings() {
               </div>
               <Button
                 onClick={addReason}
+                disabled={settingsBusy}
                 variant="secondary"
                 icon={<Plus className="h-4 w-4" />}
               >
@@ -633,7 +656,7 @@ export function AdminSettings() {
       </div>
       
       <ConfirmModal
-        isOpen={canManageSecuritySettings && showPurgeConfirm}
+        isOpen={canManageSecuritySettings && showPurgeConfirm && !saving}
         onClose={() => setShowPurgeConfirm(false)}
         title="Purge Images?"
         description={
@@ -649,7 +672,7 @@ export function AdminSettings() {
       />
 
       <ConfirmModal
-        isOpen={showPeakModeConfirm}
+        isOpen={showPeakModeConfirm && !settingsBusy}
         onClose={() => {
           setShowPeakModeConfirm(false);
           setPendingPeakMode(null);
@@ -662,6 +685,7 @@ export function AdminSettings() {
           </>
         }
         onConfirm={() => {
+          if (settingsBusy) return;
           if (pendingPeakMode) {
             setSettings({ ...settings, peakMode: pendingPeakMode });
             toast.info('Peak Mode change staged. Press Save Settings to apply.');

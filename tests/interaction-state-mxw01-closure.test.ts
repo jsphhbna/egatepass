@@ -742,7 +742,7 @@ describe('Interaction-State & MXW01 Hidden-Bug Closure Pass — Comprehensive Re
       expect(editorSrc).toContain('const [hasLoadedCanonical, setHasLoadedCanonical] = useState(false);');
       expect(editorSrc).toContain('const [loadError, setLoadError] = useState<string | null>(null);');
       expect(editorSrc).toContain('Unable to load thermal templates');
-      expect(editorSrc).toContain('disabled={saving || publishing || !hasLoadedCanonical}');
+      expect(editorSrc).toMatch(/disabled=\{(?:activeMutation !== null|saving \|\| publishing) \|\| !hasLoadedCanonical\}/);
     });
 
     it('11.2. refresh failure after prior load preserves last-known-good editor state and displays warning toast', () => {

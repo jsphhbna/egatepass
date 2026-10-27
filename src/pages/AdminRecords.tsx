@@ -2,7 +2,7 @@ import { useAuth } from '@/hooks/useAuth';
 import { formatManilaDateTime, formatManilaTime, formatManilaIso, formatManilaFileTimestamp } from '@/lib/manilaTime';
 import { getActiveIncidentHoldsForRecord, createIncidentHold, releaseIncidentHold, type IncidentHold } from '@/services/incidentHold';
 import { AlertTriangle, Download, Eye, Printer, ShieldAlert, ShieldCheck } from 'lucide-react';
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { Card, Input, Select, Button, DataTable, DataTableHead, DataTableRow, DataTableCell, Modal, StatusBadge } from '@/components/ui';
 import { AuthenticatedImage } from '@/components/AuthenticatedImage';
 import type { GatePass, PassSource, PassStatus } from '@/types';
@@ -12,10 +12,10 @@ import { asAppTimestamp } from '@/lib/timestamp';
 import { getAccessToken } from '@/services/auth';
 
 export type HoldLookupState =
-  | { status: 'loading' }
-  | { status: 'protected'; holds: IncidentHold[] }
-  | { status: 'unprotected' }
-  | { status: 'error' };
+  | { status: 'loading'; passId?: string; visitorId?: string }
+  | { status: 'protected'; holds: IncidentHold[]; passId: string; visitorId: string }
+  | { status: 'unprotected'; passId?: string; visitorId?: string }
+  | { status: 'error'; passId?: string; visitorId?: string };
 
 interface GatePassWithId extends GatePass {
   id: string;
@@ -45,6 +45,38 @@ interface SerializedRecordPass {
 
 const RECORDS_PAGE_SIZE = 50;
 
+export function deserializeRecordPass(p: SerializedRecordPass): GatePassWithId {
+  const validFrom = asAppTimestamp(p.validFrom);
+  const validUntil = asAppTimestamp(p.validUntil);
+  const issuedAt = asAppTimestamp(p.issuedAt);
+
+  if (!validFrom || !validUntil || !issuedAt) {
+    throw new Error('invalid_record_pass_timestamp');
+  }
+
+  return {
+    id: p.id,
+    visitorId: p.visitorId,
+    visitorName: p.visitorName,
+    purpose: p.purpose,
+    photoPublicId: p.photoPublicId ?? '',
+    idImagePublicId: p.idImagePublicId,
+    source: p.source,
+    status: p.status,
+    validFrom,
+    validUntil,
+    issuedAt,
+    scannedAt: asAppTimestamp(p.scannedAt),
+    timeIn: asAppTimestamp(p.timeIn),
+    timeOut: asAppTimestamp(p.timeOut),
+    entryDeviceId: p.entryDeviceId,
+    exitDeviceId: p.exitDeviceId,
+    decidedByUid: p.decidedByUid,
+    rejectionReason: p.rejectionReason,
+    gate: p.gate,
+  };
+}
+
 export function AdminRecords() {
   const { role } = useAuth();
   const [passes, setPasses] = useState<GatePassWithId[]>([]);
@@ -64,6 +96,14 @@ export function AdminRecords() {
   const [hasMore, setHasMore] = useState(false);
   const [loadingMore, setLoadingMore] = useState(false);
   const [exporting, setExporting] = useState(false);
+  const [recordsError, setRecordsError] = useState<string | null>(null);
+
+  const recordsQueryGenerationRef = useRef(0);
+  const recordsAbortControllerRef = useRef<AbortController | null>(null);
+  const lastCommittedRecordsQueryRef = useRef<{ dateFilter: string; statusFilter: string; search: string } | null>(null);
+  const recordsLoadMoreInFlightRef = useRef(false);
+  const holdLookupGenerationRef = useRef(0);
+  const selectedPassRef = useRef<GatePassWithId | null>(null);
 
   useEffect(() => {
     const timer = setTimeout(() => {
@@ -72,18 +112,25 @@ export function AdminRecords() {
     return () => clearTimeout(timer);
   }, [search]);
 
-  async function fetchRecordsPage(cursor: string | null, pageSize: number, searchOverride?: string) {
+  async function fetchRecordsPage(options: {
+    cursor: string | null;
+    pageSize: number;
+    search: string;
+    date: string;
+    status: string;
+    signal?: AbortSignal;
+  }) {
     const token = await getAccessToken();
     const params = new URLSearchParams();
-    if (statusFilter) params.set('status', statusFilter);
-    if (dateFilter) params.set('date', dateFilter);
-    const activeSearch = searchOverride !== undefined ? searchOverride : debouncedSearch;
-    if (activeSearch.trim()) params.set('search', activeSearch.trim());
-    if (cursor) params.set('cursor', cursor);
-    params.set('pageSize', String(pageSize));
+    if (options.status) params.set('status', options.status);
+    if (options.date) params.set('date', options.date);
+    if (options.search.trim()) params.set('search', options.search.trim());
+    if (options.cursor) params.set('cursor', options.cursor);
+    params.set('pageSize', String(options.pageSize));
 
     const response = await fetch(`/api/admin/records?${params.toString()}`, {
       headers: { Authorization: `Bearer ${token}` },
+      signal: options.signal,
     });
     const data = await response.json().catch(() => null) as {
       passes?: SerializedRecordPass[];
@@ -94,27 +141,7 @@ export function AdminRecords() {
 
     if (!response.ok) throw new Error(data?.error || 'Failed to load records');
 
-    const mapped: GatePassWithId[] = (data?.passes ?? []).map((p) => ({
-      id: p.id,
-      visitorId: p.visitorId,
-      visitorName: p.visitorName,
-      purpose: p.purpose,
-      photoPublicId: p.photoPublicId ?? '',
-      idImagePublicId: p.idImagePublicId,
-      source: p.source,
-      status: p.status,
-      validFrom: asAppTimestamp(p.validFrom)!,
-      validUntil: asAppTimestamp(p.validUntil)!,
-      issuedAt: asAppTimestamp(p.issuedAt)!,
-      scannedAt: asAppTimestamp(p.scannedAt),
-      timeIn: asAppTimestamp(p.timeIn),
-      timeOut: asAppTimestamp(p.timeOut),
-      entryDeviceId: p.entryDeviceId,
-      exitDeviceId: p.exitDeviceId,
-      decidedByUid: p.decidedByUid,
-      rejectionReason: p.rejectionReason,
-      gate: p.gate,
-    }));
+    const mapped: GatePassWithId[] = (data?.passes ?? []).map(deserializeRecordPass);
 
     return {
       items: mapped,
@@ -123,51 +150,159 @@ export function AdminRecords() {
     };
   }
 
-  async function loadRecords(append = false, currentSearch?: string) {
-    append ? setLoadingMore(true) : setLoading(true);
+  async function loadRootRecords(searchOverride?: string) {
+    const currentQuery = {
+      dateFilter,
+      statusFilter,
+      search: searchOverride !== undefined ? searchOverride : debouncedSearch,
+    };
+
+    const currentGen = ++recordsQueryGenerationRef.current;
+    recordsAbortControllerRef.current?.abort();
+    const controller = new AbortController();
+    recordsAbortControllerRef.current = controller;
+
+    setNextCursor(null);
+    setHasMore(false);
+    setRecordsError(null);
+    setLoading(true);
+
     try {
-      const res = await fetchRecordsPage(append ? nextCursor : null, RECORDS_PAGE_SIZE, currentSearch);
-      setPasses((current) => (append ? [...current, ...res.items] : res.items));
+      const res = await fetchRecordsPage({
+        cursor: null,
+        pageSize: RECORDS_PAGE_SIZE,
+        search: currentQuery.search,
+        date: currentQuery.dateFilter,
+        status: currentQuery.statusFilter,
+        signal: controller.signal,
+      });
+
+      if (controller.signal.aborted || currentGen !== recordsQueryGenerationRef.current) {
+        return;
+      }
+
+      setPasses(res.items);
+      setNextCursor(res.nextCursor);
+      setHasMore(res.hasMore);
+      setRecordsError(null);
+      lastCommittedRecordsQueryRef.current = currentQuery;
+    } catch (err: any) {
+      if (controller.signal.aborted || currentGen !== recordsQueryGenerationRef.current) {
+        return;
+      }
+      console.error('Visitor records load error:', err);
+      // Section 15: Never show previous query rows under new filters after failure
+      setPasses([]);
+      setRecordsError(err.message || 'Visitor records could not be loaded');
+      toast.error('Visitor records could not be loaded');
+    } finally {
+      if (currentGen === recordsQueryGenerationRef.current) {
+        setLoading(false);
+      }
+    }
+  }
+
+  async function loadMoreRecords() {
+    if (recordsLoadMoreInFlightRef.current || !hasMore || !nextCursor) return;
+    recordsLoadMoreInFlightRef.current = true;
+    setLoadingMore(true);
+
+    const currentGen = recordsQueryGenerationRef.current;
+    const committedQuery = lastCommittedRecordsQueryRef.current;
+    if (!committedQuery) {
+      recordsLoadMoreInFlightRef.current = false;
+      setLoadingMore(false);
+      return;
+    }
+
+    try {
+      const res = await fetchRecordsPage({
+        cursor: nextCursor,
+        pageSize: RECORDS_PAGE_SIZE,
+        search: committedQuery.search,
+        date: committedQuery.dateFilter,
+        status: committedQuery.statusFilter,
+      });
+
+      if (currentGen !== recordsQueryGenerationRef.current) {
+        return;
+      }
+
+      setPasses((prev) => [...prev, ...res.items]);
       setNextCursor(res.nextCursor);
       setHasMore(res.hasMore);
     } catch (err) {
-      console.error(err);
-      toast.error('Visitor records could not be loaded');
+      if (currentGen === recordsQueryGenerationRef.current) {
+        console.error('Load more records error:', err);
+        toast.error('Failed to load more records');
+      }
     } finally {
-      setLoading(false);
-      setLoadingMore(false);
+      recordsLoadMoreInFlightRef.current = false;
+      if (currentGen === recordsQueryGenerationRef.current) {
+        setLoadingMore(false);
+      }
     }
   }
 
   useEffect(() => {
-    setNextCursor(null);
-    void loadRecords(false, debouncedSearch);
+    void loadRootRecords(debouncedSearch);
   }, [dateFilter, statusFilter, debouncedSearch]);
 
   const filteredPasses = passes;
 
   async function handleSelectPass(pass: GatePassWithId) {
+    const currentGen = ++holdLookupGenerationRef.current;
     setSelectedPass(pass);
-    setHoldLookupState({ status: 'loading' });
+    selectedPassRef.current = pass;
+    setHoldLookupState({ status: 'loading', passId: pass.id, visitorId: pass.visitorId });
     try {
       const holds = await getActiveIncidentHoldsForRecord({
         passId: pass.id,
         visitorId: pass.visitorId,
       });
+      if (
+        currentGen !== holdLookupGenerationRef.current ||
+        !selectedPassRef.current ||
+        selectedPassRef.current.id !== pass.id
+      ) {
+        return;
+      }
       if (holds.length > 0) {
-        setHoldLookupState({ status: 'protected', holds });
+        setHoldLookupState({ status: 'protected', holds, passId: pass.id, visitorId: pass.visitorId });
       } else {
-        setHoldLookupState({ status: 'unprotected' });
+        setHoldLookupState({ status: 'unprotected', passId: pass.id, visitorId: pass.visitorId });
       }
     } catch {
-      setHoldLookupState({ status: 'error' });
+      if (
+        currentGen === holdLookupGenerationRef.current &&
+        selectedPassRef.current &&
+        selectedPassRef.current.id === pass.id
+      ) {
+        setHoldLookupState({ status: 'error', passId: pass.id, visitorId: pass.visitorId });
+      }
     }
+  }
+
+  function handleClosePassModal() {
+    holdLookupGenerationRef.current++;
+    selectedPassRef.current = null;
+    setSelectedPass(null);
+    setHoldLookupState({ status: 'unprotected' });
   }
 
   async function handleCreateHold() {
     if (!selectedPass || !holdReason.trim()) return;
     if (holdLookupState.status === 'loading' || holdLookupState.status === 'error') {
       toast.error('Retention protection status unavailable. Authoritative lookup required before placing hold.');
+      void handleSelectPass(selectedPass);
+      return;
+    }
+    if (
+      holdLookupState.passId !== selectedPass.id ||
+      (holdLookupState.visitorId && holdLookupState.visitorId !== selectedPass.visitorId)
+    ) {
+      toast.error('Retention protection status unavailable. Authoritative lookup required before placing hold.');
+      void handleSelectPass(selectedPass);
       return;
     }
     setSubmittingHold(true);
@@ -189,7 +324,17 @@ export function AdminRecords() {
   }
 
   async function handleReleaseHold() {
-    if (holdLookupState.status !== 'protected' || holdLookupState.holds.length === 0) return;
+    if (
+      holdLookupState.status !== 'protected' ||
+      holdLookupState.holds.length === 0 ||
+      !selectedPass ||
+      holdLookupState.passId !== selectedPass.id ||
+      holdLookupState.visitorId !== selectedPass.visitorId
+    ) {
+      toast.error('Retention protection status mismatch. Refreshing incident hold state.');
+      if (selectedPass) void handleSelectPass(selectedPass);
+      return;
+    }
     const holdToRelease = holdLookupState.holds[0];
     if (!holdToRelease) return;
     setSubmittingHold(true);
@@ -210,10 +355,21 @@ export function AdminRecords() {
 
   async function exportCSV() {
     setExporting(true);
+    // Section 18: snapshot search.trim() directly at click time
+    const exportSearch = search.trim();
+    const exportDate = dateFilter;
+    const exportStatus = statusFilter;
+
     try {
       const exportResult = await collectCursorPages<GatePassWithId, string>(
         async (cursor, pageSize) => {
-          const res = await fetchRecordsPage(cursor, pageSize, debouncedSearch);
+          const res = await fetchRecordsPage({
+            cursor,
+            pageSize,
+            search: exportSearch,
+            date: exportDate,
+            status: exportStatus,
+          });
           return {
             items: res.items,
             nextCursor: res.nextCursor,
@@ -222,16 +378,16 @@ export function AdminRecords() {
         { pageSize: 250 },
       );
       const exportPasses = exportResult.items;
-    const headers = ['Visitor Name', 'Purpose', 'Status', 'Issued At', 'Time In', 'Time Out', 'Gate'];
+      const headers = ['Visitor Name', 'Purpose', 'Status', 'Issued At', 'Time In', 'Time Out', 'Gate'];
       const rows = exportPasses.map((p) => [
-      p.visitorName,
-      p.purpose,
-      p.status,
-      p.issuedAt ? formatManilaIso(p.issuedAt.toMillis()) : '',
-      p.timeIn ? formatManilaIso(p.timeIn.toMillis()) : '',
-      p.timeOut ? formatManilaIso(p.timeOut.toMillis()) : '',
-      p.gate || '',
-    ]);
+        p.visitorName,
+        p.purpose,
+        p.status,
+        p.issuedAt ? formatManilaIso(p.issuedAt.toMillis()) : '',
+        p.timeIn ? formatManilaIso(p.timeIn.toMillis()) : '',
+        p.timeOut ? formatManilaIso(p.timeOut.toMillis()) : '',
+        p.gate || '',
+      ]);
 
       downloadCsvFile(`gate_passes_${formatManilaFileTimestamp(new Date())}.csv`, [headers, ...rows]);
       if (exportResult.truncated) {
@@ -346,6 +502,17 @@ export function AdminRecords() {
                   <div className="mx-auto h-8 w-8 animate-spin rounded-full border-4 border-[var(--color-border)] border-t-[var(--color-brand)]" role="status" aria-label="Loading visitor records" />
                 </td>
               </tr>
+            ) : recordsError ? (
+              <tr>
+                <td colSpan={6} className="py-8 text-center">
+                  <div className="flex flex-col items-center justify-center gap-3">
+                    <p className="text-sm font-medium text-[var(--color-danger)]">{recordsError}</p>
+                    <Button size="sm" variant="secondary" onClick={() => void loadRootRecords()}>
+                      Retry
+                    </Button>
+                  </div>
+                </td>
+              </tr>
             ) : filteredPasses.length === 0 ? (
               <tr>
                 <td colSpan={6} className="py-8 text-center text-[var(--color-text-muted)]">
@@ -387,7 +554,7 @@ export function AdminRecords() {
         </DataTable>
         {hasMore && (
           <div className="mt-4 flex justify-center print:hidden">
-            <Button variant="secondary" loading={loadingMore} disabled={loadingMore} onClick={() => void loadRecords(true)}>
+            <Button variant="secondary" loading={loadingMore} disabled={loadingMore} onClick={() => void loadMoreRecords()}>
               {loadingMore ? 'Loading...' : 'Load more records'}
             </Button>
           </div>
@@ -396,7 +563,7 @@ export function AdminRecords() {
 
       <Modal
         isOpen={!!selectedPass}
-        onClose={() => setSelectedPass(null)}
+        onClose={handleClosePassModal}
         title="Visitor Pass Details"
         description="Read-only visitor information and verification images"
         size="lg"

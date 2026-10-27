@@ -335,10 +335,10 @@ describe('PATCH 5: Authoritative Incident-Hold Targeted Lookup Tests', () => {
 
     // Explicit state type
     expect(adminRecordsCode).toContain("type HoldLookupState =");
-    expect(adminRecordsCode).toContain("{ status: 'loading' }");
-    expect(adminRecordsCode).toContain("{ status: 'protected'; holds: IncidentHold[] }");
-    expect(adminRecordsCode).toContain("{ status: 'unprotected' }");
-    expect(adminRecordsCode).toContain("{ status: 'error' }");
+    expect(adminRecordsCode).toMatch(/\{\s*status:\s*'loading'/);
+    expect(adminRecordsCode).toMatch(/\{\s*status:\s*'protected'/);
+    expect(adminRecordsCode).toMatch(/\{\s*status:\s*'unprotected'/);
+    expect(adminRecordsCode).toMatch(/\{\s*status:\s*'error'/);
 
     // UI text requirements
     expect(adminRecordsCode).toContain('Checking retention protection…');

@@ -18,6 +18,7 @@ import { BrandMark } from '@/components/BrandMark';
 import { ConfirmModal } from '@/components/ui';
 import { useState, useRef, useEffect } from 'react';
 import { formatUserRole, isSuperAdmin } from '@/lib/permissions';
+import { RouteErrorBoundary } from '@/components/RouteErrorBoundary';
 
 const navItems = [
   { to: '/admin', icon: LayoutDashboard, label: 'Dashboard', end: true },
@@ -208,7 +209,9 @@ export function AdminPage() {
       {/* Main content */}
       <main id="main-content" aria-hidden={sidebarOpen ? 'true' : undefined} inert={sidebarOpen ? true : undefined} className="min-w-0 flex-1 overflow-y-auto p-4 pt-20 md:p-6 lg:p-8 xl:p-10">
         <div className="mx-auto w-full max-w-7xl 2xl:max-w-[1600px]">
-          <Outlet />
+          <RouteErrorBoundary>
+            <Outlet />
+          </RouteErrorBoundary>
         </div>
       </main>
     </div>

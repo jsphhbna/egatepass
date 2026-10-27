@@ -40,14 +40,15 @@ interface TemplateVersionRecord {
   created_at: string;
 }
 
+export type TemplateMutation = 'save' | 'publish' | 'restore' | null;
+
 export function AdminPrintTemplatesPage() {
   const { role } = useAuth();
   const isSuper = isSuperAdmin(role);
 
   const [loading, setLoading] = useState(true);
-  const [saving, setSaving] = useState(false);
-  const [publishing, setPublishing] = useState(false);
-  const [restoring, setRestoring] = useState(false);
+  const [activeMutation, setActiveMutation] = useState<TemplateMutation>(null);
+  const mutationInFlightRef = useRef(false);
 
   const [templateName, setTemplateName] = useState('Default Institutional 384px Template');
   const [currentVersion, setCurrentVersion] = useState<number | null>(null);
@@ -232,13 +233,15 @@ export function AdminPrintTemplatesPage() {
 
   // Save Draft RPC via API schema
   async function handleSaveDraft() {
+    if (mutationInFlightRef.current || activeMutation !== null) return;
     const valResult = validateThermalTemplateLayout(layout);
     if (!valResult.success) {
       toast.error(valResult.error.issues[0]?.message || 'Invalid layout');
       return;
     }
 
-    setSaving(true);
+    mutationInFlightRef.current = true;
+    setActiveMutation('save');
     try {
       const client = requireSupabase();
       const { data, error } = await client.schema('api').rpc('admin_save_thermal_template', {
@@ -255,19 +258,22 @@ export function AdminPrintTemplatesPage() {
       console.error('Save draft error:', err);
       toast.error(err.message || 'Failed to save draft template');
     } finally {
-      setSaving(false);
+      mutationInFlightRef.current = false;
+      setActiveMutation(null);
     }
   }
 
   // Publish Template RPC via API schema
   async function handlePublish() {
+    if (mutationInFlightRef.current || activeMutation !== null) return;
     const valResult = validateThermalTemplateLayout(layout);
     if (!valResult.success) {
       toast.error(valResult.error.issues[0]?.message || 'Invalid layout');
       return;
     }
 
-    setPublishing(true);
+    mutationInFlightRef.current = true;
+    setActiveMutation('publish');
     try {
       const client = requireSupabase();
       // Ensure draft is saved first
@@ -290,13 +296,16 @@ export function AdminPrintTemplatesPage() {
       console.error('Publish error:', err);
       toast.error(err.message || 'Failed to publish thermal template');
     } finally {
-      setPublishing(false);
+      mutationInFlightRef.current = false;
+      setActiveMutation(null);
     }
   }
 
   // Restore previous version RPC via API schema
   async function handleRestoreVersion(versionNum: number) {
-    setRestoring(true);
+    if (mutationInFlightRef.current || activeMutation !== null) return;
+    mutationInFlightRef.current = true;
+    setActiveMutation('restore');
     try {
       const client = requireSupabase();
       const { data, error } = await client.schema('api').rpc('admin_restore_thermal_template', {
@@ -310,7 +319,8 @@ export function AdminPrintTemplatesPage() {
       console.error('Restore error:', err);
       toast.error(err.message || 'Failed to restore template version');
     } finally {
-      setRestoring(false);
+      mutationInFlightRef.current = false;
+      setActiveMutation(null);
     }
   }
 
@@ -412,7 +422,8 @@ export function AdminPrintTemplatesPage() {
                           size="sm"
                           variant="secondary"
                           onClick={() => void handleRestoreVersion(v.version)}
-                          disabled={restoring}
+                          disabled={activeMutation !== null}
+                          loading={activeMutation === 'restore'}
                           icon={<RotateCcw className="h-3.5 w-3.5" />}
                         >
                           Restore as Published
@@ -472,8 +483,8 @@ export function AdminPrintTemplatesPage() {
               <div className="flex gap-2 pt-2 border-t border-[var(--color-border)]">
                 <Button
                   onClick={handleSaveDraft}
-                  disabled={saving || publishing || !hasLoadedCanonical}
-                  loading={saving}
+                  disabled={activeMutation !== null || !hasLoadedCanonical}
+                  loading={activeMutation === 'save'}
                   variant="secondary"
                   size="sm"
                   className="flex-1"
@@ -483,8 +494,8 @@ export function AdminPrintTemplatesPage() {
                 </Button>
                 <Button
                   onClick={handlePublish}
-                  disabled={saving || publishing || !hasLoadedCanonical}
-                  loading={publishing}
+                  disabled={activeMutation !== null || !hasLoadedCanonical}
+                  loading={activeMutation === 'publish'}
                   size="sm"
                   className="flex-1 bg-[#800000] hover:bg-[#660000]"
                   icon={<CheckCircle2 className="h-4 w-4" />}

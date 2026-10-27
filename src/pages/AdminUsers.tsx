@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { Plus } from 'lucide-react';
 import { Button, FormField, Input, Select, StatusBadge, DataTable, DataTableHead, DataTableRow, DataTableCell, Modal, ConfirmModal } from '@/components/ui';
 import { toast } from 'sonner';
@@ -47,6 +47,10 @@ export function AdminUsers() {
   const [isChangingRole, setIsChangingRole] = useState(false);
   const [reactivatingUserId, setReactivatingUserId] = useState<string | null>(null);
 
+  const usersReadGenerationRef = useRef(0);
+  const usersAbortControllerRef = useRef<AbortController | null>(null);
+  const usersLoadMoreInFlightRef = useRef(false);
+
   const {
     register,
     handleSubmit,
@@ -58,44 +62,67 @@ export function AdminUsers() {
   });
 
   async function loadUsers() {
+    const currentGen = ++usersReadGenerationRef.current;
+    usersAbortControllerRef.current?.abort();
+    const controller = new AbortController();
+    usersAbortControllerRef.current = controller;
+
     setLoading(true);
     try {
-      const response = await fetch('/api/admin/users?limit=50', { headers: { Authorization: `Bearer ${await getAccessToken()}` } });
+      const response = await fetch('/api/admin/users?limit=50', {
+        headers: { Authorization: `Bearer ${await getAccessToken()}` },
+        signal: controller.signal,
+      });
       const body = await response.json().catch(() => null) as { users?: AppUserWithId[]; nextCursor?: string | null; hasMore?: boolean; error?: string } | null;
+      if (controller.signal.aborted || currentGen !== usersReadGenerationRef.current) return;
       if (!response.ok) throw new Error(body?.error || 'Failed to load users');
       setUsers(body?.users ?? []);
       setNextCursor(body?.nextCursor ?? null);
       setHasMore(body?.hasMore ?? false);
-    } catch (err) {
+    } catch (err: any) {
+      if (controller.signal.aborted || currentGen !== usersReadGenerationRef.current) return;
       console.error(err);
       toast.error('Failed to load users');
     } finally {
-      setLoading(false);
+      if (currentGen === usersReadGenerationRef.current) {
+        setLoading(false);
+      }
     }
   }
 
   async function loadMoreUsers() {
-    if (!nextCursor || loadingMore) return;
+    if (!nextCursor || usersLoadMoreInFlightRef.current || loadingMore) return;
+    usersLoadMoreInFlightRef.current = true;
     setLoadingMore(true);
+    const currentGen = usersReadGenerationRef.current;
     try {
       const response = await fetch(`/api/admin/users?limit=50&cursor=${encodeURIComponent(nextCursor)}`, {
         headers: { Authorization: `Bearer ${await getAccessToken()}` },
       });
       const body = await response.json().catch(() => null) as { users?: AppUserWithId[]; nextCursor?: string | null; hasMore?: boolean; error?: string } | null;
+      if (currentGen !== usersReadGenerationRef.current) return;
       if (!response.ok) throw new Error(body?.error || 'Failed to load more users');
       setUsers((prev) => [...prev, ...(body?.users ?? [])]);
       setNextCursor(body?.nextCursor ?? null);
       setHasMore(body?.hasMore ?? false);
     } catch (err) {
-      console.error(err);
-      toast.error('Failed to load more users');
+      if (currentGen === usersReadGenerationRef.current) {
+        console.error(err);
+        toast.error('Failed to load more users');
+      }
     } finally {
-      setLoadingMore(false);
+      usersLoadMoreInFlightRef.current = false;
+      if (currentGen === usersReadGenerationRef.current) {
+        setLoadingMore(false);
+      }
     }
   }
 
   useEffect(() => {
     loadUsers();
+    return () => {
+      usersAbortControllerRef.current?.abort();
+    };
   }, []);
 
   async function onSubmit(data: UserFormData) {

@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useAuth } from '@/hooks/useAuth';
 import type { Device, DeviceType } from '@/types';
 import { Tablet, Plus, X, Lock, Unlock, Key, AtSign, Trash2, Eye, EyeOff } from 'lucide-react';
@@ -62,6 +62,10 @@ export function DevicesPage() {
   const [isDeleting, setIsDeleting] = useState(false);
   const [reactivatingDeviceId, setReactivatingDeviceId] = useState<string | null>(null);
 
+  const devicesReadGenerationRef = useRef(0);
+  const devicesAbortControllerRef = useRef<AbortController | null>(null);
+  const devicesLoadMoreInFlightRef = useRef(false);
+
   const {
     register,
     handleSubmit,
@@ -77,13 +81,27 @@ export function DevicesPage() {
   const [loadingMore, setLoadingMore] = useState(false);
 
   async function loadDevices(append = false) {
-    append ? setLoadingMore(true) : setLoading(true);
+    if (append) {
+      if (devicesLoadMoreInFlightRef.current || !nextCursor) return;
+      devicesLoadMoreInFlightRef.current = true;
+      setLoadingMore(true);
+    } else {
+      devicesAbortControllerRef.current?.abort();
+      const controller = new AbortController();
+      devicesAbortControllerRef.current = controller;
+      setLoading(true);
+    }
+
+    const currentGen = append ? devicesReadGenerationRef.current : ++devicesReadGenerationRef.current;
+    const signal = append ? undefined : devicesAbortControllerRef.current?.signal;
+
     try {
       const token = await getAccessToken();
       const params = new URLSearchParams({ pageSize: '50' });
       if (append && nextCursor) params.set('cursor', nextCursor);
       const response = await fetch(`/api/admin/devices?${params.toString()}`, {
         headers: { Authorization: `Bearer ${token}` },
+        signal,
       });
       const data = await response.json().catch(() => null) as {
         devices?: DeviceWithId[];
@@ -92,22 +110,37 @@ export function DevicesPage() {
         nextCursor?: string | null;
         error?: string;
       } | null;
+
+      if (signal?.aborted || currentGen !== devicesReadGenerationRef.current) return;
       if (!response.ok) throw new Error(data?.error || 'Failed to load devices');
+
       setDevices((prev) => append ? [...prev, ...(data?.devices ?? [])] : (data?.devices ?? []));
       setTotalDevices(data?.total ?? data?.devices?.length ?? 0);
       setHasMore(Boolean(data?.hasMore));
       setNextCursor(data?.nextCursor ?? null);
-    } catch (err) {
+    } catch (err: any) {
+      if (signal?.aborted || currentGen !== devicesReadGenerationRef.current) return;
       console.error('Load devices error:', err);
-      toast.error('Failed to load devices');
+      toast.error(append ? 'Failed to load more devices' : 'Failed to load devices');
     } finally {
-      setLoading(false);
-      setLoadingMore(false);
+      if (append) {
+        devicesLoadMoreInFlightRef.current = false;
+        if (currentGen === devicesReadGenerationRef.current) {
+          setLoadingMore(false);
+        }
+      } else {
+        if (currentGen === devicesReadGenerationRef.current) {
+          setLoading(false);
+        }
+      }
     }
   }
 
   useEffect(() => {
     void loadDevices(false);
+    return () => {
+      devicesAbortControllerRef.current?.abort();
+    };
   }, []);
 
   // ============================================================

@@ -8,6 +8,8 @@ import { OfflineBanner } from '@/components/OfflineBanner';
 import { LoadingState } from '@/components/ui';
 import { PrivacyModal } from '@/components/PrivacyModal';
 
+import { RouteErrorBoundary } from '@/components/RouteErrorBoundary';
+
 const GetPassPage = lazy(() => import('@/pages/GetPassPage').then((module) => ({ default: module.GetPassPage })));
 const LoginPage = lazy(() => import('@/pages/LoginPage').then((module) => ({ default: module.LoginPage })));
 const AdminPage = lazy(() => import('@/pages/AdminPage').then((module) => ({ default: module.AdminPage })));
@@ -66,58 +68,60 @@ export function App() {
           Skip to main content
         </a>
 
-        <Suspense fallback={<RouteLoadingFallback />}>
-          <Routes>
-          {/* Public routes */}
-          <Route path="/" element={<LandingPage />} />
-          <Route
-            path="/get-pass"
-            element={
-              <Suspense fallback={<GetPassLoadingFallback />}>
-                <GetPassPage />
-              </Suspense>
-            }
-          />
-          <Route path="/login" element={<LoginPage />} />
-          <Route path="/forgot-password" element={<ForgotPasswordPage />} />
-          <Route path="/reset-password" element={<ResetPasswordPage />} />
+        <RouteErrorBoundary>
+          <Suspense fallback={<RouteLoadingFallback />}>
+            <Routes>
+            {/* Public routes */}
+            <Route path="/" element={<LandingPage />} />
+            <Route
+              path="/get-pass"
+              element={
+                <Suspense fallback={<GetPassLoadingFallback />}>
+                  <GetPassPage />
+                </Suspense>
+              }
+            />
+            <Route path="/login" element={<LoginPage />} />
+            <Route path="/forgot-password" element={<ForgotPasswordPage />} />
+            <Route path="/reset-password" element={<ResetPasswordPage />} />
 
-          {/* Kiosk — requires kiosk device account */}
-          <Route element={<ProtectedRoute allowedRoles={['kiosk']} />}>
-            <Route path="/kiosk" element={<KioskPage />} />
-          </Route>
-
-          {/* Scanner tablets — requires matching device account */}
-          <Route element={<ProtectedRoute allowedRoles={['entry']} />}>
-            <Route path="/scan/entry" element={<EntryScanPage />} />
-          </Route>
-          <Route element={<ProtectedRoute allowedRoles={['exit']} />}>
-            <Route path="/scan/exit" element={<ExitScanPage />} />
-          </Route>
-
-          {/* Guard — requires guard or admin role */}
-          <Route element={<ProtectedRoute allowedRoles={['guard', 'admin', 'superadmin']} />}>
-            <Route path="/guard" element={<GuardPage />} />
-          </Route>
-
-          {/* Admin — requires admin role, uses nested layout */}
-          <Route element={<ProtectedRoute allowedRoles={['admin', 'superadmin']} />}>
-            <Route path="/admin" element={<AdminPage />}>
-              <Route index element={<AdminDashboard />} />
-              <Route path="visitors" element={<AdminRecords />} />
-              <Route path="devices" element={<DevicesPage />} />
-              <Route path="users" element={<AdminUsers />} />
-              <Route path="emergency" element={<AdminEmergency />} />
-              <Route path="audit" element={<AdminAuditLogs />} />
-              <Route path="templates" element={<AdminPrintTemplatesPage />} />
-              <Route path="settings" element={<AdminSettings />} />
+            {/* Kiosk — requires kiosk device account */}
+            <Route element={<ProtectedRoute allowedRoles={['kiosk']} />}>
+              <Route path="/kiosk" element={<KioskPage />} />
             </Route>
-          </Route>
 
-          {/* Catch-all 404 */}
-          <Route path="*" element={<NotFoundPage />} />
-          </Routes>
-        </Suspense>
+            {/* Scanner tablets — requires matching device account */}
+            <Route element={<ProtectedRoute allowedRoles={['entry']} />}>
+              <Route path="/scan/entry" element={<EntryScanPage />} />
+            </Route>
+            <Route element={<ProtectedRoute allowedRoles={['exit']} />}>
+              <Route path="/scan/exit" element={<ExitScanPage />} />
+            </Route>
+
+            {/* Guard — requires guard or admin role */}
+            <Route element={<ProtectedRoute allowedRoles={['guard', 'admin', 'superadmin']} />}>
+              <Route path="/guard" element={<GuardPage />} />
+            </Route>
+
+            {/* Admin — requires admin role, uses nested layout */}
+            <Route element={<ProtectedRoute allowedRoles={['admin', 'superadmin']} />}>
+              <Route path="/admin" element={<AdminPage />}>
+                <Route index element={<AdminDashboard />} />
+                <Route path="visitors" element={<AdminRecords />} />
+                <Route path="devices" element={<DevicesPage />} />
+                <Route path="users" element={<AdminUsers />} />
+                <Route path="emergency" element={<AdminEmergency />} />
+                <Route path="audit" element={<AdminAuditLogs />} />
+                <Route path="templates" element={<AdminPrintTemplatesPage />} />
+                <Route path="settings" element={<AdminSettings />} />
+              </Route>
+            </Route>
+
+            {/* Catch-all 404 */}
+            <Route path="*" element={<NotFoundPage />} />
+            </Routes>
+          </Suspense>
+        </RouteErrorBoundary>
 
         <Toaster
           position="top-center"

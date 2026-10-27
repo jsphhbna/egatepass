@@ -105,7 +105,15 @@ interface QueuedRetryDeferred {
 }
 let pendingManualResolvers: QueuedRetryDeferred[] = [];
 
-function deserializePass(p: SerializedPass): GatePass {
+export function deserializePass(p: SerializedPass): GatePass {
+  const validFrom = asAppTimestamp(p.validFrom);
+  const validUntil = asAppTimestamp(p.validUntil);
+  const issuedAt = asAppTimestamp(p.issuedAt);
+
+  if (!validFrom || !validUntil || !issuedAt) {
+    throw new Error('invalid_dashboard_pass_timestamp');
+  }
+
   return {
     visitorId: p.visitorId,
     visitorName: p.visitorName,
@@ -114,9 +122,9 @@ function deserializePass(p: SerializedPass): GatePass {
     idImagePublicId: p.idImagePublicId,
     source: p.source,
     status: p.status,
-    validFrom: asAppTimestamp(p.validFrom)!,
-    validUntil: asAppTimestamp(p.validUntil)!,
-    issuedAt: asAppTimestamp(p.issuedAt)!,
+    validFrom,
+    validUntil,
+    issuedAt,
     scannedAt: asAppTimestamp(p.scannedAt),
     timeIn: asAppTimestamp(p.timeIn),
     timeOut: asAppTimestamp(p.timeOut),

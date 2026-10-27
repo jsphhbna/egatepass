@@ -120,6 +120,9 @@ const vercelApiDevPlugin = (): Plugin => {
 
 export default defineConfig({
   plugins: [react(), tailwindcss(), fixMimeTypesPlugin(), vercelApiDevPlugin()],
+  define: {
+    __EGATEPASS_BUILD_ID__: JSON.stringify(process.env.VERCEL_GIT_COMMIT_SHA || process.env.BUILD_ID || `build-${Date.now().toString(36)}`),
+  },
   resolve: {
     alias: {
       '@': import.meta.dirname + '/src',
