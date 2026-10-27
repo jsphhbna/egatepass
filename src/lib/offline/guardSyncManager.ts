@@ -36,6 +36,7 @@ import {
   finalizeOfflineRegistrationSync,
   recoverInterruptedSyncStates,
   updateOfflineRegistrationCheckpoint,
+  clearOfflineRegistrationCheckpoints,
   type CachedVisitorPass,
   type OfflineRegistrationRecord,
   type UploadCheckpoint,
@@ -107,11 +108,17 @@ async function uploadRegistrationEvidence(
   let checkpoint: UploadCheckpoint;
 
   // 1. Reuse existing non-expired checkpoint if present
-  if (
-    existingCheckpoint &&
-    (!existingCheckpoint.expiresAt || new Date(existingCheckpoint.expiresAt).getTime() > Date.now())
-  ) {
-    checkpoint = { ...existingCheckpoint };
+  const isCheckpointValid = (cp?: UploadCheckpoint | null): boolean => {
+    return Boolean(
+      cp &&
+      cp.expiresAt &&
+      !Number.isNaN(new Date(cp.expiresAt).getTime()) &&
+      new Date(cp.expiresAt).getTime() > Date.now()
+    );
+  };
+
+  if (isCheckpointValid(existingCheckpoint)) {
+    checkpoint = { ...existingCheckpoint! };
   } else {
     // Create new upload intent via bounded RPC
     const rpcCall = client
@@ -139,6 +146,7 @@ async function uploadRegistrationEvidence(
       objectPath: intentData.object_path,
       contentType: 'image/webp',
       maxBytes: intentData.max_bytes || 5242880,
+      expiresAt: intentData.expires_at,
       uploaded: false,
     };
 
@@ -395,6 +403,56 @@ export async function runOfflineMaintenance(): Promise<MaintenanceResult> {
             await stripTerminalOfflineEvidence();
             continue;
           }
+
+          if (res.status === 422) {
+            const recoverableErrors = ['invalid_upload_intent', 'missing_uploaded_object', 'invalid_uploaded_content'];
+            if (recoverableErrors.includes(syncData?.error)) {
+              // Recoverable evidence failure: clear checkpoints, keep blobs, keep pending for fresh re-upload next cycle
+              await clearOfflineRegistrationCheckpoints(reg.offlineRegistrationId);
+              summary.errors++;
+              await updateOfflineRegistrationStatus(reg.offlineRegistrationId, 'pending', {
+                conflictReason: syncData?.error || 'Recoverable evidence rejection',
+              });
+              continue;
+            }
+
+            // Other 422: authoritative deterministic domain failure (e.g. invalid date / business rule)
+            summary.conflicts++;
+            await updateOfflineRegistrationStatus(reg.offlineRegistrationId, 'conflict', {
+              conflictReason: syncData?.error || 'Deterministic registration domain validation failure',
+              syncedAt: new Date().toISOString(),
+            });
+            await stripTerminalOfflineEvidence();
+            continue;
+          }
+
+          if (res.status === 400) {
+            // Deterministic payload / schema / RPC domain failure that cannot succeed by retrying identical data
+            summary.conflicts++;
+            await updateOfflineRegistrationStatus(reg.offlineRegistrationId, 'conflict', {
+              conflictReason: syncData?.error || 'Deterministic registration validation error',
+              syncedAt: new Date().toISOString(),
+            });
+            await stripTerminalOfflineEvidence();
+            continue;
+          }
+
+          if (res.status === 401 || res.status === 403) {
+            summary.errors++;
+            await updateOfflineRegistrationStatus(reg.offlineRegistrationId, 'pending', {
+              conflictReason: 'Authentication required',
+            });
+            continue;
+          }
+
+          if (res.status >= 500) {
+            summary.errors++;
+            await updateOfflineRegistrationStatus(reg.offlineRegistrationId, 'pending', {
+              conflictReason: syncData?.error || `Server error (${res.status})`,
+            });
+            continue;
+          }
+
           throw new Error(syncData?.error || `HTTP ${res.status}`);
         }
 
@@ -440,6 +498,7 @@ export async function runOfflineMaintenance(): Promise<MaintenanceResult> {
     );
 
     const conflictedPassIds = new Set<string>();
+    const unresolvedPassIds = new Set<string>();
 
     for (const evt of pendingEvents) {
       let targetPassId = evt.passId;
@@ -451,6 +510,7 @@ export async function runOfflineMaintenance(): Promise<MaintenanceResult> {
         if (parentReg.syncStatus === 'pending' || parentReg.syncStatus === 'syncing') {
           // Parent registration is still pending due to network/transient failure:
           // DO NOT call lifecycle RPC; leave event pending for next cycle (Section 3)
+          unresolvedPassIds.add(evt.passId);
           continue;
         }
 
@@ -480,6 +540,13 @@ export async function runOfflineMaintenance(): Promise<MaintenanceResult> {
         continue;
       }
 
+      // Check per-pass causal unresolved predecessor rule
+      if (unresolvedPassIds.has(targetPassId) || unresolvedPassIds.has(evt.passId)) {
+        // Predecessor event on this pass is unresolved (timed out / ambiguous / pending).
+        // Leave this event pending and DO NOT call guard_sync_offline_event.
+        continue;
+      }
+
       try {
         const rpcCall = client
           .schema('api')
@@ -503,6 +570,7 @@ export async function runOfflineMaintenance(): Promise<MaintenanceResult> {
         const resData = eventRes.data;
         if (resData.status === 'conflict') {
           conflictedPassIds.add(targetPassId);
+          conflictedPassIds.add(evt.passId);
           summary.conflicts++;
           await updateOfflineEventStatus(evt.eventId, 'conflict', {
             conflictReason: resData.reason || 'Server status conflict',
@@ -521,6 +589,8 @@ export async function runOfflineMaintenance(): Promise<MaintenanceResult> {
         await updateOfflineEventStatus(evt.eventId, 'pending', {
           conflictReason: evtErr.message || 'Event sync failed',
         });
+        unresolvedPassIds.add(targetPassId);
+        unresolvedPassIds.add(evt.passId);
       }
     }
 

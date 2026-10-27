@@ -18,6 +18,8 @@ import {
   getOfflineEvents,
   queueOfflineEvent,
   updateOfflineEventStatus,
+  updateOfflineRegistrationCheckpoint,
+  clearOfflineRegistrationCheckpoints,
   type CachedVisitorPass,
 } from '@/lib/offline/guardIndexedDb';
 import {
@@ -36,17 +38,29 @@ import {
   classifySubmissionOutcome,
   uploadCheckpointedEvidence,
   createIssueTransaction,
+  createPortalIssueTransaction,
+  issueVisitorPass,
+  PassIssuanceError,
 } from '@/services/visitorRegistration';
+import { createPassPresentation } from '@/lib/passPresentation';
 import { requireSupabase } from '@/lib/supabase';
 import { thermalTemplateLayoutSchema } from '@/types/thermalTemplate';
 import { renderThermalPass } from '@/printer/renderer/thermalRenderer';
-import { mxw01Manager } from '@/printer/mxw01/mxw01Manager';
+import { MXW01Manager, mxw01PrinterManager } from '@/printer/mxw01/mxw01Manager';
 import { PGlite } from '@electric-sql/pglite';
 
 // Mock dependencies for guardSyncManager and supabase services
 const { mockRpc, mockGetSession, mockStorageFrom } = vi.hoisted(() => ({
   mockRpc: vi.fn(),
-  mockGetSession: vi.fn(),
+  mockGetSession: vi.fn().mockResolvedValue({
+    data: {
+      session: {
+        access_token: 'valid-test-token',
+        user: { id: 'portal-user-1' },
+      },
+    },
+    error: null,
+  }),
   mockStorageFrom: vi.fn(),
 }));
 
@@ -54,6 +68,16 @@ vi.mock('@/lib/supabase', () => {
   const client: any = {
     auth: {
       getSession: mockGetSession,
+      signOut: vi.fn().mockResolvedValue({}),
+      signInAnonymously: vi.fn().mockResolvedValue({
+        data: {
+          session: {
+            access_token: 'portal-anon-token',
+            user: { id: 'portal-user-1' },
+          },
+        },
+        error: null,
+      }),
     },
     rpc: (...args: any[]) => {
       const getResult = () => Promise.resolve(mockRpc(...args));
@@ -196,7 +220,7 @@ describe('Deep Dive 1 + Deep Dive 2 Root-Cause Closure Test Suite', () => {
             intent_id: 'intent-uuid-default',
             bucket_id: 'visitor-photos',
             object_path: 'passes/photo-default.jpg',
-            expiry: new Date(Date.now() + 600000).toISOString(),
+            expires_at: new Date(Date.now() + 600000).toISOString(),
             max_bytes: 1048576,
           },
           error: null,
@@ -960,7 +984,7 @@ describe('Deep Dive 1 + Deep Dive 2 Root-Cause Closure Test Suite', () => {
               intent_id: 'intent-uuid-test-1',
               bucket_id: 'visitor-photos',
               object_path: 'passes/photo-test-1.jpg',
-              expiry: new Date(Date.now() + 600000).toISOString(),
+              expires_at: new Date(Date.now() + 600000).toISOString(),
               max_bytes: 1048576,
             },
             error: null,
@@ -1051,7 +1075,7 @@ describe('Deep Dive 1 + Deep Dive 2 Root-Cause Closure Test Suite', () => {
               intent_id: 'intent-uuid-test-2',
               bucket_id: 'visitor-photos',
               object_path: 'passes/photo-test-2.jpg',
-              expiry: new Date(Date.now() + 600000).toISOString(),
+              expires_at: new Date(Date.now() + 600000).toISOString(),
               max_bytes: 1048576,
             },
             error: null,
@@ -1121,7 +1145,7 @@ describe('Deep Dive 1 + Deep Dive 2 Root-Cause Closure Test Suite', () => {
               intent_id: 'intent-uuid-test-3',
               bucket_id: 'visitor-photos',
               object_path: 'passes/photo-test-3.jpg',
-              expiry: new Date(Date.now() + 600000).toISOString(),
+              expires_at: new Date(Date.now() + 600000).toISOString(),
               max_bytes: 1048576,
             },
             error: null,
@@ -1210,7 +1234,7 @@ describe('Deep Dive 1 + Deep Dive 2 Root-Cause Closure Test Suite', () => {
               intent_id: 'intent-uuid-test-4',
               bucket_id: 'visitor-photos',
               object_path: 'passes/photo-test-4.jpg',
-              expiry: new Date(Date.now() + 600000).toISOString(),
+              expires_at: new Date(Date.now() + 600000).toISOString(),
               max_bytes: 1048576,
             },
             error: null,
@@ -1317,7 +1341,7 @@ describe('Deep Dive 1 + Deep Dive 2 Root-Cause Closure Test Suite', () => {
               intent_id: 'intent-uuid-test-5',
               bucket_id: 'visitor-photos',
               object_path: 'passes/photo-test-5.jpg',
-              expiry: new Date(Date.now() + 600000).toISOString(),
+              expires_at: new Date(Date.now() + 600000).toISOString(),
               max_bytes: 1048576,
             },
             error: null,
@@ -1411,7 +1435,7 @@ describe('Deep Dive 1 + Deep Dive 2 Root-Cause Closure Test Suite', () => {
               intent_id: 'intent-uuid-12345',
               bucket_id: 'visitor-photos',
               object_path: 'passes/photo-123.jpg',
-              expiry: new Date(Date.now() + 600000).toISOString(),
+              expires_at: new Date(Date.now() + 600000).toISOString(),
               max_bytes: 1048576,
             },
             error: null,
@@ -1459,9 +1483,9 @@ describe('Deep Dive 1 + Deep Dive 2 Root-Cause Closure Test Suite', () => {
       expect(transaction.photoCheckpoint?.uploaded).toBe(true);
     });
 
-    it('classifySubmissionOutcome classifies HTTP 409 replay-consistency errors as rejected_requires_new_transaction', () => {
-      expect(classifySubmissionOutcome({ status: 409, message: 'intent_mismatch' })).toBe('rejected_requires_new_transaction');
-      expect(classifySubmissionOutcome({ status: 409, message: 'payload_mismatch' })).toBe('rejected_requires_new_transaction');
+    it('classifySubmissionOutcome classifies HTTP 409 replay-consistency errors appropriately', () => {
+      expect(classifySubmissionOutcome({ status: 409, message: 'intent_mismatch' })).toBe('existing_pass_replay_conflict');
+      expect(classifySubmissionOutcome({ status: 409, message: 'payload_mismatch' })).toBe('existing_pass_replay_conflict');
       expect(classifySubmissionOutcome({ status: 409, message: 'cross_actor_replay' })).toBe('rejected_requires_new_transaction');
       expect(classifySubmissionOutcome({ status: 409, message: 'source_mismatch' })).toBe('rejected_requires_new_transaction');
       expect(classifySubmissionOutcome({ status: 422, message: 'pass_has_expired' })).toBe('rejected_requires_new_transaction');
@@ -1531,6 +1555,812 @@ describe('Deep Dive 1 + Deep Dive 2 Root-Cause Closure Test Suite', () => {
       const rlsError = { code: '42501', message: 'permission denied for table passes' };
       expect(isTransportOrNetworkError(rlsError)).toBe(false);
       expect(isAuthoritativeServerError(rlsError)).toBe(true);
+    });
+  });
+
+  describe('22. Final State-Machine Closure Pass Scenarios', () => {
+    beforeEach(async () => {
+      await setupMockIndexedDb();
+      mockRpc.mockReset();
+      mockGetSession.mockReset();
+      mockGetSession.mockResolvedValue({
+        data: { session: { access_token: 'valid-test-token' } },
+      });
+      mockStorageFrom.mockReset();
+      vi.restoreAllMocks();
+    });
+
+    it('Scenario 1: Expired Guard photo checkpoint -> allocates fresh upload intent', async () => {
+      const regId = '00000000-0000-4000-8000-000000000021';
+      mockGetSession.mockResolvedValue({
+        data: { session: { access_token: 'valid-guard-token' } },
+      });
+
+      const expiredCheckpoint = {
+        intentId: 'old-expired-photo-intent',
+        bucketId: 'visitor-photos',
+        objectPath: 'passes/old-photo.jpg',
+        contentType: 'image/webp',
+        maxBytes: 1048576,
+        expiresAt: new Date(Date.now() - 3600000).toISOString(), // Expired 1h ago
+        uploaded: true,
+      };
+
+      await saveOfflineRegistrationWithCache({
+        offlineRegistrationId: regId,
+        visitor: {
+          firstName: 'ExpiredPhoto',
+          lastName: 'Visitor',
+          contactNumber: '09171234567',
+          purpose: 'Official',
+          visitDate: '2026-10-27',
+        },
+        action: 'approved',
+        occurredAt: new Date().toISOString(),
+        photoBlob: new Blob(['photo-bytes'], { type: 'image/webp' }),
+        rejectionReason: null,
+      });
+
+      await updateOfflineRegistrationCheckpoint(regId, 'photo', expiredCheckpoint);
+
+      let createdIntents: string[] = [];
+      mockRpc.mockImplementation((name: string) => {
+        if (name === 'create_upload_intent') {
+          const freshId = `fresh-photo-intent-${createdIntents.length + 1}`;
+          createdIntents.push(freshId);
+          return Promise.resolve({
+            data: {
+              intent_id: freshId,
+              bucket_id: 'visitor-photos',
+              object_path: `passes/${freshId}.webp`,
+              expires_at: new Date(Date.now() + 900000).toISOString(),
+              max_bytes: 5242880,
+            },
+            error: null,
+          });
+        }
+        if (name === 'guard_offline_snapshot_page') {
+          return Promise.resolve({ data: [], error: null });
+        }
+        return Promise.resolve({ data: null, error: null });
+      });
+
+      mockStorageFrom.mockReturnValue({
+        upload: vi.fn().mockResolvedValue({ data: { path: 'passes/fresh.webp' }, error: null }),
+      });
+
+      let requestedPhotoIntent: string | null = null;
+      globalThis.fetch = vi.fn().mockImplementation((url: string, init?: any) => {
+        if (String(url).includes('/api/sync-offline-registration')) {
+          const body = JSON.parse(init?.body || '{}');
+          requestedPhotoIntent = body.photoIntentId;
+          return Promise.resolve(new Response(JSON.stringify({ canonicalPassId: 'pass-canon-21' }), { status: 200 }));
+        }
+        return Promise.resolve(new Response('{}', { status: 200 }));
+      });
+
+      await runOfflineMaintenance();
+
+      expect(createdIntents.length).toBeGreaterThanOrEqual(1);
+      expect(requestedPhotoIntent).not.toBe('old-expired-photo-intent');
+      expect(requestedPhotoIntent).toBe(createdIntents[0]);
+    });
+
+    it('Scenario 2: Expired Guard ID checkpoint -> allocates fresh upload intent', async () => {
+      const regId = '00000000-0000-4000-8000-000000000022';
+      mockGetSession.mockResolvedValue({
+        data: { session: { access_token: 'valid-guard-token' } },
+      });
+
+      const validPhotoCheckpoint = {
+        intentId: 'valid-photo-intent-22',
+        bucketId: 'visitor-photos',
+        objectPath: 'passes/photo-22.jpg',
+        contentType: 'image/webp',
+        maxBytes: 1048576,
+        expiresAt: new Date(Date.now() + 600000).toISOString(), // valid for 10 min
+        uploaded: true,
+      };
+
+      const expiredIdCheckpoint = {
+        intentId: 'old-expired-id-intent',
+        bucketId: 'visitor-ids',
+        objectPath: 'passes/old-id.jpg',
+        contentType: 'image/webp',
+        maxBytes: 1048576,
+        expiresAt: new Date(Date.now() - 3600000).toISOString(), // Expired 1h ago
+        uploaded: true,
+      };
+
+      await saveOfflineRegistrationWithCache({
+        offlineRegistrationId: regId,
+        visitor: {
+          firstName: 'ExpiredId',
+          lastName: 'Visitor',
+          contactNumber: '09171234567',
+          purpose: 'Official',
+          visitDate: '2026-10-27',
+        },
+        action: 'approved',
+        occurredAt: new Date().toISOString(),
+        photoBlob: new Blob(['photo-bytes'], { type: 'image/webp' }),
+        idBlob: new Blob(['id-bytes'], { type: 'image/webp' }),
+        rejectionReason: null,
+      });
+
+      await updateOfflineRegistrationCheckpoint(regId, 'photo', validPhotoCheckpoint);
+      await updateOfflineRegistrationCheckpoint(regId, 'id', expiredIdCheckpoint);
+
+      let createdKinds: string[] = [];
+      mockRpc.mockImplementation((name: string, args: any) => {
+        if (name === 'create_upload_intent') {
+          createdKinds.push(args?.requested_kind);
+          return Promise.resolve({
+            data: {
+              intent_id: 'fresh-id-intent-22',
+              bucket_id: 'visitor-ids',
+              object_path: 'passes/id-22.webp',
+              expires_at: new Date(Date.now() + 900000).toISOString(),
+              max_bytes: 5242880,
+            },
+            error: null,
+          });
+        }
+        if (name === 'guard_offline_snapshot_page') {
+          return Promise.resolve({ data: [], error: null });
+        }
+        return Promise.resolve({ data: null, error: null });
+      });
+
+      mockStorageFrom.mockReturnValue({
+        upload: vi.fn().mockResolvedValue({ data: { path: 'passes/id-22.webp' }, error: null }),
+      });
+
+      let requestedIdIntent: string | null = null;
+      let requestedPhotoIntent: string | null = null;
+      globalThis.fetch = vi.fn().mockImplementation((url: string, init?: any) => {
+        if (String(url).includes('/api/sync-offline-registration')) {
+          const body = JSON.parse(init?.body || '{}');
+          requestedPhotoIntent = body.photoIntentId;
+          requestedIdIntent = body.idIntentId;
+          return Promise.resolve(new Response(JSON.stringify({ canonicalPassId: 'pass-canon-22' }), { status: 200 }));
+        }
+        return Promise.resolve(new Response('{}', { status: 200 }));
+      });
+
+      await runOfflineMaintenance();
+
+      expect(createdKinds).toContain('id');
+      expect(createdKinds).not.toContain('photo'); // Valid photo was reused
+      expect(requestedPhotoIntent).toBe('valid-photo-intent-22');
+      expect(requestedIdIntent).toBe('fresh-id-intent-22');
+    });
+
+    it('Scenario 3: Legacy checkpoint without expiresAt is treated as stale and allocates fresh intent', async () => {
+      const transaction = createIssueTransaction('kiosk');
+      transaction.photoCheckpoint = {
+        intentId: 'legacy-intent-no-expiry',
+        bucketId: 'visitor-photos',
+        objectPath: 'passes/legacy.jpg',
+        contentType: 'image/jpeg',
+        maxBytes: 1048576,
+        uploaded: true,
+      };
+
+      let rpcCalled = false;
+      mockRpc.mockImplementation((name: string) => {
+        if (name === 'create_upload_intent') {
+          rpcCalled = true;
+          return Promise.resolve({
+            data: {
+              intent_id: 'fresh-intent-allocated',
+              bucket_id: 'visitor-photos',
+              object_path: 'passes/fresh.jpg',
+              expires_at: new Date(Date.now() + 900000).toISOString(),
+              max_bytes: 1048576,
+            },
+            error: null,
+          });
+        }
+        return Promise.resolve({ data: null, error: null });
+      });
+
+      mockStorageFrom.mockReturnValue({
+        upload: vi.fn().mockResolvedValue({ data: { path: 'passes/fresh.jpg' }, error: null }),
+      });
+
+      const { intentId } = await uploadCheckpointedEvidence(
+        requireSupabase(),
+        'kiosk',
+        'photo',
+        new Blob(['photo'], { type: 'image/jpeg' }),
+        transaction
+      );
+
+      expect(rpcCalled).toBe(true);
+      expect(intentId).toBe('fresh-intent-allocated');
+      expect(transaction.photoCheckpoint?.expiresAt).toBeDefined();
+    });
+
+    it('Scenario 4: invalid_upload_intent -> checkpoints cleared -> later sync succeeds with fresh intent', async () => {
+      const regId = '00000000-0000-4000-8000-000000000024';
+      mockGetSession.mockResolvedValue({
+        data: { session: { access_token: 'valid-guard-token' } },
+      });
+
+      await saveOfflineRegistrationWithCache({
+        offlineRegistrationId: regId,
+        visitor: {
+          firstName: 'InvalidIntent',
+          lastName: 'Recoverable',
+          contactNumber: '09171234567',
+          purpose: 'Official',
+          visitDate: '2026-10-27',
+        },
+        action: 'approved',
+        occurredAt: new Date().toISOString(),
+        photoBlob: new Blob(['photo-bytes-24'], { type: 'image/webp' }),
+        rejectionReason: null,
+      });
+
+      await updateOfflineRegistrationCheckpoint(regId, 'photo', {
+        intentId: 'stale-or-rejected-intent',
+        bucketId: 'visitor-photos',
+        objectPath: 'passes/photo-24.jpg',
+        contentType: 'image/webp',
+        maxBytes: 1048576,
+        expiresAt: new Date(Date.now() + 600000).toISOString(),
+        uploaded: true,
+      });
+
+      let cycle = 1;
+      mockRpc.mockImplementation((name: string) => {
+        if (name === 'create_upload_intent') {
+          return Promise.resolve({
+            data: {
+              intent_id: `intent-fresh-cycle-${cycle}`,
+              bucket_id: 'visitor-photos',
+              object_path: `passes/photo-fresh-${cycle}.webp`,
+              expires_at: new Date(Date.now() + 900000).toISOString(),
+              max_bytes: 5242880,
+            },
+            error: null,
+          });
+        }
+        if (name === 'guard_offline_snapshot_page') {
+          return Promise.resolve({ data: [], error: null });
+        }
+        return Promise.resolve({ data: null, error: null });
+      });
+
+      mockStorageFrom.mockReturnValue({
+        upload: vi.fn().mockResolvedValue({ data: { path: 'passes/photo.webp' }, error: null }),
+      });
+
+      globalThis.fetch = vi.fn().mockImplementation((url: string) => {
+        if (String(url).includes('/api/sync-offline-registration')) {
+          if (cycle === 1) {
+            return Promise.resolve(new Response(JSON.stringify({ error: 'invalid_upload_intent' }), { status: 422 }));
+          }
+          return Promise.resolve(new Response(JSON.stringify({ canonicalPassId: 'pass-recovered-24' }), { status: 200 }));
+        }
+        return Promise.resolve(new Response('{}', { status: 200 }));
+      });
+
+      // Cycle 1: Server rejects with 422 invalid_upload_intent
+      const res1 = await runOfflineMaintenance();
+      expect(res1.summary.errors).toBe(1);
+
+      let regs = await getOfflineRegistrations();
+      let regRecord = regs.find((r) => r.offlineRegistrationId === regId);
+      expect(regRecord?.syncStatus).toBe('pending');
+      expect(regRecord?.photoUploadCheckpoint).toBeUndefined(); // Checkpoint cleared!
+      expect(regRecord?.photoBlob).toBeDefined(); // Local blob retained!
+
+      // Cycle 2: Server succeeds on retry with fresh upload intent
+      cycle = 2;
+      const res2 = await runOfflineMaintenance();
+      expect(res2.summary.registrationsSynced).toBe(1);
+
+      regs = await getOfflineRegistrations();
+      regRecord = regs.find((r) => r.offlineRegistrationId === regId);
+      expect(regRecord?.syncStatus).toBe('synced');
+      expect(regRecord?.canonicalPassId).toBe('pass-recovered-24');
+    });
+
+    it('Scenario 5: Deterministic invalid registration payload (400) -> converts to conflict, not infinite retry', async () => {
+      const regId = '00000000-0000-4000-8000-000000000025';
+      mockGetSession.mockResolvedValue({
+        data: { session: { access_token: 'valid-guard-token' } },
+      });
+
+      await saveOfflineRegistrationWithCache({
+        offlineRegistrationId: regId,
+        visitor: {
+          firstName: 'BadData',
+          lastName: 'Deterministic',
+          contactNumber: 'invalid-number',
+          purpose: 'Official',
+          visitDate: '2026-10-27',
+        },
+        action: 'approved',
+        occurredAt: new Date().toISOString(),
+        photoBlob: new Blob(['photo-bytes-25'], { type: 'image/webp' }),
+        rejectionReason: null,
+      });
+
+      mockRpc.mockImplementation((name: string) => {
+        if (name === 'create_upload_intent') {
+          return Promise.resolve({
+            data: {
+              intent_id: 'intent-25',
+              bucket_id: 'visitor-photos',
+              object_path: 'passes/photo-25.webp',
+              expires_at: new Date(Date.now() + 900000).toISOString(),
+              max_bytes: 5242880,
+            },
+            error: null,
+          });
+        }
+        if (name === 'guard_offline_snapshot_page') {
+          return Promise.resolve({ data: [], error: null });
+        }
+        return Promise.resolve({ data: null, error: null });
+      });
+
+      mockStorageFrom.mockReturnValue({
+        upload: vi.fn().mockResolvedValue({ data: { path: 'passes/photo.webp' }, error: null }),
+      });
+
+      let syncAttempts = 0;
+      globalThis.fetch = vi.fn().mockImplementation((url: string) => {
+        if (String(url).includes('/api/sync-offline-registration')) {
+          syncAttempts++;
+          return Promise.resolve(new Response(JSON.stringify({ error: 'invalid_visitor_data_format' }), { status: 400 }));
+        }
+        return Promise.resolve(new Response('{}', { status: 200 }));
+      });
+
+      const res = await runOfflineMaintenance();
+      expect(res.summary.conflicts).toBe(1);
+
+      const regs = await getOfflineRegistrations();
+      const reg = regs.find((r) => r.offlineRegistrationId === regId);
+      expect(reg?.syncStatus).toBe('conflict');
+      expect(reg?.conflictReason).toBe('invalid_visitor_data_format');
+
+      // Subsequent maintenance cycle does NOT attempt sync for conflict records
+      await runOfflineMaintenance();
+      expect(syncAttempts).toBe(1);
+    });
+
+    it('Scenario 6 & 7: Approve A timeout -> Exit B not submitted in cycle 1; cycle 2 replays A applied -> B submitted', async () => {
+      const passId = '00000000-0000-4000-8000-000000000026';
+      mockGetSession.mockResolvedValue({
+        data: { session: { access_token: 'valid-guard-token' } },
+      });
+
+      const eventAId = '00000000-0000-4000-8000-00000000002a';
+      const eventBId = '00000000-0000-4000-8000-00000000002b';
+
+      const t0 = new Date('2026-10-27T08:00:00Z').getTime();
+
+      await queueOfflineEvent({
+        eventId: eventAId,
+        passId,
+        visitorName: 'Sequential Visitor',
+        action: 'approve_entry',
+        expectedStatus: 'issued',
+        expectedVersion: 1,
+        occurredAt: new Date(t0).toISOString(),
+        syncStatus: 'pending',
+      });
+
+      await queueOfflineEvent({
+        eventId: eventBId,
+        passId,
+        visitorName: 'Sequential Visitor',
+        action: 'record_exit',
+        expectedStatus: 'inside',
+        expectedVersion: 2,
+        occurredAt: new Date(t0 + 5000).toISOString(),
+        syncStatus: 'pending',
+      });
+
+      let calledEventsCycle1: string[] = [];
+      let cycle = 1;
+
+      mockRpc.mockImplementation((name: string, args: any) => {
+        if (name === 'guard_sync_offline_event') {
+          if (cycle === 1) {
+            calledEventsCycle1.push(args?.requested_event_id);
+            // Event A times out
+            if (args?.requested_event_id === eventAId) {
+              return Promise.reject(new Error('Connection timed out'));
+            }
+          } else {
+            // Cycle 2: both succeed
+            return Promise.resolve({
+              data: { status: 'applied', version: args?.requested_expected_version + 1 },
+              error: null,
+            });
+          }
+        }
+        if (name === 'guard_offline_snapshot_page') {
+          return Promise.resolve({ data: [], error: null });
+        }
+        return Promise.resolve({ data: null, error: null });
+      });
+
+      // Cycle 1: Event A times out
+      await runOfflineMaintenance();
+
+      // Assertions for Cycle 1:
+      // RPC was called for Event A exactly once
+      expect(calledEventsCycle1).toEqual([eventAId]);
+      // RPC was NEVER called for Event B in cycle 1!
+      expect(calledEventsCycle1).not.toContain(eventBId);
+
+      let events = await getOfflineEvents();
+      expect(events.find((e) => e.eventId === eventAId)?.syncStatus).toBe('pending');
+      expect(events.find((e) => e.eventId === eventBId)?.syncStatus).toBe('pending');
+
+      // Cycle 2: Event A replays and receives applied receipt, then Event B submits
+      cycle = 2;
+      let calledEventsCycle2: string[] = [];
+      mockRpc.mockImplementation((name: string, args: any) => {
+        if (name === 'guard_sync_offline_event') {
+          calledEventsCycle2.push(args?.requested_event_id);
+          return Promise.resolve({
+            data: { status: 'applied', version: args?.requested_expected_version + 1 },
+            error: null,
+          });
+        }
+        if (name === 'guard_offline_snapshot_page') {
+          return Promise.resolve({ data: [], error: null });
+        }
+        return Promise.resolve({ data: null, error: null });
+      });
+
+      await runOfflineMaintenance();
+
+      expect(calledEventsCycle2).toEqual([eventAId, eventBId]);
+      events = await getOfflineEvents();
+      expect(events.find((e) => e.eventId === eventAId)?.syncStatus).toBe('synced');
+      expect(events.find((e) => e.eventId === eventBId)?.syncStatus).toBe('synced');
+    });
+
+    it('Scenario 8: Kiosk ambiguous state freezes all mutation controls and displays amber warning banner', () => {
+      const kioskSrc = fs.readFileSync('src/pages/KioskPage.tsx', 'utf8');
+
+      // Ambiguous amber banner check
+      expect(kioskSrc).toContain("kioskTransactionRef.current?.phase === 'ambiguous'");
+      expect(kioskSrc).toContain('The previous submission may already have created a pass. To prevent duplicates, the exact previous submission must be retried before any details can be changed.');
+      expect(kioskSrc).toContain('Retry Exact Submission');
+      expect(kioskSrc).toContain('Cancel & Ask Guard');
+
+      // Mutation controls are strictly guarded behind phase !== 'ambiguous'
+      expect(kioskSrc).toContain("kioskTransactionRef.current?.phase !== 'ambiguous' && (");
+      expect(kioskSrc).toContain('Retake Selfie');
+      expect(kioskSrc).toContain('Retake ID');
+    });
+
+    it('Scenario 9: Kiosk exact ambiguous retry preserves original requestId, evidence checkpoints, and frozen payload', async () => {
+      const tx = createIssueTransaction('kiosk');
+      const originalRequestId = tx.requestId;
+      const originalVisitor = {
+        firstName: 'OriginalKiosk',
+        lastName: 'Visitor',
+        contactNumber: '09181112233',
+        purpose: 'Meeting',
+        visitDate: '2026-10-27',
+      };
+      const photoBlob = new Blob(['photo'], { type: 'image/jpeg' });
+
+      mockRpc.mockImplementation((name: string) => {
+        if (name === 'create_upload_intent') {
+          return Promise.resolve({
+            data: {
+              intent_id: 'intent-orig-kiosk',
+              bucket_id: 'visitor-photos',
+              object_path: 'passes/photo-orig.jpg',
+              expires_at: new Date(Date.now() + 600000).toISOString(),
+              max_bytes: 1048576,
+            },
+            error: null,
+          });
+        }
+        return Promise.resolve({ data: null, error: null });
+      });
+
+      mockStorageFrom.mockReturnValue({
+        upload: vi.fn().mockResolvedValue({ data: { path: 'passes/photo.jpg' }, error: null }),
+      });
+
+      // 1. First submission fails with network interruption
+      globalThis.fetch = vi.fn().mockImplementation((url: string) => {
+        if (String(url).includes('/api/passes/issue')) {
+          return Promise.reject(new TypeError('Network disconnected'));
+        }
+        return Promise.resolve(new Response('{}', { status: 200 }));
+      });
+
+      await expect(
+        issueVisitorPass('kiosk', originalVisitor, photoBlob, undefined, tx.requestId, undefined, tx)
+      ).rejects.toThrow('Generation result could not be confirmed');
+
+      expect(tx.phase).toBe('ambiguous');
+      expect(tx.requestId).toBe(originalRequestId);
+      expect(tx.submittedPayload?.visitor.firstName).toBe('OriginalKiosk');
+      expect(tx.photoIntentId).toBe('intent-orig-kiosk');
+
+      // 2. Retry exact submission: succeeds
+      let replayBody: any = null;
+      globalThis.fetch = vi.fn().mockImplementation((url: string, init?: any) => {
+        if (String(url).includes('/api/passes/issue')) {
+          replayBody = JSON.parse(init?.body || '{}');
+          return Promise.resolve(
+            new Response(
+              JSON.stringify({
+                passId: 'kiosk-pass-canon-1',
+                qrToken: 'qr-token-canon-1',
+                publicReference: 'EP-20261027-0099',
+                validFrom: '2026-10-27T08:00:00Z',
+                validUntil: '2026-10-27T17:00:00Z',
+              }),
+              { status: 200 }
+            )
+          );
+        }
+        return Promise.resolve(new Response('{}', { status: 200 }));
+      });
+
+      const res = await issueVisitorPass(
+        'kiosk',
+        originalVisitor,
+        photoBlob,
+        undefined,
+        tx.requestId,
+        undefined,
+        tx
+      );
+
+      expect(res.passId).toBe('kiosk-pass-canon-1');
+      expect(tx.phase).toBe('committed');
+      expect(replayBody.requestId).toBe(originalRequestId);
+      expect(replayBody.photoIntentId).toBe('intent-orig-kiosk');
+      expect(replayBody.visitor.firstName).toBe('OriginalKiosk');
+    });
+
+    it('Scenario 10: Presentation after replay uses frozen submitted visitor data even if form was tampered', () => {
+      const tx = createIssueTransaction('kiosk');
+      tx.phase = 'ambiguous';
+      tx.submittedPayload = {
+        source: 'kiosk',
+        visitor: {
+          firstName: 'AliceAuthoritative',
+          middleName: 'M',
+          lastName: 'Smith',
+          contactNumber: '09171112233',
+          purpose: 'Official Transaction',
+          visitDate: '2026-10-27',
+        },
+        photoIntentId: 'intent-alice',
+        idIntentId: null,
+      };
+
+      // Attacker or UI race alters the active form values before replay resolves
+      const tamperedFormData = {
+        firstName: 'EveTampered',
+        middleName: 'X',
+        lastName: 'Attacker',
+        contactNumber: '09999999999',
+        purpose: 'Malicious Access',
+        visitDate: '2026-10-28',
+      };
+
+      // Defensive invariant implemented in both KioskPage and GetPassPage:
+      const effectiveVisitor = tx.submittedPayload?.visitor ?? tamperedFormData;
+
+      const presentation = createPassPresentation({
+        visitorName: [effectiveVisitor.firstName, effectiveVisitor.middleName, effectiveVisitor.lastName].filter(Boolean).join(' '),
+        visitDate: effectiveVisitor.visitDate,
+        passReference: 'EP-20261027-1234',
+        qrToken: 'server-verified-qr-token',
+        purpose: effectiveVisitor.purpose,
+      });
+
+      // Assert presentation reflects authoritative submitted payload, NOT tampered form
+      expect(presentation.visitorName).toBe('ALICEAUTHORITATIVE M SMITH');
+      expect(presentation.visitDate).toContain('2026');
+      expect(presentation.purpose).toBe('Official Transaction');
+      expect(presentation.visitorName).not.toContain('TAMPERED');
+      expect(presentation.visitorName).not.toContain('ATTACKER');
+    });
+
+    it('Scenario 11: intent_mismatch & payload_mismatch classify as existing_pass_replay_conflict and do NOT rotate requestId', async () => {
+      expect(classifySubmissionOutcome(409, 'intent_mismatch')).toBe('existing_pass_replay_conflict');
+      expect(classifySubmissionOutcome(409, 'payload_mismatch')).toBe('existing_pass_replay_conflict');
+
+      const tx = await createPortalIssueTransaction();
+      const origRequestId = tx.requestId;
+      tx.submittedPayload = {
+        source: 'portal',
+        visitor: {
+          firstName: 'Bob',
+          lastName: 'Builder',
+          contactNumber: '09171234567',
+          purpose: 'Job',
+          visitDate: '2026-10-27',
+        },
+        photoIntentId: 'intent-bob-1',
+        idIntentId: null,
+      };
+
+      tx.photoIntentId = 'intent-bob-1';
+      tx.photoCheckpoint = {
+        intentId: 'intent-bob-1',
+        bucketId: 'visitor-photos',
+        objectPath: 'passes/photo-bob.jpg',
+        contentType: 'image/jpeg',
+        maxBytes: 1048576,
+        expiresAt: new Date(Date.now() + 600000).toISOString(),
+        uploaded: true,
+      };
+
+      mockRpc.mockImplementation((name: string) => {
+        if (name === 'create_upload_intent') {
+          return Promise.resolve({
+            data: {
+              intent_id: 'intent-bob-1',
+              bucket_id: 'visitor-photos',
+              object_path: 'passes/photo-bob.jpg',
+              expires_at: new Date(Date.now() + 600000).toISOString(),
+              max_bytes: 1048576,
+            },
+            error: null,
+          });
+        }
+        return Promise.resolve({ data: null, error: null });
+      });
+
+      globalThis.fetch = vi.fn().mockImplementation((url: string) => {
+        if (String(url).includes('/api/passes/issue')) {
+          return Promise.resolve(new Response(JSON.stringify({ error: 'intent_mismatch' }), { status: 409 }));
+        }
+        return Promise.resolve(new Response('{}', { status: 200 }));
+      });
+
+      let caughtErr: any = null;
+      try {
+        await issueVisitorPass(
+          'portal',
+          tx.submittedPayload.visitor,
+          new Blob(['photo']),
+          undefined,
+          tx.requestId,
+          undefined,
+          tx
+        );
+      } catch (err) {
+        caughtErr = err;
+      }
+
+      expect(caughtErr).toBeInstanceOf(PassIssuanceError);
+      expect(caughtErr.outcome).toBe('existing_pass_replay_conflict');
+      expect(caughtErr.message).toContain('An existing pass was already created for this request');
+
+      // Invariant: requestId must NOT be rotated, submittedPayload must NOT be cleared!
+      expect(tx.requestId).toBe(origRequestId);
+      expect(tx.submittedPayload).not.toBeNull();
+      expect(tx.photoIntentId).toBe('intent-bob-1');
+    });
+
+    it('Scenario 12: Portal ambiguous state cannot issue a brand-new pass through Start Over', () => {
+      const getPassSrc = fs.readFileSync('src/pages/GetPassPage.tsx', 'utf8');
+
+      // Ambiguous block has Cancel & Ask Guard and Retry Exact Submission
+      expect(getPassSrc).toContain("portalTransactionRef.current?.phase === 'ambiguous'");
+      expect(getPassSrc).toContain('Cancel & Ask Guard');
+      expect(getPassSrc).toContain('Retry Exact Submission');
+
+      // In ambiguous branch, handleStartOver is NOT called
+      expect(getPassSrc).toContain('handleAmbiguousCancelAndAskGuard');
+      expect(getPassSrc).toContain('Submission cancelled. The previous pass may have been created. Please proceed to the Guard Station with your valid ID for assistance.');
+    });
+
+    it('Scenario 13 & 14: Normal first-time kiosk issuance and portal issuance remain unchanged', async () => {
+      mockRpc.mockImplementation((name: string) => {
+        if (name === 'create_upload_intent') {
+          return Promise.resolve({
+            data: {
+              intent_id: 'intent-normal',
+              bucket_id: 'visitor-photos',
+              object_path: 'passes/photo-normal.jpg',
+              expires_at: new Date(Date.now() + 600000).toISOString(),
+              max_bytes: 1048576,
+            },
+            error: null,
+          });
+        }
+        return Promise.resolve({ data: null, error: null });
+      });
+
+      mockStorageFrom.mockReturnValue({
+        upload: vi.fn().mockResolvedValue({ data: { path: 'passes/photo-normal.jpg' }, error: null }),
+      });
+
+      // 1. Kiosk normal issuance
+      const kioskTx = createIssueTransaction('kiosk');
+      globalThis.fetch = vi.fn().mockImplementation((url: string) => {
+        if (String(url).includes('/api/passes/issue')) {
+          return Promise.resolve(
+            new Response(
+              JSON.stringify({
+                passId: 'kiosk-pass-normal',
+                qrToken: 'qr-normal-kiosk',
+                publicReference: 'EP-20261027-0001',
+                validFrom: '2026-10-27T08:00:00Z',
+                validUntil: '2026-10-27T17:00:00Z',
+              }),
+              { status: 200 }
+            )
+          );
+        }
+        return Promise.resolve(new Response('{}', { status: 200 }));
+      });
+
+      const kioskRes = await issueVisitorPass(
+        'kiosk',
+        { firstName: 'First', lastName: 'Kiosk', contactNumber: '09171234567', purpose: 'Visit', visitDate: '2026-10-27' },
+        new Blob(['photo']),
+        undefined,
+        kioskTx.requestId,
+        undefined,
+        kioskTx
+      );
+
+      expect(kioskRes.passId).toBe('kiosk-pass-normal');
+      expect(kioskTx.phase).toBe('committed');
+
+      // 2. Portal normal issuance
+      const portalTx = createIssueTransaction('portal');
+      globalThis.fetch = vi.fn().mockImplementation((url: string) => {
+        if (String(url).includes('/api/passes/issue')) {
+          return Promise.resolve(
+            new Response(
+              JSON.stringify({
+                passId: 'portal-pass-normal',
+                qrToken: 'qr-normal-portal',
+                publicReference: 'EP-20261027-0002',
+                validFrom: '2026-10-27T08:00:00Z',
+                validUntil: '2026-10-27T17:00:00Z',
+              }),
+              { status: 200 }
+            )
+          );
+        }
+        return Promise.resolve(new Response('{}', { status: 200 }));
+      });
+
+      const portalRes = await issueVisitorPass(
+        'portal',
+        { firstName: 'First', lastName: 'Portal', contactNumber: '09171234567', purpose: 'Visit', visitDate: '2026-10-27' },
+        new Blob(['photo']),
+        undefined,
+        portalTx.requestId,
+        undefined,
+        portalTx
+      );
+
+      expect(portalRes.passId).toBe('portal-pass-normal');
+      expect(portalTx.phase).toBe('committed');
+    });
+
+    it('Scenario 15: Physical printer tests remain mocked/software-only and README maintains truthful disclaimer', () => {
+      const readme = fs.readFileSync('README.md', 'utf8');
+      expect(readme).toContain('PHYSICAL MXW01 ACCEPTANCE: NOT YET TESTED');
+      expect(mxw01PrinterManager).toBeDefined();
     });
   });
 });

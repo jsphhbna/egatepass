@@ -953,3 +953,30 @@ export async function updateOfflineRegistrationCheckpoint(
     tx.onabort = () => reject(tx.error || new Error('Transaction aborted'));
   });
 }
+
+/**
+ * Clears both photo and ID upload checkpoints on an offline registration record.
+ */
+export async function clearOfflineRegistrationCheckpoints(
+  offlineRegistrationId: string
+): Promise<void> {
+  const db = await openDatabase();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction('offline_registrations', 'readwrite');
+    const store = tx.objectStore('offline_registrations');
+    const req = store.get(offlineRegistrationId);
+
+    req.onsuccess = () => {
+      if (req.result) {
+        const updated = { ...req.result };
+        delete updated.photoUploadCheckpoint;
+        delete updated.idUploadCheckpoint;
+        store.put(updated);
+      }
+    };
+
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => reject(tx.error);
+    tx.onabort = () => reject(tx.error || new Error('Transaction aborted'));
+  });
+}

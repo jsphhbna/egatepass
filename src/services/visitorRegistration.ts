@@ -24,6 +24,7 @@ interface UploadIntent {
   intent_id: string;
   bucket_id: string;
   object_path: string;
+  expires_at: string;
   max_bytes: number;
 }
 
@@ -67,7 +68,8 @@ export type SubmissionOutcomeType =
   | 'committed'
   | 'ambiguous'
   | 'rejected_correctable_field'
-  | 'rejected_requires_new_transaction';
+  | 'rejected_requires_new_transaction'
+  | 'existing_pass_replay_conflict';
 
 export function classifySubmissionOutcome(
   statusOrErr: number | { status?: number; message?: string; error?: string; code?: string } | any,
@@ -96,12 +98,15 @@ export function classifySubmissionOutcome(
     return 'rejected_correctable_field';
   }
 
-  // 2. Authoritative replay consistency / session mismatches / expiration (Section 10)
+  // 2. Existing pass replay conflicts (same-request-id replay payload or intent mismatch)
+  if (code === 'payload_mismatch' || code === 'intent_mismatch') {
+    return 'existing_pass_replay_conflict';
+  }
+
+  // 3. Authoritative replay consistency / session mismatches / expiration (Section 10)
   if (
     code === 'cross_actor_replay' ||
     code === 'source_mismatch' ||
-    code === 'payload_mismatch' ||
-    code === 'intent_mismatch' ||
     code === 'pass_has_expired' ||
     status === 409 ||
     status === 422
@@ -212,7 +217,7 @@ async function authenticatedClient(
     if (existingTransaction?.token && existingTransaction?.actorId) {
       // Reuse existing transaction session
       const { data: { session } } = await client.auth.getSession();
-      if (session && session.user.id === existingTransaction.actorId) {
+      if (session && session.user?.id === existingTransaction.actorId) {
         return { client, token: session.access_token };
       }
       return { client, token: existingTransaction.token };
@@ -250,11 +255,17 @@ export async function uploadCheckpointedEvidence(
 
   let checkpoint: UploadCheckpoint;
 
-  if (
-    existingCheckpoint &&
-    (!existingCheckpoint.expiresAt || new Date(existingCheckpoint.expiresAt).getTime() > Date.now())
-  ) {
-    checkpoint = { ...existingCheckpoint };
+  const isCheckpointValid = (cp?: UploadCheckpoint | null): boolean => {
+    return Boolean(
+      cp &&
+      cp.expiresAt &&
+      !Number.isNaN(new Date(cp.expiresAt).getTime()) &&
+      new Date(cp.expiresAt).getTime() > Date.now()
+    );
+  };
+
+  if (isCheckpointValid(existingCheckpoint)) {
+    checkpoint = { ...existingCheckpoint! };
   } else {
     const contentType = blob.type || 'image/jpeg';
     const rpcCall = client
@@ -283,6 +294,7 @@ export async function uploadCheckpointedEvidence(
       objectPath: data.object_path,
       contentType,
       maxBytes: data.max_bytes,
+      expiresAt: data.expires_at,
       uploaded: false,
     };
 
@@ -339,16 +351,16 @@ export async function uploadCheckpointedEvidence(
         throw err;
       }
     }
+  }
 
-    // Persist updated uploaded state in transaction
-    if (transaction) {
-      if (kind === 'photo') {
-        transaction.photoCheckpoint = checkpoint;
-        transaction.photoIntentId = checkpoint.intentId;
-      } else {
-        transaction.idCheckpoint = checkpoint;
-        transaction.idIntentId = checkpoint.intentId;
-      }
+  // Ensure transaction reflects current checkpoint and intent ID
+  if (transaction) {
+    if (kind === 'photo') {
+      transaction.photoCheckpoint = checkpoint;
+      transaction.photoIntentId = checkpoint.intentId;
+    } else {
+      transaction.idCheckpoint = checkpoint;
+      transaction.idIntentId = checkpoint.intentId;
     }
   }
 
@@ -444,6 +456,16 @@ export async function issueVisitorPass(
       throw new PassIssuanceError(message, errCode, outcome);
     }
 
+    if (outcome === 'existing_pass_replay_conflict') {
+      // Do NOT rotate requestId, do NOT clear existing request, do NOT issue a second pass.
+      // Preserve transaction state for operator/recovery handling.
+      throw new PassIssuanceError(
+        'An existing pass was already created for this request, but this retry does not match the recorded details. Please consult the guard station.',
+        errCode,
+        outcome
+      );
+    }
+
     if (outcome === 'rejected_requires_new_transaction') {
       if (transaction) {
         transaction.requestId = crypto.randomUUID();
@@ -466,10 +488,7 @@ export async function issueVisitorPass(
     if (transaction) {
       transaction.phase = 'ambiguous';
     }
-    const message =
-      errCode === 'intent_mismatch'
-        ? 'Pass evidence verification conflict. Please retry your request.'
-        : 'Generation result could not be confirmed. Please retry your submission.';
+    const message = 'Generation result could not be confirmed. Please retry your submission.';
 
     throw new PassIssuanceError(message, errCode, 'ambiguous');
   }

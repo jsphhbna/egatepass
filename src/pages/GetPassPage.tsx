@@ -491,9 +491,20 @@ export function GetPassPage() {
     portalTransactionRef.current = null;
   }
 
+  // Start Over is disabled during ambiguous issuance to prevent duplicate passes.
+  // Outside ambiguous phase, handleStartOver resets form and generates fresh transaction.
   function handleStartOver() {
     resetRegistrationFlow();
     toast.info('Registration reset. You can enter details and capture fresh evidence.');
+  }
+
+  function handleAmbiguousCancelAndAskGuard() {
+    toast.warning(
+      'Submission cancelled. The previous pass may have been created. Please proceed to the Guard Station with your valid ID for assistance.',
+      { duration: 8000 }
+    );
+    resetRegistrationFlow();
+    setStep('form');
   }
 
   // ============================================================
@@ -543,15 +554,17 @@ export function GetPassPage() {
 
       setQrDataUrl(qrUrl);
 
+      const effectiveVisitor = portalTransactionRef.current?.submittedPayload?.visitor ?? formData;
+
       const presentation = createPassPresentation({
-        firstName: formData.firstName,
-        middleName: formData.middleName,
-        lastName: formData.lastName,
-        visitDate: formData.visitDate,
+        firstName: effectiveVisitor.firstName,
+        middleName: effectiveVisitor.middleName,
+        lastName: effectiveVisitor.lastName,
+        visitDate: effectiveVisitor.visitDate,
         passReference: result.publicReference || result.passId,
         qrToken: result.qrToken,
         validityWindow: validity,
-        purpose: formData.purpose,
+        purpose: effectiveVisitor.purpose,
       });
       setPassPresentation(presentation);
       
@@ -569,7 +582,14 @@ export function GetPassPage() {
       const errMsg = err instanceof Error ? err.message : 'An unexpected error occurred.';
       setSubmitError(errMsg);
       if (err instanceof PassIssuanceError) {
-        if (err.outcome === 'rejected_requires_new_transaction' || errMsg.includes('conflict')) {
+        if (err.outcome === 'existing_pass_replay_conflict') {
+          // Do NOT rotate requestId, do NOT clear existing request, do NOT issue a second pass.
+          // Preserve transaction state for operator/recovery handling.
+          setSubmitError(
+            err.message ||
+              'An existing pass was already created for this request, but this retry does not match the recorded details. Please consult the guard station.'
+          );
+        } else if (err.outcome === 'rejected_requires_new_transaction' || errMsg.includes('conflict')) {
           portalTransactionRef.current = null;
           issueRequestId.current = crypto.randomUUID();
         } else if (err.outcome === 'rejected_correctable_field') {
@@ -1174,7 +1194,7 @@ export function GetPassPage() {
                     <span>Generation result could not be confirmed</span>
                   </div>
                   <p>
-                    A network interruption occurred while processing your pass. To prevent duplicate passes, please retry your exact submission, or start over.
+                    A network interruption occurred while processing your pass. To prevent duplicate passes, the exact previous submission must be retried before any details can be changed.
                   </p>
                   <p className="text-xs text-amber-800 dark:text-amber-300">
                     Retry Exact Submission resubmits the exact previous attempt without altering your identity or evidence.
@@ -1273,11 +1293,11 @@ export function GetPassPage() {
                 <div className="flex flex-col sm:flex-row gap-3">
                   <Button
                     variant="secondary"
-                    onClick={handleStartOver}
-                    className="flex-1"
-                    icon={<RotateCcw className="h-4 w-4" />}
+                    onClick={handleAmbiguousCancelAndAskGuard}
+                    className="flex-1 text-amber-700 dark:text-amber-300 border-amber-300 dark:border-amber-700"
+                    icon={<AlertCircle className="h-4 w-4" />}
                   >
-                    Start Over
+                    Cancel & Ask Guard
                   </Button>
                   <Button
                     onClick={onSubmit}
@@ -1479,7 +1499,7 @@ export function GetPassPage() {
                 </Link>
                 <button
                   type="button"
-                  onClick={resetRegistrationFlow}
+                  onClick={handleStartOver}
                   className="text-xs text-[var(--color-brand)] hover:underline transition-colors inline-block cursor-pointer"
                 >
                   Register Another Pass

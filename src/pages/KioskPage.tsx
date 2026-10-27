@@ -26,6 +26,7 @@ import {
   Scan,
   Loader2,
   LogOut,
+  RefreshCw,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { Button, Card, Input, FormField, Stepper, Modal } from '@/components/ui';
@@ -398,7 +399,14 @@ export function KioskPage() {
     } catch (err) {
       console.error(err);
       if (err instanceof PassIssuanceError) {
-        if (err.outcome === 'rejected_requires_new_transaction') {
+        if (err.outcome === 'existing_pass_replay_conflict') {
+          // Do NOT rotate requestId, do NOT clear existing request, do NOT issue a second pass.
+          // Preserve transaction state for operator/recovery handling.
+          setSubmitError(
+            err.message ||
+              'An existing pass was already created for this request, but this retry does not match the recorded details. Please consult the guard station.'
+          );
+        } else if (err.outcome === 'rejected_requires_new_transaction') {
           // Reset kiosk transaction: new request ID, no old intents/checkpoints, phase editable (Section 10)
           kioskTransactionRef.current = {
             requestId: crypto.randomUUID(),
@@ -450,12 +458,14 @@ export function KioskPage() {
       }
     }
 
+    const effectiveVisitor = kioskTransactionRef.current?.submittedPayload?.visitor ?? formData;
+
     const presentation = createPassPresentation({
-      visitorName: [formData.firstName, formData.middleName, formData.lastName].filter(Boolean).join(' '),
-      visitDate: formData.visitDate,
+      visitorName: [effectiveVisitor.firstName, effectiveVisitor.middleName, effectiveVisitor.lastName].filter(Boolean).join(' '),
+      visitDate: effectiveVisitor.visitDate,
       passReference: result.publicReference || result.passId,
       qrToken: result.qrToken,
-      purpose: formData.purpose,
+      purpose: effectiveVisitor.purpose,
       validityWindow: validity ?? undefined,
     });
 
@@ -533,6 +543,14 @@ export function KioskPage() {
     setIssuedValidity(null);
     setOcrSuccessNotice(false);
     setStep(isPeakMode ? 'form' : 'scan-intro');
+  }
+
+  function handleAmbiguousCancelAndAskGuard() {
+    toast.warning(
+      'Session cancelled. The previous pass may have been created. Please ask the Guard for assistance.',
+      { duration: 8000 }
+    );
+    resetCurrentVisitor();
   }
 
   function handleNextVisitor() {
@@ -1015,35 +1033,54 @@ export function KioskPage() {
           {step === 'review' && (
             <div className="space-y-6">
               <h2 className="text-center text-lg font-bold text-[var(--color-text-primary)]">Review Pass</h2>
-              {submitError && <div className="rounded-md border border-[var(--color-danger)] bg-[var(--color-danger-light)] p-3 text-sm text-[var(--color-danger-dark)]" role="alert">{submitError}</div>}
+              {kioskTransactionRef.current?.phase === 'ambiguous' ? (
+                <div className="rounded-lg border border-amber-300 bg-amber-50 dark:border-amber-700/60 dark:bg-amber-950/40 p-4 space-y-2 text-sm text-amber-900 dark:text-amber-200" role="alert">
+                  <div className="flex items-center gap-2 font-semibold text-amber-950 dark:text-amber-100">
+                    <AlertCircle className="h-5 w-5 text-amber-600 dark:text-amber-400 shrink-0" />
+                    <span>Generation result could not be confirmed</span>
+                  </div>
+                  <p>
+                    The previous submission may already have created a pass. To prevent duplicates, the exact previous submission must be retried before any details can be changed.
+                  </p>
+                  <p className="text-xs text-amber-800 dark:text-amber-300">
+                    Retry Exact Submission resubmits the exact previous attempt without altering your identity or evidence.
+                  </p>
+                </div>
+              ) : submitError ? (
+                <div className="rounded-md border border-[var(--color-danger)] bg-[var(--color-danger-light)] p-3 text-sm text-[var(--color-danger-dark)]" role="alert">{submitError}</div>
+              ) : null}
               
               <div className="flex flex-wrap gap-6 justify-center items-center py-2">
                 {photoPreview && (
                   <div className="text-center">
                     <p className="text-xs text-[var(--color-text-secondary)] mb-1">Face Photo</p>
                     <img src={photoPreview} alt="Face photo" className="h-24 w-20 object-cover rounded-lg border border-[var(--color-border)] shadow-sm mx-auto" />
-                    <button
-                      type="button"
-                      onClick={onRetakePhoto}
-                      className="mt-1.5 text-xs font-semibold text-[var(--color-brand)] hover:underline inline-flex items-center gap-1"
-                    >
-                      <RotateCcw className="h-3 w-3" />
-                      Retake Selfie
-                    </button>
+                    {kioskTransactionRef.current?.phase !== 'ambiguous' && (
+                      <button
+                        type="button"
+                        onClick={onRetakePhoto}
+                        className="mt-1.5 text-xs font-semibold text-[var(--color-brand)] hover:underline inline-flex items-center gap-1"
+                      >
+                        <RotateCcw className="h-3 w-3" />
+                        Retake Selfie
+                      </button>
+                    )}
                   </div>
                 )}
                 {idPreview && !isPeakMode ? (
                   <div className="text-center">
                     <p className="text-xs text-[var(--color-text-secondary)] mb-1">ID Card</p>
                     <img src={idPreview} alt="ID preview" className="h-24 w-36 object-cover rounded-lg border border-[var(--color-border)] shadow-sm mx-auto" />
-                    <button
-                      type="button"
-                      onClick={onRetakeId}
-                      className="mt-1.5 text-xs font-semibold text-[var(--color-brand)] hover:underline inline-flex items-center gap-1"
-                    >
-                      <RotateCcw className="h-3 w-3" />
-                      Retake ID
-                    </button>
+                    {kioskTransactionRef.current?.phase !== 'ambiguous' && (
+                      <button
+                        type="button"
+                        onClick={onRetakeId}
+                        className="mt-1.5 text-xs font-semibold text-[var(--color-brand)] hover:underline inline-flex items-center gap-1"
+                      >
+                        <RotateCcw className="h-3 w-3" />
+                        Retake ID
+                      </button>
+                    )}
                   </div>
                 ) : isPeakMode ? (
                   <div className="text-center">
@@ -1058,40 +1095,64 @@ export function KioskPage() {
               <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-canvas)] p-4 text-sm">
                 <div className="flex items-center justify-between mb-2">
                   <p><strong className="text-[var(--color-text-secondary)]">Name:</strong> {[getValues('firstName'), getValues('middleName'), getValues('lastName')].filter(Boolean).join(' ')}</p>
-                  <button
+                  {kioskTransactionRef.current?.phase !== 'ambiguous' && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        faceWebcam.stop();
+                        idWebcam.stop();
+                        setStep('form');
+                      }}
+                      className="text-xs font-semibold text-[var(--color-brand)] hover:underline"
+                    >
+                      Edit Details
+                    </button>
+                  )}
+                </div>
+                <p className="mb-2"><strong className="text-[var(--color-text-secondary)]">Visit Date:</strong> {getValues('visitDate')}</p>
+                <p><strong className="text-[var(--color-text-secondary)]">Purpose:</strong> {getValues('purpose')}</p>
+              </div>
+
+              {kioskTransactionRef.current?.phase === 'ambiguous' ? (
+                <div className="flex flex-col sm:flex-row gap-3">
+                  <Button
+                    variant="secondary"
+                    type="button"
+                    onClick={handleAmbiguousCancelAndAskGuard}
+                    className="flex-1 min-h-[44px] text-amber-700 dark:text-amber-300 border-amber-300 dark:border-amber-700"
+                    icon={<AlertCircle className="h-4 w-4" />}
+                  >
+                    Cancel & Ask Guard
+                  </Button>
+                  <Button
+                    type="button"
+                    onClick={onSubmit}
+                    className="flex-1 min-h-[44px]"
+                    icon={<RefreshCw className="h-4 w-4" />}
+                  >
+                    Retry Exact Submission
+                  </Button>
+                </div>
+              ) : (
+                <div className="flex flex-col sm:flex-row gap-3">
+                  <Button
+                    variant="secondary"
                     type="button"
                     onClick={() => {
                       faceWebcam.stop();
                       idWebcam.stop();
                       setStep('form');
                     }}
-                    className="text-xs font-semibold text-[var(--color-brand)] hover:underline"
+                    className="flex-1 min-h-[44px]"
+                    icon={<ArrowLeft className="h-4 w-4" />}
                   >
                     Edit Details
-                  </button>
+                  </Button>
+                  <Button type="button" onClick={onSubmit} className="flex-1 min-h-[44px]" icon={<CheckCircle2 className="h-4 w-4" />}>
+                    Generate Pass
+                  </Button>
                 </div>
-                <p className="mb-2"><strong className="text-[var(--color-text-secondary)]">Visit Date:</strong> {getValues('visitDate')}</p>
-                <p><strong className="text-[var(--color-text-secondary)]">Purpose:</strong> {getValues('purpose')}</p>
-              </div>
-
-              <div className="flex flex-col sm:flex-row gap-3">
-                <Button
-                  variant="secondary"
-                  type="button"
-                  onClick={() => {
-                    faceWebcam.stop();
-                    idWebcam.stop();
-                    setStep('form');
-                  }}
-                  className="flex-1 min-h-[44px]"
-                  icon={<ArrowLeft className="h-4 w-4" />}
-                >
-                  Edit Details
-                </Button>
-                <Button type="button" onClick={onSubmit} className="flex-1 min-h-[44px]" icon={<CheckCircle2 className="h-4 w-4" />}>
-                  Generate Pass
-                </Button>
-              </div>
+              )}
             </div>
           )}
 
