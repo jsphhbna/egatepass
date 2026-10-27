@@ -41,8 +41,10 @@ async function handleRequest(request: Request): Promise<Response> {
       return jsonResponse(403, { error: 'kiosk_device_required' });
     }
 
-    // 4. Retrieve current published template via trusted RPC
-    const { data, error } = await admin.rpc('get_published_thermal_template');
+    // 4. Retrieve current published template via trusted RPC in api schema
+    const { data, error } = await admin
+      .schema('api')
+      .rpc('get_published_thermal_template');
     if (error) {
       console.error('Failed to retrieve published thermal template:', error);
       return jsonResponse(500, { error: 'database_error' });

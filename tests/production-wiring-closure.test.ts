@@ -414,18 +414,25 @@ describe('Production Wiring Closure Verification (PW-T01 to PW-T11)', () => {
         }
         return {};
       }),
-      rpc: vi.fn().mockImplementation(async (name: string) => {
-        if (name === 'get_published_thermal_template') {
-          return {
-            data: {
-              version: 2,
-              name: 'Default Institutional 384px Template',
-              layout: BUNDLED_DEFAULT_THERMAL_TEMPLATE,
-            },
-            error: null,
-          };
+      schema: vi.fn().mockImplementation((schemaName: string) => {
+        if (schemaName !== 'api') {
+          throw new Error(`Unexpected schema: ${schemaName}`);
         }
-        return { data: null, error: null };
+        return {
+          rpc: vi.fn().mockImplementation(async (name: string) => {
+            if (name === 'get_published_thermal_template') {
+              return {
+                data: {
+                  version: 2,
+                  name: 'Default Institutional 384px Template',
+                  layout: BUNDLED_DEFAULT_THERMAL_TEMPLATE,
+                },
+                error: null,
+              };
+            }
+            return { data: null, error: null };
+          }),
+        };
       }),
     } as any;
 
@@ -497,13 +504,20 @@ describe('Production Wiring Closure Verification (PW-T01 to PW-T11)', () => {
           }),
         }),
       }),
-      rpc: vi.fn().mockResolvedValue({
-        data: {
-          version: 2,
-          name: 'Default Institutional 384px Template',
-          layout: BUNDLED_DEFAULT_THERMAL_TEMPLATE,
-        },
-        error: null,
+      schema: vi.fn().mockImplementation((schemaName: string) => {
+        if (schemaName !== 'api') {
+          throw new Error(`Unexpected schema: ${schemaName}`);
+        }
+        return {
+          rpc: vi.fn().mockResolvedValue({
+            data: {
+              version: 2,
+              name: 'Default Institutional 384px Template',
+              layout: BUNDLED_DEFAULT_THERMAL_TEMPLATE,
+            },
+            error: null,
+          }),
+        };
       }),
     } as any;
 
@@ -552,13 +566,20 @@ describe('Production Wiring Closure Verification (PW-T01 to PW-T11)', () => {
           }),
         }),
       }),
-      rpc: vi.fn().mockResolvedValue({
-        data: {
-          version: 3,
-          name: 'Malformed Template',
-          layout: malformedLayout,
-        },
-        error: null,
+      schema: vi.fn().mockImplementation((schemaName: string) => {
+        if (schemaName !== 'api') {
+          throw new Error(`Unexpected schema: ${schemaName}`);
+        }
+        return {
+          rpc: vi.fn().mockResolvedValue({
+            data: {
+              version: 3,
+              name: 'Malformed Template',
+              layout: malformedLayout,
+            },
+            error: null,
+          }),
+        };
       }),
     } as any;
 
