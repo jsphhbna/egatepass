@@ -31,46 +31,57 @@ export function KioskPrinterSettingsModal({ isOpen, onClose }: KioskPrinterSetti
     printTestTicket,
   } = useThermalPrinter();
 
-  const [pin, setPin] = useState('');
+  const [password, setPassword] = useState('');
   const [isAuthenticated, setIsAuthenticated] = useState(false);
-  const [isVerifyingPin, setIsVerifyingPin] = useState(false);
+  const [isAuthenticating, setIsAuthenticating] = useState(false);
   const [isTesting, setIsTesting] = useState(false);
   const [isConnecting, setIsConnecting] = useState(false);
 
-  // Kiosk device operator PIN verified via secure server RPC against salted hash
-  async function handleVerifyPin(e: React.FormEvent) {
+  // Kiosk device password re-authentication via trusted server endpoint
+  async function handleReauthenticate(e: React.FormEvent) {
     e.preventDefault();
-    const trimmed = pin.trim();
-    if (!/^\d{6,12}$/.test(trimmed)) {
-      toast.error('Operator PIN must be between 6 and 12 numeric digits');
+    if (!password) {
+      toast.error('Kiosk device password is required');
       return;
     }
 
-    setIsVerifyingPin(true);
+    setIsAuthenticating(true);
     try {
       const client = requireSupabase();
-      const { data, error } = await client.rpc('verify_kiosk_operator_pin', {
-        requested_pin: trimmed,
-      });
-
-      if (error) {
-        toast.error('Unable to verify operator credentials. Please check your connection.');
+      const sessionRes = await client.auth.getSession();
+      const token = sessionRes.data.session?.access_token;
+      if (!token) {
+        toast.error('Kiosk device session missing. Please log in.');
         return;
       }
 
-      if (data?.verified === true) {
+      const res = await fetch('/api/device/reauthenticate', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({ password }),
+      });
+
+      if (res.ok) {
         setIsAuthenticated(true);
-        setPin('');
-        toast.success('Operator settings unlocked');
-      } else if (data?.locked === true) {
-        toast.error(`Verification locked due to excessive failed attempts. Retry in ${data.retry_after_seconds}s.`);
+        setPassword('');
+        toast.success('Printer settings unlocked');
       } else {
-        toast.error('Invalid operator PIN');
+        const errData = await res.json().catch(() => null);
+        if (res.status === 401) {
+          toast.error('Invalid kiosk device password');
+        } else if (res.status === 403) {
+          toast.error('Access denied: Kiosk device account required');
+        } else {
+          toast.error(errData?.error || 'Reauthentication failed');
+        }
       }
-    } catch (err: unknown) {
-      toast.error('Verification request failed. Please check network connectivity.');
+    } catch {
+      toast.error('Reauthentication request failed. Please check network connectivity.');
     } finally {
-      setIsVerifyingPin(false);
+      setIsAuthenticating(false);
     }
   }
 
@@ -120,40 +131,38 @@ export function KioskPrinterSettingsModal({ isOpen, onClose }: KioskPrinterSetti
       isOpen={isOpen}
       onClose={() => {
         setIsAuthenticated(false);
-        setPin('');
+        setPassword('');
         onClose();
       }}
       title="Kiosk Thermal Printer (MXW01)"
       size="md"
     >
       {!isAuthenticated ? (
-        <form onSubmit={handleVerifyPin} className="space-y-4 py-2">
+        <form onSubmit={handleReauthenticate} className="space-y-4 py-2">
           <div className="flex items-center gap-3 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] p-3 text-xs text-[var(--color-text-secondary)]">
             <ShieldLock className="h-5 w-5 text-[var(--color-brand)] shrink-0" />
             <p>
-              Device settings are restricted to campus operators and administrators. Enter the kiosk security PIN to proceed.
+              Re-enter this kiosk device's password to manage printer settings.
             </p>
           </div>
           <div>
             <label className="block text-xs font-semibold text-[var(--color-text-primary)] mb-1">
-              Device Operator PIN
+              Kiosk Device Password
             </label>
             <Input
               type="password"
-              inputMode="numeric"
-              maxLength={12}
-              value={pin}
-              onChange={(e) => setPin(e.target.value.replace(/\D/g, ''))}
-              placeholder="Enter operator PIN"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              placeholder="Enter kiosk device password"
               autoFocus
             />
           </div>
           <div className="flex justify-end gap-2 pt-2">
-            <Button type="button" variant="secondary" onClick={onClose} disabled={isVerifyingPin}>
+            <Button type="button" variant="secondary" onClick={onClose} disabled={isAuthenticating}>
               Cancel
             </Button>
-            <Button type="submit" disabled={pin.trim().length < 6 || isVerifyingPin}>
-              {isVerifyingPin ? 'Verifying…' : 'Unlock Settings'}
+            <Button type="submit" disabled={!password || isAuthenticating}>
+              {isAuthenticating ? 'Verifying…' : 'Unlock Settings'}
             </Button>
           </div>
         </form>

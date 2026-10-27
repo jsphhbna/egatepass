@@ -261,7 +261,7 @@ stateDiagram-v2
    - Power on the printer.
 2. **Device Settings & Pairing**:
    - On the Kiosk tablet (`/kiosk`), tap the Gear icon in the header.
-   - Enter Operator PIN `123456`.
+   - Re-enter this kiosk device's password when prompted.
    - Tap **Connect MXW01**.
    - In the browser device picker, select the MXW01 device and click **Pair**.
    - Confirm status badge updates to **Connected**.

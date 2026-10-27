@@ -79,8 +79,8 @@ describe('Section F: Guard Offline Cache Behavior Tests (CACHE-T01 - CACHE-T05)'
         return Promise.resolve({
           data: {
             items: pageItems,
-            next_cursor: hasMore ? `cursor-${nextIndex}` : null,
-            has_more: hasMore,
+            nextCursor: hasMore ? `cursor-${nextIndex}` : null,
+            hasMore: hasMore,
           },
           error: null,
         });
@@ -150,8 +150,8 @@ describe('Section F: Guard Offline Cache Behavior Tests (CACHE-T01 - CACHE-T05)'
     mockRpc.mockResolvedValue({
       data: {
         items: noA_Visitors,
-        next_cursor: null,
-        has_more: false,
+        nextCursor: null,
+        hasMore: false,
       },
       error: null,
     });
@@ -207,8 +207,8 @@ describe('Section F: Guard Offline Cache Behavior Tests (CACHE-T01 - CACHE-T05)'
             idEvidenceId: 'evi-id-888',
           },
         ],
-        next_cursor: null,
-        has_more: false,
+        nextCursor: null,
+        hasMore: false,
       },
       error: null,
     });
@@ -294,8 +294,8 @@ describe('Section F: Guard Offline Cache Behavior Tests (CACHE-T01 - CACHE-T05)'
             photoEvidenceId: 'evi-fail', // Triggers network error
           },
         ],
-        next_cursor: null,
-        has_more: false,
+        nextCursor: null,
+        hasMore: false,
       },
       error: null,
     });

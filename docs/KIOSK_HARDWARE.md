@@ -97,7 +97,7 @@ sequenceDiagram
 
 ### 3.2 Bluetooth Pairing & Safe Reconnection Lifecycle
 1. **Initial Pairing**:
-   - The kiosk operator opens **Device Settings** (protected by operator PIN).
+   - The kiosk operator opens **Device Settings** (protected by kiosk device password re-authentication).
    - Tapping **Connect MXW01** initiates `navigator.bluetooth.requestDevice()` filtering for MXW01 GATT services.
    - User grants permission in the browser Bluetooth device picker.
 2. **Session Reconnection**:
@@ -105,7 +105,7 @@ sequenceDiagram
    - If permissions expire or device is powered off, the UI safely falls back to disconnected state without crashing the registration wizard.
 
 ### 3.3 Protected Device Settings & Controls
-Kiosk device settings (`/kiosk` > Gear Icon) are strictly protected by the Kiosk Operator PIN (default `123456`) to prevent visitors from tampering with hardware configuration:
+Kiosk device settings (`/kiosk` > Gear Icon) are strictly protected by the Kiosk Device Password (verified via trusted server endpoint `/api/device/reauthenticate`) to prevent visitors from tampering with hardware configuration:
 - **Connection Status**: Real-time indicator (`connected`, `connecting`, `disconnected`, `error`).
 - **Connect / Disconnect**: Explicit Bluetooth lifecycle controls.
 - **Auto-Print Toggle**: Enables or disables immediate printing upon pass issuance.

@@ -130,6 +130,10 @@ export function GuardVisitorRecoveryTab({
   }
 
   async function queueOfflineApproval(pass: any, occurredAt: string) {
+    if (pass.version == null) {
+      toast.error('Visitor record is not ready for safe offline action. Refresh while online.');
+      return;
+    }
     try {
       await queueOfflineEvent({
         eventId: crypto.randomUUID(),
@@ -137,6 +141,7 @@ export function GuardVisitorRecoveryTab({
         visitorName: pass.visitorName,
         action: 'approve_entry',
         expectedStatus: pass.status,
+        expectedVersion: pass.version,
         occurredAt,
         reason: 'visitor_recovery',
         syncStatus: 'pending',
@@ -187,6 +192,10 @@ export function GuardVisitorRecoveryTab({
   }
 
   async function queueOfflineRejection(pass: any, reason: string, occurredAt: string) {
+    if (pass.version == null) {
+      toast.error('Visitor record is not ready for safe offline action. Refresh while online.');
+      return;
+    }
     try {
       await queueOfflineEvent({
         eventId: crypto.randomUUID(),
@@ -194,6 +203,7 @@ export function GuardVisitorRecoveryTab({
         visitorName: pass.visitorName,
         action: 'reject_entry',
         expectedStatus: pass.status,
+        expectedVersion: pass.version,
         occurredAt,
         reason,
         syncStatus: 'pending',
@@ -240,6 +250,10 @@ export function GuardVisitorRecoveryTab({
   }
 
   async function queueOfflineExit(pass: any, occurredAt: string) {
+    if (pass.version == null) {
+      toast.error('Visitor record is not ready for safe offline action. Refresh while online.');
+      return;
+    }
     try {
       await queueOfflineEvent({
         eventId: crypto.randomUUID(),
@@ -247,6 +261,7 @@ export function GuardVisitorRecoveryTab({
         visitorName: pass.visitorName,
         action: 'record_exit',
         expectedStatus: 'inside',
+        expectedVersion: pass.version,
         occurredAt,
         reason: 'visitor_recovery_exit',
         syncStatus: 'pending',

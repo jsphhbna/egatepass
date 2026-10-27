@@ -99,11 +99,17 @@ export const thermalElementSchema = z.object({
   align: z.enum(['left', 'center', 'right']).optional(),
   isMandatory: z.boolean().optional(),
 }).strict().superRefine((el, ctx) => {
-  // Disallow scripts or HTML in custom text
-  if (el.text && (/<script/i.test(el.text) || /<[^>]+>/i.test(el.text))) {
+  // Disallow scripts, HTML, or remote URLs in custom text
+  if (
+    el.text &&
+    (/<script/i.test(el.text) ||
+      /<[^>]+>/i.test(el.text) ||
+      /javascript:/i.test(el.text) ||
+      /https?:\/\//i.test(el.text))
+  ) {
     ctx.addIssue({
       code: z.ZodIssueCode.custom,
-      message: 'HTML or script tags are strictly prohibited in template elements',
+      message: 'HTML or script tags, and remote URLs are strictly prohibited in template elements',
     });
   }
   // If QR, validate size constraints

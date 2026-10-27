@@ -290,12 +290,12 @@ export async function refreshOperationalCache(): Promise<number> {
       });
 
       if (pageRes.error) throw pageRes.error;
-      const pageData = pageRes.data as { items?: any[]; next_cursor?: string | null; has_more?: boolean } | null;
+      const pageData = pageRes.data as { items?: any[]; nextCursor?: string | null; hasMore?: boolean } | null;
       if (!pageData || !Array.isArray(pageData.items)) break;
 
       allItems.push(...pageData.items);
-      cursor = pageData.next_cursor ?? null;
-      hasMore = Boolean(pageData.has_more && cursor);
+      cursor = pageData.nextCursor ?? null;
+      hasMore = Boolean(pageData.hasMore && cursor);
     }
 
     // R11: Download evidence blobs for visual offline verification

@@ -2,6 +2,8 @@ import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { PGlite } from '@electric-sql/pglite';
 import fs from 'node:fs';
 import path from 'node:path';
+import reauthenticateHandler from '../server/routes/device/reauthenticate.js';
+import { setServerSupabaseClientsForTest } from '../server/supabase.js';
 
 const MIGRATIONS_DIR = path.resolve(process.cwd(), 'supabase', 'migrations');
 
@@ -107,124 +109,234 @@ async function applyAllMigrations(db: PGlite): Promise<void> {
   }
 }
 
-const SUPERADMIN_ID = '00000000-0000-4000-a000-000000000001';
-
-describe('Section G: Kiosk Operator PIN Security Tests', () => {
+describe('CL-T01 & CL-T02: Kiosk Device Password Reauthentication & PIN System Elimination', () => {
   let db: PGlite;
 
   beforeAll(async () => {
     db = new PGlite();
     await applyAllMigrations(db);
-
-    // Seed Super Admin
-    await db.exec(`
-      insert into auth.users (id, email, email_confirmed_at)
-      values ('${SUPERADMIN_ID}', 'admin@earist.edu.ph', now());
-
-      insert into public.staff_profiles (user_id, display_name, role, active, must_change_password, privacy_accepted_at)
-      values ('${SUPERADMIN_ID}', 'Super Administrator', 'superadmin', true, false, now());
-    `);
   }, 60000);
 
   afterAll(async () => {
     if (db) {
       await db.close();
     }
+    setServerSupabaseClientsForTest(null);
   });
 
-  const asKioskAnon = async () => {
-    await db.exec(`
-      set local "request.jwt.claim.role" = 'anon';
-      set local role anon;
+  it('CL-T02: proves obsolete separate PIN tables and RPCs are dropped in migration 31', async () => {
+    // Assert table does not exist
+    const tableRes = await db.query(`
+      select 1 from information_schema.tables
+      where table_schema = 'private' and table_name = 'kiosk_operator_config';
     `);
-  };
+    expect(tableRes.rows.length).toBe(0);
 
-  const asSuperAdmin = async () => {
-    await db.exec(`
-      set local "request.jwt.claim.role" = 'authenticated';
-      set local "request.jwt.claim.sub" = '${SUPERADMIN_ID}';
-      set local role authenticated;
+    // Assert verify RPC does not exist
+    const verifyRpcRes = await db.query(`
+      select 1 from information_schema.routines
+      where routine_schema = 'api' and routine_name = 'verify_kiosk_operator_pin';
     `);
-  };
+    expect(verifyRpcRes.rows.length).toBe(0);
 
-  it('G.1: rejects arbitrary PINs (1234, 9999, abcd, 0000, 1904, 123456) when PIN is not configured', async () => {
-    const arbitraryPins = ['1234', '9999', 'abcd', '0000', '1904', '123456'];
+    // Assert set RPC does not exist
+    const setRpcRes = await db.query(`
+      select 1 from information_schema.routines
+      where routine_schema = 'api' and routine_name = 'admin_set_kiosk_operator_pin';
+    `);
+    expect(setRpcRes.rows.length).toBe(0);
+  });
 
-    for (const pin of arbitraryPins) {
-      await asKioskAnon();
-      const res = await db.query<{ verify_kiosk_operator_pin: any }>(`
-        select api.verify_kiosk_operator_pin('${pin}');
-      `);
-      const result = res.rows[0]?.verify_kiosk_operator_pin;
-      expect(result.valid).toBe(false);
+  it('CL-T02: asserts active source/runtime contains no separate PIN artifacts', () => {
+    const srcDir = path.resolve(process.cwd(), 'src');
+    const serverDir = path.resolve(process.cwd(), 'server');
+
+    function searchDir(dir: string): string[] {
+      let results: string[] = [];
+      const list = fs.readdirSync(dir);
+      for (const item of list) {
+        const full = path.join(dir, item);
+        const stat = fs.statSync(full);
+        if (stat.isDirectory()) {
+          results = results.concat(searchDir(full));
+        } else if (item.endsWith('.ts') || item.endsWith('.tsx')) {
+          results.push(full);
+        }
+      }
+      return results;
+    }
+
+    const files = [...searchDir(srcDir), ...searchDir(serverDir)];
+    const forbiddenPatterns = [
+      'verify_kiosk_operator_pin',
+      'admin_set_kiosk_operator_pin',
+      'kiosk_operator_config',
+      'Device Operator PIN',
+    ];
+
+    for (const file of files) {
+      const content = fs.readFileSync(file, 'utf8');
+      for (const pattern of forbiddenPatterns) {
+        expect(
+          content.includes(pattern),
+          `Found forbidden PIN artifact "${pattern}" in active source file: ${file}`
+        ).toBe(false);
+      }
     }
   });
 
-  it('G.2: allows Super Admin to configure a PIN and unlocks with exact matching PIN', async () => {
-    // 1. Super Admin sets PIN to '847291'
-    await asSuperAdmin();
-    await db.exec(`
-      select api.admin_set_kiosk_operator_pin('847291');
-    `);
+  it('CL-T01: kiosk device password reauthentication endpoint authorizes only matching kiosk device', async () => {
+    const KIOSK_ID = '00000000-0000-4000-a000-000000000050';
+    const OTHER_KIOSK_ID = '00000000-0000-4000-a000-000000000051';
+    const STAFF_ID = '00000000-0000-4000-a000-000000000052';
 
-    // 2. Random/previous PINs still fail
-    await asKioskAnon();
-    const wrongRes = await db.query<{ verify_kiosk_operator_pin: any }>(`
-      select api.verify_kiosk_operator_pin('1904');
-    `);
-    expect(wrongRes.rows[0].verify_kiosk_operator_pin.valid).toBe(false);
+    // Mock Supabase admin client
+    const mockAdmin: any = {
+      auth: {
+        getUser: async (token: string) => {
+          if (token === 'kiosk-token') {
+            return {
+              data: {
+                user: { id: KIOSK_ID, email: 'kiosk-01@devices.egatepass.invalid' },
+              },
+              error: null,
+            };
+          }
+          if (token === 'other-kiosk-token') {
+            return {
+              data: {
+                user: { id: OTHER_KIOSK_ID, email: 'kiosk-02@devices.egatepass.invalid' },
+              },
+              error: null,
+            };
+          }
+          if (token === 'staff-token') {
+            return {
+              data: {
+                user: { id: STAFF_ID, email: 'staff@earist.edu.ph' },
+              },
+              error: null,
+            };
+          }
+          return { data: { user: null }, error: new Error('invalid_token') };
+        },
+      },
+      from: (table: string) => {
+        if (table === 'devices') {
+          return {
+            select: () => ({
+              eq: (_col: string, val: string) => ({
+                maybeSingle: async () => {
+                  if (val === KIOSK_ID) {
+                    return {
+                      data: { user_id: KIOSK_ID, type: 'kiosk', status: 'active', alias: 'kiosk-01' },
+                      error: null,
+                    };
+                  }
+                  if (val === OTHER_KIOSK_ID) {
+                    return {
+                      data: { user_id: OTHER_KIOSK_ID, type: 'kiosk', status: 'active', alias: 'kiosk-02' },
+                      error: null,
+                    };
+                  }
+                  // Staff ID is not in devices table
+                  return { data: null, error: null };
+                },
+              }),
+            }),
+          };
+        }
+        return {};
+      },
+    };
 
-    // 3. Exact configured PIN succeeds
-    await asKioskAnon();
-    const correctRes = await db.query<{ verify_kiosk_operator_pin: any }>(`
-      select api.verify_kiosk_operator_pin('847291');
-    `);
-    expect(correctRes.rows[0].verify_kiosk_operator_pin.valid).toBe(true);
-  });
+    // Mock passwordVerifier client
+    const mockVerifier: any = {
+      auth: {
+        signInWithPassword: async ({ email, password }: { email: string; password: string }) => {
+          if (email === 'kiosk-01@devices.egatepass.invalid' && password === 'ValidKioskPass123!') {
+            return {
+              data: { user: { id: KIOSK_ID } },
+              error: null,
+            };
+          }
+          if (email === 'kiosk-02@devices.egatepass.invalid' && password === 'OtherKioskPass456!') {
+            return {
+              data: { user: { id: OTHER_KIOSK_ID } },
+              error: null,
+            };
+          }
+          if (email === 'staff@earist.edu.ph' && password === 'StaffPass789!') {
+            return {
+              data: { user: { id: STAFF_ID } },
+              error: null,
+            };
+          }
+          return { data: { user: null }, error: { message: 'Invalid login credentials' } };
+        },
+        signOut: async () => ({ error: null }),
+      },
+    };
 
-  it('G.3: enforces lockout after 5 consecutive failed attempts', async () => {
-    // Reset config with a new PIN as Super Admin
-    await asSuperAdmin();
-    await db.exec(`
-      select api.admin_set_kiosk_operator_pin('987654');
-    `);
+    setServerSupabaseClientsForTest({
+      admin: mockAdmin,
+      passwordVerifier: mockVerifier,
+    });
 
-    // 4 failed attempts from kiosk
-    for (let i = 0; i < 4; i++) {
-      await asKioskAnon();
-      const res = await db.query<{ verify_kiosk_operator_pin: any }>(`
-        select api.verify_kiosk_operator_pin('00000${i}');
-      `);
-      expect(res.rows[0].verify_kiosk_operator_pin.valid).toBe(false);
-      expect(res.rows[0].verify_kiosk_operator_pin.locked).toBe(false);
-    }
+    // 1. Wrong current device password -> 401
+    const wrongPassReq = new Request('http://localhost/api/device/reauthenticate', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: 'Bearer kiosk-token',
+      },
+      body: JSON.stringify({ password: 'WrongPassword999!' }),
+    });
+    const wrongPassRes = await reauthenticateHandler.fetch(wrongPassReq);
+    expect(wrongPassRes.status).toBe(401);
+    const wrongPassBody = await wrongPassRes.json();
+    expect(wrongPassBody.error).toBe('invalid_device_password');
 
-    // 5th failed attempt triggers lockout
-    await asKioskAnon();
-    const lockRes = await db.query<{ verify_kiosk_operator_pin: any }>(`
-      select api.verify_kiosk_operator_pin('000005');
-    `);
-    expect(lockRes.rows[0].verify_kiosk_operator_pin.valid).toBe(false);
-    expect(lockRes.rows[0].verify_kiosk_operator_pin.locked).toBe(true);
+    // 2. Staff user calling endpoint -> 403 (kiosk_device_required)
+    const staffReq = new Request('http://localhost/api/device/reauthenticate', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: 'Bearer staff-token',
+      },
+      body: JSON.stringify({ password: 'StaffPass789!' }),
+    });
+    const staffRes = await reauthenticateHandler.fetch(staffReq);
+    expect(staffRes.status).toBe(403);
+    const staffBody = await staffRes.json();
+    expect(staffBody.error).toBe('kiosk_device_required');
 
-    // Subsequent attempt (even with correct PIN) is locked out!
-    await asKioskAnon();
-    const blockedRes = await db.query<{ verify_kiosk_operator_pin: any }>(`
-      select api.verify_kiosk_operator_pin('987654');
-    `);
-    expect(blockedRes.rows[0].verify_kiosk_operator_pin.valid).toBe(false);
-    expect(blockedRes.rows[0].verify_kiosk_operator_pin.locked).toBe(true);
-  });
+    // 3. Another kiosk device password supplied to this kiosk session -> 401
+    const crossKioskReq = new Request('http://localhost/api/device/reauthenticate', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: 'Bearer kiosk-token',
+      },
+      body: JSON.stringify({ password: 'OtherKioskPass456!' }),
+    });
+    const crossKioskRes = await reauthenticateHandler.fetch(crossKioskReq);
+    expect(crossKioskRes.status).toBe(401);
+    const crossKioskBody = await crossKioskRes.json();
+    expect(crossKioskBody.error).toBe('invalid_device_password');
 
-  it('G.4: verifies that no hardcoded production PINs or length >= 4 bypasses exist in frontend source', () => {
-    const modalPath = path.resolve(process.cwd(), 'src/components/KioskPrinterSettingsModal.tsx');
-    const content = fs.readFileSync(modalPath, 'utf8');
-
-    // Assert absence of hardcoded fallback PINs and bypasses
-    expect(content).not.toContain("pin === '1904'");
-    expect(content).not.toContain("pin === '0000'");
-    expect(content).not.toContain('pin.length >= 4');
-    expect(content).not.toContain('pin.length >= 6'); // Should not unlock simply on length
-    expect(content).toContain('verify_kiosk_operator_pin');
+    // 4. Correct password for CURRENT kiosk device identity -> 200 OK
+    const correctReq = new Request('http://localhost/api/device/reauthenticate', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: 'Bearer kiosk-token',
+      },
+      body: JSON.stringify({ password: 'ValidKioskPass123!' }),
+    });
+    const correctRes = await reauthenticateHandler.fetch(correctReq);
+    expect(correctRes.status).toBe(200);
+    const correctBody = await correctRes.json();
+    expect(correctBody.ok).toBe(true);
   });
 });

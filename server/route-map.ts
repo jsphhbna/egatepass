@@ -120,7 +120,7 @@ export const ROUTE_CONTRACT_MATRIX: readonly RouteContract[] = [
     handlerModule: 'server/routes/passes/issue.ts',
   },
 
-  // Device Router (4 routes)
+  // Device Router (5 routes)
   {
     path: '/api/create-device',
     group: 'device',
@@ -148,6 +148,13 @@ export const ROUTE_CONTRACT_MATRIX: readonly RouteContract[] = [
     subpath: 'update-device-auth',
     allowedMethods: ['POST'],
     handlerModule: 'server/routes/device/update-device-auth.ts',
+  },
+  {
+    path: '/api/device/reauthenticate',
+    group: 'device',
+    subpath: 'reauthenticate',
+    allowedMethods: ['POST'],
+    handlerModule: 'server/routes/device/reauthenticate.ts',
   },
 
   // Gate Router (4 routes)

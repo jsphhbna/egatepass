@@ -251,7 +251,7 @@ The kiosk station operates a single dedicated **MXW01 Bluetooth thermal receipt 
 1. Power on the MXW01 printer (hold power button until blue LED flashes).
 2. On the kiosk tablet, open the `/kiosk` page.
 3. Tap the **Gear Icon** in the top-right corner to open **Device Settings**.
-4. Enter the Kiosk Operator PIN (default `123456`).
+4. Re-enter this kiosk device's password when prompted to unlock settings.
 5. In the Thermal Printer section, tap **Connect MXW01**.
 6. The Chromium Bluetooth device picker will appear. Select the MXW01 / PeriPage device and tap **Pair**.
 7. Confirm status changes to **Connected** (Green badge).
