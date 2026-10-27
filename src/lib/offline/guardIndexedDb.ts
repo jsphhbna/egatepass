@@ -47,7 +47,7 @@ export interface CachedVisitorPass {
   idEvidenceId?: string | null;
   photoBlob?: Blob | null;
   idBlob?: Blob | null;
-  cachedAt: string;
+  cachedAt: string | number;
   version?: number;
 }
 
@@ -73,6 +73,11 @@ export interface OfflineRegistrationRecord {
   photoUploadCheckpoint?: UploadCheckpoint | null;
   idUploadCheckpoint?: UploadCheckpoint | null;
 }
+
+export type SaveOfflineRegistrationInput = Omit<OfflineRegistrationRecord, 'syncStatus' | 'rejectionReason'> & {
+  syncStatus?: OfflineRegistrationRecord['syncStatus'];
+  rejectionReason?: string | null;
+};
 
 export interface OfflineEventRecord {
   eventId: string; // Immutable random UUID
@@ -161,7 +166,7 @@ export async function getMeta<T = any>(key: string): Promise<T | null> {
  * Strips sensitive biometric/ID Blobs from terminal offline registrations (synced or conflict)
  * and enforces the 7-day evidence retention ceiling (Root Cause 14).
  */
-export async function stripTerminalOfflineEvidence(): Promise<{ strippedBlobs: number; expiredPurged: number }> {
+export async function stripTerminalOfflineEvidence(specificRegistrationId?: string): Promise<{ strippedBlobs: number; expiredPurged: number }> {
   const db = await openDatabase();
   let strippedBlobs = 0;
   let expiredPurged = 0;
@@ -176,6 +181,10 @@ export async function stripTerminalOfflineEvidence(): Promise<{ strippedBlobs: n
       const cursor = (e.target as IDBRequest<IDBCursorWithValue>).result;
       if (cursor) {
         const item = cursor.value as OfflineRegistrationRecord;
+        if (specificRegistrationId && item.offlineRegistrationId !== specificRegistrationId) {
+          cursor.continue();
+          return;
+        }
         const recordTime = new Date(item.occurredAt).getTime();
 
         // 1. Terminal states: synced or conflict
@@ -403,11 +412,16 @@ export async function updateCachedVisitorStatus(passId: string, status: 'issued'
 // OFFLINE REGISTRATIONS (GUARD CREATED)
 // =============================================================================
 
-export async function saveOfflineRegistration(record: OfflineRegistrationRecord): Promise<void> {
+export async function saveOfflineRegistration(record: SaveOfflineRegistrationInput): Promise<void> {
   const db = await openDatabase();
   return new Promise((resolve, reject) => {
     const tx = db.transaction('offline_registrations', 'readwrite');
-    tx.objectStore('offline_registrations').put(record);
+    const normalizedRecord: OfflineRegistrationRecord = {
+      rejectionReason: null,
+      syncStatus: 'pending',
+      ...record,
+    };
+    tx.objectStore('offline_registrations').put(normalizedRecord);
     tx.oncomplete = () => resolve();
     tx.onerror = () => reject(tx.error);
   });
@@ -557,7 +571,7 @@ export async function getPendingSyncCount(): Promise<{ registrations: number; ev
  * An approved visitor starts with status 'inside' and projected version 1.
  */
 export async function saveOfflineRegistrationWithCache(
-  record: OfflineRegistrationRecord
+  record: SaveOfflineRegistrationInput
 ): Promise<CachedVisitorPass | null> {
   const db = await openDatabase();
   return new Promise((resolve, reject) => {
@@ -565,9 +579,10 @@ export async function saveOfflineRegistrationWithCache(
     const regStore = tx.objectStore('offline_registrations');
     const visitorStore = tx.objectStore('cached_visitors');
 
-    const normalizedRecord = {
+    const normalizedRecord: OfflineRegistrationRecord = {
+      rejectionReason: null,
+      syncStatus: 'pending',
       ...record,
-      syncStatus: (record as any).syncStatus || 'pending',
     };
     regStore.put(normalizedRecord);
 
@@ -621,6 +636,8 @@ export async function queueOfflineVisitorAction(params: {
   action: 'approve_entry' | 'reject_entry' | 'record_exit';
   reason?: string | null;
   occurredAt?: string;
+  gate?: string | null;
+  actorId?: string | null;
 }): Promise<{ event: OfflineEventRecord; projectedVisitor: CachedVisitorPass | null }> {
   const db = await openDatabase();
   return new Promise((resolve, reject) => {
@@ -680,6 +697,7 @@ export async function queueOfflineVisitorAction(params: {
           status: 'inside',
           version: expectedVersion + 1,
           timeIn: occurredAt,
+          gate: params.gate ?? visitor.gate ?? 'Offline Gate',
         };
         visitorStore.put(projectedVisitor);
       } else if (params.action === 'record_exit') {

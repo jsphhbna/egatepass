@@ -345,7 +345,7 @@ describe('Deep Dive 1 + Deep Dive 2 Root-Cause Closure Test Suite', () => {
         version: 5,
         validFrom: '2026-10-27T08:00:00+08:00',
         validUntil: '2026-10-27T17:00:00+08:00',
-        cachedAt: Date.now(),
+        cachedAt: new Date().toISOString(),
       };
 
       // Seed cache directly using saveCachedVisitors
@@ -431,7 +431,7 @@ describe('Deep Dive 1 + Deep Dive 2 Root-Cause Closure Test Suite', () => {
         version: 2,
         validFrom: '2026-10-27T08:00:00+08:00',
         validUntil: '2026-10-27T17:00:00+08:00',
-        cachedAt: Date.now(),
+        cachedAt: new Date().toISOString(),
       };
 
       await saveCachedVisitors([pass]);
@@ -510,7 +510,7 @@ describe('Deep Dive 1 + Deep Dive 2 Root-Cause Closure Test Suite', () => {
           version: 1,
           validFrom: '2026-10-27T08:00:00+08:00',
           validUntil: '2026-10-27T17:00:00+08:00',
-          cachedAt: Date.now(),
+          cachedAt: new Date().toISOString(),
         },
       ];
 
@@ -1317,7 +1317,7 @@ describe('Deep Dive 1 + Deep Dive 2 Root-Cause Closure Test Suite', () => {
           version: 1,
           validFrom: '2026-10-27T08:00:00+08:00',
           validUntil: '2026-10-27T17:00:00+08:00',
-          cachedAt: Date.now(),
+          cachedAt: new Date().toISOString(),
         },
       ]);
       await queueOfflineVisitorAction({
@@ -2241,7 +2241,7 @@ describe('Deep Dive 1 + Deep Dive 2 Root-Cause Closure Test Suite', () => {
       try {
         await issueVisitorPass(
           'portal',
-          tx.submittedPayload.visitor,
+          tx.submittedPayload!.visitor,
           new Blob(['photo']),
           undefined,
           tx.requestId,
@@ -2300,7 +2300,7 @@ describe('Deep Dive 1 + Deep Dive 2 Root-Cause Closure Test Suite', () => {
       try {
         await issueVisitorPass(
           'portal',
-          tx2.submittedPayload.visitor,
+          tx2.submittedPayload!.visitor,
           new Blob(['photo']),
           undefined,
           tx2.requestId,

@@ -7,7 +7,7 @@
 
 export class RequestTimeoutError extends Error {
   readonly timeoutMs: number;
-  constructor(message: string, timeoutMs: number) {
+  constructor(message: string, timeoutMs: number = 15000) {
     super(message);
     this.name = 'TimeoutError';
     this.timeoutMs = timeoutMs;

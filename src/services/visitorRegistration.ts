@@ -10,6 +10,8 @@ export interface VisitorRegistration {
   contactNumber: string;
   purpose: string;
   visitDate: string;
+  email?: string;
+  consent?: boolean;
 }
 
 export interface IssuedPass {
@@ -179,6 +181,9 @@ export interface IssueTransaction {
   phase: IssueTransactionPhase;
   submittedPayload?: {
     visitor: VisitorRegistration;
+    source?: RegistrationSource;
+    photoIntentId?: string | null;
+    idIntentId?: string | null;
   } | null;
 }
 
@@ -396,7 +401,7 @@ export async function issueVisitorPass(
   source: RegistrationSource,
   visitor: VisitorRegistration,
   photo: Blob,
-  identification: Blob | null,
+  identification?: Blob | null,
   requestId: string = crypto.randomUUID(),
   captchaToken?: string,
   transaction?: IssueTransaction | null,
