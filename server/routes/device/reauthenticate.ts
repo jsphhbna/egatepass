@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { getVerifiedSessionContext } from '../../actors.js';
+import { getVerifiedSessionContext, HttpError } from '../../actors.js';
 import { jsonResponse, readBearerToken } from '../../http.js';
 import { getServerSupabaseClients } from '../../supabase.js';
 
@@ -71,16 +71,24 @@ async function handleRequest(request: Request): Promise<Response> {
       return jsonResponse(401, { error: 'invalid_device_password' });
     }
 
-    // Immediately sign out isolated client so no session remains
+    // Immediately sign out isolated client so no session remains (scope: 'local' preserves existing kiosk browser session)
     try {
-      await passwordVerifier.auth.signOut();
+      await passwordVerifier.auth.signOut({ scope: 'local' });
     } catch {
       // Ignore client signout error
     }
 
     return jsonResponse(200, { ok: true });
   } catch (error) {
-    console.error('Device reauthentication error:', error instanceof Error ? error.message : 'unknown');
+    if (error instanceof HttpError) {
+      return jsonResponse(error.status, { error: error.code });
+    }
+
+    console.error(
+      'Device reauthentication error:',
+      error instanceof Error ? error.message : 'unknown'
+    );
+
     return jsonResponse(500, { error: 'internal_error' });
   }
 }

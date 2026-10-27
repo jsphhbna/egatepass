@@ -19,6 +19,22 @@ export interface KioskPrinterSettingsModalProps {
 
 const UNLOCK_TIMEOUT_MS = 15 * 60 * 1000; // 15-minute maximum unlock duration
 
+export function getKioskReauthErrorMessage(status: number, errorCode?: string | null): string {
+  if (status === 401) {
+    if (errorCode === 'invalid_session' || errorCode === 'authentication_required') {
+      return 'Kiosk session expired. Please log in to the kiosk again.';
+    }
+    return 'Invalid kiosk device password.';
+  }
+  if (status === 403) {
+    return 'Access denied: Kiosk device account required';
+  }
+  if (status >= 500) {
+    return 'Printer settings could not be unlocked due to a server error.';
+  }
+  return 'Reauthentication failed';
+}
+
 export function KioskPrinterSettingsModal({ isOpen, onClose }: KioskPrinterSettingsModalProps) {
   const {
     isSupported,
@@ -85,7 +101,7 @@ export function KioskPrinterSettingsModal({ isOpen, onClose }: KioskPrinterSetti
       const sessionRes = await client.auth.getSession();
       const token = sessionRes.data.session?.access_token;
       if (!token) {
-        toast.error('Kiosk device session missing. Please log in.');
+        toast.error('Kiosk session expired. Please log in to the kiosk again.');
         return;
       }
 
@@ -105,13 +121,8 @@ export function KioskPrinterSettingsModal({ isOpen, onClose }: KioskPrinterSetti
         toast.success('Printer settings unlocked');
       } else {
         const errData = await res.json().catch(() => null);
-        if (res.status === 401) {
-          toast.error('Invalid kiosk device password');
-        } else if (res.status === 403) {
-          toast.error('Access denied: Kiosk device account required');
-        } else {
-          toast.error(errData?.error || 'Reauthentication failed');
-        }
+        const message = getKioskReauthErrorMessage(res.status, errData?.error);
+        toast.error(message);
       }
     } catch {
       toast.error('Reauthentication request failed. Please check network connectivity.');

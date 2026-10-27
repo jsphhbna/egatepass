@@ -1,9 +1,10 @@
-import { describe, it, expect, beforeAll, afterAll } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
 import { PGlite } from '@electric-sql/pglite';
 import fs from 'node:fs';
 import path from 'node:path';
 import reauthenticateHandler from '../server/routes/device/reauthenticate.js';
 import { setServerSupabaseClientsForTest } from '../server/supabase.js';
+import { getKioskReauthErrorMessage } from '../src/components/KioskPrinterSettingsModal';
 
 const MIGRATIONS_DIR = path.resolve(process.cwd(), 'supabase', 'migrations');
 
@@ -339,4 +340,257 @@ describe('CL-T01 & CL-T02: Kiosk Device Password Reauthentication & PIN System E
     const correctBody = await correctRes.json();
     expect(correctBody.ok).toBe(true);
   });
+
+  it('HOTFIX: regression test: passwordVerifier.auth.signOut({ scope: "local" }) preserves original kiosk session across consecutive reauthentications', async () => {
+    const KIOSK_ID = '00000000-0000-4000-a000-000000000050';
+    const activeSessions = new Set(['kiosk-token']);
+
+    const mockAdmin: any = {
+      auth: {
+        getUser: vi.fn(async (token: string) => {
+          if (activeSessions.has(token)) {
+            return {
+              data: {
+                user: { id: KIOSK_ID, email: 'kiosk-01@devices.egatepass.invalid' },
+              },
+              error: null,
+            };
+          }
+          return { data: { user: null }, error: new Error('invalid_token') };
+        }),
+      },
+      from: (table: string) => {
+        if (table === 'devices') {
+          return {
+            select: () => ({
+              eq: (_col: string, val: string) => ({
+                maybeSingle: async () => {
+                  if (val === KIOSK_ID) {
+                    return {
+                      data: { user_id: KIOSK_ID, type: 'kiosk', status: 'active', alias: 'kiosk-01' },
+                      error: null,
+                    };
+                  }
+                  return { data: null, error: null };
+                },
+              }),
+            }),
+          };
+        }
+        return {};
+      },
+    };
+
+    const signOutCalls: Array<any> = [];
+    const mockVerifier: any = {
+      auth: {
+        signInWithPassword: vi.fn(async ({ email, password }: { email: string; password: string }) => {
+          if (email === 'kiosk-01@devices.egatepass.invalid' && password === 'ValidKioskPass123!') {
+            return {
+              data: { user: { id: KIOSK_ID } },
+              error: null,
+            };
+          }
+          return { data: { user: null }, error: { message: 'Invalid login credentials' } };
+        }),
+        signOut: vi.fn(async (options?: { scope?: string }) => {
+          signOutCalls.push(options);
+          // If signOut is called WITHOUT { scope: 'local' } (i.e. default global signOut in Supabase),
+          // it revokes all active sessions for this user, including the kiosk's active browser bearer!
+          if (!options || options.scope !== 'local') {
+            activeSessions.clear();
+          }
+          return { error: null };
+        }),
+      },
+    };
+
+    setServerSupabaseClientsForTest({
+      admin: mockAdmin,
+      passwordVerifier: mockVerifier,
+    });
+
+    // Request 1: Kiosk bearer + correct password
+    const req1 = new Request('http://localhost/api/device/reauthenticate', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: 'Bearer kiosk-token',
+      },
+      body: JSON.stringify({ password: 'ValidKioskPass123!' }),
+    });
+    const res1 = await reauthenticateHandler.fetch(req1);
+    expect(res1.status).toBe(200);
+    const body1 = await res1.json();
+    expect(body1.ok).toBe(true);
+
+    // Assert: passwordVerifier.auth.signOut was called with exactly { scope: 'local' }
+    expect(mockVerifier.auth.signOut).toHaveBeenCalledWith({ scope: 'local' });
+    expect(signOutCalls).toEqual([{ scope: 'local' }]);
+    // Assert: kiosk session is still active
+    expect(activeSessions.has('kiosk-token')).toBe(true);
+
+    // Request 2: Using the SAME original kiosk bearer + same correct password
+    const req2 = new Request('http://localhost/api/device/reauthenticate', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: 'Bearer kiosk-token',
+      },
+      body: JSON.stringify({ password: 'ValidKioskPass123!' }),
+    });
+    const res2 = await reauthenticateHandler.fetch(req2);
+    expect(res2.status).toBe(200);
+    const body2 = await res2.json();
+    expect(body2.ok).toBe(true);
+    expect(mockVerifier.auth.signOut).toHaveBeenCalledTimes(2);
+    expect(signOutCalls).toEqual([{ scope: 'local' }, { scope: 'local' }]);
+    expect(activeSessions.has('kiosk-token')).toBe(true);
+  });
+
+  it('HOTFIX: proves that accidental global signout revokes original kiosk session and causes Request 2 to fail with 401 invalid_session', async () => {
+    const KIOSK_ID = '00000000-0000-4000-a000-000000000050';
+    const activeSessions = new Set(['kiosk-token']);
+
+    const mockAdmin: any = {
+      auth: {
+        getUser: vi.fn(async (token: string) => {
+          if (activeSessions.has(token)) {
+            return {
+              data: {
+                user: { id: KIOSK_ID, email: 'kiosk-01@devices.egatepass.invalid' },
+              },
+              error: null,
+            };
+          }
+          return { data: { user: null }, error: new Error('invalid_token') };
+        }),
+      },
+      from: (table: string) => {
+        if (table === 'devices') {
+          return {
+            select: () => ({
+              eq: () => ({
+                maybeSingle: async () => ({
+                  data: { user_id: KIOSK_ID, type: 'kiosk', status: 'active', alias: 'kiosk-01' },
+                  error: null,
+                }),
+              }),
+            }),
+          };
+        }
+        return {};
+      },
+    };
+
+    // Simulate buggy global sign-out behavior
+    const mockVerifierBuggy: any = {
+      auth: {
+        signInWithPassword: vi.fn(async () => ({
+          data: { user: { id: KIOSK_ID } },
+          error: null,
+        })),
+        signOut: vi.fn(async () => {
+          // Buggy behavior: global signOut revokes kiosk-token
+          activeSessions.clear();
+          return { error: null };
+        }),
+      },
+    };
+
+    setServerSupabaseClientsForTest({
+      admin: mockAdmin,
+      passwordVerifier: mockVerifierBuggy,
+    });
+
+    // Request 1 passes
+    const req1 = new Request('http://localhost/api/device/reauthenticate', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: 'Bearer kiosk-token',
+      },
+      body: JSON.stringify({ password: 'ValidKioskPass123!' }),
+    });
+    const res1 = await reauthenticateHandler.fetch(req1);
+    expect(res1.status).toBe(200);
+
+    // Request 2 immediately fails with 401 invalid_session because kiosk session was globally destroyed!
+    const req2 = new Request('http://localhost/api/device/reauthenticate', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: 'Bearer kiosk-token',
+      },
+      body: JSON.stringify({ password: 'ValidKioskPass123!' }),
+    });
+    const res2 = await reauthenticateHandler.fetch(req2);
+    expect(res2.status).toBe(401);
+    const body2 = await res2.json();
+    expect(body2.error).toBe('invalid_session');
+  });
+
+  it('HOTFIX: Section 5: getVerifiedSessionContext failure returns HTTP 401 { error: "invalid_session" } and NOT 500 internal_error', async () => {
+    const mockAdmin: any = {
+      auth: {
+        getUser: vi.fn(async () => {
+          return { data: { user: null }, error: new Error('session_expired_or_revoked') };
+        }),
+      },
+      from: () => ({}),
+    };
+
+    setServerSupabaseClientsForTest({
+      admin: mockAdmin,
+      passwordVerifier: {} as any,
+    });
+
+    const req = new Request('http://localhost/api/device/reauthenticate', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: 'Bearer expired-kiosk-token',
+      },
+      body: JSON.stringify({ password: 'ValidKioskPass123!' }),
+    });
+
+    const res = await reauthenticateHandler.fetch(req);
+    expect(res.status).toBe(401);
+    const body = await res.json();
+    expect(body.error).toBe('invalid_session');
+    expect(body.error).not.toBe('internal_error');
+  });
+
+  it('HOTFIX: Section 5: frontend getKioskReauthErrorMessage truthfully differentiates error codes', () => {
+    // 401 invalid_device_password
+    expect(getKioskReauthErrorMessage(401, 'invalid_device_password')).toBe(
+      'Invalid kiosk device password.'
+    );
+
+    // 401 invalid_session
+    expect(getKioskReauthErrorMessage(401, 'invalid_session')).toBe(
+      'Kiosk session expired. Please log in to the kiosk again.'
+    );
+
+    // 401 authentication_required
+    expect(getKioskReauthErrorMessage(401, 'authentication_required')).toBe(
+      'Kiosk session expired. Please log in to the kiosk again.'
+    );
+
+    // 403 access_denied / kiosk_device_required
+    expect(getKioskReauthErrorMessage(403, 'kiosk_device_required')).toBe(
+      'Access denied: Kiosk device account required'
+    );
+
+    // 500 internal_error
+    expect(getKioskReauthErrorMessage(500, 'internal_error')).toBe(
+      'Printer settings could not be unlocked due to a server error.'
+    );
+
+    // 502 or other server error
+    expect(getKioskReauthErrorMessage(502, 'bad_gateway')).toBe(
+      'Printer settings could not be unlocked due to a server error.'
+    );
+  });
 });
+
