@@ -37,7 +37,7 @@ export interface CachedVisitorPass {
   purpose: string;
   visitDate: string;
   status: 'issued' | 'pending' | 'inside';
-  passReference: string;
+  passReference?: string;
   validFrom: string;
   validUntil: string;
   timeIn?: string | null;
