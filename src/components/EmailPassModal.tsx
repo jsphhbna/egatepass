@@ -109,6 +109,11 @@ export function EmailPassModal({
     onClose();
   }
 
+  function handleSkip() {
+    if (loading) return;
+    onSkip?.();
+  }
+
   async function executeRequestCode(isResend: boolean) {
     if (!consent) {
       setErrorMessage('You must consent to receive your pass by email.');
@@ -317,7 +322,7 @@ export function EmailPassModal({
 
           <div className="flex gap-2 pt-2">
             {isDeliveryGate && onSkip ? (
-              <Button type="button" variant="secondary" onClick={onSkip} disabled={loading} className="flex-1">
+              <Button type="button" variant="secondary" onClick={handleSkip} disabled={loading} className="flex-1">
                 Continue without email
               </Button>
             ) : (
@@ -417,8 +422,9 @@ export function EmailPassModal({
             <div className="text-center pt-1">
               <button
                 type="button"
-                onClick={onSkip}
-                className="text-xs text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)] hover:underline"
+                onClick={handleSkip}
+                disabled={loading}
+                className="text-xs text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)] hover:underline disabled:opacity-50 disabled:cursor-not-allowed disabled:no-underline"
               >
                 Continue without email
               </button>

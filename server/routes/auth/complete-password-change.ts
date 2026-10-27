@@ -58,33 +58,40 @@ async function handleRequest(request: Request): Promise<Response> {
       return jsonResponse(401, { error: 'invalid_current_password' });
     }
 
-    const { error: passwordError } = await admin.auth.admin.updateUserById(user.id, {
-      password: parsed.data.newPassword,
-    });
-    if (passwordError) throw passwordError;
-
-    // finalize_guard_password_change is generalized in migration to finalize_staff_password_change
-    const { error: finalizeError } = await admin.schema('api').rpc('finalize_guard_password_change', {
-      target_user_id: user.id,
-    });
-    if (finalizeError) {
-      const reconciliationRecorded = await recordReconciliation(
-        admin,
-        'guard.password_change_finalize',
-        'staff_profile',
-        user.id,
-        finalizeError.message || 'finalize_guard_password_change_failed',
-        { passwordChanged: true }
-      );
-      return jsonResponse(503, {
-        error: 'password_changed_finalization_pending',
-        passwordChanged: true,
-        reconciliationRecorded,
+    try {
+      const { error: passwordError } = await admin.auth.admin.updateUserById(user.id, {
+        password: parsed.data.newPassword,
       });
-    }
+      if (passwordError) throw passwordError;
 
-    await passwordVerifier.auth.signOut();
-    return jsonResponse(200, { ok: true });
+      // finalize_guard_password_change is generalized in migration to finalize_staff_password_change
+      const { error: finalizeError } = await admin.schema('api').rpc('finalize_guard_password_change', {
+        target_user_id: user.id,
+      });
+      if (finalizeError) {
+        const reconciliationRecorded = await recordReconciliation(
+          admin,
+          'guard.password_change_finalize',
+          'staff_profile',
+          user.id,
+          finalizeError.message || 'finalize_guard_password_change_failed',
+          { passwordChanged: true }
+        );
+        return jsonResponse(503, {
+          error: 'password_changed_finalization_pending',
+          passwordChanged: true,
+          reconciliationRecorded,
+        });
+      }
+
+      return jsonResponse(200, { ok: true });
+    } finally {
+      try {
+        await passwordVerifier.auth.signOut({ scope: 'local' });
+      } catch {
+        // Safe local cleanup error swallow so actual password change outcome is preserved
+      }
+    }
   } catch (error) {
     console.error('Staff password change failed.', error instanceof Error ? error.message : 'unknown_error');
     return jsonResponse(503, { error: 'service_unavailable' });

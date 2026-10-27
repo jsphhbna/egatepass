@@ -16,7 +16,9 @@ export function ForcePasswordChange() {
   const [newPassword, setNewPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
   const [loading, setLoading] = useState(false);
-  const [showPasswords, setShowPasswords] = useState(false);
+  const [showCurrentPassword, setShowCurrentPassword] = useState(false);
+  const [showNewPassword, setShowNewPassword] = useState(false);
+  const [showConfirmPassword, setShowConfirmPassword] = useState(false);
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -117,21 +119,21 @@ export function ForcePasswordChange() {
             <div className="relative">
               <Input
                 id="current-password"
-                type={showPasswords ? "text" : "password"}
+                type={showCurrentPassword ? "text" : "password"}
                 value={currentPassword}
                 onChange={(e) => setCurrentPassword(e.target.value)}
                 disabled={loading}
                 autoComplete="current-password"
                 placeholder="••••••••"
-                className="pr-10"
+                className="pr-10 app-password-toggle-input"
               />
               <button
                 type="button"
-                onClick={() => setShowPasswords(!showPasswords)}
+                onClick={() => setShowCurrentPassword(!showCurrentPassword)}
                 className="absolute inset-y-0 right-0 flex min-w-11 items-center justify-center text-[var(--color-text-muted)] hover:text-[var(--color-brand)] focus:outline-none"
-                aria-label={showPasswords ? 'Hide passwords' : 'Show passwords'}
+                aria-label={showCurrentPassword ? 'Hide current password' : 'Show current password'}
               >
-                {showPasswords ? <EyeOff className="h-5 w-5" /> : <Eye className="h-5 w-5" />}
+                {showCurrentPassword ? <EyeOff className="h-5 w-5" /> : <Eye className="h-5 w-5" />}
               </button>
             </div>
           </FormField>
@@ -140,22 +142,22 @@ export function ForcePasswordChange() {
             <div className="relative">
               <Input
                 id="new-password"
-                type={showPasswords ? "text" : "password"}
+                type={showNewPassword ? "text" : "password"}
                 value={newPassword}
                 onChange={(e) => setNewPassword(e.target.value)}
                 disabled={loading}
                 minLength={PASSWORD_MIN_LENGTH}
                 autoComplete="new-password"
                 placeholder="••••••••"
-                className="pr-10"
+                className="pr-10 app-password-toggle-input"
               />
               <button
                 type="button"
-                onClick={() => setShowPasswords(!showPasswords)}
+                onClick={() => setShowNewPassword(!showNewPassword)}
                 className="absolute inset-y-0 right-0 flex min-w-11 items-center justify-center text-[var(--color-text-muted)] hover:text-[var(--color-brand)] focus:outline-none"
-                aria-label={showPasswords ? 'Hide passwords' : 'Show passwords'}
+                aria-label={showNewPassword ? 'Hide new password' : 'Show new password'}
               >
-                {showPasswords ? <EyeOff className="h-5 w-5" /> : <Eye className="h-5 w-5" />}
+                {showNewPassword ? <EyeOff className="h-5 w-5" /> : <Eye className="h-5 w-5" />}
               </button>
             </div>
             <p className="mt-1 text-xs text-[var(--color-text-muted)]">
@@ -167,22 +169,22 @@ export function ForcePasswordChange() {
             <div className="relative">
               <Input
                 id="confirm-password"
-                type={showPasswords ? "text" : "password"}
+                type={showConfirmPassword ? "text" : "password"}
                 value={confirmPassword}
                 onChange={(e) => setConfirmPassword(e.target.value)}
                 disabled={loading}
                 minLength={PASSWORD_MIN_LENGTH}
                 autoComplete="new-password"
                 placeholder="••••••••"
-                className="pr-10"
+                className="pr-10 app-password-toggle-input"
               />
               <button
                 type="button"
-                onClick={() => setShowPasswords(!showPasswords)}
+                onClick={() => setShowConfirmPassword(!showConfirmPassword)}
                 className="absolute inset-y-0 right-0 flex min-w-11 items-center justify-center text-[var(--color-text-muted)] hover:text-[var(--color-brand)] focus:outline-none"
-                aria-label={showPasswords ? 'Hide passwords' : 'Show passwords'}
+                aria-label={showConfirmPassword ? 'Hide confirm password' : 'Show confirm password'}
               >
-                {showPasswords ? <EyeOff className="h-5 w-5" /> : <Eye className="h-5 w-5" />}
+                {showConfirmPassword ? <EyeOff className="h-5 w-5" /> : <Eye className="h-5 w-5" />}
               </button>
             </div>
           </FormField>

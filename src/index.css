@@ -266,3 +266,9 @@ button:active,
     animation-duration: 2s !important;
   }
 }
+
+/* Suppress Edge/IE native password reveal controls only for inputs with custom eye toggles */
+.app-password-toggle-input::-ms-reveal,
+.app-password-toggle-input::-ms-clear {
+  display: none;
+}

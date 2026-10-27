@@ -45,6 +45,7 @@ export function AdminUsers() {
   const [isDeactivating, setIsDeactivating] = useState(false);
   const [roleChange, setRoleChange] = useState<{ user: AppUserWithId; newRole: UserRole } | null>(null);
   const [isChangingRole, setIsChangingRole] = useState(false);
+  const [reactivatingUserId, setReactivatingUserId] = useState<string | null>(null);
 
   const {
     register,
@@ -207,7 +208,8 @@ export function AdminUsers() {
     if (user.active) {
       setDeactivatingUser(user);
     } else {
-      // Reactivate instantly
+      if (reactivatingUserId === user.uid) return;
+      setReactivatingUserId(user.uid);
       try {
         const res = await updateUserAccount(user.uid, { active: true });
         if (res?.result === 'partial' && res.profileUpdated && res.reconciliationRequired) {
@@ -221,6 +223,8 @@ export function AdminUsers() {
       } catch (err) {
         console.error(err);
         toast.error(err instanceof Error ? err.message : 'Failed to update user status');
+      } finally {
+        setReactivatingUserId(null);
       }
     }
   }
@@ -365,9 +369,11 @@ export function AdminUsers() {
                       <Button
                         variant="ghost"
                         onClick={() => toggleStatus(user)}
+                        disabled={reactivatingUserId === user.uid}
+                        loading={reactivatingUserId === user.uid}
                         className="text-[var(--color-brand)] hover:bg-[var(--color-brand-light)]"
                       >
-                        {user.active ? 'Deactivate' : 'Activate'}
+                        {user.active ? 'Deactivate' : reactivatingUserId === user.uid ? 'Reactivating…' : 'Activate'}
                       </Button>
                     ) : user.uid === uid ? (
                       <span className="text-xs font-medium text-[var(--color-text-muted)]">Current account</span>

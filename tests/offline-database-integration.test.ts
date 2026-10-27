@@ -111,6 +111,10 @@ describe('Offline Database Integration & Lifecycle Invariants (DB-T01 - DB-T10)'
   let db: PGlite;
   const GUARD_ID = '00000000-0000-4000-a000-000000000001';
 
+  function getManilaDate(date: Date | string | number = Date.now()): string {
+    return new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Manila' }).format(new Date(date));
+  }
+
   beforeAll(async () => {
     db = new PGlite();
     await applyAllMigrations(db);
@@ -141,6 +145,7 @@ describe('Offline Database Integration & Lifecycle Invariants (DB-T01 - DB-T10)'
     const photoIntent = '22222222-2222-4000-8000-222222222222';
     const idIntent = '33333333-3333-4000-8000-333333333333';
     const occurredAt = new Date(Date.now() - 30 * 60 * 1000).toISOString();
+    const visitDate = getManilaDate(occurredAt);
 
     await db.exec(`
       reset role;
@@ -154,7 +159,7 @@ describe('Offline Database Integration & Lifecycle Invariants (DB-T01 - DB-T10)'
     const res = await db.query<{ guard_sync_offline_registration: any }>(`
       select api.guard_sync_offline_registration(
         '${regId}'::uuid,
-        '{"firstName": "Juan", "middleName": "Protacio", "lastName": "Dela Cruz", "contactNumber": "09171234567", "email": "juan@example.com", "purpose": "Registrar Records Request", "visitDate": "2026-10-27"}'::jsonb,
+        '{"firstName": "Juan", "middleName": "Protacio", "lastName": "Dela Cruz", "contactNumber": "09171234567", "email": "juan@example.com", "purpose": "Registrar Records Request", "visitDate": "${visitDate}"}'::jsonb,
         'approved'::text,
         '${occurredAt}'::timestamptz,
         '${photoIntent}'::uuid,
@@ -178,7 +183,7 @@ describe('Offline Database Integration & Lifecycle Invariants (DB-T01 - DB-T10)'
     expect(vRows.rows.length).toBe(1);
     expect(vRows.rows[0].source).toBe('guard_offline');
     expect(vRows.rows[0].full_name).toBe('Juan Protacio Dela Cruz');
-    expect(new Date(vRows.rows[0].visit_date).toISOString().slice(0, 10)).toBe('2026-10-27');
+    expect(new Date(vRows.rows[0].visit_date).toISOString().slice(0, 10)).toBe(visitDate);
     expect(vRows.rows[0].consent_accepted_at).not.toBeNull();
     expect(vRows.rows[0].owner_id).toBe(GUARD_ID);
 
@@ -206,6 +211,7 @@ describe('Offline Database Integration & Lifecycle Invariants (DB-T01 - DB-T10)'
     const regId = '44444444-4444-4000-8000-444444444444';
     const photoIntent = '55555555-5555-4000-8000-555555555555';
     const occurredAt = new Date(Date.now() - 30 * 60 * 1000).toISOString();
+    const visitDate = getManilaDate(occurredAt);
 
     await db.exec(`
       reset role;
@@ -217,7 +223,7 @@ describe('Offline Database Integration & Lifecycle Invariants (DB-T01 - DB-T10)'
     const res = await db.query<{ guard_sync_offline_registration: any }>(`
       select api.guard_sync_offline_registration(
         '${regId}'::uuid,
-        '{"firstName": "Bad", "lastName": "Actor", "contactNumber": "09170000000", "purpose": "Unauthorized Solicitation", "visitDate": "2026-10-27"}'::jsonb,
+        '{"firstName": "Bad", "lastName": "Actor", "contactNumber": "09170000000", "purpose": "Unauthorized Solicitation", "visitDate": "${visitDate}"}'::jsonb,
         'rejected'::text,
         '${occurredAt}'::timestamptz,
         '${photoIntent}'::uuid,
@@ -247,6 +253,7 @@ describe('Offline Database Integration & Lifecycle Invariants (DB-T01 - DB-T10)'
     const photoIntent = '77777777-7777-4000-8000-777777777777';
     const idIntent = '88888888-8888-4000-8000-888888888888';
     const occurredAt = new Date(Date.now() - 30 * 60 * 1000).toISOString();
+    const visitDate = getManilaDate(occurredAt);
 
     await db.exec(`
       reset role;
@@ -259,7 +266,7 @@ describe('Offline Database Integration & Lifecycle Invariants (DB-T01 - DB-T10)'
     await asGuard();
     const payload = `
       '${regId}'::uuid,
-      '{"firstName": "Maria", "lastName": "Clara", "contactNumber": "09191234567", "purpose": "Faculty Meeting", "visitDate": "2026-10-27"}'::jsonb,
+      '{"firstName": "Maria", "lastName": "Clara", "contactNumber": "09191234567", "purpose": "Faculty Meeting", "visitDate": "${visitDate}"}'::jsonb,
       'approved'::text,
       '${occurredAt}'::timestamptz,
       '${photoIntent}'::uuid,
@@ -296,6 +303,7 @@ describe('Offline Database Integration & Lifecycle Invariants (DB-T01 - DB-T10)'
     const photoIntent = 'aaaaaaaa-aaaa-4000-8000-aaaaaaaaaaaa';
     const idIntent = 'bbbbbbbb-bbbb-4000-8000-bbbbbbbbbbbb';
     const occurredAt = new Date(Date.now() - 30 * 60 * 1000).toISOString();
+    const visitDate = getManilaDate(occurredAt);
 
     await db.exec(`
       reset role;
@@ -310,7 +318,7 @@ describe('Offline Database Integration & Lifecycle Invariants (DB-T01 - DB-T10)'
     await db.query(`
       select api.guard_sync_offline_registration(
         '${regId}'::uuid,
-        '{"firstName": "Juan", "lastName": "Dela Cruz", "contactNumber": "09171112222", "purpose": "Inquiry", "visitDate": "2026-10-27"}'::jsonb,
+        '{"firstName": "Juan", "lastName": "Dela Cruz", "contactNumber": "09171112222", "purpose": "Inquiry", "visitDate": "${visitDate}"}'::jsonb,
         'approved'::text,
         '${occurredAt}'::timestamptz,
         '${photoIntent}'::uuid,
@@ -327,7 +335,7 @@ describe('Offline Database Integration & Lifecycle Invariants (DB-T01 - DB-T10)'
     const modifiedRes = await db.query<{ guard_sync_offline_registration: any }>(`
       select api.guard_sync_offline_registration(
         '${regId}'::uuid,
-        '{"firstName": "Different", "lastName": "Person", "contactNumber": "09998887766", "purpose": "Tampered", "visitDate": "2026-10-27"}'::jsonb,
+        '{"firstName": "Different", "lastName": "Person", "contactNumber": "09998887766", "purpose": "Tampered", "visitDate": "${visitDate}"}'::jsonb,
         'approved'::text,
         '${occurredAt}'::timestamptz,
         '${photoIntent}'::uuid,
@@ -492,6 +500,7 @@ describe('Offline Database Integration & Lifecycle Invariants (DB-T01 - DB-T10)'
     const idIntent = '78787878-7878-4000-8000-787878787878';
     const timeIn = new Date(Date.now() - 60 * 60 * 1000).toISOString();
     const timeOut = new Date(Date.now() - 15 * 60 * 1000).toISOString();
+    const visitDate = getManilaDate(timeIn);
 
     await db.exec(`
       reset role;
@@ -506,7 +515,7 @@ describe('Offline Database Integration & Lifecycle Invariants (DB-T01 - DB-T10)'
     const regRes = await db.query<{ guard_sync_offline_registration: any }>(`
       select api.guard_sync_offline_registration(
         '${regId}'::uuid,
-        '{"firstName": "Offline", "lastName": "Visitor", "contactNumber": "09179998888", "purpose": "Campus Tour", "visitDate": "2026-10-27"}'::jsonb,
+        '{"firstName": "Offline", "lastName": "Visitor", "contactNumber": "09179998888", "purpose": "Campus Tour", "visitDate": "${visitDate}"}'::jsonb,
         'approved'::text,
         '${timeIn}'::timestamptz,
         '${photoIntent}'::uuid,
@@ -566,7 +575,7 @@ describe('Offline Database Integration & Lifecycle Invariants (DB-T01 - DB-T10)'
       await db.query(`
         select api.guard_sync_offline_registration(
           '${regId}'::uuid,
-          '{"firstName": "NoId", "lastName": "Visitor", "contactNumber": "09171239999", "purpose": "Testing", "visitDate": "2026-10-27"}'::jsonb,
+          ('{"firstName": "NoId", "lastName": "Visitor", "contactNumber": "09171239999", "purpose": "Testing", "visitDate": "' || (now() at time zone 'Asia/Manila')::date || '"}')::jsonb,
           'approved'::text,
           now()::timestamptz,
           '${photoIntent}'::uuid,

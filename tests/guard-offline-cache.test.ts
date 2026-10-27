@@ -10,6 +10,7 @@ import {
   type CachedVisitorPass,
 } from '@/lib/offline/guardIndexedDb';
 import { refreshOperationalCache } from '@/lib/offline/guardSyncManager';
+import { getManilaDateString } from '@/lib/scheduling';
 
 // Mock dependencies for guardSyncManager
 const { mockRpc, mockGetSession } = vi.hoisted(() => ({
@@ -55,6 +56,7 @@ describe('Section F: Guard Offline Cache Behavior Tests (CACHE-T01 - CACHE-T05)'
 
   // CACHE-T01: More than 50 visitors paginated
   it('CACHE-T01: exhausts all pages to cache > 50 visitors (125 total), not capped at 50', async () => {
+    const today = getManilaDateString();
     // Generate 125 synthetic visitors across 3 pages: 50, 50, 25
     const totalVisitors = 125;
     const allVisitors = Array.from({ length: totalVisitors }, (_, i) => ({
@@ -64,12 +66,12 @@ describe('Section F: Guard Offline Cache Behavior Tests (CACHE-T01 - CACHE-T05)'
       visitorName: `Visitor ${i + 1}`,
       contactNumber: `0917000${String(i).padStart(4, '0')}`,
       purpose: 'Official Business',
-      visitDate: '2026-10-27',
+      visitDate: today,
       status: 'inside',
       version: 1,
-      validFrom: '2026-10-27T08:00:00+08:00',
-      validUntil: '2026-10-27T17:00:00+08:00',
-      timeIn: '2026-10-27T08:30:00+08:00',
+      validFrom: `${today}T08:00:00+08:00`,
+      validUntil: `${today}T17:00:00+08:00`,
+      timeIn: `${today}T08:30:00+08:00`,
       gate: 'Main Gate',
       photoEvidenceId: null,
       idEvidenceId: null,
@@ -106,6 +108,7 @@ describe('Section F: Guard Offline Cache Behavior Tests (CACHE-T01 - CACHE-T05)'
 
   // CACHE-T02: No letter-a dependency
   it('CACHE-T02: caches and searches visitors with no letter "a" in name, contact, or reference', async () => {
+    const today = getManilaDateString();
     const noA_Visitors = [
       {
         passId: 'pass-no-a-1',
@@ -114,11 +117,11 @@ describe('Section F: Guard Offline Cache Behavior Tests (CACHE-T01 - CACHE-T05)'
         visitorName: 'John Cruz', // No letter 'a'
         contactNumber: '09180001111',
         purpose: 'Office Visit',
-        visitDate: '2026-10-27',
+        visitDate: today,
         status: 'issued',
         version: 1,
-        validFrom: '2026-10-27T08:00:00+08:00',
-        validUntil: '2026-10-27T17:00:00+08:00',
+        validFrom: `${today}T08:00:00+08:00`,
+        validUntil: `${today}T17:00:00+08:00`,
         photoEvidenceId: null,
         idEvidenceId: null,
       },
@@ -129,11 +132,11 @@ describe('Section F: Guard Offline Cache Behavior Tests (CACHE-T01 - CACHE-T05)'
         visitorName: 'Bobby Lim', // No letter 'a'
         contactNumber: '09192223333',
         purpose: 'Consult',
-        visitDate: '2026-10-27',
+        visitDate: today,
         status: 'inside',
         version: 1,
-        validFrom: '2026-10-27T08:00:00+08:00',
-        validUntil: '2026-10-27T17:00:00+08:00',
+        validFrom: `${today}T08:00:00+08:00`,
+        validUntil: `${today}T17:00:00+08:00`,
         photoEvidenceId: null,
         idEvidenceId: null,
       },
@@ -144,11 +147,11 @@ describe('Section F: Guard Offline Cache Behavior Tests (CACHE-T01 - CACHE-T05)'
         visitorName: 'Jun Rico', // No letter 'a'
         contactNumber: '09204445555',
         purpose: 'Billing',
-        visitDate: '2026-10-27',
+        visitDate: today,
         status: 'pending',
         version: 1,
-        validFrom: '2026-10-27T08:00:00+08:00',
-        validUntil: '2026-10-27T17:00:00+08:00',
+        validFrom: `${today}T08:00:00+08:00`,
+        validUntil: `${today}T17:00:00+08:00`,
         photoEvidenceId: null,
         idEvidenceId: null,
       },
@@ -205,11 +208,11 @@ describe('Section F: Guard Offline Cache Behavior Tests (CACHE-T01 - CACHE-T05)'
             visitorName: 'Offline Evidence Visitor',
             contactNumber: '09178889999',
             purpose: 'Evidence Verification',
-            visitDate: '2026-10-27',
+            visitDate: getManilaDateString(),
             status: 'inside',
             version: 1,
-            validFrom: '2026-10-27T08:00:00+08:00',
-            validUntil: '2026-10-27T17:00:00+08:00',
+            validFrom: `${getManilaDateString()}T08:00:00+08:00`,
+            validUntil: `${getManilaDateString()}T17:00:00+08:00`,
             photoEvidenceId: 'evi-photo-777',
             idEvidenceId: 'evi-id-888',
           },
@@ -239,6 +242,7 @@ describe('Section F: Guard Offline Cache Behavior Tests (CACHE-T01 - CACHE-T05)'
 
   // CACHE-T04: Failed refresh preserves previous snapshot
   it('CACHE-T04: aborts and preserves previous valid snapshot if download fails halfway', async () => {
+    const today = getManilaDateString();
     // 1. Establish valid previous snapshot with 2 visitors
     const initialVisitors: CachedVisitorPass[] = [
       {
@@ -247,11 +251,11 @@ describe('Section F: Guard Offline Cache Behavior Tests (CACHE-T01 - CACHE-T05)'
         visitorName: 'Initial Person 1',
         contactNumber: '09171111111',
         purpose: 'Initial Test',
-        visitDate: '2026-10-27',
+        visitDate: today,
         status: 'issued',
         passReference: 'EG-11111111',
-        validFrom: '2026-10-27T08:00:00+08:00',
-        validUntil: '2026-10-27T17:00:00+08:00',
+        validFrom: `${today}T08:00:00+08:00`,
+        validUntil: `${today}T17:00:00+08:00`,
         cachedAt: new Date().toISOString(),
         photoBlob: null,
         idBlob: null,
@@ -262,11 +266,11 @@ describe('Section F: Guard Offline Cache Behavior Tests (CACHE-T01 - CACHE-T05)'
         visitorName: 'Initial Person 2',
         contactNumber: '09172222222',
         purpose: 'Initial Test',
-        visitDate: '2026-10-27',
+        visitDate: today,
         status: 'inside',
         passReference: 'EG-22222222',
-        validFrom: '2026-10-27T08:00:00+08:00',
-        validUntil: '2026-10-27T17:00:00+08:00',
+        validFrom: `${today}T08:00:00+08:00`,
+        validUntil: `${today}T17:00:00+08:00`,
         cachedAt: new Date().toISOString(),
         photoBlob: null,
         idBlob: null,
@@ -285,7 +289,7 @@ describe('Section F: Guard Offline Cache Behavior Tests (CACHE-T01 - CACHE-T05)'
             visitorName: 'New Person 1',
             contactNumber: '09173333333',
             purpose: 'New Test',
-            visitDate: '2026-10-27',
+            visitDate: today,
             status: 'issued',
             photoEvidenceId: 'evi-ok',
           },
@@ -296,7 +300,7 @@ describe('Section F: Guard Offline Cache Behavior Tests (CACHE-T01 - CACHE-T05)'
             visitorName: 'New Person 2',
             contactNumber: '09174444444',
             purpose: 'New Test',
-            visitDate: '2026-10-27',
+            visitDate: today,
             status: 'inside',
             photoEvidenceId: 'evi-fail', // Triggers network error
           },

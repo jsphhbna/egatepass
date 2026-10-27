@@ -54,6 +54,8 @@ export function AdminPrintTemplatesPage() {
   const [currentStatus, setCurrentStatus] = useState<'draft' | 'published' | 'archived'>('published');
   const [layout, setLayout] = useState<ThermalTemplateLayout>(BUNDLED_DEFAULT_THERMAL_TEMPLATE);
   const [versions, setVersions] = useState<TemplateVersionRecord[]>([]);
+  const [hasLoadedCanonical, setHasLoadedCanonical] = useState(false);
+  const [loadError, setLoadError] = useState<string | null>(null);
 
   const [selectedElementId, setSelectedElementId] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<'editor' | 'versions'>('editor');
@@ -72,33 +74,53 @@ export function AdminPrintTemplatesPage() {
 
       if (error) throw error;
 
+      setHasLoadedCanonical(true);
+      setLoadError(null);
+
       if (data && data.length > 0) {
         setVersions(data as TemplateVersionRecord[]);
         // Find preferred version, published version, or latest record
         const target = (preferVersion !== undefined ? data.find((t) => t.version === preferVersion) : null)
           || data.find((t) => t.status === 'published')
           || data[0];
-        setTemplateName(target.name);
-        setCurrentVersion(target.version);
-        setCurrentStatus(target.status as any);
+
         if (target.layout && typeof target.layout === 'object' && target.layout.width === 384) {
           const valResult = validateThermalTemplateLayout(target.layout);
           if (valResult.success) {
+            setTemplateName(target.name);
+            setCurrentVersion(target.version);
+            setCurrentStatus(target.status as any);
             setLayout(target.layout);
           } else {
+            // Incompatible historical layout: treat as recovered unsaved draft / new version
+            setTemplateName(`${target.name} (Compatible Recovery)`);
+            setCurrentVersion(null);
+            setCurrentStatus('draft');
             setLayout(BUNDLED_DEFAULT_THERMAL_TEMPLATE);
-            toast.info('This historical template uses an older format. A current compatible template is loaded for editing.');
+            toast.info('This historical template uses an older format. A current compatible template is loaded as an unsaved draft.');
           }
         } else {
+          setTemplateName(`${target.name} (Compatible Recovery)`);
+          setCurrentVersion(null);
+          setCurrentStatus('draft');
           setLayout(BUNDLED_DEFAULT_THERMAL_TEMPLATE);
         }
       } else {
+        // Zero templates: load default as unsaved local draft
+        setVersions([]);
+        setTemplateName('Default Institutional 384px Template');
+        setCurrentVersion(null);
+        setCurrentStatus('draft');
         setLayout(BUNDLED_DEFAULT_THERMAL_TEMPLATE);
       }
     } catch (err) {
       console.error('Failed to load thermal templates:', err);
-      toast.error('Could not load thermal templates. Using default template.');
-      setLayout(BUNDLED_DEFAULT_THERMAL_TEMPLATE);
+      if (hasLoadedCanonical) {
+        toast.warning('Failed to refresh thermal templates. Keeping current editor state.');
+      } else {
+        setLoadError('Unable to load thermal templates');
+        toast.error('Unable to load thermal templates');
+      }
     } finally {
       setLoading(false);
     }
@@ -333,6 +355,17 @@ export function AdminPrintTemplatesPage() {
           <Loader2 className="h-6 w-6 animate-spin text-[#800000]" />
           <span>Loading thermal print templates…</span>
         </Card>
+      ) : !hasLoadedCanonical && loadError ? (
+        <Card className="p-12 text-center text-sm text-[var(--color-text-secondary)] flex flex-col items-center justify-center gap-4">
+          <AlertTriangle className="h-10 w-10 text-[var(--color-danger)]" />
+          <div>
+            <h3 className="text-base font-bold text-[var(--color-text-primary)]">Unable to load thermal templates</h3>
+            <p className="mt-1 text-xs text-[var(--color-text-muted)]">Could not retrieve canonical templates from server.</p>
+          </div>
+          <Button onClick={() => void loadTemplates()} size="sm" icon={<RotateCcw className="h-4 w-4" />}>
+            Retry
+          </Button>
+        </Card>
       ) : activeTab === 'versions' ? (
         /* Version History View (Phase 3.4) */
         <Card className="p-6">
@@ -439,7 +472,7 @@ export function AdminPrintTemplatesPage() {
               <div className="flex gap-2 pt-2 border-t border-[var(--color-border)]">
                 <Button
                   onClick={handleSaveDraft}
-                  disabled={saving || publishing}
+                  disabled={saving || publishing || !hasLoadedCanonical}
                   loading={saving}
                   variant="secondary"
                   size="sm"
@@ -450,7 +483,7 @@ export function AdminPrintTemplatesPage() {
                 </Button>
                 <Button
                   onClick={handlePublish}
-                  disabled={saving || publishing}
+                  disabled={saving || publishing || !hasLoadedCanonical}
                   loading={publishing}
                   size="sm"
                   className="flex-1 bg-[#800000] hover:bg-[#660000]"

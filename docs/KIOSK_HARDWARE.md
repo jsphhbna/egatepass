@@ -96,13 +96,14 @@ sequenceDiagram
 - **Platform Compatibility**: Android Tablet (Target deployment), ChromeOS, or Windows tablet. Apple iOS/iPadOS Safari does not support Web Bluetooth and automatically defaults to the system `window.print()` path.
 
 ### 3.2 Bluetooth Pairing & Safe Reconnection Lifecycle
-1. **Initial Pairing**:
+1. **First authorization**:
    - The kiosk operator opens **Device Settings** (protected by kiosk device password re-authentication).
    - Tapping **Connect MXW01** initiates `navigator.bluetooth.requestDevice()` filtering for MXW01 GATT services.
-   - User grants permission in the browser Bluetooth device picker.
-2. **Session Reconnection**:
-   - On subsequent launches, the kiosk invokes `navigator.bluetooth.getDevices()` to attempt zero-interaction reconnection to a previously authorized printer.
-   - If permissions expire or device is powered off, the UI safely falls back to disconnected state without crashing the registration wizard.
+   - Choose/authorize MXW01 through the browser picker.
+2. **Subsequent reconnect**:
+   - Uses a previously authorized browser device (`navigator.bluetooth.getDevices()`) and does not reopen the chooser unless authorization is missing or the operator explicitly chooses another printer.
+3. **Physical disconnect detection**:
+   - Physical power-off or link loss transitions the UI to Disconnected through the browser GATT `gattserverdisconnected` event without crashing the registration wizard or auto-opening the chooser.
 
 ### 3.3 Protected Device Settings & Controls
 Kiosk device settings (`/kiosk` > Gear Icon) are strictly protected by the Kiosk Device Password (verified via trusted server endpoint `/api/device/reauthenticate`) to prevent visitors from tampering with hardware configuration:

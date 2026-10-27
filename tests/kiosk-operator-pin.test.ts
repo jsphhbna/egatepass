@@ -569,12 +569,12 @@ describe('CL-T01 & CL-T02: Kiosk Device Password Reauthentication & PIN System E
 
     // 401 invalid_session
     expect(getKioskReauthErrorMessage(401, 'invalid_session')).toBe(
-      'Kiosk session expired. Please log in to the kiosk again.'
+      'Kiosk session expired. Please sign in to the kiosk again.'
     );
 
     // 401 authentication_required
     expect(getKioskReauthErrorMessage(401, 'authentication_required')).toBe(
-      'Kiosk session expired. Please log in to the kiosk again.'
+      'Kiosk session expired. Please sign in to the kiosk again.'
     );
 
     // 403 access_denied / kiosk_device_required

@@ -60,6 +60,7 @@ export function DevicesPage() {
   const [isUpdatingAuth, setIsUpdatingAuth] = useState(false);
   const [deletingDevice, setDeletingDevice] = useState<DeviceWithId | null>(null);
   const [isDeleting, setIsDeleting] = useState(false);
+  const [reactivatingDeviceId, setReactivatingDeviceId] = useState<string | null>(null);
 
   const {
     register,
@@ -144,7 +145,8 @@ export function DevicesPage() {
     if (device.status === 'active') {
       setRevokingDevice(device);
     } else {
-      // Reactivate instantly
+      if (reactivatingDeviceId === device.id) return;
+      setReactivatingDeviceId(device.id);
       try {
         const res = await updateDeviceStatus(device.id, 'active');
         if (res.result === 'partial' || res.reconciliationRequired) {
@@ -156,6 +158,8 @@ export function DevicesPage() {
       } catch (err) {
         console.error('Reactivate device error:', err);
         toast.error('Failed to reactivate device.');
+      } finally {
+        setReactivatingDeviceId(null);
       }
     }
   }
@@ -521,10 +525,12 @@ export function DevicesPage() {
                 <Button
                   variant={device.status === 'active' ? 'destructive' : 'primary'}
                   onClick={() => toggleDeviceStatus(device)}
+                  disabled={reactivatingDeviceId === device.id}
+                  loading={reactivatingDeviceId === device.id}
                   className={canManageCredentials ? 'flex-[2]' : 'flex-1'}
                   icon={device.status === 'active' ? <Lock className="h-4 w-4" /> : <Unlock className="h-4 w-4" />}
                 >
-                  {device.status === 'active' ? 'Revoke' : 'Reactivate'}
+                  {device.status === 'active' ? 'Revoke' : reactivatingDeviceId === device.id ? 'Reactivating…' : 'Reactivate'}
                 </Button>
               </div>
             </Card>
@@ -602,7 +608,7 @@ export function DevicesPage() {
                 minLength={PASSWORD_MIN_LENGTH}
                 maxLength={128}
                 autoComplete="new-password"
-                className="pr-12"
+                className="pr-12 app-password-toggle-input"
               />
               <button
                 type="button"

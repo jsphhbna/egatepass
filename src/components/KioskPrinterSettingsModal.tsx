@@ -1,6 +1,6 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { Modal, Button, Input } from '@/components/ui';
-import { useThermalPrinter } from '@/printer/hooks/useThermalPrinter';
+import type { ThermalPrinterController } from '@/printer/hooks/useThermalPrinter';
 import {
   Printer,
   Bluetooth,
@@ -10,11 +10,13 @@ import {
   ShieldLock,
 } from 'lucide-react';
 import { requireSupabase } from '@/lib/supabase';
+import { fetchWithTimeout } from '@/lib/fetchWithTimeout';
 import { toast } from 'sonner';
 
 export interface KioskPrinterSettingsModalProps {
   isOpen: boolean;
   onClose: () => void;
+  printer: ThermalPrinterController;
 }
 
 const UNLOCK_TIMEOUT_MS = 15 * 60 * 1000; // 15-minute maximum unlock duration
@@ -22,7 +24,7 @@ const UNLOCK_TIMEOUT_MS = 15 * 60 * 1000; // 15-minute maximum unlock duration
 export function getKioskReauthErrorMessage(status: number, errorCode?: string | null): string {
   if (status === 401) {
     if (errorCode === 'invalid_session' || errorCode === 'authentication_required') {
-      return 'Kiosk session expired. Please log in to the kiosk again.';
+      return 'Kiosk session expired. Please sign in to the kiosk again.';
     }
     return 'Invalid kiosk device password.';
   }
@@ -35,7 +37,7 @@ export function getKioskReauthErrorMessage(status: number, errorCode?: string | 
   return 'Reauthentication failed';
 }
 
-export function KioskPrinterSettingsModal({ isOpen, onClose }: KioskPrinterSettingsModalProps) {
+export function KioskPrinterSettingsModal({ isOpen, onClose, printer }: KioskPrinterSettingsModalProps) {
   const {
     isSupported,
     status,
@@ -47,14 +49,19 @@ export function KioskPrinterSettingsModal({ isOpen, onClose }: KioskPrinterSetti
     disconnect,
     updateConfig,
     printTestTicket,
-  } = useThermalPrinter();
+  } = printer;
 
   const [password, setPassword] = useState('');
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [unlockExpiresAt, setUnlockExpiresAt] = useState<number | null>(null);
   const [isAuthenticating, setIsAuthenticating] = useState(false);
   const [isTesting, setIsTesting] = useState(false);
-  const [isConnecting, setIsConnecting] = useState(false);
+  const [connectionAction, setConnectionAction] = useState<'connect' | 'reconnect' | null>(null);
+
+  const isConnecting = connectionAction !== null || status === 'connecting';
+
+  const reauthGenerationRef = useRef(0);
+  const abortControllerRef = useRef<AbortController | null>(null);
 
   // 15-minute automatic relock timer (memory-only, cleared on timeout/close/reload/logout)
   useEffect(() => {
@@ -81,13 +88,32 @@ export function KioskPrinterSettingsModal({ isOpen, onClose }: KioskPrinterSetti
   // Relock immediately if modal is closed
   useEffect(() => {
     if (!isOpen) {
+      reauthGenerationRef.current += 1;
+      if (abortControllerRef.current) {
+        abortControllerRef.current.abort();
+        abortControllerRef.current = null;
+      }
       setIsAuthenticated(false);
       setPassword('');
       setUnlockExpiresAt(null);
+      setIsAuthenticating(false);
     }
   }, [isOpen]);
 
-  // Kiosk device password re-authentication via trusted server endpoint
+  function handleCloseModal() {
+    reauthGenerationRef.current += 1;
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort();
+      abortControllerRef.current = null;
+    }
+    setIsAuthenticated(false);
+    setPassword('');
+    setUnlockExpiresAt(null);
+    setIsAuthenticating(false);
+    onClose();
+  }
+
+  // Kiosk device password re-authentication via trusted server endpoint with generation fencing and timeout
   async function handleReauthenticate(e: React.FormEvent) {
     e.preventDefault();
     if (!password) {
@@ -95,24 +121,43 @@ export function KioskPrinterSettingsModal({ isOpen, onClose }: KioskPrinterSetti
       return;
     }
 
+    const generation = ++reauthGenerationRef.current;
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort();
+    }
+    const controller = new AbortController();
+    abortControllerRef.current = controller;
+
     setIsAuthenticating(true);
     try {
       const client = requireSupabase();
       const sessionRes = await client.auth.getSession();
       const token = sessionRes.data.session?.access_token;
       if (!token) {
-        toast.error('Kiosk session expired. Please log in to the kiosk again.');
+        if (generation === reauthGenerationRef.current) {
+          toast.error('Kiosk session expired. Please sign in to the kiosk again.');
+        }
         return;
       }
 
-      const res = await fetch('/api/device/reauthenticate', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${token}`,
+      const res = await fetchWithTimeout(
+        '/api/device/reauthenticate',
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${token}`,
+          },
+          body: JSON.stringify({ password }),
+          signal: controller.signal,
         },
-        body: JSON.stringify({ password }),
-      });
+        10000
+      );
+
+      if (generation !== reauthGenerationRef.current) {
+        // Modal was closed or a newer request began
+        return;
+      }
 
       if (res.ok) {
         setIsAuthenticated(true);
@@ -124,43 +169,68 @@ export function KioskPrinterSettingsModal({ isOpen, onClose }: KioskPrinterSetti
         const message = getKioskReauthErrorMessage(res.status, errData?.error);
         toast.error(message);
       }
-    } catch {
+    } catch (err: unknown) {
+      if (generation !== reauthGenerationRef.current) {
+        return;
+      }
+      if (err instanceof Error && err.name === 'AbortError') {
+        return;
+      }
       toast.error('Reauthentication request failed. Please check network connectivity.');
     } finally {
-      setIsAuthenticating(false);
+      if (generation === reauthGenerationRef.current) {
+        setIsAuthenticating(false);
+        abortControllerRef.current = null;
+      }
     }
   }
 
   async function handleConnect() {
-    setIsConnecting(true);
-    const res = await connect();
-    setIsConnecting(false);
-    if (res.success) {
-      toast.success(`Connected to ${res.deviceName || 'MXW01 Printer'}`);
-    } else if (res.error && !res.error.includes('cancelled')) {
-      toast.error(res.error);
+    setConnectionAction('connect');
+    try {
+      const res = await connect();
+      if (res.success) {
+        toast.success(`Connected to ${res.deviceName || 'MXW01 Printer'}`);
+      } else if (res.error && !res.error.includes('cancelled')) {
+        toast.error(res.error);
+      }
+    } finally {
+      setConnectionAction(null);
     }
   }
 
   async function handleReconnect() {
-    setIsConnecting(true);
-    const success = await reconnect();
-    setIsConnecting(false);
-    if (success) {
-      toast.success('Reconnected to MXW01 Printer');
-    } else {
-      toast.info('No previously authorized device available to reconnect');
+    setConnectionAction('reconnect');
+    try {
+      const res = await reconnect();
+      if (res.outcome === 'success') {
+        toast.success(`Reconnected to ${res.deviceName || 'MXW01 Printer'}`);
+      } else if (res.outcome === 'no_authorized_device') {
+        toast.info(res.error || 'Previously authorized MXW01 was not found. Choose the printer again.');
+      } else if (res.outcome === 'connection_failed') {
+        toast.error(res.error || 'MXW01 was found, but connection failed. Make sure the printer is powered on and nearby.');
+      } else if (res.outcome === 'busy') {
+        toast.info(res.error || 'Connection already in progress.');
+      } else if (res.outcome === 'unsupported') {
+        toast.error(res.error || 'Web Bluetooth is not supported on this device.');
+      }
+    } finally {
+      setConnectionAction(null);
     }
   }
 
   async function handleTestPrint() {
     setIsTesting(true);
-    const res = await printTestTicket();
-    setIsTesting(false);
-    if (res.success) {
-      toast.success('Test ticket printed successfully');
-    } else {
-      toast.error(res.error || 'Test print failed');
+    try {
+      const res = await printTestTicket();
+      if (res.success) {
+        toast.success('Test ticket printed successfully');
+      }
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Test print failed';
+      toast.error(message);
+    } finally {
+      setIsTesting(false);
     }
   }
 
@@ -175,12 +245,7 @@ export function KioskPrinterSettingsModal({ isOpen, onClose }: KioskPrinterSetti
   return (
     <Modal
       isOpen={isOpen}
-      onClose={() => {
-        setIsAuthenticated(false);
-        setPassword('');
-        setUnlockExpiresAt(null);
-        onClose();
-      }}
+      onClose={handleCloseModal}
       title="Kiosk Thermal Printer (MXW01)"
       size="md"
     >
@@ -205,7 +270,7 @@ export function KioskPrinterSettingsModal({ isOpen, onClose }: KioskPrinterSetti
             />
           </div>
           <div className="flex justify-end gap-2 pt-2">
-            <Button type="button" variant="secondary" onClick={onClose} disabled={isAuthenticating}>
+            <Button type="button" variant="secondary" onClick={handleCloseModal} disabled={isAuthenticating}>
               Cancel
             </Button>
             <Button type="submit" disabled={!password || isAuthenticating}>
@@ -268,34 +333,51 @@ export function KioskPrinterSettingsModal({ isOpen, onClose }: KioskPrinterSetti
                     type="button"
                     variant="destructive-outline"
                     onClick={disconnect}
+                    disabled={isTesting}
                     size="sm"
                   >
                     Disconnect
                   </Button>
                 </>
+              ) : status === 'printing' ? (
+                <span className="text-xs text-[var(--color-text-secondary)] italic self-center">
+                  Printing…
+                </span>
+              ) : status === 'connecting' ? (
+                <Button
+                  type="button"
+                  disabled
+                  loading
+                  size="sm"
+                  icon={<RefreshCw className="h-3.5 w-3.5" />}
+                >
+                  Connecting…
+                </Button>
               ) : (
                 <>
                   <Button
                     type="button"
                     onClick={handleConnect}
-                    loading={isConnecting}
+                    loading={connectionAction === 'connect'}
                     disabled={!isSupported || isConnecting}
                     size="sm"
                     icon={<Bluetooth className="h-3.5 w-3.5" />}
                   >
-                    Connect MXW01
+                    {config.lastDeviceId ? 'Choose Another Printer' : 'Connect MXW01'}
                   </Button>
-                  <Button
-                    type="button"
-                    variant="secondary"
-                    onClick={handleReconnect}
-                    loading={isConnecting}
-                    disabled={!isSupported || isConnecting}
-                    size="sm"
-                    icon={<RefreshCw className="h-3.5 w-3.5" />}
-                  >
-                    Reconnect
-                  </Button>
+                  {config.lastDeviceId && (
+                    <Button
+                      type="button"
+                      variant="secondary"
+                      onClick={handleReconnect}
+                      loading={connectionAction === 'reconnect'}
+                      disabled={!isSupported || isConnecting}
+                      size="sm"
+                      icon={<RefreshCw className="h-3.5 w-3.5" />}
+                    >
+                      Reconnect MXW01
+                    </Button>
+                  )}
                 </>
               )}
             </div>
@@ -353,7 +435,7 @@ export function KioskPrinterSettingsModal({ isOpen, onClose }: KioskPrinterSetti
           </div>
 
           <div className="flex justify-end pt-2">
-            <Button type="button" onClick={onClose}>
+            <Button type="button" onClick={handleCloseModal}>
               Done
             </Button>
           </div>

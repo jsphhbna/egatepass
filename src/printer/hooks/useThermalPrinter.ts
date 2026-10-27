@@ -3,12 +3,12 @@ import {
   MXW01Manager,
   type PrinterConnectionStatus,
   type StoredPrinterConfig,
+  type ReconnectResult,
 } from '../mxw01/mxw01Manager';
 import type { PassPresentation } from '@/lib/passPresentation';
 import { validateThermalTemplateLayout, type ThermalTemplateLayout } from '@/types/thermalTemplate';
 import { BUNDLED_DEFAULT_THERMAL_TEMPLATE } from '../templates/bundledDefaultTemplate';
 import { requireSupabase } from '@/lib/supabase';
-
 import { fetchWithTimeout } from '@/lib/fetchWithTimeout';
 
 export function useThermalPrinter() {
@@ -20,45 +20,65 @@ export function useThermalPrinter() {
   const [lastError, setLastError] = useState<string | null>(manager.getLastError());
   const [config, setConfig] = useState<StoredPrinterConfig>(manager.getConfig());
   const [publishedTemplate, setPublishedTemplate] = useState<ThermalTemplateLayout>(BUNDLED_DEFAULT_THERMAL_TEMPLATE);
+  const [isPrintBusy, setIsPrintBusy] = useState(false);
+
   const publishedTemplateRef = useRef<ThermalTemplateLayout>(BUNDLED_DEFAULT_THERMAL_TEMPLATE);
   const lastTemplateFetchAtRef = useRef<number>(0);
+  const inFlightRefreshPromiseRef = useRef<Promise<ThermalTemplateLayout> | null>(null);
+  const isPrintBusyRef = useRef(false);
+
   const isSupported = manager.isSupported();
 
   const refreshPublishedTemplate = useCallback(async (): Promise<ThermalTemplateLayout> => {
-    try {
-      const client = requireSupabase();
-      const sessionRes = await client.auth.getSession();
-      const token = sessionRes.data.session?.access_token;
-      if (!token) {
-        return publishedTemplateRef.current;
-      }
-
-      const res = await fetchWithTimeout('/api/device/thermal-template', {
-        headers: {
-          Authorization: `Bearer ${token}`,
-        },
-      }, 5000);
-
-      if (res.ok) {
-        const data = await res.json().catch(() => null);
-        if (data?.layout) {
-          const validation = validateThermalTemplateLayout(data.layout);
-          if (validation.success) {
-            publishedTemplateRef.current = validation.data;
-            setPublishedTemplate(validation.data);
-            lastTemplateFetchAtRef.current = Date.now();
-            return validation.data;
-          } else {
-            console.warn('[MXW01] Fetched thermal template failed validation; preserving in-memory template');
-          }
-        }
-      } else {
-        console.warn('[MXW01] Template fetch failed with status', res.status);
-      }
-    } catch {
-      console.warn('[MXW01] Template delivery network error; preserving in-memory template');
+    if (inFlightRefreshPromiseRef.current) {
+      return inFlightRefreshPromiseRef.current;
     }
-    return publishedTemplateRef.current;
+
+    const refreshPromise = (async (): Promise<ThermalTemplateLayout> => {
+      try {
+        const client = requireSupabase();
+        const sessionRes = await client.auth.getSession();
+        const token = sessionRes.data.session?.access_token;
+        if (!token) {
+          return publishedTemplateRef.current;
+        }
+
+        const res = await fetchWithTimeout(
+          '/api/device/thermal-template',
+          {
+            headers: {
+              Authorization: `Bearer ${token}`,
+            },
+          },
+          5000
+        );
+
+        if (res.ok) {
+          const data = await res.json().catch(() => null);
+          if (data?.layout) {
+            const validation = validateThermalTemplateLayout(data.layout);
+            if (validation.success) {
+              publishedTemplateRef.current = validation.data;
+              setPublishedTemplate(validation.data);
+              lastTemplateFetchAtRef.current = Date.now();
+              return validation.data;
+            } else {
+              console.warn('[MXW01] Fetched thermal template failed validation; preserving in-memory template');
+            }
+          }
+        } else {
+          console.warn('[MXW01] Template fetch failed with status', res.status);
+        }
+      } catch {
+        console.warn('[MXW01] Template delivery network error; preserving in-memory template');
+      } finally {
+        inFlightRefreshPromiseRef.current = null;
+      }
+      return publishedTemplateRef.current;
+    })();
+
+    inFlightRefreshPromiseRef.current = refreshPromise;
+    return refreshPromise;
   }, []);
 
   useEffect(() => {
@@ -76,19 +96,25 @@ export function useThermalPrinter() {
 
     void refreshPublishedTemplate();
 
-    const handleFocusOrVisible = () => {
+    const handleFocus = () => {
       if (Date.now() - lastTemplateFetchAtRef.current > 60_000) {
         void refreshPublishedTemplate();
       }
     };
 
-    window.addEventListener('focus', handleFocusOrVisible);
-    document.addEventListener('visibilitychange', handleFocusOrVisible);
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'visible' && Date.now() - lastTemplateFetchAtRef.current > 60_000) {
+        void refreshPublishedTemplate();
+      }
+    };
+
+    window.addEventListener('focus', handleFocus);
+    document.addEventListener('visibilitychange', handleVisibilityChange);
 
     return () => {
       unsubscribe();
-      window.removeEventListener('focus', handleFocusOrVisible);
-      document.removeEventListener('visibilitychange', handleFocusOrVisible);
+      window.removeEventListener('focus', handleFocus);
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
     };
   }, [manager, isSupported, refreshPublishedTemplate]);
 
@@ -96,7 +122,7 @@ export function useThermalPrinter() {
     return await manager.connect();
   }, [manager]);
 
-  const reconnect = useCallback(async () => {
+  const reconnect = useCallback(async (): Promise<ReconnectResult> => {
     return await manager.reconnect();
   }, [manager]);
 
@@ -114,13 +140,26 @@ export function useThermalPrinter() {
 
   const printPass = useCallback(
     async (presentation: PassPresentation, customLayout?: ThermalTemplateLayout) => {
-      await refreshPublishedTemplate();
-      const layoutToUse = customLayout ?? publishedTemplateRef.current;
-      const result = await manager.printPass(presentation, layoutToUse);
-      if (!result.success) {
-        throw new Error(result.error || 'Direct thermal print failed');
+      if (isPrintBusyRef.current) {
+        console.warn('[MXW01] Print already in progress, ignoring duplicate print call');
+        return { success: false, error: 'print_in_progress' };
       }
-      return result;
+
+      isPrintBusyRef.current = true;
+      setIsPrintBusy(true);
+
+      try {
+        await refreshPublishedTemplate();
+        const layoutToUse = customLayout ?? publishedTemplateRef.current;
+        const result = await manager.printPass(presentation, layoutToUse);
+        if (!result.success) {
+          throw new Error(result.error || 'Direct thermal print failed');
+        }
+        return result;
+      } finally {
+        isPrintBusyRef.current = false;
+        setIsPrintBusy(false);
+      }
     },
     [manager, refreshPublishedTemplate]
   );
@@ -140,6 +179,7 @@ export function useThermalPrinter() {
     lastError,
     config,
     publishedTemplate,
+    isPrintBusy,
     connect,
     reconnect,
     disconnect,
@@ -149,3 +189,5 @@ export function useThermalPrinter() {
     refreshPublishedTemplate,
   };
 }
+
+export type ThermalPrinterController = ReturnType<typeof useThermalPrinter>;

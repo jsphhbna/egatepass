@@ -71,14 +71,16 @@ async function handleRequest(request: Request): Promise<Response> {
       return jsonResponse(401, { error: 'invalid_device_password' });
     }
 
-    // Immediately sign out isolated client so no session remains (scope: 'local' preserves existing kiosk browser session)
     try {
-      await passwordVerifier.auth.signOut({ scope: 'local' });
-    } catch {
-      // Ignore client signout error
+      return jsonResponse(200, { ok: true });
+    } finally {
+      // Immediately sign out isolated client so no session remains (scope: 'local' preserves existing kiosk browser session)
+      try {
+        await passwordVerifier.auth.signOut({ scope: 'local' });
+      } catch {
+        // Ignore client signout error
+      }
     }
-
-    return jsonResponse(200, { ok: true });
   } catch (error) {
     if (error instanceof HttpError) {
       return jsonResponse(error.status, { error: error.code });

@@ -145,7 +145,7 @@ export function LoginPage() {
           </FormField>
           <FormField label="Password" id="login-password">
             <div className="relative">
-              <Input id="login-password" type={showPassword ? 'text' : 'password'} required autoComplete="current-password" value={password} onChange={(event) => setPassword(event.target.value)} placeholder="••••••••" className="pr-10" disabled={isSigningIn || isResendingVerification || serviceStatus === 'unavailable'} />
+              <Input id="login-password" type={showPassword ? 'text' : 'password'} required autoComplete="current-password" value={password} onChange={(event) => setPassword(event.target.value)} placeholder="••••••••" className="pr-10 app-password-toggle-input" disabled={isSigningIn || isResendingVerification || serviceStatus === 'unavailable'} />
               <button type="button" onClick={() => setShowPassword((value) => !value)} className="absolute inset-y-0 right-0 flex min-w-11 items-center justify-center text-[var(--color-text-muted)] hover:text-[var(--color-brand)]" aria-label={showPassword ? 'Hide password' : 'Show password'}>
                 {showPassword ? <EyeOff className="h-5 w-5" /> : <Eye className="h-5 w-5" />}
               </button>

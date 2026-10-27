@@ -250,16 +250,17 @@ The kiosk station operates a single dedicated **MXW01 Bluetooth thermal receipt 
 ### 7.2 Initial Setup & Pairing Procedure
 1. Power on the MXW01 printer (hold power button until blue LED flashes).
 2. On the kiosk tablet, open the `/kiosk` page.
-3. Tap the **Gear Icon** in the top-right corner to open **Device Settings**.
+3. Tap the **Gear Icon** in the sidebar to open **Device Settings**.
 4. Re-enter this kiosk device's password when prompted to unlock settings.
-5. In the Thermal Printer section, tap **Connect MXW01**.
-6. The Chromium Bluetooth device picker will appear. Select the MXW01 device and tap **Pair** (Note: Physical protocol discovery and paper output remain subject to on-site testing: **PHYSICAL MXW01 ACCEPTANCE: NOT YET TESTED**).
-7. Confirm status changes to **Connected** (Green badge).
-8. Tap **Test Print** to verify paper alignment, darkness, and cutter feed.
+5. In the Thermal Printer section:
+   - **First authorization**: Tap **Connect MXW01**. The Chromium Bluetooth device picker will appear. Choose/authorize the MXW01 device and tap **Pair** (Note: Physical protocol discovery and paper output remain subject to on-site testing: **PHYSICAL MXW01 ACCEPTANCE: NOT YET TESTED**).
+   - **Subsequent reconnect**: Tap **Reconnect MXW01** or allow background reconnect. It uses a previously authorized browser device and does not reopen the chooser unless authorization is missing or the operator explicitly chooses another printer.
+6. Confirm status changes to **Connected** (Green badge). Physical power-off transitions the UI to Disconnected through the browser GATT disconnect event.
+7. Tap **Test Print** to verify paper alignment, darkness, and cutter feed.
 
 ### 7.3 Daily Operation & Maintenance
 - **Auto-Print**: When enabled, the kiosk automatically sends the 384px raster print job to the printer immediately upon successful pass creation.
-- **Fail-Safe Invariant**: If the printer disconnects, runs out of paper, or suffers a Bluetooth timeout, the pass is **NOT** cancelled or rolled back. The visitor is presented with a clear notice, and the operator or visitor can tap **Print Again** or **Browser Print** (falling back to the standard system print dialog).
+- **Fail-Safe Invariant**: If the printer disconnects, runs out of paper, or suffers a Bluetooth timeout, the pass is **NOT** cancelled or rolled back. The visitor is presented with a clear notice, and the operator or visitor can tap **Print Again** (when connected) or **Browser Print** (falling back to the standard system print dialog).
 - **Paper Roll Replacement**: Use standard 57mm × 30mm thermal receipt rolls. Ensure the thermal-coated side faces the thermal head (paper feeds from underneath).
 
 ---

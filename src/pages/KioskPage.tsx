@@ -127,13 +127,16 @@ export function KioskPage() {
   const [showPrinterSettings, setShowPrinterSettings] = useState(false);
   const [printFailed, setPrintFailed] = useState(false);
 
+  const printer = useThermalPrinter();
   const {
     status: printerStatus,
     config: printerConfig,
     printPass,
-  } = useThermalPrinter();
+    isPrintBusy,
+  } = printer;
   const isPrinting = printerStatus === 'printing';
   const isAutoPrintEnabled = printerConfig.autoPrint;
+  const visitorSessionGenerationRef = useRef(0);
 
   const kioskTransactionRef = useRef<IssueTransaction>({
     requestId: crypto.randomUUID(),
@@ -480,29 +483,42 @@ export function KioskPage() {
 
     // Critical invariant: PRINT FAILURE MUST NEVER ROLL BACK PASS ISSUANCE.
     if (isAutoPrintEnabled && printerStatus === 'connected') {
+      const sessionGen = visitorSessionGenerationRef.current;
       try {
         await printPass(presentation);
-        setPrintFailed(false);
-        toast.success('Pass printed via MXW01');
-      } catch (printErr) {
+        if (sessionGen === visitorSessionGenerationRef.current) {
+          setPrintFailed(false);
+          toast.success('Pass printed via MXW01');
+        }
+      } catch (printErr: any) {
+        if (printErr?.message === 'print_in_progress') return;
         console.warn('Auto print failed:', printErr);
-        setPrintFailed(true);
-        toast.error('Direct thermal print failed. Printer unavailable.');
+        if (sessionGen === visitorSessionGenerationRef.current) {
+          setPrintFailed(true);
+          toast.error('Direct thermal print failed. Printer unavailable.');
+        }
       }
     }
   }
 
   async function handlePrint() {
+    if (isPrintBusy || isPrinting) return;
     if (currentPassPresentation && printerStatus === 'connected') {
+      const sessionGen = visitorSessionGenerationRef.current;
       try {
         await printPass(currentPassPresentation);
-        setPrintFailed(false);
-        toast.success('Pass printed via MXW01');
-      } catch (printErr) {
+        if (sessionGen === visitorSessionGenerationRef.current) {
+          setPrintFailed(false);
+          toast.success('Pass printed via MXW01');
+        }
+      } catch (printErr: any) {
+        if (printErr?.message === 'print_in_progress') return;
         console.warn('Direct print failed, falling back to browser print:', printErr);
-        setPrintFailed(true);
-        toast.error('Direct thermal printing unavailable. Opening browser print.');
-        window.print();
+        if (sessionGen === visitorSessionGenerationRef.current) {
+          setPrintFailed(true);
+          toast.error('Direct thermal printing unavailable. Opening browser print.');
+          window.print();
+        }
       }
     } else {
       window.print();
@@ -510,6 +526,7 @@ export function KioskPage() {
   }
 
   function resetCurrentVisitor() {
+    visitorSessionGenerationRef.current += 1;
     ocrGenerationRef.current += 1;
     kioskTransactionRef.current = {
       requestId: crypto.randomUUID(),
@@ -636,7 +653,19 @@ export function KioskPage() {
             aria-label="Thermal printer settings"
           >
             <Printer className="h-4 w-4" />
-            <span>Printer ({printerStatus === 'connected' ? 'Ready' : 'Offline'})</span>
+            <span>
+              Printer ({
+                printerStatus === 'connected'
+                  ? 'Ready'
+                  : printerStatus === 'connecting'
+                  ? 'Connecting'
+                  : printerStatus === 'printing'
+                  ? 'Printing'
+                  : printerStatus === 'error'
+                  ? 'Error'
+                  : 'Offline'
+              })
+            </span>
           </button>
           <button
             type="button"
@@ -1206,9 +1235,15 @@ export function KioskPage() {
                     <span>Thermal printer unavailable. Pass was successfully created.</span>
                   </div>
                   <div className="flex gap-2">
-                    <Button size="sm" variant="secondary" onClick={() => void handlePrint()}>
-                      Print Again
-                    </Button>
+                    {printerStatus === 'connected' ? (
+                      <Button size="sm" variant="secondary" onClick={() => void handlePrint()} disabled={isPrintBusy || isPrinting}>
+                        Print Again
+                      </Button>
+                    ) : (
+                      <Button size="sm" variant="secondary" onClick={() => setShowPrinterSettings(true)}>
+                        Printer Settings
+                      </Button>
+                    )}
                     <Button size="sm" variant="secondary" onClick={() => window.print()}>
                       Browser Print
                     </Button>
@@ -1230,16 +1265,26 @@ export function KioskPage() {
                   variant="secondary"
                   type="button"
                   onClick={() => void handlePrint()}
-                  disabled={isPrinting}
+                  disabled={isPrintBusy || isPrinting}
                   className="flex-1 min-h-[44px]"
                   icon={<Printer className="h-4 w-4" />}
                 >
-                  {isPrinting ? 'Printing…' : printerStatus === 'connected' ? 'Print Pass (MXW01)' : 'Print Pass'}
+                  {isPrintBusy || isPrinting
+                    ? 'Printing…'
+                    : printerStatus === 'connected'
+                    ? 'Print Pass (MXW01)'
+                    : 'Browser Print'}
                 </Button>
                 <Button variant="secondary" type="button" onClick={() => setShowEmailModal(true)} className="flex-1 min-h-[44px]" icon={<Mail className="h-4 w-4" />}>
                   Email my QR code
                 </Button>
-                <Button type="button" onClick={handleNextVisitor} className="flex-1 min-h-[44px]">
+                <Button
+                  type="button"
+                  onClick={handleNextVisitor}
+                  disabled={isPrintBusy || isPrinting}
+                  loading={isPrintBusy || isPrinting}
+                  className="flex-1 min-h-[44px]"
+                >
                   Next Visitor
                 </Button>
               </div>
@@ -1293,6 +1338,7 @@ export function KioskPage() {
         <KioskPrinterSettingsModal
           isOpen={showPrinterSettings}
           onClose={() => setShowPrinterSettings(false)}
+          printer={printer}
         />
       </div>
     </main>

@@ -255,21 +255,23 @@ stateDiagram-v2
 
 ## 9. MXW01 Kiosk Direct Bluetooth Thermal Printing QA
 
+> [!NOTE]
+> Physical paper output and hardware-level protocol acceptance remain subject to on-site testing (**PHYSICAL MXW01 ACCEPTANCE: NOT YET TESTED**).
+
 1. **Hardware Preparation**:
    - Ensure MXW01 thermal printer is charged and loaded with 57mm thermal roll.
    - Power on the printer.
 2. **Device Settings & Pairing**:
    - On the Kiosk tablet (`/kiosk`), tap the Gear icon in the header.
    - Re-enter this kiosk device's password when prompted.
-   - Tap **Connect MXW01**.
-   - In the browser device picker, select the MXW01 device and click **Pair**.
-   - Confirm status badge updates to **Connected**.
+   - **First authorization**: Tap **Connect MXW01** / **Choose Printer**. In the browser device picker, select the MXW01 device and click **Pair**. Confirm status badge updates to **Connected**.
+   - **Subsequent reconnect**: Uses a previously authorized browser device via `navigator.bluetooth.getDevices()` and does not reopen the browser chooser unless authorization is missing or the operator explicitly chooses another printer.
 3. **Test Print**:
    - Tap **Test Print**.
    - Verify printer feeds and prints an official 384px EARIST diagnostic slip.
 4. **Issuance & Printing**:
    - Complete a walk-in registration.
-   - Verify thermal pass prints automatically if auto-print is enabled, or prints upon tapping **Print Thermal Pass**.
+   - Verify thermal pass prints automatically if auto-print is enabled, or prints upon tapping **Print Pass (MXW01)**.
    - Verify printed paper ticket:
      - Header: `EARIST E-GATEPASS`
      - Visitor Name and Visit Date are clearly legible.
@@ -278,8 +280,9 @@ stateDiagram-v2
 5. **Print Failure Issuance Immunity (Critical)**:
    - Power off the MXW01 printer.
    - Complete a kiosk pass issuance.
-   - **Expected**: Pass creation succeeds completely. The UI displays the valid pass alongside a clear "Printer Unavailable" notice with **Print Again** and **Browser Print** buttons. The pass is NEVER rolled back or duplicated.
-6. **Browser Print Fallback**:
+   - **Expected**: Pass creation succeeds completely. The UI displays the valid pass alongside a clear "Printer Unavailable" notice with **Printer Settings** and **Browser Print** buttons (truthful direct **Print Again** is only shown if the direct printer is actually connected). The pass is NEVER rolled back or duplicated.
+6. **Physical Disconnect & Browser Print Fallback**:
+   - Physical power-off transitions the UI to Disconnected through the browser `gattserverdisconnected` event.
    - Tap **Browser Print**.
    - Verify the browser's native `window.print()` dialog opens with styled print media layout.
 
@@ -406,19 +409,19 @@ stateDiagram-v2
 
 ### 13.5 MXW01 Bluetooth Lifecycle & Fallback
 1. **Pair & Test Ticket**:
-   - On Kiosk tablet settings, tap **Connect MXW01** and pair printer.
+   - On Kiosk tablet settings, tap **Connect MXW01** / **Choose Printer** and authorize printer via browser chooser.
    - Tap **Test Print**; confirm diagnostic ticket prints.
 2. **Successful Direct Print**:
    - Issue a kiosk pass. Confirm thermal pass prints and status confirms direct print.
 3. **Forced Failure & Browser Fallback**:
    - Turn off printer power or allow paper to run out.
    - Issue a kiosk pass.
-   - Confirm pass issuance succeeds authoritatively and UI displays **Printer Unavailable** with fallback **Browser Print** button.
+   - Confirm pass issuance succeeds authoritatively and UI displays **Printer Unavailable** with fallback **Browser Print** button (truthful **Print Again** is only displayed if direct printer is connected).
    - Confirm UI NEVER displays "Pass printed via MXW01" on failure.
    - Tap **Browser Print**; verify native `window.print()` dialog opens.
 4. **Reconnect & Disconnect Verification**:
-   - Power printer back on; verify automatic reconnection via `reconnect()`.
-   - Power printer off again; verify disconnect event triggers React status transition to `disconnected`.
+   - Power printer back on; verify automatic or manual reconnection via `reconnect()` retrieves previously authorized device via `navigator.bluetooth.getDevices()` without opening the browser chooser.
+   - Power printer off again; verify native `gattserverdisconnected` event triggers React status transition to `disconnected`.
 
 ### 13.6 Thermal Template Update on Open Kiosks
 1. **Open Kiosk**:
