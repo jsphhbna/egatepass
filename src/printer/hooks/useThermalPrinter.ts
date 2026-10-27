@@ -5,8 +5,9 @@ import {
   type StoredPrinterConfig,
 } from '../mxw01/mxw01Manager';
 import type { PassPresentation } from '@/lib/passPresentation';
-import type { ThermalTemplateLayout } from '@/types/thermalTemplate';
+import { validateThermalTemplateLayout, type ThermalTemplateLayout } from '@/types/thermalTemplate';
 import { BUNDLED_DEFAULT_THERMAL_TEMPLATE } from '../templates/bundledDefaultTemplate';
+import { requireSupabase } from '@/lib/supabase';
 
 export function useThermalPrinter() {
   const managerRef = useRef(MXW01Manager.getInstance());
@@ -35,15 +36,38 @@ export function useThermalPrinter() {
     // Fetch latest published thermal template from API (Phase 3.5), fallback to bundled default
     async function loadTemplate() {
       try {
-        const res = await fetch('/api/device/thermal-template');
-        if (res.ok) {
-          const data = await res.json();
-          if (data?.layout && typeof data.layout === 'object' && data.layout.width === 384) {
-            setPublishedTemplate(data.layout);
-          }
+        const client = requireSupabase();
+        const sessionRes = await client.auth.getSession();
+        const token = sessionRes.data.session?.access_token;
+        if (!token) {
+          setPublishedTemplate(BUNDLED_DEFAULT_THERMAL_TEMPLATE);
+          return;
         }
+
+        const res = await fetch('/api/device/thermal-template', {
+          headers: {
+            Authorization: `Bearer ${token}`,
+          },
+        });
+
+        if (res.ok) {
+          const data = await res.json().catch(() => null);
+          if (data?.layout) {
+            const validation = validateThermalTemplateLayout(data.layout);
+            if (validation.success) {
+              setPublishedTemplate(validation.data);
+              return;
+            } else {
+              console.warn('[MXW01] Fetched thermal template failed validation; using bundled fallback');
+            }
+          }
+        } else {
+          console.warn('[MXW01] Template fetch failed with status', res.status);
+        }
+        setPublishedTemplate(BUNDLED_DEFAULT_THERMAL_TEMPLATE);
       } catch {
-        // Fallback to bundled known-good default template
+        // Fallback to bundled known-good default template without interrupting printing
+        console.warn('[MXW01] Template delivery network error; using bundled fallback');
         setPublishedTemplate(BUNDLED_DEFAULT_THERMAL_TEMPLATE);
       }
     }

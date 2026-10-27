@@ -373,9 +373,9 @@ describe('Offline Database Integration & Lifecycle Invariants (DB-T01 - DB-T10)'
         '00000000-0000-4000-d000-000000000005'::uuid,
         'approve_entry'::text,
         'exited'::text,
+        3::integer,
         now()::timestamptz,
-        null::text,
-        3::integer
+        null::text
       );
     `);
 
@@ -407,9 +407,9 @@ describe('Offline Database Integration & Lifecycle Invariants (DB-T01 - DB-T10)'
         '00000000-0000-4000-d000-000000000006'::uuid,
         'record_exit'::text,
         'issued'::text,
+        1::integer,
         now()::timestamptz,
-        null::text,
-        1::integer
+        null::text
       );
     `);
 
@@ -441,9 +441,9 @@ describe('Offline Database Integration & Lifecycle Invariants (DB-T01 - DB-T10)'
         '00000000-0000-4000-d000-000000000007'::uuid,
         'approve_entry'::text,
         'issued'::text,
+        4::integer, -- Stale client version 4 when server is at version 5
         now()::timestamptz,
-        null::text,
-        4::integer -- Stale client version 4 when server is at version 5
+        null::text
       );
     `);
 
@@ -462,9 +462,9 @@ describe('Offline Database Integration & Lifecycle Invariants (DB-T01 - DB-T10)'
         '00000000-0000-4000-d000-000000000007'::uuid,
         'approve_entry'::text,
         'issued'::text,
+        1::integer,
         now()::timestamptz,
-        null::text,
-        1::integer
+        null::text
       );
     `);
 
@@ -529,9 +529,9 @@ describe('Offline Database Integration & Lifecycle Invariants (DB-T01 - DB-T10)'
         '${passId}'::uuid,
         'record_exit'::text,
         'inside'::text,
+        1::integer,
         '${timeOut}'::timestamptz,
-        'normal_exit'::text,
-        1::integer
+        'normal_exit'::text
       );
     `);
 

@@ -24,7 +24,6 @@ export interface ThermalTemplateElement {
   id: string;
   type: ThermalElementType;
   field?: ThermalFieldBinding;
-  label?: string;
   text?: string;
   x: number;
   y: number;
@@ -34,8 +33,6 @@ export interface ThermalTemplateElement {
   fontWeight?: 'normal' | 'bold';
   align?: 'left' | 'center' | 'right';
   isMandatory?: boolean; // If true, cannot be removed
-  isLocked?: boolean;
-  isRequired?: boolean;
 }
 
 export type ThermalElement = ThermalTemplateElement;

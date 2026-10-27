@@ -120,7 +120,7 @@ export const ROUTE_CONTRACT_MATRIX: readonly RouteContract[] = [
     handlerModule: 'server/routes/passes/issue.ts',
   },
 
-  // Device Router (5 routes)
+  // Device Router (6 routes)
   {
     path: '/api/create-device',
     group: 'device',
@@ -155,6 +155,13 @@ export const ROUTE_CONTRACT_MATRIX: readonly RouteContract[] = [
     subpath: 'reauthenticate',
     allowedMethods: ['POST'],
     handlerModule: 'server/routes/device/reauthenticate.ts',
+  },
+  {
+    path: '/api/device/thermal-template',
+    group: 'device',
+    subpath: 'thermal-template',
+    allowedMethods: ['GET'],
+    handlerModule: 'server/routes/device/thermal-template.ts',
   },
 
   // Gate Router (4 routes)

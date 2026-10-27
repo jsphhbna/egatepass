@@ -10,5 +10,5 @@
     "skipLibCheck": true,
     "types": ["node"]
   },
-  "include": ["api/**/*.ts", "server/**/*.ts", "server/**/*.tsx", "src/lib/passEmailContract.ts"]
+  "include": ["api/**/*.ts", "server/**/*.ts", "server/**/*.tsx", "src/lib/passEmailContract.ts", "src/types/thermalTemplate.ts"]
 }

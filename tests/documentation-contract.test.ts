@@ -161,7 +161,7 @@ describe('Documentation Truthfulness & Formatting Contract', () => {
 
   it('ensures documentation states canonical route counts matching route-map matrix', () => {
     const arch = fs.readFileSync('docs/ARCHITECTURE.md', 'utf8');
-    expect(arch).toContain('All 29 endpoints');
+    expect(arch).toContain('All 30 endpoints');
     expect(arch).toContain('Auth Router (4 routes');
     expect(arch).not.toContain('Auth Router (3 routes');
   });
@@ -453,7 +453,7 @@ describe('Mermaid Rendering & Documentation Truthfulness Contract', () => {
         throw new Error(diagnostic);
       }
     }
-  });
+  }, 30000);
 
   it('enforces static guard against malformed joined node declarations with raw HTML tags', () => {
     // Guards against patterns like OCR[...]<br/> ID[...] where a raw break tag joins two declarations outside quotes

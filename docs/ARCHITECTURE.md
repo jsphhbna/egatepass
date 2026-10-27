@@ -192,7 +192,7 @@ erDiagram
 
 ## 3. Canonical API Route Architecture
 
-The platform's API surface is declared in `server/route-map.ts`. All 29 endpoints execute within Vercel Serverless Function instances:
+The platform's API surface is declared in `server/route-map.ts`. All 30 endpoints execute within Vercel Serverless Function instances:
 
 ### 3.1 Admin Router (9 routes: `/api/admin/*`)
 - `GET /api/admin/activity`: Historical audit event query for administrators.
@@ -215,12 +215,13 @@ The platform's API surface is declared in `server/route-map.ts`. All 29 endpoint
 - `POST /api/passes/issue`: Atomically validates evidence upload intents and issues QR gate passes.
 - `POST /api/passes/email`: Two-step verification challenge and dispatch of QR passes via email.
 
-### 3.4 Device Router (5 routes: `/api/*`)
+### 3.4 Device Router (6 routes: `/api/*`)
 - `POST /api/create-device`: Register new gate or kiosk scanner device.
 - `DELETE /api/delete-device`: Decommission and soft-delete device hardware.
 - `POST /api/update-device`: Update device display name, gate binding, or type.
 - `POST /api/update-device-auth`: Rotate device login credentials.
 - `POST /api/device/reauthenticate`: Trusted server reauthentication of active kiosk device credentials.
+- `GET /api/device/thermal-template`: Kiosk endpoint retrieving canonical published thermal pass template.
 
 ### 3.5 Gate Router (4 routes: `/api/*`)
 - `POST /api/scan-pass`: Scanner endpoint for entry and exit events; verifies `token_digest` and gate.

@@ -149,6 +149,7 @@ export const SERVER_DIRECT_TABLE_OPERATIONS: DirectServerTableOperation[] = [
   { file: 'server/routes/device/update-device-auth.ts', table: 'devices', operations: ['SELECT'], purpose: 'Lookup target device and check alias uniqueness' },
   { file: 'server/routes/device/update-device-auth.ts', table: 'audit_events', operations: ['INSERT'], purpose: 'Log device credential rotation event' },
   { file: 'server/routes/device/reauthenticate.ts', table: 'devices', operations: ['SELECT'], purpose: 'Verify caller is active kiosk device' },
+  { file: 'server/routes/device/thermal-template.ts', table: 'devices', operations: ['SELECT'], purpose: 'Verify caller is active kiosk device' },
   { file: 'server/routes/gate/evidence.ts', table: 'visitor_evidence', operations: ['SELECT'], purpose: 'Fetch evidence metadata' },
   { file: 'server/routes/gate/evidence.ts', table: 'incident_holds', operations: ['SELECT'], purpose: 'Check active holds on evidence target' },
   { file: 'server/routes/gate/evidence.ts', table: 'passes', operations: ['SELECT'], purpose: 'Check pending pass for guard view authorization' },

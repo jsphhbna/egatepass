@@ -20,7 +20,7 @@ function getPhysicalApiFiles(dir: string): string[] {
   return results;
 }
 
-const EXPECTED_29_ROUTES = [
+const EXPECTED_30_ROUTES = [
   // Admin (9)
   '/api/admin/activity',
   '/api/admin/dashboard',
@@ -39,12 +39,13 @@ const EXPECTED_29_ROUTES = [
   // Passes (2)
   '/api/passes/email',
   '/api/passes/issue',
-  // Device (5)
+  // Device (6)
   '/api/create-device',
   '/api/delete-device',
   '/api/update-device',
   '/api/update-device-auth',
   '/api/device/reauthenticate',
+  '/api/device/thermal-template',
   // Gate (4)
   '/api/scan-pass',
   '/api/decide-visit',
@@ -80,17 +81,17 @@ describe('Vercel Hobby Plan Function Limit Architecture Regressions', () => {
     });
   });
 
-  describe('2. Route Contract Matrix Integrity (29 Preserved API Endpoints)', () => {
-    it('contains exactly 29 route contracts in the matrix', () => {
-      expect(ROUTE_CONTRACT_MATRIX.length).toBe(29);
+  describe('2. Route Contract Matrix Integrity (30 Preserved API Endpoints)', () => {
+    it('contains exactly 30 route contracts in the matrix', () => {
+      expect(ROUTE_CONTRACT_MATRIX.length).toBe(30);
     });
 
-    it('contains all 29 historical external API paths with no duplicates', () => {
+    it('contains all 30 historical external API paths with no duplicates', () => {
       const paths = ROUTE_CONTRACT_MATRIX.map((r) => r.path);
       const uniquePaths = new Set(paths);
-      expect(uniquePaths.size).toBe(29);
+      expect(uniquePaths.size).toBe(30);
 
-      for (const expectedPath of EXPECTED_29_ROUTES) {
+      for (const expectedPath of EXPECTED_30_ROUTES) {
         expect(paths).toContain(expectedPath);
       }
     });
@@ -116,7 +117,7 @@ describe('Vercel Hobby Plan Function Limit Architecture Regressions', () => {
       expect(getRouteByPath('/api/create-device')?.group).toBe('device');
       expect(getRoutesByGroup('auth').length).toBe(4);
       expect(getRoutesByGroup('passes').length).toBe(2);
-      expect(getRoutesByGroup('device').length).toBe(5);
+      expect(getRoutesByGroup('device').length).toBe(6);
       expect(getRoutesByGroup('gate').length).toBe(4);
       expect(getRoutesByGroup('system').length).toBe(5);
       expect(getRoutesByGroup('admin').length).toBe(9);

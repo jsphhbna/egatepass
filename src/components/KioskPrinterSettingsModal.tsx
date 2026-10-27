@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Modal, Button, Input } from '@/components/ui';
 import { useThermalPrinter } from '@/printer/hooks/useThermalPrinter';
 import {
@@ -17,6 +17,8 @@ export interface KioskPrinterSettingsModalProps {
   onClose: () => void;
 }
 
+const UNLOCK_TIMEOUT_MS = 15 * 60 * 1000; // 15-minute maximum unlock duration
+
 export function KioskPrinterSettingsModal({ isOpen, onClose }: KioskPrinterSettingsModalProps) {
   const {
     isSupported,
@@ -33,9 +35,41 @@ export function KioskPrinterSettingsModal({ isOpen, onClose }: KioskPrinterSetti
 
   const [password, setPassword] = useState('');
   const [isAuthenticated, setIsAuthenticated] = useState(false);
+  const [unlockExpiresAt, setUnlockExpiresAt] = useState<number | null>(null);
   const [isAuthenticating, setIsAuthenticating] = useState(false);
   const [isTesting, setIsTesting] = useState(false);
   const [isConnecting, setIsConnecting] = useState(false);
+
+  // 15-minute automatic relock timer (memory-only, cleared on timeout/close/reload/logout)
+  useEffect(() => {
+    if (!isAuthenticated || !unlockExpiresAt) return;
+
+    const remaining = unlockExpiresAt - Date.now();
+    if (remaining <= 0) {
+      setIsAuthenticated(false);
+      setPassword('');
+      setUnlockExpiresAt(null);
+      return;
+    }
+
+    const timer = setTimeout(() => {
+      setIsAuthenticated(false);
+      setPassword('');
+      setUnlockExpiresAt(null);
+      toast.info('Printer settings timed out and were relocked');
+    }, remaining);
+
+    return () => clearTimeout(timer);
+  }, [isAuthenticated, unlockExpiresAt]);
+
+  // Relock immediately if modal is closed
+  useEffect(() => {
+    if (!isOpen) {
+      setIsAuthenticated(false);
+      setPassword('');
+      setUnlockExpiresAt(null);
+    }
+  }, [isOpen]);
 
   // Kiosk device password re-authentication via trusted server endpoint
   async function handleReauthenticate(e: React.FormEvent) {
@@ -66,6 +100,7 @@ export function KioskPrinterSettingsModal({ isOpen, onClose }: KioskPrinterSetti
 
       if (res.ok) {
         setIsAuthenticated(true);
+        setUnlockExpiresAt(Date.now() + UNLOCK_TIMEOUT_MS);
         setPassword('');
         toast.success('Printer settings unlocked');
       } else {
@@ -132,6 +167,7 @@ export function KioskPrinterSettingsModal({ isOpen, onClose }: KioskPrinterSetti
       onClose={() => {
         setIsAuthenticated(false);
         setPassword('');
+        setUnlockExpiresAt(null);
         onClose();
       }}
       title="Kiosk Thermal Printer (MXW01)"

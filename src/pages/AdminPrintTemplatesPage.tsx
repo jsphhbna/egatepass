@@ -80,7 +80,15 @@ export function AdminPrintTemplatesPage() {
         setCurrentVersion(published.version);
         setCurrentStatus(published.status as any);
         if (published.layout && typeof published.layout === 'object' && published.layout.width === 384) {
-          setLayout(published.layout);
+          const valResult = validateThermalTemplateLayout(published.layout);
+          if (valResult.success) {
+            setLayout(published.layout);
+          } else {
+            setLayout(BUNDLED_DEFAULT_THERMAL_TEMPLATE);
+            toast.info('This historical template uses an older format. A current compatible template is loaded for editing.');
+          }
+        } else {
+          setLayout(BUNDLED_DEFAULT_THERMAL_TEMPLATE);
         }
       } else {
         setLayout(BUNDLED_DEFAULT_THERMAL_TEMPLATE);
@@ -131,7 +139,6 @@ export function AdminPrintTemplatesPage() {
       newElement = {
         id: newId,
         type: 'divider',
-        label: 'Divider Line',
         x: 20,
         y: Math.min(layout.height, 200),
         width: 344,
@@ -142,7 +149,6 @@ export function AdminPrintTemplatesPage() {
       newElement = {
         id: newId,
         type: 'rectangle',
-        label: 'Box Border',
         x: 20,
         y: Math.min(layout.height, 200),
         width: 344,
@@ -154,7 +160,6 @@ export function AdminPrintTemplatesPage() {
         id: newId,
         type: 'text',
         field: 'custom',
-        label: 'Custom Text',
         x: 192,
         y: Math.min(layout.height, 200),
         width: 200,
@@ -181,8 +186,6 @@ export function AdminPrintTemplatesPage() {
 
     const isMandatory =
       elem.isMandatory ||
-      elem.isLocked ||
-      elem.isRequired ||
       MANDATORY_ELEMENT_TYPES.includes((elem.field || elem.type) as string);
 
     if (isMandatory) {
@@ -459,7 +462,7 @@ export function AdminPrintTemplatesPage() {
             <Card className="p-4 space-y-3">
               <h3 className="text-sm font-bold text-[var(--color-text-primary)] flex items-center justify-between">
                 <span>Element Properties</span>
-                {(selectedElement?.isMandatory || selectedElement?.isLocked || selectedElement?.isRequired) && (
+                {(selectedElement?.isMandatory || MANDATORY_ELEMENT_TYPES.includes((selectedElement?.field || selectedElement?.type) as string)) && (
                   <span className="inline-flex items-center gap-1 text-[10px] text-amber-700 dark:text-amber-300 font-semibold">
                     <Lock className="h-3 w-3" /> Mandatory
                   </span>
@@ -470,13 +473,13 @@ export function AdminPrintTemplatesPage() {
                 <div className="space-y-3 text-xs">
                   <div>
                     <label className="block font-medium text-[var(--color-text-secondary)] mb-1">
-                      Label / Description
+                      Binding / Type
                     </label>
                     <input
                       type="text"
-                      value={selectedElement.label || selectedElement.field || selectedElement.type}
-                      onChange={(e) => updateElement(selectedElement.id, { label: e.target.value })}
-                      className="w-full rounded-md border border-[var(--color-border)] bg-[var(--color-canvas)] px-2.5 py-1 text-xs"
+                      readOnly
+                      value={selectedElement.field || selectedElement.type}
+                      className="w-full rounded-md border border-[var(--color-border)] bg-[var(--color-surface-hover)] px-2.5 py-1 text-xs cursor-not-allowed text-[var(--color-text-secondary)]"
                     />
                   </div>
 
@@ -594,7 +597,7 @@ export function AdminPrintTemplatesPage() {
                     </div>
                   )}
 
-                  {!selectedElement.isMandatory && !selectedElement.isLocked && !selectedElement.isRequired && (
+                  {!selectedElement.isMandatory && !MANDATORY_ELEMENT_TYPES.includes((selectedElement.field || selectedElement.type) as string) && (
                     <div className="pt-2 border-t border-[var(--color-border)]">
                       <Button
                         size="sm"
@@ -751,7 +754,7 @@ export function AdminPrintTemplatesPage() {
                         textAlign: el.align || 'center',
                       }}
                     >
-                      {el.text || el.label || 'Notice'}
+                      {el.text || el.field || 'Notice'}
                     </div>
                   );
                 }
