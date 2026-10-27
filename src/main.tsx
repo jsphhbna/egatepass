@@ -1,6 +1,7 @@
 import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
 import { ErrorBoundary } from './components/ErrorBoundary';
+import { handlePreloadError } from './lib/preloadRecovery';
 import './index.css';
 
 const rootElement = document.getElementById('root');
@@ -42,21 +43,7 @@ root.render(
 
 if (typeof window !== 'undefined') {
   window.addEventListener('vite:preloadError', (event: Event) => {
-    if (typeof navigator !== 'undefined' && !navigator.onLine) {
-      return;
-    }
-    const recoveryKey = 'egatepass_preload_recovery_at';
-    try {
-      const lastRecovery = window.sessionStorage.getItem(recoveryKey);
-      const now = Date.now();
-      if (!lastRecovery || now - parseInt(lastRecovery, 10) > 30000) {
-        event.preventDefault();
-        window.sessionStorage.setItem(recoveryKey, String(now));
-        window.location.reload();
-      }
-    } catch {
-      // If sessionStorage is unavailable, avoid unhandled throws
-    }
+    handlePreloadError(event);
   });
 }
 

@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { Save, Trash2, AlertTriangle, Plus } from 'lucide-react';
 import { toast } from 'sonner';
 import { Button, Card, Input, Select, ConfirmModal, LoadingState } from '@/components/ui';
@@ -20,6 +20,12 @@ import {
 
 export type PeakModeScope = 'off' | 'portal' | 'kiosk' | 'both';
 
+export function tryAcquireSettingsMutation(inFlightRef: { current: boolean }, busy: boolean): boolean {
+  if (inFlightRef.current || busy) return false;
+  inFlightRef.current = true;
+  return true;
+}
+
 export function AdminSettings() {
   const { role } = useAuth();
   const canManageSecuritySettings = isSuperAdmin(role);
@@ -30,7 +36,8 @@ export function AdminSettings() {
   const [calculatingPurge, setCalculatingPurge] = useState(false);
 
   const settingsBusy = saving || purging || calculatingPurge;
-  
+  const settingsMutationInFlightRef = useRef(false);
+
   const [settings, setSettings] = useState({
     ...DEFAULT_RETENTION_POLICY,
     workingHours: DEFAULT_WORKING_HOURS,
@@ -96,27 +103,28 @@ export function AdminSettings() {
   }, []);
 
   async function handleSave() {
-    if (settingsBusy) return;
-    const retentionValidation = canManageSecuritySettings
-      ? validateRetentionInputs(retentionInputs)
-      : null;
-    if (retentionValidation && !retentionValidation.success) {
-      setRetentionErrors(retentionValidation.errors);
-      toast.error('Correct the highlighted retention settings before saving');
-      return;
-    }
-    setRetentionErrors({});
-    if (settings.workingHours.start >= settings.workingHours.end) {
-      toast.error('Campus opening time must be earlier than closing time');
-      return;
-    }
-    const missingPrompt = settings.visitPurposes.find((purpose) => purpose.requiresDetails && purpose.detailPrompt.trim().length < 3);
-    if (missingPrompt) {
-      toast.error(`Add an instruction for “${missingPrompt.label}” before saving`);
-      return;
-    }
-    setSaving(true);
+    if (settingsMutationInFlightRef.current || settingsBusy) return;
+    settingsMutationInFlightRef.current = true;
     try {
+      const retentionValidation = canManageSecuritySettings
+        ? validateRetentionInputs(retentionInputs)
+        : null;
+      if (retentionValidation && !retentionValidation.success) {
+        setRetentionErrors(retentionValidation.errors);
+        toast.error('Correct the highlighted retention settings before saving');
+        return;
+      }
+      setRetentionErrors({});
+      if (settings.workingHours.start >= settings.workingHours.end) {
+        toast.error('Campus opening time must be earlier than closing time');
+        return;
+      }
+      const missingPrompt = settings.visitPurposes.find((purpose) => purpose.requiresDetails && purpose.detailPrompt.trim().length < 3);
+      if (missingPrompt) {
+        toast.error(`Add an instruction for “${missingPrompt.label}” before saving`);
+        return;
+      }
+      setSaving(true);
       const operationalSettings = {
         peakMode: settings.peakMode,
         rejectionReasons: settings.rejectionReasons,
@@ -145,6 +153,7 @@ export function AdminSettings() {
       toast.error('Failed to save settings');
     } finally {
       setSaving(false);
+      settingsMutationInFlightRef.current = false;
     }
   }
 
@@ -226,7 +235,8 @@ export function AdminSettings() {
   // PURGE IMAGES
   // ============================================================
   async function handlePurgeClick() {
-    if (settingsBusy) return;
+    if (settingsMutationInFlightRef.current || settingsBusy) return;
+    settingsMutationInFlightRef.current = true;
     setCalculatingPurge(true);
     try {
       const token = await getAccessToken();
@@ -254,11 +264,13 @@ export function AdminSettings() {
       toast.error('Could not calculate purge impact');
     } finally {
       setCalculatingPurge(false);
+      settingsMutationInFlightRef.current = false;
     }
   }
 
   async function executePurge() {
-    if (settingsBusy) return;
+    if (settingsMutationInFlightRef.current || settingsBusy) return;
+    settingsMutationInFlightRef.current = true;
     setPurging(true);
     try {
       const token = await getAccessToken();
@@ -294,6 +306,7 @@ export function AdminSettings() {
       toast.error(err.message || 'Purge failed');
     } finally {
       setPurging(false);
+      settingsMutationInFlightRef.current = false;
     }
   }
 

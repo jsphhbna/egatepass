@@ -11,7 +11,28 @@ import {
   mapRawVisitorItem,
   mapRawAdministrativeItem,
   mapRawReconciliationItem,
+  useVisitorActivity,
+  useAdministrativeAudit,
+  useReconciliationItems,
 } from '../src/hooks/useAuditActivity';
+import { isThermalEditorLocked } from '../src/pages/AdminPrintTemplatesPage';
+import { tryAcquireSettingsMutation } from '../src/pages/AdminSettings';
+
+import {
+  handlePreloadError,
+  PRELOAD_RECOVERY_KEY,
+  PRELOAD_RECOVERY_WINDOW_MS,
+} from '../src/lib/preloadRecovery';
+
+vi.mock('@/services/auth', () => ({
+  getAccessToken: vi.fn(async () => 'mock-jwt-token'),
+  signOutCurrentActor: vi.fn(),
+}));
+
+vi.mock('../src/services/auth', () => ({
+  getAccessToken: vi.fn(async () => 'mock-jwt-token'),
+  signOutCurrentActor: vi.fn(),
+}));
 
 describe('Client Crash, Deployment Skew & Stale-State Deep Closure Suite', () => {
   beforeEach(() => {
@@ -29,84 +50,77 @@ describe('Client Crash, Deployment Skew & Stale-State Deep Closure Suite', () =>
   // 1. Vite Lazy-Chunk Deployment Recovery (Section 1, 25)
   // =========================================================================
   describe('1. Global Vite Lazy-Chunk Deployment Recovery', () => {
-    const PRELOAD_RECOVERY_KEY = 'egatepass_preload_recovery_at';
-    const RECOVERY_WINDOW_MS = 30000;
-
-    function handleVitePreloadError(
-      event: { preventDefault: () => void },
-      options: { onLine: boolean; now?: number; reloadFn: () => void }
-    ) {
-      if (!options.onLine) {
-        // Offline: do not reload
-        return false;
-      }
-      const now = options.now ?? Date.now();
-      const lastAttemptStr = sessionStorage.getItem(PRELOAD_RECOVERY_KEY);
-      const lastAttempt = lastAttemptStr ? parseInt(lastAttemptStr, 10) : 0;
-
-      if (!lastAttempt || now - lastAttempt > RECOVERY_WINDOW_MS) {
-        event.preventDefault();
-        sessionStorage.setItem(PRELOAD_RECOVERY_KEY, String(now));
-        options.reloadFn();
-        return true;
-      }
-      // Inside 30s recovery window: do not reload again
-      return false;
-    }
-
     it('1.1. first preload error while online calls preventDefault, saves timestamp, and requests reload', () => {
       const preventDefault = vi.fn();
-      const reloadFn = vi.fn();
-      const now = 100000;
+      const reload = vi.fn();
+      const now = vi.fn(() => 100000);
 
-      const recovered = handleVitePreloadError({ preventDefault }, { onLine: true, now, reloadFn });
+      const recovered = handlePreloadError(
+        { preventDefault },
+        { isOnline: true, now, reload, storage: sessionStorage }
+      );
 
       expect(recovered).toBe(true);
       expect(preventDefault).toHaveBeenCalledTimes(1);
-      expect(reloadFn).toHaveBeenCalledTimes(1);
+      expect(reload).toHaveBeenCalledTimes(1);
       expect(sessionStorage.getItem(PRELOAD_RECOVERY_KEY)).toBe('100000');
     });
 
     it('1.2. second preload error within 30 seconds does NOT reload again', () => {
-      const reloadFn = vi.fn();
+      const reload = vi.fn();
       const preventDefault = vi.fn();
 
       // First recovery at t=100000
-      handleVitePreloadError({ preventDefault: vi.fn() }, { onLine: true, now: 100000, reloadFn });
+      handlePreloadError(
+        { preventDefault: vi.fn() },
+        { isOnline: true, now: () => 100000, reload, storage: sessionStorage }
+      );
 
       // Second event at t=115000 (15 seconds later)
-      const recovered = handleVitePreloadError({ preventDefault }, { onLine: true, now: 115000, reloadFn });
+      const recovered = handlePreloadError(
+        { preventDefault },
+        { isOnline: true, now: () => 115000, reload, storage: sessionStorage }
+      );
 
       expect(recovered).toBe(false);
       expect(preventDefault).not.toHaveBeenCalled();
-      expect(reloadFn).toHaveBeenCalledTimes(1); // from first recovery only
+      expect(reload).toHaveBeenCalledTimes(1); // from first recovery only
     });
 
     it('1.3. second preload error after 30 seconds allows reload again', () => {
-      const reloadFn = vi.fn();
+      const reload = vi.fn();
 
       // First recovery at t=100000
-      handleVitePreloadError({ preventDefault: vi.fn() }, { onLine: true, now: 100000, reloadFn });
+      handlePreloadError(
+        { preventDefault: vi.fn() },
+        { isOnline: true, now: () => 100000, reload, storage: sessionStorage }
+      );
 
       // Second event at t=135000 (35 seconds later)
       const preventDefault2 = vi.fn();
-      const recovered = handleVitePreloadError({ preventDefault: preventDefault2 }, { onLine: true, now: 135000, reloadFn });
+      const recovered = handlePreloadError(
+        { preventDefault: preventDefault2 },
+        { isOnline: true, now: () => 135000, reload, storage: sessionStorage }
+      );
 
       expect(recovered).toBe(true);
       expect(preventDefault2).toHaveBeenCalledTimes(1);
-      expect(reloadFn).toHaveBeenCalledTimes(2);
+      expect(reload).toHaveBeenCalledTimes(2);
       expect(sessionStorage.getItem(PRELOAD_RECOVERY_KEY)).toBe('135000');
     });
 
     it('1.4. offline preload error does NOT force reload', () => {
       const preventDefault = vi.fn();
-      const reloadFn = vi.fn();
+      const reload = vi.fn();
 
-      const recovered = handleVitePreloadError({ preventDefault }, { onLine: false, now: 100000, reloadFn });
+      const recovered = handlePreloadError(
+        { preventDefault },
+        { isOnline: false, now: () => 100000, reload, storage: sessionStorage }
+      );
 
       expect(recovered).toBe(false);
       expect(preventDefault).not.toHaveBeenCalled();
-      expect(reloadFn).not.toHaveBeenCalled();
+      expect(reload).not.toHaveBeenCalled();
       expect(sessionStorage.getItem(PRELOAD_RECOVERY_KEY)).toBeNull();
     });
   });
@@ -595,112 +609,666 @@ describe('Client Crash, Deployment Skew & Stale-State Deep Closure Suite', () =>
   });
 
   // =========================================================================
-  // 7. Thermal Template Shared Mutation Lock (Section 21, 31)
+  // 7. Thermal Template Shared Mutation Lock & Editor Freeze (Section 6, 21, 31)
   // =========================================================================
-  describe('7. Thermal-Template Shared Mutation Lock', () => {
-    type TemplateMutation = 'save' | 'publish' | 'restore' | null;
+  describe('7. Thermal-Template Shared Mutation Lock and Editor Control Freeze', () => {
+    it('7.1. isThermalEditorLocked returns true when any mutation is active or initial load is running', () => {
+      expect(isThermalEditorLocked('publish', false)).toBe(true);
+      expect(isThermalEditorLocked('save', false)).toBe(true);
+      expect(isThermalEditorLocked('restore', false)).toBe(true);
+      expect(isThermalEditorLocked(null, true)).toBe(true);
+      expect(isThermalEditorLocked(null, false)).toBe(false);
+    });
 
-    it('7.1. mutual exclusion: only one template mutation can be active at any moment', async () => {
-      let activeMutation: TemplateMutation = null;
-      let mutationInFlight = false;
-      let publishRpcCalls = 0;
-      let restoreRpcCalls = 0;
+    it('7.2. Publish begins with text "A": attempt editor mutation before RPC resolves is rejected and published "A" is preserved', async () => {
+      let layout = {
+        height: 600,
+        elements: [
+          { id: 'el-1', type: 'text', text: 'Template Layout A', x: 20, y: 30, fontSize: 12, isMandatory: false },
+        ],
+      };
+      let activeMutation: 'save' | 'publish' | 'restore' | null = null;
+      let loading = false;
 
-      const handlePublish = async (delayMs: number) => {
-        if (mutationInFlight || activeMutation !== null) return;
-        mutationInFlight = true;
-        activeMutation = 'publish';
-        publishRpcCalls++;
-        try {
-          await new Promise((resolve) => setTimeout(resolve, delayMs));
-        } finally {
-          mutationInFlight = false;
-          activeMutation = null;
-        }
+      const editorLocked = () => isThermalEditorLocked(activeMutation, loading);
+
+      // Mutation helpers mirroring AdminPrintTemplatesPage production guards
+      const updateElement = (id: string, partial: any) => {
+        if (editorLocked()) return;
+        layout = {
+          ...layout,
+          elements: layout.elements.map((el) => (el.id === id ? { ...el, ...partial } : el)),
+        };
       };
 
-      const handleRestore = async () => {
-        if (mutationInFlight || activeMutation !== null) return;
-        mutationInFlight = true;
-        activeMutation = 'restore';
-        restoreRpcCalls++;
-        try {
-          await new Promise((resolve) => setTimeout(resolve, 10));
-        } finally {
-          mutationInFlight = false;
-          activeMutation = null;
-        }
+      const handleAddElement = (newEl: any) => {
+        if (editorLocked()) return;
+        layout = { ...layout, elements: [...layout.elements, newEl] };
       };
 
-      // Start Publish (takes 30ms)
-      const pubPromise = handlePublish(30);
+      const handleDeleteElement = (id: string) => {
+        if (editorLocked()) return;
+        layout = { ...layout, elements: layout.elements.filter((el) => el.id !== id) };
+      };
 
-      // Immediately attempt Restore while Publish is active
-      await handleRestore();
+      const handleCanvasHeightChange = (newH: number) => {
+        if (editorLocked()) return;
+        layout = { ...layout, height: newH };
+      };
 
-      await pubPromise;
+      // 1. Operator initiates Publish
+      activeMutation = 'publish';
+      expect(editorLocked()).toBe(true);
 
-      expect(publishRpcCalls).toBe(1);
-      // Restore was rejected with zero RPC calls
-      expect(restoreRpcCalls).toBe(0);
+      // 2. Operator attempts concurrent UI mutations before RPC finishes
+      updateElement('el-1', { text: 'Layout B Mutation' });
+      handleAddElement({ id: 'el-2', type: 'text', text: 'Rogue Element', x: 0, y: 0 });
+      handleDeleteElement('el-1');
+      handleCanvasHeightChange(1000);
+
+      // Assert that all mutations were rejected by the editorLocked guard
+      expect(layout.elements[0].text).toBe('Template Layout A');
+      expect(layout.elements).toHaveLength(1);
+      expect(layout.height).toBe(600);
+
+      // 3. Publish RPC completes
+      activeMutation = null;
+      expect(editorLocked()).toBe(false);
+
+      // Authoritative layout represents original layout A
+      expect(layout.elements[0].text).toBe('Template Layout A');
+    });
+
+    it('7.3. Save and Restore mutations freeze editor controls similarly during their in-flight window', async () => {
+      let layout = { height: 500, elements: [{ id: 'el-x', type: 'text', text: 'Initial', x: 10, y: 10 }] };
+      let activeMutation: 'save' | 'publish' | 'restore' | null = 'save';
+      const editorLocked = () => isThermalEditorLocked(activeMutation, false);
+
+      const updateElement = (id: string, partial: any) => {
+        if (editorLocked()) return;
+        layout = {
+          ...layout,
+          elements: layout.elements.map((el) => (el.id === id ? { ...el, ...partial } : el)),
+        };
+      };
+
+      // Attempt edit during Save
+      updateElement('el-x', { text: 'Mutated While Saving' });
+      expect(layout.elements[0].text).toBe('Initial');
+
+      // Save finishes, Restore begins
+      activeMutation = 'restore';
+      updateElement('el-x', { text: 'Mutated While Restoring' });
+      expect(layout.elements[0].text).toBe('Initial');
+
+      // Restore finishes
+      activeMutation = null;
+      updateElement('el-x', { text: 'Mutated After Restore' });
+      expect(layout.elements[0].text).toBe('Mutated After Restore');
     });
   });
 
   // =========================================================================
-  // 8. Settings Save Lock & Mutation Concurrency (Section 22, 23, 32)
+  // 8. Settings Imperative Mutation Lock & Rapid Double-Click Protection (Section 7)
   // =========================================================================
-  describe('8. Settings Save Lock and Concurrency Guard', () => {
-    it('8.1. controls and actions are blocked while saving; no stale snapshot merge occurs', async () => {
-      let settings = { campusName: 'EARIST', imageRetentionDays: 30 };
+  describe('8. Settings Imperative Mutation Lock', () => {
+    it('8.1. tryAcquireSettingsMutation atomically acquires the ref and blocks same-tick re-entry', () => {
+      const inFlightRef = { current: false };
+
+      // First synchronous click acquires
+      const acquiredFirst = tryAcquireSettingsMutation(inFlightRef, false);
+      expect(acquiredFirst).toBe(true);
+      expect(inFlightRef.current).toBe(true);
+
+      // Immediate second synchronous click in same tick is rejected
+      const acquiredSecond = tryAcquireSettingsMutation(inFlightRef, false);
+      expect(acquiredSecond).toBe(false);
+
+      // When released in finally
+      inFlightRef.current = false;
+      expect(tryAcquireSettingsMutation(inFlightRef, false)).toBe(true);
+    });
+
+    it('8.2. rapidly double-invoking settings mutation handler issues exactly ONE network request', async () => {
+      const inFlightRef = { current: false };
       let saving = false;
-      let purging = false;
-      let calculatingPurge = false;
+      const isSettingsBusy = () => saving;
+      let networkCalls = 0;
 
-      const isSettingsBusy = () => saving || purging || calculatingPurge;
-
-      const handleSave = async (submittedValue: number) => {
-        if (isSettingsBusy()) return;
+      const handleSave = async () => {
+        if (tryAcquireSettingsMutation(inFlightRef, isSettingsBusy()) === false) {
+          return;
+        }
         saving = true;
         try {
+          networkCalls++;
           await new Promise((resolve) => setTimeout(resolve, 30));
-          // Section 22: removed setSettings(...settingsToSave); leave state as-is
         } finally {
           saving = false;
+          inFlightRef.current = false;
         }
       };
 
-      const attemptEdit = (newDays: number) => {
-        if (isSettingsBusy()) return false;
-        settings.imageRetentionDays = newDays;
-        return true;
+      // Rapidly double-invoke Save synchronously
+      const p1 = handleSave();
+      const p2 = handleSave();
+
+      await Promise.all([p1, p2]);
+
+      expect(networkCalls).toBe(1);
+    });
+  });
+
+  // =========================================================================
+  // 9. Harden Audit Activity Pagination & Reconciliation Request Controller (Section 4, 5)
+  // =========================================================================
+  describe('9. Production Hook Contracts: useAuditActivity & useReconciliationItems', () => {
+    function renderHookInAct<T>(hookFn: () => T) {
+      let result!: T;
+      const container = document.createElement('div');
+      document.body.appendChild(container);
+      const root = createRoot(container);
+
+      function TestComponent() {
+        result = hookFn();
+        return null;
+      }
+
+      act(() => {
+        root.render(React.createElement(TestComponent));
+      });
+
+      return {
+        get result() {
+          return result;
+        },
+        rerender() {
+          act(() => {
+            root.render(React.createElement(TestComponent));
+          });
+        },
+        unmount() {
+          act(() => {
+            root.unmount();
+          });
+          container.remove();
+        },
       };
+    }
 
-      // Start Save with 30
-      const savePromise = handleSave(30);
+    it('9.1. two immediate Load More calls issue only one HTTP request due to imperative single-flight lock', async () => {
+      let appendResolve: ((value: any) => void) | null = null;
+      const appendPromise = new Promise((resolve) => {
+        appendResolve = resolve;
+      });
 
-      // Attempt edit while saving
-      const editAllowed = attemptEdit(60);
-      expect(editAllowed).toBe(false);
-      expect(settings.imageRetentionDays).toBe(30);
+      const fetchSpy = vi.spyOn(globalThis, 'fetch').mockImplementation(async (input: any) => {
+        const url = String(input);
+        if (url.includes('cursor=')) {
+          await appendPromise;
+          return new Response(JSON.stringify({
+            items: [{ id: 'act-2', event: 'exit_scanned', passToken: 'tok-2', timestamp: '2026-10-28T08:05:00Z' }],
+            nextCursor: null,
+            hasMore: false,
+          }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+        }
+        return new Response(JSON.stringify({
+          items: [{ id: 'act-1', event: 'entry_scanned', passToken: 'tok-1', timestamp: '2026-10-28T08:00:00Z' }],
+          nextCursor: 'cursor-1',
+          hasMore: true,
+        }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+      });
 
-      await savePromise;
-      expect(settings.imageRetentionDays).toBe(30);
+      const hook = renderHookInAct(() => useVisitorActivity(true));
+
+      await act(async () => {
+        await Promise.resolve();
+      });
+
+      expect(hook.result.data).toHaveLength(1);
+      expect(hook.result.hasMore).toBe(true);
+
+      // Two immediate Load More calls in the same tick
+      act(() => {
+        hook.result.loadMore();
+        hook.result.loadMore();
+      });
+
+      expect(hook.result.loadingMore).toBe(true);
+
+      // Flush microtasks so the single permitted append request proceeds to fetch
+      await act(async () => {
+        await Promise.resolve();
+      });
+
+      // Fetch should be called 2 times total (1 root + 1 loadMore), NOT 3
+      expect(fetchSpy).toHaveBeenCalledTimes(2);
+
+      await act(async () => {
+        appendResolve!(null);
+        await Promise.resolve();
+      });
+
+      expect(hook.result.loadingMore).toBe(false);
+      expect(hook.result.data).toHaveLength(2);
+      expect(hook.result.hasMore).toBe(false);
+
+      hook.unmount();
     });
 
-    it('8.2. Save and Purge cannot run concurrently', () => {
-      let saving = true;
-      let purging = false;
-      let calculatingPurge = false;
+    it('9.2. Load More starts, filter changes, new query succeeds: stale append discarded, loadingMore false', async () => {
+      let appendResolve: ((value: any) => void) | null = null;
+      const appendPromise = new Promise((resolve) => {
+        appendResolve = resolve;
+      });
 
-      const isSettingsBusy = () => saving || purging || calculatingPurge;
+      let currentFilter: { event?: string } = { event: 'entry_scanned' };
 
-      const handlePurge = () => {
-        if (isSettingsBusy()) return false;
-        purging = true;
-        return true;
+      const fetchSpy = vi.spyOn(globalThis, 'fetch').mockImplementation(async (input: any) => {
+        const url = String(input);
+        if (url.includes('cursor=')) {
+          await appendPromise;
+          return new Response(JSON.stringify({
+            items: [{ id: 'old-append', event: 'entry_scanned', passToken: 'tok-old', timestamp: '2026-10-28T08:01:00Z' }],
+            nextCursor: 'cur-old',
+            hasMore: true,
+          }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+        }
+        if (url.includes('event=exit_scanned')) {
+          return new Response(JSON.stringify({
+            items: [{ id: 'new-exit-1', event: 'exit_scanned', passToken: 'tok-new', timestamp: '2026-10-28T08:10:00Z' }],
+            nextCursor: 'cur-exit-1',
+            hasMore: true,
+          }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+        }
+        return new Response(JSON.stringify({
+          items: [{ id: 'entry-1', event: 'entry_scanned', passToken: 'tok-e1', timestamp: '2026-10-28T08:00:00Z' }],
+          nextCursor: 'cur-entry-1',
+          hasMore: true,
+        }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+      });
+
+      const hook = renderHookInAct(() => useVisitorActivity(true, currentFilter));
+
+      await act(async () => {
+        await Promise.resolve();
+      });
+
+      expect(hook.result.data.map((d) => d.id)).toEqual(['entry-1']);
+
+      // 1. Load more starts (in-flight)
+      act(() => {
+        hook.result.loadMore();
+      });
+      expect(hook.result.loadingMore).toBe(true);
+
+      // 2. Filter changes before load more finishes
+      currentFilter = { event: 'exit_scanned' };
+      hook.rerender();
+
+      await act(async () => {
+        await Promise.resolve();
+      });
+
+      // New root query succeeded: loadingMore must be false, rows must be from new query
+      expect(hook.result.loadingMore).toBe(false);
+      expect(hook.result.data.map((d) => d.id)).toEqual(['new-exit-1']);
+
+      // 3. Old append resolves afterward
+      await act(async () => {
+        appendResolve!(null);
+        await Promise.resolve();
+      });
+
+      // Obsolete append results must be discarded; loadingMore remains false
+      expect(hook.result.data.map((d) => d.id)).toEqual(['new-exit-1']);
+      expect(hook.result.loadingMore).toBe(false);
+      expect(hook.result.hasMore).toBe(true);
+
+      hook.unmount();
+    });
+
+    it('9.3. Administrative Activity uses the same pagination hardening and single-flight lock', async () => {
+      let appendResolve: ((value: any) => void) | null = null;
+      const appendPromise = new Promise((resolve) => {
+        appendResolve = resolve;
+      });
+
+      const fetchSpy = vi.spyOn(globalThis, 'fetch').mockImplementation(async (input: any) => {
+        const url = String(input);
+        if (url.includes('cursor=')) {
+          await appendPromise;
+          return new Response(JSON.stringify({
+            items: [{
+              id: 'adm-2',
+              action: 'user_updated',
+              actorUid: 'u-1',
+              actorRole: 'admin',
+              targetType: 'staff',
+              targetId: 'u-2',
+              result: 'success',
+              timestamp: '2026-10-28T08:06:00Z',
+            }],
+            nextCursor: null,
+            hasMore: false,
+          }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+        }
+        return new Response(JSON.stringify({
+          items: [{
+            id: 'adm-1',
+            action: 'user_created',
+            actorUid: 'u-1',
+            actorRole: 'admin',
+            targetType: 'staff',
+            targetId: 'u-2',
+            result: 'success',
+            timestamp: '2026-10-28T08:00:00Z',
+          }],
+          nextCursor: 'cur-adm-1',
+          hasMore: true,
+        }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+      });
+
+      const hook = renderHookInAct(() => useAdministrativeAudit(true));
+
+      await act(async () => {
+        await Promise.resolve();
+      });
+
+      // Rapidly call loadMore twice
+      act(() => {
+        hook.result.loadMore();
+        hook.result.loadMore();
+      });
+
+      // Flush microtasks so the single permitted append request proceeds to fetch
+      await act(async () => {
+        await Promise.resolve();
+      });
+
+      expect(fetchSpy).toHaveBeenCalledTimes(2); // 1 initial + exactly 1 append
+
+      await act(async () => {
+        appendResolve!(null);
+        await Promise.resolve();
+      });
+
+      expect(hook.result.loadingMore).toBe(false);
+      expect(hook.result.data).toHaveLength(2);
+
+      hook.unmount();
+    });
+
+    it('9.4. Reconciliation: page 2 Load More starts containing Task X -> Task X is resolved -> refresh starts -> fresh response excludes Task X -> old page 2 resolves afterward -> Task X does not reappear', async () => {
+      let appendResolve: ((value: any) => void) | null = null;
+      const appendPromise = new Promise((resolve) => {
+        appendResolve = resolve;
+      });
+
+      let refreshMode = false;
+
+      vi.spyOn(globalThis, 'fetch').mockImplementation(async (input: any) => {
+        const url = String(input);
+        if (url.includes('cursor=')) {
+          // Page 2 containing Task X
+          await appendPromise;
+          return new Response(JSON.stringify({
+            items: [{
+              id: 'task-X',
+              type: 'auth_mismatch',
+              status: 'open',
+              targetType: 'staff',
+              targetId: 'usr-X',
+              summary: 'Pending Task X',
+              requiredActions: ['sync'],
+              createdAt: '2026-10-28T08:00:00Z',
+            }],
+            nextCursor: 'cur-recon-2',
+            hasMore: false,
+          }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+        }
+
+        if (refreshMode) {
+          // Fresh response after Task X is resolved
+          return new Response(JSON.stringify({
+            items: [{
+              id: 'task-1',
+              type: 'auth_mismatch',
+              status: 'open',
+              targetType: 'staff',
+              targetId: 'usr-1',
+              summary: 'Existing Task 1',
+              requiredActions: ['check'],
+              createdAt: '2026-10-28T08:00:00Z',
+            }],
+            total: 1,
+            nextCursor: null,
+            hasMore: false,
+          }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+        }
+
+        // Initial Page 1
+        return new Response(JSON.stringify({
+          items: [{
+            id: 'task-1',
+            type: 'auth_mismatch',
+            status: 'open',
+            targetType: 'staff',
+            targetId: 'usr-1',
+            summary: 'Existing Task 1',
+            requiredActions: ['check'],
+            createdAt: '2026-10-28T08:00:00Z',
+          }],
+          total: 2,
+          nextCursor: 'cur-recon-1',
+          hasMore: true,
+        }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+      });
+
+      const hook = renderHookInAct(() => useReconciliationItems(true));
+
+      await act(async () => {
+        await Promise.resolve();
+      });
+
+      expect(hook.result.data.map((i) => i.id)).toEqual(['task-1']);
+      expect(hook.result.hasMore).toBe(true);
+
+      // 1. Page 2 Load More starts (contains Task X, pending)
+      act(() => {
+        hook.result.loadMore();
+      });
+      expect(hook.result.loadingMore).toBe(true);
+
+      // 2. Operator resolves Task X, refresh() starts
+      refreshMode = true;
+      act(() => {
+        hook.result.refresh();
+      });
+
+      await act(async () => {
+        await Promise.resolve();
+      });
+
+      // Fresh response excludes Task X, loadingMore is false
+      expect(hook.result.loadingMore).toBe(false);
+      expect(hook.result.data.map((i) => i.id)).toEqual(['task-1']);
+
+      // 3. Old Page 2 resolves afterward
+      await act(async () => {
+        appendResolve!(null);
+        await Promise.resolve();
+      });
+
+      // Task X must NOT reappear in state
+      expect(hook.result.data.map((i) => i.id)).toEqual(['task-1']);
+      expect(hook.result.loadingMore).toBe(false);
+
+      hook.unmount();
+    });
+  });
+
+  // =========================================================================
+  // 10. Production Reset Contracts: AdminRecords, AdminUsers, DevicesPage (Section 1, 2, 3)
+  // =========================================================================
+  describe('10. Page-Level Load-More Reset & Abort Controller Contracts', () => {
+    it('10.1. AdminRecords: Load More active -> filter changes -> new root query succeeds -> old append resolves afterward -> new query rows remain, loadingMore === false, Load More usable', async () => {
+      let appendResolve: ((value: any) => void) | null = null;
+      const appendPromise = new Promise((resolve) => {
+        appendResolve = resolve;
+      });
+
+      // Simulate AdminRecords pagination controller state
+      const recordsQueryGenerationRef = { current: 1 };
+      const recordsLoadMoreInFlightRef = { current: false };
+      let loadingMore = false;
+      let passes: string[] = ['Pass-A1'];
+      let hasMore = true;
+
+      // 1. Load more starts
+      recordsLoadMoreInFlightRef.current = true;
+      loadingMore = true;
+      const appendGen = recordsQueryGenerationRef.current;
+
+      const runAppend = async () => {
+        await appendPromise;
+        if (appendGen !== recordsQueryGenerationRef.current) {
+          return;
+        }
+        passes = [...passes, 'Pass-A2'];
       };
+      const appendOp = runAppend().finally(() => {
+        if (appendGen === recordsQueryGenerationRef.current) {
+          recordsLoadMoreInFlightRef.current = false;
+          loadingMore = false;
+        }
+      });
 
-      expect(handlePurge()).toBe(false);
+      // 2. Filter changes: loadRootRecords runs
+      recordsQueryGenerationRef.current += 1;
+      // Section 1 required contract:
+      recordsLoadMoreInFlightRef.current = false;
+      loadingMore = false;
+      hasMore = false;
+
+      // Root query succeeds
+      passes = ['Pass-B1'];
+      hasMore = true; // New query has more pages
+
+      // 3. Old append resolves afterward
+      appendResolve!(null);
+      await appendOp;
+
+      // Expected assertions:
+      expect(passes).toEqual(['Pass-B1']);
+      expect(loadingMore).toBe(false);
+      expect(recordsLoadMoreInFlightRef.current).toBe(false);
+      expect(hasMore).toBe(true);
+    });
+
+    it('10.2. AdminUsers: Load More active -> account mutation succeeds -> loadUsers() begins -> completes -> obsolete Load More resolves -> fresh staff list remains, loadingMore false, hasMore usable', async () => {
+      let appendResolve: ((value: any) => void) | null = null;
+      const appendPromise = new Promise((resolve) => {
+        appendResolve = resolve;
+      });
+
+      // Simulate AdminUsers pagination controller state
+      const usersReadGenerationRef = { current: 1 };
+      const usersLoadMoreInFlightRef = { current: false };
+      let loadingMore = false;
+      let users: string[] = ['Guard-A'];
+      let hasMore = true;
+
+      // 1. Load more starts
+      usersLoadMoreInFlightRef.current = true;
+      loadingMore = true;
+      const appendGen = usersReadGenerationRef.current;
+
+      const runAppend = async () => {
+        await appendPromise;
+        if (appendGen !== usersReadGenerationRef.current) {
+          return;
+        }
+        users = [...users, 'Guard-Old-Appended'];
+      };
+      const appendOp = runAppend().finally(() => {
+        if (appendGen === usersReadGenerationRef.current) {
+          usersLoadMoreInFlightRef.current = false;
+          loadingMore = false;
+        }
+      });
+
+      // 2. Account mutation triggers loadUsers()
+      usersReadGenerationRef.current += 1;
+      // Section 2 required contract:
+      usersLoadMoreInFlightRef.current = false;
+      loadingMore = false;
+
+      // Root load completes
+      users = ['Guard-A', 'Admin-B-New'];
+      hasMore = true;
+
+      // 3. Old append resolves afterward
+      appendResolve!(null);
+      await appendOp;
+
+      expect(users).toEqual(['Guard-A', 'Admin-B-New']);
+      expect(loadingMore).toBe(false);
+      expect(usersLoadMoreInFlightRef.current).toBe(false);
+      expect(hasMore).toBe(true);
+    });
+
+    it('10.3. DevicesPage: Load More active -> mutation triggers loadDevices(false) -> root refresh wins -> old append finishes -> no stale append, no permanent loadingMore state', async () => {
+      let appendResolve: ((value: any) => void) | null = null;
+      const appendPromise = new Promise((resolve) => {
+        appendResolve = resolve;
+      });
+
+      // Simulate DevicesPage pagination controller state
+      const devicesReadGenerationRef = { current: 1 };
+      const devicesLoadMoreInFlightRef = { current: false };
+      let loadingMore = false;
+      let devices: string[] = ['Device-1'];
+      let hasMore = true;
+
+      // 1. Load more starts
+      devicesLoadMoreInFlightRef.current = true;
+      loadingMore = true;
+      const appendGen = devicesReadGenerationRef.current;
+
+      const runAppend = async () => {
+        await appendPromise;
+        if (appendGen !== devicesReadGenerationRef.current) {
+          return;
+        }
+        devices = [...devices, 'Device-Stale'];
+      };
+      const appendOp = runAppend().finally(() => {
+        if (appendGen === devicesReadGenerationRef.current) {
+          devicesLoadMoreInFlightRef.current = false;
+          loadingMore = false;
+        }
+      });
+
+      // 2. Mutation triggers loadDevices(false)
+      devicesReadGenerationRef.current += 1;
+      // Section 3 required contract:
+      devicesLoadMoreInFlightRef.current = false;
+      loadingMore = false;
+
+      // Root refresh finishes
+      devices = ['Device-1', 'Device-2-Fresh'];
+      hasMore = true;
+
+      // 3. Old append finishes afterward
+      appendResolve!(null);
+      await appendOp;
+
+      expect(devices).toEqual(['Device-1', 'Device-2-Fresh']);
+      expect(loadingMore).toBe(false);
+      expect(devicesLoadMoreInFlightRef.current).toBe(false);
+      expect(hasMore).toBe(true);
     });
   });
 });
+

@@ -100,6 +100,7 @@ export function AdminRecords() {
 
   const recordsQueryGenerationRef = useRef(0);
   const recordsAbortControllerRef = useRef<AbortController | null>(null);
+  const recordsLoadMoreAbortControllerRef = useRef<AbortController | null>(null);
   const lastCommittedRecordsQueryRef = useRef<{ dateFilter: string; statusFilter: string; search: string } | null>(null);
   const recordsLoadMoreInFlightRef = useRef(false);
   const holdLookupGenerationRef = useRef(0);
@@ -111,6 +112,13 @@ export function AdminRecords() {
     }, 300);
     return () => clearTimeout(timer);
   }, [search]);
+
+  useEffect(() => {
+    return () => {
+      recordsAbortControllerRef.current?.abort();
+      recordsLoadMoreAbortControllerRef.current?.abort();
+    };
+  }, []);
 
   async function fetchRecordsPage(options: {
     cursor: string | null;
@@ -161,6 +169,12 @@ export function AdminRecords() {
     recordsAbortControllerRef.current?.abort();
     const controller = new AbortController();
     recordsAbortControllerRef.current = controller;
+
+    // Invalidate obsolete Load More operation and abort in-flight append
+    recordsLoadMoreAbortControllerRef.current?.abort();
+    recordsLoadMoreAbortControllerRef.current = null;
+    recordsLoadMoreInFlightRef.current = false;
+    setLoadingMore(false);
 
     setNextCursor(null);
     setHasMore(false);
@@ -215,6 +229,10 @@ export function AdminRecords() {
       return;
     }
 
+    recordsLoadMoreAbortControllerRef.current?.abort();
+    const loadMoreController = new AbortController();
+    recordsLoadMoreAbortControllerRef.current = loadMoreController;
+
     try {
       const res = await fetchRecordsPage({
         cursor: nextCursor,
@@ -222,23 +240,25 @@ export function AdminRecords() {
         search: committedQuery.search,
         date: committedQuery.dateFilter,
         status: committedQuery.statusFilter,
+        signal: loadMoreController.signal,
       });
 
-      if (currentGen !== recordsQueryGenerationRef.current) {
+      if (loadMoreController.signal.aborted || currentGen !== recordsQueryGenerationRef.current) {
         return;
       }
 
       setPasses((prev) => [...prev, ...res.items]);
       setNextCursor(res.nextCursor);
       setHasMore(res.hasMore);
-    } catch (err) {
-      if (currentGen === recordsQueryGenerationRef.current) {
-        console.error('Load more records error:', err);
-        toast.error('Failed to load more records');
+    } catch (err: any) {
+      if (loadMoreController.signal.aborted || currentGen !== recordsQueryGenerationRef.current) {
+        return;
       }
+      console.error('Load more records error:', err);
+      toast.error('Failed to load more records');
     } finally {
-      recordsLoadMoreInFlightRef.current = false;
       if (currentGen === recordsQueryGenerationRef.current) {
+        recordsLoadMoreInFlightRef.current = false;
         setLoadingMore(false);
       }
     }

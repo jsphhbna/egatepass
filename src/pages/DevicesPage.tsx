@@ -64,6 +64,7 @@ export function DevicesPage() {
 
   const devicesReadGenerationRef = useRef(0);
   const devicesAbortControllerRef = useRef<AbortController | null>(null);
+  const devicesLoadMoreAbortControllerRef = useRef<AbortController | null>(null);
   const devicesLoadMoreInFlightRef = useRef(false);
 
   const {
@@ -85,15 +86,25 @@ export function DevicesPage() {
       if (devicesLoadMoreInFlightRef.current || !nextCursor) return;
       devicesLoadMoreInFlightRef.current = true;
       setLoadingMore(true);
+      devicesLoadMoreAbortControllerRef.current?.abort();
+      const loadMoreController = new AbortController();
+      devicesLoadMoreAbortControllerRef.current = loadMoreController;
     } else {
       devicesAbortControllerRef.current?.abort();
       const controller = new AbortController();
       devicesAbortControllerRef.current = controller;
+
+      // Invalidate load-more ownership and abort in-flight append
+      devicesLoadMoreAbortControllerRef.current?.abort();
+      devicesLoadMoreAbortControllerRef.current = null;
+      devicesLoadMoreInFlightRef.current = false;
+      setLoadingMore(false);
+
       setLoading(true);
     }
 
     const currentGen = append ? devicesReadGenerationRef.current : ++devicesReadGenerationRef.current;
-    const signal = append ? undefined : devicesAbortControllerRef.current?.signal;
+    const signal = append ? devicesLoadMoreAbortControllerRef.current?.signal : devicesAbortControllerRef.current?.signal;
 
     try {
       const token = await getAccessToken();
@@ -124,8 +135,8 @@ export function DevicesPage() {
       toast.error(append ? 'Failed to load more devices' : 'Failed to load devices');
     } finally {
       if (append) {
-        devicesLoadMoreInFlightRef.current = false;
         if (currentGen === devicesReadGenerationRef.current) {
+          devicesLoadMoreInFlightRef.current = false;
           setLoadingMore(false);
         }
       } else {
@@ -140,6 +151,7 @@ export function DevicesPage() {
     void loadDevices(false);
     return () => {
       devicesAbortControllerRef.current?.abort();
+      devicesLoadMoreAbortControllerRef.current?.abort();
     };
   }, []);
 

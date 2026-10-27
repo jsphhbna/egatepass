@@ -42,6 +42,10 @@ interface TemplateVersionRecord {
 
 export type TemplateMutation = 'save' | 'publish' | 'restore' | null;
 
+export function isThermalEditorLocked(activeMutation: string | null, loading: boolean): boolean {
+  return activeMutation !== null || loading;
+}
+
 export function AdminPrintTemplatesPage() {
   const { role } = useAuth();
   const isSuper = isSuperAdmin(role);
@@ -145,10 +149,12 @@ export function AdminPrintTemplatesPage() {
     );
   }
 
+  const editorLocked = isThermalEditorLocked(activeMutation, loading);
   const selectedElement = layout.elements.find((el) => el.id === selectedElementId) || null;
 
   // Element property updates
   function updateElement(id: string, partial: Partial<ThermalElement>) {
+    if (editorLocked) return;
     setLayout((prev) => ({
       ...prev,
       elements: prev.elements.map((el) => (el.id === id ? { ...el, ...partial } : el)),
@@ -157,6 +163,7 @@ export function AdminPrintTemplatesPage() {
 
   // Add static element (divider, text, rectangle)
   function handleAddElement(type: 'text' | 'divider' | 'rectangle') {
+    if (editorLocked) return;
     const newId = `elem-${Date.now().toString(36)}`;
     let newElement: ThermalElement;
 
@@ -206,6 +213,7 @@ export function AdminPrintTemplatesPage() {
 
   // Delete element (only if not locked/mandatory)
   function handleDeleteElement(id: string) {
+    if (editorLocked) return;
     const elem = layout.elements.find((e) => e.id === id);
     if (!elem) return;
 
@@ -227,6 +235,7 @@ export function AdminPrintTemplatesPage() {
 
   // Canvas height update (canonical 400..1600 range, no undeclared canvasHeight)
   function handleCanvasHeightChange(newHeight: number) {
+    if (editorLocked) return;
     const bounded = Math.max(400, Math.min(1600, newHeight));
     setLayout((prev) => ({ ...prev, height: bounded }));
   }
@@ -460,8 +469,15 @@ export function AdminPrintTemplatesPage() {
                 <input
                   type="text"
                   value={templateName}
-                  onChange={(e) => setTemplateName(e.target.value)}
-                  className="w-full rounded-md border border-[var(--color-border)] bg-[var(--color-canvas)] px-3 py-1.5 text-sm"
+                  disabled={editorLocked}
+                  onChange={(e) => {
+                    if (!editorLocked) setTemplateName(e.target.value);
+                  }}
+                  className={`w-full rounded-md border border-[var(--color-border)] px-3 py-1.5 text-sm ${
+                    editorLocked
+                      ? 'bg-[var(--color-surface-hover)] cursor-not-allowed text-[var(--color-text-secondary)]'
+                      : 'bg-[var(--color-canvas)]'
+                  }`}
                 />
               </div>
 
@@ -475,8 +491,11 @@ export function AdminPrintTemplatesPage() {
                   max="1600"
                   step="20"
                   value={layout.height}
+                  disabled={editorLocked}
                   onChange={(e) => handleCanvasHeightChange(Number(e.target.value))}
-                  className="w-full cursor-pointer accent-[#800000]"
+                  className={`w-full accent-[#800000] ${
+                    editorLocked ? 'cursor-not-allowed opacity-60' : 'cursor-pointer'
+                  }`}
                 />
               </div>
 
@@ -538,8 +557,13 @@ export function AdminPrintTemplatesPage() {
                       <input
                         type="text"
                         value={selectedElement.text || ''}
+                        disabled={editorLocked}
                         onChange={(e) => updateElement(selectedElement.id, { text: e.target.value })}
-                        className="w-full rounded-md border border-[var(--color-border)] bg-[var(--color-canvas)] px-2.5 py-1 text-xs"
+                        className={`w-full rounded-md border border-[var(--color-border)] px-2.5 py-1 text-xs ${
+                          editorLocked
+                            ? 'bg-[var(--color-surface-hover)] cursor-not-allowed text-[var(--color-text-secondary)]'
+                            : 'bg-[var(--color-canvas)]'
+                        }`}
                       />
                     </div>
                   )}
@@ -554,8 +578,13 @@ export function AdminPrintTemplatesPage() {
                         min="0"
                         max="384"
                         value={selectedElement.x}
+                        disabled={editorLocked}
                         onChange={(e) => updateElement(selectedElement.id, { x: Number(e.target.value) })}
-                        className="w-full rounded-md border border-[var(--color-border)] bg-[var(--color-canvas)] px-2 py-1 text-xs"
+                        className={`w-full rounded-md border border-[var(--color-border)] px-2 py-1 text-xs ${
+                          editorLocked
+                            ? 'bg-[var(--color-surface-hover)] cursor-not-allowed text-[var(--color-text-secondary)]'
+                            : 'bg-[var(--color-canvas)]'
+                        }`}
                       />
                     </div>
                     <div>
@@ -567,8 +596,13 @@ export function AdminPrintTemplatesPage() {
                         min="0"
                         max={layout.height}
                         value={selectedElement.y}
+                        disabled={editorLocked}
                         onChange={(e) => updateElement(selectedElement.id, { y: Number(e.target.value) })}
-                        className="w-full rounded-md border border-[var(--color-border)] bg-[var(--color-canvas)] px-2 py-1 text-xs"
+                        className={`w-full rounded-md border border-[var(--color-border)] px-2 py-1 text-xs ${
+                          editorLocked
+                            ? 'bg-[var(--color-surface-hover)] cursor-not-allowed text-[var(--color-text-secondary)]'
+                            : 'bg-[var(--color-canvas)]'
+                        }`}
                       />
                     </div>
                   </div>
@@ -584,10 +618,15 @@ export function AdminPrintTemplatesPage() {
                           min="8"
                           max="36"
                           value={selectedElement.fontSize}
+                          disabled={editorLocked}
                           onChange={(e) =>
                             updateElement(selectedElement.id, { fontSize: Number(e.target.value) })
                           }
-                          className="w-full rounded-md border border-[var(--color-border)] bg-[var(--color-canvas)] px-2 py-1 text-xs"
+                          className={`w-full rounded-md border border-[var(--color-border)] px-2 py-1 text-xs ${
+                            editorLocked
+                              ? 'bg-[var(--color-surface-hover)] cursor-not-allowed text-[var(--color-text-secondary)]'
+                              : 'bg-[var(--color-canvas)]'
+                          }`}
                         />
                       </div>
                       <div>
@@ -596,10 +635,15 @@ export function AdminPrintTemplatesPage() {
                         </label>
                         <select
                           value={selectedElement.align || 'center'}
+                          disabled={editorLocked}
                           onChange={(e) =>
                             updateElement(selectedElement.id, { align: e.target.value as any })
                           }
-                          className="w-full rounded-md border border-[var(--color-border)] bg-[var(--color-canvas)] px-2 py-1 text-xs"
+                          className={`w-full rounded-md border border-[var(--color-border)] px-2 py-1 text-xs ${
+                            editorLocked
+                              ? 'bg-[var(--color-surface-hover)] cursor-not-allowed text-[var(--color-text-secondary)]'
+                              : 'bg-[var(--color-canvas)]'
+                          }`}
                         >
                           <option value="left">Left</option>
                           <option value="center">Center</option>
@@ -620,10 +664,15 @@ export function AdminPrintTemplatesPage() {
                           min="20"
                           max="384"
                           value={selectedElement.width}
+                          disabled={editorLocked}
                           onChange={(e) =>
                             updateElement(selectedElement.id, { width: Number(e.target.value) })
                           }
-                          className="w-full rounded-md border border-[var(--color-border)] bg-[var(--color-canvas)] px-2 py-1 text-xs"
+                          className={`w-full rounded-md border border-[var(--color-border)] px-2 py-1 text-xs ${
+                            editorLocked
+                              ? 'bg-[var(--color-surface-hover)] cursor-not-allowed text-[var(--color-text-secondary)]'
+                              : 'bg-[var(--color-canvas)]'
+                          }`}
                         />
                       </div>
                       <div>
@@ -635,10 +684,15 @@ export function AdminPrintTemplatesPage() {
                           min="1"
                           max="384"
                           value={selectedElement.height || 1}
+                          disabled={editorLocked}
                           onChange={(e) =>
                             updateElement(selectedElement.id, { height: Number(e.target.value) })
                           }
-                          className="w-full rounded-md border border-[var(--color-border)] bg-[var(--color-canvas)] px-2 py-1 text-xs"
+                          className={`w-full rounded-md border border-[var(--color-border)] px-2 py-1 text-xs ${
+                            editorLocked
+                              ? 'bg-[var(--color-surface-hover)] cursor-not-allowed text-[var(--color-text-secondary)]'
+                              : 'bg-[var(--color-canvas)]'
+                          }`}
                         />
                       </div>
                     </div>
@@ -650,6 +704,7 @@ export function AdminPrintTemplatesPage() {
                         size="sm"
                         variant="destructive-outline"
                         onClick={() => handleDeleteElement(selectedElement.id)}
+                        disabled={editorLocked}
                         className="w-full"
                         icon={<Trash2 className="h-3.5 w-3.5" />}
                       >
@@ -674,6 +729,7 @@ export function AdminPrintTemplatesPage() {
                 <Button
                   size="sm"
                   variant="secondary"
+                  disabled={editorLocked}
                   onClick={() => handleAddElement('text')}
                   icon={<Type className="h-3 w-3" />}
                 >
@@ -682,6 +738,7 @@ export function AdminPrintTemplatesPage() {
                 <Button
                   size="sm"
                   variant="secondary"
+                  disabled={editorLocked}
                   onClick={() => handleAddElement('divider')}
                   icon={<Plus className="h-3 w-3" />}
                 >
@@ -690,6 +747,7 @@ export function AdminPrintTemplatesPage() {
                 <Button
                   size="sm"
                   variant="secondary"
+                  disabled={editorLocked}
                   onClick={() => handleAddElement('rectangle')}
                   icon={<Maximize2 className="h-3 w-3" />}
                 >
@@ -813,7 +871,7 @@ export function AdminPrintTemplatesPage() {
                       e.stopPropagation();
                       setSelectedElementId(el.id);
                     }}
-                    className={`absolute cursor-move transition-all ${
+                    className={`absolute ${editorLocked ? 'cursor-default' : 'cursor-move'} transition-all ${
                       isSelected
                         ? 'ring-2 ring-blue-500 ring-offset-1 z-30'
                         : 'hover:ring-1 hover:ring-zinc-400 z-10'

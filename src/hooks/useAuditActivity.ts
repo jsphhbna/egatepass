@@ -200,12 +200,43 @@ function usePaginatedActivity<T>(
   const [loadingMore, setLoadingMore] = useState(false);
   const cursorRef = useRef<string | null>(null);
   const requestIdRef = useRef(0);
+  const loadMoreInFlightRef = useRef(false);
+  const abortControllerRef = useRef<AbortController | null>(null);
+  const loadMoreAbortControllerRef = useRef<AbortController | null>(null);
   const filtersKey = JSON.stringify(filters ?? {});
 
   const loadPage = useCallback(async (append: boolean) => {
     if (!enabled) return;
-    const requestId = requestIdRef.current;
-    append ? setLoadingMore(true) : setState({ data: [], loading: true, error: null });
+
+    if (append) {
+      if (loadMoreInFlightRef.current || !cursorRef.current) return;
+      loadMoreInFlightRef.current = true;
+      setLoadingMore(true);
+    } else {
+      abortControllerRef.current?.abort();
+      const controller = new AbortController();
+      abortControllerRef.current = controller;
+
+      // Invalidate load more state and abort in-flight append
+      loadMoreAbortControllerRef.current?.abort();
+      loadMoreAbortControllerRef.current = null;
+      loadMoreInFlightRef.current = false;
+      setLoadingMore(false);
+      cursorRef.current = null;
+      setHasMore(false);
+
+      setState({ data: [], loading: true, error: null });
+    }
+
+    const requestId = append ? requestIdRef.current : ++requestIdRef.current;
+    if (append) {
+      loadMoreAbortControllerRef.current?.abort();
+      const loadMoreController = new AbortController();
+      loadMoreAbortControllerRef.current = loadMoreController;
+    }
+    const signal = append ? loadMoreAbortControllerRef.current?.signal : abortControllerRef.current?.signal;
+    const cursor = append ? cursorRef.current : null;
+
     try {
       const token = await getAccessToken();
       const params = new URLSearchParams({
@@ -217,11 +248,12 @@ function usePaginatedActivity<T>(
           if (val && val.trim()) params.set(key, val.trim());
         });
       }
-      if (append && cursorRef.current) {
-        params.set('cursor', cursorRef.current);
+      if (append && cursor) {
+        params.set('cursor', cursor);
       }
       const response = await fetch(`/api/admin/activity?${params.toString()}`, {
         headers: { Authorization: `Bearer ${token}` },
+        signal,
       });
       const data = await response.json().catch(() => null) as {
         items?: any[];
@@ -229,29 +261,40 @@ function usePaginatedActivity<T>(
         hasMore?: boolean;
         error?: string;
       } | null;
+
+      if (signal?.aborted || requestId !== requestIdRef.current) return;
       if (!response.ok) throw new Error(data?.error || errorMessage);
-      if (requestId !== requestIdRef.current) return;
 
       const page: T[] = (data?.items ?? []).map(mapper);
       cursorRef.current = data?.nextCursor ?? null;
       setHasMore(data?.hasMore ?? false);
       setState((current) => ({ data: append ? [...current.data, ...page] : page, loading: false, error: null }));
-    } catch {
-      if (requestId === requestIdRef.current) {
-        setState((current) => ({ data: append ? current.data : [], loading: false, error: errorMessage }));
-      }
+    } catch (err: any) {
+      if (signal?.aborted || requestId !== requestIdRef.current) return;
+      setState((current) => ({ data: append ? current.data : [], loading: false, error: errorMessage }));
     } finally {
-      if (requestId === requestIdRef.current) setLoadingMore(false);
+      if (append) {
+        if (requestId === requestIdRef.current) {
+          loadMoreInFlightRef.current = false;
+          setLoadingMore(false);
+        }
+      } else {
+        if (requestId === requestIdRef.current) {
+          setState((current) => ({ ...current, loading: false }));
+        }
+      }
     }
   }, [enabled, errorMessage, mapper, type, filtersKey]);
 
   useEffect(() => {
     if (!enabled) return;
-    requestIdRef.current += 1;
-    cursorRef.current = null;
-    setHasMore(false);
     void loadPage(false);
-    return () => { requestIdRef.current += 1; };
+    return () => {
+      requestIdRef.current += 1;
+      abortControllerRef.current?.abort();
+      loadMoreAbortControllerRef.current?.abort();
+      loadMoreInFlightRef.current = false;
+    };
   }, [enabled, loadPage, filtersKey]);
 
   return { ...state, hasMore, loadingMore, loadMore: () => void loadPage(true) };
@@ -283,17 +326,50 @@ export function useReconciliationItems(enabled: boolean): PaginatedReconciliatio
   const [loadingMore, setLoadingMore] = useState(false);
   const cursorRef = useRef<string | null>(null);
 
+  const reconciliationGenerationRef = useRef(0);
+  const reconciliationAbortControllerRef = useRef<AbortController | null>(null);
+  const reconciliationLoadMoreAbortControllerRef = useRef<AbortController | null>(null);
+  const reconciliationLoadMoreInFlightRef = useRef(false);
+
   const loadPage = useCallback(async (append: boolean) => {
     if (!enabled) return;
-    append ? setLoadingMore(true) : setState({ data: [], loading: true, error: null });
+
+    if (append) {
+      if (reconciliationLoadMoreInFlightRef.current || !cursorRef.current) return;
+      reconciliationLoadMoreInFlightRef.current = true;
+      setLoadingMore(true);
+      reconciliationLoadMoreAbortControllerRef.current?.abort();
+      const loadMoreController = new AbortController();
+      reconciliationLoadMoreAbortControllerRef.current = loadMoreController;
+    } else {
+      reconciliationAbortControllerRef.current?.abort();
+      const controller = new AbortController();
+      reconciliationAbortControllerRef.current = controller;
+
+      // Invalidate load more state and abort in-flight append
+      reconciliationLoadMoreAbortControllerRef.current?.abort();
+      reconciliationLoadMoreAbortControllerRef.current = null;
+      reconciliationLoadMoreInFlightRef.current = false;
+      setLoadingMore(false);
+      cursorRef.current = null;
+      setHasMore(false);
+
+      setState({ data: [], loading: true, error: null });
+    }
+
+    const currentGen = append ? reconciliationGenerationRef.current : ++reconciliationGenerationRef.current;
+    const signal = append ? reconciliationLoadMoreAbortControllerRef.current?.signal : reconciliationAbortControllerRef.current?.signal;
+    const cursor = append ? cursorRef.current : null;
+
     try {
       const token = await getAccessToken();
       const params = new URLSearchParams({ pageSize: '50' });
-      if (append && cursorRef.current) {
-        params.set('cursor', cursorRef.current);
+      if (append && cursor) {
+        params.set('cursor', cursor);
       }
       const response = await fetch(`/api/reconciliation-items?${params.toString()}`, {
         headers: { Authorization: `Bearer ${token}` },
+        signal,
       });
       const body = await response.json().catch(() => null) as {
         items?: ReconciliationItem[];
@@ -302,9 +378,12 @@ export function useReconciliationItems(enabled: boolean): PaginatedReconciliatio
         nextCursor?: string | null;
         error?: string;
       } | null;
+
+      if (signal?.aborted || currentGen !== reconciliationGenerationRef.current) return;
       if (!response.ok) throw new Error(body?.error || 'Reconciliation items could not be loaded.');
       const rawItems = Array.isArray(body?.items) ? body.items : [];
       const items = rawItems.map(mapRawReconciliationItem);
+
       cursorRef.current = body?.nextCursor ?? null;
       setHasMore(Boolean(body?.hasMore));
       setTotal(body?.total ?? items.length);
@@ -313,21 +392,36 @@ export function useReconciliationItems(enabled: boolean): PaginatedReconciliatio
         loading: false,
         error: null,
       }));
-    } catch (error) {
+    } catch (error: any) {
+      if (signal?.aborted || currentGen !== reconciliationGenerationRef.current) return;
       setState((current) => ({
         data: append ? current.data : [],
         loading: false,
         error: error instanceof Error ? error.message : 'Reconciliation items could not be loaded.',
       }));
     } finally {
-      setLoadingMore(false);
+      if (append) {
+        if (currentGen === reconciliationGenerationRef.current) {
+          reconciliationLoadMoreInFlightRef.current = false;
+          setLoadingMore(false);
+        }
+      } else {
+        if (currentGen === reconciliationGenerationRef.current) {
+          setState((current) => ({ ...current, loading: false }));
+        }
+      }
     }
   }, [enabled]);
 
   useEffect(() => {
     if (!enabled) return;
-    cursorRef.current = null;
     void loadPage(false);
+    return () => {
+      reconciliationGenerationRef.current += 1;
+      reconciliationAbortControllerRef.current?.abort();
+      reconciliationLoadMoreAbortControllerRef.current?.abort();
+      reconciliationLoadMoreInFlightRef.current = false;
+    };
   }, [enabled, loadPage]);
 
   return { ...state, total, hasMore, loadingMore, loadMore: () => void loadPage(true), refresh: () => void loadPage(false) };

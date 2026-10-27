@@ -49,6 +49,7 @@ export function AdminUsers() {
 
   const usersReadGenerationRef = useRef(0);
   const usersAbortControllerRef = useRef<AbortController | null>(null);
+  const usersLoadMoreAbortControllerRef = useRef<AbortController | null>(null);
   const usersLoadMoreInFlightRef = useRef(false);
 
   const {
@@ -66,6 +67,12 @@ export function AdminUsers() {
     usersAbortControllerRef.current?.abort();
     const controller = new AbortController();
     usersAbortControllerRef.current = controller;
+
+    // Invalidate load-more ownership and abort in-flight append
+    usersLoadMoreAbortControllerRef.current?.abort();
+    usersLoadMoreAbortControllerRef.current = null;
+    usersLoadMoreInFlightRef.current = false;
+    setLoadingMore(false);
 
     setLoading(true);
     try {
@@ -95,24 +102,29 @@ export function AdminUsers() {
     usersLoadMoreInFlightRef.current = true;
     setLoadingMore(true);
     const currentGen = usersReadGenerationRef.current;
+
+    usersLoadMoreAbortControllerRef.current?.abort();
+    const loadMoreController = new AbortController();
+    usersLoadMoreAbortControllerRef.current = loadMoreController;
+
     try {
       const response = await fetch(`/api/admin/users?limit=50&cursor=${encodeURIComponent(nextCursor)}`, {
         headers: { Authorization: `Bearer ${await getAccessToken()}` },
+        signal: loadMoreController.signal,
       });
       const body = await response.json().catch(() => null) as { users?: AppUserWithId[]; nextCursor?: string | null; hasMore?: boolean; error?: string } | null;
-      if (currentGen !== usersReadGenerationRef.current) return;
+      if (loadMoreController.signal.aborted || currentGen !== usersReadGenerationRef.current) return;
       if (!response.ok) throw new Error(body?.error || 'Failed to load more users');
       setUsers((prev) => [...prev, ...(body?.users ?? [])]);
       setNextCursor(body?.nextCursor ?? null);
       setHasMore(body?.hasMore ?? false);
-    } catch (err) {
-      if (currentGen === usersReadGenerationRef.current) {
-        console.error(err);
-        toast.error('Failed to load more users');
-      }
+    } catch (err: any) {
+      if (loadMoreController.signal.aborted || currentGen !== usersReadGenerationRef.current) return;
+      console.error(err);
+      toast.error('Failed to load more users');
     } finally {
-      usersLoadMoreInFlightRef.current = false;
       if (currentGen === usersReadGenerationRef.current) {
+        usersLoadMoreInFlightRef.current = false;
         setLoadingMore(false);
       }
     }
@@ -122,6 +134,7 @@ export function AdminUsers() {
     loadUsers();
     return () => {
       usersAbortControllerRef.current?.abort();
+      usersLoadMoreAbortControllerRef.current?.abort();
     };
   }, []);
 

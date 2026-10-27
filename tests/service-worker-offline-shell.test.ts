@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import fs from 'node:fs';
 import path from 'node:path';
+import vm from 'node:vm';
 
 describe('Section I: Service Worker & Offline App Shell Reliability', () => {
   const swPath = path.resolve(process.cwd(), 'public/sw.js');
@@ -9,6 +10,86 @@ describe('Section I: Service Worker & Offline App Shell Reliability', () => {
   beforeEach(() => {
     swSource = fs.readFileSync(swPath, 'utf8');
   });
+
+  function createSwSandbox(swUrl = 'https://egatepass.tech/sw.js?v=commit-bbb') {
+    const listeners: Record<string, ((event: any) => void)[]> = {};
+    const cacheStores = new Map<string, Map<string, Response>>();
+
+    const mockCaches = {
+      keys: vi.fn(async () => Array.from(cacheStores.keys())),
+      open: vi.fn(async (cacheName: string) => {
+        if (!cacheStores.has(cacheName)) {
+          cacheStores.set(cacheName, new Map());
+        }
+        const store = cacheStores.get(cacheName)!;
+        return {
+          addAll: vi.fn(async (urls: string[]) => {
+            for (const u of urls) store.set(u, new Response('<html>shell</html>', { status: 200 }));
+          }),
+          match: vi.fn(async (req: any) => {
+            const key = typeof req === 'string' ? req : req.url;
+            return store.get(key) || null;
+          }),
+          put: vi.fn(async (req: any, res: any) => {
+            const key = typeof req === 'string' ? req : req.url;
+            store.set(key, res);
+          }),
+        };
+      }),
+      delete: vi.fn(async (cacheName: string) => {
+        return cacheStores.delete(cacheName);
+      }),
+      match: vi.fn(async (req: any) => {
+        const key = typeof req === 'string' ? req : req.url;
+        for (const store of cacheStores.values()) {
+          if (store.has(key)) return store.get(key);
+        }
+        return null;
+      }),
+    };
+
+    const mockFetch = vi.fn(async (req: any) => {
+      const url = typeof req === 'string' ? req : req.url;
+      if (url.includes('broken.js')) {
+        throw new TypeError('Failed to fetch (404)');
+      }
+      return new Response(`response for ${url}`, { status: 200 });
+    });
+
+    const sandbox = {
+      location: new URL(swUrl),
+      self: {} as any,
+      addEventListener: vi.fn((type: string, handler: (event: any) => void) => {
+        listeners[type] = listeners[type] || [];
+        listeners[type].push(handler);
+      }),
+      skipWaiting: vi.fn(async () => {}),
+      clients: {
+        claim: vi.fn(async () => {}),
+      },
+      caches: mockCaches,
+      fetch: mockFetch,
+      console,
+      URL,
+      Response,
+      Promise,
+      Array,
+      Map,
+      Set,
+    };
+    sandbox.self = sandbox;
+
+    const context = vm.createContext(sandbox);
+    vm.runInContext(swSource, context);
+
+    return {
+      sandbox,
+      listeners,
+      mockCaches,
+      cacheStores,
+      mockFetch,
+    };
+  }
 
   it('I.1: sw.js enforces security invariant: NEVER caches /api/*, /rest/*, or /storage/*', () => {
     expect(swSource).toContain("url.pathname.startsWith('/api/')");
@@ -28,44 +109,7 @@ describe('Section I: Service Worker & Offline App Shell Reliability', () => {
     expect(swSource).toContain("event.data.type === 'PRECACHE_ASSETS'");
   });
 
-  it('I.4: simulates offline reload after initial online visit with static cache', async () => {
-    const mockCacheStore = new Map<string, Response>();
-    const mockCache = {
-      addAll: vi.fn(async (urls: string[]) => {
-        for (const u of urls) {
-          mockCacheStore.set(u, new Response('<html>mock app shell</html>', { status: 200 }));
-        }
-      }),
-      put: vi.fn(async (req: any, res: any) => {
-        const key = typeof req === 'string' ? req : req.url;
-        mockCacheStore.set(key, res);
-      }),
-      match: vi.fn(async (req: any) => {
-        const key = typeof req === 'string' ? req : req.url;
-        return mockCacheStore.get(key) || null;
-      }),
-    };
-
-    // Precache shell
-    await mockCache.addAll(['/', '/index.html', '/earist-logo.png']);
-    expect(mockCacheStore.has('/index.html')).toBe(true);
-
-    // Simulate navigation request while OFFLINE (fetch fails)
-    const simulateOfflineNavigation = async (_urlStr: string) => {
-      try {
-        throw new TypeError('Failed to fetch (offline)');
-      } catch {
-        return mockCache.match('/index.html');
-      }
-    };
-
-    const offlineResponse = await simulateOfflineNavigation('https://egatepass.tech/guard');
-    expect(offlineResponse).not.toBeNull();
-    const text = await offlineResponse!.text();
-    expect(text).toContain('mock app shell');
-  });
-
-  it('I.5: verifies that main.tsx posts asset discovery message to service worker on registration with build version', () => {
+  it('I.4: verifies that main.tsx posts asset discovery message to service worker on registration with build version', () => {
     const mainPath = path.resolve(process.cwd(), 'src/main.tsx');
     const mainContent = fs.readFileSync(mainPath, 'utf8');
 
@@ -75,172 +119,148 @@ describe('Section I: Service Worker & Offline App Shell Reliability', () => {
     expect(mainContent).toContain("type: 'PRECACHE_ASSETS'");
   });
 
-  it('I.6: successful same-origin online navigation updates cached /index.html with fresh network response clone', () => {
-    expect(swSource).toContain("if (networkResponse && networkResponse.status === 200 && url.origin === self.location.origin)");
-    expect(swSource).toContain("cache.put('/index.html', clone)");
-  });
+  // =========================================================================
+  // Section 9 VM-Backed Execution Tests Running Actual public/sw.js
+  // =========================================================================
 
-  // Section 26 Behavioral Tests
-  it('Behavioral 1: build A and build B produce different E-GatePass cache names', () => {
-    const computeCacheName = (href: string) => {
-      const buildId = new URL(href).searchParams.get('v') || 'v1';
-      return `egatepass-shell-${buildId}`;
-    };
+  it('I.5 (Behavioral): actual activate handler from sw.js purges obsolete egatepass caches but preserves current and external caches', async () => {
+    const { listeners, mockCaches, cacheStores } = createSwSandbox('https://egatepass.tech/sw.js?v=commit-bbb');
 
-    const cacheA = computeCacheName('https://egatepass.tech/sw.js?v=commit-aaa');
-    const cacheB = computeCacheName('https://egatepass.tech/sw.js?v=commit-bbb');
-    const cacheDefault = computeCacheName('https://egatepass.tech/sw.js');
+    // Populate cacheStores with old and unrelated caches
+    cacheStores.set('egatepass-shell-commit-aaa', new Map());
+    cacheStores.set('egatepass-shell-commit-bbb', new Map()); // current
+    cacheStores.set('egatepass-shell-v1', new Map());
+    cacheStores.set('other-app-cache-v2', new Map());
+    cacheStores.set('supabase-auth-token-cache', new Map());
 
-    expect(cacheA).toBe('egatepass-shell-commit-aaa');
-    expect(cacheB).toBe('egatepass-shell-commit-bbb');
-    expect(cacheDefault).toBe('egatepass-shell-v1');
-    expect(cacheA).not.toBe(cacheB);
-  });
+    expect(listeners['activate']).toBeDefined();
+    expect(listeners['activate'].length).toBeGreaterThan(0);
 
-  it('Behavioral 2 & 3: activation for B deletes old egatepass-shell-* caches while preserving unrelated caches', async () => {
-    const existingCaches = new Set([
-      'egatepass-shell-commit-aaa',
-      'egatepass-shell-commit-bbb',
-      'other-app-data-v1',
-      'firebase-installations-database',
-      'egatepass-shell-v1',
-    ]);
-
-    const CURRENT_CACHE = 'egatepass-shell-commit-bbb';
-
-    // Simulate SW activate cleanup logic
-    const keys = Array.from(existingCaches);
-    await Promise.all(
-      keys.map(async (key) => {
-        if (key.startsWith('egatepass-shell-') && key !== CURRENT_CACHE) {
-          existingCaches.delete(key);
-        }
-      })
-    );
-
-    // Assert that old egatepass-shell caches were removed
-    expect(existingCaches.has('egatepass-shell-commit-aaa')).toBe(false);
-    expect(existingCaches.has('egatepass-shell-v1')).toBe(false);
-    // Current cache remains
-    expect(existingCaches.has('egatepass-shell-commit-bbb')).toBe(true);
-    // Unrelated caches are strictly preserved
-    expect(existingCaches.has('other-app-data-v1')).toBe(true);
-    expect(existingCaches.has('firebase-installations-database')).toBe(true);
-  });
-
-  it('Behavioral 4 & 5: PRECACHE_ASSETS awaits all puts and does not fail complete lifecycle on one failed asset', async () => {
-    const cacheStore = new Map<string, Response>();
-    const putCompleted: string[] = [];
-
-    const mockCache = {
-      match: vi.fn(async (url: string) => cacheStore.get(url) || null),
-      put: vi.fn(async (url: string, res: Response) => {
-        // simulate async storage delay
-        await new Promise((resolve) => setTimeout(resolve, 10));
-        cacheStore.set(url, res);
-        putCompleted.push(url);
+    let waitPromise: Promise<any> | null = null;
+    const activateEvent = {
+      waitUntil: vi.fn((p: Promise<any>) => {
+        waitPromise = p;
       }),
     };
 
-    const mockFetch = vi.fn(async (url: string) => {
-      if (url === '/assets/broken.js') {
-        throw new Error('404 Not Found');
-      }
-      return new Response(`content of ${url}`, { status: 200 });
+    listeners['activate'][0](activateEvent);
+    expect(activateEvent.waitUntil).toHaveBeenCalled();
+    await waitPromise;
+
+    // Verify through the real evaluated code that old egatepass caches were deleted
+    expect(mockCaches.delete).toHaveBeenCalledWith('egatepass-shell-commit-aaa');
+    expect(mockCaches.delete).toHaveBeenCalledWith('egatepass-shell-v1');
+    // Current cache and unrelated caches were NOT deleted
+    expect(mockCaches.delete).not.toHaveBeenCalledWith('egatepass-shell-commit-bbb');
+    expect(mockCaches.delete).not.toHaveBeenCalledWith('other-app-cache-v2');
+    expect(mockCaches.delete).not.toHaveBeenCalledWith('supabase-auth-token-cache');
+  });
+
+  it('I.6 (Behavioral): PRECACHE_ASSETS actual message handler passes real pending Promise to waitUntil and populates cache', async () => {
+    const { listeners, cacheStores } = createSwSandbox('https://egatepass.tech/sw.js?v=commit-bbb');
+
+    expect(listeners['message']).toBeDefined();
+
+    let waitPromise: Promise<any> | null = null;
+    const messageEvent = {
+      data: {
+        type: 'PRECACHE_ASSETS',
+        assets: ['/assets/main.js', '/assets/broken.js', '/assets/style.css'],
+      },
+      waitUntil: vi.fn((p: Promise<any>) => {
+        waitPromise = p;
+      }),
+    };
+
+    listeners['message'][0](messageEvent);
+    expect(messageEvent.waitUntil).toHaveBeenCalledWith(expect.any(Promise));
+    await waitPromise;
+
+    const currentStore = cacheStores.get('egatepass-shell-commit-bbb');
+    expect(currentStore).toBeDefined();
+    expect(currentStore?.has('/assets/main.js')).toBe(true);
+    expect(currentStore?.has('/assets/style.css')).toBe(true);
+    // Broken asset was caught gracefully without failing the outer promise
+    expect(currentStore?.has('/assets/broken.js')).toBe(false);
+  });
+
+  it('I.7 (Behavioral): actual fetch handler routes navigation requests and falls back to /index.html when offline', async () => {
+    const { listeners, cacheStores, mockFetch } = createSwSandbox('https://egatepass.tech/sw.js?v=commit-bbb');
+
+    // Pre-populate /index.html in cache
+    const currentStore = new Map<string, Response>();
+    currentStore.set('/index.html', new Response('<html>cached index</html>', { status: 200 }));
+    cacheStores.set('egatepass-shell-commit-bbb', currentStore);
+
+    expect(listeners['fetch']).toBeDefined();
+
+    // 1. Simulate offline navigation: fetch throws
+    mockFetch.mockImplementationOnce(async () => {
+      throw new TypeError('Failed to fetch (offline)');
     });
 
-    const assetsToPrecache = ['/assets/index-1.js', '/assets/broken.js', '/assets/index-2.css'];
-
-    // Run the exact SW message logic
-    const handlePrecacheAssets = async (assets: string[]) => {
-      await Promise.all(
-        assets.map(async (assetUrl) => {
-          if (typeof assetUrl === 'string' && (assetUrl.startsWith('/assets/') || assetUrl.startsWith('/'))) {
-            try {
-              const match = await mockCache.match(assetUrl);
-              if (!match) {
-                const res = await mockFetch(assetUrl);
-                if (res && res.ok) {
-                  await mockCache.put(assetUrl, res);
-                }
-              }
-            } catch {
-              // Graceful failure per requirement 5
-            }
-          }
-        })
-      );
-    };
-
-    // Await the operation (as event.waitUntil does)
-    await handlePrecacheAssets(assetsToPrecache);
-
-    // Verify all valid puts were awaited and completed
-    expect(putCompleted).toContain('/assets/index-1.js');
-    expect(putCompleted).toContain('/assets/index-2.css');
-    expect(cacheStore.has('/assets/index-1.js')).toBe(true);
-    expect(cacheStore.has('/assets/index-2.css')).toBe(true);
-    // Broken asset was caught and did not reject the outer Promise.all
-    expect(cacheStore.has('/assets/broken.js')).toBe(false);
-  });
-
-  it('Behavioral 6: API, REST, and Storage GET requests return immediately without touching CacheStorage', () => {
-    const shouldBypassCache = (pathname: string, method = 'GET') => {
-      return (
-        pathname.startsWith('/api/') ||
-        pathname.startsWith('/rest/v1/') ||
-        pathname.startsWith('/storage/v1/') ||
-        method !== 'GET'
-      );
-    };
-
-    expect(shouldBypassCache('/api/admin/dashboard')).toBe(true);
-    expect(shouldBypassCache('/rest/v1/gate_passes')).toBe(true);
-    expect(shouldBypassCache('/storage/v1/object/public/photos/visitor.jpg')).toBe(true);
-    expect(shouldBypassCache('/assets/index-abc.js', 'POST')).toBe(true);
-    expect(shouldBypassCache('/assets/index-abc.js', 'GET')).toBe(false);
-    expect(shouldBypassCache('/index.html', 'GET')).toBe(false);
-  });
-
-  it('Behavioral 7 & 8: navigation updates index.html on network success and falls back on offline', async () => {
-    let cachedIndexHtml = '<html>build A index</html>';
-    const cache = {
-      match: vi.fn(async (key: string) => {
-        if (key === '/index.html') return new Response(cachedIndexHtml, { status: 200 });
-        return null;
-      }),
-      put: vi.fn(async (key: string, res: Response) => {
-        if (key === '/index.html') {
-          cachedIndexHtml = await res.text();
-        }
+    let navRespondPromise: Promise<Response> | null = null;
+    const navEvent = {
+      request: {
+        url: 'https://egatepass.tech/admin/records',
+        mode: 'navigate',
+        method: 'GET',
+      },
+      respondWith: vi.fn((p: Promise<Response>) => {
+        navRespondPromise = p;
       }),
     };
 
-    // 1. Online navigation succeeds: network response clone is put to cache
-    const onlineFetch = async () => new Response('<html>build B fresh index</html>', { status: 200 });
-    const networkRes = await onlineFetch();
-    if (networkRes.status === 200) {
-      await cache.put('/index.html', networkRes);
-    }
-    expect(cachedIndexHtml).toBe('<html>build B fresh index</html>');
+    listeners['fetch'][0](navEvent);
+    expect(navEvent.respondWith).toHaveBeenCalled();
+    const fallbackResponse = await navRespondPromise!;
+    expect(fallbackResponse).not.toBeNull();
+    const fallbackText = await fallbackResponse.text();
+    expect(fallbackText).toBe('<html>cached index</html>');
 
-    // 2. Offline navigation fails: falls back to cached index.html
-    const offlineFetch = async (): Promise<Response> => {
-      throw new TypeError('Failed to fetch (offline)');
+    // 2. Simulate online navigation: fetch succeeds with 200
+    mockFetch.mockImplementationOnce(async () => {
+      return new Response('<html>fresh online index</html>', { status: 200 });
+    });
+
+    let onlineRespondPromise: Promise<Response> | null = null;
+    const onlineNavEvent = {
+      request: {
+        url: 'https://egatepass.tech/guard',
+        mode: 'navigate',
+        method: 'GET',
+      },
+      respondWith: vi.fn((p: Promise<Response>) => {
+        onlineRespondPromise = p;
+      }),
     };
 
-    const navigate = async () => {
-      try {
-        return await offlineFetch();
-      } catch {
-        const fallback = await cache.match('/index.html');
-        return fallback!;
-      }
+    listeners['fetch'][0](onlineNavEvent);
+    expect(onlineNavEvent.respondWith).toHaveBeenCalled();
+    const onlineResponse = await onlineRespondPromise!;
+    expect(await onlineResponse.text()).toBe('<html>fresh online index</html>');
+  });
+
+  it('I.8 (Behavioral): actual fetch handler never intercepts API, REST, Storage, or non-GET requests', () => {
+    const { listeners } = createSwSandbox('https://egatepass.tech/sw.js?v=commit-bbb');
+
+    const testBypass = (url: string, method = 'GET') => {
+      const event = {
+        request: {
+          url,
+          mode: 'cors',
+          method,
+        },
+        respondWith: vi.fn(),
+      };
+      listeners['fetch'][0](event);
+      expect(event.respondWith).not.toHaveBeenCalled();
     };
 
-    const fallbackRes = await navigate();
-    expect(fallbackRes).not.toBeNull();
-    const text = await fallbackRes.text();
-    expect(text).toBe('<html>build B fresh index</html>');
+    testBypass('https://egatepass.tech/api/admin/records');
+    testBypass('https://egatepass.tech/api/create-user', 'POST');
+    testBypass('https://egatepass.tech/rest/v1/gate_passes');
+    testBypass('https://egatepass.tech/storage/v1/object/public/photos/vis-1.jpg');
+    testBypass('https://egatepass.tech/assets/main.js', 'POST');
   });
 });
