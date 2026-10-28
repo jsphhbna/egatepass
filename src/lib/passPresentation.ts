@@ -112,7 +112,7 @@ export async function renderPassCardToDataUrl(
   const qrDataUrl = options?.qrDataUrl ?? (await generateBrandedQrDataUrl(presentation.qrToken, { size: 320 }));
 
   if (typeof document === 'undefined') {
-    return qrDataUrl;
+    throw new Error('Canvas rendering is not supported in this environment');
   }
 
   const svg = generateCanonicalDigitalPassSvg(presentation, qrDataUrl);
@@ -120,24 +120,50 @@ export async function renderPassCardToDataUrl(
   canvas.width = width;
   canvas.height = height;
   const ctx = canvas.getContext('2d');
-  if (!ctx) return qrDataUrl;
+  if (!ctx) {
+    throw new Error('Unable to obtain 2D canvas rendering context');
+  }
 
   const svgBlob = new Blob([svg], { type: 'image/svg+xml;charset=utf-8' });
   const url = URL.createObjectURL(svgBlob);
 
   try {
-    await new Promise<void>((resolve) => {
+    await new Promise<void>((resolve, reject) => {
+      let settled = false;
       const img = new Image();
       img.crossOrigin = 'anonymous';
+
+      const timer = setTimeout(() => {
+        if (!settled) {
+          settled = true;
+          img.onload = null;
+          img.onerror = null;
+          reject(new Error('Pass card rasterization timed out'));
+        }
+      }, 5000);
+
       img.onload = () => {
-        ctx.drawImage(img, 0, 0, width, height);
-        resolve();
+        if (!settled) {
+          settled = true;
+          clearTimeout(timer);
+          try {
+            ctx.drawImage(img, 0, 0, width, height);
+            resolve();
+          } catch (err) {
+            reject(err);
+          }
+        }
       };
+
       img.onerror = () => {
-        resolve();
+        if (!settled) {
+          settled = true;
+          clearTimeout(timer);
+          reject(new Error('Failed to load pass card SVG image'));
+        }
       };
+
       img.src = url;
-      setTimeout(resolve, 100);
     });
     return canvas.toDataURL('image/png');
   } finally {

@@ -50,20 +50,23 @@ async function handleRequest(request: Request): Promise<Response> {
 
       if (rpcResult.error) {
         const msg = rpcResult.error.message || '';
-        if (msg.includes('cannot decommission self')) {
+        if (msg.includes('cannot_decommission_self')) {
           return jsonResponse(403, { error: 'cannot_decommission_self' });
         }
-        if (msg.includes('target staff profile must already be inactive')) {
-          return jsonResponse(409, { error: 'target_user_must_be_inactive' });
-        }
-        if (msg.includes('target staff profile is already decommissioned')) {
-          return jsonResponse(409, { error: 'target_already_decommissioned' });
-        }
-        if (msg.includes('target staff profile not found')) {
+        if (msg.includes('target_user_not_found')) {
           return jsonResponse(404, { error: 'target_user_not_found' });
         }
-        if (msg.includes('managed device identities cannot be decommissioned')) {
+        if (msg.includes('cannot_decommission_device')) {
           return jsonResponse(400, { error: 'cannot_decommission_device' });
+        }
+        if (msg.includes('target_already_decommissioned')) {
+          return jsonResponse(409, { error: 'target_already_decommissioned' });
+        }
+        if (msg.includes('target_user_must_be_inactive')) {
+          return jsonResponse(409, { error: 'target_user_must_be_inactive' });
+        }
+        if (msg.includes('invalid_decommission_reason')) {
+          return jsonResponse(400, { error: 'invalid_decommission_reason' });
         }
         if (rpcResult.error.code === '42501') {
           return jsonResponse(403, { error: 'access_denied' });

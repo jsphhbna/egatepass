@@ -226,7 +226,10 @@ export function useWebcam(options: UseWebcamOptions = {}): UseWebcamResult {
 
   const setMirrorPreview = useCallback((mirror: boolean) => {
     setMirrorPreviewState(mirror);
-  }, []);
+    if (allowCaptureMirroring) {
+      setMirrorCaptureState(mirror);
+    }
+  }, [allowCaptureMirroring]);
 
   const setMirrorCapture = useCallback(
     (mirror: boolean) => {
@@ -242,12 +245,12 @@ export function useWebcam(options: UseWebcamOptions = {}): UseWebcamResult {
   const toggleMirrorPreview = useCallback(() => {
     setMirrorPreviewState((prev) => {
       const next = !prev;
-      if (allowCaptureMirroring && activeFacingMode === 'user') {
+      if (allowCaptureMirroring) {
         setMirrorCaptureState(next);
       }
       return next;
     });
-  }, [allowCaptureMirroring, activeFacingMode]);
+  }, [allowCaptureMirroring]);
 
   const toggleMirrorCapture = useCallback(() => {
     if (!allowCaptureMirroring) {

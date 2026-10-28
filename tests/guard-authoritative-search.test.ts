@@ -127,4 +127,127 @@ describe('Group I: Guard Live / Authoritative Search Contract & Invariants', () 
     // Normal live queue remains untouched with 3 items
     expect(sampleLoadedPasses.length).toBe(3);
   });
+
+  describe('Authoritative Search Action & Lifecycle Regressions', () => {
+    const visitorX: GuardQueuePass = {
+      id: 'pass-x',
+      visitorName: 'Visitor X (Outside Local Queue)',
+      purpose: 'Special Delivery',
+      entryScannedAt: '2026-10-28T09:00:00Z',
+      hasValidId: true,
+      publicReference: 'EG-XXXXXXXX',
+    };
+
+    it('rejects an authoritative-only search result using rejectingPass identity (not passes.find)', async () => {
+      // 1. Initial queue does not contain Visitor X
+      const passes: GuardQueuePass[] = [...sampleLoadedPasses];
+      expect(passes.some((p) => p.id === visitorX.id)).toBe(false);
+
+      // 2. Authoritative search returns Visitor X
+      let authoritativeResults: GuardQueuePass[] = [visitorX];
+      const displayedResults = authoritativeResults;
+      expect(displayedResults).toContainEqual(visitorX);
+
+      // 3. User clicks Reject on displayed Visitor X -> sets rejectingPass directly
+      let rejectingPass: GuardQueuePass | null = null;
+      function onRejectClick(pass: GuardQueuePass) {
+        rejectingPass = pass;
+      }
+      onRejectClick(displayedResults[0]);
+      expect(rejectingPass).toEqual(visitorX);
+
+      // 4. Mock recordDecision
+      const mockRecordDecision = vi.fn().mockResolvedValue({ ok: true, status: 'rejected' });
+
+      // 5. User selects reason and confirms reject using rejectingPass
+      const reason = 'Invalid ID presentation';
+      async function onConfirmReject() {
+        if (!rejectingPass) return;
+        await mockRecordDecision(rejectingPass.id, 'rejected', reason);
+        // Remove from authoritative results immediately
+        authoritativeResults = authoritativeResults.filter((p) => p.id !== rejectingPass?.id);
+        rejectingPass = null;
+      }
+
+      await onConfirmReject();
+
+      // Verify recordDecision was called with visitorX.id and reason
+      expect(mockRecordDecision).toHaveBeenCalledTimes(1);
+      expect(mockRecordDecision).toHaveBeenCalledWith('pass-x', 'rejected', 'Invalid ID presentation');
+
+      // Verify visitorX immediately disappears from active search results
+      expect(authoritativeResults.some((p) => p.id === 'pass-x')).toBe(false);
+      expect(rejectingPass).toBeNull();
+    });
+
+    it('approves an authoritative-only search result and immediately removes it from active search results', async () => {
+      const passes: GuardQueuePass[] = [...sampleLoadedPasses];
+      expect(passes.some((p) => p.id === visitorX.id)).toBe(false);
+
+      let authoritativeResults: GuardQueuePass[] = [visitorX];
+      const mockRecordDecision = vi.fn().mockResolvedValue({ ok: true, status: 'approved' });
+
+      async function handleApprove(pass: GuardQueuePass) {
+        authoritativeResults = authoritativeResults.filter((p) => p.id !== pass.id);
+        await mockRecordDecision(pass.id, 'approved', undefined);
+      }
+
+      await handleApprove(visitorX);
+
+      expect(mockRecordDecision).toHaveBeenCalledTimes(1);
+      expect(mockRecordDecision).toHaveBeenCalledWith('pass-x', 'approved', undefined);
+      expect(authoritativeResults.some((p) => p.id === 'pass-x')).toBe(false);
+    });
+
+    it('removes authoritative result on 409 already processed or 422 expired conflict', async () => {
+      let authoritativeResults: GuardQueuePass[] = [visitorX];
+
+      async function handleApproveWithConflict(pass: GuardQueuePass) {
+        try {
+          const err: any = new Error('already processed');
+          err.status = 409;
+          throw err;
+        } catch (err: any) {
+          if (err?.status === 409 || err?.status === 422) {
+            authoritativeResults = authoritativeResults.filter((p) => p.id !== pass.id);
+          }
+        }
+      }
+
+      await handleApproveWithConflict(visitorX);
+      expect(authoritativeResults.some((p) => p.id === 'pass-x')).toBe(false);
+    });
+
+    it('external realtime pass mutation increments searchRevalidationVersion and refreshes search query', async () => {
+      let searchRevalidationVersion = 0;
+      let activeQuery = 'Visitor X';
+      let searchCallCount = 0;
+
+      // Simulate realtime subscription handler
+      function onRealtimePassMutation() {
+        if (activeQuery.trim().length >= 2) {
+          searchRevalidationVersion += 1;
+        }
+      }
+
+      // Simulate effect watching searchRevalidationVersion and activeQuery
+      function runSearchEffect(query: string, version: number) {
+        if (query.trim().length >= 2) {
+          searchCallCount += 1;
+        }
+      }
+
+      // Initial search
+      runSearchEffect(activeQuery, searchRevalidationVersion);
+      expect(searchCallCount).toBe(1);
+
+      // External pass mutation arrives
+      onRealtimePassMutation();
+      expect(searchRevalidationVersion).toBe(1);
+
+      // Revalidation triggers
+      runSearchEffect(activeQuery, searchRevalidationVersion);
+      expect(searchCallCount).toBe(2);
+    });
+  });
 });

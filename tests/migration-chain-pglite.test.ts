@@ -521,23 +521,18 @@ describe('Permanent PostgreSQL Migration Chain & Schema Contracts (PGlite)', () 
 
     // 1. Anon safe columns -> ALLOWED
     await db.exec('set role anon;');
-    const anonQuery = await db.query<{ working_hours_start: string; visit_purposes: any }>(
-      'select working_hours_start, working_hours_end, timezone, scheduling_days_ahead, peak_mode, visit_purposes from public.app_settings;'
+    const anonQuery = await db.query<{ working_hours_start: string; visit_purposes: any; visitor_instructions: any; image_retention_days: number; visitor_retention_days: number }>(
+      'select working_hours_start, working_hours_end, timezone, scheduling_days_ahead, peak_mode, visit_purposes, visitor_instructions, image_retention_days, visitor_retention_days from public.app_settings;'
     );
     expect(anonQuery.rows.length).toBe(1);
     expect(anonQuery.rows[0].working_hours_start).toBeDefined();
+    expect(anonQuery.rows[0].visitor_instructions).toBeDefined();
+    expect(anonQuery.rows[0].image_retention_days).toBeDefined();
+    expect(anonQuery.rows[0].visitor_retention_days).toBeDefined();
 
-    // 2. Anon retention fields -> DENIED
+    // 2. Sensitive / unapproved fields -> STILL DENIED for anon
     await expect(
       db.query('select automatic_cleanup_enabled from public.app_settings;')
-    ).rejects.toThrow(/permission denied/);
-
-    await expect(
-      db.query('select image_retention_days from public.app_settings;')
-    ).rejects.toThrow(/permission denied/);
-
-    await expect(
-      db.query('select visitor_retention_days from public.app_settings;')
     ).rejects.toThrow(/permission denied/);
 
     await expect(
@@ -547,6 +542,30 @@ describe('Permanent PostgreSQL Migration Chain & Schema Contracts (PGlite)', () 
     await expect(
       db.query('select audit_retention_days from public.app_settings;')
     ).rejects.toThrow(/permission denied/);
+
+    // 3. Authenticated safe columns -> ALLOWED, sensitive columns -> DENIED
+    await db.exec('set role authenticated;');
+    const authQuery = await db.query<{ visitor_instructions: any; image_retention_days: number; visitor_retention_days: number }>(
+      'select visitor_instructions, image_retention_days, visitor_retention_days from public.app_settings;'
+    );
+    expect(authQuery.rows.length).toBe(1);
+    expect(authQuery.rows[0].visitor_instructions).toBeDefined();
+    expect(authQuery.rows[0].image_retention_days).toBeDefined();
+    expect(authQuery.rows[0].visitor_retention_days).toBeDefined();
+
+    await expect(
+      db.query('select automatic_cleanup_enabled from public.app_settings;')
+    ).rejects.toThrow(/permission denied/);
+
+    await expect(
+      db.query('select reconciliation_retention_days from public.app_settings;')
+    ).rejects.toThrow(/permission denied/);
+
+    await expect(
+      db.query('select audit_retention_days from public.app_settings;')
+    ).rejects.toThrow(/permission denied/);
+
+    await db.exec('set role anon;');
 
     // 3. Anon UPDATE -> DENIED
     await expect(
@@ -568,21 +587,21 @@ describe('Permanent PostgreSQL Migration Chain & Schema Contracts (PGlite)', () 
                 // 6. Authenticated role safe columns -> ALLOWED
     await db.exec('set role authenticated;');
     const authSafeQuery = await db.query(
-      'select working_hours_start, working_hours_end, timezone, scheduling_days_ahead, peak_mode, visit_purposes from public.app_settings;'
+      'select working_hours_start, working_hours_end, timezone, scheduling_days_ahead, peak_mode, visit_purposes, visitor_instructions, image_retention_days, visitor_retention_days from public.app_settings;'
     );
     expect(authSafeQuery.rows.length).toBe(1);
 
-    // 7. Authenticated role full select / retention columns -> DENIED (leak prevented)
+    // 7. Authenticated role full select / sensitive columns -> DENIED (leak prevented)
     await expect(
       db.query('select * from public.app_settings;')
     ).rejects.toThrow(/permission denied/);
 
     await expect(
-      db.query('select visitor_retention_days from public.app_settings;')
+      db.query('select automatic_cleanup_enabled from public.app_settings;')
     ).rejects.toThrow(/permission denied/);
 
     await expect(
-      db.query('select automatic_cleanup_enabled from public.app_settings;')
+      db.query('select audit_retention_days from public.app_settings;')
     ).rejects.toThrow(/permission denied/);
 
     await db.exec('reset role;');
@@ -660,9 +679,9 @@ describe('Permanent PostgreSQL Migration Chain & Schema Contracts (PGlite)', () 
 
     // 1. Pre-auth anon role
     await db.exec(`set role anon; set request.jwt.claims = '';`);
-    const anonSettings = await db.query('select working_hours_start from public.app_settings;');
+    const anonSettings = await db.query('select working_hours_start, visitor_retention_days, visitor_instructions from public.app_settings;');
     expect(anonSettings.rows.length).toBe(1);
-    await expect(db.query('select visitor_retention_days from public.app_settings;')).rejects.toThrow(/permission denied/);
+    await expect(db.query('select automatic_cleanup_enabled from public.app_settings;')).rejects.toThrow(/permission denied/);
     await db.exec('reset role;');
 
     // 2. Real Anonymous Portal visitor: is_anonymous = true
@@ -671,10 +690,10 @@ describe('Permanent PostgreSQL Migration Chain & Schema Contracts (PGlite)', () 
     expect(portalActorRes.rows.length).toBe(1);
     expect(portalActorRes.rows[0].actor_kind).toBe('visitor');
     // Can read safe settings columns only
-    const visitorSettings = await db.query('select working_hours_start from public.app_settings;');
+    const visitorSettings = await db.query('select working_hours_start, visitor_retention_days, visitor_instructions from public.app_settings;');
     expect(visitorSettings.rows.length).toBe(1);
     await expect(db.query('select * from public.app_settings;')).rejects.toThrow(/permission denied/);
-    await expect(db.query('select visitor_retention_days from public.app_settings;')).rejects.toThrow(/permission denied/);
+    await expect(db.query('select automatic_cleanup_enabled from public.app_settings;')).rejects.toThrow(/permission denied/);
     // CAN create valid portal upload intent
     const uploadRes = await db.query(
       "select * from api.create_upload_intent('portal'::public.pass_source, 'photo'::public.evidence_kind, 'image/jpeg');"

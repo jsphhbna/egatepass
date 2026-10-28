@@ -50,10 +50,10 @@ export function GuardOfflineRegistrationTab({
   const [rejectReason, setRejectReason] = useState('');
 
   const webcam = useWebcam({
-    facingMode: captureMode === 'id' ? 'environment' : 'user',
+    facingMode: 'user',
     width: 640,
     height: 480,
-    allowCaptureMirroring: captureMode === 'photo',
+    allowCaptureMirroring: true,
   });
 
   useEffect(() => {
@@ -73,7 +73,9 @@ export function GuardOfflineRegistrationTab({
   }
 
   async function handleCapture() {
-    const raw = webcam.capture();
+    const raw = captureMode === 'photo'
+      ? webcam.capture({ mirror: webcam.mirrorPreview })
+      : webcam.capture({ mirror: false });
     if (!raw) {
       toast.error('Failed to capture frame from camera');
       return;

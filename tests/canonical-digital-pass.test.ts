@@ -50,6 +50,24 @@ describe('Group D: Canonical Digital E-GatePass Contract & Parity', () => {
 
     // Raw QR token is NEVER rendered as raw text in SVG
     expect(svg).not.toContain('egp_opaque_token_canonical_digital_pass_987654321');
+
+    // Neutral institutional privacy wording (not legal compliance certification)
+    expect(svg).toContain('Nagtahan, Sampaloc, Manila • Visitor information handled under EARIST privacy policy');
+    expect(svg).not.toContain('Data Privacy Act Aligned');
+  });
+
+  it('proves browser and server QR generators share the exact same branded QR visual config', async () => {
+    const { BRANDED_QR_CONFIG } = await import('@/lib/brandedQrConfig');
+    expect(BRANDED_QR_CONFIG).toBeDefined();
+    expect(BRANDED_QR_CONFIG.size).toBe(360);
+    expect(BRANDED_QR_CONFIG.margin).toBe(2);
+    expect(BRANDED_QR_CONFIG.errorCorrectionLevel).toBe('H');
+    expect(BRANDED_QR_CONFIG.logoRatio).toBe(0.17);
+    expect(BRANDED_QR_CONFIG.logoPadding).toBe(6);
+    expect(BRANDED_QR_CONFIG.logoBackingRadius).toBe(6);
+    expect(BRANDED_QR_CONFIG.canonicalLogoAsset).toBe('/earist-logo.png');
+    expect(BRANDED_QR_CONFIG.darkColor).toBe('#000000');
+    expect(BRANDED_QR_CONFIG.lightColor).toBe('#ffffff');
   });
 
   it('server rasterizer uses the shared canonical SVG and produces a valid PNG Buffer', async () => {

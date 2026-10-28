@@ -22,15 +22,30 @@ export interface ReportExportOptions<T> {
 }
 
 /**
+ * Neutralizes spreadsheet formula injection in CSV text cells.
+ * If a text value, after leading whitespace, begins with =, +, -, @, tab, or carriage return,
+ * prefix it with a single quote (').
+ */
+export function sanitizeSpreadsheetText(val: unknown): string {
+  if (val === null || val === undefined) return '';
+  const str = String(val);
+  const trimmed = str.replace(/^[ \t\r\n]+/, '');
+  if (/^[=+\-@\t\r]/.test(str) || /^[=+\-@\t\r]/.test(trimmed)) {
+    return `'${str}`;
+  }
+  return str;
+}
+
+/**
  * Escapes CSV field value conforming to RFC 4180
  */
 function escapeCsvCell(val: unknown): string {
   if (val === null || val === undefined) return '';
-  const str = String(val);
-  if (str.includes(',') || str.includes('"') || str.includes('\n') || str.includes('\r')) {
-    return `"${str.replace(/"/g, '""')}"`;
+  const sanitized = sanitizeSpreadsheetText(val);
+  if (sanitized.includes(',') || sanitized.includes('"') || sanitized.includes('\n') || sanitized.includes('\r')) {
+    return `"${sanitized.replace(/"/g, '""')}"`;
   }
-  return str;
+  return sanitized;
 }
 
 function getCellValue<T>(row: T, col: ReportColumn<T>): string {
@@ -213,20 +228,24 @@ export async function exportReportToPdf<T>(options: ReportExportOptions<T>): Pro
       fontSize: 8,
       cellPadding: 4,
     },
-    didDrawPage: (dataPage: any) => {
-      // Page numbering footer
-      const pageStr = `Page ${dataPage.pageNumber} of ${doc.getNumberOfPages()}`;
-      doc.setFontSize(8);
-      doc.setTextColor(161, 161, 170);
-      doc.text(pageStr, pageWidth - 24, pageHeight - 16, { align: 'right' });
-      doc.text('Eulogio "Amang" Rodriguez Institute of Science and Technology • Confidential', 24, pageHeight - 16);
-    },
   };
 
   if (typeof (doc as any).autoTable === 'function') {
     (doc as any).autoTable(tableOptions);
   } else if (typeof autoTableFn === 'function') {
     autoTableFn(doc, tableOptions);
+  }
+
+  // Draw final institutional footer with accurate total page count on every page
+  const totalPages = doc.getNumberOfPages();
+  for (let pageNumber = 1; pageNumber <= totalPages; pageNumber++) {
+    doc.setPage(pageNumber);
+    const pageStr = `Page ${pageNumber} of ${totalPages}`;
+    doc.setFontSize(8);
+    doc.setFont('helvetica', 'normal');
+    doc.setTextColor(161, 161, 170);
+    doc.text(pageStr, pageWidth - 24, pageHeight - 16, { align: 'right' });
+    doc.text('Eulogio "Amang" Rodriguez Institute of Science and Technology • Confidential', 24, pageHeight - 16);
   }
 
   const blob = doc.output('blob');

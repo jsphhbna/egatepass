@@ -69,6 +69,8 @@ describe('EMAIL-ARCH-01: React Email Templates', () => {
     expect(html).toContain('Registrar Transcript Request');
     expect(html).toContain('egatepass-EG-10000000.png');
     expect(html).toContain('Security Notice');
+    expect(html).not.toContain('Tracking ID:');
+    expect(html).not.toContain('10000000-0000-4000-a000-000000000888');
   });
 
   it('escapes malicious markup in purpose in PassIssuedEmail', async () => {
@@ -311,7 +313,7 @@ describe('EMAIL-ARCH-01: React Email Templates', () => {
         purpose: 'Meeting',
         publicReference: 'ref-pass-999',
       });
-      expect(passHtml).toContain('ref-pass-999');
+      expect(passHtml).toContain('EG-REFPASS9');
     });
   });
 

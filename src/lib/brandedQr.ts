@@ -1,20 +1,12 @@
 import QRCode from 'qrcode';
+import { BRANDED_QR_CONFIG } from './brandedQrConfig.js';
 
 export interface BrandedQrOptions {
   size?: number;
   logoSrc?: string;
 }
 
-export const QR_BRANDED_CONFIG = {
-  errorCorrectionLevel: 'H' as const,
-  size: 360,
-  logoRatio: 0.17, // 17% of QR width (strictly within 15-18% safe bounds)
-  logoPadding: 6,
-  margin: 2,
-  darkColor: '#000000',
-  lightColor: '#ffffff',
-  defaultLogoSrc: '/earist-logo.png',
-};
+export const QR_BRANDED_CONFIG = BRANDED_QR_CONFIG;
 
 /**
  * Generates a branded QR code data URL with the EARIST logo centered inside.
@@ -24,8 +16,8 @@ export async function generateBrandedQrDataUrl(
   qrToken: string,
   options?: BrandedQrOptions
 ): Promise<string> {
-  const size = options?.size ?? QR_BRANDED_CONFIG.size;
-  const logoSrc = options?.logoSrc ?? QR_BRANDED_CONFIG.defaultLogoSrc;
+  const size = options?.size ?? BRANDED_QR_CONFIG.size;
+  const logoSrc = options?.logoSrc ?? BRANDED_QR_CONFIG.canonicalLogoAsset;
 
   // If running in a non-browser environment (e.g. node tests), fallback to toDataURL directly
   if (typeof document === 'undefined') {
@@ -69,7 +61,7 @@ export async function generateBrandedQrDataUrl(
     ctx.beginPath();
     const boxX = centerX - boxSize / 2;
     const boxY = centerY - boxSize / 2;
-    const radius = 6;
+    const radius = BRANDED_QR_CONFIG.logoBackingRadius;
     if (typeof (ctx as any).roundRect === 'function') {
       (ctx as any).roundRect(boxX, boxY, boxSize, boxSize, radius);
     } else {

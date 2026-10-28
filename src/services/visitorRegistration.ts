@@ -546,9 +546,8 @@ export interface RegistrationSettingsData {
 
 export async function loadRegistrationSettings(source: RegistrationSource): Promise<RegistrationSettingsData> {
   const client = source === 'portal' ? requirePortalSupabase() : requireSupabase();
-  const selectCols = source === 'portal'
-    ? 'working_hours_start, working_hours_end, timezone, scheduling_days_ahead, peak_mode, visit_purposes, visitor_instructions'
-    : 'working_hours_start, working_hours_end, timezone, scheduling_days_ahead, peak_mode, visit_purposes, visitor_instructions, image_retention_days, visitor_retention_days';
+  const selectCols =
+    'working_hours_start, working_hours_end, timezone, scheduling_days_ahead, peak_mode, visit_purposes, visitor_instructions, image_retention_days, visitor_retention_days';
 
   const { data, error } = await client
     .from('app_settings')
@@ -579,7 +578,7 @@ export async function loadRegistrationSettings(source: RegistrationSource): Prom
     peak_mode: (raw.peak_mode as string) ?? null,
     visit_purposes: raw.visit_purposes,
     visitor_instructions: Array.isArray(raw.visitor_instructions) ? (raw.visitor_instructions as string[]) : null,
-    image_retention_days: typeof raw.image_retention_days === 'number' ? raw.image_retention_days : 7,
-    visitor_retention_days: typeof raw.visitor_retention_days === 'number' ? raw.visitor_retention_days : 30,
+    image_retention_days: typeof raw.image_retention_days === 'number' ? raw.image_retention_days : null,
+    visitor_retention_days: typeof raw.visitor_retention_days === 'number' ? raw.visitor_retention_days : null,
   };
 }

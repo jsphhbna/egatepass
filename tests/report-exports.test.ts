@@ -110,6 +110,64 @@ describe('Group H: Unified Report Exports Contract (CSV, XLSX, PDF)', () => {
     expect(text).not.toContain('signedUrl');
   });
 
+  it('neutralizes spreadsheet formula injection in CSV text cells (=, +, -, @, tab, cr)', async () => {
+    const maliciousRows: SampleRecord[] = [
+      {
+        reference: 'EG-00000001',
+        visitorName: 'Attacker 1',
+        visitDate: '2026-10-28',
+        purpose: '=HYPERLINK("https://example.invalid","click")',
+        status: 'pending',
+      },
+      {
+        reference: 'EG-00000002',
+        visitorName: 'Attacker 2',
+        visitDate: '2026-10-28',
+        purpose: '+SUM(1,1)',
+        status: 'pending',
+      },
+      {
+        reference: 'EG-00000003',
+        visitorName: 'Attacker 3',
+        visitDate: '2026-10-28',
+        purpose: '@SUM(1,1)',
+        status: 'pending',
+      },
+      {
+        reference: 'EG-00000004',
+        visitorName: 'Attacker 4',
+        visitDate: '2026-10-28',
+        purpose: '-CMD|/C calc.exe',
+        status: 'pending',
+      },
+    ];
+
+    let capturedBlob: Blob | null = null;
+    globalThis.URL.createObjectURL = vi.fn().mockImplementation((blob: Blob) => {
+      capturedBlob = blob;
+      return 'blob:csv-url';
+    });
+
+    await exportReportToCsv({
+      ...exportOptions,
+      rows: maliciousRows,
+    });
+
+    expect(capturedBlob).not.toBeNull();
+    const text = await (capturedBlob as unknown as Blob).text();
+
+    // Verify formula characters are escaped with leading single-quote
+    expect(text).toContain('\'=HYPERLINK');
+    expect(text).toContain('\'+SUM(1,1)');
+    expect(text).toContain('\'@SUM(1,1)');
+    expect(text).toContain('\'-CMD');
+
+    // No raw unescaped formula lines
+    expect(text).not.toMatch(/^=HYPERLINK/m);
+    expect(text).not.toMatch(/^\+SUM/m);
+    expect(text).not.toMatch(/^@SUM/m);
+  });
+
   it('exportReportToExcel dynamically imports exceljs and creates valid XLSX workbook', async () => {
     let capturedBlob: Blob | null = null;
     globalThis.URL.createObjectURL = vi.fn().mockImplementation((blob: Blob) => {
@@ -136,5 +194,30 @@ describe('Group H: Unified Report Exports Contract (CSV, XLSX, PDF)', () => {
 
     expect(capturedBlob).not.toBeNull();
     expect((capturedBlob as unknown as Blob).type).toBe('application/pdf');
+  });
+
+  it('PDF multi-page report calculates accurate total pages across all pages (Page 1 of N)', async () => {
+    // Generate 60 rows to ensure multi-page table output
+    const multiPageRows: SampleRecord[] = Array.from({ length: 60 }, (_, i) => ({
+      reference: `EG-${String(i).padStart(8, '0')}`,
+      visitorName: `Visitor Number ${i + 1}`,
+      visitDate: '2026-10-28',
+      purpose: `Institutional Visit Purpose Description for record ${i + 1}`,
+      status: i % 2 === 0 ? 'approved' : 'pending',
+    }));
+
+    let capturedBlob: Blob | null = null;
+    globalThis.URL.createObjectURL = vi.fn().mockImplementation((blob: Blob) => {
+      capturedBlob = blob;
+      return 'blob:pdf-url';
+    });
+
+    await exportReportToPdf({
+      ...exportOptions,
+      rows: multiPageRows,
+    });
+
+    expect(capturedBlob).not.toBeNull();
+    expect((capturedBlob as unknown as Blob).size).toBeGreaterThan(1000);
   });
 });

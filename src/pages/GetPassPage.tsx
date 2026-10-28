@@ -179,8 +179,8 @@ export function GetPassPage() {
     'This visitor pass is personal and non-transferable.',
     'Scan your E-GatePass when leaving the campus.',
   ]);
-  const [imageRetentionDays, setImageRetentionDays] = useState(7);
-  const [visitorRetentionDays, setVisitorRetentionDays] = useState(30);
+  const [imageRetentionDays, setImageRetentionDays] = useState<number | null>(null);
+  const [visitorRetentionDays, setVisitorRetentionDays] = useState<number | null>(null);
 
   const loadConfig = useCallback(async (isRetry = false) => {
     if (isRetry) setIsRetryingConfig(true);
@@ -636,29 +636,20 @@ export function GetPassPage() {
   // DOWNLOAD QR
   // ============================================================
   async function handleDownload() {
-    if (!qrDataUrl || !passId) return;
+    if (!passPresentation) {
+      toast.error('Your E-GatePass image could not be prepared. Please try again.');
+      return;
+    }
     try {
-      if (passPresentation) {
-        const passCardDataUrl = await renderPassCardToDataUrl(passPresentation, { qrDataUrl });
-        const link = document.createElement('a');
-        link.download = `egatepass-${passPresentation.passReference}.png`;
-        link.href = passCardDataUrl;
-        link.click();
-      } else {
-        const link = document.createElement('a');
-        link.download = `egatepass-${passId}.png`;
-        link.href = qrDataUrl;
-        link.click();
-      }
+      const passCardDataUrl = await renderPassCardToDataUrl(passPresentation, { qrDataUrl: qrDataUrl || undefined });
+      const link = document.createElement('a');
+      link.download = `egatepass-${passPresentation.passReference}.png`;
+      link.href = passCardDataUrl;
+      link.click();
       setIsDownloaded(true);
       toast.success('Official gate pass downloaded!');
     } catch {
-      const link = document.createElement('a');
-      link.download = `egatepass-${passId}.png`;
-      link.href = qrDataUrl;
-      link.click();
-      setIsDownloaded(true);
-      toast.success('QR code downloaded!');
+      toast.error('Your E-GatePass image could not be prepared. Please try again.');
     }
   }
 
@@ -666,23 +657,26 @@ export function GetPassPage() {
   // SHARE (Web Share API)
   // ============================================================
   async function handleShare() {
-    if (!passId || !qrDataUrl || isSharing) return;
+    if (!passPresentation || isSharing) {
+      if (!passPresentation) {
+        toast.error('Your E-GatePass image could not be prepared. Please try again.');
+      }
+      return;
+    }
     setIsSharing(true);
 
     try {
-      const cardDataUrl = passPresentation
-        ? await renderPassCardToDataUrl(passPresentation, { qrDataUrl }).catch(() => qrDataUrl)
-        : qrDataUrl;
+      const cardDataUrl = await renderPassCardToDataUrl(passPresentation, { qrDataUrl: qrDataUrl || undefined });
       const res = await fetch(cardDataUrl);
       const blob = await res.blob();
-      const filename = passPresentation ? `egatepass-${passPresentation.passReference}.png` : `egatepass-${passId}.png`;
+      const filename = `egatepass-${passPresentation.passReference}.png`;
       const file = new File([blob], filename, { type: 'image/png' });
 
       if (navigator.canShare && navigator.canShare({ files: [file] })) {
         try {
           await navigator.share({
             title: 'EARIST Gate Pass',
-            text: `My EARIST Visitor Gate Pass: ${passPresentation?.passReference || passId}`,
+            text: `My EARIST Visitor Gate Pass: ${passPresentation.passReference}`,
             files: [file],
           });
           return;
@@ -696,14 +690,14 @@ export function GetPassPage() {
           console.warn('Web Share failed with non-abort error:', shareErr);
         }
       }
+
+      // Fallback: download canonical pass card directly when sharing is unsupported or returns non-abort error
+      await handleDownload();
     } catch {
-      // Image preparation error
+      toast.error('Your E-GatePass image could not be prepared. Please try again.');
     } finally {
       setIsSharing(false);
     }
-
-    // Fallback: download complete pass card directly when sharing unsupported or genuine error
-    await handleDownload();
   }
 
   // ============================================================
@@ -1594,7 +1588,14 @@ export function GetPassPage() {
                   <span>Data Retention & Security</span>
                 </div>
                 <p>
-                  Your information is collected for campus security and visitor management. Photos and ID images are retained according to EARIST’s configured retention period ({imageRetentionDays} days). Visitor records are retained according to institutional policy ({visitorRetentionDays} days). Records associated with a documented incident may be retained longer while an authorized incident hold remains active.
+                  Your information is collected for campus security and visitor management.{' '}
+                  {typeof imageRetentionDays === 'number'
+                    ? `Photos and ID images are retained according to EARIST’s configured retention period (${imageRetentionDays} days).`
+                    : "Photos and ID images are retained according to EARIST's configured retention policy."}{' '}
+                  {typeof visitorRetentionDays === 'number'
+                    ? `Visitor records are retained according to institutional policy (${visitorRetentionDays} days).`
+                    : 'Visitor records are retained according to institutional policy.'}{' '}
+                  Records associated with a documented incident may be retained longer while an authorized incident hold remains active.
                 </p>
               </div>
 

@@ -12,7 +12,6 @@ import {
   WifiOff,
   MapPin,
   User,
-  Volume2,
   BarChart2,
   UserCheck,
   X,
@@ -78,8 +77,9 @@ export function GuardPage() {
   const [authoritativeResults, setAuthoritativeResults] = useState<GuardQueuePass[]>([]);
   const [isSearchingAuthoritative, setIsSearchingAuthoritative] = useState(false);
   const [searchError, setSearchError] = useState<string | null>(null);
+  const [searchRevalidationVersion, setSearchRevalidationVersion] = useState(0);
   const searchGenerationRef = useRef(0);
-  const [rejectingId, setRejectingId] = useState<string | null>(null);
+  const [rejectingPass, setRejectingPass] = useState<GuardQueuePass | null>(null);
   const [processingPassIds, setProcessingPassIds] = useState<Set<string>>(new Set());
   const [rejectReason, setRejectReason] = useState('');
   const [isOnline, setIsOnline] = useState(navigator.onLine);
@@ -181,6 +181,7 @@ export function GuardPage() {
         reason: 'realtime',
         showRefreshing: true,
       });
+      setSearchRevalidationVersion((v) => v + 1);
     });
     const poll = window.setInterval(() => {
       void requestGuardQueueRefresh({
@@ -276,6 +277,7 @@ export function GuardPage() {
     try {
       await recordDecision(pass.id, 'approved');
       toast.success(`${pass.visitorName} approved`);
+      setAuthoritativeResults((prev) => prev.filter((p) => p.id !== pass.id));
       void refreshQueue();
     } catch (err: unknown) {
       if (err instanceof RequestTimeoutError) {
@@ -286,11 +288,13 @@ export function GuardPage() {
       if (err instanceof GuardApiError) {
         if (err.status === 409) {
           toast.info('This visitor was already processed by another guard.');
+          setAuthoritativeResults((prev) => prev.filter((p) => p.id !== pass.id));
           void refreshQueue();
           return;
         }
         if (err.status === 422) {
           toast.info('This pass has expired and can no longer be approved.');
+          setAuthoritativeResults((prev) => prev.filter((p) => p.id !== pass.id));
           void refreshQueue();
           return;
         }
@@ -323,12 +327,13 @@ export function GuardPage() {
     try {
       await recordDecision(pass.id, 'rejected', rejectReason);
       toast.success(`${pass.visitorName} rejected`);
-      setRejectingId(null);
+      setAuthoritativeResults((prev) => prev.filter((p) => p.id !== pass.id));
+      setRejectingPass(null);
       setRejectReason('');
       setIsRejecting(false);
       void refreshQueue();
     } catch (err: unknown) {
-      setRejectingId(null);
+      setRejectingPass(null);
       setRejectReason('');
       setIsRejecting(false);
       if (err instanceof RequestTimeoutError) {
@@ -339,11 +344,13 @@ export function GuardPage() {
       if (err instanceof GuardApiError) {
         if (err.status === 409) {
           toast.info('This visitor was already processed by another guard.');
+          setAuthoritativeResults((prev) => prev.filter((p) => p.id !== pass.id));
           void refreshQueue();
           return;
         }
         if (err.status === 422) {
           toast.info('This pass has expired and can no longer be approved.');
+          setAuthoritativeResults((prev) => prev.filter((p) => p.id !== pass.id));
           void refreshQueue();
           return;
         }
@@ -398,7 +405,7 @@ export function GuardPage() {
     return () => {
       clearTimeout(timer);
     };
-  }, [searchTerm]);
+  }, [searchTerm, searchRevalidationVersion]);
 
   const handleClearSearch = () => {
     searchGenerationRef.current += 1;
@@ -467,11 +474,6 @@ export function GuardPage() {
   // ============================================================
   // PENDING AGE & WAITING-TIME VISIBILITY (0-5m normal, 5-10m attention, 10m+ long)
   // ============================================================
-  function isPendingLong(pass: PassWithId): boolean {
-    if (!pass.scannedAt) return false;
-    const scannedMs = new Date(pass.scannedAt).getTime();
-    return Date.now() - scannedMs > 30000;
-  }
 
   function getWaitingTimeInfo(scannedAt: string | null): { text: string; tone: 'normal' | 'attention' | 'long' } | null {
     if (!scannedAt) return null;
@@ -946,19 +948,8 @@ export function GuardPage() {
               return (
                 <Card
                   key={pass.id}
-                  className={`col-span-full overflow-hidden transition-all motion-safe:animate-in motion-safe:fade-in motion-safe:slide-in-from-bottom-2 motion-safe:duration-200 ${
-                    isPendingLong(pass) 
-                      ? 'border-[var(--color-warning)] ring-1 ring-[var(--color-warning)]'
-                      : ''
-                  }`}
+                  className="col-span-full overflow-hidden transition-all motion-safe:animate-in motion-safe:fade-in motion-safe:slide-in-from-bottom-2 motion-safe:duration-200"
                 >
-                  {isPendingLong(pass) && (
-                    <div className="flex items-center gap-2 border-b border-[var(--color-warning)] bg-[var(--color-warning-light)] px-4 py-3 text-sm font-bold text-[var(--color-warning-dark)]">
-                      <Volume2 className="h-4 w-4" />
-                      Pending for over 30 seconds
-                    </div>
-                  )}
-
                   <div className="p-6">
                     <div className="mb-6 grid gap-6 md:grid-cols-3">
                       {/* Panel 1: Info */}
@@ -1079,7 +1070,7 @@ export function GuardPage() {
                           variant="destructive"
                           disabled={processingPassIds.has(pass.id)}
                           onClick={() => {
-                            setRejectingId(pass.id);
+                            setRejectingPass(pass);
                             setIsRejecting(true);
                           }}
                           className="flex-1"
@@ -1151,7 +1142,7 @@ export function GuardPage() {
                     <Button
                       variant="destructive"
                       onClick={() => {
-                        setRejectingId(pass.id);
+                        setRejectingPass(pass);
                         setIsRejecting(true);
                       }}
                       className="flex-1"
@@ -1221,6 +1212,7 @@ export function GuardPage() {
               onClick={() => {
                 setIsRejecting(false);
                 setRejectReason('');
+                setRejectingPass(null);
               }}
               className="w-full sm:w-auto"
             >
@@ -1229,13 +1221,12 @@ export function GuardPage() {
             <Button
               variant="destructive"
               onClick={() => {
-                const pass = passes.find(p => p.id === rejectingId);
-                if (pass) handleReject(pass);
+                if (rejectingPass) handleReject(rejectingPass);
               }}
-              disabled={!rejectReason || (rejectingId ? processingPassIds.has(rejectingId) : false)}
+              disabled={!rejectReason || (rejectingPass ? processingPassIds.has(rejectingPass.id) : false)}
               className="w-full sm:w-auto"
             >
-              {rejectingId && processingPassIds.has(rejectingId) ? 'Rejecting...' : 'Confirm Reject'}
+              {rejectingPass && processingPassIds.has(rejectingPass.id) ? 'Rejecting...' : 'Confirm Reject'}
             </Button>
           </div>
         </div>

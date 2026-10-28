@@ -134,7 +134,6 @@ export function PassIssuedEmail({
             <Section style={cardSection}>
               <Text style={detailRow}><strong>Visitor Name:</strong> {fullName}</Text>
               <Text style={detailRow}><strong>Pass Reference:</strong> {formattedRef}</Text>
-              <Text style={{ ...detailRow, fontSize: '12px', color: '#71717a' }}>Tracking ID: {publicReference}</Text>
               <Text style={detailRow}><strong>Visit Date:</strong> {visitDate}</Text>
               {validFrom && validUntil && (
                 <Text style={detailRow}><strong>Valid Hours:</strong> {validFrom} – {validUntil} (Asia/Manila)</Text>

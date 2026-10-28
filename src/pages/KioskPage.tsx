@@ -162,6 +162,8 @@ export function KioskPage() {
     'This visitor pass is personal and non-transferable.',
     'Scan your E-GatePass when leaving the campus.',
   ]);
+  const [imageRetentionDays, setImageRetentionDays] = useState<number | null>(null);
+  const [visitorRetentionDays, setVisitorRetentionDays] = useState<number | null>(null);
 
   const loadSettings = useCallback(async (isRetry = false) => {
     if (isRetry) setRetryingConfig(true);
@@ -183,6 +185,12 @@ export function KioskPage() {
       }
       if (Array.isArray(data.visitor_instructions) && data.visitor_instructions.length > 0) {
         setVisitorInstructions(data.visitor_instructions);
+      }
+      if (typeof data.image_retention_days === 'number') {
+        setImageRetentionDays(data.image_retention_days);
+      }
+      if (typeof data.visitor_retention_days === 'number') {
+        setVisitorRetentionDays(data.visitor_retention_days);
       }
       setConfigState('ready');
     } catch {
@@ -920,7 +928,21 @@ export function KioskPage() {
               {/* Data Privacy Agreement */}
               <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-canvas)] p-4 text-xs text-[var(--color-text-secondary)] space-y-2">
                 <p className="font-semibold text-[var(--color-text-primary)]">Data Privacy Notice (RA 10173)</p>
-                <p>EARIST collects your photo and visitor information solely for security and campus safety. Information is handled in strict accordance with the Data Privacy Act.</p>
+                <p>
+                  EARIST collects your photo and visitor information solely for security and campus safety.{' '}
+                  {typeof imageRetentionDays === 'number' && typeof visitorRetentionDays === 'number' ? (
+                    <>
+                      Evidence images: {imageRetentionDays} days • Visitor records: {visitorRetentionDays} days.
+                    </>
+                  ) : typeof imageRetentionDays === 'number' ? (
+                    <>Evidence images: {imageRetentionDays} days • Visitor records are retained according to institutional policy.</>
+                  ) : typeof visitorRetentionDays === 'number' ? (
+                    <>Photos and ID images are retained according to EARIST's configured retention policy • Visitor records: {visitorRetentionDays} days.</>
+                  ) : (
+                    <>Photos, ID images, and visitor records are retained according to EARIST's configured retention policy.</>
+                  )}{' '}
+                  Information is handled in strict accordance with institutional policy and the Data Privacy Act. Records associated with a documented incident may be retained longer while an authorized incident hold remains active.
+                </p>
                 <label className="flex items-center gap-2 pt-2 border-t border-[var(--color-border)] cursor-pointer">
                   <input type="checkbox" {...register('consent')} required aria-required="true" className="rounded border-[var(--color-border-strong)] text-[var(--color-brand)] focus:ring-[var(--color-brand)]" />
                   <span className="font-medium text-[var(--color-text-primary)]">I agree to the collection and processing of my data. *</span>

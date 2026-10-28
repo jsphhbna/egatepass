@@ -2,32 +2,20 @@ import QRCode from 'qrcode';
 import { PNG } from 'pngjs';
 import fs from 'node:fs';
 import path from 'node:path';
+import { BRANDED_QR_CONFIG } from '../src/lib/brandedQrConfig.js';
 
-export const SERVER_QR_CONFIG = {
-  errorCorrectionLevel: 'H' as const,
-  size: 360,
-  logoRatio: 0.17, // 17% of QR width (strictly within 15-18% safe bounds)
-  logoPadding: 6,
-  margin: 2,
-  darkColor: '#000000',
-  lightColor: '#ffffff',
-};
+export const SERVER_QR_CONFIG = BRANDED_QR_CONFIG;
 
 let cachedLogoPng: PNG | null = null;
 
 function getLogoPng(): PNG | null {
   if (cachedLogoPng) return cachedLogoPng;
   try {
-    const candidates = [
-      path.resolve(process.cwd(), 'public/earist-logo-email.png'),
-      path.resolve(process.cwd(), 'public/earist-logo.png'),
-    ];
-    for (const cand of candidates) {
-      if (fs.existsSync(cand)) {
-        const buf = fs.readFileSync(cand);
-        cachedLogoPng = PNG.sync.read(buf);
-        return cachedLogoPng;
-      }
+    const logoPath = path.resolve(process.cwd(), 'public' + BRANDED_QR_CONFIG.canonicalLogoAsset);
+    if (fs.existsSync(logoPath)) {
+      const buf = fs.readFileSync(logoPath);
+      cachedLogoPng = PNG.sync.read(buf);
+      return cachedLogoPng;
     }
   } catch (err) {
     console.warn('Could not read EARIST logo file for server QR branding:', err);
@@ -62,16 +50,39 @@ export async function generateBrandedQrPngBuffer(qrToken: string): Promise<Buffe
     const centerY = Math.floor(qrPng.height / 2);
     const boxX = centerX - Math.floor(boxSize / 2);
     const boxY = centerY - Math.floor(boxSize / 2);
+    const radius = SERVER_QR_CONFIG.logoBackingRadius;
+    const r2 = radius * radius;
 
-    // Draw white background backing in center
+    // Draw white background backing with matching corner radius
     for (let y = boxY; y < boxY + boxSize; y++) {
       for (let x = boxX; x < boxX + boxSize; x++) {
         if (x >= 0 && x < qrPng.width && y >= 0 && y < qrPng.height) {
-          const idx = (qrPng.width * y + x) << 2;
-          qrPng.data[idx] = 255;
-          qrPng.data[idx + 1] = 255;
-          qrPng.data[idx + 2] = 255;
-          qrPng.data[idx + 3] = 255;
+          let inCorner = false;
+          if (x < boxX + radius && y < boxY + radius) {
+            const dx = x - (boxX + radius);
+            const dy = y - (boxY + radius);
+            if (dx * dx + dy * dy > r2) inCorner = true;
+          } else if (x >= boxX + boxSize - radius && y < boxY + radius) {
+            const dx = x - (boxX + boxSize - 1 - radius);
+            const dy = y - (boxY + radius);
+            if (dx * dx + dy * dy > r2) inCorner = true;
+          } else if (x < boxX + radius && y >= boxY + boxSize - radius) {
+            const dx = x - (boxX + radius);
+            const dy = y - (boxY + boxSize - 1 - radius);
+            if (dx * dx + dy * dy > r2) inCorner = true;
+          } else if (x >= boxX + boxSize - radius && y >= boxY + boxSize - radius) {
+            const dx = x - (boxX + boxSize - 1 - radius);
+            const dy = y - (boxY + boxSize - 1 - radius);
+            if (dx * dx + dy * dy > r2) inCorner = true;
+          }
+
+          if (!inCorner) {
+            const idx = (qrPng.width * y + x) << 2;
+            qrPng.data[idx] = 255;
+            qrPng.data[idx + 1] = 255;
+            qrPng.data[idx + 2] = 255;
+            qrPng.data[idx + 3] = 255;
+          }
         }
       }
     }

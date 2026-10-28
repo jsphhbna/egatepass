@@ -261,4 +261,170 @@ describe('Group B: System-Wide Camera Controller Refactor', () => {
 
     unmount();
   });
+
+  it('rear-facing selfie + Mirror ON synchronizes mirrorCapture and canvas receives mirror transform', async () => {
+    const stream = createMockStream('environment');
+    navigator.mediaDevices = {
+      getUserMedia: vi.fn().mockResolvedValue(stream),
+      enumerateDevices: vi.fn().mockResolvedValue([
+        { kind: 'videoinput', deviceId: 'cam1' },
+        { kind: 'videoinput', deviceId: 'cam2' },
+      ]),
+    } as any;
+
+    const { result, unmount } = renderHook(() =>
+      useWebcam({ facingMode: 'environment', allowCaptureMirroring: true })
+    );
+
+    await act(async () => {
+      await result.current.start();
+    });
+
+    expect(result.current.activeFacingMode).toBe('environment');
+    expect(result.current.mirrorPreview).toBe(false);
+    expect(result.current.mirrorCapture).toBe(false);
+
+    // User toggles mirror preview on rear camera
+    act(() => {
+      result.current.toggleMirrorPreview();
+    });
+
+    // Both preview and capture MUST synchronize to true when allowCaptureMirroring is true
+    expect(result.current.mirrorPreview).toBe(true);
+    expect(result.current.mirrorCapture).toBe(true);
+
+    // Verify canvas receives mirror transform
+    const mockScale = vi.fn();
+    const mockTranslate = vi.fn();
+    const mockCanvas = {
+      width: 640,
+      height: 480,
+      getContext: () => ({
+        drawImage: vi.fn(),
+        scale: mockScale,
+        translate: mockTranslate,
+      }),
+      toDataURL: vi.fn().mockReturnValue('data:image/webp;base64,AAAA'),
+    };
+    vi.spyOn(document, 'createElement').mockImplementation((tagName: string) => {
+      if (tagName === 'canvas') return mockCanvas as any;
+      return document.createElement(tagName);
+    });
+
+    result.current.videoRef.current = {
+      readyState: 4,
+      videoWidth: 640,
+      videoHeight: 480,
+    } as any;
+
+    act(() => {
+      result.current.capture();
+    });
+
+    expect(mockScale).toHaveBeenCalledWith(-1, 1);
+    expect(mockTranslate).toHaveBeenCalledWith(640, 0);
+
+    unmount();
+  });
+
+  it('Guard regression: captureMode none -> startPhotoCapture -> immediate selfie mirrors correctly', async () => {
+    const stream = createMockStream('user');
+    navigator.mediaDevices = {
+      getUserMedia: vi.fn().mockResolvedValue(stream),
+      enumerateDevices: vi.fn().mockResolvedValue([{ kind: 'videoinput', deviceId: 'cam1' }]),
+    } as any;
+
+    // Guard hook uses allowCaptureMirroring: true
+    const { result, unmount } = renderHook(() =>
+      useWebcam({ facingMode: 'user', allowCaptureMirroring: true })
+    );
+
+    await act(async () => {
+      await result.current.start();
+    });
+
+    expect(result.current.mirrorPreview).toBe(true);
+
+    const mockScale = vi.fn();
+    const mockCanvas = {
+      width: 640,
+      height: 480,
+      getContext: () => ({
+        drawImage: vi.fn(),
+        scale: mockScale,
+        translate: vi.fn(),
+      }),
+      toDataURL: vi.fn().mockReturnValue('data:image/webp;base64,AAAA'),
+    };
+    vi.spyOn(document, 'createElement').mockImplementation((tagName: string) => {
+      if (tagName === 'canvas') return mockCanvas as any;
+      return document.createElement(tagName);
+    });
+
+    result.current.videoRef.current = {
+      readyState: 4,
+      videoWidth: 640,
+      videoHeight: 480,
+    } as any;
+
+    // Guard selfie capture explicitly passes mirror: webcam.mirrorPreview
+    act(() => {
+      result.current.capture({ mirror: result.current.mirrorPreview });
+    });
+
+    expect(mockScale).toHaveBeenCalledWith(-1, 1);
+
+    unmount();
+  });
+
+  it('Guard ID preview mirrored -> stored ID capture still unmirrored', async () => {
+    const stream = createMockStream('user');
+    navigator.mediaDevices = {
+      getUserMedia: vi.fn().mockResolvedValue(stream),
+      enumerateDevices: vi.fn().mockResolvedValue([{ kind: 'videoinput', deviceId: 'cam1' }]),
+    } as any;
+
+    const { result, unmount } = renderHook(() =>
+      useWebcam({ facingMode: 'user', allowCaptureMirroring: true })
+    );
+
+    await act(async () => {
+      await result.current.start();
+    });
+
+    // Preview is mirrored
+    expect(result.current.mirrorPreview).toBe(true);
+
+    const mockScale = vi.fn();
+    const mockCanvas = {
+      width: 640,
+      height: 480,
+      getContext: () => ({
+        drawImage: vi.fn(),
+        scale: mockScale,
+        translate: vi.fn(),
+      }),
+      toDataURL: vi.fn().mockReturnValue('data:image/webp;base64,AAAA'),
+    };
+    vi.spyOn(document, 'createElement').mockImplementation((tagName: string) => {
+      if (tagName === 'canvas') return mockCanvas as any;
+      return document.createElement(tagName);
+    });
+
+    result.current.videoRef.current = {
+      readyState: 4,
+      videoWidth: 640,
+      videoHeight: 480,
+    } as any;
+
+    // Guard ID capture explicitly passes mirror: false
+    act(() => {
+      result.current.capture({ mirror: false });
+    });
+
+    // Canvas scale should NOT be called
+    expect(mockScale).not.toHaveBeenCalled();
+
+    unmount();
+  });
 });

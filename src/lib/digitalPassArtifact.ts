@@ -71,6 +71,6 @@ export function generateCanonicalDigitalPassSvg(
 
   <!-- Institutional Notice & Watermark -->
   <text x="240" y="655" text-anchor="middle" font-family="'Segoe UI', Roboto, Arial, sans-serif" font-size="10" fill="#A1A1AA">Present this pass with a valid ID at campus gate security.</text>
-  <text x="240" y="670" text-anchor="middle" font-family="'Segoe UI', Roboto, Arial, sans-serif" font-size="10" fill="#A1A1AA">Nagtahan, Sampaloc, Manila • Data Privacy Act Aligned</text>
+  <text x="240" y="670" text-anchor="middle" font-family="'Segoe UI', Roboto, Arial, sans-serif" font-size="10" fill="#A1A1AA">Nagtahan, Sampaloc, Manila • Visitor information handled under EARIST privacy policy</text>
 </svg>`.trim();
 }

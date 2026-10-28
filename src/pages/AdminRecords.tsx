@@ -156,12 +156,6 @@ export function AdminRecords() {
     setStatusFilter('');
     setSearch('');
     setDebouncedSearch('');
-    void loadRootRecords({
-      search: '',
-      dateFrom: '',
-      dateTo: '',
-      status: '',
-    });
   }
 
   const activeFilterCount = (dateFrom || dateTo ? 1 : 0) + (statusFilter ? 1 : 0) + (search.trim() ? 1 : 0);

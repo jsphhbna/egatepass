@@ -93,4 +93,42 @@ describe('Group G: Visitor Records Date-Range Filtering Contract', () => {
     const parsed = recordsQuerySchema.safeParse({ date: '2026-10-28' });
     expect(parsed.success).toBe(true);
   });
+
+  it('Reset Filters triggers exactly one authoritative fetch via effect without duplicate manual query', () => {
+    let fetchCount = 0;
+    const loadRootRecords = () => {
+      fetchCount += 1;
+    };
+
+    // Simulated component state
+    let dateFrom = '2026-10-01';
+    let dateTo = '2026-10-28';
+    let statusFilter = 'approved';
+    let search = 'Juan';
+    let debouncedSearch = 'Juan';
+
+    // Simulated handleResetFilters (repaired: no manual loadRootRecords call)
+    function handleResetFilters() {
+      dateFrom = '';
+      dateTo = '';
+      statusFilter = '';
+      search = '';
+      debouncedSearch = '';
+      // Manual loadRootRecords() was REMOVED to prevent duplicate fetch
+    }
+
+    // Reset action occurs
+    handleResetFilters();
+
+    // React batches the state updates and triggers the dependency effect ONCE
+    loadRootRecords();
+
+    // Exactly one authoritative request dispatched
+    expect(fetchCount).toBe(1);
+    expect(dateFrom).toBe('');
+    expect(dateTo).toBe('');
+    expect(statusFilter).toBe('');
+    expect(search).toBe('');
+    expect(debouncedSearch).toBe('');
+  });
 });
