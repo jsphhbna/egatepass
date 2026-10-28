@@ -438,3 +438,43 @@ Outage Architecture & Authority Delegation
 - **Row-Level Locking & Conflict Detection**: Server-side sync RPCs lock affected pass rows (`FOR UPDATE`) and verify expected prior statuses. Conflicting server states (e.g. pass already cancelled or exited) are routed to `public.reconciliation_tasks` for administrative audit rather than blindly overwriting authoritative state.
 - **Daily Retention Purge**: The local IndexedDB database purges operational caches and processed event receipts daily to ensure client devices do not accumulate a shadow database.
 
+---
+
+## 12. Institutional Upgrades & Specialized Subsystems
+
+### A. Canonical Digital E-GatePass Artifact
+- **Shared Pure SVG Generator (`src/lib/digitalPassArtifact.ts`)**: Generates a single authoritative 480×696 SVG pass artifact containing EARIST institutional branding (maroon `#800000`, gold `#DAA520`), visitor name, visit date, validity window, canonical reference (`Ref: EG-XXXXXXXX`), purpose, and embedded QR code.
+- **Client Render Path (`src/lib/passPresentation.ts`, `InstitutionalPassCard.tsx`)**: Used for on-screen display, browser card download (rasterized onto HTML5 Canvas as PNG), and the Web Share API.
+- **Server Render Path (`server/lib/render-digital-pass.ts`, `server/routes/passes/email.ts`)**: Server-side rasterization via `sharp` converting the exact same canonical SVG into `egatepass-EG-XXXXXXXX.png` attached to pass delivery emails, eliminating visual drift.
+- **Thermal Print Isolation**: The 384px monochrome MXW01 thermal print architecture remains decoupled, using its dedicated thermal layout engine.
+
+### B. Unified Camera Subsystem & Mirroring Contract (`src/hooks/useWebcam.ts`, `CameraControls.tsx`)
+- **Active Mode Authoritative**: Detects hardware-assigned facing mode via `track.getSettings().facingMode` rather than trusting initial constructor options.
+- **Device Enumeration**: Calls `navigator.mediaDevices.enumerateDevices()` post-permission to dynamically hide camera switching controls on single-camera hardware.
+- **Mirroring Invariants**:
+  - Front camera defaults to preview mirroring (`true`) and face capture mirroring (`true`).
+  - Rear camera defaults to unmirrored preview (`false`) and unmirrored capture (`false`).
+  - ID / Document Evidence: Preview mirroring may be toggled, but stored capture **always** remains unmirrored (`mirror: false`) to ensure government ID text remains readable.
+  - OCR Scanning: Input frame supplied to OCR engines is **strictly unmirrored** regardless of preview state.
+- **Generation Fencing & Stream Teardown**: Rapid camera switching terminates every prior track and clears `video.srcObject` before requesting the opposite facing mode, preventing camera locks on Android/Chromium.
+
+### C. Guard Authoritative Search Controller (`src/pages/GuardPage.tsx`, Migration 34)
+- **Default Experience Preserved**: The chronological pending queue with keyset/snapshot pagination remains primary; search is not required to view pending visitors.
+- **Local Live Filtering**: Queries under 2 characters filter the loaded queue client-side instantly.
+- **Authoritative Search RPC (`api.guard_search_pending_queue`)**: Queries >= 2 characters trigger a 280ms debounced server search matching visitor name, contact number, purpose, and public reference with generation fencing. Results deduplicate seamlessly with loaded cards.
+- **Clear Search**: Clears search filters instantly restoring the live queue without reloading all passes.
+
+### D. Safe Staff Permanent Decommissioning (`server/routes/system/decommission-user.ts`, Migration 34)
+- **Zero Row Deletion**: Preserves `ON DELETE RESTRICT` foreign keys and historical audit attribution on `public.staff_profiles`.
+- **Pre-Conditions**: Target must be inactive (`active = false`), cannot be the acting actor (`cannot_decommission_self`), and cannot be an already decommissioned account.
+- **Super Admin Reauthentication**: Requires the acting Super Admin's password, verified via an isolated Supabase Auth client using local-only signout (`signOut({ scope: 'local' })`) to preserve the browser session.
+- **Auth Suspension & Reconciliation**: Enforces permanent Auth ban (`876000h`). External Auth failures trigger reconciliation tasks rather than rolling back database state.
+
+### E. Unified Report Exports (`src/lib/reportExport.ts`)
+- **Dynamic Module Loading**: `exceljs`, `jspdf`, and `jspdf-autotable` are loaded on-demand only when an export is triggered, keeping initial bundle size minimal.
+- **Format Contracts**:
+  - **CSV (RFC 4180)**: Pure tabular data with no decorative rows; row 1 is always column headers.
+  - **XLSX**: Institutional header, metadata block (filters, date, staff actor), frozen table headers, and styled columns.
+  - **PDF**: Formatted human-readable report with institutional maroon header, metadata block, and auto-paginated table with page numbering.
+- **Security Exclusions**: Never exports raw QR tokens, token digests, storage object paths, signed URLs, or credential secrets.
+

@@ -57,6 +57,7 @@ export function VisitPurposeField({ purposes, value, error, onChange }: VisitPur
     <FormField
       id="visit-purpose-choice"
       label="Purpose of Visit"
+      requirement="required"
       hint={!isCustom && !requiresDetails ? 'Choose the closest reason, or select Other.' : undefined}
       error={detailsRequiredError || error}
     >
@@ -66,6 +67,8 @@ export function VisitPurposeField({ purposes, value, error, onChange }: VisitPur
           value={choice}
           onChange={(event) => handleChoiceChange(event.target.value)}
           error={Boolean(detailsRequiredError || error)}
+          required
+          aria-required="true"
         >
           <option value="">Select a purpose</option>
           {purposes.map((purpose) => (
@@ -77,7 +80,9 @@ export function VisitPurposeField({ purposes, value, error, onChange }: VisitPur
         {(isCustom || requiresDetails) && (
           <div className="space-y-1">
             <label htmlFor="visit-purpose-details" className="block text-sm font-medium text-[var(--color-text-primary)]">
-              {detailsLabel}
+              <span>{detailsLabel}</span>
+              <span className="text-[var(--color-danger)] font-bold ml-1" aria-hidden="true">*</span>
+              <span className="sr-only"> (required)</span>
             </label>
             <Textarea
               id="visit-purpose-details"
@@ -87,6 +92,8 @@ export function VisitPurposeField({ purposes, value, error, onChange }: VisitPur
               maxLength={detailsMaxLength}
               placeholder={isCustom ? 'Briefly describe your purpose of visit' : 'Enter the requested details'}
               error={Boolean(detailsRequiredError || error)}
+              required
+              aria-required="true"
             />
           </div>
         )}

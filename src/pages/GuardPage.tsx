@@ -1,9 +1,9 @@
 import { formatManilaTime } from '@/lib/manilaTime';
-import { useEffect, useState, useRef } from 'react';
+import { useEffect, useState, useRef, useMemo } from 'react';
 import { useAuth } from '@/hooks/useAuth';
 import { signOutCurrentActor } from '@/services/auth';
 import { AuthenticatedImage } from '@/components/AuthenticatedImage';
-import { subscribeToPassChanges, recordDecision, GuardApiError, type GuardQueuePass } from '@/services/guard';
+import { subscribeToPassChanges, recordDecision, GuardApiError, type GuardQueuePass, searchGuardPendingQueue } from '@/services/guard';
 import { useGuardQueue } from '@/hooks/useGuardQueue';
 import {
   CheckCircle2,
@@ -75,6 +75,10 @@ export function GuardPage() {
   });
 
   const [searchTerm, setSearchTerm] = useState('');
+  const [authoritativeResults, setAuthoritativeResults] = useState<GuardQueuePass[]>([]);
+  const [isSearchingAuthoritative, setIsSearchingAuthoritative] = useState(false);
+  const [searchError, setSearchError] = useState<string | null>(null);
+  const searchGenerationRef = useRef(0);
   const [rejectingId, setRejectingId] = useState<string | null>(null);
   const [processingPassIds, setProcessingPassIds] = useState<Set<string>>(new Set());
   const [rejectReason, setRejectReason] = useState('');
@@ -360,23 +364,129 @@ export function GuardPage() {
   }
 
   // ============================================================
-  // FILTER
+  // AUTHORITATIVE SEARCH CONTROLLER & DEDUPLICATION (PATCH 55)
   // ============================================================
-  const filteredPasses = searchTerm
-    ? passes.filter(
-        (p) =>
-          (p.visitorName ?? '').toLowerCase().includes(searchTerm.toLowerCase()) ||
-          (p.purpose ?? '').toLowerCase().includes(searchTerm.toLowerCase())
-      )
-    : passes;
+  useEffect(() => {
+    const trimmed = searchTerm.trim();
+    if (trimmed.length < 2) {
+      searchGenerationRef.current += 1;
+      setAuthoritativeResults([]);
+      setIsSearchingAuthoritative(false);
+      setSearchError(null);
+      return;
+    }
+
+    const generation = ++searchGenerationRef.current;
+    setIsSearchingAuthoritative(true);
+    setSearchError(null);
+
+    const timer = setTimeout(async () => {
+      try {
+        const results = await searchGuardPendingQueue(trimmed);
+        if (generation === searchGenerationRef.current) {
+          setAuthoritativeResults(results);
+          setIsSearchingAuthoritative(false);
+        }
+      } catch (err) {
+        if (generation === searchGenerationRef.current) {
+          setSearchError('Search unavailable. The live queue remains available.');
+          setIsSearchingAuthoritative(false);
+        }
+      }
+    }, 280);
+
+    return () => {
+      clearTimeout(timer);
+    };
+  }, [searchTerm]);
+
+  const handleClearSearch = () => {
+    searchGenerationRef.current += 1;
+    setSearchTerm('');
+    setAuthoritativeResults([]);
+    setIsSearchingAuthoritative(false);
+    setSearchError(null);
+  };
+
+  // Immediate local filter combined with authoritative server results
+  const filteredPasses = useMemo(() => {
+    const trimmed = searchTerm.trim();
+    if (!trimmed) {
+      return passes;
+    }
+
+    const q = trimmed.toLowerCase();
+    const localMatches = passes.filter((p) =>
+      (p.visitorName ?? '').toLowerCase().includes(q) ||
+      (p.purpose ?? '').toLowerCase().includes(q) ||
+      (p.publicReference ?? '').toLowerCase().includes(q) ||
+      (p.contactNumber ?? '').toLowerCase().includes(q)
+    );
+
+    if (trimmed.length < 2) {
+      return localMatches;
+    }
+
+    // Authoritative results win when duplicate IDs exist
+    const passMap = new Map<string, GuardQueuePass>();
+    for (const p of localMatches) {
+      passMap.set(p.id, p);
+    }
+    for (const p of authoritativeResults) {
+      passMap.set(p.id, p);
+    }
+
+    return Array.from(passMap.values()).sort((a, b) => {
+      if (a.scannedAt && b.scannedAt) {
+        const diff = new Date(a.scannedAt).getTime() - new Date(b.scannedAt).getTime();
+        if (diff !== 0) return diff;
+      } else if (a.scannedAt && !b.scannedAt) {
+        return -1;
+      } else if (!a.scannedAt && b.scannedAt) {
+        return 1;
+      }
+      return a.id.localeCompare(b.id);
+    });
+  }, [searchTerm, passes, authoritativeResults]);
+
+  const searchStatusMessage = useMemo(() => {
+    const trimmed = searchTerm.trim();
+    if (!trimmed) return null;
+    if (isSearchingAuthoritative) {
+      return 'Searching all pending visitors…';
+    }
+    if (searchError) {
+      return searchError;
+    }
+    if (filteredPasses.length > 0) {
+      return `${filteredPasses.length} matching pending ${filteredPasses.length === 1 ? 'visitor' : 'visitors'}`;
+    }
+    return 'No pending visitors match this search.';
+  }, [searchTerm, isSearchingAuthoritative, searchError, filteredPasses.length]);
 
   // ============================================================
-  // PENDING AGE — highlight if > 30 seconds
+  // PENDING AGE & WAITING-TIME VISIBILITY (0-5m normal, 5-10m attention, 10m+ long)
   // ============================================================
   function isPendingLong(pass: PassWithId): boolean {
     if (!pass.scannedAt) return false;
     const scannedMs = new Date(pass.scannedAt).getTime();
     return Date.now() - scannedMs > 30000;
+  }
+
+  function getWaitingTimeInfo(scannedAt: string | null): { text: string; tone: 'normal' | 'attention' | 'long' } | null {
+    if (!scannedAt) return null;
+    const scannedMs = new Date(scannedAt).getTime();
+    const diffMs = Date.now() - scannedMs;
+    if (isNaN(diffMs) || diffMs < 0) return null;
+    const minutes = Math.floor(diffMs / 60000);
+    const text = minutes < 1 ? 'Waiting < 1 min' : `Waiting ${minutes} min`;
+    let tone: 'normal' | 'attention' | 'long' = 'normal';
+    if (minutes >= 10) {
+      tone = 'long';
+    } else if (minutes >= 5) {
+      tone = 'attention';
+    }
+    return { text, tone };
   }
 
   // ============================================================
@@ -735,26 +845,35 @@ export function GuardPage() {
       {activeTab === 'queue' && (
         <>
           <div className="mb-6 flex flex-col gap-2 sm:items-end">
-            <div className="w-full sm:w-80">
-              <Input
-                type="search"
-                aria-label="Search loaded visitors by name or purpose"
-                placeholder="Search loaded visitors by name or purpose…"
-                value={searchTerm}
-                onChange={(e) => setSearchTerm(e.target.value)}
-              />
-            </div>
-            {hasMore && searchTerm && (
-              <div className="flex items-center gap-2 text-xs text-[var(--color-text-secondary)]">
-                <span>Filtering loaded ({passes.length} of {pendingTotal} pending).</span>
-                <button
-                  type="button"
-                  onClick={handleLoadAll}
-                  disabled={loadingMore}
-                  className="font-bold text-[var(--color-brand)] underline hover:text-[var(--color-brand-dark)]"
+            <div className="flex w-full sm:w-96 items-center gap-2">
+              <div className="relative flex-1">
+                <Input
+                  type="search"
+                  aria-label="Search pending visitors"
+                  placeholder="Search pending visitors…"
+                  value={searchTerm}
+                  onChange={(e) => setSearchTerm(e.target.value)}
+                />
+                {isSearchingAuthoritative && (
+                  <div className="absolute right-3 top-1/2 -translate-y-1/2" role="status" aria-label="Searching">
+                    <Loader2 className="h-4 w-4 animate-spin text-[var(--color-brand)]" />
+                  </div>
+                )}
+              </div>
+              {searchTerm && (
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  onClick={handleClearSearch}
+                  className="shrink-0"
                 >
-                  Load all pending
-                </button>
+                  Clear Search
+                </Button>
+              )}
+            </div>
+            {searchTerm.trim().length > 0 && (
+              <div className="text-xs font-medium text-[var(--color-text-secondary)]">
+                {searchStatusMessage}
               </div>
             )}
           </div>
@@ -803,18 +922,16 @@ export function GuardPage() {
       ) : filteredPasses.length === 0 ? (
         <EmptyState
           icon={<BrandMark size="sm" />}
-          title={searchTerm ? 'No matching visitors in loaded queue' : 'No pending passes'}
+          title={searchTerm ? 'No matching pending visitors' : 'No pending passes'}
           description={
             searchTerm
-              ? hasMore
-                ? 'No matches in currently loaded queue. Try loading all pending passes.'
-                : 'Try a different name or purpose.'
+              ? 'No pending visitors match this search.'
               : 'New requests appear here after visitors scan at the entry gate.'
           }
           action={
-            searchTerm && hasMore ? (
-              <Button variant="secondary" size="sm" onClick={handleLoadAll} loading={loadingMore}>
-                Load All Pending Passes ({pendingTotal})
+            searchTerm ? (
+              <Button variant="secondary" size="sm" onClick={handleClearSearch}>
+                Clear Search
               </Button>
             ) : undefined
           }
@@ -846,9 +963,27 @@ export function GuardPage() {
                     <div className="mb-6 grid gap-6 md:grid-cols-3">
                       {/* Panel 1: Info */}
                       <div className="flex flex-col justify-center border-b pb-6 md:border-b-0 md:border-r md:pb-0 md:pr-6 border-[var(--color-border)]">
-                        <h3 className="text-2xl font-bold text-[var(--color-text-primary)]">
-                          {pass.visitorName}
-                        </h3>
+                        <div className="flex flex-wrap items-center gap-2">
+                          <h3 className="text-2xl font-bold text-[var(--color-text-primary)]">
+                            {pass.visitorName}
+                          </h3>
+                          {(() => {
+                            const waitInfo = getWaitingTimeInfo(pass.scannedAt);
+                            if (!waitInfo) return null;
+                            const toneClasses =
+                              waitInfo.tone === 'long'
+                                ? 'bg-rose-100 text-rose-800 dark:bg-rose-950/80 dark:text-rose-300 border border-rose-300 dark:border-rose-800'
+                                : waitInfo.tone === 'attention'
+                                ? 'bg-amber-100 text-amber-800 dark:bg-amber-950/80 dark:text-amber-300 border border-amber-300 dark:border-amber-800'
+                                : 'bg-zinc-100 text-zinc-700 dark:bg-zinc-800 dark:text-zinc-300 border border-zinc-200 dark:border-zinc-700';
+                            return (
+                              <span className={`inline-flex items-center gap-1 rounded-full px-2.5 py-0.5 text-xs font-semibold ${toneClasses}`}>
+                                <Clock className="h-3 w-3" />
+                                {waitInfo.text}
+                              </span>
+                            );
+                          })()}
+                        </div>
                         <p className="mt-2 text-base text-[var(--color-text-secondary)]">
                           {pass.purpose}
                         </p>
@@ -973,9 +1108,26 @@ export function GuardPage() {
                       <User className="h-5 w-5 text-[var(--color-text-muted)]" />
                     </div>
                     <div className="flex-1 min-w-0">
-                      <h3 className="truncate text-sm font-bold text-[var(--color-text-primary)]">
-                        {pass.visitorName}
-                      </h3>
+                      <div className="flex items-center justify-between gap-1">
+                        <h3 className="truncate text-sm font-bold text-[var(--color-text-primary)]">
+                          {pass.visitorName}
+                        </h3>
+                        {(() => {
+                          const waitInfo = getWaitingTimeInfo(pass.scannedAt);
+                          if (!waitInfo) return null;
+                          const toneClasses =
+                            waitInfo.tone === 'long'
+                              ? 'bg-rose-100 text-rose-800 dark:bg-rose-950/80 dark:text-rose-300 border border-rose-300 dark:border-rose-800'
+                              : waitInfo.tone === 'attention'
+                              ? 'bg-amber-100 text-amber-800 dark:bg-amber-950/80 dark:text-amber-300 border border-amber-300 dark:border-amber-800'
+                              : 'bg-zinc-100 text-zinc-700 dark:bg-zinc-800 dark:text-zinc-300 border border-zinc-200 dark:border-zinc-700';
+                          return (
+                            <span className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-semibold ${toneClasses}`}>
+                              {waitInfo.text}
+                            </span>
+                          );
+                        })()}
+                      </div>
                       <p className="truncate text-xs text-[var(--color-text-secondary)] mt-0.5">
                         {pass.purpose}
                       </p>
@@ -1013,8 +1165,8 @@ export function GuardPage() {
               </Card>
             );
           })}
-          {hasMore && (
-            <div className="col-span-full mt-4 flex justify-center">
+          {hasMore && !searchTerm && (
+            <div className="col-span-full mt-4 flex flex-wrap justify-center gap-3">
               <Button
                 variant="secondary"
                 size="md"
@@ -1022,6 +1174,14 @@ export function GuardPage() {
                 loading={loadingMore}
               >
                 Load More Pending Passes ({passes.length} of {pendingTotal})
+              </Button>
+              <Button
+                variant="ghost"
+                size="md"
+                onClick={handleLoadAll}
+                loading={loadingMore}
+              >
+                Load All Pending Passes ({pendingTotal})
               </Button>
             </div>
           )}

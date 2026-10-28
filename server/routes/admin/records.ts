@@ -23,6 +23,7 @@ interface RawRecordPassRow {
   visitors: {
     full_name: string;
     purpose: string;
+    visit_date?: string | null;
     visitor_evidence: Array<{ id: string; kind: 'photo' | 'id' }>;
   } | null;
 }
@@ -38,6 +39,7 @@ function mapPass(row: RawRecordPassRow) {
     visitorId: row.visitor_id,
     visitorName: visitor?.full_name ?? '',
     purpose: visitor?.purpose ?? '',
+    visitDate: visitor?.visit_date ?? null,
     photoPublicId: photoId,
     idImagePublicId: idImageId,
     source: row.source,
@@ -66,7 +68,26 @@ async function handleRequest(request: Request): Promise<Response> {
 
   const url = new URL(request.url);
   const statusParam = url.searchParams.get('status')?.trim();
-  const dateParam = url.searchParams.get('date')?.trim();
+  let dateFrom = url.searchParams.get('dateFrom')?.trim();
+  let dateTo = url.searchParams.get('dateTo')?.trim();
+  const legacyDate = url.searchParams.get('date')?.trim();
+
+  if (!dateFrom && !dateTo && legacyDate) {
+    dateFrom = legacyDate;
+    dateTo = legacyDate;
+  }
+
+  const DATE_REGEX = /^\d{4}-\d{2}-\d{2}$/;
+  if (dateFrom && !DATE_REGEX.test(dateFrom)) {
+    return jsonResponse(400, { error: 'invalid_date_from', message: 'dateFrom must be in YYYY-MM-DD format' });
+  }
+  if (dateTo && !DATE_REGEX.test(dateTo)) {
+    return jsonResponse(400, { error: 'invalid_date_to', message: 'dateTo must be in YYYY-MM-DD format' });
+  }
+  if (dateFrom && dateTo && dateFrom > dateTo) {
+    return jsonResponse(400, { error: 'invalid_date_range', message: 'dateFrom must be less than or equal to dateTo' });
+  }
+
   const searchParam = url.searchParams.get('search')?.trim().toLowerCase();
   const cursor = url.searchParams.get('cursor')?.trim();
   const pageSizeParam = parseInt(url.searchParams.get('pageSize') || '50', 10);
@@ -103,6 +124,7 @@ async function handleRequest(request: Request): Promise<Response> {
         visitors!inner (
           full_name,
           purpose,
+          visit_date,
           visitor_evidence (
             id,
             kind
@@ -116,11 +138,11 @@ async function handleRequest(request: Request): Promise<Response> {
       query = query.eq('status', statusParam);
     }
 
-    if (dateParam && /^\d{4}-\d{2}-\d{2}$/.test(dateParam)) {
-      const start = `${dateParam}T00:00:00+08:00`;
-      const nextDayDate = new Date(new Date(`${dateParam}T00:00:00+08:00`).getTime() + 86_400_000);
-      const end = nextDayDate.toISOString();
-      query = query.gte('issued_at', start).lt('issued_at', end);
+    if (dateFrom) {
+      query = query.gte('visitors.visit_date', dateFrom);
+    }
+    if (dateTo) {
+      query = query.lte('visitors.visit_date', dateTo);
     }
 
     if (searchParam) {
@@ -129,12 +151,13 @@ async function handleRequest(request: Request): Promise<Response> {
 
     if (cursor) {
       const decoded = decodeCursorStrict(cursor, { idType: 'uuid' });
-      if (decoded) {
-        if (decoded.id) {
-          query = query.or(`issued_at.lt.${decoded.timestamp},and(issued_at.eq.${decoded.timestamp},id.lt.${decoded.id})`);
-        } else {
-          query = query.lt('issued_at', decoded.timestamp);
-        }
+      if (!decoded) {
+        return jsonResponse(400, { error: 'invalid_cursor' });
+      }
+      if (decoded.id) {
+        query = query.or(`issued_at.lt.${decoded.timestamp},and(issued_at.eq.${decoded.timestamp},id.lt.${decoded.id})`);
+      } else {
+        query = query.lt('issued_at', decoded.timestamp);
       }
     }
 

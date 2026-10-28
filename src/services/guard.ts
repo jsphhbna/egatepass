@@ -27,6 +27,8 @@ export interface GuardQueuePass {
   gate: string | null;
   photoPublicId: string;
   idImagePublicId: string | null;
+  publicReference?: string | null;
+  contactNumber?: string | null;
 }
 
 export interface GuardDashboardData {
@@ -367,4 +369,62 @@ export async function recordDecision(
     );
   }
   return body;
+}
+
+export const guardSearchResultItemSchema = z.object({
+  id: z.string().uuid(),
+  visitorName: z.string().min(1),
+  purpose: z.string(),
+  source: z.enum(['portal', 'kiosk']),
+  status: z.literal('pending'),
+  validFrom: z.string(),
+  validUntil: z.string(),
+  scannedAt: z.string().nullable(),
+  gate: z.string().nullable(),
+  publicReference: z.string().nullable().optional(),
+  contactNumber: z.string().nullable().optional(),
+  photoEvidenceId: z.string().uuid().nullable(),
+  idEvidenceId: z.string().uuid().nullable(),
+});
+
+export async function searchGuardPendingQueue(
+  query: string,
+  limit: number = 50
+): Promise<GuardQueuePass[]> {
+  const cleanQuery = query.trim();
+  if (cleanQuery.length < 2) return [];
+  const normalizedLimit = Math.min(Math.max(limit, 1), 100);
+
+  const { data: rawData, error } = await requireSupabase()
+    .schema('api')
+    .rpc('guard_search_pending_queue', {
+      requested_query: cleanQuery,
+      requested_limit: normalizedLimit,
+    });
+
+  if (error || !rawData) throw error ?? new Error('Guard search unavailable');
+
+  const parsed = z.array(guardSearchResultItemSchema).safeParse(rawData);
+  if (!parsed.success) {
+    const issueSummary = parsed.error.issues
+      .map((i) => `${i.path.join('.')}: ${i.message}`)
+      .join(', ');
+    throw new Error(`api.guard_search_pending_queue contract violation: ${issueSummary}`);
+  }
+
+  return parsed.data.map((item) => ({
+    id: item.id,
+    visitorName: item.visitorName,
+    purpose: item.purpose,
+    source: item.source,
+    status: item.status,
+    validFrom: item.validFrom,
+    validUntil: item.validUntil,
+    scannedAt: item.scannedAt,
+    gate: item.gate,
+    photoPublicId: item.photoEvidenceId ?? '',
+    idImagePublicId: item.idEvidenceId,
+    publicReference: item.publicReference,
+    contactNumber: item.contactNumber,
+  }));
 }

@@ -1,5 +1,5 @@
 import { useAuth } from '@/hooks/useAuth';
-import { formatManilaDateTime, formatManilaTime, formatManilaIso, formatManilaFileTimestamp } from '@/lib/manilaTime';
+import { formatManilaDateTime, formatManilaTime, formatManilaIso, formatManilaFileTimestamp, getManilaDateString } from '@/lib/manilaTime';
 import { getActiveIncidentHoldsForRecord, createIncidentHold, releaseIncidentHold, type IncidentHold } from '@/services/incidentHold';
 import { AlertTriangle, Download, Eye, Printer, ShieldAlert, ShieldCheck } from 'lucide-react';
 import { useState, useEffect, useRef } from 'react';
@@ -7,7 +7,8 @@ import { Card, Input, Select, Button, DataTable, DataTableHead, DataTableRow, Da
 import { AuthenticatedImage } from '@/components/AuthenticatedImage';
 import type { GatePass, PassSource, PassStatus } from '@/types';
 import { toast } from 'sonner';
-import { collectCursorPages, downloadCsvFile, EXPORT_MAX_ROWS } from '@/lib/completeExport';
+import { collectCursorPages, EXPORT_MAX_ROWS } from '@/lib/completeExport';
+import { exportReportToCsv, exportReportToExcel, exportReportToPdf } from '@/lib/reportExport';
 import { asAppTimestamp } from '@/lib/timestamp';
 import { getAccessToken } from '@/services/auth';
 
@@ -81,7 +82,9 @@ export function AdminRecords() {
   const { role } = useAuth();
   const [passes, setPasses] = useState<GatePassWithId[]>([]);
   const [loading, setLoading] = useState(true);
-  const [dateFilter, setDateFilter] = useState('');
+  const [dateFrom, setDateFrom] = useState('');
+  const [dateTo, setDateTo] = useState('');
+  const [datePreset, setDatePreset] = useState<'today' | 'last7' | 'thisMonth' | 'custom' | ''>('');
   const [statusFilter, setStatusFilter] = useState('');
   const [search, setSearch] = useState('');
   const [debouncedSearch, setDebouncedSearch] = useState('');
@@ -96,12 +99,13 @@ export function AdminRecords() {
   const [hasMore, setHasMore] = useState(false);
   const [loadingMore, setLoadingMore] = useState(false);
   const [exporting, setExporting] = useState(false);
+  const [exportFormat, setExportFormat] = useState<'csv' | 'xlsx' | 'pdf' | null>(null);
   const [recordsError, setRecordsError] = useState<string | null>(null);
 
   const recordsQueryGenerationRef = useRef(0);
   const recordsAbortControllerRef = useRef<AbortController | null>(null);
   const recordsLoadMoreAbortControllerRef = useRef<AbortController | null>(null);
-  const lastCommittedRecordsQueryRef = useRef<{ dateFilter: string; statusFilter: string; search: string } | null>(null);
+  const lastCommittedRecordsQueryRef = useRef<{ dateFrom: string; dateTo: string; statusFilter: string; search: string } | null>(null);
   const recordsLoadMoreInFlightRef = useRef(false);
   const holdLookupGenerationRef = useRef(0);
   const selectedPassRef = useRef<GatePassWithId | null>(null);
@@ -120,18 +124,62 @@ export function AdminRecords() {
     };
   }, []);
 
+  function applyPreset(preset: 'today' | 'last7' | 'thisMonth') {
+    const today = getManilaDateString();
+    let from = today;
+    let to = today;
+
+    if (preset === 'today') {
+      from = today;
+      to = today;
+    } else if (preset === 'last7') {
+      const d = new Date();
+      const sevenDaysAgo = new Date(d.getTime() - 6 * 24 * 60 * 60 * 1000);
+      from = getManilaDateString(sevenDaysAgo);
+      to = today;
+    } else if (preset === 'thisMonth') {
+      const [year, month] = today.split('-');
+      from = `${year}-${month}-01`;
+      const lastDayOfMonth = new Date(Number(year), Number(month), 0).getDate();
+      to = `${year}-${month}-${String(lastDayOfMonth).padStart(2, '0')}`;
+    }
+
+    setDatePreset(preset);
+    setDateFrom(from);
+    setDateTo(to);
+  }
+
+  function handleResetFilters() {
+    setDateFrom('');
+    setDateTo('');
+    setDatePreset('');
+    setStatusFilter('');
+    setSearch('');
+    setDebouncedSearch('');
+    void loadRootRecords({
+      search: '',
+      dateFrom: '',
+      dateTo: '',
+      status: '',
+    });
+  }
+
+  const activeFilterCount = (dateFrom || dateTo ? 1 : 0) + (statusFilter ? 1 : 0) + (search.trim() ? 1 : 0);
+
   async function fetchRecordsPage(options: {
     cursor: string | null;
     pageSize: number;
     search: string;
-    date: string;
+    dateFrom?: string;
+    dateTo?: string;
     status: string;
     signal?: AbortSignal;
   }) {
     const token = await getAccessToken();
     const params = new URLSearchParams();
     if (options.status) params.set('status', options.status);
-    if (options.date) params.set('date', options.date);
+    if (options.dateFrom) params.set('dateFrom', options.dateFrom);
+    if (options.dateTo) params.set('dateTo', options.dateTo);
     if (options.search.trim()) params.set('search', options.search.trim());
     if (options.cursor) params.set('cursor', options.cursor);
     params.set('pageSize', String(options.pageSize));
@@ -158,11 +206,17 @@ export function AdminRecords() {
     };
   }
 
-  async function loadRootRecords(searchOverride?: string) {
+  async function loadRootRecords(override?: {
+    search?: string;
+    dateFrom?: string;
+    dateTo?: string;
+    status?: string;
+  }) {
     const currentQuery = {
-      dateFilter,
-      statusFilter,
-      search: searchOverride !== undefined ? searchOverride : debouncedSearch,
+      dateFrom: override?.dateFrom !== undefined ? override.dateFrom : dateFrom,
+      dateTo: override?.dateTo !== undefined ? override.dateTo : dateTo,
+      statusFilter: override?.status !== undefined ? override.status : statusFilter,
+      search: override?.search !== undefined ? override.search : debouncedSearch,
     };
 
     const currentGen = ++recordsQueryGenerationRef.current;
@@ -186,7 +240,8 @@ export function AdminRecords() {
         cursor: null,
         pageSize: RECORDS_PAGE_SIZE,
         search: currentQuery.search,
-        date: currentQuery.dateFilter,
+        dateFrom: currentQuery.dateFrom,
+        dateTo: currentQuery.dateTo,
         status: currentQuery.statusFilter,
         signal: controller.signal,
       });
@@ -238,7 +293,8 @@ export function AdminRecords() {
         cursor: nextCursor,
         pageSize: RECORDS_PAGE_SIZE,
         search: committedQuery.search,
-        date: committedQuery.dateFilter,
+        dateFrom: committedQuery.dateFrom,
+        dateTo: committedQuery.dateTo,
         status: committedQuery.statusFilter,
         signal: loadMoreController.signal,
       });
@@ -265,8 +321,8 @@ export function AdminRecords() {
   }
 
   useEffect(() => {
-    void loadRootRecords(debouncedSearch);
-  }, [dateFilter, statusFilter, debouncedSearch]);
+    void loadRootRecords();
+  }, [dateFrom, dateTo, statusFilter, debouncedSearch]);
 
   const filteredPasses = passes;
 
@@ -373,11 +429,12 @@ export function AdminRecords() {
     }
   }
 
-  async function exportCSV() {
+  async function exportRecords(format: 'csv' | 'xlsx' | 'pdf') {
     setExporting(true);
-    // Section 18: snapshot search.trim() directly at click time
+    setExportFormat(format);
     const exportSearch = search.trim();
-    const exportDate = dateFilter;
+    const exportDateFrom = dateFrom;
+    const exportDateTo = dateTo;
     const exportStatus = statusFilter;
 
     try {
@@ -387,7 +444,8 @@ export function AdminRecords() {
             cursor,
             pageSize,
             search: exportSearch,
-            date: exportDate,
+            dateFrom: exportDateFrom,
+            dateTo: exportDateTo,
             status: exportStatus,
           });
           return {
@@ -398,18 +456,69 @@ export function AdminRecords() {
         { pageSize: 250 },
       );
       const exportPasses = exportResult.items;
-      const headers = ['Visitor Name', 'Purpose', 'Status', 'Issued At', 'Time In', 'Time Out', 'Gate'];
-      const rows = exportPasses.map((p) => [
-        p.visitorName,
-        p.purpose,
-        p.status,
-        p.issuedAt ? formatManilaIso(p.issuedAt.toMillis()) : '',
-        p.timeIn ? formatManilaIso(p.timeIn.toMillis()) : '',
-        p.timeOut ? formatManilaIso(p.timeOut.toMillis()) : '',
-        p.gate || '',
-      ]);
+      const columns = [
+        { header: 'Visitor Name', key: 'visitorName' },
+        { header: 'Purpose', key: 'purpose' },
+        { header: 'Status', key: 'status' },
+        { header: 'Issued At', key: 'issuedAt' },
+        { header: 'Time In', key: 'timeIn' },
+        { header: 'Time Out', key: 'timeOut' },
+        { header: 'Gate', key: 'gate' },
+      ];
+      const rows = exportPasses.map((p) => ({
+        visitorName: p.visitorName,
+        purpose: p.purpose,
+        status: p.status,
+        issuedAt: p.issuedAt ? formatManilaIso(p.issuedAt.toMillis()) : '',
+        timeIn: p.timeIn ? formatManilaIso(p.timeIn.toMillis()) : '',
+        timeOut: p.timeOut ? formatManilaIso(p.timeOut.toMillis()) : '',
+        gate: p.gate || '',
+      }));
 
-      downloadCsvFile(`gate_passes_${formatManilaFileTimestamp(new Date())}.csv`, [headers, ...rows]);
+      const filterMetadata: Record<string, string> = {};
+      if (exportSearch) filterMetadata['Search'] = exportSearch;
+      if (exportStatus) filterMetadata['Status'] = exportStatus;
+      if (exportDateFrom) filterMetadata['Date From'] = exportDateFrom;
+      if (exportDateTo) filterMetadata['Date To'] = exportDateTo;
+
+      const baseFilename = `visitor_records_${formatManilaFileTimestamp(new Date())}`;
+      const generatedAt = formatManilaIso(Date.now());
+      const generatedBy = role ?? undefined;
+
+      if (format === 'csv') {
+        exportReportToCsv({
+          reportTitle: 'Visitor Records',
+          columns,
+          rows,
+          filterMetadata,
+          generatedAt,
+          generatedBy,
+          filename: `${baseFilename}.csv`,
+        });
+      } else if (format === 'xlsx') {
+        await exportReportToExcel({
+          reportTitle: 'Visitor Records',
+          sheetName: 'Visitor Records',
+          columns,
+          rows,
+          filterMetadata,
+          generatedAt,
+          generatedBy,
+          filename: `${baseFilename}.xlsx`,
+        });
+      } else if (format === 'pdf') {
+        await exportReportToPdf({
+          reportTitle: 'Visitor Records',
+          columns,
+          rows,
+          filterMetadata,
+          generatedAt,
+          generatedBy,
+          filename: `${baseFilename}.pdf`,
+          orientation: 'landscape',
+        });
+      }
+
       if (exportResult.truncated) {
         toast.warning(`Export reached the ${EXPORT_MAX_ROWS.toLocaleString()} record safety limit. Narrow the filters for a complete file.`);
       } else {
@@ -420,6 +529,7 @@ export function AdminRecords() {
       toast.error('The complete filtered export could not be generated');
     } finally {
       setExporting(false);
+      setExportFormat(null);
     }
   }
 
@@ -434,7 +544,7 @@ export function AdminRecords() {
             View and export gate pass history
           </p>
         </div>
-        <div className="flex flex-col gap-2 print:hidden min-[420px]:flex-row">
+        <div className="flex flex-wrap items-center gap-2 print:hidden">
           <Button
             onClick={() => window.print()}
             variant="secondary"
@@ -442,14 +552,35 @@ export function AdminRecords() {
           >
             Print loaded view
           </Button>
-          <Button
-            onClick={() => void exportCSV()}
-            disabled={exporting}
-            loading={exporting}
-            icon={<Download className="h-4 w-4" />}
-          >
-            {exporting ? 'Exporting...' : 'Export filtered CSV'}
-          </Button>
+          <div className="flex items-center gap-1.5">
+            <Button
+              onClick={() => void exportRecords('csv')}
+              disabled={exporting}
+              loading={exporting && exportFormat === 'csv'}
+              icon={<Download className="h-4 w-4" />}
+              variant="secondary"
+            >
+              CSV
+            </Button>
+            <Button
+              onClick={() => void exportRecords('xlsx')}
+              disabled={exporting}
+              loading={exporting && exportFormat === 'xlsx'}
+              icon={<Download className="h-4 w-4" />}
+              variant="secondary"
+            >
+              Excel
+            </Button>
+            <Button
+              onClick={() => void exportRecords('pdf')}
+              disabled={exporting}
+              loading={exporting && exportFormat === 'pdf'}
+              icon={<Download className="h-4 w-4" />}
+              variant="secondary"
+            >
+              PDF
+            </Button>
+          </div>
         </div>
       </div>
 
@@ -462,36 +593,106 @@ export function AdminRecords() {
       </div>
 
       {/* Filters */}
-      <Card className="flex flex-wrap gap-4 p-5 print:hidden">
-        <div className="min-w-0 flex-1 sm:min-w-52">
-          <label htmlFor="visitor-search" className="mb-2 block text-sm font-medium text-[var(--color-text-secondary)]">Search Name</label>
-          <Input
-            id="visitor-search"
-            type="text"
-            placeholder="Search visitors..."
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-          />
-        </div>
-        
-        <div className="w-full sm:w-48">
-          <label htmlFor="visitor-date-filter" className="mb-2 block text-sm font-medium text-[var(--color-text-secondary)]">Date</label>
-          <Input
-            id="visitor-date-filter"
-            type="date"
-            value={dateFilter}
-            onChange={(e) => setDateFilter(e.target.value)}
-          />
+      <Card className="flex flex-col gap-4 p-5 print:hidden">
+        {/* Presets and Active Filter count */}
+        <div className="flex flex-wrap items-center justify-between gap-2 border-b border-[var(--color-border)] pb-3">
+          <div className="flex flex-wrap items-center gap-1.5">
+            <span className="text-xs font-semibold text-[var(--color-text-secondary)] mr-1">Presets:</span>
+            <Button
+              type="button"
+              size="sm"
+              variant={datePreset === 'today' ? 'primary' : 'secondary'}
+              onClick={() => applyPreset('today')}
+            >
+              Today
+            </Button>
+            <Button
+              type="button"
+              size="sm"
+              variant={datePreset === 'last7' ? 'primary' : 'secondary'}
+              onClick={() => applyPreset('last7')}
+            >
+              Last 7 Days
+            </Button>
+            <Button
+              type="button"
+              size="sm"
+              variant={datePreset === 'thisMonth' ? 'primary' : 'secondary'}
+              onClick={() => applyPreset('thisMonth')}
+            >
+              This Month
+            </Button>
+            {datePreset === 'custom' && (
+              <span className="rounded bg-[var(--color-surface-hover)] px-2 py-0.5 text-xs text-[var(--color-text-muted)]">
+                Custom range
+              </span>
+            )}
+          </div>
+          <div className="flex items-center gap-2">
+            {activeFilterCount > 0 && (
+              <span className="rounded-full bg-[var(--color-brand)]/10 px-2.5 py-0.5 text-xs font-semibold text-[var(--color-brand)]">
+                Filters ({activeFilterCount})
+              </span>
+            )}
+            {activeFilterCount > 0 && (
+              <Button
+                type="button"
+                size="sm"
+                variant="secondary"
+                onClick={handleResetFilters}
+              >
+                Reset Filters
+              </Button>
+            )}
+          </div>
         </div>
 
-        <div className="w-full sm:w-48">
-          <label className="mb-2 block text-sm font-medium text-[var(--color-text-secondary)]">Status</label>
-          <Select
-            value={statusFilter}
-            onChange={(e) => setStatusFilter(e.target.value)}
-            aria-label="Filter by status"
-          >
-            <option value="">All Statuses</option>
+        <div className="flex flex-wrap gap-4">
+          <div className="min-w-0 flex-1 sm:min-w-52">
+            <label htmlFor="visitor-search" className="mb-2 block text-sm font-medium text-[var(--color-text-secondary)]">Search Name</label>
+            <Input
+              id="visitor-search"
+              type="text"
+              placeholder="Search visitors..."
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+            />
+          </div>
+          
+          <div className="w-full sm:w-44">
+            <label htmlFor="visitor-date-from" className="mb-2 block text-sm font-medium text-[var(--color-text-secondary)]">From Date</label>
+            <Input
+              id="visitor-date-from"
+              type="date"
+              value={dateFrom}
+              onChange={(e) => {
+                setDateFrom(e.target.value);
+                setDatePreset('custom');
+              }}
+            />
+          </div>
+
+          <div className="w-full sm:w-44">
+            <label htmlFor="visitor-date-to" className="mb-2 block text-sm font-medium text-[var(--color-text-secondary)]">To Date</label>
+            <Input
+              id="visitor-date-to"
+              type="date"
+              value={dateTo}
+              onChange={(e) => {
+                setDateTo(e.target.value);
+                setDatePreset('custom');
+              }}
+            />
+          </div>
+
+          <div className="w-full sm:w-48">
+            <label className="mb-2 block text-sm font-medium text-[var(--color-text-secondary)]">Status</label>
+            <Select
+              value={statusFilter}
+              onChange={(e) => setStatusFilter(e.target.value)}
+              aria-label="Filter by status"
+            >
+              <option value="">All Statuses</option>
             <option value="issued">Issued</option>
             <option value="pending">Pending</option>
             <option value="inside">Inside</option>
@@ -499,6 +700,7 @@ export function AdminRecords() {
             <option value="rejected">Rejected</option>
             <option value="expired">Expired</option>
           </Select>
+        </div>
         </div>
       </Card>
 

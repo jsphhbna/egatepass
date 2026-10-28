@@ -194,7 +194,7 @@ export const ROUTE_CONTRACT_MATRIX: readonly RouteContract[] = [
     handlerModule: 'server/routes/gate/sync-offline-registration.ts',
   },
 
-  // System Router (5 routes)
+  // System Router (6 routes)
   {
     path: '/api/create-user',
     group: 'system',
@@ -208,6 +208,13 @@ export const ROUTE_CONTRACT_MATRIX: readonly RouteContract[] = [
     subpath: 'update-user',
     allowedMethods: ['POST'],
     handlerModule: 'server/routes/system/update-user.ts',
+  },
+  {
+    path: '/api/decommission-user',
+    group: 'system',
+    subpath: 'decommission-user',
+    allowedMethods: ['POST'],
+    handlerModule: 'server/routes/system/decommission-user.ts',
   },
   {
     path: '/api/update-settings',

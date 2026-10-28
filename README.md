@@ -58,12 +58,13 @@ flowchart LR
 |---|---|---|
 | **Frontend** | React 19, TypeScript, Vite 8 | Single Page Application (SPA), responsive mobile/tablet interfaces |
 | **Hosting & CDN** | Vercel | Global edge CDN delivery and frontend asset hosting |
-| **Serverless API** | Vercel Functions (Node.js 24) | 27 canonical API endpoints across 6 route groups, verification, and cryptography |
+| **Serverless API** | Vercel Functions (Node.js 24) | 31 canonical API endpoints across 6 route groups, verification, and cryptography |
 | **Database** | Supabase PostgreSQL | Authoritative relational data, Row Level Security (RLS), and RPCs |
 | **Authentication** | Supabase Auth | Anonymous visitor sessions, staff identities, and managed device credentials |
 | **Object Storage** | Supabase Storage (Private) | Private storage for visitor photos (`visitor-photos`) and IDs (`visitor-ids`) |
-| **Transactional Email** | Resend | Dispatch of system notifications, auth invites, and QR pass delivery |
+| **Transactional Email** | Resend | Dispatch of system notifications, auth invites, and canonical QR pass delivery |
 | **Email Templates** | React Email | Type-safe, branded HTML templates built with TypeScript and TSX |
+| **Pass Rendering** | Pure SVG + Canvas + Sharp | Shared canonical digital pass artifact across portal, kiosk, and email attachment |
 | **Bot Protection** | Cloudflare Turnstile | Turnstile bot protection ONLY (not authoritative DNS, not CDN/proxy) |
 | **Authoritative DNS** | get.tech / Orderbox | Domain registrar and authoritative DNS management (@ A to Vercel, Resend DKIM/SPF) |
 | **Local OCR** | Tesseract.js | Client-side optical character recognition for kiosk ID capture and optional portal autofill |
@@ -550,3 +551,4 @@ EARIST E-GatePass is designed with clear architectural boundaries separating log
 | [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md) | Diagnostic matrices for Auth Email Hook, device auth, RLS denials, and scanner errors |
 | [docs/IMAGE_SECURITY.md](docs/IMAGE_SECURITY.md) | Camera capture constraints, upload intents, and private storage lifecycle |
 | [docs/AUDIT_POLICY.md](docs/AUDIT_POLICY.md) | Audit trail schema, protected action exemptions, and strict sensitive data redaction |
+| [docs/FUTURE_VISITOR_ACCOUNT_REQUIREMENTS.md](docs/FUTURE_VISITOR_ACCOUNT_REQUIREMENTS.md) | Specification & policy requirements for optional future reusable visitor accounts |

@@ -81,7 +81,7 @@ describe('FEATURE 4 CONTRACT: Online Pass Delivery Gate, Timed Skip Warning & Re
   });
 
   it('keeps kiosk email modal strictly optional post-issuance', () => {
-    expect(kioskSrc).toContain('Email my QR code');
+    expect(kioskSrc).toContain('Email E-GatePass');
     expect(kioskSrc).toContain('<EmailPassModal');
     expect(kioskSrc).not.toContain("mode='delivery-gate'");
     expect(kioskSrc).not.toContain('mode="delivery-gate"');

@@ -40,7 +40,7 @@ async function handleRequest(request: Request): Promise<Response> {
     await requireStaffActor(admin, token, ['admin', 'superadmin']);
 
     let query = admin.from('staff_profiles')
-      .select('user_id, display_name, role, active, privacy_accepted_at, must_change_password, created_at')
+      .select('user_id, display_name, role, active, privacy_accepted_at, must_change_password, created_at, decommissioned_at, decommissioned_by, decommission_reason')
       .order('created_at', { ascending: false })
       .order('user_id', { ascending: false })
       .limit(limit + 1);
@@ -93,6 +93,9 @@ async function handleRequest(request: Request): Promise<Response> {
         privacyAcceptedAt: profile.privacy_accepted_at,
         mustChangePassword: profile.must_change_password,
         createdAt: profile.created_at,
+        decommissionedAt: profile.decommissioned_at ?? null,
+        decommissionedBy: profile.decommissioned_by ?? null,
+        decommissionReason: profile.decommission_reason ?? null,
       })),
       nextCursor,
       hasMore,

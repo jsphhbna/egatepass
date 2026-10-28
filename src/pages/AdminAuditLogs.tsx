@@ -7,7 +7,8 @@ import { useAuth } from '@/hooks/useAuth';
 import { isSuperAdmin } from '@/lib/permissions';
 import { getAccessToken } from '@/services/auth';
 import { asAppTimestamp } from '@/lib/timestamp';
-import { collectCursorPages, downloadCsvFile, EXPORT_MAX_ROWS } from '@/lib/completeExport';
+import { collectCursorPages, EXPORT_MAX_ROWS } from '@/lib/completeExport';
+import { exportReportToCsv, exportReportToExcel, exportReportToPdf } from '@/lib/reportExport';
 import {
   normalizeAdministrativeAudit,
   useAdministrativeAudit,
@@ -127,9 +128,28 @@ export function AdminAuditLogs() {
   const actionSearch = administrativeAction.trim().toLocaleLowerCase();
   const visibleAdministrative = administrative.data;
 
-  async function exportActivity() {
+  const [exportFormat, setExportFormat] = useState<'csv' | 'xlsx' | 'pdf' | null>(null);
+
+  function resetFilters() {
+    if (tab === 'visitor') {
+      setVisitorEvent('');
+    } else if (tab === 'administrative') {
+      setAdministrativeRole('');
+      setAdministrativeAction('');
+      setDebouncedAction('');
+    }
+    setDateFrom('');
+    setDateTo('');
+  }
+
+  const hasActiveFilters = tab === 'visitor'
+    ? Boolean(visitorEvent || dateFrom || dateTo)
+    : Boolean(administrativeRole || administrativeAction || dateFrom || dateTo);
+
+  async function handleExport(format: 'csv' | 'xlsx' | 'pdf') {
     if (tab === 'reconciliation') return;
     setExporting(true);
+    setExportFormat(format);
     try {
       const token = await getAccessToken();
       if (!token) throw new Error('Not authenticated');
@@ -159,6 +179,10 @@ export function AdminAuditLogs() {
         },
       );
 
+      const generatedAt = formatManilaIso(Date.now());
+      const generatedBy = role ?? undefined;
+      const fileTimestamp = formatManilaFileTimestamp(new Date());
+
       if (tab === 'visitor') {
         const items = result.items
           .map((raw) => ({
@@ -166,42 +190,146 @@ export function AdminAuditLogs() {
             timestamp: asAppTimestamp(raw.timestamp),
           }))
           .filter((item: VisitorActivityItem) => !visitorEvent || item.event === visitorEvent);
-        downloadCsvFile(`visitor_activity_${formatManilaFileTimestamp(new Date())}.csv`, [
-          ['Time', 'Event', 'Gate', 'Guard UID', 'Device UID', 'Visitor UID', 'Reason'],
-          ...items.map((item: VisitorActivityItem) => [
-            item.timestamp ? formatManilaIso(item.timestamp.toMillis()) : '',
-            item.event,
-            item.gate || '',
-            item.guardUid || '',
-            item.deviceId || '',
-            item.visitorId || '',
-            item.reason || '',
-          ]),
-        ]);
+
+        const columns = [
+          { header: 'Time', key: 'time' },
+          { header: 'Event', key: 'event' },
+          { header: 'Gate', key: 'gate' },
+          { header: 'Guard UID', key: 'guardUid' },
+          { header: 'Device UID', key: 'deviceId' },
+          { header: 'Visitor UID', key: 'visitorId' },
+          { header: 'Reason', key: 'reason' },
+        ];
+
+        const rows = items.map((item: VisitorActivityItem) => ({
+          time: item.timestamp ? formatManilaIso(item.timestamp.toMillis()) : '',
+          event: item.event,
+          gate: item.gate || '',
+          guardUid: item.guardUid || '',
+          deviceId: item.deviceId || '',
+          visitorId: item.visitorId || '',
+          reason: item.reason || '',
+        }));
+
+        const filterMetadata: Record<string, string> = {};
+        if (visitorEvent) filterMetadata['Event'] = visitorEvent;
+        if (dateFrom) filterMetadata['Date From'] = dateFrom;
+        if (dateTo) filterMetadata['Date To'] = dateTo;
+
+        const baseFilename = `visitor_activity_${fileTimestamp}`;
+        if (format === 'csv') {
+          exportReportToCsv({
+            reportTitle: 'Visitor Activity',
+            columns,
+            rows,
+            filterMetadata,
+            generatedAt,
+            generatedBy,
+            filename: `${baseFilename}.csv`,
+          });
+        } else if (format === 'xlsx') {
+          await exportReportToExcel({
+            reportTitle: 'Visitor Activity',
+            sheetName: 'Visitor Activity',
+            columns,
+            rows,
+            filterMetadata,
+            generatedAt,
+            generatedBy,
+            filename: `${baseFilename}.xlsx`,
+          });
+        } else if (format === 'pdf') {
+          await exportReportToPdf({
+            reportTitle: 'Visitor Activity',
+            columns,
+            rows,
+            filterMetadata,
+            generatedAt,
+            generatedBy,
+            filename: `${baseFilename}.pdf`,
+            orientation: 'landscape',
+          });
+        }
+
         toast.success(`Exported ${items.length.toLocaleString()} visitor activity record${items.length === 1 ? '' : 's'}.`);
       } else {
         const items = result.items
           .map((raw) => normalizeAdministrativeAudit(raw))
           .filter((item) => (!administrativeRole || item.actorRole === administrativeRole)
             && (!actionSearch || item.action.toLocaleLowerCase().includes(actionSearch)));
-        downloadCsvFile(`administrative_activity_${formatManilaFileTimestamp(new Date())}.csv`, [
-          ['Time', 'Action', 'Actor UID', 'Actor role', 'Target type', 'Target ID', 'Previous role', 'New role', 'Previous status', 'New status', 'Result'],
-          ...items.map((item) => [
-            item.timestamp ? formatManilaIso(item.timestamp.toMillis()) : '',
-            item.action,
-            item.actorUid,
-            item.actorRole,
-            item.targetType,
-            item.targetId,
-            item.previousRole ?? '',
-            item.newRole ?? '',
-            item.previousStatus ?? '',
-            item.newStatus ?? '',
-            item.result,
-          ]),
-        ]);
+
+        const columns = [
+          { header: 'Time', key: 'time' },
+          { header: 'Action', key: 'action' },
+          { header: 'Actor UID', key: 'actorUid' },
+          { header: 'Actor Role', key: 'actorRole' },
+          { header: 'Target Type', key: 'targetType' },
+          { header: 'Target ID', key: 'targetId' },
+          { header: 'Previous Role', key: 'previousRole' },
+          { header: 'New Role', key: 'newRole' },
+          { header: 'Previous Status', key: 'previousStatus' },
+          { header: 'New Status', key: 'newStatus' },
+          { header: 'Result', key: 'result' },
+        ];
+
+        const rows = items.map((item) => ({
+          time: item.timestamp ? formatManilaIso(item.timestamp.toMillis()) : '',
+          action: item.action,
+          actorUid: item.actorUid,
+          actorRole: item.actorRole,
+          targetType: item.targetType,
+          targetId: item.targetId,
+          previousRole: item.previousRole ?? '',
+          newRole: item.newRole ?? '',
+          previousStatus: item.previousStatus ?? '',
+          newStatus: item.newStatus ?? '',
+          result: item.result,
+        }));
+
+        const filterMetadata: Record<string, string> = {};
+        if (administrativeRole) filterMetadata['Actor Role'] = administrativeRole;
+        if (actionSearch) filterMetadata['Action'] = actionSearch;
+        if (dateFrom) filterMetadata['Date From'] = dateFrom;
+        if (dateTo) filterMetadata['Date To'] = dateTo;
+
+        const baseFilename = `administrative_activity_${fileTimestamp}`;
+        if (format === 'csv') {
+          exportReportToCsv({
+            reportTitle: 'Administrative Activity',
+            columns,
+            rows,
+            filterMetadata,
+            generatedAt,
+            generatedBy,
+            filename: `${baseFilename}.csv`,
+          });
+        } else if (format === 'xlsx') {
+          await exportReportToExcel({
+            reportTitle: 'Administrative Activity',
+            sheetName: 'Administrative Activity',
+            columns,
+            rows,
+            filterMetadata,
+            generatedAt,
+            generatedBy,
+            filename: `${baseFilename}.xlsx`,
+          });
+        } else if (format === 'pdf') {
+          await exportReportToPdf({
+            reportTitle: 'Administrative Activity',
+            columns,
+            rows,
+            filterMetadata,
+            generatedAt,
+            generatedBy,
+            filename: `${baseFilename}.pdf`,
+            orientation: 'landscape',
+          });
+        }
+
         toast.success(`Exported ${items.length.toLocaleString()} administrative record${items.length === 1 ? '' : 's'}.`);
       }
+
       if (result.truncated) {
         toast.warning(`Export reached the ${EXPORT_MAX_ROWS.toLocaleString()} record safety limit. Narrow the filters for a complete file.`);
       }
@@ -210,6 +338,7 @@ export function AdminAuditLogs() {
       toast.error('The complete filtered activity export could not be generated');
     } finally {
       setExporting(false);
+      setExportFormat(null);
     }
   }
 
@@ -267,9 +396,46 @@ export function AdminAuditLogs() {
           )}
           <div className="w-full sm:w-44"><label className="mb-1.5 block text-xs font-semibold text-[var(--color-text-secondary)]">From</label><Input type="date" value={dateFrom} onChange={(event) => setDateFrom(event.target.value)} /></div>
           <div className="w-full sm:w-44"><label className="mb-1.5 block text-xs font-semibold text-[var(--color-text-secondary)]">To</label><Input type="date" value={dateTo} onChange={(event) => setDateTo(event.target.value)} /></div>
-          <Button className="sm:ml-auto" variant="secondary" loading={exporting} disabled={exporting} icon={<Download className="h-4 w-4" />} onClick={() => void exportActivity()}>
-            {exporting ? 'Exporting...' : 'Export complete filtered CSV'}
-          </Button>
+          <div className="flex flex-wrap items-center gap-2 sm:ml-auto">
+            {hasActiveFilters && (
+              <Button
+                variant="secondary"
+                onClick={resetFilters}
+                disabled={exporting}
+              >
+                Reset Filters
+              </Button>
+            )}
+            <div className="flex items-center gap-1.5">
+              <Button
+                variant="secondary"
+                loading={exporting && exportFormat === 'csv'}
+                disabled={exporting}
+                icon={<Download className="h-4 w-4" />}
+                onClick={() => void handleExport('csv')}
+              >
+                CSV
+              </Button>
+              <Button
+                variant="secondary"
+                loading={exporting && exportFormat === 'xlsx'}
+                disabled={exporting}
+                icon={<Download className="h-4 w-4" />}
+                onClick={() => void handleExport('xlsx')}
+              >
+                Excel
+              </Button>
+              <Button
+                variant="secondary"
+                loading={exporting && exportFormat === 'pdf'}
+                disabled={exporting}
+                icon={<Download className="h-4 w-4" />}
+                onClick={() => void handleExport('pdf')}
+              >
+                PDF
+              </Button>
+            </div>
+          </div>
         </div>
       )}
 

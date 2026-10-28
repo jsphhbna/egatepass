@@ -64,10 +64,10 @@ describe('EMAIL-ARCH-01: React Email Templates', () => {
 
     expect(html).toContain('EARIST E-GatePass');
     expect(html).toContain('Maria Santos');
-    expect(html).toContain('10000000-0000-4000-a000-000000000888');
+    expect(html).toContain('EG-10000000');
     expect(html).toContain('2026-10-20');
     expect(html).toContain('Registrar Transcript Request');
-    expect(html).toContain('earist-gate-pass-qr.png');
+    expect(html).toContain('egatepass-EG-10000000.png');
     expect(html).toContain('Security Notice');
   });
 

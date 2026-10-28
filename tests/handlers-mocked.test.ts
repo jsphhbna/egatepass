@@ -1407,7 +1407,7 @@ describe('Behavioral Mocked-Handler Tests [PASS (MOCKED HANDLER)]', () => {
       expect(res.status).toBe(200);
       expect(json.success).toBe(true);
       expect(json.status).toBe('sent_to_provider');
-      const deliveryEmail = sentEmails.find((e) => e.subject.includes('Your EARIST Digital Gate Pass'));
+      const deliveryEmail = sentEmails.find((e) => e.subject.includes('Your EARIST E-GatePass') || e.subject.includes('Your EARIST Digital Gate Pass'));
       expect(deliveryEmail).toBeDefined();
       expect(deliveryEmail?.attachments?.length).toBe(1);
     });

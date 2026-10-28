@@ -4,9 +4,9 @@ import { getServerSupabaseClients } from '../../supabase.js';
 import { getVerifiedSessionContext, HttpError, recordReconciliation } from '../../actors.js';
 import {
   EmailDeliveryError,
-  generateQrPngBuffer,
   sendResendEmail,
 } from '../../email.js';
+import { renderDigitalPassPngBuffer } from '../../lib/render-digital-pass.js';
 import {
   renderVerificationCodeEmail,
   renderPassIssuedEmail,
@@ -412,9 +412,30 @@ async function handleRequest(request: Request): Promise<Response> {
 
     let providerAttempted = false;
     try {
-      const qrBase64 = (await generateQrPngBuffer(parsed.data.qrToken)).toString('base64');
       const validFrom = new Date(passRow.valid_from).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', timeZone: 'Asia/Manila' });
       const validUntil = new Date(passRow.valid_until).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', timeZone: 'Asia/Manila' });
+
+      const { pngBuffer, filename } = await renderDigitalPassPngBuffer({
+        fullName: passRow.visitors.full_name,
+        visitDate: passRow.visitors.visit_date,
+        publicReference: passRow.public_reference,
+        qrToken: parsed.data.qrToken,
+        purpose: passRow.visitors.purpose,
+        validFrom,
+        validUntil,
+      });
+      const passBase64 = pngBuffer.toString('base64');
+
+      const { data: settingsData } = await admin
+        .from('app_settings')
+        .select('visitor_instructions')
+        .eq('id', 1)
+        .maybeSingle();
+
+      const visitorInstructions: string[] | undefined = Array.isArray(settingsData?.visitor_instructions)
+        ? (settingsData.visitor_instructions as string[])
+        : undefined;
+
       const html = await renderPassIssuedEmail({
         fullName: passRow.visitors.full_name,
         visitDate: passRow.visitors.visit_date,
@@ -422,13 +443,15 @@ async function handleRequest(request: Request): Promise<Response> {
         validFrom,
         validUntil,
         purpose: passRow.visitors.purpose,
+        visitorInstructions,
+        attachmentFilename: filename,
       });
       providerAttempted = true;
       const sent = await sendResendEmail({
         to: recipient,
-        subject: 'Your EARIST Digital Gate Pass QR Code',
+        subject: 'Your EARIST E-GatePass',
         html,
-        attachments: [{ filename: 'earist-gate-pass-qr.png', content: qrBase64 }],
+        attachments: [{ filename, content: passBase64 }],
       });
       const finalResult = await finalizeDispatch(admin, verificationId, requestId, 'sent_to_provider', sent.id);
       if (!finalResult.success) {

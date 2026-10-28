@@ -460,4 +460,84 @@ stateDiagram-v2
 3. **Guard Password Reset Modal**:
    - On `/guard`, open reset password modal. Confirm Turnstile widget is present, solved, and verified before email dispatch.
 
+---
+
+## 14. Institutional Upgrades Manual QA Runbook
+
+### 14.1 Required Field UX Verification
+1. Navigate to `/get-pass` (Online Registration) and `/kiosk` (Kiosk Registration).
+2. Verify introductory notice is present: *"Fields marked * are required."*
+3. Verify required fields visibly render a red asterisk `*` and accessible `(required)` screen-reader text:
+   - First Name *
+   - Last Name *
+   - Contact Number *
+   - Purpose of Visit *
+   - Visit Date *
+   - Privacy Consent *
+4. Verify optional fields visibly render `(Optional)` with muted styling (e.g. `Middle Name (Optional)`).
+5. Select a Visit Purpose requiring details (e.g. *Official Business*). Verify the conditional details field visibly appears with `*` and required attributes. Change to *General Inquiry* and verify details field is hidden.
+6. Verify actual input elements receive `required` and `aria-required="true"`.
+
+### 14.2 Camera Controls & Mirroring Verification
+> [!NOTE]
+> Physical camera hardware behavior remains subject to manual acceptance on physical devices (**PHYSICAL CAMERA ACCEPTANCE: REQUIRES DEVICE TESTING**).
+1. Open camera on a multi-camera device (e.g., Android phone or tablet).
+2. Verify Front camera starts by default with mirrored preview and mirrored face capture.
+3. Tap **Switch Camera**: verify old video stream tracks stop cleanly and rear camera activates with unmirrored preview and unmirrored capture.
+4. Tap **Mirror**: verify mirror state toggles.
+5. In ID Document capture: verify preview mirroring can be enabled, but captured ID image remains unmirrored so text is readable.
+6. In Kiosk OCR scan: verify OCR source frame is unmirrored regardless of preview mirror state.
+7. Rapidly switch cameras twice: verify no orphaned media streams remain locked.
+
+### 14.3 Canonical Digital Pass Parity Verification
+1. Register a visitor pass online at `/get-pass`.
+2. Observe on-screen pass presentation.
+3. Download the pass PNG and share via Web Share API.
+4. Request email dispatch and inspect the attached PNG `egatepass-EG-XXXXXXXX.png`.
+5. Complete a walk-in registration at `/kiosk` and observe the digital on-screen pass.
+6. **Compare Visual Artifacts**: Verify the on-screen card, downloaded card, shared card, and email attachment all use the exact same canonical SVG layout, fonts, institutional maroon/gold branding, pass reference, and QR code placement.
+7. Confirm email attachment is named `egatepass-EG-XXXXXXXX.png` and no longer `earist-gate-pass-qr.png`.
+8. Verify physical thermal print via MXW01 remains isolated using the 384px thermal template layout.
+
+### 14.4 Visitor Instructions & Privacy Configuration QA
+1. As Super Admin, navigate to **System Settings > Visitor Instructions**.
+2. Edit instructions (e.g., modify text, add an item up to 8 items). Save settings.
+3. Generate a new pass online (`/get-pass`): verify updated instructions render in the *"Before You Arrive"* panel.
+4. Generate a kiosk pass: verify the same instructions render on the kiosk success screen.
+5. Email pass: verify the email body contains the configured instructions.
+6. Verify privacy notice displays configured retention days (`image_retention_days` and `visitor_retention_days`) rather than hardcoded numbers.
+
+### 14.5 Visitor Records Date Range & Report Exports QA
+1. Navigate to **Visitor Records** (`/admin/records`).
+2. Test date presets: **Today**, **Last 7 Days**, **This Month**, and verify `From Date` and `To Date` populate with Asia/Manila calendar dates.
+3. Test **Reset Filters**: verify dates, status, and search reset and trigger a single root query.
+4. Test invalid range: set `From Date` after `To Date` and verify error toast without crashing.
+5. Tap **Export** and choose:
+   - **CSV**: Open downloaded file. Verify row 1 contains column headers and no decorative rows exist. Verify sensitive secrets (`qrToken`, `tokenDigest`, evidence paths) are absent.
+   - **Excel**: Open `.xlsx` in spreadsheet viewer. Verify institutional header, filter metadata block, frozen table headers, and styled rows.
+   - **PDF**: Open `.pdf`. Verify maroon banner header, applied filters, and formatted paginated table with page numbers.
+6. Repeat exports on **Admin Audit Logs** (`/admin/audit-logs`) for Visitor Activity and Administrative Activity.
+
+### 14.6 Guard Authoritative Search & Waiting-Time QA
+1. On Guard Console (`/guard`), verify live pending queue displays chronological oldest-first visitors without requiring a search.
+2. In the Search input, type 1 character: verify local filtering on loaded cards only.
+3. Type >= 2 characters (e.g., visitor surname or contact number): verify 280ms debounce triggers authoritative server search via `api.guard_search_pending_queue`.
+4. Verify search returns visitors even if they were outside the initial 50 loaded passes.
+5. Tap **Clear Search**: verify the normal live queue instantly returns without reloading all passes.
+6. Verify waiting-time badges: cards display `Waiting X min` with subtle tone thresholds (0–5m normal, 5–10m attention, 10m+ long wait).
+
+### 14.7 Safe Staff Permanent Decommission QA
+> [!CAUTION]
+> Never test decommissioning on the only active Super Admin account.
+1. Create a disposable test staff account (e.g. `test-guard@earist.ph`).
+2. Deactivate the account. Confirm login is denied.
+3. As Super Admin, open **User Management** and click the **Inactive** tab.
+4. Click **Permanently Decommission**.
+5. In the modal, enter an incorrect password: verify rejection with *"Incorrect Super Admin password"*.
+6. Enter correct Super Admin password and a valid reason (e.g., *"Staff departed institution"*): verify success.
+7. Verify account moves to the **Decommissioned** tab with decommission timestamp and reason.
+8. Verify no Reactivate button or role editor is available.
+9. Verify Super Admin remains logged in (local signout preserved the browser session).
+10. Verify historical audit records attribute prior actions to the decommissioned staff user.
+
 

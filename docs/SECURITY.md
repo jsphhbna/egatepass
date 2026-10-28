@@ -556,3 +556,31 @@ During connectivity outages, operational access authority delegates to the Guard
 - **No Blind Overwrite**: The server RPC `api.sync_offline_event` locks target pass rows (`FOR UPDATE`), evaluates `expected_status`, and verifies legitimate lifecycle transitions.
 - **Conflict Handling**: If a pass was modified on the server during the outage (e.g. cancelled or exited remotely), the sync engine refuses to overwrite the record and writes a conflict record to `public.reconciliation_tasks` for administrative triage.
 
+---
+
+## 21. Institutional Upgrades Security Contracts
+
+### 21.1 Safe Staff Permanent Decommissioning Security Invariants
+- **Zero Row Deletion & Attribution Preservation**: Under `staff_profiles.user_id -> auth.users.id ON DELETE RESTRICT`, hard deletion would break historical audit events and attribution. Decommissioning permanently updates `decommissioned_at = now()`, `decommissioned_by`, `decommission_reason`, and forces `active = false` without removing the relational record.
+- **Super Admin Re-Authentication**: Destructive permanent decommissioning requires the acting Super Admin's current password. Verification executes on an isolated Supabase Auth client and terminates immediately with `signOut({ scope: 'local' })` to guarantee the Super Admin's primary browser session remains intact.
+- **Auth Identity Suspension**: The Auth identity is suspended with an 876,000-hour ban (`banned_until`), disabling credential login. If Supabase Auth synchronization fails, the database change commits and an administrative reconciliation item is registered (`reconciliationRequired: true`) rather than rolling back truthful database status.
+
+### 21.2 Report Export Data Hygiene & Secret Exclusion
+Export pipelines generating CSV, XLSX, and PDF files enforce absolute exclusion of sensitive secrets and storage internals:
+- Raw QR tokens (`qrToken`) and cryptographic digests (`tokenDigest`) are strictly excluded.
+- Private Storage object paths (`photoPublicId`, `idImagePublicId`) and temporary signed URLs are strictly excluded.
+- Passwords, email verification codes, API keys, and internal session identifiers are strictly excluded.
+- Dynamic modules (`exceljs`, `jspdf`, `jspdf-autotable`) are loaded only on demand at click time to prevent client bundle inflation.
+
+### 21.3 Canonical SVG Pass Artifact Injection Defense
+The shared pure SVG template generator (`src/lib/digitalPassArtifact.ts`) uses strict XML escaping on all dynamic visitor-provided fields:
+- Visitor Name, Purpose, Pass Reference, Visit Date, and Validity Window are sanitized through `escapeXml(...)` before interpolation into SVG markup.
+- Prevents SVG injection, attribute breakout, and script execution across browser DOM, Canvas rasterization, and server `sharp` rendering pipelines.
+- Raw QR token is never rendered as SVG text (the QR image contains only the opaque token).
+
+### 21.4 Guard Authoritative Search RPC Authorization
+- `api.guard_search_pending_queue` is protected with `REVOKE ALL FROM PUBLIC`, `REVOKE ALL FROM ANON`, and `GRANT EXECUTE TO authenticated`.
+- Executed with `SECURITY DEFINER` and `SET search_path = ''`.
+- Hard role enforcement inside function body verifies caller is active `guard`, `admin`, or `superadmin`.
+- Query validation bounds input between 2 and 100 characters, bounds limit between 1 and 100, and returns only passes with status `pending`. No QR tokens, digests, or storage credentials are included in projections.
+

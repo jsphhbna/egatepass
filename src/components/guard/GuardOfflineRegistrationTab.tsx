@@ -3,6 +3,7 @@ import { useWebcam } from '@/hooks/useWebcam';
 import { useObjectUrl } from '@/hooks/useObjectUrl';
 import { compressImageToWebP } from '@/lib/imageProcessing';
 import { Button, Card } from '@/components/ui';
+import { CameraControls } from '@/components/CameraControls';
 import {
   Camera,
   CheckCircle2,
@@ -52,6 +53,7 @@ export function GuardOfflineRegistrationTab({
     facingMode: captureMode === 'id' ? 'environment' : 'user',
     width: 640,
     height: 480,
+    allowCaptureMirroring: captureMode === 'photo',
   });
 
   useEffect(() => {
@@ -308,6 +310,16 @@ export function GuardOfflineRegistrationTab({
                 playsInline
                 muted
                 className="h-full w-full object-cover"
+                style={{ transform: webcam.mirrorPreview ? 'scaleX(-1)' : 'none' }}
+              />
+            </div>
+            <div className="mt-2 max-w-md mx-auto">
+              <CameraControls
+                activeFacingMode={webcam.activeFacingMode}
+                mirrorPreview={webcam.mirrorPreview}
+                canSwitchCamera={webcam.canSwitchCamera}
+                onSwitchCamera={webcam.switchCamera}
+                onToggleMirror={webcam.toggleMirrorPreview}
               />
             </div>
             <div className="mt-4 flex justify-center gap-3">

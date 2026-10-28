@@ -30,6 +30,7 @@ async function handleRequest(request: Request): Promise<Response> {
         visitor_retention_days,
         audit_retention_days,
         reconciliation_retention_days,
+        visitor_instructions,
         automatic_cleanup_enabled,
         updated_at
       `)
@@ -56,6 +57,7 @@ async function handleRequest(request: Request): Promise<Response> {
       peakModeScope: data.peak_mode,
       rejectionReasons: Array.isArray(data.rejection_reasons) ? data.rejection_reasons : [],
       visitPurposes: Array.isArray(data.visit_purposes) ? data.visit_purposes : [],
+      visitorInstructions: Array.isArray(data.visitor_instructions) ? data.visitor_instructions : [],
       imageRetentionDays: data.image_retention_days,
       photoRetentionDays: data.photo_retention_days ?? data.image_retention_days ?? 7,
       idRetentionDays: data.id_retention_days ?? 30,

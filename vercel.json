@@ -185,6 +185,10 @@
       "destination": "/api/system/update-user"
     },
     {
+      "source": "/api/decommission-user",
+      "destination": "/api/system/decommission-user"
+    },
+    {
       "source": "/api/update-settings",
       "destination": "/api/system/update-settings"
     },

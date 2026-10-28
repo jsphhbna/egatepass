@@ -24,6 +24,7 @@ const settingsSchema = z.object({
   peakMode: z.union([z.boolean(), z.enum(['off', 'portal', 'kiosk', 'both'])]),
   rejectionReasons: z.array(z.string().trim().min(1).max(160)).max(50),
   visitPurposes: z.array(purposeSchema).min(1).max(50),
+  visitorInstructions: z.array(z.string().trim().min(3).max(180)).min(1).max(8).optional(),
   retentionDays: z.number().int().min(1).max(3650).optional(),
   visitorRetentionDays: z.number().int().min(7).max(730).optional(),
   imageRetentionDays: z.number().int().min(1).max(365).optional(),
@@ -144,12 +145,25 @@ async function handleRequest(request: Request): Promise<Response> {
       throw new HttpError(503, errMsg);
     }
 
+    if (parsed.data.visitorInstructions !== undefined) {
+      const instrResult = await admin.schema('api').rpc('update_visitor_instructions', {
+        requested_actor_id: actor.id,
+        requested_instructions: parsed.data.visitorInstructions,
+      });
+      if (instrResult.error) {
+        console.error('update_visitor_instructions RPC failed:', instrResult.error);
+        throw new HttpError(400, instrResult.error.message || 'invalid_visitor_instructions');
+      }
+    }
+
     return jsonResponse(200, {
       success: true,
       settings: {
         peak_mode: peakModeScope,
         rejection_reasons: parsed.data.rejectionReasons,
         visit_purposes: parsed.data.visitPurposes,
+        visitor_instructions: parsed.data.visitorInstructions,
+        visitorInstructions: parsed.data.visitorInstructions,
         working_hours_start: startVal,
         working_hours_end: endVal,
         image_retention_days: imgRet,

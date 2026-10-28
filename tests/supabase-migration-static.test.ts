@@ -199,4 +199,34 @@ describe('Supabase migration static safety contract', () => {
     expect(migration).toContain('pendingTotal');
     expect(migration).toContain('hasMore');
   });
+
+  it('applies additive institutional product polish schema and RPCs in Migration 34', () => {
+    const migration = readFileSync('supabase/migrations/20261028210000_institutional_product_polish.sql', 'utf8');
+
+    // Visitor instructions in app_settings
+    expect(migration).toContain('visitor_instructions jsonb not null');
+    expect(migration).toContain('app_settings_visitor_instructions_check');
+    expect(migration).toContain('jsonb_typeof(visitor_instructions) = \'array\'');
+    expect(migration).toContain('jsonb_array_length(visitor_instructions) <= 8');
+
+    // Staff decommission columns & constraints
+    expect(migration).toContain('decommissioned_at timestamptz null');
+    expect(migration).toContain('decommissioned_by uuid null');
+    expect(migration).toContain('decommission_reason text null');
+    expect(migration).toContain('staff_profiles_decommissioned_inactive_check');
+    expect(migration).toContain('staff_profiles_decommission_reason_check');
+
+    // RPCs
+    expect(migration).toContain('api.decommission_staff_profile');
+    expect(migration).toContain('api.guard_search_pending_queue');
+    expect(migration).toContain("set search_path = ''");
+    expect(migration).toContain('staff.decommissioned');
+
+    // Permissions
+    expect(migration).toMatch(/revoke all on function api\.decommission_staff_profile[^;]+from public, anon;/i);
+    expect(migration).toMatch(/grant execute on function api\.decommission_staff_profile[^;]+to authenticated/i);
+    expect(migration).toMatch(/revoke all on function api\.guard_search_pending_queue[^;]+from public, anon;/i);
+    expect(migration).toMatch(/grant execute on function api\.guard_search_pending_queue[^;]+to authenticated/i);
+  });
 });
+

@@ -346,3 +346,47 @@ When cloud connectivity returns:
 4. Synchronized entries are acknowledged and safely purged from the local device store.
 5. In the rare event of a state conflict (e.g. visitor was already rejected online prior to outage), a reconciliation record is logged in `public.reconciliation_tasks` for administrative review without overwriting data.
 
+---
+
+## 11. Institutional Reporting, Search & Staff Lifecycle Operations
+
+### 11.1 Guard Live & Authoritative Queue Search
+- **Live Local Filtering**: For queries under 2 characters, currently loaded pending queue passes are filtered immediately in the browser matching name or purpose.
+- **Authoritative Server Search**: For queries >= 2 characters, after a 280ms debounce, `api.guard_search_pending_queue` searches all pending passes across the database without requiring "Load All". Matches on visitor full name, contact number, purpose, or public reference (`EG-XXXXXXXX`).
+- **Generation Fencing & Deduping**: Fast queries never get overwritten by delayed slow queries. Local and authoritative cards are deduped by pass ID.
+- **Clear Search**: Restores the live queue snapshot instantly without reloading or resetting pagination.
+- **Queue Age Visibility**: Displays waiting age prominently (e.g. `Waiting 3 min`, `Waiting 12 min`) with subtle tone thresholds (0–5m normal, 5–10m attention, 10m+ long wait).
+
+### 11.2 Visitor Records Date-Range Filtering
+- **Range Support**: Selectable `From Date` and `To Date` inputs validated in `Asia/Manila` time.
+- **Presets**: `Today`, `Last 7 Days`, `This Month`, and `Custom` quickly populate the date bounds.
+- **Server Validation**: The server validates format (`YYYY-MM-DD`) and rejects invalid ranges where `dateFrom > dateTo` with HTTP 400.
+- **Reset Filters**: One-click action resets dates, status, and search query while triggering a single clean root query.
+
+### 11.3 Unified Report Exports
+- **Formats Available**: CSV, Excel (`.xlsx`), and PDF (`.pdf`) available across Visitor Records and Admin Audit Logs.
+- **Full Traversal**: Exports traverse the entire filtered dataset across keyset cursor pagination up to safety limit `EXPORT_MAX_ROWS`, not just the current view page.
+- **Clean RFC 4180 CSV**: Pure machine-readable rows without decorative headers.
+- **Institutional XLSX**: Includes metadata header (filters, date, staff actor), frozen table header, and styled rows.
+- **Institutional PDF**: Human-readable layout with maroon institutional header banner, applied filters, and paginated table with page numbering.
+- **Data Hygiene**: Sensitive secrets (raw QR tokens, token digests, storage object paths, signed URLs, credentials) are strictly stripped from all export formats.
+
+### 11.4 Configurable Visitor Instructions & Privacy Notices
+- **Admin Configuration**: Super Admins configure 1–8 institutional reminder instructions in **System Settings > Visitor Instructions**.
+- **Public & Email Distribution**: Instructions immediately propagate to:
+  - Online Visitor Portal success screen ("Before You Arrive" panel)
+  - Kiosk Registration success screen ("Before You Arrive" panel)
+  - Pass delivery email body (`PassIssuedEmail.tsx`)
+- **Configurable Retention Notices**: UI privacy text displays actual configured days (`image_retention_days` and `visitor_retention_days`) rather than hardcoded durations.
+
+### 11.5 Safe Staff Permanent Decommissioning
+1. **Deactivate Target Staff**: Staff account must first be set to Inactive (`active = false`). Active accounts cannot be decommissioned.
+2. **Select Action**: Super Admin opens **User Management**, selects the **Inactive** tab, and clicks **Permanently Decommission**.
+3. **Re-Authentication Modal**: Super Admin enters their own current password and a reason (5–240 characters).
+4. **Permanent State Transition**:
+   - `public.staff_profiles` row is updated with `decommissioned_at = now()`, `decommissioned_by = auth.uid()`, and `decommission_reason`. Row is NOT deleted.
+   - Historical audit attribution remains linked via foreign key.
+   - Auth user is suspended for 876,000 hours (`banned_until`).
+   - If Auth suspension encounters partial failure, database state remains committed and an administrative reconciliation item is created.
+   - Account appears under the **Decommissioned** filter tab with no Reactivate or credential reset actions available.
+

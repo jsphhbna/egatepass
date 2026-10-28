@@ -26,6 +26,14 @@ export function tryAcquireSettingsMutation(inFlightRef: { current: boolean }, bu
   return true;
 }
 
+export const DEFAULT_VISITOR_INSTRUCTIONS: string[] = [
+  'Follow the EARIST visitor dress code and campus policies.',
+  'Bring a valid ID for identity verification at the gate.',
+  'Keep your E-GatePass ready before approaching the entrance.',
+  'This visitor pass is personal and non-transferable.',
+  'Scan your E-GatePass when leaving the campus.',
+];
+
 export function AdminSettings() {
   const { role } = useAuth();
   const canManageSecuritySettings = isSuperAdmin(role);
@@ -44,12 +52,14 @@ export function AdminSettings() {
     peakMode: 'off' as PeakModeScope,
     rejectionReasons: [] as string[],
     visitPurposes: [] as VisitPurposeOption[],
+    visitorInstructions: DEFAULT_VISITOR_INSTRUCTIONS,
   });
   const [retentionInputs, setRetentionInputs] = useState(() => createRetentionInputValues(DEFAULT_RETENTION_POLICY));
   const [retentionErrors, setRetentionErrors] = useState<RetentionInputErrors>({});
 
   const [newReason, setNewReason] = useState('');
   const [newPurpose, setNewPurpose] = useState('');
+  const [newInstruction, setNewInstruction] = useState('');
   
   // Modals state
   const [showPeakModeConfirm, setShowPeakModeConfirm] = useState(false);
@@ -79,6 +89,9 @@ export function AdminSettings() {
           peakMode: peakScope,
           rejectionReasons: Array.isArray(data.rejectionReasons) ? data.rejectionReasons : DEFAULT_REJECTION_REASONS,
           visitPurposes: normalizeVisitPurposes(data.visitPurposes),
+          visitorInstructions: Array.isArray(data.visitorInstructions) && data.visitorInstructions.length > 0
+            ? data.visitorInstructions
+            : DEFAULT_VISITOR_INSTRUCTIONS,
         });
         setRetentionInputs(createRetentionInputValues(retentionPolicy));
         setLoadError(null);
@@ -132,6 +145,7 @@ export function AdminSettings() {
           ...purpose,
           detailPrompt: purpose.requiresDetails ? purpose.detailPrompt.trim() : '',
         })),
+        visitorInstructions: settings.visitorInstructions.map((i) => i.trim()).filter(Boolean),
       };
       const settingsToSave = canManageSecuritySettings
         ? { ...operationalSettings, workingHours: settings.workingHours,
@@ -228,6 +242,45 @@ export function AdminSettings() {
       visitPurposes: previous.visitPurposes.map((purpose) => purpose.label === label
         ? { ...purpose, detailPrompt }
         : purpose),
+    }));
+  }
+
+  function addInstruction() {
+    if (settingsBusy) return;
+    const instruction = newInstruction.trim();
+    if (!instruction) return;
+    if (instruction.length < 3 || instruction.length > 180) {
+      toast.error('Instruction must be between 3 and 180 characters');
+      return;
+    }
+    if (settings.visitorInstructions.length >= 8) {
+      toast.error('Maximum of 8 instructions allowed');
+      return;
+    }
+    setSettings((prev) => ({
+      ...prev,
+      visitorInstructions: [...prev.visitorInstructions, instruction],
+    }));
+    setNewInstruction('');
+  }
+
+  function removeInstruction(index: number) {
+    if (settingsBusy) return;
+    if (settings.visitorInstructions.length <= 1) {
+      toast.error('At least one visitor instruction is required');
+      return;
+    }
+    setSettings((prev) => ({
+      ...prev,
+      visitorInstructions: prev.visitorInstructions.filter((_, i) => i !== index),
+    }));
+  }
+
+  function updateInstruction(index: number, text: string) {
+    if (settingsBusy) return;
+    setSettings((prev) => ({
+      ...prev,
+      visitorInstructions: prev.visitorInstructions.map((item, i) => (i === index ? text : item)),
     }));
   }
 
@@ -536,6 +589,75 @@ export function AdminSettings() {
               </li>
             </ul>
           </Card>}
+
+          {/* Visitor Instructions */}
+          <Card className="overflow-hidden">
+            <div className="border-b border-[var(--color-border)] p-6">
+              <h2 className="text-xl font-bold text-[var(--color-text-primary)]">Visitor Instructions</h2>
+              <p className="mt-1 text-sm text-[var(--color-text-secondary)]">
+                These reminders are shown to visitors after pass issuance and included in E-GatePass email delivery.
+              </p>
+            </div>
+
+            <ul className="divide-y divide-[var(--color-border)]">
+              {settings.visitorInstructions.map((instruction, index) => (
+                <li key={index} className="flex items-center gap-3 p-4">
+                  <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-[var(--color-brand-light)] text-xs font-bold text-[var(--color-brand)]">
+                    {index + 1}
+                  </span>
+                  <div className="flex-1">
+                    <Input
+                      type="text"
+                      value={instruction}
+                      disabled={settingsBusy}
+                      onChange={(e) => updateInstruction(index, e.target.value)}
+                      maxLength={180}
+                      aria-label={`Visitor instruction ${index + 1}`}
+                    />
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => removeInstruction(index)}
+                    disabled={settingsBusy || settings.visitorInstructions.length <= 1}
+                    className="rounded p-2 text-[var(--color-text-muted)] hover:bg-[var(--color-danger-light)] hover:text-[var(--color-danger)] disabled:opacity-30 disabled:cursor-not-allowed"
+                    aria-label={`Remove instruction ${index + 1}`}
+                  >
+                    <Trash2 className="h-4 w-4" />
+                  </button>
+                </li>
+              ))}
+
+              {settings.visitorInstructions.length < 8 && (
+                <li className="flex gap-3 border-t border-[var(--color-border)] bg-[var(--color-canvas)] p-4">
+                  <div className="flex-1">
+                    <Input
+                      type="text"
+                      value={newInstruction}
+                      disabled={settingsBusy}
+                      onChange={(e) => setNewInstruction(e.target.value)}
+                      placeholder="Add new visitor instruction..."
+                      maxLength={180}
+                      aria-label="New visitor instruction"
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') {
+                          e.preventDefault();
+                          addInstruction();
+                        }
+                      }}
+                    />
+                  </div>
+                  <Button
+                    onClick={addInstruction}
+                    disabled={settingsBusy || !newInstruction.trim()}
+                    variant="secondary"
+                    icon={<Plus className="h-4 w-4" />}
+                  >
+                    Add
+                  </Button>
+                </li>
+              )}
+            </ul>
+          </Card>
         </div>
 
         {canManageSecuritySettings && <div className="grid content-start gap-6">

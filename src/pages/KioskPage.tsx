@@ -45,6 +45,7 @@ import { InstitutionalPassCard } from '@/components/InstitutionalPassCard';
 import { createPassPresentation, type PassPresentation } from '@/lib/passPresentation';
 import { recognizeIdImage, terminateLocalOcrWorker } from '@/lib/ocr';
 import { generateBrandedQrDataUrl } from '@/lib/brandedQr';
+import { CameraControls } from '@/components/CameraControls';
 
 // ============================================================
 // FORM SCHEMA (Zod)
@@ -154,6 +155,13 @@ export function KioskPage() {
   const [retryingConfig, setRetryingConfig] = useState(false);
   const [isProcessingId, setIsProcessingId] = useState(false);
   const [isSigningOut, setIsSigningOut] = useState(false);
+  const [visitorInstructions, setVisitorInstructions] = useState<string[]>([
+    'Follow the EARIST visitor dress code and campus policies.',
+    'Bring a valid ID for identity verification at the gate.',
+    'Keep your E-GatePass ready before approaching the entrance.',
+    'This visitor pass is personal and non-transferable.',
+    'Scan your E-GatePass when leaving the campus.',
+  ]);
 
   const loadSettings = useCallback(async (isRetry = false) => {
     if (isRetry) setRetryingConfig(true);
@@ -173,6 +181,9 @@ export function KioskPage() {
       if (typeof data.scheduling_days_ahead === 'number') {
         setSchedulingDaysAhead(data.scheduling_days_ahead);
       }
+      if (Array.isArray(data.visitor_instructions) && data.visitor_instructions.length > 0) {
+        setVisitorInstructions(data.visitor_instructions);
+      }
       setConfigState('ready');
     } catch {
       setConfigState('error');
@@ -185,8 +196,8 @@ export function KioskPage() {
     void loadSettings();
   }, [loadSettings]);
 
-  const faceWebcam = useWebcam({ facingMode: 'user', width: 640, height: 480 });
-  const idWebcam = useWebcam({ facingMode: 'environment', width: 1280, height: 720 });
+  const faceWebcam = useWebcam({ facingMode: 'user', width: 640, height: 480, allowCaptureMirroring: true });
+  const idWebcam = useWebcam({ facingMode: 'environment', width: 1280, height: 720, allowCaptureMirroring: false });
   const ocrGenerationRef = useRef(0);
 
   // Cleanup on unmount
@@ -801,9 +812,26 @@ export function KioskPage() {
                         <span className="text-sm font-medium">Starting ID camera…</span>
                       </div>
                     )}
-                    <video ref={idWebcam.videoRef} autoPlay playsInline muted className="h-full w-full object-cover" />
+                    <video
+                      ref={idWebcam.videoRef}
+                      autoPlay
+                      playsInline
+                      muted
+                      className="h-full w-full object-cover"
+                      style={{ transform: idWebcam.mirrorPreview ? 'scaleX(-1)' : 'none' }}
+                    />
                   </>
                 )}
+              </div>
+
+              <div className="mx-auto w-full max-w-md">
+                <CameraControls
+                  activeFacingMode={idWebcam.activeFacingMode}
+                  mirrorPreview={idWebcam.mirrorPreview}
+                  canSwitchCamera={idWebcam.canSwitchCamera}
+                  onSwitchCamera={idWebcam.switchCamera}
+                  onToggleMirror={idWebcam.toggleMirrorPreview}
+                />
               </div>
 
               <div className="flex flex-col gap-3 sm:flex-row">
@@ -848,6 +876,13 @@ export function KioskPage() {
           {/* STEP 4: Form Details (Prefilled if OCR or Blank if Manual) */}
           {step === 'form' && (
             <form onSubmit={handleSubmit(onFormNext)} className="space-y-5" noValidate>
+              <div className="rounded-xl border border-sky-500/20 bg-sky-500/10 p-3.5 text-xs text-sky-900 dark:text-sky-200">
+                <p className="font-semibold">No account required</p>
+                <p className="mt-0.5">This registration creates a visitor pass only. No reusable visitor account is being created.</p>
+              </div>
+
+              <p className="text-xs text-[var(--color-text-secondary)] font-medium">Fields marked * are required.</p>
+
               {ocrSuccessNotice && (
                 <div className="rounded-xl border border-[var(--color-brand)]/20 bg-[var(--color-brand-light)] p-3 text-xs text-[var(--color-brand)] flex items-center gap-2">
                   <CheckCircle2 className="h-4 w-4 shrink-0" />
@@ -856,19 +891,19 @@ export function KioskPage() {
               )}
 
               <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
-                <FormField label="First Name" id="kiosk-first-name" error={errors.firstName?.message}>
-                  <Input id="kiosk-first-name" {...register('firstName')} error={!!errors.firstName} />
+                <FormField label="First Name" requirement="required" id="kiosk-first-name" error={errors.firstName?.message}>
+                  <Input id="kiosk-first-name" {...register('firstName')} error={!!errors.firstName} required aria-required="true" />
                 </FormField>
-                <FormField label="Middle Name" id="kiosk-middle-name" hint="Optional" error={errors.middleName?.message}>
+                <FormField label="Middle Name" requirement="optional" id="kiosk-middle-name" error={errors.middleName?.message}>
                   <Input id="kiosk-middle-name" {...register('middleName')} error={!!errors.middleName} />
                 </FormField>
-                <FormField label="Last Name" id="kiosk-last-name" error={errors.lastName?.message}>
-                  <Input id="kiosk-last-name" {...register('lastName')} error={!!errors.lastName} />
+                <FormField label="Last Name" requirement="required" id="kiosk-last-name" error={errors.lastName?.message}>
+                  <Input id="kiosk-last-name" {...register('lastName')} error={!!errors.lastName} required aria-required="true" />
                 </FormField>
               </div>
 
-              <FormField label="Contact Number" id="kiosk-phone" hint="Philippine mobile number" error={errors.contactNumber?.message}>
-                <Input id="kiosk-phone" type="tel" placeholder="0917 123 4567" {...register('contactNumber')} error={!!errors.contactNumber} />
+              <FormField label="Contact Number" requirement="required" id="kiosk-phone" hint="Philippine mobile number" error={errors.contactNumber?.message}>
+                <Input id="kiosk-phone" type="tel" placeholder="0917 123 4567" {...register('contactNumber')} error={!!errors.contactNumber} required aria-required="true" />
               </FormField>
 
               <VisitPurposeField
@@ -878,8 +913,8 @@ export function KioskPage() {
                 onChange={(value) => setValue('purpose', value, { shouldDirty: true, shouldValidate: true })}
               />
 
-              <FormField label="Visit Date" id="kiosk-date" error={errors.visitDate?.message}>
-                <Input id="kiosk-date" type="date" {...register('visitDate')} min={today} max={latestVisitDate} error={!!errors.visitDate} />
+              <FormField label="Visit Date" requirement="required" id="kiosk-date" error={errors.visitDate?.message}>
+                <Input id="kiosk-date" type="date" {...register('visitDate')} min={today} max={latestVisitDate} error={!!errors.visitDate} required aria-required="true" />
               </FormField>
 
               {/* Data Privacy Agreement */}
@@ -887,8 +922,8 @@ export function KioskPage() {
                 <p className="font-semibold text-[var(--color-text-primary)]">Data Privacy Notice (RA 10173)</p>
                 <p>EARIST collects your photo and visitor information solely for security and campus safety. Information is handled in strict accordance with the Data Privacy Act.</p>
                 <label className="flex items-center gap-2 pt-2 border-t border-[var(--color-border)] cursor-pointer">
-                  <input type="checkbox" {...register('consent')} className="rounded border-[var(--color-border-strong)] text-[var(--color-brand)] focus:ring-[var(--color-brand)]" />
-                  <span className="font-medium text-[var(--color-text-primary)]">I agree to the collection and processing of my data.</span>
+                  <input type="checkbox" {...register('consent')} required aria-required="true" className="rounded border-[var(--color-border-strong)] text-[var(--color-brand)] focus:ring-[var(--color-brand)]" />
+                  <span className="font-medium text-[var(--color-text-primary)]">I agree to the collection and processing of my data. *</span>
                 </label>
                 {errors.consent && <p className="text-[var(--color-danger)] font-medium">{errors.consent.message}</p>}
               </div>
@@ -945,17 +980,34 @@ export function KioskPage() {
                         <span className="text-sm font-medium">Starting camera…</span>
                       </div>
                     )}
-                    <video ref={faceWebcam.videoRef} autoPlay playsInline muted className="h-full w-full object-cover" style={{ transform: 'scaleX(-1)' }} />
+                    <video
+                      ref={faceWebcam.videoRef}
+                      autoPlay
+                      playsInline
+                      muted
+                      className="h-full w-full object-cover"
+                      style={{ transform: faceWebcam.mirrorPreview ? 'scaleX(-1)' : 'none' }}
+                    />
                   </>
                 )}
+              </div>
+
+              <div className="mx-auto w-full max-w-xs">
+                <CameraControls
+                  activeFacingMode={faceWebcam.activeFacingMode}
+                  mirrorPreview={faceWebcam.mirrorPreview}
+                  canSwitchCamera={faceWebcam.canSwitchCamera}
+                  onSwitchCamera={faceWebcam.switchCamera}
+                  onToggleMirror={faceWebcam.toggleMirrorPreview}
+                />
               </div>
 
               <div className="flex gap-3">
                 <Button variant="secondary" type="button" onClick={() => { faceWebcam.stop(); setStep('form'); }} className="flex-1 min-h-[44px]" icon={<ArrowLeft className="h-4 w-4" />}>
                   Back
                 </Button>
-                <Button type="button" onClick={onCapturePhoto} disabled={!faceWebcam.isActive} className="flex-1 min-h-[44px]" icon={<Camera className="h-4 w-4" />}>
-                  Capture
+                <Button type="button" onClick={onCapturePhoto} disabled={!faceWebcam.isActive} className="flex-1 min-h-[44px]" icon={<Camera className="h-4 w-4" />} aria-label="Capture Photo">
+                  Capture Photo
                 </Button>
               </div>
             </div>
@@ -1025,8 +1077,25 @@ export function KioskPage() {
                       </div>
                     )}
                     {idWebcam.videoRef && (
-                      <video ref={idWebcam.videoRef} autoPlay playsInline muted className="h-full w-full object-cover" />
+                      <video
+                        ref={idWebcam.videoRef}
+                        autoPlay
+                        playsInline
+                        muted
+                        className="h-full w-full object-cover"
+                        style={{ transform: idWebcam.mirrorPreview ? 'scaleX(-1)' : 'none' }}
+                      />
                     )}
+                  </div>
+
+                  <div className="mx-auto w-full max-w-md">
+                    <CameraControls
+                      activeFacingMode={idWebcam.activeFacingMode}
+                      mirrorPreview={idWebcam.mirrorPreview}
+                      canSwitchCamera={idWebcam.canSwitchCamera}
+                      onSwitchCamera={idWebcam.switchCamera}
+                      onToggleMirror={idWebcam.toggleMirrorPreview}
+                    />
                   </div>
 
                   <div className="flex gap-3">
@@ -1055,7 +1124,7 @@ export function KioskPage() {
                     </Button>
                   </div>
                   <Button variant="ghost" type="button" onClick={onRetakePhoto} disabled={isProcessingId} className="w-full min-h-[44px]" icon={<RotateCcw className="h-4 w-4" />}>
-                    Retake Selfie
+                    Retake Photo
                   </Button>
                 </div>
               )}
@@ -1065,7 +1134,10 @@ export function KioskPage() {
           {/* STEP 7: Review Step */}
           {step === 'review' && (
             <div className="space-y-6">
-              <h2 className="text-center text-lg font-bold text-[var(--color-text-primary)]">Review Pass</h2>
+              <div className="text-center">
+                <h2 className="text-lg font-bold text-[var(--color-text-primary)]">Review Your Information</h2>
+                <p className="text-xs text-[var(--color-text-secondary)] mt-1">Please verify your information before generating your E-GatePass.</p>
+              </div>
               {kioskTransactionRef.current?.phase === 'existing_pass_conflict' ? (
                 <div className="rounded-lg border border-amber-300 bg-amber-50 dark:border-amber-700/60 dark:bg-amber-950/40 p-4 space-y-2 text-sm text-amber-900 dark:text-amber-200" role="alert">
                   <div className="flex items-center gap-2 font-semibold text-amber-950 dark:text-amber-100">
@@ -1092,68 +1164,84 @@ export function KioskPage() {
               ) : submitError ? (
                 <div className="rounded-md border border-[var(--color-danger)] bg-[var(--color-danger-light)] p-3 text-sm text-[var(--color-danger-dark)]" role="alert">{submitError}</div>
               ) : null}
-              
-              <div className="flex flex-wrap gap-6 justify-center items-center py-2">
-                {photoPreview && (
-                  <div className="text-center">
-                    <p className="text-xs text-[var(--color-text-secondary)] mb-1">Face Photo</p>
-                    <img src={photoPreview} alt="Face photo" className="h-24 w-20 object-cover rounded-lg border border-[var(--color-border)] shadow-sm mx-auto" />
-                    {kioskTransactionRef.current?.phase !== 'ambiguous' && kioskTransactionRef.current?.phase !== 'existing_pass_conflict' && (
-                      <button
-                        type="button"
-                        onClick={onRetakePhoto}
-                        className="mt-1.5 text-xs font-semibold text-[var(--color-brand)] hover:underline inline-flex items-center gap-1"
-                      >
-                        <RotateCcw className="h-3 w-3" />
-                        Retake Selfie
-                      </button>
-                    )}
-                  </div>
-                )}
-                {idPreview && !isPeakMode ? (
-                  <div className="text-center">
-                    <p className="text-xs text-[var(--color-text-secondary)] mb-1">ID Card</p>
-                    <img src={idPreview} alt="ID preview" className="h-24 w-36 object-cover rounded-lg border border-[var(--color-border)] shadow-sm mx-auto" />
-                    {kioskTransactionRef.current?.phase !== 'ambiguous' && kioskTransactionRef.current?.phase !== 'existing_pass_conflict' && (
-                      <button
-                        type="button"
-                        onClick={onRetakeId}
-                        className="mt-1.5 text-xs font-semibold text-[var(--color-brand)] hover:underline inline-flex items-center gap-1"
-                      >
-                        <RotateCcw className="h-3 w-3" />
-                        Retake ID
-                      </button>
-                    )}
-                  </div>
-                ) : isPeakMode ? (
-                  <div className="text-center">
-                    <p className="text-xs text-[var(--color-text-secondary)] mb-1">ID Card</p>
-                    <div className="flex h-24 w-36 items-center justify-center rounded-lg border border-dashed border-[var(--color-border)] bg-[var(--color-canvas-subtle)] p-2 text-center text-xs text-[var(--color-text-secondary)]">
-                      No ID required (Peak Mode)
+
+              {/* Grouped: Photo / Valid ID */}
+              <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] p-4 space-y-3">
+                <p className="font-semibold text-xs text-[var(--color-text-secondary)] uppercase tracking-wider">Photo / Valid ID</p>
+                <div className="flex flex-wrap gap-6 justify-center items-center py-1">
+                  {photoPreview && (
+                    <div className="text-center">
+                      <p className="text-xs text-[var(--color-text-secondary)] mb-1">Face Photo</p>
+                      <img src={photoPreview} alt="Face photo" className="h-24 w-20 object-cover rounded-lg border border-[var(--color-border)] shadow-sm mx-auto" />
+                      {kioskTransactionRef.current?.phase !== 'ambiguous' && kioskTransactionRef.current?.phase !== 'existing_pass_conflict' && (
+                        <button
+                          type="button"
+                          onClick={onRetakePhoto}
+                          className="mt-1.5 text-xs font-semibold text-[var(--color-brand)] hover:underline inline-flex items-center gap-1"
+                        >
+                          <RotateCcw className="h-3 w-3" />
+                          Retake Photo
+                        </button>
+                      )}
                     </div>
-                  </div>
-                ) : null}
+                  )}
+                  {idPreview && !isPeakMode ? (
+                    <div className="text-center">
+                      <p className="text-xs text-[var(--color-text-secondary)] mb-1">Valid ID</p>
+                      <img src={idPreview} alt="ID preview" className="h-24 w-36 object-cover rounded-lg border border-[var(--color-border)] shadow-sm mx-auto" />
+                      {kioskTransactionRef.current?.phase !== 'ambiguous' && kioskTransactionRef.current?.phase !== 'existing_pass_conflict' && (
+                        <button
+                          type="button"
+                          onClick={onRetakeId}
+                          className="mt-1.5 text-xs font-semibold text-[var(--color-brand)] hover:underline inline-flex items-center gap-1"
+                        >
+                          <RotateCcw className="h-3 w-3" />
+                          Retake ID
+                        </button>
+                      )}
+                    </div>
+                  ) : isPeakMode ? (
+                    <div className="text-center">
+                      <p className="text-xs text-[var(--color-text-secondary)] mb-1">Valid ID</p>
+                      <div className="flex h-24 w-36 items-center justify-center rounded-lg border border-dashed border-[var(--color-border)] bg-[var(--color-canvas-subtle)] p-2 text-center text-xs text-[var(--color-text-secondary)]">
+                        No ID required (Peak Mode)
+                      </div>
+                    </div>
+                  ) : null}
+                </div>
               </div>
 
-              <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-canvas)] p-4 text-sm">
-                <div className="flex items-center justify-between mb-2">
-                  <p><strong className="text-[var(--color-text-secondary)]">Name:</strong> {[getValues('firstName'), getValues('middleName'), getValues('lastName')].filter(Boolean).join(' ')}</p>
-                  {kioskTransactionRef.current?.phase !== 'ambiguous' && kioskTransactionRef.current?.phase !== 'existing_pass_conflict' && (
-                    <button
-                      type="button"
-                      onClick={() => {
-                        faceWebcam.stop();
-                        idWebcam.stop();
-                        setStep('form');
-                      }}
-                      className="text-xs font-semibold text-[var(--color-brand)] hover:underline"
-                    >
-                      Edit Details
-                    </button>
-                  )}
+              {/* Grouped: Visitor Information & Visit Information */}
+              <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-canvas)] p-4 text-sm divide-y divide-[var(--color-border)]">
+                <div className="pb-3">
+                  <div className="flex items-center justify-between mb-2">
+                    <p className="font-semibold text-xs text-[var(--color-text-secondary)] uppercase tracking-wider">Visitor Information</p>
+                    {kioskTransactionRef.current?.phase !== 'ambiguous' && kioskTransactionRef.current?.phase !== 'existing_pass_conflict' && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          faceWebcam.stop();
+                          idWebcam.stop();
+                          setStep('form');
+                        }}
+                        className="text-xs font-semibold text-[var(--color-brand)] hover:underline"
+                      >
+                        Edit Details
+                      </button>
+                    )}
+                  </div>
+                  <p><strong className="text-[var(--color-text-secondary)]">Full Name:</strong> {[getValues('firstName'), getValues('middleName'), getValues('lastName')].filter(Boolean).join(' ')}</p>
+                  <p className="mt-1"><strong className="text-[var(--color-text-secondary)]">Contact Number:</strong> {getValues('contactNumber')}</p>
                 </div>
-                <p className="mb-2"><strong className="text-[var(--color-text-secondary)]">Visit Date:</strong> {getValues('visitDate')}</p>
-                <p><strong className="text-[var(--color-text-secondary)]">Purpose:</strong> {getValues('purpose')}</p>
+                <div className="pt-3">
+                  <p className="font-semibold text-xs text-[var(--color-text-secondary)] uppercase tracking-wider mb-2">Visit Information</p>
+                  <p className="mb-1"><strong className="text-[var(--color-text-secondary)]">Visit Date:</strong> {getValues('visitDate')}</p>
+                  <p><strong className="text-[var(--color-text-secondary)]">Purpose of Visit:</strong> {getValues('purpose')}</p>
+                </div>
+                <div className="pt-3">
+                  <p className="font-semibold text-xs text-[var(--color-text-secondary)] uppercase tracking-wider mb-1">Privacy Confirmation</p>
+                  <p className="text-xs text-[var(--color-text-secondary)]">✓ Data Privacy Consent granted for campus security.</p>
+                </div>
               </div>
 
               {kioskTransactionRef.current?.phase === 'existing_pass_conflict' ? (
@@ -1204,7 +1292,7 @@ export function KioskPage() {
                     Edit Details
                   </Button>
                   <Button type="button" onClick={onSubmit} className="flex-1 min-h-[44px]" icon={<CheckCircle2 className="h-4 w-4" />}>
-                    Generate Pass
+                    Generate E-GatePass
                   </Button>
                 </div>
               )}
@@ -1227,6 +1315,11 @@ export function KioskPage() {
               </div>
               
               <h2 className="text-2xl font-bold text-[var(--color-text-primary)] print:hidden">Gate Pass Created</h2>
+
+              <div className="rounded-xl border border-sky-500/20 bg-sky-500/10 p-3 text-xs text-sky-900 dark:text-sky-200 text-left print:hidden">
+                <p className="font-semibold">Pass Created</p>
+                <p className="mt-0.5">Your visitor pass has been created. No reusable visitor account was created.</p>
+              </div>
 
               {printFailed && (
                 <div className="rounded-xl border border-[var(--color-warning)] bg-[var(--color-warning-light)] p-4 text-sm text-[var(--color-warning-dark)] print:hidden flex flex-col sm:flex-row items-center justify-between gap-3 text-left">
@@ -1252,13 +1345,25 @@ export function KioskPage() {
               )}
 
               <div className="flex justify-center">
-                <InstitutionalPassCard pass={currentPassPresentation} qrDataUrl={qrDataUrl} />
+                <InstitutionalPassCard presentation={currentPassPresentation} qrDataUrl={qrDataUrl} />
               </div>
 
               <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-canvas)] p-4 text-left text-sm print:hidden">
                 <p className="mb-1"><strong className="text-[var(--color-text-secondary)]">Purpose:</strong> {getValues('purpose')}</p>
                 <p><strong className="text-[var(--color-text-secondary)]">Valid:</strong> {issuedValidity || formatWorkingHours(workingHours)}</p>
               </div>
+
+              {/* Before You Arrive instructions panel */}
+              {visitorInstructions && visitorInstructions.length > 0 && (
+                <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] p-4 text-left text-xs space-y-2 print:hidden">
+                  <p className="font-bold uppercase tracking-wider text-[var(--color-brand)]">Before You Arrive</p>
+                  <ul className="list-disc list-inside space-y-1 text-[var(--color-text-secondary)]">
+                    {visitorInstructions.map((inst, idx) => (
+                      <li key={idx}>{inst}</li>
+                    ))}
+                  </ul>
+                </div>
+              )}
 
               <div className="flex flex-wrap gap-3 print:hidden">
                 <Button
@@ -1276,7 +1381,7 @@ export function KioskPage() {
                     : 'Browser Print'}
                 </Button>
                 <Button variant="secondary" type="button" onClick={() => setShowEmailModal(true)} className="flex-1 min-h-[44px]" icon={<Mail className="h-4 w-4" />}>
-                  Email my QR code
+                  Email E-GatePass
                 </Button>
                 <Button
                   type="button"
@@ -1285,7 +1390,7 @@ export function KioskPage() {
                   loading={isPrintBusy || isPrinting}
                   className="flex-1 min-h-[44px]"
                 >
-                  Next Visitor
+                  Register Another Visitor
                 </Button>
               </div>
             </div>

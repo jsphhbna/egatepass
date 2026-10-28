@@ -2051,7 +2051,7 @@ describe('Deep Dive 1 + Deep Dive 2 Root-Cause Closure Test Suite', () => {
 
       // Mutation controls are strictly guarded behind phase !== 'ambiguous'
       expect(kioskSrc).toContain("kioskTransactionRef.current?.phase !== 'ambiguous'");
-      expect(kioskSrc).toContain('Retake Selfie');
+      expect(kioskSrc).toContain('Retake Photo');
       expect(kioskSrc).toContain('Retake ID');
     });
 

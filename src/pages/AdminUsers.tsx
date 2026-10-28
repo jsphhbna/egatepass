@@ -30,6 +30,9 @@ interface AppUserWithId {
   privacyAcceptedAt: string | null;
   mustChangePassword?: boolean;
   createdAt: string;
+  decommissionedAt?: string | null;
+  decommissionedBy?: string | null;
+  decommissionReason?: string | null;
 }
 
 export function AdminUsers() {
@@ -37,12 +40,17 @@ export function AdminUsers() {
   const canManageAdministrativeRoles = isSuperAdmin(role);
   const [users, setUsers] = useState<AppUserWithId[]>([]);
   const [loading, setLoading] = useState(true);
+  const [statusFilter, setStatusFilter] = useState<'all' | 'active' | 'inactive' | 'decommissioned'>('active');
   const [nextCursor, setNextCursor] = useState<string | null>(null);
   const [hasMore, setHasMore] = useState(false);
   const [loadingMore, setLoadingMore] = useState(false);
   const [isCreating, setIsCreating] = useState(false);
   const [deactivatingUser, setDeactivatingUser] = useState<AppUserWithId | null>(null);
   const [isDeactivating, setIsDeactivating] = useState(false);
+  const [decommissioningUser, setDecommissioningUser] = useState<AppUserWithId | null>(null);
+  const [decommissionPassword, setDecommissionPassword] = useState('');
+  const [decommissionReason, setDecommissionReason] = useState('');
+  const [isDecommissioning, setIsDecommissioning] = useState(false);
   const [roleChange, setRoleChange] = useState<{ user: AppUserWithId; newRole: UserRole } | null>(null);
   const [isChangingRole, setIsChangingRole] = useState(false);
   const [reactivatingUserId, setReactivatingUserId] = useState<string | null>(null);
@@ -244,6 +252,79 @@ export function AdminUsers() {
     }
   }
 
+  async function handlePermanentDecommission() {
+    if (!decommissioningUser) return;
+    if (!decommissionPassword) {
+      toast.error('Please enter your Super Admin password to confirm.');
+      return;
+    }
+    const cleanReason = decommissionReason.trim();
+    if (cleanReason.length < 5 || cleanReason.length > 240) {
+      toast.error('Decommission reason must be between 5 and 240 characters.');
+      return;
+    }
+
+    setIsDecommissioning(true);
+    try {
+      const token = await getAccessToken();
+      const response = await fetch('/api/decommission-user', {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${token}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          targetUid: decommissioningUser.uid,
+          reason: cleanReason,
+          password: decommissionPassword,
+        }),
+      });
+
+      const body = (await response.json().catch(() => null)) as {
+        ok?: boolean;
+        error?: string;
+        message?: string;
+        reconciliationRequired?: boolean;
+      } | null;
+
+      if (response.status === 503 && body?.reconciliationRequired) {
+        toast.warning(
+          body.message ||
+            'Account decommissioned in database, but Auth suspension requires reconciliation.'
+        );
+        setDecommissioningUser(null);
+        setDecommissionPassword('');
+        setDecommissionReason('');
+        await loadUsers();
+        return;
+      }
+
+      if (!response.ok) {
+        if (body?.error === 'invalid_superadmin_password') {
+          throw new Error('Incorrect Super Admin password. Please check your password and try again.');
+        }
+        if (body?.error === 'target_user_must_be_inactive') {
+          throw new Error('Staff account must be deactivated before it can be decommissioned.');
+        }
+        if (body?.error === 'cannot_decommission_self') {
+          throw new Error('You cannot decommission your own Super Admin account.');
+        }
+        throw new Error(body?.error || 'Failed to decommission account.');
+      }
+
+      toast.success(`Staff account for ${decommissioningUser.name} has been permanently decommissioned.`);
+      setDecommissioningUser(null);
+      setDecommissionPassword('');
+      setDecommissionReason('');
+      await loadUsers();
+    } catch (err) {
+      console.error(err);
+      toast.error(err instanceof Error ? err.message : 'Failed to decommission user.');
+    } finally {
+      setIsDecommissioning(false);
+    }
+  }
+
   async function toggleStatus(user: AppUserWithId) {
     if (user.active) {
       setDeactivatingUser(user);
@@ -297,6 +378,13 @@ export function AdminUsers() {
     return ['admin', 'superadmin'];
   }
 
+  const filteredUsers = users.filter((user) => {
+    if (statusFilter === 'active') return !user.decommissionedAt && user.active;
+    if (statusFilter === 'inactive') return !user.decommissionedAt && !user.active;
+    if (statusFilter === 'decommissioned') return !!user.decommissionedAt;
+    return true; // 'all'
+  });
+
   return (
     <div className="space-y-6">
       <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
@@ -313,6 +401,30 @@ export function AdminUsers() {
         </Button>
       </div>
 
+      <div className="flex flex-wrap items-center gap-1.5 border-b border-[var(--color-border)] pb-3">
+        {(
+          [
+            { id: 'active', label: 'Active' },
+            { id: 'inactive', label: 'Inactive' },
+            { id: 'decommissioned', label: 'Decommissioned' },
+            { id: 'all', label: 'All' },
+          ] as const
+        ).map((tab) => (
+          <button
+            key={tab.id}
+            type="button"
+            onClick={() => setStatusFilter(tab.id)}
+            className={`rounded-lg px-3 py-1.5 text-xs font-semibold transition-colors ${
+              statusFilter === tab.id
+                ? 'bg-[var(--color-brand)] text-white shadow-xs'
+                : 'text-[var(--color-text-secondary)] hover:bg-[var(--color-surface-hover)] hover:text-[var(--color-text-primary)]'
+            }`}
+          >
+            {tab.label}
+          </button>
+        ))}
+      </div>
+
       <Modal 
         isOpen={isCreating} 
         onClose={() => {
@@ -324,26 +436,30 @@ export function AdminUsers() {
         size="sm"
       >
         <form onSubmit={handleSubmit(onSubmit)} className="space-y-5">
-          <FormField label="Name" id="new-user-name" error={errors.name?.message}>
-            <Input id="new-user-name" type="text" {...register('name')} error={!!errors.name} />
+          <p className="text-xs text-[var(--color-text-secondary)] font-medium">Fields marked * are required.</p>
+
+          <FormField label="Name" id="new-user-name" requirement="required" error={errors.name?.message}>
+            <Input id="new-user-name" type="text" {...register('name')} error={!!errors.name} required aria-required="true" />
           </FormField>
 
-          <FormField label="Email" id="new-user-email" error={errors.email?.message}>
-            <Input id="new-user-email" type="email" {...register('email')} error={!!errors.email} />
+          <FormField label="Email" id="new-user-email" requirement="required" error={errors.email?.message}>
+            <Input id="new-user-email" type="email" {...register('email')} error={!!errors.email} required aria-required="true" />
           </FormField>
 
-          <FormField label="Password" id="new-user-password" error={errors.password?.message}>
-            <Input id="new-user-password" type="password" minLength={PASSWORD_MIN_LENGTH} autoComplete="new-password" {...register('password')} error={!!errors.password} />
+          <FormField label="Password" id="new-user-password" requirement="required" error={errors.password?.message}>
+            <Input id="new-user-password" type="password" minLength={PASSWORD_MIN_LENGTH} autoComplete="new-password" {...register('password')} error={!!errors.password} required aria-required="true" />
             <p className="mt-1 text-xs text-[var(--color-text-muted)]">
               {PASSWORD_POLICY_HELPER_TEXT}
             </p>
           </FormField>
 
-          <FormField label="Role" id="new-user-role" error={errors.role?.message}>
+          <FormField label="Role" id="new-user-role" requirement="required" error={errors.role?.message}>
             <Select
               id="new-user-role"
               {...register('role')} 
               error={!!errors.role}
+              required
+              aria-required="true"
             >
               <option value="guard">Guard</option>
               {canManageAdministrativeRoles && <option value="admin">Admin</option>}
@@ -372,7 +488,7 @@ export function AdminUsers() {
             </DataTableRow>
           </DataTableHead>
           <tbody>
-            {users.map((user) => (
+            {filteredUsers.map((user) => (
               <DataTableRow key={user.uid}>
                 <DataTableCell className="font-semibold">{user.name}</DataTableCell>
                 <DataTableCell className="text-[var(--color-text-secondary)]">{user.email}</DataTableCell>
@@ -383,46 +499,78 @@ export function AdminUsers() {
                   />
                 </DataTableCell>
                 <DataTableCell>
-                  <StatusBadge 
-                    status={user.active ? 'active' : 'inactive'}
-                    label={user.active ? 'Active' : 'Deactivated'} 
-                  />
+                  {user.decommissionedAt ? (
+                    <div className="flex flex-col gap-0.5">
+                      <StatusBadge 
+                        status="destructive" 
+                        label="Decommissioned" 
+                      />
+                      <span className="text-[11px] text-[var(--color-text-muted)]">
+                        {new Date(user.decommissionedAt).toLocaleDateString()}
+                      </span>
+                    </div>
+                  ) : (
+                    <StatusBadge 
+                      status={user.active ? 'active' : 'inactive'}
+                      label={user.active ? 'Active' : 'Deactivated'} 
+                    />
+                  )}
                 </DataTableCell>
                 <DataTableCell className="text-right">
                   <div className="flex flex-wrap items-center justify-end gap-2">
-                    {canManageAdministrativeRoles && user.uid !== uid && (
-                      <Select
-                        value={user.role}
-                        onChange={(event) => {
-                          const newRole = event.target.value as UserRole;
-                          if (newRole !== user.role) setRoleChange({ user, newRole });
-                        }}
-                        aria-label={`Change role for ${user.name}`}
-                        className="min-h-9 w-auto py-1 text-xs"
-                      >
-                        {roleOptionsFor(user).map((option) => (
-                          <option key={option} value={option}>{formatUserRole(option)}</option>
-                        ))}
-                      </Select>
+                    {user.decommissionedAt ? (
+                      <span className="text-xs text-[var(--color-text-muted)] italic">Decommissioned</span>
+                    ) : (
+                      <>
+                        {canManageAdministrativeRoles && user.uid !== uid && (
+                          <Select
+                            value={user.role}
+                            onChange={(event) => {
+                              const newRole = event.target.value as UserRole;
+                              if (newRole !== user.role) setRoleChange({ user, newRole });
+                            }}
+                            aria-label={`Change role for ${user.name}`}
+                            className="min-h-9 w-auto py-1 text-xs"
+                          >
+                            {roleOptionsFor(user).map((option) => (
+                              <option key={option} value={option}>{formatUserRole(option)}</option>
+                            ))}
+                          </Select>
+                        )}
+                        {canManageAccount(user) && (
+                          <Button
+                            variant="ghost"
+                            onClick={() => toggleStatus(user)}
+                            disabled={reactivatingUserId === user.uid}
+                            loading={reactivatingUserId === user.uid}
+                            className="text-[var(--color-brand)] hover:bg-[var(--color-brand-light)]"
+                          >
+                            {user.active ? 'Deactivate' : reactivatingUserId === user.uid ? 'Reactivating…' : 'Activate'}
+                          </Button>
+                        )}
+                        {role === 'superadmin' && !user.active && user.uid !== uid && (
+                          <Button
+                            variant="destructive"
+                            size="sm"
+                            onClick={() => {
+                              setDecommissioningUser(user);
+                              setDecommissionPassword('');
+                              setDecommissionReason('');
+                            }}
+                          >
+                            Permanently Decommission
+                          </Button>
+                        )}
+                        {user.uid === uid && (
+                          <span className="text-xs font-medium text-[var(--color-text-muted)]">Current account</span>
+                        )}
+                      </>
                     )}
-                    {canManageAccount(user) ? (
-                      <Button
-                        variant="ghost"
-                        onClick={() => toggleStatus(user)}
-                        disabled={reactivatingUserId === user.uid}
-                        loading={reactivatingUserId === user.uid}
-                        className="text-[var(--color-brand)] hover:bg-[var(--color-brand-light)]"
-                      >
-                        {user.active ? 'Deactivate' : reactivatingUserId === user.uid ? 'Reactivating…' : 'Activate'}
-                      </Button>
-                    ) : user.uid === uid ? (
-                      <span className="text-xs font-medium text-[var(--color-text-muted)]">Current account</span>
-                    ) : null}
                   </div>
                 </DataTableCell>
               </DataTableRow>
             ))}
-            {users.length === 0 && (
+            {filteredUsers.length === 0 && (
               <tr>
                 <td colSpan={5} className="py-8 text-center text-[var(--color-text-muted)]">
                   No users found.
@@ -477,6 +625,99 @@ export function AdminUsers() {
         confirmText="Change Role"
         loading={isChangingRole}
       />
+
+      <Modal
+        isOpen={!!decommissioningUser}
+        onClose={() => {
+          if (!isDecommissioning) {
+            setDecommissioningUser(null);
+            setDecommissionPassword('');
+            setDecommissionReason('');
+          }
+        }}
+        title="Permanently Decommission Staff Account"
+        preventClose={isDecommissioning}
+        size="md"
+      >
+        <div className="space-y-4">
+          <div className="rounded-lg border border-[var(--color-danger-border)] bg-[var(--color-danger-light)] p-3 text-xs text-[var(--color-danger)] leading-relaxed">
+            <strong>Warning:</strong> This action permanently prevents this staff account from returning to service. Historical security and audit records will be preserved.
+          </div>
+
+          {decommissioningUser && (
+            <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface-subtle)] p-3 text-xs space-y-1">
+              <div><span className="font-semibold">Name:</span> {decommissioningUser.name}</div>
+              <div><span className="font-semibold">Email:</span> {decommissioningUser.email}</div>
+              <div><span className="font-semibold">Role:</span> {formatUserRole(decommissioningUser.role)}</div>
+            </div>
+          )}
+
+          <p className="text-xs text-[var(--color-text-secondary)] font-medium">Fields marked * are required.</p>
+
+          <FormField
+            label="Super Admin Password"
+            id="decommission-admin-password"
+            requirement="required"
+          >
+            <Input
+              id="decommission-admin-password"
+              type="password"
+              value={decommissionPassword}
+              onChange={(e) => setDecommissionPassword(e.target.value)}
+              placeholder="Enter your current password to authorize"
+              disabled={isDecommissioning}
+              required
+              aria-required="true"
+              autoComplete="current-password"
+            />
+          </FormField>
+
+          <FormField
+            label="Decommission Reason"
+            id="decommission-reason"
+            requirement="required"
+          >
+            <textarea
+              id="decommission-reason"
+              value={decommissionReason}
+              onChange={(e) => setDecommissionReason(e.target.value)}
+              placeholder="Provide a reason for permanent decommissioning (5-240 characters)"
+              rows={3}
+              minLength={5}
+              maxLength={240}
+              disabled={isDecommissioning}
+              required
+              aria-required="true"
+              className="w-full rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2 text-xs text-[var(--color-text-primary)] focus:border-[var(--color-brand)] focus:outline-none"
+            />
+            <div className="flex justify-end text-[11px] text-[var(--color-text-muted)]">
+              {decommissionReason.length} / 240
+            </div>
+          </FormField>
+
+          <div className="flex justify-end gap-2 pt-2">
+            <Button
+              variant="secondary"
+              onClick={() => {
+                setDecommissioningUser(null);
+                setDecommissionPassword('');
+                setDecommissionReason('');
+              }}
+              disabled={isDecommissioning}
+            >
+              Cancel
+            </Button>
+            <Button
+              variant="destructive"
+              onClick={handlePermanentDecommission}
+              loading={isDecommissioning}
+              disabled={isDecommissioning || !decommissionPassword || decommissionReason.trim().length < 5}
+            >
+              Permanently Decommission
+            </Button>
+          </div>
+        </div>
+      </Modal>
     </div>
   );
 }

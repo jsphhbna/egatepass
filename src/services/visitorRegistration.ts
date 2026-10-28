@@ -539,13 +539,20 @@ export interface RegistrationSettingsData {
   scheduling_days_ahead: number | null;
   peak_mode: string | null;
   visit_purposes: unknown;
+  visitor_instructions?: string[] | null;
+  image_retention_days?: number | null;
+  visitor_retention_days?: number | null;
 }
 
 export async function loadRegistrationSettings(source: RegistrationSource): Promise<RegistrationSettingsData> {
   const client = source === 'portal' ? requirePortalSupabase() : requireSupabase();
+  const selectCols = source === 'portal'
+    ? 'working_hours_start, working_hours_end, timezone, scheduling_days_ahead, peak_mode, visit_purposes, visitor_instructions'
+    : 'working_hours_start, working_hours_end, timezone, scheduling_days_ahead, peak_mode, visit_purposes, visitor_instructions, image_retention_days, visitor_retention_days';
+
   const { data, error } = await client
     .from('app_settings')
-    .select('working_hours_start, working_hours_end, timezone, scheduling_days_ahead, peak_mode, visit_purposes')
+    .select(selectCols)
     .maybeSingle();
 
   if (error) {
@@ -563,5 +570,16 @@ export async function loadRegistrationSettings(source: RegistrationSource): Prom
     throw new Error('No registration settings found in database');
   }
 
-  return data;
+  const raw = data as unknown as Record<string, unknown>;
+  return {
+    working_hours_start: (raw.working_hours_start as string) ?? null,
+    working_hours_end: (raw.working_hours_end as string) ?? null,
+    timezone: (raw.timezone as string) ?? null,
+    scheduling_days_ahead: typeof raw.scheduling_days_ahead === 'number' ? raw.scheduling_days_ahead : null,
+    peak_mode: (raw.peak_mode as string) ?? null,
+    visit_purposes: raw.visit_purposes,
+    visitor_instructions: Array.isArray(raw.visitor_instructions) ? (raw.visitor_instructions as string[]) : null,
+    image_retention_days: typeof raw.image_retention_days === 'number' ? raw.image_retention_days : 7,
+    visitor_retention_days: typeof raw.visitor_retention_days === 'number' ? raw.visitor_retention_days : 30,
+  };
 }

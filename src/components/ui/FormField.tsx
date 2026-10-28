@@ -1,8 +1,9 @@
 import { type ReactNode } from 'react';
 import { AlertCircle } from 'lucide-react';
 
-interface FormFieldProps {
+export interface FormFieldProps {
   label: string;
+  requirement?: 'required' | 'optional' | 'none';
   error?: string;
   hint?: string;
   children: ReactNode;
@@ -10,11 +11,30 @@ interface FormFieldProps {
   className?: string;
 }
 
-export function FormField({ label, error, hint, children, id, className = '' }: FormFieldProps) {
+export function FormField({
+  label,
+  requirement = 'none',
+  error,
+  hint,
+  children,
+  id,
+  className = '',
+}: FormFieldProps) {
   return (
     <div className={`min-w-0 space-y-1.5 ${className}`.trim()}>
       <label htmlFor={id} className="block text-sm font-semibold text-[var(--color-text-primary)]">
-        {label}
+        <span>{label}</span>
+        {requirement === 'required' && (
+          <>
+            <span className="text-[var(--color-danger)] font-bold ml-1" aria-hidden="true">*</span>
+            <span className="sr-only"> (required)</span>
+          </>
+        )}
+        {requirement === 'optional' && (
+          <span className="text-[var(--color-text-muted)] font-normal ml-1 text-xs">
+            (Optional)
+          </span>
+        )}
       </label>
       {children}
       {hint && !error && (

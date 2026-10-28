@@ -156,6 +156,7 @@ export const SERVER_DIRECT_TABLE_OPERATIONS: DirectServerTableOperation[] = [
   { file: 'server/routes/gate/evidence.ts', table: 'audit_events', operations: ['INSERT'], purpose: 'Log evidence access audit event' },
   { file: 'server/routes/passes/email.ts', table: 'passes', operations: ['SELECT'], purpose: 'Lookup pass for email dispatch' },
   { file: 'server/routes/passes/email.ts', table: 'devices', operations: ['SELECT'], purpose: 'Verify issuing device status' },
+  { file: 'server/routes/passes/email.ts', table: 'app_settings', operations: ['SELECT'], purpose: 'Read configured visitor instructions for email' },
   { file: 'server/routes/passes/issue.ts', table: 'upload_intents', operations: ['SELECT'], purpose: 'Validate photo/ID upload intents belong to session' },
   { file: 'server/routes/passes/issue.ts', table: 'passes', operations: ['SELECT'], purpose: 'Idempotent replay query by issue_request_id' },
   { file: 'server/routes/passes/issue.ts', table: 'visitors', operations: ['SELECT'], purpose: 'Lookup existing visitor on replay' },

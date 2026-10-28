@@ -31,16 +31,14 @@ describe('UI/UX QA, Responsive Institutional Redesign & Usability Regressions Su
 
     it('only renders "No pending passes" when not loading, no error, and queue is truly empty', () => {
       expect(guardSrc).toContain('filteredPasses.length === 0 ? (');
-      expect(guardSrc).toContain("searchTerm ? 'No matching visitors in loaded queue' : 'No pending passes'");
+      expect(guardSrc).toContain("searchTerm ? 'No matching pending visitors' : 'No pending passes'");
     });
 
-    it('clarifies search placeholder that search applies to loaded visitors', () => {
-      expect(guardSrc).toContain('placeholder="Search loaded visitors by name or purpose…"');
+    it('clarifies search placeholder that search applies across pending queue', () => {
+      expect(guardSrc).toContain('placeholder="Search pending visitors…"');
     });
 
-    it('renders an authoritative notice and "Load all pending visitors" button when more records exist', () => {
-      expect(guardSrc).toContain('hasMore && searchTerm');
-      expect(guardSrc).toContain('No matches in currently loaded queue. Try loading all pending passes.');
+    it('renders authoritative search and preserves explicit load all control', () => {
       expect(guardSrc).toContain('Load All Pending Passes');
       expect(guardSrc).toContain('handleLoadAll');
     });
@@ -183,7 +181,7 @@ describe('UI/UX QA, Responsive Institutional Redesign & Usability Regressions Su
       expect(getPassSrc).toContain('faceWebcam.stop();');
       expect(getPassSrc).toContain('idWebcam.stop();');
       expect(getPassSrc).toContain('Edit Details');
-      expect(getPassSrc).toContain('Retake Selfie');
+      expect(getPassSrc).toContain('Retake Photo');
       expect(getPassSrc).toContain('!isPeakMode && (');
       expect(getPassSrc).toContain('Retake ID');
     });
@@ -192,7 +190,7 @@ describe('UI/UX QA, Responsive Institutional Redesign & Usability Regressions Su
       expect(kioskSrc).toContain('faceWebcam.stop();');
       expect(kioskSrc).toContain('idWebcam.stop();');
       expect(kioskSrc).toContain('Edit Details');
-      expect(kioskSrc).toContain('Retake Selfie');
+      expect(kioskSrc).toContain('Retake Photo');
       expect(kioskSrc).toContain('!isPeakMode');
       expect(kioskSrc).toContain('Retake ID');
     });

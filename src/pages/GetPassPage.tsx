@@ -31,6 +31,7 @@ import {
   RefreshCw,
   AlertCircle,
   Upload,
+  Info,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { Link } from 'react-router-dom';
@@ -45,6 +46,7 @@ import { DEFAULT_WORKING_HOURS, formatValidityWindow, formatWorkingHours, MAX_VI
 import { getManilaDateString, getLatestVisitDateString, validateVisitDate } from '@/lib/scheduling';
 import { createPassPresentation, type PassPresentation, renderPassCardToDataUrl } from '@/lib/passPresentation';
 import { InstitutionalPassCard } from '@/components/InstitutionalPassCard';
+import { CameraControls } from '@/components/CameraControls';
 
 const MAX_RAW_ID_FILE_BYTES = 10 * 1024 * 1024;
 
@@ -170,6 +172,15 @@ export function GetPassPage() {
   }, []);
 
   const [isSharing, setIsSharing] = useState(false);
+  const [visitorInstructions, setVisitorInstructions] = useState<string[]>([
+    'Follow the EARIST visitor dress code and campus policies.',
+    'Bring a valid ID for identity verification at the gate.',
+    'Keep your E-GatePass ready before approaching the entrance.',
+    'This visitor pass is personal and non-transferable.',
+    'Scan your E-GatePass when leaving the campus.',
+  ]);
+  const [imageRetentionDays, setImageRetentionDays] = useState(7);
+  const [visitorRetentionDays, setVisitorRetentionDays] = useState(30);
 
   const loadConfig = useCallback(async (isRetry = false) => {
     if (isRetry) setIsRetryingConfig(true);
@@ -186,6 +197,15 @@ export function GetPassPage() {
       if (Number.isInteger(data.scheduling_days_ahead)) {
         setSchedulingDaysAhead(data.scheduling_days_ahead!);
       }
+      if (Array.isArray(data.visitor_instructions) && data.visitor_instructions.length > 0) {
+        setVisitorInstructions(data.visitor_instructions);
+      }
+      if (typeof data.image_retention_days === 'number') {
+        setImageRetentionDays(data.image_retention_days);
+      }
+      if (typeof data.visitor_retention_days === 'number') {
+        setVisitorRetentionDays(data.visitor_retention_days);
+      }
       setConfigState('ready');
     } catch (err) {
       console.error('Failed to load portal registration settings:', err);
@@ -199,9 +219,9 @@ export function GetPassPage() {
     void loadConfig();
   }, [loadConfig]);
 
-  const faceWebcam = useWebcam({ facingMode: 'user', width: 640, height: 480 });
-  const idWebcam = useWebcam({ facingMode: 'environment', width: 1280, height: 720 });
-  const ocrWebcam = useWebcam({ facingMode: 'environment', width: 1280, height: 720 });
+  const faceWebcam = useWebcam({ facingMode: 'user', width: 640, height: 480, allowCaptureMirroring: true });
+  const idWebcam = useWebcam({ facingMode: 'environment', width: 1280, height: 720, allowCaptureMirroring: false });
+  const ocrWebcam = useWebcam({ facingMode: 'environment', width: 1280, height: 720, allowCaptureMirroring: false });
 
   // Cleanup on unmount
   useEffect(() => {
@@ -460,7 +480,7 @@ export function GetPassPage() {
   }
 
   async function onCaptureOcrCamera() {
-    const blob = ocrWebcam.capture();
+    const blob = ocrWebcam.capture({ mirror: false });
     if (!blob) {
       toast.error('Failed to capture ID photo. Please try again.');
       return;
@@ -762,6 +782,13 @@ export function GetPassPage() {
           {/* ============================== STEP 1: FORM ============================== */}
           {step === 'form' && (
             <form onSubmit={handleSubmit(onFormNext)} className="space-y-4">
+              <div className="rounded-xl border border-sky-500/20 bg-sky-500/10 p-3.5 text-xs text-sky-900 dark:text-sky-200">
+                <p className="font-semibold">No account required</p>
+                <p className="mt-0.5">This registration creates a visitor pass only. You are not creating a reusable visitor account.</p>
+              </div>
+
+              <p className="text-xs text-[var(--color-text-secondary)] font-medium">Fields marked * are required.</p>
+
               {/* Optional OCR Convenience Affordance */}
               <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] p-3.5 text-xs">
                 <div className="flex items-start justify-between gap-3">
@@ -795,20 +822,20 @@ export function GetPassPage() {
               </div>
 
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                <FormField label="First Name" error={errors.firstName?.message} id="firstName">
-                  <Input {...register('firstName')} placeholder="Juan" id="firstName" />
+                <FormField label="First Name" requirement="required" error={errors.firstName?.message} id="firstName">
+                  <Input {...register('firstName')} placeholder="Juan" id="firstName" required aria-required="true" />
                 </FormField>
-                <FormField label="Middle Name" error={errors.middleName?.message} id="middleName" hint="Optional">
+                <FormField label="Middle Name" requirement="optional" error={errors.middleName?.message} id="middleName">
                   <Input {...register('middleName')} placeholder="Reyes" id="middleName" />
                 </FormField>
               </div>
 
-              <FormField label="Last Name" error={errors.lastName?.message} id="lastName">
-                <Input {...register('lastName')} placeholder="Dela Cruz" id="lastName" />
+              <FormField label="Last Name" requirement="required" error={errors.lastName?.message} id="lastName">
+                <Input {...register('lastName')} placeholder="Dela Cruz" id="lastName" required aria-required="true" />
               </FormField>
 
-              <FormField label="Contact Number" error={errors.contactNumber?.message} id="contactNumber" hint="Philippine mobile number preferred">
-                <Input {...register('contactNumber')} placeholder="09171234567" type="tel" id="contactNumber" />
+              <FormField label="Contact Number" requirement="required" error={errors.contactNumber?.message} id="contactNumber" hint="Philippine mobile number preferred">
+                <Input {...register('contactNumber')} placeholder="09171234567" type="tel" id="contactNumber" required aria-required="true" />
               </FormField>
 
               <VisitPurposeField
@@ -816,9 +843,9 @@ export function GetPassPage() {
                 value={purpose}
                 onChange={(val) => setValue('purpose', val, { shouldValidate: true })}
                 error={errors.purpose?.message}
-                              />
+              />
 
-              <FormField label="Visit Date" error={errors.visitDate?.message} id="visitDate">
+              <FormField label="Visit Date" requirement="required" error={errors.visitDate?.message} id="visitDate">
                 <Input
                   {...register('visitDate')}
                   type="date"
@@ -826,6 +853,8 @@ export function GetPassPage() {
                   max={latestVisitDate}
                   defaultValue={today}
                   id="visitDate"
+                  required
+                  aria-required="true"
                 />
               </FormField>
 
@@ -844,11 +873,13 @@ export function GetPassPage() {
                   <input
                     type="checkbox"
                     {...register('consent')}
+                    required
+                    aria-required="true"
                     className="mt-0.5 rounded border-[var(--color-border)] text-[var(--color-brand)] focus:ring-[var(--color-brand)]"
                   />
                   <span>
                     I consent to the collection and processing of my personal
-                    information for campus security purposes.
+                    information for campus security purposes. *
                   </span>
                 </label>
                 {errors.consent && (
@@ -883,7 +914,7 @@ export function GetPassPage() {
                   </div>
                   <div className="flex gap-3">
                     <Button variant="secondary" onClick={onRetakePhoto} className="flex-1" icon={<RotateCcw className="h-4 w-4" />}>
-                      Retake
+                      Retake Photo
                     </Button>
                     <Button
                       onClick={() => {
@@ -935,10 +966,19 @@ export function GetPassPage() {
                         autoPlay
                         playsInline
                         muted
-                        className="h-full w-full object-cover -scale-x-100"
+                        style={{ transform: faceWebcam.mirrorPreview ? 'scaleX(-1)' : 'none' }}
+                        className="h-full w-full object-cover"
                       />
                     )}
                   </div>
+
+                  <CameraControls
+                    activeFacingMode={faceWebcam.activeFacingMode}
+                    mirrorPreview={faceWebcam.mirrorPreview}
+                    canSwitchCamera={faceWebcam.canSwitchCamera}
+                    onSwitchCamera={faceWebcam.switchCamera}
+                    onToggleMirror={faceWebcam.toggleMirrorPreview}
+                  />
 
                   <div className="flex gap-3">
                     <Button
@@ -1078,10 +1118,19 @@ export function GetPassPage() {
                             autoPlay
                             playsInline
                             muted
+                            style={{ transform: idWebcam.mirrorPreview ? 'scaleX(-1)' : 'none' }}
                             className="h-full w-full object-cover"
                           />
                         )}
                       </div>
+
+                      <CameraControls
+                        activeFacingMode={idWebcam.activeFacingMode}
+                        mirrorPreview={idWebcam.mirrorPreview}
+                        canSwitchCamera={idWebcam.canSwitchCamera}
+                        onSwitchCamera={idWebcam.switchCamera}
+                        onToggleMirror={idWebcam.toggleMirrorPreview}
+                      />
 
                       <div className="flex gap-3">
                         <Button
@@ -1177,7 +1226,7 @@ export function GetPassPage() {
                   )}
 
                   <Button variant="ghost" type="button" onClick={onRetakePhoto} disabled={isProcessingId} className="w-full" icon={<RotateCcw className="h-4 w-4" />}>
-                    Retake Selfie
+                    Retake Photo
                   </Button>
                 </div>
               )}
@@ -1187,9 +1236,14 @@ export function GetPassPage() {
           {/* ============================== STEP 4: REVIEW ============================== */}
           {step === 'review' && (
             <div className="space-y-6">
-              <h2 className="text-center text-lg font-bold text-[var(--color-text-primary)]">
-                Review Your Details
-              </h2>
+              <div className="text-center">
+                <h2 className="text-lg font-bold text-[var(--color-text-primary)]">
+                  Review Your Information
+                </h2>
+                <p className="text-sm text-[var(--color-text-secondary)] mt-1">
+                  Please verify your information before generating your E-GatePass.
+                </p>
+              </div>
 
               {portalTransactionRef.current?.phase === 'existing_pass_conflict' ? (
                 <div className="rounded-lg border border-amber-300 bg-amber-50 dark:border-amber-700/60 dark:bg-amber-950/40 p-4 space-y-2 text-sm text-amber-900 dark:text-amber-200" role="alert">
@@ -1220,64 +1274,11 @@ export function GetPassPage() {
                 </div>
               ) : null}
 
-              {/* Photos preview with direct retake actions */}
-              <div className="flex flex-wrap gap-6 justify-center items-center py-2">
-                {photoPreview && (
-                  <div className="text-center">
-                    <p className="text-xs text-[var(--color-text-secondary)] mb-1">Face Photo</p>
-                    <img
-                      src={photoPreview}
-                      alt="Your photo"
-                      className="h-24 w-20 object-cover rounded-lg border border-[var(--color-border)] shadow-sm mx-auto"
-                    />
-                    {portalTransactionRef.current?.phase !== 'existing_pass_conflict' && (
-                      portalTransactionRef.current?.phase !== 'ambiguous' && (
-                        <button
-                          type="button"
-                          onClick={onRetakePhoto}
-                          className="mt-1.5 text-xs font-semibold text-[var(--color-brand)] hover:underline inline-flex items-center gap-1"
-                        >
-                          <RotateCcw className="h-3 w-3" />
-                          Retake Selfie
-                        </button>
-                      )
-                    )}
-                  </div>
-                )}
-                {idPreview && !isPeakMode && (
-                  <div className="text-center">
-                    <p className="text-xs text-[var(--color-text-secondary)] mb-1">Valid ID</p>
-                    <img
-                      src={idPreview}
-                      alt="Valid ID"
-                      className="h-24 w-36 object-cover rounded-lg border border-[var(--color-border)] shadow-sm mx-auto"
-                    />
-                    {portalTransactionRef.current?.phase !== 'existing_pass_conflict' && (
-                      portalTransactionRef.current?.phase !== 'ambiguous' && (
-                        <button
-                          type="button"
-                          onClick={onRetakeId}
-                          className="mt-1.5 text-xs font-semibold text-[var(--color-brand)] hover:underline inline-flex items-center gap-1"
-                        >
-                          <RotateCcw className="h-3 w-3" />
-                          Retake ID
-                        </button>
-                      )
-                    )}
-                  </div>
-                )}
-              </div>
-
-              {/* Data summary */}
-              <div className="rounded-lg bg-[var(--color-surface)] p-4 text-sm divide-y divide-[var(--color-border)] border border-[var(--color-border)]">
-                <div className="flex items-center justify-between pb-2">
-                  <div>
-                    <span className="text-[var(--color-text-secondary)]">Name:</span>
-                    <p className="font-semibold text-[var(--color-text-primary)] mt-0.5">
-                      {[getValues('firstName'), getValues('middleName'), getValues('lastName')].filter(Boolean).join(' ')}
-                    </p>
-                  </div>
-                  {portalTransactionRef.current?.phase !== 'existing_pass_conflict' && (
+              {/* Group 1: Visitor Information */}
+              <div className="rounded-lg bg-[var(--color-surface)] p-4 text-sm border border-[var(--color-border)] space-y-3">
+                <div className="flex items-center justify-between border-b border-[var(--color-border)] pb-2">
+                  <span className="font-bold text-xs uppercase tracking-wider text-[var(--color-text-secondary)]">Visitor Information</span>
+                  {portalTransactionRef.current?.phase !== 'existing_pass_conflict' &&
                     portalTransactionRef.current?.phase !== 'ambiguous' && (
                       <button
                         type="button"
@@ -1290,20 +1291,96 @@ export function GetPassPage() {
                       >
                         Edit Details
                       </button>
-                    )
+                    )}
+                </div>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div>
+                    <span className="text-xs text-[var(--color-text-secondary)]">Full Name:</span>
+                    <p className="font-semibold text-[var(--color-text-primary)] mt-0.5">
+                      {[getValues('firstName'), getValues('middleName'), getValues('lastName')].filter(Boolean).join(' ')}
+                    </p>
+                  </div>
+                  <div>
+                    <span className="text-xs text-[var(--color-text-secondary)]">Contact Number:</span>
+                    <p className="font-semibold text-[var(--color-text-primary)] mt-0.5">{getValues('contactNumber')}</p>
+                  </div>
+                </div>
+              </div>
+
+              {/* Group 2: Visit Information */}
+              <div className="rounded-lg bg-[var(--color-surface)] p-4 text-sm border border-[var(--color-border)] space-y-3">
+                <div className="border-b border-[var(--color-border)] pb-2">
+                  <span className="font-bold text-xs uppercase tracking-wider text-[var(--color-text-secondary)]">Visit Information</span>
+                </div>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div>
+                    <span className="text-xs text-[var(--color-text-secondary)]">Purpose of Visit:</span>
+                    <p className="font-semibold text-[var(--color-text-primary)] mt-0.5">{getValues('purpose')}</p>
+                  </div>
+                  <div>
+                    <span className="text-xs text-[var(--color-text-secondary)]">Visit Date:</span>
+                    <p className="font-semibold text-[var(--color-text-primary)] mt-0.5">{getValues('visitDate')}</p>
+                  </div>
+                </div>
+              </div>
+
+              {/* Group 3: Photo / Valid ID */}
+              <div className="rounded-lg bg-[var(--color-surface)] p-4 text-sm border border-[var(--color-border)] space-y-3">
+                <div className="border-b border-[var(--color-border)] pb-2">
+                  <span className="font-bold text-xs uppercase tracking-wider text-[var(--color-text-secondary)]">Photo / Valid ID</span>
+                </div>
+                <div className="flex flex-wrap gap-6 justify-center items-center py-2">
+                  {photoPreview && (
+                    <div className="text-center">
+                      <p className="text-xs text-[var(--color-text-secondary)] mb-1">Face Photo</p>
+                      <img
+                        src={photoPreview}
+                        alt="Your photo"
+                        className="h-24 w-20 object-cover rounded-lg border border-[var(--color-border)] shadow-sm mx-auto"
+                      />
+                      {portalTransactionRef.current?.phase !== 'existing_pass_conflict' &&
+                        portalTransactionRef.current?.phase !== 'ambiguous' && (
+                          <button
+                            type="button"
+                            onClick={onRetakePhoto}
+                            className="mt-1.5 text-xs font-semibold text-[var(--color-brand)] hover:underline inline-flex items-center gap-1"
+                          >
+                            <RotateCcw className="h-3 w-3" />
+                            Retake Photo
+                          </button>
+                        )}
+                    </div>
+                  )}
+                  {idPreview && !isPeakMode && (
+                    <div className="text-center">
+                      <p className="text-xs text-[var(--color-text-secondary)] mb-1">Valid ID</p>
+                      <img
+                        src={idPreview}
+                        alt="Valid ID"
+                        className="h-24 w-36 object-cover rounded-lg border border-[var(--color-border)] shadow-sm mx-auto"
+                      />
+                      {portalTransactionRef.current?.phase !== 'existing_pass_conflict' &&
+                        portalTransactionRef.current?.phase !== 'ambiguous' && (
+                          <button
+                            type="button"
+                            onClick={onRetakeId}
+                            className="mt-1.5 text-xs font-semibold text-[var(--color-brand)] hover:underline inline-flex items-center gap-1"
+                          >
+                            <RotateCcw className="h-3 w-3" />
+                            Retake ID
+                          </button>
+                        )}
+                    </div>
                   )}
                 </div>
-                <div className="py-2">
-                  <span className="text-[var(--color-text-secondary)]">Contact Number:</span>
-                  <p className="font-semibold text-[var(--color-text-primary)] mt-1">{getValues('contactNumber')}</p>
-                </div>
-                <div className="py-2">
-                  <span className="text-[var(--color-text-secondary)]">Purpose:</span>
-                  <p className="font-semibold text-[var(--color-text-primary)] mt-1">{getValues('purpose')}</p>
-                </div>
-                <div className="pt-2">
-                  <span className="text-[var(--color-text-secondary)]">Visit Date:</span>
-                  <p className="font-semibold text-[var(--color-text-primary)] mt-1">{getValues('visitDate')}</p>
+              </div>
+
+              {/* Group 4: Privacy Confirmation */}
+              <div className="rounded-lg bg-[var(--color-surface)] p-3 text-xs border border-[var(--color-border)] text-[var(--color-text-secondary)] flex items-start gap-2">
+                <ShieldCheck className="h-4 w-4 text-[var(--color-brand)] shrink-0 mt-0.5" />
+                <div>
+                  <span className="font-semibold text-[var(--color-text-primary)]">Privacy Confirmation: </span>
+                  Consent granted under the Data Privacy Act of 2012 for campus security and visitor pass processing.
                 </div>
               </div>
 
@@ -1357,7 +1434,7 @@ export function GetPassPage() {
                     className="flex-1"
                     icon={<CheckCircle2 className="h-4 w-4" />}
                   >
-                    Generate Pass
+                    Generate E-GatePass
                   </Button>
                 </div>
               )}
@@ -1432,6 +1509,25 @@ export function GetPassPage() {
                 </p>
               </div>
 
+              <div className="rounded-xl border border-sky-500/20 bg-sky-500/10 p-3.5 text-xs text-sky-900 dark:text-sky-200 text-left">
+                <p className="font-semibold">No account required</p>
+                <p className="mt-0.5">Your visitor pass has been created. No reusable visitor account was created.</p>
+              </div>
+
+              {visitorInstructions.length > 0 && (
+                <div className="rounded-xl border border-amber-500/30 bg-amber-500/10 p-4 text-left">
+                  <div className="flex items-center gap-2 text-sm font-bold text-amber-900 dark:text-amber-200 mb-2">
+                    <Info className="h-4 w-4 shrink-0 text-amber-600 dark:text-amber-400" />
+                    <span>Before You Arrive</span>
+                  </div>
+                  <ul className="space-y-1.5 text-xs text-amber-950 dark:text-amber-100 list-disc list-inside">
+                    {visitorInstructions.map((inst, idx) => (
+                      <li key={idx}>{inst}</li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+
               {/* Delivery notification status banner */}
               {emailSkipped && !emailDeliverySecured && !emailOutcomeUnknown && (
                 <div
@@ -1492,6 +1588,16 @@ export function GetPassPage() {
                 </div>
               )}
 
+              <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] p-3 text-left text-xs text-[var(--color-text-secondary)] space-y-1">
+                <div className="flex items-center gap-1.5 font-semibold text-[var(--color-text-primary)]">
+                  <ShieldCheck className="h-3.5 w-3.5 text-[var(--color-brand)]" />
+                  <span>Data Retention & Security</span>
+                </div>
+                <p>
+                  Your information is collected for campus security and visitor management. Photos and ID images are retained according to EARIST’s configured retention period ({imageRetentionDays} days). Visitor records are retained according to institutional policy ({visitorRetentionDays} days). Records associated with a documented incident may be retained longer while an authorized incident hold remains active.
+                </p>
+              </div>
+
               {/* Action buttons */}
               <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                 <Button
@@ -1499,7 +1605,7 @@ export function GetPassPage() {
                   className="w-full"
                   icon={<Download className="h-4 w-4" />}
                 >
-                  Download
+                  Download E-GatePass
                 </Button>
                 <Button
                   variant="secondary"
@@ -1507,7 +1613,7 @@ export function GetPassPage() {
                   className="w-full"
                   icon={<Mail className="h-4 w-4" />}
                 >
-                  Email Pass
+                  Email E-GatePass
                 </Button>
                 <Button
                   variant="secondary"
@@ -1517,7 +1623,7 @@ export function GetPassPage() {
                   className="w-full"
                   icon={<Share2 className="h-4 w-4" />}
                 >
-                  {isSharing ? 'Opening Share…' : 'Share'}
+                  {isSharing ? 'Opening Share…' : 'Share E-GatePass'}
                 </Button>
               </div>
 
@@ -1533,7 +1639,7 @@ export function GetPassPage() {
                   onClick={handleStartOver}
                   className="text-xs text-[var(--color-brand)] hover:underline transition-colors inline-block cursor-pointer"
                 >
-                  Register Another Pass
+                  Register Another Visitor
                 </button>
               </div>
             </div>
@@ -1672,10 +1778,18 @@ export function GetPassPage() {
                         autoPlay
                         playsInline
                         muted
+                        style={{ transform: ocrWebcam.mirrorPreview ? 'scaleX(-1)' : 'none' }}
                         className="h-full w-full object-cover"
                       />
                     )}
                   </div>
+                  <CameraControls
+                    activeFacingMode={ocrWebcam.activeFacingMode}
+                    mirrorPreview={ocrWebcam.mirrorPreview}
+                    canSwitchCamera={ocrWebcam.canSwitchCamera}
+                    onSwitchCamera={ocrWebcam.switchCamera}
+                    onToggleMirror={ocrWebcam.toggleMirrorPreview}
+                  />
                   <div className="flex gap-2">
                     <Button
                       type="button"
