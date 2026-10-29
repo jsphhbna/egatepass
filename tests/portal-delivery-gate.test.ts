@@ -144,7 +144,7 @@ describe('FEATURE 4 CONTRACT: Online Pass Delivery Gate, Timed Skip Warning & Re
     expect(getPassSrc).toContain('{emailOutcomeUnknown && !emailDeliverySecured && (');
     expect(getPassSrc).toContain('Email delivery could not be confirmed.');
     expect(getPassSrc).toContain('Your E-GatePass is valid, but the email provider did not return a confirmed delivery result.');
-    expect(getPassSrc).toContain('Please download or save this QR before leaving this page.');
+    expect(getPassSrc).toContain('Please download or save your E-GatePass before leaving this page.');
 
     // onUnknown callback does NOT display success toast
     const onUnknownMatch = getPassSrc.match(/onUnknown=\{\(\) => \{[\s\S]*?\}\}/);

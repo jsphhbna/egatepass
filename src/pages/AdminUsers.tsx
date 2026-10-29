@@ -218,6 +218,9 @@ export function AdminUsers() {
     }
 
     if (!response.ok) {
+      if (body?.error === 'target_decommissioned') {
+        throw new Error('This staff account has been permanently decommissioned and can no longer be modified.');
+      }
       if (body?.error === 'cannot_remove_last_superadmin') {
         throw new Error('Cannot demote or deactivate the last remaining Super Admin.');
       }
@@ -227,7 +230,7 @@ export function AdminUsers() {
   }
 
   function canManageAccount(user: AppUserWithId): boolean {
-    if (user.uid === uid) return false;
+    if (user.uid === uid || user.decommissionedAt) return false;
     return canManageAdministrativeRoles || (role === 'admin' && user.role === 'guard');
   }
 
@@ -500,14 +503,26 @@ export function AdminUsers() {
                 </DataTableCell>
                 <DataTableCell>
                   {user.decommissionedAt ? (
-                    <div className="flex flex-col gap-0.5">
+                    <div className="flex flex-col gap-0.5 max-w-[220px]">
                       <StatusBadge 
                         status="destructive" 
                         label="Decommissioned" 
                       />
                       <span className="text-[11px] text-[var(--color-text-muted)]">
-                        {new Date(user.decommissionedAt).toLocaleDateString()}
+                        {new Date(user.decommissionedAt).toLocaleDateString('en-US', {
+                          month: 'short',
+                          day: 'numeric',
+                          year: 'numeric',
+                        })}
                       </span>
+                      {user.decommissionReason && (
+                        <span
+                          className="text-[11px] text-[var(--color-text-secondary)] break-words line-clamp-2"
+                          title={user.decommissionReason}
+                        >
+                          Reason: {user.decommissionReason}
+                        </span>
+                      )}
                     </div>
                   ) : (
                     <StatusBadge 

@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { createHash, createHmac, randomUUID } from 'node:crypto';
+import { readFileSync } from 'node:fs';
 import { setServerSupabaseClientsForTest } from '../server/supabase.js';
 import { EmailDeliveryError, setEmailSenderForTest, SendEmailPayload } from '../server/email.js';
 import updateDeviceAuthHandler from '../server/routes/device/update-device-auth.js';
@@ -1753,6 +1754,40 @@ describe('Behavioral Mocked-Handler Tests [PASS (MOCKED HANDLER)]', () => {
       expect(res.status).toBe(500);
       // Asset must NOT be purged
       expect(mockDbData.visitor_evidence[0].purged_at).toBeNull();
+    });
+
+    it('dryRun returns photoRetentionDays and idRetentionDays separately', async () => {
+      mockDbData.app_settings = [
+        {
+          singleton: true,
+          image_retention_days: 7,
+          photo_retention_days: 14,
+          id_retention_days: 60,
+        },
+      ];
+
+      const res = await invokeHandler(purgeImagesHandler, new Request('http://localhost/api/purge-images', {
+        method: 'POST',
+        headers: { authorization: VALID_SUPERADMIN_BEARER, 'content-type': 'application/json' },
+        body: JSON.stringify({ dryRun: true }),
+      }));
+      const json = await res.json();
+
+      expect(res.status).toBe(200);
+      expect(json.evidenceDeleted).toBe(0);
+      expect(json.photoRetentionDays).toBe(14);
+      expect(json.idRetentionDays).toBe(60);
+      expect(json.retentionDays).toBe(7);
+    });
+
+    it('AdminSettings purge confirmation describes separate face/ID policies and no longer claims one legacy image policy', () => {
+      const adminSettingsSrc = readFileSync('src/pages/AdminSettings.tsx', 'utf8');
+      expect(adminSettingsSrc).not.toContain('-day image policy');
+      expect(adminSettingsSrc).toContain('Purge Expired Evidence?');
+      expect(adminSettingsSrc).toContain('You are about to permanently delete evidence that has reached its authoritative expiry date');
+      expect(adminSettingsSrc).toContain('Face photos: {purgePhotoRetentionDays');
+      expect(adminSettingsSrc).toContain('Valid ID images: {purgeIdRetentionDays');
+      expect(adminSettingsSrc).toContain('Active/future visits and authorized incident holds remain protected.');
     });
   });
 

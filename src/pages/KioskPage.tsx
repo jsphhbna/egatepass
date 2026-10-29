@@ -162,7 +162,8 @@ export function KioskPage() {
     'This visitor pass is personal and non-transferable.',
     'Scan your E-GatePass when leaving the campus.',
   ]);
-  const [imageRetentionDays, setImageRetentionDays] = useState<number | null>(null);
+  const [photoRetentionDays, setPhotoRetentionDays] = useState<number | null>(null);
+  const [idRetentionDays, setIdRetentionDays] = useState<number | null>(null);
   const [visitorRetentionDays, setVisitorRetentionDays] = useState<number | null>(null);
 
   const loadSettings = useCallback(async (isRetry = false) => {
@@ -186,8 +187,11 @@ export function KioskPage() {
       if (Array.isArray(data.visitor_instructions) && data.visitor_instructions.length > 0) {
         setVisitorInstructions(data.visitor_instructions);
       }
-      if (typeof data.image_retention_days === 'number') {
-        setImageRetentionDays(data.image_retention_days);
+      if (typeof data.photo_retention_days === 'number') {
+        setPhotoRetentionDays(data.photo_retention_days);
+      }
+      if (typeof data.id_retention_days === 'number') {
+        setIdRetentionDays(data.id_retention_days);
       }
       if (typeof data.visitor_retention_days === 'number') {
         setVisitorRetentionDays(data.visitor_retention_days);
@@ -927,21 +931,19 @@ export function KioskPage() {
 
               {/* Data Privacy Agreement */}
               <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-canvas)] p-4 text-xs text-[var(--color-text-secondary)] space-y-2">
-                <p className="font-semibold text-[var(--color-text-primary)]">Data Privacy Notice (RA 10173)</p>
+                <p className="font-semibold text-[var(--color-text-primary)]">Data Privacy Notice</p>
                 <p>
-                  EARIST collects your photo and visitor information solely for security and campus safety.{' '}
-                  {typeof imageRetentionDays === 'number' && typeof visitorRetentionDays === 'number' ? (
-                    <>
-                      Evidence images: {imageRetentionDays} days • Visitor records: {visitorRetentionDays} days.
-                    </>
-                  ) : typeof imageRetentionDays === 'number' ? (
-                    <>Evidence images: {imageRetentionDays} days • Visitor records are retained according to institutional policy.</>
-                  ) : typeof visitorRetentionDays === 'number' ? (
-                    <>Photos and ID images are retained according to EARIST's configured retention policy • Visitor records: {visitorRetentionDays} days.</>
-                  ) : (
-                    <>Photos, ID images, and visitor records are retained according to EARIST's configured retention policy.</>
-                  )}{' '}
-                  Information is handled in strict accordance with institutional policy and the Data Privacy Act. Records associated with a documented incident may be retained longer while an authorized incident hold remains active.
+                  Visitor information is processed under EARIST institutional privacy procedures and applicable privacy requirements.{' '}
+                  {typeof photoRetentionDays === 'number'
+                    ? `Face photos are normally retained for ${photoRetentionDays} days.`
+                    : 'Face photos are normally retained under institutional policy.'}{' '}
+                  {typeof idRetentionDays === 'number'
+                    ? `Valid ID images, when collected, are normally retained for ${idRetentionDays} days.`
+                    : 'Valid ID images, when collected, are normally retained under institutional policy.'}{' '}
+                  {typeof visitorRetentionDays === 'number'
+                    ? `Visitor records are retained for ${visitorRetentionDays} days under institutional policy.`
+                    : 'Visitor records are retained under institutional policy.'}{' '}
+                  Evidence is retained at least through the scheduled visit, and authorized incident holds may extend retention when required.
                 </p>
                 <label className="flex items-center gap-2 pt-2 border-t border-[var(--color-border)] cursor-pointer">
                   <input type="checkbox" {...register('consent')} required aria-required="true" className="rounded border-[var(--color-border-strong)] text-[var(--color-brand)] focus:ring-[var(--color-brand)]" />

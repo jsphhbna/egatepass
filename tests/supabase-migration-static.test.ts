@@ -228,5 +228,24 @@ describe('Supabase migration static safety contract', () => {
     expect(migration).toMatch(/revoke all on function api\.guard_search_pending_queue[^;]+from public, anon;/i);
     expect(migration).toMatch(/grant execute on function api\.guard_search_pending_queue[^;]+to authenticated/i);
   });
+
+  it('applies retention truth column grants and decommission immutability in Migration 36', () => {
+    const migration = readFileSync('supabase/migrations/20261028234059_retention_truth_and_decommission_immutability.sql', 'utf8');
+
+    // Safe column grants for photo and ID retention
+    expect(migration).toContain('photo_retention_days');
+    expect(migration).toContain('id_retention_days');
+    expect(migration).toMatch(/grant select \(\s*photo_retention_days,\s*id_retention_days\s*\) on public\.app_settings to anon, authenticated;/i);
+
+    // Replacement api.update_staff_profile with immutability check
+    expect(migration).toContain('create or replace function api.update_staff_profile');
+    expect(migration).toContain('target.decommissioned_at is not null');
+    expect(migration).toContain("errcode = 'P0004'");
+    expect(migration).toContain("message = 'target_decommissioned'");
+
+    // Service-role-only permissions
+    expect(migration).toMatch(/revoke all on function api\.update_staff_profile[^;]+from public, anon, authenticated;/i);
+    expect(migration).toMatch(/grant execute on function api\.update_staff_profile[^;]+to service_role;/i);
+  });
 });
 

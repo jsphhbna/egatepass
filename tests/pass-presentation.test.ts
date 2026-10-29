@@ -1,4 +1,5 @@
 import { describe, it, expect } from 'vitest';
+import { readFileSync } from 'node:fs';
 import {
   createPassPresentation,
   formatPassVisitorName,
@@ -70,5 +71,18 @@ describe('Phase 1: Institutional Visitor Pass Presentation Contract', () => {
       const dataUrl = await renderPassCardToDataUrl(presentation);
       expect(dataUrl).toMatch(/^data:image\/png;base64,/);
     }
+  });
+
+  it('1.8. Invariant: passPresentation missing after issuance displays controlled recovery state and suppresses raw standalone QR and raw passId', () => {
+    const getPassSrc = readFileSync('src/pages/GetPassPage.tsx', 'utf8');
+
+    // Asserts canonical presentation or controlled recovery state
+    expect(getPassSrc).toContain('qrDataUrl && passPresentation ? (');
+    expect(getPassSrc).toContain('<InstitutionalPassCard');
+    expect(getPassSrc).toContain('Your E-GatePass was issued, but the visual pass could not be prepared. Please retry or ask the Guard for assistance.');
+
+    // Asserts NO raw QR fallback or raw passId fallback on success screen
+    expect(getPassSrc).not.toContain('alt="Visitor Gate Pass QR Code"');
+    expect(getPassSrc).not.toContain('{passId}');
   });
 });

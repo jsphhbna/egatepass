@@ -145,7 +145,6 @@ export function GetPassPage() {
   const [visitPurposes, setVisitPurposes] = useState<VisitPurposeOption[]>(DEFAULT_VISIT_PURPOSES);
   const [workingHours, setWorkingHours] = useState(DEFAULT_WORKING_HOURS);
   const [schedulingDaysAhead, setSchedulingDaysAhead] = useState(MAX_VISIT_ADVANCE_DAYS);
-  const [issuedValidity, setIssuedValidity] = useState<string | null>(null);
   const issueRequestId = useRef(crypto.randomUUID());
   const portalTransactionRef = useRef<PortalIssueTransaction | null>(null);
 
@@ -179,7 +178,8 @@ export function GetPassPage() {
     'This visitor pass is personal and non-transferable.',
     'Scan your E-GatePass when leaving the campus.',
   ]);
-  const [imageRetentionDays, setImageRetentionDays] = useState<number | null>(null);
+  const [photoRetentionDays, setPhotoRetentionDays] = useState<number | null>(null);
+  const [idRetentionDays, setIdRetentionDays] = useState<number | null>(null);
   const [visitorRetentionDays, setVisitorRetentionDays] = useState<number | null>(null);
 
   const loadConfig = useCallback(async (isRetry = false) => {
@@ -200,8 +200,11 @@ export function GetPassPage() {
       if (Array.isArray(data.visitor_instructions) && data.visitor_instructions.length > 0) {
         setVisitorInstructions(data.visitor_instructions);
       }
-      if (typeof data.image_retention_days === 'number') {
-        setImageRetentionDays(data.image_retention_days);
+      if (typeof data.photo_retention_days === 'number') {
+        setPhotoRetentionDays(data.photo_retention_days);
+      }
+      if (typeof data.id_retention_days === 'number') {
+        setIdRetentionDays(data.id_retention_days);
       }
       if (typeof data.visitor_retention_days === 'number') {
         setVisitorRetentionDays(data.visitor_retention_days);
@@ -561,7 +564,6 @@ export function GetPassPage() {
       const validity = result.validFrom && result.validUntil
         ? formatValidityWindow(result.validFrom, result.validUntil)
         : formatWorkingHours(workingHours);
-      setIssuedValidity(validity);
 
       // Phase B: Presentation generation
       let qrUrl: string | null = null;
@@ -1541,7 +1543,7 @@ export function GetPassPage() {
                   <p className="font-bold">Email delivery could not be confirmed.</p>
                   <p>
                     Your E-GatePass is valid, but the email provider did not return a confirmed delivery result.
-                    Please download or save this QR before leaving this page.
+                    Please download or save your E-GatePass before leaving this page.
                   </p>
                 </div>
               )}
@@ -1562,25 +1564,15 @@ export function GetPassPage() {
                   qrDataUrl={qrDataUrl}
                   showRecoveryGuidance={true}
                 />
-              ) : qrDataUrl && (
-                <div className="mx-auto w-64 rounded-xl border border-[var(--color-border)] bg-white p-4 shadow-xs">
-                  <img
-                    src={qrDataUrl}
-                    alt="Visitor Gate Pass QR Code"
-                    className="w-full aspect-square"
-                  />
-                  {passId && (
-                    <p className="mt-2 text-xs font-mono text-[var(--color-text-muted)]">
-                      {passId}
-                    </p>
-                  )}
-                  {issuedValidity && (
-                    <p className="mt-1 text-xs font-semibold text-[var(--color-brand)]">
-                      Valid: {issuedValidity}
-                    </p>
-                  )}
+              ) : qrDataUrl ? (
+                <div
+                  className="rounded-lg border border-[var(--color-warning)] bg-[var(--color-warning-light)] p-4 text-xs text-[var(--color-warning-dark)] text-left space-y-1"
+                  role="alert"
+                >
+                  <p className="font-bold">E-GatePass Visual Pass Unavailable</p>
+                  <p>Your E-GatePass was issued, but the visual pass could not be prepared. Please retry or ask the Guard for assistance.</p>
                 </div>
-              )}
+              ) : null}
 
               <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] p-3 text-left text-xs text-[var(--color-text-secondary)] space-y-1">
                 <div className="flex items-center gap-1.5 font-semibold text-[var(--color-text-primary)]">
@@ -1589,13 +1581,16 @@ export function GetPassPage() {
                 </div>
                 <p>
                   Your information is collected for campus security and visitor management.{' '}
-                  {typeof imageRetentionDays === 'number'
-                    ? `Photos and ID images are retained according to EARIST’s configured retention period (${imageRetentionDays} days).`
-                    : "Photos and ID images are retained according to EARIST's configured retention policy."}{' '}
+                  {typeof photoRetentionDays === 'number'
+                    ? `Face photos are normally retained for ${photoRetentionDays} days.`
+                    : 'Face photos are normally retained under institutional policy.'}{' '}
+                  {typeof idRetentionDays === 'number'
+                    ? `Valid ID images, when collected, are normally retained for ${idRetentionDays} days.`
+                    : 'Valid ID images, when collected, are normally retained under institutional policy.'}{' '}
                   {typeof visitorRetentionDays === 'number'
-                    ? `Visitor records are retained according to institutional policy (${visitorRetentionDays} days).`
-                    : 'Visitor records are retained according to institutional policy.'}{' '}
-                  Records associated with a documented incident may be retained longer while an authorized incident hold remains active.
+                    ? `Visitor records are retained for ${visitorRetentionDays} days under institutional policy.`
+                    : 'Visitor records are retained under institutional policy.'}{' '}
+                  Evidence is retained at least through the scheduled visit, and authorized incident holds may extend retention when required.
                 </p>
               </div>
 

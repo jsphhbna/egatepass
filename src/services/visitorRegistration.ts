@@ -541,13 +541,15 @@ export interface RegistrationSettingsData {
   visit_purposes: unknown;
   visitor_instructions?: string[] | null;
   image_retention_days?: number | null;
+  photo_retention_days?: number | null;
+  id_retention_days?: number | null;
   visitor_retention_days?: number | null;
 }
 
 export async function loadRegistrationSettings(source: RegistrationSource): Promise<RegistrationSettingsData> {
   const client = source === 'portal' ? requirePortalSupabase() : requireSupabase();
   const selectCols =
-    'working_hours_start, working_hours_end, timezone, scheduling_days_ahead, peak_mode, visit_purposes, visitor_instructions, image_retention_days, visitor_retention_days';
+    'working_hours_start, working_hours_end, timezone, scheduling_days_ahead, peak_mode, visit_purposes, visitor_instructions, image_retention_days, photo_retention_days, id_retention_days, visitor_retention_days';
 
   const { data, error } = await client
     .from('app_settings')
@@ -579,6 +581,8 @@ export async function loadRegistrationSettings(source: RegistrationSource): Prom
     visit_purposes: raw.visit_purposes,
     visitor_instructions: Array.isArray(raw.visitor_instructions) ? (raw.visitor_instructions as string[]) : null,
     image_retention_days: typeof raw.image_retention_days === 'number' ? raw.image_retention_days : null,
+    photo_retention_days: typeof raw.photo_retention_days === 'number' ? raw.photo_retention_days : null,
+    id_retention_days: typeof raw.id_retention_days === 'number' ? raw.id_retention_days : null,
     visitor_retention_days: typeof raw.visitor_retention_days === 'number' ? raw.visitor_retention_days : null,
   };
 }

@@ -230,6 +230,54 @@ describe('Group J: Production-Backed Staff Permanent Decommission Contract', () 
       // Rule: total staff row count never decreases (historical data preserved)
       const afterStaffCount = await db.query('select count(*) as cnt from public.staff_profiles;');
       expect(Number(afterStaffCount.rows[0].cnt)).toBe(4);
+
+      // Rule: Decommission immutability - attempt role change afterward -> P0004 target_decommissioned -> role unchanged
+      let roleChangeErr: any = null;
+      try {
+        await db.query(`
+          select api.update_staff_profile(
+            '${SUPERADMIN_A}'::uuid,
+            '${INACTIVE_GUARD_B}'::uuid,
+            'admin'::public.staff_role,
+            null,
+            '55555555-5555-4555-8555-555555555555'::uuid
+          );
+        `);
+      } catch (err) {
+        roleChangeErr = err;
+      }
+      expect(roleChangeErr).not.toBeNull();
+      expect(roleChangeErr.message).toContain('target_decommissioned');
+      expect((roleChangeErr as any).code).toBe('P0004');
+
+      const guardRoleCheck = await db.query<{ role: string }>(`
+        select role from public.staff_profiles where user_id = '${INACTIVE_GUARD_B}';
+      `);
+      expect(guardRoleCheck.rows[0].role).toBe('guard');
+
+      // Rule: Decommission immutability - attempt active=true afterward -> P0004 target_decommissioned -> active remains false
+      let activeChangeErr: any = null;
+      try {
+        await db.query(`
+          select api.update_staff_profile(
+            '${SUPERADMIN_A}'::uuid,
+            '${INACTIVE_GUARD_B}'::uuid,
+            null,
+            true,
+            '66666666-6666-4666-8666-666666666666'::uuid
+          );
+        `);
+      } catch (err) {
+        activeChangeErr = err;
+      }
+      expect(activeChangeErr).not.toBeNull();
+      expect(activeChangeErr.message).toContain('target_decommissioned');
+      expect((activeChangeErr as any).code).toBe('P0004');
+
+      const guardActiveCheck = await db.query<{ active: boolean }>(`
+        select active from public.staff_profiles where user_id = '${INACTIVE_GUARD_B}';
+      `);
+      expect(guardActiveCheck.rows[0].active).toBe(false);
     }, 35000);
 
     it('enforces privilege boundaries: service_role only can execute decommission RPC', async () => {

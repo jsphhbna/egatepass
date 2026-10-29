@@ -187,14 +187,18 @@ describe('Group E: Configurable Visitor Instructions & Public Settings Access Co
       const res = await db.query<{
         visitor_instructions: any;
         image_retention_days: number;
+        photo_retention_days: number;
+        id_retention_days: number;
         visitor_retention_days: number;
       }>(`
-        select visitor_instructions, image_retention_days, visitor_retention_days
+        select visitor_instructions, image_retention_days, photo_retention_days, id_retention_days, visitor_retention_days
         from public.app_settings;
       `);
       expect(res.rows.length).toBe(1);
       expect(res.rows[0].visitor_instructions).toBeDefined();
       expect(res.rows[0].image_retention_days).toBeDefined();
+      expect(res.rows[0].photo_retention_days).toBeDefined();
+      expect(res.rows[0].id_retention_days).toBeDefined();
       expect(res.rows[0].visitor_retention_days).toBeDefined();
 
       // CANNOT SELECT unapproved sensitive columns
@@ -227,14 +231,18 @@ describe('Group E: Configurable Visitor Instructions & Public Settings Access Co
       const res = await db.query<{
         visitor_instructions: any;
         image_retention_days: number;
+        photo_retention_days: number;
+        id_retention_days: number;
         visitor_retention_days: number;
       }>(`
-        select visitor_instructions, image_retention_days, visitor_retention_days
+        select visitor_instructions, image_retention_days, photo_retention_days, id_retention_days, visitor_retention_days
         from public.app_settings;
       `);
       expect(res.rows.length).toBe(1);
       expect(res.rows[0].visitor_instructions).toBeDefined();
       expect(res.rows[0].image_retention_days).toBeDefined();
+      expect(res.rows[0].photo_retention_days).toBeDefined();
+      expect(res.rows[0].id_retention_days).toBeDefined();
       expect(res.rows[0].visitor_retention_days).toBeDefined();
 
       // CANNOT SELECT unapproved sensitive columns
@@ -255,7 +263,7 @@ describe('Group E: Configurable Visitor Instructions & Public Settings Access Co
   });
 
   describe('Behavioral Settings Loading Contract (Portal & Kiosk)', () => {
-    it('loadRegistrationSettings returns real configured retention values (11, 45) for Portal, not 7/30', async () => {
+    it('loadRegistrationSettings returns real configured retention values (photo=11, ID=37, visitor=45) for Portal, not 7/30', async () => {
       const mockSettingsRow = {
         working_hours_start: '07:00',
         working_hours_end: '18:00',
@@ -265,6 +273,8 @@ describe('Group E: Configurable Visitor Instructions & Public Settings Access Co
         visit_purposes: ['Inquiry', 'Admission'],
         visitor_instructions: ['Dress appropriately.'],
         image_retention_days: 11,
+        photo_retention_days: 11,
+        id_retention_days: 37,
         visitor_retention_days: 45,
       };
 
@@ -279,13 +289,14 @@ describe('Group E: Configurable Visitor Instructions & Public Settings Access Co
       } as any);
 
       const portalSettings = await loadRegistrationSettings('portal');
-      expect(portalSettings.image_retention_days).toBe(11);
+      expect(portalSettings.photo_retention_days).toBe(11);
+      expect(portalSettings.id_retention_days).toBe(37);
       expect(portalSettings.visitor_retention_days).toBe(45);
-      expect(portalSettings.image_retention_days).not.toBe(7);
-      expect(portalSettings.visitor_retention_days).not.toBe(30);
+      expect(portalSettings.photo_retention_days).not.toBe(7);
+      expect(portalSettings.id_retention_days).not.toBe(30);
     });
 
-    it('loadRegistrationSettings returns real configured retention values (11, 45) for Kiosk, not 7/30', async () => {
+    it('loadRegistrationSettings returns real configured retention values (photo=11, ID=37, visitor=45) for Kiosk, not 7/30', async () => {
       const mockSettingsRow = {
         working_hours_start: '07:00',
         working_hours_end: '18:00',
@@ -295,6 +306,8 @@ describe('Group E: Configurable Visitor Instructions & Public Settings Access Co
         visit_purposes: ['Inquiry', 'Admission'],
         visitor_instructions: ['Dress appropriately.'],
         image_retention_days: 11,
+        photo_retention_days: 11,
+        id_retention_days: 37,
         visitor_retention_days: 45,
       };
 
@@ -309,10 +322,11 @@ describe('Group E: Configurable Visitor Instructions & Public Settings Access Co
       } as any);
 
       const kioskSettings = await loadRegistrationSettings('kiosk');
-      expect(kioskSettings.image_retention_days).toBe(11);
+      expect(kioskSettings.photo_retention_days).toBe(11);
+      expect(kioskSettings.id_retention_days).toBe(37);
       expect(kioskSettings.visitor_retention_days).toBe(45);
-      expect(kioskSettings.image_retention_days).not.toBe(7);
-      expect(kioskSettings.visitor_retention_days).not.toBe(30);
+      expect(kioskSettings.photo_retention_days).not.toBe(7);
+      expect(kioskSettings.id_retention_days).not.toBe(30);
     });
 
     it('normalizes missing/unreadable retention values to null (never invented defaults)', async () => {
@@ -325,6 +339,8 @@ describe('Group E: Configurable Visitor Instructions & Public Settings Access Co
         visit_purposes: ['Inquiry'],
         visitor_instructions: null,
         image_retention_days: null,
+        photo_retention_days: null,
+        id_retention_days: null,
         visitor_retention_days: null,
       };
 
@@ -339,8 +355,34 @@ describe('Group E: Configurable Visitor Instructions & Public Settings Access Co
       } as any);
 
       const settings = await loadRegistrationSettings('portal');
-      expect(settings.image_retention_days).toBeNull();
+      expect(settings.photo_retention_days).toBeNull();
+      expect(settings.id_retention_days).toBeNull();
       expect(settings.visitor_retention_days).toBeNull();
+    });
+
+    it('proves visitor-facing privacy copy in Portal and Kiosk presents truthful separate policies', () => {
+      const getPassSrc = readFileSync('src/pages/GetPassPage.tsx', 'utf8');
+      const kioskSrc = readFileSync('src/pages/KioskPage.tsx', 'utf8');
+
+      // Portal checks
+      expect(getPassSrc).toContain('Face photos are normally retained for');
+      expect(getPassSrc).toContain('Valid ID images, when collected, are normally retained for');
+      expect(getPassSrc).toContain('Visitor records are retained for');
+      expect(getPassSrc).toContain('Evidence is retained at least through the scheduled visit, and authorized incident holds may extend retention when required.');
+      expect(getPassSrc).not.toContain('Photos and ID images are retained according to EARIST’s configured retention period');
+
+      // Kiosk checks
+      expect(kioskSrc).toContain('Visitor information is processed under EARIST institutional privacy procedures and applicable privacy requirements.');
+      expect(kioskSrc).toContain('Face photos are normally retained for');
+      expect(kioskSrc).toContain('Valid ID images, when collected, are normally retained for');
+      expect(kioskSrc).toContain('Visitor records are retained for');
+      expect(kioskSrc).toContain('Evidence is retained at least through the scheduled visit, and authorized incident holds may extend retention when required.');
+      expect(kioskSrc).not.toContain('Data Privacy Notice (RA 10173)');
+      expect(kioskSrc).not.toContain('Evidence images:');
+
+      // Controlled recovery state in GetPassPage (no raw standalone QR fallback)
+      expect(getPassSrc).toContain('Your E-GatePass was issued, but the visual pass could not be prepared. Please retry or ask the Guard for assistance.');
+      expect(getPassSrc).not.toContain('alt="Visitor Gate Pass QR Code"');
     });
   });
 });

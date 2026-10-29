@@ -54,13 +54,15 @@ async function handleRequest(request: Request): Promise<Response> {
 
     const { data: settingsData, error: settingsError } = await admin
       .from('app_settings')
-      .select('image_retention_days')
+      .select('image_retention_days, photo_retention_days, id_retention_days')
       .eq('singleton', true)
       .maybeSingle();
 
     if (settingsError) throw settingsError;
 
     const retentionDays = settingsData?.image_retention_days ?? 7;
+    const photoRetentionDays = settingsData?.photo_retention_days ?? 7;
+    const idRetentionDays = settingsData?.id_retention_days ?? 30;
     const now = new Date().toISOString();
 
     // 1. Fetch active incident holds by visitor_id
@@ -150,6 +152,8 @@ async function handleRequest(request: Request): Promise<Response> {
         evidenceDeleted: 0,
         visitorsAffected: distinctVisitors.size,
         retentionDays,
+        photoRetentionDays,
+        idRetentionDays,
         hasMore: !exhausted,
       });
     }

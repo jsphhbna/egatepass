@@ -66,7 +66,8 @@ export function AdminSettings() {
   const [pendingPeakMode, setPendingPeakMode] = useState<PeakModeScope | null>(null);
   const [showPurgeConfirm, setShowPurgeConfirm] = useState(false);
   const [purgeEligibleCount, setPurgeEligibleCount] = useState<number | null>(null);
-  const [purgeRetentionDays, setPurgeRetentionDays] = useState<number | null>(null);
+  const [purgePhotoRetentionDays, setPurgePhotoRetentionDays] = useState<number | null>(null);
+  const [purgeIdRetentionDays, setPurgeIdRetentionDays] = useState<number | null>(null);
 
   async function loadSettings() {
     setLoading(true);
@@ -308,9 +309,15 @@ export function AdminSettings() {
         throw new Error('Could not check which images are ready for deletion');
       }
 
-      const data = await res.json() as { visitorsAffected: number; retentionDays: number };
+      const data = await res.json() as {
+        visitorsAffected: number;
+        retentionDays?: number;
+        photoRetentionDays?: number;
+        idRetentionDays?: number;
+      };
       setPurgeEligibleCount(data.visitorsAffected);
-      setPurgeRetentionDays(data.retentionDays);
+      setPurgePhotoRetentionDays(data.photoRetentionDays ?? settings.photoRetentionDays ?? 7);
+      setPurgeIdRetentionDays(data.idRetentionDays ?? settings.idRetentionDays ?? 30);
       setShowPurgeConfirm(true);
     } catch (err) {
       console.error('Dry run failed', err);
@@ -718,7 +725,7 @@ export function AdminSettings() {
                 <div>
                   <h3 className="text-lg font-semibold text-[var(--color-danger-dark)]">Purge Eligible Images</h3>
                   <p className="mt-2 text-sm text-[var(--color-danger-dark)]">
-                    Permanently deletes eligible visitor photos and ID images under the {settings.imageRetentionDays}-day image policy. Visitor details and visit history are kept. This action cannot be undone.
+                    Permanently deletes eligible visitor photos and ID images that have reached their authoritative expiry date under configured retention policies. Active visits and incident holds remain protected. Visitor details and visit history are kept. This action cannot be undone.
                   </p>
                   <Button
                     variant="destructive"
@@ -793,12 +800,22 @@ export function AdminSettings() {
       <ConfirmModal
         isOpen={canManageSecuritySettings && showPurgeConfirm && !saving}
         onClose={() => setShowPurgeConfirm(false)}
-        title="Purge Images?"
+        title="Purge Expired Evidence?"
         description={
-          <>
-            You are about to permanently delete photos and ID images for <strong className="text-[var(--color-text-primary)]">{purgeEligibleCount}</strong> eligible visitor{purgeEligibleCount === 1 ? '' : 's'} under the {purgeRetentionDays ?? settings.imageRetentionDays}-day image policy. Visitor details and visit history will remain.
-            This action cannot be undone.
-          </>
+          <div className="space-y-3 text-left">
+            <p>
+              You are about to permanently delete evidence that has reached its authoritative expiry date for{' '}
+              <strong className="text-[var(--color-text-primary)]">{purgeEligibleCount}</strong> eligible visitor{purgeEligibleCount === 1 ? '' : 's'}.
+            </p>
+            <div className="rounded border border-[var(--color-border)] bg-[var(--color-surface)] p-2.5 text-xs space-y-1">
+              <p className="font-semibold text-[var(--color-text-primary)]">Configured policy:</p>
+              <p>Face photos: {purgePhotoRetentionDays ?? settings.photoRetentionDays ?? 7} days</p>
+              <p>Valid ID images: {purgeIdRetentionDays ?? settings.idRetentionDays ?? 30} days</p>
+            </div>
+            <p className="text-xs text-[var(--color-text-secondary)]">
+              Active/future visits and authorized incident holds remain protected. Visitor details and visit history will remain. This action cannot be undone.
+            </p>
+          </div>
         }
         onConfirm={executePurge}
         confirmText="Yes, purge images"

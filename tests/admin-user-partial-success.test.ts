@@ -205,4 +205,145 @@ describe('PATCH 4: Admin User Partial-Success Contract Tests', () => {
     expect(adminUsersSrc).toContain("authentication synchronization needs reconciliation");
     expect(adminUsersSrc).toContain("loadUsers()");
   });
+
+  it('4C. Decommission immutability: target_decommissioned RPC error maps to HTTP 409 and does not call auth updateUserById', async () => {
+    const mockUpdateUserById = vi.fn();
+
+    const mockAdmin = {
+      from: vi.fn((table: string) => ({
+        select: vi.fn(() => ({
+          eq: vi.fn(() => ({
+            maybeSingle: vi.fn(async () => {
+              if (table === 'staff_profiles') {
+                return {
+                  data: { role: 'superadmin', active: true, must_change_password: false, privacy_accepted_at: '2026-01-01T00:00:00Z' },
+                  error: null,
+                };
+              }
+              return { data: null, error: null };
+            }),
+          })),
+        })),
+      })),
+      schema: vi.fn(() => ({
+        rpc: vi.fn(async (fn: string) => {
+          if (fn === 'update_staff_profile') {
+            return { data: null, error: { code: 'P0004', message: 'target_decommissioned' } };
+          }
+          return { data: null, error: null };
+        }),
+      })),
+      auth: {
+        getUser: vi.fn(async () => ({
+          data: {
+            user: { id: SUPERADMIN_ID, email: 'super@earist.edu.ph', is_anonymous: false, email_confirmed_at: '2026-01-01T00:00:00Z' },
+          },
+          error: null,
+        })),
+        admin: {
+          updateUserById: mockUpdateUserById,
+        },
+      },
+    };
+
+    setServerSupabaseClientsForTest({
+      admin: mockAdmin as any,
+      anon: {} as any,
+      passwordVerifier: {} as any,
+    });
+
+    const req = new Request('http://localhost/api/update-user', {
+      method: 'POST',
+      headers: {
+        authorization: VALID_BEARER,
+        'content-type': 'application/json',
+      },
+      body: JSON.stringify({
+        targetUid: TARGET_GUARD_ID,
+        active: true,
+      }),
+    });
+
+    const res = await updateUserHandler.fetch(req);
+    expect(res.status).toBe(409);
+
+    const body = await res.json();
+    expect(body).toEqual({ error: 'target_decommissioned' });
+
+    // CRITICAL INVARIANT: Auth updateUserById must never be called for a decommissioned target
+    expect(mockUpdateUserById).not.toHaveBeenCalled();
+  });
+
+  it('4D. Preserves last Super Admin 23514 mapping to HTTP 409 cannot_remove_last_superadmin without calling auth updateUserById', async () => {
+    const mockUpdateUserById = vi.fn();
+
+    const mockAdmin = {
+      from: vi.fn((table: string) => ({
+        select: vi.fn(() => ({
+          eq: vi.fn(() => ({
+            maybeSingle: vi.fn(async () => {
+              if (table === 'staff_profiles') {
+                return {
+                  data: { role: 'superadmin', active: true, must_change_password: false, privacy_accepted_at: '2026-01-01T00:00:00Z' },
+                  error: null,
+                };
+              }
+              return { data: null, error: null };
+            }),
+          })),
+        })),
+      })),
+      schema: vi.fn(() => ({
+        rpc: vi.fn(async (fn: string) => {
+          if (fn === 'update_staff_profile') {
+            return { data: null, error: { code: '23514', message: 'cannot remove last superadmin' } };
+          }
+          return { data: null, error: null };
+        }),
+      })),
+      auth: {
+        getUser: vi.fn(async () => ({
+          data: {
+            user: { id: SUPERADMIN_ID, email: 'super@earist.edu.ph', is_anonymous: false, email_confirmed_at: '2026-01-01T00:00:00Z' },
+          },
+          error: null,
+        })),
+        admin: {
+          updateUserById: mockUpdateUserById,
+        },
+      },
+    };
+
+    setServerSupabaseClientsForTest({
+      admin: mockAdmin as any,
+      anon: {} as any,
+      passwordVerifier: {} as any,
+    });
+
+    const req = new Request('http://localhost/api/update-user', {
+      method: 'POST',
+      headers: {
+        authorization: VALID_BEARER,
+        'content-type': 'application/json',
+      },
+      body: JSON.stringify({
+        targetUid: TARGET_GUARD_ID,
+        active: false,
+      }),
+    });
+
+    const res = await updateUserHandler.fetch(req);
+    expect(res.status).toBe(409);
+
+    const body = await res.json();
+    expect(body).toEqual({ error: 'cannot_remove_last_superadmin' });
+    expect(mockUpdateUserById).not.toHaveBeenCalled();
+  });
+
+  it('4E. AdminUsers.tsx displays decommission reason and target_decommissioned user message', () => {
+    const adminUsersSrcLatest = readFileSync('src/pages/AdminUsers.tsx', 'utf8');
+    expect(adminUsersSrcLatest).toContain("body?.error === 'target_decommissioned'");
+    expect(adminUsersSrcLatest).toContain('This staff account has been permanently decommissioned and can no longer be modified.');
+    expect(adminUsersSrcLatest).toContain('Reason: {user.decommissionReason}');
+  });
 });

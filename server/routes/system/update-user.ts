@@ -19,6 +19,9 @@ async function handleRequest(request: Request): Promise<Response> {
       requested_role: parsed.data.role ?? null, requested_active: parsed.data.active ?? null, requested_request_id: randomUUID(),
     });
     if (updated.error) {
+      if (updated.error.code === 'P0004' || updated.error.message?.includes('target_decommissioned')) {
+        return jsonResponse(409, { error: 'target_decommissioned' });
+      }
       if (updated.error.code === '23514') return jsonResponse(409, { error: 'cannot_remove_last_superadmin' });
       if (updated.error.code === '42501') return jsonResponse(403, { error: 'access_denied' });
       throw updated.error;
