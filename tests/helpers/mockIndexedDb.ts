@@ -24,6 +24,14 @@ class MockIDBRequest {
 }
 
 class MockIDBObjectStore {
+  public indexNames = {
+    contains: (_name: string) => true,
+  };
+
+  createIndex(_name: string, _keyPath: string, _options?: any) {
+    return {};
+  }
+
   constructor(
     public name: string,
     public data: Map<string, any>,
@@ -170,6 +178,13 @@ class MockIDBTransaction {
 class MockIDBDatabase {
   public stores = new Map<string, Map<string, any>>();
   public keyPaths = new Map<string, string>();
+  public version = 2;
+
+  get objectStoreNames() {
+    return {
+      contains: (name: string) => this.stores.has(name),
+    };
+  }
 
   createObjectStore(name: string, options?: { keyPath?: string }) {
     if (!this.stores.has(name)) {

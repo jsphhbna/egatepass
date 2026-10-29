@@ -425,20 +425,22 @@ export function DevicesPage() {
           className="grid gap-6 sm:grid-cols-2"
         >
           <div className="sm:col-span-2">
-            <FormField label="Device Name" id="device-name" error={errors.name?.message}>
+            <FormField label="Device Name" id="device-name" requirement="required" error={errors.name?.message}>
               <Input
                 id="device-name"
                 {...register('name')}
+                aria-required="true"
                 placeholder="Main Gate Entry Tablet"
                 error={!!errors.name}
               />
             </FormField>
           </div>
 
-          <FormField label="Type" id="device-type" error={errors.type?.message}>
+          <FormField label="Type" id="device-type" requirement="required" error={errors.type?.message}>
             <Select
               id="device-type"
               {...register('type')}
+              aria-required="true"
               error={!!errors.type}
             >
               <option value="">Select type…</option>
@@ -448,10 +450,11 @@ export function DevicesPage() {
             </Select>
           </FormField>
 
-          <FormField label="Gate / Location" id="device-gate" error={errors.gate?.message}>
+          <FormField label="Gate / Location" id="device-gate" requirement="required" error={errors.gate?.message}>
             <Input
               id="device-gate"
               {...register('gate')}
+              aria-required="true"
               placeholder="Main Gate"
               error={!!errors.gate}
             />
@@ -461,6 +464,7 @@ export function DevicesPage() {
             <FormField
               label="Device Username / Alias"
               id="device-username"
+              requirement="required"
               hint="Enter a unique device alias (e.g. maingate-entry). The sign-in identity will be maingate-entry@devices.egatepass.invalid."
               error={errors.email?.message}
             >
@@ -476,11 +480,12 @@ export function DevicesPage() {
           </div>
 
           <div className="sm:col-span-2">
-            <FormField label="Device Password" id="device-password" error={errors.password?.message}>
+            <FormField label="Device Password" id="device-password" requirement="required" error={errors.password?.message}>
               <Input
                 id="device-password"
                 type="password"
                 {...register('password')}
+                aria-required="true"
                 placeholder="••••••••"
                 error={!!errors.password}
               />

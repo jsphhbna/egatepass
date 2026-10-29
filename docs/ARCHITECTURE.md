@@ -428,8 +428,8 @@ Outage Architecture & Authority Delegation
                 │     └── Offline Event Outbox: Queued entry, exit, and rejection events
                 │
                 └── Connectivity Restored: Reconnection Sync
-                      ├── api.sync_offline_registration (Idempotent new visitor creation)
-                      └── api.sync_offline_event (Row-locked atomic lifecycle transition)
+                      ├── POST /api/sync-offline-registration -> api.guard_sync_offline_registration (Server-only service_role execution with byte inspection & actor binding)
+                      └── api.guard_sync_offline_event (Row-locked atomic lifecycle transition)
 ```
 
 ### Architectural Guarantees:

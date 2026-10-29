@@ -1496,5 +1496,31 @@ describe('Permanent PostgreSQL Migration Chain & Schema Contracts (PGlite)', () 
       db.query(`select private.bootstrap_super_admin('${secondValidId}'::uuid, 'Second Super Admin');`)
     ).rejects.toThrow('bootstrap is allowed only before the first staff profile');
   }, 30000);
-});
 
+  it('Migration 37: enforces server-only execution boundaries on guard offline sync and thermal template RPCs', async () => {
+    const db = new PGlite();
+    await applyAllMigrations(db);
+
+    // Verify guard_sync_offline_registration privileges
+    const regAuthPriv = await db.query<{ allowed: boolean }>(`
+      select has_function_privilege('authenticated', 'api.guard_sync_offline_registration(uuid, uuid, jsonb, text, timestamptz, uuid, integer, text, uuid, integer, text, text)', 'execute') as allowed;
+    `);
+    expect(regAuthPriv.rows[0]?.allowed).toBe(false);
+
+    const regServicePriv = await db.query<{ allowed: boolean }>(`
+      select has_function_privilege('service_role', 'api.guard_sync_offline_registration(uuid, uuid, jsonb, text, timestamptz, uuid, integer, text, uuid, integer, text, text)', 'execute') as allowed;
+    `);
+    expect(regServicePriv.rows[0]?.allowed).toBe(true);
+
+    // Verify get_published_thermal_template privileges
+    const templateAuthPriv = await db.query<{ allowed: boolean }>(`
+      select has_function_privilege('authenticated', 'api.get_published_thermal_template()', 'execute') as allowed;
+    `);
+    expect(templateAuthPriv.rows[0]?.allowed).toBe(false);
+
+    const templateServicePriv = await db.query<{ allowed: boolean }>(`
+      select has_function_privilege('service_role', 'api.get_published_thermal_template()', 'execute') as allowed;
+    `);
+    expect(templateServicePriv.rows[0]?.allowed).toBe(true);
+  }, 60000);
+});

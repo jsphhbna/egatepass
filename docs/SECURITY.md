@@ -542,19 +542,28 @@ During connectivity outages, operational access authority delegates to the Guard
 - **Honest Security Boundary**: Browser IndexedDB is **NOT** a tamper-proof hardware security module (HSM) or hardware-backed TPM. Physical extraction from an unlocked device or rooted OS is possible.
 - **Zero Server Secrets**: No server service-role keys, database passwords, or signing secrets are EVER written to browser local storage, IndexedDB, or client cookies.
 
-### 20.2 Operational Cache Scoping, Retention & Evidence Stripping
+### 20.2 Operational Cache Scoping, Actor Isolation & Evidence Stripping
 - **Minimal Operational Footprint**: The tablet only caches operationally relevant passes: today's date in `Asia/Manila` in `issued`, `pending`, or `inside` status. Historical passes are excluded.
-- **Truthful Storage Framing**: UI messaging and documentation state "Stored on this device pending synchronization" rather than misleading claims of hardware-backed tamper-proof storage.
+- **IndexedDB v2 & Cross-Guard Actor Binding**: IndexedDB store upgraded to v2 (`egatepass_guard_offline`) with mandatory `actorId` attributes and indexes across cached visitors, registrations, and events. Any unattributed legacy records without an authenticating actor are purged on upgrade.
+- **Cross-Guard Data Privacy**: When switching guards (`prepareGuardOfflineStoreForActor(actorId)`), operational visitor cache (`cached_visitors`) is invalidated immediately so Guard B never views cached face photos or details from Guard A. Pending offline outbox records remain strictly isolated by `actorId`.
+- **Blocked Clean Logout with Pending Records**: To prevent evidence loss and attribution failure, Guard clean logout is blocked if unsynchronized offline registrations or events remain on the device. Guards must synchronize records or resolve pending transfers before signing out.
 - **Local Data Retention & Evidence Stripping**:
   - Daily automatic purge clears previous calendar days' cached visitor records.
   - Terminal Evidence Stripping: Upon reaching a terminal state (either successful synchronization or terminal conflict), sensitive local binary blobs (`photoBlob` and `idBlob`) are stripped immediately from IndexedDB while preserving metadata necessary for audit and administrative reconciliation.
-  - Absolute Retention Ceiling: Enforcing the institutional 7-day evidence retention policy, any offline registration older than 7 days that fails to synchronize is treated as expired/conflicted and purged of all sensitive binary evidence blobs.
-  - Staff logout or session invalidation clears all sensitive local caches.
+  - Transient Failure Protection: Network timeouts, 5xx server errors, 503 authority outages, or unclassified 400 responses never destroy local blobs; evidence remains safely queued in `pending` state for automatic retry.
+  - Absolute Retention Ceiling: Enforcing the institutional 7-day evidence retention policy, any offline registration older than 7 days that fails to synchronize is treated as expired/conflicted and purged of sensitive binary evidence blobs.
 
-### 20.3 Server Synchronization & Conflict Defense
-- **Immutable Provenance**: Every offline event carries an immutable random UUID `eventId` and `actorId`. Offline walk-in registrations carry an immutable UUID `offlineRegistrationId`.
-- **No Blind Overwrite**: The server RPC `api.sync_offline_event` locks target pass rows (`FOR UPDATE`), evaluates `expected_status`, and verifies legitimate lifecycle transitions.
-- **Conflict Handling**: If a pass was modified on the server during the outage (e.g. cancelled or exited remotely), the sync engine refuses to overwrite the record and writes a conflict record to `public.reconciliation_tasks` for administrative triage.
+### 20.3 Server-Only Synchronization Trust Boundary & Conflict Defense
+- **Rebuilt Offline Registration Trust Boundary**: Direct browser execution of `api.guard_sync_offline_registration` is revoked. The RPC is granted strictly to `service_role`.
+- **Trusted Server Route (`POST /api/sync-offline-registration`)**:
+  - Verifies authenticated Guard bearer token and resolves the guard's staff profile.
+  - Performs server-side byte inspection, MIME type validation (WebP magic bytes `RIFF`...`WEBP`), and SHA-256 verification of uploaded photo and ID blobs.
+  - Invokes `api.guard_sync_offline_registration` as `service_role` passing verified `requested_actor_id`.
+- **Database Defense-in-Depth Authorization**:
+  - The database RPC validates that `requested_actor_id` corresponds to an active guard or superadmin in `staff_profiles`.
+  - Validates that associated `upload_intents` records exist, are active, belong to `guard_offline`, and are owned by `requested_actor_id`.
+  - Evidence retention adheres to institutional configuration (`photo_retention_days` and `id_retention_days` from `app_settings`, defaulting to 7 and 30 days) with Manila calendar day visit window matching `api.issue_pass`.
+- **Thermal Template Least Privilege**: The thermal receipt template RPC `api.get_published_thermal_template()` is restricted strictly to `service_role`; direct browser RPC access is revoked.
 
 ---
 

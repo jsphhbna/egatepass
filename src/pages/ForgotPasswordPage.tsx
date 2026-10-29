@@ -86,11 +86,12 @@ export function ForgotPasswordPage() {
         </div>
 
         <form onSubmit={handleSubmit} className="space-y-5">
-          <FormField label="Email" id="reset-email">
+          <FormField label="Email" id="reset-email" requirement="required">
             <Input
               id="reset-email"
               type="email"
               required
+              aria-required="true"
               autoComplete="email"
               value={email}
               onChange={(e) => setEmail(e.target.value)}

@@ -80,7 +80,7 @@ export function AuthenticatedImage({ publicId, blob, fallbackText = 'Image unava
       }
     }
 
-    if (publicId) {
+    if (blob || publicId) {
       fetchImage();
     } else {
       setLoading(false);
@@ -94,7 +94,7 @@ export function AuthenticatedImage({ publicId, blob, fallbackText = 'Image unava
         URL.revokeObjectURL(url);
       }
     };
-  }, [publicId]);
+  }, [publicId, blob]);
 
   if (loading) {
     return (
@@ -107,7 +107,7 @@ export function AuthenticatedImage({ publicId, blob, fallbackText = 'Image unava
   }
 
   if (state !== 'ready' || !objectUrl) {
-    const message = state === 'expired' ? 'Image expired' : state === 'missing' ? 'No image available' : 'Image temporarily unavailable';
+    const message = state === 'expired' ? 'Image expired' : fallbackText;
     return (
       <div 
         className={`flex flex-col items-center justify-center rounded-md border border-dashed border-[var(--color-border-strong)] bg-[var(--color-overlay)] p-4 text-center text-[var(--color-text-muted)] ${className}`}

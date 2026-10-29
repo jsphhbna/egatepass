@@ -98,6 +98,7 @@ export function AdminAuditLogs() {
   const [dateFrom, setDateFrom] = useState('');
   const [dateTo, setDateTo] = useState('');
   const [exporting, setExporting] = useState(false);
+  const isDateRangeInvalid = Boolean(dateFrom && dateTo && dateFrom > dateTo);
 
   useEffect(() => {
     const timer = setTimeout(() => {
@@ -106,12 +107,12 @@ export function AdminAuditLogs() {
     return () => clearTimeout(timer);
   }, [administrativeAction]);
 
-  const visitor = useVisitorActivity(tab === 'visitor', {
+  const visitor = useVisitorActivity(tab === 'visitor' && !isDateRangeInvalid, {
     event: visitorEvent || undefined,
     dateFrom: dateFrom || undefined,
     dateTo: dateTo || undefined,
   });
-  const administrative = useAdministrativeAudit(tab === 'administrative', {
+  const administrative = useAdministrativeAudit(tab === 'administrative' && !isDateRangeInvalid, {
     role: administrativeRole || undefined,
     action: debouncedAction.trim() || undefined,
     dateFrom: dateFrom || undefined,
@@ -130,6 +131,31 @@ export function AdminAuditLogs() {
 
   const [exportFormat, setExportFormat] = useState<'csv' | 'xlsx' | 'pdf' | null>(null);
 
+  function handleTabKeyDown(e: React.KeyboardEvent<HTMLDivElement>) {
+    const tabIds = tabs.map((t) => t.id);
+    const currentIndex = tabIds.indexOf(tab);
+    if (currentIndex === -1) return;
+    let nextIndex = -1;
+    if (e.key === 'ArrowRight') {
+      nextIndex = (currentIndex + 1) % tabIds.length;
+    } else if (e.key === 'ArrowLeft') {
+      nextIndex = (currentIndex - 1 + tabIds.length) % tabIds.length;
+    } else if (e.key === 'Home') {
+      nextIndex = 0;
+    } else if (e.key === 'End') {
+      nextIndex = tabIds.length - 1;
+    }
+    if (nextIndex !== -1) {
+      e.preventDefault();
+      const nextTab = tabIds[nextIndex];
+      if (nextTab) {
+        setTab(nextTab);
+        const el = document.getElementById(`audit-tab-${nextTab}`);
+        el?.focus();
+      }
+    }
+  }
+
   function resetFilters() {
     if (tab === 'visitor') {
       setVisitorEvent('');
@@ -147,7 +173,7 @@ export function AdminAuditLogs() {
     : Boolean(administrativeRole || administrativeAction || dateFrom || dateTo);
 
   async function handleExport(format: 'csv' | 'xlsx' | 'pdf') {
-    if (tab === 'reconciliation') return;
+    if (tab === 'reconciliation' || isDateRangeInvalid) return;
     setExporting(true);
     setExportFormat(format);
     try {
@@ -352,12 +378,15 @@ export function AdminAuditLogs() {
         <p className="mt-1 text-sm text-[var(--color-text-secondary)]">Read-only visitor operations and privileged administrative events</p>
       </div>
 
-      <div className="flex flex-wrap gap-2" role="tablist" aria-label="Audit log type">
+      <div className="flex flex-wrap gap-2" role="tablist" aria-label="Audit log type" onKeyDown={handleTabKeyDown}>
         {tabs.map((item) => (
           <button
             key={item.id}
+            id={`audit-tab-${item.id}`}
             type="button"
             role="tab"
+            tabIndex={tab === item.id ? 0 : -1}
+            aria-controls={`audit-tabpanel-${item.id}`}
             aria-selected={tab === item.id}
             onClick={() => setTab(item.id)}
             className={`rounded-lg border px-4 py-2 text-sm font-semibold transition-colors ${tab === item.id
@@ -394,8 +423,19 @@ export function AdminAuditLogs() {
               </div>
             </>
           )}
-          <div className="w-full sm:w-44"><label className="mb-1.5 block text-xs font-semibold text-[var(--color-text-secondary)]">From</label><Input type="date" value={dateFrom} onChange={(event) => setDateFrom(event.target.value)} /></div>
-          <div className="w-full sm:w-44"><label className="mb-1.5 block text-xs font-semibold text-[var(--color-text-secondary)]">To</label><Input type="date" value={dateTo} onChange={(event) => setDateTo(event.target.value)} /></div>
+          <div className="w-full sm:w-44">
+            <label className="mb-1.5 block text-xs font-semibold text-[var(--color-text-secondary)]">From</label>
+            <Input type="date" value={dateFrom} max={dateTo || undefined} onChange={(event) => setDateFrom(event.target.value)} />
+          </div>
+          <div className="w-full sm:w-44">
+            <label className="mb-1.5 block text-xs font-semibold text-[var(--color-text-secondary)]">To</label>
+            <Input type="date" value={dateTo} min={dateFrom || undefined} onChange={(event) => setDateTo(event.target.value)} />
+          </div>
+          {isDateRangeInvalid && (
+            <div className="w-full text-xs font-semibold text-red-600 dark:text-red-400">
+              Start date cannot be later than end date.
+            </div>
+          )}
           <div className="flex flex-wrap items-center gap-2 sm:ml-auto">
             {hasActiveFilters && (
               <Button
@@ -410,7 +450,7 @@ export function AdminAuditLogs() {
               <Button
                 variant="secondary"
                 loading={exporting && exportFormat === 'csv'}
-                disabled={exporting}
+                disabled={exporting || isDateRangeInvalid}
                 icon={<Download className="h-4 w-4" />}
                 onClick={() => void handleExport('csv')}
               >
@@ -419,7 +459,7 @@ export function AdminAuditLogs() {
               <Button
                 variant="secondary"
                 loading={exporting && exportFormat === 'xlsx'}
-                disabled={exporting}
+                disabled={exporting || isDateRangeInvalid}
                 icon={<Download className="h-4 w-4" />}
                 onClick={() => void handleExport('xlsx')}
               >
@@ -428,7 +468,7 @@ export function AdminAuditLogs() {
               <Button
                 variant="secondary"
                 loading={exporting && exportFormat === 'pdf'}
-                disabled={exporting}
+                disabled={exporting || isDateRangeInvalid}
                 icon={<Download className="h-4 w-4" />}
                 onClick={() => void handleExport('pdf')}
               >
@@ -440,7 +480,7 @@ export function AdminAuditLogs() {
       )}
 
       {tab === 'visitor' && (
-        <>
+        <div role="tabpanel" id="audit-tabpanel-visitor" aria-labelledby="audit-tab-visitor">
           <DataTable>
           <DataTableHead><DataTableRow>
             <DataTableCell isHeader>Time</DataTableCell><DataTableCell isHeader>Event</DataTableCell>
@@ -448,7 +488,8 @@ export function AdminAuditLogs() {
             <DataTableCell isHeader>Details</DataTableCell>
           </DataTableRow></DataTableHead>
           <tbody className="divide-y border-[var(--color-border)] font-mono text-xs">
-            {visitor.loading ? <LoadingRow label="Loading visitor activity" columns={5} />
+            {isDateRangeInvalid ? <EmptyRow message="Start date cannot be later than end date." columns={5} />
+              : visitor.loading ? <LoadingRow label="Loading visitor activity" columns={5} />
               : visitor.error ? <EmptyRow message={visitor.error} columns={5} />
                 : visibleVisitor.length === 0 ? <EmptyRow message="No visitor activity found." columns={5} />
                   : visibleVisitor.map((log) => <DataTableRow key={log.id}>
@@ -461,11 +502,11 @@ export function AdminAuditLogs() {
           </tbody>
           </DataTable>
           {visitor.hasMore && <div className="mt-4 flex justify-center"><Button variant="secondary" loading={visitor.loadingMore} disabled={visitor.loadingMore} onClick={visitor.loadMore}>Load more activity</Button></div>}
-        </>
+        </div>
       )}
 
       {tab === 'administrative' && (
-        <>
+        <div role="tabpanel" id="audit-tabpanel-administrative" aria-labelledby="audit-tab-administrative">
           <DataTable>
           <DataTableHead><DataTableRow>
             <DataTableCell isHeader>Time</DataTableCell><DataTableCell isHeader>Action</DataTableCell>
@@ -473,7 +514,8 @@ export function AdminAuditLogs() {
             <DataTableCell isHeader>Result / Changes</DataTableCell>
           </DataTableRow></DataTableHead>
           <tbody className="divide-y border-[var(--color-border)] font-mono text-xs">
-            {administrative.loading ? <LoadingRow label="Loading administrative activity" columns={5} />
+            {isDateRangeInvalid ? <EmptyRow message="Start date cannot be later than end date." columns={5} />
+              : administrative.loading ? <LoadingRow label="Loading administrative activity" columns={5} />
               : administrative.error ? <EmptyRow message={administrative.error} columns={5} />
                 : visibleAdministrative.length === 0 ? <EmptyRow message="No administrative activity found." columns={5} />
                   : visibleAdministrative.map((log) => <DataTableRow key={log.id}>
@@ -486,11 +528,11 @@ export function AdminAuditLogs() {
           </tbody>
           </DataTable>
           {administrative.hasMore && <div className="mt-4 flex justify-center"><Button variant="secondary" loading={administrative.loadingMore} disabled={administrative.loadingMore} onClick={administrative.loadMore}>Load more audit events</Button></div>}
-        </>
+        </div>
       )}
 
       {tab === 'reconciliation' && canViewReconciliation && (
-        <div className="space-y-3">
+        <div role="tabpanel" id="audit-tabpanel-reconciliation" aria-labelledby="audit-tab-reconciliation" className="space-y-3">
           <div className="flex items-start gap-3 rounded-lg border border-[var(--color-warning)]/40 bg-[var(--color-warning-light)] p-4">
             <ShieldCheck className="mt-0.5 h-5 w-5 text-[var(--color-warning-dark)]" />
             <div><p className="font-semibold text-[var(--color-text-primary)]">Manual investigation required</p><p className="text-sm text-[var(--color-text-secondary)]">These records are read-only. Confirm external and system state before taking corrective action.</p></div>
@@ -503,9 +545,9 @@ export function AdminAuditLogs() {
               <DataTableCell isHeader>Action</DataTableCell>
             </DataTableRow></DataTableHead>
             <tbody className="divide-y border-[var(--color-border)] text-xs">
-              {reconciliation.loading ? <LoadingRow label="Loading reconciliation items" columns={5} />
-                : reconciliation.error ? <EmptyRow message={reconciliation.error} columns={5} />
-                  : reconciliation.data.length === 0 ? <EmptyRow message="No unresolved reconciliation items." columns={5} />
+              {reconciliation.loading ? <LoadingRow label="Loading reconciliation items" columns={6} />
+                : reconciliation.error ? <EmptyRow message={reconciliation.error} columns={6} />
+                  : reconciliation.data.length === 0 ? <EmptyRow message="No unresolved reconciliation items." columns={6} />
                     : reconciliation.data.map((item) => <DataTableRow key={item.id}>
                       <DataTableCell className="whitespace-nowrap">{item.createdAt ? formatManilaDateTime(item.createdAt) : '—'}</DataTableCell>
                       <DataTableCell>{item.type.replace(/_/g, ' ')}</DataTableCell>
@@ -553,13 +595,14 @@ export function AdminAuditLogs() {
           <p className="text-sm text-[var(--color-text-secondary)]">
             Provide an operational resolution note for this reconciliation discrepancy. The note will be recorded in the audit trail.
           </p>
-          <FormField id="resolution-note" label="Resolution Note">
+          <FormField id="resolution-note" label="Resolution Note" requirement="required">
             <Textarea
               id="resolution-note"
               value={resolutionNote}
               onChange={(e) => setResolutionNote(e.target.value)}
               placeholder="Explain how this reconciliation discrepancy was reviewed or resolved…"
               required
+              aria-required="true"
               rows={3}
               autoFocus
             />

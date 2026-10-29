@@ -3,7 +3,7 @@ import { completeStaffPasswordChange } from '@/services/auth';
 import { Button, Card, Input, FormField, Modal } from '@/components/ui';
 import { BrandMark } from '@/components/BrandMark';
 import { toast } from 'sonner';
-import { getPasswordPolicyError, PASSWORD_MIN_LENGTH } from '@/lib/passwordPolicy';
+import { getPasswordPolicyError, PASSWORD_MIN_LENGTH, PASSWORD_POLICY_HELPER_TEXT } from '@/lib/passwordPolicy';
 
 import { useAuth } from '@/hooks/useAuth';
 import { supabase } from '@/lib/supabase';
@@ -115,11 +115,13 @@ export function ForcePasswordChange() {
         </div>
 
         <form onSubmit={handleSubmit} className="space-y-4">
-          <FormField label="Current Password" id="current-password">
+          <FormField label="Current Password" id="current-password" requirement="required">
             <div className="relative">
               <Input
                 id="current-password"
                 type={showCurrentPassword ? "text" : "password"}
+                required
+                aria-required="true"
                 value={currentPassword}
                 onChange={(e) => setCurrentPassword(e.target.value)}
                 disabled={loading}
@@ -138,11 +140,13 @@ export function ForcePasswordChange() {
             </div>
           </FormField>
 
-          <FormField label="New Password" id="new-password">
+          <FormField label="New Password" id="new-password" requirement="required">
             <div className="relative">
               <Input
                 id="new-password"
                 type={showNewPassword ? "text" : "password"}
+                required
+                aria-required="true"
                 value={newPassword}
                 onChange={(e) => setNewPassword(e.target.value)}
                 disabled={loading}
@@ -161,15 +165,17 @@ export function ForcePasswordChange() {
               </button>
             </div>
             <p className="mt-1 text-xs text-[var(--color-text-muted)]">
-              Use at least {PASSWORD_MIN_LENGTH} characters with a letter and a number.
+              {PASSWORD_POLICY_HELPER_TEXT}
             </p>
           </FormField>
 
-          <FormField label="Confirm Password" id="confirm-password">
+          <FormField label="Confirm Password" id="confirm-password" requirement="required">
             <div className="relative">
               <Input
                 id="confirm-password"
                 type={showConfirmPassword ? "text" : "password"}
+                required
+                aria-required="true"
                 value={confirmPassword}
                 onChange={(e) => setConfirmPassword(e.target.value)}
                 disabled={loading}

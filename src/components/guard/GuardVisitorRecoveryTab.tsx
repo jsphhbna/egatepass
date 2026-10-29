@@ -25,11 +25,13 @@ import { formatPassReference } from '@/lib/passPresentation';
 
 export interface GuardVisitorRecoveryTabProps {
   isBackendOnline: boolean;
+  actorId?: string;
   onActionComplete?: () => void;
 }
 
 export function GuardVisitorRecoveryTab({
   isBackendOnline,
+  actorId,
   onActionComplete,
 }: GuardVisitorRecoveryTabProps) {
   const [searchQuery, setSearchQuery] = useState('');
@@ -273,6 +275,7 @@ export function GuardVisitorRecoveryTab({
         action: 'record_exit',
         reason: 'visitor_recovery_exit',
         occurredAt,
+        actorId: actorId || null,
       });
       toast.success(`Exit recorded offline for ${pass.visitorName} (Stored on this device pending synchronization)`);
       await performSearch(searchQuery);
@@ -387,8 +390,10 @@ export function GuardVisitorRecoveryTab({
                       <p className="text-[10px] text-[var(--color-text-muted)] mb-1 font-semibold uppercase">
                         Selfie Photo
                       </p>
-                      <div
-                        className="relative cursor-pointer group h-24 w-20 overflow-hidden rounded-lg border border-[var(--color-border)] shadow-xs"
+                      <button
+                        type="button"
+                        aria-label="Open visitor selfie"
+                        className="relative cursor-pointer group h-24 w-20 overflow-hidden rounded-lg border border-[var(--color-border)] shadow-xs focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-brand)] focus-visible:ring-offset-2"
                         onClick={() => setZoomImage({ publicId: pass.photoEvidenceId, blob: pass.photoBlob })}
                       >
                         <AuthenticatedImage
@@ -400,7 +405,7 @@ export function GuardVisitorRecoveryTab({
                         <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
                           <ZoomIn className="h-5 w-5 text-white" />
                         </div>
-                      </div>
+                      </button>
                     </div>
                   )}
 
@@ -409,8 +414,10 @@ export function GuardVisitorRecoveryTab({
                       <p className="text-[10px] text-[var(--color-text-muted)] mb-1 font-semibold uppercase">
                         Presented ID
                       </p>
-                      <div
-                        className="relative cursor-pointer group h-24 w-36 overflow-hidden rounded-lg border border-[var(--color-border)] shadow-xs"
+                      <button
+                        type="button"
+                        aria-label="Open presented ID"
+                        className="relative cursor-pointer group h-24 w-36 overflow-hidden rounded-lg border border-[var(--color-border)] shadow-xs focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-brand)] focus-visible:ring-offset-2"
                         onClick={() => setZoomImage({ publicId: pass.idEvidenceId, blob: pass.idBlob })}
                       >
                         <AuthenticatedImage
@@ -422,7 +429,7 @@ export function GuardVisitorRecoveryTab({
                         <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
                           <ZoomIn className="h-5 w-5 text-white" />
                         </div>
-                      </div>
+                      </button>
                     </div>
                   ) : (
                     <div className="text-center flex flex-col items-center justify-center h-24 w-36 rounded-lg border border-dashed border-[var(--color-border)] text-[10px] text-[var(--color-text-muted)] p-2">

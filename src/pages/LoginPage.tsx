@@ -140,12 +140,12 @@ export function LoginPage() {
         )}
 
         <form onSubmit={handleSubmit} className="space-y-5">
-          <FormField label="Email or Device Username" id="login-email">
-            <Input id="login-email" type="text" required autoComplete="username" value={identity} onChange={(event) => setIdentity(event.target.value)} placeholder="guard@earist.edu.ph or gate-kiosk-01" disabled={isSigningIn || isResendingVerification || serviceStatus === 'unavailable'} />
+          <FormField label="Email or Device Username" id="login-email" requirement="required">
+            <Input id="login-email" type="text" required aria-required="true" autoComplete="username" value={identity} onChange={(event) => setIdentity(event.target.value)} placeholder="guard@earist.edu.ph or gate-kiosk-01" disabled={isSigningIn || isResendingVerification || serviceStatus === 'unavailable'} />
           </FormField>
-          <FormField label="Password" id="login-password">
+          <FormField label="Password" id="login-password" requirement="required">
             <div className="relative">
-              <Input id="login-password" type={showPassword ? 'text' : 'password'} required autoComplete="current-password" value={password} onChange={(event) => setPassword(event.target.value)} placeholder="••••••••" className="pr-10 app-password-toggle-input" disabled={isSigningIn || isResendingVerification || serviceStatus === 'unavailable'} />
+              <Input id="login-password" type={showPassword ? 'text' : 'password'} required aria-required="true" autoComplete="current-password" value={password} onChange={(event) => setPassword(event.target.value)} placeholder="••••••••" className="pr-10 app-password-toggle-input" disabled={isSigningIn || isResendingVerification || serviceStatus === 'unavailable'} />
               <button type="button" onClick={() => setShowPassword((value) => !value)} className="absolute inset-y-0 right-0 flex min-w-11 items-center justify-center text-[var(--color-text-muted)] hover:text-[var(--color-brand)]" aria-label={showPassword ? 'Hide password' : 'Show password'}>
                 {showPassword ? <EyeOff className="h-5 w-5" /> : <Eye className="h-5 w-5" />}
               </button>

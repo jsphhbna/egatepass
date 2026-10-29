@@ -390,3 +390,17 @@ When cloud connectivity returns:
    - If Auth suspension encounters partial failure, database state remains committed and an administrative reconciliation item is created.
    - Account appears under the **Decommissioned** filter tab with no Reactivate or credential reset actions available.
 
+
+
+## 9. Guard Offline Operations & Shift Change Procedures
+
+### 9.1 Cross-Guard Actor Binding & Sign-Out Guard
+- **Actor-Bound Offline Stores**: All local registrations and audit actions are cryptographically and relationally bound to the active guard's UUID in IndexedDB v2.
+- **Unsynchronized Records Warning**: When a guard attempts to sign out, the application checks for pending local records. If unsynchronized records exist:
+  - The client attempts an immediate synchronization if network is available.
+  - If records remain unsynchronized, sign-out is blocked with an explicit error toast to prevent evidence loss and attribution failure.
+- **Operational Cache Clearance**: If a different guard logs into the device, operational visitor records from previous shifts are immediately purged from local cache.
+
+### 9.2 Audit Log Date Range Validation
+- Date filters on `/api/admin/activity` strictly reject inverted ranges (`dateFrom > dateTo`) with HTTP 400 `invalid_date_range`.
+- The Admin UI disables network queries and exports when date inputs are inverted and displays an inline notice: *"Start date cannot be later than end date."*

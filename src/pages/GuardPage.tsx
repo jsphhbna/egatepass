@@ -34,6 +34,8 @@ import {
   getOfflineRegistrations,
   getOfflineEvents,
   purgeStaleLocalData,
+  prepareGuardOfflineStoreForActor,
+  clearAllGuardOfflineData,
   type OfflineRegistrationRecord,
   type OfflineEventRecord,
 } from '@/lib/offline/guardIndexedDb';
@@ -46,7 +48,7 @@ type PassWithId = GuardQueuePass;
 type GuardTab = 'queue' | 'recovery' | 'offline_reg' | 'outbox';
 
 export function GuardPage() {
-  const { userData } = useAuth();
+  const { userData, uid } = useAuth();
   const audioRef = useRef<HTMLAudioElement | null>(null);
 
   const {
@@ -96,15 +98,18 @@ export function GuardPage() {
   const [isSyncing, setIsSyncing] = useState(false);
   const [outboxRegistrations, setOutboxRegistrations] = useState<OfflineRegistrationRecord[]>([]);
   const [outboxEvents, setOutboxEvents] = useState<OfflineEventRecord[]>([]);
+  const [storePrepared, setStorePrepared] = useState(false);
+  const [storeError, setStoreError] = useState<string | null>(null);
 
   // Function to refresh local IndexedDB outbox counts
   const refreshPendingCounts = async () => {
     try {
-      const counts = await getPendingSyncCount();
+      const actorId = uid ?? undefined;
+      const counts = await getPendingSyncCount(actorId);
       setPendingSyncCount(counts);
       const [regs, evts] = await Promise.all([
-        getOfflineRegistrations(),
-        getOfflineEvents(),
+        getOfflineRegistrations(actorId),
+        getOfflineEvents(actorId),
       ]);
       setOutboxRegistrations(regs);
       setOutboxEvents(evts);
@@ -112,6 +117,34 @@ export function GuardPage() {
       console.warn('Could not read offline outbox count:', e);
     }
   };
+
+  useEffect(() => {
+    let active = true;
+    if (!uid) {
+      setStorePrepared(false);
+      void clearAllGuardOfflineData();
+      return;
+    }
+
+    prepareGuardOfflineStoreForActor(uid)
+      .then(() => {
+        if (active) {
+          setStorePrepared(true);
+          setStoreError(null);
+          void refreshPendingCounts();
+        }
+      })
+      .catch((err) => {
+        if (active) {
+          console.error('Failed to prepare local Guard store for actor:', err);
+          setStoreError('Unable to initialize secure local offline storage for this account. Please refresh or contact support.');
+        }
+      });
+
+    return () => {
+      active = false;
+    };
+  }, [uid]);
 
   const isBackendOnline = computeBackendAvailability({
     isBrowserOnline: isOnline,
@@ -498,6 +531,27 @@ export function GuardPage() {
   async function handleSignOut() {
     setIsSigningOut(true);
     try {
+      const actorId = uid ?? undefined;
+      if (actorId) {
+        let counts = await getPendingSyncCount(actorId);
+        if (counts.total > 0) {
+          if (isBackendOnline) {
+            toast.info('Synchronizing pending records before sign-out…');
+            await runOfflineMaintenance();
+            counts = await getPendingSyncCount(actorId);
+          }
+          if (counts.total > 0) {
+            toast.error(
+              'This device still has unsynchronized visitor records. Synchronize them before signing out so visitor evidence and audit attribution are not lost.',
+              { duration: 8000 }
+            );
+            setIsSigningOut(false);
+            setShowSignOutModal(false);
+            return;
+          }
+        }
+        await clearAllGuardOfflineData();
+      }
       await signOutCurrentActor();
     } catch (err) {
       toast.error('Failed to sign out');
@@ -667,16 +721,30 @@ export function GuardPage() {
         </button>
       </div>
 
-      {activeTab === 'recovery' && (
+      {storeError && (
+        <Card className="p-6 border-red-300 bg-red-50 dark:bg-red-950/20 text-center mb-6">
+          <p className="text-sm font-semibold text-red-800 dark:text-red-300">{storeError}</p>
+        </Card>
+      )}
+
+      {!storePrepared && !storeError && (
+        <div className="p-4 text-center text-sm text-[var(--color-text-secondary)]">
+          Initializing offline store…
+        </div>
+      )}
+
+      {activeTab === 'recovery' && storePrepared && !storeError && (
         <GuardVisitorRecoveryTab
           isBackendOnline={isBackendOnline}
+          actorId={uid ?? undefined}
           onActionComplete={refreshPendingCounts}
         />
       )}
 
-      {activeTab === 'offline_reg' && (
+      {activeTab === 'offline_reg' && storePrepared && !storeError && (
         <GuardOfflineRegistrationTab
           isBackendOnline={isBackendOnline}
+          actorId={uid ?? undefined}
           onRegistered={refreshPendingCounts}
         />
       )}

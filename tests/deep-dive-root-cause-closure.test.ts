@@ -802,6 +802,7 @@ describe('Deep Dive 1 + Deep Dive 2 Root-Cause Closure Test Suite', () => {
       try {
         await db.query(`
           select api.guard_sync_offline_registration(
+            requested_actor_id := '00000000-0000-0000-0000-000000000001'::uuid,
             requested_registration_id := gen_random_uuid(),
             requested_visitor := jsonb_build_object(
               'firstName', 'Test',

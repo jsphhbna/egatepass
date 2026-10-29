@@ -290,7 +290,7 @@ export function EmailPassModal({
 
       {step === 'input' && (
         <form onSubmit={handleRequestCode} className="space-y-4">
-          <FormField label="Recipient Email" id="recipient-email" hint="We will send a 6-digit verification code to this address.">
+          <FormField label="Recipient Email" id="recipient-email" requirement="required" hint="We will send a 6-digit verification code to this address.">
             <Input
               id="recipient-email"
               type="email"
@@ -298,6 +298,7 @@ export function EmailPassModal({
               onChange={(e) => setRecipientEmail(e.target.value)}
               placeholder="visitor@example.com"
               required
+              aria-required="true"
               autoFocus
             />
           </FormField>
@@ -307,10 +308,12 @@ export function EmailPassModal({
               type="checkbox"
               checked={consent}
               onChange={(e) => setConsent(e.target.checked)}
+              required
+              aria-required="true"
               className="mt-0.5 rounded border-[var(--color-border)] text-[var(--color-brand)] focus:ring-[var(--color-brand)]"
             />
             <span>
-              I consent to receive my EARIST gate pass QR code and visit instructions at this email address.
+              I consent to receive my EARIST gate pass QR code and visit instructions at this email address. <span className="text-red-500 font-bold">*</span>
             </span>
           </label>
 
@@ -343,7 +346,7 @@ export function EmailPassModal({
             Verification code submitted for <strong>{recipientEmail}</strong>. Check your inbox and spam folder.
           </div>
 
-          <FormField label="6-Digit Verification Code" id="verification-code">
+          <FormField label="6-Digit Verification Code" id="verification-code" requirement="required">
             <Input
               id="verification-code"
               type="text"
@@ -356,6 +359,7 @@ export function EmailPassModal({
               placeholder="123456"
               className="text-center text-lg font-mono tracking-widest"
               required
+              aria-required="true"
               autoFocus
             />
           </FormField>

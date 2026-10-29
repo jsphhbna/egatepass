@@ -25,6 +25,8 @@
 import { requireSupabase } from '@/lib/supabase';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import {
+  prepareGuardOfflineStoreForActor,
+  getActiveGuardActorId,
   getOfflineRegistrations,
   getOfflineEvents,
   updateOfflineRegistrationStatus,
@@ -42,6 +44,7 @@ import {
   type UploadCheckpoint,
 } from './guardIndexedDb';
 import { getManilaDateString } from '@/lib/scheduling';
+import { isTransportOrNetworkError } from './errorClassification';
 import { fetchWithTimeout, createBoundedAbortSignal, withTimeout } from '@/lib/fetchWithTimeout';
 
 export interface SyncSummary {
@@ -57,6 +60,59 @@ export interface MaintenanceResult {
   recoveredRecords: {
     recoveredRegistrations: number;
     recoveredEvents: number;
+  };
+}
+
+
+export type OfflineSyncFailureDisposition =
+  | { type: 'transient_or_internal'; reason: string }
+  | { type: 'recoverable_evidence'; reason: string }
+  | { type: 'authoritative_conflict'; reason: string };
+
+/**
+ * Centralized production classifier for offline registration sync failures (Requirement 7).
+ * - TRANSIENT / INTERNAL: 5xx, authority unavailable, network timeouts, unknown responses, unexpected 400.
+ *   Remains pending, preserves Blobs and checkpoints, never destroys local evidence.
+ * - RECOVERABLE EVIDENCE: 422 with known evidence failure codes. Clears checkpoints, preserves Blobs for retry.
+ * - AUTHORITATIVE CONFLICT: Server-confirmed 409 conflict envelope only. Transitions to conflict.
+ */
+export function classifyOfflineRegistrationSyncFailure(
+  status: number,
+  body: any,
+  err?: unknown
+): OfflineSyncFailureDisposition {
+  if (err && isTransportOrNetworkError(err)) {
+    return {
+      type: 'transient_or_internal',
+      reason: (err as any)?.message || 'Network transport failure',
+    };
+  }
+
+  // Only an explicit server 409 conflict envelope is an authoritative conflict
+  if (status === 409 && body?.status === 'conflict') {
+    return {
+      type: 'authoritative_conflict',
+      reason: body?.reason || 'Server authoritative conflict',
+    };
+  }
+
+  // Recoverable evidence failure (HTTP 422 with known recoverable codes)
+  if (status === 422) {
+    const recoverableErrors = ['invalid_upload_intent', 'missing_uploaded_object', 'invalid_uploaded_content'];
+    const errCode = body?.error;
+    if (recoverableErrors.includes(errCode)) {
+      return {
+        type: 'recoverable_evidence',
+        reason: errCode,
+      };
+    }
+  }
+
+  // All other statuses (5xx, authority unavailable, unexpected 400, transport error) are transient/internal
+  const serverMsg = body?.error || body?.message || (status ? `HTTP ${status}` : 'Unknown sync failure');
+  return {
+    type: 'transient_or_internal',
+    reason: serverMsg,
   };
 }
 
@@ -209,7 +265,8 @@ async function uploadRegistrationEvidence(
  */
 async function internalRefreshOperationalCache(
   client: SupabaseClient,
-  token: string | undefined
+  token: string | undefined,
+  actorId?: string
 ): Promise<number> {
   if (!token) {
     console.warn('Session token unavailable for recovery cache refresh');
@@ -228,7 +285,7 @@ async function internalRefreshOperationalCache(
         requested_cursor: cursor,
         requested_limit: 50,
       });
-    const pageRes = await (typeof (rpcCall as any).abortSignal === 'function'
+    const pageRes = await (typeof (rpcCall as any)?.abortSignal === 'function'
       ? (rpcCall as any).abortSignal(createBoundedAbortSignal(10000))
       : rpcCall);
 
@@ -265,6 +322,7 @@ async function internalRefreshOperationalCache(
 
     passesToCache.push({
       id: item.passId,
+      actorId,
       publicReference: item.publicReference,
       visitorId: item.visitorId,
       visitorName: item.visitorName,
@@ -287,7 +345,7 @@ async function internalRefreshOperationalCache(
   }
 
   // Atomic replace in IndexedDB transaction - preserves unsynchronized local visitors
-  await atomicReplaceCachedVisitors(passesToCache);
+  await atomicReplaceCachedVisitors(passesToCache, actorId);
   await setMeta('last_cache_refresh_at', new Date().toISOString());
   return passesToCache.length;
 }
@@ -322,9 +380,34 @@ export async function runOfflineMaintenance(): Promise<MaintenanceResult> {
     const client = requireSupabase();
     const sessionRes = await client.auth.getSession();
     const token = sessionRes.data.session?.access_token;
+    let actorId = sessionRes.data.session?.user?.id;
+
+    if (!actorId && token) {
+      try {
+        const parts = token.split('.');
+        const payloadPart = parts[1];
+        if (payloadPart) {
+          const payload = JSON.parse(atob(payloadPart.replace(/-/g, '+').replace(/_/g, '/')));
+          if (typeof payload?.sub === 'string') actorId = payload.sub;
+        }
+      } catch {
+        // ignore
+      }
+    }
+    if (!actorId) {
+      actorId = (await getActiveGuardActorId()) || undefined;
+    }
+
+    // Step 1b: Bind and prepare local Guard store for current authenticated actor if known
+    if (actorId) {
+      await prepareGuardOfflineStoreForActor(actorId);
+    }
 
     // Step 2 & 3: Synchronize Pending Offline Registrations FIRST in chronological order
-    const pendingRegs = await getOfflineRegistrations('pending');
+    const allPendingRegs = await getOfflineRegistrations(actorId, 'pending');
+    const pendingRegs = actorId
+      ? allPendingRegs.filter((r) => !r.actorId || r.actorId === actorId)
+      : allPendingRegs;
     pendingRegs.sort((a, b) => {
       const tDiff = new Date(a.occurredAt).getTime() - new Date(b.occurredAt).getTime();
       if (tDiff !== 0) return tDiff;
@@ -475,16 +558,20 @@ export async function runOfflineMaintenance(): Promise<MaintenanceResult> {
         summary.registrationsSynced++;
       } catch (regErr: any) {
         console.error('Offline registration sync failed:', regErr);
+        const failure = classifyOfflineRegistrationSyncFailure(0, null, regErr);
         summary.errors++;
         // Keep durable record as pending (Section 2)
         await updateOfflineRegistrationStatus(reg.offlineRegistrationId, 'pending', {
-          conflictReason: regErr.message || 'Sync failed',
+          conflictReason: failure.reason,
         });
       }
     }
 
     // Step 4: Synchronize Pending Offline Lifecycle Events in chronological order (Section 3)
-    const pendingEvents = await getOfflineEvents('pending');
+    const allPendingEvents = await getOfflineEvents(actorId, 'pending');
+    const pendingEvents = actorId
+      ? allPendingEvents.filter((e) => !e.actorId || e.actorId === actorId)
+      : allPendingEvents;
     pendingEvents.sort((a, b) => {
       const tDiff = new Date(a.occurredAt).getTime() - new Date(b.occurredAt).getTime();
       if (tDiff !== 0) return tDiff;
@@ -492,7 +579,7 @@ export async function runOfflineMaintenance(): Promise<MaintenanceResult> {
     });
 
     // Build lookup of current registrations to check parent status
-    const currentRegs = await getOfflineRegistrations();
+    const currentRegs = await getOfflineRegistrations(actorId);
     const regById = new Map<string, OfflineRegistrationRecord>(
       currentRegs.map((r) => [r.offlineRegistrationId, r])
     );
@@ -595,7 +682,7 @@ export async function runOfflineMaintenance(): Promise<MaintenanceResult> {
     }
 
     // Step 5: Refresh authoritative operational snapshot (sync before snapshot - Section 4)
-    refreshedPasses = await internalRefreshOperationalCache(client, token);
+    refreshedPasses = await internalRefreshOperationalCache(client, token, actorId);
 
     // Step 6: Local retention & evidence cleanup
     const today = getManilaDateString();

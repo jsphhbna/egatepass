@@ -71,8 +71,9 @@ async function handleRequest(request: Request): Promise<Response> {
         )
       : null;
 
-    // Call transactional DB RPC with trusted, server-verified byte metrics
+    // Call transactional DB RPC with trusted, server-verified byte metrics and explicit actor binding
     const { data, error } = await admin.schema('api').rpc('guard_sync_offline_registration', {
+      requested_actor_id: actor.id,
       requested_registration_id: parsed.data.offlineRegistrationId,
       requested_visitor: parsed.data.visitor,
       requested_action: parsed.data.action,
@@ -88,7 +89,33 @@ async function handleRequest(request: Request): Promise<Response> {
 
     if (error) {
       console.error('guard_sync_offline_registration RPC error:', error);
-      return jsonResponse(400, { error: error.message || 'sync_failed' });
+      const code = (error as any).code || '';
+      const msg = (error as any).message || '';
+
+      // Authorization / infrastructure failure -> 503 offline_sync_authority_unavailable
+      if (
+        code === '42501' ||
+        msg.includes('service_role_required') ||
+        msg.includes('permission denied') ||
+        msg.includes('active guard or superadmin required')
+      ) {
+        return jsonResponse(503, { error: 'offline_sync_authority_unavailable' });
+      }
+
+      // Upload-intent / evidence failure from DB checks -> 422
+      if (
+        code === '22023' &&
+        (msg.includes('invalid_photo_upload_intent') ||
+          msg.includes('invalid_id_upload_intent') ||
+          msg.includes('byte_size') ||
+          msg.includes('sha256') ||
+          msg.includes('valid_id_evidence_required'))
+      ) {
+        return jsonResponse(422, { error: 'invalid_upload_intent' });
+      }
+
+      // Any other unexpected PostgREST / RPC infrastructure failure -> 503 offline_sync_unavailable
+      return jsonResponse(503, { error: 'offline_sync_unavailable' });
     }
 
     if (data?.status === 'conflict') {
@@ -99,10 +126,14 @@ async function handleRequest(request: Request): Promise<Response> {
   } catch (error: any) {
     console.error('Offline registration sync error:', error);
     const msg = error?.message || 'internal_server_error';
-    if (msg.startsWith('invalid_') || msg === 'missing_uploaded_object') {
+    if (
+      msg === 'invalid_upload_intent' ||
+      msg === 'missing_uploaded_object' ||
+      msg === 'invalid_uploaded_content'
+    ) {
       return jsonResponse(422, { error: msg });
     }
-    return jsonResponse(500, { error: msg });
+    return jsonResponse(503, { error: 'offline_sync_unavailable' });
   }
 }
 

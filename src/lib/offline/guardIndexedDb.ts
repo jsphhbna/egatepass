@@ -15,7 +15,7 @@
 import { getManilaDayValidityWindow } from '@/lib/scheduling';
 
 const DB_NAME = 'egatepass_guard_offline';
-const DB_VERSION = 1;
+const DB_VERSION = 2;
 
 export interface UploadCheckpoint {
   intentId: string;
@@ -29,6 +29,7 @@ export interface UploadCheckpoint {
 
 export interface CachedVisitorPass {
   id: string; // passId
+  actorId?: string;
   passId?: string;
   publicReference?: string;
   visitorId: string;
@@ -53,6 +54,7 @@ export interface CachedVisitorPass {
 
 export interface OfflineRegistrationRecord {
   offlineRegistrationId: string; // Immutable UUID
+  actorId: string;
   visitor: {
     firstName: string;
     middleName?: string;
@@ -77,10 +79,12 @@ export interface OfflineRegistrationRecord {
 export type SaveOfflineRegistrationInput = Omit<OfflineRegistrationRecord, 'syncStatus' | 'rejectionReason'> & {
   syncStatus?: OfflineRegistrationRecord['syncStatus'];
   rejectionReason?: string | null;
+  actorId?: string;
 };
 
 export interface OfflineEventRecord {
   eventId: string; // Immutable random UUID
+  actorId: string;
   passId: string;
   visitorName: string;
   action: 'approve_entry' | 'reject_entry' | 'record_exit';
@@ -103,27 +107,58 @@ function openDatabase(): Promise<IDBDatabase> {
 
     request.onupgradeneeded = (event) => {
       const db = (event.target as IDBOpenDBRequest).result;
+      const oldVersion = event.oldVersion;
 
       if (!db.objectStoreNames.contains('meta')) {
         db.createObjectStore('meta', { keyPath: 'key' });
       }
 
+      let visitorStore: IDBObjectStore;
       if (!db.objectStoreNames.contains('cached_visitors')) {
-        const store = db.createObjectStore('cached_visitors', { keyPath: 'id' });
-        store.createIndex('by_name', 'visitorName', { unique: false });
-        store.createIndex('by_contact', 'contactNumber', { unique: false });
-        store.createIndex('by_status', 'status', { unique: false });
+        visitorStore = db.createObjectStore('cached_visitors', { keyPath: 'id' });
+        visitorStore.createIndex('by_name', 'visitorName', { unique: false });
+        visitorStore.createIndex('by_contact', 'contactNumber', { unique: false });
+        visitorStore.createIndex('by_status', 'status', { unique: false });
+        visitorStore.createIndex('by_actorId', 'actorId', { unique: false });
+      } else {
+        visitorStore = (event.target as IDBOpenDBRequest).transaction!.objectStore('cached_visitors');
+        if (!visitorStore.indexNames.contains('by_actorId')) {
+          visitorStore.createIndex('by_actorId', 'actorId', { unique: false });
+        }
       }
 
+      let regStore: IDBObjectStore;
       if (!db.objectStoreNames.contains('offline_registrations')) {
-        const store = db.createObjectStore('offline_registrations', { keyPath: 'offlineRegistrationId' });
-        store.createIndex('by_syncStatus', 'syncStatus', { unique: false });
+        regStore = db.createObjectStore('offline_registrations', { keyPath: 'offlineRegistrationId' });
+        regStore.createIndex('by_syncStatus', 'syncStatus', { unique: false });
+        regStore.createIndex('by_actorId', 'actorId', { unique: false });
+      } else {
+        regStore = (event.target as IDBOpenDBRequest).transaction!.objectStore('offline_registrations');
+        if (!regStore.indexNames.contains('by_actorId')) {
+          regStore.createIndex('by_actorId', 'actorId', { unique: false });
+        }
       }
 
+      let eventStore: IDBObjectStore;
       if (!db.objectStoreNames.contains('offline_events')) {
-        const store = db.createObjectStore('offline_events', { keyPath: 'eventId' });
-        store.createIndex('by_syncStatus', 'syncStatus', { unique: false });
-        store.createIndex('by_passId', 'passId', { unique: false });
+        eventStore = db.createObjectStore('offline_events', { keyPath: 'eventId' });
+        eventStore.createIndex('by_syncStatus', 'syncStatus', { unique: false });
+        eventStore.createIndex('by_passId', 'passId', { unique: false });
+        eventStore.createIndex('by_actorId', 'actorId', { unique: false });
+      } else {
+        eventStore = (event.target as IDBOpenDBRequest).transaction!.objectStore('offline_events');
+        if (!eventStore.indexNames.contains('by_actorId')) {
+          eventStore.createIndex('by_actorId', 'actorId', { unique: false });
+        }
+      }
+
+      // One-time security migration from v1 to v2:
+      // Existing DB version 1 records lack trustworthy actor attribution.
+      // Purge unattributed legacy data so that subsequent Guards cannot inherit or synchronize them.
+      if (oldVersion > 0 && oldVersion < 2) {
+        visitorStore.clear();
+        regStore.clear();
+        eventStore.clear();
       }
     };
 
@@ -153,6 +188,59 @@ export async function getMeta<T = any>(key: string): Promise<T | null> {
     const req = tx.objectStore('meta').get(key);
     req.onsuccess = () => resolve(req.result ? req.result.value : null);
     req.onerror = () => reject(req.error);
+  });
+}
+
+/**
+ * Binds the local Guard offline store to the authenticated actor (Requirement 10).
+ * If a different actor was previously bound, sensitive stores are purged to prevent
+ * cross-Guard PII leakage and audit misattribution.
+ */
+export async function getActiveGuardActorId(): Promise<string | null> {
+  return await getMeta<string>('guard_store_actor_id');
+}
+
+export async function prepareGuardOfflineStoreForActor(actorId: string): Promise<void> {
+  if (!actorId) throw new Error('actorId required to prepare Guard store');
+  const db = await openDatabase();
+  const currentActor = await getMeta<string>('guard_store_actor_id');
+
+  if (!currentActor) {
+    await setMeta('guard_store_actor_id', actorId);
+    return;
+  }
+
+  if (currentActor === actorId) {
+    return;
+  }
+
+  // Different actor: invalidate/clear operational visitor cache (cached_visitors) so Guard B never sees Guard A's data
+  // Unsynchronized offline records remain isolated under their respective actorId
+  await new Promise<void>((resolve, reject) => {
+    const tx = db.transaction('cached_visitors', 'readwrite');
+    tx.objectStore('cached_visitors').clear();
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => reject(tx.error);
+    tx.onabort = () => reject(tx.error || new Error('Actor store switch transaction aborted'));
+  });
+
+  await setMeta('guard_store_actor_id', actorId);
+}
+
+/**
+ * Atomically clears all Guard-sensitive IndexedDB stores on explicit logout (Requirement 12).
+ */
+export async function clearAllGuardOfflineData(): Promise<void> {
+  const db = await openDatabase();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(['cached_visitors', 'offline_registrations', 'offline_events', 'meta'], 'readwrite');
+    tx.objectStore('cached_visitors').clear();
+    tx.objectStore('offline_registrations').clear();
+    tx.objectStore('offline_events').clear();
+    tx.objectStore('meta').clear();
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => reject(tx.error);
+    tx.onabort = () => reject(tx.error || new Error('Clear all data transaction aborted'));
   });
 }
 
@@ -228,7 +316,11 @@ export async function stripTerminalOfflineEvidence(specificRegistrationId?: stri
  * 2. Terminal (synced & conflicted) offline registrations have sensitive evidence blobs stripped.
  * 3. Synced events older than 24 hours are removed.
  */
-export async function purgeStaleLocalData(currentManilaDay: string): Promise<{ purgedVisitors: number; purgedEvents: number; strippedBlobs: number }> {
+export async function purgeStaleLocalData(
+  currentManilaDayOrActorId: string,
+  maybeDay?: string
+): Promise<{ purgedVisitors: number; purgedEvents: number; strippedBlobs: number }> {
+  const currentManilaDay = maybeDay !== undefined ? maybeDay : currentManilaDayOrActorId;
   const db = await openDatabase();
   let purgedVisitors = 0;
   let purgedEvents = 0;
@@ -306,7 +398,7 @@ export async function saveCachedVisitors(visitors: CachedVisitorPass[]): Promise
  * unsynchronized local visitors belonging to registrations still pending or syncing (Root Cause 3.1).
  * If any step fails, the transaction aborts and previous cached data remains untouched.
  */
-export async function atomicReplaceCachedVisitors(visitors: CachedVisitorPass[]): Promise<void> {
+export async function atomicReplaceCachedVisitors(visitors: CachedVisitorPass[], actorId?: string): Promise<void> {
   const db = await openDatabase();
   return new Promise((resolve, reject) => {
     const tx = db.transaction(['cached_visitors', 'offline_registrations'], 'readwrite');
@@ -319,7 +411,7 @@ export async function atomicReplaceCachedVisitors(visitors: CachedVisitorPass[])
       // Identify active unsynchronized local registration IDs (pending or syncing approved visitors)
       const unsyncedRegIds = new Set(
         registrations
-          .filter((r) => r.action === 'approved' && (r.syncStatus === 'pending' || r.syncStatus === 'syncing'))
+          .filter((r) => r.action === 'approved' && (r.syncStatus === 'pending' || r.syncStatus === 'syncing') && (!actorId || !r.actorId || r.actorId === actorId))
           .map((r) => r.offlineRegistrationId)
       );
 
@@ -327,17 +419,17 @@ export async function atomicReplaceCachedVisitors(visitors: CachedVisitorPass[])
       const currentReq = visitorStore.getAll();
       currentReq.onsuccess = () => {
         const currentCached = (currentReq.result as CachedVisitorPass[]) || [];
-        const preservedLocalVisitors = currentCached.filter((v) => unsyncedRegIds.has(v.id));
+        const preservedLocalVisitors = currentCached.filter((v) => unsyncedRegIds.has(v.id) && (!actorId || !v.actorId || v.actorId === actorId));
 
         // Clear store and re-populate with preserved local visitors + new server snapshot
         visitorStore.clear();
 
         for (const localV of preservedLocalVisitors) {
-          visitorStore.put(localV);
+          visitorStore.put(actorId ? { ...localV, actorId } : localV);
         }
 
         for (const serverV of visitors) {
-          visitorStore.put(serverV);
+          visitorStore.put(actorId ? { ...serverV, actorId } : serverV);
         }
       };
       currentReq.onerror = () => tx.abort();
@@ -350,17 +442,25 @@ export async function atomicReplaceCachedVisitors(visitors: CachedVisitorPass[])
   });
 }
 
-export async function searchCachedVisitors(query: string): Promise<CachedVisitorPass[]> {
-  const db = await openDatabase();
-  const clean = query.trim().toLowerCase();
+export async function searchCachedVisitors(
+  actorIdOrQuery: string,
+  maybeQuery?: string
+): Promise<CachedVisitorPass[]> {
+  const actorId = maybeQuery !== undefined ? actorIdOrQuery : undefined;
+  const rawQuery = maybeQuery !== undefined ? maybeQuery : actorIdOrQuery;
+  const clean = rawQuery.trim().toLowerCase();
 
+  const db = await openDatabase();
   return new Promise((resolve, reject) => {
     const tx = db.transaction('cached_visitors', 'readonly');
     const store = tx.objectStore('cached_visitors');
     const req = store.getAll();
 
     req.onsuccess = () => {
-      const all = (req.result as CachedVisitorPass[]) || [];
+      let all = (req.result as CachedVisitorPass[]) || [];
+      if (actorId) {
+        all = all.filter((v) => !v.actorId || v.actorId === actorId);
+      }
       if (!clean) {
         return resolve(all);
       }
@@ -420,6 +520,7 @@ export async function saveOfflineRegistration(record: SaveOfflineRegistrationInp
       rejectionReason: null,
       syncStatus: 'pending',
       ...record,
+      actorId: record.actorId || '',
     };
     tx.objectStore('offline_registrations').put(normalizedRecord);
     tx.oncomplete = () => resolve();
@@ -427,7 +528,14 @@ export async function saveOfflineRegistration(record: SaveOfflineRegistrationInp
   });
 }
 
-export async function getOfflineRegistrations(status?: OfflineRegistrationRecord['syncStatus']): Promise<OfflineRegistrationRecord[]> {
+export async function getOfflineRegistrations(
+  actorIdOrStatus?: string,
+  maybeStatus?: OfflineRegistrationRecord['syncStatus']
+): Promise<OfflineRegistrationRecord[]> {
+  const isStatusOnly = actorIdOrStatus && ['pending', 'syncing', 'synced', 'conflict'].includes(actorIdOrStatus);
+  const actorId = isStatusOnly ? undefined : actorIdOrStatus;
+  const status = isStatusOnly ? (actorIdOrStatus as OfflineRegistrationRecord['syncStatus']) : maybeStatus;
+
   const db = await openDatabase();
   return new Promise((resolve, reject) => {
     const tx = db.transaction('offline_registrations', 'readonly');
@@ -435,7 +543,10 @@ export async function getOfflineRegistrations(status?: OfflineRegistrationRecord
     const req = store.getAll();
 
     req.onsuccess = () => {
-      const all = (req.result as OfflineRegistrationRecord[]) || [];
+      let all = (req.result as OfflineRegistrationRecord[]) || [];
+      if (actorId) {
+        all = all.filter((r) => !r.actorId || r.actorId === actorId);
+      }
       if (status) {
         resolve(all.filter((r) => r.syncStatus === status));
       } else {
@@ -474,17 +585,31 @@ export async function updateOfflineRegistrationStatus(
 // OFFLINE EVENT OUTBOX (APPROVE / REJECT / EXIT)
 // =============================================================================
 
-export async function queueOfflineEvent(event: OfflineEventRecord): Promise<void> {
+export async function queueOfflineEvent(event: OfflineEventRecord & { actorId?: string }): Promise<void> {
   const db = await openDatabase();
+  let actorId = event.actorId;
+  if (!actorId) {
+    actorId = (await getActiveGuardActorId()) || '';
+  }
   return new Promise((resolve, reject) => {
     const tx = db.transaction('offline_events', 'readwrite');
-    tx.objectStore('offline_events').put(event);
+    tx.objectStore('offline_events').put({
+      ...event,
+      actorId,
+    });
     tx.oncomplete = () => resolve();
     tx.onerror = () => reject(tx.error);
   });
 }
 
-export async function getOfflineEvents(status?: OfflineEventRecord['syncStatus']): Promise<OfflineEventRecord[]> {
+export async function getOfflineEvents(
+  actorIdOrStatus?: string,
+  maybeStatus?: OfflineEventRecord['syncStatus']
+): Promise<OfflineEventRecord[]> {
+  const isStatusOnly = actorIdOrStatus && ['pending', 'syncing', 'synced', 'conflict'].includes(actorIdOrStatus);
+  const actorId = isStatusOnly ? undefined : actorIdOrStatus;
+  const status = isStatusOnly ? (actorIdOrStatus as OfflineEventRecord['syncStatus']) : maybeStatus;
+
   const db = await openDatabase();
   return new Promise((resolve, reject) => {
     const tx = db.transaction('offline_events', 'readonly');
@@ -492,7 +617,10 @@ export async function getOfflineEvents(status?: OfflineEventRecord['syncStatus']
     const req = store.getAll();
 
     req.onsuccess = () => {
-      const all = (req.result as OfflineEventRecord[]) || [];
+      let all = (req.result as OfflineEventRecord[]) || [];
+      if (actorId) {
+        all = all.filter((e) => !e.actorId || e.actorId === actorId);
+      }
       if (status) {
         resolve(all.filter((e) => e.syncStatus === status));
       } else {
@@ -552,10 +680,10 @@ export async function resolvePendingEventsPassId(oldPassId: string, canonicalPas
   });
 }
 
-export async function getPendingSyncCount(): Promise<{ registrations: number; events: number; total: number }> {
+export async function getPendingSyncCount(actorId?: string): Promise<{ registrations: number; events: number; total: number }> {
   const [regs, evts] = await Promise.all([
-    getOfflineRegistrations('pending'),
-    getOfflineEvents('pending'),
+    getOfflineRegistrations(actorId, 'pending'),
+    getOfflineEvents(actorId, 'pending'),
   ]);
   return {
     registrations: regs.length,
@@ -571,8 +699,14 @@ export async function getPendingSyncCount(): Promise<{ registrations: number; ev
  * An approved visitor starts with status 'inside' and projected version 1.
  */
 export async function saveOfflineRegistrationWithCache(
-  record: SaveOfflineRegistrationInput
+  actorIdOrRecord: string | (SaveOfflineRegistrationInput & { actorId?: string }),
+  maybeRecord?: SaveOfflineRegistrationInput
 ): Promise<CachedVisitorPass | null> {
+  let actorId = typeof actorIdOrRecord === 'string' ? actorIdOrRecord : (actorIdOrRecord.actorId || '');
+  const record = typeof actorIdOrRecord === 'string' ? maybeRecord! : actorIdOrRecord;
+  if (!actorId) {
+    actorId = (await getActiveGuardActorId()) || '';
+  }
   const db = await openDatabase();
   return new Promise((resolve, reject) => {
     const tx = db.transaction(['offline_registrations', 'cached_visitors'], 'readwrite');
@@ -583,6 +717,7 @@ export async function saveOfflineRegistrationWithCache(
       rejectionReason: null,
       syncStatus: 'pending',
       ...record,
+      actorId,
     };
     regStore.put(normalizedRecord);
 
@@ -596,6 +731,7 @@ export async function saveOfflineRegistrationWithCache(
 
       cached = {
         id: record.offlineRegistrationId,
+        actorId,
         publicReference: record.offlineRegistrationId,
         visitorId: record.offlineRegistrationId,
         visitorName: fullName,
@@ -631,14 +767,28 @@ export async function saveOfflineRegistrationWithCache(
  * - Record exit: requires projected inside; expected = N, locally evicted from actionable cache
  * - Reject: expected = N, locally evicted from actionable cache
  */
-export async function queueOfflineVisitorAction(params: {
-  passId: string;
-  action: 'approve_entry' | 'reject_entry' | 'record_exit';
-  reason?: string | null;
-  occurredAt?: string;
-  gate?: string | null;
-  actorId?: string | null;
-}): Promise<{ event: OfflineEventRecord; projectedVisitor: CachedVisitorPass | null }> {
+export async function queueOfflineVisitorAction(
+  actorIdOrParams: string | {
+    passId: string;
+    action: 'approve_entry' | 'reject_entry' | 'record_exit';
+    reason?: string | null;
+    occurredAt?: string;
+    gate?: string | null;
+    actorId?: string | null;
+  },
+  maybeParams?: {
+    passId: string;
+    action: 'approve_entry' | 'reject_entry' | 'record_exit';
+    reason?: string | null;
+    occurredAt?: string;
+    gate?: string | null;
+  }
+): Promise<{ event: OfflineEventRecord; projectedVisitor: CachedVisitorPass | null }> {
+  const actorId = typeof actorIdOrParams === 'string' ? actorIdOrParams : (actorIdOrParams.actorId || '');
+  const params = typeof actorIdOrParams === 'string' ? maybeParams! : actorIdOrParams;
+  if (!actorId) {
+    throw new Error('actorId required to queue offline visitor action');
+  }
   const db = await openDatabase();
   return new Promise((resolve, reject) => {
     const tx = db.transaction(['cached_visitors', 'offline_events'], 'readwrite');
@@ -679,6 +829,7 @@ export async function queueOfflineVisitorAction(params: {
 
       const event: OfflineEventRecord = {
         eventId,
+        actorId,
         passId: visitor.id,
         visitorName: visitor.visitorName,
         action: params.action,

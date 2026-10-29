@@ -46,6 +46,21 @@ async function handleRequest(request: Request): Promise<Response> {
   const actionFilter = url.searchParams.get('action')?.trim().toLowerCase();
   const dateFrom = url.searchParams.get('dateFrom')?.trim();
   const dateTo = url.searchParams.get('dateTo')?.trim();
+
+  if (dateFrom) {
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(dateFrom) || isNaN(Date.parse(`${dateFrom}T00:00:00+08:00`))) {
+      return jsonResponse(400, { error: 'invalid_date_from', message: 'dateFrom must be a valid YYYY-MM-DD date' });
+    }
+  }
+  if (dateTo) {
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(dateTo) || isNaN(Date.parse(`${dateTo}T00:00:00+08:00`))) {
+      return jsonResponse(400, { error: 'invalid_date_to', message: 'dateTo must be a valid YYYY-MM-DD date' });
+    }
+  }
+  if (dateFrom && dateTo && dateFrom > dateTo) {
+    return jsonResponse(400, { error: 'invalid_date_range', message: 'dateFrom cannot be later than dateTo' });
+  }
+
   const cursor = url.searchParams.get('cursor')?.trim();
   const pageSizeParam = parseInt(url.searchParams.get('pageSize') || '100', 10);
   const pageSize = Math.min(Math.max(Number.isFinite(pageSizeParam) ? pageSizeParam : 100, 1), 250);

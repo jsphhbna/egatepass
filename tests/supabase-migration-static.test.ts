@@ -247,5 +247,48 @@ describe('Supabase migration static safety contract', () => {
     expect(migration).toMatch(/revoke all on function api\.update_staff_profile[^;]+from public, anon, authenticated;/i);
     expect(migration).toMatch(/grant execute on function api\.update_staff_profile[^;]+to service_role;/i);
   });
+
+  it('applies guard offline authority and actor binding closure in Migration 37', () => {
+    const migration = readFileSync('supabase/migrations/20261029090000_guard_offline_authority_and_actor_binding_closure.sql', 'utf8');
+
+    // Drops previous signature
+    expect(migration).toContain('drop function if exists api.guard_sync_offline_registration');
+
+    // New signature with requested_actor_id
+    expect(migration).toContain('requested_actor_id uuid');
+    expect(migration).toContain("auth.role() <> 'service_role'");
+    expect(migration).toContain("message = 'service_role_required'");
+
+    // Actor verification
+    expect(migration).toContain('where user_id = requested_actor_id');
+    expect(migration).toContain('active');
+    expect(migration).toContain('not must_change_password');
+    expect(migration).toContain('privacy_accepted_at is not null');
+    expect(migration).toContain("actor.role not in ('guard'::public.staff_role, 'superadmin'::public.staff_role)");
+
+    // Intent defense-in-depth
+    expect(migration).toContain('photo_intent.owner_id <> requested_actor_id');
+    expect(migration).toContain("photo_intent.source <> 'guard_offline'::public.pass_source");
+    expect(migration).toContain("photo_intent.kind <> 'photo'::public.evidence_kind");
+    expect(migration).toContain("photo_intent.bucket_id <> 'visitor-photos'");
+    expect(migration).toContain("id_intent.owner_id <> requested_actor_id");
+    expect(migration).toContain("id_intent.source <> 'guard_offline'::public.pass_source");
+    expect(migration).toContain("id_intent.kind <> 'id'::public.evidence_kind");
+    expect(migration).toContain("id_intent.bucket_id <> 'visitor-ids'");
+
+    // Configured retention
+    expect(migration).toContain('photo_retention_days');
+    expect(migration).toContain('id_retention_days');
+    expect(migration).toContain('v_day_end + interval \'1 day\'');
+
+    // Permissions: service_role only
+    expect(migration).toMatch(/revoke all on function api\.guard_sync_offline_registration[^;]+from public, anon, authenticated;/i);
+    expect(migration).toMatch(/grant execute on function api\.guard_sync_offline_registration[^;]+to service_role;/i);
+
+    // Thermal template RPC: service_role only
+    expect(migration).toContain('create or replace function api.get_published_thermal_template');
+    expect(migration).toMatch(/revoke all on function api\.get_published_thermal_template\(\) from public, anon, authenticated;/i);
+    expect(migration).toMatch(/grant execute on function api\.get_published_thermal_template\(\) to service_role;/i);
+  });
 });
 

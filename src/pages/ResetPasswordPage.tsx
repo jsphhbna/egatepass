@@ -167,12 +167,12 @@ export function ResetPasswordPage() {
           </div>
         ) : (
           <form onSubmit={handleSubmit} className="space-y-5">
-            <FormField label="New Password" id="reset-new-password">
-              <Input id="reset-new-password" type="password" autoComplete="new-password" minLength={PASSWORD_MIN_LENGTH} required value={newPassword} onChange={(event) => setNewPassword(event.target.value)} disabled={loading} />
+            <FormField label="New Password" id="reset-new-password" requirement="required">
+              <Input id="reset-new-password" type="password" autoComplete="new-password" minLength={PASSWORD_MIN_LENGTH} required aria-required="true" value={newPassword} onChange={(event) => setNewPassword(event.target.value)} disabled={loading} />
               <p className="mt-1 text-xs text-[var(--color-text-muted)]">{PASSWORD_POLICY_HELPER_TEXT}</p>
             </FormField>
-            <FormField label="Confirm Password" id="reset-confirm-password">
-              <Input id="reset-confirm-password" type="password" autoComplete="new-password" minLength={PASSWORD_MIN_LENGTH} required value={confirmPassword} onChange={(event) => setConfirmPassword(event.target.value)} disabled={loading} />
+            <FormField label="Confirm Password" id="reset-confirm-password" requirement="required">
+              <Input id="reset-confirm-password" type="password" autoComplete="new-password" minLength={PASSWORD_MIN_LENGTH} required aria-required="true" value={confirmPassword} onChange={(event) => setConfirmPassword(event.target.value)} disabled={loading} />
             </FormField>
             <Button type="submit" className="w-full" size="lg" loading={loading}>Update Password</Button>
           </form>

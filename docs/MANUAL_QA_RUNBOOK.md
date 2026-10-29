@@ -541,3 +541,28 @@ stateDiagram-v2
 10. Verify historical audit records attribute prior actions to the decommissioned staff user.
 
 
+
+
+## 15. Guard Offline Security, Privacy & Inverted Date Range Verification
+
+### 15.1 Guard Offline Registration Server Authority Verification
+1. **Intake Offline Visitor**: On the Guard page, switch to "Register Offline Visitor" while offline. Complete form with selfie and valid ID.
+2. **Inspect Network on Reconnect**: Restore network connection and observe sync network traffic.
+3. **Verify Route Target**: Confirm synchronization posts to `/api/sync-offline-registration` and NOT directly to Supabase RPC.
+4. **Verify Database Privilege**: Attempting direct RPC call from browser console as `authenticated` must return permission denied.
+
+### 15.2 Cross-Guard Sign-Out Block
+1. Disconnect network on Guard terminal.
+2. Record an offline entry scan or intake an offline visitor.
+3. Click "Sign Out".
+4. **Expected**: System attempts sync, then displays notification that unsynchronized records remain on the device and blocks logout.
+5. Restore network, allow sync to complete, then click "Sign Out".
+6. **Expected**: Sign-out proceeds cleanly and IndexedDB sensitive cache is cleared.
+
+### 15.3 Inverted Date Range Audit Validation
+1. Navigate to Admin > Audit and Activity.
+2. Set "From" date to tomorrow and "To" date to today.
+3. **Expected**:
+   - Inline message appears: *"Start date cannot be later than end date."*
+   - Table displays *"Start date cannot be later than end date."* without querying backend.
+   - Export CSV, Excel, and PDF buttons are disabled.

@@ -123,7 +123,7 @@ describe('Offline Database Integration & Lifecycle Invariants (DB-T01 - DB-T10)'
     await db.exec(`
       reset role;
       insert into auth.users (id, email, raw_user_meta_data)
-      values ('${GUARD_ID}', 'guard@earist.edu.ph', '{"role": "guard"}')
+      values ('${GUARD_ID}', 'guard@earist.edu.ph', '{"role": "guard"}'), ('00000000-0000-4000-d000-000000000002', 'wrong@test.local', '{}')
       on conflict (id) do nothing;
 
       insert into public.staff_profiles (user_id, display_name, role, active, must_change_password, privacy_accepted_at)
@@ -136,6 +136,13 @@ describe('Offline Database Integration & Lifecycle Invariants (DB-T01 - DB-T10)'
     await db.exec(`
       set role authenticated;
       set request.jwt.claims = '{"sub": "${GUARD_ID}", "role": "authenticated"}';
+    `);
+  }
+
+  async function asServiceRole() {
+    await db.exec(`
+      set role service_role;
+      set request.jwt.claims = '{"sub": "00000000-0000-0000-0000-000000000000", "role": "service_role"}';
     `);
   }
 
@@ -155,9 +162,10 @@ describe('Offline Database Integration & Lifecycle Invariants (DB-T01 - DB-T10)'
         ('${idIntent}', '${GUARD_ID}', 'guard_offline', 'id', 'visitor-ids', 'guards/i1.webp', 'image/webp', now() + interval '1 hour');
     `);
 
-    await asGuard();
+    await asServiceRole();
     const res = await db.query<{ guard_sync_offline_registration: any }>(`
       select api.guard_sync_offline_registration(
+        '${GUARD_ID}'::uuid,
         '${regId}'::uuid,
         '{"firstName": "Juan", "middleName": "Protacio", "lastName": "Dela Cruz", "contactNumber": "09171234567", "email": "juan@example.com", "purpose": "Registrar Records Request", "visitDate": "${visitDate}"}'::jsonb,
         'approved'::text,
@@ -219,9 +227,10 @@ describe('Offline Database Integration & Lifecycle Invariants (DB-T01 - DB-T10)'
       values ('${photoIntent}', '${GUARD_ID}', 'guard_offline', 'photo', 'visitor-photos', 'guards/p2.webp', 'image/webp', now() + interval '1 hour');
     `);
 
-    await asGuard();
+    await asServiceRole();
     const res = await db.query<{ guard_sync_offline_registration: any }>(`
       select api.guard_sync_offline_registration(
+        '${GUARD_ID}'::uuid,
         '${regId}'::uuid,
         '{"firstName": "Bad", "lastName": "Actor", "contactNumber": "09170000000", "purpose": "Unauthorized Solicitation", "visitDate": "${visitDate}"}'::jsonb,
         'rejected'::text,
@@ -263,8 +272,9 @@ describe('Offline Database Integration & Lifecycle Invariants (DB-T01 - DB-T10)'
         ('${idIntent}', '${GUARD_ID}', 'guard_offline', 'id', 'visitor-ids', 'guards/i3.webp', 'image/webp', now() + interval '1 hour');
     `);
 
-    await asGuard();
+    await asServiceRole();
     const payload = `
+      '${GUARD_ID}'::uuid,
       '${regId}'::uuid,
       '{"firstName": "Maria", "lastName": "Clara", "contactNumber": "09191234567", "purpose": "Faculty Meeting", "visitDate": "${visitDate}"}'::jsonb,
       'approved'::text,
@@ -313,10 +323,11 @@ describe('Offline Database Integration & Lifecycle Invariants (DB-T01 - DB-T10)'
         ('${idIntent}', '${GUARD_ID}', 'guard_offline', 'id', 'visitor-ids', 'guards/i4.webp', 'image/webp', now() + interval '1 hour');
     `);
 
-    await asGuard();
+    await asServiceRole();
     // First submission: Juan Dela Cruz
     await db.query(`
       select api.guard_sync_offline_registration(
+        '${GUARD_ID}'::uuid,
         '${regId}'::uuid,
         '{"firstName": "Juan", "lastName": "Dela Cruz", "contactNumber": "09171112222", "purpose": "Inquiry", "visitDate": "${visitDate}"}'::jsonb,
         'approved'::text,
@@ -334,6 +345,7 @@ describe('Offline Database Integration & Lifecycle Invariants (DB-T01 - DB-T10)'
     // Modified submission with same registration ID: Different Person
     const modifiedRes = await db.query<{ guard_sync_offline_registration: any }>(`
       select api.guard_sync_offline_registration(
+        '${GUARD_ID}'::uuid,
         '${regId}'::uuid,
         '{"firstName": "Different", "lastName": "Person", "contactNumber": "09998887766", "purpose": "Tampered", "visitDate": "${visitDate}"}'::jsonb,
         'approved'::text,
@@ -510,10 +522,11 @@ describe('Offline Database Integration & Lifecycle Invariants (DB-T01 - DB-T10)'
         ('${idIntent}', '${GUARD_ID}', 'guard_offline', 'id', 'visitor-ids', 'guards/i9.webp', 'image/webp', now() + interval '1 hour');
     `);
 
-    await asGuard();
+    await asServiceRole();
     // 1. Sync offline registration
     const regRes = await db.query<{ guard_sync_offline_registration: any }>(`
       select api.guard_sync_offline_registration(
+        '${GUARD_ID}'::uuid,
         '${regId}'::uuid,
         '{"firstName": "Offline", "lastName": "Visitor", "contactNumber": "09179998888", "purpose": "Campus Tour", "visitDate": "${visitDate}"}'::jsonb,
         'approved'::text,
@@ -531,6 +544,7 @@ describe('Offline Database Integration & Lifecycle Invariants (DB-T01 - DB-T10)'
     const passId = regRes.rows[0].guard_sync_offline_registration.passId;
 
     // 2. Sync offline exit event
+    await asGuard();
     const exitEventId = '90909090-9090-4000-8000-909090909090';
     const exitRes = await db.query<{ guard_sync_offline_event: any }>(`
       select api.guard_sync_offline_event(
@@ -569,11 +583,12 @@ describe('Offline Database Integration & Lifecycle Invariants (DB-T01 - DB-T10)'
       values ('${photoIntent}', '${GUARD_ID}', 'guard_offline', 'photo', 'visitor-photos', 'guards/p10.webp', 'image/webp', now() + interval '1 hour');
     `);
 
-    await asGuard();
+    await asServiceRole();
     let thrownError: any = null;
     try {
       await db.query(`
         select api.guard_sync_offline_registration(
+          '${GUARD_ID}'::uuid,
           '${regId}'::uuid,
           ('{"firstName": "NoId", "lastName": "Visitor", "contactNumber": "09171239999", "purpose": "Testing", "visitDate": "' || (now() at time zone 'Asia/Manila')::date || '"}')::jsonb,
           'approved'::text,
@@ -593,5 +608,107 @@ describe('Offline Database Integration & Lifecycle Invariants (DB-T01 - DB-T10)'
 
     expect(thrownError).not.toBeNull();
     expect(String(thrownError)).toContain('valid_id_evidence_required_for_approval');
+  });
+
+  // DB-T11: Security Privilege Boundary - authenticated role denied direct execution
+  it('DB-T11: authenticated role receives permission denied when attempting to invoke guard_sync_offline_registration', async () => {
+    await asGuard();
+    let thrownError: any = null;
+    try {
+      await db.query(`
+        select api.guard_sync_offline_registration(
+          '${GUARD_ID}'::uuid,
+          gen_random_uuid(),
+          '{"firstName": "Hacker", "lastName": "Direct", "contactNumber": "09170000000", "purpose": "Direct RPC Bypass", "visitDate": "2026-10-27"}'::jsonb,
+          'approved'::text,
+          now()::timestamptz,
+          gen_random_uuid(),
+          1000,
+          '1111222233334444111122223333444411112222333344441111222233334444'::text,
+          null::uuid,
+          null::integer,
+          null::text,
+          null::text
+        );
+      `);
+    } catch (err: any) {
+      thrownError = err;
+    }
+
+    expect(thrownError).not.toBeNull();
+    expect(String(thrownError).toLowerCase()).toContain('permission denied');
+  });
+
+  // DB-T12: Security - mismatched requested_actor_id rejected
+  it('DB-T12: rejects execution when requested_actor_id is not a valid active guard', async () => {
+    await asServiceRole();
+    const fakeGuardId = '99999999-9999-4000-8000-999999999999';
+    let thrownError: any = null;
+    try {
+      await db.query(`
+        select api.guard_sync_offline_registration(
+          '${fakeGuardId}'::uuid,
+          gen_random_uuid(),
+          '{"firstName": "Spoofed", "lastName": "Actor", "contactNumber": "09170000000", "purpose": "Invalid Guard Actor", "visitDate": "2026-10-27"}'::jsonb,
+          'approved'::text,
+          now()::timestamptz,
+          gen_random_uuid(),
+          1000,
+          '1111222233334444111122223333444411112222333344441111222233334444'::text,
+          null::uuid,
+          null::integer,
+          null::text,
+          null::text
+        );
+      `);
+    } catch (err: any) {
+      thrownError = err;
+    }
+
+    expect(thrownError).not.toBeNull();
+    expect(String(thrownError)).toContain('active guard or superadmin required');
+  });
+
+  // DB-T13: Security - upload intent owner mismatch rejected
+  it('DB-T13: rejects execution when upload intent owner does not match requested_actor_id', async () => {
+    const wrongOwnerId = '00000000-0000-4000-d000-000000000002';
+    const photoIntent = 'f9f9f9f9-f9f9-4000-8000-f9f9f9f9f9f9';
+    const idIntent = 'f8f8f8f8-f8f8-4000-8000-f8f8f8f8f8f8';
+    const nowIso = new Date().toISOString();
+    const visitDate = getManilaDate(nowIso);
+
+    await db.exec(`
+      reset role;
+      insert into public.upload_intents (id, owner_id, source, kind, bucket_id, object_path, content_type, expires_at)
+      values
+        ('${photoIntent}', '${wrongOwnerId}', 'guard_offline', 'photo', 'visitor-photos', 'guards/p_wrong.webp', 'image/webp', now() + interval '1 hour'),
+        ('${idIntent}', '${wrongOwnerId}', 'guard_offline', 'id', 'visitor-ids', 'guards/i_wrong.webp', 'image/webp', now() + interval '1 hour');
+    `);
+
+    await asServiceRole();
+    let thrownError: any = null;
+    try {
+      await db.query(`
+        select api.guard_sync_offline_registration(
+          '${GUARD_ID}'::uuid,
+          gen_random_uuid(),
+          '{"firstName": "Intent", "lastName": "Mismatch", "contactNumber": "09170000000", "purpose": "Testing Intent Owner", "visitDate": "${visitDate}"}'::jsonb,
+          'approved'::text,
+          '${nowIso}'::timestamptz,
+          '${photoIntent}'::uuid,
+          1000,
+          '1111222233334444111122223333444411112222333344441111222233334444'::text,
+          '${idIntent}'::uuid,
+          2000,
+          '2222333344445555222233334444555522223333444455552222333344445555'::text,
+          null::text
+        );
+      `);
+    } catch (err: any) {
+      thrownError = err;
+    }
+
+    expect(thrownError).not.toBeNull();
+    expect(String(thrownError)).toContain('invalid_photo_upload_intent');
   });
 });

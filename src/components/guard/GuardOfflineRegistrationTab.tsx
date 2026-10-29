@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 import { useWebcam } from '@/hooks/useWebcam';
 import { useObjectUrl } from '@/hooks/useObjectUrl';
 import { compressImageToWebP } from '@/lib/imageProcessing';
-import { Button, Card } from '@/components/ui';
+import { Button, Card, FormField, Input, Modal } from '@/components/ui';
 import { CameraControls } from '@/components/CameraControls';
 import {
   Camera,
@@ -23,11 +23,13 @@ import { formatManilaTime } from '@/lib/manilaTime';
 
 export interface GuardOfflineRegistrationTabProps {
   isBackendOnline: boolean;
+  actorId?: string;
   onRegistered?: () => void;
 }
 
 export function GuardOfflineRegistrationTab({
   isBackendOnline,
+  actorId,
   onRegistered,
 }: GuardOfflineRegistrationTabProps) {
   const today = getManilaDateString();
@@ -137,6 +139,7 @@ export function GuardOfflineRegistrationTab({
 
     const record: OfflineRegistrationRecord = {
       offlineRegistrationId,
+      actorId: actorId || '',
       visitor: {
         firstName: firstName.trim(),
         middleName: middleName.trim() || undefined,
@@ -155,7 +158,7 @@ export function GuardOfflineRegistrationTab({
 
     try {
       // Atomic registration + projected visitor cache insert (Root Causes 2.2 and 2.3)
-      await saveOfflineRegistrationWithCache(record);
+      await saveOfflineRegistrationWithCache(actorId ? actorId : record, actorId ? record : undefined);
 
       setCompletedRecord(record);
       toast.success('Visitor entry approved offline (Stored on this device pending synchronization)');
@@ -183,6 +186,7 @@ export function GuardOfflineRegistrationTab({
 
     const record: OfflineRegistrationRecord = {
       offlineRegistrationId,
+      actorId: actorId || '',
       visitor: {
         firstName: firstName.trim(),
         middleName: middleName.trim() || undefined,
@@ -200,7 +204,7 @@ export function GuardOfflineRegistrationTab({
     };
 
     try {
-      await saveOfflineRegistrationWithCache(record);
+      await saveOfflineRegistrationWithCache(actorId ? actorId : record, actorId ? record : undefined);
       setShowRejectModal(false);
       setCompletedRecord(record);
       toast.success('Visitor rejection recorded offline (Stored on this device pending synchronization)');
@@ -338,83 +342,74 @@ export function GuardOfflineRegistrationTab({
         {/* Form Fields */}
         <div className="space-y-4 text-sm">
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-            <div>
-              <label className="block text-xs font-semibold text-[var(--color-text-secondary)] mb-1">
-                First Name *
-              </label>
-              <input
+            <FormField label="First Name" requirement="required" id="offline-first-name">
+              <Input
+                id="offline-first-name"
                 type="text"
+                required
+                aria-required="true"
                 value={firstName}
                 onChange={(e) => setFirstName(e.target.value)}
                 placeholder="e.g. Juan"
-                className="w-full rounded-lg border border-[var(--color-border)] bg-[var(--color-canvas)] px-3 py-2 text-sm"
               />
-            </div>
-            <div>
-              <label className="block text-xs font-semibold text-[var(--color-text-secondary)] mb-1">
-                Middle Name
-              </label>
-              <input
+            </FormField>
+            <FormField label="Middle Name" requirement="optional" id="offline-middle-name">
+              <Input
+                id="offline-middle-name"
                 type="text"
                 value={middleName}
                 onChange={(e) => setMiddleName(e.target.value)}
                 placeholder="Optional"
-                className="w-full rounded-lg border border-[var(--color-border)] bg-[var(--color-canvas)] px-3 py-2 text-sm"
               />
-            </div>
-            <div>
-              <label className="block text-xs font-semibold text-[var(--color-text-secondary)] mb-1">
-                Last Name *
-              </label>
-              <input
+            </FormField>
+            <FormField label="Last Name" requirement="required" id="offline-last-name">
+              <Input
+                id="offline-last-name"
                 type="text"
+                required
+                aria-required="true"
                 value={lastName}
                 onChange={(e) => setLastName(e.target.value)}
                 placeholder="e.g. Dela Cruz"
-                className="w-full rounded-lg border border-[var(--color-border)] bg-[var(--color-canvas)] px-3 py-2 text-sm"
               />
-            </div>
+            </FormField>
           </div>
 
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-            <div>
-              <label className="block text-xs font-semibold text-[var(--color-text-secondary)] mb-1">
-                Contact Number *
-              </label>
-              <input
+            <FormField label="Contact Number" requirement="required" id="offline-contact-number">
+              <Input
+                id="offline-contact-number"
                 type="tel"
+                required
+                aria-required="true"
                 value={contactNumber}
                 onChange={(e) => setContactNumber(e.target.value)}
                 placeholder="09XXXXXXXXX"
-                className="w-full rounded-lg border border-[var(--color-border)] bg-[var(--color-canvas)] px-3 py-2 text-sm"
               />
-            </div>
-            <div>
-              <label className="block text-xs font-semibold text-[var(--color-text-secondary)] mb-1">
-                Visit Date (Current Manila Date)
-              </label>
-              <input
+            </FormField>
+            <FormField label="Visit Date (Current Manila Date)" id="offline-visit-date">
+              <Input
+                id="offline-visit-date"
                 type="date"
                 value={today}
                 disabled
                 readOnly
-                className="w-full rounded-lg border border-[var(--color-border)] bg-[var(--color-surface-hover)] px-3 py-2 text-sm cursor-not-allowed text-[var(--color-text-secondary)]"
+                className="cursor-not-allowed bg-[var(--color-surface-hover)] text-[var(--color-text-secondary)]"
               />
-            </div>
+            </FormField>
           </div>
 
-          <div>
-            <label className="block text-xs font-semibold text-[var(--color-text-secondary)] mb-1">
-              Purpose of Visit *
-            </label>
-            <input
+          <FormField label="Purpose of Visit" requirement="required" id="offline-purpose">
+            <Input
+              id="offline-purpose"
               type="text"
+              required
+              aria-required="true"
               value={purpose}
               onChange={(e) => setPurpose(e.target.value)}
               placeholder="e.g. Registrar inquiry, Admission exam, Department meeting"
-              className="w-full rounded-lg border border-[var(--color-border)] bg-[var(--color-canvas)] px-3 py-2 text-sm"
             />
-          </div>
+          </FormField>
 
           {/* Photo & ID Capture Buttons */}
           <div className="pt-2 border-t border-[var(--color-border)]">
@@ -444,7 +439,7 @@ export function GuardOfflineRegistrationTab({
               {/* ID */}
               <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-canvas)] p-4 text-center">
                 <p className="text-xs font-semibold text-[var(--color-text-primary)] mb-2">
-                  Presented Valid ID
+                  Presented Valid ID — Required for approval
                 </p>
                 {idUrl.url ? (
                   <div className="space-y-2">
@@ -493,44 +488,41 @@ export function GuardOfflineRegistrationTab({
       </Card>
 
       {/* Reject Modal */}
-      {showRejectModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
-          <div className="w-full max-w-md rounded-2xl bg-white dark:bg-zinc-900 p-6 shadow-xl border border-[var(--color-border)]">
-            <h3 className="text-lg font-bold text-[var(--color-text-primary)]">
-              Reject Offline Visitor
-            </h3>
-            <p className="mt-1 text-sm text-[var(--color-text-secondary)]">
-              Specify the reason for refusing entry.
-            </p>
-            <div className="mt-4">
-              <label className="block text-xs font-semibold text-[var(--color-text-secondary)] mb-1">
-                Reason
-              </label>
-              <textarea
-                value={rejectReason}
-                onChange={(e) => setRejectReason(e.target.value)}
-                placeholder="e.g. Expired ID, dress code violation, security concern..."
-                className="w-full rounded-lg border border-[var(--color-border)] bg-[var(--color-canvas)] p-3 text-sm focus:outline-none focus:ring-2 focus:ring-[var(--color-brand)]"
-                rows={3}
-                autoFocus
-              />
-            </div>
-            <div className="mt-5 flex justify-end gap-3">
-              <Button variant="secondary" onClick={() => setShowRejectModal(false)}>
-                Cancel
-              </Button>
-              <Button
-                variant="destructive"
-                onClick={() => void handleConfirmReject()}
-                loading={saving}
-                disabled={saving}
-              >
-                Record Rejection
-              </Button>
-            </div>
+      <Modal
+        isOpen={showRejectModal}
+        onClose={() => setShowRejectModal(false)}
+        title="Reject Offline Visitor"
+        description="Specify the reason for refusing entry."
+      >
+        <div className="p-6">
+          <FormField label="Reason" requirement="required">
+            <textarea
+              id="offline-reject-reason"
+              value={rejectReason}
+              onChange={(e) => setRejectReason(e.target.value)}
+              placeholder="e.g. Expired ID, dress code violation, security concern..."
+              className="w-full rounded-lg border border-[var(--color-border)] bg-[var(--color-canvas)] p-3 text-sm focus:outline-none focus:ring-2 focus:ring-[var(--color-brand)]"
+              rows={3}
+              required
+              aria-required="true"
+              autoFocus
+            />
+          </FormField>
+          <div className="mt-5 flex justify-end gap-3">
+            <Button variant="secondary" onClick={() => setShowRejectModal(false)}>
+              Cancel
+            </Button>
+            <Button
+              variant="destructive"
+              onClick={() => void handleConfirmReject()}
+              loading={saving}
+              disabled={saving}
+            >
+              Record Rejection
+            </Button>
           </div>
         </div>
-      )}
+      </Modal>
     </div>
   );
 }
