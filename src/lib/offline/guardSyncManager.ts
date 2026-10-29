@@ -26,7 +26,6 @@ import { requireSupabase } from '@/lib/supabase';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import {
   prepareGuardOfflineStoreForActor,
-  getActiveGuardActorId,
   getOfflineRegistrations,
   getOfflineEvents,
   updateOfflineRegistrationStatus,
@@ -89,10 +88,10 @@ export function classifyOfflineRegistrationSyncFailure(
   }
 
   // Only an explicit server 409 conflict envelope is an authoritative conflict
-  if (status === 409 && body?.status === 'conflict') {
+  if (status === 409) {
     return {
       type: 'authoritative_conflict',
-      reason: body?.reason || 'Server authoritative conflict',
+      reason: body?.reason || body?.error || 'Server authoritative conflict',
     };
   }
 
@@ -266,7 +265,7 @@ async function uploadRegistrationEvidence(
 async function internalRefreshOperationalCache(
   client: SupabaseClient,
   token: string | undefined,
-  actorId?: string
+  actorId: string
 ): Promise<number> {
   if (!token) {
     console.warn('Session token unavailable for recovery cache refresh');
@@ -345,7 +344,7 @@ async function internalRefreshOperationalCache(
   }
 
   // Atomic replace in IndexedDB transaction - preserves unsynchronized local visitors
-  await atomicReplaceCachedVisitors(passesToCache, actorId);
+  await atomicReplaceCachedVisitors(actorId, passesToCache);
   await setMeta('last_cache_refresh_at', new Date().toISOString());
   return passesToCache.length;
 }
@@ -379,35 +378,25 @@ export async function runOfflineMaintenance(): Promise<MaintenanceResult> {
 
     const client = requireSupabase();
     const sessionRes = await client.auth.getSession();
-    const token = sessionRes.data.session?.access_token;
-    let actorId = sessionRes.data.session?.user?.id;
+    const session = sessionRes.data.session;
+    const token = session?.access_token;
+    const actorId = session?.user?.id;
 
-    if (!actorId && token) {
-      try {
-        const parts = token.split('.');
-        const payloadPart = parts[1];
-        if (payloadPart) {
-          const payload = JSON.parse(atob(payloadPart.replace(/-/g, '+').replace(/_/g, '/')));
-          if (typeof payload?.sub === 'string') actorId = payload.sub;
-        }
-      } catch {
-        // ignore
-      }
-    }
-    if (!actorId) {
-      actorId = (await getActiveGuardActorId()) || undefined;
+    if (!session || !token || !actorId) {
+      console.warn('Authenticated Guard session unavailable for synchronization. Sync aborted.');
+      summary.errors++;
+      return {
+        summary,
+        refreshedPasses: 0,
+        recoveredRecords: { recoveredRegistrations: 0, recoveredEvents: 0 },
+      };
     }
 
-    // Step 1b: Bind and prepare local Guard store for current authenticated actor if known
-    if (actorId) {
-      await prepareGuardOfflineStoreForActor(actorId);
-    }
+    // Step 1b: Bind and prepare local Guard store for current authenticated actor
+    await prepareGuardOfflineStoreForActor(actorId);
 
-    // Step 2 & 3: Synchronize Pending Offline Registrations FIRST in chronological order
-    const allPendingRegs = await getOfflineRegistrations(actorId, 'pending');
-    const pendingRegs = actorId
-      ? allPendingRegs.filter((r) => !r.actorId || r.actorId === actorId)
-      : allPendingRegs;
+    // Step 2 & 3: Synchronize Pending Offline Registrations FIRST in chronological order (Requirement 8)
+    const pendingRegs = await getOfflineRegistrations(actorId, 'pending');
     pendingRegs.sort((a, b) => {
       const tDiff = new Date(a.occurredAt).getTime() - new Date(b.occurredAt).getTime();
       if (tDiff !== 0) return tDiff;
@@ -415,16 +404,6 @@ export async function runOfflineMaintenance(): Promise<MaintenanceResult> {
     });
 
     for (const reg of pendingRegs) {
-      // If Guard session has no usable access token, leave pending (Section 6)
-      if (!token) {
-        console.warn('Guard session token unavailable for registration sync. Leaving pending.');
-        summary.errors++;
-        await updateOfflineRegistrationStatus(reg.offlineRegistrationId, 'pending', {
-          conflictReason: 'Guard session unavailable: authentication required to sync registration',
-        });
-        continue;
-      }
-
       try {
         if (!reg.photoBlob) {
           throw new Error('Photo blob missing for offline registration sync');
@@ -477,66 +456,34 @@ export async function runOfflineMaintenance(): Promise<MaintenanceResult> {
         const syncData = await res.json().catch(() => null);
 
         if (!res.ok) {
-          if (res.status === 409) {
-            summary.conflicts++;
-            await updateOfflineRegistrationStatus(reg.offlineRegistrationId, 'conflict', {
-              conflictReason: syncData?.reason || 'Server fingerprint conflict',
-              syncedAt: new Date().toISOString(),
-            });
-            await stripTerminalOfflineEvidence();
-            continue;
-          }
-
-          if (res.status === 422) {
-            const recoverableErrors = ['invalid_upload_intent', 'missing_uploaded_object', 'invalid_uploaded_content'];
-            if (recoverableErrors.includes(syncData?.error)) {
-              // Recoverable evidence failure: clear checkpoints, keep blobs, keep pending for fresh re-upload next cycle
-              await clearOfflineRegistrationCheckpoints(reg.offlineRegistrationId);
+          const failure = classifyOfflineRegistrationSyncFailure(res.status, syncData);
+          switch (failure.type) {
+            case 'transient_or_internal': {
               summary.errors++;
               await updateOfflineRegistrationStatus(reg.offlineRegistrationId, 'pending', {
-                conflictReason: syncData?.error || 'Recoverable evidence rejection',
+                conflictReason: failure.reason,
               });
-              continue;
+              break;
             }
-
-            // Other 422: authoritative deterministic domain failure (e.g. invalid date / business rule)
-            summary.conflicts++;
-            await updateOfflineRegistrationStatus(reg.offlineRegistrationId, 'conflict', {
-              conflictReason: syncData?.error || 'Deterministic registration domain validation failure',
-              syncedAt: new Date().toISOString(),
-            });
-            await stripTerminalOfflineEvidence();
-            continue;
+            case 'recoverable_evidence': {
+              summary.errors++;
+              await clearOfflineRegistrationCheckpoints(reg.offlineRegistrationId);
+              await updateOfflineRegistrationStatus(reg.offlineRegistrationId, 'pending', {
+                conflictReason: failure.reason,
+              });
+              break;
+            }
+            case 'authoritative_conflict': {
+              summary.conflicts++;
+              await updateOfflineRegistrationStatus(reg.offlineRegistrationId, 'conflict', {
+                conflictReason: failure.reason,
+                syncedAt: new Date().toISOString(),
+              });
+              await stripTerminalOfflineEvidence(reg.offlineRegistrationId);
+              break;
+            }
           }
-
-          if (res.status === 400) {
-            // Deterministic payload / schema / RPC domain failure that cannot succeed by retrying identical data
-            summary.conflicts++;
-            await updateOfflineRegistrationStatus(reg.offlineRegistrationId, 'conflict', {
-              conflictReason: syncData?.error || 'Deterministic registration validation error',
-              syncedAt: new Date().toISOString(),
-            });
-            await stripTerminalOfflineEvidence();
-            continue;
-          }
-
-          if (res.status === 401 || res.status === 403) {
-            summary.errors++;
-            await updateOfflineRegistrationStatus(reg.offlineRegistrationId, 'pending', {
-              conflictReason: 'Authentication required',
-            });
-            continue;
-          }
-
-          if (res.status >= 500) {
-            summary.errors++;
-            await updateOfflineRegistrationStatus(reg.offlineRegistrationId, 'pending', {
-              conflictReason: syncData?.error || `Server error (${res.status})`,
-            });
-            continue;
-          }
-
-          throw new Error(syncData?.error || `HTTP ${res.status}`);
+          continue;
         }
 
         const canonicalPassId = syncData?.canonicalPassId || syncData?.passId || syncData?.pass_id;
@@ -568,10 +515,7 @@ export async function runOfflineMaintenance(): Promise<MaintenanceResult> {
     }
 
     // Step 4: Synchronize Pending Offline Lifecycle Events in chronological order (Section 3)
-    const allPendingEvents = await getOfflineEvents(actorId, 'pending');
-    const pendingEvents = actorId
-      ? allPendingEvents.filter((e) => !e.actorId || e.actorId === actorId)
-      : allPendingEvents;
+    const pendingEvents = await getOfflineEvents(actorId, 'pending');
     pendingEvents.sort((a, b) => {
       const tDiff = new Date(a.occurredAt).getTime() - new Date(b.occurredAt).getTime();
       if (tDiff !== 0) return tDiff;

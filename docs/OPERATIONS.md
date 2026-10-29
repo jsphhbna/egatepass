@@ -394,12 +394,18 @@ When cloud connectivity returns:
 
 ## 9. Guard Offline Operations & Shift Change Procedures
 
-### 9.1 Cross-Guard Actor Binding & Sign-Out Guard
-- **Actor-Bound Offline Stores**: All local registrations and audit actions are cryptographically and relationally bound to the active guard's UUID in IndexedDB v2.
-- **Unsynchronized Records Warning**: When a guard attempts to sign out, the application checks for pending local records. If unsynchronized records exist:
-  - The client attempts an immediate synchronization if network is available.
-  - If records remain unsynchronized, sign-out is blocked with an explicit error toast to prevent evidence loss and attribution failure.
-- **Operational Cache Clearance**: If a different guard logs into the device, operational visitor records from previous shifts are immediately purged from local cache.
+### 9.1 Cross-Guard Actor Binding & Shift Change Procedures
+- **Actor-Bound Offline Stores**: All local registrations, cached visitor passes, and outbox actions are bound to the active guard's UUID (`actorId`) in IndexedDB (`egatepass_guard_offline`).
+- **Fail-Closed Unattributed Isolation**: Any record lacking a valid `actorId` is excluded by fail-closed queries and will never be assigned, displayed, or executed during sync.
+- **Identity-Switch Store Purge**: When a new guard logs in on a shared terminal (`prepareGuardOfflineStoreForActor(nextActorId)` via `transitionGuardOfflineStore`), if `lastActorId` differs from `nextActorId`, the previous guard's sensitive local stores (`cached_visitors`, `offline_registrations`, `offline_events`, `meta`) are fully purged. Guard B starts with an empty cache and 0 pending records.
+- **Strictly Blocked Sign-Out with Pending Records**: When a guard attempts to sign out, the application checks `getPendingSyncCount(actorId)`. If unsynchronized records exist:
+  - The client attempts an immediate synchronization if network connectivity is detected.
+  - If records remain unsynchronized, sign-out is strictly blocked with an error toast (*"Cannot sign out while offline records remain pending. Please connect to the network to sync your work."*) to prevent biometric evidence loss and audit attribution gaps.
+- **Centralized Synchronization Error Classification**:
+  - `classifyOfflineRegistrationSyncFailure` governs offline sync outcomes:
+    - Unexpected 400 responses, unknown 422 errors, network timeouts, and 5xx/503 authority outages are classified as transient, keeping local photo/ID blobs and checkpoints in `pending` state for automatic retry.
+    - Stale upload intent 422 errors clear checkpoints while keeping blobs for fresh intent acquisition.
+    - Only explicit HTTP 409 server conflicts mark registrations terminal and strip local photo/ID blobs while preserving relational audit metadata.
 
 ### 9.2 Audit Log Date Range Validation
 - Date filters on `/api/admin/activity` strictly reject inverted ranges (`dateFrom > dateTo`) with HTTP 400 `invalid_date_range`.

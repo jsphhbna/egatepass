@@ -544,13 +544,16 @@ During connectivity outages, operational access authority delegates to the Guard
 
 ### 20.2 Operational Cache Scoping, Actor Isolation & Evidence Stripping
 - **Minimal Operational Footprint**: The tablet only caches operationally relevant passes: today's date in `Asia/Manila` in `issued`, `pending`, or `inside` status. Historical passes are excluded.
-- **IndexedDB v2 & Cross-Guard Actor Binding**: IndexedDB store upgraded to v2 (`egatepass_guard_offline`) with mandatory `actorId` attributes and indexes across cached visitors, registrations, and events. Any unattributed legacy records without an authenticating actor are purged on upgrade.
-- **Cross-Guard Data Privacy**: When switching guards (`prepareGuardOfflineStoreForActor(actorId)`), operational visitor cache (`cached_visitors`) is invalidated immediately so Guard B never views cached face photos or details from Guard A. Pending offline outbox records remain strictly isolated by `actorId`.
-- **Blocked Clean Logout with Pending Records**: To prevent evidence loss and attribution failure, Guard clean logout is blocked if unsynchronized offline registrations or events remain on the device. Guards must synchronize records or resolve pending transfers before signing out.
-- **Local Data Retention & Evidence Stripping**:
+- **IndexedDB v2 & Strict Actor-Binding Contract**: IndexedDB store (`egatepass_guard_offline`) enforces mandatory `actorId` attributes across `cached_visitors`, `offline_registrations`, and `offline_events`.
+- **Fail-Closed Unattributed Record Rejection**: Any legacy or malformed record lacking an authenticating `actorId` is strictly excluded by fail-closed queries (`r.actorId === actorId`) and will NEVER be assigned, read, or executed during sync.
+- **Cross-Guard Data Privacy & Identity-Switch Purge**: When switching guards (`prepareGuardOfflineStoreForActor(nextActorId)` via `transitionGuardOfflineStore(nextActorId)`), if a previous guard was active (`lastActorId` differs from `nextActorId`), all sensitive local stores (`cached_visitors`, `offline_registrations`, `offline_events`, and `meta`) are immediately purged from IndexedDB so Guard B starts with a clean slate and zero remnant biometric or operational data from Guard A.
+- **Strictly Blocked Clean Logout with Pending Records**: To prevent evidence loss and audit attribution failure, Guard clean logout is strictly blocked whenever `getPendingSyncCount(actorId) > 0`. Guards must restore network connectivity and synchronize outbox records before signing out.
+- **Centralized Failure Classification & Local Evidence Retention**:
+  - `classifyOfflineRegistrationSyncFailure` centralizes all sync response and network error triage:
+    - `transient_or_internal`: Network timeouts, HTTP 5xx errors, 503 authority outages, unexpected 400 responses, and unknown 422 validation errors leave the offline registration in `pending` status with full local biometric Blobs (`photoBlob`, `idBlob`) and upload intent checkpoints intact for automatic retry.
+    - `recoverable_evidence`: Specific 422 metadata/evidence errors clear stale upload checkpoints while preserving binary Blobs for immediate re-upload.
+    - `authoritative_conflict`: Only explicit server HTTP 409 conflict responses (`status === 409`) mark the registration as terminal `conflict` and strip local binary evidence blobs (`photoBlob`, `idBlob`) while preserving relational audit metadata for supervisor reconciliation.
   - Daily automatic purge clears previous calendar days' cached visitor records.
-  - Terminal Evidence Stripping: Upon reaching a terminal state (either successful synchronization or terminal conflict), sensitive local binary blobs (`photoBlob` and `idBlob`) are stripped immediately from IndexedDB while preserving metadata necessary for audit and administrative reconciliation.
-  - Transient Failure Protection: Network timeouts, 5xx server errors, 503 authority outages, or unclassified 400 responses never destroy local blobs; evidence remains safely queued in `pending` state for automatic retry.
   - Absolute Retention Ceiling: Enforcing the institutional 7-day evidence retention policy, any offline registration older than 7 days that fails to synchronize is treated as expired/conflicted and purged of sensitive binary evidence blobs.
 
 ### 20.3 Server-Only Synchronization Trust Boundary & Conflict Defense

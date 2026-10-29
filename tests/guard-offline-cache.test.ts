@@ -44,6 +44,9 @@ describe('Section F: Guard Offline Cache Behavior Tests (CACHE-T01 - CACHE-T05)'
       data: {
         session: {
           access_token: 'guard-test-token-xyz',
+          user: {
+            id: 'guard-actor-123',
+          },
         },
       },
     });
@@ -100,7 +103,7 @@ describe('Section F: Guard Offline Cache Behavior Tests (CACHE-T01 - CACHE-T05)'
     const cachedCount = await refreshOperationalCache();
     expect(cachedCount).toBe(125);
 
-    const cached = await searchCachedVisitors('');
+    const cached = await searchCachedVisitors('guard-actor-123', '');
     expect(cached.length).toBe(125);
     expect(cached[0]?.visitorName).toBe('Visitor 1');
     expect(cached[124]?.visitorName).toBe('Visitor 125');
@@ -170,15 +173,15 @@ describe('Section F: Guard Offline Cache Behavior Tests (CACHE-T01 - CACHE-T05)'
     expect(cachedCount).toBe(3);
 
     // Assert every one is found without requiring 'a'
-    const searchCruz = await searchCachedVisitors('Cruz');
+    const searchCruz = await searchCachedVisitors('guard-actor-123', 'Cruz');
     expect(searchCruz.length).toBe(1);
     expect(searchCruz[0]?.visitorName).toBe('John Cruz');
 
-    const searchLim = await searchCachedVisitors('Bobby');
+    const searchLim = await searchCachedVisitors('guard-actor-123', 'Bobby');
     expect(searchLim.length).toBe(1);
     expect(searchLim[0]?.visitorName).toBe('Bobby Lim');
 
-    const searchRico = await searchCachedVisitors('Rico');
+    const searchRico = await searchCachedVisitors('guard-actor-123', 'Rico');
     expect(searchRico.length).toBe(1);
     expect(searchRico[0]?.visitorName).toBe('Jun Rico');
   });
@@ -230,7 +233,7 @@ describe('Section F: Guard Offline Cache Behavior Tests (CACHE-T01 - CACHE-T05)'
     mockRpc.mockRejectedValue(new Error('Network offline'));
 
     // Search cached visitor
-    const results = await searchCachedVisitors('Offline Evidence Visitor');
+    const results = await searchCachedVisitors('guard-actor-123', 'Offline Evidence Visitor');
     expect(results.length).toBe(1);
     const visitor = results[0]!;
 
@@ -246,6 +249,7 @@ describe('Section F: Guard Offline Cache Behavior Tests (CACHE-T01 - CACHE-T05)'
     // 1. Establish valid previous snapshot with 2 visitors
     const initialVisitors: CachedVisitorPass[] = [
       {
+        actorId: 'guard-actor-123',
         id: 'initial-1',
         visitorId: 'v-init-1',
         visitorName: 'Initial Person 1',
@@ -261,6 +265,7 @@ describe('Section F: Guard Offline Cache Behavior Tests (CACHE-T01 - CACHE-T05)'
         idBlob: null,
       },
       {
+        actorId: 'guard-actor-123',
         id: 'initial-2',
         visitorId: 'v-init-2',
         visitorName: 'Initial Person 2',
@@ -276,7 +281,7 @@ describe('Section F: Guard Offline Cache Behavior Tests (CACHE-T01 - CACHE-T05)'
         idBlob: null,
       },
     ];
-    await atomicReplaceCachedVisitors(initialVisitors);
+    await atomicReplaceCachedVisitors('guard-actor-123', initialVisitors);
 
     // 2. Next refresh fails during evidence download for item 2
     mockRpc.mockResolvedValue({
@@ -321,7 +326,7 @@ describe('Section F: Guard Offline Cache Behavior Tests (CACHE-T01 - CACHE-T05)'
     await expect(refreshOperationalCache()).rejects.toThrow('Evidence download failed');
 
     // 3. Verify previous snapshot is completely intact
-    const remaining = await searchCachedVisitors('');
+    const remaining = await searchCachedVisitors('guard-actor-123', '');
     expect(remaining.length).toBe(2);
     expect(remaining.some((v) => v.id === 'initial-1')).toBe(true);
     expect(remaining.some((v) => v.id === 'initial-2')).toBe(true);
@@ -332,6 +337,7 @@ describe('Section F: Guard Offline Cache Behavior Tests (CACHE-T01 - CACHE-T05)'
   it('CACHE-T05: purges yesterday visitor metadata and blobs without deleting pending offline events', async () => {
     // 1. Setup yesterday visitor and today visitor
     const yesterdayVisitor: CachedVisitorPass = {
+      actorId: 'guard-actor-123',
       id: 'pass-yesterday',
       visitorId: 'vis-yesterday',
       visitorName: 'Yesterday Visitor',
@@ -348,6 +354,7 @@ describe('Section F: Guard Offline Cache Behavior Tests (CACHE-T01 - CACHE-T05)'
     };
 
     const todayVisitor: CachedVisitorPass = {
+      actorId: 'guard-actor-123',
       id: 'pass-today',
       visitorId: 'vis-today',
       visitorName: 'Today Visitor',
@@ -363,10 +370,11 @@ describe('Section F: Guard Offline Cache Behavior Tests (CACHE-T01 - CACHE-T05)'
       idBlob: new Blob(['today-id']),
     };
 
-    await saveCachedVisitors([yesterdayVisitor, todayVisitor]);
+    await saveCachedVisitors('guard-actor-123', [yesterdayVisitor, todayVisitor]);
 
     // 2. Queue a pending offline event that must NOT be purged
-    await queueOfflineEvent({
+    await queueOfflineEvent('guard-actor-123', {
+      actorId: 'guard-actor-123',
       eventId: 'evt-pending-outbox-999',
       passId: 'pass-yesterday',
       action: 'record_exit',
@@ -380,12 +388,12 @@ describe('Section F: Guard Offline Cache Behavior Tests (CACHE-T01 - CACHE-T05)'
     expect(purgeReport.purgedVisitors).toBeGreaterThanOrEqual(1);
 
     // 4. Assert yesterday visitor was purged, today visitor remains
-    const activeCached = await searchCachedVisitors('');
+    const activeCached = await searchCachedVisitors('guard-actor-123', '');
     expect(activeCached.some((v) => v.id === 'pass-yesterday')).toBe(false);
     expect(activeCached.some((v) => v.id === 'pass-today')).toBe(true);
 
     // 5. Assert pending offline outbox was preserved
-    const pendingEvents = await getOfflineEvents('pending');
+    const pendingEvents = await getOfflineEvents('guard-actor-123', 'pending');
     expect(pendingEvents.length).toBe(1);
     expect(pendingEvents[0]?.eventId).toBe('evt-pending-outbox-999');
   });

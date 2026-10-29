@@ -25,7 +25,7 @@ import { formatPassReference } from '@/lib/passPresentation';
 
 export interface GuardVisitorRecoveryTabProps {
   isBackendOnline: boolean;
-  actorId?: string;
+  actorId: string;
   onActionComplete?: () => void;
 }
 
@@ -75,7 +75,7 @@ export function GuardVisitorRecoveryTab({
         } catch (err: any) {
           if (isTransportOrNetworkError(err)) {
             console.warn('Online recovery search transport failure, falling back to local cache:', err);
-            const cached = await searchCachedVisitors(clean);
+            const cached = await searchCachedVisitors(actorId, clean);
             setResults(cached);
             setIsCachedResults(true);
             toast.info('Showing cached offline visitor results due to network issue.');
@@ -95,7 +95,7 @@ export function GuardVisitorRecoveryTab({
       } else {
         // Offline Search in local IndexedDB
         try {
-          const cached = await searchCachedVisitors(clean);
+          const cached = await searchCachedVisitors(actorId, clean);
           setResults(cached);
           setIsCachedResults(true);
         } catch (err) {
@@ -159,7 +159,7 @@ export function GuardVisitorRecoveryTab({
 
   async function queueOfflineApproval(pass: any, occurredAt: string) {
     try {
-      await queueOfflineVisitorAction({
+      await queueOfflineVisitorAction(actorId, {
         passId: pass.id,
         action: 'approve_entry',
         reason: 'visitor_recovery',
@@ -216,7 +216,7 @@ export function GuardVisitorRecoveryTab({
 
   async function queueOfflineRejection(pass: any, reason: string, occurredAt: string) {
     try {
-      await queueOfflineVisitorAction({
+      await queueOfflineVisitorAction(actorId, {
         passId: pass.id,
         action: 'reject_entry',
         reason,
@@ -270,12 +270,11 @@ export function GuardVisitorRecoveryTab({
 
   async function queueOfflineExit(pass: any, occurredAt: string) {
     try {
-      await queueOfflineVisitorAction({
+      await queueOfflineVisitorAction(actorId, {
         passId: pass.id,
         action: 'record_exit',
         reason: 'visitor_recovery_exit',
         occurredAt,
-        actorId: actorId || null,
       });
       toast.success(`Exit recorded offline for ${pass.visitorName} (Stored on this device pending synchronization)`);
       await performSearch(searchQuery);

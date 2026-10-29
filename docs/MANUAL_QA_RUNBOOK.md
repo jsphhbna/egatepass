@@ -566,3 +566,26 @@ stateDiagram-v2
    - Inline message appears: *"Start date cannot be later than end date."*
    - Table displays *"Start date cannot be later than end date."* without querying backend.
    - Export CSV, Excel, and PDF buttons are disabled.
+
+### 15.4 Forced Actor Switch Purge & Unattributed Record Rejection
+1. **Setup Shift Transfer Scenario**: Guard A logs in and records offline actions while offline.
+2. **Forced Actor Switch**: Guard B logs in on the same browser (or `transitionGuardOfflineStore(guardB)` triggers).
+3. **Verify Store Purge**:
+   - Inspect IndexedDB stores: `cached_visitors`, `offline_registrations`, `offline_events`, and `meta` are completely emptied.
+   - Guard B's pending outbox badge shows 0.
+   - Guard B cannot see, approve, or synchronize any records created by Guard A.
+4. **Unattributed Record Rejection**:
+   - If an unattributed record (`actorId = null` or missing) is artificially injected into IndexedDB, verify that `getOfflineRegistrations(guardB)`, `getOfflineEvents(guardB)`, and `searchCachedVisitors(guardB)` fail closed and omit the unattributed record completely.
+
+### 15.5 Evidence-Safe Sync Failure Classifier Verification
+1. **Intake Offline Registration**: Complete an offline registration on the Guard console while disconnected.
+2. **Simulate Transient / Network / 5xx Outage**:
+   - Intercept `/api/sync-offline-registration` and return HTTP 503 or simulate network disconnection.
+   - Trigger sync via `runOfflineMaintenance()`.
+   - **Expected**: Registration remains in `pending` state with photo and ID blobs intact. Checkpoints are retained.
+3. **Simulate Unexpected 400 Bad Request**:
+   - Return HTTP 400 with generic error message.
+   - **Expected**: Classifier treats this as `transient_or_internal`. Local photo and ID blobs are preserved; registration remains `pending`.
+4. **Simulate Server 409 Conflict**:
+   - Return HTTP 409 `{"status": "conflict", "reason": "pass_already_exists"}`.
+   - **Expected**: Classifier marks registration as terminal `conflict`. Binary blobs (`photoBlob`, `idBlob`) are stripped from IndexedDB, while relational record and error metadata remain intact for reconciliation.

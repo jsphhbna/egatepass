@@ -434,6 +434,13 @@ Outage Architecture & Authority Delegation
 
 ### Architectural Guarantees:
 - **No Client Secrets**: The IndexedDB store contains strictly operational visitor metadata. No server secrets, service-role keys, or signing keys are ever stored client-side.
+- **Strict Actor Binding & Fail-Closed Exclusion**: Every record across `cached_visitors`, `offline_registrations`, and `offline_events` requires a non-null `actorId`. Queries fail closed (`r.actorId === actorId`); records lacking an actor attribution are never read, modified, or synchronized.
+- **Identity-Switch Store Purge**: When switching guards (`prepareGuardOfflineStoreForActor` via `transitionGuardOfflineStore`), if a prior guard's session was present, all sensitive stores (`cached_visitors`, `offline_registrations`, `offline_events`, `meta`) are purged to ensure the incoming guard starts with clean local storage and zero cross-actor data leakage.
+- **Sign-Out Guard**: Clean logout is strictly prevented if `getPendingSyncCount(actorId) > 0`, forcing guards to synchronize outbox items before ending their shift.
+- **Centralized Sync Failure Classifier (`classifyOfflineRegistrationSyncFailure`)**: Synchronizer failure branches are unified:
+  - Transient or internal errors (network timeouts, 5xx outages, 503 authority failures, unexpected 400 bad requests, or unmapped 422s) preserve local photo and ID binary blobs and upload intent checkpoints, leaving records in `pending` state for automated retry.
+  - Stale intent errors (specific 422 codes) clear checkpoints while preserving blobs for re-upload.
+  - Authoritative conflicts (HTTP 409) mark registrations as terminal `conflict` and strip local evidence blobs while retaining metadata for audit reconciliation.
 - **Idempotent Synchronization**: Each offline registration possesses an immutable UUID `offlineRegistrationId`. Each offline event possesses an immutable UUID `eventId`. Interrupted or replayed sync requests return the existing canonical records without duplication.
 - **Row-Level Locking & Conflict Detection**: Server-side sync RPCs lock affected pass rows (`FOR UPDATE`) and verify expected prior statuses. Conflicting server states (e.g. pass already cancelled or exited) are routed to `public.reconciliation_tasks` for administrative audit rather than blindly overwriting authoritative state.
 - **Daily Retention Purge**: The local IndexedDB database purges operational caches and processed event receipts daily to ensure client devices do not accumulate a shadow database.

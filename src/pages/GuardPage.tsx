@@ -34,8 +34,7 @@ import {
   getOfflineRegistrations,
   getOfflineEvents,
   purgeStaleLocalData,
-  prepareGuardOfflineStoreForActor,
-  clearAllGuardOfflineData,
+  transitionGuardOfflineStore,
   type OfflineRegistrationRecord,
   type OfflineEventRecord,
 } from '@/lib/offline/guardIndexedDb';
@@ -101,15 +100,20 @@ export function GuardPage() {
   const [storePrepared, setStorePrepared] = useState(false);
   const [storeError, setStoreError] = useState<string | null>(null);
 
-  // Function to refresh local IndexedDB outbox counts
+  // Function to refresh local IndexedDB outbox counts (Requirement 22)
   const refreshPendingCounts = async () => {
+    if (!uid || !storePrepared) {
+      setPendingSyncCount({ registrations: 0, events: 0, total: 0 });
+      setOutboxRegistrations([]);
+      setOutboxEvents([]);
+      return;
+    }
     try {
-      const actorId = uid ?? undefined;
-      const counts = await getPendingSyncCount(actorId);
+      const counts = await getPendingSyncCount(uid);
       setPendingSyncCount(counts);
       const [regs, evts] = await Promise.all([
-        getOfflineRegistrations(actorId),
-        getOfflineEvents(actorId),
+        getOfflineRegistrations(uid),
+        getOfflineEvents(uid),
       ]);
       setOutboxRegistrations(regs);
       setOutboxEvents(evts);
@@ -120,24 +124,26 @@ export function GuardPage() {
 
   useEffect(() => {
     let active = true;
-    if (!uid) {
-      setStorePrepared(false);
-      void clearAllGuardOfflineData();
-      return;
-    }
+    setStorePrepared(false);
 
-    prepareGuardOfflineStoreForActor(uid)
+    transitionGuardOfflineStore(uid ?? null)
       .then(() => {
         if (active) {
-          setStorePrepared(true);
-          setStoreError(null);
-          void refreshPendingCounts();
+          if (uid) {
+            setStorePrepared(true);
+            setStoreError(null);
+            void refreshPendingCounts();
+          } else {
+            setStorePrepared(false);
+            setStoreError(null);
+          }
         }
       })
       .catch((err) => {
         if (active) {
-          console.error('Failed to prepare local Guard store for actor:', err);
+          console.error('Failed to transition local Guard store for actor:', err);
           setStoreError('Unable to initialize secure local offline storage for this account. Please refresh or contact support.');
+          setStorePrepared(false);
         }
       });
 
@@ -531,14 +537,13 @@ export function GuardPage() {
   async function handleSignOut() {
     setIsSigningOut(true);
     try {
-      const actorId = uid ?? undefined;
-      if (actorId) {
-        let counts = await getPendingSyncCount(actorId);
+      if (uid) {
+        let counts = await getPendingSyncCount(uid);
         if (counts.total > 0) {
           if (isBackendOnline) {
             toast.info('Synchronizing pending records before sign-out…');
             await runOfflineMaintenance();
-            counts = await getPendingSyncCount(actorId);
+            counts = await getPendingSyncCount(uid);
           }
           if (counts.total > 0) {
             toast.error(
@@ -550,7 +555,7 @@ export function GuardPage() {
             return;
           }
         }
-        await clearAllGuardOfflineData();
+        await transitionGuardOfflineStore(null);
       }
       await signOutCurrentActor();
     } catch (err) {
@@ -733,18 +738,18 @@ export function GuardPage() {
         </div>
       )}
 
-      {activeTab === 'recovery' && storePrepared && !storeError && (
+      {activeTab === 'recovery' && storePrepared && uid && !storeError && (
         <GuardVisitorRecoveryTab
           isBackendOnline={isBackendOnline}
-          actorId={uid ?? undefined}
+          actorId={uid}
           onActionComplete={refreshPendingCounts}
         />
       )}
 
-      {activeTab === 'offline_reg' && storePrepared && !storeError && (
+      {activeTab === 'offline_reg' && storePrepared && uid && !storeError && (
         <GuardOfflineRegistrationTab
           isBackendOnline={isBackendOnline}
-          actorId={uid ?? undefined}
+          actorId={uid}
           onRegistered={refreshPendingCounts}
         />
       )}

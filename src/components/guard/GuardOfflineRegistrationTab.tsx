@@ -23,7 +23,7 @@ import { formatManilaTime } from '@/lib/manilaTime';
 
 export interface GuardOfflineRegistrationTabProps {
   isBackendOnline: boolean;
-  actorId?: string;
+  actorId: string;
   onRegistered?: () => void;
 }
 
@@ -158,7 +158,7 @@ export function GuardOfflineRegistrationTab({
 
     try {
       // Atomic registration + projected visitor cache insert (Root Causes 2.2 and 2.3)
-      await saveOfflineRegistrationWithCache(actorId ? actorId : record, actorId ? record : undefined);
+      await saveOfflineRegistrationWithCache(actorId, record);
 
       setCompletedRecord(record);
       toast.success('Visitor entry approved offline (Stored on this device pending synchronization)');
@@ -204,7 +204,7 @@ export function GuardOfflineRegistrationTab({
     };
 
     try {
-      await saveOfflineRegistrationWithCache(actorId ? actorId : record, actorId ? record : undefined);
+      await saveOfflineRegistrationWithCache(actorId, record);
       setShowRejectModal(false);
       setCompletedRecord(record);
       toast.success('Visitor rejection recorded offline (Stored on this device pending synchronization)');

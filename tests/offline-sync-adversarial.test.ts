@@ -17,10 +17,13 @@ describe('Phase 17 & Phase 10: Offline Synchronization Adversarial Scenarios (S1
     setupMockIndexedDb();
   });
 
+  const actorId = 'test-guard-actor-id';
+
   // S1 — Interrupted sync retry
   it('S1: Interrupted sync retry does not duplicate records and retries cleanly', async () => {
     const offlineRegId = 's1-reg-uuid-1111';
     const reg: OfflineRegistrationRecord = {
+      actorId,
       offlineRegistrationId: offlineRegId,
       visitor: {
         firstName: 'Andres',
@@ -37,18 +40,18 @@ describe('Phase 17 & Phase 10: Offline Synchronization Adversarial Scenarios (S1
       syncStatus: 'pending',
     };
 
-    await saveOfflineRegistration(reg);
+    await saveOfflineRegistration(actorId, reg);
 
     // Simulate first attempt: status becomes 'syncing', but network drops
     await updateOfflineRegistrationStatus(offlineRegId, 'syncing');
-    let current = (await getOfflineRegistrations()).find((r) => r.offlineRegistrationId === offlineRegId);
+    let current = (await getOfflineRegistrations(actorId)).find((r) => r.offlineRegistrationId === offlineRegId);
     expect(current?.syncStatus).toBe('syncing');
 
     // Network drops: status resets to 'pending' with conflictReason
     await updateOfflineRegistrationStatus(offlineRegId, 'pending', {
       conflictReason: 'Network timeout during photo upload',
     });
-    current = (await getOfflineRegistrations()).find((r) => r.offlineRegistrationId === offlineRegId);
+    current = (await getOfflineRegistrations(actorId)).find((r) => r.offlineRegistrationId === offlineRegId);
     expect(current?.syncStatus).toBe('pending');
     expect(current?.conflictReason).toContain('Network timeout');
 
@@ -58,7 +61,7 @@ describe('Phase 17 & Phase 10: Offline Synchronization Adversarial Scenarios (S1
       syncedAt: new Date().toISOString(),
     });
 
-    const allRegs = await getOfflineRegistrations();
+    const allRegs = await getOfflineRegistrations(actorId);
     const matches = allRegs.filter((r) => r.offlineRegistrationId === offlineRegId);
     // Exactly 1 record exists — no duplicates
     expect(matches.length).toBe(1);
@@ -70,6 +73,7 @@ describe('Phase 17 & Phase 10: Offline Synchronization Adversarial Scenarios (S1
   it('S2: Submitting the same eventId twice returns idempotent receipt without duplicate transition', async () => {
     const eventId = 's2-evt-uuid-2222';
     const event: OfflineEventRecord = {
+      actorId,
       eventId,
       passId: 'pass-s2',
       action: 'approve_entry',
@@ -78,7 +82,7 @@ describe('Phase 17 & Phase 10: Offline Synchronization Adversarial Scenarios (S1
       syncStatus: 'pending',
     };
 
-    await queueOfflineEvent(event);
+    await queueOfflineEvent(actorId, event);
 
     // First submission
     await updateOfflineEventStatus(eventId, 'synced', {
@@ -86,11 +90,11 @@ describe('Phase 17 & Phase 10: Offline Synchronization Adversarial Scenarios (S1
     });
 
     // Replay of same eventId
-    const stored = (await getOfflineEvents()).find((e) => e.eventId === eventId);
+    const stored = (await getOfflineEvents(actorId)).find((e) => e.eventId === eventId);
     expect(stored?.syncStatus).toBe('synced');
 
     // Total events with this ID remains exactly 1
-    const matching = (await getOfflineEvents()).filter((e) => e.eventId === eventId);
+    const matching = (await getOfflineEvents(actorId)).filter((e) => e.eventId === eventId);
     expect(matching.length).toBe(1);
   });
 
@@ -98,6 +102,7 @@ describe('Phase 17 & Phase 10: Offline Synchronization Adversarial Scenarios (S1
   it('S3: Offline action expecting issued when server is rejected is flagged as conflict', async () => {
     const eventId = 's3-evt-conflict-3333';
     const event: OfflineEventRecord = {
+      actorId,
       eventId,
       passId: 'pass-s3',
       action: 'approve_entry',
@@ -106,7 +111,7 @@ describe('Phase 17 & Phase 10: Offline Synchronization Adversarial Scenarios (S1
       syncStatus: 'pending',
     };
 
-    await queueOfflineEvent(event);
+    await queueOfflineEvent(actorId, event);
 
     // Server returns conflict because pass was already rejected
     await updateOfflineEventStatus(eventId, 'conflict', {
@@ -114,7 +119,7 @@ describe('Phase 17 & Phase 10: Offline Synchronization Adversarial Scenarios (S1
       syncedAt: new Date().toISOString(),
     });
 
-    const stored = (await getOfflineEvents()).find((e) => e.eventId === eventId);
+    const stored = (await getOfflineEvents(actorId)).find((e) => e.eventId === eventId);
     expect(stored?.syncStatus).toBe('conflict');
     expect(stored?.conflictReason).toContain('Server status is rejected');
   });
@@ -123,6 +128,7 @@ describe('Phase 17 & Phase 10: Offline Synchronization Adversarial Scenarios (S1
   it('S4: Same offlineRegistrationId with different visitor payload is rejected as conflict', async () => {
     const regId = 's4-reg-idempotency-4444';
     const regOriginal: OfflineRegistrationRecord = {
+      actorId,
       offlineRegistrationId: regId,
       visitor: {
         firstName: 'Emilio',
@@ -139,7 +145,7 @@ describe('Phase 17 & Phase 10: Offline Synchronization Adversarial Scenarios (S1
       syncStatus: 'pending',
     };
 
-    await saveOfflineRegistration(regOriginal);
+    await saveOfflineRegistration(actorId, regOriginal);
 
     // If an attacker or corrupt client reuses the same UUID for a different visitor:
     const isPayloadIdentical = (
@@ -156,7 +162,7 @@ describe('Phase 17 & Phase 10: Offline Synchronization Adversarial Scenarios (S1
       conflictReason: 'offlineRegistrationId reused with conflicting visitor payload',
     });
 
-    const stored = (await getOfflineRegistrations()).find((r) => r.offlineRegistrationId === regId);
+    const stored = (await getOfflineRegistrations(actorId)).find((r) => r.offlineRegistrationId === regId);
     expect(stored?.syncStatus).toBe('conflict');
     expect(stored?.conflictReason).toContain('conflicting visitor payload');
   });
@@ -168,6 +174,7 @@ describe('Phase 17 & Phase 10: Offline Synchronization Adversarial Scenarios (S1
     const timeOut = '2026-10-27T11:45:00.000Z';
 
     const reg: OfflineRegistrationRecord = {
+      actorId,
       offlineRegistrationId: regId,
       visitor: {
         firstName: 'Apolinario',
@@ -183,9 +190,10 @@ describe('Phase 17 & Phase 10: Offline Synchronization Adversarial Scenarios (S1
       rejectionReason: null,
       syncStatus: 'pending',
     };
-    await saveOfflineRegistration(reg);
+    await saveOfflineRegistration(actorId, reg);
 
     const exitEvt: OfflineEventRecord = {
+      actorId,
       eventId: 's5-exit-evt',
       passId: 'pass-s5',
       action: 'record_exit',
@@ -193,7 +201,7 @@ describe('Phase 17 & Phase 10: Offline Synchronization Adversarial Scenarios (S1
       occurredAt: timeOut,
       syncStatus: 'pending',
     };
-    await queueOfflineEvent(exitEvt);
+    await queueOfflineEvent(actorId, exitEvt);
 
     expect(new Date(timeOut).getTime()).toBeGreaterThan(new Date(timeIn).getTime());
     expect(reg.action).toBe('approved');
@@ -204,6 +212,7 @@ describe('Phase 17 & Phase 10: Offline Synchronization Adversarial Scenarios (S1
   it('S6: Pre-existing visitor approved and exited offline updates existing pass without duplicating', async () => {
     const existingPassId = 'pass-pre-existing-006';
     const exitEvt: OfflineEventRecord = {
+      actorId,
       eventId: 's6-evt-exit',
       passId: existingPassId,
       action: 'record_exit',
@@ -211,9 +220,9 @@ describe('Phase 17 & Phase 10: Offline Synchronization Adversarial Scenarios (S1
       occurredAt: new Date().toISOString(),
       syncStatus: 'pending',
     };
-    await queueOfflineEvent(exitEvt);
+    await queueOfflineEvent(actorId, exitEvt);
 
-    const pending = await getOfflineEvents('pending');
+    const pending = await getOfflineEvents(actorId, 'pending');
     expect(pending.some((e) => e.passId === existingPassId)).toBe(true);
   });
 
@@ -221,6 +230,7 @@ describe('Phase 17 & Phase 10: Offline Synchronization Adversarial Scenarios (S1
   it('S7: Evidence upload failure keeps record pending and retryable without false synced state', async () => {
     const regId = 's7-evidence-fail';
     const reg: OfflineRegistrationRecord = {
+      actorId,
       offlineRegistrationId: regId,
       visitor: {
         firstName: 'Melchora',
@@ -236,14 +246,14 @@ describe('Phase 17 & Phase 10: Offline Synchronization Adversarial Scenarios (S1
       rejectionReason: null,
       syncStatus: 'pending',
     };
-    await saveOfflineRegistration(reg);
+    await saveOfflineRegistration(actorId, reg);
 
     // Simulate failure during upload
     await updateOfflineRegistrationStatus(regId, 'pending', {
       conflictReason: 'Storage upload failed: 503 Service Unavailable',
     });
 
-    const stored = (await getOfflineRegistrations()).find((r) => r.offlineRegistrationId === regId);
+    const stored = (await getOfflineRegistrations(actorId)).find((r) => r.offlineRegistrationId === regId);
     expect(stored?.syncStatus).toBe('pending');
     expect(stored?.syncedAt).toBeUndefined();
     expect(stored?.canonicalPassId).toBeUndefined();

@@ -11,6 +11,7 @@ import {
   searchCachedVisitors,
   atomicReplaceCachedVisitors,
   clearAllGuardOfflineData,
+  saveCachedVisitors,
   type CachedVisitorPass,
 } from '@/lib/offline/guardIndexedDb';
 import { runOfflineMaintenance } from '@/lib/offline/guardSyncManager';
@@ -66,15 +67,14 @@ describe('Cross-Guard Actor Isolation & Session Management (P1 Invariants)', () 
     });
 
     // Guard A queues an offline event
-    await queueOfflineEvent({
+    await queueOfflineEvent(GUARD_A, {
       eventId: 'evt-001',
       passId: 'pass-001',
-      action: 'record_entry',
-      expectedStatus: 'issued',
+      visitorName: 'Alice Visitor',
+      action: 'record_exit',
+      expectedStatus: 'inside',
       expectedVersion: 1,
       occurredAt: new Date().toISOString(),
-      entryGate: 'Gate 1',
-      actorId: GUARD_A,
       syncStatus: 'pending',
     });
 
@@ -105,6 +105,7 @@ describe('Cross-Guard Actor Isolation & Session Management (P1 Invariants)', () 
     const serverPasses: CachedVisitorPass[] = [
       {
         id: 'pass-a-1',
+        actorId: GUARD_A,
         passId: 'pass-a-1',
         publicReference: 'EG-PASS-A',
         passReference: 'EG-PASS-A',
@@ -120,10 +121,10 @@ describe('Cross-Guard Actor Isolation & Session Management (P1 Invariants)', () 
         cachedAt: new Date().toISOString(),
       },
     ];
-    await atomicReplaceCachedVisitors(serverPasses);
+    await atomicReplaceCachedVisitors(GUARD_A, serverPasses);
 
     // Guard A can see the visitor
-    const searchA = await searchCachedVisitors('Confidential Visitor');
+    const searchA = await searchCachedVisitors(GUARD_A, 'Confidential Visitor');
     expect(searchA.length).toBe(1);
 
     // 2. Guard B logs in on same device
@@ -131,11 +132,11 @@ describe('Cross-Guard Actor Isolation & Session Management (P1 Invariants)', () 
     expect(await getActiveGuardActorId()).toBe(GUARD_B);
 
     // Guard B's search MUST NOT reveal Guard A's cached visitor
-    const searchB = await searchCachedVisitors('Confidential Visitor');
+    const searchB = await searchCachedVisitors(GUARD_B, 'Confidential Visitor');
     expect(searchB.length).toBe(0);
   });
 
-  it('runOfflineMaintenance only synchronizes records belonging to active actor', async () => {
+  it('forced actor switch purges previous guard sensitive data and Guard B starts clean (Requirement 27)', async () => {
     // Guard A creates offline registration
     await prepareGuardOfflineStoreForActor(GUARD_A);
     await saveOfflineRegistrationWithCache(GUARD_A, {
@@ -165,10 +166,12 @@ describe('Cross-Guard Actor Isolation & Session Management (P1 Invariants)', () 
     // Guard B has 0 records, so 0 registrations synced
     expect(res.summary.registrationsSynced).toBe(0);
 
-    // Guard A's record remains pending
+    // Requirement 27: Guard A's data was purged during forced actor transition to Guard B
     const regsA = await getOfflineRegistrations(GUARD_A, 'pending');
-    expect(regsA.length).toBe(1);
-    expect(regsA[0]?.offlineRegistrationId).toBe('reg-a-only');
+    expect(regsA.length).toBe(0);
+
+    const regsB = await getOfflineRegistrations(GUARD_B, 'pending');
+    expect(regsB.length).toBe(0);
   });
 
   it('clearAllGuardOfflineData removes all offline data across stores', async () => {
@@ -188,9 +191,87 @@ describe('Cross-Guard Actor Isolation & Session Management (P1 Invariants)', () 
 
     await clearAllGuardOfflineData();
 
-    const counts = await getPendingSyncCount();
+    const counts = await getPendingSyncCount(GUARD_A);
     expect(counts.total).toBe(0);
-    const regs = await getOfflineRegistrations();
+    const regs = await getOfflineRegistrations(GUARD_A);
+    expect(regs.length).toBe(0);
+  });
+
+  it('fails closed when attempting to save without valid actorId (Requirement 25)', async () => {
+    await expect(
+      saveOfflineRegistrationWithCache('', {
+        offlineRegistrationId: 'no-actor-reg',
+        visitor: {
+          firstName: 'No',
+          lastName: 'Actor',
+          contactNumber: '09170000000',
+          purpose: 'No Actor Test',
+          visitDate: '2026-10-29',
+        },
+        occurredAt: new Date().toISOString(),
+        action: 'approved',
+      })
+    ).rejects.toThrow('actorId required');
+
+    await expect(
+      queueOfflineEvent('', {
+        eventId: 'no-actor-evt',
+        passId: 'pass-1',
+        visitorName: 'No Actor',
+        action: 'record_exit',
+        expectedStatus: 'inside',
+        occurredAt: new Date().toISOString(),
+        syncStatus: 'pending',
+      })
+    ).rejects.toThrow('actorId required');
+
+    await expect(
+      saveCachedVisitors('', [
+        {
+          id: 'pass-no-actor',
+          actorId: '',
+          visitorId: 'vis-1',
+          visitorName: 'No Actor Visitor',
+          contactNumber: '09170000000',
+          purpose: 'Test',
+          visitDate: '2026-10-29',
+          status: 'issued',
+          validFrom: '2026-10-29T08:00:00+08:00',
+          validUntil: '2026-10-29T17:00:00+08:00',
+          cachedAt: new Date().toISOString(),
+        },
+      ])
+    ).rejects.toThrow('actorId required');
+  });
+
+  it('corrupted or unowned records with empty actorId are not visible or counted (Requirement 25)', async () => {
+    await prepareGuardOfflineStoreForActor(GUARD_A);
+    // Directly inject an unowned record into IndexedDB
+    const { setupMockIndexedDb } = await import('./helpers/mockIndexedDb');
+    const db = await setupMockIndexedDb();
+    await new Promise<void>((resolve, reject) => {
+      const tx = db.transaction('offline_registrations', 'readwrite');
+      tx.objectStore('offline_registrations').put({
+        offlineRegistrationId: 'corrupted-unowned-reg',
+        actorId: '', // unowned / empty
+        visitor: {
+          firstName: 'Corrupted',
+          lastName: 'Record',
+          contactNumber: '09170000000',
+          purpose: 'Corrupted',
+          visitDate: '2026-10-29',
+        },
+        action: 'approved',
+        occurredAt: new Date().toISOString(),
+        syncStatus: 'pending',
+      });
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => reject(tx.error);
+    });
+
+    const counts = await getPendingSyncCount(GUARD_A);
+    expect(counts.total).toBe(0);
+    const regs = await getOfflineRegistrations(GUARD_A);
     expect(regs.length).toBe(0);
   });
 });

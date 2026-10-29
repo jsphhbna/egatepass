@@ -62,8 +62,10 @@ describe('Section H: Pass Reference Parity Across All Surfaces', () => {
 
   it('H.2: Guard recovery tab displays and searches the exact EG-XXXXXXXX public reference', async () => {
     setupMockIndexedDb();
+    const testActorId = 'test-guard-actor-id';
 
     const cachedPass: CachedVisitorPass = {
+      actorId: testActorId,
       id: canonicalPassId,
       publicReference: canonicalPublicRef,
       visitorId: 'vis-123',
@@ -79,20 +81,20 @@ describe('Section H: Pass Reference Parity Across All Surfaces', () => {
     };
 
     const { saveCachedVisitors } = await import('@/lib/offline/guardIndexedDb');
-    await saveCachedVisitors([cachedPass]);
+    await saveCachedVisitors(testActorId, [cachedPass]);
 
     // Search by full EG-XXXXXXXX reference
-    const fullMatch = await searchCachedVisitors(expectedDisplayRef);
+    const fullMatch = await searchCachedVisitors(testActorId, expectedDisplayRef);
     expect(fullMatch.length).toBe(1);
     expect(fullMatch[0]?.passReference).toBe(expectedDisplayRef);
 
     // Search by short 8-char reference
-    const shortMatch = await searchCachedVisitors('E4A8B2C1');
+    const shortMatch = await searchCachedVisitors(testActorId, 'E4A8B2C1');
     expect(shortMatch.length).toBe(1);
     expect(shortMatch[0]?.passReference).toBe(expectedDisplayRef);
 
     // Search by lowercase input
-    const lowerMatch = await searchCachedVisitors('eg-e4a8b2c1');
+    const lowerMatch = await searchCachedVisitors(testActorId, 'eg-e4a8b2c1');
     expect(lowerMatch.length).toBe(1);
     expect(lowerMatch[0]?.passReference).toBe(expectedDisplayRef);
   });

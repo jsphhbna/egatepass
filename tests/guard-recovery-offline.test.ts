@@ -18,8 +18,11 @@ describe('Phase 4, 5, 6, 7, 8: Guard Visitor Recovery & Offline Operations', () 
     setupMockIndexedDb();
   });
 
+  const actorId = 'test-guard-actor-id';
+
   const mockActiveVisitors: CachedVisitorPass[] = [
     {
+      actorId,
       id: 'pass-001',
       visitorId: 'vis-001',
       visitorName: 'Juan Dela Cruz',
@@ -35,6 +38,7 @@ describe('Phase 4, 5, 6, 7, 8: Guard Visitor Recovery & Offline Operations', () 
       cachedAt: new Date().toISOString(),
     },
     {
+      actorId,
       id: 'pass-002',
       visitorId: 'vis-002',
       visitorName: 'Maria Santos',
@@ -50,6 +54,7 @@ describe('Phase 4, 5, 6, 7, 8: Guard Visitor Recovery & Offline Operations', () 
       cachedAt: new Date().toISOString(),
     },
     {
+      actorId,
       id: 'pass-003',
       visitorId: 'vis-003',
       visitorName: 'Pedro Penduko',
@@ -68,38 +73,39 @@ describe('Phase 4, 5, 6, 7, 8: Guard Visitor Recovery & Offline Operations', () 
   ];
 
   it('4.1. caches operational visitors in IndexedDB and retrieves them', async () => {
-    await saveCachedVisitors(mockActiveVisitors);
+    await saveCachedVisitors(actorId, mockActiveVisitors);
 
-    const all = await searchCachedVisitors('');
+    const all = await searchCachedVisitors(actorId, '');
     expect(all.length).toBe(3);
   });
 
   it('4.2. recovery search filters by visitor name', async () => {
-    await saveCachedVisitors(mockActiveVisitors);
+    await saveCachedVisitors(actorId, mockActiveVisitors);
 
-    const results = await searchCachedVisitors('Dela Cruz');
+    const results = await searchCachedVisitors(actorId, 'Dela Cruz');
     expect(results.length).toBe(1);
     expect(results[0]?.visitorName).toBe('Juan Dela Cruz');
   });
 
   it('4.3. recovery search filters by contact number', async () => {
-    await saveCachedVisitors(mockActiveVisitors);
+    await saveCachedVisitors(actorId, mockActiveVisitors);
 
-    const results = await searchCachedVisitors('09189876543');
+    const results = await searchCachedVisitors(actorId, '09189876543');
     expect(results.length).toBe(1);
     expect(results[0]?.visitorName).toBe('Maria Santos');
   });
 
   it('4.4. recovery search filters by pass reference', async () => {
-    await saveCachedVisitors(mockActiveVisitors);
+    await saveCachedVisitors(actorId, mockActiveVisitors);
 
-    const results = await searchCachedVisitors('EG-9C0D1E2F');
+    const results = await searchCachedVisitors(actorId, 'EG-9C0D1E2F');
     expect(results.length).toBe(1);
     expect(results[0]?.visitorName).toBe('Pedro Penduko');
   });
 
   it('4.5. offline gate actions write to outbox with immutable eventId', async () => {
     const offlineEvent: OfflineEventRecord = {
+      actorId,
       eventId: 'evt-unique-uuid-1234',
       passId: 'pass-001',
       action: 'approve_entry',
@@ -108,9 +114,9 @@ describe('Phase 4, 5, 6, 7, 8: Guard Visitor Recovery & Offline Operations', () 
       syncStatus: 'pending',
     };
 
-    await queueOfflineEvent(offlineEvent);
+    await queueOfflineEvent(actorId, offlineEvent);
 
-    const pending = await getOfflineEvents('pending');
+    const pending = await getOfflineEvents(actorId, 'pending');
     expect(pending.length).toBe(1);
     expect(pending[0]?.eventId).toBe('evt-unique-uuid-1234');
     expect(pending[0]?.action).toBe('approve_entry');
@@ -120,6 +126,7 @@ describe('Phase 4, 5, 6, 7, 8: Guard Visitor Recovery & Offline Operations', () 
     const dummyBlob = new Blob(['dummy photo content'], { type: 'image/webp' });
 
     const offlineReg: OfflineRegistrationRecord = {
+      actorId,
       offlineRegistrationId: 'offline-reg-uuid-5678',
       visitor: {
         firstName: 'Jose',
@@ -136,9 +143,9 @@ describe('Phase 4, 5, 6, 7, 8: Guard Visitor Recovery & Offline Operations', () 
       syncStatus: 'pending',
     };
 
-    await saveOfflineRegistration(offlineReg);
+    await saveOfflineRegistration(actorId, offlineReg);
 
-    const regs = await getOfflineRegistrations('pending');
+    const regs = await getOfflineRegistrations(actorId, 'pending');
     expect(regs.length).toBe(1);
     expect(regs[0]?.offlineRegistrationId).toBe('offline-reg-uuid-5678');
     expect(regs[0]?.visitor.firstName).toBe('Jose');
@@ -148,22 +155,24 @@ describe('Phase 4, 5, 6, 7, 8: Guard Visitor Recovery & Offline Operations', () 
   it('4.7. data retention: purgeStaleLocalData cleans visitors from yesterday but keeps today', async () => {
     const oldVisitor: CachedVisitorPass = {
       ...mockActiveVisitors[0]!,
+      actorId,
       id: 'pass-old',
       visitDate: '2026-10-26', // Yesterday
     };
     const todayVisitor: CachedVisitorPass = {
       ...mockActiveVisitors[1]!,
+      actorId,
       id: 'pass-today',
       visitDate: '2026-10-27', // Today
     };
 
-    await saveCachedVisitors([oldVisitor, todayVisitor]);
+    await saveCachedVisitors(actorId, [oldVisitor, todayVisitor]);
 
     // Purge with today = '2026-10-27'
     const purgeResult = await purgeStaleLocalData('2026-10-27');
     expect(purgeResult.purgedVisitors).toBeGreaterThanOrEqual(1);
 
-    const remaining = await searchCachedVisitors('');
+    const remaining = await searchCachedVisitors(actorId, '');
     expect(remaining.some((v) => v.id === 'pass-old')).toBe(false);
     expect(remaining.some((v) => v.id === 'pass-today')).toBe(true);
   });
