@@ -79,6 +79,12 @@ flowchart LR
 - **Online Visitors**: Access `https://egatepass.tech`, solve Turnstile, fill out personal and visit details manually or via optional browser-local OCR autofill, capture camera-only facial selfie and valid ID via rear camera or supported image upload (JPEG, PNG, WebP), obtain an issued pass with an EARIST-branded center logo QR code (error correction level H), and secure pass delivery through the verified email delivery gate (or intentionally continue without email after a 5-second timed warning).
 - **Walk-in Visitors (Kiosk)**: Use the campus kiosk tablet. Rear camera captures the visitor's valid ID, local Tesseract OCR extracts information for review, front camera captures a selfie, and a QR pass is displayed. Kiosk printing supports direct Web Bluetooth thermal printing via MXW01 with fail-safe issuance and browser/operating-system print fallback. (Physical hardware testing was not performed in software repairs and requires on-site manual QA).
 
+### 2.1.1 Deterministic Typography, Unicode Integrity & Export Encoding
+- **Visitor Names with Diacritics**: Names containing non-ASCII Latin characters (e.g., *José Niño Dela Cruz*, *Renée François*, *Mary-Jane O’Connor*) are rendered accurately across on-screen passes, server-generated email attachments, thermal printer receipts, PDF reports, and CSV spreadsheets.
+- **Spreadsheet Compatibility (Excel UTF-8 BOM)**: Generated CSV reports prepend a UTF-8 Byte Order Mark (`\uFEFF`), ensuring Excel on Windows opens reports with proper UTF-8 decoding rather than mojibake or mangled characters.
+- **Embedded PDF Fonts**: PDF report exports embed official Google Noto Sans TrueType fonts directly, guaranteeing identical appearance across operating systems without missing character boxes.
+- **Guard Console Outbox Truth**: When a guard logs in or shifts change, the local outbox counter and queue immediately reflect accurate local pending counts without requiring manual refreshes or extra actions.
+
 ### 2.2 Gate Entry, Guard Review, and Exit Sequence
 
 ```mermaid

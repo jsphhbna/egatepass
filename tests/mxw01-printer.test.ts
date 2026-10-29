@@ -109,4 +109,19 @@ describe('Phase 2 & Phase 17: MXW01 Kiosk Thermal Printer Integration', () => {
     mxw01PrinterManager.setPrintIntensity(150);
     expect(mxw01PrinterManager.getPrintIntensity()).toBe(100);
   });
+  it('2.8. thermal renderer supports Unicode visitor names and grapheme-safe rendering', async () => {
+    const unicodePresentation: PassPresentation = {
+      institutionName: 'EARIST E-GATEPASS',
+      systemTitle: 'CAMPUS VISITOR PASS',
+      visitorName: 'JOSÉ NIÑO DELA CRUZ',
+      visitDate: 'Oct 30, 2026',
+      passReference: 'Ref: EG-99887766',
+      qrToken: 'test-qr-token',
+      purpose: 'Académico – Registrar Verification • Special Permit',
+    };
+
+    const result = await renderThermalPass(unicodePresentation, BUNDLED_DEFAULT_THERMAL_TEMPLATE);
+    expect(result.canvas.width).toBe(384);
+    expect(result.dataUrl).toMatch(/^data:image\/png;base64,/);
+  });
 });

@@ -433,6 +433,13 @@ Outage Architecture & Authority Delegation
 ```
 
 ### Architectural Guarantees:
+- **Offline Transition Mutex & Race Elimination**: IndexedDB store preparation and actor shifts are strictly serialized via a global promise-chain mutex (`transitionGuardOfflineStore(actorId)`). Concurrently launched maintenance sweeps, cache updates, or shift handoffs queue deterministically without overlapping store purges or state corruptions.
+- **Session Authority Precondition**: The synchronizer (`runOfflineMaintenance`) verifies active Guard session authority via `client.auth.getSession()` *prior* to executing any IndexedDB mutations or network dispatches. If a session is absent or expired, sync immediately halts without mutating local records or resetting sync states.
+- **Immediate Outbox Truth**: The Guard UI initializes its outbox counter and synchronization view immediately upon store readiness via `refreshPendingCounts(actorId)` and an actor-bound React effect, ensuring truthful pending badge counts on initial offline reload without requiring extra user interactions.
+- **Strict Actor Isolation & Defense-in-Depth**:
+  - `saveCachedVisitors(actorId, visitors)` strictly requires a non-empty `actorId` and unconditionally overwrites any visitor record's `actorId` field with the verified actor.
+  - `queueOfflineVisitorAction(actorId, params)` verifies that target cached visitors belong to the acting guard (`visitor.actorId === actorId`); mismatches abort the transaction and reject with `'actor_mismatch'`.
+  - `recoverInterruptedSyncStates(actorId)` strictly confines state resets (`syncing` -> `pending`) to records belonging exclusively to the specified `actorId`.
 - **No Client Secrets**: The IndexedDB store contains strictly operational visitor metadata. No server secrets, service-role keys, or signing keys are ever stored client-side.
 - **Strict Actor Binding & Fail-Closed Exclusion**: Every record across `cached_visitors`, `offline_registrations`, and `offline_events` requires a non-null `actorId`. Queries fail closed (`r.actorId === actorId`); records lacking an actor attribution are never read, modified, or synchronized.
 - **Identity-Switch Store Purge**: When switching guards (`prepareGuardOfflineStoreForActor` via `transitionGuardOfflineStore`), if a prior guard's session was present, all sensitive stores (`cached_visitors`, `offline_registrations`, `offline_events`, `meta`) are purged to ensure the incoming guard starts with clean local storage and zero cross-actor data leakage.
@@ -449,7 +456,13 @@ Outage Architecture & Authority Delegation
 
 ## 12. Institutional Upgrades & Specialized Subsystems
 
-### A. Canonical Digital E-GatePass Artifact
+### A. Canonical Digital E-GatePass Artifact & Deterministic Font Rendering
+- **Bundled Typography (`public/fonts/`)**: Official Google Noto Sans TrueType fonts (`NotoSans-Regular.ttf`, `NotoSans-Bold.ttf`) and SIL Open Font License 1.1 (`OFL.txt`) are statically bundled in the repository, guaranteeing zero external runtime CDN dependencies or Google Fonts network requests.
+- **Server Fontconfig Bootstrapping (`server/lib/server-fonts.ts`)**: Serverless image generation boots a localized Fontconfig XML configuration before dynamically importing `sharp`. Fontconfig maps the `"Egatepass Noto Sans"` family directly to bundled TTF files, ensuring deterministic server-side SVG rasterization in Linux serverless containers.
+- **Canonical SVG 2-Line Name Fitting (`fitCanonicalVisitorName`)**: Visitor names are fitted within a defined horizontal bounding box ($x = 30..450$, width $420\text{px}$). Names $\le 24$ graphemes render on a single line ($y = 125, \text{size } 22$). Names $> 24$ graphemes wrap cleanly across two balanced lines ($y = 112, 136, \text{size } 18$) with visit date positioned at $y = 158$ and validity window at $y = 176$, preventing any overlap with the QR container ($y = 182$). Overlength lines apply `textLength="420" lengthAdjust="spacingAndGlyphs"`.
+- **Grapheme-Safe Truncation (`src/lib/textGraphemes.ts`)**: Character counting and string truncation use standard `Intl.Segmenter` (with `Array.from` fallback) to guarantee that Filipino, Spanish, and French names, diacritics, and combining marks (such as in *José Niño Dela Cruz*) are never severed mid-glyph.
+- **Institutional PDF Unicode Embedding**: The PDF export engine (`src/lib/reportExport.ts`) embeds `NotoSans-Regular.ttf` and `NotoSans-Bold.ttf` directly into the jsPDF Virtual File System as font `EgatepassNoto`, rendering multi-language characters and typographic bullets without corruption.
+- **CSV UTF-8 BOM Encoding**: All CSV exports prepend a UTF-8 Byte Order Mark (`\uFEFF`) to ensure Microsoft Excel and spreadsheet software on Windows immediately decode non-ASCII characters without mojibake.
 - **Shared Pure SVG Generator (`src/lib/digitalPassArtifact.ts`)**: Generates a single authoritative 480×696 SVG pass artifact containing EARIST institutional branding (maroon `#800000`, gold `#DAA520`), visitor name, visit date, validity window, canonical reference (`Ref: EG-XXXXXXXX`), purpose, and embedded QR code.
 - **Client Render Path (`src/lib/passPresentation.ts`, `InstitutionalPassCard.tsx`)**: Used for on-screen display, browser card download (rasterized onto HTML5 Canvas as PNG), and the Web Share API.
 - **Server Render Path (`server/lib/render-digital-pass.ts`, `server/routes/passes/email.ts`)**: Server-side rasterization via `sharp` converting the exact same canonical SVG into `egatepass-EG-XXXXXXXX.png` attached to pass delivery emails, eliminating visual drift.

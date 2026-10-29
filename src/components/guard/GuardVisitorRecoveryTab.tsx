@@ -106,7 +106,7 @@ export function GuardVisitorRecoveryTab({
         }
       }
     },
-    [isBackendOnline]
+    [isBackendOnline, actorId]
   );
 
   useEffect(() => {

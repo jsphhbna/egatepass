@@ -96,4 +96,23 @@ describe('Group D: Canonical Digital E-GatePass Contract & Parity', () => {
     expect(expectedFilename).toBe('egatepass-EG-E5F6A7B8.png');
     expect(expectedFilename).not.toBe('earist-gate-pass-qr.png');
   });
+  it('server rasterizer renders Unicode glyphs (José Niño Dela Cruz, •, –) deterministically with sharp', async () => {
+    const unicodePass = {
+      fullName: 'José Niño Dela Cruz',
+      visitDate: '2026-10-30',
+      publicReference: 'EG-99998888',
+      qrToken: 'egp_token_unicode_glyph_test',
+      purpose: 'Académico – Registrar Verification • Compliance',
+    };
+
+    const result = await renderDigitalPassPngBuffer(unicodePass);
+    expect(result.pngBuffer).toBeInstanceOf(Buffer);
+
+    const { default: sharp } = await import('sharp');
+    const metadata = await sharp(result.pngBuffer).metadata();
+    expect(metadata.width).toBe(480);
+    expect(metadata.height).toBe(696);
+    expect(metadata.format).toBe('png');
+    expect(result.presentation.visitorName).toBe('JOSÉ NIÑO DELA CRUZ');
+  });
 });

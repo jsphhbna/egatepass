@@ -199,7 +199,13 @@ export async function getActiveGuardActorId(): Promise<string | null> {
   return await getMeta<string>('guard_store_actor_id');
 }
 
-export async function prepareGuardOfflineStoreForActor(actorId: string): Promise<void> {
+let transitionMutex: Promise<void> = Promise.resolve();
+
+/**
+ * Internal uncoordinated store preparation.
+ * Never called directly by production modules; always invoked via transitionGuardOfflineStore.
+ */
+async function prepareGuardOfflineStoreForActorInternal(actorId: string): Promise<void> {
   if (!actorId || typeof actorId !== 'string' || !actorId.trim()) {
     throw new Error('actorId required to prepare Guard store');
   }
@@ -231,29 +237,36 @@ export async function prepareGuardOfflineStoreForActor(actorId: string): Promise
   await setMeta('guard_store_actor_id', actorId);
 }
 
-let isStoreTransitioning = false;
-const storeTransitionQueue: Array<() => void> = [];
-
 /**
- * Serialized local-store transition primitive (Requirement 20).
- * Prevents race conditions during actor handoff or logout.
+ * Serialized local-store transition primitive (Workstream A / Requirement 3 & 14).
+ * Enforces a strict Promise-chain mutex so only one actor-store prepare/clear executes at once,
+ * errors release the queue, and subsequent transitions await completion of previous operations.
  */
 export async function transitionGuardOfflineStore(nextActorId: string | null): Promise<void> {
-  while (isStoreTransitioning) {
-    await new Promise<void>((resolve) => storeTransitionQueue.push(resolve));
-  }
-  isStoreTransitioning = true;
+  const previous = transitionMutex;
+  let release: () => void = () => {};
+  transitionMutex = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+
   try {
+    await previous.catch(() => {});
     if (!nextActorId) {
       await clearAllGuardOfflineData();
     } else {
-      await prepareGuardOfflineStoreForActor(nextActorId);
+      await prepareGuardOfflineStoreForActorInternal(nextActorId);
     }
   } finally {
-    isStoreTransitioning = false;
-    const next = storeTransitionQueue.shift();
-    if (next) next();
+    release();
   }
+}
+
+/**
+ * Compatibility wrapper routing through the serialization mutex.
+ * Direct callers must use transitionGuardOfflineStore(actorId).
+ */
+export async function prepareGuardOfflineStoreForActor(actorId: string): Promise<void> {
+  return transitionGuardOfflineStore(actorId);
 }
 
 /**
@@ -410,22 +423,18 @@ export async function purgeStaleLocalData(
 // =============================================================================
 
 export async function saveCachedVisitors(
-  actorIdOrVisitors: string | CachedVisitorPass[],
-  maybeVisitors?: CachedVisitorPass[]
+  actorId: string,
+  visitors: CachedVisitorPass[]
 ): Promise<void> {
-  const actorId = typeof actorIdOrVisitors === 'string' ? actorIdOrVisitors : undefined;
-  const visitors = typeof actorIdOrVisitors === 'string' ? maybeVisitors! : actorIdOrVisitors;
+  if (!actorId || typeof actorId !== 'string' || !actorId.trim()) {
+    throw new Error('actorId required to save cached visitor');
+  }
   const db = await openDatabase();
   return new Promise((resolve, reject) => {
     const tx = db.transaction('cached_visitors', 'readwrite');
     const store = tx.objectStore('cached_visitors');
     for (const v of visitors) {
-      const finalActorId = actorId || v.actorId;
-      if (!finalActorId || typeof finalActorId !== 'string' || !finalActorId.trim()) {
-        tx.abort();
-        return reject(new Error('actorId required to save cached visitor'));
-      }
-      store.put({ ...v, actorId: finalActorId });
+      store.put({ ...v, actorId });
     }
     tx.oncomplete = () => resolve();
     tx.onerror = () => reject(tx.error);
@@ -833,13 +842,20 @@ export async function queueOfflineVisitorAction(
     const visitorStore = tx.objectStore('cached_visitors');
     const eventsStore = tx.objectStore('offline_events');
 
+    let abortReason: Error | null = null;
     const getReq = visitorStore.get(params.passId);
 
     getReq.onsuccess = () => {
       const visitor = getReq.result as CachedVisitorPass | undefined;
       if (!visitor) {
+        abortReason = new Error(`Visitor pass '${params.passId}' not found in operational cache`);
         tx.abort();
-        return reject(new Error(`Visitor pass '${params.passId}' not found in operational cache`));
+        return reject(abortReason);
+      }
+      if (visitor.actorId !== actorId) {
+        abortReason = new Error('actor_mismatch');
+        tx.abort();
+        return reject(abortReason);
       }
 
       // Legal state transition checks
@@ -907,8 +923,8 @@ export async function queueOfflineVisitorAction(
       tx.abort();
       reject(getReq.error);
     };
-    tx.onerror = () => reject(tx.error);
-    tx.onabort = () => reject(tx.error || new Error('Transaction aborted'));
+    tx.onerror = () => reject(abortReason || tx.error);
+    tx.onabort = () => reject(abortReason || tx.error || new Error('Transaction aborted'));
   });
 }
 
@@ -1077,10 +1093,13 @@ export async function finalizeOfflineRegistrationSync(
  * Recovers records left in transient 'syncing' state due to previous crash or ungraceful termination (Section 2).
  * Resets them to 'pending' so they become eligible for synchronization again.
  */
-export async function recoverInterruptedSyncStates(): Promise<{
+export async function recoverInterruptedSyncStates(actorId: string): Promise<{
   recoveredRegistrations: number;
   recoveredEvents: number;
 }> {
+  if (!actorId || typeof actorId !== 'string' || !actorId.trim()) {
+    throw new Error('actorId required to recover interrupted sync states');
+  }
   const db = await openDatabase();
   return new Promise((resolve, reject) => {
     const tx = db.transaction(['offline_registrations', 'offline_events'], 'readwrite');
@@ -1094,7 +1113,7 @@ export async function recoverInterruptedSyncStates(): Promise<{
       const cursor = (e.target as IDBRequest<IDBCursorWithValue>).result;
       if (cursor) {
         const item = cursor.value as OfflineRegistrationRecord;
-        if (item.syncStatus === 'syncing') {
+        if (item && item.actorId === actorId && item.syncStatus === 'syncing') {
           cursor.update({ ...item, syncStatus: 'pending' });
           recoveredRegistrations++;
         }
@@ -1107,7 +1126,7 @@ export async function recoverInterruptedSyncStates(): Promise<{
       const cursor = (e.target as IDBRequest<IDBCursorWithValue>).result;
       if (cursor) {
         const item = cursor.value as OfflineEventRecord;
-        if (item.syncStatus === 'syncing') {
+        if (item && item.actorId === actorId && item.syncStatus === 'syncing') {
           cursor.update({ ...item, syncStatus: 'pending' });
           recoveredEvents++;
         }

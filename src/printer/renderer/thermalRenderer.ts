@@ -2,6 +2,7 @@ import QRCode from 'qrcode';
 import type { PassPresentation } from '@/lib/passPresentation';
 import type { ThermalTemplateLayout, ThermalTemplateElement } from '@/types/thermalTemplate';
 import { BUNDLED_DEFAULT_THERMAL_TEMPLATE } from '../templates/bundledDefaultTemplate';
+import { splitGraphemes } from '@/lib/textGraphemes';
 
 export interface RenderThermalResult {
   canvas: HTMLCanvasElement;
@@ -22,6 +23,14 @@ export async function renderThermalPass(
 
   if (typeof document === 'undefined') {
     throw new Error('Canvas rendering requires a browser or DOM environment');
+  }
+
+  if ((document as any).fonts?.load) {
+    try {
+      await (document as any).fonts.load('14px "Egatepass Noto Sans"');
+    } catch {
+      // Non-fatal if font loading is unsupported
+    }
   }
 
   const canvas = document.createElement('canvas');
@@ -115,7 +124,7 @@ function renderElement(
     ctx.fillStyle = '#000000';
     const weight = el.fontWeight === 'bold' ? 'bold ' : '';
     const size = el.fontSize ?? 14;
-    ctx.font = `${weight}${size}px "Segoe UI", Roboto, Arial, sans-serif`;
+    ctx.font = `${weight}${size}px "Egatepass Noto Sans", "Noto Sans", Arial, sans-serif`;
 
     const maxWidth = el.width;
     const lineHeight = Math.max(size * 1.2, 14);
@@ -137,12 +146,12 @@ function renderElement(
           lines.push(currentLine);
           currentLine = word;
         } else {
-          // Word itself exceeds maxWidth: truncate with ellipsis
-          let truncated = word;
-          while (truncated.length > 1 && ctx.measureText(truncated + '…').width > maxWidth) {
-            truncated = truncated.slice(0, -1);
+          // Word itself exceeds maxWidth: truncate with ellipsis (grapheme-safe)
+          const g = splitGraphemes(word);
+          while (g.length > 1 && ctx.measureText(g.join('') + '…').width > maxWidth) {
+            g.pop();
           }
-          lines.push(truncated + '…');
+          lines.push(g.join('') + '…');
           currentLine = '';
         }
         if (lines.length >= maxLines) break;
@@ -153,11 +162,13 @@ function renderElement(
       lines.push(currentLine);
     } else if (lines.length > 0 && lines.length >= maxLines && currentLine) {
       const lastIndex = lines.length - 1;
-      let last = lines[lastIndex] ?? '';
-      while (last.length > 1 && ctx.measureText(last + '…').width > maxWidth) {
-        last = last.slice(0, -1);
+      const last = lines[lastIndex] ?? '';
+      const rawText = last.endsWith('…') ? last.slice(0, -1) : last;
+      const g = splitGraphemes(rawText);
+      while (g.length > 1 && ctx.measureText(g.join('') + '…').width > maxWidth) {
+        g.pop();
       }
-      lines[lastIndex] = last.endsWith('…') ? last : last + '…';
+      lines[lastIndex] = g.join('') + '…';
     }
 
     let textX = el.x;

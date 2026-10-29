@@ -1,5 +1,5 @@
 import { formatManilaTime } from '@/lib/manilaTime';
-import { useEffect, useState, useRef, useMemo } from 'react';
+import { useEffect, useState, useRef, useMemo, useCallback } from 'react';
 import { useAuth } from '@/hooks/useAuth';
 import { signOutCurrentActor } from '@/services/auth';
 import { AuthenticatedImage } from '@/components/AuthenticatedImage';
@@ -100,27 +100,27 @@ export function GuardPage() {
   const [storePrepared, setStorePrepared] = useState(false);
   const [storeError, setStoreError] = useState<string | null>(null);
 
-  // Function to refresh local IndexedDB outbox counts (Requirement 22)
-  const refreshPendingCounts = async () => {
-    if (!uid || !storePrepared) {
-      setPendingSyncCount({ registrations: 0, events: 0, total: 0 });
-      setOutboxRegistrations([]);
-      setOutboxEvents([]);
-      return;
-    }
+  const resetOutboxView = useCallback(() => {
+    setPendingSyncCount({ registrations: 0, events: 0, total: 0 });
+    setOutboxRegistrations([]);
+    setOutboxEvents([]);
+  }, []);
+
+  // Function to refresh local IndexedDB outbox counts for an actor (Requirement 7)
+  const refreshPendingCounts = useCallback(async (actorId: string) => {
     try {
-      const counts = await getPendingSyncCount(uid);
+      const counts = await getPendingSyncCount(actorId);
       setPendingSyncCount(counts);
       const [regs, evts] = await Promise.all([
-        getOfflineRegistrations(uid),
-        getOfflineEvents(uid),
+        getOfflineRegistrations(actorId),
+        getOfflineEvents(actorId),
       ]);
       setOutboxRegistrations(regs);
       setOutboxEvents(evts);
     } catch (e) {
       console.warn('Could not read offline outbox count:', e);
     }
-  };
+  }, []);
 
   useEffect(() => {
     let active = true;
@@ -132,7 +132,6 @@ export function GuardPage() {
           if (uid) {
             setStorePrepared(true);
             setStoreError(null);
-            void refreshPendingCounts();
           } else {
             setStorePrepared(false);
             setStoreError(null);
@@ -152,6 +151,15 @@ export function GuardPage() {
     };
   }, [uid]);
 
+  // Refresh outbox truth when store preparation completes (Requirement 8)
+  useEffect(() => {
+    if (!uid || !storePrepared) {
+      resetOutboxView();
+      return;
+    }
+    void refreshPendingCounts(uid);
+  }, [uid, storePrepared, refreshPendingCounts, resetOutboxView]);
+
   const isBackendOnline = computeBackendAvailability({
     isBrowserOnline: isOnline,
     queueError,
@@ -162,22 +170,35 @@ export function GuardPage() {
   const prevBackendOnlineRef = useRef(isBackendOnline);
   const initialSyncAttemptedRef = useRef(false);
 
+  // Reset initial synchronization marker whenever uid changes (Requirement 9)
   useEffect(() => {
-    void refreshPendingCounts();
+    initialSyncAttemptedRef.current = false;
+  }, [uid]);
+
+  // Background reconnect/initial maintenance waits for store preparation (Requirement 9)
+  useEffect(() => {
+    if (!uid || !storePrepared || storeError) {
+      return;
+    }
     const becameAvailable = !prevBackendOnlineRef.current && isBackendOnline;
     prevBackendOnlineRef.current = isBackendOnline;
 
     if (becameAvailable || (!initialSyncAttemptedRef.current && isBackendOnline)) {
       initialSyncAttemptedRef.current = true;
       void runOfflineMaintenance()
-        .then(() => refreshPendingCounts())
+        .then(() => refreshPendingCounts(uid))
         .catch((err) => {
           console.warn('Initial offline maintenance failed:', err);
         });
     }
-  }, [isBackendOnline]);
+  }, [isBackendOnline, uid, storePrepared, storeError, refreshPendingCounts]);
 
+  // Manual Sync Now requires prepared store (Requirement 10)
   const handleSyncNow = async () => {
+    if (!uid || !storePrepared || storeError) {
+      toast.error('Local storage is not prepared. Synchronization unavailable.');
+      return;
+    }
     setIsSyncing(true);
     try {
       const { summary } = await runOfflineMaintenance();
@@ -190,7 +211,7 @@ export function GuardPage() {
       } else {
         toast.info('All offline records are already synchronized.');
       }
-      await refreshPendingCounts();
+      await refreshPendingCounts(uid);
       void refreshQueue();
     } catch (err: any) {
       toast.error(err.message || 'Synchronization failed');
@@ -200,11 +221,12 @@ export function GuardPage() {
   };
 
   const handlePurgeSynced = async () => {
+    if (!uid) return;
     try {
       const today = getManilaDateString();
       const res = await purgeStaleLocalData(today);
       toast.success(`Purged ${res.purgedVisitors} stale visitor(s) and ${res.purgedEvents} synced event(s).`);
-      await refreshPendingCounts();
+      await refreshPendingCounts(uid);
     } catch (err: any) {
       toast.error('Failed to purge stale local data');
     }
@@ -742,7 +764,7 @@ export function GuardPage() {
         <GuardVisitorRecoveryTab
           isBackendOnline={isBackendOnline}
           actorId={uid}
-          onActionComplete={refreshPendingCounts}
+          onActionComplete={() => { if (uid) void refreshPendingCounts(uid); }}
         />
       )}
 
@@ -750,7 +772,7 @@ export function GuardPage() {
         <GuardOfflineRegistrationTab
           isBackendOnline={isBackendOnline}
           actorId={uid}
-          onRegistered={refreshPendingCounts}
+          onRegistered={() => { if (uid) void refreshPendingCounts(uid); }}
         />
       )}
 

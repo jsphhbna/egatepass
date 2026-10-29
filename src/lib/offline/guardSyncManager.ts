@@ -25,7 +25,7 @@
 import { requireSupabase } from '@/lib/supabase';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import {
-  prepareGuardOfflineStoreForActor,
+  transitionGuardOfflineStore,
   getOfflineRegistrations,
   getOfflineEvents,
   updateOfflineRegistrationStatus,
@@ -373,9 +373,6 @@ export async function runOfflineMaintenance(): Promise<MaintenanceResult> {
   let recoveredRecords = { recoveredRegistrations: 0, recoveredEvents: 0 };
 
   try {
-    // Step 1: Recover any records stranded in 'syncing' by a previous crash (Section 2)
-    recoveredRecords = await recoverInterruptedSyncStates();
-
     const client = requireSupabase();
     const sessionRes = await client.auth.getSession();
     const session = sessionRes.data.session;
@@ -392,8 +389,11 @@ export async function runOfflineMaintenance(): Promise<MaintenanceResult> {
       };
     }
 
-    // Step 1b: Bind and prepare local Guard store for current authenticated actor
-    await prepareGuardOfflineStoreForActor(actorId);
+    // Step 1: Serialized store transition for authenticated actor (Workstream A / Requirement 3 & 4)
+    await transitionGuardOfflineStore(actorId);
+
+    // Step 2: Recover any records stranded in 'syncing' for THIS actor only (Workstream A / Requirement 5 & 6)
+    recoveredRecords = await recoverInterruptedSyncStates(actorId);
 
     // Step 2 & 3: Synchronize Pending Offline Registrations FIRST in chronological order (Requirement 8)
     const pendingRegs = await getOfflineRegistrations(actorId, 'pending');

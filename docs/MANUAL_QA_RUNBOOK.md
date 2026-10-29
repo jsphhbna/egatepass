@@ -351,8 +351,8 @@ stateDiagram-v2
 5. **Reconnection & Synchronization**:
    - Re-enable Wi-Fi / internet connectivity.
    - Confirm the Guard sync manager triggers background synchronization.
-   - Confirm offline registrations upload photo/ID evidence and generate canonical server passes without duplication.
-   - Confirm outbox events execute server-side row locking and transition passes to `inside` or `exited`.
+   - Confirm offline registrations synchronize via `POST /api/sync-offline-registration` (uploading photo/ID evidence and generating canonical server passes without duplication).
+   - Confirm outbox lifecycle events synchronize via PostgREST RPC `api.guard_sync_offline_event` (executing row locking and transitioning passes to `inside` or `exited`). Do NOT expect offline events to call `/api/scan-pass` or `/api/decide-visit`.
    - Confirm local outbox records are acknowledged and cleared from the tablet store.
 
 ---
@@ -589,3 +589,40 @@ stateDiagram-v2
 4. **Simulate Server 409 Conflict**:
    - Return HTTP 409 `{"status": "conflict", "reason": "pass_already_exists"}`.
    - **Expected**: Classifier marks registration as terminal `conflict`. Binary blobs (`photoBlob`, `idBlob`) are stripped from IndexedDB, while relational record and error metadata remain intact for reconciliation.
+
+## 16. Deterministic Text Rendering, Font Embedding & Outbox Truth QA
+
+### 16.1 Special Unicode Visitor Names & Grapheme Integrity
+1. **Register Pass with Accented Characters**:
+   - Register a visitor with name `José Niño Dela Cruz` and purpose `Académico – Registrar Verification • Special Permit`.
+2. **Inspect On-Screen Presentation**:
+   - Verify all accented letters (`é`, `ñ`), dashes (`–`), and bullets (`•`) render crisp and clear without mojibake, boxes, or substitution marks.
+3. **Inspect Server Email Attachment**:
+   - Check the delivered email attachment `egatepass-EG-XXXXXXXX.png`. Verify sharp serverless rasterization matches on-screen appearance perfectly.
+
+### 16.2 2-Line Visitor Name Fitting on Digital Passes
+1. **Register Pass with Long Full Name**:
+   - Register a visitor with name `Maria Concepcion Dela Cruz Hernandez` (> 24 graphemes).
+2. **Verify 2-Line Layout**:
+   - Verify the name wraps into two balanced lines: Line 1 (`Maria Concepcion` at $y \approx 112$) and Line 2 (`Dela Cruz Hernandez` at $y \approx 136$).
+   - Verify visit date shifts to $y \approx 158$ and validity window shifts to $y \approx 176$.
+   - Verify no text overlaps with the QR code box ($y \ge 182$).
+
+### 16.3 PDF Report Export with Bundled Noto Sans
+1. Navigate to **Visitor Records** (`/admin/records`).
+2. Filter or search for visitors with accented characters.
+3. Tap **Export > PDF**.
+4. Open the generated `.pdf` file in a PDF reader.
+5. Verify all columns, headers, footers, and special Unicode characters render cleanly using embedded Noto Sans font (`EgatepassNoto`).
+
+### 16.4 CSV Report Export with UTF-8 BOM in Microsoft Excel
+1. In **Visitor Records** or **Audit Logs**, tap **Export > CSV**.
+2. Open the downloaded `.csv` file directly in Microsoft Excel on Windows.
+3. Verify that non-ASCII characters (`ñ`, `é`, `•`, `–`) display correctly without requiring manual text-import wizard configuration (UTF-8 BOM `\uFEFF` detected automatically).
+
+### 16.5 Guard Initial Reload Outbox Truth
+1. Disconnect the Guard tablet from the network.
+2. Record an offline entry scan or intake an offline visitor.
+3. Note the outbox pending count shows `1`.
+4. Hard-refresh the browser tab (`Ctrl+F5` or `Cmd+Shift+R`).
+5. **Expected**: Immediately upon store initialization, the pending outbox badge displays `1` and the outbox tab lists the pending item without requiring the guard to tap "Sync Now" or trigger extra actions.

@@ -4,6 +4,11 @@
   "regions": [
     "syd1"
   ],
+  "functions": {
+    "api/**/*.ts": {
+      "includeFiles": "public/fonts/**"
+    }
+  },
   "headers": [
     {
       "source": "/(.*)",

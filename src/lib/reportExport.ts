@@ -69,7 +69,7 @@ function triggerDownload(blob: Blob, filename: string) {
 }
 
 /**
- * Clean machine-readable CSV export (RFC 4180)
+ * Clean machine-readable CSV export (RFC 4180) with UTF-8 BOM.
  * Does NOT prepend decorative rows. First row is column headers.
  */
 export async function exportReportToCsv<T>(options: ReportExportOptions<T>): Promise<void> {
@@ -79,7 +79,7 @@ export async function exportReportToCsv<T>(options: ReportExportOptions<T>): Pro
   );
 
   const csvContent = [headerLine, ...rowLines].join('\r\n');
-  const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+  const blob = new Blob(['\uFEFF' + csvContent], { type: 'text/csv;charset=utf-8;' });
   triggerDownload(blob, options.filename.endsWith('.csv') ? options.filename : `${options.filename}.csv`);
 }
 
@@ -153,6 +153,85 @@ export async function exportReportToExcel<T>(options: ReportExportOptions<T>): P
   triggerDownload(blob, options.filename.endsWith('.xlsx') ? options.filename : `${options.filename}.xlsx`);
 }
 
+let cachedFontRegularBase64: string | null = null;
+let cachedFontBoldBase64: string | null = null;
+
+function arrayBufferToBase64(buffer: ArrayBuffer): string {
+  let binary = '';
+  const bytes = new Uint8Array(buffer);
+  const len = bytes.byteLength;
+  for (let i = 0; i < len; i++) {
+    const b = bytes[i];
+    if (b !== undefined) {
+      binary += String.fromCharCode(b);
+    }
+  }
+  if (typeof btoa === 'function') {
+    return btoa(binary);
+  }
+  return Buffer.from(binary, 'binary').toString('base64');
+}
+
+export async function loadNotoPdfFonts(doc: any): Promise<void> {
+  if (!cachedFontRegularBase64 || !cachedFontBoldBase64) {
+    let loaded = false;
+    if (typeof window !== 'undefined' && typeof window.fetch === 'function' && !(typeof process !== 'undefined' && process.env?.VITEST)) {
+      try {
+        const [resReg, resBold] = await Promise.all([
+          fetch('/fonts/NotoSans-Regular.ttf'),
+          fetch('/fonts/NotoSans-Bold.ttf'),
+        ]);
+        if (resReg.ok && resBold.ok) {
+          const [bufReg, bufBold] = await Promise.all([
+            resReg.arrayBuffer(),
+            resBold.arrayBuffer(),
+          ]);
+          cachedFontRegularBase64 = arrayBufferToBase64(bufReg);
+          cachedFontBoldBase64 = arrayBufferToBase64(bufBold);
+          loaded = true;
+        }
+      } catch {
+        // Fall back to node filesystem if fetch fails
+      }
+    }
+
+    if (!loaded) {
+      try {
+        const fs = await import('node:fs');
+        const path = await import('node:path');
+        const candidateDirs = [
+          path.resolve(process.cwd(), 'public/fonts'),
+          path.resolve(process.cwd(), 'dist/fonts'),
+        ];
+        let fontDir = '';
+        for (const d of candidateDirs) {
+          if (fs.existsSync(path.join(d, 'NotoSans-Regular.ttf'))) {
+            fontDir = d;
+            break;
+          }
+        }
+        if (fontDir) {
+          cachedFontRegularBase64 = fs.readFileSync(path.join(fontDir, 'NotoSans-Regular.ttf')).toString('base64');
+          cachedFontBoldBase64 = fs.readFileSync(path.join(fontDir, 'NotoSans-Bold.ttf')).toString('base64');
+          loaded = true;
+        }
+      } catch {
+        // ignore error
+      }
+    }
+
+    if (!loaded || !cachedFontRegularBase64 || !cachedFontBoldBase64) {
+      throw new Error('Failed to load authoritative Noto Sans fonts for PDF export');
+    }
+  }
+
+  doc.addFileToVFS('NotoSans-Regular.ttf', cachedFontRegularBase64);
+  doc.addFont('NotoSans-Regular.ttf', 'EgatepassNoto', 'normal');
+  doc.addFileToVFS('NotoSans-Bold.ttf', cachedFontBoldBase64);
+  doc.addFont('NotoSans-Bold.ttf', 'EgatepassNoto', 'bold');
+  doc.setFont('EgatepassNoto', 'normal');
+}
+
 /**
  * Human-readable Institutional PDF export using jsPDF and jspdf-autotable
  */
@@ -169,6 +248,8 @@ export async function exportReportToPdf<T>(options: ReportExportOptions<T>): Pro
     format: 'a4',
   });
 
+  await loadNotoPdfFonts(doc);
+
   const pageWidth = doc.internal.pageSize.getWidth();
   const pageHeight = doc.internal.pageSize.getHeight();
 
@@ -178,21 +259,21 @@ export async function exportReportToPdf<T>(options: ReportExportOptions<T>): Pro
 
   doc.setTextColor(255, 255, 255);
   doc.setFontSize(14);
-  doc.setFont('helvetica', 'bold');
+  doc.setFont('EgatepassNoto', 'bold');
   doc.text('EARIST E-GATEPASS', 24, 28);
 
   doc.setFontSize(9);
-  doc.setFont('helvetica', 'normal');
+  doc.setFont('EgatepassNoto', 'normal');
   doc.text('Institutional Security & Visitor Records', pageWidth - 24, 28, { align: 'right' });
 
   // 2. Report Information
   doc.setTextColor(24, 24, 27);
   doc.setFontSize(14);
-  doc.setFont('helvetica', 'bold');
+  doc.setFont('EgatepassNoto', 'bold');
   doc.text(reportTitle, 24, 70);
 
   doc.setFontSize(9);
-  doc.setFont('helvetica', 'normal');
+  doc.setFont('EgatepassNoto', 'normal');
   doc.setTextColor(82, 82, 91);
   const metaTime = options.generatedAt || formatManilaDateTime(new Date());
   doc.text(`Generated: ${metaTime}  •  By: ${options.generatedBy || 'Authorized Staff'}`, 24, 85);
@@ -218,13 +299,19 @@ export async function exportReportToPdf<T>(options: ReportExportOptions<T>): Pro
     startY,
     margin: { left: 24, right: 24, bottom: 40 },
     theme: 'striped',
+    styles: {
+      font: 'EgatepassNoto',
+    },
     headStyles: {
+      font: 'EgatepassNoto',
       fillColor: [128, 0, 0] as [number, number, number],
       textColor: [255, 255, 255] as [number, number, number],
       fontStyle: 'bold',
       fontSize: 8,
     },
     bodyStyles: {
+      font: 'EgatepassNoto',
+      fontStyle: 'normal',
       fontSize: 8,
       cellPadding: 4,
     },
@@ -242,7 +329,7 @@ export async function exportReportToPdf<T>(options: ReportExportOptions<T>): Pro
     doc.setPage(pageNumber);
     const pageStr = `Page ${pageNumber} of ${totalPages}`;
     doc.setFontSize(8);
-    doc.setFont('helvetica', 'normal');
+    doc.setFont('EgatepassNoto', 'normal');
     doc.setTextColor(161, 161, 170);
     doc.text(pageStr, pageWidth - 24, pageHeight - 16, { align: 'right' });
     doc.text('Eulogio "Amang" Rodriguez Institute of Science and Technology • Confidential', 24, pageHeight - 16);

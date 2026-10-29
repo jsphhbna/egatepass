@@ -108,3 +108,21 @@ The historical Resend SMTP API credential (`RESEND_SUPABASE_SMTP_KEY`) was creat
 Production runtime policy: Node.js 24.x.
 
 Vercel manages patch-level runtime updates within the selected Node.js major line.
+---
+
+## 6. Bundled Font Typography & Static Assets
+
+The platform bundles official Google Noto Sans fonts in `public/fonts/`:
+- `public/fonts/NotoSans-Regular.ttf`
+- `public/fonts/NotoSans-Bold.ttf`
+- `public/fonts/OFL.txt` (SIL Open Font License 1.1)
+
+In `vercel.json`, functions include these files via:
+```json
+  "functions": {
+    "api/**/*.ts": {
+      "includeFiles": "public/fonts/**"
+    }
+  }
+```
+No external Google Fonts API requests or runtime CDN connections are permitted. All serverless rendering (via `sharp` and `fontconfig`) and client-side PDF exports consume the local bundled fonts.

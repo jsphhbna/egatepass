@@ -1,4 +1,4 @@
-import sharp from 'sharp';
+import { ensureServerFonts } from './server-fonts.js';
 import { generateCanonicalDigitalPassSvg } from '../../src/lib/digitalPassArtifact.js';
 import { generateQrPngBuffer } from '../email.js';
 import {
@@ -23,6 +23,9 @@ export async function renderDigitalPassPngBuffer(input: ServerPassPresentationIn
   filename: string;
   presentation: PassPresentation;
 }> {
+  await ensureServerFonts();
+  const { default: sharp } = await import('sharp');
+
   const qrBuffer = await generateQrPngBuffer(input.qrToken);
   const qrDataUrl = `data:image/png;base64,${qrBuffer.toString('base64')}`;
 

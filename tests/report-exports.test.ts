@@ -96,7 +96,8 @@ describe('Group H: Unified Report Exports Contract (CSV, XLSX, PDF)', () => {
     expect(capturedBlob).not.toBeNull();
     // Verify content
     const text = await (capturedBlob as unknown as Blob).text();
-    const lines = text.split('\r\n');
+    expect(text.startsWith('\uFEFF')).toBe(true);
+    const lines = text.replace(/^\uFEFF/, '').split('\r\n');
 
     // First row MUST be column headers (RFC 4180 requirement)
     expect(lines[0]).toBe('Pass Ref,Visitor Name,Visit Date,Purpose,Status');
