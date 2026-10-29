@@ -468,7 +468,7 @@ export function EmailPassModal({
           <AlertCircle className="mx-auto h-10 w-10 text-[var(--color-warning)]" />
           <h3 className="text-lg font-bold text-[var(--color-text-primary)]">Outcome Unknown</h3>
           <p className="text-xs leading-relaxed text-[var(--color-text-secondary)]">
-            The provider may have accepted the email, but confirmation was interrupted. To avoid sending the bearer QR twice, automatic retry is disabled. You can still download, print, or share the issued pass.
+            The provider may have accepted the email, but confirmation was interrupted. To avoid sending the bearer QR twice, automatic retry is disabled. You can still download or save the issued pass.
           </p>
           <Button
             onClick={() => {

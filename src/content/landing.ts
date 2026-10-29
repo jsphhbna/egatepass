@@ -5,6 +5,7 @@ export const LANDING_CONTENT = {
     navLinks: [
       { label: 'How It Works', href: '#how-it-works' },
       { label: 'What You Need', href: '#what-you-need' },
+      { label: 'Dress Code', href: '#dress-code' },
       { label: 'Privacy', href: '#privacy' },
       { label: 'FAQ', href: '#faq' },
     ],
@@ -40,6 +41,30 @@ export const LANDING_CONTENT = {
       { title: 'Valid ID', text: 'A valid government, school, or employee photo ID card for campus entry verification.' },
       { title: 'Visit Information', text: 'Your specific campus destination, purpose of visit, and intended date.' },
     ],
+  },
+  dressCode: {
+    heading: 'Visitor Dress Code',
+    eyebrow: 'Before visiting campus',
+    intro: 'Please arrive in decent, campus-appropriate attire. Security personnel may enforce current EARIST entry policies at the gate.',
+    proper: {
+      title: 'Proper Campus Attire',
+      items: [
+        'Decent, campus-appropriate clothing',
+        'Proper top/shirt',
+        'Appropriate long lower garment',
+        'Proper footwear',
+      ],
+    },
+    avoid: {
+      title: 'Please Avoid',
+      items: [
+        'Shorts',
+        'Sando',
+        'Sleeveless tops',
+        'Slippers',
+      ],
+    },
+    note: 'Final admission remains subject to identity verification and current campus security policies at the gate.',
   },
   verification: {
     heading: 'Why Visitor Verification Is Required',

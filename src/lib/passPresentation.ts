@@ -1,5 +1,6 @@
 import { formatManilaDate } from './manilaTime.js';
 import { generateBrandedQrDataUrl } from './brandedQr.js';
+import { generateCanonicalDigitalPassSvg } from './digitalPassArtifact.js';
 
 export const INSTITUTION_NAME = 'EARIST E-GATEPASS';
 export const INSTITUTION_SUBTITLE = 'Eulogio "Amang" Rodriguez Institute of Science and Technology';
@@ -96,12 +97,88 @@ export function createPassPresentation(params: FormatPassParams): PassPresentati
   };
 }
 
-import { generateCanonicalDigitalPassSvg } from './digitalPassArtifact.js';
+interface EmbeddedFontCache {
+  regularBase64: string;
+  boldBase64: string;
+}
+
+let cachedEmbeddedFonts: EmbeddedFontCache | null = null;
+
+export function __resetEmbeddedFontCacheForTests(): void {
+  cachedEmbeddedFonts = null;
+}
+
+export function __setEmbeddedFontCacheForTests(fonts: EmbeddedFontCache | null): void {
+  cachedEmbeddedFonts = fonts;
+}
+
+function bufferToBase64(buffer: ArrayBuffer): string {
+  if (typeof Buffer !== 'undefined') {
+    return Buffer.from(buffer).toString('base64');
+  }
+  const bytes = new Uint8Array(buffer);
+  let binary = '';
+  const chunkSize = 0x8000;
+  for (let i = 0; i < bytes.length; i += chunkSize) {
+    binary += String.fromCharCode.apply(null, Array.from(bytes.subarray(i, i + chunkSize)));
+  }
+  return btoa(binary);
+}
+
+export async function getSelfContainedSvgFontFace(): Promise<string> {
+  if (!cachedEmbeddedFonts) {
+    if (typeof fetch !== 'function') {
+      throw new Error('deterministic_font_preparation_failed: fetch is not available in environment');
+    }
+
+    const [regularRes, boldRes] = await Promise.all([
+      fetch('/fonts/NotoSans-Regular.ttf'),
+      fetch('/fonts/NotoSans-Bold.ttf'),
+    ]);
+
+    if (!regularRes.ok || !boldRes.ok) {
+      throw new Error(
+        `deterministic_font_preparation_failed: font fetch returned status ${regularRes.status}/${boldRes.status}`
+      );
+    }
+
+    const [regularBuf, boldBuf] = await Promise.all([
+      regularRes.arrayBuffer(),
+      boldRes.arrayBuffer(),
+    ]);
+
+    if (!regularBuf.byteLength || !boldBuf.byteLength) {
+      throw new Error('deterministic_font_preparation_failed: font buffer is empty');
+    }
+
+    cachedEmbeddedFonts = {
+      regularBase64: bufferToBase64(regularBuf),
+      boldBase64: bufferToBase64(boldBuf),
+    };
+  }
+
+  return `<defs>
+    <style>
+      @font-face {
+        font-family: 'Egatepass Noto Sans';
+        src: url('data:font/ttf;charset=utf-8;base64,${cachedEmbeddedFonts.regularBase64}') format('truetype');
+        font-weight: 400;
+        font-style: normal;
+      }
+      @font-face {
+        font-family: 'Egatepass Noto Sans';
+        src: url('data:font/ttf;charset=utf-8;base64,${cachedEmbeddedFonts.boldBase64}') format('truetype');
+        font-weight: 700;
+        font-style: normal;
+      }
+    </style>
+  </defs>`;
+}
 
 /**
  * Renders the full canonical institutional pass card using the shared SVG template
  * onto an HTML5 canvas and exports as PNG data URL.
- * Used for complete card downloads and Web Share API.
+ * Used for complete card downloads.
  */
 export async function renderPassCardToDataUrl(
   presentation: PassPresentation,
@@ -115,7 +192,10 @@ export async function renderPassCardToDataUrl(
     throw new Error('Canvas rendering is not supported in this environment');
   }
 
-  const svg = generateCanonicalDigitalPassSvg(presentation, qrDataUrl);
+  const fontDefs = await getSelfContainedSvgFontFace();
+  let svg = generateCanonicalDigitalPassSvg(presentation, qrDataUrl);
+  svg = svg.replace(/(<svg[^>]*>)/i, `$1\n  ${fontDefs}`);
+
   const canvas = document.createElement('canvas');
   canvas.width = width;
   canvas.height = height;

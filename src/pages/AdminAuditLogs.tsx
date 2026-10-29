@@ -432,7 +432,7 @@ export function AdminAuditLogs() {
             <Input type="date" value={dateTo} min={dateFrom || undefined} onChange={(event) => setDateTo(event.target.value)} />
           </div>
           {isDateRangeInvalid && (
-            <div className="w-full text-xs font-semibold text-red-600 dark:text-red-400">
+            <div className="w-full text-xs font-semibold text-[var(--color-danger-dark)]">
               Start date cannot be later than end date.
             </div>
           )}

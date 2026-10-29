@@ -5,9 +5,10 @@
   "description": "EARIST E-GatePass — Smart QR Code-Based Visitor Management System",
   "type": "module",
   "scripts": {
+    "sync:ocr-assets": "node scripts/sync-tesseract-assets.mjs",
     "build:templates": "node scripts/bundle-email-templates.mjs",
-    "prebuild": "npm run build:templates",
-    "pretest": "npm run build:templates",
+    "prebuild": "npm run sync:ocr-assets && npm run build:templates",
+    "pretest": "npm run sync:ocr-assets && npm run build:templates",
     "dev": "vite",
     "build": "tsc && vite build",
     "preview": "vite preview",
@@ -18,6 +19,7 @@
     "test:docs": "vitest run tests/documentation-contract.test.ts",
     "test:e2e": "npm run test:e2e:startup",
     "test:e2e:startup": "npm run build && node scripts/run-startup-e2e.mjs",
+    "test:e2e:ocr": "npm run build && node scripts/run-ocr-e2e.mjs",
     "test:architecture": "vitest run tests/architecture-contract.test.ts",
     "test:supabase:static": "vitest run tests/supabase-migration-static.test.ts",
     "test:runtime": "vitest run tests/runtime-config.test.ts",
@@ -58,7 +60,7 @@
     "sharp": "^0.35.5",
     "sonner": "^2.0.8",
     "standardwebhooks": "1.1.1",
-    "tesseract.js": "^7.0.0",
+    "tesseract.js": "7.0.0",
     "zod": "^4.6.5"
   },
   "devDependencies": {

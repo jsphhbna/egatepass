@@ -26,7 +26,6 @@ import {
   RotateCcw,
   ShieldCheck,
   Mail,
-  Share2,
   Loader2,
   RefreshCw,
   AlertCircle,
@@ -170,7 +169,6 @@ export function GetPassPage() {
     };
   }, []);
 
-  const [isSharing, setIsSharing] = useState(false);
   const [visitorInstructions, setVisitorInstructions] = useState<string[]>([
     'Follow the EARIST visitor dress code and campus policies.',
     'Bring a valid ID for identity verification at the gate.',
@@ -418,8 +416,8 @@ export function GetPassPage() {
       setIdBlob(compressed);
       idUrl.setFromBlob(compressed);
 
-      // 2. Perform local OCR recognition in browser memory
-      const parsed = await recognizeIdImage(compressed);
+      // 2. Perform local OCR recognition in browser memory using original source
+      const parsed = await recognizeIdImage(source);
       if (generation !== ocrGenerationRef.current) return;
 
       // 3. Prefill empty fields, preserving user-entered values
@@ -444,12 +442,12 @@ export function GetPassPage() {
       } else if (parsed.firstName || parsed.lastName) {
         toast.info('Existing details were preserved. Please review your information.');
       } else {
-        toast.info("We couldn't read all details automatically. Please enter them manually.");
+        toast.info("We couldn't clearly read the name. Please enter the details manually.");
       }
     } catch (err) {
       if (generation !== ocrGenerationRef.current) return;
       console.warn('OCR processing failure:', err);
-      toast.info("We couldn't read all details automatically. Please enter them manually.");
+      toast.info('Automatic ID reading is unavailable right now. Your ID was still added successfully.');
     } finally {
       if (generation === ocrGenerationRef.current) {
         setIsProcessingOcr(false);
@@ -655,52 +653,6 @@ export function GetPassPage() {
     }
   }
 
-  // ============================================================
-  // SHARE (Web Share API)
-  // ============================================================
-  async function handleShare() {
-    if (!passPresentation || isSharing) {
-      if (!passPresentation) {
-        toast.error('Your E-GatePass image could not be prepared. Please try again.');
-      }
-      return;
-    }
-    setIsSharing(true);
-
-    try {
-      const cardDataUrl = await renderPassCardToDataUrl(passPresentation, { qrDataUrl: qrDataUrl || undefined });
-      const res = await fetch(cardDataUrl);
-      const blob = await res.blob();
-      const filename = `egatepass-${passPresentation.passReference}.png`;
-      const file = new File([blob], filename, { type: 'image/png' });
-
-      if (navigator.canShare && navigator.canShare({ files: [file] })) {
-        try {
-          await navigator.share({
-            title: 'EARIST Gate Pass',
-            text: `My EARIST Visitor Gate Pass: ${passPresentation.passReference}`,
-            files: [file],
-          });
-          return;
-        } catch (shareErr) {
-          if (
-            (shareErr instanceof DOMException && shareErr.name === 'AbortError') ||
-            (shareErr && typeof shareErr === 'object' && (shareErr as any).name === 'AbortError')
-          ) {
-            return;
-          }
-          console.warn('Web Share failed with non-abort error:', shareErr);
-        }
-      }
-
-      // Fallback: download canonical pass card directly when sharing is unsupported or returns non-abort error
-      await handleDownload();
-    } catch {
-      toast.error('Your E-GatePass image could not be prepared. Please try again.');
-    } finally {
-      setIsSharing(false);
-    }
-  }
 
   // ============================================================
   // STEP DEFINITIONS
@@ -778,9 +730,9 @@ export function GetPassPage() {
           {/* ============================== STEP 1: FORM ============================== */}
           {step === 'form' && (
             <form onSubmit={handleSubmit(onFormNext)} className="space-y-4">
-              <div className="rounded-xl border border-sky-500/20 bg-sky-500/10 p-3.5 text-xs text-sky-900 dark:text-sky-200">
-                <p className="font-semibold">No account required</p>
-                <p className="mt-0.5">This registration creates a visitor pass only. You are not creating a reusable visitor account.</p>
+              <div className="rounded-xl border border-sky-200 bg-sky-50 p-3.5 text-xs">
+                <p className="font-semibold text-sky-950">No account required</p>
+                <p className="mt-0.5 text-slate-700">This registration creates a visitor pass only. You are not creating a reusable visitor account.</p>
               </div>
 
               <p className="text-xs text-[var(--color-text-secondary)] font-medium">Fields marked * are required.</p>
@@ -1387,7 +1339,7 @@ export function GetPassPage() {
                   <Button
                     variant="secondary"
                     onClick={handleAmbiguousCancelAndAskGuard}
-                    className="w-full text-amber-700 dark:text-amber-300 border-amber-300 dark:border-amber-700"
+                    className="w-full text-amber-800 border-amber-400 hover:bg-amber-50"
                     icon={<AlertCircle className="h-4 w-4" />}
                   >
                     Cancel & Ask Guard
@@ -1398,7 +1350,7 @@ export function GetPassPage() {
                   <Button
                     variant="secondary"
                     onClick={handleAmbiguousCancelAndAskGuard}
-                    className="flex-1 text-amber-700 dark:text-amber-300 border-amber-300 dark:border-amber-700"
+                    className="flex-1 text-amber-800 border-amber-400 hover:bg-amber-50"
                     icon={<AlertCircle className="h-4 w-4" />}
                   >
                     Cancel & Ask Guard
@@ -1505,18 +1457,18 @@ export function GetPassPage() {
                 </p>
               </div>
 
-              <div className="rounded-xl border border-sky-500/20 bg-sky-500/10 p-3.5 text-xs text-sky-900 dark:text-sky-200 text-left">
-                <p className="font-semibold">No account required</p>
-                <p className="mt-0.5">Your visitor pass has been created. No reusable visitor account was created.</p>
+              <div className="rounded-xl border border-sky-200 bg-sky-50 p-3.5 text-xs text-left">
+                <p className="font-semibold text-sky-950">No account required</p>
+                <p className="mt-0.5 text-slate-700">Your visitor pass has been created. No reusable visitor account was created.</p>
               </div>
 
               {visitorInstructions.length > 0 && (
-                <div className="rounded-xl border border-amber-500/30 bg-amber-500/10 p-4 text-left">
-                  <div className="flex items-center gap-2 text-sm font-bold text-amber-900 dark:text-amber-200 mb-2">
-                    <Info className="h-4 w-4 shrink-0 text-amber-600 dark:text-amber-400" />
+                <div className="rounded-xl border border-amber-300 bg-amber-50 p-4 text-left">
+                  <div className="flex items-center gap-2 text-sm font-bold text-amber-950 mb-2">
+                    <Info className="h-4 w-4 shrink-0 text-amber-700" />
                     <span>Before You Arrive</span>
                   </div>
-                  <ul className="space-y-1.5 text-xs text-amber-950 dark:text-amber-100 list-disc list-inside">
+                  <ul className="space-y-1.5 text-xs text-amber-950 list-disc list-inside">
                     {visitorInstructions.map((inst, idx) => (
                       <li key={idx}>{inst}</li>
                     ))}
@@ -1595,7 +1547,7 @@ export function GetPassPage() {
               </div>
 
               {/* Action buttons */}
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <Button
                   onClick={handleDownload}
                   className="w-full"
@@ -1610,16 +1562,6 @@ export function GetPassPage() {
                   icon={<Mail className="h-4 w-4" />}
                 >
                   Email E-GatePass
-                </Button>
-                <Button
-                  variant="secondary"
-                  onClick={handleShare}
-                  loading={isSharing}
-                  disabled={isSharing}
-                  className="w-full"
-                  icon={<Share2 className="h-4 w-4" />}
-                >
-                  {isSharing ? 'Opening Share…' : 'Share E-GatePass'}
                 </Button>
               </div>
 

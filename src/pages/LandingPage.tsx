@@ -17,6 +17,7 @@ import {
   CreditCard,
   QrCode,
   User,
+  X,
 } from 'lucide-react';
 import { LANDING_CONTENT } from '@/content/landing';
 
@@ -29,6 +30,7 @@ type GatePassCtaSource = 'header' | 'hero' | 'final' | null;
 export function LandingPage() {
   const [isScrolled, setIsScrolled] = useState(false);
   const [openingGatePassFrom, setOpeningGatePassFrom] = useState<GatePassCtaSource>(null);
+  const [openFaqIndex, setOpenFaqIndex] = useState<number | null>(null);
   const navigate = useNavigate();
 
   function handleGetPassClick(event: MouseEvent<HTMLAnchorElement>, source: GatePassCtaSource) {
@@ -54,7 +56,7 @@ export function LandingPage() {
       behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth',
       block: 'start',
     });
-    window.history.pushState(null, '', target);
+
   }
 
   return (
@@ -316,6 +318,74 @@ export function LandingPage() {
         </section>
 
         {/* ============================================================
+            VISITOR DRESS CODE SECTION
+            ============================================================ */}
+        <section
+          id="dress-code"
+          aria-labelledby="dress-code-heading"
+          className="scroll-mt-20 border-t border-gray-100 bg-white px-4 py-16 sm:px-6 sm:py-20 lg:px-8 lg:py-24 xl:px-12 2xl:px-16"
+        >
+          <div className="mx-auto max-w-7xl 2xl:max-w-[1600px]">
+            <SectionHeading
+              id="dress-code-heading"
+              eyebrow={LANDING_CONTENT.dressCode.eyebrow}
+              title={LANDING_CONTENT.dressCode.heading}
+              description={LANDING_CONTENT.dressCode.intro}
+            />
+
+            <div className="mt-10 grid gap-6 sm:grid-cols-2 lg:gap-8">
+              {/* Proper Campus Attire */}
+              <div className="rounded-2xl border border-emerald-200 bg-emerald-50/50 p-6 sm:p-8 shadow-sm">
+                <div className="flex items-center gap-3 mb-6">
+                  <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-emerald-100 text-emerald-800">
+                    <CheckCircle2 className="h-5 w-5" aria-hidden="true" />
+                  </div>
+                  <h3 className="text-xl font-bold text-slate-900">
+                    {LANDING_CONTENT.dressCode.proper.title}
+                  </h3>
+                </div>
+                <ul className="space-y-3.5 text-sm font-medium text-slate-700">
+                  {LANDING_CONTENT.dressCode.proper.items.map((item) => (
+                    <li key={item} className="flex items-start gap-3">
+                      <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-emerald-200/70 text-emerald-800 text-xs font-bold" aria-hidden="true">
+                        ✓
+                      </span>
+                      <span>{item}</span>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+
+              {/* Please Avoid */}
+              <div className="rounded-2xl border border-amber-200 bg-amber-50/50 p-6 sm:p-8 shadow-sm">
+                <div className="flex items-center gap-3 mb-6">
+                  <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-amber-100 text-amber-800">
+                    <X className="h-5 w-5" aria-hidden="true" />
+                  </div>
+                  <h3 className="text-xl font-bold text-slate-900">
+                    {LANDING_CONTENT.dressCode.avoid.title}
+                  </h3>
+                </div>
+                <ul className="space-y-3.5 text-sm font-medium text-slate-700">
+                  {LANDING_CONTENT.dressCode.avoid.items.map((item) => (
+                    <li key={item} className="flex items-start gap-3">
+                      <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-amber-200/70 text-amber-800 text-xs font-bold" aria-hidden="true">
+                        ✕
+                      </span>
+                      <span>{item}</span>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            </div>
+
+            <p className="mt-8 text-center text-xs text-[var(--color-text-secondary)]">
+              {LANDING_CONTENT.dressCode.note}
+            </p>
+          </div>
+        </section>
+
+        {/* ============================================================
             FIX GROUP 6: ASYMMETRIC INSTITUTIONAL VERIFICATION SECTION
             ============================================================ */}
         <section
@@ -444,25 +514,52 @@ export function LandingPage() {
             />
 
             <div className="mt-10 space-y-3.5">
-              {LANDING_CONTENT.faq.items.map((item, idx) => (
-                <details
-                  key={idx}
-                  className="group rounded-xl border border-[var(--color-border)] bg-white p-5 transition-colors open:bg-[var(--color-canvas-subtle)] open:border-[var(--color-brand)]/40 hover:border-gray-300"
-                >
-                  <summary className="flex cursor-pointer list-none items-center justify-between text-base font-bold text-[var(--color-text-primary)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-brand)]">
-                    <span className="flex items-center gap-3">
-                      <HelpCircle className="h-4 w-4 shrink-0 text-[var(--color-institutional)]" aria-hidden="true" />
-                      <span>{item.q}</span>
-                    </span>
-                    <span className="ml-4 shrink-0 text-[var(--color-text-muted)] transition-transform duration-200 group-open:rotate-180">
-                      ▼
-                    </span>
-                  </summary>
-                  <p className="mt-3 pl-7 text-sm leading-relaxed text-[var(--color-text-secondary)]">
-                    {item.a}
-                  </p>
-                </details>
-              ))}
+              {LANDING_CONTENT.faq.items.map((item, idx) => {
+                const isOpen = openFaqIndex === idx;
+                return (
+                  <div
+                    key={idx}
+                    className={`rounded-xl border transition-colors ${
+                      isOpen
+                        ? 'border-[var(--color-brand)]/40 bg-[var(--color-canvas-subtle)]'
+                        : 'border-[var(--color-border)] bg-white hover:border-gray-300'
+                    }`}
+                  >
+                    <button
+                      type="button"
+                      id={`faq-trigger-${idx}`}
+                      aria-expanded={isOpen}
+                      aria-controls={`faq-panel-${idx}`}
+                      onClick={() => setOpenFaqIndex(isOpen ? null : idx)}
+                      className="flex w-full cursor-pointer items-center justify-between p-5 text-left text-base font-bold text-[var(--color-text-primary)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-brand)] focus-visible:ring-offset-2 rounded-xl"
+                    >
+                      <span className="flex items-center gap-3">
+                        <HelpCircle className="h-4 w-4 shrink-0 text-[var(--color-institutional)]" aria-hidden="true" />
+                        <span>{item.q}</span>
+                      </span>
+                      <span
+                        className={`ml-4 shrink-0 text-[var(--color-text-muted)] transition-transform duration-200 ${
+                          isOpen ? 'rotate-180' : ''
+                        }`}
+                        aria-hidden="true"
+                      >
+                        ▼
+                      </span>
+                    </button>
+                    <div
+                      id={`faq-panel-${idx}`}
+                      role="region"
+                      aria-labelledby={`faq-trigger-${idx}`}
+                      hidden={!isOpen}
+                      className={isOpen ? 'px-5 pb-5 pt-0' : 'hidden'}
+                    >
+                      <p className="pl-7 text-sm leading-relaxed text-[var(--color-text-secondary)]">
+                        {item.a}
+                      </p>
+                    </div>
+                  </div>
+                );
+              })}
             </div>
           </div>
         </section>

@@ -351,16 +351,18 @@ describe('Async Feedback, Slow-Network Resilience, and State-Truthfulness Regres
   });
 
   // ==========================================================================
-  // FIX 19: QR Share Action Duplicate Prevention
+  // FIX 19: QR Share Action Removal and 2-Column Action Buttons
   // ==========================================================================
-  describe('FIX 19: QR Share Action State and Duplicate Prevention', () => {
+  describe('FIX 19: QR Share Action Removal and 2-Column Action Buttons', () => {
     const getPassSrc = readSrc('src/pages/GetPassPage.tsx');
 
-    it('GetPassPage tracks isSharing, displays "Opening Share…", and disables repeated share taps', () => {
-      expect(getPassSrc).toContain('const [isSharing, setIsSharing] = useState(false);');
-      expect(getPassSrc).toContain('Opening Share…');
-      expect(getPassSrc).toContain('disabled={isSharing}');
-      expect(getPassSrc).toContain('loading={isSharing}');
+    it('GetPassPage removes Web Share API and provides 2 equal columns for Download and Email', () => {
+      expect(getPassSrc).not.toContain('isSharing');
+      expect(getPassSrc).not.toContain('Opening Share');
+      expect(getPassSrc).not.toContain('navigator.share');
+      expect(getPassSrc).toContain('grid grid-cols-1 sm:grid-cols-2 gap-3');
+      expect(getPassSrc).toContain('Download E-GatePass');
+      expect(getPassSrc).toContain('Email E-GatePass');
     });
   });
 });

@@ -266,8 +266,8 @@ export function KioskPage() {
       setIdBlob(compressed);
       idUrl.setFromBlob(compressed);
 
-      // Offline OCR via self-hosted worker
-      const parsed = await recognizeIdImage(compressed);
+      // Offline OCR via self-hosted worker using original high-quality captured blob
+      const parsed = await recognizeIdImage(blob);
       if (generation !== ocrGenerationRef.current) return;
 
       let filledCount = 0;
@@ -289,13 +289,13 @@ export function KioskPage() {
         toast.success('Details read from ID! Please review and complete your information.');
       } else {
         setOcrSuccessNotice(false);
-        toast.info('Could not clearly read names. Please review and enter details manually.');
+        toast.info("We couldn't clearly read the name from this ID. Please enter or correct your details manually.");
       }
     } catch (err) {
       if (generation !== ocrGenerationRef.current) return;
       console.warn('Local OCR warning:', err);
       setOcrSuccessNotice(false);
-      toast.info('Automatic reading skipped. Please enter your details manually.');
+      toast.info('Automatic ID reading is unavailable right now. Your ID photo was kept. Please enter your name manually.');
     } finally {
       if (generation === ocrGenerationRef.current) {
         setStep('form');
@@ -722,8 +722,8 @@ export function KioskPage() {
               <p className="mt-1 text-sm text-[var(--color-text-secondary)] max-w-sm mx-auto">
                 Campus visit settings could not be loaded. Check the kiosk connection and try again.
               </p>
-              <div className="mt-4 p-4 rounded-xl border border-amber-500/30 bg-amber-500/10 text-amber-900 dark:text-amber-200 text-sm font-medium max-w-sm mx-auto">
-                <p className="font-bold text-xs uppercase tracking-wider mb-1 text-amber-800 dark:text-amber-300">
+              <div className="mt-4 p-4 rounded-xl border border-amber-300 bg-amber-50 text-amber-950 text-sm font-medium max-w-sm mx-auto">
+                <p className="font-bold text-xs uppercase tracking-wider mb-1 text-amber-900">
                   ⚠ SERVICE TEMPORARILY UNAVAILABLE
                 </p>
                 <p className="text-xs mb-1">Visitor registration is currently unavailable.</p>
@@ -888,9 +888,9 @@ export function KioskPage() {
           {/* STEP 4: Form Details (Prefilled if OCR or Blank if Manual) */}
           {step === 'form' && (
             <form onSubmit={handleSubmit(onFormNext)} className="space-y-5" noValidate>
-              <div className="rounded-xl border border-sky-500/20 bg-sky-500/10 p-3.5 text-xs text-sky-900 dark:text-sky-200">
-                <p className="font-semibold">No account required</p>
-                <p className="mt-0.5">This registration creates a visitor pass only. No reusable visitor account is being created.</p>
+              <div className="rounded-xl border border-sky-200 bg-sky-50 p-3.5 text-xs">
+                <p className="font-semibold text-sky-950">No account required</p>
+                <p className="mt-0.5 text-slate-700">This registration creates a visitor pass only. No reusable visitor account is being created.</p>
               </div>
 
               <p className="text-xs text-[var(--color-text-secondary)] font-medium">Fields marked * are required.</p>
@@ -1274,7 +1274,7 @@ export function KioskPage() {
                     variant="secondary"
                     type="button"
                     onClick={handleAmbiguousCancelAndAskGuard}
-                    className="w-full min-h-[44px] text-amber-700 dark:text-amber-300 border-amber-300 dark:border-amber-700"
+                    className="w-full min-h-[44px] text-amber-800 border-amber-400 hover:bg-amber-50"
                     icon={<AlertCircle className="h-4 w-4" />}
                   >
                     Cancel & Ask Guard
@@ -1286,7 +1286,7 @@ export function KioskPage() {
                     variant="secondary"
                     type="button"
                     onClick={handleAmbiguousCancelAndAskGuard}
-                    className="flex-1 min-h-[44px] text-amber-700 dark:text-amber-300 border-amber-300 dark:border-amber-700"
+                    className="flex-1 min-h-[44px] text-amber-800 border-amber-400 hover:bg-amber-50"
                     icon={<AlertCircle className="h-4 w-4" />}
                   >
                     Cancel & Ask Guard
@@ -1340,9 +1340,9 @@ export function KioskPage() {
               
               <h2 className="text-2xl font-bold text-[var(--color-text-primary)] print:hidden">Gate Pass Created</h2>
 
-              <div className="rounded-xl border border-sky-500/20 bg-sky-500/10 p-3 text-xs text-sky-900 dark:text-sky-200 text-left print:hidden">
-                <p className="font-semibold">Pass Created</p>
-                <p className="mt-0.5">Your visitor pass has been created. No reusable visitor account was created.</p>
+              <div className="rounded-xl border border-sky-200 bg-sky-50 p-3 text-xs text-left print:hidden">
+                <p className="font-semibold text-sky-950">Pass Created</p>
+                <p className="mt-0.5 text-slate-700">Your visitor pass has been created. No reusable visitor account was created.</p>
               </div>
 
               {printFailed && (

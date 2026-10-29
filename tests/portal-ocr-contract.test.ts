@@ -20,7 +20,7 @@ describe('FEATURE 2 CONTRACT: Optional Portal OCR & Kiosk Boundary', () => {
 
   it('uses browser-local recognizeIdImage without third-party cloud OCR services', () => {
     expect(getPassSrc).toMatch(/import\s*\{[^}]*recognizeIdImage[^}]*\}\s*from\s*'@\/lib\/ocr'/);
-    expect(getPassSrc).toContain('await recognizeIdImage(compressed)');
+    expect(getPassSrc).toContain('await recognizeIdImage(source)');
     // Preserves local privacy boundary
     expect(getPassSrc).not.toContain('google-cloud-vision');
     expect(getPassSrc).not.toContain('aws-rekognition');
@@ -53,7 +53,7 @@ describe('FEATURE 2 CONTRACT: Optional Portal OCR & Kiosk Boundary', () => {
     expect(ocrFn).toContain('setIdBlob(compressed)');
     expect(ocrFn).toContain('idUrl.setFromBlob(compressed)');
     // Failure shows user-facing manual entry fallback without clearing idBlob
-    expect(ocrFn).toContain("We couldn't read all details automatically. Please enter them manually.");
+    expect(ocrFn).toContain('Automatic ID reading is unavailable right now. Your ID was still added successfully.');
   });
 
   it('reuses ID evidence in later Valid ID step if captured during OCR', () => {

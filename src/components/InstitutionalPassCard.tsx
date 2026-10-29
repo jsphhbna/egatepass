@@ -24,11 +24,6 @@ export function InstitutionalPassCard({
     return generateCanonicalDigitalPassSvg(effectivePass, qrDataUrl);
   }, [effectivePass, qrDataUrl]);
 
-  const svgDataUrl = useMemo(() => {
-    if (!canonicalSvg) return '';
-    return `data:image/svg+xml;charset=utf-8,${encodeURIComponent(canonicalSvg)}`;
-  }, [canonicalSvg]);
-
   if (!effectivePass) return null;
 
   return (
@@ -37,10 +32,11 @@ export function InstitutionalPassCard({
       <div
         className="w-full max-w-sm rounded-2xl overflow-hidden border border-[var(--color-border)] bg-white shadow-md transition-shadow hover:shadow-lg p-2 flex justify-center items-center print:border-none print:shadow-none print:p-0"
       >
-        <img
-          src={svgDataUrl}
-          alt={`EARIST E-GatePass for ${effectivePass.visitorName}`}
-          className="block h-auto w-full"
+        <div
+          role="img"
+          aria-label={`EARIST E-GatePass for ${effectivePass.visitorName}`}
+          className="block h-auto w-full [&>svg]:h-auto [&>svg]:w-full [&>svg]:block"
+          dangerouslySetInnerHTML={{ __html: canonicalSvg }}
         />
       </div>
 

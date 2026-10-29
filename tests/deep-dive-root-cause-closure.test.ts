@@ -919,12 +919,14 @@ describe('Deep Dive 1 + Deep Dive 2 Root-Cause Closure Test Suite', () => {
       expect(modalContent).toContain('outcome_unknown');
     });
 
-    it('GetPassPage handleShare catches AbortError cleanly without download fallback', () => {
+    it('GetPassPage has completely removed Web Share API in favor of direct download and email', () => {
       const pagePath = path.resolve(process.cwd(), 'src/pages/GetPassPage.tsx');
       const pageContent = fs.readFileSync(pagePath, 'utf8');
 
-      expect(pageContent).toContain("shareErr.name === 'AbortError'");
-      expect(pageContent).toContain('Web Share failed with non-abort error');
+      expect(pageContent).not.toContain('handleShare');
+      expect(pageContent).not.toContain('navigator.share');
+      expect(pageContent).toContain('Download E-GatePass');
+      expect(pageContent).toContain('Email E-GatePass');
     });
   });
 

@@ -103,4 +103,94 @@ TEL NO: 0917-000-0000
     expect(result).not.toHaveProperty('phone');
     expect(result).not.toHaveProperty('contactNumber');
   });
+
+  it('correctly preserves accented Unicode characters (José Niño Dela Cruz, María Peña, Ana Muñoz)', () => {
+    const ocrSampleJose = `
+REPUBLIC OF THE PHILIPPINES
+Last Name: DELA CRUZ
+First Name: JOSÉ NIÑO
+Middle Name: SANTOS
+    `;
+    const resJose = extractNamesFromIdText(ocrSampleJose, 90);
+    expect(resJose.lastName).toBe('Dela Cruz');
+    expect(resJose.firstName).toBe('José Niño');
+    expect(resJose.middleName).toBe('Santos');
+
+    const ocrSampleMaria = `
+PHILIPPINE IDENTIFICATION SYSTEM
+Surname / Apelyido
+PEÑA
+Given Names / Mga Pangalan
+MARÍA
+    `;
+    const resMaria = extractNamesFromIdText(ocrSampleMaria, 92);
+    expect(resMaria.lastName).toBe('Peña');
+    expect(resMaria.firstName).toBe('María');
+
+    const ocrSampleAna = `
+LAND TRANSPORTATION OFFICE
+MUÑOZ, ANA CLARA SANTOS
+    `;
+    const resAna = extractNamesFromIdText(ocrSampleAna, 89);
+    expect(resAna.lastName).toBe('Muñoz');
+    expect(resAna.firstName).toBe('Ana');
+    expect(resAna.middleName).toBe('Clara Santos');
+  });
+
+  it('parses Professional Regulation Commission (PRC) ID format', () => {
+    const ocrSamplePrc = `
+PROFESSIONAL REGULATION COMMISSION
+PROFESSIONAL IDENTIFICATION CARD
+REGISTRATION NO: 0123456
+DELA CRUZ, JUAN PEDRO SANTOS
+PROFESSION: CIVIL ENGINEER
+VALIDITY: 2027/10/30
+    `;
+    const res = extractNamesFromIdText(ocrSamplePrc, 95);
+    expect(res.lastName).toBe('Dela Cruz');
+    expect(res.firstName).toBe('Juan');
+    expect(res.middleName).toBe('Pedro Santos');
+  });
+
+  it('parses Philippine Passport format with surname and given names labels', () => {
+    const ocrSamplePassport = `
+REPUBLIC OF THE PHILIPPINES / REPUBLIKA NG PILIPINAS
+PASSPORT / PASAPORTE
+Surname / Apelyido
+DELA CRUZ
+Given Names / Mga Pangalan
+JUAN PEDRO
+Nationality / Pagkamamamayan: PHILIPPINES
+Date of Birth / Petsa ng kapanganakan: 15 JAN 1990
+    `;
+    const res = extractNamesFromIdText(ocrSamplePassport, 91);
+    expect(res.lastName).toBe('Dela Cruz');
+    expect(res.firstName).toBe('Juan Pedro');
+  });
+
+  it('parses University / Student ID and Company ID format', () => {
+    const ocrSampleStudent = `
+EULOGIO "AMANG" RODRIGUEZ INSTITUTE OF SCIENCE AND TECHNOLOGY
+STUDENT IDENTIFICATION
+SANTOS, MARIA CLARA REYES
+STUDENT NO: 2023-99887-MN-0
+COLLEGE OF ENGINEERING
+    `;
+    const resStudent = extractNamesFromIdText(ocrSampleStudent, 88);
+    expect(resStudent.lastName).toBe('Santos');
+    expect(resStudent.firstName).toBe('Maria');
+    expect(resStudent.middleName).toBe('Clara Reyes');
+
+    const ocrSampleCompany = `
+ACME CORPORATION
+EMPLOYEE ID
+RAMOS, EDUARDO JOSE
+EMP ID: 10492
+DEPARTMENT: SECURITY
+    `;
+    const resCompany = extractNamesFromIdText(ocrSampleCompany, 85);
+    expect(resCompany.lastName).toBe('Ramos');
+    expect(resCompany.firstName).toBe('Eduardo');
+    expect(resCompany.middleName).toBe('Jose');
+  });
 });

@@ -1,4 +1,5 @@
 @import "tailwindcss";
+@custom-variant dark (&:where(.dark, .dark *));
 
 /* ============================================================
    INSTITUTIONAL TYPOGRAPHY — Bundled Noto Sans
@@ -44,14 +45,17 @@
 
   /* Surfaces (60% canvas, 30% secondary) */
   --color-canvas: #F7F8FA;
+  --color-canvas-subtle: #F1F5F9;
   --color-surface: #FFFFFF;
+  --color-surface-hover: #F1F5F9;
+  --color-surface-subtle: #F8FAFC;
   --color-overlay: hsl(220, 14%, 96%);
   --color-overlay-strong: rgba(23, 32, 51, 0.68);
 
   /* Text */
   --color-text-primary: #172033;
-  --color-text-secondary: #64748B;
-  --color-text-muted: hsl(220, 8%, 64%);
+  --color-text-secondary: #5F6B7F;
+  --color-text-muted: #687386;
 
   /* Borders */
   --color-border: hsl(220, 13%, 88%);
@@ -66,6 +70,7 @@
   --color-danger: hsl(0, 72%, 51%);
   --color-danger-light: hsl(0, 72%, 95%);
   --color-danger-dark: #B91C1C;
+  --color-danger-border: #FECACA;
   --color-warning: hsl(38, 92%, 50%);
   --color-warning-light: hsl(38, 92%, 95%);
   --color-warning-dark: #92400E;
@@ -114,12 +119,15 @@
   --color-earist-maroon: #7A0A0A;
   --color-earist-ink: #172033;
   --color-canvas: #F7F8FA;
+  --color-canvas-subtle: #F1F5F9;
   --color-surface: #FFFFFF;
+  --color-surface-hover: #F1F5F9;
+  --color-surface-subtle: #F8FAFC;
   --color-overlay: hsl(220, 14%, 96%);
   --color-overlay-strong: rgba(23, 32, 51, 0.68);
   --color-text-primary: #172033;
-  --color-text-secondary: #64748B;
-  --color-text-muted: hsl(220, 8%, 64%);
+  --color-text-secondary: #5F6B7F;
+  --color-text-muted: #687386;
   --color-border: hsl(220, 13%, 88%);
   --color-border-strong: hsl(220, 13%, 72%);
   --color-neutral: #475569;
@@ -130,6 +138,7 @@
   --color-danger: hsl(0, 72%, 51%);
   --color-danger-light: hsl(0, 72%, 95%);
   --color-danger-dark: #B91C1C;
+  --color-danger-border: #FECACA;
   --color-warning: hsl(38, 92%, 50%);
   --color-warning-light: hsl(38, 92%, 95%);
   --color-warning-dark: #92400E;

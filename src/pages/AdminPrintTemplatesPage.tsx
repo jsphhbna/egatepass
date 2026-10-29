@@ -529,7 +529,7 @@ export function AdminPrintTemplatesPage() {
               <h3 className="text-sm font-bold text-[var(--color-text-primary)] flex items-center justify-between">
                 <span>Element Properties</span>
                 {(selectedElement?.isMandatory || MANDATORY_ELEMENT_TYPES.includes((selectedElement?.field || selectedElement?.type) as string)) && (
-                  <span className="inline-flex items-center gap-1 text-[10px] text-amber-700 dark:text-amber-300 font-semibold">
+                  <span className="inline-flex items-center gap-1 text-[10px] text-amber-800 font-semibold">
                     <Lock className="h-3 w-3" /> Mandatory
                   </span>
                 )}

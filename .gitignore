@@ -1,4 +1,4 @@
-﻿# Dependencies
+# Dependencies
 node_modules/
 
 # Build output
@@ -51,3 +51,6 @@ v10/
 scripts/*
 !scripts/bundle-email-templates.mjs
 !scripts/run-startup-e2e.mjs
+!scripts/sync-tesseract-assets.mjs
+!scripts/run-ocr-e2e.mjs
+!scripts/generate-synthetic-id.mjs
