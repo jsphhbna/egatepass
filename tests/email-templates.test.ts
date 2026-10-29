@@ -315,6 +315,22 @@ describe('EMAIL-ARCH-01: React Email Templates', () => {
       });
       expect(passHtml).toContain('EG-REFPASS9');
     });
+
+    it('preserves exact Unicode (José Niño Dela Cruz, Académico – Registrar) and UTF-8 charset in rendered PassIssuedEmail', async () => {
+      const passHtml = await renderPassIssuedEmail({
+        fullName: 'José Niño Dela Cruz',
+        visitDate: '2026-10-30',
+        purpose: 'Académico – Registrar Verification',
+        publicReference: 'ref-pass-unicode',
+      });
+
+      // Asserts exact Unicode characters
+      expect(passHtml).toContain('José Niño Dela Cruz');
+      expect(passHtml).toContain('Académico – Registrar Verification');
+
+      // Asserts UTF-8 charset declaration
+      expect(passHtml.toLowerCase()).toContain('charset=utf-8');
+    });
   });
 
 });

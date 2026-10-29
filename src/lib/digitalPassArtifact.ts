@@ -26,9 +26,9 @@ export interface CanonicalNameLayout {
 
 export function fitCanonicalVisitorName(name: string): CanonicalNameLayout {
   const trimmed = (name || '').trim();
-  const totalLen = graphemeLength(trimmed);
+  const totalGraphemes = graphemeLength(trimmed);
 
-  if (totalLen <= 24) {
+  if (totalGraphemes <= 24) {
     return {
       isTwoLines: false,
       line1: trimmed,
@@ -41,36 +41,61 @@ export function fitCanonicalVisitorName(name: string): CanonicalNameLayout {
     };
   }
 
-  // Two lines needed
-  const words = trimmed.split(/\s+/);
+  // Maximum readable graphemes allowed on line 1 and line 2
+  const MAX_LINE_GRAPHEMES = 26;
+
+  const words = trimmed.split(/\s+/).filter(Boolean);
   let line1 = '';
   let line2 = '';
 
   if (words.length <= 1) {
+    // Single long token without whitespace
     const g = splitGraphemes(trimmed);
-    const mid = Math.ceil(g.length / 2);
+    const mid = Math.min(MAX_LINE_GRAPHEMES, Math.ceil(g.length / 2));
     line1 = g.slice(0, mid).join('');
-    line2 = g.slice(mid).join('');
+    const remaining = g.slice(mid).join('');
+    if (graphemeLength(remaining) > MAX_LINE_GRAPHEMES) {
+      line2 = truncateGraphemes(remaining, MAX_LINE_GRAPHEMES, '…');
+    } else {
+      line2 = remaining;
+    }
   } else {
+    // Word-aware distribution across up to 2 lines
     let bestIdx = 1;
     let minDiff = Infinity;
+
     for (let i = 1; i < words.length; i++) {
       const l1 = words.slice(0, i).join(' ');
       const l2 = words.slice(i).join(' ');
       const l1Len = graphemeLength(l1);
       const l2Len = graphemeLength(l2);
-      const penalty = (l1Len > 26 ? 100 : 0) + (l2Len > 26 ? 100 : 0) + Math.abs(l1Len - l2Len);
+
+      const l1Overflow = l1Len > MAX_LINE_GRAPHEMES ? 1000 : 0;
+      const penalty = l1Overflow + Math.abs(l1Len - l2Len);
       if (penalty < minDiff) {
         minDiff = penalty;
         bestIdx = i;
       }
     }
+
     line1 = words.slice(0, bestIdx).join(' ');
-    line2 = words.slice(bestIdx).join(' ');
+    let rawLine2 = words.slice(bestIdx).join(' ');
+
+    if (graphemeLength(line1) > MAX_LINE_GRAPHEMES) {
+      line1 = truncateGraphemes(line1, MAX_LINE_GRAPHEMES, '…');
+    }
+
+    if (graphemeLength(rawLine2) > MAX_LINE_GRAPHEMES) {
+      line2 = truncateGraphemes(rawLine2, MAX_LINE_GRAPHEMES, '…');
+    } else {
+      line2 = rawLine2;
+    }
   }
 
   const l1Len = graphemeLength(line1);
   const l2Len = graphemeLength(line2);
+
+  // Apply modest textLength squeeze attribute only when approaching boundary
   const line1Attrs = l1Len >= 24 ? ' textLength="420" lengthAdjust="spacingAndGlyphs"' : '';
   const line2Attrs = l2Len >= 24 ? ' textLength="420" lengthAdjust="spacingAndGlyphs"' : '';
 
@@ -143,7 +168,7 @@ export function generateCanonicalDigitalPassSvg(
   <image href="${qrDataUrl}" x="115" y="190" width="250" height="250" preserveAspectRatio="xMidYMid meet" data-testid="canonical-pass-qr-image"/>
 
   <!-- Pass Reference -->
-  <text x="240" y="485" text-anchor="middle" font-family="'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace" font-size="16" font-weight="bold" fill="#18181B" data-testid="canonical-pass-reference">Ref: ${escapedRef}</text>
+  <text x="240" y="485" text-anchor="middle" font-family="'Egatepass Noto Sans', 'Noto Sans', Arial, sans-serif" font-size="16" font-weight="bold" fill="#18181B" data-testid="canonical-pass-reference">Ref: ${escapedRef}</text>
 
   <!-- Purpose -->
   ${purposeElement}

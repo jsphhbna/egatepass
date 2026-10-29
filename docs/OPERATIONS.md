@@ -80,9 +80,10 @@ flowchart LR
 - **Walk-in Visitors (Kiosk)**: Use the campus kiosk tablet. Rear camera captures the visitor's valid ID, local Tesseract OCR extracts information for review, front camera captures a selfie, and a QR pass is displayed. Kiosk printing supports direct Web Bluetooth thermal printing via MXW01 with fail-safe issuance and browser/operating-system print fallback. (Physical hardware testing was not performed in software repairs and requires on-site manual QA).
 
 ### 2.1.1 Deterministic Typography, Unicode Integrity & Export Encoding
-- **Visitor Names with Diacritics**: Names containing non-ASCII Latin characters (e.g., *José Niño Dela Cruz*, *Renée François*, *Mary-Jane O’Connor*) are rendered accurately across on-screen passes, server-generated email attachments, thermal printer receipts, PDF reports, and CSV spreadsheets.
-- **Spreadsheet Compatibility (Excel UTF-8 BOM)**: Generated CSV reports prepend a UTF-8 Byte Order Mark (`\uFEFF`), ensuring Excel on Windows opens reports with proper UTF-8 decoding rather than mojibake or mangled characters.
-- **Embedded PDF Fonts**: PDF report exports embed official Google Noto Sans TrueType fonts directly, guaranteeing identical appearance across operating systems without missing character boxes.
+- **Tested Regression Character Set**: The canonical pass and PDF paths bundle Noto Sans and verify representative Latin/extended-Latin (ASCII Latin, Filipino/Spanish accented Latin such as *Ñ/ñ*, *É/é*, *Á/á*, *Ü/ü*, *Ç/ç*) and institutional punctuation (curly apostrophes/quotes, bullets, en/em dashes) required by the E-GatePass regression contract.
+- **Spreadsheet Compatibility (Excel UTF-8 BOM)**: Generated CSV reports prepend a UTF-8 Byte Order Mark (`\uFEFF`, raw bytes `EF BB BF`), ensuring Excel on Windows opens reports with proper UTF-8 decoding rather than mojibake or mangled characters, while formula injection defenses remain active.
+- **Embedded PDF Fonts**: PDF report exports embed official Google Noto Sans TrueType fonts directly (`EgatepassNoto`), failing closed if font binaries cannot be retrieved rather than silently substituting default Helvetica.
+- **Server Font Fail-Closed Contract**: Serverless Sharp pass generation fails closed if bundled TTF assets or fontconfig environment cannot be verified, preventing unintentional fallback to unknown host system fonts.
 - **Guard Console Outbox Truth**: When a guard logs in or shifts change, the local outbox counter and queue immediately reflect accurate local pending counts without requiring manual refreshes or extra actions.
 
 ### 2.2 Gate Entry, Guard Review, and Exit Sequence
@@ -403,7 +404,7 @@ When cloud connectivity returns:
 ### 9.1 Cross-Guard Actor Binding & Shift Change Procedures
 - **Actor-Bound Offline Stores**: All local registrations, cached visitor passes, and outbox actions are bound to the active guard's UUID (`actorId`) in IndexedDB (`egatepass_guard_offline`).
 - **Fail-Closed Unattributed Isolation**: Any record lacking a valid `actorId` is excluded by fail-closed queries and will never be assigned, displayed, or executed during sync.
-- **Identity-Switch Store Purge**: When a new guard logs in on a shared terminal (`prepareGuardOfflineStoreForActor(nextActorId)` via `transitionGuardOfflineStore`), if `lastActorId` differs from `nextActorId`, the previous guard's sensitive local stores (`cached_visitors`, `offline_registrations`, `offline_events`, `meta`) are fully purged. Guard B starts with an empty cache and 0 pending records.
+- **Identity-Switch Store Purge**: When a new guard logs in on a shared terminal (`transitionGuardOfflineStore(nextActorId)`), if `lastActorId` differs from `nextActorId`, the previous guard's sensitive local stores (`cached_visitors`, `offline_registrations`, `offline_events`, `meta`) are fully purged. Guard B starts with an empty cache and 0 pending records.
 - **Strictly Blocked Sign-Out with Pending Records**: When a guard attempts to sign out, the application checks `getPendingSyncCount(actorId)`. If unsynchronized records exist:
   - The client attempts an immediate synchronization if network connectivity is detected.
   - If records remain unsynchronized, sign-out is strictly blocked with an error toast (*"Cannot sign out while offline records remain pending. Please connect to the network to sync your work."*) to prevent biometric evidence loss and audit attribution gaps.

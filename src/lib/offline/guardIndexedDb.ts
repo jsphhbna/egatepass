@@ -205,7 +205,7 @@ let transitionMutex: Promise<void> = Promise.resolve();
  * Internal uncoordinated store preparation.
  * Never called directly by production modules; always invoked via transitionGuardOfflineStore.
  */
-async function prepareGuardOfflineStoreForActorInternal(actorId: string): Promise<void> {
+async function prepareActorStoreInternal(actorId: string): Promise<void> {
   if (!actorId || typeof actorId !== 'string' || !actorId.trim()) {
     throw new Error('actorId required to prepare Guard store');
   }
@@ -254,19 +254,11 @@ export async function transitionGuardOfflineStore(nextActorId: string | null): P
     if (!nextActorId) {
       await clearAllGuardOfflineData();
     } else {
-      await prepareGuardOfflineStoreForActorInternal(nextActorId);
+      await prepareActorStoreInternal(nextActorId);
     }
   } finally {
     release();
   }
-}
-
-/**
- * Compatibility wrapper routing through the serialization mutex.
- * Direct callers must use transitionGuardOfflineStore(actorId).
- */
-export async function prepareGuardOfflineStoreForActor(actorId: string): Promise<void> {
-  return transitionGuardOfflineStore(actorId);
 }
 
 /**

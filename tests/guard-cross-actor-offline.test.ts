@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { setupMockIndexedDb } from './helpers/mockIndexedDb';
 import {
-  prepareGuardOfflineStoreForActor,
+  transitionGuardOfflineStore,
   getActiveGuardActorId,
   saveOfflineRegistrationWithCache,
   queueOfflineEvent,
@@ -48,7 +48,7 @@ describe('Cross-Guard Actor Isolation & Session Management (P1 Invariants)', () 
 
   it('binds IndexedDB store to actor and isolates pending registrations and events', async () => {
     // Initialize store for Guard A
-    await prepareGuardOfflineStoreForActor(GUARD_A);
+    await transitionGuardOfflineStore(GUARD_A);
     expect(await getActiveGuardActorId()).toBe(GUARD_A);
 
     // Guard A saves an offline registration
@@ -101,7 +101,7 @@ describe('Cross-Guard Actor Isolation & Session Management (P1 Invariants)', () 
 
   it('switching actor invalidates operational visitor cache to prevent cross-guard data leakage', async () => {
     // 1. Guard A logs in and populates operational cache
-    await prepareGuardOfflineStoreForActor(GUARD_A);
+    await transitionGuardOfflineStore(GUARD_A);
     const serverPasses: CachedVisitorPass[] = [
       {
         id: 'pass-a-1',
@@ -128,7 +128,7 @@ describe('Cross-Guard Actor Isolation & Session Management (P1 Invariants)', () 
     expect(searchA.length).toBe(1);
 
     // 2. Guard B logs in on same device
-    await prepareGuardOfflineStoreForActor(GUARD_B);
+    await transitionGuardOfflineStore(GUARD_B);
     expect(await getActiveGuardActorId()).toBe(GUARD_B);
 
     // Guard B's search MUST NOT reveal Guard A's cached visitor
@@ -138,7 +138,7 @@ describe('Cross-Guard Actor Isolation & Session Management (P1 Invariants)', () 
 
   it('forced actor switch purges previous guard sensitive data and Guard B starts clean (Requirement 27)', async () => {
     // Guard A creates offline registration
-    await prepareGuardOfflineStoreForActor(GUARD_A);
+    await transitionGuardOfflineStore(GUARD_A);
     await saveOfflineRegistrationWithCache(GUARD_A, {
       offlineRegistrationId: 'reg-a-only',
       visitor: {
@@ -175,7 +175,7 @@ describe('Cross-Guard Actor Isolation & Session Management (P1 Invariants)', () 
   });
 
   it('clearAllGuardOfflineData removes all offline data across stores', async () => {
-    await prepareGuardOfflineStoreForActor(GUARD_A);
+    await transitionGuardOfflineStore(GUARD_A);
     await saveOfflineRegistrationWithCache(GUARD_A, {
       offlineRegistrationId: 'reg-to-clear',
       visitor: {
@@ -245,7 +245,7 @@ describe('Cross-Guard Actor Isolation & Session Management (P1 Invariants)', () 
   });
 
   it('corrupted or unowned records with empty actorId are not visible or counted (Requirement 25)', async () => {
-    await prepareGuardOfflineStoreForActor(GUARD_A);
+    await transitionGuardOfflineStore(GUARD_A);
     // Directly inject an unowned record into IndexedDB
     const { setupMockIndexedDb } = await import('./helpers/mockIndexedDb');
     const db = await setupMockIndexedDb();

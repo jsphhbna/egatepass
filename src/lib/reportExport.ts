@@ -172,56 +172,35 @@ function arrayBufferToBase64(buffer: ArrayBuffer): string {
   return Buffer.from(binary, 'binary').toString('base64');
 }
 
+/**
+ * Loads and embeds authoritative Noto Sans font binaries into jsPDF Virtual File System (VFS).
+ * Pure browser fetch: retrieves /fonts/NotoSans-Regular.ttf and /fonts/NotoSans-Bold.ttf.
+ * Fails closed: if either font cannot be fetched, aborts and throws an authoritative error.
+ * Caches loaded base64 strings so repeated exports do not re-fetch.
+ */
 export async function loadNotoPdfFonts(doc: any): Promise<void> {
   if (!cachedFontRegularBase64 || !cachedFontBoldBase64) {
-    let loaded = false;
-    if (typeof window !== 'undefined' && typeof window.fetch === 'function' && !(typeof process !== 'undefined' && process.env?.VITEST)) {
-      try {
-        const [resReg, resBold] = await Promise.all([
-          fetch('/fonts/NotoSans-Regular.ttf'),
-          fetch('/fonts/NotoSans-Bold.ttf'),
-        ]);
-        if (resReg.ok && resBold.ok) {
-          const [bufReg, bufBold] = await Promise.all([
-            resReg.arrayBuffer(),
-            resBold.arrayBuffer(),
-          ]);
-          cachedFontRegularBase64 = arrayBufferToBase64(bufReg);
-          cachedFontBoldBase64 = arrayBufferToBase64(bufBold);
-          loaded = true;
-        }
-      } catch {
-        // Fall back to node filesystem if fetch fails
-      }
-    }
+    try {
+      const [resReg, resBold] = await Promise.all([
+        fetch('/fonts/NotoSans-Regular.ttf'),
+        fetch('/fonts/NotoSans-Bold.ttf'),
+      ]);
 
-    if (!loaded) {
-      try {
-        const fs = await import('node:fs');
-        const path = await import('node:path');
-        const candidateDirs = [
-          path.resolve(process.cwd(), 'public/fonts'),
-          path.resolve(process.cwd(), 'dist/fonts'),
-        ];
-        let fontDir = '';
-        for (const d of candidateDirs) {
-          if (fs.existsSync(path.join(d, 'NotoSans-Regular.ttf'))) {
-            fontDir = d;
-            break;
-          }
-        }
-        if (fontDir) {
-          cachedFontRegularBase64 = fs.readFileSync(path.join(fontDir, 'NotoSans-Regular.ttf')).toString('base64');
-          cachedFontBoldBase64 = fs.readFileSync(path.join(fontDir, 'NotoSans-Bold.ttf')).toString('base64');
-          loaded = true;
-        }
-      } catch {
-        // ignore error
+      if (!resReg.ok || !resBold.ok) {
+        throw new Error(`HTTP fetch failed (Regular: ${resReg.status}, Bold: ${resBold.status})`);
       }
-    }
 
-    if (!loaded || !cachedFontRegularBase64 || !cachedFontBoldBase64) {
-      throw new Error('Failed to load authoritative Noto Sans fonts for PDF export');
+      const [bufReg, bufBold] = await Promise.all([
+        resReg.arrayBuffer(),
+        resBold.arrayBuffer(),
+      ]);
+
+      cachedFontRegularBase64 = arrayBufferToBase64(bufReg);
+      cachedFontBoldBase64 = arrayBufferToBase64(bufBold);
+    } catch (err) {
+      cachedFontRegularBase64 = null;
+      cachedFontBoldBase64 = null;
+      throw new Error(`Failed to load authoritative Noto Sans fonts for PDF export: ${err instanceof Error ? err.message : String(err)}`);
     }
   }
 
@@ -230,6 +209,15 @@ export async function loadNotoPdfFonts(doc: any): Promise<void> {
   doc.addFileToVFS('NotoSans-Bold.ttf', cachedFontBoldBase64);
   doc.addFont('NotoSans-Bold.ttf', 'EgatepassNoto', 'bold');
   doc.setFont('EgatepassNoto', 'normal');
+}
+
+/**
+ * Test-only hook to reset cached base64 font representations.
+ * Never to be invoked in production application runtime.
+ */
+export function __resetCachedPdfFontsForTests(): void {
+  cachedFontRegularBase64 = null;
+  cachedFontBoldBase64 = null;
 }
 
 /**

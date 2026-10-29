@@ -1,13 +1,29 @@
 // @vitest-environment happy-dom
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import fs from 'node:fs';
+import path from 'node:path';
 import { exportReportToCsv, exportReportToExcel, exportReportToPdf, type ReportExportOptions } from '@/lib/reportExport';
 
 describe('Group H: Unified Report Exports Contract (CSV, XLSX, PDF)', () => {
   let createdBlobs: { blob: Blob; filename: string }[] = [];
 
+  const regularFontBuffer = fs.readFileSync(path.resolve(process.cwd(), 'public/fonts/NotoSans-Regular.ttf'));
+  const boldFontBuffer = fs.readFileSync(path.resolve(process.cwd(), 'public/fonts/NotoSans-Bold.ttf'));
+
   beforeEach(() => {
     createdBlobs = [];
     vi.restoreAllMocks();
+
+    globalThis.fetch = vi.fn().mockImplementation(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes('NotoSans-Regular.ttf')) {
+        return new Response(regularFontBuffer, { status: 200 });
+      }
+      if (url.includes('NotoSans-Bold.ttf')) {
+        return new Response(boldFontBuffer, { status: 200 });
+      }
+      return new Response('Not Found', { status: 404 });
+    });
 
     // Mock URL.createObjectURL and URL.revokeObjectURL
     globalThis.URL.createObjectURL = vi.fn().mockImplementation((blob: Blob) => {

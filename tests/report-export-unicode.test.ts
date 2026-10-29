@@ -1,10 +1,34 @@
 // @vitest-environment happy-dom
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { exportReportToCsv, exportReportToPdf, type ReportExportOptions } from '@/lib/reportExport';
+import fs from 'node:fs';
+import path from 'node:path';
+import {
+  exportReportToCsv,
+  exportReportToPdf,
+  exportReportToExcel,
+  __resetCachedPdfFontsForTests,
+  type ReportExportOptions,
+} from '@/lib/reportExport';
 
 describe('Workstream B: Report Export Unicode & Font Embedding Integrity', () => {
+  const regularFontBuffer = fs.readFileSync(path.resolve(process.cwd(), 'public/fonts/NotoSans-Regular.ttf'));
+  const boldFontBuffer = fs.readFileSync(path.resolve(process.cwd(), 'public/fonts/NotoSans-Bold.ttf'));
+
   beforeEach(() => {
     vi.restoreAllMocks();
+    __resetCachedPdfFontsForTests();
+
+    // Default fetch mock supplying genuine bundled font buffers
+    globalThis.fetch = vi.fn().mockImplementation(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes('NotoSans-Regular.ttf')) {
+        return new Response(regularFontBuffer, { status: 200 });
+      }
+      if (url.includes('NotoSans-Bold.ttf')) {
+        return new Response(boldFontBuffer, { status: 200 });
+      }
+      return new Response('Not Found', { status: 404 });
+    });
   });
 
   interface UnicodeRecord {
@@ -55,7 +79,7 @@ describe('Workstream B: Report Export Unicode & Font Embedding Integrity', () =>
     generatedBy: 'Super Admin',
   };
 
-  it('CSV export begins with UTF-8 BOM \\uFEFF and preserves all special Unicode glyphs', async () => {
+  it('CSV export begins with UTF-8 BOM EF BB BF and preserves all special Unicode glyphs', async () => {
     let capturedBlob: Blob | null = null;
     globalThis.URL.createObjectURL = vi.fn().mockImplementation((blob: Blob) => {
       capturedBlob = blob;
@@ -66,9 +90,15 @@ describe('Workstream B: Report Export Unicode & Font Embedding Integrity', () =>
     await exportReportToCsv(options);
 
     expect(capturedBlob).not.toBeNull();
-    const text = await (capturedBlob as unknown as Blob).text();
+    const arrayBuffer = await (capturedBlob as unknown as Blob).arrayBuffer();
+    const bytes = new Uint8Array(arrayBuffer);
 
-    // Must start with UTF-8 BOM \uFEFF
+    // Verify exact raw BOM bytes: 0xEF, 0xBB, 0xBF
+    expect(bytes[0]).toBe(0xEF);
+    expect(bytes[1]).toBe(0xBB);
+    expect(bytes[2]).toBe(0xBF);
+
+    const text = await (capturedBlob as unknown as Blob).text();
     expect(text.charCodeAt(0)).toBe(0xFEFF);
     expect(text.startsWith('\uFEFF')).toBe(true);
 
@@ -80,7 +110,7 @@ describe('Workstream B: Report Export Unicode & Font Embedding Integrity', () =>
     expect(text).toContain('Mary-Jane O’Connor');
   });
 
-  it('PDF export successfully loads bundled Noto Sans and renders Unicode characters without exception', async () => {
+  it('PDF export proves custom font embedding (EgatepassNoto) in generated binary', async () => {
     let capturedBlob: Blob | null = null;
     globalThis.URL.createObjectURL = vi.fn().mockImplementation((blob: Blob) => {
       capturedBlob = blob;
@@ -92,6 +122,64 @@ describe('Workstream B: Report Export Unicode & Font Embedding Integrity', () =>
 
     expect(capturedBlob).not.toBeNull();
     expect((capturedBlob as unknown as Blob).type).toBe('application/pdf');
-    expect((capturedBlob as unknown as Blob).size).toBeGreaterThan(1000);
+
+    const arrayBuffer = await (capturedBlob as unknown as Blob).arrayBuffer();
+    const binary = Buffer.from(arrayBuffer).toString('latin1');
+
+    // Asserts evidence of custom font registration in PDF stream
+    expect(binary).toContain('EgatepassNoto');
+  });
+
+  it('PDF font-load failure contract: aborts export with error when fonts are unavailable', async () => {
+    __resetCachedPdfFontsForTests();
+
+    // Mock fetch failure
+    globalThis.fetch = vi.fn().mockResolvedValue(new Response(null, { status: 404, statusText: 'Not Found' }));
+
+    let downloadTriggered = false;
+    globalThis.URL.createObjectURL = vi.fn().mockImplementation(() => {
+      downloadTriggered = true;
+      return 'blob:fail-pdf';
+    });
+
+    await expect(exportReportToPdf(options)).rejects.toThrow('Failed to load authoritative Noto Sans fonts for PDF export');
+    expect(downloadTriggered).toBe(false);
+  });
+
+  it('XLSX export successfully round-trips accented Unicode cells through ExcelJS workbook parser', async () => {
+    let capturedBlob: Blob | null = null;
+    globalThis.URL.createObjectURL = vi.fn().mockImplementation((blob: Blob) => {
+      capturedBlob = blob;
+      return 'blob:mock-xlsx';
+    });
+    globalThis.URL.revokeObjectURL = vi.fn();
+
+    await exportReportToExcel(options);
+
+    expect(capturedBlob).not.toBeNull();
+    const arrayBuffer = await (capturedBlob as unknown as Blob).arrayBuffer();
+
+    const ExcelJS = await import('exceljs');
+    const workbook = new ExcelJS.Workbook();
+    await workbook.xlsx.load(arrayBuffer);
+
+    const sheet = workbook.worksheets[0];
+    expect(sheet).toBeDefined();
+
+    // Search for cells matching Unicode values
+    const cellValues: string[] = [];
+    sheet.eachRow((row) => {
+      row.eachCell((cell) => {
+        if (cell.value) {
+          cellValues.push(String(cell.value));
+        }
+      });
+    });
+
+    expect(cellValues).toContain('José Niño Dela Cruz');
+    expect(cellValues).toContain('Académico – Registrar Verification');
+    expect(cellValues).toContain('Renée François');
+    expect(cellValues).toContain('Consultant • Audit & Compliance');
+    expect(cellValues).toContain('Mary-Jane O’Connor');
   });
 });

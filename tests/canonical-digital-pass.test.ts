@@ -96,7 +96,7 @@ describe('Group D: Canonical Digital E-GatePass Contract & Parity', () => {
     expect(expectedFilename).toBe('egatepass-EG-E5F6A7B8.png');
     expect(expectedFilename).not.toBe('earist-gate-pass-qr.png');
   });
-  it('server rasterizer renders Unicode glyphs (José Niño Dela Cruz, •, –) deterministically with sharp', async () => {
+  it('server rasterizer renders Unicode glyphs (José Niño Dela Cruz, •, –) and verifies raw pixel raster output', async () => {
     const unicodePass = {
       fullName: 'José Niño Dela Cruz',
       visitDate: '2026-10-30',
@@ -109,10 +109,90 @@ describe('Group D: Canonical Digital E-GatePass Contract & Parity', () => {
     expect(result.pngBuffer).toBeInstanceOf(Buffer);
 
     const { default: sharp } = await import('sharp');
-    const metadata = await sharp(result.pngBuffer).metadata();
+    const image = sharp(result.pngBuffer);
+    const metadata = await image.metadata();
     expect(metadata.width).toBe(480);
     expect(metadata.height).toBe(696);
     expect(metadata.format).toBe('png');
     expect(result.presentation.visitorName).toBe('JOSÉ NIÑO DELA CRUZ');
+
+    // Decode to raw pixel buffer (RGBA/RGB) to inspect actual rendered glyph pixels
+    const { data: rawPixels, info } = await image.raw().toBuffer({ resolveWithObject: true });
+    expect(info.width).toBe(480);
+    expect(info.height).toBe(696);
+
+    // Inspect the visitor name vertical region: y ≈ 95..145, x ≈ 25..455
+    let nameDarkPixels = 0;
+    for (let y = 95; y < 145; y++) {
+      for (let x = 25; x < 455; x++) {
+        const idx = (y * info.width + x) * info.channels;
+        // Background is pure white (#FFFFFF); dark glyph pixels have luminance < 200
+        const r = rawPixels[idx];
+        const g = rawPixels[idx + 1];
+        const b = rawPixels[idx + 2];
+        if (r < 200 || g < 200 || b < 200) {
+          nameDarkPixels++;
+        }
+      }
+    }
+
+    // Meaningful dark pixel activity confirms actual font glyphs were rendered, not empty space
+    expect(nameDarkPixels).toBeGreaterThan(250);
+
+    // Inspect the purpose/footer text region containing '•' and '–': y ≈ 495..525, x ≈ 25..455
+    let purposeDarkPixels = 0;
+    for (let y = 495; y < 525; y++) {
+      for (let x = 25; x < 455; x++) {
+        const idx = (y * info.width + x) * info.channels;
+        const r = rawPixels[idx];
+        const g = rawPixels[idx + 1];
+        const b = rawPixels[idx + 2];
+        if (r < 200 || g < 200 || b < 200) {
+          purposeDarkPixels++;
+        }
+      }
+    }
+    expect(purposeDarkPixels).toBeGreaterThan(100);
+  });
+
+  it('tofu / fallback detection: legitimate accented Unicode produces distinct raster output from square-box control', async () => {
+    const { default: sharp } = await import('sharp');
+
+    // Render A: Legitimate Unicode name with 'É' and 'Ñ'
+    const resultA = await renderDigitalPassPngBuffer({
+      fullName: 'JOSÉ NIÑO DELA CRUZ',
+      visitDate: '2026-10-30',
+      publicReference: 'EG-DIFF0001',
+      qrToken: 'test-token-tofu-a',
+    });
+
+    // Render B: Control string with explicit fallback tofu boxes U+25A1 (□)
+    const resultB = await renderDigitalPassPngBuffer({
+      fullName: 'JOS\u25A1 NI\u25A1O DELA CRUZ',
+      visitDate: '2026-10-30',
+      publicReference: 'EG-DIFF0001',
+      qrToken: 'test-token-tofu-a',
+    });
+
+    const { data: rawA, info: infoA } = await sharp(resultA.pngBuffer).raw().toBuffer({ resolveWithObject: true });
+    const { data: rawB } = await sharp(resultB.pngBuffer).raw().toBuffer({ resolveWithObject: true });
+
+    // Count differing pixels in the visitor name region: y ≈ 95..145, x ≈ 25..455
+    let diffPixelCount = 0;
+    for (let y = 95; y < 145; y++) {
+      for (let x = 25; x < 455; x++) {
+        const idx = (y * infoA.width + x) * infoA.channels;
+        if (
+          rawA[idx] !== rawB[idx] ||
+          rawA[idx + 1] !== rawB[idx + 1] ||
+          rawA[idx + 2] !== rawB[idx + 2]
+        ) {
+          diffPixelCount++;
+        }
+      }
+    }
+
+    // Asserts that the legitimate accented glyphs render differently than fallback square boxes
+    expect(diffPixelCount).toBeGreaterThan(50);
   });
 });

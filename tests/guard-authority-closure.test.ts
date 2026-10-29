@@ -346,8 +346,8 @@ describe('Workstream A: Guard Offline Authority Closure (Section 15 Regressions)
     });
   });
 
-  // 15.D: Maintenance and identity transition cannot double-clear
-  it('D. maintenance and identity transition cannot double-clear B data', async () => {
+  // 15.D: Maintenance and identity transition cannot double-clear (deterministic deferred race)
+  it('D. maintenance and identity transition cannot double-clear B data (controlled ordering)', async () => {
     await transitionGuardOfflineStore(GUARD_A);
     await saveCachedVisitors(GUARD_A, [{
       id: 'pass-a-test',
@@ -369,16 +369,56 @@ describe('Workstream A: Guard Offline Authority Closure (Section 15 Regressions)
       error: null,
     });
 
-    // Trigger transition and maintenance closely together
-    const p1 = transitionGuardOfflineStore(GUARD_B);
-    const p2 = runOfflineMaintenance();
+    // Controlled ordering with deferred promises:
+    // 1. transition B begins
+    // 2. B preparation pauses
+    // 3. maintenance attempts transition
+    // 4. first transition completes
+    // 5. B data is created
+    // 6. queued maintenance transition resolves
+    // 7. B data remains intact without second destructive clear
+    let pauseBResolve!: () => void;
+    const pauseBPromise = new Promise<void>((resolve) => {
+      pauseBResolve = resolve;
+    });
 
-    await Promise.all([p1, p2]);
+    let bStartedResolve!: () => void;
+    const bStartedPromise = new Promise<void>((resolve) => {
+      bStartedResolve = resolve;
+    });
 
-    // Store is now prepared for Guard B
+    const originalTransaction = mockDb.transaction.bind(mockDb);
+    let intercepted = false;
+    mockDb.transaction = (storeNames: any, mode: any) => {
+      const tx = originalTransaction(storeNames, mode);
+      if (!intercepted && Array.isArray(storeNames) && storeNames.includes('cached_visitors')) {
+        intercepted = true;
+        bStartedResolve();
+        const originalOnComplete = tx.oncomplete;
+        tx.oncomplete = async () => {
+          await pauseBPromise;
+          if (originalOnComplete) originalOnComplete();
+        };
+      }
+      return tx;
+    };
+
+    // 1. Launch transition B (will pause in transaction)
+    const pTransitionB = transitionGuardOfflineStore(GUARD_B);
+
+    // 2. Wait until transition B has begun and paused
+    await bStartedPromise;
+
+    // 3. While transition B is paused, maintenance attempts transition
+    const pMaintenance = runOfflineMaintenance();
+
+    // 4. Complete first transition
+    pauseBResolve();
+    await pTransitionB;
+
     expect(await getActiveGuardActorId()).toBe(GUARD_B);
 
-    // Guard B adds local data
+    // 5. Guard B creates local data
     await saveOfflineRegistrationWithCache(GUARD_B, {
       offlineRegistrationId: 'reg-b-walkin-1',
       visitor: {
@@ -393,7 +433,11 @@ describe('Workstream A: Guard Offline Authority Closure (Section 15 Regressions)
       occurredAt: '2026-10-30T11:00:00Z',
     });
 
-    // Guard B data survives and is not cleared by trailing uncoordinated promises
+    // 6. Await queued maintenance transition
+    await pMaintenance;
+
+    // 7. Assert: no second destructive clear, one actor assignment, Guard B data remains intact
+    expect(await getActiveGuardActorId()).toBe(GUARD_B);
     const bRegs = await getOfflineRegistrations(GUARD_B);
     expect(bRegs.length).toBe(1);
     expect(bRegs[0].visitor.lastName).toBe('Walk-in');

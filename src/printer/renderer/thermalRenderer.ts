@@ -27,9 +27,10 @@ export async function renderThermalPass(
 
   if ((document as any).fonts?.load) {
     try {
-      await (document as any).fonts.load('14px "Egatepass Noto Sans"');
-    } catch {
-      // Non-fatal if font loading is unsupported
+      await (document as any).fonts.load('400 14px "Egatepass Noto Sans"');
+      await (document as any).fonts.load('700 14px "Egatepass Noto Sans"');
+    } catch (err) {
+      console.warn('[thermalRenderer] Font Loading API rejected; proceeding with CSS fallback stack:', err);
     }
   }
 

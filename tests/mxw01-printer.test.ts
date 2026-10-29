@@ -109,19 +109,119 @@ describe('Phase 2 & Phase 17: MXW01 Kiosk Thermal Printer Integration', () => {
     mxw01PrinterManager.setPrintIntensity(150);
     expect(mxw01PrinterManager.getPrintIntensity()).toBe(100);
   });
-  it('2.8. thermal renderer supports Unicode visitor names and grapheme-safe rendering', async () => {
+  it('2.8. thermal renderer passes exact Unicode strings and requests Egatepass Noto Sans', async () => {
+    const filledTexts: string[] = [];
+    let requestedFont = '';
+
+    const mockCtx = {
+      fillStyle: '#FFFFFF',
+      fillRect: vi.fn(),
+      clearRect: vi.fn(),
+      drawImage: vi.fn(),
+      fillText: vi.fn().mockImplementation((str: string) => {
+        filledTexts.push(str);
+      }),
+      strokeRect: vi.fn(),
+      beginPath: vi.fn(),
+      moveTo: vi.fn(),
+      lineTo: vi.fn(),
+      stroke: vi.fn(),
+      measureText: vi.fn().mockReturnValue({ width: 100 }),
+      createImageData: vi.fn().mockImplementation((w: number, h: number) => ({
+        data: new Uint8ClampedArray(w * h * 4),
+        width: w,
+        height: h,
+      })),
+      putImageData: vi.fn(),
+      getImageData: vi.fn().mockReturnValue({
+        data: new Uint8ClampedArray(384 * 640 * 4),
+        width: 384,
+        height: 640,
+      }),
+      get font() {
+        return requestedFont;
+      },
+      set font(val: string) {
+        requestedFont = val;
+      },
+    };
+
+    HTMLCanvasElement.prototype.getContext = vi.fn().mockReturnValue(mockCtx);
+
     const unicodePresentation: PassPresentation = {
-      institutionName: 'EARIST E-GATEPASS',
-      systemTitle: 'CAMPUS VISITOR PASS',
+      ...samplePresentation,
       visitorName: 'JOSÉ NIÑO DELA CRUZ',
-      visitDate: 'Oct 30, 2026',
-      passReference: 'Ref: EG-99887766',
-      qrToken: 'test-qr-token',
       purpose: 'Académico – Registrar Verification • Special Permit',
     };
 
     const result = await renderThermalPass(unicodePresentation, BUNDLED_DEFAULT_THERMAL_TEMPLATE);
     expect(result.canvas.width).toBe(384);
     expect(result.dataUrl).toMatch(/^data:image\/png;base64,/);
+
+    // Verify fillText received exact Unicode strings without mojibake or U+FFFD
+    const combinedTexts = filledTexts.join(' ');
+    expect(combinedTexts).toContain('JOSÉ NIÑO DELA CRUZ');
+    expect(combinedTexts).toContain('Académico');
+    expect(combinedTexts).toContain('–');
+    expect(combinedTexts).toContain('•');
+    expect(combinedTexts).not.toContain('\uFFFD');
+    expect(combinedTexts).not.toContain('Ã');
+
+    // Verify ctx.font requested institutional Egatepass Noto Sans
+    expect(requestedFont).toContain('Egatepass Noto Sans');
+  });
+
+  it('2.9. thermal grapheme truncation handles narrow boundaries, combining accents, and surrogates without corruption', async () => {
+    const filledTexts: string[] = [];
+    const mockCtx = {
+      fillStyle: '#FFFFFF',
+      fillRect: vi.fn(),
+      clearRect: vi.fn(),
+      drawImage: vi.fn(),
+      fillText: vi.fn().mockImplementation((str: string) => {
+        filledTexts.push(str);
+      }),
+      strokeRect: vi.fn(),
+      beginPath: vi.fn(),
+      moveTo: vi.fn(),
+      lineTo: vi.fn(),
+      stroke: vi.fn(),
+      measureText: vi.fn().mockImplementation((str: string) => ({
+        width: str.length * 20, // artificially wide per character to force word wrapping / truncation
+      })),
+      createImageData: vi.fn().mockImplementation((w: number, h: number) => ({
+        data: new Uint8ClampedArray(w * h * 4),
+        width: w,
+        height: h,
+      })),
+      putImageData: vi.fn(),
+      getImageData: vi.fn().mockReturnValue({
+        data: new Uint8ClampedArray(384 * 640 * 4),
+        width: 384,
+        height: 640,
+      }),
+      font: '14px "Egatepass Noto Sans"',
+    };
+
+    HTMLCanvasElement.prototype.getContext = vi.fn().mockReturnValue(mockCtx);
+
+    // Presentation with decomposed combining mark ('e' + '\u0301'), emoji surrogate pairs ('🎓'), and accented Latin
+    const complexPresentation: PassPresentation = {
+      ...samplePresentation,
+      visitorName: 'Jose\u0301 Nin\u0303o Dela Cruz 🎓',
+      purpose: 'Acade\u0301mico – Records Evaluation • Very Long Purpose String Forcing Truncation And Ellipsis Processing',
+    };
+
+    await renderThermalPass(complexPresentation, BUNDLED_DEFAULT_THERMAL_TEMPLATE);
+
+    // None of the rendered text chunks should contain severed surrogate pairs or U+FFFD
+    for (const text of filledTexts) {
+      expect(text).not.toContain('\uFFFD');
+      // No dangling high surrogate or low surrogate
+      expect(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/.test(text)).toBe(false);
+    }
+
+    // Ellipsis appears for truncated lines
+    expect(filledTexts.some((t) => t.includes('…'))).toBe(true);
   });
 });
