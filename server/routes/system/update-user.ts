@@ -9,16 +9,28 @@ const schema = z.object({ targetUid: z.string().uuid(), role: z.enum(['guard', '
 
 async function handleRequest(request: Request): Promise<Response> {
   if (request.method !== 'POST') return jsonResponse(405, { error: 'method_not_allowed' }, { Allow: 'POST' });
-  const token = readBearerToken(request); const parsed = schema.safeParse(await request.json().catch(() => null));
+  const token = readBearerToken(request);
+  const parsed = schema.safeParse(await request.json().catch(() => null));
   if (!token) return jsonResponse(401, { error: 'authentication_required' });
   if (!parsed.success) return jsonResponse(400, { error: 'invalid_request' });
+  if (parsed.data.role === 'guard') {
+    return jsonResponse(422, { error: 'legacy_guard_role_disabled', message: 'The legacy guard role is disabled and cannot be assigned.' });
+  }
+
   try {
-    const { admin } = getServerSupabaseClients(); const actor = await requireStaffActor(admin, token, ['admin', 'superadmin']);
+    const { admin } = getServerSupabaseClients();
+    const actor = await requireStaffActor(admin, token, ['admin', 'superadmin']);
     const updated = await admin.schema('api').rpc('update_staff_profile', {
-      requested_actor_id: actor.id, requested_user_id: parsed.data.targetUid,
-      requested_role: parsed.data.role ?? null, requested_active: parsed.data.active ?? null, requested_request_id: randomUUID(),
+      requested_actor_id: actor.id,
+      requested_user_id: parsed.data.targetUid,
+      requested_role: parsed.data.role ?? null,
+      requested_active: parsed.data.active ?? null,
+      requested_request_id: randomUUID(),
     });
     if (updated.error) {
+      if (updated.error.code === '22023' || updated.error.message?.includes('legacy_guard_role_disabled')) {
+        return jsonResponse(422, { error: 'legacy_guard_role_disabled', message: 'The legacy guard role is disabled and cannot be assigned.' });
+      }
       if (updated.error.code === 'P0004' || updated.error.message?.includes('target_decommissioned')) {
         return jsonResponse(409, { error: 'target_decommissioned' });
       }
@@ -49,4 +61,5 @@ async function handleRequest(request: Request): Promise<Response> {
     return jsonResponse(503, { error: 'service_unavailable' });
   }
 }
+
 export default { fetch: handleRequest };

@@ -1577,4 +1577,217 @@ describe('Permanent PostgreSQL Migration Chain & Schema Contracts (PGlite)', () 
     `);
     expect(columns.rows).toHaveLength(2);
   }, 60000);
+
+  it('Migration 40: verifies final scan_pass lifecycle, wrong-gate fail-closed exit, guard role deprecation, and visit_event_type enums', async () => {
+    const db = new PGlite();
+    const files = await applyAllMigrations(db);
+    expect(files.length).toBe(40);
+
+    // 1. Enum contract: visit_event_type contains valid enums and NO invalid writes
+    const eventTypeQuery = await db.query<{ enumlabel: string }>(`
+      select enumlabel from pg_enum
+      join pg_type on pg_enum.enumtypid = pg_type.oid
+      where pg_type.typname = 'visit_event_type';
+    `);
+    const eventEnums = eventTypeQuery.rows.map((r) => r.enumlabel);
+    expect(eventEnums).toContain('scan_entry');
+    expect(eventEnums).toContain('scan_exit');
+    expect(eventEnums).toContain('invalid_scan');
+    expect(eventEnums).toContain('approved');
+    expect(eventEnums).toContain('rejected');
+    expect(eventEnums).not.toContain('scan_failed');
+    expect(eventEnums).not.toContain('exit');
+
+    // 2. Setup mock devices, staff, and visitors
+    const entryDevId = '10000000-0000-0000-0000-000000000001';
+    const exitDevGate1Id = '10000000-0000-0000-0000-000000000002';
+    const exitDevGate2Id = '10000000-0000-0000-0000-000000000003';
+    const adminId = '20000000-0000-0000-0000-000000000001';
+    const guardId = '20000000-0000-0000-0000-000000000002';
+    const portalVisitorUserId = '30000000-0000-0000-0000-000000000001';
+    const kioskVisitorUserId = '30000000-0000-0000-0000-000000000002';
+    const portalVisitorId = '30000000-0000-0000-0000-000000000003';
+    const kioskVisitorId = '30000000-0000-0000-0000-000000000004';
+    const portalPassId = '40000000-0000-0000-0000-000000000001';
+    const kioskPassId = '40000000-0000-0000-0000-000000000002';
+
+    const portalDigestHex = '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef';
+    const kioskDigestHex = 'fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210';
+
+    // Insert auth users
+    await db.query(`
+      insert into auth.users (id, email) values
+        ($1, 'entry-dev@devices.egatepass.invalid'),
+        ($2, 'exit-dev1@devices.egatepass.invalid'),
+        ($3, 'exit-dev2@devices.egatepass.invalid'),
+        ($4, 'admin@earist.edu.ph'),
+        ($5, 'guard@earist.edu.ph'),
+        ($6, 'portalvis@test.invalid'),
+        ($7, 'kioskvis@test.invalid');
+    `, [entryDevId, exitDevGate1Id, exitDevGate2Id, adminId, guardId, portalVisitorUserId, kioskVisitorUserId]);
+
+    // Insert devices
+    await db.query(`
+      insert into public.devices (user_id, name, alias, type, gate, status) values
+        ($1, 'Gate 1 Entry', 'g1-entry', 'entry', 'Gate 1', 'active'),
+        ($2, 'Gate 1 Exit', 'g1-exit', 'exit', 'Gate 1', 'active'),
+        ($3, 'Gate 2 Exit', 'g2-exit', 'exit', 'Gate 2', 'active');
+    `, [entryDevId, exitDevGate1Id, exitDevGate2Id]);
+
+    // Insert staff
+    await db.query(`
+      insert into public.staff_profiles (user_id, display_name, role, active, must_change_password, privacy_accepted_at) values
+        ($1, 'System Administrator', 'admin', true, false, now()),
+        ($2, 'Legacy Guard User', 'guard', true, false, now());
+    `, [adminId, guardId]);
+
+    // Insert visitors (portal + kiosk)
+    await db.query(`
+      insert into public.visitors (id, owner_id, source, created_by_device_id, full_name, contact_number, purpose, visit_date, consent_accepted_at)
+      values
+        ($1, $2, 'portal', null, 'Juan Dela Cruz', '09171234567', 'Official Business', current_date, now()),
+        ($3, $4, 'kiosk', $5, 'Maria Santos', '09171234568', 'Campus Tour', current_date, now());
+    `, [portalVisitorId, portalVisitorUserId, kioskVisitorId, kioskVisitorUserId, entryDevId]);
+
+    // Insert portal pass (status: issued, gate: Gate 1)
+    await db.query(`
+      insert into public.passes (
+        id, public_reference, visitor_id, source, status, gate,
+        token_digest, valid_from, valid_until
+      ) values (
+        $1, '00000000-0000-0000-0000-000000000001', $2, 'portal', 'issued', 'Gate 1',
+        decode($3, 'hex'), now() - interval '1 hour', now() + interval '8 hours'
+      );
+    `, [portalPassId, portalVisitorId, portalDigestHex]);
+
+    // Insert kiosk pass (status: issued, gate: Gate 1)
+    await db.query(`
+      insert into public.passes (
+        id, public_reference, visitor_id, source, status, gate,
+        token_digest, valid_from, valid_until
+      ) values (
+        $1, '00000000-0000-0000-0000-000000000002', $2, 'kiosk', 'issued', 'Gate 1',
+        decode($3, 'hex'), now() - interval '1 hour', now() + interval '8 hours'
+      );
+    `, [kioskPassId, kioskVisitorId, kioskDigestHex]);
+
+    // 3. Executable test: Portal automatic entry transition (issued -> inside)
+    const portalEntryRes = await db.query<{ ok: boolean; result_status: string; code: string; message: string }>(`
+      select * from api.scan_pass(
+        $1, $2, 'entry', gen_random_uuid()
+      );
+    `, [entryDevId, portalDigestHex]);
+
+    expect(portalEntryRes.rows[0]?.ok).toBe(true);
+    expect(portalEntryRes.rows[0]?.result_status).toBe('inside');
+
+    // Verify pass status updated in DB
+    const passCheck1 = await db.query<{ status: string; time_in: string }>(`
+      select status, time_in from public.passes where id = $1;
+    `, [portalPassId]);
+    expect(passCheck1.rows[0]?.status).toBe('inside');
+    expect(passCheck1.rows[0]?.time_in).not.toBeNull();
+
+    // Verify scan_entry event written
+    const eventCheck1 = await db.query<{ event: string }>(`
+      select event from public.visit_events where pass_id = $1 order by occurred_at desc limit 1;
+    `, [portalPassId]);
+    expect(eventCheck1.rows[0]?.event).toBe('scan_entry');
+
+    // 4. Executable test: Fail-closed wrong-gate exit protection
+    // Visitor entered at Gate 1 attempts to exit at Gate 2 scanner -> MUST FAIL CLOSED
+    const wrongGateRes = await db.query<{ ok: boolean; result_status: string; code: string; message: string }>(`
+      select * from api.scan_pass(
+        $1, $2, 'exit', gen_random_uuid()
+      );
+    `, [exitDevGate2Id, portalDigestHex]);
+
+    expect(wrongGateRes.rows[0]?.ok).toBe(false);
+    expect(wrongGateRes.rows[0]?.code).toBe('wrong_gate');
+
+    // Pass must remain 'inside'
+    const passCheckWrongGate = await db.query<{ status: string; time_out: string }>(`
+      select status, time_out from public.passes where id = $1;
+    `, [portalPassId]);
+    expect(passCheckWrongGate.rows[0]?.status).toBe('inside');
+    expect(passCheckWrongGate.rows[0]?.time_out).toBeNull();
+
+    // Verify invalid_scan event logged (NOT scan_failed or exit)
+    const eventCheckWrongGate = await db.query<{ event: string }>(`
+      select event from public.visit_events where pass_id = $1 order by occurred_at desc limit 1;
+    `, [portalPassId]);
+    expect(eventCheckWrongGate.rows[0]?.event).toBe('invalid_scan');
+
+    // 5. Executable test: Same-gate exit succeeds (inside -> exited)
+    const sameGateExitRes = await db.query<{ ok: boolean; result_status: string; code: string; message: string }>(`
+      select * from api.scan_pass(
+        $1, $2, 'exit', gen_random_uuid()
+      );
+    `, [exitDevGate1Id, portalDigestHex]);
+
+    expect(sameGateExitRes.rows[0]?.ok).toBe(true);
+    expect(sameGateExitRes.rows[0]?.result_status).toBe('exited');
+
+    const passCheckExit = await db.query<{ status: string; time_out: string }>(`
+      select status, time_out from public.passes where id = $1;
+    `, [portalPassId]);
+    expect(passCheckExit.rows[0]?.status).toBe('exited');
+    expect(passCheckExit.rows[0]?.time_out).not.toBeNull();
+
+    // Verify scan_exit event logged
+    const eventCheckExit = await db.query<{ event: string }>(`
+      select event from public.visit_events where pass_id = $1 order by occurred_at desc limit 1;
+    `, [portalPassId]);
+    expect(eventCheckExit.rows[0]?.event).toBe('scan_exit');
+
+    // 6. Executable test: Kiosk entry scan retains issued -> pending legacy review
+    const kioskEntryRes = await db.query<{ ok: boolean; result_status: string; code: string; message: string }>(`
+      select * from api.scan_pass(
+        $1, $2, 'entry', gen_random_uuid()
+      );
+    `, [entryDevId, kioskDigestHex]);
+
+    expect(kioskEntryRes.rows[0]?.ok).toBe(true);
+    expect(kioskEntryRes.rows[0]?.result_status).toBe('pending');
+
+    // 7. Executable test: Legacy guard role rejected from decide_visit; admin succeeds
+    await expect(db.query(`
+      select api.decide_visit(
+        $1, $2, 'approved', null, gen_random_uuid()
+      );
+    `, [guardId, kioskPassId])).rejects.toThrow(/active administrator required/);
+
+    // Admin decision succeeds (returns new pass status: inside)
+    const adminDecision = await db.query<{ decide_visit: string }>(`
+      select api.decide_visit(
+        $1, $2, 'approved', null, gen_random_uuid()
+      ) as decide_visit;
+    `, [adminId, kioskPassId]);
+    expect(adminDecision.rows[0]?.decide_visit).toBe('inside');
+
+    // 8. Executable test: Disabling new Guard staff creation and role conversion
+    const newStaffId = '50000000-0000-0000-0000-000000000001';
+    const admin2Id = '50000000-0000-0000-0000-000000000002';
+    await db.query(`
+      insert into auth.users (id, email) values
+        ($1, 'newguard@earist.edu.ph'),
+        ($2, 'admin2@earist.edu.ph');
+    `, [newStaffId, admin2Id]);
+    await db.query(`
+      insert into public.staff_profiles (user_id, display_name, role, active, must_change_password, privacy_accepted_at) values
+        ($1, 'Second Admin', 'admin', true, false, now());
+    `, [admin2Id]);
+
+    await expect(db.query(`
+      select api.create_staff_profile(
+        $1, $2, 'New Guard', 'guard', gen_random_uuid()
+      );
+    `, [adminId, newStaffId])).rejects.toThrow(/legacy_guard_role_disabled/);
+
+    await expect(db.query(`
+      select api.update_staff_profile(
+        $1, $2, 'guard', null, gen_random_uuid()
+      );
+    `, [adminId, admin2Id])).rejects.toThrow(/legacy_guard_role_disabled/);
+  }, 60000);
 });

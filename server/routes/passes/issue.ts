@@ -273,33 +273,28 @@ async function handleRequest(request: Request): Promise<Response> {
 
       const { data: attempt, error: attemptError } = await admin
         .from('portal_identity_verification_attempts')
-        .select('id, actor_id, request_id, photo_intent_id, id_intent_id, status, matched, score, expires_at')
+        .select('id, owner_id, request_id, photo_intent_id, id_intent_id, outcome, expires_at')
         .eq('request_id', parsed.data.requestId)
-        .eq('actor_id', actorId)
-        .order('created_at', { ascending: false })
+        .eq('owner_id', actorId)
+        .eq('photo_intent_id', parsed.data.photoIntentId)
+        .eq('id_intent_id', parsed.data.idIntentId)
+        .order('verified_at', { ascending: false })
         .limit(1)
         .maybeSingle();
 
       if (attemptError) throw attemptError;
 
-      if (!attempt || attempt.status !== 'matched' || !attempt.matched) {
+      if (!attempt || attempt.outcome !== 'matched') {
         return jsonResponse(422, {
           error: 'identity_verification_required',
           message: 'Identity verification must pass before a pass can be issued.',
         });
       }
 
-      if (attempt.photo_intent_id !== parsed.data.photoIntentId || attempt.id_intent_id !== parsed.data.idIntentId) {
-        return jsonResponse(422, {
-          error: 'identity_verification_required',
-          message: 'Identity verification evidence mismatch.',
-        });
-      }
-
       if (new Date(attempt.expires_at).getTime() <= Date.now()) {
         return jsonResponse(422, {
           error: 'identity_verification_expired',
-          message: 'Identity verification has expired. Please verify again.',
+          message: 'Identity verification has expired. Please retry verification.',
         });
       }
     }

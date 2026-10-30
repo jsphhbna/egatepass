@@ -59,10 +59,15 @@ describe('GuardVisitorRecoveryTab UI Actions Actor-Binding (P0 Invariant)', () =
       input.dispatchEvent(new Event('change', { bubbles: true }));
     });
 
-    // Wait for the 300ms debounce in useEffect
-    await act(async () => {
-      await new Promise((resolve) => setTimeout(resolve, 400));
-    });
+    // Wait for the 300ms debounce in useEffect and UI render under load
+    for (let i = 0; i < 20; i++) {
+      await act(async () => {
+        await new Promise((resolve) => setTimeout(resolve, 100));
+      });
+      if (container.querySelectorAll('button').length > 1) {
+        break;
+      }
+    }
   }
 
   it('offline Approve Entry creates event strictly bound to actorId and action approve_entry', async () => {

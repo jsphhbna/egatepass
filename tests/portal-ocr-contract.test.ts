@@ -49,8 +49,8 @@ describe('FEATURE 2 CONTRACT: Optional Portal OCR & Kiosk Boundary', () => {
     const ocrFn = processOcrMatch![0];
 
     // Image is stored before OCR parsing
-    expect(ocrFn).toContain('setIdBlob(compressed)');
-    expect(ocrFn).toContain('idUrl.setFromBlob(compressed)');
+    expect(ocrFn).toMatch(/setIdBlob\((normalized|compressed)\)/);
+    expect(ocrFn).toMatch(/idUrl\.setFromBlob\((normalized|compressed)\)/);
     // Failure shows user-facing manual entry fallback without clearing idBlob
     expect(ocrFn).toContain('Automatic text recognition skipped. Your ID image was saved for later verification.');
   });

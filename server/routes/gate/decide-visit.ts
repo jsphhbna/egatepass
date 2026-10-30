@@ -23,14 +23,14 @@ async function handleRequest(request: Request): Promise<Response> {
     const { admin } = getServerSupabaseClients();
     let actor;
     try {
-      actor = await requireStaffActor(admin, token, ['guard', 'admin', 'superadmin']);
+      actor = await requireStaffActor(admin, token, ['admin', 'superadmin']);
     } catch (err) {
       if (err instanceof HttpError) {
         if (err.status === 401) return jsonResponse(401, { error: 'Invalid or expired session' });
         return jsonResponse(err.status, {
           error: err.code === 'recovery_session_forbidden'
             ? 'Recovery session cannot perform guard operations'
-            : 'Guard access required',
+            : 'Administrator access required',
           code: err.code,
         });
       }
@@ -58,7 +58,7 @@ async function handleRequest(request: Request): Promise<Response> {
     return jsonResponse(200, { status: data });
   } catch (error) {
     const code = typeof error === 'object' && error !== null && 'code' in error ? String(error.code) : null;
-    if (code === '42501') return jsonResponse(403, { error: 'Guard access required' });
+    if (code === '42501') return jsonResponse(403, { error: 'Administrator access required' });
     console.error('Visitor decision failed.', error instanceof Error ? error.message : code ?? 'unknown_error');
     return jsonResponse(503, { error: 'Decision could not be recorded' });
   }

@@ -81,7 +81,7 @@ async function handleRequest(request: Request): Promise<Response> {
       const { count, error: passError } = await admin.from('passes').select('id', { count: 'exact', head: true })
         .eq('visitor_id', evidence.visitor_id)
         .eq('gate', stationDevice.gate)
-        .in('status', ['issued', 'pending', 'inside', 'completed']);
+        .in('status', ['issued', 'pending', 'inside', 'exited']);
       if (passError) throw passError;
       if (!count) return jsonResponse(403, { error: 'Evidence is not operationally accessible at this station' });
     } else if (staffActor) {

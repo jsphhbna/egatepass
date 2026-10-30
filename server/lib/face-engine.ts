@@ -15,7 +15,6 @@ export type QualityResultCode =
   | 'face_too_small'
   | 'face_cropped'
   | 'pose_unsuitable'
-  | 'document_cropped'
   | 'portrait_missing'
   | 'ambiguous_portrait';
 

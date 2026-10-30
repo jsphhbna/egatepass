@@ -4,13 +4,22 @@ import { getVerifiedSessionContext, HttpError } from '../../actors.js';
 import { jsonResponse, readBearerToken } from '../../http.js';
 import { getServerSupabaseClients } from '../../supabase.js';
 import { getClientNetworkIdentifier } from './issue.js';
-import { compareFaces } from '../../lib/face-engine.js';
+import { compareFaces, evaluateLiveFaceQuality } from '../../lib/face-engine.js';
 
 const requestSchema = z.object({
   requestId: z.string().uuid(),
   photoIntentId: z.string().uuid(),
-  idIntentId: z.string().uuid(),
-}).strict();
+  idIntentId: z.string().uuid().optional(),
+  mode: z.enum(['preflight_face', 'verify']).optional(),
+}).strict().superRefine((val, ctx) => {
+  if (val.mode !== 'preflight_face' && !val.idIntentId) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: 'idIntentId is required for identity verification',
+      path: ['idIntentId'],
+    });
+  }
+});
 
 function validMagic(bytes: Uint8Array, contentType: string): boolean {
   if (contentType === 'image/jpeg') return bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff;
@@ -35,12 +44,17 @@ interface IntentRow {
   expires_at: string;
 }
 
-async function inspectAndDownloadUpload(
+export interface UploadDownloadResult {
+  buffer: Buffer;
+  expiresAt: string;
+}
+
+export async function inspectAndDownloadUpload(
   admin: ReturnType<typeof getServerSupabaseClients>['admin'],
   id: string,
   actorId: string,
   kind: 'photo' | 'id'
-): Promise<Buffer> {
+): Promise<UploadDownloadResult> {
   const { data, error } = await admin.from('upload_intents').select('*').eq('id', id).maybeSingle<IntentRow>();
   if (error) throw error;
   if (
@@ -62,7 +76,20 @@ async function inspectAndDownloadUpload(
     throw new Error(`invalid_uploaded_content_${kind}`);
   }
 
-  return Buffer.from(bytes);
+  return { buffer: Buffer.from(bytes), expiresAt: data.expires_at };
+}
+
+export function computeVerificationExpiry(
+  photoIntentExpiresAt: string,
+  idIntentExpiresAt: string,
+  nowMs: number = Date.now(),
+  maxWindowMs: number = 30 * 60 * 1000
+): string {
+  const photoExp = new Date(photoIntentExpiresAt).getTime();
+  const idExp = new Date(idIntentExpiresAt).getTime();
+  const cap = nowMs + maxWindowMs;
+  const boundedMs = Math.min(photoExp, idExp, cap);
+  return new Date(boundedMs).toISOString();
 }
 
 async function handleRequest(request: Request): Promise<Response> {
@@ -92,12 +119,12 @@ async function handleRequest(request: Request): Promise<Response> {
 
     const actorId = session.user.id;
 
-    // 1. Rate limiting - Actor Bucket (6 per 10 minutes)
+    // 1. Rate limiting - Actor Bucket
     const actorKeyHex = createHash('sha256').update(`actor:${actorId}`).digest('hex');
     const { data: actorAllowed, error: actorRlError } = await admin.schema('api').rpc('consume_rate_limit', {
       requested_key_hex: actorKeyHex,
       requested_action: 'portal.verify_identity',
-      requested_max_requests: 6,
+      requested_max_requests: 12,
       requested_window_seconds: 600,
     });
 
@@ -116,12 +143,12 @@ async function handleRequest(request: Request): Promise<Response> {
       });
     }
 
-    // 2. Rate limiting - Network Bucket (15 per 10 minutes)
+    // 2. Rate limiting - Network Bucket
     const networkKeyHex = getClientNetworkIdentifier(request);
     const { data: netAllowed, error: netRlError } = await admin.schema('api').rpc('consume_rate_limit', {
       requested_key_hex: networkKeyHex,
       requested_action: 'portal.network_verify',
-      requested_max_requests: 15,
+      requested_max_requests: 30,
       requested_window_seconds: 600,
     });
 
@@ -140,60 +167,73 @@ async function handleRequest(request: Request): Promise<Response> {
       });
     }
 
-    // 3. Inspect and download photo (live selfie) and ID images
-    const photoBytes = await inspectAndDownloadUpload(admin, parsed.data.photoIntentId, actorId, 'photo');
-    const idBytes = await inspectAndDownloadUpload(admin, parsed.data.idIntentId, actorId, 'id');
+    // 3. Inspect and download photo (live selfie)
+    const photoResult = await inspectAndDownloadUpload(admin, parsed.data.photoIntentId, actorId, 'photo');
 
-    // 4. Run local face engine comparison (YuNet + SFace)
-    const comparison = await compareFaces(photoBytes, idBytes);
+    // 4. Branch: Preflight Face Check Mode (Live face presence & geometry check before ID step)
+    if (parsed.data.mode === 'preflight_face') {
+      const faceQuality = await evaluateLiveFaceQuality(photoResult.buffer);
+      if (!faceQuality.passed) {
+        return jsonResponse(422, {
+          ok: false,
+          error: 'quality_rejected',
+          reasonCode: faceQuality.code,
+          message: faceQuality.message,
+        });
+      }
 
-    let dbOutcome: 'matched' | 'mismatched' | 'face_not_detected' | 'quality_rejected';
+      return jsonResponse(200, {
+        ok: true,
+        preflightPassed: true,
+        message: 'Live face quality and geometry verified.',
+      });
+    }
+
+    // 5. Full 1:1 Identity Verification Mode
+    const idIntentId = parsed.data.idIntentId!;
+    const idResult = await inspectAndDownloadUpload(admin, idIntentId, actorId, 'id');
+
+    // Run local face engine comparison (OpenCV Zoo YuNet + SFace)
+    const comparison = await compareFaces(photoResult.buffer, idResult.buffer);
+
     let userMessage = 'Identity verified successfully.';
-
-    if (comparison.outcome === 'matched') {
-      dbOutcome = 'matched';
-    } else if (comparison.outcome === 'mismatch') {
-      dbOutcome = 'mismatched';
+    if (comparison.outcome === 'mismatch') {
       userMessage = 'The face in your live photo does not match the portrait on your ID. Please ensure you are presenting your own ID document.';
     } else if (comparison.outcome === 'no_face_in_selfie') {
-      dbOutcome = 'face_not_detected';
       userMessage = 'No face was detected in your live selfie. Please retake your photo inside the guide.';
     } else if (comparison.outcome === 'no_face_in_id') {
-      dbOutcome = 'face_not_detected';
       userMessage = 'No portrait was found on the uploaded ID. Please ensure your ID image shows a clear photo of your face.';
     } else if (comparison.outcome === 'multiple_selfie_faces') {
-      dbOutcome = 'quality_rejected';
       userMessage = 'More than one face was detected in your live selfie. Only the visitor must be in view.';
     } else if (comparison.outcome === 'ambiguous_id_faces') {
-      dbOutcome = 'quality_rejected';
       userMessage = 'Multiple faces were found on the ID card. Please ensure only the document owner is visible.';
     } else if (comparison.outcome === 'low_quality_selfie') {
-      dbOutcome = 'quality_rejected';
       userMessage = comparison.error || 'Your live selfie did not meet quality requirements. Please ensure good lighting and steady camera.';
     } else if (comparison.outcome === 'low_quality_id') {
-      dbOutcome = 'quality_rejected';
       userMessage = comparison.error || 'Your ID image did not meet quality requirements. Please ensure the card is flat, clear, and well-lit.';
-    } else {
-      dbOutcome = 'quality_rejected';
+    } else if (comparison.outcome === 'engine_error') {
       userMessage = 'We could not complete identity verification. Please retry with clear images.';
     }
 
-    // 5. Store attempt in portal_identity_verification_attempts (valid for 30 minutes)
-    // Minimization rule: zero persistence of embeddings, face descriptors, landmarks, or tensors.
-    const expiresAt = new Date(Date.now() + 30 * 60 * 1000).toISOString();
+    // Bounded expiry: min(photoIntent.expires_at, idIntent.expires_at, now + 30 mins)
+    const expiresAt = computeVerificationExpiry(photoResult.expiresAt, idResult.expiresAt);
+
+    // Persist attempt into public.portal_identity_verification_attempts using canonical schema
+    // Zero vector persistence: no embeddings, landmarks, or tensors are saved.
     const { data: attemptRow, error: insertError } = await admin
       .from('portal_identity_verification_attempts')
       .insert({
-        actor_id: actorId,
+        owner_id: actorId,
         request_id: parsed.data.requestId,
         photo_intent_id: parsed.data.photoIntentId,
-        id_intent_id: parsed.data.idIntentId,
-        outcome: dbOutcome,
-        confidence_score: comparison.score != null ? Math.round(comparison.score * 1000) / 1000 : null,
-        decision_reason: comparison.outcome,
+        id_intent_id: idIntentId,
+        outcome: comparison.outcome,
+        model_name: comparison.modelName,
+        model_version: comparison.modelVersion,
+        verified_at: new Date().toISOString(),
         expires_at: expiresAt,
       })
-      .select('id, outcome, confidence_score, expires_at')
+      .select('id, outcome, expires_at')
       .single();
 
     if (insertError) {
@@ -202,8 +242,8 @@ async function handleRequest(request: Request): Promise<Response> {
     }
 
     return jsonResponse(200, {
-      outcome: dbOutcome,
-      matched: dbOutcome === 'matched',
+      outcome: comparison.outcome,
+      matched: comparison.outcome === 'matched',
       verificationId: attemptRow.id,
       expiresAt: attemptRow.expires_at,
       message: userMessage,

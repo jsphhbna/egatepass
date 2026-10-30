@@ -99,8 +99,8 @@ export function App() {
               <Route path="/scan/exit" element={<ExitScanPage />} />
             </Route>
 
-            {/* Guard — requires guard or admin role */}
-            <Route element={<ProtectedRoute allowedRoles={['guard_station', 'guard', 'admin', 'superadmin']} />}>
+            {/* Guard Station — requires guard_station device or admin role */}
+            <Route element={<ProtectedRoute allowedRoles={['guard_station', 'admin', 'superadmin']} />}>
               <Route path="/guard" element={<GuardPage />} />
             </Route>
 

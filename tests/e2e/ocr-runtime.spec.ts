@@ -9,12 +9,12 @@ test.describe('Workstream G: Real OCR Integration in Browser Runtime', () => {
     await page.goto('/get-pass');
 
     // 2. Wait for registration form to render
-    const autofillBtn = page.getByRole('button', { name: /Autofill from ID/i });
+    const autofillBtn = page.getByRole('button', { name: /Autofill from ID|Upload ID Image/i });
     await expect(autofillBtn).toBeVisible({ timeout: 15_000 });
 
     // 3. Verify inputs are initially empty
-    const firstNameInput = page.locator('#firstName');
-    const lastNameInput = page.locator('#lastName');
+    const firstNameInput = page.locator('#first-name, #firstName');
+    const lastNameInput = page.locator('#last-name, #lastName');
     await expect(firstNameInput).toBeVisible();
     await expect(lastNameInput).toBeVisible();
 

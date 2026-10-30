@@ -28,8 +28,8 @@ describe('FEATURE 1 & REGRESSION CONTRACT: Valid ID Ingestion & Kiosk Enforcemen
 
   it('routes uploaded portal valid IDs into the same secure evidence path', () => {
     // Both pathways set idBlob and idUrl
-    expect(getPassSrc).toContain('setIdBlob(compressed)');
-    expect(getPassSrc).toContain('idUrl.setFromBlob(compressed)');
+    expect(getPassSrc).toMatch(/setIdBlob\((normalized|compressed)\)/);
+    expect(getPassSrc).toMatch(/idUrl\.setFromBlob\((normalized|compressed)\)/);
     expect(getPassSrc).toContain("issueVisitorPass(");
   });
 

@@ -62,24 +62,55 @@ async function handleRequest(request: Request): Promise<Response> {
         (staff.role === 'admin' || staff.role === 'superadmin')
       ) {
         const url = new URL(request.url);
-        stationGate = url.searchParams.get('gate')?.trim() || 'Gate 1';
+        const requestedGate = url.searchParams.get('gate')?.trim();
+
+        // Validate gate against configured active devices to prevent spoofing
+        const { data: activeDevices, error: devicesError } = await admin
+          .from('devices')
+          .select('gate')
+          .eq('status', 'active');
+
+        if (devicesError) throw devicesError;
+
+        const validGates = Array.from(new Set((activeDevices || []).map((d) => d.gate).filter(Boolean)));
+        if (validGates.length === 0) {
+          validGates.push('Gate 1');
+        }
+
+        let gateName: string;
+        if (requestedGate) {
+          if (!validGates.includes(requestedGate)) {
+            return jsonResponse(400, { error: 'invalid_gate' });
+          }
+          gateName = requestedGate;
+        } else {
+          gateName = validGates[0] || 'Gate 1';
+        }
+
+        stationGate = gateName;
         stationInfo = {
           id: staff.user_id,
-          name: `Admin Console (${stationGate})`,
+          name: `Admin Console (${gateName})`,
           alias: 'admin-monitor',
-          gate: stationGate,
+          gate: gateName,
         };
       } else {
         return jsonResponse(403, { error: 'access_denied' });
       }
     }
 
-    // 2. Fetch passes scanned at this gate today (last 24 hours)
+    if (!stationGate) {
+      return jsonResponse(400, { error: 'invalid_gate' });
+    }
+
+    // 2. Fetch passes scanned at this gate today (last 24 hours), strictly portal entries
     const twentyFourHoursAgo = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
     const { data: passes, error: passesError } = await admin
       .from('passes')
       .select('id, public_reference, status, source, entry_scanned_at, time_in, time_out, visitor_id, gate')
       .eq('gate', stationGate)
+      .eq('source', 'portal')
+      .in('status', ['inside', 'exited'])
       .not('entry_scanned_at', 'is', null)
       .gte('entry_scanned_at', twentyFourHoursAgo)
       .order('entry_scanned_at', { ascending: false })

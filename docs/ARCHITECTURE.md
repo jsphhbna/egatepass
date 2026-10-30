@@ -515,3 +515,17 @@ Outage Architecture & Authority Delegation
 - **Legacy Guard Role Deprecation**: Operational guard accounts are retired for sign-in (`legacy_guard_role_disabled`). Kiosk walk-in manual reviews are preserved at `/admin/legacy-guard` for Admin and Super Admin actors.
 - **Stale Client & Readability Protection**: `public/build-meta.json` generated at build with `Cache-Control: no-store, max-age=0` powers background build polling and non-destructive update notifications. Institutional light theme strictly enforced (`color-scheme: light`) with WCAG 2.1 AA compliant contrast ratios ($\ge 4.5:1$).
 
+### G. Post-Redesign Contract Closure & Fail-Closed Gate Invariants (Migration 40)
+- **Single Canonical Verification Schema**: `portal_identity_verification_attempts` defined in Migration 39 with schema `(owner_id, request_id, photo_intent_id, id_intent_id, outcome, model_name, model_version, verified_at, expires_at)` is the authoritative database contract. `server/routes/passes/verify-identity.ts` writes this exact schema, and `server/routes/passes/issue.ts` queries this exact schema. Invented columns (`actor_id`, `status`, `matched`, `score`) are permanently eliminated.
+- **Fail-Closed Wrong-Gate Exit**: `api.scan_pass` enforces `target.gate is not distinct from scanner.gate` before permitting `inside -> exited`. If an exit scan occurs at a mismatched gate, pass status remains `inside`, no `time_out` is recorded, result returns `wrong_gate`, and canonical `invalid_scan` event is logged.
+- **Strict Canonical Event Logging**: `api.scan_pass` writes strictly valid `visit_event_type` enums (`scan_entry`, `scan_exit`, `invalid_scan`). Invalid non-enum writes (`scan_failed`, `exit`) are eliminated.
+- **Authoritative Guard Authority Deprecation**: Operational authority for legacy human guard accounts is revoked at the database and API boundaries:
+  - `api.decide_visit` allows only `admin` and `superadmin` roles; human `guard` calls fail with 42501.
+  - `api.create_staff_profile` and `api.update_staff_profile` reject `guard` role with `legacy_guard_role_disabled`.
+  - `/guard` UI route restricts access to `guard_station`, `admin`, and `superadmin`.
+- **Trusted Face Preflight**: Live face capture undergoes trusted server-side presence and geometry preflight via YuNet (`mode: 'preflight_face'`) before the visitor can advance to the Valid ID step.
+- **Unmirrored Biometric Evidence**: The webcam hook allows visual mirroring for visitor preview ergonomics, but captured biometric blobs are strictly non-mirrored (`allowCaptureMirroring: false`, `faceWebcam.capture({ mirror: false })`).
+- **High-Resolution ID Normalization**: `normalizeIdentityDocumentImage` standardizes identity document images to long edge ~2000px (max 2400px) at WebP quality 0.92 without upscaling, replacing the old 1024px @ 0.8 compressor.
+- **OCR ID Direct Reuse**: Documents uploaded during optional OCR are normalized and saved for identity verification without prompting the visitor for a second upload.
+- **Exact-Pinned Model Runtime**: `onnxruntime-node: 1.31.1` is exact-pinned, with model provenance, licenses (Apache-2.0), and SHA-256 hashes documented in `server/models/README.md`.
+

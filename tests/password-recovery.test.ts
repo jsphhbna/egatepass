@@ -631,11 +631,38 @@ describe('REPAIR GROUP A: Password Recovery Authorization & Credential Governanc
     expect(body.code).toBe('recovery_session_forbidden');
   });
 
-  // J. Normal eligible staff session CAN call representative Guard API
-  it('13. RECOVERY CONFINEMENT: Normal eligible staff session CAN call representative Guard API (200 OK)', async () => {
-    const staffJwt = makeJwt({
+  // J. Normal eligible staff session CAN call representative API (Admin), legacy guard rejected
+  it('13. RECOVERY CONFINEMENT & AUTHORITY: Eligible admin session CAN call decide-visit (200 OK); legacy guard is rejected (403)', async () => {
+    // Legacy guard role is rejected with 403 Administrator access required
+    const guardJwt = makeJwt({
       sub: STAFF_ID,
       email: 'guard@earist.edu.ph',
+      role: 'authenticated',
+      amr: [{ method: 'password', timestamp: Date.now() }],
+    });
+
+    const guardReq = new Request('http://localhost/api/decide-visit', {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${guardJwt}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        passId: '00000000-0000-4000-a000-000000000001',
+        decision: 'approved',
+        reason: null,
+      }),
+    });
+
+    const guardRes = await decideVisitHandler.fetch(guardReq);
+    expect(guardRes.status).toBe(403);
+    const guardBody = await guardRes.json();
+    expect(guardBody.error).toBe('Administrator access required');
+
+    // Authorized admin session succeeds with 200 OK
+    const adminJwt = makeJwt({
+      sub: SUPERADMIN_ID,
+      email: 'superadmin@earist.edu.ph',
       role: 'authenticated',
       amr: [{ method: 'password', timestamp: Date.now() }],
     });
@@ -643,7 +670,7 @@ describe('REPAIR GROUP A: Password Recovery Authorization & Credential Governanc
     const req = new Request('http://localhost/api/decide-visit', {
       method: 'POST',
       headers: {
-        Authorization: `Bearer ${staffJwt}`,
+        Authorization: `Bearer ${adminJwt}`,
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({

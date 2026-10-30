@@ -626,3 +626,22 @@ stateDiagram-v2
 3. Note the outbox pending count shows `1`.
 4. Hard-refresh the browser tab (`Ctrl+F5` or `Cmd+Shift+R`).
 5. **Expected**: Immediately upon store initialization, the pending outbox badge displays `1` and the outbox tab lists the pending item without requiring the guard to tap "Sync Now" or trigger extra actions.
+
+
+### 16.6 Guard Station Monitor & Gate Confinement (Migration 40)
+1. Log in on a hardware device account provisioned with `type = 'guard_station'` and `gate = 'Gate 1'`.
+2. Navigate to `/guard`. Verify the high-visibility Guard Station monitor is displayed.
+3. Confirm that personal guard logins are rejected with HTTP 403 `legacy_guard_role_disabled`.
+4. Scan a valid online preregistered pass at Gate 1 entry scanner.
+5. Verify the pass automatically transitions to `inside` (`scan_entry` recorded) and immediately appears on the Guard Station monitor with full-bleed registration photo.
+6. Attempt to exit through a scanner at Gate 2. Verify the exit is rejected with `wrong_gate` and `invalid_scan` is logged.
+7. Exit through the scanner at Gate 1. Verify the exit is recorded as `scan_exit` and status updates to `exited`.
+
+### 16.7 Online Pre-Registration Biometric Flow & Single Camera Rule
+1. Navigate to `/get-pass`.
+2. Fill visitor details or optionally select an ID image for OCR autofill (using native file picker).
+3. Advance to Live Face Capture. Verify only ONE custom camera exists with front-facing mirrored preview.
+4. Capture face. Verify captured blob is physically unmirrored.
+5. Confirm server face-presence/geometry preflight runs before advancing to Valid ID.
+6. Provide or reuse valid ID (normalized at ~2000px, 0.92 WebP).
+7. Execute identity verification. Verify matching succeeds against SFace/YuNet before review and pass generation.

@@ -603,19 +603,45 @@ The shared pure SVG template generator (`src/lib/digitalPassArtifact.ts`) uses s
 ### 22.1 Zero Biometric Persistence Guarantee
 - **Model Execution in RAM**: 1:1 biometric comparison executes on the server via OpenCV Zoo models (`YuNet` face detection + `SFace` feature extraction) using ONNX Runtime.
 - **Ephemeral Embeddings**: 128-dimensional L2-normalized feature vectors, 5-point facial landmark coordinates, bounding boxes, and cropped face tensors are generated in transient memory buffers and destroyed immediately upon request completion.
-- **Strict Storage Minimization**: Zero biometric embeddings, templates, or facial measurements are persisted to PostgreSQL tables, Redis caches, or Cloud Object Storage. The relational database only stores audit metadata in `portal_identity_verification_attempts` (`match_status`, `similarity_score`, `model_version`, and unexpired verification timestamps).
+- **Strict Storage Minimization**: Zero biometric embeddings, templates, or facial measurements are persisted to PostgreSQL tables, Redis caches, or Cloud Object Storage. The relational database only stores audit metadata in `portal_identity_verification_attempts` (`outcome`, `model_name`, `model_version`, `verified_at`, and `expires_at`).
 
 ### 22.2 Identity Verification Boundary & Rate Limiting
 - **Anti-Tampering Correlation**: `/api/passes/verify-identity` validates that `photoIntentId` and `idIntentId` belong to the caller's active anonymous Supabase session and match the transaction's `requestId`.
-- **Sliding-Window Rate Limits**: Biometric comparison requests are rate-limited to 5 verification attempts per 10 minutes per anonymous session IP/actor.
-- **Strict Server Authority**: Pass issuance via `POST /api/passes/issue` enforces that an unexpired `matched` record exists in `portal_identity_verification_attempts` within the last 15 minutes before executing `api.issue_pass`.
+- **Sliding-Window Rate Limits**: Biometric comparison requests are rate-limited per session actor and client network identifier.
+- **Strict Server Authority**: Pass issuance via `POST /api/passes/issue` enforces that an unexpired `matched` record exists in `portal_identity_verification_attempts` before executing `api.issue_pass`. Expiry cannot outlive either evidence intent (`min(photoIntent.expires_at, idIntent.expires_at, now + 30m)`).
 
 ### 22.3 Same-Gate Confinement for Guard Station Devices
 - Dedicated hardware devices (`device_type = 'guard_station'`) monitor campus entrance gates.
-- **Gate-Scoped Projections**: `/api/guard-station-feed` only returns visit records and scans originating at the device's assigned gate.
-- **Evidence Access Scoping**: `/api/evidence` strictly restricts `guard_station` devices to visitor registration photos (`photo`) for visits scanned at that station's gate. Access to government ID cards (`id_card`) is denied to guard station devices.
+- **Gate-Scoped Projections**: `/api/guard-station-feed` only returns visit records and scans originating at the device's assigned gate for portal visitors (`source = 'portal'`).
+- **Evidence Access Scoping**: `/api/evidence` strictly restricts `guard_station` devices to visitor registration photos (`photo`) for visits scanned at that station's gate. Access to government ID cards (`id`) is denied to guard station devices.
 
 ### 22.4 Legacy Guard Role Deprecation (`legacy_guard_role_disabled`)
 - To prevent manual approval bypasses on automated online visitor entries, personal guard staff accounts are disabled for operational sign-in with HTTP 403 `legacy_guard_role_disabled`.
 - Walk-in kiosk manual approvals are restricted to Administrative actors (`/admin/legacy-guard`).
+
+## 23. Post-Redesign Contract Closure & Fail-Closed Gate Invariants (Migration 40)
+
+### 23.1 Canonical Database Schema as Single Source of Truth
+- Migration 39 / 40 table `portal_identity_verification_attempts` is the authoritative contract: `(owner_id, request_id, photo_intent_id, id_intent_id, outcome, model_name, model_version, verified_at, expires_at)`.
+- All routes write and read directly against this canonical schema. No invented legacy columns (`actor_id`, `status`, `matched`, `score`) are used or persisted.
+
+### 23.2 Fail-Closed Wrong-Gate Exit Invariant
+- In `api.scan_pass`, exit scanning requires `target.gate is not distinct from scanner.gate`.
+- If an exit scan occurs at a mismatched gate, pass status remains `inside`, no `time_out` is recorded, result returns `wrong_gate`, and canonical `invalid_scan` event is logged.
+
+### 23.3 Strict Canonical Visit Event Logging
+- In `api.scan_pass`, every scan writes exclusively canonical `visit_event_type` enums: `scan_entry` (successful entry), `scan_exit` (successful exit), or `invalid_scan` (wrong gate, expired, unknown QR).
+- Decommissioned / non-existent enum values (`scan_failed`, `exit`) are eliminated.
+
+### 23.4 Total Operational Guard Deprecation
+- `api.decide_visit` authorizes strictly `admin` and `superadmin` roles; legacy human `guard` calls are rejected with 42501 `active administrator required`.
+- `api.create_staff_profile` and `api.update_staff_profile` reject `guard` role assignments with `legacy_guard_role_disabled`.
+- UI `/guard` route is restricted to `guard_station` devices and administrators.
+
+### 23.5 Biometric Capture Integrity & Trusted Preflight
+- **Unmirrored Captured Evidence**: Front-facing webcam preview is visually mirrored for user convenience, but captured biometric blobs are strictly non-mirrored (`allowCaptureMirroring: false`, `faceWebcam.capture({ mirror: false })`).
+- **Trusted Server Face Preflight**: Live face photo undergoes server-side presence and geometry preflight via YuNet (`mode: 'preflight_face'`) before the visitor can advance to the Valid ID step.
+- **High-Resolution ID Normalization**: `normalizeIdentityDocumentImage` standardizes identity document images to long edge ~2000px (max 2400px) at WebP quality 0.92 without upscaling, replacing the generic 1024px @ 0.8 compressor.
+- **OCR ID Direct Reuse**: Documents uploaded during optional OCR are normalized and saved for identity verification without prompting the visitor for a second upload.
+- **Exact-Pinned Model Runtime**: `onnxruntime-node: 1.31.1` is exact-pinned, with model provenance, licenses (Apache-2.0), and SHA-256 hashes documented in `server/models/README.md`.
 

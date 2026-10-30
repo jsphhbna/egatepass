@@ -438,6 +438,47 @@ export async function verifyPortalIdentity(
   return body;
 }
 
+export async function preflightLiveFace(
+  client: SupabaseClient,
+  requestId: string,
+  photoIntentId: string
+): Promise<{ ok: boolean; message?: string; reasonCode?: string }> {
+  const { data: { session } } = await client.auth.getSession();
+  const token = session?.access_token;
+  if (!token) throw new Error('Authentication session required for face quality check.');
+
+  const res = await fetch('/api/passes/verify-identity', {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${token}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      requestId,
+      photoIntentId,
+      mode: 'preflight_face',
+    }),
+  });
+
+  const body = (await res.json().catch(() => null)) as {
+    ok?: boolean;
+    error?: string;
+    message?: string;
+    reasonCode?: string;
+    preflightPassed?: boolean;
+  } | null;
+
+  if (!res.ok || !body?.ok) {
+    return {
+      ok: false,
+      message: body?.message || body?.error || 'Face quality verification failed.',
+      reasonCode: body?.reasonCode,
+    };
+  }
+
+  return { ok: true, message: body.message };
+}
+
 export async function issueVisitorPass(
   source: RegistrationSource,
   visitor: VisitorRegistration,

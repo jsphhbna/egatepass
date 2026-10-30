@@ -5,13 +5,14 @@ import { z } from 'zod';
 import { useWebcam } from '@/hooks/useWebcam';
 import { useObjectUrl } from '@/hooks/useObjectUrl';
 import { useBuildVersion } from '@/hooks/useBuildVersion';
-import { compressImageToWebP } from '@/lib/imageProcessing';
+import { normalizeIdentityDocumentImage } from '@/lib/imageProcessing';
 import {
   issueVisitorPass,
   loadRegistrationSettings,
   createPortalIssueTransaction,
   uploadCheckpointedEvidence,
   verifyPortalIdentity,
+  preflightLiveFace,
   type PortalIssueTransaction,
 } from '@/services/visitorRegistration';
 import { TurnstileWidget } from '@/components/TurnstileWidget';
@@ -173,6 +174,7 @@ export function GetPassPage() {
   const [schedulingDaysAhead, setSchedulingDaysAhead] = useState(MAX_VISIT_ADVANCE_DAYS);
   const issueRequestId = useRef(crypto.randomUUID());
   const portalTransactionRef = useRef<PortalIssueTransaction | null>(null);
+  const livePhotoIntentIdRef = useRef<string | null>(null);
 
   const [visitorInstructions, setVisitorInstructions] = useState<string[]>([
     'Follow the EARIST visitor dress code and campus policies.',
@@ -192,6 +194,7 @@ export function GetPassPage() {
   function resetRegistrationFlow() {
     ocrGenerationRef.current += 1;
     void terminateLocalOcrWorker();
+    livePhotoIntentIdRef.current = null;
     setStep('form');
     setPhotoBlob(null);
     setIdBlob(null);
@@ -245,7 +248,7 @@ export function GetPassPage() {
   }, [loadConfig]);
 
   // SINGLE CAMERA RULE: Live face camera is the ONLY custom camera in the entire flow
-  const faceWebcam = useWebcam({ facingMode: 'user', width: 640, height: 480, allowCaptureMirroring: true });
+  const faceWebcam = useWebcam({ facingMode: 'user', width: 640, height: 480, allowCaptureMirroring: false });
 
   useEffect(() => {
     return () => {
@@ -319,12 +322,12 @@ export function GetPassPage() {
     setOcrSuccessNotice(null);
 
     try {
-      // 1. Compress and store ID image so it can be reused later
-      const compressed = await compressImageToWebP(file);
+      // 1. Normalize and store ID image so it can be reused later
+      const normalized = await normalizeIdentityDocumentImage(file);
       if (generation !== ocrGenerationRef.current) return;
 
-      setIdBlob(compressed);
-      idUrl.setFromBlob(compressed);
+      setIdBlob(normalized);
+      idUrl.setFromBlob(normalized);
       setIdReusedFromOcr(true);
       setIdQualityError(null);
 
@@ -374,12 +377,13 @@ export function GetPassPage() {
   // STEP 2: LIVE FACE CAPTURE & QUALITY GATE
   // ============================================================
   function onCaptureLivePhoto() {
-    const blob = faceWebcam.capture();
+    const blob = faceWebcam.capture({ mirror: false });
     if (blob) {
       setPhotoBlob(blob);
       photoUrl.setFromBlob(blob);
       setLiveFaceQualityError(null);
       setIdentityVerified(false);
+      livePhotoIntentIdRef.current = null;
       faceWebcam.stop();
     } else {
       toast.error('Failed to capture photo. Please hold steady and try again.');
@@ -391,6 +395,7 @@ export function GetPassPage() {
     setPhotoBlob(null);
     setLiveFaceQualityError(null);
     setIdentityVerified(false);
+    livePhotoIntentIdRef.current = null;
     faceWebcam.stop();
     setStep('photo');
     void faceWebcam.start();
@@ -402,6 +407,7 @@ export function GetPassPage() {
     setLiveFaceQualityError(null);
 
     try {
+      // 1. Client-side technical checks first
       const evaluation = await evaluateLiveFaceQuality(photoBlob);
       if (!evaluation.passed) {
         setLiveFaceQualityError(evaluation.message);
@@ -409,11 +415,34 @@ export function GetPassPage() {
         return;
       }
 
-      // Passed Live Face quality gate -> continue to Valid ID step
+      // 2. Prepare transaction & upload live photo intent for trusted server preflight
+      if (!portalTransactionRef.current) {
+        portalTransactionRef.current = await createPortalIssueTransaction();
+        issueRequestId.current = portalTransactionRef.current.requestId as ReturnType<typeof crypto.randomUUID>;
+      }
+
+      const tx = portalTransactionRef.current;
+      const { client } = await import('@/lib/supabase').then((m) => ({ client: m.supabase }));
+      if (!client) throw new Error('Supabase client unavailable');
+
+      if (!livePhotoIntentIdRef.current) {
+        const photoRes = await uploadCheckpointedEvidence(client, 'portal', 'photo', photoBlob, tx);
+        livePhotoIntentIdRef.current = photoRes.intentId;
+      }
+
+      // 3. Call trusted server face-presence/geometry preflight
+      const preflight = await preflightLiveFace(client, tx.requestId, livePhotoIntentIdRef.current);
+      if (!preflight.ok) {
+        setLiveFaceQualityError(preflight.message || 'Face presence check failed. Please ensure your face is clearly visible.');
+        toast.error(preflight.message || 'Face presence check failed.');
+        return;
+      }
+
+      // Passed Live Face quality gate and server preflight -> continue to Valid ID step
       setStep('id');
-    } catch (err) {
+    } catch (err: any) {
       console.warn('Live face quality check error:', err);
-      setLiveFaceQualityError('Could not verify photo quality. Please retake under good lighting.');
+      setLiveFaceQualityError(err?.message || 'Could not verify photo quality. Please retake under good lighting.');
     } finally {
       setIsEvaluatingFaceQuality(false);
     }
@@ -443,16 +472,16 @@ export function GetPassPage() {
     setIdentityVerified(false);
 
     try {
-      const compressed = await compressImageToWebP(file);
-      const quality = await evaluateIdImageQuality(compressed);
+      const normalized = await normalizeIdentityDocumentImage(file);
+      const quality = await evaluateIdImageQuality(normalized);
       if (!quality.passed) {
         setIdQualityError(quality.message);
         toast.error(quality.message);
         return;
       }
 
-      setIdBlob(compressed);
-      idUrl.setFromBlob(compressed);
+      setIdBlob(normalized);
+      idUrl.setFromBlob(normalized);
       setIdReusedFromOcr(false);
       toast.success('Valid ID added successfully.');
     } catch {
@@ -494,14 +523,15 @@ export function GetPassPage() {
       const { client } = await import('@/lib/supabase').then((m) => ({ client: m.supabase }));
       if (!client) throw new Error('Supabase client unavailable');
 
-      // 2. Upload photo and ID to storage checkpoints
-      const [photoRes, idRes] = await Promise.all([
-        uploadCheckpointedEvidence(client, 'portal', 'photo', photoBlob, tx),
-        uploadCheckpointedEvidence(client, 'portal', 'id', idBlob, tx),
-      ]);
+      // 2. Upload photo and ID to storage checkpoints (reuse preflight photo intent if available)
+      const photoIntentId = livePhotoIntentIdRef.current
+        ? livePhotoIntentIdRef.current
+        : (await uploadCheckpointedEvidence(client, 'portal', 'photo', photoBlob, tx)).intentId;
+
+      const idRes = await uploadCheckpointedEvidence(client, 'portal', 'id', idBlob, tx);
 
       // 3. Call server identity verification endpoint
-      const result = await verifyPortalIdentity(client, tx.requestId, photoRes.intentId, idRes.intentId);
+      const result = await verifyPortalIdentity(client, tx.requestId, photoIntentId, idRes.intentId);
 
       if (result.outcome === 'matched') {
         setIdentityVerified(true);
@@ -529,6 +559,7 @@ export function GetPassPage() {
   // Outside ambiguous phase, handleStartOver resets form and generates fresh transaction.
   function handleStartOver() {
     portalTransactionRef.current = null;
+    livePhotoIntentIdRef.current = null;
     issueRequestId.current = crypto.randomUUID();
     resetRegistrationFlow();
   }
@@ -736,6 +767,7 @@ export function GetPassPage() {
                 </div>
 
                 <input
+                  id="ocr-file-upload"
                   ref={ocrFileInputRef}
                   type="file"
                   accept="image/jpeg,image/png,image/webp"
@@ -747,6 +779,7 @@ export function GetPassPage() {
                   type="button"
                   variant="secondary"
                   size="sm"
+                  aria-label="Autofill from ID"
                   onClick={() => ocrFileInputRef.current?.click()}
                   disabled={isProcessingOcr}
                   icon={isProcessingOcr ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Upload className="h-3.5 w-3.5" />}

@@ -398,6 +398,12 @@ When cloud connectivity returns:
    - If Auth suspension encounters partial failure, database state remains committed and an administrative reconciliation item is created.
    - Account appears under the **Decommissioned** filter tab with no Reactivate or credential reset actions available.
 
+### 11.6 Guard Station Operations & Online Entry Monitoring (Migration 40)
+- **Station Device Deployment**: Gate security monitors use authenticated hardware devices with `device_type = 'guard_station'`.
+- **Portal Entry Real-Time Feed**: Displays real-time entries for visitors who preregistered online (`source = 'portal'`). Kiosk walk-ins awaiting review do not appear in this feed.
+- **Fail-Closed Wrong-Gate Exit Invariant**: Gate exit scanners enforce that a visitor may only exit through an exit scanner bound to the gate where they entered. Attempts to exit at an unassigned gate fail closed with `wrong_gate` and log `invalid_scan`.
+- **Legacy Guard Staff Deprecation**: Operational personal guard accounts are disabled (`legacy_guard_role_disabled`). Kiosk reviews are performed via `/admin/legacy-guard` by administrators.
+
 
 
 ## 9. Guard Offline Operations & Shift Change Procedures
