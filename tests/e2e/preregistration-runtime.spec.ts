@@ -66,7 +66,7 @@ test.describe('Workstream H: Real Online Pre-Registration Runtime & Turnstile JI
     });
 
     // 3. Open /get-pass in new visitor mode
-    await page.goto('/get-pass?mode=new');
+    await page.goto('/get-pass?mode=new&arrival=no_vehicle');
 
     // 4. Fill required Step 1 (Personal Details) fields
     const firstNameInput = page.locator('#first-name, #firstName');
@@ -285,7 +285,7 @@ test.describe('Workstream H: Real Online Pre-Registration Runtime & Turnstile JI
     });
 
     // 8. Open /get-pass in new visitor mode
-    await page.goto('/get-pass?mode=new');
+    await page.goto('/get-pass?mode=new&arrival=no_vehicle');
     await expect(page.locator('#first-name, #firstName')).toBeVisible({ timeout: 15_000 });
 
     // Step 1: Personal Details

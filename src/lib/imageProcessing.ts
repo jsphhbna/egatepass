@@ -59,3 +59,38 @@ export async function normalizeIdentityDocumentImage(file: Blob | File): Promise
     reader.readAsDataURL(file);
   });
 }
+
+/**
+ * Normalizes a declared vehicle photo for guard station visual inspection.
+ * Preserves clear resolution (long edge up to 1800px, quality 0.88 WebP) without upscaling.
+ */
+export async function normalizeVehicleImage(file: Blob | File): Promise<Blob> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      const image = new Image();
+      image.onload = () => {
+        const targetLongEdge = 1800;
+        const maxDimension = Math.max(image.width, image.height);
+        const scale = maxDimension > targetLongEdge ? targetLongEdge / maxDimension : 1;
+        const canvas = document.createElement('canvas');
+        canvas.width = Math.round(image.width * scale);
+        canvas.height = Math.round(image.height * scale);
+        const context = canvas.getContext('2d');
+        if (!context) return reject(new Error('Failed to prepare vehicle image.'));
+        context.drawImage(image, 0, 0, canvas.width, canvas.height);
+        canvas.toBlob(
+          (blob) => (blob ? resolve(blob) : reject(new Error('Failed to encode vehicle image.'))),
+          'image/webp',
+          0.88,
+        );
+      };
+      image.onerror = () => reject(new Error('The selected vehicle file is not a readable image.'));
+      image.src = event.target?.result as string;
+    };
+    reader.onerror = () => reject(new Error('Failed to read the selected vehicle file.'));
+    reader.readAsDataURL(file);
+  });
+}
+
+

@@ -365,5 +365,45 @@ describe('Supabase migration static safety contract', () => {
     expect(migration43).toMatch(/revoke all on function api\.issue_online_pass_v2[^;]+from public, anon, authenticated;/i);
     expect(migration43).toMatch(/grant execute on function api\.issue_online_pass_v2[^;]+to service_role;/i);
   });
+
+  it('applies Migration 44: verified address provenance, vehicle evidence, and arrival setup (V3)', () => {
+    const migration44 = readFileSync('supabase/migrations/20261031000200_verified_address_vehicle_evidence_and_arrival_setup.sql', 'utf8');
+
+    // Evidence kind enum extension
+    expect(migration44).toContain("alter type public.evidence_kind add value if not exists 'vehicle_photo';");
+
+    // Address provenance columns
+    expect(migration44).toContain('address_provider text');
+    expect(migration44).toContain('address_place_id text');
+    expect(migration44).toContain('address_result_type text');
+    expect(migration44).toContain('address_confidence numeric');
+    expect(migration44).toContain('address_lat double precision');
+    expect(migration44).toContain('address_lon double precision');
+    expect(migration44).toContain('address_city text');
+    expect(migration44).toContain('address_state text');
+    expect(migration44).toContain('address_postcode text');
+    expect(migration44).toContain('address_country_code text');
+    expect(migration44).toContain('address_verified_at timestamptz');
+    expect(migration44).toContain('address_detail text');
+
+    // Vehicle declaration extensions
+    expect(migration44).toContain('vehicle_photo_evidence_id uuid references public.visitor_evidence(id)');
+    expect(migration44).toContain("vehicle_catalog_status text not null default 'catalog'");
+    expect(migration44).toContain('plate_conflict_flag boolean not null default false');
+
+    // Simultaneous inside prevention partial unique index
+    expect(migration44).toContain('create unique index if not exists idx_visit_vehicle_declarations_active_inside');
+
+    // Updated upload intent supporting vehicle_photo
+    expect(migration44).toContain("when 'vehicle_photo'::public.evidence_kind then 'visitor-photos'");
+
+    // Scan pass rejection for vehicle_already_inside
+    expect(migration44).toContain("'vehicle_already_inside'");
+
+    // Online pass issuance v3
+    expect(migration44).toContain('create or replace function api.issue_online_pass_v3');
+    expect(migration44).toMatch(/revoke all on function api\.issue_online_pass_v3[^;]+from public, anon, authenticated;/i);
+    expect(migration44).toMatch(/grant execute on function api\.issue_online_pass_v3[^;]+to service_role;/i);
+  });
 });
 

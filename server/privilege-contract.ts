@@ -194,6 +194,7 @@ export const SERVER_DIRECT_TABLE_OPERATIONS: DirectServerTableOperation[] = [
   { file: 'server/routes/gate/evidence.ts', table: 'visitor_evidence', operations: ['SELECT'], purpose: 'Fetch evidence metadata' },
   { file: 'server/routes/gate/evidence.ts', table: 'incident_holds', operations: ['SELECT'], purpose: 'Check active holds on evidence target' },
   { file: 'server/routes/gate/evidence.ts', table: 'passes', operations: ['SELECT'], purpose: 'Check pending pass for guard view authorization' },
+  { file: 'server/routes/gate/evidence.ts', table: 'visit_vehicle_declarations', operations: ['SELECT'], purpose: 'Verify vehicle photo authorization for guard station' },
   { file: 'server/routes/gate/evidence.ts', table: 'audit_events', operations: ['INSERT'], purpose: 'Log evidence access audit event' },
   { file: 'server/routes/gate/guard-station-feed.ts', table: 'devices', operations: ['SELECT'], purpose: 'Authorize guard station device' },
   { file: 'server/routes/gate/guard-station-feed.ts', table: 'staff_profiles', operations: ['SELECT'], purpose: 'Authorize admin monitor' },

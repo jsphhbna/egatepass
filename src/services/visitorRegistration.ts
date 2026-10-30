@@ -3,6 +3,20 @@ import { requirePortalSupabase, requireSupabase } from '@/lib/supabase';
 
 export type RegistrationSource = 'portal' | 'kiosk';
 
+export interface AddressProvenance {
+  provider: 'geoapify';
+  placeId: string;
+  resultType?: string;
+  confidence?: number | null;
+  lat?: number;
+  lon?: number;
+  city?: string | null;
+  state?: string | null;
+  postcode?: string | null;
+  countryCode?: string;
+  addressDetail?: string;
+}
+
 export interface VisitorRegistration {
   firstName: string;
   middleName?: string;
@@ -13,12 +27,15 @@ export interface VisitorRegistration {
   email?: string;
   consent?: boolean;
   homeAddress?: string;
+  addressProvenance?: AddressProvenance;
   arrivalMode?: 'no_vehicle' | 'vehicle';
   vehicle?: {
-    vehicleType?: 'car' | 'motorcycle' | 'van' | 'suv' | 'truck' | 'bicycle' | 'other' | string;
+    vehicleType?: 'car' | 'motorcycle' | 'van' | 'pickup' | 'suv' | 'truck' | 'bicycle' | 'other' | string;
     plateNumber?: string;
     color?: string;
     makeModel?: string | null;
+    catalogStatus?: 'catalog' | 'manual';
+    photoIntentId?: string;
     savedVehicleId?: string;
     saveVehicle?: boolean;
   } | null;
@@ -193,14 +210,17 @@ export interface IssueTransaction {
   token?: string;
   photoIntentId: string | null;
   idIntentId: string | null;
+  vehiclePhotoIntentId?: string | null;
   photoCheckpoint?: UploadCheckpoint | null;
   idCheckpoint?: UploadCheckpoint | null;
+  vehiclePhotoCheckpoint?: UploadCheckpoint | null;
   phase: IssueTransactionPhase;
   submittedPayload?: {
     visitor: VisitorRegistration;
     source?: RegistrationSource;
     photoIntentId?: string | null;
     idIntentId?: string | null;
+    vehiclePhotoIntentId?: string | null;
   } | null;
 }
 
@@ -209,8 +229,10 @@ export function createIssueTransaction(_source: 'kiosk' | 'portal' = 'kiosk'): I
     requestId: crypto.randomUUID(),
     photoIntentId: null,
     idIntentId: null,
+    vehiclePhotoIntentId: null,
     photoCheckpoint: null,
     idCheckpoint: null,
+    vehiclePhotoCheckpoint: null,
     phase: 'editable',
   };
 }
@@ -263,8 +285,10 @@ export async function createPortalIssueTransaction(captchaToken?: string): Promi
     token: session.access_token,
     photoIntentId: null,
     idIntentId: null,
+    vehiclePhotoIntentId: null,
     photoCheckpoint: null,
     idCheckpoint: null,
+    vehiclePhotoCheckpoint: null,
     phase: 'editable',
     submittedPayload: null,
   };
@@ -325,8 +349,10 @@ async function authenticatedClient(
       existingTransaction.token = newTx.token;
       existingTransaction.photoIntentId = newTx.photoIntentId;
       existingTransaction.idIntentId = newTx.idIntentId;
+      existingTransaction.vehiclePhotoIntentId = newTx.vehiclePhotoIntentId;
       existingTransaction.photoCheckpoint = null;
       existingTransaction.idCheckpoint = null;
+      existingTransaction.vehiclePhotoCheckpoint = null;
     }
     if (!newTx.token) {
       throw new PortalSessionError('portal_token_missing', 'Visitor registration session token missing.');
@@ -342,7 +368,7 @@ async function authenticatedClient(
 
 export async function uploadPortalEvidence(
   transaction: PortalIssueTransaction,
-  kind: 'photo' | 'id',
+  kind: 'photo' | 'id' | 'vehicle_photo',
   blob: Blob,
 ): Promise<{ intentId: string; checkpoint: UploadCheckpoint }> {
   const { client } = await getVerifiedPortalSession(transaction);
@@ -352,12 +378,16 @@ export async function uploadPortalEvidence(
 export async function uploadCheckpointedEvidence(
   client: SupabaseClient,
   source: RegistrationSource,
-  kind: 'photo' | 'id',
+  kind: 'photo' | 'id' | 'vehicle_photo',
   blob: Blob,
   transaction?: IssueTransaction | null,
 ): Promise<{ intentId: string; checkpoint: UploadCheckpoint }> {
   const existingCheckpoint =
-    kind === 'photo' ? transaction?.photoCheckpoint : transaction?.idCheckpoint;
+    kind === 'photo'
+      ? transaction?.photoCheckpoint
+      : kind === 'id'
+      ? transaction?.idCheckpoint
+      : transaction?.vehiclePhotoCheckpoint;
 
   let checkpoint: UploadCheckpoint;
 
@@ -410,9 +440,12 @@ export async function uploadCheckpointedEvidence(
       if (kind === 'photo') {
         transaction.photoCheckpoint = checkpoint;
         transaction.photoIntentId = checkpoint.intentId;
-      } else {
+      } else if (kind === 'id') {
         transaction.idCheckpoint = checkpoint;
         transaction.idIntentId = checkpoint.intentId;
+      } else if (kind === 'vehicle_photo') {
+        transaction.vehiclePhotoCheckpoint = checkpoint;
+        transaction.vehiclePhotoIntentId = checkpoint.intentId;
       }
     }
   }
@@ -465,9 +498,12 @@ export async function uploadCheckpointedEvidence(
     if (kind === 'photo') {
       transaction.photoCheckpoint = checkpoint;
       transaction.photoIntentId = checkpoint.intentId;
-    } else {
+    } else if (kind === 'id') {
       transaction.idCheckpoint = checkpoint;
       transaction.idIntentId = checkpoint.intentId;
+    } else if (kind === 'vehicle_photo') {
+      transaction.vehiclePhotoCheckpoint = checkpoint;
+      transaction.vehiclePhotoIntentId = checkpoint.intentId;
     }
   }
 
@@ -501,7 +537,7 @@ export interface VerifyIdentityResponse {
  */
 export function invalidatePortalEvidenceCheckpoint(
   transaction: IssueTransaction | null | undefined,
-  kind: 'photo' | 'id'
+  kind: 'photo' | 'id' | 'vehicle_photo' | 'vehicle'
 ): void {
   if (!transaction) return;
   if (kind === 'photo') {
@@ -512,6 +548,9 @@ export function invalidatePortalEvidenceCheckpoint(
     transaction.idCheckpoint = null;
     transaction.idIntentId = null;
     (transaction as any).verifiedIdIntentId = null;
+  } else if (kind === 'vehicle_photo' || kind === 'vehicle') {
+    transaction.vehiclePhotoCheckpoint = null;
+    transaction.vehiclePhotoIntentId = null;
   }
 }
 
@@ -795,6 +834,7 @@ export async function issueVisitorPass(
   requestId: string = crypto.randomUUID(),
   captchaToken?: string,
   transaction?: IssueTransaction | null,
+  vehiclePhoto?: Blob | null,
 ): Promise<IssuedPass> {
   const { client, token } = await authenticatedClient(source, captchaToken, transaction);
 
@@ -817,6 +857,17 @@ export async function issueVisitorPass(
     } else {
       const idRes = await uploadCheckpointedEvidence(client, source, 'id', identification, transaction);
       idIntentId = idRes.intentId;
+    }
+  }
+
+  // If vehicle arrival declared, upload vehicle photo with retry-safe checkpointing
+  let vehiclePhotoIntentId: string | null = null;
+  if (visitor.arrivalMode === 'vehicle') {
+    if (shouldReuseUploadedIntentForIssue(transaction, transaction?.vehiclePhotoCheckpoint, transaction?.vehiclePhotoIntentId)) {
+      vehiclePhotoIntentId = transaction!.vehiclePhotoIntentId!;
+    } else if (vehiclePhoto) {
+      const vehRes = await uploadCheckpointedEvidence(client, source, 'vehicle_photo', vehiclePhoto, transaction);
+      vehiclePhotoIntentId = vehRes.intentId;
     }
   }
 
@@ -848,8 +899,15 @@ export async function issueVisitorPass(
           purpose: effectiveVisitor.purpose,
           visitDate: effectiveVisitor.visitDate,
         },
-        arrivalMode: effectiveVisitor.arrivalMode || 'no_vehicle',
-        vehicle: effectiveVisitor.vehicle || undefined,
+        arrivalMode: effectiveVisitor.arrivalMode,
+        addressProvenance: effectiveVisitor.addressProvenance,
+        vehicle: effectiveVisitor.vehicle
+          ? {
+              ...effectiveVisitor.vehicle,
+              photoIntentId: vehiclePhotoIntentId || effectiveVisitor.vehicle.photoIntentId,
+            }
+          : undefined,
+        vehiclePhotoIntentId: vehiclePhotoIntentId || undefined,
         returning: effectiveVisitor.returning || undefined,
         enrollReturning: Boolean(effectiveVisitor.enrollReturning || effectiveVisitor.rememberVisitor),
         photoIntentId,

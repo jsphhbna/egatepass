@@ -15,7 +15,7 @@ test.describe('Mobile Stepper Geometry & WebKit Viewport Contract (Sections 47-4
       page,
     }) => {
       await page.setViewportSize({ width: vp.width, height: vp.height });
-      await page.goto('/get-pass?mode=new');
+      await page.goto('/get-pass?mode=new&arrival=no_vehicle');
 
       const stepperNav = page.locator('nav[aria-label="Progress"]');
       await expect(stepperNav).toBeVisible({ timeout: 15_000 });

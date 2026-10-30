@@ -41,6 +41,8 @@ interface StationEntry {
     vehicleType: string;
     color: string;
     makeModel?: string | null;
+    vehiclePhotoEvidenceId?: string | null;
+    plateConflictFlag?: boolean;
   } | null;
 }
 
@@ -272,6 +274,12 @@ export function GuardPage() {
 
                       {latestEntry?.vehicle && (
                         <div className="rounded-xl border border-blue-200 bg-blue-50/60 p-4 text-blue-950">
+                          {latestEntry.vehicle.plateConflictFlag && (
+                            <div className="mb-3 rounded-lg border border-red-300 bg-red-100 p-2.5 text-xs text-red-950 font-semibold flex items-center gap-2">
+                              <AlertCircle className="h-4 w-4 text-red-700 flex-shrink-0" />
+                              <span>Duplicate Plate Warning: Plate was declared on another active pass. Verify documentation.</span>
+                            </div>
+                          )}
                           <div className="flex items-center gap-2 font-bold text-xs uppercase tracking-wider text-blue-800">
                             <Car className="h-4 w-4 text-blue-600" />
                             Vehicle Declared
@@ -296,6 +304,20 @@ export function GuardPage() {
                               </div>
                             )}
                           </div>
+                          {latestEntry.vehicle.vehiclePhotoEvidenceId && (
+                            <div className="mt-3 pt-3 border-t border-blue-200">
+                              <span className="text-blue-800 block text-[11px] font-bold mb-1.5 uppercase tracking-wider">
+                                Declared Vehicle Photo
+                              </span>
+                              <div className="relative aspect-video w-full max-w-[220px] overflow-hidden rounded-xl border border-blue-300 bg-slate-100 shadow-xs">
+                                <AuthenticatedImage
+                                  publicId={latestEntry.vehicle.vehiclePhotoEvidenceId}
+                                  alt={`Vehicle ${latestEntry.vehicle.plateNumber}`}
+                                  className="h-full w-full object-cover"
+                                />
+                              </div>
+                            </div>
+                          )}
                         </div>
                       )}
 

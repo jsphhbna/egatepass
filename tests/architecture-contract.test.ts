@@ -61,10 +61,13 @@ describe('target repository and Vercel routing contract', () => {
     const clientApp = readFileSync('src/App.tsx', 'utf8');
     const clientSupabase = readFileSync('src/lib/supabase.ts', 'utf8');
 
-    for (const content of [clientEntry, clientApp, clientSupabase]) {
+    const getPassPage = readFileSync('src/pages/GetPassPage.tsx', 'utf8');
+    for (const content of [clientEntry, clientApp, clientSupabase, getPassPage]) {
       expect(content).not.toContain('SUPABASE_SECRET_KEY');
       expect(content).not.toContain('PASS_TOKEN_SECRET');
       expect(content).not.toContain('RESEND_API_KEY');
+      expect(content).not.toContain('GEOAPIFY_API_KEY');
+      expect(content).not.toContain('VITE_GEOAPIFY_API_KEY');
       expect(content).not.toContain('getServerSupabaseClients');
     }
   });

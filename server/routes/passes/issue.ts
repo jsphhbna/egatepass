@@ -10,6 +10,7 @@ import {
   extractFaceDescriptorFromBuffer,
 } from '../../lib/face-engine.js';
 import { computeMatchTokenDigest } from './identify-returning.js';
+import { verifyPlaceDetails, type VerifiedAddressDetails } from '../../lib/geoapify.js';
 
 const namePart = z.string().trim().min(1).max(50);
 const requestSchema = z.object({
@@ -25,15 +26,31 @@ const requestSchema = z.object({
     purpose: z.string().trim().min(3).max(300),
     visitDate: z.iso.date(),
   }),
-  arrivalMode: z.enum(['no_vehicle', 'vehicle']).default('no_vehicle'),
+  arrivalMode: z.enum(['no_vehicle', 'vehicle']).optional(),
+  addressProvenance: z.object({
+    provider: z.literal('geoapify'),
+    placeId: z.string().min(1).max(200),
+    resultType: z.string().min(1).max(100).optional(),
+    confidence: z.number().nullable().optional(),
+    lat: z.number().optional(),
+    lon: z.number().optional(),
+    city: z.string().nullable().optional(),
+    state: z.string().nullable().optional(),
+    postcode: z.string().nullable().optional(),
+    countryCode: z.string().max(10).optional(),
+    addressDetail: z.string().max(200).optional(),
+  }).optional(),
   vehicle: z.object({
-    vehicleType: z.enum(['car', 'motorcycle', 'van', 'suv', 'truck', 'bicycle', 'other']).optional(),
+    vehicleType: z.enum(['car', 'motorcycle', 'van', 'pickup', 'suv', 'truck', 'bicycle', 'other']).optional(),
     plateNumber: z.string().trim().min(3).max(16).optional(),
     color: z.string().trim().min(2).max(40).optional(),
     makeModel: z.string().trim().max(100).optional(),
+    catalogStatus: z.enum(['catalog', 'manual']).optional(),
+    photoIntentId: z.string().uuid().optional(),
     savedVehicleId: z.string().uuid().optional(),
     saveVehicle: z.boolean().optional(),
   }).optional(),
+  vehiclePhotoIntentId: z.string().uuid().optional(),
   returning: z.object({
     profileId: z.string().uuid().optional(),
     matchToken: z.string().optional(),
@@ -58,7 +75,7 @@ interface IntentRow {
   id: string;
   owner_id: string;
   source: 'portal' | 'kiosk';
-  kind: 'photo' | 'id';
+  kind: 'photo' | 'id' | 'vehicle_photo';
   bucket_id: string;
   object_path: string;
   content_type: string;
@@ -85,7 +102,7 @@ async function inspectUpload(
   id: string,
   actorId: string,
   source: 'portal' | 'kiosk',
-  kind: 'photo' | 'id',
+  kind: 'photo' | 'id' | 'vehicle_photo',
   keepBuffer = false
 ): Promise<InspectedUpload> {
   const { data, error } = await admin.from('upload_intents').select('*').eq('id', id).maybeSingle<IntentRow>();
@@ -144,6 +161,8 @@ async function handleRequest(request: Request): Promise<Response> {
   const token = readBearerToken(request);
   if (!token) return jsonResponse(401, { error: 'authentication_required' });
 
+  const isProd = process.env.NODE_ENV === 'production' || process.env.VERCEL_ENV === 'production';
+
   const parsed = requestSchema.safeParse(await request.json().catch(() => null));
   if (!parsed.success) return jsonResponse(400, { error: 'invalid_request' });
 
@@ -187,9 +206,10 @@ async function handleRequest(request: Request): Promise<Response> {
       }
     }
 
-    // Vehicle normalization (Section 23: Plate normalization)
+    // Vehicle normalization (Section 23: Plate normalization & Photo requirement)
     let normalizedPlateDisplay: string | null = null;
     let normalizedPlateKey: string | null = null;
+    let vehiclePhotoIntentId: string | null = null;
     if (parsed.data.arrivalMode === 'vehicle') {
       const v = parsed.data.vehicle;
       if (!v?.vehicleType || !v?.plateNumber || !v?.color) {
@@ -207,16 +227,72 @@ async function handleRequest(request: Request): Promise<Response> {
       }
       normalizedPlateDisplay = plateResult.displayPlate;
       normalizedPlateKey = plateResult.plateKey;
+
+      if (parsed.data.source === 'portal') {
+        vehiclePhotoIntentId = v.photoIntentId || parsed.data.vehiclePhotoIntentId || null;
+        if (!vehiclePhotoIntentId) {
+          return jsonResponse(422, {
+            error: 'vehicle_photo_required',
+            message: 'A photo of the vehicle is required when bringing a vehicle.',
+          });
+        }
+      }
     }
 
-    // Home address check for portal when provided
-    if (parsed.data.source === 'portal' && parsed.data.visitor.homeAddress !== undefined) {
-      const addr = parsed.data.visitor.homeAddress.trim();
-      if (addr.length < 5) {
-        return jsonResponse(422, {
-          error: 'home_address_required',
-          message: 'Please provide a valid home address.',
-        });
+    // Home address & provenance check for portal
+    let verifiedAddress: VerifiedAddressDetails | null = null;
+    if (parsed.data.source === 'portal') {
+      if (parsed.data.addressProvenance?.placeId) {
+        try {
+          verifiedAddress = await verifyPlaceDetails(
+            parsed.data.addressProvenance.placeId,
+            parsed.data.addressProvenance.addressDetail
+          );
+        } catch (addrErr) {
+          const msg = addrErr instanceof Error ? addrErr.message : 'address_verification_failed';
+          if (msg === 'address_too_broad') {
+            return jsonResponse(422, {
+              error: 'address_insufficient_specificity',
+              message: 'Please select a more specific address including your street, barangay, or building.',
+            });
+          }
+          if (msg === 'address_must_be_philippines' || msg === 'address_coordinates_out_of_bounds') {
+            return jsonResponse(422, {
+              error: msg,
+              message: 'Address must be within the Philippines.',
+            });
+          }
+          if (msg === 'address_rate_limited') {
+            return jsonResponse(429, {
+              error: 'rate_limit_exceeded',
+              message: 'Address verification rate limit reached. Please wait a moment.',
+            });
+          }
+          if (msg === 'address_verification_unavailable') {
+            return jsonResponse(503, {
+              error: 'address_verification_unavailable',
+              message: 'Address verification is temporarily unavailable. Please try again shortly.',
+            });
+          }
+          return jsonResponse(422, {
+            error: 'address_verification_failed',
+            message: 'The selected address could not be verified. Please search and select your address again.',
+          });
+        }
+      } else if (parsed.data.visitor.homeAddress !== undefined) {
+        const addr = parsed.data.visitor.homeAddress.trim();
+        if (addr.length < 5) {
+          return jsonResponse(422, {
+            error: 'home_address_required',
+            message: 'Please provide a valid home address.',
+          });
+        }
+        if (isProd) {
+          return jsonResponse(422, {
+            error: 'address_verification_required',
+            message: 'Address must be selected from verified suggestions.',
+          });
+        }
       }
     }
 
@@ -408,43 +484,99 @@ async function handleRequest(request: Request): Promise<Response> {
     const identification = parsed.data.idIntentId
       ? await inspectUpload(admin, parsed.data.idIntentId, actorId, parsed.data.source, 'id')
       : null;
+    const vehiclePhoto = (parsed.data.arrivalMode === 'vehicle' && vehiclePhotoIntentId)
+      ? await inspectUpload(admin, vehiclePhotoIntentId, actorId, parsed.data.source, 'vehicle_photo')
+      : null;
 
     const visitor = parsed.data.visitor;
     let data: IssueResult | null = null;
 
     if (parsed.data.source === 'portal') {
-      // Use online v2 RPC
-      const rpcRes = await admin.schema('api').rpc('issue_online_pass_v2', {
-        requested_actor_id: actorId,
-        requested_registration_mode: parsed.data.registrationMode,
-        requested_request_id: parsed.data.requestId,
-        requested_first_name: visitor.firstName,
-        requested_middle_name: visitor.middleName || null,
-        requested_last_name: visitor.lastName,
-        requested_contact_number: canonicalContact,
-        requested_home_address: visitor.homeAddress?.trim() || '',
-        requested_purpose: visitor.purpose,
-        requested_visit_date: visitor.visitDate,
-        requested_photo_intent_id: parsed.data.photoIntentId,
-        requested_photo_bytes: photo.bytes,
-        requested_photo_sha256: photo.sha256,
-        requested_id_intent_id: parsed.data.registrationMode === 'new' ? (parsed.data.idIntentId ?? null) : null,
-        requested_id_bytes: parsed.data.registrationMode === 'new' ? (identification?.bytes ?? null) : null,
-        requested_id_sha256: parsed.data.registrationMode === 'new' ? (identification?.sha256 ?? null) : null,
-        requested_token_digest: tokenDigest,
-        requested_arrival_mode: parsed.data.arrivalMode,
-        requested_vehicle_type: parsed.data.arrivalMode === 'vehicle' ? (parsed.data.vehicle?.vehicleType ?? null) : null,
-        requested_plate_number: parsed.data.arrivalMode === 'vehicle' ? normalizedPlateDisplay : null,
-        requested_plate_key: parsed.data.arrivalMode === 'vehicle' ? normalizedPlateKey : null,
-        requested_color: parsed.data.arrivalMode === 'vehicle' ? (parsed.data.vehicle?.color ?? null) : null,
-        requested_make_model: parsed.data.arrivalMode === 'vehicle' ? (parsed.data.vehicle?.makeModel ?? null) : null,
-        requested_saved_vehicle_id: parsed.data.arrivalMode === 'vehicle' ? (parsed.data.vehicle?.savedVehicleId ?? null) : null,
-        requested_returning_profile_id: parsed.data.registrationMode === 'returning' ? (parsed.data.returning?.profileId ?? null) : null,
-        requested_returning_match_token_digest: parsed.data.registrationMode === 'returning' ? returningMatchDigest : null,
-      }).single<IssueResult>();
+      if (verifiedAddress) {
+        // Use online v3 RPC with verified address provenance and vehicle evidence
+        const rpcRes = await admin.schema('api').rpc('issue_online_pass_v3', {
+          requested_actor_id: actorId,
+          requested_registration_mode: parsed.data.registrationMode,
+          requested_request_id: parsed.data.requestId,
+          requested_first_name: visitor.firstName,
+          requested_middle_name: visitor.middleName || null,
+          requested_last_name: visitor.lastName,
+          requested_contact_number: canonicalContact,
+          requested_home_address: verifiedAddress.formatted,
+          requested_purpose: visitor.purpose,
+          requested_visit_date: visitor.visitDate,
+          requested_photo_intent_id: parsed.data.photoIntentId,
+          requested_photo_bytes: photo.bytes,
+          requested_photo_sha256: photo.sha256,
+          requested_id_intent_id: parsed.data.registrationMode === 'new' ? (parsed.data.idIntentId ?? null) : null,
+          requested_id_bytes: parsed.data.registrationMode === 'new' ? (identification?.bytes ?? null) : null,
+          requested_id_sha256: parsed.data.registrationMode === 'new' ? (identification?.sha256 ?? null) : null,
+          requested_token_digest: tokenDigest,
+          requested_arrival_mode: parsed.data.arrivalMode || 'no_vehicle',
+          // Address provenance
+          requested_address_provider: 'geoapify',
+          requested_address_place_id: verifiedAddress.placeId,
+          requested_address_result_type: verifiedAddress.resultType,
+          requested_address_confidence: verifiedAddress.confidence,
+          requested_address_lat: verifiedAddress.lat,
+          requested_address_lon: verifiedAddress.lon,
+          requested_address_city: verifiedAddress.city,
+          requested_address_state: verifiedAddress.state,
+          requested_address_postcode: verifiedAddress.postcode,
+          requested_address_country_code: 'ph',
+          requested_address_detail: verifiedAddress.addressDetail || null,
+          // Vehicle declaration
+          requested_vehicle_type: parsed.data.arrivalMode === 'vehicle' ? (parsed.data.vehicle?.vehicleType ?? null) : null,
+          requested_plate_number: parsed.data.arrivalMode === 'vehicle' ? normalizedPlateDisplay : null,
+          requested_plate_key: parsed.data.arrivalMode === 'vehicle' ? normalizedPlateKey : null,
+          requested_color: parsed.data.arrivalMode === 'vehicle' ? (parsed.data.vehicle?.color ?? null) : null,
+          requested_make_model: parsed.data.arrivalMode === 'vehicle' ? (parsed.data.vehicle?.makeModel ?? null) : null,
+          requested_vehicle_catalog_status: parsed.data.arrivalMode === 'vehicle' ? (parsed.data.vehicle?.catalogStatus ?? 'catalog') : 'catalog',
+          requested_vehicle_photo_intent_id: vehiclePhotoIntentId ?? null,
+          requested_vehicle_photo_bytes: vehiclePhoto?.bytes ?? null,
+          requested_vehicle_photo_sha256: vehiclePhoto?.sha256 ?? null,
+          // Returning
+          requested_saved_vehicle_id: parsed.data.arrivalMode === 'vehicle' ? (parsed.data.vehicle?.savedVehicleId ?? null) : null,
+          requested_returning_profile_id: parsed.data.registrationMode === 'returning' ? (parsed.data.returning?.profileId ?? null) : null,
+          requested_returning_match_token_digest: parsed.data.registrationMode === 'returning' ? returningMatchDigest : null,
+        }).single<IssueResult>();
 
-      if (rpcRes.error || !rpcRes.data) throw rpcRes.error ?? new Error('issue_failed');
-      data = rpcRes.data;
+        if (rpcRes.error || !rpcRes.data) throw rpcRes.error ?? new Error('issue_failed');
+        data = rpcRes.data;
+      } else {
+        // Fallback to online v2 RPC for tests without address provenance
+        const rpcRes = await admin.schema('api').rpc('issue_online_pass_v2', {
+          requested_actor_id: actorId,
+          requested_registration_mode: parsed.data.registrationMode,
+          requested_request_id: parsed.data.requestId,
+          requested_first_name: visitor.firstName,
+          requested_middle_name: visitor.middleName || null,
+          requested_last_name: visitor.lastName,
+          requested_contact_number: canonicalContact,
+          requested_home_address: visitor.homeAddress?.trim() || '',
+          requested_purpose: visitor.purpose,
+          requested_visit_date: visitor.visitDate,
+          requested_photo_intent_id: parsed.data.photoIntentId,
+          requested_photo_bytes: photo.bytes,
+          requested_photo_sha256: photo.sha256,
+          requested_id_intent_id: parsed.data.registrationMode === 'new' ? (parsed.data.idIntentId ?? null) : null,
+          requested_id_bytes: parsed.data.registrationMode === 'new' ? (identification?.bytes ?? null) : null,
+          requested_id_sha256: parsed.data.registrationMode === 'new' ? (identification?.sha256 ?? null) : null,
+          requested_token_digest: tokenDigest,
+          requested_arrival_mode: parsed.data.arrivalMode || 'no_vehicle',
+          requested_vehicle_type: parsed.data.arrivalMode === 'vehicle' ? (parsed.data.vehicle?.vehicleType ?? null) : null,
+          requested_plate_number: parsed.data.arrivalMode === 'vehicle' ? normalizedPlateDisplay : null,
+          requested_plate_key: parsed.data.arrivalMode === 'vehicle' ? normalizedPlateKey : null,
+          requested_color: parsed.data.arrivalMode === 'vehicle' ? (parsed.data.vehicle?.color ?? null) : null,
+          requested_make_model: parsed.data.arrivalMode === 'vehicle' ? (parsed.data.vehicle?.makeModel ?? null) : null,
+          requested_saved_vehicle_id: parsed.data.arrivalMode === 'vehicle' ? (parsed.data.vehicle?.savedVehicleId ?? null) : null,
+          requested_returning_profile_id: parsed.data.registrationMode === 'returning' ? (parsed.data.returning?.profileId ?? null) : null,
+          requested_returning_match_token_digest: parsed.data.registrationMode === 'returning' ? returningMatchDigest : null,
+        }).single<IssueResult>();
+
+        if (rpcRes.error || !rpcRes.data) throw rpcRes.error ?? new Error('issue_failed');
+        data = rpcRes.data;
+      }
     } else {
       // Kiosk backward-compatible RPC
       const rpcRes = await admin.schema('api').rpc('issue_pass', {

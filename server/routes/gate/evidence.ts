@@ -72,7 +72,9 @@ async function handleRequest(request: Request): Promise<Response> {
     if (stationDevice) {
       // Guard station privacy boundary: only photo evidence permitted, never ID document
       if (evidence.kind !== 'photo') {
-        return jsonResponse(403, { error: 'Guard station cannot access ID evidence' });
+        if (evidence.kind !== 'vehicle_photo') {
+          return jsonResponse(403, { error: 'Guard station cannot access ID evidence' });
+        }
       }
       if (isExpired) {
         return jsonResponse(410, { error: 'Evidence expired' });
@@ -87,6 +89,15 @@ async function handleRequest(request: Request): Promise<Response> {
         .in('status', ['inside', 'exited']);
       if (passError) throw passError;
       if (!count) return jsonResponse(403, { error: 'Evidence is not operationally accessible at this station' });
+
+      // If vehicle photo, verify it is linked to an authorized visit vehicle declaration
+      if (evidence.kind === 'vehicle_photo') {
+        const { count: declCount, error: declError } = await admin.from('visit_vehicle_declarations')
+          .select('id', { count: 'exact', head: true })
+          .eq('vehicle_photo_evidence_id', evidenceId.data);
+        if (declError) throw declError;
+        if (!declCount) return jsonResponse(403, { error: 'Vehicle photo is not associated with an authorized visit' });
+      }
     } else if (staffActor) {
       if (isExpired) {
         // Admins and Super Admins may review expired evidence ONLY if an active incident hold protects it

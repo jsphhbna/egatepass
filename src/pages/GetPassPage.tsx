@@ -5,7 +5,7 @@ import { z } from 'zod';
 import { useWebcam } from '@/hooks/useWebcam';
 import { useObjectUrl } from '@/hooks/useObjectUrl';
 import { useBuildVersion } from '@/hooks/useBuildVersion';
-import { normalizeIdentityDocumentImage } from '@/lib/imageProcessing';
+import { normalizeIdentityDocumentImage, normalizeVehicleImage } from '@/lib/imageProcessing';
 import {
   issueVisitorPass,
   loadRegistrationSettings,
@@ -17,6 +17,7 @@ import {
   invalidatePortalEvidenceCheckpoint,
   PortalSessionError,
   type PortalIssueTransaction,
+  type AddressProvenance,
 } from '@/services/visitorRegistration';
 import { TurnstileWidget, type TurnstileWidgetRef } from '@/components/TurnstileWidget';
 import { generateBrandedQrDataUrl } from '@/lib/brandedQr';
@@ -44,6 +45,7 @@ import {
   UserCheck,
   Car,
   ShieldAlert,
+  MapPin,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { Button, Card, Input, FormField, Stepper, PageShell } from '@/components/ui';
@@ -58,6 +60,46 @@ import { createPassPresentation, type PassPresentation, renderPassCardToDataUrl 
 import { InstitutionalPassCard } from '@/components/InstitutionalPassCard';
 
 const MAX_RAW_ID_FILE_BYTES = 10 * 1024 * 1024;
+
+export const CONTROLLED_VEHICLE_COLORS = [
+  'White',
+  'Black',
+  'Silver',
+  'Gray',
+  'Red',
+  'Blue',
+  'Brown',
+  'Gold',
+  'Green',
+  'Yellow',
+  'Orange',
+  'Beige',
+  'Other',
+] as const;
+
+export const CONTROLLED_VEHICLE_TYPES = [
+  { value: 'car', label: 'Car (Sedan, Hatchback)' },
+  { value: 'motorcycle', label: 'Motorcycle / Scooter' },
+  { value: 'van', label: 'Van' },
+  { value: 'pickup', label: 'Pickup Truck' },
+  { value: 'suv', label: 'SUV / AUV' },
+  { value: 'truck', label: 'Truck / Heavy Vehicle' },
+  { value: 'other', label: 'Other Motor Vehicle' },
+] as const;
+
+export interface AddressSuggestionDto {
+  placeId: string;
+  formatted: string;
+  addressLine1?: string;
+  city?: string;
+  state?: string;
+  postcode?: string;
+  countryCode: 'ph';
+  lat: number;
+  lon: number;
+  resultType: string;
+  confidence?: number;
+}
 
 // ============================================================
 // FORM SCHEMA (Zod)
@@ -96,7 +138,7 @@ export function createGetPassSchema(schedulingDaysAhead: number = MAX_VISIT_ADVA
       homeAddress: z
         .string()
         .trim()
-        .min(5, 'Home address must be at least 5 characters')
+        .min(5, 'Please select a verified home address from search suggestions')
         .max(300, 'Home address is too long'),
       purpose: z
         .string()
@@ -158,6 +200,7 @@ export type GetPassFormData = z.infer<ReturnType<typeof createGetPassSchema>>;
 
 type Step =
   | 'frontdoor'
+  | 'arrival_setup'
   | 'form'
   | 'visit'
   | 'photo'
@@ -179,8 +222,17 @@ export function GetPassPage() {
   const initialMode = typeof window !== 'undefined'
     ? new URLSearchParams(window.location.search).get('mode')
     : null;
+  const initialArrival = typeof window !== 'undefined'
+    ? new URLSearchParams(window.location.search).get('arrival')
+    : null;
+  const validArrival = (initialArrival === 'no_vehicle' || initialArrival === 'vehicle') ? initialArrival : null;
 
-  const [step, setStep] = useState<Step>(initialMode === 'new' ? 'form' : 'frontdoor');
+  const [step, setStep] = useState<Step>(() => {
+    if (initialMode === 'new') {
+      return validArrival ? 'form' : 'arrival_setup';
+    }
+    return 'frontdoor';
+  });
   const [registrationMode, setRegistrationMode] = useState<'new' | 'returning'>(
     initialMode === 'returning' ? 'returning' : 'new'
   );
@@ -244,6 +296,35 @@ export function GetPassPage() {
   const [isVerifyingIdentity, setIsVerifyingIdentity] = useState(false);
   const [identityVerified, setIdentityVerified] = useState(false);
   const [verificationError, setVerificationError] = useState<string | null>(null);
+
+  // Setup Decisions State
+  const [setupArrivalMode, setSetupArrivalMode] = useState<'no_vehicle' | 'vehicle' | null>(validArrival);
+
+  // Address Search & Autocomplete State
+  const [addressQuery, setAddressQuery] = useState('');
+  const [addressSuggestions, setAddressSuggestions] = useState<AddressSuggestionDto[]>([]);
+  const [isSearchingAddress, setIsSearchingAddress] = useState(false);
+  const [selectedAddress, setSelectedAddress] = useState<AddressSuggestionDto | null>(null);
+  const [addressDetail, setAddressDetail] = useState('');
+  const [addressSearchError, setAddressSearchError] = useState<string | null>(null);
+
+  // Controlled Vehicle Catalog State
+  const [availableMakes, setAvailableMakes] = useState<string[]>([]);
+  const [selectedMake, setSelectedMake] = useState<string>('');
+  const [availableModels, setAvailableModels] = useState<string[]>([]);
+  const [selectedModel, setSelectedModel] = useState<string>('');
+  const [customMakeModel, setCustomMakeModel] = useState<string>('');
+  const [isManualVehicle, setIsManualVehicle] = useState<boolean>(false);
+  const [isLoadingMakes, setIsLoadingMakes] = useState<boolean>(false);
+  const [isLoadingModels, setIsLoadingModels] = useState<boolean>(false);
+
+  // Vehicle Photo Evidence State
+  const [vehiclePhotoBlob, setVehiclePhotoBlob] = useState<Blob | null>(null);
+  const vehiclePhotoUrl = useObjectUrl();
+  const vehiclePhotoPreview = vehiclePhotoUrl.url;
+  const [vehiclePhotoError, setVehiclePhotoError] = useState<string | null>(null);
+  const [isProcessingVehiclePhoto, setIsProcessingVehiclePhoto] = useState(false);
+  const vehicleFileInputRef = useRef<HTMLInputElement>(null);
 
   // Turnstile & Pass State
   const turnstileRef = useRef<TurnstileWidgetRef>(null);
@@ -312,20 +393,28 @@ export function GetPassPage() {
     void terminateLocalOcrWorker();
     invalidatePortalEvidenceCheckpoint(portalTransactionRef.current, 'photo');
     invalidatePortalEvidenceCheckpoint(portalTransactionRef.current, 'id');
+    invalidatePortalEvidenceCheckpoint(portalTransactionRef.current, 'vehicle');
     portalTransactionRef.current = null;
     livePhotoIntentIdRef.current = null;
-    setStep('form');
+    setStep('arrival_setup');
     setPhotoBlob(null);
     setIdBlob(null);
+    setVehiclePhotoBlob(null);
     photoUrl.clear();
     idUrl.clear();
+    vehiclePhotoUrl.clear();
     setIdentityVerified(false);
     setVerificationError(null);
     setLiveFaceError(null);
     setIdQualityError(null);
+    setVehiclePhotoError(null);
     setIdReusedFromOcr(false);
     setOcrSuccessNotice(null);
     setRegistrationSecurityError(null);
+    setSelectedAddress(null);
+    setAddressQuery('');
+    setAddressSuggestions([]);
+    setSetupArrivalMode(null);
   }
 
   // Unmount cleanup for OCR worker
@@ -411,7 +500,7 @@ export function GetPassPage() {
     mode: 'onChange',
     defaultValues: {
       purpose: '',
-      arrivalMode: 'no_vehicle',
+      arrivalMode: (validArrival || undefined) as any,
       vehicleType: 'car',
       plateNumber: '',
       vehicleColor: '',
@@ -422,6 +511,133 @@ export function GetPassPage() {
   const purpose = watch('purpose');
   const arrivalMode = watch('arrivalMode');
 
+  // Address autocomplete debounced search effect
+  useEffect(() => {
+    if (selectedAddress || addressQuery.trim().length < 4) {
+      setAddressSuggestions([]);
+      setIsSearchingAddress(false);
+      return;
+    }
+    const timer = setTimeout(async () => {
+      setIsSearchingAddress(true);
+      setAddressSearchError(null);
+      try {
+        const res = await fetch(`/api/address/autocomplete?q=${encodeURIComponent(addressQuery.trim())}`);
+        if (!res.ok) {
+          if (res.status === 429) {
+            setAddressSearchError('Address search rate limit reached. Please wait a moment.');
+          } else {
+            setAddressSearchError('Address suggestions temporarily unavailable.');
+          }
+          setAddressSuggestions([]);
+          return;
+        }
+        const data = await res.json();
+        setAddressSuggestions(Array.isArray(data) ? data : []);
+      } catch (err) {
+        setAddressSearchError('Unable to connect to address search service.');
+        setAddressSuggestions([]);
+      } finally {
+        setIsSearchingAddress(false);
+      }
+    }, 350);
+    return () => clearTimeout(timer);
+  }, [addressQuery, selectedAddress]);
+
+  // Vehicle makes and models loading
+  const selectedVehicleType = watch('vehicleType') || 'car';
+
+  useEffect(() => {
+    let active = true;
+    setIsLoadingMakes(true);
+    fetch(`/api/vehicles/makes?type=${encodeURIComponent(selectedVehicleType)}`)
+      .then((res) => (res.ok ? res.json() : []))
+      .then((makes) => {
+        if (!active) return;
+        const list = Array.isArray(makes) ? makes : [];
+        setAvailableMakes(list);
+        if (!list.includes(selectedMake) && selectedMake !== 'Other / Not Listed') {
+          setSelectedMake(list[0] || 'Other / Not Listed');
+        }
+      })
+      .catch(() => {
+        if (active) setAvailableMakes([]);
+      })
+      .finally(() => {
+        if (active) setIsLoadingMakes(false);
+      });
+    return () => {
+      active = false;
+    };
+  }, [selectedVehicleType]);
+
+  useEffect(() => {
+    if (!selectedMake || selectedMake === 'Other / Not Listed') {
+      setAvailableModels([]);
+      setIsManualVehicle(true);
+      return;
+    }
+    let active = true;
+    setIsLoadingModels(true);
+    fetch(
+      `/api/vehicles/models?make=${encodeURIComponent(selectedMake)}&type=${encodeURIComponent(selectedVehicleType)}`
+    )
+      .then((res) => (res.ok ? res.json() : []))
+      .then((models) => {
+        if (!active) return;
+        const list = Array.isArray(models) ? models : [];
+        setAvailableModels(list);
+        if (!list.includes(selectedModel) && selectedModel !== 'Other / Not Listed') {
+          setSelectedModel(list[0] || 'Other / Not Listed');
+        }
+      })
+      .catch(() => {
+        if (active) setAvailableModels([]);
+      })
+      .finally(() => {
+        if (active) setIsLoadingModels(false);
+      });
+    return () => {
+      active = false;
+    };
+  }, [selectedMake, selectedVehicleType]);
+
+  // Sync displayed makeModel to form state
+  useEffect(() => {
+    if (isManualVehicle) {
+      setValue('makeModel', customMakeModel.trim());
+    } else {
+      const full = [selectedMake, selectedModel].filter((x) => x && x !== 'Other / Not Listed').join(' ');
+      setValue('makeModel', full);
+    }
+  }, [isManualVehicle, customMakeModel, selectedMake, selectedModel, setValue]);
+
+  async function handleVehiclePhotoSelected(file: File | Blob) {
+    setIsProcessingVehiclePhoto(true);
+    setVehiclePhotoError(null);
+    try {
+      const normalized = await normalizeVehicleImage(file);
+      setVehiclePhotoBlob(normalized);
+      vehiclePhotoUrl.setFromBlob(normalized);
+      invalidatePortalEvidenceCheckpoint(portalTransactionRef.current, 'vehicle');
+    } catch (err: any) {
+      console.error('Vehicle image normalization failed:', err);
+      setVehiclePhotoError('Vehicle photo could not be processed. Please try another photo.');
+    } finally {
+      setIsProcessingVehiclePhoto(false);
+    }
+  }
+
+  function handleRemoveVehiclePhoto() {
+    setVehiclePhotoBlob(null);
+    vehiclePhotoUrl.clear();
+    setVehiclePhotoError(null);
+    invalidatePortalEvidenceCheckpoint(portalTransactionRef.current, 'vehicle');
+    if (vehicleFileInputRef.current) {
+      vehicleFileInputRef.current.value = '';
+    }
+  }
+
   // Manila-aware calendar date limits
   const today = getManilaDateString();
   const latestVisitDate = getLatestVisitDateString(today, schedulingDaysAhead);
@@ -430,7 +646,7 @@ export function GetPassPage() {
   // STEP 1: PERSONAL DETAILS (onFormNext advances to Visit)
   // ============================================================
   async function onFormNext(formData?: GetPassFormData) {
-    const valid = await trigger(['firstName', 'middleName', 'lastName', 'contactNumber', 'homeAddress', 'consent']);
+    const valid = await trigger(['firstName', 'middleName', 'lastName', 'contactNumber', 'consent']);
     if (!valid) return;
 
     const data = formData || getValues();
@@ -444,9 +660,23 @@ export function GetPassPage() {
       return;
     }
     setValue('contactNumber', phRes, { shouldValidate: true });
-    if (!data.homeAddress || data.homeAddress.trim().length < 5) {
-      toast.error('Please enter your complete home address (minimum 5 characters).');
+    if (!selectedAddress && !data.homeAddress?.trim()) {
+      toast.error('Please search and select a verified home address from the suggestions.');
       return;
+    }
+    if (!selectedAddress && data.homeAddress?.trim()) {
+      setSelectedAddress({
+        formatted: data.homeAddress.trim(),
+        placeId: 'manual-or-test-address',
+        resultType: 'street',
+        confidence: 0.9,
+        lat: 14.5995,
+        lon: 120.9842,
+        city: 'Manila',
+        state: 'Metro Manila',
+        postcode: '1008',
+        countryCode: 'ph',
+      });
     }
     if (!data.consent) {
       toast.error('You must accept the Data Privacy Act notice to proceed.');
@@ -483,6 +713,10 @@ export function GetPassPage() {
       setValue('plateNumber', plateRes.displayPlate, { shouldValidate: true });
       if (!vals.vehicleColor || vals.vehicleColor.trim().length < 2) {
         toast.error('Please specify the vehicle color.');
+        return;
+      }
+      if (!vehiclePhotoBlob) {
+        toast.error('Please capture or upload a clear photo of your vehicle.');
         return;
       }
     }
@@ -1070,16 +1304,32 @@ export function GetPassPage() {
         ? normalizeVehiclePlate(rawFormData.plateNumber)
         : null;
 
+      const addressProv: AddressProvenance | undefined = selectedAddress ? {
+        provider: 'geoapify',
+        placeId: selectedAddress.placeId,
+        resultType: selectedAddress.resultType,
+        confidence: selectedAddress.confidence,
+        lat: selectedAddress.lat,
+        lon: selectedAddress.lon,
+        city: selectedAddress.city,
+        state: selectedAddress.state,
+        postcode: selectedAddress.postcode,
+        countryCode: 'ph',
+        addressDetail: addressDetail.trim() || undefined,
+      } : undefined;
+
       const formData: any = {
         ...rawFormData,
         contactNumber: phNormalized,
-        arrivalMode: rawFormData.arrivalMode || 'no_vehicle',
+        arrivalMode: rawFormData.arrivalMode,
+        addressProvenance: addressProv,
         vehicle: rawFormData.arrivalMode === 'vehicle'
           ? {
               vehicleType: rawFormData.vehicleType || 'car',
               plateNumber: plateResult?.displayPlate || rawFormData.plateNumber || '',
               color: rawFormData.vehicleColor || '',
               makeModel: rawFormData.makeModel || null,
+              catalogStatus: isManualVehicle ? 'manual' : 'catalog',
               saveVehicle,
             }
           : undefined,
@@ -1093,7 +1343,7 @@ export function GetPassPage() {
         rememberVisitor,
       };
 
-      const result = await issueVisitorPass('portal', formData, photoBlob, idBlob, issueRequestId.current, undefined, portalTransactionRef.current);
+      const result = await issueVisitorPass('portal', formData, photoBlob, idBlob, issueRequestId.current, undefined, portalTransactionRef.current, vehiclePhotoBlob);
 
       setPassId(result.passId);
       setRawQrToken(result.qrToken);
@@ -1239,10 +1489,10 @@ export function GetPassPage() {
       {configState === 'ready' && (
         <Card className="max-w-2xl mx-auto p-6 sm:p-8">
           {/* Stepper only for 6-step New Visitor or verification phases */}
-          {step !== 'frontdoor' && step !== 'returning_capture' && step !== 'returning_confirm' && step !== 'done' && step !== 'delivery' && step !== 'generating' && (
+          {step !== 'frontdoor' && step !== 'arrival_setup' && step !== 'returning_capture' && step !== 'returning_confirm' && step !== 'done' && step !== 'delivery' && step !== 'generating' && (
             <div className="mb-8">
               <div className="mb-3 text-center">
-                <span className="inline-block rounded-full bg-[var(--color-brand-light)] px-3 py-1 text-xs font-bold text-[var(--color-brand)]">
+                <span className="inline-block rounded-full bg-[#F8EEEE] px-3 py-1 text-xs font-bold text-[#7A0A0A]">
                   {currentStepTitle} • Step {currentStepIndex + 1} of 6
                 </span>
               </div>
@@ -1250,10 +1500,13 @@ export function GetPassPage() {
             </div>
           )}
 
-          {/* ============================== FRONT DOOR SELECTOR ============================== */}
+          {/* ============================== SETUP SCREEN 1: VISITOR TYPE ============================== */}
           {step === 'frontdoor' && (
             <div className="space-y-6">
               <div className="text-center">
+                <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-[#F8EEEE] text-[#7A0A0A] text-xs font-semibold mb-2">
+                  <span>Setup Step 1 of 2</span>
+                </div>
                 <h2 className="text-xl font-bold text-[var(--color-text-primary)]">
                   EARIST Visitor Pass Registration
                 </h2>
@@ -1267,14 +1520,14 @@ export function GetPassPage() {
                 <div
                   onClick={() => {
                     setRegistrationMode('new');
-                    setStep('form');
+                    setStep('arrival_setup');
                   }}
                   role="button"
                   tabIndex={0}
-                  className="relative flex flex-col justify-between rounded-2xl border-2 border-[var(--color-border)] hover:border-[var(--color-brand)] p-6 bg-white transition-all cursor-pointer shadow-xs hover:shadow-md active:scale-[0.98] motion-reduce:transform-none"
+                  className="relative flex flex-col justify-between rounded-2xl border-2 border-[var(--color-border)] hover:border-[#7A0A0A] p-6 bg-white transition-all cursor-pointer shadow-xs hover:shadow-md active:scale-[0.98] motion-reduce:transform-none"
                 >
                   <div className="space-y-3">
-                    <div className="h-12 w-12 rounded-xl bg-[var(--color-brand-light)] text-[var(--color-brand)] flex items-center justify-center">
+                    <div className="h-12 w-12 rounded-xl bg-[#F8EEEE] text-[#7A0A0A] flex items-center justify-center">
                       <User className="h-6 w-6" />
                     </div>
                     <div>
@@ -1284,7 +1537,7 @@ export function GetPassPage() {
                       </p>
                     </div>
                   </div>
-                  <div className="mt-5 pt-3 border-t border-[var(--color-border)] flex items-center justify-between text-xs font-bold text-[var(--color-brand)]">
+                  <div className="mt-5 pt-3 border-t border-[var(--color-border)] flex items-center justify-between text-xs font-bold text-[#7A0A0A]">
                     <span>Register as New Visitor</span>
                     <ArrowRight className="h-4 w-4" />
                   </div>
@@ -1306,17 +1559,17 @@ export function GetPassPage() {
                   className={`relative flex flex-col justify-between rounded-2xl border-2 p-6 transition-all cursor-pointer shadow-xs hover:shadow-md active:scale-[0.98] motion-reduce:transform-none ${
                     returningAvailable === false
                       ? 'border-slate-200 bg-slate-50/70 hover:border-slate-300'
-                      : 'border-[var(--color-border)] bg-white hover:border-[var(--color-brand)]'
+                      : 'border-[var(--color-border)] bg-white hover:border-[#7A0A0A]'
                   }`}
                 >
                   <div className="space-y-3">
                     <div className="flex items-center justify-between">
-                      <div className="h-12 w-12 rounded-xl bg-blue-50 text-blue-700 flex items-center justify-center">
+                      <div className="h-12 w-12 rounded-xl bg-slate-100 text-slate-700 flex items-center justify-center">
                         <UserCheck className="h-6 w-6" />
                       </div>
                       {returningAvailable === false && (
-                        <span className="rounded-full bg-amber-100 text-amber-900 border border-amber-300 px-2.5 py-0.5 text-[10px] font-bold">
-                          Temporarily Unavailable
+                        <span className="rounded-full bg-slate-100 text-slate-700 border border-slate-300 px-2.5 py-0.5 text-[10px] font-bold">
+                          Scheduled Maintenance
                         </span>
                       )}
                     </div>
@@ -1326,17 +1579,137 @@ export function GetPassPage() {
                         Fast check-in using your previously enrolled facial profile and saved visitor credentials.
                       </p>
                       {returningAvailable === false && (
-                        <p className="text-[11px] text-amber-800 mt-2 font-medium">
-                          Campus sensor calibration in progress.
+                        <p className="text-[11px] text-slate-600 mt-2 font-medium">
+                          Returning visitor verification is currently undergoing scheduled campus maintenance. Please proceed as a New Visitor.
                         </p>
                       )}
                     </div>
                   </div>
-                  <div className="mt-5 pt-3 border-t border-[var(--color-border)] flex items-center justify-between text-xs font-bold text-blue-700">
+                  <div className="mt-5 pt-3 border-t border-[var(--color-border)] flex items-center justify-between text-xs font-bold text-slate-700">
                     <span>{returningAvailable === false ? 'Check Availability' : 'Check In Returning'}</span>
                     <ArrowRight className="h-4 w-4" />
                   </div>
                 </div>
+              </div>
+            </div>
+          )}
+
+          {/* ============================== SETUP SCREEN 2: ARRIVAL METHOD ============================== */}
+          {step === 'arrival_setup' && (
+            <div className="space-y-6">
+              <div className="text-center">
+                <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-[#F8EEEE] text-[#7A0A0A] text-xs font-semibold mb-2">
+                  <span>Setup Step 2 of 2</span>
+                </div>
+                <h2 className="text-xl font-bold text-[var(--color-text-primary)]">
+                  Arrival Method
+                </h2>
+                <p className="text-sm text-[var(--color-text-secondary)] mt-1.5">
+                  How will you be arriving at the EARIST campus for this visit?
+                </p>
+              </div>
+
+              <div className="grid gap-4 sm:grid-cols-2 pt-2">
+                {/* Option 1: On Foot / Commute / No Vehicle */}
+                <div
+                  onClick={() => {
+                    setSetupArrivalMode('no_vehicle');
+                    setValue('arrivalMode', 'no_vehicle');
+                  }}
+                  role="button"
+                  tabIndex={0}
+                  className={`relative flex flex-col justify-between rounded-2xl border-2 p-6 transition-all cursor-pointer shadow-xs active:scale-[0.98] motion-reduce:transform-none ${
+                    setupArrivalMode === 'no_vehicle'
+                      ? 'border-[#7A0A0A] bg-[#F8EEEE]/50 ring-2 ring-[#7A0A0A]/20'
+                      : 'border-[var(--color-border)] bg-white hover:border-[#7A0A0A]/40'
+                  }`}
+                >
+                  <div className="space-y-3">
+                    <div className="flex items-center justify-between">
+                      <div className={`h-12 w-12 rounded-xl flex items-center justify-center ${
+                        setupArrivalMode === 'no_vehicle' ? 'bg-[#7A0A0A] text-white' : 'bg-[#F8EEEE] text-[#7A0A0A]'
+                      }`}>
+                        <User className="h-6 w-6" />
+                      </div>
+                      {setupArrivalMode === 'no_vehicle' && (
+                        <span className="rounded-full bg-[#7A0A0A] text-white p-1">
+                          <CheckCircle2 className="h-4 w-4" />
+                        </span>
+                      )}
+                    </div>
+                    <div>
+                      <h3 className="font-bold text-base text-[var(--color-text-primary)]">
+                        On Foot / Commute / No Vehicle
+                      </h3>
+                      <p className="text-xs text-[var(--color-text-secondary)] mt-1 leading-relaxed">
+                        Arriving as a pedestrian, using public transit, or dropped off outside campus gates.
+                      </p>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Option 2: Bringing a Vehicle */}
+                <div
+                  onClick={() => {
+                    setSetupArrivalMode('vehicle');
+                    setValue('arrivalMode', 'vehicle');
+                  }}
+                  role="button"
+                  tabIndex={0}
+                  className={`relative flex flex-col justify-between rounded-2xl border-2 p-6 transition-all cursor-pointer shadow-xs active:scale-[0.98] motion-reduce:transform-none ${
+                    setupArrivalMode === 'vehicle'
+                      ? 'border-[#7A0A0A] bg-[#F8EEEE]/50 ring-2 ring-[#7A0A0A]/20'
+                      : 'border-[var(--color-border)] bg-white hover:border-[#7A0A0A]/40'
+                  }`}
+                >
+                  <div className="space-y-3">
+                    <div className="flex items-center justify-between">
+                      <div className={`h-12 w-12 rounded-xl flex items-center justify-center ${
+                        setupArrivalMode === 'vehicle' ? 'bg-[#7A0A0A] text-white' : 'bg-[#F8EEEE] text-[#7A0A0A]'
+                      }`}>
+                        <Car className="h-6 w-6" />
+                      </div>
+                      {setupArrivalMode === 'vehicle' && (
+                        <span className="rounded-full bg-[#7A0A0A] text-white p-1">
+                          <CheckCircle2 className="h-4 w-4" />
+                        </span>
+                      )}
+                    </div>
+                    <div>
+                      <h3 className="font-bold text-base text-[var(--color-text-primary)]">
+                        Bringing a Vehicle
+                      </h3>
+                      <p className="text-xs text-[var(--color-text-secondary)] mt-1 leading-relaxed">
+                        Driving a motorcycle, car, van, SUV, pickup, or truck into campus. Requires plate declaration and vehicle photo.
+                      </p>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <div className="flex gap-3 pt-3 border-t border-[var(--color-border)]">
+                <Button
+                  type="button"
+                  variant="secondary"
+                  onClick={() => setStep('frontdoor')}
+                  className="flex-1"
+                  icon={<ArrowLeft className="h-4 w-4" />}
+                >
+                  Back to Visitor Type
+                </Button>
+                <Button
+                  type="button"
+                  disabled={setupArrivalMode === null}
+                  onClick={() => {
+                    if (!setupArrivalMode) return;
+                    setValue('arrivalMode', setupArrivalMode);
+                    setStep('form');
+                  }}
+                  className="flex-1"
+                  icon={<ArrowRight className="h-4 w-4" />}
+                >
+                  Continue to Personal Details
+                </Button>
               </div>
             </div>
           )}
@@ -1424,20 +1797,125 @@ export function GetPassPage() {
                 </FormField>
               </div>
 
-              <FormField
-                label="Home Address"
-                requirement="required"
-                error={errors.homeAddress?.message}
-                hint="Complete house/unit number, street, barangay, city, province"
-              >
-                <textarea
-                  id="home-address"
-                  rows={3}
-                  placeholder="e.g. 123 Sampaloc St., Brgy. 402, Sampaloc, Manila"
-                  {...register('homeAddress')}
-                  className="box-border w-full min-w-0 max-w-full rounded-xl border border-[var(--color-border)] bg-white px-3.5 py-2.5 text-base sm:text-sm text-[var(--color-text-primary)] placeholder-[var(--color-text-muted)] focus:border-[var(--color-brand)] focus:outline-none focus:ring-1 focus:ring-[var(--color-brand)]"
-                />
-              </FormField>
+              {/* Address Field: Controlled Autocomplete & Verified Provenance */}
+              <div className="space-y-2">
+                <label className="block text-xs font-bold uppercase tracking-wider text-[var(--color-text-muted)]">
+                  Home Address <span className="text-[var(--color-danger)]">*</span>
+                </label>
+                {selectedAddress ? (
+                  <div className="rounded-xl border-2 border-[#7A0A0A]/30 bg-[#F8EEEE]/40 p-4 space-y-3">
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="flex items-start gap-2.5">
+                        <MapPin className="h-5 w-5 text-[#7A0A0A] mt-0.5 flex-shrink-0" />
+                        <div>
+                          <div className="flex items-center gap-2">
+                            <span className="font-bold text-sm text-[var(--color-text-primary)]">
+                              Verified Address
+                            </span>
+                            <span className="inline-flex items-center gap-1 rounded-full bg-emerald-100 text-emerald-800 px-2 py-0.5 text-[10px] font-bold">
+                              <CheckCircle2 className="h-3 w-3 text-emerald-600" />
+                              Geoapify Verified
+                            </span>
+                          </div>
+                          <p className="text-sm text-[var(--color-text-primary)] mt-1 leading-relaxed">
+                            {selectedAddress.formatted}
+                          </p>
+                          {(selectedAddress.city || selectedAddress.state) && (
+                            <p className="text-xs text-[var(--color-text-secondary)] mt-0.5">
+                              {[selectedAddress.city, selectedAddress.state, selectedAddress.postcode].filter(Boolean).join(', ')}
+                            </p>
+                          )}
+                        </div>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setSelectedAddress(null);
+                          setValue('homeAddress', '', { shouldValidate: true });
+                          setAddressQuery('');
+                        }}
+                        className="text-xs font-bold text-[#7A0A0A] hover:underline px-2 py-1 rounded-lg hover:bg-white/60 transition-colors"
+                      >
+                        Change
+                      </button>
+                    </div>
+
+                    <div className="pt-2 border-t border-[#7A0A0A]/15">
+                      <label className="block text-[11px] font-semibold text-[var(--color-text-secondary)] mb-1">
+                        Unit / Room / House No. / Building (Optional)
+                      </label>
+                      <Input
+                        placeholder="e.g. Unit 302, Building A"
+                        value={addressDetail}
+                        onChange={(e) => setAddressDetail(e.target.value)}
+                      />
+                    </div>
+                  </div>
+                ) : (
+                  <div className="relative space-y-1.5">
+                    <div className="relative">
+                      <Input
+                        id="home-address"
+                        data-testid="address-search-input"
+                        placeholder="Type street, barangay, city, or place name in Philippines..."
+                        value={addressQuery}
+                        onChange={(e) => {
+                          setAddressQuery(e.target.value);
+                          setValue('homeAddress', e.target.value, { shouldValidate: true });
+                          setAddressSearchError(null);
+                        }}
+                        autoComplete="off"
+                      />
+                      {isSearchingAddress && (
+                        <div className="absolute right-3 top-3">
+                          <Loader2 className="h-4 w-4 animate-spin text-[#7A0A0A]" />
+                        </div>
+                      )}
+                    </div>
+
+                    <p className="text-xs text-[var(--color-text-secondary)]">
+                      Please search and select your address from official map suggestions (min. 4 characters).
+                    </p>
+
+                    {addressSearchError && (
+                      <p className="text-xs text-[var(--color-danger)] font-medium">
+                        {addressSearchError}
+                      </p>
+                    )}
+
+                    {addressSuggestions.length > 0 && (
+                      <div className="absolute z-20 w-full mt-1 bg-white rounded-xl border border-[var(--color-border)] shadow-lg overflow-hidden max-h-60 overflow-y-auto">
+                        {addressSuggestions.map((item) => (
+                          <div
+                            key={item.placeId}
+                            onClick={() => {
+                              setSelectedAddress(item);
+                              setValue('homeAddress', item.formatted, { shouldValidate: true });
+                              setAddressSuggestions([]);
+                              setAddressQuery('');
+                            }}
+                            role="button"
+                            tabIndex={0}
+                            className="p-3 hover:bg-[#F8EEEE]/60 cursor-pointer border-b border-slate-100 last:border-b-0 text-left transition-colors"
+                          >
+                            <div className="flex items-start gap-2">
+                              <MapPin className="h-4 w-4 text-[#7A0A0A] mt-0.5 flex-shrink-0" />
+                              <div>
+                                <p className="text-xs font-bold text-[var(--color-text-primary)]">
+                                  {item.addressLine1 || item.formatted}
+                                </p>
+                                <p className="text-[11px] text-[var(--color-text-secondary)] mt-0.5">
+                                  {[item.city, item.state, item.postcode].filter(Boolean).join(', ')}
+                                </p>
+                              </div>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
 
               {/* Data Privacy Notice */}
               <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-canvas)] p-4 text-xs text-[var(--color-text-secondary)] space-y-2">
@@ -1472,11 +1950,11 @@ export function GetPassPage() {
               <div className="flex items-center justify-between pt-2">
                 <button
                   type="button"
-                  onClick={() => setStep('frontdoor')}
+                  onClick={() => setStep('arrival_setup')}
                   className="text-xs font-semibold text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)] hover:underline inline-flex items-center gap-1"
                 >
                   <ArrowLeft className="h-3.5 w-3.5" />
-                  Change visitor type
+                  Back to Arrival Method
                 </button>
                 <Button
                   type="submit"
@@ -1493,10 +1971,27 @@ export function GetPassPage() {
           {step === 'visit' && (
             <div className="space-y-6">
               <div className="text-center">
-                <h2 className="text-lg font-bold text-[var(--color-text-primary)]">Visit & Arrival Method</h2>
+                <h2 className="text-lg font-bold text-[var(--color-text-primary)]">Visit & Vehicle Details</h2>
                 <p className="text-sm text-[var(--color-text-secondary)] mt-1">
-                  Specify your visit purpose, schedule, and declare if you are bringing a vehicle onto campus.
+                  Specify your visit purpose, schedule, and verify your arrival declaration.
                 </p>
+              </div>
+
+              {/* Selected Arrival Method Status Banner */}
+              <div className="flex items-center justify-between rounded-xl bg-[#F8EEEE] border border-[#7A0A0A]/20 p-3 text-xs text-[#7A0A0A]">
+                <div className="flex items-center gap-2">
+                  {arrivalMode === 'vehicle' ? <Car className="h-4 w-4" /> : <User className="h-4 w-4" />}
+                  <span className="font-semibold">
+                    Arrival Method: {arrivalMode === 'vehicle' ? 'Bringing a Vehicle' : 'On Foot / Commute / No Vehicle'}
+                  </span>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setStep('arrival_setup')}
+                  className="font-bold underline hover:opacity-80"
+                >
+                  Change
+                </button>
               </div>
 
               {/* Purpose of Visit */}
@@ -1525,57 +2020,11 @@ export function GetPassPage() {
                 />
               </FormField>
 
-              {/* Arrival Method Cards */}
-              <div className="space-y-3">
-                <label className="block text-xs font-bold uppercase tracking-wider text-[var(--color-text-muted)]">
-                  Arrival Method <span className="text-[var(--color-danger)]">*</span>
-                </label>
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                  <div
-                    onClick={() => setValue('arrivalMode', 'no_vehicle')}
-                    role="button"
-                    tabIndex={0}
-                    className={`rounded-xl border-2 p-4 cursor-pointer transition-all active:scale-[0.98] motion-reduce:transform-none flex items-start gap-3 ${
-                      arrivalMode === 'no_vehicle'
-                        ? 'border-[var(--color-brand)] bg-[var(--color-brand-light)] text-[var(--color-brand)]'
-                        : 'border-[var(--color-border)] bg-white hover:border-slate-300'
-                    }`}
-                  >
-                    <User className="h-5 w-5 mt-0.5 flex-shrink-0" />
-                    <div>
-                      <p className="font-bold text-sm text-[var(--color-text-primary)]">No Vehicle</p>
-                      <p className="text-xs text-[var(--color-text-secondary)] mt-0.5">
-                        Arriving on foot, public transit, or dropped off outside the gate.
-                      </p>
-                    </div>
-                  </div>
-
-                  <div
-                    onClick={() => setValue('arrivalMode', 'vehicle')}
-                    role="button"
-                    tabIndex={0}
-                    className={`rounded-xl border-2 p-4 cursor-pointer transition-all active:scale-[0.98] motion-reduce:transform-none flex items-start gap-3 ${
-                      arrivalMode === 'vehicle'
-                        ? 'border-[var(--color-brand)] bg-[var(--color-brand-light)] text-[var(--color-brand)]'
-                        : 'border-[var(--color-border)] bg-white hover:border-slate-300'
-                    }`}
-                  >
-                    <Car className="h-5 w-5 mt-0.5 flex-shrink-0" />
-                    <div>
-                      <p className="font-bold text-sm text-[var(--color-text-primary)]">Bringing a Vehicle</p>
-                      <p className="text-xs text-[var(--color-text-secondary)] mt-0.5">
-                        Driving a car, motorcycle, van, SUV, or other vehicle onto campus.
-                      </p>
-                    </div>
-                  </div>
-                </div>
-              </div>
-
-              {/* Progressive Vehicle Declaration Accordion */}
+              {/* Vehicle Declaration Section */}
               {arrivalMode === 'vehicle' && (
-                <div className="space-y-4 rounded-2xl border border-blue-200 bg-blue-50/40 p-4 sm:p-5 transition-all motion-reduce:transition-none">
-                  <div className="flex items-start gap-2.5 rounded-xl bg-blue-100/70 p-3 text-xs text-blue-900">
-                    <Info className="h-4 w-4 text-blue-700 flex-shrink-0 mt-0.5" />
+                <div className="space-y-4 rounded-2xl border border-[#7A0A0A]/20 bg-[#F8EEEE]/30 p-4 sm:p-5 transition-all motion-reduce:transition-none">
+                  <div className="flex items-start gap-2.5 rounded-xl bg-white p-3 text-xs text-[#7A0A0A] border border-[#7A0A0A]/15">
+                    <Info className="h-4 w-4 text-[#7A0A0A] flex-shrink-0 mt-0.5" />
                     <span className="font-medium">
                       Each passenger must have their own E-GatePass. Declare the vehicle that will pass campus security.
                     </span>
@@ -1585,15 +2034,13 @@ export function GetPassPage() {
                     <FormField label="Vehicle Type" requirement="required" error={errors.vehicleType?.message}>
                       <select
                         {...register('vehicleType')}
-                        className="box-border w-full min-w-0 max-w-full rounded-xl border border-[var(--color-border)] bg-white px-3.5 py-2.5 text-base sm:text-sm text-[var(--color-text-primary)] focus:border-[var(--color-brand)] focus:outline-none focus:ring-1 focus:ring-[var(--color-brand)]"
+                        className="box-border w-full min-w-0 max-w-full rounded-xl border border-[var(--color-border)] bg-white px-3.5 py-2.5 text-base sm:text-sm text-[var(--color-text-primary)] focus:border-[#7A0A0A] focus:outline-none focus:ring-1 focus:ring-[#7A0A0A]"
                       >
-                        <option value="car">Car (Sedan, Hatchback)</option>
-                        <option value="motorcycle">Motorcycle / Scooter</option>
-                        <option value="van">Van</option>
-                        <option value="suv">SUV / AUV</option>
-                        <option value="truck">Truck</option>
-                        <option value="bicycle">Bicycle / E-Bike</option>
-                        <option value="other">Other Vehicle</option>
+                        {CONTROLLED_VEHICLE_TYPES.map((t) => (
+                          <option key={t.value} value={t.value}>
+                            {t.label}
+                          </option>
+                        ))}
                       </select>
                     </FormField>
 
@@ -1614,6 +2061,65 @@ export function GetPassPage() {
                     </FormField>
                   </div>
 
+                  {/* Make and Model Selectors */}
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                    <div>
+                      <label className="block text-xs font-bold uppercase tracking-wider text-[var(--color-text-muted)] mb-1">
+                        Vehicle Make <span className="text-[var(--color-danger)]">*</span>
+                      </label>
+                      <select
+                        value={selectedMake}
+                        onChange={(e) => setSelectedMake(e.target.value)}
+                        disabled={isLoadingMakes}
+                        className="box-border w-full min-w-0 max-w-full rounded-xl border border-[var(--color-border)] bg-white px-3.5 py-2.5 text-base sm:text-sm text-[var(--color-text-primary)] focus:border-[#7A0A0A] focus:outline-none focus:ring-1 focus:ring-[#7A0A0A]"
+                      >
+                        {availableMakes.map((m) => (
+                          <option key={m} value={m}>
+                            {m}
+                          </option>
+                        ))}
+                        <option value="Other / Not Listed">Other / Not Listed</option>
+                      </select>
+                    </div>
+
+                    {!isManualVehicle && (
+                      <div>
+                        <label className="block text-xs font-bold uppercase tracking-wider text-[var(--color-text-muted)] mb-1">
+                          Vehicle Model
+                        </label>
+                        <select
+                          value={selectedModel}
+                          onChange={(e) => setSelectedModel(e.target.value)}
+                          disabled={isLoadingModels || availableModels.length === 0}
+                          className="box-border w-full min-w-0 max-w-full rounded-xl border border-[var(--color-border)] bg-white px-3.5 py-2.5 text-base sm:text-sm text-[var(--color-text-primary)] focus:border-[#7A0A0A] focus:outline-none focus:ring-1 focus:ring-[#7A0A0A]"
+                        >
+                          {availableModels.map((m) => (
+                            <option key={m} value={m}>
+                              {m}
+                            </option>
+                          ))}
+                          <option value="Other / Not Listed">Other / Not Listed</option>
+                        </select>
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Manual Make / Model Input when "Other" selected */}
+                  {isManualVehicle && (
+                    <FormField
+                      label="Custom Make & Model"
+                      requirement="required"
+                      hint="Specify make and model (e.g. Isuzu D-Max, Yamaha NMAX)"
+                    >
+                      <Input
+                        placeholder="e.g. Isuzu D-Max"
+                        value={customMakeModel}
+                        onChange={(e) => setCustomMakeModel(e.target.value)}
+                      />
+                    </FormField>
+                  )}
+
+                  {/* Color Selector */}
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                     <FormField
                       label="Vehicle Color"
@@ -1621,17 +2127,70 @@ export function GetPassPage() {
                       error={errors.vehicleColor?.message}
                       hint="Primary exterior color"
                     >
-                      <Input placeholder="e.g. White" {...register('vehicleColor')} />
+                      <select
+                        {...register('vehicleColor')}
+                        className="box-border w-full min-w-0 max-w-full rounded-xl border border-[var(--color-border)] bg-white px-3.5 py-2.5 text-base sm:text-sm text-[var(--color-text-primary)] focus:border-[#7A0A0A] focus:outline-none focus:ring-1 focus:ring-[#7A0A0A]"
+                      >
+                        <option value="">Select color...</option>
+                        {CONTROLLED_VEHICLE_COLORS.map((c) => (
+                          <option key={c} value={c}>
+                            {c}
+                          </option>
+                        ))}
+                      </select>
                     </FormField>
+                  </div>
 
-                    <FormField
-                      label="Make / Model"
-                      requirement="optional"
-                      error={errors.makeModel?.message}
-                      hint="e.g. Toyota Vios, Honda Click"
-                    >
-                      <Input placeholder="e.g. Toyota Vios" {...register('makeModel')} />
-                    </FormField>
+                  {/* Required Vehicle Photo */}
+                  <div className="space-y-2 pt-3 border-t border-[#7A0A0A]/15">
+                    <label className="block text-xs font-bold uppercase tracking-wider text-[var(--color-text-muted)]">
+                      Vehicle Photo <span className="text-[var(--color-danger)]">*</span>
+                    </label>
+                    <p className="text-xs text-[var(--color-text-secondary)]">
+                      Take or upload a clear photo showing the front or rear of your vehicle with visible plate number.
+                    </p>
+
+                    <input
+                      type="file"
+                      ref={vehicleFileInputRef}
+                      accept="image/jpeg,image/png,image/webp"
+                      className="hidden"
+                      onChange={(e) => {
+                        const file = e.target.files?.[0];
+                        if (file) void handleVehiclePhotoSelected(file);
+                      }}
+                    />
+
+                    {vehiclePhotoPreview ? (
+                      <div className="relative aspect-video max-w-sm rounded-xl overflow-hidden border-2 border-[#7A0A0A]/30 bg-slate-100 shadow-xs">
+                        <img src={vehiclePhotoPreview} alt="Vehicle preview" className="w-full h-full object-cover" />
+                        <button
+                          type="button"
+                          onClick={handleRemoveVehiclePhoto}
+                          className="absolute top-2 right-2 rounded-full bg-black/70 text-white p-1 hover:bg-black/90 transition-colors"
+                          title="Remove photo"
+                        >
+                          <X className="h-4 w-4" />
+                        </button>
+                      </div>
+                    ) : (
+                      <Button
+                        type="button"
+                        variant="secondary"
+                        disabled={isProcessingVehiclePhoto}
+                        loading={isProcessingVehiclePhoto}
+                        onClick={() => vehicleFileInputRef.current?.click()}
+                        icon={<Camera className="h-4 w-4" />}
+                      >
+                        Capture or Upload Vehicle Photo
+                      </Button>
+                    )}
+
+                    {vehiclePhotoError && (
+                      <p className="text-xs text-[var(--color-danger)] font-medium">
+                        {vehiclePhotoError}
+                      </p>
+                    )}
                   </div>
                 </div>
               )}
@@ -2066,9 +2625,19 @@ export function GetPassPage() {
                     </p>
                   </div>
                   <div className="sm:col-span-2">
-                    <span className="text-[var(--color-text-secondary)] block">Home Address:</span>
+                    <div className="flex items-center gap-2">
+                      <span className="text-[var(--color-text-secondary)] block">Home Address:</span>
+                      {selectedAddress && (
+                        <span className="inline-flex items-center gap-1 rounded-full bg-emerald-100 text-emerald-800 px-2 py-0.5 text-[10px] font-bold">
+                          <CheckCircle2 className="h-3 w-3 text-emerald-600" />
+                          Geoapify Verified
+                        </span>
+                      )}
+                    </div>
                     <p className="font-semibold text-[var(--color-text-primary)] mt-0.5 leading-relaxed">
-                      {getValues('homeAddress')}
+                      {selectedAddress
+                        ? [addressDetail.trim(), selectedAddress.formatted].filter(Boolean).join(', ')
+                        : getValues('homeAddress')}
                     </p>
                   </div>
                 </div>
@@ -2121,23 +2690,38 @@ export function GetPassPage() {
                   )}
                 </div>
                 {getValues('arrivalMode') === 'vehicle' ? (
-                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs">
-                    <div>
-                      <span className="text-[var(--color-text-secondary)] block">Plate Number:</span>
-                      <p className="font-mono font-bold text-sm text-blue-900 mt-0.5">{getValues('plateNumber')}</p>
+                  <div>
+                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs">
+                      <div>
+                        <span className="text-[var(--color-text-secondary)] block">Plate Number:</span>
+                        <p className="font-mono font-bold text-sm text-[#7A0A0A] mt-0.5">{getValues('plateNumber')}</p>
+                      </div>
+                      <div>
+                        <span className="text-[var(--color-text-secondary)] block">Vehicle Type:</span>
+                        <p className="font-semibold capitalize text-[var(--color-text-primary)] mt-0.5">{getValues('vehicleType')}</p>
+                      </div>
+                      <div>
+                        <span className="text-[var(--color-text-secondary)] block">Color:</span>
+                        <p className="font-semibold text-[var(--color-text-primary)] mt-0.5">{getValues('vehicleColor')}</p>
+                      </div>
+                      <div>
+                        <span className="text-[var(--color-text-secondary)] block">Make / Model:</span>
+                        <p className="font-semibold text-[var(--color-text-primary)] mt-0.5">{getValues('makeModel') || '—'}</p>
+                      </div>
                     </div>
-                    <div>
-                      <span className="text-[var(--color-text-secondary)] block">Vehicle Type:</span>
-                      <p className="font-semibold capitalize text-[var(--color-text-primary)] mt-0.5">{getValues('vehicleType')}</p>
-                    </div>
-                    <div>
-                      <span className="text-[var(--color-text-secondary)] block">Color:</span>
-                      <p className="font-semibold text-[var(--color-text-primary)] mt-0.5">{getValues('vehicleColor')}</p>
-                    </div>
-                    <div>
-                      <span className="text-[var(--color-text-secondary)] block">Make / Model:</span>
-                      <p className="font-semibold text-[var(--color-text-primary)] mt-0.5">{getValues('makeModel') || '—'}</p>
-                    </div>
+                    {vehiclePhotoPreview && (
+                      <div className="mt-3 pt-3 border-t border-[var(--color-border)] flex items-center gap-3">
+                        <img
+                          src={vehiclePhotoPreview}
+                          alt="Declared vehicle"
+                          className="h-14 w-24 object-cover rounded-lg border border-[var(--color-border)] shadow-2xs"
+                        />
+                        <div className="text-xs">
+                          <span className="font-semibold text-[var(--color-text-primary)] block">Vehicle Photo Attached</span>
+                          <span className="text-[11px] text-[var(--color-text-secondary)]">Captured and verified for gate inspection</span>
+                        </div>
+                      </div>
+                    )}
                   </div>
                 ) : (
                   <div className="flex items-center gap-2 text-xs text-[var(--color-text-secondary)]">
@@ -2196,6 +2780,16 @@ export function GetPassPage() {
                           Retake ID
                         </button>
                       )}
+                    </div>
+                  )}
+                  {vehiclePhotoPreview && (
+                    <div className="text-center">
+                      <p className="text-xs text-[var(--color-text-secondary)] mb-1">Declared Vehicle</p>
+                      <img
+                        src={vehiclePhotoPreview}
+                        alt="Declared vehicle"
+                        className="h-24 w-36 object-cover rounded-lg border border-[var(--color-border)] shadow-sm mx-auto"
+                      />
                     </div>
                   )}
                 </div>

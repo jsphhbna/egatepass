@@ -223,6 +223,18 @@
       "destination": "/api/auth/resend-webhook"
     },
     {
+      "source": "/api/address/autocomplete",
+      "destination": "/api/passes/address-autocomplete"
+    },
+    {
+      "source": "/api/vehicles/makes",
+      "destination": "/api/passes/vehicles-makes"
+    },
+    {
+      "source": "/api/vehicles/models",
+      "destination": "/api/passes/vehicles-models"
+    },
+    {
       "source": "/((?!api/).*)",
       "destination": "/index.html"
     }

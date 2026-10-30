@@ -124,7 +124,15 @@ async function handleRequest(request: Request): Promise<Response> {
 
     let visitors: Array<{ id: string; full_name: string; purpose: string }> = [];
     let photoEvidence: Array<{ id: string; visitor_id: string }> = [];
-    let vehicles: Array<{ pass_id: string; vehicle_type: string; plate_number: string; color: string; make_model: string | null }> = [];
+    let vehicles: Array<{
+      pass_id: string;
+      vehicle_type: string;
+      plate_number: string;
+      color: string;
+      make_model: string | null;
+      vehicle_photo_evidence_id?: string | null;
+      plate_conflict_flag?: boolean | null;
+    }> = [];
 
     const fetchPromises: Promise<void>[] = [];
 
@@ -146,7 +154,7 @@ async function handleRequest(request: Request): Promise<Response> {
     if (passIds.length > 0) {
       fetchPromises.push(
         (async () => {
-          const { data, error } = await admin.from('visit_vehicle_declarations').select('pass_id, vehicle_type, plate_number, color, make_model').in('pass_id', passIds);
+          const { data, error } = await admin.from('visit_vehicle_declarations').select('pass_id, vehicle_type, plate_number, color, make_model, vehicle_photo_evidence_id, plate_conflict_flag').in('pass_id', passIds);
           if (error) throw error;
           vehicles = data || [];
         })()
@@ -180,6 +188,8 @@ async function handleRequest(request: Request): Promise<Response> {
               vehicleType: veh.vehicle_type,
               color: veh.color,
               makeModel: veh.make_model || null,
+              vehiclePhotoEvidenceId: veh.vehicle_photo_evidence_id || null,
+              plateConflictFlag: Boolean(veh.plate_conflict_flag),
             }
           : null,
       };

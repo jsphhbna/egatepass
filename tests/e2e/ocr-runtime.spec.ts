@@ -6,7 +6,7 @@ test.describe('Workstream G: Real OCR Integration in Browser Runtime', () => {
     page,
   }) => {
     // 1. Visit /get-pass in new visitor mode
-    await page.goto('/get-pass?mode=new');
+    await page.goto('/get-pass?mode=new&arrival=no_vehicle');
 
     // 2. Wait for registration form to render
     const autofillBtn = page.getByRole('button', { name: /Autofill from ID|Upload ID Image/i });

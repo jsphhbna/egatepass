@@ -1958,7 +1958,7 @@ describe('Permanent PostgreSQL Migration Chain & Schema Contracts (PGlite)', () 
   it('Migration 43: verifies unified online registration, returning visitor schema, vehicle declarations, and scan_pass lifecycle', async () => {
     const db = new PGlite();
     const files = await applyAllMigrations(db);
-    expect(files.length).toBe(43);
+    expect(files.length).toBeGreaterThanOrEqual(43);
 
     // 1. Verify schema tables and columns
     const tablesCheck = await db.query<{ tablename: string }>(`
@@ -2184,5 +2184,98 @@ describe('Permanent PostgreSQL Migration Chain & Schema Contracts (PGlite)', () 
       select exit_recorded_at from public.visit_vehicle_declarations where pass_id = '${passRow.pass_id}';
     `);
     expect(declAfterExit.rows[0].exit_recorded_at).not.toBeNull();
+  }, 60000);
+
+  it('Migration 44: verifies verified address, vehicle photo evidence, active inside plate invariant, and issue_online_pass_v3', async () => {
+    const db = new PGlite();
+    await applyAllMigrations(db);
+
+    // 1. Verify evidence_kind includes vehicle_photo
+    const evidenceEnum = await db.query<{ enumlabel: string }>(`
+      select e.enumlabel
+      from pg_type t
+      join pg_enum e on t.oid = e.enumtypid
+      where t.typname = 'evidence_kind';
+    `);
+    const kinds = evidenceEnum.rows.map((r) => r.enumlabel);
+    expect(kinds).toContain('vehicle_photo');
+
+    // 2. Verify address provenance columns on visitors
+    const visitorCols = await db.query<{ column_name: string }>(`
+      select column_name from information_schema.columns
+      where table_schema = 'public' and table_name = 'visitors' and column_name like 'address_%';
+    `);
+    const visitorColNames = visitorCols.rows.map((r) => r.column_name);
+    expect(visitorColNames).toContain('address_provider');
+    expect(visitorColNames).toContain('address_place_id');
+    expect(visitorColNames).toContain('address_lat');
+    expect(visitorColNames).toContain('address_lon');
+    expect(visitorColNames).toContain('address_city');
+    expect(visitorColNames).toContain('address_country_code');
+    expect(visitorColNames).toContain('address_verified_at');
+    expect(visitorColNames).toContain('address_detail');
+
+    // 3. Verify vehicle declaration extensions
+    const declCols = await db.query<{ column_name: string }>(`
+      select column_name from information_schema.columns
+      where table_schema = 'public' and table_name = 'visit_vehicle_declarations';
+    `);
+    const declColNames = declCols.rows.map((r) => r.column_name);
+    expect(declColNames).toContain('vehicle_photo_evidence_id');
+    expect(declColNames).toContain('vehicle_catalog_status');
+    expect(declColNames).toContain('plate_conflict_flag');
+    expect(declColNames).toContain('entry_scanned_at');
+    expect(declColNames).toContain('exit_scanned_at');
+
+    // 4. Test partial unique index preventing same plate simultaneously inside twice
+    const visitorId1 = '11111111-1111-1111-1111-111111111111';
+    const visitorId2 = '22222222-2222-2222-2222-222222222222';
+    const passId1 = '33333333-3333-3333-3333-333333333333';
+    const passId2 = '44444444-4444-4444-4444-444444444444';
+
+    await db.exec(`
+      insert into auth.users (id, is_anonymous) values ('${visitorId1}', true), ('${visitorId2}', true);
+      insert into public.visitors (id, owner_id, source, full_name, contact_number, visit_date, purpose, consent_accepted_at)
+      values
+        ('${visitorId1}', '${visitorId1}', 'portal', 'Visitor One', '+639171111111', current_date, 'Visit 1', now()),
+        ('${visitorId2}', '${visitorId2}', 'portal', 'Visitor Two', '+639172222222', current_date, 'Visit 2', now());
+      insert into public.passes (id, visitor_id, token_digest, source, status, valid_from, valid_until)
+      values
+        ('${passId1}', '${visitorId1}', decode('0101010101010101010101010101010101010101010101010101010101010101', 'hex'), 'portal', 'issued', now(), now() + interval '8 hours'),
+        ('${passId2}', '${visitorId2}', decode('0202020202020202020202020202020202020202020202020202020202020202', 'hex'), 'portal', 'issued', now(), now() + interval '8 hours');
+    `);
+
+    // First vehicle declaration inside
+    await db.exec(`
+      insert into public.visit_vehicle_declarations (
+        visitor_id, pass_id, vehicle_type, plate_number, plate_key, color, entry_scanned_at
+      ) values (
+        '${visitorId1}', '${passId1}', 'car', 'NBD 1234', 'NBD1234', 'White', now()
+      );
+    `);
+
+    // Second vehicle declaration with same plate_key trying to be inside simultaneously MUST violate unique index
+    await expect(
+      db.exec(`
+        insert into public.visit_vehicle_declarations (
+          visitor_id, pass_id, vehicle_type, plate_number, plate_key, color, entry_scanned_at
+        ) values (
+          '${visitorId2}', '${passId2}', 'car', 'NBD 1234', 'NBD1234', 'White', now()
+        );
+      `)
+    ).rejects.toThrow();
+
+    // But once first vehicle exits, second declaration CAN enter
+    await db.exec(`
+      update public.visit_vehicle_declarations set exit_scanned_at = now() where pass_id = '${passId1}';
+      insert into public.visit_vehicle_declarations (
+        visitor_id, pass_id, vehicle_type, plate_number, plate_key, color, entry_scanned_at
+      ) values (
+        '${visitorId2}', '${passId2}', 'car', 'NBD 1234', 'NBD1234', 'White', now()
+      );
+    `);
+
+    const secondDecl = await db.query(`select plate_key from public.visit_vehicle_declarations where pass_id = '${passId2}';`);
+    expect(secondDecl.rows.length).toBe(1);
   }, 60000);
 });
