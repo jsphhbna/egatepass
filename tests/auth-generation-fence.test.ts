@@ -147,7 +147,7 @@ describe('Repair Group 8: AuthProvider Async Generation Fencing', () => {
         return {
           data: {
             display_name: 'Bob',
-            role: 'guard',
+            role: 'admin',
             active: true,
             must_change_password: false,
             privacy_accepted_at: '2026-10-20',
@@ -188,10 +188,10 @@ describe('Repair Group 8: AuthProvider Async Generation Fencing', () => {
       await Promise.resolve();
     });
 
-    // User B should now be authenticated as guard
+    // User B should now be authenticated as admin
     expect(latestState.status).toBe('authenticated');
     expect(latestState.uid).toBe('user-b');
-    expect(latestState.role).toBe('guard');
+    expect(latestState.role).toBe('admin');
 
     // A finishes last
     await act(async () => {
@@ -212,7 +212,7 @@ describe('Repair Group 8: AuthProvider Async Generation Fencing', () => {
     // Invariant: Final state remains B, stale A resolution is discarded
     expect(latestState.status).toBe('authenticated');
     expect(latestState.uid).toBe('user-b');
-    expect(latestState.role).toBe('guard');
+    expect(latestState.role).toBe('admin');
   });
 
   it('unmount during role resolution does not throw or commit state', async () => {

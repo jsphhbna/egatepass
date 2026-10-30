@@ -424,3 +424,9 @@ When cloud connectivity returns:
 ### 9.2 Audit Log Date Range Validation
 - Date filters on `/api/admin/activity` strictly reject inverted ranges (`dateFrom > dateTo`) with HTTP 400 `invalid_date_range`.
 - The Admin UI disables network queries and exports when date inputs are inverted and displays an inline notice: *"Start date cannot be later than end date."*
+
+### 11.7 Portal Actor Continuity & Layout-Aware OCR Operations (Migrations 40–42)
+- **Portal Client Continuity**: The online visitor pre-registration portal uses a dedicated Supabase client (`requirePortalSupabase()`) configured with `storageKey: 'egatepass-portal-auth'`. This guarantees session isolation even when operators test or register on stations with logged-in administrative accounts.
+- **Guard Station Device Gate Monitoring**: Guard stations at campus gates operate under dedicated device accounts (`device_type = 'guard_station'`). When a valid online pre-registered visitor pass is scanned at the entrance gate scanner, the pass automatically transitions to `inside` and immediately surfaces on the Guard Station monitor with full-bleed photo and visitor details.
+- **Legacy Admin Walk-in Processing**: If an emergency walk-in occurs and kiosk devices are unavailable, campus administrators can process registrations using the `guard_offline` workflow.
+- **Layout-Aware Structured OCR**: Client-side OCR operates entirely within browser memory using spatial multi-line analysis and fuzzy label matching. Autofill occurs when confidence meets or exceeds 60%, and warnings are presented if extraction confidence is low. Visitors may review and freely adjust all prefilled values before continuing.

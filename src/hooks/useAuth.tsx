@@ -59,6 +59,10 @@ async function resolveRole(user: User): Promise<{ role: AuthRole; userData: Auth
   if (staffResult.data) {
     const profile = staffResult.data;
     if (!profile.active || !isUserRole(profile.role)) return { role: null, userData: null };
+    if (profile.role === 'guard') {
+      await supabase.auth.signOut();
+      return { role: null, userData: null };
+    }
     const userData: StaffAuthActor = {
       kind: 'staff',
       name: profile.display_name,

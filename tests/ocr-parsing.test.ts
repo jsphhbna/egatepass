@@ -37,8 +37,8 @@ Address: 123 ESPANA BLVD SAMPALOC MANILA
 
     const result = extractNamesFromIdText(ocrSample, 92);
     expect(result.lastName).toBe('Dela Cruz');
-    expect(result.firstName).toBe('Juan');
-    expect(result.middleName).toBe('Miguel Santos');
+    expect(result.firstName).toBe('Juan Miguel');
+    expect(result.middleName).toBe('Santos');
   });
 
   it('parses UMID card with colon-separated labels', () => {
@@ -133,8 +133,8 @@ MUÑOZ, ANA CLARA SANTOS
     `;
     const resAna = extractNamesFromIdText(ocrSampleAna, 89);
     expect(resAna.lastName).toBe('Muñoz');
-    expect(resAna.firstName).toBe('Ana');
-    expect(resAna.middleName).toBe('Clara Santos');
+    expect(resAna.firstName).toBe('Ana Clara');
+    expect(resAna.middleName).toBe('Santos');
   });
 
   it('parses Professional Regulation Commission (PRC) ID format', () => {
@@ -148,8 +148,8 @@ VALIDITY: 2027/10/30
     `;
     const res = extractNamesFromIdText(ocrSamplePrc, 95);
     expect(res.lastName).toBe('Dela Cruz');
-    expect(res.firstName).toBe('Juan');
-    expect(res.middleName).toBe('Pedro Santos');
+    expect(res.firstName).toBe('Juan Pedro');
+    expect(res.middleName).toBe('Santos');
   });
 
   it('parses Philippine Passport format with surname and given names labels', () => {

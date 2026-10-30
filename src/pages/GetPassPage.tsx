@@ -10,16 +10,18 @@ import {
   issueVisitorPass,
   loadRegistrationSettings,
   createPortalIssueTransaction,
-  uploadCheckpointedEvidence,
+  uploadPortalEvidence,
   verifyPortalIdentity,
-  preflightLiveFace,
+  preflightPortalLiveFace,
+  validatePortalSession,
   invalidatePortalEvidenceCheckpoint,
+  PortalSessionError,
   type PortalIssueTransaction,
 } from '@/services/visitorRegistration';
 import { TurnstileWidget, type TurnstileWidgetRef } from '@/components/TurnstileWidget';
 import { generateBrandedQrDataUrl } from '@/lib/brandedQr';
 import QRCode from 'qrcode';
-import { recognizeIdImage, terminateLocalOcrWorker } from '@/lib/ocr';
+import { recognizeIdImage, terminateLocalOcrWorker, getNextOcrJobId } from '@/lib/ocr';
 import { evaluateLiveFaceQuality, evaluateIdImageQuality } from '@/lib/imageQuality';
 import {
   Camera,
@@ -119,7 +121,12 @@ export function GetPassPage() {
   const [photoBlob, setPhotoBlob] = useState<Blob | null>(null);
   const photoUrl = useObjectUrl();
   const photoPreview = photoUrl.url;
-  const [liveFaceQualityError, setLiveFaceQualityError] = useState<string | null>(null);
+  const [liveFaceError, setLiveFaceError] = useState<{
+    category: 'quality' | 'session' | 'upload' | 'network' | 'service';
+    title: string;
+    message: string;
+    reasonCode?: string;
+  } | null>(null);
   const [isEvaluatingFaceQuality, setIsEvaluatingFaceQuality] = useState(false);
 
   // Valid ID State (File picker only, no custom camera)
@@ -136,6 +143,7 @@ export function GetPassPage() {
   const [ocrSuccessNotice, setOcrSuccessNotice] = useState<string | null>(null);
   const ocrFileInputRef = useRef<HTMLInputElement>(null);
   const ocrGenerationRef = useRef(0);
+  const ocrJobIdRef = useRef<number>(0);
 
   // Identity Verification State
   const [isVerifyingIdentity, setIsVerifyingIdentity] = useState(false);
@@ -206,7 +214,7 @@ export function GetPassPage() {
     idUrl.clear();
     setIdentityVerified(false);
     setVerificationError(null);
-    setLiveFaceQualityError(null);
+    setLiveFaceError(null);
     setIdQualityError(null);
     setIdReusedFromOcr(false);
     setOcrSuccessNotice(null);
@@ -309,11 +317,16 @@ export function GetPassPage() {
     if (isStartingRegistration) return;
     setRegistrationSecurityError(null);
 
-    // If valid portal transaction already exists, advance directly without re-challenging
-    if (portalTransactionRef.current?.token) {
-      setStep('photo');
-      void faceWebcam.start();
-      return;
+    // If valid portal transaction already exists with an active live session, advance directly
+    if (portalTransactionRef.current) {
+      const isValid = await validatePortalSession(portalTransactionRef.current);
+      if (isValid) {
+        setStep('photo');
+        void faceWebcam.start();
+        return;
+      }
+      portalTransactionRef.current = null;
+      livePhotoIntentIdRef.current = null;
     }
 
     setIsStartingRegistration(true);
@@ -378,30 +391,55 @@ export function GetPassPage() {
       setIdentityVerified(false);
       setVerificationError(null);
 
-      // 2. Perform local OCR recognition in browser memory with cancellation token
-      const parsed = await recognizeIdImage(file);
-      if (generation !== ocrGenerationRef.current) return;
+      // 2. Perform local OCR recognition in browser memory: recognizeIdImage(file)
+      const currentJobId = getNextOcrJobId();
+      ocrJobIdRef.current = currentJobId;
+      const parsed = await recognizeIdImage(file, undefined, currentJobId);
+      if (generation !== ocrGenerationRef.current || ocrJobIdRef.current !== currentJobId) return;
 
-      // 3. Prefill empty fields, preserving user-entered values
+      // 3. Prefill empty fields, preserving user-entered values - ONLY CONFIDENT FIELDS (>= 60)
       const currentValues = getValues();
       let filledCount = 0;
+      let weakCount = 0;
+
+      const CONFIDENCE_THRESHOLD = 60;
+      const isFieldConfident = (fieldName: 'firstName' | 'middleName' | 'lastName'): boolean => {
+        const candidate = parsed.fieldCandidates?.[fieldName];
+        if (candidate) return candidate.confidence >= CONFIDENCE_THRESHOLD;
+        return parsed.confidence >= CONFIDENCE_THRESHOLD;
+      };
 
       if (!currentValues.firstName?.trim() && parsed.firstName) {
-        setValue('firstName', parsed.firstName, { shouldValidate: true });
-        filledCount++;
+        if (isFieldConfident('firstName')) {
+          setValue('firstName', parsed.firstName, { shouldValidate: true });
+          filledCount++;
+        } else {
+          weakCount++;
+        }
       }
       if (!currentValues.middleName?.trim() && parsed.middleName) {
-        setValue('middleName', parsed.middleName, { shouldValidate: true });
-        filledCount++;
+        if (isFieldConfident('middleName')) {
+          setValue('middleName', parsed.middleName, { shouldValidate: true });
+          filledCount++;
+        } else {
+          weakCount++;
+        }
       }
       if (!currentValues.lastName?.trim() && parsed.lastName) {
-        setValue('lastName', parsed.lastName, { shouldValidate: true });
-        filledCount++;
+        if (isFieldConfident('lastName')) {
+          setValue('lastName', parsed.lastName, { shouldValidate: true });
+          filledCount++;
+        } else {
+          weakCount++;
+        }
       }
 
       if (filledCount > 0) {
         setOcrSuccessNotice('Information autofilled from your ID. ID image saved for verification.');
         toast.success('Information autofilled from your ID.');
+      } else if (weakCount > 0) {
+        setOcrSuccessNotice("We couldn't confidently read all name fields. Please review or enter the remaining fields manually.");
+        toast.info("We couldn't confidently read all name fields. Please review or enter the remaining fields manually.");
       } else {
         setOcrSuccessNotice('ID image saved. Please check and enter your name details manually.');
         toast.info('ID image saved. You can enter or confirm your name details.');
@@ -427,7 +465,7 @@ export function GetPassPage() {
       invalidatePortalEvidenceCheckpoint(portalTransactionRef.current, 'photo');
       setPhotoBlob(blob);
       photoUrl.setFromBlob(blob);
-      setLiveFaceQualityError(null);
+      setLiveFaceError(null);
       setIdentityVerified(false);
       livePhotoIntentIdRef.current = null;
       faceWebcam.stop();
@@ -440,7 +478,7 @@ export function GetPassPage() {
     invalidatePortalEvidenceCheckpoint(portalTransactionRef.current, 'photo');
     photoUrl.clear();
     setPhotoBlob(null);
-    setLiveFaceQualityError(null);
+    setLiveFaceError(null);
     setIdentityVerified(false);
     livePhotoIntentIdRef.current = null;
     faceWebcam.stop();
@@ -451,37 +489,50 @@ export function GetPassPage() {
   async function onConfirmLivePhoto() {
     if (!photoBlob) return;
     setIsEvaluatingFaceQuality(true);
-    setLiveFaceQualityError(null);
+    setLiveFaceError(null);
 
     try {
       // 1. Client-side technical checks first
       const evaluation = await evaluateLiveFaceQuality(photoBlob);
       if (!evaluation.passed) {
-        setLiveFaceQualityError(evaluation.message);
+        setLiveFaceError({
+          category: 'quality',
+          title: 'Photo Quality Check Failed',
+          message: evaluation.message,
+          reasonCode: 'client_quality_failed',
+        });
         toast.error(evaluation.message);
         return;
       }
 
       // 2. Verify authenticated portal transaction exists
       if (!portalTransactionRef.current) {
+        setLiveFaceError({
+          category: 'session',
+          title: 'Registration Session Error',
+          message: 'Your visitor registration session changed or expired. Please continue again to securely restart this registration.',
+          reasonCode: 'portal_session_missing',
+        });
         setStep('form');
         toast.error('Session expired. Please complete visitor details to continue.');
         return;
       }
 
       const tx = portalTransactionRef.current;
-      const { client } = await import('@/lib/supabase').then((m) => ({ client: m.supabase }));
-      if (!client) throw new Error('Supabase client unavailable');
-
       if (!livePhotoIntentIdRef.current) {
-        const photoRes = await uploadCheckpointedEvidence(client, 'portal', 'photo', photoBlob, tx);
+        const photoRes = await uploadPortalEvidence(tx, 'photo', photoBlob);
         livePhotoIntentIdRef.current = photoRes.intentId;
       }
 
       // 3. Call trusted server face-presence/geometry preflight
-      const preflight = await preflightLiveFace(client, tx.requestId, livePhotoIntentIdRef.current);
+      const preflight = await preflightPortalLiveFace(tx, livePhotoIntentIdRef.current);
       if (!preflight.ok) {
-        setLiveFaceQualityError(preflight.message || 'Face presence check failed. Please ensure your face is clearly visible.');
+        setLiveFaceError({
+          category: 'quality',
+          title: 'Photo Quality Check Failed',
+          message: preflight.message || 'Face presence check failed. Please ensure your face is clearly visible.',
+          reasonCode: preflight.reasonCode || 'preflight_failed',
+        });
         toast.error(preflight.message || 'Face presence check failed.');
         return;
       }
@@ -490,7 +541,61 @@ export function GetPassPage() {
       setStep('id');
     } catch (err: any) {
       console.warn('Live face quality check error:', err);
-      setLiveFaceQualityError(err?.message || 'Could not verify photo quality. Please retake under good lighting.');
+      const msg = err?.message?.toLowerCase() || '';
+      if (err instanceof PortalSessionError || err?.code?.startsWith?.('portal_session') || msg.includes('session') || msg.includes('visitor registration')) {
+        setLiveFaceError({
+          category: 'session',
+          title: 'Registration Session Error',
+          message: 'Your visitor registration session changed or expired. Please continue again to securely restart this registration.',
+          reasonCode: err?.code || 'portal_session_mismatch',
+        });
+        const tx = portalTransactionRef.current;
+        portalTransactionRef.current = null;
+        livePhotoIntentIdRef.current = null;
+        if (tx) {
+          invalidatePortalEvidenceCheckpoint(tx, 'photo');
+          invalidatePortalEvidenceCheckpoint(tx, 'id');
+        }
+        setStep('form');
+        toast.error('Registration session expired. Returning to visitor details.');
+        return;
+      }
+      if (msg.includes('upload') || msg.includes('authorized') || msg.includes('403') || msg.includes('401') || msg.includes('visitor identity required')) {
+        setLiveFaceError({
+          category: 'upload',
+          title: 'Photo Upload Error',
+          message: 'The photo could not be authorized for this visitor session. Please restart the registration session and try again.',
+          reasonCode: 'upload_intent_unauthorized',
+        });
+        toast.error('Photo upload could not be authorized.');
+        return;
+      }
+      if (msg.includes('network') || msg.includes('fetch') || msg.includes('timeout') || msg.includes('failed to fetch')) {
+        setLiveFaceError({
+          category: 'network',
+          title: 'Connection Problem',
+          message: 'Network interruption occurred while communicating with the server. Please check your connection and try again.',
+          reasonCode: 'network_interruption',
+        });
+        toast.error('Network connection problem.');
+        return;
+      }
+      if (msg.includes('service') || msg.includes('unavailable') || msg.includes('503')) {
+        setLiveFaceError({
+          category: 'service',
+          title: 'Service Unavailable',
+          message: 'The verification service is temporarily unavailable. Please try again shortly.',
+          reasonCode: 'service_unavailable',
+        });
+        toast.error('Verification service unavailable.');
+        return;
+      }
+      setLiveFaceError({
+        category: 'quality',
+        title: 'Photo Quality Check Failed',
+        message: err?.message || 'Could not verify photo quality. Please retake under good lighting.',
+        reasonCode: 'quality_error',
+      });
     } finally {
       setIsEvaluatingFaceQuality(false);
     }
@@ -572,18 +677,16 @@ export function GetPassPage() {
       }
 
       const tx = portalTransactionRef.current;
-      const { client } = await import('@/lib/supabase').then((m) => ({ client: m.supabase }));
-      if (!client) throw new Error('Supabase client unavailable');
 
       // 2. Upload photo and ID to storage checkpoints (reuse preflight photo intent if available)
       const photoIntentId = livePhotoIntentIdRef.current
         ? livePhotoIntentIdRef.current
-        : (await uploadCheckpointedEvidence(client, 'portal', 'photo', photoBlob, tx)).intentId;
+        : (await uploadPortalEvidence(tx, 'photo', photoBlob)).intentId;
 
-      const idRes = await uploadCheckpointedEvidence(client, 'portal', 'id', idBlob, tx);
+      const idRes = await uploadPortalEvidence(tx, 'id', idBlob);
 
       // 3. Call server identity verification endpoint
-      const result = await verifyPortalIdentity(client, tx.requestId, photoIntentId, idRes.intentId);
+      const result = await verifyPortalIdentity(tx, photoIntentId, idRes.intentId);
 
       if (result.outcome === 'matched') {
         setIdentityVerified(true);
@@ -599,6 +702,19 @@ export function GetPassPage() {
     } catch (err: any) {
       console.error('Identity verification failed:', err);
       setIdentityVerified(false);
+      const msg = err?.message?.toLowerCase() || '';
+      if (err instanceof PortalSessionError || err?.code?.startsWith?.('portal_session') || msg.includes('session')) {
+        const tx = portalTransactionRef.current;
+        portalTransactionRef.current = null;
+        livePhotoIntentIdRef.current = null;
+        if (tx) {
+          invalidatePortalEvidenceCheckpoint(tx, 'photo');
+          invalidatePortalEvidenceCheckpoint(tx, 'id');
+        }
+        setStep('form');
+        toast.error('Registration session expired. Returning to visitor details.');
+        return;
+      }
       setVerificationError(
         err?.message || 'We could not complete identity verification. Please ensure steady lighting and clear images.'
       );
@@ -947,13 +1063,13 @@ export function GetPassPage() {
               </p>
             </div>
 
-            {liveFaceQualityError && (
+            {liveFaceError && (
               <div className="rounded-xl border border-[var(--color-danger)] bg-[var(--color-danger-light)] p-4 text-xs text-[var(--color-danger-dark)] space-y-1" role="alert">
                 <div className="flex items-center gap-2 font-bold">
                   <AlertCircle className="h-4 w-4 text-[var(--color-danger)] flex-shrink-0" />
-                  <span>Photo Quality Check Failed</span>
+                  <span>{liveFaceError.title}</span>
                 </div>
-                <p>{liveFaceQualityError}</p>
+                <p>{liveFaceError.message}</p>
               </div>
             )}
 

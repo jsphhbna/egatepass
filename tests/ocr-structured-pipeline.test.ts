@@ -150,7 +150,7 @@ describe('Structured OCR Pipeline & Spatial Adapter', () => {
 
     const parsed = extractNamesFromIdText(dlText, 94);
     expect(parsed.lastName).toBe('Santos');
-    expect(parsed.firstName).toBe('Maria');
-    expect(parsed.middleName).toBe('Clara Reyes');
+    expect(parsed.firstName).toBe('Maria Clara');
+    expect(parsed.middleName).toBe('Reyes');
   });
 });

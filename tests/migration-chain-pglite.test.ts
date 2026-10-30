@@ -1604,7 +1604,7 @@ describe('Permanent PostgreSQL Migration Chain & Schema Contracts (PGlite)', () 
   it('Migration 40: verifies final scan_pass lifecycle, wrong-gate fail-closed exit, guard role deprecation, and visit_event_type enums', async () => {
     const db = new PGlite();
     const files = await applyAllMigrations(db);
-    expect(files.length).toBe(41);
+    expect(files.length).toBe(42);
 
     // 1. Enum contract: visit_event_type contains valid enums and NO invalid writes
     const eventTypeQuery = await db.query<{ enumlabel: string }>(`
@@ -1817,7 +1817,7 @@ describe('Permanent PostgreSQL Migration Chain & Schema Contracts (PGlite)', () 
   it('Migration 41: verifies guard authority deprecation across all 8 legacy RPCs and RLS policies', async () => {
     const db = new PGlite();
     const files = await applyAllMigrations(db);
-    expect(files.length).toBe(41);
+    expect(files.length).toBe(42);
 
     // Seed Admin and Guard users with confirmed emails
     const adminId = '60000000-0000-0000-0000-000000000001';
@@ -1877,5 +1877,81 @@ describe('Permanent PostgreSQL Migration Chain & Schema Contracts (PGlite)', () 
     `);
     const adminDash = await db.query('select api.guard_dashboard();');
     expect(adminDash.rows.length).toBe(1);
+  }, 60000);
+
+  it('Migration 42: verifies upload intent creation role matrix (admin and superadmin allowed for guard_offline, legacy guard rejected with administrator required, portal allowed for visitor, kiosk allowed for kiosk)', async () => {
+    const db = new PGlite();
+    const files = await applyAllMigrations(db);
+    expect(files.length).toBe(42);
+
+    const superAdminId = '70000000-0000-0000-0000-000000000001';
+    const adminId = '70000000-0000-0000-0000-000000000002';
+    const guardId = '70000000-0000-0000-0000-000000000003';
+    const visitorId = '70000000-0000-0000-0000-000000000004';
+    const kioskDeviceId = '70000000-0000-0000-0000-000000000005';
+
+    await db.exec(`
+      insert into auth.users (id, email, email_confirmed_at, is_anonymous) values
+        ('${superAdminId}', 'super42@earist.edu.ph', now(), false),
+        ('${adminId}', 'admin42@earist.edu.ph', now(), false),
+        ('${guardId}', 'guard42@earist.edu.ph', now(), false),
+        ('${visitorId}', null, now(), true),
+        ('${kioskDeviceId}', 'kiosk42@device.local', now(), false);
+
+      insert into public.staff_profiles (user_id, display_name, role, active, must_change_password, privacy_accepted_at) values
+        ('${superAdminId}', 'Super 42', 'superadmin', true, false, now()),
+        ('${adminId}', 'Admin 42', 'admin', true, false, now()),
+        ('${guardId}', 'Guard 42', 'guard', true, false, now());
+
+      insert into public.devices (user_id, alias, name, type, gate, status) values
+        ('${kioskDeviceId}', 'kiosk-42', 'Kiosk 42', 'kiosk', 'Main Gate', 'active');
+    `);
+
+    // 1. As legacy guard: guard_offline upload intent rejected with 42501 'administrator required'
+    await db.exec(`
+      set role authenticated;
+      set request.jwt.claims = '{"sub": "${guardId}", "role": "authenticated", "amr": [{"method": "password"}]}';
+    `);
+    await expect(
+      db.query("select * from api.create_upload_intent('guard_offline', 'photo', 'image/jpeg');")
+    ).rejects.toThrow(/administrator required/);
+
+    // 2. As admin: guard_offline upload intent succeeds
+    await db.exec(`
+      set role authenticated;
+      set request.jwt.claims = '{"sub": "${adminId}", "role": "authenticated", "amr": [{"method": "password"}]}';
+    `);
+    const adminIntent = await db.query("select * from api.create_upload_intent('guard_offline', 'photo', 'image/jpeg');");
+    expect(adminIntent.rows.length).toBe(1);
+
+    // 3. As superadmin: guard_offline upload intent succeeds
+    await db.exec(`
+      set role authenticated;
+      set request.jwt.claims = '{"sub": "${superAdminId}", "role": "authenticated", "amr": [{"method": "password"}]}';
+    `);
+    const superIntent = await db.query("select * from api.create_upload_intent('guard_offline', 'photo', 'image/jpeg');");
+    expect(superIntent.rows.length).toBe(1);
+
+    // 4. As anonymous visitor: portal upload intent succeeds; guard_offline rejected with administrator required
+    await db.exec(`
+      set role authenticated;
+      set request.jwt.claims = '{"sub": "${visitorId}", "role": "authenticated", "is_anonymous": true}';
+    `);
+    const visitorIntent = await db.query("select * from api.create_upload_intent('portal', 'photo', 'image/jpeg');");
+    expect(visitorIntent.rows.length).toBe(1);
+    await expect(
+      db.query("select * from api.create_upload_intent('guard_offline', 'photo', 'image/jpeg');")
+    ).rejects.toThrow(/administrator required/);
+
+    // 5. As kiosk device: kiosk upload intent succeeds; portal rejected with visitor identity required
+    await db.exec(`
+      set role authenticated;
+      set request.jwt.claims = '{"sub": "${kioskDeviceId}", "role": "authenticated", "user_metadata": {"device_type": "kiosk"}}';
+    `);
+    const kioskIntent = await db.query("select * from api.create_upload_intent('kiosk', 'photo', 'image/jpeg');");
+    expect(kioskIntent.rows.length).toBe(1);
+    await expect(
+      db.query("select * from api.create_upload_intent('portal', 'photo', 'image/jpeg');")
+    ).rejects.toThrow(/visitor identity required/);
   }, 60000);
 });

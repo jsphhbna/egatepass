@@ -31,12 +31,26 @@ export interface StructuredOcrData {
   lines: OcrLine[];
 }
 
+export interface FieldCandidate {
+  value: string;
+  confidence: number;
+  sourcePass: 1 | 2;
+  documentFamily: string;
+  extractionMode: 'same_row' | 'below_label' | 'combined_field' | 'generic';
+}
+
 export interface ParsedIdNames {
   firstName: string;
   middleName: string;
   lastName: string;
   confidence: number;
   rawText?: string;
+  documentFamily?: string;
+  fieldCandidates?: {
+    firstName?: FieldCandidate;
+    middleName?: FieldCandidate;
+    lastName?: FieldCandidate;
+  };
 }
 
 export type OcrFailureCode =
@@ -204,6 +218,64 @@ function classifyLabel(text: string): 'last' | 'first' | 'middle' | null {
   return null;
 }
 
+export type DocumentFamily =
+  | 'philsys'
+  | 'driver_license'
+  | 'umid'
+  | 'passport'
+  | 'prc'
+  | 'postal'
+  | 'generic';
+
+export function detectDocumentFamily(text: string): DocumentFamily {
+  const upper = text.toUpperCase();
+  if (
+    upper.includes('PHILSYS') ||
+    upper.includes('PAMBANSANG PAGKAKAKILANLAN') ||
+    upper.includes('PHILIPPINE IDENTIFICATION') ||
+    (upper.includes('REPUBLIKA NG PILIPINAS') && upper.includes('APELYIDO'))
+  ) {
+    return 'philsys';
+  }
+  if (
+    upper.includes('DRIVER') ||
+    upper.includes('LTO') ||
+    upper.includes('LAND TRANSPORTATION')
+  ) {
+    return 'driver_license';
+  }
+  if (
+    upper.includes('UNIFIED MULTI-PURPOSE') ||
+    upper.includes('UMID') ||
+    upper.includes('CRN-')
+  ) {
+    return 'umid';
+  }
+  if (
+    upper.includes('PASSPORT') ||
+    upper.includes('PASAPORTE') ||
+    upper.includes('FOREIGN AFFAIRS') ||
+    upper.includes('DFA')
+  ) {
+    return 'passport';
+  }
+  if (
+    upper.includes('PROFESSIONAL REGULATION COMMISSION') ||
+    upper.includes('PRC') ||
+    upper.includes('PROFESSIONAL IDENTIFICATION')
+  ) {
+    return 'prc';
+  }
+  if (
+    upper.includes('POSTAL') ||
+    upper.includes('PHILPOST') ||
+    upper.includes('POST OFFICE')
+  ) {
+    return 'postal';
+  }
+  return 'generic';
+}
+
 /**
  * Extracts structured lines and bounding boxes from raw Tesseract data.
  */
@@ -239,11 +311,51 @@ export function extractStructuredOcrData(data: any): StructuredOcrData {
  * Merges two ParsedIdNames field-by-field, picking the strongest candidate for each field.
  */
 export function mergeParsedNames(pass1: ParsedIdNames, pass2: ParsedIdNames): ParsedIdNames {
+  const mergedCandidates: NonNullable<ParsedIdNames['fieldCandidates']> = {};
+
+  const pickCandidate = (
+    f: 'firstName' | 'middleName' | 'lastName'
+  ): { value: string; conf: number; candidate?: FieldCandidate } => {
+    const c1 = pass1.fieldCandidates?.[f];
+    const c2 = pass2.fieldCandidates?.[f];
+    const val1 = pass1[f] || c1?.value || '';
+    const val2 = pass2[f] || c2?.value || '';
+    const conf1 = c1?.confidence ?? (val1 ? pass1.confidence : 0);
+    const conf2 = c2?.confidence ?? (val2 ? pass2.confidence : 0);
+
+    if (val1 && val2 && val1.toLowerCase() === val2.toLowerCase()) {
+      const boosted = Math.min(100, Math.max(conf1, conf2) + 10);
+      const chosen = (c1 || c2) ? { ...(c1 || c2)!, confidence: boosted } : undefined;
+      return { value: val1, conf: boosted, candidate: chosen };
+    }
+    if (conf2 > conf1 && val2) {
+      return { value: val2, conf: conf2, candidate: c2 };
+    }
+    if (val1) {
+      return { value: val1, conf: conf1, candidate: c1 };
+    }
+    return { value: val2, conf: conf2, candidate: c2 };
+  };
+
+  const fRes = pickCandidate('firstName');
+  const mRes = pickCandidate('middleName');
+  const lRes = pickCandidate('lastName');
+
+  if (fRes.candidate) mergedCandidates.firstName = fRes.candidate;
+  if (mRes.candidate) mergedCandidates.middleName = mRes.candidate;
+  if (lRes.candidate) mergedCandidates.lastName = lRes.candidate;
+
+  const validConfs = [fRes.conf, lRes.conf].filter((c) => c > 0);
+  if (mRes.conf > 0) validConfs.push(mRes.conf);
+  const finalConfidence = Math.max(pass1.confidence, pass2.confidence);
+
   return {
-    firstName: pass1.firstName || pass2.firstName,
-    middleName: pass1.middleName || pass2.middleName,
-    lastName: pass1.lastName || pass2.lastName,
-    confidence: Math.max(pass1.confidence, pass2.confidence),
+    firstName: fRes.value,
+    middleName: mRes.value,
+    lastName: lRes.value,
+    confidence: finalConfidence,
+    documentFamily: pass1.documentFamily || pass2.documentFamily,
+    fieldCandidates: mergedCandidates,
     rawText: [pass1.rawText, pass2.rawText].filter(Boolean).join('\n---\n'),
   };
 }
@@ -255,48 +367,138 @@ export function mergeParsedNames(pass1: ParsedIdNames, pass2: ParsedIdNames): Pa
 export function extractNamesFromIdText(
   text: string,
   overallConfidence = 0,
-  structuredData?: StructuredOcrData
+  structuredData?: StructuredOcrData,
+  sourcePass: 1 | 2 = 1
 ): ParsedIdNames {
+  const docFamily = detectDocumentFamily(text);
+  const fieldCandidates: NonNullable<ParsedIdNames['fieldCandidates']> = {};
+
   const result: ParsedIdNames = {
     firstName: '',
     middleName: '',
     lastName: '',
     confidence: overallConfidence,
     rawText: text,
+    documentFamily: docFamily,
+    fieldCandidates,
   };
 
   if (!text || text.trim().length === 0) {
     return result;
   }
 
-  // Strategy A: Spatial Layout-aware parsing when structured data with bounding boxes is available
+  // Strategy A: Spatial Layout-aware parsing using bounding box geometry
   if (structuredData?.lines && structuredData.lines.length > 0) {
     const sLines = structuredData.lines;
+
     for (let i = 0; i < sLines.length; i++) {
       const curLine = sLines[i]!;
       const labelKind = classifyLabel(curLine.text);
 
       if (labelKind) {
-        // 1. Try finding value on same line to the right of label
-        let val = cleanNameCandidate(curLine.text);
-        let words = val ? val.split(' ').filter(isValidNameWord) : [];
-        // 2. If same line contains only the label (or no valid name words), check immediate next line below
-        if (words.length === 0 && i + 1 < sLines.length) {
-          const nextLine = sLines[i + 1]!;
-          if (!classifyLabel(nextLine.text) && !isPureLabelLine(nextLine.text)) {
-            val = cleanNameCandidate(nextLine.text);
-            words = val ? val.split(' ').filter(isValidNameWord) : [];
+        let extractedVal = '';
+        let extractionMode: FieldCandidate['extractionMode'] = 'below_label';
+        let candidateConf = curLine.confidence || overallConfidence;
+
+        // Mode 1: PRC and explicit horizontal labels prefer same row immediately to the right
+        const preferSameRow = docFamily === 'prc';
+
+        // Check same row to the right first if preferred
+        let sameRowVal = '';
+        const sameRowTokens: string[] = [];
+        const labelRightEdge = curLine.tokens.length > 0
+          ? curLine.tokens[curLine.tokens.length - 1]!.bbox.x1
+          : curLine.bbox.x1;
+
+        // Check if current line contains tokens to the right of label
+        const cleanedInLine = cleanNameCandidate(curLine.text);
+        const inLineWords = cleanedInLine ? cleanedInLine.split(' ').filter(isValidNameWord) : [];
+
+        if (inLineWords.length > 0) {
+          sameRowVal = inLineWords.join(' ');
+        } else {
+          // Check other lines on same horizontal plane
+          for (let j = 0; j < sLines.length; j++) {
+            if (i === j) continue;
+            const other = sLines[j]!;
+            const vertOverlap = Math.max(
+              0,
+              Math.min(curLine.bbox.y1, other.bbox.y1) - Math.max(curLine.bbox.y0, other.bbox.y0)
+            );
+            const lineH = Math.max(1, curLine.bbox.y1 - curLine.bbox.y0);
+            if (vertOverlap / lineH > 0.4 && other.bbox.x0 >= labelRightEdge - 15) {
+              const otherClean = cleanNameCandidate(other.text);
+              const otherWords = otherClean ? otherClean.split(' ').filter(isValidNameWord) : [];
+              if (otherWords.length > 0) {
+                sameRowTokens.push(...otherWords);
+                candidateConf = other.confidence || candidateConf;
+                break;
+              }
+            }
+          }
+          if (sameRowTokens.length > 0) {
+            sameRowVal = sameRowTokens.join(' ');
           }
         }
 
-        if (words.length > 0) {
-          const formatted = toTitleCase(words.join(' '));
+        // Check aligned candidate line immediately below
+        let belowVal = '';
+        if (i + 1 < sLines.length) {
+          const nextLine = sLines[i + 1]!;
+          if (!classifyLabel(nextLine.text) && !isPureLabelLine(nextLine.text)) {
+            const vertGap = nextLine.bbox.y0 - curLine.bbox.y1;
+            const lineH = Math.max(1, curLine.bbox.y1 - curLine.bbox.y0);
+            if (vertGap >= -5 && vertGap < lineH * 3.5) {
+              const cleanedBelow = cleanNameCandidate(nextLine.text);
+              const belowWords = cleanedBelow ? cleanedBelow.split(' ').filter(isValidNameWord) : [];
+              if (belowWords.length > 0) {
+                belowVal = belowWords.join(' ');
+                candidateConf = nextLine.confidence || candidateConf;
+              }
+            }
+          }
+        }
+
+        if (preferSameRow && sameRowVal) {
+          extractedVal = sameRowVal;
+          extractionMode = 'same_row';
+        } else if (belowVal) {
+          extractedVal = belowVal;
+          extractionMode = 'below_label';
+        } else if (sameRowVal) {
+          extractedVal = sameRowVal;
+          extractionMode = 'same_row';
+        }
+
+        if (extractedVal) {
+          const formatted = toTitleCase(extractedVal);
           if (labelKind === 'last' && !result.lastName) {
             result.lastName = formatted;
+            fieldCandidates.lastName = {
+              value: formatted,
+              confidence: candidateConf,
+              sourcePass,
+              documentFamily: docFamily,
+              extractionMode,
+            };
           } else if (labelKind === 'first' && !result.firstName) {
             result.firstName = formatted;
+            fieldCandidates.firstName = {
+              value: formatted,
+              confidence: candidateConf,
+              sourcePass,
+              documentFamily: docFamily,
+              extractionMode,
+            };
           } else if (labelKind === 'middle' && !result.middleName) {
             result.middleName = formatted;
+            fieldCandidates.middleName = {
+              value: formatted,
+              confidence: candidateConf,
+              sourcePass,
+              documentFamily: docFamily,
+              extractionMode,
+            };
           }
         }
       }
@@ -323,29 +525,57 @@ export function extractNamesFromIdText(
     if (labelKind) {
       let val = cleanNameCandidate(line);
       let words = val ? val.split(' ').filter(isValidNameWord) : [];
+      let mode: FieldCandidate['extractionMode'] = 'same_row';
+
       if (words.length === 0 && nextLine && !classifyLabel(nextLine) && !isPureLabelLine(nextLine)) {
         val = cleanNameCandidate(nextLine);
         words = val ? val.split(' ').filter(isValidNameWord) : [];
+        mode = 'below_label';
       }
+
       if (words.length > 0) {
         const formatted = toTitleCase(words.join(' '));
         if (labelKind === 'last' && !result.lastName) {
           result.lastName = formatted;
+          fieldCandidates.lastName = {
+            value: formatted,
+            confidence: overallConfidence,
+            sourcePass,
+            documentFamily: docFamily,
+            extractionMode: mode,
+          };
         } else if (labelKind === 'first' && !result.firstName) {
           result.firstName = formatted;
+          fieldCandidates.firstName = {
+            value: formatted,
+            confidence: overallConfidence,
+            sourcePass,
+            documentFamily: docFamily,
+            extractionMode: mode,
+          };
         } else if (labelKind === 'middle' && !result.middleName) {
           result.middleName = formatted;
+          fieldCandidates.middleName = {
+            value: formatted,
+            confidence: overallConfidence,
+            sourcePass,
+            documentFamily: docFamily,
+            extractionMode: mode,
+          };
         }
       }
     }
   }
 
-  // If labeled parsing succeeded for at least first and last name, return it
   if (result.firstName && result.lastName) {
     return result;
   }
 
-  // Strategy B.2: Comma separated "LASTNAME, FIRSTNAME MIDDLENAME" (Common on Driver's Licenses, PRC, Passports)
+  // Strategy B.2: Comma separated "LASTNAME, FIRSTNAME MIDDLENAME" (Driver's Licenses, PRC, Passports)
+  // Section 37 LTO split rule:
+  // Before comma -> surname
+  // After comma with >= 2 tokens: final token = middle candidate, preceding token(s) = given-name candidate
+  // After comma with 1 token: first name only, middle blank
   for (const line of lines) {
     if (line.includes(',')) {
       const parts = line.split(',');
@@ -356,11 +586,53 @@ export function extractNamesFromIdText(
         const restWords = rest.split(' ').filter(isValidNameWord);
         const lastWords = potentialLast.split(' ').filter(isValidNameWord);
 
-        if (lastWords.length >= 1 && restWords.length >= 1 && restWords[0]) {
+        if (lastWords.length >= 1 && restWords.length >= 1) {
           result.lastName = toTitleCase(lastWords.join(' '));
-          result.firstName = toTitleCase(restWords[0]);
-          if (restWords.length > 1) {
-            result.middleName = toTitleCase(restWords.slice(1).join(' '));
+          fieldCandidates.lastName = {
+            value: result.lastName,
+            confidence: overallConfidence,
+            sourcePass,
+            documentFamily: docFamily,
+            extractionMode: 'combined_field',
+          };
+
+          if (restWords.length >= 2) {
+            if (docFamily === 'driver_license' || docFamily === 'prc') {
+              const middleWord = restWords[restWords.length - 1]!;
+              const givenWords = restWords.slice(0, -1).join(' ');
+              result.firstName = toTitleCase(givenWords);
+              result.middleName = toTitleCase(middleWord);
+            } else {
+              const firstWord = restWords[0]!;
+              const middleWords = restWords.slice(1).join(' ');
+              result.firstName = toTitleCase(firstWord);
+              result.middleName = toTitleCase(middleWords);
+            }
+
+            fieldCandidates.firstName = {
+              value: result.firstName,
+              confidence: overallConfidence,
+              sourcePass,
+              documentFamily: docFamily,
+              extractionMode: 'combined_field',
+            };
+            fieldCandidates.middleName = {
+              value: result.middleName,
+              confidence: Math.max(30, overallConfidence - 10),
+              sourcePass,
+              documentFamily: docFamily,
+              extractionMode: 'combined_field',
+            };
+          } else {
+            result.firstName = toTitleCase(restWords[0]!);
+            result.middleName = '';
+            fieldCandidates.firstName = {
+              value: result.firstName,
+              confidence: overallConfidence,
+              sourcePass,
+              documentFamily: docFamily,
+              extractionMode: 'combined_field',
+            };
           }
           return result;
         }
@@ -369,7 +641,6 @@ export function extractNamesFromIdText(
   }
 
   // Strategy B.3: Heuristic scan for lines containing 2-4 valid capitalized words
-  // that don't match card headers or addresses
   const candidateNameLines: string[] = [];
   for (const line of lines) {
     if (isPureLabelLine(line) || classifyLabel(line)) continue;
@@ -377,7 +648,6 @@ export function extractNamesFromIdText(
     const words = cleaned.split(' ').filter(Boolean);
     if (words.length >= 2 && words.length <= 4) {
       const allValid = words.every(isValidNameWord);
-      // Avoid dates, digits, addresses (ST, AVE, BARANGAY, CITY, MANILA)
       const hasAddressWords = /\b(ST|STREET|AVE|AVENUE|BRGY|BARANGAY|CITY|DISTRICT|ROAD|BLK|LOT|ZONE)\b/i.test(line);
       if (allValid && !hasAddressWords) {
         candidateNameLines.push(cleaned);
@@ -392,12 +662,57 @@ export function extractNamesFromIdText(
     const second = nameWords[1];
     const last = nameWords[nameWords.length - 1];
     if (nameWords.length === 2 && first && second) {
-      if (!result.firstName) result.firstName = toTitleCase(first);
-      if (!result.lastName) result.lastName = toTitleCase(second);
+      if (!result.firstName) {
+        result.firstName = toTitleCase(first);
+        fieldCandidates.firstName = {
+          value: result.firstName,
+          confidence: Math.max(20, overallConfidence - 20),
+          sourcePass,
+          documentFamily: docFamily,
+          extractionMode: 'generic',
+        };
+      }
+      if (!result.lastName) {
+        result.lastName = toTitleCase(second);
+        fieldCandidates.lastName = {
+          value: result.lastName,
+          confidence: Math.max(20, overallConfidence - 20),
+          sourcePass,
+          documentFamily: docFamily,
+          extractionMode: 'generic',
+        };
+      }
     } else if (nameWords.length >= 3 && first && last) {
-      if (!result.firstName) result.firstName = toTitleCase(first);
-      if (!result.middleName) result.middleName = toTitleCase(nameWords.slice(1, -1).join(' '));
-      if (!result.lastName) result.lastName = toTitleCase(last);
+      if (!result.firstName) {
+        result.firstName = toTitleCase(first);
+        fieldCandidates.firstName = {
+          value: result.firstName,
+          confidence: Math.max(20, overallConfidence - 20),
+          sourcePass,
+          documentFamily: docFamily,
+          extractionMode: 'generic',
+        };
+      }
+      if (!result.middleName) {
+        result.middleName = toTitleCase(nameWords.slice(1, -1).join(' '));
+        fieldCandidates.middleName = {
+          value: result.middleName,
+          confidence: Math.max(20, overallConfidence - 25),
+          sourcePass,
+          documentFamily: docFamily,
+          extractionMode: 'generic',
+        };
+      }
+      if (!result.lastName) {
+        result.lastName = toTitleCase(last);
+        fieldCandidates.lastName = {
+          value: result.lastName,
+          confidence: Math.max(20, overallConfidence - 20),
+          sourcePass,
+          documentFamily: docFamily,
+          extractionMode: 'generic',
+        };
+      }
     }
   }
 
@@ -407,6 +722,7 @@ export function extractNamesFromIdText(
 let cachedWorkerPromise: Promise<any> | null = null;
 let activeWorkerInstance: any = null;
 let globalOcrJobCounter = 0;
+let workerGeneration = 0;
 
 /**
  * Gets a fresh unique OCR Job ID to prevent race conditions from cancelled runs.
@@ -417,6 +733,7 @@ export function getNextOcrJobId(): number {
 
 /**
  * Lazily initialize and return a singleton Tesseract worker configured for offline execution.
+ * Fenced with workerGeneration to prevent late-resolving orphaned workers.
  */
 export async function getLocalOcrWorker(
   onProgress?: (progress: number) => void
@@ -425,6 +742,7 @@ export async function getLocalOcrWorker(
     return cachedWorkerPromise;
   }
 
+  const currentGeneration = ++workerGeneration;
   let timer: NodeJS.Timeout | undefined;
 
   const initPromise = (async () => {
@@ -446,6 +764,14 @@ export async function getLocalOcrWorker(
         }
       },
     });
+
+    if (currentGeneration !== workerGeneration) {
+      try {
+        await worker.terminate();
+      } catch {}
+      throw new OcrError('worker_initialization_failed', 'OCR worker initialization superseded by generation increment');
+    }
+
     activeWorkerInstance = worker;
     return worker;
   })();
@@ -477,6 +803,7 @@ export async function getLocalOcrWorker(
  * Terminate any running OCR worker and release memory.
  */
 export async function terminateLocalOcrWorker(): Promise<void> {
+  workerGeneration++;
   const currentWorker = activeWorkerInstance;
   activeWorkerInstance = null;
   cachedWorkerPromise = null;
@@ -560,11 +887,27 @@ export async function recognizeIdImage(
     }
 
     const structuredPass1 = extractStructuredOcrData(dataPass1);
-    let parsed = extractNamesFromIdText(dataPass1.text, dataPass1.confidence, structuredPass1);
+    let parsed = extractNamesFromIdText(dataPass1.text, dataPass1.confidence, structuredPass1, 1);
 
-    // If Pass 1 did not detect both first and last name, run Pass 2 (high contrast, PSM 11 SPARSE_TEXT)
+    // Pass 2 trigger:
+    // Run fallback when:
+    // 1. first missing OR
+    // 2. last missing OR
+    // 3. middle-name label was detected but no confident middle name was extracted OR
+    // 4. a required candidate is below autofill confidence (< 60)
+    const middleLabelDetected = /middle\s*name|middie\s*name|gitnang\s*apelyido/i.test(dataPass1.text);
+    const hasWeakCandidate = Object.values(parsed.fieldCandidates || {}).some(
+      (c) => c && c.confidence < 60
+    );
+    const shouldRunPass2 =
+      !parsed.firstName ||
+      !parsed.lastName ||
+      (middleLabelDetected && !parsed.middleName) ||
+      parsed.confidence < 60 ||
+      hasWeakCandidate;
+
     if (
-      (!parsed.firstName || !parsed.lastName) &&
+      shouldRunPass2 &&
       typeof window !== 'undefined' &&
       typeof imageSource !== 'string' &&
       (imageSource as any) instanceof Blob
@@ -579,9 +922,9 @@ export async function recognizeIdImage(
         }
 
         const structuredPass2 = extractStructuredOcrData(dataPass2);
-        const parsedPass2 = extractNamesFromIdText(dataPass2.text, dataPass2.confidence, structuredPass2);
+        const parsedPass2 = extractNamesFromIdText(dataPass2.text, dataPass2.confidence, structuredPass2, 2);
 
-        // Merge field-by-field
+        // Merge field-by-field picking strongest candidate
         parsed = mergeParsedNames(parsed, parsedPass2);
       } catch (err: any) {
         if (err?.message === 'ocr_job_superseded') throw err;

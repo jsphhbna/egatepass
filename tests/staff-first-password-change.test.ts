@@ -20,7 +20,7 @@ describe('PATCH 1: Staff First-Password-Change State Machine Tests', () => {
       expect(loginPageSrc).toContain("status !== 'authenticated' && status !== 'requires_password_change'");
       expect(loginPageSrc).toMatch(/admin:\s*'\/admin'/);
       expect(loginPageSrc).toMatch(/superadmin:\s*'\/admin'/);
-      expect(loginPageSrc).toMatch(/guard:\s*'\/guard'/);
+      expect(loginPageSrc).not.toMatch(/guard:\s*'\/guard'/);
     });
 
     it('1C. ProtectedRoute enforces ForcePasswordChange before checking role permissions or rendering children', () => {

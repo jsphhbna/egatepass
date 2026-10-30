@@ -1,4 +1,4 @@
-import type { SupabaseClient } from '@supabase/supabase-js';
+import type { SupabaseClient, Session } from '@supabase/supabase-js';
 import { requirePortalSupabase, requireSupabase } from '@/lib/supabase';
 
 export type RegistrationSource = 'portal' | 'kiosk';
@@ -174,6 +174,7 @@ export interface IssueTransaction {
   requestId: string;
   actorId?: string;
   token?: string;
+  client?: SupabaseClient;
   photoIntentId: string | null;
   idIntentId: string | null;
   photoCheckpoint?: UploadCheckpoint | null;
@@ -199,6 +200,15 @@ export function createIssueTransaction(_source: 'kiosk' | 'portal' = 'kiosk'): I
 }
 
 export type PortalIssueTransaction = IssueTransaction;
+
+export class PortalSessionError extends Error {
+  readonly code: string;
+  constructor(code: string, message: string) {
+    super(message);
+    this.name = 'PortalSessionError';
+    this.code = code;
+  }
+}
 
 export async function createPortalIssueTransaction(captchaToken?: string): Promise<PortalIssueTransaction> {
   const client = requirePortalSupabase();
@@ -226,15 +236,59 @@ export async function createPortalIssueTransaction(captchaToken?: string): Promi
   }
 
   const session = result.data.session;
+  if (!session.user || session.user.is_anonymous === false) {
+    await client.auth.signOut();
+    throw new PortalSessionError('portal_actor_not_anonymous', 'Visitor registration requires an anonymous visitor session.');
+  }
+
   return {
     requestId: crypto.randomUUID(),
     actorId: session.user.id,
     token: session.access_token,
     photoIntentId: null,
     idIntentId: null,
+    photoCheckpoint: null,
+    idCheckpoint: null,
     phase: 'editable',
     submittedPayload: null,
   };
+}
+
+export async function getVerifiedPortalSession(
+  transaction: PortalIssueTransaction
+): Promise<{
+  client: SupabaseClient;
+  session: Session;
+  token: string;
+}> {
+  if (!transaction || !transaction.actorId) {
+    throw new PortalSessionError('portal_session_missing', 'Visitor registration transaction is missing or invalid.');
+  }
+  const client = transaction.client || requirePortalSupabase();
+  const { data: { session }, error } = await client.auth.getSession();
+  if (error || !session || !session.user) {
+    throw new PortalSessionError('portal_session_missing', 'Visitor registration session expired or unavailable.');
+  }
+  if (session.user.is_anonymous === false) {
+    throw new PortalSessionError('portal_actor_not_anonymous', 'Visitor registration requires an anonymous visitor session.');
+  }
+  if (session.user.id !== transaction.actorId) {
+    throw new PortalSessionError('portal_session_mismatch', 'Visitor registration session mismatch.');
+  }
+  if (!session.access_token) {
+    throw new PortalSessionError('portal_token_missing', 'Visitor registration session token missing.');
+  }
+  transaction.token = session.access_token;
+  return { client, session, token: session.access_token };
+}
+
+export async function validatePortalSession(transaction: PortalIssueTransaction): Promise<boolean> {
+  try {
+    await getVerifiedPortalSession(transaction);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 async function authenticatedClient(
@@ -243,14 +297,9 @@ async function authenticatedClient(
   existingTransaction?: PortalIssueTransaction | null,
 ): Promise<{ client: SupabaseClient; token: string }> {
   if (source === 'portal') {
-    const client = requirePortalSupabase();
-    if (existingTransaction?.token && existingTransaction?.actorId) {
-      // Reuse existing transaction session
-      const { data: { session } } = await client.auth.getSession();
-      if (session && session.user?.id === existingTransaction.actorId) {
-        return { client, token: session.access_token };
-      }
-      return { client, token: existingTransaction.token };
+    if (existingTransaction && existingTransaction.actorId) {
+      const verified = await getVerifiedPortalSession(existingTransaction);
+      return { client: verified.client, token: verified.token };
     }
 
     const newTx = await createPortalIssueTransaction(captchaToken);
@@ -260,17 +309,28 @@ async function authenticatedClient(
       existingTransaction.token = newTx.token;
       existingTransaction.photoIntentId = newTx.photoIntentId;
       existingTransaction.idIntentId = newTx.idIntentId;
+      existingTransaction.photoCheckpoint = null;
+      existingTransaction.idCheckpoint = null;
     }
     if (!newTx.token) {
-      throw new Error('Visitor registration session token missing.');
+      throw new PortalSessionError('portal_token_missing', 'Visitor registration session token missing.');
     }
-    return { client, token: newTx.token };
+    return { client: requirePortalSupabase(), token: newTx.token };
   }
 
   const client = requireSupabase();
   const { data: { session } } = await client.auth.getSession();
   if (!session) throw new Error('Kiosk device not authenticated.');
   return { client, token: session.access_token };
+}
+
+export async function uploadPortalEvidence(
+  transaction: PortalIssueTransaction,
+  kind: 'photo' | 'id',
+  blob: Blob,
+): Promise<{ intentId: string; checkpoint: UploadCheckpoint }> {
+  const { client } = await getVerifiedPortalSession(transaction);
+  return uploadCheckpointedEvidence(client, 'portal', kind, blob, transaction);
 }
 
 export async function uploadCheckpointedEvidence(
@@ -312,7 +372,8 @@ export async function uploadCheckpointedEvidence(
     const { data, error } = (await boundedRpc.single()) as { data: UploadIntent | null; error: any };
 
     if (error || !data) {
-      throw new Error('Image upload could not be authorized.');
+      const detail = error?.message ? ` ${error.message}` : '';
+      throw new Error(`Image upload could not be authorized.${detail}`);
     }
     if (blob.size < 1 || blob.size > data.max_bytes) {
       throw new Error('Image exceeds the 5 MB upload limit.');
@@ -438,15 +499,74 @@ export function invalidatePortalEvidenceCheckpoint(
   }
 }
 
+export async function preflightPortalLiveFace(
+  transaction: PortalIssueTransaction,
+  photoIntentId: string
+): Promise<{ ok: boolean; message?: string; reasonCode?: string }> {
+  const { token } = await getVerifiedPortalSession(transaction);
+
+  const res = await fetch('/api/passes/verify-identity', {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${token}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      requestId: transaction.requestId,
+      photoIntentId,
+      mode: 'preflight_face',
+    }),
+  });
+
+  const body = (await res.json().catch(() => null)) as {
+    ok?: boolean;
+    error?: string;
+    message?: string;
+    reasonCode?: string;
+    preflightPassed?: boolean;
+  } | null;
+
+  if (!res.ok || !body?.ok) {
+    return {
+      ok: false,
+      message: body?.message || body?.error || 'Face quality verification failed.',
+      reasonCode: body?.reasonCode,
+    };
+  }
+
+  return { ok: true, message: body.message };
+}
+
 export async function verifyPortalIdentity(
-  client: SupabaseClient,
-  requestId: string,
-  photoIntentId: string,
-  idIntentId: string
+  transactionOrClient: PortalIssueTransaction | SupabaseClient,
+  requestIdOrPhotoIntentId: string,
+  photoIntentIdOrIdIntentId: string,
+  maybeIdIntentId?: string
 ): Promise<VerifyIdentityResponse> {
-  const { data: { session } } = await client.auth.getSession();
-  const token = session?.access_token;
-  if (!token) throw new Error('Authentication session required for identity verification.');
+  let token: string;
+  let requestId: string;
+  let photoIntentId: string;
+  let idIntentId: string;
+
+  if (maybeIdIntentId !== undefined) {
+    // Legacy client signature: (client, requestId, photoIntentId, idIntentId)
+    const client = transactionOrClient as SupabaseClient;
+    requestId = requestIdOrPhotoIntentId;
+    photoIntentId = photoIntentIdOrIdIntentId;
+    idIntentId = maybeIdIntentId;
+    const { data: { session } } = await client.auth.getSession();
+    token = session?.access_token || '';
+  } else {
+    // Portal transaction signature: (transaction, photoIntentId, idIntentId)
+    const transaction = transactionOrClient as PortalIssueTransaction;
+    requestId = transaction.requestId;
+    photoIntentId = requestIdOrPhotoIntentId;
+    idIntentId = photoIntentIdOrIdIntentId;
+    const verified = await getVerifiedPortalSession(transaction);
+    token = verified.token;
+  }
+
+  if (!token) throw new PortalSessionError('portal_session_missing', 'Authentication session required for identity verification.');
 
   const res = await fetch('/api/passes/verify-identity', {
     method: 'POST',
@@ -470,13 +590,31 @@ export async function verifyPortalIdentity(
 }
 
 export async function preflightLiveFace(
-  client: SupabaseClient,
-  requestId: string,
-  photoIntentId: string
+  transactionOrClient: PortalIssueTransaction | SupabaseClient,
+  requestIdOrPhotoIntentId: string,
+  maybePhotoIntentId?: string
 ): Promise<{ ok: boolean; message?: string; reasonCode?: string }> {
-  const { data: { session } } = await client.auth.getSession();
-  const token = session?.access_token;
-  if (!token) throw new Error('Authentication session required for face quality check.');
+  let token: string;
+  let requestId: string;
+  let photoIntentId: string;
+
+  if (maybePhotoIntentId !== undefined) {
+    // Legacy client signature: (client, requestId, photoIntentId)
+    const client = transactionOrClient as SupabaseClient;
+    requestId = requestIdOrPhotoIntentId;
+    photoIntentId = maybePhotoIntentId;
+    const { data: { session } } = await client.auth.getSession();
+    token = session?.access_token || '';
+  } else {
+    // Portal transaction signature: (transaction, photoIntentId)
+    const transaction = transactionOrClient as PortalIssueTransaction;
+    requestId = transaction.requestId;
+    photoIntentId = requestIdOrPhotoIntentId;
+    const verified = await getVerifiedPortalSession(transaction);
+    token = verified.token;
+  }
+
+  if (!token) throw new PortalSessionError('portal_session_missing', 'Authentication session required for face quality check.');
 
   const res = await fetch('/api/passes/verify-identity', {
     method: 'POST',

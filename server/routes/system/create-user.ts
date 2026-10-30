@@ -9,7 +9,7 @@ const schema = z.object({
   name: z.string().trim().min(2).max(50),
   email: z.string().email().max(320),
   password: passwordSchema,
-  role: z.enum(['guard', 'admin']),
+  role: z.literal('admin'),
 }).strict();
 
 async function handleRequest(request: Request): Promise<Response> {
@@ -21,13 +21,7 @@ async function handleRequest(request: Request): Promise<Response> {
 
   try {
     const { admin } = getServerSupabaseClients();
-    const actor = await requireStaffActor(admin, token, ['admin', 'superadmin']);
-    if (parsed.data.role === 'guard') {
-      return jsonResponse(400, { error: 'legacy_guard_role_disabled' });
-    }
-    if (actor.role === 'admin') {
-      return jsonResponse(403, { error: 'admins_may_create_guards_only' });
-    }
+    const actor = await requireStaffActor(admin, token, ['superadmin']);
 
     const normalizedEmail = parsed.data.email.toLowerCase().trim();
     const created = await admin.auth.admin.createUser({

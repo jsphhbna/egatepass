@@ -37,11 +37,16 @@ export function LoginPage() {
 
   useEffect(() => {
     if ((status !== 'authenticated' && status !== 'requires_password_change') || !role) return;
+    if (role === 'guard') {
+      void supabase?.auth.signOut();
+      setError('This legacy Guard account is disabled. Gate monitoring now uses a Guard Station device.');
+      return;
+    }
     const redirectMap: Record<string, string> = {
-      admin: '/admin', superadmin: '/admin', guard: '/guard', entry: '/scan/entry', exit: '/scan/exit', kiosk: '/kiosk',
+      admin: '/admin', superadmin: '/admin', entry: '/scan/entry', exit: '/scan/exit', kiosk: '/kiosk',
     };
     navigate(redirectMap[role] ?? '/login', { replace: true });
-  }, [navigate, role, status]);
+  }, [navigate, role, status, supabase]);
 
   async function handleResendVerification() {
     if (!supabase || resendCooldown > 0 || !unverifiedEmail || isSigningIn || isResendingVerification) return;
@@ -102,10 +107,23 @@ export function LoginPage() {
         options: captchaToken ? { captchaToken } : undefined,
       });
       if (signInError) throw signInError;
-      if (data.user && !data.user.is_anonymous && !data.user.email_confirmed_at && identity.includes('@')) {
-        setUnverifiedEmail(normalized.email);
-        await supabase.auth.signOut();
-        setError('Account not verified. Please verify your email first. Check your inbox, spam, or trash folder for the verification email.');
+      if (data.user && !data.user.is_anonymous) {
+        if (!data.user.email_confirmed_at && identity.includes('@')) {
+          setUnverifiedEmail(normalized.email);
+          await supabase.auth.signOut();
+          setError('Account not verified. Please verify your email first. Check your inbox, spam, or trash folder for the verification email.');
+          return;
+        }
+        const { data: staff } = await supabase
+          .from('staff_profiles')
+          .select('role')
+          .eq('user_id', data.user.id)
+          .maybeSingle();
+        if (staff?.role === 'guard') {
+          await supabase.auth.signOut();
+          setError('This legacy Guard account is disabled. Gate monitoring now uses a Guard Station device.');
+          return;
+        }
       }
     } catch (signInError: unknown) {
       const code = typeof signInError === 'object' && signInError !== null && 'code' in signInError
@@ -141,7 +159,7 @@ export function LoginPage() {
 
         <form onSubmit={handleSubmit} className="space-y-5">
           <FormField label="Email or Device Username" id="login-email" requirement="required">
-            <Input id="login-email" type="text" required aria-required="true" autoComplete="username" value={identity} onChange={(event) => setIdentity(event.target.value)} placeholder="guard@earist.edu.ph or gate-kiosk-01" disabled={isSigningIn || isResendingVerification || serviceStatus === 'unavailable'} />
+            <Input id="login-email" type="text" required aria-required="true" autoComplete="username" value={identity} onChange={(event) => setIdentity(event.target.value)} placeholder="admin@earist.edu.ph or gate-kiosk-01" disabled={isSigningIn || isResendingVerification || serviceStatus === 'unavailable'} />
           </FormField>
           <FormField label="Password" id="login-password" requirement="required">
             <div className="relative">

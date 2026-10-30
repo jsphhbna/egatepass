@@ -396,27 +396,33 @@ Cloud Connectivity Outage
 
 | Actor | Primary Responsibility | Authentication Mechanism |
 |---|---|---|
-| **Visitor** | Registers online, receives digital QR pass | Anonymous Supabase session with Turnstile verification |
-| **Kiosk Device** | Self-service registration & local OCR on campus | Managed device credentials (`devices` table) |
+| **Visitor** | Registers online, receives digital QR pass | Anonymous Supabase session (`storageKey: egatepass-portal-auth`) with Turnstile verification |
+| **Guard Station Device** | High-visibility gate entry monitor and live entry tracking | Managed device credentials (`devices` table, `device_type = 'guard_station'`) |
+| **Kiosk Device** | Self-service registration & local OCR on campus | Managed device credentials (`devices` table, `device_type = 'kiosk'`) |
 | **Entry Scanner** | Scans QR code at campus gates | Authenticated scanner device bound to gate identifier |
-| **Guard** | Reviews pending passes, inspects evidence, approves/rejects | Authenticated staff account (`role = 'guard'`) |
 | **Exit Scanner** | Verifies exiting visitors at gate barriers | Authenticated scanner device bound to gate identifier |
-| **Admin** | Manages staff accounts, hardware devices, and visitor logs | Authenticated staff account (`role = 'admin'`) |
+| **Admin** | Manages staff accounts, hardware devices, walk-in recovery | Authenticated staff account (`role = 'admin'`) |
 | **Super Admin** | Configures system settings, retention windows, promotes admins | Authenticated staff account (`role = 'superadmin'`) |
+| **Legacy Guard (Disabled)** | Decommissioned role; personal gate authority removed | Disabled (logins are intercepted and signed out immediately) |
 
 ### Capability Authority Matrix
 
-| Capability | Guard | Admin | Super Admin | Kiosk Device |
-|---|:---:|:---:|:---:|:---:|
-| Normal gate entry decisions | ✅ | Existing policy | Existing policy | ❌ |
-| Visitor Recovery (Manual Entry/Exit) | ✅ | Existing policy | ✅ | ❌ |
-| Offline visitor registration | ✅ | ❌ | ✅ (Emergency) | ❌ |
-| Offline approve/reject | ✅ | ❌ | ✅ | ❌ |
-| Offline time-in/time-out | ✅ | ❌ | ✅ | ❌ |
-| MXW01 Bluetooth connection | ❌ | ❌ | ❌ | ✅ |
-| Printer test | ❌ | ❌ | Preview only | ✅ |
-| Edit thermal template | ❌ | ❌ | ✅ | ❌ |
-| Publish thermal template | ❌ | ❌ | ✅ | ❌ |
+| Capability | Guard Station | Admin | Super Admin | Kiosk Device | Legacy Guard |
+|---|:---:|:---:|:---:|:---:|:---:|
+| Live gate entry monitoring | ✅ | ✅ | ✅ | ❌ | ❌ |
+| Visitor Recovery (Manual Entry/Exit) | ❌ | ✅ | ✅ | ❌ | ❌ |
+| Walk-in / offline registration (`guard_offline`) | ❌ | ✅ | ✅ (Emergency) | ❌ | ❌ |
+| Offline approve/reject | ❌ | ✅ | ✅ | ❌ | ❌ |
+| Offline time-in/time-out | ❌ | ✅ | ✅ | ❌ | ❌ |
+| MXW01 Bluetooth connection | ❌ | ❌ | ❌ | ✅ | ❌ |
+| Printer test | ❌ | ❌ | Preview only | ✅ | ❌ |
+| Edit thermal template | ❌ | ❌ | ✅ | ❌ | ❌ |
+| Publish thermal template | ❌ | ❌ | ✅ | ❌ | ❌ |
+
+### Portal Actor Continuity & Layout-Aware OCR Architecture
+
+- **Portal Actor Continuity**: The online visitor portal strictly uses `requirePortalSupabase()` bound to `storageKey: 'egatepass-portal-auth'`, providing complete process and credential isolation from operator accounts (`storageKey: 'egatepass-operator-auth'`). Every portal issuance transaction enforces an active anonymous visitor session (`is_anonymous: true`) matching `transaction.actorId`. All upload intents, face preflights, and biometric verification requests use the visitor bearer token.
+- **Layout-Aware Structured OCR**: Client-side OCR (`src/lib/ocr.ts`) employs a spatial layout parser with bounding-box reconstruction, fuzzy PhilSys/LTO label classification, candidate extraction across same-row and vertically aligned fields, confidence-based prefilling with thresholding (>= 60) that never overwrites user-entered values, and worker generation fencing. LTO Driver's Licenses follow standard comma splitting where text before the comma denotes the surname, and tokens after the comma assign the final token to middle name and preceding tokens to given names.
 
 ---
 

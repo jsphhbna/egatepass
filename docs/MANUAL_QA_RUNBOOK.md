@@ -645,3 +645,22 @@ stateDiagram-v2
 5. Confirm server face-presence/geometry preflight runs before advancing to Valid ID.
 6. Provide or reuse valid ID (normalized at ~2000px, 0.92 WebP).
 7. Execute identity verification. Verify matching succeeds against SFace/YuNet before review and pass generation.
+
+### 16.8 Portal Actor Continuity & Multi-Actor Isolation QA (Migrations 40–42)
+1. **Simultaneous Operator & Visitor Sessions**:
+   - Log into `/admin` on a browser tab with an Administrator account.
+   - Open `/get-pass` in a second tab.
+   - Complete visitor pre-registration on `/get-pass`.
+   - Inspect network request headers: confirm all requests to `api.create_upload_intent`, storage uploads, `/api/passes/verify-identity`, and `/api/passes/issue` carry the anonymous visitor token and NEVER the Administrator token.
+2. **Legacy Guard Account Sign-In Rejection**:
+   - Attempt to log in at `/login` with a legacy Guard email and password.
+   - Confirm login fails with: *"This legacy Guard account is disabled. Gate monitoring now uses a Guard Station device."*
+   - Confirm the session is immediately signed out and the user is NOT redirected to `/guard`.
+3. **Guard Station Gate Monitoring**:
+   - Log into `/device/login` with a Guard Station device account (`device_type = 'guard_station'`).
+   - Observe the live entry feed displaying recent online visitor entries with full-bleed photos.
+4. **Layout-Aware OCR Autofill**:
+   - On `/get-pass`, upload a sample Philippine Driver's License or National ID during optional OCR.
+   - Verify names are extracted without label corruption.
+   - Verify existing entered fields are not overwritten.
+   - Verify Driver's License comma format correctly assigns surname before comma, middle name to final token, and given name to preceding tokens.

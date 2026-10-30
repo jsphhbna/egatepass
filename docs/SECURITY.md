@@ -643,5 +643,18 @@ The shared pure SVG template generator (`src/lib/digitalPassArtifact.ts`) uses s
 - **Trusted Server Face Preflight**: Live face photo undergoes server-side presence and geometry preflight via YuNet (`mode: 'preflight_face'`) before the visitor can advance to the Valid ID step.
 - **High-Resolution ID Normalization**: `normalizeIdentityDocumentImage` standardizes identity document images to long edge ~2000px (max 2400px) at WebP quality 0.92 without upscaling, replacing the generic 1024px @ 0.8 compressor.
 - **OCR ID Direct Reuse**: Documents uploaded during optional OCR are normalized and saved for identity verification without prompting the visitor for a second upload.
-- **Exact-Pinned Model Runtime**: `onnxruntime-node: 1.31.1` is exact-pinned, with model provenance, licenses (Apache-2.0), and SHA-256 hashes documented in `server/models/README.md`.
+- **Exact-Pinned Model Runtime**: `onnxruntime-node: 1.31.1` is exact-pinned, with model provenance, licenses (MIT for YuNet, Apache-2.0 for SFace), and SHA-256 hashes documented in `server/models/README.md`.
 
+
+## 24. Portal Actor Continuity & Hardware Guard Station Device Security (Migrations 40–42)
+
+### 24.1 Portal Actor Continuity & Operator Token Isolation
+- **Storage Key Isolation**: Public pre-registration portal requests execute strictly against `requirePortalSupabase()` configured with `storageKey: 'egatepass-portal-auth'`. Operator and administrative sessions execute against `requireSupabase()` with `storageKey: 'egatepass-operator-auth'`. This separation eliminates token collision or leakage on shared or operator devices.
+- **Anonymous Visitor Assertion**: Every portal issuance transaction validates that `session.user.is_anonymous === true` and matches `transaction.actorId`. Transactions with non-anonymous sessions or mismatched identities are rejected with `portal_actor_not_anonymous` or `portal_session_mismatch`.
+- **Bearer Token Verification**: Evidence upload intents (`api.create_upload_intent(requested_source => 'portal')`), face preflight checks, and identity comparisons require a valid anonymous visitor token in the `Authorization: Bearer <token>` header.
+
+### 24.2 Guard Station Hardware Devices & Legacy Role Decommissioning
+- **Hardware Device Authority**: Live gate monitoring is performed strictly by hardware devices provisioned in the `devices` table with `device_type = 'guard_station'`.
+- **Legacy Guard Decommissioning**: Personal human guard accounts (`role = 'guard'`) have been decommissioned. Attempts to authenticate with a guard account are rejected and immediately signed out.
+- **Strict Administrator Role Boundary**: System user creation (`server/routes/system/create-user.ts`) schema enforces `role: z.literal('admin')` and requires superadmin caller privileges.
+- **Legacy Admin Walk-in Compatibility**: Administrators and superadmins retain the authority to issue `guard_offline` upload intents and execute emergency offline registrations. Ordinary guards are rejected with SQLSTATE 42501 `administrator required`.

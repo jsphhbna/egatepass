@@ -57,7 +57,7 @@ const { mockRpc, mockGetSession, mockStorageFrom, createMockSupabase } = vi.hois
     data: {
       session: {
         access_token: 'valid-test-token',
-        user: { id: 'portal-user-1' },
+        user: { id: 'portal-user-1', is_anonymous: true },
       },
     },
     error: null,
@@ -73,7 +73,7 @@ const { mockRpc, mockGetSession, mockStorageFrom, createMockSupabase } = vi.hois
           data: {
             session: {
               access_token: 'portal-anon-token',
-              user: { id: 'portal-user-1' },
+              user: { id: 'portal-user-1', is_anonymous: true },
             },
           },
           error: null,
@@ -1601,7 +1601,7 @@ describe('Deep Dive 1 + Deep Dive 2 Root-Cause Closure Test Suite', () => {
       mockGetSession.mockResolvedValue({
         data: { session: {
           access_token: 'valid-test-token',
-          user: { id: 'guard-1' },
+          user: { id: 'portal-user-1', is_anonymous: true },
         } },
       });
       mockStorageFrom.mockReset();

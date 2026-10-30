@@ -20,9 +20,18 @@ export default defineConfig({
   projects: [
     {
       name: 'edge',
+      testIgnore: /.*webkit\.spec\.ts/,
       use: {
         ...devices['Desktop Edge'],
         channel: 'msedge',
+      },
+    },
+    {
+      name: 'webkit-iphone',
+      testMatch: /.*webkit\.spec\.ts/,
+      use: {
+        ...devices['iPhone 12'],
+        browserName: 'webkit',
       },
     },
   ],
