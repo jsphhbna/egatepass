@@ -67,7 +67,7 @@ describe('FIX GROUP F: Orphan Auth Identity Conflict Detection', () => {
         name: 'New Staff',
         email: 'orphan.user@earist.edu.ph',
         password: 'ValidPassword123!',
-        role: 'guard',
+        role: 'admin',
       }),
     });
 
@@ -143,7 +143,7 @@ describe('FIX GROUP F: Orphan Auth Identity Conflict Detection', () => {
         name: 'Another Guard',
         email: 'existing.guard@earist.edu.ph',
         password: 'ValidPassword123!',
-        role: 'guard',
+        role: 'admin',
       }),
     });
 
@@ -199,7 +199,7 @@ describe('FIX GROUP F: Orphan Auth Identity Conflict Detection', () => {
         name: 'Brand New Staff',
         email: 'brandnew@earist.edu.ph',
         password: 'ValidPassword123!',
-        role: 'guard',
+        role: 'admin',
       }),
     });
 
@@ -211,7 +211,7 @@ describe('FIX GROUP F: Orphan Auth Identity Conflict Detection', () => {
     expect(rpcSpy).toHaveBeenCalledWith('create_staff_profile', expect.objectContaining({
       requested_user_id: 'new-auth-user-999',
       requested_name: 'Brand New Staff',
-      requested_role: 'guard',
+      requested_role: 'admin',
     }));
   });
 });

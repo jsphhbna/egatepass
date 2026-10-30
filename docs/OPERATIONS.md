@@ -27,8 +27,9 @@ flowchart TD
 #### Creating a Staff User
 1. Navigate to **Admin Dashboard > Staff Management** (`/admin/users`).
 2. Click **Add Staff Member**.
-3. Enter legal name, official EARIST email address, and select role (`guard` or `admin`).
-4. The serverless route `POST /api/create-user` creates the Supabase Auth identity, inserts the `staff_profiles` row, and triggers an automated invite email via Resend.
+3. Enter legal name, official EARIST email address, and select role (`admin`).
+4. *Guard Role Deprecation*: Operational personal guard accounts are deprecated (`legacy_guard_role_disabled`). General campus guard operations use dedicated `guard_station` hardware devices. For kiosk walk-in pass review, administrators use `/admin/legacy-guard`.
+5. The serverless route `POST /api/create-user` creates the Supabase Auth identity, inserts the `staff_profiles` row, and triggers an automated invite email via Resend.
 5. **Password Onboarding Lifecycle**:
    - **New Guard via `create-user`**: Flagged with `must_change_password = true`.
    - **New Admin via `create-user`**: Flagged with `must_change_password = true`.
@@ -63,7 +64,7 @@ flowchart LR
 
 #### Device Registration
 1. In **Admin Dashboard > Device Management** (`/admin/devices`), click **Register New Device**.
-2. Specify Device Name, Type (`entry`, `exit`, `kiosk`), and Gate identifier (e.g. `Main Gate`).
+2. Specify Device Name, Type (`entry`, `exit`, `kiosk`, `guard_station`), and Gate identifier (e.g. `Main Gate`). Guard Station devices operate as the high-visibility gate display at the guard station.
 3. Note the generated device credentials.
 4. On the physical device (e.g. tablet or scanner), log into `/device/login`.
 
@@ -76,7 +77,7 @@ flowchart LR
 ## 2. Daily Visitor & Gate Workflows
 
 ### 2.1 Visitor Portal & Kiosk Registration
-- **Online Visitors**: Access `https://egatepass.tech`, solve Turnstile, fill out personal and visit details manually or via optional browser-local OCR autofill, capture camera-only facial selfie and valid ID via rear camera or supported image upload (JPEG, PNG, WebP), obtain an issued pass with an EARIST-branded center logo QR code (error correction level H), and secure pass delivery through the verified email delivery gate (or intentionally continue without email after a 5-second timed warning).
+- **Online Visitors**: Pre-register at `https://egatepass.tech`. Optional OCR with native image chooser allows autofilling details. Followed by mandatory Live Face Capture (user camera with face guide oval; the single custom camera in the flow) verified by technical quality gate, then Valid ID (native image chooser or reused OCR document) verified by technical quality gate. Local face engine performs 1:1 biometric comparison. Once verified, review details and generate official E-GatePass. The pass transitions directly to `inside` on gate scanner scan with zero manual guard approval queue required.
 - **Walk-in Visitors (Kiosk)**: Use the campus kiosk tablet. Rear camera captures the visitor's valid ID, local Tesseract OCR extracts information for review, front camera captures a selfie, and a QR pass is displayed. Kiosk printing supports direct Web Bluetooth thermal printing via MXW01 with fail-safe issuance and browser/operating-system print fallback. (Physical hardware testing was not performed in software repairs and requires on-site manual QA).
 
 ### 2.1.1 Deterministic Typography, Unicode Integrity & Export Encoding

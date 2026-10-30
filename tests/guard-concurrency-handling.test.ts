@@ -66,9 +66,9 @@ describe('PATCH 6: Guard HTTP Concurrency & Structured Error Handling', () => {
     }
   });
 
-  it('6C. GuardPage.tsx handles 409 concurrency conflict with informational toast, queue refresh, and no red error', () => {
+  it('6C. LegacyGuardPage.tsx handles 409 concurrency conflict with informational toast, queue refresh, and no red error', () => {
     const guardPageSrc = readFileSync(
-      join(process.cwd(), 'src', 'pages', 'GuardPage.tsx'),
+      join(process.cwd(), 'src', 'pages', 'LegacyGuardPage.tsx'),
       'utf8',
     );
 

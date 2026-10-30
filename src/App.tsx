@@ -17,6 +17,7 @@ const ForgotPasswordPage = lazy(() => import('@/pages/ForgotPasswordPage').then(
 const ResetPasswordPage = lazy(() => import('@/pages/ResetPasswordPage').then((module) => ({ default: module.ResetPasswordPage })));
 const KioskPage = lazy(() => import('@/pages/KioskPage').then((module) => ({ default: module.KioskPage })));
 const GuardPage = lazy(() => import('@/pages/GuardPage').then((module) => ({ default: module.GuardPage })));
+const LegacyGuardPage = lazy(() => import('@/pages/LegacyGuardPage').then((module) => ({ default: module.LegacyGuardPage })));
 const AdminDashboard = lazy(() => import('@/pages/AdminDashboard').then((module) => ({ default: module.AdminDashboard })));
 const AdminUsers = lazy(() => import('@/pages/AdminUsers').then((module) => ({ default: module.AdminUsers })));
 const AdminRecords = lazy(() => import('@/pages/AdminRecords').then((module) => ({ default: module.AdminRecords })));
@@ -99,7 +100,7 @@ export function App() {
             </Route>
 
             {/* Guard — requires guard or admin role */}
-            <Route element={<ProtectedRoute allowedRoles={['guard', 'admin', 'superadmin']} />}>
+            <Route element={<ProtectedRoute allowedRoles={['guard_station', 'guard', 'admin', 'superadmin']} />}>
               <Route path="/guard" element={<GuardPage />} />
             </Route>
 
@@ -110,6 +111,7 @@ export function App() {
                 <Route path="visitors" element={<AdminRecords />} />
                 <Route path="devices" element={<DevicesPage />} />
                 <Route path="users" element={<AdminUsers />} />
+                <Route path="legacy-guard" element={<LegacyGuardPage />} />
                 <Route path="emergency" element={<AdminEmergency />} />
                 <Route path="audit" element={<AdminAuditLogs />} />
                 <Route path="templates" element={<AdminPrintTemplatesPage />} />

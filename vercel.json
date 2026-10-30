@@ -6,7 +6,7 @@
   ],
   "functions": {
     "api/**/*.ts": {
-      "includeFiles": "public/fonts/**"
+      "includeFiles": "{public/fonts/**,server/models/**}"
     }
   },
   "headers": [
@@ -146,6 +146,15 @@
           "value": "no-cache, no-store, must-revalidate"
         }
       ]
+    },
+    {
+      "source": "/build-meta.json",
+      "headers": [
+        {
+          "key": "Cache-Control",
+          "value": "no-cache, no-store, max-age=0, must-revalidate"
+        }
+      ]
     }
   ],
   "rewrites": [
@@ -180,6 +189,10 @@
     {
       "source": "/api/sync-offline-registration",
       "destination": "/api/gate/sync-offline-registration"
+    },
+    {
+      "source": "/api/guard-station-feed",
+      "destination": "/api/gate/guard-station-feed"
     },
     {
       "source": "/api/create-user",

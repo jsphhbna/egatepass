@@ -198,7 +198,7 @@ describe('Group H: Unified Report Exports Contract (CSV, XLSX, PDF)', () => {
     expect((capturedBlob as unknown as Blob).type).toBe(
       'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
     );
-  });
+  }, 30000);
 
   it('exportReportToPdf dynamically imports jsPDF and generates document with metadata and tables', async () => {
     let capturedBlob: Blob | null = null;

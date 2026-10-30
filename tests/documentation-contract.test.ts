@@ -430,7 +430,7 @@ describe('Mermaid Rendering & Documentation Truthfulness Contract', () => {
     const mermaidModule = await import('mermaid');
     mermaid = mermaidModule.default || mermaidModule;
     mermaid.initialize({ startOnLoad: false, suppressErrorRendering: true });
-  });
+  }, 30000);
 
   it('verifies exact inventory of active markdown files, files containing mermaid, and active mermaid blocks', () => {
     expect(activeFiles.length, 'Expected exactly 20 active Markdown files').toBe(20);

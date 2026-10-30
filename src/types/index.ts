@@ -7,7 +7,7 @@ export type Timestamp = AppTimestamp;
    ============================================================ */
 export type UserRole = 'guard' | 'admin' | 'superadmin';
 
-export type DeviceType = 'entry' | 'exit' | 'kiosk';
+export type DeviceType = 'entry' | 'exit' | 'kiosk' | 'guard_station';
 
 export type DeviceStatus = 'active' | 'revoked';
 

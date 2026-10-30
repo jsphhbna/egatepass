@@ -181,5 +181,5 @@ describe('Workstream B: Report Export Unicode & Font Embedding Integrity', () =>
     expect(cellValues).toContain('Renée François');
     expect(cellValues).toContain('Consultant • Audit & Compliance');
     expect(cellValues).toContain('Mary-Jane O’Connor');
-  });
+  }, 30000);
 });

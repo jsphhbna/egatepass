@@ -596,3 +596,26 @@ The shared pure SVG template generator (`src/lib/digitalPassArtifact.ts`) uses s
 - Hard role enforcement inside function body verifies caller is active `guard`, `admin`, or `superadmin`.
 - Query validation bounds input between 2 and 100 characters, bounds limit between 1 and 100, and returns only passes with status `pending`. No QR tokens, digests, or storage credentials are included in projections.
 
+---
+
+## 22. Online Pre-Registration Biometric Verification & Privacy Minimization (Migrations 38 & 39)
+
+### 22.1 Zero Biometric Persistence Guarantee
+- **Model Execution in RAM**: 1:1 biometric comparison executes on the server via OpenCV Zoo models (`YuNet` face detection + `SFace` feature extraction) using ONNX Runtime.
+- **Ephemeral Embeddings**: 128-dimensional L2-normalized feature vectors, 5-point facial landmark coordinates, bounding boxes, and cropped face tensors are generated in transient memory buffers and destroyed immediately upon request completion.
+- **Strict Storage Minimization**: Zero biometric embeddings, templates, or facial measurements are persisted to PostgreSQL tables, Redis caches, or Cloud Object Storage. The relational database only stores audit metadata in `portal_identity_verification_attempts` (`match_status`, `similarity_score`, `model_version`, and unexpired verification timestamps).
+
+### 22.2 Identity Verification Boundary & Rate Limiting
+- **Anti-Tampering Correlation**: `/api/passes/verify-identity` validates that `photoIntentId` and `idIntentId` belong to the caller's active anonymous Supabase session and match the transaction's `requestId`.
+- **Sliding-Window Rate Limits**: Biometric comparison requests are rate-limited to 5 verification attempts per 10 minutes per anonymous session IP/actor.
+- **Strict Server Authority**: Pass issuance via `POST /api/passes/issue` enforces that an unexpired `matched` record exists in `portal_identity_verification_attempts` within the last 15 minutes before executing `api.issue_pass`.
+
+### 22.3 Same-Gate Confinement for Guard Station Devices
+- Dedicated hardware devices (`device_type = 'guard_station'`) monitor campus entrance gates.
+- **Gate-Scoped Projections**: `/api/guard-station-feed` only returns visit records and scans originating at the device's assigned gate.
+- **Evidence Access Scoping**: `/api/evidence` strictly restricts `guard_station` devices to visitor registration photos (`photo`) for visits scanned at that station's gate. Access to government ID cards (`id_card`) is denied to guard station devices.
+
+### 22.4 Legacy Guard Role Deprecation (`legacy_guard_role_disabled`)
+- To prevent manual approval bypasses on automated online visitor entries, personal guard staff accounts are disabled for operational sign-in with HTTP 403 `legacy_guard_role_disabled`.
+- Walk-in kiosk manual approvals are restricted to Administrative actors (`/admin/legacy-guard`).
+

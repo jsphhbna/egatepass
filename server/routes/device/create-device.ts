@@ -5,7 +5,7 @@ import { jsonResponse, readBearerToken } from '../../http.js';
 import { passwordSchema } from '../../password-policy.js';
 import { getServerSupabaseClients } from '../../supabase.js';
 
-const schema = z.object({ name: z.string().trim().min(2).max(50), type: z.enum(['entry', 'exit', 'kiosk']), gate: z.string().trim().min(1).max(50), email: z.string().min(3).max(320), password: passwordSchema }).strict();
+const schema = z.object({ name: z.string().trim().min(2).max(50), type: z.enum(['entry', 'exit', 'kiosk', 'guard_station']), gate: z.string().trim().min(1).max(50), email: z.string().min(3).max(320), password: passwordSchema }).strict();
 async function handleRequest(request: Request): Promise<Response> {
   if (request.method !== 'POST') return jsonResponse(405, { error: 'method_not_allowed' }, { Allow: 'POST' });
   const token = readBearerToken(request); const parsed = schema.safeParse(await request.json().catch(() => null));

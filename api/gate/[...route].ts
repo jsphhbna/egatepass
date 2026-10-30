@@ -3,12 +3,14 @@ import scanPass from '../../server/routes/gate/scan-pass.js';
 import decideVisit from '../../server/routes/gate/decide-visit.js';
 import evidence from '../../server/routes/gate/evidence.js';
 import syncOfflineRegistration from '../../server/routes/gate/sync-offline-registration.js';
+import guardStationFeed from '../../server/routes/gate/guard-station-feed.js';
 
 const router = createGroupedRouter('gate', {
   'scan-pass': scanPass,
   'decide-visit': decideVisit,
   evidence,
   'sync-offline-registration': syncOfflineRegistration,
+  'guard-station-feed': guardStationFeed,
 });
 
 export const { fetch, handleRequest, GET, POST, PUT, PATCH, DELETE, HEAD, OPTIONS } = router;

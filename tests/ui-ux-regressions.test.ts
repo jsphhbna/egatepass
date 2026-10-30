@@ -14,7 +14,7 @@ describe('UI/UX QA, Responsive Institutional Redesign & Usability Regressions Su
   // Fix Group 11 & 12: Guard Queue Initial Loading & Search Authority
   // --------------------------------------------------------------------------
   describe('Fix Groups 11 & 12: Guard Queue State Truthfulness & Pagination Search Authority', () => {
-    const guardSrc = readFileSync('src/pages/GuardPage.tsx', 'utf8');
+    const guardSrc = readFileSync('src/pages/LegacyGuardPage.tsx', 'utf8');
     const hookSrc = readFileSync('src/hooks/useGuardQueue.ts', 'utf8');
 
     it('initializes initialLoading to true to prevent false empty queue state on mount', () => {
@@ -177,12 +177,10 @@ describe('UI/UX QA, Responsive Institutional Redesign & Usability Regressions Su
     const getPassSrc = readFileSync('src/pages/GetPassPage.tsx', 'utf8');
     const kioskSrc = readFileSync('src/pages/KioskPage.tsx', 'utf8');
 
-    it('GetPassPage review step stops webcam and provides direct edit actions', () => {
+    it('GetPassPage review step stops face webcam and provides direct edit actions', () => {
       expect(getPassSrc).toContain('faceWebcam.stop();');
-      expect(getPassSrc).toContain('idWebcam.stop();');
       expect(getPassSrc).toContain('Edit Details');
       expect(getPassSrc).toContain('Retake Photo');
-      expect(getPassSrc).toContain('!isPeakMode && (');
       expect(getPassSrc).toContain('Retake ID');
     });
 

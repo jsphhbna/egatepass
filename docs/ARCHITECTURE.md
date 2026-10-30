@@ -501,3 +501,17 @@ Outage Architecture & Authority Delegation
   - **PDF**: Formatted human-readable report with institutional maroon header, metadata block, and auto-paginated table with page numbering.
 - **Security Exclusions**: Never exports raw QR tokens, token digests, storage object paths, signed URLs, or credential secrets.
 
+### F. Online Pre-Registration Identity Verification & Guard Station Redesign (Migrations 38 & 39)
+- **Single Camera Rule**: Exactly one custom camera preview exists in the online preregistration flow: **Live Face Capture** (`facingMode = 'user'`). Optional OCR and mandatory valid ID acquisition use the device/browser native file input / image chooser (`<input type="file" accept="image/jpeg,image/png,image/webp">`).
+- **Technical Quality Gates**: Both live face capture and valid ID images undergo deterministic client-side technical checks (blur, illumination, resolution, single face detection, face size, and aspect) before identity comparison.
+- **Local Face Verification Engine (`server/lib/face-engine.ts`)**: 1:1 biometric comparison using OpenCV Zoo models running in ONNX Runtime inside Node.js:
+  - **Detection & Landmarks**: YuNet 640x640 with 5 facial landmarks.
+  - **Alignment**: 5-point Umeyama similarity transform mapped to 112x112 canonical reference frame.
+  - **Feature Extraction & Matching**: SFace feature extraction producing 128-d L2-normalized feature embeddings evaluated with cosine similarity against canonical threshold `0.363`.
+- **Zero Biometric Persistence**: Biometric embeddings, landmarks, bounding boxes, and cropped tensors are strictly ephemerally processed in memory. Zero biometric vectors are saved to database tables or object storage.
+- **Server Authority**: `/api/passes/issue` enforces that an unexpired `matched` record exists in `portal_identity_verification_attempts` for `(actorId, requestId, photoIntentId, idIntentId)`. Pass issuance is cryptographically and logically blocked without verified identity.
+- **Automatic Online Entry**: Upon gate scanner scan, valid online preregistered passes transition directly to `inside` without entering an approval queue.
+- **Guard Station Device View**: Authenticated hardware devices (`device_type = 'guard_station'`) bound to specific gates provide a high-visibility gate monitor displaying real-time entries, full-bleed registration photo, visitor details, and status. Confined strictly to same-gate scans.
+- **Legacy Guard Role Deprecation**: Operational guard accounts are retired for sign-in (`legacy_guard_role_disabled`). Kiosk walk-in manual reviews are preserved at `/admin/legacy-guard` for Admin and Super Admin actors.
+- **Stale Client & Readability Protection**: `public/build-meta.json` generated at build with `Cache-Control: no-store, max-age=0` powers background build polling and non-destructive update notifications. Institutional light theme strictly enforced (`color-scheme: light`) with WCAG 2.1 AA compliant contrast ratios ($\ge 4.5:1$).
+

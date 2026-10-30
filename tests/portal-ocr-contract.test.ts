@@ -6,9 +6,8 @@ describe('FEATURE 2 CONTRACT: Optional Portal OCR & Kiosk Boundary', () => {
   const kioskSrc = readFileSync('src/pages/KioskPage.tsx', 'utf8');
 
   it('provides a subtle optional OCR CTA near the personal details section', () => {
-    expect(getPassSrc).toContain('Want to fill in faster?');
-    expect(getPassSrc).toContain('Scan your ID to autofill your information.');
     expect(getPassSrc).toContain('Autofill from ID');
+    expect(getPassSrc).toContain('Upload ID Image');
   });
 
   it('keeps manual registration form fully usable without selecting OCR', () => {
@@ -20,7 +19,7 @@ describe('FEATURE 2 CONTRACT: Optional Portal OCR & Kiosk Boundary', () => {
 
   it('uses browser-local recognizeIdImage without third-party cloud OCR services', () => {
     expect(getPassSrc).toMatch(/import\s*\{[^}]*recognizeIdImage[^}]*\}\s*from\s*'@\/lib\/ocr'/);
-    expect(getPassSrc).toContain('await recognizeIdImage(source)');
+    expect(getPassSrc).toContain('recognizeIdImage(file)');
     // Preserves local privacy boundary
     expect(getPassSrc).not.toContain('google-cloud-vision');
     expect(getPassSrc).not.toContain('aws-rekognition');
@@ -33,8 +32,8 @@ describe('FEATURE 2 CONTRACT: Optional Portal OCR & Kiosk Boundary', () => {
   });
 
   it('does NOT automatically submit upon OCR completion, keeping values user-reviewed and editable', () => {
-    // Does not invoke onSubmit or issueVisitorPass inside processOcrImage
-    const processOcrMatch = getPassSrc.match(/async function processOcrImage[\s\S]*?finally/);
+    // Does not invoke onSubmit or issueVisitorPass inside handleOcrFileSelected
+    const processOcrMatch = getPassSrc.match(/async function handleOcrFileSelected[\s\S]*?finally/);
     expect(processOcrMatch).toBeTruthy();
     const ocrFn = processOcrMatch![0];
 
@@ -45,7 +44,7 @@ describe('FEATURE 2 CONTRACT: Optional Portal OCR & Kiosk Boundary', () => {
   });
 
   it('handles OCR failure gracefully without discarding valid ID image evidence', () => {
-    const processOcrMatch = getPassSrc.match(/async function processOcrImage[\s\S]*?finally/);
+    const processOcrMatch = getPassSrc.match(/async function handleOcrFileSelected[\s\S]*?finally/);
     expect(processOcrMatch).toBeTruthy();
     const ocrFn = processOcrMatch![0];
 
@@ -53,14 +52,14 @@ describe('FEATURE 2 CONTRACT: Optional Portal OCR & Kiosk Boundary', () => {
     expect(ocrFn).toContain('setIdBlob(compressed)');
     expect(ocrFn).toContain('idUrl.setFromBlob(compressed)');
     // Failure shows user-facing manual entry fallback without clearing idBlob
-    expect(ocrFn).toContain('Automatic ID reading is unavailable right now. Your ID was still added successfully.');
+    expect(ocrFn).toContain('Automatic text recognition skipped. Your ID image was saved for later verification.');
   });
 
   it('reuses ID evidence in later Valid ID step if captured during OCR', () => {
-    expect(getPassSrc).toContain("idPreview ? 'Valid ID Added' : 'Capture Valid ID'");
-    expect(getPassSrc).toContain('ID image attached and saved for registration.');
-    expect(getPassSrc).toContain('Retake ID');
-    expect(getPassSrc).toContain("setStep('review')");
+    expect(getPassSrc).toContain('idReusedFromOcr');
+    expect(getPassSrc).toContain('ID image already added');
+    expect(getPassSrc).toContain('Replace ID');
+    expect(getPassSrc).toContain("setStep('verify')");
   });
 
   it('preserves existing OCR-first physical kiosk workflow unchanged', () => {

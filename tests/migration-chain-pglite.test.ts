@@ -1523,4 +1523,58 @@ describe('Permanent PostgreSQL Migration Chain & Schema Contracts (PGlite)', () 
     `);
     expect(templateServicePriv.rows[0]?.allowed).toBe(true);
   }, 60000);
+
+  it('Migration 38 & 39: verifies device_type guard_station enum, identity verification table, and visitor provenance columns', async () => {
+    const db = new PGlite();
+    await applyAllMigrations(db);
+
+    // 1. Verify guard_station is in device_type enum
+    const enumQuery = await db.query<{ enumlabel: string }>(`
+      select enumlabel from pg_enum
+      join pg_type on pg_enum.enumtypid = pg_type.oid
+      where pg_type.typname = 'device_type';
+    `);
+    const labels = enumQuery.rows.map((r) => r.enumlabel);
+    expect(labels).toContain('guard_station');
+    expect(labels).toContain('kiosk');
+    expect(labels).toContain('entry');
+    expect(labels).toContain('exit');
+
+    // 2. Verify portal_identity_verification_attempts table and RLS
+    const tableCheck = await db.query<{ table_name: string }>(`
+      select table_name from information_schema.tables
+      where table_schema = 'public' and table_name = 'portal_identity_verification_attempts';
+    `);
+    expect(tableCheck.rows).toHaveLength(1);
+
+    const rlsCheck = await db.query<{ rowsecurity: boolean }>(`
+      select rowsecurity from pg_tables
+      where schemaname = 'public' and tablename = 'portal_identity_verification_attempts';
+    `);
+    expect(rlsCheck.rows[0]?.rowsecurity).toBe(true);
+
+    // Privileges: anon/authenticated cannot access, service_role can
+    const anonPriv = await db.query<{ allowed: boolean }>(`
+      select has_table_privilege('anon', 'public.portal_identity_verification_attempts', 'select') as allowed;
+    `);
+    expect(anonPriv.rows[0]?.allowed).toBe(false);
+
+    const authPriv = await db.query<{ allowed: boolean }>(`
+      select has_table_privilege('authenticated', 'public.portal_identity_verification_attempts', 'select') as allowed;
+    `);
+    expect(authPriv.rows[0]?.allowed).toBe(false);
+
+    const servicePriv = await db.query<{ allowed: boolean }>(`
+      select has_table_privilege('service_role', 'public.portal_identity_verification_attempts', 'select') as allowed;
+    `);
+    expect(servicePriv.rows[0]?.allowed).toBe(true);
+
+    // 3. Verify visitors provenance columns
+    const columns = await db.query<{ column_name: string }>(`
+      select column_name from information_schema.columns
+      where table_schema = 'public' and table_name = 'visitors'
+      and column_name in ('identity_verification_id', 'identity_verified_at');
+    `);
+    expect(columns.rows).toHaveLength(2);
+  }, 60000);
 });

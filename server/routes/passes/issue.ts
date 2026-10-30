@@ -213,6 +213,10 @@ async function handleRequest(request: Request): Promise<Response> {
     }
 
     if (parsed.data.source === 'portal') {
+      if (!parsed.data.idIntentId) {
+        return jsonResponse(422, { error: 'identity_verification_required' });
+      }
+
       // 1. Anonymous Actor Bucket
       const actorKeyHex = createHash('sha256').update(`actor:${actorId}`).digest('hex');
       const { data: actorAllowed, error: actorRlError } = await admin.schema('api').rpc('consume_rate_limit', {
@@ -262,6 +266,44 @@ async function handleRequest(request: Request): Promise<Response> {
       }
     }
 
+    if (parsed.data.source === 'portal') {
+      if (!parsed.data.idIntentId) {
+        return jsonResponse(422, { error: 'identity_verification_required', message: 'Valid ID is required for portal pass issuance' });
+      }
+
+      const { data: attempt, error: attemptError } = await admin
+        .from('portal_identity_verification_attempts')
+        .select('id, actor_id, request_id, photo_intent_id, id_intent_id, status, matched, score, expires_at')
+        .eq('request_id', parsed.data.requestId)
+        .eq('actor_id', actorId)
+        .order('created_at', { ascending: false })
+        .limit(1)
+        .maybeSingle();
+
+      if (attemptError) throw attemptError;
+
+      if (!attempt || attempt.status !== 'matched' || !attempt.matched) {
+        return jsonResponse(422, {
+          error: 'identity_verification_required',
+          message: 'Identity verification must pass before a pass can be issued.',
+        });
+      }
+
+      if (attempt.photo_intent_id !== parsed.data.photoIntentId || attempt.id_intent_id !== parsed.data.idIntentId) {
+        return jsonResponse(422, {
+          error: 'identity_verification_required',
+          message: 'Identity verification evidence mismatch.',
+        });
+      }
+
+      if (new Date(attempt.expires_at).getTime() <= Date.now()) {
+        return jsonResponse(422, {
+          error: 'identity_verification_expired',
+          message: 'Identity verification has expired. Please verify again.',
+        });
+      }
+    }
+
     const photo = await inspectUpload(admin, parsed.data.photoIntentId, actorId, parsed.data.source, 'photo');
     const identification = parsed.data.idIntentId
       ? await inspectUpload(admin, parsed.data.idIntentId, actorId, parsed.data.source, 'id')
@@ -303,6 +345,13 @@ async function handleRequest(request: Request): Promise<Response> {
     // SQL 22023: visit date outside scheduling window
     if (errCode === '22023' || errMessage.includes('outside scheduling window') || errMessage.includes('visit date outside scheduling window')) {
       return jsonResponse(422, { error: 'visit_date_out_of_range' });
+    }
+    if (
+      errMessage.includes('portal passes require') ||
+      errMessage.includes('portal identity verification matching record required') ||
+      errMessage.includes('identity verification')
+    ) {
+      return jsonResponse(422, { error: 'identity_verification_required' });
     }
     // Authorization / permission errors from Postgres / PostgREST (42501)
     if (errCode === '42501' || errMessage.includes('permission denied')) {

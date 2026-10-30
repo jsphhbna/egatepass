@@ -94,6 +94,7 @@ self.addEventListener('fetch', (event) => {
     url.pathname.startsWith('/api/') ||
     url.pathname.startsWith('/rest/v1/') ||
     url.pathname.startsWith('/storage/v1/') ||
+    url.pathname === '/build-meta.json' ||
     event.request.method !== 'GET'
   ) {
     return;

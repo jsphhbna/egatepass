@@ -397,6 +397,47 @@ export async function uploadCheckpointedEvidence(
   return { intentId: checkpoint.intentId, checkpoint };
 }
 
+export interface VerifyIdentityResponse {
+  outcome: 'matched' | 'mismatched' | 'face_not_detected' | 'quality_rejected';
+  matched: boolean;
+  verificationId?: string;
+  expiresAt?: string;
+  message?: string;
+  reasonCode?: string;
+  error?: string;
+}
+
+export async function verifyPortalIdentity(
+  client: SupabaseClient,
+  requestId: string,
+  photoIntentId: string,
+  idIntentId: string
+): Promise<VerifyIdentityResponse> {
+  const { data: { session } } = await client.auth.getSession();
+  const token = session?.access_token;
+  if (!token) throw new Error('Authentication session required for identity verification.');
+
+  const res = await fetch('/api/passes/verify-identity', {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${token}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      requestId,
+      photoIntentId,
+      idIntentId,
+    }),
+  });
+
+  const body = (await res.json().catch(() => null)) as (VerifyIdentityResponse & { error?: string }) | null;
+  if (!res.ok || !body) {
+    throw new Error(body?.message || body?.error || 'Identity verification failed');
+  }
+
+  return body;
+}
+
 export async function issueVisitorPass(
   source: RegistrationSource,
   visitor: VisitorRegistration,

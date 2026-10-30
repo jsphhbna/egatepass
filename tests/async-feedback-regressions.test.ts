@@ -158,11 +158,9 @@ describe('Async Feedback, Slow-Network Resilience, and State-Truthfulness Regres
       expect(webcamHookSrc).toContain('isStartingRef.current = false;');
     });
 
-    it('GetPassPage displays "Starting camera…" and "Starting ID camera…" overlays and "Starting…" on retry', () => {
+    it('GetPassPage displays "Starting camera…" overlay and "Starting…" on retry', () => {
       expect(getPassSrc).toContain('Starting camera…');
-      expect(getPassSrc).toContain('Starting ID camera…');
       expect(getPassSrc).toContain("faceWebcam.isStarting ? 'Starting…' : 'Retry Camera'");
-      expect(getPassSrc).toContain("idWebcam.isStarting ? 'Starting…' : 'Retry Camera'");
     });
 
     it('KioskPage displays "Starting camera…" and "Starting ID camera…" overlays and "Starting…" on retry', () => {
@@ -180,11 +178,10 @@ describe('Async Feedback, Slow-Network Resilience, and State-Truthfulness Regres
     const getPassSrc = readSrc('src/pages/GetPassPage.tsx');
     const kioskSrc = readSrc('src/pages/KioskPage.tsx');
 
-    it('GetPassPage stops camera, displays "Processing ID image…", and disables actions during compression', () => {
+    it('GetPassPage displays "Processing ID image…" and disables actions during compression', () => {
       expect(getPassSrc).toContain('const [isProcessingId, setIsProcessingId] = useState(false);');
-      expect(getPassSrc).toContain('Processing ID image…');
+      expect(getPassSrc).toContain('Processing image…');
       expect(getPassSrc).toContain('disabled={isProcessingId}');
-      expect(getPassSrc).toContain('disabled={!idWebcam.isActive || isProcessingId}');
     });
 
     it('KioskPage manual ID capture stops camera, displays "Processing ID image…", and disables actions during compression', () => {
@@ -245,7 +242,7 @@ describe('Async Feedback, Slow-Network Resilience, and State-Truthfulness Regres
   // FIX 13: Guard Queue Background Freshness
   // ==========================================================================
   describe('FIX 13: Guard Queue Background Refresh Truthfulness', () => {
-    const guardSrc = readSrc('src/pages/GuardPage.tsx');
+    const guardSrc = readSrc('src/pages/LegacyGuardPage.tsx');
     const hookSrc = readSrc('src/hooks/useGuardQueue.ts');
 
     it('tracks refreshing, lastUpdatedAt, and refreshError without clearing queue', () => {

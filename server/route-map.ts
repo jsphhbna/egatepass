@@ -104,7 +104,7 @@ export const ROUTE_CONTRACT_MATRIX: readonly RouteContract[] = [
     handlerModule: 'server/routes/auth/resend-webhook.ts',
   },
 
-  // Passes Router (2 routes)
+  // Passes Router (3 routes)
   {
     path: '/api/passes/email',
     group: 'passes',
@@ -118,6 +118,13 @@ export const ROUTE_CONTRACT_MATRIX: readonly RouteContract[] = [
     subpath: 'issue',
     allowedMethods: ['POST'],
     handlerModule: 'server/routes/passes/issue.ts',
+  },
+  {
+    path: '/api/passes/verify-identity',
+    group: 'passes',
+    subpath: 'verify-identity',
+    allowedMethods: ['POST'],
+    handlerModule: 'server/routes/passes/verify-identity.ts',
   },
 
   // Device Router (6 routes)
@@ -164,7 +171,7 @@ export const ROUTE_CONTRACT_MATRIX: readonly RouteContract[] = [
     handlerModule: 'server/routes/device/thermal-template.ts',
   },
 
-  // Gate Router (4 routes)
+  // Gate Router (5 routes)
   {
     path: '/api/scan-pass',
     group: 'gate',
@@ -192,6 +199,13 @@ export const ROUTE_CONTRACT_MATRIX: readonly RouteContract[] = [
     subpath: 'sync-offline-registration',
     allowedMethods: ['POST'],
     handlerModule: 'server/routes/gate/sync-offline-registration.ts',
+  },
+  {
+    path: '/api/guard-station-feed',
+    group: 'gate',
+    subpath: 'guard-station-feed',
+    allowedMethods: ['GET'],
+    handlerModule: 'server/routes/gate/guard-station-feed.ts',
   },
 
   // System Router (6 routes)

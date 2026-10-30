@@ -290,5 +290,32 @@ describe('Supabase migration static safety contract', () => {
     expect(migration).toMatch(/revoke all on function api\.get_published_thermal_template\(\) from public, anon, authenticated;/i);
     expect(migration).toMatch(/grant execute on function api\.get_published_thermal_template\(\) to service_role;/i);
   });
+
+  it('applies guard_station enum extension in Migration 38 and online identity redesign in Migration 39', () => {
+    const migration38 = readFileSync('supabase/migrations/20261030000100_guard_station_enum_extension.sql', 'utf8');
+    const migration39 = readFileSync('supabase/migrations/20261030000200_online_identity_and_guard_station_redesign.sql', 'utf8');
+
+    expect(migration38).toContain("alter type public.device_type add value if not exists 'guard_station';");
+
+    expect(migration39).toContain('create table if not exists public.portal_identity_verification_attempts');
+    expect(migration39).toContain('alter table public.portal_identity_verification_attempts enable row level security;');
+    expect(migration39).toContain('revoke all on public.portal_identity_verification_attempts from public, anon, authenticated;');
+    expect(migration39).toContain('grant select, insert, update on public.portal_identity_verification_attempts to service_role;');
+
+    expect(migration39).toContain('identity_verification_id');
+    expect(migration39).toContain('identity_verified_at');
+
+    // api.issue_pass security and identity enforcement
+    expect(migration39).toContain('valid matched identity verification required');
+    expect(migration39).toMatch(/revoke all on function api\.issue_pass[^;]+from public, anon, authenticated;/i);
+    expect(migration39).toMatch(/grant execute on function api\.issue_pass[^;]+to service_role;/i);
+
+    // api.scan_pass automatic online entry
+    expect(migration39).toContain("target.source = 'portal'::public.pass_source");
+    expect(migration39).toContain("status = 'inside'::public.pass_status");
+    expect(migration39).toContain('Entry recorded. Please proceed through the normal security inspection.');
+    expect(migration39).toMatch(/revoke all on function api\.scan_pass[^;]+from public, anon, authenticated;/i);
+    expect(migration39).toMatch(/grant execute on function api\.scan_pass[^;]+to service_role;/i);
+  });
 });
 

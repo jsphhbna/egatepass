@@ -36,9 +36,10 @@ const EXPECTED_30_ROUTES = [
   '/api/auth/resend-webhook',
   '/api/auth/reset-password',
   '/api/auth/send-email-hook',
-  // Passes (2)
+  // Passes (3)
   '/api/passes/email',
   '/api/passes/issue',
+  '/api/passes/verify-identity',
   // Device (6)
   '/api/create-device',
   '/api/delete-device',
@@ -46,11 +47,12 @@ const EXPECTED_30_ROUTES = [
   '/api/update-device-auth',
   '/api/device/reauthenticate',
   '/api/device/thermal-template',
-  // Gate (4)
+  // Gate (5)
   '/api/scan-pass',
   '/api/decide-visit',
   '/api/evidence',
   '/api/sync-offline-registration',
+  '/api/guard-station-feed',
   // System (6)
   '/api/create-user',
   '/api/update-user',
@@ -82,15 +84,15 @@ describe('Vercel Hobby Plan Function Limit Architecture Regressions', () => {
     });
   });
 
-  describe('2. Route Contract Matrix Integrity (31 Preserved API Endpoints)', () => {
-    it('contains exactly 31 route contracts in the matrix', () => {
-      expect(ROUTE_CONTRACT_MATRIX.length).toBe(31);
+  describe('2. Route Contract Matrix Integrity (33 Preserved API Endpoints)', () => {
+    it('contains exactly 33 route contracts in the matrix', () => {
+      expect(ROUTE_CONTRACT_MATRIX.length).toBe(33);
     });
 
-    it('contains all 31 historical external API paths with no duplicates', () => {
+    it('contains all 33 historical external API paths with no duplicates', () => {
       const paths = ROUTE_CONTRACT_MATRIX.map((r) => r.path);
       const uniquePaths = new Set(paths);
-      expect(uniquePaths.size).toBe(31);
+      expect(uniquePaths.size).toBe(33);
 
       for (const expectedPath of EXPECTED_30_ROUTES) {
         expect(paths).toContain(expectedPath);
@@ -117,9 +119,9 @@ describe('Vercel Hobby Plan Function Limit Architecture Regressions', () => {
       expect(getRouteByPath('/api/admin/dashboard')?.subpath).toBe('dashboard');
       expect(getRouteByPath('/api/create-device')?.group).toBe('device');
       expect(getRoutesByGroup('auth').length).toBe(4);
-      expect(getRoutesByGroup('passes').length).toBe(2);
+      expect(getRoutesByGroup('passes').length).toBe(3);
       expect(getRoutesByGroup('device').length).toBe(6);
-      expect(getRoutesByGroup('gate').length).toBe(4);
+      expect(getRoutesByGroup('gate').length).toBe(5);
       expect(getRoutesByGroup('system').length).toBe(6);
       expect(getRoutesByGroup('admin').length).toBe(9);
     });
@@ -220,12 +222,12 @@ describe('Vercel Hobby Plan Function Limit Architecture Regressions', () => {
   });
 
   describe('4. Vercel Configuration Rewrites for Legacy Top-Level Paths', () => {
-    it('contains all 13 top-level API rewrites in vercel.json preceding the SPA fallback', () => {
+    it('contains all 14 top-level API rewrites in vercel.json preceding the SPA fallback', () => {
       const config = JSON.parse(readFileSync('vercel.json', 'utf8')) as {
         rewrites: Array<{ source: string; destination: string }>;
       };
 
-      const topLevel13 = [
+      const topLevel14 = [
         { source: '/api/create-device', destination: '/api/device/create-device' },
         { source: '/api/delete-device', destination: '/api/device/delete-device' },
         { source: '/api/update-device', destination: '/api/device/update-device' },
@@ -234,6 +236,7 @@ describe('Vercel Hobby Plan Function Limit Architecture Regressions', () => {
         { source: '/api/decide-visit', destination: '/api/gate/decide-visit' },
         { source: '/api/evidence', destination: '/api/gate/evidence' },
         { source: '/api/sync-offline-registration', destination: '/api/gate/sync-offline-registration' },
+        { source: '/api/guard-station-feed', destination: '/api/gate/guard-station-feed' },
         { source: '/api/create-user', destination: '/api/system/create-user' },
         { source: '/api/update-user', destination: '/api/system/update-user' },
         { source: '/api/update-settings', destination: '/api/system/update-settings' },
@@ -241,7 +244,7 @@ describe('Vercel Hobby Plan Function Limit Architecture Regressions', () => {
         { source: '/api/reconciliation-items', destination: '/api/system/reconciliation-items' },
       ];
 
-      for (const expectedRewrite of topLevel13) {
+      for (const expectedRewrite of topLevel14) {
         expect(config.rewrites).toContainEqual(expectedRewrite);
       }
 

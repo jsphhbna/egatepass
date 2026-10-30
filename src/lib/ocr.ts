@@ -3,6 +3,8 @@
  * Operates strictly offline on device; does NOT upload images or text to any third-party service.
  */
 
+import { preprocessIdForOcr } from './ocrImageProcessing.js';
+
 export interface ParsedIdNames {
   firstName: string;
   middleName: string;
@@ -29,6 +31,25 @@ export class OcrError extends Error {
 export const OCR_INIT_TIMEOUT_MS = 45000;
 export const OCR_RECOGNIZE_TIMEOUT_MS = 30000;
 
+export function levenshteinDistance(a: string, b: string): number {
+  const m = a.length;
+  const n = b.length;
+  const dp: number[][] = Array.from({ length: m + 1 }, () => Array(n + 1).fill(0));
+  for (let i = 0; i <= m; i++) dp[i]![0] = i;
+  for (let j = 0; j <= n; j++) dp[0]![j] = j;
+  for (let i = 1; i <= m; i++) {
+    for (let j = 1; j <= n; j++) {
+      const cost = a[i - 1] === b[j - 1] ? 0 : 1;
+      dp[i]![j] = Math.min(
+        dp[i - 1]![j]! + 1,
+        dp[i]![j - 1]! + 1,
+        dp[i - 1]![j - 1]! + cost
+      );
+    }
+  }
+  return dp[m]![n]!;
+}
+
 const COMMON_HEADER_WORDS = new Set([
   'REPUBLIC', 'PHILIPPINES', 'PILIPINAS', 'DEPARTMENT', 'TRANSPORTATION',
   'LAND', 'OFFICE', 'COMMISSION', 'IDENTIFICATION', 'CARD', 'SYSTEM',
@@ -46,6 +67,30 @@ const COMMON_HEADER_WORDS = new Set([
   'EXPIRY', 'BIRTH', 'SEX', 'NATIONALITY', 'CIVIL', 'STATUS', 'VALID',
   'UNTIL', 'EXPIRATION',
 ]);
+
+const BILINGUAL_LABEL_TARGETS = [
+  'LAST NAME', 'SURNAME', 'APELYIDO',
+  'GIVEN NAMES', 'FIRST NAME', 'FIRST NAMES', 'MGA PANGALAN',
+  'MIDDLE NAME', 'GITNANG APELYIDO',
+  'DATE OF BIRTH', 'PETSA NG KAPANGANAKAN',
+  'SEX', 'KASARIAN',
+  'ADDRESS', 'TIRAHAN',
+  'PHILIPPINE IDENTIFICATION CARD', 'REPUBLIKA NG PILIPINAS',
+  'NATIONAL ID', 'DRIVERS LICENSE', 'STUDENT ID',
+];
+
+export function isFuzzyLabel(text: string): boolean {
+  const norm = text.toUpperCase().replace(/[^A-Z\s]/g, ' ').replace(/\s+/g, ' ').trim();
+  if (norm.length < 3) return false;
+  for (const target of BILINGUAL_LABEL_TARGETS) {
+    if (norm === target) return true;
+    if (Math.abs(norm.length - target.length) <= 2) {
+      const dist = levenshteinDistance(norm, target);
+      if (dist <= 2) return true;
+    }
+  }
+  return false;
+}
 
 const BILINGUAL_LABEL_REGEX = /^(?:(?:last\s*name|surname|apelyido|given\s*names?|first\s*names?|mga\s*pangalan|middle\s*name|gitnang\s*apelyido)[\s\/\-\.:]*)+/i;
 
@@ -68,13 +113,13 @@ function isPureLabelLine(text: string): boolean {
     .toUpperCase();
   const tokens = stripped.split(' ').filter(Boolean);
   if (tokens.length === 0) return true;
-  return tokens.every((t) => COMMON_HEADER_WORDS.has(t));
+  return tokens.every((t) => COMMON_HEADER_WORDS.has(t) || isFuzzyLabel(t));
 }
 
 function isValidNameWord(word: string): boolean {
   if (word.length < 2) return false;
   const upper = word.toUpperCase();
-  if (COMMON_HEADER_WORDS.has(upper)) return false;
+  if (COMMON_HEADER_WORDS.has(upper) || isFuzzyLabel(upper)) return false;
   // Ignore single letters or Roman numerals or common abbreviations
   if (/^(II|III|IV|JR|SR|MR|MS|MRS)$/i.test(word)) return false;
   return /^[\p{L}\-\.']+$/u.test(word);
@@ -118,35 +163,40 @@ export function extractNamesFromIdText(text: string, overallConfidence = 0): Par
   //       "Given Names / Mga Pangalan: JUAN"
   //       "Middle Name / Gitnang Apelyido: SANTOS"
   for (let i = 0; i < lines.length; i++) {
-    const line = lines[i];
-    if (!line) continue;
+    const line = lines[i]!;
     const nextLine = i + 1 < lines.length ? lines[i + 1] : undefined;
 
     // Last name / Surname
     if (/(?:last\s*name|surname|apelyido)\b/i.test(line)) {
-      let val = isPureLabelLine(line) ? '' : cleanNameCandidate(line);
-      if (!val && nextLine && !/(?:given|first|middle|name|date|birth|sex|address|valid|nationality)/i.test(nextLine)) {
+      let val = cleanNameCandidate(line);
+      if (!val && nextLine && !isPureLabelLine(nextLine) && !/(?:given|first|middle|name|date|birth|sex|address|valid|nationality)/i.test(nextLine)) {
         val = cleanNameCandidate(nextLine);
       }
-      if (val && !result.lastName) result.lastName = toTitleCase(val);
+      if (val && !result.lastName && val.split(' ').every(isValidNameWord)) {
+        result.lastName = toTitleCase(val);
+      }
     }
 
     // First name / Given names
     if (/(?:given\s*names?|first\s*names?|mga\s*pangalan)\b/i.test(line)) {
-      let val = isPureLabelLine(line) ? '' : cleanNameCandidate(line);
-      if (!val && nextLine && !/(?:last|surname|middle|name|date|birth|sex|address|valid|nationality)/i.test(nextLine)) {
+      let val = cleanNameCandidate(line);
+      if (!val && nextLine && !isPureLabelLine(nextLine) && !/(?:last|surname|middle|name|date|birth|sex|address|valid|nationality)/i.test(nextLine)) {
         val = cleanNameCandidate(nextLine);
       }
-      if (val && !result.firstName) result.firstName = toTitleCase(val);
+      if (val && !result.firstName && val.split(' ').every(isValidNameWord)) {
+        result.firstName = toTitleCase(val);
+      }
     }
 
     // Middle name
     if (/(?:middle\s*name|gitnang\s*apelyido)\b/i.test(line)) {
-      let val = isPureLabelLine(line) ? '' : cleanNameCandidate(line);
-      if (!val && nextLine && !/(?:last|surname|first|given|name|date|birth|sex|address|valid|nationality)/i.test(nextLine)) {
+      let val = cleanNameCandidate(line);
+      if (!val && nextLine && !isPureLabelLine(nextLine) && !/(?:last|surname|first|given|name|date|birth|sex|address|valid|nationality)/i.test(nextLine)) {
         val = cleanNameCandidate(nextLine);
       }
-      if (val && !result.middleName) result.middleName = toTitleCase(val);
+      if (val && !result.middleName && val.split(' ').every(isValidNameWord)) {
+        result.middleName = toTitleCase(val);
+      }
     }
   }
 
@@ -157,7 +207,6 @@ export function extractNamesFromIdText(text: string, overallConfidence = 0): Par
 
   // Strategy 2: Comma separated "LASTNAME, FIRSTNAME MIDDLENAME" (Common on Driver's Licenses, PRC, Passports)
   for (const line of lines) {
-    if (!line) continue;
     if (line.includes(',')) {
       const parts = line.split(',');
       const p0 = parts[0];
@@ -183,7 +232,7 @@ export function extractNamesFromIdText(text: string, overallConfidence = 0): Par
   // that don't match card headers or addresses
   const candidateNameLines: string[] = [];
   for (const line of lines) {
-    if (!line) continue;
+    if (isPureLabelLine(line)) continue;
     const cleaned = cleanNameCandidate(line);
     const words = cleaned.split(' ').filter(Boolean);
     if (words.length >= 2 && words.length <= 4) {
@@ -217,6 +266,14 @@ export function extractNamesFromIdText(text: string, overallConfidence = 0): Par
 
 let cachedWorkerPromise: Promise<any> | null = null;
 let activeWorkerInstance: any = null;
+let globalOcrJobCounter = 0;
+
+/**
+ * Gets a fresh unique OCR Job ID to prevent race conditions from cancelled runs.
+ */
+export function getNextOcrJobId(): number {
+  return ++globalOcrJobCounter;
+}
 
 /**
  * Lazily initialize and return a singleton Tesseract worker configured for offline execution.
@@ -295,11 +352,12 @@ export async function terminateLocalOcrWorker(): Promise<void> {
 
 /**
  * Recognize text from an image Blob, File, or image element offline.
- * Bounded with timeouts and direct Blob passing without createObjectURL.
+ * Implements two-pass enhancement (standard vs. high contrast) and timeout management.
  */
 export async function recognizeIdImage(
   imageSource: Blob | File | string,
-  onProgress?: (progress: number) => void
+  onProgress?: (progress: number) => void,
+  jobId?: number
 ): Promise<ParsedIdNames> {
   if (onProgress) {
     onProgress(5);
@@ -313,6 +371,18 @@ export async function recognizeIdImage(
     throw err;
   }
 
+  // Preprocess Pass 1 if source is Blob or File in browser
+  let pass1Source: any = imageSource;
+  if (typeof window !== 'undefined' && typeof imageSource !== 'string' && (imageSource as any) instanceof Blob) {
+    try {
+      const preprocessed = await preprocessIdForOcr(imageSource, 'standard');
+      pass1Source = preprocessed.blob;
+    } catch (e) {
+      console.warn('Pass 1 preprocessing fallback to raw image:', e);
+      pass1Source = imageSource;
+    }
+  }
+
   let timer: NodeJS.Timeout | undefined;
 
   const timeoutPromise = new Promise<never>((_, reject) => {
@@ -321,24 +391,46 @@ export async function recognizeIdImage(
     }, OCR_RECOGNIZE_TIMEOUT_MS);
   });
 
-  const recognitionPromise = (async () => {
-    try {
-      // Pass Blob/File directly without URL.createObjectURL!
-      const { data } = await worker.recognize(imageSource);
-      return data;
-    } catch (err: any) {
-      throw new OcrError('recognition_failed', `OCR recognition failed: ${err?.message || err}`);
-    }
-  })();
+  const runRecognition = async (src: any) => {
+    const { data } = await worker.recognize(src);
+    return data;
+  };
 
   try {
-    const data = await Promise.race([recognitionPromise, timeoutPromise]);
+    const data = await Promise.race([runRecognition(pass1Source), timeoutPromise]);
+    if (jobId != null && jobId !== globalOcrJobCounter) {
+      throw new Error('ocr_job_superseded');
+    }
+
+    let parsed = extractNamesFromIdText(data.text, data.confidence);
+
+    // If Pass 1 did not detect both first and last name, and we have a Blob/File, try Pass 2 (high contrast)
+    if ((!parsed.firstName || !parsed.lastName) && typeof window !== 'undefined' && typeof imageSource !== 'string' && (imageSource as any) instanceof Blob) {
+      try {
+        if (onProgress) onProgress(60);
+        const pass2 = await preprocessIdForOcr(imageSource, 'high_contrast');
+        const dataPass2 = await Promise.race([runRecognition(pass2.blob), timeoutPromise]);
+        if (jobId != null && jobId !== globalOcrJobCounter) {
+          throw new Error('ocr_job_superseded');
+        }
+        const parsedPass2 = extractNamesFromIdText(dataPass2.text, dataPass2.confidence);
+        if (parsedPass2.firstName || parsedPass2.lastName) {
+          parsed = parsedPass2;
+        }
+      } catch (err: any) {
+        if (err?.message === 'ocr_job_superseded') throw err;
+        console.warn('Pass 2 high contrast OCR skipped/failed:', err);
+      }
+    }
+
     if (onProgress) {
       onProgress(100);
     }
-    return extractNamesFromIdText(data.text, data.confidence);
-  } catch (err) {
-    // Fatal failure or timeout terminates the worker
+    return parsed;
+  } catch (err: any) {
+    if (err?.message === 'ocr_job_superseded') {
+      return { firstName: '', middleName: '', lastName: '', confidence: 0 };
+    }
     await terminateLocalOcrWorker();
     throw err;
   } finally {

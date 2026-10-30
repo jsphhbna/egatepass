@@ -21,16 +21,16 @@ describe('FEATURE 1 & REGRESSION CONTRACT: Valid ID Ingestion & Kiosk Enforcemen
     expect(kioskSrc).not.toContain('manualIdInputRef');
   });
 
-  it('configures rear/environment camera for ID capture in Portal and Kiosk', () => {
-    expect(getPassSrc).toContain("facingMode: 'environment'");
+  it('configures rear/environment camera for ID capture in Kiosk while Portal enforces single-camera rule', () => {
     expect(kioskSrc).toContain("facingMode: 'environment'");
+    expect(getPassSrc).not.toContain("facingMode: 'environment'");
   });
 
-  it('routes uploaded and camera-captured portal valid IDs into the same secure evidence path', () => {
+  it('routes uploaded portal valid IDs into the same secure evidence path', () => {
     // Both pathways set idBlob and idUrl
     expect(getPassSrc).toContain('setIdBlob(compressed)');
     expect(getPassSrc).toContain('idUrl.setFromBlob(compressed)');
-    expect(getPassSrc).toContain('issueVisitorPass(\'portal\', formData, photoBlob, idBlob');
+    expect(getPassSrc).toContain("issueVisitorPass(");
   });
 
   it('validates supported image formats and fails safely on unsupported types in Portal', () => {

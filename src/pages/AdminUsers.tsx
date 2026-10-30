@@ -15,8 +15,8 @@ const userSchema = z.object({
   name: z.string().min(2, 'Name is required').max(50),
   email: z.string().email('Valid email required'),
   password: passwordSchema,
-  role: z.enum({ admin: 'admin', guard: 'guard' }, {
-    message: 'Select a valid role',
+  role: z.literal('admin', {
+    message: 'New staff accounts are limited to Admin role',
   }),
 });
 type UserFormData = z.infer<typeof userSchema>;
@@ -67,7 +67,7 @@ export function AdminUsers() {
     formState: { errors, isSubmitting },
   } = useForm<UserFormData>({
     resolver: zodResolver(userSchema),
-    defaultValues: { role: 'guard' },
+    defaultValues: { role: 'admin' },
   });
 
   async function loadUsers() {
@@ -147,8 +147,8 @@ export function AdminUsers() {
   }, []);
 
   async function onSubmit(data: UserFormData) {
-    if (!canManageAdministrativeRoles && data.role !== 'guard') {
-      toast.error('Admins may only create Guard accounts');
+    if (!canManageAdministrativeRoles) {
+      toast.error('Only superadmins may create administrator accounts');
       return;
     }
     try {
@@ -456,6 +456,10 @@ export function AdminUsers() {
             </p>
           </FormField>
 
+          <div className="rounded-md border border-[var(--color-info)] bg-[var(--color-info-light)] p-3 text-xs text-[var(--color-info-dark)]">
+            Guard staff accounts for daily operations are now managed as dedicated <strong>Guard Station</strong> devices under the <strong>Devices</strong> tab. New staff accounts are created as Admin.
+          </div>
+
           <FormField label="Role" id="new-user-role" requirement="required" error={errors.role?.message}>
             <Select
               id="new-user-role"
@@ -464,8 +468,7 @@ export function AdminUsers() {
               required
               aria-required="true"
             >
-              <option value="guard">Guard</option>
-              {canManageAdministrativeRoles && <option value="admin">Admin</option>}
+              <option value="admin">Admin</option>
             </Select>
           </FormField>
 
