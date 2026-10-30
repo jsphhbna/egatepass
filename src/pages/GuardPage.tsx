@@ -15,7 +15,6 @@ import {
   WifiOff,
   AlertCircle,
   CheckCircle2,
-  Phone,
   FileText,
 } from 'lucide-react';
 
@@ -33,7 +32,6 @@ interface StationEntry {
   source: 'portal' | 'kiosk';
   enteredAt: string;
   visitorName: string;
-  contactNumber: string;
   purpose: string;
   photoEvidenceId: string | null;
   gate: string;
@@ -261,14 +259,6 @@ export function GuardPage() {
                           <div>
                             <span className="text-xs text-[var(--color-text-muted)] block">Purpose of Visit:</span>
                             <span className="font-medium text-[var(--color-text-primary)]">{latestEntry?.purpose}</span>
-                          </div>
-                        </div>
-
-                        <div className="flex items-center gap-2">
-                          <Phone className="h-4 w-4 text-[var(--color-brand)] flex-shrink-0" />
-                          <div>
-                            <span className="text-xs text-[var(--color-text-muted)] block">Contact Number:</span>
-                            <span className="font-medium text-[var(--color-text-primary)]">{latestEntry?.contactNumber}</span>
                           </div>
                         </div>
                       </div>

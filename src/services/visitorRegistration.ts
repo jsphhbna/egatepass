@@ -397,14 +397,45 @@ export async function uploadCheckpointedEvidence(
   return { intentId: checkpoint.intentId, checkpoint };
 }
 
+export type CanonicalVerificationOutcome =
+  | 'matched'
+  | 'mismatch'
+  | 'no_face_in_id'
+  | 'no_face_in_selfie'
+  | 'multiple_selfie_faces'
+  | 'ambiguous_id_faces'
+  | 'low_quality_id'
+  | 'low_quality_selfie'
+  | 'engine_error';
+
 export interface VerifyIdentityResponse {
-  outcome: 'matched' | 'mismatched' | 'face_not_detected' | 'quality_rejected';
+  outcome: CanonicalVerificationOutcome;
   matched: boolean;
   verificationId?: string;
   expiresAt?: string;
   message?: string;
   reasonCode?: string;
   error?: string;
+}
+
+/**
+ * Invalidate checkpoint and intent ID on the transaction when evidence is retaken or replaced.
+ * Ensures fresh blobs generate fresh intents and require new authoritative verification.
+ */
+export function invalidatePortalEvidenceCheckpoint(
+  transaction: IssueTransaction | null | undefined,
+  kind: 'photo' | 'id'
+): void {
+  if (!transaction) return;
+  if (kind === 'photo') {
+    transaction.photoCheckpoint = null;
+    transaction.photoIntentId = null;
+    (transaction as any).verifiedPhotoIntentId = null;
+  } else if (kind === 'id') {
+    transaction.idCheckpoint = null;
+    transaction.idIntentId = null;
+    (transaction as any).verifiedIdIntentId = null;
+  }
 }
 
 export async function verifyPortalIdentity(

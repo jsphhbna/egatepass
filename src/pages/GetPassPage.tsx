@@ -13,9 +13,10 @@ import {
   uploadCheckpointedEvidence,
   verifyPortalIdentity,
   preflightLiveFace,
+  invalidatePortalEvidenceCheckpoint,
   type PortalIssueTransaction,
 } from '@/services/visitorRegistration';
-import { TurnstileWidget } from '@/components/TurnstileWidget';
+import { TurnstileWidget, type TurnstileWidgetRef } from '@/components/TurnstileWidget';
 import { generateBrandedQrDataUrl } from '@/lib/brandedQr';
 import QRCode from 'qrcode';
 import { recognizeIdImage, terminateLocalOcrWorker } from '@/lib/ocr';
@@ -142,13 +143,9 @@ export function GetPassPage() {
   const [verificationError, setVerificationError] = useState<string | null>(null);
 
   // Turnstile & Pass State
-  const [captchaToken, setCaptchaToken] = useState<string | null>(null);
-  const [turnstileKey, setTurnstileKey] = useState(0);
-
-  function resetTurnstile() {
-    setCaptchaToken(null);
-    setTurnstileKey((prev) => prev + 1);
-  }
+  const turnstileRef = useRef<TurnstileWidgetRef>(null);
+  const [isStartingRegistration, setIsStartingRegistration] = useState(false);
+  const [registrationSecurityError, setRegistrationSecurityError] = useState<string | null>(null);
 
   const [qrDataUrl, setQrDataUrl] = useState<string | null>(null);
   const [passId, setPassId] = useState<string | null>(null);
@@ -185,15 +182,22 @@ export function GetPassPage() {
   ]);
 
   function onRetakeId() {
+    invalidatePortalEvidenceCheckpoint(portalTransactionRef.current, 'id');
     setIdBlob(null);
     idUrl.clear();
     setIdReusedFromOcr(false);
     setIdentityVerified(false);
+    setVerificationError(null);
+    setIdQualityError(null);
+    setStep('id');
   }
 
   function resetRegistrationFlow() {
     ocrGenerationRef.current += 1;
     void terminateLocalOcrWorker();
+    invalidatePortalEvidenceCheckpoint(portalTransactionRef.current, 'photo');
+    invalidatePortalEvidenceCheckpoint(portalTransactionRef.current, 'id');
+    portalTransactionRef.current = null;
     livePhotoIntentIdRef.current = null;
     setStep('form');
     setPhotoBlob(null);
@@ -201,7 +205,12 @@ export function GetPassPage() {
     photoUrl.clear();
     idUrl.clear();
     setIdentityVerified(false);
+    setVerificationError(null);
+    setLiveFaceQualityError(null);
+    setIdQualityError(null);
     setIdReusedFromOcr(false);
+    setOcrSuccessNotice(null);
+    setRegistrationSecurityError(null);
   }
 
   // Unmount cleanup for OCR worker
@@ -295,10 +304,43 @@ export function GetPassPage() {
   // ============================================================
   // STEP 1: FORM & OPTIONAL OCR
   // ============================================================
-  function onFormNext(data: GetPassFormData) {
+  async function onFormNext(data: GetPassFormData) {
     void data;
-    setStep('photo');
-    void faceWebcam.start();
+    if (isStartingRegistration) return;
+    setRegistrationSecurityError(null);
+
+    // If valid portal transaction already exists, advance directly without re-challenging
+    if (portalTransactionRef.current?.token) {
+      setStep('photo');
+      void faceWebcam.start();
+      return;
+    }
+
+    setIsStartingRegistration(true);
+    try {
+      let freshCaptchaToken: string | undefined;
+      if (turnstileRef.current) {
+        freshCaptchaToken = await turnstileRef.current.executeChallenge();
+      }
+
+      const tx = await createPortalIssueTransaction(freshCaptchaToken);
+      portalTransactionRef.current = tx;
+      issueRequestId.current = tx.requestId as ReturnType<typeof crypto.randomUUID>;
+
+      // Reset challenge state after consumption
+      turnstileRef.current?.resetChallenge();
+
+      setStep('photo');
+      void faceWebcam.start();
+    } catch (err: any) {
+      console.warn('Registration security challenge or transaction error:', err);
+      turnstileRef.current?.resetChallenge();
+      const msg = err?.message || 'Could not verify security check. Please try again.';
+      setRegistrationSecurityError(msg);
+      toast.error(msg);
+    } finally {
+      setIsStartingRegistration(false);
+    }
   }
 
   async function handleOcrFileSelected(e: React.ChangeEvent<HTMLInputElement>) {
@@ -326,6 +368,7 @@ export function GetPassPage() {
       const normalized = await normalizeIdentityDocumentImage(file);
       if (generation !== ocrGenerationRef.current) return;
 
+      invalidatePortalEvidenceCheckpoint(portalTransactionRef.current, 'id');
       setIdBlob(normalized);
       idUrl.setFromBlob(normalized);
       setIdReusedFromOcr(true);
@@ -333,8 +376,9 @@ export function GetPassPage() {
 
       // Invalidate existing verified state if ID changes
       setIdentityVerified(false);
+      setVerificationError(null);
 
-      // 2. Perform local OCR recognition in browser memory
+      // 2. Perform local OCR recognition in browser memory with cancellation token
       const parsed = await recognizeIdImage(file);
       if (generation !== ocrGenerationRef.current) return;
 
@@ -362,8 +406,9 @@ export function GetPassPage() {
         setOcrSuccessNotice('ID image saved. Please check and enter your name details manually.');
         toast.info('ID image saved. You can enter or confirm your name details.');
       }
-    } catch (err) {
+    } catch (err: any) {
       if (generation !== ocrGenerationRef.current) return;
+      if (err?.message === 'ocr_job_superseded') return;
       console.warn('OCR processing failure:', err);
       toast.info('Automatic text recognition skipped. Your ID image was saved for later verification.');
     } finally {
@@ -379,6 +424,7 @@ export function GetPassPage() {
   function onCaptureLivePhoto() {
     const blob = faceWebcam.capture({ mirror: false });
     if (blob) {
+      invalidatePortalEvidenceCheckpoint(portalTransactionRef.current, 'photo');
       setPhotoBlob(blob);
       photoUrl.setFromBlob(blob);
       setLiveFaceQualityError(null);
@@ -391,6 +437,7 @@ export function GetPassPage() {
   }
 
   function onRetakeLivePhoto() {
+    invalidatePortalEvidenceCheckpoint(portalTransactionRef.current, 'photo');
     photoUrl.clear();
     setPhotoBlob(null);
     setLiveFaceQualityError(null);
@@ -415,10 +462,11 @@ export function GetPassPage() {
         return;
       }
 
-      // 2. Prepare transaction & upload live photo intent for trusted server preflight
+      // 2. Verify authenticated portal transaction exists
       if (!portalTransactionRef.current) {
-        portalTransactionRef.current = await createPortalIssueTransaction();
-        issueRequestId.current = portalTransactionRef.current.requestId as ReturnType<typeof crypto.randomUUID>;
+        setStep('form');
+        toast.error('Session expired. Please complete visitor details to continue.');
+        return;
       }
 
       const tx = portalTransactionRef.current;
@@ -480,9 +528,12 @@ export function GetPassPage() {
         return;
       }
 
+      invalidatePortalEvidenceCheckpoint(portalTransactionRef.current, 'id');
       setIdBlob(normalized);
       idUrl.setFromBlob(normalized);
       setIdReusedFromOcr(false);
+      setIdentityVerified(false);
+      setVerificationError(null);
       toast.success('Valid ID added successfully.');
     } catch {
       toast.error('The selected file could not be processed as an image.');
@@ -515,8 +566,9 @@ export function GetPassPage() {
     try {
       // 1. Obtain authenticated portal session / transaction
       if (!portalTransactionRef.current) {
-        portalTransactionRef.current = await createPortalIssueTransaction();
-        issueRequestId.current = portalTransactionRef.current.requestId as ReturnType<typeof crypto.randomUUID>;
+        setStep('form');
+        toast.error('Session expired. Please complete visitor details to continue.');
+        return;
       }
 
       const tx = portalTransactionRef.current;
@@ -599,11 +651,12 @@ export function GetPassPage() {
     try {
       const formData = getValues();
       if (!portalTransactionRef.current) {
-        portalTransactionRef.current = await createPortalIssueTransaction(captchaToken ?? undefined);
-        issueRequestId.current = portalTransactionRef.current.requestId as ReturnType<typeof crypto.randomUUID>;
+        setStep('form');
+        toast.error('Session expired. Please complete visitor details to continue.');
+        return;
       }
 
-      const result = await issueVisitorPass('portal', formData, photoBlob, idBlob, issueRequestId.current, captchaToken ?? undefined, portalTransactionRef.current);
+      const result = await issueVisitorPass('portal', formData, photoBlob, idBlob, issueRequestId.current, undefined, portalTransactionRef.current);
 
       setPassId(result.passId);
       setRawQrToken(result.qrToken);
@@ -651,7 +704,7 @@ export function GetPassPage() {
       setStep('review');
       toast.error('Failed to generate pass. Please try again.');
     } finally {
-      resetTurnstile();
+      // Submission finalized
     }
   }
 
@@ -856,7 +909,25 @@ export function GetPassPage() {
               )}
             </div>
 
-            <Button type="submit" disabled={!isValid} className="w-full" icon={<ArrowRight className="h-4 w-4" />}>
+            {registrationSecurityError && (
+              <div className="rounded-xl border border-[var(--color-danger)] bg-[var(--color-danger-light)] p-3 text-xs text-[var(--color-danger-dark)]" role="alert">
+                {registrationSecurityError}
+              </div>
+            )}
+
+            <TurnstileWidget
+              ref={turnstileRef}
+              execution="execute"
+              appearance="interaction-only"
+            />
+
+            <Button
+              type="submit"
+              disabled={!isValid || isStartingRegistration}
+              loading={isStartingRegistration}
+              className="w-full"
+              icon={<ArrowRight className="h-4 w-4" />}
+            >
               Continue to Live Face Capture
             </Button>
           </form>
@@ -1140,12 +1211,7 @@ export function GetPassPage() {
                 <div className="flex flex-col sm:flex-row gap-3">
                   <Button
                     variant="secondary"
-                    onClick={() => {
-                      setPhotoBlob(null);
-                      photoUrl.clear();
-                      setStep('photo');
-                      void faceWebcam.start();
-                    }}
+                    onClick={onRetakeLivePhoto}
                     className="flex-1"
                     icon={<RotateCcw className="h-4 w-4" />}
                   >
@@ -1153,9 +1219,7 @@ export function GetPassPage() {
                   </Button>
                   <Button
                     variant="secondary"
-                    onClick={() => {
-                      idFileInputRef.current?.click();
-                    }}
+                    onClick={onRetakeId}
                     className="flex-1"
                     icon={<Upload className="h-4 w-4" />}
                   >
@@ -1321,10 +1385,7 @@ export function GetPassPage() {
                     />
                     <button
                       type="button"
-                      onClick={() => {
-                        onRetakeId();
-                        setStep('id');
-                      }}
+                      onClick={onRetakeId}
                       className="mt-1.5 text-xs font-semibold text-[var(--color-brand)] hover:underline inline-flex items-center gap-1"
                     >
                       <RotateCcw className="h-3 w-3" />
@@ -1334,8 +1395,6 @@ export function GetPassPage() {
                 )}
               </div>
             </div>
-
-            <TurnstileWidget key={turnstileKey} onVerify={setCaptchaToken} />
 
             <div className="flex flex-col sm:flex-row gap-3">
               <Button

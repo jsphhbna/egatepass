@@ -121,12 +121,12 @@ async function handleRequest(request: Request): Promise<Response> {
     const passList = passes || [];
     const visitorIds = Array.from(new Set(passList.map((p) => p.visitor_id)));
 
-    let visitors: Array<{ id: string; full_name: string; contact_number: string; purpose: string }> = [];
+    let visitors: Array<{ id: string; full_name: string; purpose: string }> = [];
     let photoEvidence: Array<{ id: string; visitor_id: string }> = [];
 
     if (visitorIds.length > 0) {
       const [{ data: vData, error: vError }, { data: eData, error: eError }] = await Promise.all([
-        admin.from('visitors').select('id, full_name, contact_number, purpose').in('id', visitorIds),
+        admin.from('visitors').select('id, full_name, purpose').in('id', visitorIds),
         admin.from('visitor_evidence').select('id, visitor_id').in('visitor_id', visitorIds).eq('kind', 'photo').is('purged_at', null),
       ]);
 
@@ -149,7 +149,6 @@ async function handleRequest(request: Request): Promise<Response> {
         source: p.source,
         enteredAt: p.time_in || p.entry_scanned_at,
         visitorName: v?.full_name || 'Visitor',
-        contactNumber: v?.contact_number || '',
         purpose: v?.purpose || '',
         photoEvidenceId: photoMap.get(p.visitor_id) || null,
         gate: p.gate,

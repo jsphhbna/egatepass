@@ -26,7 +26,7 @@ async function handleRequest(request: Request): Promise<Response> {
       return jsonResponse(403, { error: 'Access denied' });
     }
 
-    let staffActor: { id: string; role: 'guard' | 'admin' | 'superadmin' } | null = null;
+    let staffActor: { id: string; role: 'admin' | 'superadmin' } | null = null;
     let stationDevice: { id: string; gate: string } | null = null;
 
     const { data: staff, error: staffError } = await admin.from('staff_profiles')
@@ -41,9 +41,9 @@ async function handleRequest(request: Request): Promise<Response> {
       staff.active &&
       !staff.must_change_password &&
       staff.privacy_accepted_at &&
-      ['guard', 'admin', 'superadmin'].includes(staff.role)
+      ['admin', 'superadmin'].includes(staff.role)
     ) {
-      staffActor = { id: session.user.id, role: staff.role as 'guard' | 'admin' | 'superadmin' };
+      staffActor = { id: session.user.id, role: staff.role as 'admin' | 'superadmin' };
     } else {
       const { data: device, error: deviceError } = await admin.from('devices')
         .select('user_id, status, type, gate')
@@ -77,20 +77,18 @@ async function handleRequest(request: Request): Promise<Response> {
       if (isExpired) {
         return jsonResponse(410, { error: 'Evidence expired' });
       }
-      // Same-gate confinement: pass must belong to the device's gate
+      // Station operational confinement: portal-originated pass at this gate that has scanned entry
+      // (Legacy human guard operational verification previously checked: .eq('status', 'pending'))
       const { count, error: passError } = await admin.from('passes').select('id', { count: 'exact', head: true })
         .eq('visitor_id', evidence.visitor_id)
         .eq('gate', stationDevice.gate)
-        .in('status', ['issued', 'pending', 'inside', 'exited']);
+        .eq('source', 'portal')
+        .not('entry_scanned_at', 'is', null)
+        .in('status', ['inside', 'exited']);
       if (passError) throw passError;
       if (!count) return jsonResponse(403, { error: 'Evidence is not operationally accessible at this station' });
     } else if (staffActor) {
       if (isExpired) {
-        // Ordinary guards cannot access expired evidence even under hold
-        if (staffActor.role === 'guard') {
-          return jsonResponse(410, { error: 'Evidence expired' });
-        }
-
         // Admins and Super Admins may review expired evidence ONLY if an active incident hold protects it
         const { data: visitorHold, error: visitorHoldError } = await admin
           .from('incident_holds')
@@ -152,13 +150,6 @@ async function handleRequest(request: Request): Promise<Response> {
           ).catch(() => undefined);
           return jsonResponse(503, { error: 'Audit recording unavailable' });
         }
-      } else if (staffActor.role === 'guard') {
-        // Guard access is scoped to operational verification (.eq('status', 'pending') and active recovery passes)
-        const { count, error: passError } = await admin.from('passes').select('id', { count: 'exact', head: true })
-          .eq('visitor_id', evidence.visitor_id)
-          .eq('status', 'pending');
-        if (passError) throw passError;
-        if (!count) return jsonResponse(403, { error: 'Evidence is not operationally accessible' });
       }
     }
 

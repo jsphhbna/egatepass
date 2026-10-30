@@ -798,8 +798,8 @@ describe('Deep Dive 1 + Deep Dive 2 Root-Cause Closure Test Suite', () => {
         insert into public.staff_profiles (
           user_id, display_name, role, active, must_change_password, privacy_accepted_at
         ) values (
-          '00000000-0000-0000-0000-000000000001'::uuid, 'Guard Tester', 'guard'::public.staff_role, true, false, now()
-        ) on conflict (user_id) do update set active = true, privacy_accepted_at = now();
+          '00000000-0000-0000-0000-000000000001'::uuid, 'Admin Tester', 'admin'::public.staff_role, true, false, now()
+        ) on conflict (user_id) do update set role = 'admin'::public.staff_role, active = true, privacy_accepted_at = now();
       `);
 
       let rejected = false;

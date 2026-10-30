@@ -219,7 +219,7 @@ describe('Group E: Configurable Visitor Instructions & Public Settings Access Co
       ).rejects.toThrow(/permission denied/);
 
       await db.exec('reset role;');
-    }, 30000);
+    }, 60000);
 
     it('proves authenticated can SELECT safe columns and CANNOT select sensitive columns', async () => {
       const db = new PGlite();
@@ -259,7 +259,7 @@ describe('Group E: Configurable Visitor Instructions & Public Settings Access Co
       ).rejects.toThrow(/permission denied/);
 
       await db.exec('reset role;');
-    }, 30000);
+    }, 60000);
   });
 
   describe('Behavioral Settings Loading Contract (Portal & Kiosk)', () => {

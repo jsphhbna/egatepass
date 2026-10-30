@@ -43,7 +43,7 @@ describe('Guard Station Device, Feed & Evidence Boundaries (Executable + Contrac
     expect(evidenceSource).toContain("Guard station cannot access ID evidence");
     // Lifecycle status containment must NOT include nonexistent 'completed'
     expect(evidenceSource).not.toContain("'completed'");
-    expect(evidenceSource).toContain(".in('status', ['issued', 'pending', 'inside', 'exited'])");
+    expect(evidenceSource).toContain(".in('status', ['inside', 'exited'])");
   });
 
   it('4. Executable PostgreSQL test: Guard Station feed criteria matches portal entered passes only', async () => {

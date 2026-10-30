@@ -126,8 +126,8 @@ describe('Guard Keyset Pagination Database Contracts & Mutation Invariants (PGli
       on conflict (id) do update set email_confirmed_at = now();
 
       insert into public.staff_profiles (user_id, display_name, role, active, must_change_password, privacy_accepted_at)
-      values ('${GUARD_UID}', 'Keyset Guard', 'guard', true, false, now())
-      on conflict (user_id) do update set active = true, must_change_password = false, privacy_accepted_at = now();
+      values ('${GUARD_UID}', 'Keyset Staff', 'admin', true, false, now())
+      on conflict (user_id) do update set role = 'admin', active = true, must_change_password = false, privacy_accepted_at = now();
 
       insert into auth.users (id, email, is_anonymous, email_confirmed_at)
       values ('${VISITOR_OWNER}', 'visitor-owner@example.com', true, now())

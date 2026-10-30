@@ -200,9 +200,9 @@ describe('PATCH 2 & 3: Authoritative Pass Expiration and Truthful Metric Event C
     const GUARD_UID = '00000000-0000-4000-b000-000000000099';
     await db.exec(`
       insert into auth.users (id, email, is_anonymous, email_confirmed_at)
-      values ('${GUARD_UID}', 'guard-queue@earist.edu.ph', false, now());
+      values ('${GUARD_UID}', 'admin-queue@earist.edu.ph', false, now());
       insert into public.staff_profiles (user_id, display_name, role, active, must_change_password, privacy_accepted_at)
-      values ('${GUARD_UID}', 'Officer Queue', 'guard', true, false, now());
+      values ('${GUARD_UID}', 'Officer Queue', 'admin', true, false, now());
     `);
 
     const OWNER_ID = '00000000-0000-4000-e000-000000000020';
@@ -252,18 +252,18 @@ describe('PATCH 2 & 3: Authoritative Pass Expiration and Truthful Metric Event C
     const db = new PGlite();
     await applyAllMigrations(db);
 
-    const GUARD_UID = '00000000-0000-4000-b000-000000000098';
+    const ADMIN_UID = '00000000-0000-4000-b000-000000000098';
     await db.exec(`
       insert into auth.users (id, email, is_anonymous, email_confirmed_at)
-      values ('${GUARD_UID}', 'guard-recovery@earist.edu.ph', false, now());
+      values ('${ADMIN_UID}', 'admin-recovery@earist.edu.ph', false, now());
       insert into public.staff_profiles (user_id, display_name, role, active, must_change_password, privacy_accepted_at)
-      values ('${GUARD_UID}', 'Officer Recovery', 'guard', true, false, now());
+      values ('${ADMIN_UID}', 'Officer Recovery', 'admin', true, false, now());
     `);
 
     // Recovery session claims
     await db.exec(`
       set role authenticated;
-      set request.jwt.claims = '{"sub": "${GUARD_UID}", "role": "authenticated", "amr": [{"method": "recovery"}]}';
+      set request.jwt.claims = '{"sub": "${ADMIN_UID}", "role": "authenticated", "amr": [{"method": "recovery"}]}';
     `);
 
     await expect(db.query('select api.guard_dashboard(10, 0);')).rejects.toThrow('recovery_session_forbidden');
@@ -275,7 +275,7 @@ describe('PATCH 2 & 3: Authoritative Pass Expiration and Truthful Metric Event C
       set request.jwt.claims = '{"sub": "${ANON_UID}", "role": "authenticated", "amr": [{"method": "password"}]}';
     `);
 
-    await expect(db.query('select api.guard_dashboard(10, 0);')).rejects.toThrow('active guard or administrator required');
+    await expect(db.query('select api.guard_dashboard(10, 0);')).rejects.toThrow('administrator required');
   }, 60000);
 
   it('D. Cross-day regression fixture (3D): Pass issued Oct 25, scanned & approved & exited Oct 26', async () => {

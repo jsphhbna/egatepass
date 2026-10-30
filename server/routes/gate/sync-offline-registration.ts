@@ -42,7 +42,7 @@ async function handleRequest(request: Request): Promise<Response> {
     const { admin } = getServerSupabaseClients();
     let actor;
     try {
-      actor = await requireStaffActor(admin, token, ['guard', 'superadmin']);
+      actor = await requireStaffActor(admin, token, ['admin', 'superadmin']);
     } catch (err) {
       if (err instanceof HttpError) {
         if (err.status === 401) return jsonResponse(401, { error: 'Invalid or expired session' });

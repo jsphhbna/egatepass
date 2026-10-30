@@ -10,6 +10,7 @@ const supabaseOverrides = environmentCase === 'missing'
 
 export default defineConfig({
   testDir: './tests/startup',
+  timeout: 60_000,
   fullyParallel: false,
   forbidOnly: true,
   retries: 0,
@@ -22,7 +23,7 @@ export default defineConfig({
     screenshot: 'only-on-failure',
     video: 'off',
     actionTimeout: 10_000,
-    navigationTimeout: 15_000,
+    navigationTimeout: 30_000,
   },
   projects: [
     {

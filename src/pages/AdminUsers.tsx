@@ -376,8 +376,8 @@ export function AdminUsers() {
   }
 
   function roleOptionsFor(user: AppUserWithId): UserRole[] {
-    if (user.role === 'guard') return ['guard', 'admin'];
-    if (user.role === 'admin') return ['guard', 'admin', 'superadmin'];
+    // Legacy Guard accounts display their current role but can only be promoted to Admin or Superadmin.
+    if (user.role === 'guard') return ['guard', 'admin', 'superadmin'];
     return ['admin', 'superadmin'];
   }
 
@@ -499,10 +499,17 @@ export function AdminUsers() {
                 <DataTableCell className="font-semibold">{user.name}</DataTableCell>
                 <DataTableCell className="text-[var(--color-text-secondary)]">{user.email}</DataTableCell>
                 <DataTableCell>
-                  <StatusBadge 
-                    status={user.role}
-                    label={formatUserRole(user.role)}
-                  />
+                  <div className="flex items-center gap-1.5 flex-wrap">
+                    <StatusBadge 
+                      status={user.role}
+                      label={formatUserRole(user.role)}
+                    />
+                    {user.role === 'guard' && (
+                      <span className="inline-flex items-center rounded-md bg-amber-50 px-1.5 py-0.5 text-[10px] font-medium text-amber-800 ring-1 ring-inset ring-amber-600/20">
+                        Deprecated
+                      </span>
+                    )}
+                  </div>
                 </DataTableCell>
                 <DataTableCell>
                   {user.decommissionedAt ? (

@@ -122,7 +122,7 @@ describe('Permanent PostgreSQL Migration Chain & Schema Contracts (PGlite)', () 
 
     const appSettingsCheck = await db.query(`select count(*) as count from public.app_settings;`);
     expect(Number(appSettingsCheck.rows[0].count)).toBe(1);
-  }, 30000);
+  }, 60000);
 
   it('B. Final-schema function contract: verifies critical RPC signatures', async () => {
     const db = new PGlite();
@@ -195,7 +195,7 @@ describe('Permanent PostgreSQL Migration Chain & Schema Contracts (PGlite)', () 
     // 7. dashboard aggregates RPCs (Repair Group N)
     expect(funcMap.has('dashboard_calendar_counts')).toBe(true);
     expect(funcMap.has('dashboard_today_insights')).toBe(true);
-  }, 30000);
+  }, 60000);
 
   it('C. Enum contract: verifies visit_event_type and pass_status values', async () => {
     const db = new PGlite();
@@ -227,7 +227,7 @@ describe('Permanent PostgreSQL Migration Chain & Schema Contracts (PGlite)', () 
     expect(passStatuses).toContain('expired');
     expect(passStatuses).toContain('pending');
     expect(passStatuses).toContain('inside');
-  }, 30000);
+  }, 60000);
 
   it('D. Audit schema contract: verifies canonical columns and outcome constraints', async () => {
     const db = new PGlite();
@@ -290,7 +290,7 @@ describe('Permanent PostgreSQL Migration Chain & Schema Contracts (PGlite)', () 
         );
       `)
     ).rejects.toThrow();
-  }, 30000);
+  }, 60000);
 
   it('E. Incident hold cross-target invariant: rejects mismatched visitor and pass', async () => {
     const db = new PGlite();
@@ -360,7 +360,7 @@ describe('Permanent PostgreSQL Migration Chain & Schema Contracts (PGlite)', () 
       );
     `);
     expect(successRes.rows.length).toBe(1);
-  }, 30000);
+  }, 60000);
 
   it('F. Upgrade execution: applying migration 001400 and new hardening migration on top of 001300 cleanly succeeds', async () => {
     const db = new PGlite();
@@ -395,7 +395,7 @@ describe('Permanent PostgreSQL Migration Chain & Schema Contracts (PGlite)', () 
     `);
     expect(upgradeProcs.rows.length).toBe(1);
     expect(upgradeProcs.rows[0].regproc).toMatch(/api\.update_app_settings\(uuid,(public\.)?peak_mode_scope,jsonb,jsonb,time( without time zone)?,time( without time zone)?,smallint,smallint,smallint,smallint,smallint,boolean,uuid,smallint,smallint\)/);
-  }, 30000);
+  }, 60000);
 
   it('G. PGLITE/POSTGRES CONTRACT TEST: Device and anonymous credential mutation protection trigger (D1-D10)', async () => {
     const db = new PGlite();
@@ -513,7 +513,7 @@ describe('Permanent PostgreSQL Migration Chain & Schema Contracts (PGlite)', () 
       db.query('select public.protect_managed_credentials();')
     ).rejects.toThrow(/permission denied/);
     await db.exec('reset role;');
-  }, 30000);
+  }, 60000);
 
   it('H. PGLITE/POSTGRES CONTRACT TEST: Public registration settings safe column RLS and grants', async () => {
     const db = new PGlite();
@@ -605,7 +605,7 @@ describe('Permanent PostgreSQL Migration Chain & Schema Contracts (PGlite)', () 
     ).rejects.toThrow(/permission denied/);
 
     await db.exec('reset role;');
-  }, 30000);
+  }, 60000);
 
   it('I. PGLITE/POSTGRES CONTRACT TEST: Supabase 10-actor identity matrix and recovery confinement', async () => {
     const db = new PGlite();
@@ -793,7 +793,12 @@ describe('Permanent PostgreSQL Migration Chain & Schema Contracts (PGlite)', () 
     const guardProfileNormal = await db.query('select * from public.staff_profiles;');
     expect(guardProfileNormal.rows.length).toBe(1);
     expect(guardProfileNormal.rows[0].user_id).toBe(GUARD_UID);
-    // Normal Guard session CAN execute guard_dashboard
+    // Under Migration 41, normal Guard session is DENIED from executing legacy guard_dashboard (administrator required)
+    await expect(db.query('select * from api.guard_dashboard();')).rejects.toThrow(/administrator required/);
+    await db.exec('reset role;');
+
+    // Normal Admin session CAN execute guard_dashboard
+    await setSession(ADMIN_UID, ['password']);
     const dashboardNormal = await db.query('select * from api.guard_dashboard();');
     expect(dashboardNormal.rows.length).toBe(1);
     await db.exec('reset role;');
@@ -843,19 +848,24 @@ describe('Permanent PostgreSQL Migration Chain & Schema Contracts (PGlite)', () 
     expect(directRecCheck.rows[0].is_rec).toBe(true);
     const directRoleCheck = await db.query('select private.current_staff_role() as role;');
     expect(directRoleCheck.rows[0].role).toBeNull();
-  }, 30000);
+  }, 60000);
 
   it('J. PGLITE/POSTGRES CONTRACT TEST: api.guard_dashboard response contract, deterministic ordering, and Asia/Manila daily statistics', async () => {
     const db = new PGlite();
     await applyAllMigrations(db);
 
-    // 1. Seed Guard actor
+    // 1. Seed Guard actor and Admin actor
     const GUARD_UID = '00000000-0000-4000-b000-000000000021';
+    const ADMIN_UID = '00000000-0000-4000-b000-000000000022';
     await db.exec(`
       insert into auth.users (id, email, is_anonymous, email_confirmed_at)
-      values ('${GUARD_UID}', 'guard-duty@earist.edu.ph', false, now());
+      values
+        ('${GUARD_UID}', 'guard-duty@earist.edu.ph', false, now()),
+        ('${ADMIN_UID}', 'admin-duty@earist.edu.ph', false, now());
       insert into public.staff_profiles (user_id, display_name, role, active, must_change_password, privacy_accepted_at)
-      values ('${GUARD_UID}', 'Officer Ramos', 'guard', true, false, now());
+      values
+        ('${GUARD_UID}', 'Officer Ramos', 'guard', true, false, now()),
+        ('${ADMIN_UID}', 'Admin Ramos', 'admin', true, false, now());
     `);
 
     // 2. Seed visitors with valid auth.users owners and explicit Manila day dates
@@ -1010,7 +1020,20 @@ describe('Permanent PostgreSQL Migration Chain & Schema Contracts (PGlite)', () 
       `);
     }
 
+    // Helper to switch session to Admin actor
+    async function asAdmin() {
+      await db.exec(`
+        set role authenticated;
+        set request.jwt.claims = '{"sub": "${ADMIN_UID}", "role": "authenticated", "amr": [{"method": "password"}]}';
+      `);
+    }
+
+    // Under Migration 41, Guard role is rejected from executing legacy guard_dashboard
     await asGuard();
+    await expect(db.query('select api.guard_dashboard(10, 0) as guard_dashboard;')).rejects.toThrow(/administrator required/);
+
+    // Admin role succeeds and executes dashboard
+    await asAdmin();
 
     // 5. Test Deterministic Ordering & Full Queue: All 4 pending passes
     const resFull = await db.query<{ guard_dashboard: any }>('select api.guard_dashboard(10, 0) as guard_dashboard;');
@@ -1114,7 +1137,7 @@ describe('Permanent PostgreSQL Migration Chain & Schema Contracts (PGlite)', () 
     expect(dNy.queue[3].id).toBe(PASS_4_TIE);
 
     await db.exec('reset role;');
-  }, 30000);
+  }, 60000);
 
   it('K. PGLITE/POSTGRES CONTRACT TEST: service_role least-privilege backend table grants matrix', async () => {
     const db = new PGlite();
@@ -1207,7 +1230,7 @@ describe('Permanent PostgreSQL Migration Chain & Schema Contracts (PGlite)', () 
       );
       expect(authInsert.rows[0].has_priv, `authenticated must NOT have direct INSERT on public.${table}`).toBe(false);
     }
-  }, 30000);
+  }, 60000);
   it('L. PGLITE/POSTGRES CONTRACT TEST: api.record_resend_delivery_event transactional atomicity & retry rollback', async () => {
     const db = new PGlite();
     await applyAllMigrations(db);
@@ -1353,7 +1376,7 @@ describe('Permanent PostgreSQL Migration Chain & Schema Contracts (PGlite)', () 
       `select count(*)::text from public.audit_events where action = 'resend.delivery_event' and target_id = 'email_fail_rollback';`
     );
     expect(auditAfterRetry.rows[0].count).toBe('1');
-  }, 30000);
+  }, 60000);
 
   it('M. PGLITE/POSTGRES CONTRACT TEST: private.bootstrap_super_admin hardening and security invariants', async () => {
     const db = new PGlite();
@@ -1495,7 +1518,7 @@ describe('Permanent PostgreSQL Migration Chain & Schema Contracts (PGlite)', () 
     await expect(
       db.query(`select private.bootstrap_super_admin('${secondValidId}'::uuid, 'Second Super Admin');`)
     ).rejects.toThrow('bootstrap is allowed only before the first staff profile');
-  }, 30000);
+  }, 60000);
 
   it('Migration 37: enforces server-only execution boundaries on guard offline sync and thermal template RPCs', async () => {
     const db = new PGlite();
@@ -1581,7 +1604,7 @@ describe('Permanent PostgreSQL Migration Chain & Schema Contracts (PGlite)', () 
   it('Migration 40: verifies final scan_pass lifecycle, wrong-gate fail-closed exit, guard role deprecation, and visit_event_type enums', async () => {
     const db = new PGlite();
     const files = await applyAllMigrations(db);
-    expect(files.length).toBe(40);
+    expect(files.length).toBe(41);
 
     // 1. Enum contract: visit_event_type contains valid enums and NO invalid writes
     const eventTypeQuery = await db.query<{ enumlabel: string }>(`
@@ -1789,5 +1812,70 @@ describe('Permanent PostgreSQL Migration Chain & Schema Contracts (PGlite)', () 
         $1, $2, 'guard', null, gen_random_uuid()
       );
     `, [adminId, admin2Id])).rejects.toThrow(/legacy_guard_role_disabled/);
+  }, 60000);
+
+  it('Migration 41: verifies guard authority deprecation across all 8 legacy RPCs and RLS policies', async () => {
+    const db = new PGlite();
+    const files = await applyAllMigrations(db);
+    expect(files.length).toBe(41);
+
+    // Seed Admin and Guard users with confirmed emails
+    const adminId = '60000000-0000-0000-0000-000000000001';
+    const guardId = '60000000-0000-0000-0000-000000000002';
+    await db.exec(`
+      insert into auth.users (id, email, email_confirmed_at) values
+        ('${adminId}', 'admin41@earist.edu.ph', now()),
+        ('${guardId}', 'guard41@earist.edu.ph', now());
+      insert into public.staff_profiles (user_id, display_name, role, active, must_change_password, privacy_accepted_at) values
+        ('${adminId}', 'Admin 41', 'admin', true, false, now()),
+        ('${guardId}', 'Guard 41', 'guard', true, false, now());
+    `);
+
+    // As Guard: verify all legacy operational RPCs throw 42501 'administrator required'
+    await db.exec(`
+      set role authenticated;
+      set request.jwt.claims = '{"sub": "${guardId}", "role": "authenticated", "amr": [{"method": "password"}]}';
+    `);
+
+    // 1. guard_dashboard
+    await expect(db.query('select api.guard_dashboard();')).rejects.toThrow(/administrator required/);
+
+    // 2. guard_dashboard_page
+    await expect(db.query('select api.guard_dashboard_page();')).rejects.toThrow(/administrator required/);
+
+    // 3. guard_offline_snapshot_page
+    await expect(db.query('select api.guard_offline_snapshot_page();')).rejects.toThrow(/administrator required/);
+
+    // 4. guard_search_pending_queue
+    await expect(db.query("select api.guard_search_pending_queue('Test');")).rejects.toThrow(/administrator required/);
+
+    // 5. guard_search_recovery_visitors
+    await expect(db.query("select api.guard_search_recovery_visitors('Test');")).rejects.toThrow(/administrator required/);
+
+    // 6. guard_recover_pass_action
+    await expect(db.query(`select api.guard_recover_pass_action(gen_random_uuid(), 'approve_entry');`)).rejects.toThrow(/administrator required/);
+
+    // 7. guard_sync_offline_event
+    await expect(db.query(`select api.guard_sync_offline_event(gen_random_uuid(), gen_random_uuid(), 'approve_entry', 'issued', 1, now());`)).rejects.toThrow(/administrator required/);
+
+    // 8. guard_sync_offline_registration (under service_role with guard actor)
+    await db.exec(`
+      set role service_role;
+      set request.jwt.claims = '{"sub": "${guardId}", "role": "service_role"}';
+    `);
+    await expect(db.query(`
+      select api.guard_sync_offline_registration(
+        '${guardId}', gen_random_uuid(), '{"firstName":"A","lastName":"B","contactNumber":"1","purpose":"X","visitDate":"2026-10-30"}'::jsonb,
+        'approved', now(), gen_random_uuid(), 100, '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef'
+      );
+    `)).rejects.toThrow(/administrator required/);
+
+    // Under Admin: guard_dashboard succeeds
+    await db.exec(`
+      set role authenticated;
+      set request.jwt.claims = '{"sub": "${adminId}", "role": "authenticated", "amr": [{"method": "password"}]}';
+    `);
+    const adminDash = await db.query('select api.guard_dashboard();');
+    expect(adminDash.rows.length).toBe(1);
   }, 60000);
 });

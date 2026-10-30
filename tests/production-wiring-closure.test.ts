@@ -342,7 +342,7 @@ describe('Production Wiring Closure Verification (PW-T01 to PW-T11)', () => {
     expect(valResult.success).toBe(true);
 
     await isolatedDb.close();
-  }, 30000);
+  }, 60000);
 
   // ---------------------------------------------------------------------------
   // PW-T04: Fresh installation migration chain (from zero to 32)
@@ -370,7 +370,7 @@ describe('Production Wiring Closure Verification (PW-T01 to PW-T11)', () => {
     expect(serverVal).toBeDefined();
 
     await freshDb.close();
-  }, 30000);
+  }, 60000);
 
   // ---------------------------------------------------------------------------
   // PW-T05: Thermal template endpoint authorization

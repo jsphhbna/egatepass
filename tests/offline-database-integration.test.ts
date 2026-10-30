@@ -127,8 +127,8 @@ describe('Offline Database Integration & Lifecycle Invariants (DB-T01 - DB-T10)'
       on conflict (id) do nothing;
 
       insert into public.staff_profiles (user_id, display_name, role, active, must_change_password, privacy_accepted_at)
-      values ('${GUARD_ID}', 'Officer Gate 1', 'guard', true, false, now())
-      on conflict (user_id) do update set active = true, must_change_password = false, privacy_accepted_at = now();
+      values ('${GUARD_ID}', 'Officer Gate 1', 'admin', true, false, now())
+      on conflict (user_id) do update set role = 'admin', active = true, must_change_password = false, privacy_accepted_at = now();
     `);
   }, 60000);
 
@@ -666,7 +666,7 @@ describe('Offline Database Integration & Lifecycle Invariants (DB-T01 - DB-T10)'
     }
 
     expect(thrownError).not.toBeNull();
-    expect(String(thrownError)).toContain('active guard or superadmin required');
+    expect(String(thrownError)).toContain('administrator required');
   });
 
   // DB-T13: Security - upload intent owner mismatch rejected
