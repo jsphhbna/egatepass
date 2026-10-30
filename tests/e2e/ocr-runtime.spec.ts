@@ -5,8 +5,8 @@ test.describe('Workstream G: Real OCR Integration in Browser Runtime', () => {
   test('processes high-contrast Philippine ID image offline, populates form inputs, and does NOT auto-submit', async ({
     page,
   }) => {
-    // 1. Visit /get-pass
-    await page.goto('/get-pass');
+    // 1. Visit /get-pass in new visitor mode
+    await page.goto('/get-pass?mode=new');
 
     // 2. Wait for registration form to render
     const autofillBtn = page.getByRole('button', { name: /Autofill from ID|Upload ID Image/i });

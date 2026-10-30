@@ -16,6 +16,7 @@ import {
   AlertCircle,
   CheckCircle2,
   FileText,
+  Car,
 } from 'lucide-react';
 
 interface StationInfo {
@@ -35,6 +36,12 @@ interface StationEntry {
   purpose: string;
   photoEvidenceId: string | null;
   gate: string;
+  vehicle?: {
+    plateNumber: string;
+    vehicleType: string;
+    color: string;
+    makeModel?: string | null;
+  } | null;
 }
 
 interface FeedResponse {
@@ -263,6 +270,35 @@ export function GuardPage() {
                         </div>
                       </div>
 
+                      {latestEntry?.vehicle && (
+                        <div className="rounded-xl border border-blue-200 bg-blue-50/60 p-4 text-blue-950">
+                          <div className="flex items-center gap-2 font-bold text-xs uppercase tracking-wider text-blue-800">
+                            <Car className="h-4 w-4 text-blue-600" />
+                            Vehicle Declared
+                          </div>
+                          <div className="mt-2 grid grid-cols-2 gap-2 text-xs">
+                            <div>
+                              <span className="text-blue-600 block text-[11px]">Plate Number</span>
+                              <span className="font-mono font-bold text-sm text-blue-900">{latestEntry.vehicle.plateNumber}</span>
+                            </div>
+                            <div>
+                              <span className="text-blue-600 block text-[11px]">Type</span>
+                              <span className="font-semibold capitalize text-blue-900">{latestEntry.vehicle.vehicleType}</span>
+                            </div>
+                            <div>
+                              <span className="text-blue-600 block text-[11px]">Color</span>
+                              <span className="font-semibold text-blue-900">{latestEntry.vehicle.color}</span>
+                            </div>
+                            {latestEntry.vehicle.makeModel && (
+                              <div>
+                                <span className="text-blue-600 block text-[11px]">Make / Model</span>
+                                <span className="font-semibold text-blue-900">{latestEntry.vehicle.makeModel}</span>
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      )}
+
                       <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-4 text-emerald-900">
                         <div className="flex items-center gap-2 font-bold text-sm">
                           <CheckCircle2 className="h-5 w-5 text-emerald-600 flex-shrink-0" />
@@ -324,6 +360,12 @@ export function GuardPage() {
                           <span>•</span>
                           <span className="font-mono">{entry.publicReference}</span>
                         </div>
+                        {entry.vehicle && (
+                          <div className="mt-1 flex items-center gap-1.5 text-[11px] text-blue-700 font-mono">
+                            <Car className="h-3 w-3" />
+                            <span>{entry.vehicle.plateNumber} ({entry.vehicle.vehicleType})</span>
+                          </div>
+                        )}
                       </div>
 
                       <span className="flex-shrink-0 rounded-md bg-emerald-50 px-2 py-0.5 text-[11px] font-semibold text-emerald-700 border border-emerald-200">

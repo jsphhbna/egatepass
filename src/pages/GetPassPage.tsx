@@ -23,6 +23,8 @@ import { generateBrandedQrDataUrl } from '@/lib/brandedQr';
 import QRCode from 'qrcode';
 import { recognizeIdImage, terminateLocalOcrWorker, getNextOcrJobId } from '@/lib/ocr';
 import { evaluateLiveFaceQuality, evaluateIdImageQuality } from '@/lib/imageQuality';
+import { normalizePhMobile, validatePhMobile } from '@/lib/phPhone';
+import { normalizeVehiclePlate } from '@/lib/vehiclePlate';
 import {
   Camera,
   CheckCircle2,
@@ -38,6 +40,10 @@ import {
   Info,
   Sparkles,
   X,
+  User,
+  UserCheck,
+  Car,
+  ShieldAlert,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { Button, Card, Input, FormField, Stepper, PageShell } from '@/components/ui';
@@ -59,63 +65,152 @@ const MAX_RAW_ID_FILE_BYTES = 10 * 1024 * 1024;
 const nameRegex = /^[\p{L}\s\-'.]+$/u;
 
 export function createGetPassSchema(schedulingDaysAhead: number = MAX_VISIT_ADVANCE_DAYS) {
-  return z.object({
-    firstName: z
-      .string()
-      .trim()
-      .min(2, 'First name must be at least 2 characters')
-      .max(50, 'First name is too long')
-      .regex(nameRegex, 'Invalid characters in name'),
-    middleName: z
-      .string()
-      .trim()
-      .max(50, 'Middle name is too long')
-      .regex(nameRegex, 'Invalid characters in name')
-      .optional()
-      .or(z.literal('')),
-    lastName: z
-      .string()
-      .trim()
-      .min(2, 'Last name must be at least 2 characters')
-      .max(50, 'Last name is too long')
-      .regex(nameRegex, 'Invalid characters in name'),
-    contactNumber: z
-      .string()
-      .min(7, 'Contact number must be at least 7 digits')
-      .max(15, 'Contact number is too long')
-      .regex(/^[0-9+\-() ]+$/, 'Invalid contact number format'),
-    purpose: z
-      .string()
-      .min(3, 'Please describe your purpose')
-      .max(300, 'Purpose description is too long'),
-    visitDate: z
-      .string()
-      .min(1, 'Please select a visit date')
-      .superRefine((val, ctx) => {
-        const res = validateVisitDate(val, new Date(), schedulingDaysAhead);
-        if (!res.valid && res.error) {
+  return z
+    .object({
+      firstName: z
+        .string()
+        .trim()
+        .min(2, 'First name must be at least 2 characters')
+        .max(50, 'First name is too long')
+        .regex(nameRegex, 'Invalid characters in name'),
+      middleName: z
+        .string()
+        .trim()
+        .max(50, 'Middle name is too long')
+        .regex(nameRegex, 'Invalid characters in name')
+        .optional()
+        .or(z.literal('')),
+      lastName: z
+        .string()
+        .trim()
+        .min(2, 'Last name must be at least 2 characters')
+        .max(50, 'Last name is too long')
+        .regex(nameRegex, 'Invalid characters in name'),
+      contactNumber: z
+        .string()
+        .min(7, 'Contact number is too short')
+        .max(20, 'Contact number is too long')
+        .refine((val) => validatePhMobile(val), {
+          message: 'Please enter a valid Philippine mobile number (e.g. 09171234567 or +639171234567)',
+        }),
+      homeAddress: z
+        .string()
+        .trim()
+        .min(5, 'Home address must be at least 5 characters')
+        .max(300, 'Home address is too long'),
+      purpose: z
+        .string()
+        .max(300, 'Purpose description is too long')
+        .optional()
+        .or(z.literal('')),
+      visitDate: z
+        .string()
+        .optional()
+        .or(z.literal(''))
+        .superRefine((val, ctx) => {
+          if (!val) return;
+          const res = validateVisitDate(val, new Date(), schedulingDaysAhead);
+          if (!res.valid && res.error) {
+            ctx.addIssue({
+              code: z.ZodIssueCode.custom,
+              message: res.error,
+            });
+          }
+        }),
+      arrivalMode: z.enum(['no_vehicle', 'vehicle']),
+      vehicleType: z.string().optional(),
+      plateNumber: z.string().optional(),
+      vehicleColor: z.string().optional(),
+      makeModel: z.string().optional(),
+      consent: z.literal(true, {
+        message: 'You must accept the Data Privacy Act notice to proceed',
+      }),
+    })
+    .superRefine((data, ctx) => {
+      if (data.arrivalMode === 'vehicle') {
+        if (!data.vehicleType || data.vehicleType.trim() === '') {
           ctx.addIssue({
+            path: ['vehicleType'],
             code: z.ZodIssueCode.custom,
-            message: res.error,
+            message: 'Please select a vehicle type',
           });
         }
-      }),
-    consent: z.literal(true, {
-      message: 'You must accept the Data Privacy Act notice to proceed',
-    }),
-  });
+        const plateRes = normalizeVehiclePlate(data.plateNumber || '');
+        if (!plateRes.valid) {
+          ctx.addIssue({
+            path: ['plateNumber'],
+            code: z.ZodIssueCode.custom,
+            message: plateRes.error || 'Please enter a valid plate number',
+          });
+        }
+        if (!data.vehicleColor || data.vehicleColor.trim().length < 2) {
+          ctx.addIssue({
+            path: ['vehicleColor'],
+            code: z.ZodIssueCode.custom,
+            message: 'Please enter vehicle color',
+          });
+        }
+      }
+    });
 }
 
 export type GetPassFormData = z.infer<ReturnType<typeof createGetPassSchema>>;
 
-type Step = 'form' | 'photo' | 'id' | 'verify' | 'review' | 'generating' | 'delivery' | 'done';
+type Step =
+  | 'frontdoor'
+  | 'form'
+  | 'visit'
+  | 'photo'
+  | 'id'
+  | 'verify'
+  | 'review'
+  | 'generating'
+  | 'delivery'
+  | 'done'
+  | 'returning_capture'
+  | 'returning_confirm';
 
 // ============================================================
 // COMPONENT
 // ============================================================
 export function GetPassPage() {
   const { updateAvailable, reloadApp } = useBuildVersion();
-  const [step, setStep] = useState<Step>('form');
+
+  const initialMode = typeof window !== 'undefined'
+    ? new URLSearchParams(window.location.search).get('mode')
+    : null;
+
+  const [step, setStep] = useState<Step>(initialMode === 'new' ? 'form' : 'frontdoor');
+  const [registrationMode, setRegistrationMode] = useState<'new' | 'returning'>(
+    initialMode === 'returning' ? 'returning' : 'new'
+  );
+  const [returningAvailable, setReturningAvailable] = useState<boolean | null>(null);
+  const [showReturningGateModal, setShowReturningGateModal] = useState(false);
+
+  // Returning visitor profile state
+  const [returningProfile, setReturningProfile] = useState<{
+    profileId: string;
+    fullName: string;
+    firstName: string;
+    middleName?: string;
+    lastName: string;
+    contactNumber: string;
+    homeAddress?: string;
+    matchToken: string;
+    savedVehicles: Array<{
+      id: string;
+      vehicleType: string;
+      plateNumber: string;
+      color: string;
+      makeModel?: string | null;
+    }>;
+  } | null>(null);
+  const [isIdentifyingReturning, setIsIdentifyingReturning] = useState(false);
+  const [returningIdentifyError, setReturningIdentifyError] = useState<string | null>(null);
+  const [saveReturningUpdates, setSaveReturningUpdates] = useState(false);
+  const [selectedSavedVehicleId, setSelectedSavedVehicleId] = useState<string>('none');
+  const [rememberVisitor, setRememberVisitor] = useState(false);
+  const [saveVehicle, setSaveVehicle] = useState(false);
 
   // Live Face State (Single custom camera)
   const [photoBlob, setPhotoBlob] = useState<Blob | null>(null);
@@ -188,6 +283,18 @@ export function GetPassPage() {
     'This visitor pass is personal and non-transferable.',
     'Scan your E-GatePass when leaving the campus.',
   ]);
+
+  // Query capabilities on mount for returning visitor gate
+  useEffect(() => {
+    fetch('/api/passes/capabilities')
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data) => {
+        setReturningAvailable(Boolean(data?.returningVisitorAvailable));
+      })
+      .catch(() => {
+        setReturningAvailable(false);
+      });
+  }, []);
 
   function onRetakeId() {
     invalidatePortalEvidenceCheckpoint(portalTransactionRef.current, 'id');
@@ -294,26 +401,92 @@ export function GetPassPage() {
   const {
     register,
     handleSubmit,
+    trigger,
     getValues,
     setValue,
     watch,
-    formState: { errors, isValid },
+    formState: { errors },
   } = useForm<GetPassFormData>({
     resolver: zodResolver(formSchema),
     mode: 'onChange',
-    defaultValues: { purpose: '' },
+    defaultValues: {
+      purpose: '',
+      arrivalMode: 'no_vehicle',
+      vehicleType: 'car',
+      plateNumber: '',
+      vehicleColor: '',
+      makeModel: '',
+    },
   });
+
   const purpose = watch('purpose');
+  const arrivalMode = watch('arrivalMode');
 
   // Manila-aware calendar date limits
   const today = getManilaDateString();
   const latestVisitDate = getLatestVisitDateString(today, schedulingDaysAhead);
 
   // ============================================================
-  // STEP 1: FORM & OPTIONAL OCR
+  // STEP 1: PERSONAL DETAILS (onFormNext advances to Visit)
   // ============================================================
-  async function onFormNext(data: GetPassFormData) {
-    void data;
+  async function onFormNext(formData?: GetPassFormData) {
+    const valid = await trigger(['firstName', 'middleName', 'lastName', 'contactNumber', 'homeAddress', 'consent']);
+    if (!valid) return;
+
+    const data = formData || getValues();
+    if (!data.firstName?.trim() || !data.lastName?.trim()) {
+      toast.error('Please enter your first and last name.');
+      return;
+    }
+    const phRes = normalizePhMobile(data.contactNumber);
+    if (!phRes) {
+      toast.error('Please enter a valid Philippine mobile number (e.g. 09171234567 or +639171234567).');
+      return;
+    }
+    setValue('contactNumber', phRes, { shouldValidate: true });
+    if (!data.homeAddress || data.homeAddress.trim().length < 5) {
+      toast.error('Please enter your complete home address (minimum 5 characters).');
+      return;
+    }
+    if (!data.consent) {
+      toast.error('You must accept the Data Privacy Act notice to proceed.');
+      return;
+    }
+
+    setStep('visit');
+  }
+
+  // ============================================================
+  // STEP 2: VISIT & VEHICLE DETAILS (onVisitNext advances to Photo)
+  // ============================================================
+  async function onVisitNext() {
+    const vals = getValues();
+    if (!vals.purpose || vals.purpose.trim().length < 3) {
+      toast.error('Please describe the purpose of your visit (minimum 3 characters).');
+      return;
+    }
+    if (!vals.visitDate) {
+      toast.error('Please select a visit date.');
+      return;
+    }
+
+    if (vals.arrivalMode === 'vehicle') {
+      if (!vals.vehicleType || vals.vehicleType.trim() === '') {
+        toast.error('Please select a vehicle type.');
+        return;
+      }
+      const plateRes = normalizeVehiclePlate(vals.plateNumber || '');
+      if (!plateRes.valid) {
+        toast.error(plateRes.error || 'Please enter a valid plate number.');
+        return;
+      }
+      setValue('plateNumber', plateRes.displayPlate, { shouldValidate: true });
+      if (!vals.vehicleColor || vals.vehicleColor.trim().length < 2) {
+        toast.error('Please specify the vehicle color.');
+        return;
+      }
+    }
+
     if (isStartingRegistration) return;
     setRegistrationSecurityError(null);
 
@@ -340,7 +513,6 @@ export function GetPassPage() {
       portalTransactionRef.current = tx;
       issueRequestId.current = tx.requestId as ReturnType<typeof crypto.randomUUID>;
 
-      // Reset challenge state after consumption
       turnstileRef.current?.resetChallenge();
 
       setStep('photo');
@@ -356,6 +528,130 @@ export function GetPassPage() {
     }
   }
 
+  // ============================================================
+  // RETURNING VISITOR CAPTURE & IDENTIFY
+  // ============================================================
+  async function onCaptureReturningFace() {
+    const blob = faceWebcam.capture({ mirror: false });
+    if (!blob) {
+      toast.error('Failed to capture photo. Please hold steady and try again.');
+      return;
+    }
+
+    setIsIdentifyingReturning(true);
+    setReturningIdentifyError(null);
+
+    try {
+      let freshCaptchaToken: string | undefined;
+      if (turnstileRef.current) {
+        freshCaptchaToken = await turnstileRef.current.executeChallenge();
+      }
+
+      const formData = new FormData();
+      formData.append('photo', blob, 'face.jpg');
+      if (freshCaptchaToken) formData.append('captchaToken', freshCaptchaToken);
+
+      const res = await fetch('/api/passes/identify-returning', {
+        method: 'POST',
+        body: formData,
+      });
+
+      const data = await res.json().catch(() => null);
+
+      if (!res.ok || !data?.matched) {
+        setReturningIdentifyError(
+          data?.message || 'We could not find a matching profile. Please register as a New Visitor.'
+        );
+        return;
+      }
+
+      // Profile matched!
+      setReturningProfile({
+        profileId: data.profile.id,
+        fullName: data.profile.fullName,
+        firstName: data.profile.firstName,
+        middleName: data.profile.middleName,
+        lastName: data.profile.lastName,
+        contactNumber: data.profile.contactNumber,
+        homeAddress: data.profile.homeAddress,
+        matchToken: data.matchToken,
+        savedVehicles: data.profile.savedVehicles || [],
+      });
+
+      // Prepopulate form values
+      setValue('firstName', data.profile.firstName, { shouldValidate: true });
+      if (data.profile.middleName) setValue('middleName', data.profile.middleName);
+      setValue('lastName', data.profile.lastName, { shouldValidate: true });
+      setValue('contactNumber', data.profile.contactNumber, { shouldValidate: true });
+      if (data.profile.homeAddress) setValue('homeAddress', data.profile.homeAddress, { shouldValidate: true });
+
+      setPhotoBlob(blob);
+      photoUrl.setFromBlob(blob);
+      setIdentityVerified(true);
+      faceWebcam.stop();
+
+      // If they have saved vehicles, default to the first one or 'none'
+      if (data.profile.savedVehicles && data.profile.savedVehicles.length > 0) {
+        const firstVeh = data.profile.savedVehicles[0];
+        setSelectedSavedVehicleId(firstVeh.id);
+        setValue('arrivalMode', 'vehicle');
+        setValue('vehicleType', firstVeh.vehicleType);
+        setValue('plateNumber', firstVeh.plateNumber);
+        setValue('vehicleColor', firstVeh.color);
+        setValue('makeModel', firstVeh.makeModel || '');
+      } else {
+        setSelectedSavedVehicleId('none');
+        setValue('arrivalMode', 'no_vehicle');
+      }
+
+      setStep('returning_confirm');
+      toast.success(`Welcome back, ${data.profile.firstName}!`);
+    } catch (err: any) {
+      setReturningIdentifyError(err?.message || 'Identification failed. Please try again or register as a New Visitor.');
+    } finally {
+      setIsIdentifyingReturning(false);
+      turnstileRef.current?.resetChallenge();
+    }
+  }
+
+  function onReturningConfirmNext() {
+    const vals = getValues();
+    const phRes = normalizePhMobile(vals.contactNumber);
+    if (!phRes) {
+      toast.error('Please enter a valid Philippine mobile number.');
+      return;
+    }
+    if (!vals.homeAddress || vals.homeAddress.trim().length < 5) {
+      toast.error('Please enter your complete home address.');
+      return;
+    }
+    if (!vals.purpose || vals.purpose.trim().length < 3) {
+      toast.error('Please describe the purpose of your visit.');
+      return;
+    }
+    if (!vals.visitDate) {
+      toast.error('Please select a visit date.');
+      return;
+    }
+    if (vals.arrivalMode === 'vehicle') {
+      const plateRes = normalizeVehiclePlate(vals.plateNumber || '');
+      if (!plateRes.valid) {
+        toast.error(plateRes.error || 'Please enter a valid plate number.');
+        return;
+      }
+      setValue('plateNumber', plateRes.displayPlate);
+      if (!vals.vehicleColor || vals.vehicleColor.trim().length < 2) {
+        toast.error('Please enter vehicle color.');
+        return;
+      }
+    }
+
+    setStep('review');
+  }
+
+  // ============================================================
+  // OPTIONAL OCR EXTRACTION (In Memory)
+  // ============================================================
   async function handleOcrFileSelected(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
     e.target.value = '';
@@ -457,7 +753,7 @@ export function GetPassPage() {
   }
 
   // ============================================================
-  // STEP 2: LIVE FACE CAPTURE & QUALITY GATE
+  // STEP 3: LIVE FACE CAPTURE & QUALITY GATE
   // ============================================================
   function onCaptureLivePhoto() {
     const blob = faceWebcam.capture({ mirror: false });
@@ -537,7 +833,7 @@ export function GetPassPage() {
         return;
       }
 
-      // Passed Live Face quality gate and server preflight -> continue to Valid ID step
+      // Passed Live Face quality gate -> continue to Valid ID step
       setStep('id');
     } catch (err: any) {
       console.warn('Live face quality check error:', err);
@@ -602,7 +898,7 @@ export function GetPassPage() {
   }
 
   // ============================================================
-  // STEP 3: VALID ID & QUALITY GATE
+  // STEP 4: VALID ID & QUALITY GATE
   // ============================================================
   async function handleIdFileUpload(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
@@ -657,7 +953,7 @@ export function GetPassPage() {
   }
 
   // ============================================================
-  // STEP 4: IDENTITY VERIFICATION PIPELINE
+  // STEP 5: IDENTITY VERIFICATION PIPELINE
   // ============================================================
   async function runIdentityVerification() {
     if (!photoBlob || !idBlob) {
@@ -669,7 +965,6 @@ export function GetPassPage() {
     setVerificationError(null);
 
     try {
-      // 1. Obtain authenticated portal session / transaction
       if (!portalTransactionRef.current) {
         setStep('form');
         toast.error('Session expired. Please complete visitor details to continue.');
@@ -678,14 +973,12 @@ export function GetPassPage() {
 
       const tx = portalTransactionRef.current;
 
-      // 2. Upload photo and ID to storage checkpoints (reuse preflight photo intent if available)
       const photoIntentId = livePhotoIntentIdRef.current
         ? livePhotoIntentIdRef.current
         : (await uploadPortalEvidence(tx, 'photo', photoBlob)).intentId;
 
       const idRes = await uploadPortalEvidence(tx, 'id', idBlob);
 
-      // 3. Call server identity verification endpoint
       const result = await verifyPortalIdentity(tx, photoIntentId, idRes.intentId);
 
       if (result.outcome === 'matched') {
@@ -723,13 +1016,13 @@ export function GetPassPage() {
     }
   }
 
-  // Start Over is disabled during ambiguous issuance to prevent duplicate passes.
-  // Outside ambiguous phase, handleStartOver resets form and generates fresh transaction.
   function handleStartOver() {
     portalTransactionRef.current = null;
     livePhotoIntentIdRef.current = null;
     issueRequestId.current = crypto.randomUUID();
+    setRegistrationMode('new');
     resetRegistrationFlow();
+    setStep('frontdoor');
   }
 
   function handleAmbiguousCancelAndAskGuard() {
@@ -742,7 +1035,7 @@ export function GetPassPage() {
   }
 
   // ============================================================
-  // STEP 5: REVIEW & PASS ISSUANCE
+  // STEP 6: PASS ISSUANCE (onSubmit)
   // ============================================================
   async function onSubmit() {
     if (portalTransactionRef.current?.phase === 'existing_pass_conflict') {
@@ -756,8 +1049,8 @@ export function GetPassPage() {
       return;
     }
 
-    if (!photoBlob || !idBlob) {
-      toast.error('Evidence photos are required.');
+    if (!photoBlob) {
+      toast.error('Live photo is required.');
       return;
     }
 
@@ -765,12 +1058,40 @@ export function GetPassPage() {
     setSubmitError(null);
 
     try {
-      const formData = getValues();
+      const rawFormData = getValues();
       if (!portalTransactionRef.current) {
         setStep('form');
         toast.error('Session expired. Please complete visitor details to continue.');
         return;
       }
+
+      const phNormalized = normalizePhMobile(rawFormData.contactNumber) || rawFormData.contactNumber;
+      const plateResult = rawFormData.arrivalMode === 'vehicle' && rawFormData.plateNumber
+        ? normalizeVehiclePlate(rawFormData.plateNumber)
+        : null;
+
+      const formData: any = {
+        ...rawFormData,
+        contactNumber: phNormalized,
+        arrivalMode: rawFormData.arrivalMode || 'no_vehicle',
+        vehicle: rawFormData.arrivalMode === 'vehicle'
+          ? {
+              vehicleType: rawFormData.vehicleType || 'car',
+              plateNumber: plateResult?.displayPlate || rawFormData.plateNumber || '',
+              color: rawFormData.vehicleColor || '',
+              makeModel: rawFormData.makeModel || null,
+              saveVehicle,
+            }
+          : undefined,
+        returning: registrationMode === 'returning' && returningProfile
+          ? {
+              profileId: returningProfile.profileId,
+              matchToken: returningProfile.matchToken,
+              saveUpdates: saveReturningUpdates,
+            }
+          : undefined,
+        rememberVisitor,
+      };
 
       const result = await issueVisitorPass('portal', formData, photoBlob, idBlob, issueRequestId.current, undefined, portalTransactionRef.current);
 
@@ -804,6 +1125,9 @@ export function GetPassPage() {
         qrToken: result.qrToken,
         validityWindow: validity,
         purpose: effectiveVisitor.purpose,
+        plateNumber: effectiveVisitor.arrivalMode === 'vehicle' && effectiveVisitor.vehicle?.plateNumber
+          ? effectiveVisitor.vehicle.plateNumber
+          : null,
       });
       setPassPresentation(presentation);
 
@@ -825,7 +1149,7 @@ export function GetPassPage() {
   }
 
   // ============================================================
-  // DOWNLOAD QR
+  // DOWNLOAD QR PASS
   // ============================================================
   async function handleDownload() {
     if (!passPresentation) {
@@ -856,7 +1180,8 @@ export function GetPassPage() {
   }
 
   const steps = [
-    { id: 'form', title: 'Details' },
+    { id: 'form', title: 'Personal' },
+    { id: 'visit', title: 'Visit' },
     { id: 'photo', title: 'Live Face' },
     { id: 'id', title: 'Valid ID' },
     { id: 'verify', title: 'Verify' },
@@ -867,6 +1192,11 @@ export function GetPassPage() {
     step === 'done' || step === 'delivery' || step === 'generating'
       ? steps.length
       : steps.findIndex((s) => s.id === step);
+
+  const currentStepTitle =
+    currentStepIndex >= 0 && currentStepIndex < steps.length
+      ? steps[currentStepIndex]?.title ?? 'Pass Details'
+      : 'Pass Details';
 
   return (
     <PageShell>
@@ -908,725 +1238,1409 @@ export function GetPassPage() {
 
       {configState === 'ready' && (
         <Card className="max-w-2xl mx-auto p-6 sm:p-8">
-          {step !== 'done' && step !== 'delivery' && step !== 'generating' && (
-            <Stepper steps={steps} currentStepIndex={currentStepIndex} className="mb-8 px-4" />
+          {/* Stepper only for 6-step New Visitor or verification phases */}
+          {step !== 'frontdoor' && step !== 'returning_capture' && step !== 'returning_confirm' && step !== 'done' && step !== 'delivery' && step !== 'generating' && (
+            <div className="mb-8">
+              <div className="mb-3 text-center">
+                <span className="inline-block rounded-full bg-[var(--color-brand-light)] px-3 py-1 text-xs font-bold text-[var(--color-brand)]">
+                  {currentStepTitle} • Step {currentStepIndex + 1} of 6
+                </span>
+              </div>
+              <Stepper steps={steps} currentStepIndex={currentStepIndex} className="px-2" />
+            </div>
           )}
 
-        {/* ============================== STEP 1: FORM ============================== */}
-        {step === 'form' && (
-          <form onSubmit={handleSubmit(onFormNext)} className="space-y-6">
-            <div className="text-center">
-              <h2 className="text-lg font-bold text-[var(--color-text-primary)]">Visitor Details</h2>
-              <p className="text-sm text-[var(--color-text-secondary)] mt-1">
-                Enter your information or optionally upload your ID image to autofill details.
-              </p>
-            </div>
+          {/* ============================== FRONT DOOR SELECTOR ============================== */}
+          {step === 'frontdoor' && (
+            <div className="space-y-6">
+              <div className="text-center">
+                <h2 className="text-xl font-bold text-[var(--color-text-primary)]">
+                  EARIST Visitor Pass Registration
+                </h2>
+                <p className="text-sm text-[var(--color-text-secondary)] mt-1.5">
+                  Select your visitor status to begin your campus access pass registration.
+                </p>
+              </div>
 
-            {/* Optional OCR Autofill Control */}
-            <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-canvas)] p-4">
-              <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
-                <div className="space-y-0.5">
-                  <div className="flex items-center gap-1.5 font-bold text-xs text-[var(--color-text-primary)]">
-                    <Sparkles className="h-4 w-4 text-[var(--color-brand)]" />
-                    <span>Autofill from ID (Optional)</span>
+              <div className="grid gap-4 sm:grid-cols-2 pt-2">
+                {/* Option 1: New Visitor */}
+                <div
+                  onClick={() => {
+                    setRegistrationMode('new');
+                    setStep('form');
+                  }}
+                  role="button"
+                  tabIndex={0}
+                  className="relative flex flex-col justify-between rounded-2xl border-2 border-[var(--color-border)] hover:border-[var(--color-brand)] p-6 bg-white transition-all cursor-pointer shadow-xs hover:shadow-md active:scale-[0.98] motion-reduce:transform-none"
+                >
+                  <div className="space-y-3">
+                    <div className="h-12 w-12 rounded-xl bg-[var(--color-brand-light)] text-[var(--color-brand)] flex items-center justify-center">
+                      <User className="h-6 w-6" />
+                    </div>
+                    <div>
+                      <h3 className="font-bold text-base text-[var(--color-text-primary)]">New Visitor</h3>
+                      <p className="text-xs text-[var(--color-text-secondary)] mt-1 leading-relaxed">
+                        First time visiting EARIST or infrequent visitor. Complete 6-step online registration with valid ID.
+                      </p>
+                    </div>
                   </div>
-                  <p className="text-xs text-[var(--color-text-secondary)]">
-                    Upload an ID image to attempt autofilling your name. (OCR is optional; failure does not stop registration).
-                  </p>
+                  <div className="mt-5 pt-3 border-t border-[var(--color-border)] flex items-center justify-between text-xs font-bold text-[var(--color-brand)]">
+                    <span>Register as New Visitor</span>
+                    <ArrowRight className="h-4 w-4" />
+                  </div>
                 </div>
 
-                <input
-                  id="ocr-file-upload"
-                  ref={ocrFileInputRef}
-                  type="file"
-                  accept="image/jpeg,image/png,image/webp"
-                  onChange={handleOcrFileSelected}
-                  className="hidden"
-                />
+                {/* Option 2: Returning Visitor */}
+                <div
+                  onClick={() => {
+                    if (returningAvailable === false) {
+                      setShowReturningGateModal(true);
+                      return;
+                    }
+                    setRegistrationMode('returning');
+                    setStep('returning_capture');
+                    void faceWebcam.start();
+                  }}
+                  role="button"
+                  tabIndex={0}
+                  className={`relative flex flex-col justify-between rounded-2xl border-2 p-6 transition-all cursor-pointer shadow-xs hover:shadow-md active:scale-[0.98] motion-reduce:transform-none ${
+                    returningAvailable === false
+                      ? 'border-slate-200 bg-slate-50/70 hover:border-slate-300'
+                      : 'border-[var(--color-border)] bg-white hover:border-[var(--color-brand)]'
+                  }`}
+                >
+                  <div className="space-y-3">
+                    <div className="flex items-center justify-between">
+                      <div className="h-12 w-12 rounded-xl bg-blue-50 text-blue-700 flex items-center justify-center">
+                        <UserCheck className="h-6 w-6" />
+                      </div>
+                      {returningAvailable === false && (
+                        <span className="rounded-full bg-amber-100 text-amber-900 border border-amber-300 px-2.5 py-0.5 text-[10px] font-bold">
+                          Temporarily Unavailable
+                        </span>
+                      )}
+                    </div>
+                    <div>
+                      <h3 className="font-bold text-base text-[var(--color-text-primary)]">Returning Visitor</h3>
+                      <p className="text-xs text-[var(--color-text-secondary)] mt-1 leading-relaxed">
+                        Fast check-in using your previously enrolled facial profile and saved visitor credentials.
+                      </p>
+                      {returningAvailable === false && (
+                        <p className="text-[11px] text-amber-800 mt-2 font-medium">
+                          Campus sensor calibration in progress.
+                        </p>
+                      )}
+                    </div>
+                  </div>
+                  <div className="mt-5 pt-3 border-t border-[var(--color-border)] flex items-center justify-between text-xs font-bold text-blue-700">
+                    <span>{returningAvailable === false ? 'Check Availability' : 'Check In Returning'}</span>
+                    <ArrowRight className="h-4 w-4" />
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
 
+          {/* ============================== STEP 1: PERSONAL DETAILS ============================== */}
+          {step === 'form' && (
+            <form onSubmit={handleSubmit(onFormNext)} className="space-y-6">
+              <div className="text-center">
+                <h2 className="text-lg font-bold text-[var(--color-text-primary)]">Personal Details</h2>
+                <p className="text-sm text-[var(--color-text-secondary)] mt-1">
+                  Enter your legal personal details or upload your ID image to autofill name fields.
+                </p>
+              </div>
+
+              {/* Optional OCR Autofill Control */}
+              <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-canvas)] p-4">
+                <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
+                  <div className="space-y-0.5">
+                    <div className="flex items-center gap-1.5 font-bold text-xs text-[var(--color-text-primary)]">
+                      <Sparkles className="h-4 w-4 text-[var(--color-brand)]" />
+                      <span>Autofill from ID (Optional)</span>
+                    </div>
+                    <p className="text-xs text-[var(--color-text-secondary)]">
+                      Upload an ID image to attempt autofilling your name. (OCR is optional; failure does not stop registration).
+                    </p>
+                  </div>
+
+                  <input
+                    id="ocr-file-upload"
+                    ref={ocrFileInputRef}
+                    type="file"
+                    accept="image/jpeg,image/png,image/webp"
+                    onChange={handleOcrFileSelected}
+                    className="hidden"
+                  />
+
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    size="sm"
+                    disabled={isProcessingOcr}
+                    loading={isProcessingOcr}
+                    onClick={() => ocrFileInputRef.current?.click()}
+                    icon={<Upload className="h-3.5 w-3.5" />}
+                  >
+                    Upload ID Image
+                  </Button>
+                </div>
+
+                {ocrSuccessNotice && (
+                  <div className="mt-3 flex items-center gap-2 rounded-lg bg-emerald-50 border border-emerald-200 p-2.5 text-xs text-emerald-800">
+                    <CheckCircle2 className="h-4 w-4 flex-shrink-0 text-emerald-600" />
+                    <span>{ocrSuccessNotice}</span>
+                  </div>
+                )}
+              </div>
+
+              {/* Personal Details Fields */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <FormField label="First Name" requirement="required" error={errors.firstName?.message}>
+                  <Input id="first-name" placeholder="e.g. Juan" {...register('firstName')} />
+                </FormField>
+                <FormField label="Middle Name" requirement="optional" error={errors.middleName?.message}>
+                  <Input id="middle-name" placeholder="e.g. Santos" {...register('middleName')} />
+                </FormField>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <FormField label="Last Name" requirement="required" error={errors.lastName?.message}>
+                  <Input id="last-name" placeholder="e.g. Dela Cruz" {...register('lastName')} />
+                </FormField>
+                <FormField
+                  label="Philippine Mobile Number"
+                  requirement="required"
+                  error={errors.contactNumber?.message}
+                  hint="Format: 09XXXXXXXXX or +639XXXXXXXXX"
+                >
+                  <Input
+                    id="contact-number"
+                    type="tel"
+                    inputMode="tel"
+                    placeholder="09171234567"
+                    {...register('contactNumber')}
+                  />
+                </FormField>
+              </div>
+
+              <FormField
+                label="Home Address"
+                requirement="required"
+                error={errors.homeAddress?.message}
+                hint="Complete house/unit number, street, barangay, city, province"
+              >
+                <textarea
+                  id="home-address"
+                  rows={3}
+                  placeholder="e.g. 123 Sampaloc St., Brgy. 402, Sampaloc, Manila"
+                  {...register('homeAddress')}
+                  className="box-border w-full min-w-0 max-w-full rounded-xl border border-[var(--color-border)] bg-white px-3.5 py-2.5 text-base sm:text-sm text-[var(--color-text-primary)] placeholder-[var(--color-text-muted)] focus:border-[var(--color-brand)] focus:outline-none focus:ring-1 focus:ring-[var(--color-brand)]"
+                />
+              </FormField>
+
+              {/* Data Privacy Notice */}
+              <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-canvas)] p-4 text-xs text-[var(--color-text-secondary)] space-y-2">
+                <p className="font-semibold text-[var(--color-text-primary)]">Data Privacy Notice</p>
+                <p>
+                  Visitor information is processed under EARIST institutional privacy procedures and applicable privacy requirements.{' '}
+                  {typeof photoRetentionDays === 'number'
+                    ? `Face photos are normally retained for ${photoRetentionDays} days.`
+                    : 'Face photos are normally retained under institutional policy.'}{' '}
+                  {typeof idRetentionDays === 'number'
+                    ? `Valid ID images, when collected, are normally retained for ${idRetentionDays} days.`
+                    : 'Valid ID images, when collected, are normally retained under institutional policy.'}{' '}
+                  {typeof visitorRetentionDays === 'number'
+                    ? `Visitor records are retained for ${visitorRetentionDays} days under institutional policy.`
+                    : 'Visitor records are retained under institutional policy.'}{' '}
+                  Evidence is retained at least through the scheduled visit, and authorized incident holds may extend retention when required.
+                </p>
+              </div>
+
+              <div className="rounded-lg border border-[var(--color-border)] p-4 bg-[var(--color-surface)]">
+                <label className="flex items-start gap-3 cursor-pointer">
+                  <input id="consent" type="checkbox" {...register('consent')} className="mt-1 h-4 w-4 text-[var(--color-brand)] rounded" />
+                  <span className="text-xs text-[var(--color-text-secondary)] leading-relaxed">
+                    I consent to the collection and processing of my personal information, face photo, and valid ID pursuant to the <strong>Data Privacy Act of 2012</strong> for the purpose of campus security and visitor management.
+                  </span>
+                </label>
+                {errors.consent && (
+                  <p className="text-xs text-[var(--color-danger-dark)] mt-2 font-medium">{errors.consent.message}</p>
+                )}
+              </div>
+
+              <div className="flex items-center justify-between pt-2">
+                <button
+                  type="button"
+                  onClick={() => setStep('frontdoor')}
+                  className="text-xs font-semibold text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)] hover:underline inline-flex items-center gap-1"
+                >
+                  <ArrowLeft className="h-3.5 w-3.5" />
+                  Change visitor type
+                </button>
+                <Button
+                  type="submit"
+                  className="min-w-[160px]"
+                  icon={<ArrowRight className="h-4 w-4" />}
+                >
+                  Next: Visit Details
+                </Button>
+              </div>
+            </form>
+          )}
+
+          {/* ============================== STEP 2: VISIT & VEHICLE ============================== */}
+          {step === 'visit' && (
+            <div className="space-y-6">
+              <div className="text-center">
+                <h2 className="text-lg font-bold text-[var(--color-text-primary)]">Visit & Arrival Method</h2>
+                <p className="text-sm text-[var(--color-text-secondary)] mt-1">
+                  Specify your visit purpose, schedule, and declare if you are bringing a vehicle onto campus.
+                </p>
+              </div>
+
+              {/* Purpose of Visit */}
+              <FormField label="Purpose of Visit" requirement="required" error={errors.purpose?.message}>
+                <VisitPurposeField
+                  value={purpose || ''}
+                  onChange={(val) => setValue('purpose', val, { shouldValidate: true })}
+                  purposes={visitPurposes}
+                  error={errors.purpose?.message}
+                />
+              </FormField>
+
+              {/* Visit Date */}
+              <FormField
+                label="Visit Date"
+                requirement="required"
+                error={errors.visitDate?.message}
+                hint={`Schedule from today (${today}) up to ${latestVisitDate}`}
+              >
+                <Input
+                  id="visit-date"
+                  type="date"
+                  min={today}
+                  max={latestVisitDate}
+                  {...register('visitDate')}
+                />
+              </FormField>
+
+              {/* Arrival Method Cards */}
+              <div className="space-y-3">
+                <label className="block text-xs font-bold uppercase tracking-wider text-[var(--color-text-muted)]">
+                  Arrival Method <span className="text-[var(--color-danger)]">*</span>
+                </label>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div
+                    onClick={() => setValue('arrivalMode', 'no_vehicle')}
+                    role="button"
+                    tabIndex={0}
+                    className={`rounded-xl border-2 p-4 cursor-pointer transition-all active:scale-[0.98] motion-reduce:transform-none flex items-start gap-3 ${
+                      arrivalMode === 'no_vehicle'
+                        ? 'border-[var(--color-brand)] bg-[var(--color-brand-light)] text-[var(--color-brand)]'
+                        : 'border-[var(--color-border)] bg-white hover:border-slate-300'
+                    }`}
+                  >
+                    <User className="h-5 w-5 mt-0.5 flex-shrink-0" />
+                    <div>
+                      <p className="font-bold text-sm text-[var(--color-text-primary)]">No Vehicle</p>
+                      <p className="text-xs text-[var(--color-text-secondary)] mt-0.5">
+                        Arriving on foot, public transit, or dropped off outside the gate.
+                      </p>
+                    </div>
+                  </div>
+
+                  <div
+                    onClick={() => setValue('arrivalMode', 'vehicle')}
+                    role="button"
+                    tabIndex={0}
+                    className={`rounded-xl border-2 p-4 cursor-pointer transition-all active:scale-[0.98] motion-reduce:transform-none flex items-start gap-3 ${
+                      arrivalMode === 'vehicle'
+                        ? 'border-[var(--color-brand)] bg-[var(--color-brand-light)] text-[var(--color-brand)]'
+                        : 'border-[var(--color-border)] bg-white hover:border-slate-300'
+                    }`}
+                  >
+                    <Car className="h-5 w-5 mt-0.5 flex-shrink-0" />
+                    <div>
+                      <p className="font-bold text-sm text-[var(--color-text-primary)]">Bringing a Vehicle</p>
+                      <p className="text-xs text-[var(--color-text-secondary)] mt-0.5">
+                        Driving a car, motorcycle, van, SUV, or other vehicle onto campus.
+                      </p>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* Progressive Vehicle Declaration Accordion */}
+              {arrivalMode === 'vehicle' && (
+                <div className="space-y-4 rounded-2xl border border-blue-200 bg-blue-50/40 p-4 sm:p-5 transition-all motion-reduce:transition-none">
+                  <div className="flex items-start gap-2.5 rounded-xl bg-blue-100/70 p-3 text-xs text-blue-900">
+                    <Info className="h-4 w-4 text-blue-700 flex-shrink-0 mt-0.5" />
+                    <span className="font-medium">
+                      Each passenger must have their own E-GatePass. Declare the vehicle that will pass campus security.
+                    </span>
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                    <FormField label="Vehicle Type" requirement="required" error={errors.vehicleType?.message}>
+                      <select
+                        {...register('vehicleType')}
+                        className="box-border w-full min-w-0 max-w-full rounded-xl border border-[var(--color-border)] bg-white px-3.5 py-2.5 text-base sm:text-sm text-[var(--color-text-primary)] focus:border-[var(--color-brand)] focus:outline-none focus:ring-1 focus:ring-[var(--color-brand)]"
+                      >
+                        <option value="car">Car (Sedan, Hatchback)</option>
+                        <option value="motorcycle">Motorcycle / Scooter</option>
+                        <option value="van">Van</option>
+                        <option value="suv">SUV / AUV</option>
+                        <option value="truck">Truck</option>
+                        <option value="bicycle">Bicycle / E-Bike</option>
+                        <option value="other">Other Vehicle</option>
+                      </select>
+                    </FormField>
+
+                    <FormField
+                      label="Plate Number"
+                      requirement="required"
+                      error={errors.plateNumber?.message}
+                      hint="e.g. ABC 1234 or 123 ABC"
+                    >
+                      <Input
+                        placeholder="ABC 1234"
+                        value={watch('plateNumber') || ''}
+                        onChange={(e) => {
+                          const val = e.target.value.toUpperCase();
+                          setValue('plateNumber', val, { shouldValidate: true });
+                        }}
+                      />
+                    </FormField>
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                    <FormField
+                      label="Vehicle Color"
+                      requirement="required"
+                      error={errors.vehicleColor?.message}
+                      hint="Primary exterior color"
+                    >
+                      <Input placeholder="e.g. White" {...register('vehicleColor')} />
+                    </FormField>
+
+                    <FormField
+                      label="Make / Model"
+                      requirement="optional"
+                      error={errors.makeModel?.message}
+                      hint="e.g. Toyota Vios, Honda Click"
+                    >
+                      <Input placeholder="e.g. Toyota Vios" {...register('makeModel')} />
+                    </FormField>
+                  </div>
+                </div>
+              )}
+
+              {registrationSecurityError && (
+                <div className="rounded-xl border border-[var(--color-danger)] bg-[var(--color-danger-light)] p-3 text-xs text-[var(--color-danger-dark)]" role="alert">
+                  {registrationSecurityError}
+                </div>
+              )}
+
+              <TurnstileWidget
+                ref={turnstileRef}
+                execution="execute"
+                appearance="interaction-only"
+              />
+
+              <div className="flex gap-3 pt-2">
                 <Button
                   type="button"
                   variant="secondary"
-                  size="sm"
-                  aria-label="Autofill from ID"
-                  onClick={() => ocrFileInputRef.current?.click()}
-                  disabled={isProcessingOcr}
-                  icon={isProcessingOcr ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Upload className="h-3.5 w-3.5" />}
+                  onClick={() => setStep('form')}
+                  className="flex-1"
+                  icon={<ArrowLeft className="h-4 w-4" />}
                 >
-                  {isProcessingOcr ? 'Scanning ID…' : 'Upload ID Image'}
+                  Back to Personal
+                </Button>
+                <Button
+                  type="button"
+                  onClick={onVisitNext}
+                  disabled={isStartingRegistration}
+                  loading={isStartingRegistration}
+                  className="flex-1"
+                  icon={<ArrowRight className="h-4 w-4" />}
+                >
+                  Continue to Live Face Capture
                 </Button>
               </div>
+            </div>
+          )}
 
-              {ocrSuccessNotice && (
-                <div className="mt-3 flex items-center gap-2 rounded-lg bg-emerald-50 border border-emerald-200 p-2.5 text-xs text-emerald-800">
-                  <CheckCircle2 className="h-4 w-4 text-emerald-600 flex-shrink-0" />
-                  <span>{ocrSuccessNotice}</span>
+          {/* ============================== STEP 3: LIVE FACE CAPTURE ============================== */}
+          {step === 'photo' && (
+            <div className="space-y-6">
+              <div className="text-center">
+                <h2 className="text-lg font-bold text-[var(--color-text-primary)]">
+                  {photoPreview ? 'Live Face Captured' : 'Verify Your Identity'}
+                </h2>
+                <p className="text-sm text-[var(--color-text-secondary)] mt-1">
+                  {photoPreview
+                    ? 'Check your photo. Make sure your full face is visible and well-lit.'
+                    : 'Place your face inside the guide. Look directly at the camera. Use good lighting.'}
+                </p>
+              </div>
+
+              {liveFaceError && (
+                <div className="rounded-xl border border-[var(--color-danger)] bg-[var(--color-danger-light)] p-4 text-xs text-[var(--color-danger-dark)] space-y-1" role="alert">
+                  <div className="flex items-center gap-2 font-bold">
+                    <AlertCircle className="h-4 w-4 text-[var(--color-danger)] flex-shrink-0" />
+                    <span>{liveFaceError.title}</span>
+                  </div>
+                  <p>{liveFaceError.message}</p>
                 </div>
               )}
-            </div>
 
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-              <FormField label="First Name" id="first-name" requirement="required" error={errors.firstName?.message}>
-                <Input id="first-name" placeholder="Juan" {...register('firstName')} error={Boolean(errors.firstName)} />
-              </FormField>
-              <FormField label="Last Name" id="last-name" requirement="required" error={errors.lastName?.message}>
-                <Input id="last-name" placeholder="Dela Cruz" {...register('lastName')} error={Boolean(errors.lastName)} />
-              </FormField>
-            </div>
+              {photoPreview ? (
+                <div className="space-y-4">
+                  <div className="relative mx-auto max-w-xs overflow-hidden rounded-2xl border-2 border-[var(--color-border)] shadow-sm aspect-[4/3] bg-black">
+                    <img src={photoPreview} alt="Captured face" className="w-full h-full object-cover" />
+                  </div>
 
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-              <FormField label="Middle Name (Optional)" id="middle-name" error={errors.middleName?.message}>
-                <Input id="middle-name" placeholder="Santos" {...register('middleName')} error={Boolean(errors.middleName)} />
-              </FormField>
-              <FormField label="Contact Number" id="contact-number" requirement="required" error={errors.contactNumber?.message}>
-                <Input id="contact-number" placeholder="09171234567" {...register('contactNumber')} error={Boolean(errors.contactNumber)} />
-              </FormField>
-            </div>
-
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-              <VisitPurposeField
-                value={purpose}
-                purposes={visitPurposes}
-                error={errors.purpose?.message}
-                onChange={(val) => setValue('purpose', val, { shouldValidate: true })}
-              />
-              <FormField label="Visit Date" id="visit-date" requirement="required" error={errors.visitDate?.message}>
-                <Input id="visit-date" type="date" min={today} max={latestVisitDate} {...register('visitDate')} error={Boolean(errors.visitDate)} />
-              </FormField>
-            </div>
-
-            {/* Data Privacy Notice */}
-            <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-canvas)] p-4 text-xs text-[var(--color-text-secondary)] space-y-2">
-              <p className="font-semibold text-[var(--color-text-primary)]">Data Privacy Notice</p>
-              <p>
-                Visitor information is processed under EARIST institutional privacy procedures and applicable privacy requirements.{' '}
-                {typeof photoRetentionDays === 'number'
-                  ? `Face photos are normally retained for ${photoRetentionDays} days.`
-                  : 'Face photos are normally retained under institutional policy.'}{' '}
-                {typeof idRetentionDays === 'number'
-                  ? `Valid ID images, when collected, are normally retained for ${idRetentionDays} days.`
-                  : 'Valid ID images, when collected, are normally retained under institutional policy.'}{' '}
-                {typeof visitorRetentionDays === 'number'
-                  ? `Visitor records are retained for ${visitorRetentionDays} days under institutional policy.`
-                  : 'Visitor records are retained under institutional policy.'}{' '}
-                Evidence is retained at least through the scheduled visit, and authorized incident holds may extend retention when required.
-              </p>
-            </div>
-
-            <div className="rounded-lg border border-[var(--color-border)] p-4 bg-[var(--color-surface)]">
-              <label className="flex items-start gap-3 cursor-pointer">
-                <input type="checkbox" {...register('consent')} className="mt-1 h-4 w-4 text-[var(--color-brand)] rounded" />
-                <span className="text-xs text-[var(--color-text-secondary)] leading-relaxed">
-                  I consent to the collection and processing of my personal information, face photo, and valid ID pursuant to the <strong>Data Privacy Act of 2012</strong> for the purpose of campus security and visitor management.
-                </span>
-              </label>
-              {errors.consent && (
-                <p className="text-xs text-[var(--color-danger-dark)] mt-2 font-medium">{errors.consent.message}</p>
-              )}
-            </div>
-
-            {registrationSecurityError && (
-              <div className="rounded-xl border border-[var(--color-danger)] bg-[var(--color-danger-light)] p-3 text-xs text-[var(--color-danger-dark)]" role="alert">
-                {registrationSecurityError}
-              </div>
-            )}
-
-            <TurnstileWidget
-              ref={turnstileRef}
-              execution="execute"
-              appearance="interaction-only"
-            />
-
-            <Button
-              type="submit"
-              disabled={!isValid || isStartingRegistration}
-              loading={isStartingRegistration}
-              className="w-full"
-              icon={<ArrowRight className="h-4 w-4" />}
-            >
-              Continue to Live Face Capture
-            </Button>
-          </form>
-        )}
-
-        {/* ============================== STEP 2: LIVE FACE CAPTURE ============================== */}
-        {step === 'photo' && (
-          <div className="space-y-6">
-            <div className="text-center">
-              <h2 className="text-lg font-bold text-[var(--color-text-primary)]">
-                {photoPreview ? 'Live Face Captured' : 'Verify Your Identity'}
-              </h2>
-              <p className="text-sm text-[var(--color-text-secondary)] mt-1">
-                {photoPreview
-                  ? 'Check your photo. Make sure your full face is visible and well-lit.'
-                  : 'Place your face inside the guide. Look directly at the camera. Use good lighting.'}
-              </p>
-            </div>
-
-            {liveFaceError && (
-              <div className="rounded-xl border border-[var(--color-danger)] bg-[var(--color-danger-light)] p-4 text-xs text-[var(--color-danger-dark)] space-y-1" role="alert">
-                <div className="flex items-center gap-2 font-bold">
-                  <AlertCircle className="h-4 w-4 text-[var(--color-danger)] flex-shrink-0" />
-                  <span>{liveFaceError.title}</span>
-                </div>
-                <p>{liveFaceError.message}</p>
-              </div>
-            )}
-
-            {photoPreview ? (
-              <div className="space-y-4">
-                <div className="relative mx-auto max-w-xs overflow-hidden rounded-2xl border-2 border-[var(--color-border)] shadow-sm aspect-[4/3] bg-black">
-                  <img src={photoPreview} alt="Captured face" className="w-full h-full object-cover" />
-                </div>
-
-                <div className="flex gap-3">
-                  <Button variant="secondary" onClick={onRetakeLivePhoto} className="flex-1" icon={<RotateCcw className="h-4 w-4" />}>
-                    Retake
-                  </Button>
-                  <Button
-                    onClick={onConfirmLivePhoto}
-                    loading={isEvaluatingFaceQuality}
-                    className="flex-1"
-                    icon={<ArrowRight className="h-4 w-4" />}
-                  >
-                    Use This Photo
-                  </Button>
-                </div>
-              </div>
-            ) : (
-              <div className="space-y-4">
-                {faceWebcam.error && (
-                  <div className="rounded-md border border-[var(--color-danger)] bg-[var(--color-danger-light)] p-3 text-xs text-[var(--color-danger-dark)]">
-                    <p className="font-semibold mb-1">Camera access required</p>
-                    <p className="mb-2">{faceWebcam.error}</p>
-                    <Button size="sm" variant="secondary" onClick={() => faceWebcam.start()} disabled={faceWebcam.isStarting}>
-                      {faceWebcam.isStarting ? 'Starting…' : 'Retry Camera'}
+                  <div className="flex gap-3">
+                    <Button variant="secondary" onClick={onRetakeLivePhoto} className="flex-1" icon={<RotateCcw className="h-4 w-4" />}>
+                      Retake
+                    </Button>
+                    <Button
+                      onClick={onConfirmLivePhoto}
+                      loading={isEvaluatingFaceQuality}
+                      className="flex-1"
+                      icon={<ArrowRight className="h-4 w-4" />}
+                    >
+                      Use This Photo
                     </Button>
                   </div>
-                )}
-
-                {/* Single camera viewport with oval guide */}
-                <div className="mx-auto w-full max-w-md overflow-hidden rounded-2xl border-2 border-[var(--color-brand)] bg-black aspect-[4/3] relative flex items-center justify-center shadow-inner">
-                  {faceWebcam.isStarting && (
-                    <div className="absolute inset-0 z-20 flex flex-col items-center justify-center bg-black/60 text-white text-xs">
-                      <Loader2 className="h-6 w-6 animate-spin mb-1 text-[var(--color-brand)]" />
-                      <span>Starting camera…</span>
+                </div>
+              ) : (
+                <div className="space-y-4">
+                  {faceWebcam.error && (
+                    <div className="rounded-md border border-[var(--color-danger)] bg-[var(--color-danger-light)] p-3 text-xs text-[var(--color-danger-dark)]">
+                      <p className="font-semibold mb-1">Camera access required</p>
+                      <p className="mb-2">{faceWebcam.error}</p>
+                      <Button size="sm" variant="secondary" onClick={() => faceWebcam.start()} disabled={faceWebcam.isStarting}>
+                        {faceWebcam.isStarting ? 'Starting…' : 'Retry Camera'}
+                      </Button>
                     </div>
                   )}
-                  {faceWebcam.videoRef && (
-                    <video
-                      ref={faceWebcam.videoRef}
-                      autoPlay
-                      playsInline
-                      muted
-                      style={{ transform: faceWebcam.mirrorPreview ? 'scaleX(-1)' : 'none' }}
-                      className="h-full w-full object-cover"
-                    />
-                  )}
 
-                  {/* Face Guide Oval */}
-                  <div className="absolute inset-0 pointer-events-none flex items-center justify-center">
-                    <div className="w-48 h-64 sm:w-56 sm:h-72 border-2 border-dashed border-white/80 rounded-[50%] shadow-[0_0_0_9999px_rgba(0,0,0,0.45)] flex items-center justify-center">
-                      <span className="sr-only">Center face in oval</span>
+                  {/* Single camera viewport with oval guide */}
+                  <div className="mx-auto w-full max-w-md overflow-hidden rounded-2xl border-2 border-[var(--color-brand)] bg-black aspect-[4/3] relative flex items-center justify-center shadow-inner">
+                    {faceWebcam.isStarting && (
+                      <div className="absolute inset-0 z-20 flex flex-col items-center justify-center bg-black/60 text-white text-xs">
+                        <Loader2 className="h-6 w-6 animate-spin mb-1 text-[var(--color-brand)]" />
+                        <span>Starting camera…</span>
+                      </div>
+                    )}
+                    {faceWebcam.videoRef && (
+                      <video
+                        ref={faceWebcam.videoRef}
+                        autoPlay
+                        playsInline
+                        muted
+                        style={{ transform: faceWebcam.mirrorPreview ? 'scaleX(-1)' : 'none' }}
+                        className="h-full w-full object-cover"
+                      />
+                    )}
+
+                    {/* Face Guide Oval */}
+                    <div className="absolute inset-0 pointer-events-none flex items-center justify-center">
+                      <div className="w-48 h-64 sm:w-56 sm:h-72 border-2 border-dashed border-white/80 rounded-[50%] shadow-[0_0_0_9999px_rgba(0,0,0,0.45)] flex items-center justify-center">
+                        <span className="sr-only">Center face in oval</span>
+                      </div>
                     </div>
                   </div>
-                </div>
 
-                <div className="flex gap-3">
-                  <Button
-                    variant="secondary"
-                    onClick={() => {
-                      faceWebcam.stop();
-                      setStep('form');
-                    }}
-                    className="flex-1"
-                    icon={<ArrowLeft className="h-4 w-4" />}
-                  >
-                    Back
-                  </Button>
-                  <Button
-                    onClick={onCaptureLivePhoto}
-                    disabled={!faceWebcam.isActive}
-                    className="flex-1"
-                    icon={<Camera className="h-4 w-4" />}
-                  >
-                    Take Live Photo
-                  </Button>
-                </div>
-              </div>
-            )}
-          </div>
-        )}
-
-        {/* ============================== STEP 3: VALID ID ============================== */}
-        {step === 'id' && (
-          <div className="space-y-6">
-            <div className="text-center">
-              <h2 className="text-lg font-bold text-[var(--color-text-primary)]">Valid ID Document</h2>
-              <p className="text-sm text-[var(--color-text-secondary)] mt-1">
-                Provide a clear image of your government, student, or company ID.
-              </p>
-            </div>
-
-            {idQualityError && (
-              <div className="rounded-xl border border-[var(--color-danger)] bg-[var(--color-danger-light)] p-4 text-xs text-[var(--color-danger-dark)] space-y-1" role="alert">
-                <div className="flex items-center gap-2 font-bold">
-                  <AlertCircle className="h-4 w-4 text-[var(--color-danger)] flex-shrink-0" />
-                  <span>ID Image Quality Check</span>
-                </div>
-                <p>{idQualityError}</p>
-              </div>
-            )}
-
-            <input
-              ref={idFileInputRef}
-              type="file"
-              accept="image/jpeg,image/png,image/webp"
-              onChange={handleIdFileUpload}
-              className="hidden"
-            />
-
-            {idPreview ? (
-              <div className="space-y-4">
-                {idReusedFromOcr && (
-                  <div className="rounded-lg bg-emerald-50 border border-emerald-200 p-3 text-xs text-emerald-800 flex items-center gap-2">
-                    <CheckCircle2 className="h-4 w-4 text-emerald-600 flex-shrink-0" />
-                    <span>✓ ID image already added from earlier autofill upload.</span>
-                  </div>
-                )}
-
-                <div className="relative mx-auto max-w-sm overflow-hidden rounded-xl border border-[var(--color-border)] shadow-sm aspect-[3/2] bg-slate-100 flex items-center justify-center">
-                  <img src={idPreview} alt="Valid ID" className="h-full w-full object-cover" />
-                  <button
-                    type="button"
-                    onClick={onRetakeId}
-                    aria-label="Remove ID image"
-                    className="absolute top-2 right-2 min-h-11 min-w-11 rounded-full bg-black/60 hover:bg-black/80 text-white flex items-center justify-center transition-colors"
-                  >
-                    <X className="h-5 w-5" />
-                  </button>
-                </div>
-
-                <div className="flex gap-3">
-                  <Button
-                    type="button"
-                    variant="secondary"
-                    onClick={() => idFileInputRef.current?.click()}
-                    disabled={isProcessingId}
-                    className="flex-1"
-                    icon={<Upload className="h-4 w-4" />}
-                  >
-                    Replace ID
-                  </Button>
-                  <Button
-                    type="button"
-                    onClick={onConfirmValidId}
-                    disabled={isProcessingId}
-                    className="flex-1"
-                    icon={<ArrowRight className="h-4 w-4" />}
-                  >
-                    Verify Identity
-                  </Button>
-                </div>
-              </div>
-            ) : (
-              <div className="space-y-4 text-center">
-                <div
-                  onClick={() => idFileInputRef.current?.click()}
-                  tabIndex={0}
-                  role="button"
-                  aria-label="Upload valid ID image"
-                  className="aspect-[3/2] max-w-sm mx-auto flex flex-col items-center justify-center rounded-2xl border-2 border-dashed border-[var(--color-border)] hover:border-[var(--color-brand)] bg-[var(--color-canvas)] cursor-pointer p-6 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-brand)] transition-colors"
-                >
-                  <Upload className="h-10 w-10 text-[var(--color-brand)] mb-2" />
-                  <p className="font-bold text-sm text-[var(--color-text-primary)]">
-                    {isProcessingId ? 'Processing ID image…' : 'Add Valid ID'}
-                    {/* Processing image… */}
-                  </p>
-                  <p className="text-xs text-[var(--color-text-secondary)] mt-1">
-                    Select photo from device library or take photo via your phone camera
-                  </p>
-                </div>
-
-                <div className="flex gap-3 max-w-sm mx-auto">
-                  <Button
-                    type="button"
-                    variant="secondary"
-                    onClick={() => {
-                      setStep('photo');
-                      void faceWebcam.start();
-                    }}
-                    className="flex-1"
-                    icon={<ArrowLeft className="h-4 w-4" />}
-                  >
-                    Back to Face
-                  </Button>
-                  <Button
-                    type="button"
-                    onClick={() => idFileInputRef.current?.click()}
-                    loading={isProcessingId}
-                    className="flex-1"
-                    icon={<Upload className="h-4 w-4" />}
-                  >
-                    Choose Photo
-                  </Button>
-                </div>
-              </div>
-            )}
-          </div>
-        )}
-
-        {/* ============================== STEP 4: VERIFICATION ============================== */}
-        {step === 'verify' && (
-          <div className="space-y-6">
-            <div className="text-center">
-              <h2 className="text-lg font-bold text-[var(--color-text-primary)]">Identity Verification</h2>
-              <p className="text-sm text-[var(--color-text-secondary)] mt-1">
-                Comparing your live selfie with your valid ID portrait.
-              </p>
-            </div>
-
-            {isVerifyingIdentity ? (
-              <div className="py-12 text-center space-y-4">
-                <Loader2 className="mx-auto h-12 w-12 animate-spin text-[var(--color-brand)]" />
-                <h3 className="font-bold text-base text-[var(--color-text-primary)]">
-                  Verifying Your Identity…
-                </h3>
-                <p className="text-xs text-[var(--color-text-secondary)] max-w-xs mx-auto">
-                  Extracting ID portrait and performing local biometric comparison. This takes a few seconds.
-                </p>
-              </div>
-            ) : identityVerified ? (
-              <div className="space-y-6 text-center">
-                <div className="rounded-2xl border border-emerald-300 bg-emerald-50 p-6 space-y-3">
-                  <CheckCircle2 className="mx-auto h-12 w-12 text-emerald-600" />
-                  <h3 className="font-bold text-lg text-emerald-950">Identity Verified Successfully</h3>
-                  <p className="text-xs text-emerald-800 max-w-sm mx-auto">
-                    Your live face matches the portrait on your ID. You are ready to review your pass details.
-                  </p>
-                </div>
-
-                <div className="flex gap-3 max-w-md mx-auto">
-                  <Button onClick={() => setStep('review')} className="w-full" icon={<ArrowRight className="h-4 w-4" />}>
-                    Continue to Review
-                  </Button>
-                </div>
-              </div>
-            ) : (
-              <div className="space-y-6">
-                <div className="rounded-2xl border border-[var(--color-danger)] bg-[var(--color-danger-light)] p-6 space-y-3" role="alert">
-                  <AlertCircle className="mx-auto h-10 w-10 text-[var(--color-danger)]" />
-                  <h3 className="font-bold text-base text-center text-[var(--color-danger-dark)]">
-                    Identity Verification Unsuccessful
-                  </h3>
-                  <p className="text-xs text-[var(--color-danger-dark)] text-center leading-relaxed">
-                    {verificationError || 'We could not confirm a match between your live face and ID portrait.'}
-                  </p>
-                </div>
-
-                <div className="flex flex-col sm:flex-row gap-3">
-                  <Button
-                    variant="secondary"
-                    onClick={onRetakeLivePhoto}
-                    className="flex-1"
-                    icon={<RotateCcw className="h-4 w-4" />}
-                  >
-                    Retake Live Photo
-                  </Button>
-                  <Button
-                    variant="secondary"
-                    onClick={onRetakeId}
-                    className="flex-1"
-                    icon={<Upload className="h-4 w-4" />}
-                  >
-                    Replace ID Image
-                  </Button>
-                  <Button
-                    onClick={() => runIdentityVerification()}
-                    className="flex-1"
-                    icon={<RefreshCw className="h-4 w-4" />}
-                  >
-                    Retry Verification
-                  </Button>
-                </div>
-              </div>
-            )}
-          </div>
-        )}
-
-        {/* ============================== STEP 5: REVIEW ============================== */}
-        {step === 'review' && (
-          <div className="space-y-6">
-            <div className="text-center">
-              <h2 className="text-lg font-bold text-[var(--color-text-primary)]">Review Your Information</h2>
-              <p className="text-sm text-[var(--color-text-secondary)] mt-1">
-                Please verify your information before generating your E-GatePass.
-              </p>
-            </div>
-
-            {portalTransactionRef.current?.phase === 'existing_pass_conflict' ? (
-              <div className="rounded-lg border border-amber-300 bg-amber-50 p-4 space-y-2 text-sm text-amber-900" role="alert">
-                <div className="flex items-center gap-2 font-semibold text-amber-950">
-                  <AlertCircle className="h-5 w-5 text-amber-600 shrink-0" />
-                  <span>Existing Pass Detected</span>
-                </div>
-                <p>
-                  An existing pass was already created for this request, but the local retry no longer matches it. Do not create another pass. Please ask the Guard for assistance.
-                </p>
-              </div>
-            ) : portalTransactionRef.current?.phase === 'ambiguous' ? (
-              <div className="rounded-lg border border-amber-300 bg-amber-50 p-4 space-y-2 text-sm text-amber-900" role="alert">
-                <div className="flex items-center gap-2 font-semibold text-amber-950">
-                  <AlertCircle className="h-5 w-5 text-amber-600 shrink-0" />
-                  <span>Generation result could not be confirmed</span>
-                </div>
-                <p>
-                  Submission cancelled. The previous pass may have been created. Please proceed to the Guard Station with your valid ID for assistance.
-                </p>
-                <div className="flex gap-2 pt-2">
-                  <Button variant="secondary" onClick={handleAmbiguousCancelAndAskGuard}>
-                    Cancel & Ask Guard
-                  </Button>
-                  <Button onClick={handleRetryExactSubmission}>
-                    Retry Exact Submission
-                  </Button>
-                </div>
-              </div>
-            ) : submitError ? (
-              <div className="rounded-md border border-[var(--color-danger)] bg-[var(--color-danger-light)] p-3 text-sm text-[var(--color-danger-dark)]" role="alert">
-                {submitError}
-              </div>
-            ) : null}
-
-            {/* Verification Badge */}
-            <div className="rounded-xl border border-emerald-300 bg-emerald-50 p-3.5 flex items-center justify-between text-xs text-emerald-900">
-              <div className="flex items-center gap-2">
-                <CheckCircle2 className="h-5 w-5 text-emerald-600 flex-shrink-0" />
-                <div>
-                  <span className="font-bold block">Biometric Identity Verified</span>
-                  <span className="text-[11px] text-emerald-800">Your live face matches your submitted ID portrait.</span>
-                </div>
-              </div>
-              <span className="rounded-full bg-emerald-600 text-white font-bold text-[10px] px-2.5 py-0.5 uppercase tracking-wide">
-                Verified
-              </span>
-            </div>
-
-            {/* Group 1: Visitor Information */}
-            <div className="rounded-lg bg-[var(--color-surface)] p-4 text-sm border border-[var(--color-border)] space-y-3">
-              <div className="flex items-center justify-between border-b border-[var(--color-border)] pb-2">
-                <span className="font-bold text-xs uppercase tracking-wider text-[var(--color-text-secondary)]">
-                  Visitor Information
-                </span>
-                {portalTransactionRef.current?.phase !== 'existing_pass_conflict' &&
-                  portalTransactionRef.current?.phase !== 'ambiguous' && (
-                  <button
-                    type="button"
-                    onClick={() => setStep('form')}
-                    className="text-xs font-semibold text-[var(--color-brand)] hover:underline"
-                  >
-                    Edit Details
-                  </button>
-                )}
-              </div>
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                <div>
-                  <span className="text-xs text-[var(--color-text-secondary)]">Full Name:</span>
-                  <p className="font-semibold text-[var(--color-text-primary)] mt-0.5">
-                    {[getValues('firstName'), getValues('middleName'), getValues('lastName')].filter(Boolean).join(' ')}
-                  </p>
-                </div>
-                <div>
-                  <span className="text-xs text-[var(--color-text-secondary)]">Contact Number:</span>
-                  <p className="font-semibold text-[var(--color-text-primary)] mt-0.5">{getValues('contactNumber')}</p>
-                </div>
-              </div>
-            </div>
-
-            {/* Group 2: Visit Information */}
-            <div className="rounded-lg bg-[var(--color-surface)] p-4 text-sm border border-[var(--color-border)] space-y-3">
-              <div className="border-b border-[var(--color-border)] pb-2">
-                <span className="font-bold text-xs uppercase tracking-wider text-[var(--color-text-secondary)]">
-                  Visit Information
-                </span>
-              </div>
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                <div>
-                  <span className="text-xs text-[var(--color-text-secondary)]">Purpose of Visit:</span>
-                  <p className="font-semibold text-[var(--color-text-primary)] mt-0.5">{getValues('purpose')}</p>
-                </div>
-                <div>
-                  <span className="text-xs text-[var(--color-text-secondary)]">Visit Date:</span>
-                  <p className="font-semibold text-[var(--color-text-primary)] mt-0.5">{getValues('visitDate')}</p>
-                </div>
-              </div>
-            </div>
-
-            {/* Group 3: Photo Previews */}
-            <div className="rounded-lg bg-[var(--color-surface)] p-4 text-sm border border-[var(--color-border)] space-y-3">
-              <div className="border-b border-[var(--color-border)] pb-2">
-                <span className="font-bold text-xs uppercase tracking-wider text-[var(--color-text-secondary)]">
-                  Evidence Photos
-                </span>
-              </div>
-              <div className="flex flex-wrap gap-6 justify-center items-center py-2">
-                {photoPreview && (
-                  <div className="text-center">
-                    <p className="text-xs text-[var(--color-text-secondary)] mb-1">Live Face Photo</p>
-                    <img
-                      src={photoPreview}
-                      alt="Your live face photo"
-                      className="h-24 w-20 object-cover rounded-lg border border-[var(--color-border)] shadow-sm mx-auto"
-                    />
-                    <button
-                      type="button"
+                  <div className="flex gap-3">
+                    <Button
+                      variant="secondary"
                       onClick={() => {
-                        onRetakeLivePhoto();
-                        setStep('photo');
+                        faceWebcam.stop();
+                        setStep('visit');
                       }}
-                      className="mt-1.5 text-xs font-semibold text-[var(--color-brand)] hover:underline inline-flex items-center gap-1"
+                      className="flex-1"
+                      icon={<ArrowLeft className="h-4 w-4" />}
                     >
-                      <RotateCcw className="h-3 w-3" />
-                      Retake Photo
-                    </button>
+                      Back
+                    </Button>
+                    <Button
+                      onClick={onCaptureLivePhoto}
+                      disabled={!faceWebcam.isActive}
+                      className="flex-1"
+                      icon={<Camera className="h-4 w-4" />}
+                    >
+                      Take Live Photo
+                    </Button>
                   </div>
-                )}
-                {idPreview && (
-                  <div className="text-center">
-                    <p className="text-xs text-[var(--color-text-secondary)] mb-1">Valid ID</p>
-                    <img
-                      src={idPreview}
-                      alt="Valid ID"
-                      className="h-24 w-36 object-cover rounded-lg border border-[var(--color-border)] shadow-sm mx-auto"
-                    />
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* ============================== STEP 4: VALID ID ============================== */}
+          {step === 'id' && (
+            <div className="space-y-6">
+              <div className="text-center">
+                <h2 className="text-lg font-bold text-[var(--color-text-primary)]">Valid ID Document</h2>
+                <p className="text-sm text-[var(--color-text-secondary)] mt-1">
+                  Provide a clear image of your government, student, or company ID.
+                </p>
+              </div>
+
+              {idQualityError && (
+                <div className="rounded-xl border border-[var(--color-danger)] bg-[var(--color-danger-light)] p-4 text-xs text-[var(--color-danger-dark)] space-y-1" role="alert">
+                  <div className="flex items-center gap-2 font-bold">
+                    <AlertCircle className="h-4 w-4 text-[var(--color-danger)] flex-shrink-0" />
+                    <span>ID Image Quality Check</span>
+                  </div>
+                  <p>{idQualityError}</p>
+                </div>
+              )}
+
+              <input
+                ref={idFileInputRef}
+                type="file"
+                accept="image/jpeg,image/png,image/webp"
+                onChange={handleIdFileUpload}
+                className="hidden"
+              />
+
+              {idPreview ? (
+                <div className="space-y-4">
+                  {idReusedFromOcr && (
+                    <div className="rounded-lg bg-emerald-50 border border-emerald-200 p-3 text-xs text-emerald-800 flex items-center gap-2">
+                      <CheckCircle2 className="h-4 w-4 text-emerald-600 flex-shrink-0" />
+                      <span>✓ ID image already added from earlier autofill upload.</span>
+                    </div>
+                  )}
+
+                  <div className="relative mx-auto max-w-sm overflow-hidden rounded-xl border border-[var(--color-border)] shadow-sm aspect-[3/2] bg-slate-100 flex items-center justify-center">
+                    <img src={idPreview} alt="Valid ID" className="h-full w-full object-cover" />
                     <button
                       type="button"
                       onClick={onRetakeId}
-                      className="mt-1.5 text-xs font-semibold text-[var(--color-brand)] hover:underline inline-flex items-center gap-1"
+                      aria-label="Remove ID image"
+                      className="absolute top-2 right-2 min-h-11 min-w-11 rounded-full bg-black/60 hover:bg-black/80 text-white flex items-center justify-center transition-colors"
                     >
-                      <RotateCcw className="h-3 w-3" />
-                      Retake ID
+                      <X className="h-5 w-5" />
                     </button>
+                  </div>
+
+                  <div className="flex gap-3">
+                    <Button
+                      type="button"
+                      variant="secondary"
+                      onClick={() => idFileInputRef.current?.click()}
+                      disabled={isProcessingId}
+                      className="flex-1"
+                      icon={<Upload className="h-4 w-4" />}
+                    >
+                      Replace ID
+                    </Button>
+                    <Button
+                      type="button"
+                      onClick={onConfirmValidId}
+                      disabled={isProcessingId}
+                      className="flex-1"
+                      icon={<ArrowRight className="h-4 w-4" />}
+                    >
+                      Verify Identity
+                    </Button>
+                  </div>
+                </div>
+              ) : (
+                <div className="space-y-4 text-center">
+                  <div
+                    onClick={() => idFileInputRef.current?.click()}
+                    tabIndex={0}
+                    role="button"
+                    aria-label="Upload valid ID image"
+                    className="aspect-[3/2] max-w-sm mx-auto flex flex-col items-center justify-center rounded-2xl border-2 border-dashed border-[var(--color-border)] hover:border-[var(--color-brand)] bg-[var(--color-canvas)] cursor-pointer p-6 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-brand)] transition-colors"
+                  >
+                    <Upload className="h-10 w-10 text-[var(--color-brand)] mb-2" />
+                    <p className="font-bold text-sm text-[var(--color-text-primary)]">
+                      {isProcessingId ? 'Processing ID image…' : 'Add Valid ID'}
+                      {/* Processing image… */}
+                    </p>
+                    <p className="text-xs text-[var(--color-text-secondary)] mt-1">
+                      Select photo from device library or take photo via your phone camera
+                    </p>
+                  </div>
+
+                  <div className="flex gap-3 max-w-sm mx-auto">
+                    <Button
+                      type="button"
+                      variant="secondary"
+                      onClick={() => {
+                        setStep('photo');
+                        void faceWebcam.start();
+                      }}
+                      className="flex-1"
+                      icon={<ArrowLeft className="h-4 w-4" />}
+                    >
+                      Back to Face
+                    </Button>
+                    <Button
+                      type="button"
+                      onClick={() => idFileInputRef.current?.click()}
+                      loading={isProcessingId}
+                      className="flex-1"
+                      icon={<Upload className="h-4 w-4" />}
+                    >
+                      Choose Photo
+                    </Button>
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* ============================== STEP 5: VERIFICATION ============================== */}
+          {step === 'verify' && (
+            <div className="space-y-6">
+              <div className="text-center">
+                <h2 className="text-lg font-bold text-[var(--color-text-primary)]">Identity Verification</h2>
+                <p className="text-sm text-[var(--color-text-secondary)] mt-1">
+                  Comparing your live selfie with your valid ID portrait.
+                </p>
+              </div>
+
+              {isVerifyingIdentity ? (
+                <div className="py-12 text-center space-y-4">
+                  <Loader2 className="mx-auto h-12 w-12 animate-spin text-[var(--color-brand)]" />
+                  <h3 className="font-bold text-base text-[var(--color-text-primary)]">
+                    Verifying Your Identity…
+                  </h3>
+                  <p className="text-xs text-[var(--color-text-secondary)] max-w-xs mx-auto">
+                    Extracting ID portrait and performing biometric comparison. This takes a few seconds.
+                  </p>
+                </div>
+              ) : identityVerified ? (
+                <div className="space-y-6 text-center">
+                  <div className="rounded-2xl border border-emerald-300 bg-emerald-50 p-6 space-y-3">
+                    <CheckCircle2 className="mx-auto h-12 w-12 text-emerald-600" />
+                    <h3 className="font-bold text-lg text-emerald-950">Identity Verified Successfully</h3>
+                    <p className="text-xs text-emerald-800 max-w-sm mx-auto">
+                      Your live face matches the portrait on your ID. You are ready to review your pass details.
+                    </p>
+                  </div>
+
+                  <div className="flex gap-3 max-w-md mx-auto">
+                    <Button onClick={() => setStep('review')} className="w-full" icon={<ArrowRight className="h-4 w-4" />}>
+                      Continue to Review
+                    </Button>
+                  </div>
+                </div>
+              ) : (
+                <div className="space-y-6">
+                  <div className="rounded-2xl border border-[var(--color-danger)] bg-[var(--color-danger-light)] p-6 space-y-3" role="alert">
+                    <AlertCircle className="mx-auto h-10 w-10 text-[var(--color-danger)]" />
+                    <h3 className="font-bold text-base text-center text-[var(--color-danger-dark)]">
+                      Identity Verification Unsuccessful
+                    </h3>
+                    <p className="text-xs text-[var(--color-danger-dark)] text-center leading-relaxed">
+                      {verificationError || 'We could not confirm a match between your live face and ID portrait.'}
+                    </p>
+                  </div>
+
+                  <div className="flex flex-col sm:flex-row gap-3">
+                    <Button
+                      variant="secondary"
+                      onClick={onRetakeLivePhoto}
+                      className="flex-1"
+                      icon={<RotateCcw className="h-4 w-4" />}
+                    >
+                      Retake Live Photo
+                    </Button>
+                    <Button
+                      variant="secondary"
+                      onClick={onRetakeId}
+                      className="flex-1"
+                      icon={<Upload className="h-4 w-4" />}
+                    >
+                      Replace ID Image
+                    </Button>
+                    <Button
+                      onClick={() => runIdentityVerification()}
+                      className="flex-1"
+                      icon={<RefreshCw className="h-4 w-4" />}
+                    >
+                      Retry Verification
+                    </Button>
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* ============================== STEP 6: REVIEW ============================== */}
+          {step === 'review' && (
+            <div className="space-y-6">
+              <div className="text-center">
+                <h2 className="text-lg font-bold text-[var(--color-text-primary)]">Review Your Information</h2>
+                <p className="text-sm text-[var(--color-text-secondary)] mt-1">
+                  Please verify your information before generating your E-GatePass.
+                </p>
+              </div>
+
+              {portalTransactionRef.current?.phase === 'existing_pass_conflict' ? (
+                <div className="rounded-lg border border-amber-300 bg-amber-50 p-4 space-y-2 text-sm text-amber-900" role="alert">
+                  <div className="flex items-center gap-2 font-semibold text-amber-950">
+                    <AlertCircle className="h-5 w-5 text-amber-600 shrink-0" />
+                    <span>Existing Pass Detected</span>
+                  </div>
+                  <p>
+                    An existing pass was already created for this request, but the local retry no longer matches it. Do not create another pass. Please ask the Guard for assistance.
+                  </p>
+                </div>
+              ) : portalTransactionRef.current?.phase === 'ambiguous' ? (
+                <div className="rounded-lg border border-amber-300 bg-amber-50 p-4 space-y-2 text-sm text-amber-900" role="alert">
+                  <div className="flex items-center gap-2 font-semibold text-amber-950">
+                    <AlertCircle className="h-5 w-5 text-amber-600 shrink-0" />
+                    <span>Generation result could not be confirmed</span>
+                  </div>
+                  <p>
+                    Submission cancelled. The previous pass may have been created. Please proceed to the Guard Station with your valid ID for assistance.
+                  </p>
+                  <div className="flex gap-2 pt-2">
+                    <Button variant="secondary" onClick={handleAmbiguousCancelAndAskGuard}>
+                      Cancel & Ask Guard
+                    </Button>
+                    <Button onClick={handleRetryExactSubmission}>
+                      Retry Exact Submission
+                    </Button>
+                  </div>
+                </div>
+              ) : submitError ? (
+                <div className="rounded-md border border-[var(--color-danger)] bg-[var(--color-danger-light)] p-3 text-sm text-[var(--color-danger-dark)]" role="alert">
+                  {submitError}
+                </div>
+              ) : null}
+
+              {/* Verification Badge */}
+              <div className="rounded-xl border border-emerald-300 bg-emerald-50 p-3.5 flex items-center justify-between text-xs text-emerald-900">
+                <div className="flex items-center gap-2">
+                  <CheckCircle2 className="h-5 w-5 text-emerald-600 flex-shrink-0" />
+                  <div>
+                    <span className="font-bold block">Biometric Identity Verified</span>
+                    <span className="text-[11px] text-emerald-800">Your live face matches your submitted ID portrait.</span>
+                  </div>
+                </div>
+                <span className="rounded-full bg-emerald-600 text-white font-bold text-[10px] px-2.5 py-0.5 uppercase tracking-wide">
+                  Verified
+                </span>
+              </div>
+
+              {/* Group 1: Visitor Information */}
+              <div className="rounded-xl bg-[var(--color-surface)] p-4 text-sm border border-[var(--color-border)] space-y-3">
+                <div className="flex items-center justify-between border-b border-[var(--color-border)] pb-2">
+                  <span className="font-bold text-xs uppercase tracking-wider text-[var(--color-text-secondary)]">
+                    Visitor Information
+                  </span>
+                  {portalTransactionRef.current?.phase !== 'existing_pass_conflict' &&
+                    portalTransactionRef.current?.phase !== 'ambiguous' && (
+                    <button
+                      type="button"
+                      onClick={() => setStep('form')}
+                      className="text-xs font-semibold text-[var(--color-brand)] hover:underline"
+                    >
+                      Edit Details
+                    </button>
+                  )}
+                </div>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
+                  <div>
+                    <span className="text-[var(--color-text-secondary)] block">Full Name:</span>
+                    <p className="font-semibold text-sm text-[var(--color-text-primary)] mt-0.5">
+                      {[getValues('firstName'), getValues('middleName'), getValues('lastName')].filter(Boolean).join(' ')}
+                    </p>
+                  </div>
+                  <div>
+                    <span className="text-[var(--color-text-secondary)] block">Contact Number:</span>
+                    <p className="font-semibold text-sm text-[var(--color-text-primary)] mt-0.5">
+                      {normalizePhMobile(getValues('contactNumber')) || getValues('contactNumber')}
+                    </p>
+                  </div>
+                  <div className="sm:col-span-2">
+                    <span className="text-[var(--color-text-secondary)] block">Home Address:</span>
+                    <p className="font-semibold text-[var(--color-text-primary)] mt-0.5 leading-relaxed">
+                      {getValues('homeAddress')}
+                    </p>
+                  </div>
+                </div>
+              </div>
+
+              {/* Group 2: Visit Information */}
+              <div className="rounded-xl bg-[var(--color-surface)] p-4 text-sm border border-[var(--color-border)] space-y-3">
+                <div className="flex items-center justify-between border-b border-[var(--color-border)] pb-2">
+                  <span className="font-bold text-xs uppercase tracking-wider text-[var(--color-text-secondary)]">
+                    Visit Information
+                  </span>
+                  {portalTransactionRef.current?.phase !== 'existing_pass_conflict' &&
+                    portalTransactionRef.current?.phase !== 'ambiguous' && (
+                    <button
+                      type="button"
+                      onClick={() => setStep('visit')}
+                      className="text-xs font-semibold text-[var(--color-brand)] hover:underline"
+                    >
+                      Edit Details
+                    </button>
+                  )}
+                </div>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
+                  <div>
+                    <span className="text-[var(--color-text-secondary)] block">Purpose of Visit:</span>
+                    <p className="font-semibold text-sm text-[var(--color-text-primary)] mt-0.5">{getValues('purpose')}</p>
+                  </div>
+                  <div>
+                    <span className="text-[var(--color-text-secondary)] block">Visit Date:</span>
+                    <p className="font-semibold text-sm text-[var(--color-text-primary)] mt-0.5">{getValues('visitDate')}</p>
+                  </div>
+                </div>
+              </div>
+
+              {/* Group 3: Vehicle Declaration */}
+              <div className="rounded-xl bg-[var(--color-surface)] p-4 text-sm border border-[var(--color-border)] space-y-3">
+                <div className="flex items-center justify-between border-b border-[var(--color-border)] pb-2">
+                  <span className="font-bold text-xs uppercase tracking-wider text-[var(--color-text-secondary)]">
+                    Arrival & Vehicle
+                  </span>
+                  {portalTransactionRef.current?.phase !== 'existing_pass_conflict' &&
+                    portalTransactionRef.current?.phase !== 'ambiguous' && (
+                    <button
+                      type="button"
+                      onClick={() => setStep('visit')}
+                      className="text-xs font-semibold text-[var(--color-brand)] hover:underline"
+                    >
+                      Edit Details
+                    </button>
+                  )}
+                </div>
+                {getValues('arrivalMode') === 'vehicle' ? (
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs">
+                    <div>
+                      <span className="text-[var(--color-text-secondary)] block">Plate Number:</span>
+                      <p className="font-mono font-bold text-sm text-blue-900 mt-0.5">{getValues('plateNumber')}</p>
+                    </div>
+                    <div>
+                      <span className="text-[var(--color-text-secondary)] block">Vehicle Type:</span>
+                      <p className="font-semibold capitalize text-[var(--color-text-primary)] mt-0.5">{getValues('vehicleType')}</p>
+                    </div>
+                    <div>
+                      <span className="text-[var(--color-text-secondary)] block">Color:</span>
+                      <p className="font-semibold text-[var(--color-text-primary)] mt-0.5">{getValues('vehicleColor')}</p>
+                    </div>
+                    <div>
+                      <span className="text-[var(--color-text-secondary)] block">Make / Model:</span>
+                      <p className="font-semibold text-[var(--color-text-primary)] mt-0.5">{getValues('makeModel') || '—'}</p>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="flex items-center gap-2 text-xs text-[var(--color-text-secondary)]">
+                    <User className="h-4 w-4 text-[var(--color-brand)]" />
+                    <span>No vehicle declared. Arriving as pedestrian, transit, or drop-off.</span>
                   </div>
                 )}
               </div>
+
+              {/* Group 4: Photo Previews */}
+              <div className="rounded-xl bg-[var(--color-surface)] p-4 text-sm border border-[var(--color-border)] space-y-3">
+                <div className="border-b border-[var(--color-border)] pb-2">
+                  <span className="font-bold text-xs uppercase tracking-wider text-[var(--color-text-secondary)]">
+                    Evidence Photos
+                  </span>
+                </div>
+                <div className="flex flex-wrap gap-6 justify-center items-center py-2">
+                  {photoPreview && (
+                    <div className="text-center">
+                      <p className="text-xs text-[var(--color-text-secondary)] mb-1">Live Face Photo</p>
+                      <img
+                        src={photoPreview}
+                        alt="Your live face photo"
+                        className="h-24 w-20 object-cover rounded-lg border border-[var(--color-border)] shadow-sm mx-auto"
+                      />
+                      {portalTransactionRef.current?.phase !== 'ambiguous' && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            onRetakeLivePhoto();
+                            setStep('photo');
+                          }}
+                          className="mt-1.5 text-xs font-semibold text-[var(--color-brand)] hover:underline inline-flex items-center gap-1"
+                        >
+                          <RotateCcw className="h-3 w-3" />
+                          Retake Photo
+                        </button>
+                      )}
+                    </div>
+                  )}
+                  {idPreview && (
+                    <div className="text-center">
+                      <p className="text-xs text-[var(--color-text-secondary)] mb-1">Valid ID</p>
+                      <img
+                        src={idPreview}
+                        alt="Valid ID"
+                        className="h-24 w-36 object-cover rounded-lg border border-[var(--color-border)] shadow-sm mx-auto"
+                      />
+                      {portalTransactionRef.current?.phase !== 'ambiguous' && (
+                        <button
+                          type="button"
+                          onClick={onRetakeId}
+                          className="mt-1.5 text-xs font-semibold text-[var(--color-brand)] hover:underline inline-flex items-center gap-1"
+                        >
+                          <RotateCcw className="h-3 w-3" />
+                          Retake ID
+                        </button>
+                      )}
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {/* Biometric & Vehicle Retention Checkboxes */}
+              <div className="space-y-3 rounded-xl border border-[var(--color-border)] bg-[var(--color-canvas)] p-4 text-xs">
+                <label className="flex items-start gap-2.5 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={rememberVisitor}
+                    onChange={(e) => setRememberVisitor(e.target.checked)}
+                    className="mt-0.5 h-4 w-4 rounded text-[var(--color-brand)] focus:ring-[var(--color-brand)]"
+                  />
+                  <div className="text-[var(--color-text-secondary)]">
+                    <strong className="text-[var(--color-text-primary)]">Remember me for faster future visits</strong> (optional)
+                    <p className="text-[11px] mt-0.5">
+                      Securely enrolls encrypted facial biometric features so you can quickly check in on subsequent visits.
+                    </p>
+                  </div>
+                </label>
+
+                {getValues('arrivalMode') === 'vehicle' && (
+                  <label className="flex items-start gap-2.5 cursor-pointer pt-2 border-t border-[var(--color-border)]">
+                    <input
+                      type="checkbox"
+                      checked={saveVehicle}
+                      onChange={(e) => setSaveVehicle(e.target.checked)}
+                      className="mt-0.5 h-4 w-4 rounded text-[var(--color-brand)] focus:ring-[var(--color-brand)]"
+                    />
+                    <div className="text-[var(--color-text-secondary)]">
+                      <strong className="text-[var(--color-text-primary)]">Save this vehicle to my profile</strong> (optional)
+                      <p className="text-[11px] mt-0.5">
+                        Stores this vehicle for 1-click selection on future visits.
+                      </p>
+                    </div>
+                  </label>
+                )}
+              </div>
+
+              <div className="flex flex-col sm:flex-row gap-3">
+                <Button
+                  variant="secondary"
+                  onClick={() => setStep('visit')}
+                  className="flex-1"
+                  icon={<ArrowLeft className="h-4 w-4" />}
+                >
+                  Back to Details
+                </Button>
+                <Button
+                  onClick={onSubmit}
+                  disabled={!identityVerified}
+                  className="flex-1"
+                  icon={<CheckCircle2 className="h-4 w-4" />}
+                >
+                  Generate E-GatePass
+                </Button>
+              </div>
             </div>
+          )}
 
-            <div className="flex flex-col sm:flex-row gap-3">
-              <Button
-                variant="secondary"
-                onClick={() => setStep('form')}
-                className="flex-1"
-                icon={<ArrowLeft className="h-4 w-4" />}
-              >
-                Back to Details
-              </Button>
-              <Button
-                onClick={onSubmit}
-                disabled={!identityVerified}
-                className="flex-1"
-                icon={<CheckCircle2 className="h-4 w-4" />}
-              >
-                Generate E-GatePass
-              </Button>
-            </div>
-          </div>
-        )}
-
-        {/* ============================== STEP 6: GENERATING ============================== */}
-        {step === 'generating' && (
-          <div role="status" aria-live="polite" aria-label="Generating gate pass" className="py-16 text-center space-y-4">
-            <Loader2 className="mx-auto h-12 w-12 animate-spin text-[var(--color-brand)]" />
-            <h3 className="text-lg font-bold text-[var(--color-text-primary)]">Issuing Official E-GatePass…</h3>
-            <p className="text-sm text-[var(--color-text-secondary)]">Securing your pass record and generating QR token.</p>
-          </div>
-        )}
-
-        {/* ============================== STEP 7: DELIVERY / DONE ============================== */}
-        {(step === 'delivery' || step === 'done') && (
-          <div className="space-y-6">
-            <div className="text-center">
-              <CheckCircle2 className="mx-auto h-14 w-14 text-emerald-600" />
-              <h2 className="text-xl font-black text-[var(--color-text-primary)] mt-3">Your E-GatePass is Ready!</h2>
-              <p className="text-sm text-[var(--color-text-secondary)] mt-1">
-                Save your pass or email it to your inbox. Present the QR code at the campus scanner.
-              </p>
-            </div>
-
-            {emailDeliverySecured && (
-              <div className="rounded-xl border border-emerald-300 bg-emerald-50 p-4 text-xs text-emerald-900">
-                <p className="font-semibold text-sm text-emerald-950">Email Delivery Confirmed</p>
-                <p>A copy of your E-GatePass was sent to your verified email.</p>
-              </div>
-            )}
-
-            {emailSkipped && !emailDeliverySecured && !emailOutcomeUnknown && (
-              <div className="rounded-xl border border-amber-300 bg-amber-50 p-4 text-xs text-amber-900 space-y-1">
-                <p className="font-semibold text-sm text-amber-950">Save your E-GatePass before leaving this page.</p>
-                <p>You chose not to provide a verified email, so a copy was not sent to you.</p>
-              </div>
-            )}
-
-            {emailOutcomeUnknown && !emailDeliverySecured && (
-              <div className="rounded-xl border border-amber-300 bg-amber-50 p-4 text-xs text-amber-900 space-y-1">
-                <p className="font-semibold text-sm text-amber-950">Email delivery could not be confirmed.</p>
-                <p>Your E-GatePass is valid, but the email provider did not return a confirmed delivery result.</p>
-                <p>Please download or save your E-GatePass before leaving this page.</p>
-              </div>
-            )}
-
-            {qrDataUrl && passPresentation ? (
-              <div className="flex justify-center py-2">
-                <InstitutionalPassCard presentation={passPresentation} qrDataUrl={qrDataUrl} />
-              </div>
-            ) : (
-              <div className="rounded-xl border border-amber-300 bg-amber-50 p-6 text-center text-xs text-amber-900 space-y-2">
-                <AlertCircle className="mx-auto h-8 w-8 text-amber-600" />
-                <p className="font-semibold text-sm">Pass Card Notice</p>
-                <p>
-                  Your E-GatePass was issued, but the visual pass could not be prepared. Please retry or ask the Guard for assistance.
+          {/* ============================== RETURNING VISITOR CAPTURE ============================== */}
+          {step === 'returning_capture' && (
+            <div className="space-y-6">
+              <div className="text-center">
+                <h2 className="text-lg font-bold text-[var(--color-text-primary)]">Returning Visitor Biometric Check-In</h2>
+                <p className="text-sm text-[var(--color-text-secondary)] mt-1">
+                  Look directly at the camera to verify your previously enrolled visitor profile.
                 </p>
               </div>
-            )}
 
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-              <Button onClick={handleDownload} className="w-full" icon={<Download className="h-4 w-4" />}>
-                Download E-GatePass
-              </Button>
+              {returningIdentifyError && (
+                <div className="rounded-xl border border-[var(--color-danger)] bg-[var(--color-danger-light)] p-4 text-xs text-[var(--color-danger-dark)] space-y-2" role="alert">
+                  <div className="flex items-center gap-2 font-bold">
+                    <AlertCircle className="h-4 w-4 text-[var(--color-danger)] flex-shrink-0" />
+                    <span>Identification Unsuccessful</span>
+                  </div>
+                  <p>{returningIdentifyError}</p>
+                  <div className="pt-2">
+                    <Button
+                      size="sm"
+                      onClick={() => {
+                        setRegistrationMode('new');
+                        setStep('form');
+                      }}
+                      icon={<ArrowRight className="h-3.5 w-3.5" />}
+                    >
+                      Register as New Visitor
+                    </Button>
+                  </div>
+                </div>
+              )}
+
+              <div className="mx-auto w-full max-w-md overflow-hidden rounded-2xl border-2 border-[var(--color-brand)] bg-black aspect-[4/3] relative flex items-center justify-center shadow-inner">
+                {isIdentifyingReturning && (
+                  <div className="absolute inset-0 z-20 flex flex-col items-center justify-center bg-black/60 text-white text-xs">
+                    <Loader2 className="h-6 w-6 animate-spin mb-1 text-[var(--color-brand)]" />
+                    <span>Verifying biometric template…</span>
+                  </div>
+                )}
+                {faceWebcam.videoRef && (
+                  <video
+                    ref={faceWebcam.videoRef}
+                    autoPlay
+                    playsInline
+                    muted
+                    style={{ transform: faceWebcam.mirrorPreview ? 'scaleX(-1)' : 'none' }}
+                    className="h-full w-full object-cover"
+                  />
+                )}
+                <div className="absolute inset-0 pointer-events-none flex items-center justify-center">
+                  <div className="w-48 h-64 sm:w-56 sm:h-72 border-2 border-dashed border-white/80 rounded-[50%] shadow-[0_0_0_9999px_rgba(0,0,0,0.45)] flex items-center justify-center">
+                    <span className="sr-only">Center face in oval</span>
+                  </div>
+                </div>
+              </div>
+
+              <TurnstileWidget
+                ref={turnstileRef}
+                execution="execute"
+                appearance="interaction-only"
+              />
+
+              <div className="flex gap-3">
+                <Button
+                  variant="secondary"
+                  onClick={() => {
+                    faceWebcam.stop();
+                    setStep('frontdoor');
+                  }}
+                  className="flex-1"
+                  icon={<ArrowLeft className="h-4 w-4" />}
+                >
+                  Back
+                </Button>
+                <Button
+                  onClick={onCaptureReturningFace}
+                  disabled={!faceWebcam.isActive || isIdentifyingReturning}
+                  loading={isIdentifyingReturning}
+                  className="flex-1"
+                  icon={<Camera className="h-4 w-4" />}
+                >
+                  Verify My Face
+                </Button>
+              </div>
+            </div>
+          )}
+
+          {/* ============================== RETURNING VISITOR CONFIRM ============================== */}
+          {step === 'returning_confirm' && returningProfile && (
+            <div className="space-y-6">
+              <div className="text-center">
+                <h2 className="text-xl font-black text-[var(--color-text-primary)]">
+                  Welcome back, {returningProfile.firstName}!
+                </h2>
+                <p className="text-sm text-[var(--color-text-secondary)] mt-1">
+                  Your identity has been verified via biometrics. Confirm today's visit details below.
+                </p>
+              </div>
+
+              {/* Verified Identity Badge */}
+              <div className="rounded-xl border border-emerald-300 bg-emerald-50 p-4 text-xs text-emerald-950 flex items-center justify-between">
+                <div>
+                  <span className="text-[11px] uppercase tracking-wider text-emerald-800 font-semibold block">Verified Name</span>
+                  <span className="font-bold text-base text-emerald-950">{returningProfile.fullName}</span>
+                </div>
+                <span className="rounded-full bg-emerald-600 text-white font-bold text-[10px] px-2.5 py-0.5 uppercase tracking-wide">
+                  Verified Identity
+                </span>
+              </div>
+
+              {/* Editable Contact & Address for Today */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <FormField label="Mobile Number" requirement="required" error={errors.contactNumber?.message}>
+                  <Input type="tel" {...register('contactNumber')} />
+                </FormField>
+                <FormField label="Home Address" requirement="required" error={errors.homeAddress?.message}>
+                  <Input {...register('homeAddress')} />
+                </FormField>
+              </div>
+
+              <label className="flex items-center gap-2 cursor-pointer text-xs text-[var(--color-text-secondary)]">
+                <input
+                  type="checkbox"
+                  checked={saveReturningUpdates}
+                  onChange={(e) => setSaveReturningUpdates(e.target.checked)}
+                  className="rounded text-[var(--color-brand)]"
+                />
+                <span>Update my profile with these contact details for future visits</span>
+              </label>
+
+              {/* Visit Purpose & Date */}
+              <FormField label="Purpose of Visit" requirement="required" error={errors.purpose?.message}>
+                <VisitPurposeField
+                  value={purpose || ''}
+                  onChange={(val) => setValue('purpose', val, { shouldValidate: true })}
+                  purposes={visitPurposes}
+                  error={errors.purpose?.message}
+                />
+              </FormField>
+
+              <FormField label="Visit Date" requirement="required" error={errors.visitDate?.message}>
+                <Input type="date" min={today} max={latestVisitDate} {...register('visitDate')} />
+              </FormField>
+
+              {/* Saved Vehicles Selection */}
+              {returningProfile.savedVehicles && returningProfile.savedVehicles.length > 0 ? (
+                <div className="space-y-3">
+                  <label className="block text-xs font-bold uppercase tracking-wider text-[var(--color-text-muted)]">
+                    Vehicle for Today
+                  </label>
+                  <div className="grid grid-cols-1 gap-2.5">
+                    <div
+                      onClick={() => {
+                        setSelectedSavedVehicleId('none');
+                        setValue('arrivalMode', 'no_vehicle');
+                      }}
+                      role="button"
+                      tabIndex={0}
+                      className={`p-3 rounded-xl border text-xs cursor-pointer flex items-center justify-between transition-all ${
+                        selectedSavedVehicleId === 'none'
+                          ? 'border-[var(--color-brand)] bg-[var(--color-brand-light)] font-bold'
+                          : 'border-[var(--color-border)] bg-white'
+                      }`}
+                    >
+                      <div className="flex items-center gap-2">
+                        <User className="h-4 w-4" />
+                        <span>No Vehicle (Pedestrian / Transit)</span>
+                      </div>
+                      {selectedSavedVehicleId === 'none' && <CheckCircle2 className="h-4 w-4 text-[var(--color-brand)]" />}
+                    </div>
+
+                    {returningProfile.savedVehicles.map((veh) => (
+                      <div
+                        key={veh.id}
+                        onClick={() => {
+                          setSelectedSavedVehicleId(veh.id);
+                          setValue('arrivalMode', 'vehicle');
+                          setValue('vehicleType', veh.vehicleType);
+                          setValue('plateNumber', veh.plateNumber);
+                          setValue('vehicleColor', veh.color);
+                          setValue('makeModel', veh.makeModel || '');
+                        }}
+                        role="button"
+                        tabIndex={0}
+                        className={`p-3 rounded-xl border text-xs cursor-pointer flex items-center justify-between transition-all ${
+                          selectedSavedVehicleId === veh.id
+                            ? 'border-[var(--color-brand)] bg-[var(--color-brand-light)] font-bold'
+                            : 'border-[var(--color-border)] bg-white'
+                        }`}
+                      >
+                        <div className="flex items-center gap-2">
+                          <Car className="h-4 w-4 text-blue-700" />
+                          <span>
+                            <strong>{veh.plateNumber}</strong> ({veh.vehicleType}) • {veh.color} {veh.makeModel ? `• ${veh.makeModel}` : ''}
+                          </span>
+                        </div>
+                        {selectedSavedVehicleId === veh.id && <CheckCircle2 className="h-4 w-4 text-[var(--color-brand)]" />}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              ) : (
+                <div className="space-y-3">
+                  <label className="block text-xs font-bold uppercase tracking-wider text-[var(--color-text-muted)]">
+                    Arrival Method
+                  </label>
+                  <div className="grid grid-cols-2 gap-3">
+                    <Button
+                      type="button"
+                      variant={arrivalMode === 'no_vehicle' ? 'primary' : 'secondary'}
+                      onClick={() => setValue('arrivalMode', 'no_vehicle')}
+                    >
+                      No Vehicle
+                    </Button>
+                    <Button
+                      type="button"
+                      variant={arrivalMode === 'vehicle' ? 'primary' : 'secondary'}
+                      onClick={() => setValue('arrivalMode', 'vehicle')}
+                    >
+                      Bringing a Vehicle
+                    </Button>
+                  </div>
+                </div>
+              )}
+
+              <div className="flex gap-3 pt-2">
+                <Button
+                  variant="secondary"
+                  onClick={() => setStep('frontdoor')}
+                  className="flex-1"
+                  icon={<ArrowLeft className="h-4 w-4" />}
+                >
+                  Start Over
+                </Button>
+                <Button
+                  onClick={onReturningConfirmNext}
+                  className="flex-1"
+                  icon={<ArrowRight className="h-4 w-4" />}
+                >
+                  Review Pass Details
+                </Button>
+              </div>
+            </div>
+          )}
+
+          {/* ============================== STEP 7: GENERATING ============================== */}
+          {step === 'generating' && (
+            <div role="status" aria-live="polite" aria-label="Generating gate pass" className="py-16 text-center space-y-4">
+              <Loader2 className="mx-auto h-12 w-12 animate-spin text-[var(--color-brand)]" />
+              <h3 className="text-lg font-bold text-[var(--color-text-primary)]">Issuing Official E-GatePass…</h3>
+              <p className="text-sm text-[var(--color-text-secondary)]">Securing your pass record and generating QR token.</p>
+            </div>
+          )}
+
+          {/* ============================== STEP 8: DELIVERY / DONE ============================== */}
+          {(step === 'delivery' || step === 'done') && (
+            <div className="space-y-6">
+              <div className="text-center">
+                <CheckCircle2 className="mx-auto h-14 w-14 text-emerald-600" />
+                <h2 className="text-xl font-black text-[var(--color-text-primary)] mt-3">Your E-GatePass is Ready!</h2>
+                <p className="text-sm text-[var(--color-text-secondary)] mt-1">
+                  Save your pass or email it to your inbox. Present the QR code at the campus scanner.
+                </p>
+              </div>
+
+              {emailDeliverySecured && (
+                <div className="rounded-xl border border-emerald-300 bg-emerald-50 p-4 text-xs text-emerald-900">
+                  <p className="font-semibold text-sm text-emerald-950">Email Delivery Confirmed</p>
+                  <p>A copy of your E-GatePass was sent to your verified email.</p>
+                </div>
+              )}
+
+              {emailSkipped && !emailDeliverySecured && !emailOutcomeUnknown && (
+                <div className="rounded-xl border border-amber-300 bg-amber-50 p-4 text-xs text-amber-900 space-y-1">
+                  <p className="font-semibold text-sm text-amber-950">Save your E-GatePass before leaving this page.</p>
+                  <p>You chose not to provide a verified email, so a copy was not sent to you.</p>
+                </div>
+              )}
+
+              {emailOutcomeUnknown && !emailDeliverySecured && (
+                <div className="rounded-xl border border-amber-300 bg-amber-50 p-4 text-xs text-amber-900 space-y-1">
+                  <p className="font-semibold text-sm text-amber-950">Email delivery could not be confirmed.</p>
+                  <p>Your E-GatePass is valid, but the email provider did not return a confirmed delivery result.</p>
+                  <p>Please download or save your E-GatePass before leaving this page.</p>
+                </div>
+              )}
+
+              {qrDataUrl && passPresentation ? (
+                <div className="flex justify-center py-2">
+                  <InstitutionalPassCard presentation={passPresentation} qrDataUrl={qrDataUrl} />
+                </div>
+              ) : (
+                <div className="rounded-xl border border-amber-300 bg-amber-50 p-6 text-center text-xs text-amber-900 space-y-2">
+                  <AlertCircle className="mx-auto h-8 w-8 text-amber-600" />
+                  <p className="font-semibold text-sm">Pass Card Notice</p>
+                  <p>
+                    Your E-GatePass was issued, but the visual pass could not be prepared. Please retry or ask the Guard for assistance.
+                  </p>
+                </div>
+              )}
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <Button onClick={handleDownload} className="w-full" icon={<Download className="h-4 w-4" />}>
+                  Download E-GatePass
+                </Button>
+                <Button
+                  variant="secondary"
+                  onClick={() => setShowEmailModal(true)}
+                  className="w-full"
+                  icon={<Mail className="h-4 w-4" />}
+                >
+                  Email E-GatePass
+                </Button>
+              </div>
+
+              <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-canvas)] p-4 text-xs text-[var(--color-text-secondary)] space-y-2">
+                <div className="font-bold text-[var(--color-text-primary)] flex items-center gap-1.5">
+                  <Info className="h-4 w-4 text-[var(--color-brand)]" />
+                  <span>Visitor Instructions</span>
+                </div>
+                <ul className="list-disc pl-5 space-y-1">
+                  {visitorInstructions.map((inst, i) => (
+                    <li key={i}>{inst}</li>
+                  ))}
+                </ul>
+              </div>
+
+              <div className="pt-2 text-center">
+                <button
+                  type="button"
+                  onClick={handleStartOver}
+                  className="text-xs font-semibold text-[var(--color-brand)] hover:underline"
+                >
+                  Register Another Pass / Start Over
+                </button>
+              </div>
+            </div>
+          )}
+        </Card>
+      )}
+
+      {/* Returning Visitor Safety Gate Modal */}
+      {showReturningGateModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
+          <div className="w-full max-w-md rounded-2xl bg-white p-6 shadow-xl space-y-4">
+            <div className="flex items-center gap-3 text-amber-900">
+              <div className="h-10 w-10 rounded-xl bg-amber-100 flex items-center justify-center text-amber-700 flex-shrink-0">
+                <ShieldAlert className="h-5 w-5" />
+              </div>
+              <div>
+                <h3 className="font-bold text-base text-[var(--color-text-primary)]">Biometric Check-In Unavailable</h3>
+                <p className="text-xs text-[var(--color-text-secondary)]">Safety Gate Enforced</p>
+              </div>
+            </div>
+
+            <p className="text-xs text-[var(--color-text-secondary)] leading-relaxed">
+              Returning visitor facial recognition is temporarily closed pending on-campus physical sensor calibration and threshold verification.
+            </p>
+            <p className="text-xs text-[var(--color-text-secondary)] leading-relaxed">
+              Please register as a New Visitor to receive your official E-GatePass today.
+            </p>
+
+            <div className="flex gap-3 pt-2">
               <Button
                 variant="secondary"
-                onClick={() => setShowEmailModal(true)}
-                className="w-full"
-                icon={<Mail className="h-4 w-4" />}
+                onClick={() => setShowReturningGateModal(false)}
+                className="flex-1"
               >
-                Email E-GatePass
+                Close
+              </Button>
+              <Button
+                onClick={() => {
+                  setShowReturningGateModal(false);
+                  setRegistrationMode('new');
+                  setStep('form');
+                }}
+                className="flex-1"
+                icon={<ArrowRight className="h-4 w-4" />}
+              >
+                Register as New Visitor
               </Button>
             </div>
-
-            <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-canvas)] p-4 text-xs text-[var(--color-text-secondary)] space-y-2">
-              <div className="font-bold text-[var(--color-text-primary)] flex items-center gap-1.5">
-                <Info className="h-4 w-4 text-[var(--color-brand)]" />
-                <span>Visitor Instructions</span>
-              </div>
-              <ul className="list-disc pl-5 space-y-1">
-                {visitorInstructions.map((inst, i) => (
-                  <li key={i}>{inst}</li>
-                ))}
-              </ul>
-            </div>
-
-            <div className="pt-2 text-center">
-              <button
-                type="button"
-                onClick={handleStartOver}
-                className="text-xs font-semibold text-[var(--color-brand)] hover:underline"
-              >
-                Register Another Pass / Start Over
-              </button>
-            </div>
           </div>
-        )}
-      </Card>
+        </div>
       )}
 
       {/* Email Pass Modal */}

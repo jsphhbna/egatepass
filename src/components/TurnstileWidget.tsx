@@ -22,7 +22,6 @@ declare global {
       execute: (widgetId: string) => void;
       remove: (widgetId: string) => void;
     };
-    __MOCK_TURNSTILE_TOKEN__?: string;
   }
 }
 
@@ -56,7 +55,6 @@ export const TurnstileWidget = forwardRef<TurnstileWidgetRef, TurnstileWidgetPro
   const containerRef = useRef<HTMLDivElement>(null);
   const widgetIdRef = useRef<string | null>(null);
   const siteKey = (import.meta as any).env?.VITE_TURNSTILE_SITE_KEY?.trim();
-  const isProd = Boolean((import.meta as any).env?.PROD);
 
   const [status, setStatus] = useState<TurnstileStatus>('loading');
   const [retryCount, setRetryCount] = useState(0);
@@ -78,16 +76,7 @@ export const TurnstileWidget = forwardRef<TurnstileWidgetRef, TurnstileWidgetPro
 
   useImperativeHandle(ref, () => ({
     executeChallenge: () => {
-      // 1. Mock token in test environments or browser automated tests
-      if (typeof window !== 'undefined' && window.__MOCK_TURNSTILE_TOKEN__) {
-        return Promise.resolve(window.__MOCK_TURNSTILE_TOKEN__);
-      }
-
-      // 2. Non-production without site key allows mock passthrough
       if (!siteKey) {
-        if (!isProd) {
-          return Promise.resolve('mock-turnstile-dev-token');
-        }
         return Promise.reject(new Error('Security verification unavailable'));
       }
 
@@ -302,16 +291,13 @@ export const TurnstileWidget = forwardRef<TurnstileWidgetRef, TurnstileWidgetPro
   }, [siteKey, resetKey, retryCount, execution, appearance]);
 
   if (!siteKey) {
-    if (isProd) {
-      return (
-        <div className="my-3 flex w-full justify-center" aria-live="polite">
-          <div className="flex min-h-[65px] w-full max-w-sm items-center justify-center rounded-lg border border-[var(--color-border)] bg-[var(--color-canvas)] px-4 py-3 text-xs font-medium text-[var(--color-text-secondary)]">
-            Security verification unavailable.
-          </div>
+    return (
+      <div className="my-3 flex w-full justify-center" aria-live="polite">
+        <div className="flex min-h-[65px] w-full max-w-sm items-center justify-center rounded-lg border border-[var(--color-border)] bg-[var(--color-canvas)] px-4 py-3 text-xs font-medium text-[var(--color-text-secondary)]">
+          Security verification unavailable.
         </div>
-      );
-    }
-    return null;
+      </div>
+    );
   }
 
   return (

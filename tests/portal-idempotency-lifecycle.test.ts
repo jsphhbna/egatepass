@@ -20,7 +20,7 @@ vi.mock('../src/lib/supabase', () => {
         signInAnonymously: vi.fn(async () => {
           actorCounter++;
           const session = {
-            user: { id: `actor-anon-${actorCounter}` },
+            user: { id: `actor-anon-${actorCounter}`, is_anonymous: true },
             access_token: `token-anon-${actorCounter}`,
           };
           mockSession = session;

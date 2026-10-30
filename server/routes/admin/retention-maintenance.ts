@@ -131,6 +131,8 @@ async function handleRequest(request: Request): Promise<Response> {
       anonymousAuthEligible: 0,
       anonymousAuthDeleted: 0,
       anonymousAuthDeleteFailures: 0,
+      returningProfilesCleaned: 0,
+      returningAttemptsCleaned: 0,
       errors: [] as string[],
     };
 
@@ -500,6 +502,7 @@ async function handleRequest(request: Request): Promise<Response> {
             .update({
               full_name: '[Anonymized]',
               contact_number: '[Anonymized]',
+              home_address: '[Anonymized]',
               email: null,
               purpose: '[Anonymized]',
               anonymized_at: now,
@@ -518,12 +521,69 @@ async function handleRequest(request: Request): Promise<Response> {
               { visitor_id: visitor.id }
             ).catch(() => undefined);
           } else {
+            // Anonymize visit vehicle declaration PII associated with this visitor (Section 52)
+            await admin
+              .from('visit_vehicle_declarations')
+              .update({
+                plate_number: '[Anonymized]',
+                plate_key: '[Anonymized]',
+                color: '[Anonymized]',
+                make_model: null,
+              })
+              .eq('visitor_id', visitor.id);
+
             metrics.visitorsAnonymized++;
           }
         }
       } else {
         metrics.visitorsAnonymized = candidateVisitors.length;
       }
+    }
+
+    // =========================================================================
+    // 3.5 RETURNING VISITOR & BIOMETRIC RETENTION (Section 52)
+    // =========================================================================
+    try {
+      const { data: expiredProfiles, error: profErr } = await admin
+        .from('returning_visitor_profiles')
+        .select('id')
+        .lte('expires_at', now)
+        .limit(batchSize);
+
+      if (profErr) {
+        metrics.errors.push(`returning_profile_query_failed: ${profErr.message}`);
+      } else if (expiredProfiles && expiredProfiles.length > 0) {
+        const profileIds = expiredProfiles.map((p: any) => p.id);
+        if (!dryRun) {
+          // Deleting profile cascades to returning_face_templates and returning_visitor_vehicles
+          const { error: delErr } = await admin
+            .from('returning_visitor_profiles')
+            .delete()
+            .in('id', profileIds);
+
+          if (delErr) {
+            metrics.errors.push(`returning_profile_delete_failed: ${delErr.message}`);
+          } else {
+            metrics.returningProfilesCleaned = profileIds.length;
+          }
+        } else {
+          metrics.returningProfilesCleaned = profileIds.length;
+        }
+      }
+
+      // Purge expired returning identity attempts (15-min TTL)
+      if (!dryRun) {
+        const { error: attDelErr } = await admin
+          .from('returning_identity_attempts')
+          .delete()
+          .lte('expires_at', now);
+
+        if (attDelErr) {
+          metrics.errors.push(`returning_attempts_delete_failed: ${attDelErr.message}`);
+        }
+      }
+    } catch (retentionErr) {
+      metrics.errors.push(`returning_retention_error: ${retentionErr instanceof Error ? retentionErr.message : 'unknown'}`);
     }
 
     // =========================================================================

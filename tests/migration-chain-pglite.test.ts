@@ -1604,7 +1604,7 @@ describe('Permanent PostgreSQL Migration Chain & Schema Contracts (PGlite)', () 
   it('Migration 40: verifies final scan_pass lifecycle, wrong-gate fail-closed exit, guard role deprecation, and visit_event_type enums', async () => {
     const db = new PGlite();
     const files = await applyAllMigrations(db);
-    expect(files.length).toBe(42);
+    expect(files.length).toBeGreaterThanOrEqual(42);
 
     // 1. Enum contract: visit_event_type contains valid enums and NO invalid writes
     const eventTypeQuery = await db.query<{ enumlabel: string }>(`
@@ -1817,7 +1817,7 @@ describe('Permanent PostgreSQL Migration Chain & Schema Contracts (PGlite)', () 
   it('Migration 41: verifies guard authority deprecation across all 8 legacy RPCs and RLS policies', async () => {
     const db = new PGlite();
     const files = await applyAllMigrations(db);
-    expect(files.length).toBe(42);
+    expect(files.length).toBeGreaterThanOrEqual(42);
 
     // Seed Admin and Guard users with confirmed emails
     const adminId = '60000000-0000-0000-0000-000000000001';
@@ -1882,7 +1882,7 @@ describe('Permanent PostgreSQL Migration Chain & Schema Contracts (PGlite)', () 
   it('Migration 42: verifies upload intent creation role matrix (admin and superadmin allowed for guard_offline, legacy guard rejected with administrator required, portal allowed for visitor, kiosk allowed for kiosk)', async () => {
     const db = new PGlite();
     const files = await applyAllMigrations(db);
-    expect(files.length).toBe(42);
+    expect(files.length).toBeGreaterThanOrEqual(42);
 
     const superAdminId = '70000000-0000-0000-0000-000000000001';
     const adminId = '70000000-0000-0000-0000-000000000002';
@@ -1953,5 +1953,236 @@ describe('Permanent PostgreSQL Migration Chain & Schema Contracts (PGlite)', () 
     await expect(
       db.query("select * from api.create_upload_intent('portal', 'photo', 'image/jpeg');")
     ).rejects.toThrow(/visitor identity required/);
+  }, 60000);
+
+  it('Migration 43: verifies unified online registration, returning visitor schema, vehicle declarations, and scan_pass lifecycle', async () => {
+    const db = new PGlite();
+    const files = await applyAllMigrations(db);
+    expect(files.length).toBe(43);
+
+    // 1. Verify schema tables and columns
+    const tablesCheck = await db.query<{ tablename: string }>(`
+      select tablename from pg_tables
+      where schemaname = 'public' and tablename in (
+        'returning_visitor_profiles',
+        'returning_face_templates',
+        'returning_visitor_vehicles',
+        'visit_vehicle_declarations',
+        'returning_identity_attempts'
+      );
+    `);
+    expect(tablesCheck.rows.length).toBe(5);
+
+    const visitorsCols = await db.query<{ column_name: string }>(`
+      select column_name from information_schema.columns
+      where table_schema = 'public' and table_name = 'visitors'
+        and column_name in ('home_address', 'registration_mode', 'arrival_mode', 'returning_profile_id', 'returning_identity_attempt_id');
+    `);
+    expect(visitorsCols.rows.length).toBe(5);
+
+    const settingsCheck = await db.query<{ returning_profile_retention_days: number }>(`
+      select returning_profile_retention_days from public.app_settings where singleton;
+    `);
+    expect(settingsCheck.rows[0].returning_profile_retention_days).toBe(30);
+
+    // 2. Verify RPC signature for issue_online_pass_v2
+    const funcs = await db.query<{ proname: string; proargnames: string[] }>(`
+      select p.proname, p.proargnames
+      from pg_proc p
+      join pg_namespace n on p.pronamespace = n.oid
+      where n.nspname = 'api' and p.proname = 'issue_online_pass_v2';
+    `);
+    expect(funcs.rows.length).toBe(1);
+    const args = funcs.rows[0].proargnames;
+    expect(args).toContain('requested_actor_id');
+    expect(args).toContain('requested_registration_mode');
+    expect(args).toContain('requested_home_address');
+    expect(args).toContain('requested_arrival_mode');
+    expect(args).toContain('requested_plate_number');
+    expect(args).toContain('requested_plate_key');
+
+    // 3. Setup test data for issue_online_pass_v2
+    const visitorId = '22222222-2222-2222-2222-222222222222';
+    const requestId = '33333333-3333-3333-3333-333333333333';
+    const photoIntentId = '44444444-4444-4444-4444-444444444444';
+    const idIntentId = '55555555-5555-5555-5555-555555555555';
+    const tokenDigest = 'abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789';
+    const photoSha = '1111111111111111111111111111111111111111111111111111111111111111';
+    const idSha = '2222222222222222222222222222222222222222222222222222222222222222';
+
+    // Insert anonymous user
+    await db.exec(`
+      insert into auth.users (id, is_anonymous)
+      values ('${visitorId}', true);
+    `);
+
+    // Insert upload intents
+    await db.exec(`
+      insert into public.upload_intents (id, owner_id, source, kind, bucket_id, object_path, content_type, max_bytes, status, expires_at)
+      values
+        ('${photoIntentId}', '${visitorId}', 'portal', 'photo', 'visitor-photos', 'portal/${visitorId}/photo.jpg', 'image/jpeg', 5242880, 'pending', now() + interval '1 hour'),
+        ('${idIntentId}', '${visitorId}', 'portal', 'id', 'visitor-ids', 'portal/${visitorId}/id.jpg', 'image/jpeg', 5242880, 'pending', now() + interval '1 hour');
+    `);
+
+    // Insert portal 1:1 identity verification attempt
+    await db.exec(`
+      insert into public.portal_identity_verification_attempts (owner_id, request_id, photo_intent_id, id_intent_id, outcome, model_name, model_version, verified_at, expires_at)
+      values ('${visitorId}', '${requestId}', '${photoIntentId}', '${idIntentId}', 'matched', 'opencv_zoo_yunet_sface', 'yunet_2023mar_sface_2021dec', now(), now() + interval '1 hour');
+    `);
+
+    // Issue pass via issue_online_pass_v2
+    const issueRes = await db.query<{ pass_id: string; public_reference: string; valid_from: string; valid_until: string }>(`
+      select * from api.issue_online_pass_v2(
+        '${visitorId}'::uuid,
+        'new',
+        '${requestId}'::uuid,
+        'Juan',
+        'Protacio',
+        'Dela Cruz',
+        '+639171234567',
+        '123 Sampaguita St, Sampaloc, Manila',
+        'Campus Tour & Registrar Inquiries',
+        (now() at time zone 'Asia/Manila')::date,
+        '${photoIntentId}'::uuid,
+        1024,
+        '${photoSha}',
+        '${idIntentId}'::uuid,
+        2048,
+        '${idSha}',
+        '${tokenDigest}',
+        'vehicle',
+        'car',
+        'ABC 1234',
+        'ABC1234',
+        'White',
+        'Toyota Vios',
+        null,
+        null,
+        null
+      );
+    `);
+
+    expect(issueRes.rows.length).toBe(1);
+    const passRow = issueRes.rows[0];
+    expect(passRow.pass_id).toBeDefined();
+
+    // Verify visitor record has home address, registration_mode, arrival_mode
+    const vCheck = await db.query<{
+      home_address: string;
+      registration_mode: string;
+      arrival_mode: string;
+      contact_number: string;
+    }>(`
+      select home_address, registration_mode, arrival_mode, contact_number
+      from public.visitors where owner_id = '${visitorId}';
+    `);
+    expect(vCheck.rows[0].home_address).toBe('123 Sampaguita St, Sampaloc, Manila');
+    expect(vCheck.rows[0].registration_mode).toBe('new');
+    expect(vCheck.rows[0].arrival_mode).toBe('vehicle');
+    expect(vCheck.rows[0].contact_number).toBe('+639171234567');
+
+    // Verify visit vehicle declaration
+    const declCheck = await db.query<{
+      plate_number: string;
+      plate_key: string;
+      vehicle_type: string;
+      color: string;
+      make_model: string;
+      entry_recorded_at: string | null;
+      exit_recorded_at: string | null;
+    }>(`
+      select plate_number, plate_key, vehicle_type, color, make_model, entry_recorded_at, exit_recorded_at
+      from public.visit_vehicle_declarations where pass_id = '${passRow.pass_id}';
+    `);
+    expect(declCheck.rows.length).toBe(1);
+    expect(declCheck.rows[0].plate_number).toBe('ABC 1234');
+    expect(declCheck.rows[0].plate_key).toBe('ABC1234');
+    expect(declCheck.rows[0].color).toBe('White');
+    expect(declCheck.rows[0].make_model).toBe('Toyota Vios');
+    expect(declCheck.rows[0].entry_recorded_at).toBeNull();
+    expect(declCheck.rows[0].exit_recorded_at).toBeNull();
+
+    // Idempotency: re-calling with same parameters returns exact same pass
+    const retryRes = await db.query<{ pass_id: string }>(`
+      select * from api.issue_online_pass_v2(
+        '${visitorId}'::uuid,
+        'new',
+        '${requestId}'::uuid,
+        'Juan',
+        'Protacio',
+        'Dela Cruz',
+        '+639171234567',
+        '123 Sampaguita St, Sampaloc, Manila',
+        'Campus Tour & Registrar Inquiries',
+        (now() at time zone 'Asia/Manila')::date,
+        '${photoIntentId}'::uuid,
+        1024,
+        '${photoSha}',
+        '${idIntentId}'::uuid,
+        2048,
+        '${idSha}',
+        '${tokenDigest}',
+        'vehicle',
+        'car',
+        'ABC 1234',
+        'ABC1234',
+        'White',
+        'Toyota Vios',
+        null,
+        null,
+        null
+      );
+    `);
+    expect(retryRes.rows[0].pass_id).toBe(passRow.pass_id);
+
+    // 4. Test atomic vehicle scan_pass lifecycle
+    const entryScannerId = '66666666-6666-6666-6666-666666666666';
+    const exitScannerId = '77777777-7777-7777-7777-777777777777';
+
+    // Ensure pass valid_from is active now
+    await db.exec(`
+      update public.passes set valid_from = now() - interval '1 hour' where id = '${passRow.pass_id}';
+      insert into auth.users (id) values ('${entryScannerId}'), ('${exitScannerId}');
+      insert into public.devices (user_id, name, alias, type, gate, status)
+      values
+        ('${entryScannerId}', 'Main Gate Entry Scanner', 'scanner-entry-1', 'entry', 'Gate 1', 'active'),
+        ('${exitScannerId}', 'Main Gate Exit Scanner', 'scanner-exit-1', 'exit', 'Gate 1', 'active');
+    `);
+
+    // Scan entry
+    const scanEntryRes = await db.query<{ ok: boolean; result_status: string }>(`
+      select * from api.scan_pass(
+        '${entryScannerId}'::uuid,
+        '${tokenDigest}',
+        'entry',
+        gen_random_uuid()
+      );
+    `);
+    expect(scanEntryRes.rows[0].ok).toBe(true);
+    expect(scanEntryRes.rows[0].result_status).toBe('inside');
+
+    // Verify vehicle entry_recorded_at is set
+    const declAfterEntry = await db.query<{ entry_recorded_at: string | null }>(`
+      select entry_recorded_at from public.visit_vehicle_declarations where pass_id = '${passRow.pass_id}';
+    `);
+    expect(declAfterEntry.rows[0].entry_recorded_at).not.toBeNull();
+
+    // Scan exit
+    const scanExitRes = await db.query<{ ok: boolean; result_status: string }>(`
+      select * from api.scan_pass(
+        '${exitScannerId}'::uuid,
+        '${tokenDigest}',
+        'exit',
+        gen_random_uuid()
+      );
+    `);
+    expect(scanExitRes.rows[0].ok).toBe(true);
+    expect(scanExitRes.rows[0].result_status).toBe('exited');
+
+    // Verify vehicle exit_recorded_at is set
+    const declAfterExit = await db.query<{ exit_recorded_at: string | null }>(`
+      select exit_recorded_at from public.visit_vehicle_declarations where pass_id = '${passRow.pass_id}';
+    `);
+    expect(declAfterExit.rows[0].exit_recorded_at).not.toBeNull();
   }, 60000);
 });

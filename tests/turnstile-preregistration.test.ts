@@ -19,7 +19,6 @@ describe('Turnstile Just-In-Time Pre-Registration & Checkpoint Invalidation', ()
     document.body.appendChild(container);
     root = createRoot(container);
     delete (window as any).turnstile;
-    delete (window as any).__MOCK_TURNSTILE_TOKEN__;
     document.querySelectorAll('script[src*="turnstile/v0/api.js"]').forEach((s) => s.remove());
 
     (import.meta as any).env = {
@@ -36,12 +35,24 @@ describe('Turnstile Just-In-Time Pre-Registration & Checkpoint Invalidation', ()
     container.remove();
     document.querySelectorAll('script[src*="turnstile/v0/api.js"]').forEach((s) => s.remove());
     delete (window as any).turnstile;
-    delete (window as any).__MOCK_TURNSTILE_TOKEN__;
     vi.restoreAllMocks();
   });
 
   it('exposes imperative executeChallenge and resetChallenge via ref', async () => {
-    (window as any).__MOCK_TURNSTILE_TOKEN__ = 'mock-cf-token-12345';
+    let capturedCallback: ((token: string) => void) | null = null;
+    (window as any).turnstile = {
+      render: vi.fn((_el: any, options: any) => {
+        capturedCallback = options.callback;
+        return 'widget-id-test';
+      }),
+      execute: vi.fn(() => {
+        setTimeout(() => {
+          if (capturedCallback) capturedCallback('mock-cf-token-12345');
+        }, 5);
+      }),
+      reset: vi.fn(),
+      remove: vi.fn(),
+    };
     const ref = createRef<TurnstileWidgetRef>();
 
     await act(async () => {

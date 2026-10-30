@@ -15,25 +15,25 @@ test.describe('Mobile Stepper Geometry & WebKit Viewport Contract (Sections 47-4
       page,
     }) => {
       await page.setViewportSize({ width: vp.width, height: vp.height });
-      await page.goto('/get-pass');
+      await page.goto('/get-pass?mode=new');
 
       const stepperNav = page.locator('nav[aria-label="Progress"]');
       await expect(stepperNav).toBeVisible({ timeout: 15_000 });
 
-      // Find all 5 step circles
+      // Find all 6 step circles
       const circles = stepperNav.locator('ol > li > div:first-child > div.rounded-full');
-      await expect(circles).toHaveCount(5);
+      await expect(circles).toHaveCount(6);
 
       const circleBoxes = [];
-      for (let i = 0; i < 5; i++) {
+      for (let i = 0; i < 6; i++) {
         const box = await circles.nth(i).boundingBox();
         expect(box).not.toBeNull();
         circleBoxes.push(box!);
       }
 
-      // 1. Verify circle centerY equality across all 5 step markers
+      // 1. Verify circle centerY equality across all 6 step markers
       const firstCenterY = circleBoxes[0].y + circleBoxes[0].height / 2;
-      for (let i = 1; i < 5; i++) {
+      for (let i = 1; i < 6; i++) {
         const centerY = circleBoxes[i].y + circleBoxes[i].height / 2;
         // Allow at most 1px delta for subpixel rendering
         expect(Math.abs(centerY - firstCenterY)).toBeLessThanOrEqual(1.0);
@@ -41,7 +41,7 @@ test.describe('Mobile Stepper Geometry & WebKit Viewport Contract (Sections 47-4
 
       // 2. Verify horizontal spacing equality
       const deltas = [];
-      for (let i = 0; i < 4; i++) {
+      for (let i = 0; i < 5; i++) {
         const c1X = circleBoxes[i].x + circleBoxes[i].width / 2;
         const c2X = circleBoxes[i + 1].x + circleBoxes[i + 1].width / 2;
         deltas.push(c2X - c1X);
@@ -54,9 +54,9 @@ test.describe('Mobile Stepper Geometry & WebKit Viewport Contract (Sections 47-4
 
       // 3. Verify connectors line up with circle center line
       const connectors = stepperNav.locator('ol > li > div:first-child > div.h-0\\.5');
-      await expect(connectors).toHaveCount(4);
+      await expect(connectors).toHaveCount(5);
 
-      for (let i = 0; i < 4; i++) {
+      for (let i = 0; i < 5; i++) {
         const connBox = await connectors.nth(i).boundingBox();
         expect(connBox).not.toBeNull();
         const connCenterY = connBox!.y + connBox!.height / 2;

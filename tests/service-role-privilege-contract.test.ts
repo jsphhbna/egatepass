@@ -25,7 +25,7 @@ function collectFiles(dir: string, ext = ['.ts', '.js']): string[] {
 }
 
 describe('Service Role Least-Privilege Architecture Contract', () => {
-  it('covers all 16 canonical public application tables in the contract', () => {
+  it('covers all canonical public application tables in the contract', () => {
     const expectedTables = [
       'app_settings',
       'audit_events',
@@ -38,9 +38,14 @@ describe('Service Role Least-Privilege Architecture Contract', () => {
       'rate_limit_buckets',
       'resend_webhook_events',
       'reconciliation_tasks',
+      'returning_face_templates',
+      'returning_identity_attempts',
+      'returning_visitor_profiles',
+      'returning_visitor_vehicles',
       'staff_profiles',
       'upload_intents',
       'visit_events',
+      'visit_vehicle_declarations',
       'visitor_evidence',
       'visitors',
     ].sort();

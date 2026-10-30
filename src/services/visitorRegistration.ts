@@ -12,6 +12,23 @@ export interface VisitorRegistration {
   visitDate: string;
   email?: string;
   consent?: boolean;
+  homeAddress?: string;
+  arrivalMode?: 'no_vehicle' | 'vehicle';
+  vehicle?: {
+    vehicleType?: 'car' | 'motorcycle' | 'van' | 'suv' | 'truck' | 'bicycle' | 'other' | string;
+    plateNumber?: string;
+    color?: string;
+    makeModel?: string | null;
+    savedVehicleId?: string;
+    saveVehicle?: boolean;
+  } | null;
+  returning?: {
+    profileId?: string;
+    matchToken?: string;
+    saveUpdates?: boolean;
+  };
+  rememberVisitor?: boolean;
+  enrollReturning?: boolean;
 }
 
 export interface IssuedPass {
@@ -174,7 +191,6 @@ export interface IssueTransaction {
   requestId: string;
   actorId?: string;
   token?: string;
-  client?: SupabaseClient;
   photoIntentId: string | null;
   idIntentId: string | null;
   photoCheckpoint?: UploadCheckpoint | null;
@@ -236,7 +252,7 @@ export async function createPortalIssueTransaction(captchaToken?: string): Promi
   }
 
   const session = result.data.session;
-  if (!session.user || session.user.is_anonymous === false) {
+  if (!session.user || session.user.is_anonymous !== true) {
     await client.auth.signOut();
     throw new PortalSessionError('portal_actor_not_anonymous', 'Visitor registration requires an anonymous visitor session.');
   }
@@ -264,12 +280,12 @@ export async function getVerifiedPortalSession(
   if (!transaction || !transaction.actorId) {
     throw new PortalSessionError('portal_session_missing', 'Visitor registration transaction is missing or invalid.');
   }
-  const client = transaction.client || requirePortalSupabase();
+  const client = requirePortalSupabase();
   const { data: { session }, error } = await client.auth.getSession();
   if (error || !session || !session.user) {
     throw new PortalSessionError('portal_session_missing', 'Visitor registration session expired or unavailable.');
   }
-  if (session.user.is_anonymous === false) {
+  if (session.user.is_anonymous !== true) {
     throw new PortalSessionError('portal_actor_not_anonymous', 'Visitor registration requires an anonymous visitor session.');
   }
   if (session.user.id !== transaction.actorId) {
@@ -499,24 +515,56 @@ export function invalidatePortalEvidenceCheckpoint(
   }
 }
 
+export type PortalPreflightCategory =
+  | 'quality'
+  | 'session'
+  | 'security'
+  | 'upload'
+  | 'rate_limit'
+  | 'service'
+  | 'network';
+
+export interface PreflightResponse {
+  ok: boolean;
+  category?: PortalPreflightCategory;
+  message?: string;
+  reasonCode?: string;
+  error?: string;
+  statusCode?: number;
+}
+
 export async function preflightPortalLiveFace(
   transaction: PortalIssueTransaction,
   photoIntentId: string
-): Promise<{ ok: boolean; message?: string; reasonCode?: string }> {
+): Promise<PreflightResponse> {
   const { token } = await getVerifiedPortalSession(transaction);
 
-  const res = await fetch('/api/passes/verify-identity', {
-    method: 'POST',
-    headers: {
-      Authorization: `Bearer ${token}`,
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({
-      requestId: transaction.requestId,
-      photoIntentId,
-      mode: 'preflight_face',
-    }),
-  });
+  let res: Response;
+  try {
+    res = await withTimeout(
+      fetch('/api/passes/verify-identity', {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${token}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          requestId: transaction.requestId,
+          photoIntentId,
+          mode: 'preflight_face',
+        }),
+      }),
+      15000,
+      'Preflight request timed out after 15s'
+    );
+  } catch (err: any) {
+    return {
+      ok: false,
+      category: 'network',
+      message: 'Network connection interrupted. Please check your internet connection.',
+      error: 'network_timeout',
+    };
+  }
 
   const body = (await res.json().catch(() => null)) as {
     ok?: boolean;
@@ -526,15 +574,84 @@ export async function preflightPortalLiveFace(
     preflightPassed?: boolean;
   } | null;
 
-  if (!res.ok || !body?.ok) {
+  // 1. Authoritative success
+  if (res.ok && (body?.ok || body?.preflightPassed)) {
+    return { ok: true, message: body?.message || 'Face presence and quality verified.' };
+  }
+
+  // 2. Authentication / Session failure (401)
+  if (res.status === 401 || body?.error === 'invalid_session' || body?.error === 'authentication_required') {
+    throw new PortalSessionError('portal_session_expired', 'Visitor registration session expired or unavailable.');
+  }
+
+  // 3. Authorization / Recovery session forbidden (403)
+  if (res.status === 403 || body?.error === 'recovery_session_forbidden') {
     return {
       ok: false,
-      message: body?.message || body?.error || 'Face quality verification failed.',
-      reasonCode: body?.reasonCode,
+      category: 'security',
+      statusCode: res.status,
+      error: body?.error || 'recovery_session_forbidden',
+      message: 'Visitor registration session is unauthorized.',
     };
   }
 
-  return { ok: true, message: body.message };
+  // 4. Authoritative quality rejection (422 with error=quality_rejected)
+  if (res.status === 422 && body?.error === 'quality_rejected') {
+    return {
+      ok: false,
+      category: 'quality',
+      statusCode: 422,
+      reasonCode: body.reasonCode || 'quality_rejected',
+      message: body.message || 'Face quality verification failed. Please ensure your face is clearly visible.',
+    };
+  }
+
+  // 5. Upload-related errors (422 with upload intent / content errors)
+  if (
+    res.status === 422 &&
+    (body?.error?.startsWith('invalid_upload_intent') ||
+      body?.error?.startsWith('missing_uploaded_object') ||
+      body?.error?.startsWith('invalid_uploaded_content'))
+  ) {
+    return {
+      ok: false,
+      category: 'upload',
+      statusCode: 422,
+      error: body.error,
+      message: 'Photo upload verification failed. Please retake and re-upload your photo.',
+    };
+  }
+
+  // 6. Rate limiting (429)
+  if (res.status === 429 || body?.error === 'rate_limit_exceeded') {
+    return {
+      ok: false,
+      category: 'rate_limit',
+      statusCode: 429,
+      error: 'rate_limit_exceeded',
+      message: body?.message || 'Too many verification attempts. Please wait a moment before trying again.',
+    };
+  }
+
+  // 7. Abuse control unavailable (503) or server failures (5xx)
+  if (res.status >= 500 || body?.error === 'abuse_control_unavailable') {
+    return {
+      ok: false,
+      category: 'service',
+      statusCode: res.status,
+      error: body?.error || 'service_unavailable',
+      message: body?.message || 'Verification service temporarily unavailable. Please try again shortly.',
+    };
+  }
+
+  // Fallback
+  return {
+    ok: false,
+    category: 'service',
+    statusCode: res.status,
+    error: body?.error || 'verification_failed',
+    message: body?.message || 'Verification could not be completed. Please try again.',
+  };
 }
 
 export async function verifyPortalIdentity(
@@ -568,20 +685,42 @@ export async function verifyPortalIdentity(
 
   if (!token) throw new PortalSessionError('portal_session_missing', 'Authentication session required for identity verification.');
 
-  const res = await fetch('/api/passes/verify-identity', {
-    method: 'POST',
-    headers: {
-      Authorization: `Bearer ${token}`,
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({
-      requestId,
-      photoIntentId,
-      idIntentId,
-    }),
-  });
+  let res: Response;
+  try {
+    res = await withTimeout(
+      fetch('/api/passes/verify-identity', {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${token}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          requestId,
+          photoIntentId,
+          idIntentId,
+        }),
+      }),
+      30000,
+      'Identity verification timed out after 30s'
+    );
+  } catch (err: any) {
+    throw new Error('Network connection interrupted during identity verification. Please try again.');
+  }
 
   const body = (await res.json().catch(() => null)) as (VerifyIdentityResponse & { error?: string }) | null;
+
+  if (res.status === 401 || body?.error === 'invalid_session' || body?.error === 'authentication_required') {
+    throw new PortalSessionError('portal_session_expired', 'Visitor registration session expired or unavailable.');
+  }
+
+  if (res.status === 429 || body?.error === 'rate_limit_exceeded') {
+    throw new Error(body?.message || 'Too many verification attempts. Please wait before retrying.');
+  }
+
+  if (res.status >= 500 || body?.error === 'abuse_control_unavailable') {
+    throw new Error(body?.message || 'Identity verification service temporarily unavailable. Please try again shortly.');
+  }
+
   if (!res.ok || !body) {
     throw new Error(body?.message || body?.error || 'Identity verification failed');
   }
@@ -700,7 +839,19 @@ export async function issueVisitorPass(
       body: JSON.stringify({
         requestId: effectiveRequestId,
         source,
-        visitor: effectiveVisitor,
+        visitor: {
+          firstName: effectiveVisitor.firstName,
+          middleName: effectiveVisitor.middleName,
+          lastName: effectiveVisitor.lastName,
+          contactNumber: effectiveVisitor.contactNumber,
+          homeAddress: effectiveVisitor.homeAddress,
+          purpose: effectiveVisitor.purpose,
+          visitDate: effectiveVisitor.visitDate,
+        },
+        arrivalMode: effectiveVisitor.arrivalMode || 'no_vehicle',
+        vehicle: effectiveVisitor.vehicle || undefined,
+        returning: effectiveVisitor.returning || undefined,
+        enrollReturning: Boolean(effectiveVisitor.enrollReturning || effectiveVisitor.rememberVisitor),
         photoIntentId,
         idIntentId,
       }),

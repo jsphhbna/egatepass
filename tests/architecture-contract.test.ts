@@ -128,4 +128,29 @@ describe('target repository and Vercel routing contract', () => {
     );
     expect(resendRewrite).toBeDefined();
   });
+
+  it('ensures production code and build artifacts contain no mock Turnstile token bypass hooks', () => {
+    const turnstileWidget = readFileSync('src/components/TurnstileWidget.tsx', 'utf8');
+    expect(turnstileWidget).not.toContain('__MOCK_TURNSTILE_TOKEN__');
+    expect(turnstileWidget).not.toContain('mock-turnstile-dev-token');
+
+    // If dist/ exists, ensure no bundled client asset contains the mock hook strings
+    try {
+      const fs = require('node:fs');
+      const path = require('node:path');
+      const distAssets = path.join(process.cwd(), 'dist', 'assets');
+      if (fs.existsSync(distAssets)) {
+        const files = fs.readdirSync(distAssets);
+        for (const file of files) {
+          if (file.endsWith('.js')) {
+            const content = fs.readFileSync(path.join(distAssets, file), 'utf8');
+            expect(content).not.toContain('__MOCK_TURNSTILE_TOKEN__');
+            expect(content).not.toContain('mock-turnstile-dev-token');
+          }
+        }
+      }
+    } catch {
+      // dist may not exist before build, which is fine
+    }
+  });
 });

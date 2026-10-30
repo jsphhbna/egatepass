@@ -55,3 +55,4 @@ scripts/*
 !scripts/run-ocr-e2e.mjs
 !scripts/generate-synthetic-id.mjs
 !scripts/generate-build-meta.mjs
+!scripts/calibrate-returning-face.mjs

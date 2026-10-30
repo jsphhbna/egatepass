@@ -120,28 +120,50 @@ async function handleRequest(request: Request): Promise<Response> {
 
     const passList = passes || [];
     const visitorIds = Array.from(new Set(passList.map((p) => p.visitor_id)));
+    const passIds = passList.map((p) => p.id);
 
     let visitors: Array<{ id: string; full_name: string; purpose: string }> = [];
     let photoEvidence: Array<{ id: string; visitor_id: string }> = [];
+    let vehicles: Array<{ pass_id: string; vehicle_type: string; plate_number: string; color: string; make_model: string | null }> = [];
+
+    const fetchPromises: Promise<void>[] = [];
 
     if (visitorIds.length > 0) {
-      const [{ data: vData, error: vError }, { data: eData, error: eError }] = await Promise.all([
-        admin.from('visitors').select('id, full_name, purpose').in('id', visitorIds),
-        admin.from('visitor_evidence').select('id, visitor_id').in('visitor_id', visitorIds).eq('kind', 'photo').is('purged_at', null),
-      ]);
+      fetchPromises.push(
+        (async () => {
+          const { data, error } = await admin.from('visitors').select('id, full_name, purpose').in('id', visitorIds);
+          if (error) throw error;
+          visitors = data || [];
+        })(),
+        (async () => {
+          const { data, error } = await admin.from('visitor_evidence').select('id, visitor_id').in('visitor_id', visitorIds).eq('kind', 'photo').is('purged_at', null);
+          if (error) throw error;
+          photoEvidence = data || [];
+        })()
+      );
+    }
 
-      if (vError) throw vError;
-      if (eError) throw eError;
+    if (passIds.length > 0) {
+      fetchPromises.push(
+        (async () => {
+          const { data, error } = await admin.from('visit_vehicle_declarations').select('pass_id, vehicle_type, plate_number, color, make_model').in('pass_id', passIds);
+          if (error) throw error;
+          vehicles = data || [];
+        })()
+      );
+    }
 
-      visitors = vData || [];
-      photoEvidence = eData || [];
+    if (fetchPromises.length > 0) {
+      await Promise.all(fetchPromises);
     }
 
     const visitorMap = new Map(visitors.map((v) => [v.id, v]));
     const photoMap = new Map(photoEvidence.map((e) => [e.visitor_id, e.id]));
+    const vehicleMap = new Map(vehicles.map((v) => [v.pass_id, v]));
 
     const entries = passList.map((p) => {
       const v = visitorMap.get(p.visitor_id);
+      const veh = vehicleMap.get(p.id);
       return {
         passId: p.id,
         publicReference: p.public_reference,
@@ -152,6 +174,14 @@ async function handleRequest(request: Request): Promise<Response> {
         purpose: v?.purpose || '',
         photoEvidenceId: photoMap.get(p.visitor_id) || null,
         gate: p.gate,
+        vehicle: veh
+          ? {
+              plateNumber: veh.plate_number,
+              vehicleType: veh.vehicle_type,
+              color: veh.color,
+              makeModel: veh.make_model || null,
+            }
+          : null,
       };
     });
 

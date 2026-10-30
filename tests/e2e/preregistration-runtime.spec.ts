@@ -5,10 +5,33 @@ test.describe('Workstream H: Real Online Pre-Registration Runtime & Turnstile JI
   test('executes Turnstile just-in-time on Step 1 Continue, establishes session, and transitions to Live Face', async ({
     page,
   }) => {
-    // 1. Install mock Turnstile token hook before navigation
-    await page.addInitScript(() => {
-      (window as any).__MOCK_TURNSTILE_TOKEN__ = 'mock-e2e-turnstile-token-xyz';
-    });
+    // 1. Install fake external Turnstile API before navigation (Section 6 contract)
+    await page.addInitScript((testToken) => {
+      const widgets = new Map();
+      let widgetCounter = 0;
+      (window as any).turnstile = {
+        render: (container: any, options: any) => {
+          widgetCounter++;
+          const id = `widget-${widgetCounter}`;
+          widgets.set(id, options);
+          return id;
+        },
+        execute: (widgetId: string) => {
+          const opts = widgets.get(widgetId);
+          if (opts && typeof opts.callback === 'function') {
+            setTimeout(() => {
+              opts.callback(testToken);
+            }, 10);
+          }
+        },
+        reset: (_widgetId: string) => {
+          // In Cloudflare Turnstile, reset() resets the widget without firing expired-callback
+        },
+        remove: (widgetId: string) => {
+          widgets.delete(widgetId);
+        },
+      };
+    }, 'mock-e2e-turnstile-token-xyz');
 
     // 2. Mock Supabase anonymous sign-in endpoint for offline preview server testing
     let capturedCaptchaToken: string | null = null;
@@ -42,46 +65,54 @@ test.describe('Workstream H: Real Online Pre-Registration Runtime & Turnstile JI
       await route.continue();
     });
 
-    // 3. Open /get-pass
-    await page.goto('/get-pass');
+    // 3. Open /get-pass in new visitor mode
+    await page.goto('/get-pass?mode=new');
 
-    // 4. Fill required visitor form fields
+    // 4. Fill required Step 1 (Personal Details) fields
     const firstNameInput = page.locator('#first-name, #firstName');
     const lastNameInput = page.locator('#last-name, #lastName');
     const contactInput = page.locator('#contact-number, #contactNumber');
-    const purposeSelect = page.locator('#visit-purpose-choice');
-    const visitDateInput = page.locator('#visit-date');
+    const addressInput = page.locator('#home-address, #homeAddress');
     const consentCheckbox = page.locator('input[type="checkbox"]#consent, input[name="consent"]');
 
     await expect(firstNameInput).toBeVisible({ timeout: 15_000 });
     await firstNameInput.fill('Maria');
     await lastNameInput.fill('Santos');
     await contactInput.fill('09171234567');
+    await addressInput.fill('123 Sampaloc St, Manila');
+    await expect(consentCheckbox).toBeVisible();
+    await consentCheckbox.check();
 
-    await expect(purposeSelect).toBeVisible();
+    // Continue to Step 2: Visit & Arrival Details
+    const continueToVisitBtn = page.getByRole('button', { name: /Next: Visit Details|Continue/i });
+    await expect(continueToVisitBtn).toBeEnabled({ timeout: 5_000 });
+    await continueToVisitBtn.click();
+
+    // 5. Fill required Step 2 (Visit Details) fields
+    const purposeSelect = page.locator('#visit-purpose-choice');
+    const visitDateInput = page.locator('#visit-date');
+
+    await expect(purposeSelect).toBeVisible({ timeout: 10_000 });
     await purposeSelect.selectOption({ index: 1 });
 
     const today = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Manila' }).format(new Date());
     await visitDateInput.fill(today);
 
-    await expect(consentCheckbox).toBeVisible();
-    await consentCheckbox.check();
-
-    // 5. Click "Continue to Live Face Capture"
+    // 6. Click "Continue to Live Face Capture" (triggers Turnstile execute)
     const continueBtn = page.getByRole('button', { name: /Continue to Live Face Capture|Continue/i });
     await expect(continueBtn).toBeEnabled({ timeout: 5_000 });
     await continueBtn.click();
 
-    // 6. Invariant: Must NOT show the blocker error "Verification challenge required to start registration"
+    // 7. Invariant: Must NOT show the blocker error "Verification challenge required to start registration"
     const blockerError = page.getByText(/Verification challenge required to start registration/i);
     await expect(blockerError).not.toBeVisible();
 
-    // 7. Must successfully advance to Step 2 (Live Face Capture)
+    // 8. Must successfully advance to Step 3 (Live Face Capture)
     const liveFaceHeading = page.getByRole('heading', { name: /Verify Your Identity/i });
     await expect(liveFaceHeading).toBeVisible({ timeout: 15_000 });
     await expect(page.getByText(/Center face in oval/i)).toBeVisible();
 
-    // 8. Invariant: Proves captcha token was delivered to Supabase auth payload
+    // 9. Invariant: Proves captcha token was delivered to Supabase auth payload
     expect(capturedCaptchaToken).toBe('mock-e2e-turnstile-token-xyz');
   });
 
@@ -92,9 +123,8 @@ test.describe('Workstream H: Real Online Pre-Registration Runtime & Turnstile JI
     const PORTAL_TOKEN = 'mock-portal-token-9999';
     const VISITOR_ID = '33333333-3333-4333-8333-333333333333';
 
-    // 1. Install mock Turnstile token, mock camera, and simulate pre-existing operator credentials in localStorage
-    await page.addInitScript(({ opToken, pToken, vId }) => {
-      (window as any).__MOCK_TURNSTILE_TOKEN__ = 'mock-turnstile-actor-continuity';
+    // 1. Install fake external Turnstile API, mock camera, and simulate pre-existing operator credentials in localStorage
+    await page.addInitScript(({ opToken, pToken, vId, testToken }) => {
       window.localStorage.setItem(
         'egatepass-operator-auth',
         JSON.stringify({
@@ -103,6 +133,31 @@ test.describe('Workstream H: Real Online Pre-Registration Runtime & Turnstile JI
           user: { id: 'admin-uuid', role: 'admin' },
         })
       );
+
+      const widgets = new Map();
+      let widgetCounter = 0;
+      (window as any).turnstile = {
+        render: (container: any, options: any) => {
+          widgetCounter++;
+          const id = `widget-${widgetCounter}`;
+          widgets.set(id, options);
+          return id;
+        },
+        execute: (widgetId: string) => {
+          const opts = widgets.get(widgetId);
+          if (opts && typeof opts.callback === 'function') {
+            setTimeout(() => {
+              opts.callback(testToken);
+            }, 10);
+          }
+        },
+        reset: (_widgetId: string) => {
+          // In Cloudflare Turnstile, reset() resets the widget without firing expired-callback
+        },
+        remove: (widgetId: string) => {
+          widgets.delete(widgetId);
+        },
+      };
 
       // Mock userMedia for deterministic canvas-based camera in headless environments
       if (navigator.mediaDevices) {
@@ -116,7 +171,7 @@ test.describe('Workstream H: Real Online Pre-Registration Runtime & Turnstile JI
           return (canvas as any).captureStream ? (canvas as any).captureStream(30) : new MediaStream();
         };
       }
-    }, { opToken: OPERATOR_TOKEN, pToken: PORTAL_TOKEN, vId: VISITOR_ID });
+    }, { opToken: OPERATOR_TOKEN, pToken: PORTAL_TOKEN, vId: VISITOR_ID, testToken: 'mock-turnstile-actor-continuity' });
 
     // 2. Monitor all network requests: assert OPERATOR_TOKEN is NEVER sent
     let operatorTokenObserved = false;
@@ -229,23 +284,30 @@ test.describe('Workstream H: Real Online Pre-Registration Runtime & Turnstile JI
       });
     });
 
-    // 8. Open /get-pass and verify initial step
-    await page.goto('/get-pass');
+    // 8. Open /get-pass in new visitor mode
+    await page.goto('/get-pass?mode=new');
     await expect(page.locator('#first-name, #firstName')).toBeVisible({ timeout: 15_000 });
 
-    // Step 1: Details
+    // Step 1: Personal Details
     await page.locator('#first-name, #firstName').fill('Juan');
     await page.locator('#last-name, #lastName').fill('Dela Cruz');
     await page.locator('#contact-number, #contactNumber').fill('09181234567');
+    await page.locator('#home-address, #homeAddress').fill('456 Sampaloc St, Manila');
+    await page.locator('input[type="checkbox"]#consent, input[name="consent"]').check();
+
+    const continueToVisitBtn = page.getByRole('button', { name: /Next: Visit Details|Continue to Visit Details|Continue/i });
+    await continueToVisitBtn.click();
+
+    // Step 2: Visit Details
+    await expect(page.locator('#visit-purpose-choice')).toBeVisible({ timeout: 10_000 });
     await page.locator('#visit-purpose-choice').selectOption({ index: 1 });
     const today = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Manila' }).format(new Date());
     await page.locator('#visit-date').fill(today);
-    await page.locator('input[type="checkbox"]#consent, input[name="consent"]').check();
 
     const continueBtn = page.getByRole('button', { name: /Continue to Live Face Capture|Continue/i });
     await continueBtn.click();
 
-    // Verify arrived at Step 2: Live Face
+    // Verify arrived at Step 3: Live Face
     await expect(page.getByRole('heading', { name: /Verify Your Identity/i })).toBeVisible({ timeout: 15_000 });
 
     // Assert operator token was never leaked in any request

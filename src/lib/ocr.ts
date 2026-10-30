@@ -4,6 +4,7 @@
  */
 
 import { preprocessIdForOcr } from './ocrImageProcessing.js';
+import { getDocumentAdapter } from './ocrAdapters.js';
 
 export interface OcrBBox {
   x0: number;
@@ -154,7 +155,7 @@ export function isFuzzyLabel(text: string): boolean {
 
 const BILINGUAL_LABEL_REGEX = /^(?:(?:last\s*name|surname|(?<!gitnang\s*)apelyido|apely1do|given\s*names?|first\s*names?|mga\s*pangalana?|mga\s*pangaian|pangalana?|pangaian|middle\s*name|middie\s*name|gitnang(?:\s*apelyido|apely1do)?)[\s\/\-\.:]*)+/i;
 
-function cleanNameCandidate(text: string): string {
+export function cleanNameCandidate(text: string): string {
   return text
     .normalize('NFC')
     .replace(/[’']/g, "'")
@@ -164,7 +165,7 @@ function cleanNameCandidate(text: string): string {
     .trim();
 }
 
-function isPureLabelLine(text: string): boolean {
+export function isPureLabelLine(text: string): boolean {
   const stripped = text
     .normalize('NFC')
     .replace(/[’']/g, "'")
@@ -176,7 +177,7 @@ function isPureLabelLine(text: string): boolean {
   return tokens.every((t) => COMMON_HEADER_WORDS.has(t) || isFuzzyLabel(t));
 }
 
-function isValidNameWord(word: string): boolean {
+export function isValidNameWord(word: string): boolean {
   if (word.length < 2) return false;
   const upper = word.toUpperCase();
   if (COMMON_HEADER_WORDS.has(upper) || isFuzzyLabel(upper)) return false;
@@ -185,7 +186,7 @@ function isValidNameWord(word: string): boolean {
   return /^[\p{L}\-\.']+$/u.test(word);
 }
 
-function toTitleCase(str: string): string {
+export function toTitleCase(str: string): string {
   return str
     .normalize('NFC')
     .toLowerCase()
@@ -198,7 +199,7 @@ function toTitleCase(str: string): string {
 /**
  * Classifies if a line or token acts as a specific name label.
  */
-function classifyLabel(text: string): 'last' | 'first' | 'middle' | null {
+export function classifyLabel(text: string): 'last' | 'first' | 'middle' | null {
   const upper = text.toUpperCase().replace(/[^\w\s]/g, ' ').replace(/\s+/g, ' ').trim();
   if (KNOWN_LABEL_CORRUPTIONS.has(upper)) {
     return KNOWN_LABEL_CORRUPTIONS.get(upper)!;
@@ -230,12 +231,12 @@ export type DocumentFamily =
 export function detectDocumentFamily(text: string): DocumentFamily {
   const upper = text.toUpperCase();
   if (
-    upper.includes('PHILSYS') ||
-    upper.includes('PAMBANSANG PAGKAKAKILANLAN') ||
-    upper.includes('PHILIPPINE IDENTIFICATION') ||
-    (upper.includes('REPUBLIKA NG PILIPINAS') && upper.includes('APELYIDO'))
+    upper.includes('PASSPORT') ||
+    upper.includes('PASAPORTE') ||
+    upper.includes('FOREIGN AFFAIRS') ||
+    upper.includes('DFA')
   ) {
-    return 'philsys';
+    return 'passport';
   }
   if (
     upper.includes('DRIVER') ||
@@ -252,14 +253,6 @@ export function detectDocumentFamily(text: string): DocumentFamily {
     return 'umid';
   }
   if (
-    upper.includes('PASSPORT') ||
-    upper.includes('PASAPORTE') ||
-    upper.includes('FOREIGN AFFAIRS') ||
-    upper.includes('DFA')
-  ) {
-    return 'passport';
-  }
-  if (
     upper.includes('PROFESSIONAL REGULATION COMMISSION') ||
     upper.includes('PRC') ||
     upper.includes('PROFESSIONAL IDENTIFICATION')
@@ -272,6 +265,14 @@ export function detectDocumentFamily(text: string): DocumentFamily {
     upper.includes('POST OFFICE')
   ) {
     return 'postal';
+  }
+  if (
+    upper.includes('PHILSYS') ||
+    upper.includes('PAMBANSANG PAGKAKAKILANLAN') ||
+    upper.includes('PHILIPPINE IDENTIFICATION') ||
+    (upper.includes('REPUBLIKA NG PILIPINAS') && upper.includes('APELYIDO'))
+  ) {
+    return 'philsys';
   }
   return 'generic';
 }
@@ -371,352 +372,20 @@ export function extractNamesFromIdText(
   sourcePass: 1 | 2 = 1
 ): ParsedIdNames {
   const docFamily = detectDocumentFamily(text);
-  const fieldCandidates: NonNullable<ParsedIdNames['fieldCandidates']> = {};
-
-  const result: ParsedIdNames = {
-    firstName: '',
-    middleName: '',
-    lastName: '',
-    confidence: overallConfidence,
-    rawText: text,
-    documentFamily: docFamily,
-    fieldCandidates,
-  };
-
   if (!text || text.trim().length === 0) {
-    return result;
+    return {
+      firstName: '',
+      middleName: '',
+      lastName: '',
+      confidence: overallConfidence,
+      rawText: text,
+      documentFamily: docFamily,
+      fieldCandidates: {},
+    };
   }
 
-  // Strategy A: Spatial Layout-aware parsing using bounding box geometry
-  if (structuredData?.lines && structuredData.lines.length > 0) {
-    const sLines = structuredData.lines;
-
-    for (let i = 0; i < sLines.length; i++) {
-      const curLine = sLines[i]!;
-      const labelKind = classifyLabel(curLine.text);
-
-      if (labelKind) {
-        let extractedVal = '';
-        let extractionMode: FieldCandidate['extractionMode'] = 'below_label';
-        let candidateConf = curLine.confidence || overallConfidence;
-
-        // Mode 1: PRC and explicit horizontal labels prefer same row immediately to the right
-        const preferSameRow = docFamily === 'prc';
-
-        // Check same row to the right first if preferred
-        let sameRowVal = '';
-        const sameRowTokens: string[] = [];
-        const labelRightEdge = curLine.tokens.length > 0
-          ? curLine.tokens[curLine.tokens.length - 1]!.bbox.x1
-          : curLine.bbox.x1;
-
-        // Check if current line contains tokens to the right of label
-        const cleanedInLine = cleanNameCandidate(curLine.text);
-        const inLineWords = cleanedInLine ? cleanedInLine.split(' ').filter(isValidNameWord) : [];
-
-        if (inLineWords.length > 0) {
-          sameRowVal = inLineWords.join(' ');
-        } else {
-          // Check other lines on same horizontal plane
-          for (let j = 0; j < sLines.length; j++) {
-            if (i === j) continue;
-            const other = sLines[j]!;
-            const vertOverlap = Math.max(
-              0,
-              Math.min(curLine.bbox.y1, other.bbox.y1) - Math.max(curLine.bbox.y0, other.bbox.y0)
-            );
-            const lineH = Math.max(1, curLine.bbox.y1 - curLine.bbox.y0);
-            if (vertOverlap / lineH > 0.4 && other.bbox.x0 >= labelRightEdge - 15) {
-              const otherClean = cleanNameCandidate(other.text);
-              const otherWords = otherClean ? otherClean.split(' ').filter(isValidNameWord) : [];
-              if (otherWords.length > 0) {
-                sameRowTokens.push(...otherWords);
-                candidateConf = other.confidence || candidateConf;
-                break;
-              }
-            }
-          }
-          if (sameRowTokens.length > 0) {
-            sameRowVal = sameRowTokens.join(' ');
-          }
-        }
-
-        // Check aligned candidate line immediately below
-        let belowVal = '';
-        if (i + 1 < sLines.length) {
-          const nextLine = sLines[i + 1]!;
-          if (!classifyLabel(nextLine.text) && !isPureLabelLine(nextLine.text)) {
-            const vertGap = nextLine.bbox.y0 - curLine.bbox.y1;
-            const lineH = Math.max(1, curLine.bbox.y1 - curLine.bbox.y0);
-            if (vertGap >= -5 && vertGap < lineH * 3.5) {
-              const cleanedBelow = cleanNameCandidate(nextLine.text);
-              const belowWords = cleanedBelow ? cleanedBelow.split(' ').filter(isValidNameWord) : [];
-              if (belowWords.length > 0) {
-                belowVal = belowWords.join(' ');
-                candidateConf = nextLine.confidence || candidateConf;
-              }
-            }
-          }
-        }
-
-        if (preferSameRow && sameRowVal) {
-          extractedVal = sameRowVal;
-          extractionMode = 'same_row';
-        } else if (belowVal) {
-          extractedVal = belowVal;
-          extractionMode = 'below_label';
-        } else if (sameRowVal) {
-          extractedVal = sameRowVal;
-          extractionMode = 'same_row';
-        }
-
-        if (extractedVal) {
-          const formatted = toTitleCase(extractedVal);
-          if (labelKind === 'last' && !result.lastName) {
-            result.lastName = formatted;
-            fieldCandidates.lastName = {
-              value: formatted,
-              confidence: candidateConf,
-              sourcePass,
-              documentFamily: docFamily,
-              extractionMode,
-            };
-          } else if (labelKind === 'first' && !result.firstName) {
-            result.firstName = formatted;
-            fieldCandidates.firstName = {
-              value: formatted,
-              confidence: candidateConf,
-              sourcePass,
-              documentFamily: docFamily,
-              extractionMode,
-            };
-          } else if (labelKind === 'middle' && !result.middleName) {
-            result.middleName = formatted;
-            fieldCandidates.middleName = {
-              value: formatted,
-              confidence: candidateConf,
-              sourcePass,
-              documentFamily: docFamily,
-              extractionMode,
-            };
-          }
-        }
-      }
-    }
-
-    if (result.firstName && result.lastName) {
-      return result;
-    }
-  }
-
-  // Strategy B: Text-line heuristic parsing
-  const lines = text
-    .normalize('NFC')
-    .split(/\r?\n/)
-    .map((line) => line.trim())
-    .filter((line) => line.length > 0);
-
-  // Strategy B.1: Explicit/fuzzy labels (PhilSys, UMID, LTO, Passport, PRC, Postal ID)
-  for (let i = 0; i < lines.length; i++) {
-    const line = lines[i]!;
-    const nextLine = i + 1 < lines.length ? lines[i + 1] : undefined;
-    const labelKind = classifyLabel(line);
-
-    if (labelKind) {
-      let val = cleanNameCandidate(line);
-      let words = val ? val.split(' ').filter(isValidNameWord) : [];
-      let mode: FieldCandidate['extractionMode'] = 'same_row';
-
-      if (words.length === 0 && nextLine && !classifyLabel(nextLine) && !isPureLabelLine(nextLine)) {
-        val = cleanNameCandidate(nextLine);
-        words = val ? val.split(' ').filter(isValidNameWord) : [];
-        mode = 'below_label';
-      }
-
-      if (words.length > 0) {
-        const formatted = toTitleCase(words.join(' '));
-        if (labelKind === 'last' && !result.lastName) {
-          result.lastName = formatted;
-          fieldCandidates.lastName = {
-            value: formatted,
-            confidence: overallConfidence,
-            sourcePass,
-            documentFamily: docFamily,
-            extractionMode: mode,
-          };
-        } else if (labelKind === 'first' && !result.firstName) {
-          result.firstName = formatted;
-          fieldCandidates.firstName = {
-            value: formatted,
-            confidence: overallConfidence,
-            sourcePass,
-            documentFamily: docFamily,
-            extractionMode: mode,
-          };
-        } else if (labelKind === 'middle' && !result.middleName) {
-          result.middleName = formatted;
-          fieldCandidates.middleName = {
-            value: formatted,
-            confidence: overallConfidence,
-            sourcePass,
-            documentFamily: docFamily,
-            extractionMode: mode,
-          };
-        }
-      }
-    }
-  }
-
-  if (result.firstName && result.lastName) {
-    return result;
-  }
-
-  // Strategy B.2: Comma separated "LASTNAME, FIRSTNAME MIDDLENAME" (Driver's Licenses, PRC, Passports)
-  // Section 37 LTO split rule:
-  // Before comma -> surname
-  // After comma with >= 2 tokens: final token = middle candidate, preceding token(s) = given-name candidate
-  // After comma with 1 token: first name only, middle blank
-  for (const line of lines) {
-    if (line.includes(',')) {
-      const parts = line.split(',');
-      const p0 = parts[0];
-      if (parts.length >= 2 && p0) {
-        const potentialLast = cleanNameCandidate(p0);
-        const rest = cleanNameCandidate(parts.slice(1).join(' '));
-        const restWords = rest.split(' ').filter(isValidNameWord);
-        const lastWords = potentialLast.split(' ').filter(isValidNameWord);
-
-        if (lastWords.length >= 1 && restWords.length >= 1) {
-          result.lastName = toTitleCase(lastWords.join(' '));
-          fieldCandidates.lastName = {
-            value: result.lastName,
-            confidence: overallConfidence,
-            sourcePass,
-            documentFamily: docFamily,
-            extractionMode: 'combined_field',
-          };
-
-          if (restWords.length >= 2) {
-            if (docFamily === 'driver_license' || docFamily === 'prc') {
-              const middleWord = restWords[restWords.length - 1]!;
-              const givenWords = restWords.slice(0, -1).join(' ');
-              result.firstName = toTitleCase(givenWords);
-              result.middleName = toTitleCase(middleWord);
-            } else {
-              const firstWord = restWords[0]!;
-              const middleWords = restWords.slice(1).join(' ');
-              result.firstName = toTitleCase(firstWord);
-              result.middleName = toTitleCase(middleWords);
-            }
-
-            fieldCandidates.firstName = {
-              value: result.firstName,
-              confidence: overallConfidence,
-              sourcePass,
-              documentFamily: docFamily,
-              extractionMode: 'combined_field',
-            };
-            fieldCandidates.middleName = {
-              value: result.middleName,
-              confidence: Math.max(30, overallConfidence - 10),
-              sourcePass,
-              documentFamily: docFamily,
-              extractionMode: 'combined_field',
-            };
-          } else {
-            result.firstName = toTitleCase(restWords[0]!);
-            result.middleName = '';
-            fieldCandidates.firstName = {
-              value: result.firstName,
-              confidence: overallConfidence,
-              sourcePass,
-              documentFamily: docFamily,
-              extractionMode: 'combined_field',
-            };
-          }
-          return result;
-        }
-      }
-    }
-  }
-
-  // Strategy B.3: Heuristic scan for lines containing 2-4 valid capitalized words
-  const candidateNameLines: string[] = [];
-  for (const line of lines) {
-    if (isPureLabelLine(line) || classifyLabel(line)) continue;
-    const cleaned = cleanNameCandidate(line);
-    const words = cleaned.split(' ').filter(Boolean);
-    if (words.length >= 2 && words.length <= 4) {
-      const allValid = words.every(isValidNameWord);
-      const hasAddressWords = /\b(ST|STREET|AVE|AVENUE|BRGY|BARANGAY|CITY|DISTRICT|ROAD|BLK|LOT|ZONE)\b/i.test(line);
-      if (allValid && !hasAddressWords) {
-        candidateNameLines.push(cleaned);
-      }
-    }
-  }
-
-  const firstCandidate = candidateNameLines[0];
-  if (firstCandidate) {
-    const nameWords = firstCandidate.split(' ').filter(Boolean);
-    const first = nameWords[0];
-    const second = nameWords[1];
-    const last = nameWords[nameWords.length - 1];
-    if (nameWords.length === 2 && first && second) {
-      if (!result.firstName) {
-        result.firstName = toTitleCase(first);
-        fieldCandidates.firstName = {
-          value: result.firstName,
-          confidence: Math.max(20, overallConfidence - 20),
-          sourcePass,
-          documentFamily: docFamily,
-          extractionMode: 'generic',
-        };
-      }
-      if (!result.lastName) {
-        result.lastName = toTitleCase(second);
-        fieldCandidates.lastName = {
-          value: result.lastName,
-          confidence: Math.max(20, overallConfidence - 20),
-          sourcePass,
-          documentFamily: docFamily,
-          extractionMode: 'generic',
-        };
-      }
-    } else if (nameWords.length >= 3 && first && last) {
-      if (!result.firstName) {
-        result.firstName = toTitleCase(first);
-        fieldCandidates.firstName = {
-          value: result.firstName,
-          confidence: Math.max(20, overallConfidence - 20),
-          sourcePass,
-          documentFamily: docFamily,
-          extractionMode: 'generic',
-        };
-      }
-      if (!result.middleName) {
-        result.middleName = toTitleCase(nameWords.slice(1, -1).join(' '));
-        fieldCandidates.middleName = {
-          value: result.middleName,
-          confidence: Math.max(20, overallConfidence - 25),
-          sourcePass,
-          documentFamily: docFamily,
-          extractionMode: 'generic',
-        };
-      }
-      if (!result.lastName) {
-        result.lastName = toTitleCase(last);
-        fieldCandidates.lastName = {
-          value: result.lastName,
-          confidence: Math.max(20, overallConfidence - 20),
-          sourcePass,
-          documentFamily: docFamily,
-          extractionMode: 'generic',
-        };
-      }
-    }
-  }
-
-  return result;
+  const adapter = getDocumentAdapter(docFamily);
+  return adapter.parse(text, overallConfidence, structuredData, sourcePass);
 }
 
 let cachedWorkerPromise: Promise<any> | null = null;

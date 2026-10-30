@@ -15,6 +15,7 @@ export interface PassPresentation {
   qrToken: string;
   validityWindow?: string | null;
   purpose?: string | null;
+  plateNumber?: string | null;
 }
 
 export interface FormatPassParams {
@@ -27,6 +28,7 @@ export interface FormatPassParams {
   qrToken: string;
   validityWindow?: string | null;
   purpose?: string | null;
+  plateNumber?: string | null;
 }
 
 /**
@@ -94,6 +96,7 @@ export function createPassPresentation(params: FormatPassParams): PassPresentati
     qrToken: params.qrToken,
     validityWindow: params.validityWindow ?? null,
     purpose: params.purpose ?? null,
+    plateNumber: params.plateNumber ?? null,
   };
 }
 

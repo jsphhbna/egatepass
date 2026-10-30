@@ -129,13 +129,19 @@ export function generateCanonicalDigitalPassSvg(
   const escapedPurpose = presentation.purpose
     ? escapeXml(truncateGraphemes(presentation.purpose, 40, '...'))
     : null;
+  const escapedPlate = presentation.plateNumber ? escapeXml(presentation.plateNumber) : null;
 
   const validityElement = escapedValidity
     ? `<text x="240" y="${nameLayout.validityY}" text-anchor="middle" font-family="'Egatepass Noto Sans', 'Noto Sans', Arial, sans-serif" font-size="12" font-weight="500" fill="#800000">Valid Hours: ${escapedValidity}</text>`
     : '';
 
+  const plateElement = escapedPlate
+    ? `<text x="240" y="508" text-anchor="middle" font-family="'Egatepass Noto Sans', 'Noto Sans', Arial, sans-serif" font-size="13" font-weight="bold" fill="#1E40AF" data-testid="canonical-pass-vehicle-plate">Vehicle: ${escapedPlate}</text>`
+    : '';
+
+  const purposeY = escapedPlate ? 528 : 510;
   const purposeElement = escapedPurpose
-    ? `<text x="240" y="510" text-anchor="middle" font-family="'Egatepass Noto Sans', 'Noto Sans', Arial, sans-serif" font-size="12" font-style="italic" fill="#71717A">Purpose: ${escapedPurpose}</text>`
+    ? `<text x="240" y="${purposeY}" text-anchor="middle" font-family="'Egatepass Noto Sans', 'Noto Sans', Arial, sans-serif" font-size="12" font-style="italic" fill="#71717A">Purpose: ${escapedPurpose}</text>`
     : '';
 
   const visitorNameElement = nameLayout.isTwoLines
@@ -169,6 +175,9 @@ export function generateCanonicalDigitalPassSvg(
 
   <!-- Pass Reference -->
   <text x="240" y="485" text-anchor="middle" font-family="'Egatepass Noto Sans', 'Noto Sans', Arial, sans-serif" font-size="16" font-weight="bold" fill="#18181B" data-testid="canonical-pass-reference">Ref: ${escapedRef}</text>
+
+  <!-- Vehicle Plate (if declared) -->
+  ${plateElement}
 
   <!-- Purpose -->
   ${purposeElement}

@@ -10,12 +10,85 @@ import {
   type PortalIssueTransaction,
 } from '../src/services/visitorRegistration';
 
-describe('Portal Actor Continuity & Evidence Upload Pipeline', () => {
-  const dummyActorId = '11111111-1111-4111-8111-111111111111';
-  const dummyToken = 'mock-portal-jwt-token-xyz';
+const dummyActorId = '11111111-1111-4111-8111-111111111111';
+const dummyToken = 'mock-portal-jwt-token-xyz';
 
-  const createMockTransaction = (overrides?: Partial<PortalIssueTransaction>): PortalIssueTransaction => {
-    const rpcMock = vi.fn().mockReturnValue({
+const mockRpc = vi.fn().mockReturnValue({
+  single: vi.fn().mockResolvedValue({
+    data: {
+      intent_id: 'intent-uuid-1234',
+      bucket_id: 'visitor-photos',
+      object_path: `${dummyActorId}/intent-uuid-1234/photo.jpg`,
+      expires_at: new Date(Date.now() + 900000).toISOString(),
+      max_bytes: 5242880,
+    },
+    error: null,
+  }),
+});
+
+const mockPortalClient: any = {
+  auth: {
+    getSession: vi.fn().mockResolvedValue({
+      data: {
+        session: {
+          access_token: dummyToken,
+          expires_at: Math.floor(Date.now() / 1000) + 3600,
+          user: {
+            id: dummyActorId,
+            is_anonymous: true,
+          },
+        },
+      },
+      error: null,
+    }),
+    signOut: vi.fn().mockResolvedValue({ error: null }),
+    signInAnonymously: vi.fn().mockResolvedValue({
+      data: {
+        session: {
+          access_token: dummyToken,
+          user: {
+            id: dummyActorId,
+            is_anonymous: true,
+          },
+        },
+      },
+      error: null,
+    }),
+  },
+  rpc: mockRpc,
+  schema: vi.fn().mockReturnValue({
+    rpc: mockRpc,
+  }),
+  storage: {
+    from: vi.fn().mockReturnValue({
+      uploadToSignedUrl: vi.fn().mockResolvedValue({ error: null }),
+      upload: vi.fn().mockResolvedValue({ error: null }),
+    }),
+  },
+};
+
+vi.mock('@/lib/supabase', () => ({
+  requirePortalSupabase: () => mockPortalClient,
+  requireSupabase: () => mockPortalClient,
+}));
+
+describe('Portal Actor Continuity & Evidence Upload Pipeline', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockPortalClient.auth.getSession.mockResolvedValue({
+      data: {
+        session: {
+          access_token: dummyToken,
+          expires_at: Math.floor(Date.now() / 1000) + 3600,
+          user: {
+            id: dummyActorId,
+            is_anonymous: true,
+          },
+        },
+      },
+      error: null,
+    });
+    mockRpc.mockReturnValue({
       single: vi.fn().mockResolvedValue({
         data: {
           intent_id: 'intent-uuid-1234',
@@ -27,47 +100,16 @@ describe('Portal Actor Continuity & Evidence Upload Pipeline', () => {
         error: null,
       }),
     });
+  });
 
-    const mockClient: any = {
-      auth: {
-        getSession: vi.fn().mockResolvedValue({
-          data: {
-            session: {
-              access_token: dummyToken,
-              expires_at: Math.floor(Date.now() / 1000) + 3600,
-              user: {
-                id: dummyActorId,
-                is_anonymous: true,
-              },
-            },
-          },
-          error: null,
-        }),
-      },
-      rpc: rpcMock,
-      schema: vi.fn().mockReturnValue({
-        rpc: rpcMock,
-      }),
-      storage: {
-        from: vi.fn().mockReturnValue({
-          uploadToSignedUrl: vi.fn().mockResolvedValue({ error: null }),
-          upload: vi.fn().mockResolvedValue({ error: null }),
-        }),
-      },
-    };
-
+  const createMockTransaction = (overrides?: Partial<PortalIssueTransaction>): PortalIssueTransaction => {
     return {
-      client: mockClient,
+      requestId: 'test-req-id-1234',
       actorId: dummyActorId,
-      session: {
-        access_token: dummyToken,
-        expires_at: Math.floor(Date.now() / 1000) + 3600,
-        user: {
-          id: dummyActorId,
-          is_anonymous: true,
-        },
-      } as any,
-      createdPassId: null,
+      token: dummyToken,
+      photoIntentId: null,
+      idIntentId: null,
+      phase: 'editable',
       ...overrides,
     };
   };
@@ -84,21 +126,10 @@ describe('Portal Actor Continuity & Evidence Upload Pipeline', () => {
   });
 
   it('rejects expired portal session with portal_session_missing error', async () => {
-    const tx = createMockTransaction({
-      session: {
-        access_token: dummyToken,
-        expires_at: Math.floor(Date.now() / 1000) - 60, // expired 60s ago
-        user: {
-          id: dummyActorId,
-          is_anonymous: true,
-        },
-      } as any,
-    });
+    const tx = createMockTransaction();
 
-    tx.client.auth.getSession = vi.fn().mockResolvedValue({
-      data: {
-        session: null,
-      },
+    mockPortalClient.auth.getSession.mockResolvedValue({
+      data: { session: null },
       error: null,
     });
 
@@ -113,19 +144,9 @@ describe('Portal Actor Continuity & Evidence Upload Pipeline', () => {
 
   it('rejects authenticated non-anonymous user session with portal_actor_not_anonymous error', async () => {
     const staffId = 'staff-admin-uuid-9999';
-    const tx = createMockTransaction({
-      actorId: staffId,
-      session: {
-        access_token: 'staff-jwt-token',
-        expires_at: Math.floor(Date.now() / 1000) + 3600,
-        user: {
-          id: staffId,
-          is_anonymous: false, // Operator / staff account!
-        },
-      } as any,
-    });
+    const tx = createMockTransaction({ actorId: staffId });
 
-    tx.client.auth.getSession = vi.fn().mockResolvedValue({
+    mockPortalClient.auth.getSession.mockResolvedValue({
       data: {
         session: {
           access_token: 'staff-jwt-token',
@@ -145,21 +166,34 @@ describe('Portal Actor Continuity & Evidence Upload Pipeline', () => {
     });
   });
 
-  it('rejects session actor mismatch with portal_session_mismatch error', async () => {
-    const otherVisitorId = '22222222-2222-4222-8222-222222222222';
-    const tx = createMockTransaction({
-      actorId: dummyActorId, // Expects dummyActorId
-      session: {
-        access_token: 'different-visitor-token',
-        expires_at: Math.floor(Date.now() / 1000) + 3600,
-        user: {
-          id: otherVisitorId, // Different anonymous user!
-          is_anonymous: true,
+  it('strictly rejects undefined or missing is_anonymous claim with portal_actor_not_anonymous error', async () => {
+    const tx = createMockTransaction();
+
+    mockPortalClient.auth.getSession.mockResolvedValue({
+      data: {
+        session: {
+          access_token: 'portal-token-unspecified-anon',
+          expires_at: Math.floor(Date.now() / 1000) + 3600,
+          user: { id: dummyActorId }, // is_anonymous undefined
         },
-      } as any,
+      },
+      error: null,
     });
 
-    tx.client.auth.getSession = vi.fn().mockResolvedValue({
+    const isValid = await validatePortalSession(tx);
+    expect(isValid).toBe(false);
+
+    await expect(getVerifiedPortalSession(tx)).rejects.toThrow(PortalSessionError);
+    await expect(getVerifiedPortalSession(tx)).rejects.toMatchObject({
+      code: 'portal_actor_not_anonymous',
+    });
+  });
+
+  it('rejects session actor mismatch with portal_session_mismatch error', async () => {
+    const otherVisitorId = '22222222-2222-4222-8222-222222222222';
+    const tx = createMockTransaction({ actorId: dummyActorId });
+
+    mockPortalClient.auth.getSession.mockResolvedValue({
       data: {
         session: {
           access_token: 'different-visitor-token',
@@ -186,9 +220,8 @@ describe('Portal Actor Continuity & Evidence Upload Pipeline', () => {
     const result = await uploadPortalEvidence(tx, 'photo', fakeBlob);
 
     // Verify RPC was called with requested_source: 'portal'
-    expect(tx.client.schema).toHaveBeenCalledWith('api');
-    const rpcFn = tx.client.schema().rpc;
-    expect(rpcFn).toHaveBeenCalledWith('create_upload_intent', {
+    expect(mockPortalClient.schema).toHaveBeenCalledWith('api');
+    expect(mockRpc).toHaveBeenCalledWith('create_upload_intent', {
       requested_source: 'portal',
       requested_kind: 'photo',
       requested_content_type: 'image/jpeg',
@@ -207,7 +240,7 @@ describe('Portal Actor Continuity & Evidence Upload Pipeline', () => {
         error: { code: '42501', message: 'visitor identity required' },
       }),
     });
-    tx.client.schema = vi.fn().mockReturnValue({ rpc: errRpc });
+    mockPortalClient.schema = vi.fn().mockReturnValue({ rpc: errRpc });
 
     const fakeBlob = new Blob(['test image data'], { type: 'image/jpeg' });
     await expect(uploadPortalEvidence(tx, 'photo', fakeBlob)).rejects.toThrow(/visitor identity required/);
@@ -217,6 +250,7 @@ describe('Portal Actor Continuity & Evidence Upload Pipeline', () => {
     const tx = createMockTransaction();
     const globalFetch = vi.fn().mockResolvedValue({
       ok: true,
+      status: 200,
       json: vi.fn().mockResolvedValue({
         ok: true,
         message: 'Face quality check passed',
@@ -234,6 +268,7 @@ describe('Portal Actor Continuity & Evidence Upload Pipeline', () => {
       expect(options.method).toBe('POST');
       expect(options.headers['Authorization']).toBe(`Bearer ${dummyToken}`);
       expect(JSON.parse(options.body)).toEqual({
+        requestId: 'test-req-id-1234',
         photoIntentId: 'photo-intent-5678',
         mode: 'preflight_face',
       });
@@ -242,12 +277,88 @@ describe('Portal Actor Continuity & Evidence Upload Pipeline', () => {
     }
   });
 
+  it('accurately classifies preflight error taxonomy: 401->Session, 422 quality->Quality, 422 upload->Upload, 429->RateLimit, 503->Service, timeout->Network', async () => {
+    const tx = createMockTransaction();
+
+    // 1. HTTP 401 converts to PortalSessionError, NOT photo quality
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+      ok: false,
+      status: 401,
+      json: vi.fn().mockResolvedValue({ error: 'invalid_session' }),
+    }));
+    await expect(preflightPortalLiveFace(tx, 'p1')).rejects.toThrow(PortalSessionError);
+
+    // 2. HTTP 422 with error = quality_rejected returns category = 'quality'
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+      ok: false,
+      status: 422,
+      json: vi.fn().mockResolvedValue({
+        ok: false,
+        error: 'quality_rejected',
+        reasonCode: 'no_face_detected',
+        message: 'No face detected in photo',
+      }),
+    }));
+    const qualityRes = await preflightPortalLiveFace(tx, 'p2');
+    expect(qualityRes.ok).toBe(false);
+    expect(qualityRes.category).toBe('quality');
+    expect(qualityRes.reasonCode).toBe('no_face_detected');
+
+    // 3. HTTP 422 with error = invalid_upload_intent_photo returns category = 'upload', NOT quality
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+      ok: false,
+      status: 422,
+      json: vi.fn().mockResolvedValue({
+        error: 'invalid_upload_intent_photo',
+      }),
+    }));
+    const uploadRes = await preflightPortalLiveFace(tx, 'p3');
+    expect(uploadRes.ok).toBe(false);
+    expect(uploadRes.category).toBe('upload');
+    expect(uploadRes.category).not.toBe('quality');
+
+    // 4. HTTP 429 returns category = 'rate_limit', NOT quality
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+      ok: false,
+      status: 429,
+      json: vi.fn().mockResolvedValue({
+        error: 'rate_limit_exceeded',
+        message: 'Too many attempts',
+      }),
+    }));
+    const rlRes = await preflightPortalLiveFace(tx, 'p4');
+    expect(rlRes.ok).toBe(false);
+    expect(rlRes.category).toBe('rate_limit');
+
+    // 5. HTTP 503 abuse_control_unavailable returns category = 'service', NOT quality
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+      ok: false,
+      status: 503,
+      json: vi.fn().mockResolvedValue({
+        error: 'abuse_control_unavailable',
+      }),
+    }));
+    const serviceRes = await preflightPortalLiveFace(tx, 'p5');
+    expect(serviceRes.ok).toBe(false);
+    expect(serviceRes.category).toBe('service');
+
+    // 6. Network failure returns category = 'network'
+    vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new TypeError('Failed to fetch')));
+    const netRes = await preflightPortalLiveFace(tx, 'p6');
+    expect(netRes.ok).toBe(false);
+    expect(netRes.category).toBe('network');
+
+    vi.unstubAllGlobals();
+  });
+
   it('verifyPortalIdentity includes Bearer portal token in request headers', async () => {
     const tx = createMockTransaction();
     const globalFetch = vi.fn().mockResolvedValue({
       ok: true,
+      status: 200,
       json: vi.fn().mockResolvedValue({
-        result: 'matched',
+        outcome: 'matched',
+        matched: true,
         score: 0.82,
         reason: null,
       }),
@@ -256,7 +367,7 @@ describe('Portal Actor Continuity & Evidence Upload Pipeline', () => {
 
     try {
       const response = await verifyPortalIdentity(tx, 'photo-intent-1111', 'id-intent-2222');
-      expect(response.result).toBe('matched');
+      expect(response.matched).toBe(true);
 
       expect(globalFetch).toHaveBeenCalledTimes(1);
       const [url, options] = globalFetch.mock.calls[0];
@@ -269,46 +380,5 @@ describe('Portal Actor Continuity & Evidence Upload Pipeline', () => {
     } finally {
       vi.unstubAllGlobals();
     }
-  });
-
-  it('distinguishes live face error taxonomy: quality vs session vs upload vs network', () => {
-    type ErrorCategory = 'quality' | 'session' | 'upload' | 'network' | 'service';
-
-    const categorizeError = (err: any): { category: ErrorCategory; message: string } => {
-      if (err instanceof PortalSessionError || err?.code?.startsWith('portal_session') || err?.message?.includes('session')) {
-        return { category: 'session', message: 'Registration Session Error' };
-      }
-      if (err?.code === '42501' || err?.status === 403 || err?.message?.includes('upload') || err?.message?.includes('storage')) {
-        return { category: 'upload', message: 'Photo Upload Error' };
-      }
-      if (err?.name === 'TypeError' && err?.message?.includes('fetch') || err?.message?.includes('Failed to fetch') || err?.message?.includes('NetworkError')) {
-        return { category: 'network', message: 'Connection Problem' };
-      }
-      if (err?.type === 'blur' || err?.type === 'no_face' || err?.message?.includes('blurry') || err?.message?.includes('quality')) {
-        return { category: 'quality', message: 'Photo Quality Check Failed' };
-      }
-      return { category: 'service', message: 'Identity Service Error' };
-    };
-
-    // 1. Quality check failure
-    const qualityErr = categorizeError({ type: 'blur', message: 'Image is too blurry' });
-    expect(qualityErr.category).toBe('quality');
-    expect(qualityErr.message).toBe('Photo Quality Check Failed');
-
-    // 2. Storage / 403 error must be 'upload', NOT quality check failure!
-    const uploadErr = categorizeError({ code: '42501', message: 'Failed to upload photo intent' });
-    expect(uploadErr.category).toBe('upload');
-    expect(uploadErr.message).toBe('Photo Upload Error');
-    expect(uploadErr.message).not.toBe('Photo Quality Check Failed');
-
-    // 3. Expired or invalid session
-    const sessionErr = categorizeError(new PortalSessionError('portal_session_missing', 'Session has expired'));
-    expect(sessionErr.category).toBe('session');
-    expect(sessionErr.message).toBe('Registration Session Error');
-
-    // 4. Network error
-    const netErr = categorizeError(new TypeError('Failed to fetch'));
-    expect(netErr.category).toBe('network');
-    expect(netErr.message).toBe('Connection Problem');
   });
 });

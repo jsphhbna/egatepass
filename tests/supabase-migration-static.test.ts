@@ -317,5 +317,53 @@ describe('Supabase migration static safety contract', () => {
     expect(migration39).toMatch(/revoke all on function api\.scan_pass[^;]+from public, anon, authenticated;/i);
     expect(migration39).toMatch(/grant execute on function api\.scan_pass[^;]+to service_role;/i);
   });
+
+  it('applies Migration 43: unified online registration, returning visitor profiles, biometrics, and vehicle declarations', () => {
+    const migration43 = readFileSync('supabase/migrations/20261031000100_unified_online_registration_returning_vehicle.sql', 'utf8');
+
+    // Schema extensions
+    expect(migration43).toContain('home_address');
+    expect(migration43).toContain('registration_mode');
+    expect(migration43).toContain('arrival_mode');
+    expect(migration43).toContain('returning_profile_id');
+    expect(migration43).toContain('returning_identity_attempt_id');
+
+    // Tables created
+    expect(migration43).toContain('create table if not exists public.returning_visitor_profiles');
+    expect(migration43).toContain('create table if not exists public.returning_face_templates');
+    expect(migration43).toContain('create table if not exists public.returning_visitor_vehicles');
+    expect(migration43).toContain('create table if not exists public.visit_vehicle_declarations');
+    expect(migration43).toContain('create table if not exists public.returning_identity_attempts');
+
+    // RLS enabled on all new tables
+    expect(migration43).toContain('alter table public.returning_visitor_profiles enable row level security;');
+    expect(migration43).toContain('alter table public.returning_face_templates enable row level security;');
+    expect(migration43).toContain('alter table public.returning_visitor_vehicles enable row level security;');
+    expect(migration43).toContain('alter table public.visit_vehicle_declarations enable row level security;');
+    expect(migration43).toContain('alter table public.returning_identity_attempts enable row level security;');
+
+    // Service-role confinement on biometrics and returning identity
+    expect(migration43).toContain('revoke all on public.returning_visitor_profiles from public, anon, authenticated;');
+    expect(migration43).toContain('grant all on public.returning_visitor_profiles to service_role;');
+    expect(migration43).toContain('revoke all on public.returning_face_templates from public, anon, authenticated;');
+    expect(migration43).toContain('grant all on public.returning_face_templates to service_role;');
+    expect(migration43).toContain('revoke all on public.returning_visitor_vehicles from public, anon, authenticated;');
+    expect(migration43).toContain('grant all on public.returning_visitor_vehicles to service_role;');
+    expect(migration43).toContain('revoke all on public.returning_identity_attempts from public, anon, authenticated;');
+    expect(migration43).toContain('grant all on public.returning_identity_attempts to service_role;');
+
+    // App settings retention extension
+    expect(migration43).toContain('returning_profile_retention_days integer not null default 30');
+
+    // Atomic vehicle entry/exit in scan_pass
+    expect(migration43).toContain('update public.visit_vehicle_declarations set');
+    expect(migration43).toContain('entry_recorded_at = coalesce(entry_recorded_at, now())');
+    expect(migration43).toContain('exit_recorded_at = coalesce(exit_recorded_at, now())');
+
+    // Online pass issuance v2
+    expect(migration43).toContain('create or replace function api.issue_online_pass_v2');
+    expect(migration43).toMatch(/revoke all on function api\.issue_online_pass_v2[^;]+from public, anon, authenticated;/i);
+    expect(migration43).toMatch(/grant execute on function api\.issue_online_pass_v2[^;]+to service_role;/i);
+  });
 });
 

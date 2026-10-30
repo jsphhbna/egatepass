@@ -1,6 +1,7 @@
 import * as ort from 'onnxruntime-node';
 import sharp, { type Metadata } from 'sharp';
 import path from 'node:path';
+import crypto from 'node:crypto';
 
 export type QualityResultCode =
   | 'ok'
@@ -698,3 +699,101 @@ export async function compareFaces(
     };
   }
 }
+
+// ----------------------------------------------------------------------------
+// Returning Visitor Biometric Extensions (1:N Gallery & Encrypted Persistence)
+// ----------------------------------------------------------------------------
+
+export function computeCosineSimilarity(a: Float32Array, b: Float32Array): number {
+  if (a.length !== b.length) return 0;
+  let dot = 0;
+  let normA = 0;
+  let normB = 0;
+  for (let i = 0; i < a.length; i++) {
+    const valA = a[i] ?? 0;
+    const valB = b[i] ?? 0;
+    dot += valA * valB;
+    normA += valA * valA;
+    normB += valB * valB;
+  }
+  const denominator = Math.sqrt(normA) * Math.sqrt(normB);
+  return denominator > 0 ? dot / denominator : 0;
+}
+
+export async function extractFaceDescriptorFromBuffer(
+  imageBuffer: Buffer
+): Promise<{ descriptor: Float32Array; modelName: string; modelVersion: string }> {
+  const modelName = 'opencv_zoo_yunet_sface';
+  const modelVersion = 'yunet_2023mar_sface_2021dec';
+
+  const faces = await detectFaces(imageBuffer);
+  if (faces.length === 0) {
+    throw new Error('no_face_in_selfie');
+  }
+  if (faces.length > 1) {
+    throw new Error('multiple_selfie_faces');
+  }
+
+  const descriptor = await getAlignedFaceDescriptor(imageBuffer, faces[0]!);
+  return { descriptor, modelName, modelVersion };
+}
+
+export function parseTemplateKey(keyInput: string): Buffer {
+  if (!keyInput || typeof keyInput !== 'string') {
+    throw new Error('template_key_missing');
+  }
+  const trimmed = keyInput.trim();
+  if (trimmed.length === 64 && /^[0-9a-fA-F]{64}$/.test(trimmed)) {
+    return Buffer.from(trimmed, 'hex');
+  }
+  if (Buffer.byteLength(trimmed, 'utf8') === 32) {
+    return Buffer.from(trimmed, 'utf8');
+  }
+  const buf = Buffer.from(trimmed, 'base64');
+  if (buf.length === 32) return buf;
+  return crypto.createHash('sha256').update(trimmed).digest();
+}
+
+export function encryptFaceTemplate(
+  descriptor: Float32Array,
+  keyHexOrSecret: string,
+  keyVersion = 'v1'
+): { encryptedEmbedding: string; iv: string; authTag: string; keyVersion: string } {
+  const key = parseTemplateKey(keyHexOrSecret);
+  const iv = crypto.randomBytes(12);
+  const cipher = crypto.createCipheriv('aes-256-gcm', key, iv);
+  const rawBytes = Buffer.from(descriptor.buffer, descriptor.byteOffset, descriptor.byteLength);
+  const encrypted = Buffer.concat([cipher.update(rawBytes), cipher.final()]);
+  const authTag = cipher.getAuthTag();
+
+  return {
+    encryptedEmbedding: encrypted.toString('hex'),
+    iv: iv.toString('hex'),
+    authTag: authTag.toString('hex'),
+    keyVersion,
+  };
+}
+
+export function decryptFaceTemplate(
+  encryptedHex: string,
+  ivHex: string,
+  authTagHex: string,
+  keyHexOrSecret: string
+): Float32Array {
+  const key = parseTemplateKey(keyHexOrSecret);
+  const iv = Buffer.from(ivHex, 'hex');
+  const authTag = Buffer.from(authTagHex, 'hex');
+  const decipher = crypto.createDecipheriv('aes-256-gcm', key, iv);
+  decipher.setAuthTag(authTag);
+  const decrypted = Buffer.concat([
+    decipher.update(Buffer.from(encryptedHex, 'hex')),
+    decipher.final(),
+  ]);
+  const floatCount = decrypted.byteLength / 4;
+  const floatArr = new Float32Array(floatCount);
+  for (let i = 0; i < floatCount; i++) {
+    floatArr[i] = decrypted.readFloatLE(i * 4);
+  }
+  return floatArr;
+}
+
