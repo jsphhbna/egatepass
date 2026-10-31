@@ -2139,9 +2139,9 @@ describe('Permanent PostgreSQL Migration Chain & Schema Contracts (PGlite)', () 
     const entryScannerId = '66666666-6666-6666-6666-666666666666';
     const exitScannerId = '77777777-7777-7777-7777-777777777777';
 
-    // Ensure pass valid_from is active now
+    // Ensure pass valid_from is active now and valid_until is safely in the future
     await db.exec(`
-      update public.passes set valid_from = now() - interval '1 hour' where id = '${passRow.pass_id}';
+      update public.passes set valid_from = now() - interval '1 hour', valid_until = now() + interval '1 hour' where id = '${passRow.pass_id}';
       insert into auth.users (id) values ('${entryScannerId}'), ('${exitScannerId}');
       insert into public.devices (user_id, name, alias, type, gate, status)
       values

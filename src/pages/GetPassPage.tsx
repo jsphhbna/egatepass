@@ -167,41 +167,23 @@ export function createGetPassSchema(schedulingDaysAhead: number = MAX_VISIT_ADVA
       consent: z.literal(true, {
         message: 'You must accept the Data Privacy Act notice to proceed',
       }),
-    })
-    .superRefine((data, ctx) => {
-      if (data.arrivalMode === 'vehicle') {
-        if (!data.vehicleType || data.vehicleType.trim() === '') {
-          ctx.addIssue({
-            path: ['vehicleType'],
-            code: z.ZodIssueCode.custom,
-            message: 'Please select a vehicle type',
-          });
-        }
-        const plateRes = normalizeVehiclePlate(data.plateNumber || '');
-        if (!plateRes.valid) {
-          ctx.addIssue({
-            path: ['plateNumber'],
-            code: z.ZodIssueCode.custom,
-            message: plateRes.error || 'Please enter a valid plate number',
-          });
-        }
-        if (!data.vehicleColor || data.vehicleColor.trim().length < 2) {
-          ctx.addIssue({
-            path: ['vehicleColor'],
-            code: z.ZodIssueCode.custom,
-            message: 'Please enter vehicle color',
-          });
-        }
-        if (!data.makeModel || data.makeModel.trim().length < 2 || data.makeModel.trim().length > 100) {
-          ctx.addIssue({
-            path: ['makeModel'],
-            code: z.ZodIssueCode.custom,
-            message: 'Vehicle make and model must be between 2 and 100 characters',
-          });
-        }
-      }
     });
 }
+
+export const vehicleStepSchema = z.object({
+  vehicleType: z.string().trim().min(1, 'Please select a vehicle type'),
+  plateNumber: z.string().superRefine((val, ctx) => {
+    const plateRes = normalizeVehiclePlate(val || '');
+    if (!plateRes.valid) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: plateRes.error || 'Please enter a valid plate number',
+      });
+    }
+  }),
+  vehicleColor: z.string().trim().min(2, 'Please enter vehicle color'),
+  makeModel: z.string().trim().min(2, 'Vehicle make and model must be between 2 and 100 characters').max(100, 'Vehicle make and model must be between 2 and 100 characters'),
+});
 
 export type GetPassFormData = z.infer<ReturnType<typeof createGetPassSchema>>;
 
@@ -502,6 +484,8 @@ export function GetPassPage() {
     trigger,
     getValues,
     setValue,
+    setError,
+    clearErrors,
     watch,
     formState: { errors },
   } = useForm<GetPassFormData>({
@@ -522,6 +506,7 @@ export function GetPassPage() {
 
   // Vehicle State Clearing
   function clearVehicleDeclarationState() {
+    clearErrors(['vehicleType', 'plateNumber', 'vehicleColor', 'makeModel']);
     setValue('plateNumber', '');
     setValue('vehicleColor', '');
     setValue('makeModel', '');
@@ -639,6 +624,7 @@ export function GetPassPage() {
       setIsManualVehicle(true);
       return;
     }
+    setIsManualVehicle(false);
     let active = true;
     setIsLoadingModels(true);
     fetch(
@@ -753,24 +739,31 @@ export function GetPassPage() {
     }
 
     if (vals.arrivalMode === 'vehicle') {
-      if (!vals.vehicleType || vals.vehicleType.trim() === '') {
-        toast.error('Please select a vehicle type.');
+      clearErrors(['vehicleType', 'plateNumber', 'vehicleColor', 'makeModel']);
+      const vResult = vehicleStepSchema.safeParse({
+        vehicleType: vals.vehicleType,
+        plateNumber: vals.plateNumber,
+        vehicleColor: vals.vehicleColor,
+        makeModel: vals.makeModel,
+      });
+
+      if (!vResult.success) {
+        for (const issue of vResult.error.issues) {
+          const field = issue.path[0] as 'vehicleType' | 'plateNumber' | 'vehicleColor' | 'makeModel';
+          if (field) {
+            setError(field, { type: 'custom', message: issue.message });
+          }
+        }
+        const firstIssue = vResult.error.issues[0];
+        toast.error(firstIssue?.message || 'Please complete all required vehicle declaration fields.');
         return;
       }
+
       const plateRes = normalizeVehiclePlate(vals.plateNumber || '');
-      if (!plateRes.valid) {
-        toast.error(plateRes.error || 'Please enter a valid plate number.');
-        return;
+      if (plateRes.valid && plateRes.displayPlate) {
+        setValue('plateNumber', plateRes.displayPlate, { shouldValidate: true });
       }
-      setValue('plateNumber', plateRes.displayPlate, { shouldValidate: true });
-      if (!vals.vehicleColor || vals.vehicleColor.trim().length < 2) {
-        toast.error('Please specify the vehicle color.');
-        return;
-      }
-      if (!vals.makeModel || vals.makeModel.trim().length < 2 || vals.makeModel.trim().length > 100) {
-        toast.error('Please specify the vehicle make and model (2-100 characters).');
-        return;
-      }
+
       if (!vehiclePhotoBlob) {
         toast.error('Please capture or upload a clear photo of your vehicle.');
         return;
@@ -2171,7 +2164,10 @@ export function GetPassPage() {
                       </label>
                       <select
                         value={selectedMake}
-                        onChange={(e) => setSelectedMake(e.target.value)}
+                        onChange={(e) => {
+                          setSelectedMake(e.target.value);
+                          clearErrors('makeModel');
+                        }}
                         disabled={isLoadingMakes}
                         className="box-border w-full min-w-0 max-w-full rounded-xl border border-[var(--color-border)] bg-white px-3.5 py-2.5 text-base sm:text-sm text-[var(--color-text-primary)] focus:border-[#7A0A0A] focus:outline-none focus:ring-1 focus:ring-[#7A0A0A]"
                       >
@@ -2191,7 +2187,10 @@ export function GetPassPage() {
                         </label>
                         <select
                           value={selectedModel}
-                          onChange={(e) => setSelectedModel(e.target.value)}
+                          onChange={(e) => {
+                            setSelectedModel(e.target.value);
+                            clearErrors('makeModel');
+                          }}
                           disabled={isLoadingModels || availableModels.length === 0}
                           className="box-border w-full min-w-0 max-w-full rounded-xl border border-[var(--color-border)] bg-white px-3.5 py-2.5 text-base sm:text-sm text-[var(--color-text-primary)] focus:border-[#7A0A0A] focus:outline-none focus:ring-1 focus:ring-[#7A0A0A]"
                         >
@@ -2205,18 +2204,27 @@ export function GetPassPage() {
                       </div>
                     )}
                   </div>
+                  {!isManualVehicle && errors.makeModel && (
+                    <p className="text-xs text-[var(--color-danger-dark)] font-medium -mt-2">
+                      {errors.makeModel.message}
+                    </p>
+                  )}
 
                   {/* Manual Make / Model Input when "Other" selected */}
                   {isManualVehicle && (
                     <FormField
                       label="Custom Make & Model"
                       requirement="required"
+                      error={errors.makeModel?.message}
                       hint="Specify make and model (e.g. Isuzu D-Max, Yamaha NMAX)"
                     >
                       <Input
                         placeholder="e.g. Isuzu D-Max"
                         value={customMakeModel}
-                        onChange={(e) => setCustomMakeModel(e.target.value)}
+                        onChange={(e) => {
+                          setCustomMakeModel(e.target.value);
+                          clearErrors('makeModel');
+                        }}
                       />
                     </FormField>
                   )}
@@ -2253,6 +2261,7 @@ export function GetPassPage() {
                     </p>
 
                     <input
+                      id="vehicle-photo-input"
                       type="file"
                       ref={vehicleFileInputRef}
                       accept="image/jpeg,image/png,image/webp"
@@ -2463,6 +2472,7 @@ export function GetPassPage() {
               )}
 
               <input
+                id="id-file-input"
                 ref={idFileInputRef}
                 type="file"
                 accept="image/jpeg,image/png,image/webp"

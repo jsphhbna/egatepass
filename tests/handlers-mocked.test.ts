@@ -1502,10 +1502,13 @@ describe('Behavioral Mocked-Handler Tests [PASS (MOCKED HANDLER)]', () => {
       });
       const body = verifyBody(seeded.id, seeded.code, requestId);
       const firstPromise = invokeHandler(emailPassHandler, emailRequest(body));
-      await vi.waitFor(() => expect(sentEmails).toHaveLength(1));
-      const replay = await invokeHandler(emailPassHandler, emailRequest(body));
-      expect(replay.status).toBe(202);
-      release();
+      try {
+        await vi.waitFor(() => expect(sentEmails).toHaveLength(1), { timeout: 10_000, interval: 20 });
+        const replay = await invokeHandler(emailPassHandler, emailRequest(body));
+        expect(replay.status).toBe(202);
+      } finally {
+        release();
+      }
       expect((await firstPromise).status).toBe(200);
       expect(sentEmails).toHaveLength(1);
     });
@@ -1520,10 +1523,13 @@ describe('Behavioral Mocked-Handler Tests [PASS (MOCKED HANDLER)]', () => {
         return { id: 'provider-one', provider: 'mock' };
       });
       const firstPromise = invokeHandler(emailPassHandler, emailRequest(verifyBody(seeded.id, seeded.code)));
-      await vi.waitFor(() => expect(sentEmails).toHaveLength(1));
-      const second = await invokeHandler(emailPassHandler, emailRequest(verifyBody(seeded.id, seeded.code)));
-      expect(second.status).toBe(409);
-      release();
+      try {
+        await vi.waitFor(() => expect(sentEmails).toHaveLength(1), { timeout: 10_000, interval: 20 });
+        const second = await invokeHandler(emailPassHandler, emailRequest(verifyBody(seeded.id, seeded.code)));
+        expect(second.status).toBe(409);
+      } finally {
+        release();
+      }
       await firstPromise;
       expect(sentEmails).toHaveLength(1);
     });
@@ -2543,6 +2549,7 @@ describe('Behavioral Mocked-Handler Tests [PASS (MOCKED HANDLER)]', () => {
         body: JSON.stringify({
           requestId: TEST_REQ_ID,
           source: 'portal',
+          arrivalMode: 'no_vehicle',
           visitor: {
             firstName: 'Juan',
             middleName: 'Dela',
@@ -2576,6 +2583,7 @@ describe('Behavioral Mocked-Handler Tests [PASS (MOCKED HANDLER)]', () => {
         body: JSON.stringify({
           requestId: TEST_REQ_ID,
           source: 'portal',
+          arrivalMode: 'no_vehicle',
           visitor: {
             firstName: 'Juan',
             middleName: 'Dela',
@@ -2606,6 +2614,7 @@ describe('Behavioral Mocked-Handler Tests [PASS (MOCKED HANDLER)]', () => {
         body: JSON.stringify({
           requestId: TEST_REQ_ID,
           source: 'portal',
+          arrivalMode: 'no_vehicle',
           visitor: {
             firstName: 'Altered',
             lastName: 'Name',
@@ -2640,6 +2649,7 @@ describe('Behavioral Mocked-Handler Tests [PASS (MOCKED HANDLER)]', () => {
         body: JSON.stringify({
           requestId: TEST_REQ_ID,
           source: 'portal',
+          arrivalMode: 'no_vehicle',
           visitor: {
             firstName: 'Juan',
             middleName: 'Dela',
@@ -2672,6 +2682,7 @@ describe('Behavioral Mocked-Handler Tests [PASS (MOCKED HANDLER)]', () => {
         body: JSON.stringify({
           requestId: TEST_REQ_ID,
           source: 'portal',
+          arrivalMode: 'no_vehicle',
           visitor: {
             firstName: 'Juan',
             middleName: 'Dela',
@@ -3688,6 +3699,7 @@ describe('Behavioral Mocked-Handler Tests [PASS (MOCKED HANDLER)]', () => {
         body: JSON.stringify({
           requestId: randomUUID(),
           source: 'portal',
+          arrivalMode: 'no_vehicle',
           visitor: {
             firstName: 'Juan',
             middleName: 'Dela',
@@ -3756,6 +3768,7 @@ describe('Behavioral Mocked-Handler Tests [PASS (MOCKED HANDLER)]', () => {
         body: JSON.stringify({
           requestId: REPLAY_ID,
           source: 'portal',
+          arrivalMode: 'no_vehicle',
           visitor: {
             firstName: 'Juan',
             middleName: 'Dela',
@@ -3784,6 +3797,7 @@ describe('Behavioral Mocked-Handler Tests [PASS (MOCKED HANDLER)]', () => {
         body: JSON.stringify({
           requestId: randomUUID(),
           source: 'portal',
+          arrivalMode: 'no_vehicle',
           visitor: {
             firstName: 'Juan',
             middleName: 'Dela',

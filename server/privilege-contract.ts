@@ -215,6 +215,7 @@ export const SERVER_DIRECT_TABLE_OPERATIONS: DirectServerTableOperation[] = [
   { file: 'server/routes/passes/issue.ts', table: 'portal_identity_verification_attempts', operations: ['SELECT'], purpose: 'Verify unexpired matched biometric attempt exists for portal pass issuance' },
   { file: 'server/routes/passes/issue.ts', table: 'passes', operations: ['SELECT'], purpose: 'Idempotent replay query by issue_request_id' },
   { file: 'server/routes/passes/issue.ts', table: 'visitors', operations: ['SELECT'], purpose: 'Lookup existing visitor on replay' },
+  { file: 'server/routes/passes/issue.ts', table: 'visit_vehicle_declarations', operations: ['SELECT'], purpose: 'Fetch declared vehicle details on replay or issuance' },
   { file: 'server/routes/passes/issue.ts', table: 'returning_identity_attempts', operations: ['SELECT'], purpose: 'Verify returning match token attempt before pass issuance' },
   { file: 'server/routes/passes/issue.ts', table: 'returning_visitor_profiles', operations: ['INSERT', 'UPDATE'], purpose: 'Enroll new returning profile or update returning visitor details' },
   { file: 'server/routes/passes/issue.ts', table: 'returning_face_templates', operations: ['INSERT'], purpose: 'Save encrypted face template on optional returning enrollment' },

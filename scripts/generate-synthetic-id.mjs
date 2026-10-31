@@ -7,7 +7,7 @@ fs.mkdirSync(fixturesDir, { recursive: true });
 
 const svg = `
 <svg width="800" height="500" viewBox="0 0 800 500" xmlns="http://www.w3.org/2000/svg">
-  <rect width="800" height="500" fill="#ffffff" />
+  <rect width="800" height="500" fill="#cbd5e1" />
   <rect x="20" y="20" width="760" height="460" fill="none" stroke="#000000" stroke-width="4" />
   
   <text x="400" y="60" font-family="Arial, sans-serif" font-size="22" font-weight="bold" text-anchor="middle" fill="#000000">REPUBLIC OF THE PHILIPPINES</text>

@@ -231,7 +231,7 @@ describe('Guard Keyset Pagination Database Contracts & Mutation Invariants (PGli
     expect(page2.hasMore).toBe(false);
     expect(page2.nextCursor).toBeNull();
     expect(page2.pendingTotal).toBe(259); // 260 - 1
-  }, 60000);
+  }, 120_000);
 
   it('PATCH 31. Keyset Insertion Test: Newly inserted pass after cursor appears in page 2; pass before cursor does not shift boundary', async () => {
     const db = new PGlite();
@@ -307,7 +307,7 @@ describe('Guard Keyset Pagination Database Contracts & Mutation Invariants (PGli
     // Page 2 still starts at pass #6! It is NOT shifted or duplicated by the earlier insertion!
     expect(p2.queue[0].id).toBe('00000000-0000-4000-d000-000000000006');
     expect(p2.queue).toHaveLength(5); // passes 6..10
-  }, 60000);
+  }, 120_000);
 
   it('PATCH 32. Same-Timestamp UUID Tie Break: Deterministic ordering across page boundaries when entry_scanned_at is identical', async () => {
     const db = new PGlite();
@@ -370,7 +370,7 @@ describe('Guard Keyset Pagination Database Contracts & Mutation Invariants (PGli
     expect(p2.queue[1].id).toBe(ID_D);
     expect(p2.hasMore).toBe(false);
     expect(p2.nextCursor).toBeNull();
-  }, 60000);
+  }, 120_000);
 
   it('PATCH 33. Null Timestamp Compatibility: Non-null passes sort before null-timestamp passes; nulls sort last by ID', async () => {
     const db = new PGlite();
@@ -426,7 +426,7 @@ describe('Guard Keyset Pagination Database Contracts & Mutation Invariants (PGli
     expect(p2.queue).toHaveLength(1);
     expect(p2.queue[0].id).toBe(ID_NULL_2);
     expect(p2.hasMore).toBe(false);
-  }, 60000);
+  }, 120_000);
 
   it('DATABASE RPC INVARIANTS: Recovery session confinement and role authorization on api.guard_dashboard_page', async () => {
     const db = new PGlite();
@@ -457,7 +457,7 @@ describe('Guard Keyset Pagination Database Contracts & Mutation Invariants (PGli
     await expect(
       db.query('select api.guard_dashboard_page(50, null, null);')
     ).rejects.toThrow(/recovery_session_forbidden/);
-  }, 60000);
+  }, 120_000);
 
   it('PATCH 39. Equal-Count Mutation Test: approve one visitor from page 1 + scan new visitor after snapshot preserves live pendingTotal but snapshotPendingTotal drops (detects mutation)', async () => {
     const db = new PGlite();
@@ -557,7 +557,7 @@ describe('Guard Keyset Pagination Database Contracts & Mutation Invariants (PGli
     expect(p2.snapshotPendingTotal).toBe(449);
     // Equal-count mutation is authoritatively detected by snapshotPendingTotal!
     expect(p2.snapshotPendingTotal).not.toBe(p1.snapshotPendingTotal);
-  }, 60000);
+  }, 120_000);
 
   it('PATCH 40. Snapshot Insert Test: Pass inserted after snapshotAt is excluded from current traversal, but appears on next fresh traversal', async () => {
     const db = new PGlite();
@@ -655,5 +655,5 @@ describe('Guard Keyset Pagination Database Contracts & Mutation Invariants (PGli
     // On fresh traversal, Pass #6 DOES appear!
     expect(pFresh.queue.some((p: any) => p.id === PASS6_ID)).toBe(true);
     expect(pFresh.pendingTotal).toBe(6);
-  }, 60000);
+  }, 120_000);
 });

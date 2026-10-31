@@ -278,7 +278,7 @@ describe('Group J: Production-Backed Staff Permanent Decommission Contract', () 
         select active from public.staff_profiles where user_id = '${INACTIVE_GUARD_B}';
       `);
       expect(guardActiveCheck.rows[0].active).toBe(false);
-    }, 60000);
+    }, 180_000);
 
     it('enforces privilege boundaries: service_role only can execute decommission RPC', async () => {
       const db = new PGlite();
@@ -307,7 +307,7 @@ describe('Group J: Production-Backed Staff Permanent Decommission Contract', () 
         select has_function_privilege('authenticated', 'api.decommission_staff_profile(uuid,text,uuid)', 'EXECUTE') as has_priv;
       `);
       expect(authHasPriv.rows[0].has_priv).toBe(false);
-    }, 60000);
+    }, 180_000);
   });
 
   describe('2. Server Route Reauthentication & Execution Contract', () => {

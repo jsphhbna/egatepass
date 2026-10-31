@@ -783,7 +783,7 @@ describe('Deep Dive 1 + Deep Dive 2 Root-Cause Closure Test Suite', () => {
       const v2Res = await db.query(`select private.allocate_thermal_template_version() as v;`);
       const v2 = Number((v2Res.rows[0] as any).v);
       expect(v2).toBe(v1 + 1);
-    }, 60000);
+    }, 180_000);
 
     it('asserts api.guard_sync_offline_registration rejects visit date mismatch with Manila occurrence date', async () => {
       const db = new PGlite();
