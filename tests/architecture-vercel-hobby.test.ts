@@ -145,6 +145,9 @@ describe('Vercel Hobby Plan Function Limit Architecture Regressions', () => {
       expect(extractRouteKey('/api/gate/sync-offline-registration', 'gate')).toBe('sync-offline-registration');
       expect(extractRouteKey('/api/purge-images', 'system')).toBe('purge-images');
       expect(extractRouteKey('/api/system/purge-images', 'system')).toBe('purge-images');
+      expect(extractRouteKey('/api/address/autocomplete', 'passes')).toBe('address-autocomplete');
+      expect(extractRouteKey('/api/vehicles/makes', 'passes')).toBe('vehicles-makes');
+      expect(extractRouteKey('/api/vehicles/models', 'passes')).toBe('vehicles-models');
 
       // Unknown or malformed
       expect(extractRouteKey('/api/admin', 'admin')).toBeNull();

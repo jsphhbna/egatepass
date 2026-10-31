@@ -35,6 +35,19 @@ export function extractRouteKey(pathname: string, group: RouteGroup): string | n
     return 'resend-webhook';
   }
 
+  // Address and vehicle rewrite aliases for passes group
+  if (group === 'passes') {
+    if (parts[1] === 'address' && parts[2] === 'autocomplete') {
+      return 'address-autocomplete';
+    }
+    if (parts[1] === 'vehicles' && parts[2] === 'makes') {
+      return 'vehicles-makes';
+    }
+    if (parts[1] === 'vehicles' && parts[2] === 'models') {
+      return 'vehicles-models';
+    }
+  }
+
   return null;
 }
 
