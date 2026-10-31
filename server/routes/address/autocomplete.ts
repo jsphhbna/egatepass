@@ -28,7 +28,11 @@ async function handleRequest(request: Request): Promise<Response> {
     });
 
     if (netRlError) {
-      console.warn('Autocomplete rate limit check unavailable:', netRlError.message);
+      console.error('Autocomplete rate limit check unavailable:', netRlError.message);
+      return jsonResponse(503, {
+        error: 'abuse_control_unavailable',
+        message: 'Address verification abuse protection is temporarily unavailable. Please try again shortly.',
+      });
     } else if (netAllowed === false) {
       return jsonResponse(429, {
         error: 'rate_limit_exceeded',

@@ -49,6 +49,8 @@ const PH_LAT_MAX = 22.0;
 const PH_LON_MIN = 116.0;
 const PH_LON_MAX = 127.0;
 
+const GEOAPIFY_TIMEOUT_MS = 6000;
+
 function getApiKey(): string {
   const key = process.env.GEOAPIFY_API_KEY;
   if (!key || key.trim() === '') {
@@ -76,16 +78,21 @@ export async function searchAddressAutocomplete(query: string): Promise<AddressS
   endpoint.searchParams.set('apiKey', apiKey);
 
   let res: Response;
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), GEOAPIFY_TIMEOUT_MS);
   try {
     res = await fetch(endpoint.toString(), {
       method: 'GET',
       headers: {
         Accept: 'application/json',
       },
+      signal: controller.signal,
     });
   } catch (err) {
     console.error('Geoapify autocomplete network error:', err instanceof Error ? err.message : 'network_error');
     throw new Error('address_verification_unavailable');
+  } finally {
+    clearTimeout(timer);
   }
 
   if (res.status === 429) {
@@ -164,16 +171,21 @@ export async function verifyPlaceDetails(
   endpoint.searchParams.set('apiKey', apiKey);
 
   let res: Response;
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), GEOAPIFY_TIMEOUT_MS);
   try {
     res = await fetch(endpoint.toString(), {
       method: 'GET',
       headers: {
         Accept: 'application/json',
       },
+      signal: controller.signal,
     });
   } catch (err) {
     console.error('Geoapify Place Details network error:', err instanceof Error ? err.message : 'network_error');
     throw new Error('address_verification_unavailable');
+  } finally {
+    clearTimeout(timer);
   }
 
   if (res.status === 429) {

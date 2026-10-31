@@ -297,4 +297,92 @@ describe('Guided Arrival Setup, Address Provenance & Vehicle Gate Enforcement', 
       `)
     ).rejects.toThrow('vehicle photo required for vehicle arrival');
   }, 60000);
+
+  it('5. Rejects api.issue_online_pass_v3 when vehicle make/model is missing or shorter than 2 chars', async () => {
+    const db = new PGlite();
+    await applyAllMigrations(db);
+
+    const actorId = '00000000-0000-0000-0000-000000000001';
+    await db.exec(`
+      insert into auth.users (id, email, is_anonymous)
+      values ('${actorId}', 'anon@example.com', true)
+      on conflict (id) do nothing;
+    `);
+
+    // Too short make/model: "X" (1 char)
+    await expect(
+      db.query(`
+        select * from api.issue_online_pass_v3(
+          '${actorId}'::uuid,
+          'new',
+          gen_random_uuid(),
+          'Juan', null, 'Dela Cruz',
+          '+639171234567',
+          '123 Manila St',
+          'Official Business',
+          current_date,
+          gen_random_uuid(), 1000, '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef',
+          gen_random_uuid(), 1000, '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef',
+          '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef',
+          'vehicle',
+          'geoapify', 'place-123', 'street', 0.95, 14.5995, 120.9842, 'Manila', 'Metro Manila', '1008', 'PH',
+          null,
+          'car', 'ABC 1234', 'ABC1234', 'White', 'X', 'manual',
+          gen_random_uuid()
+        );
+      `)
+    ).rejects.toThrow('invalid vehicle declaration details');
+  }, 60000);
+
+  it('6. Concurrently scanning entry for two passes with identical plate traps unique_violation cleanly', async () => {
+    const db = new PGlite();
+    await applyAllMigrations(db);
+
+    const scannerId = '11111111-1111-1111-1111-111111111111';
+    const visitor1Id = '22222222-2222-2222-2222-222222222222';
+    const pass1Id = '33333333-3333-3333-3333-333333333333';
+    const tokenDigest1 = '1111111111111111111111111111111111111111111111111111111111111111';
+
+    const visitor2Id = '44444444-4444-4444-4444-444444444444';
+    const pass2Id = '55555555-5555-5555-5555-555555555555';
+    const tokenDigest2 = '2222222222222222222222222222222222222222222222222222222222222222';
+
+    await db.exec(`
+      insert into auth.users (id, email) values ('00000000-0000-0000-0000-000000000001', 'anon@example.com'), ('${scannerId}', 'scanner@example.com') on conflict do nothing;
+      insert into public.devices (user_id, name, alias, type, gate, status)
+      values ('${scannerId}', 'Main Gate Entry Scanner', 'scanner-entry-1', 'entry', 'Gate 1', 'active');
+
+      insert into public.visitors (id, owner_id, source, full_name, contact_number, purpose, visit_date, arrival_mode, home_address, consent_accepted_at)
+      values
+        ('${visitor1Id}', '00000000-0000-0000-0000-000000000001', 'portal', 'Driver A', '+639171111111', 'Delivery', '2026-10-31', 'vehicle', '123 Manila St', now()),
+        ('${visitor2Id}', '00000000-0000-0000-0000-000000000001', 'portal', 'Driver B', '+639172222222', 'Meeting', '2026-10-31', 'vehicle', '456 Sampaloc St', now());
+
+      insert into public.passes (id, visitor_id, source, public_reference, token_digest, status, valid_from, valid_until)
+      values
+        ('${pass1Id}', '${visitor1Id}', 'portal', gen_random_uuid(), decode('${tokenDigest1}', 'hex'), 'issued', now() - interval '1 hour', now() + interval '8 hours'),
+        ('${pass2Id}', '${visitor2Id}', 'portal', gen_random_uuid(), decode('${tokenDigest2}', 'hex'), 'issued', now() - interval '1 hour', now() + interval '8 hours');
+
+      insert into public.visit_vehicle_declarations (pass_id, visitor_id, vehicle_type, plate_number, plate_key, color, make_model)
+      values
+        ('${pass1Id}', '${visitor1Id}', 'car', 'DEF 5678', 'DEF5678', 'Silver', 'Honda Civic'),
+        ('${pass2Id}', '${visitor2Id}', 'car', 'DEF 5678', 'DEF5678', 'Silver', 'Honda Civic');
+    `);
+
+    // Execute scans concurrently
+    const [scanResult1, scanResult2] = await Promise.all([
+      db.query<{ ok: boolean; result_status?: string; code?: string }>(`
+        select * from api.scan_pass('${scannerId}'::uuid, '${tokenDigest1}', 'entry', gen_random_uuid());
+      `),
+      db.query<{ ok: boolean; result_status?: string; code?: string }>(`
+        select * from api.scan_pass('${scannerId}'::uuid, '${tokenDigest2}', 'entry', gen_random_uuid());
+      `),
+    ]);
+
+    const results = [scanResult1.rows[0], scanResult2.rows[0]];
+    const successes = results.filter((r) => r.ok && r.result_status === 'inside');
+    const failures = results.filter((r) => !r.ok && r.code === 'vehicle_already_inside');
+
+    expect(successes).toHaveLength(1);
+    expect(failures).toHaveLength(1);
+  }, 60000);
 });

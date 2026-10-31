@@ -192,6 +192,13 @@ export function createGetPassSchema(schedulingDaysAhead: number = MAX_VISIT_ADVA
             message: 'Please enter vehicle color',
           });
         }
+        if (!data.makeModel || data.makeModel.trim().length < 2 || data.makeModel.trim().length > 100) {
+          ctx.addIssue({
+            path: ['makeModel'],
+            code: z.ZodIssueCode.custom,
+            message: 'Vehicle make and model must be between 2 and 100 characters',
+          });
+        }
       }
     });
 }
@@ -307,6 +314,8 @@ export function GetPassPage() {
   const [selectedAddress, setSelectedAddress] = useState<AddressSuggestionDto | null>(null);
   const [addressDetail, setAddressDetail] = useState('');
   const [addressSearchError, setAddressSearchError] = useState<string | null>(null);
+  const addressCacheRef = useRef<Map<string, AddressSuggestionDto[]>>(new Map());
+  const activeSearchRef = useRef<{ query: string; controller: AbortController } | null>(null);
 
   // Controlled Vehicle Catalog State
   const [availableMakes, setAvailableMakes] = useState<string[]>([]);
@@ -511,18 +520,52 @@ export function GetPassPage() {
   const purpose = watch('purpose');
   const arrivalMode = watch('arrivalMode');
 
+  // Vehicle State Clearing
+  function clearVehicleDeclarationState() {
+    setValue('plateNumber', '');
+    setValue('vehicleColor', '');
+    setValue('makeModel', '');
+    setValue('vehicleType', 'car');
+    setSelectedMake('');
+    setSelectedModel('');
+    setCustomMakeModel('');
+    setIsManualVehicle(false);
+    setVehiclePhotoBlob(null);
+    vehiclePhotoUrl.clear();
+    setVehiclePhotoError(null);
+    invalidatePortalEvidenceCheckpoint(portalTransactionRef.current, 'vehicle');
+    if (vehicleFileInputRef.current) {
+      vehicleFileInputRef.current.value = '';
+    }
+  }
+
   // Address autocomplete debounced search effect
   useEffect(() => {
-    if (selectedAddress || addressQuery.trim().length < 4) {
+    const trimmed = addressQuery.trim();
+    if (selectedAddress || trimmed.length < 4) {
       setAddressSuggestions([]);
       setIsSearchingAddress(false);
       return;
     }
+
+    const cached = addressCacheRef.current.get(trimmed.toLowerCase());
+    if (cached) {
+      setAddressSuggestions(cached);
+      setIsSearchingAddress(false);
+      setAddressSearchError(null);
+      return;
+    }
+
+    const controller = new AbortController();
+    activeSearchRef.current = { query: trimmed, controller };
+
     const timer = setTimeout(async () => {
       setIsSearchingAddress(true);
       setAddressSearchError(null);
       try {
-        const res = await fetch(`/api/address/autocomplete?q=${encodeURIComponent(addressQuery.trim())}`);
+        const res = await fetch(`/api/address/autocomplete?q=${encodeURIComponent(trimmed)}`, {
+          signal: controller.signal,
+        });
         if (!res.ok) {
           if (res.status === 429) {
             setAddressSearchError('Address search rate limit reached. Please wait a moment.');
@@ -533,15 +576,30 @@ export function GetPassPage() {
           return;
         }
         const data = await res.json();
-        setAddressSuggestions(Array.isArray(data) ? data : []);
-      } catch (err) {
+        const suggestions = Array.isArray(data?.suggestions)
+          ? data.suggestions
+          : Array.isArray(data)
+            ? data
+            : [];
+        addressCacheRef.current.set(trimmed.toLowerCase(), suggestions);
+        if (activeSearchRef.current?.query === trimmed) {
+          setAddressSuggestions(suggestions);
+        }
+      } catch (err: any) {
+        if (err.name === 'AbortError') return;
         setAddressSearchError('Unable to connect to address search service.');
         setAddressSuggestions([]);
       } finally {
-        setIsSearchingAddress(false);
+        if (activeSearchRef.current?.query === trimmed) {
+          setIsSearchingAddress(false);
+        }
       }
     }, 350);
-    return () => clearTimeout(timer);
+
+    return () => {
+      clearTimeout(timer);
+      controller.abort();
+    };
   }, [addressQuery, selectedAddress]);
 
   // Vehicle makes and models loading
@@ -551,10 +609,14 @@ export function GetPassPage() {
     let active = true;
     setIsLoadingMakes(true);
     fetch(`/api/vehicles/makes?type=${encodeURIComponent(selectedVehicleType)}`)
-      .then((res) => (res.ok ? res.json() : []))
-      .then((makes) => {
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data) => {
         if (!active) return;
-        const list = Array.isArray(makes) ? makes : [];
+        const list = Array.isArray(data?.makes)
+          ? data.makes
+          : Array.isArray(data)
+            ? data
+            : [];
         setAvailableMakes(list);
         if (!list.includes(selectedMake) && selectedMake !== 'Other / Not Listed') {
           setSelectedMake(list[0] || 'Other / Not Listed');
@@ -582,10 +644,14 @@ export function GetPassPage() {
     fetch(
       `/api/vehicles/models?make=${encodeURIComponent(selectedMake)}&type=${encodeURIComponent(selectedVehicleType)}`
     )
-      .then((res) => (res.ok ? res.json() : []))
-      .then((models) => {
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data) => {
         if (!active) return;
-        const list = Array.isArray(models) ? models : [];
+        const list = Array.isArray(data?.models)
+          ? data.models
+          : Array.isArray(data)
+            ? data
+            : [];
         setAvailableModels(list);
         if (!list.includes(selectedModel) && selectedModel !== 'Other / Not Listed') {
           setSelectedModel(list[0] || 'Other / Not Listed');
@@ -660,23 +726,9 @@ export function GetPassPage() {
       return;
     }
     setValue('contactNumber', phRes, { shouldValidate: true });
-    if (!selectedAddress && !data.homeAddress?.trim()) {
+    if (!selectedAddress) {
       toast.error('Please search and select a verified home address from the suggestions.');
       return;
-    }
-    if (!selectedAddress && data.homeAddress?.trim()) {
-      setSelectedAddress({
-        formatted: data.homeAddress.trim(),
-        placeId: 'manual-or-test-address',
-        resultType: 'street',
-        confidence: 0.9,
-        lat: 14.5995,
-        lon: 120.9842,
-        city: 'Manila',
-        state: 'Metro Manila',
-        postcode: '1008',
-        countryCode: 'ph',
-      });
     }
     if (!data.consent) {
       toast.error('You must accept the Data Privacy Act notice to proceed.');
@@ -713,6 +765,10 @@ export function GetPassPage() {
       setValue('plateNumber', plateRes.displayPlate, { shouldValidate: true });
       if (!vals.vehicleColor || vals.vehicleColor.trim().length < 2) {
         toast.error('Please specify the vehicle color.');
+        return;
+      }
+      if (!vals.makeModel || vals.makeModel.trim().length < 2 || vals.makeModel.trim().length > 100) {
+        toast.error('Please specify the vehicle make and model (2-100 characters).');
         return;
       }
       if (!vehiclePhotoBlob) {
@@ -1609,83 +1665,125 @@ export function GetPassPage() {
                 </p>
               </div>
 
-              <div className="grid gap-4 sm:grid-cols-2 pt-2">
-                {/* Option 1: On Foot / Commute / No Vehicle */}
+              <fieldset className="border-0 p-0 m-0">
+                <legend className="sr-only">Arrival Method</legend>
                 <div
-                  onClick={() => {
-                    setSetupArrivalMode('no_vehicle');
-                    setValue('arrivalMode', 'no_vehicle');
-                  }}
-                  role="button"
-                  tabIndex={0}
-                  className={`relative flex flex-col justify-between rounded-2xl border-2 p-6 transition-all cursor-pointer shadow-xs active:scale-[0.98] motion-reduce:transform-none ${
-                    setupArrivalMode === 'no_vehicle'
-                      ? 'border-[#7A0A0A] bg-[#F8EEEE]/50 ring-2 ring-[#7A0A0A]/20'
-                      : 'border-[var(--color-border)] bg-white hover:border-[#7A0A0A]/40'
-                  }`}
+                  role="radiogroup"
+                  aria-label="Arrival Method"
+                  className="grid gap-4 sm:grid-cols-2 pt-2"
                 >
-                  <div className="space-y-3">
-                    <div className="flex items-center justify-between">
-                      <div className={`h-12 w-12 rounded-xl flex items-center justify-center ${
-                        setupArrivalMode === 'no_vehicle' ? 'bg-[#7A0A0A] text-white' : 'bg-[#F8EEEE] text-[#7A0A0A]'
-                      }`}>
-                        <User className="h-6 w-6" />
+                  {/* Option 1: On Foot / Commute / No Vehicle */}
+                  <div
+                    role="radio"
+                    aria-checked={setupArrivalMode === 'no_vehicle'}
+                    tabIndex={setupArrivalMode === 'no_vehicle' || setupArrivalMode === null ? 0 : -1}
+                    onClick={() => {
+                      setSetupArrivalMode('no_vehicle');
+                      setValue('arrivalMode', 'no_vehicle');
+                      clearVehicleDeclarationState();
+                    }}
+                    onKeyDown={(e) => {
+                      if (e.key === ' ' || e.key === 'Enter') {
+                        e.preventDefault();
+                        setSetupArrivalMode('no_vehicle');
+                        setValue('arrivalMode', 'no_vehicle');
+                        clearVehicleDeclarationState();
+                      } else if (e.key === 'ArrowRight' || e.key === 'ArrowDown') {
+                        e.preventDefault();
+                        setSetupArrivalMode('vehicle');
+                        setValue('arrivalMode', 'vehicle');
+                      }
+                    }}
+                    className={`relative flex flex-col justify-between rounded-2xl border-2 p-6 transition-all cursor-pointer shadow-xs active:scale-[0.98] motion-reduce:transform-none focus:outline-none focus-visible:ring-2 focus-visible:ring-[#7A0A0A] focus-visible:ring-offset-2 ${
+                      setupArrivalMode === 'no_vehicle'
+                        ? 'border-[#7A0A0A] bg-[#F8EEEE]/50 ring-2 ring-[#7A0A0A]/20'
+                        : 'border-[var(--color-border)] bg-white hover:border-[#7A0A0A]/40'
+                    }`}
+                  >
+                    <div className="space-y-3">
+                      <div className="flex items-center justify-between">
+                        <div
+                          className={`h-12 w-12 rounded-xl flex items-center justify-center ${
+                            setupArrivalMode === 'no_vehicle'
+                              ? 'bg-[#7A0A0A] text-white'
+                              : 'bg-[#F8EEEE] text-[#7A0A0A]'
+                          }`}
+                        >
+                          <User className="h-6 w-6" />
+                        </div>
+                        {setupArrivalMode === 'no_vehicle' && (
+                          <span className="rounded-full bg-[#7A0A0A] text-white p-1">
+                            <CheckCircle2 className="h-4 w-4" />
+                          </span>
+                        )}
                       </div>
-                      {setupArrivalMode === 'no_vehicle' && (
-                        <span className="rounded-full bg-[#7A0A0A] text-white p-1">
-                          <CheckCircle2 className="h-4 w-4" />
-                        </span>
-                      )}
-                    </div>
-                    <div>
-                      <h3 className="font-bold text-base text-[var(--color-text-primary)]">
-                        On Foot / Commute / No Vehicle
-                      </h3>
-                      <p className="text-xs text-[var(--color-text-secondary)] mt-1 leading-relaxed">
-                        Arriving as a pedestrian, using public transit, or dropped off outside campus gates.
-                      </p>
+                      <div>
+                        <h3 className="font-bold text-base text-[var(--color-text-primary)]">
+                          On Foot / Commute / No Vehicle
+                        </h3>
+                        <p className="text-xs text-[var(--color-text-secondary)] mt-1 leading-relaxed">
+                          Arriving as a pedestrian, using public transit, or dropped off outside campus gates.
+                        </p>
+                      </div>
                     </div>
                   </div>
-                </div>
 
-                {/* Option 2: Bringing a Vehicle */}
-                <div
-                  onClick={() => {
-                    setSetupArrivalMode('vehicle');
-                    setValue('arrivalMode', 'vehicle');
-                  }}
-                  role="button"
-                  tabIndex={0}
-                  className={`relative flex flex-col justify-between rounded-2xl border-2 p-6 transition-all cursor-pointer shadow-xs active:scale-[0.98] motion-reduce:transform-none ${
-                    setupArrivalMode === 'vehicle'
-                      ? 'border-[#7A0A0A] bg-[#F8EEEE]/50 ring-2 ring-[#7A0A0A]/20'
-                      : 'border-[var(--color-border)] bg-white hover:border-[#7A0A0A]/40'
-                  }`}
-                >
-                  <div className="space-y-3">
-                    <div className="flex items-center justify-between">
-                      <div className={`h-12 w-12 rounded-xl flex items-center justify-center ${
-                        setupArrivalMode === 'vehicle' ? 'bg-[#7A0A0A] text-white' : 'bg-[#F8EEEE] text-[#7A0A0A]'
-                      }`}>
-                        <Car className="h-6 w-6" />
+                  {/* Option 2: Bringing a Vehicle */}
+                  <div
+                    role="radio"
+                    aria-checked={setupArrivalMode === 'vehicle'}
+                    tabIndex={setupArrivalMode === 'vehicle' ? 0 : -1}
+                    onClick={() => {
+                      setSetupArrivalMode('vehicle');
+                      setValue('arrivalMode', 'vehicle');
+                    }}
+                    onKeyDown={(e) => {
+                      if (e.key === ' ' || e.key === 'Enter') {
+                        e.preventDefault();
+                        setSetupArrivalMode('vehicle');
+                        setValue('arrivalMode', 'vehicle');
+                      } else if (e.key === 'ArrowLeft' || e.key === 'ArrowUp') {
+                        e.preventDefault();
+                        setSetupArrivalMode('no_vehicle');
+                        setValue('arrivalMode', 'no_vehicle');
+                        clearVehicleDeclarationState();
+                      }
+                    }}
+                    className={`relative flex flex-col justify-between rounded-2xl border-2 p-6 transition-all cursor-pointer shadow-xs active:scale-[0.98] motion-reduce:transform-none focus:outline-none focus-visible:ring-2 focus-visible:ring-[#7A0A0A] focus-visible:ring-offset-2 ${
+                      setupArrivalMode === 'vehicle'
+                        ? 'border-[#7A0A0A] bg-[#F8EEEE]/50 ring-2 ring-[#7A0A0A]/20'
+                        : 'border-[var(--color-border)] bg-white hover:border-[#7A0A0A]/40'
+                    }`}
+                  >
+                    <div className="space-y-3">
+                      <div className="flex items-center justify-between">
+                        <div
+                          className={`h-12 w-12 rounded-xl flex items-center justify-center ${
+                            setupArrivalMode === 'vehicle'
+                              ? 'bg-[#7A0A0A] text-white'
+                              : 'bg-[#F8EEEE] text-[#7A0A0A]'
+                          }`}
+                        >
+                          <Car className="h-6 w-6" />
+                        </div>
+                        {setupArrivalMode === 'vehicle' && (
+                          <span className="rounded-full bg-[#7A0A0A] text-white p-1">
+                            <CheckCircle2 className="h-4 w-4" />
+                          </span>
+                        )}
                       </div>
-                      {setupArrivalMode === 'vehicle' && (
-                        <span className="rounded-full bg-[#7A0A0A] text-white p-1">
-                          <CheckCircle2 className="h-4 w-4" />
-                        </span>
-                      )}
-                    </div>
-                    <div>
-                      <h3 className="font-bold text-base text-[var(--color-text-primary)]">
-                        Bringing a Vehicle
-                      </h3>
-                      <p className="text-xs text-[var(--color-text-secondary)] mt-1 leading-relaxed">
-                        Driving a motorcycle, car, van, SUV, pickup, or truck into campus. Requires plate declaration and vehicle photo.
-                      </p>
+                      <div>
+                        <h3 className="font-bold text-base text-[var(--color-text-primary)]">
+                          Bringing a Vehicle
+                        </h3>
+                        <p className="text-xs text-[var(--color-text-secondary)] mt-1 leading-relaxed">
+                          Driving a motorcycle, car, van, SUV, pickup, or truck into campus. Requires plate declaration and vehicle photo.
+                        </p>
+                      </div>
                     </div>
                   </div>
                 </div>
-              </div>
+              </fieldset>
 
               <div className="flex gap-3 pt-3 border-t border-[var(--color-border)]">
                 <Button
@@ -1703,6 +1801,9 @@ export function GetPassPage() {
                   onClick={() => {
                     if (!setupArrivalMode) return;
                     setValue('arrivalMode', setupArrivalMode);
+                    if (setupArrivalMode === 'no_vehicle') {
+                      clearVehicleDeclarationState();
+                    }
                     setStep('form');
                   }}
                   className="flex-1"
@@ -1861,6 +1962,7 @@ export function GetPassPage() {
                         value={addressQuery}
                         onChange={(e) => {
                           setAddressQuery(e.target.value);
+                          setSelectedAddress(null);
                           setValue('homeAddress', e.target.value, { shouldValidate: true });
                           setAddressSearchError(null);
                         }}

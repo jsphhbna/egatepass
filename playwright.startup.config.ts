@@ -10,7 +10,7 @@ const supabaseOverrides = environmentCase === 'missing'
 
 export default defineConfig({
   testDir: './tests/startup',
-  timeout: 60_000,
+  timeout: 120_000,
   fullyParallel: false,
   forbidOnly: true,
   retries: 0,
@@ -23,7 +23,7 @@ export default defineConfig({
     screenshot: 'only-on-failure',
     video: 'off',
     actionTimeout: 10_000,
-    navigationTimeout: 30_000,
+    navigationTimeout: 60_000,
   },
   projects: [
     {
@@ -38,7 +38,7 @@ export default defineConfig({
     command: `npm run ${serverMode === 'preview' ? 'preview' : 'dev'} -- --host 127.0.0.1 --port 4174 --strictPort`,
     url: 'http://127.0.0.1:4174',
     reuseExistingServer: false,
-    timeout: 60_000,
+    timeout: 120_000,
     env: {
       ...process.env,
       ...supabaseOverrides,

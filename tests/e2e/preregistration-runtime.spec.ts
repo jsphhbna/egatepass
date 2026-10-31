@@ -65,10 +65,35 @@ test.describe('Workstream H: Real Online Pre-Registration Runtime & Turnstile JI
       await route.continue();
     });
 
-    // 3. Open /get-pass in new visitor mode
+    // 3. Mock address autocomplete endpoint
+    await page.route('**/api/address/autocomplete**', async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          suggestions: [
+            {
+              formatted: '123 Sampaloc St, Manila, Metro Manila, Philippines',
+              addressLine1: '123 Sampaloc St',
+              placeId: 'geoapify-place-12345',
+              resultType: 'street',
+              confidence: 0.95,
+              lat: 14.6042,
+              lon: 120.9942,
+              city: 'Manila',
+              state: 'Metro Manila',
+              postcode: '1008',
+              countryCode: 'ph',
+            },
+          ],
+        }),
+      });
+    });
+
+    // 4. Open /get-pass in new visitor mode
     await page.goto('/get-pass?mode=new&arrival=no_vehicle');
 
-    // 4. Fill required Step 1 (Personal Details) fields
+    // 5. Fill required Step 1 (Personal Details) fields
     const firstNameInput = page.locator('#first-name, #firstName');
     const lastNameInput = page.locator('#last-name, #lastName');
     const contactInput = page.locator('#contact-number, #contactNumber');
@@ -79,7 +104,10 @@ test.describe('Workstream H: Real Online Pre-Registration Runtime & Turnstile JI
     await firstNameInput.fill('Maria');
     await lastNameInput.fill('Santos');
     await contactInput.fill('09171234567');
-    await addressInput.fill('123 Sampaloc St, Manila');
+    await addressInput.fill('Sampaloc');
+    const suggestionItem = page.locator('div[role="button"]:has-text("123 Sampaloc St")');
+    await expect(suggestionItem).toBeVisible({ timeout: 10_000 });
+    await suggestionItem.click();
     await expect(consentCheckbox).toBeVisible();
     await consentCheckbox.check();
 
@@ -88,7 +116,7 @@ test.describe('Workstream H: Real Online Pre-Registration Runtime & Turnstile JI
     await expect(continueToVisitBtn).toBeEnabled({ timeout: 5_000 });
     await continueToVisitBtn.click();
 
-    // 5. Fill required Step 2 (Visit Details) fields
+    // 6. Fill required Step 2 (Visit Details) fields
     const purposeSelect = page.locator('#visit-purpose-choice');
     const visitDateInput = page.locator('#visit-date');
 
@@ -284,7 +312,32 @@ test.describe('Workstream H: Real Online Pre-Registration Runtime & Turnstile JI
       });
     });
 
-    // 8. Open /get-pass in new visitor mode
+    // 8. Mock address autocomplete endpoint
+    await page.route('**/api/address/autocomplete**', async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          suggestions: [
+            {
+              formatted: '456 Sampaloc St, Manila, Metro Manila, Philippines',
+              addressLine1: '456 Sampaloc St',
+              placeId: 'geoapify-place-67890',
+              resultType: 'street',
+              confidence: 0.95,
+              lat: 14.6042,
+              lon: 120.9942,
+              city: 'Manila',
+              state: 'Metro Manila',
+              postcode: '1008',
+              countryCode: 'ph',
+            },
+          ],
+        }),
+      });
+    });
+
+    // 9. Open /get-pass in new visitor mode
     await page.goto('/get-pass?mode=new&arrival=no_vehicle');
     await expect(page.locator('#first-name, #firstName')).toBeVisible({ timeout: 15_000 });
 
@@ -292,7 +345,10 @@ test.describe('Workstream H: Real Online Pre-Registration Runtime & Turnstile JI
     await page.locator('#first-name, #firstName').fill('Juan');
     await page.locator('#last-name, #lastName').fill('Dela Cruz');
     await page.locator('#contact-number, #contactNumber').fill('09181234567');
-    await page.locator('#home-address, #homeAddress').fill('456 Sampaloc St, Manila');
+    await page.locator('#home-address, #homeAddress').fill('Sampaloc');
+    const suggestion2 = page.locator('div[role="button"]:has-text("456 Sampaloc St")');
+    await expect(suggestion2).toBeVisible({ timeout: 10_000 });
+    await suggestion2.click();
     await page.locator('input[type="checkbox"]#consent, input[name="consent"]').check();
 
     const continueToVisitBtn = page.getByRole('button', { name: /Next: Visit Details|Continue to Visit Details|Continue/i });

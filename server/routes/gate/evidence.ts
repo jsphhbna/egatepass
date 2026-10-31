@@ -79,24 +79,50 @@ async function handleRequest(request: Request): Promise<Response> {
       if (isExpired) {
         return jsonResponse(410, { error: 'Evidence expired' });
       }
-      // Station operational confinement: portal-originated pass at this gate that has scanned entry
-      // (Legacy human guard operational verification previously checked: .eq('status', 'pending'))
-      const { count, error: passError } = await admin.from('passes').select('id', { count: 'exact', head: true })
-        .eq('visitor_id', evidence.visitor_id)
-        .eq('gate', stationDevice.gate)
-        .eq('source', 'portal')
-        .not('entry_scanned_at', 'is', null)
-        .in('status', ['inside', 'exited']);
-      if (passError) throw passError;
-      if (!count) return jsonResponse(403, { error: 'Evidence is not operationally accessible at this station' });
 
-      // If vehicle photo, verify it is linked to an authorized visit vehicle declaration
-      if (evidence.kind === 'vehicle_photo') {
-        const { count: declCount, error: declError } = await admin.from('visit_vehicle_declarations')
-          .select('id', { count: 'exact', head: true })
-          .eq('vehicle_photo_evidence_id', evidenceId.data);
+      if (evidence.kind === 'photo') {
+        // Station operational confinement: portal-originated pass at this gate that has scanned entry
+        // (Legacy human guard operational verification previously checked: .eq('status', 'pending'))
+        const { count, error: passError } = await admin.from('passes').select('id', { count: 'exact', head: true })
+          .eq('visitor_id', evidence.visitor_id)
+          .eq('gate', stationDevice.gate)
+          .eq('source', 'portal')
+          .not('entry_scanned_at', 'is', null)
+          .in('status', ['inside', 'exited']);
+        if (passError) throw passError;
+        if (!count) return jsonResponse(403, { error: 'Evidence is not operationally accessible at this station' });
+      } else if (evidence.kind === 'vehicle_photo') {
+        // Exact-pass authorization check for vehicle photo (Section 6)
+        // Must find the exact declaration linking this vehicle photo evidence to an exact pass
+        const { data: decl, error: declError } = await admin
+          .from('visit_vehicle_declarations')
+          .select('id, pass_id, visitor_id')
+          .eq('vehicle_photo_evidence_id', evidenceId.data)
+          .maybeSingle();
+
         if (declError) throw declError;
-        if (!declCount) return jsonResponse(403, { error: 'Vehicle photo is not associated with an authorized visit' });
+        if (!decl || decl.visitor_id !== evidence.visitor_id || !decl.pass_id) {
+          return jsonResponse(403, { error: 'Vehicle photo is not associated with an authorized visit' });
+        }
+
+        // Verify that exact pass is operationally accessible at this station device's gate
+        const { data: exactPass, error: exactPassError } = await admin
+          .from('passes')
+          .select('id, visitor_id, gate, source, entry_scanned_at, status')
+          .eq('id', decl.pass_id)
+          .maybeSingle();
+
+        if (exactPassError) throw exactPassError;
+        if (
+          !exactPass ||
+          exactPass.visitor_id !== evidence.visitor_id ||
+          exactPass.gate !== stationDevice.gate ||
+          exactPass.source !== 'portal' ||
+          !exactPass.entry_scanned_at ||
+          !['inside', 'exited'].includes(exactPass.status)
+        ) {
+          return jsonResponse(403, { error: 'Vehicle photo is not operationally accessible at this station' });
+        }
       }
     } else if (staffActor) {
       if (isExpired) {

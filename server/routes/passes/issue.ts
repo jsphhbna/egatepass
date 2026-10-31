@@ -161,8 +161,6 @@ async function handleRequest(request: Request): Promise<Response> {
   const token = readBearerToken(request);
   if (!token) return jsonResponse(401, { error: 'authentication_required' });
 
-  const isProd = process.env.NODE_ENV === 'production' || process.env.VERCEL_ENV === 'production';
-
   const parsed = requestSchema.safeParse(await request.json().catch(() => null));
   if (!parsed.success) return jsonResponse(400, { error: 'invalid_request' });
 
@@ -197,6 +195,16 @@ async function handleRequest(request: Request): Promise<Response> {
       .digest('base64url');
     const tokenDigest = createHash('sha256').update(qrToken).digest('hex');
 
+    // Arrival mode enforcement (Section 5)
+    if (parsed.data.source === 'portal') {
+      if (!parsed.data.arrivalMode) {
+        return jsonResponse(422, {
+          error: 'arrival_mode_required',
+          message: 'Explicit arrival mode selection is required.',
+        });
+      }
+    }
+
     // Phone normalization (Section 19: PH mobile contract)
     let canonicalContact = parsed.data.visitor.contactNumber.trim();
     if (parsed.data.source === 'portal') {
@@ -214,8 +222,15 @@ async function handleRequest(request: Request): Promise<Response> {
       const v = parsed.data.vehicle;
       if (!v?.vehicleType || !v?.plateNumber || !v?.color) {
         return jsonResponse(422, {
-          error: 'vehicle_declaration_incomplete',
+          error: 'invalid_vehicle_declaration',
           message: 'Vehicle type, plate number, and color are required when bringing a vehicle.',
+        });
+      }
+      const makeModel = v.makeModel?.trim() || '';
+      if (makeModel.length < 2 || makeModel.length > 100) {
+        return jsonResponse(422, {
+          error: 'invalid_vehicle_declaration',
+          message: 'Vehicle make and model are required (between 2 and 100 characters).',
         });
       }
       const plateResult = normalizeVehiclePlate(v.plateNumber);
@@ -239,64 +254,7 @@ async function handleRequest(request: Request): Promise<Response> {
       }
     }
 
-    // Home address & provenance check for portal
-    let verifiedAddress: VerifiedAddressDetails | null = null;
-    if (parsed.data.source === 'portal') {
-      if (parsed.data.addressProvenance?.placeId) {
-        try {
-          verifiedAddress = await verifyPlaceDetails(
-            parsed.data.addressProvenance.placeId,
-            parsed.data.addressProvenance.addressDetail
-          );
-        } catch (addrErr) {
-          const msg = addrErr instanceof Error ? addrErr.message : 'address_verification_failed';
-          if (msg === 'address_too_broad') {
-            return jsonResponse(422, {
-              error: 'address_insufficient_specificity',
-              message: 'Please select a more specific address including your street, barangay, or building.',
-            });
-          }
-          if (msg === 'address_must_be_philippines' || msg === 'address_coordinates_out_of_bounds') {
-            return jsonResponse(422, {
-              error: msg,
-              message: 'Address must be within the Philippines.',
-            });
-          }
-          if (msg === 'address_rate_limited') {
-            return jsonResponse(429, {
-              error: 'rate_limit_exceeded',
-              message: 'Address verification rate limit reached. Please wait a moment.',
-            });
-          }
-          if (msg === 'address_verification_unavailable') {
-            return jsonResponse(503, {
-              error: 'address_verification_unavailable',
-              message: 'Address verification is temporarily unavailable. Please try again shortly.',
-            });
-          }
-          return jsonResponse(422, {
-            error: 'address_verification_failed',
-            message: 'The selected address could not be verified. Please search and select your address again.',
-          });
-        }
-      } else if (parsed.data.visitor.homeAddress !== undefined) {
-        const addr = parsed.data.visitor.homeAddress.trim();
-        if (addr.length < 5) {
-          return jsonResponse(422, {
-            error: 'home_address_required',
-            message: 'Please provide a valid home address.',
-          });
-        }
-        if (isProd) {
-          return jsonResponse(422, {
-            error: 'address_verification_required',
-            message: 'Address must be selected from verified suggestions.',
-          });
-        }
-      }
-    }
-
-    // Safe idempotent replay check before inspecting upload intents.
+    // Safe idempotent replay check BEFORE external network calls (Geoapify) and before rate limiting
     const { data: existingPass, error: existingPassError } = await admin
       .from('passes')
       .select('id, public_reference, valid_from, valid_until, token_digest, visitor_id, status')
@@ -309,7 +267,7 @@ async function handleRequest(request: Request): Promise<Response> {
       // Replay found. Validate owner, source, and payload consistency (Section 50).
       const { data: existingVisitor, error: visitorError } = await admin
         .from('visitors')
-        .select('id, owner_id, source, full_name, contact_number, purpose, visit_date, home_address, registration_mode, arrival_mode, returning_profile_id')
+        .select('id, owner_id, source, full_name, contact_number, purpose, visit_date, home_address, registration_mode, arrival_mode, returning_profile_id, address_place_id')
         .eq('id', existingPass.visitor_id)
         .maybeSingle();
 
@@ -333,8 +291,23 @@ async function handleRequest(request: Request): Promise<Response> {
         return jsonResponse(409, { error: 'payload_mismatch' });
       }
 
-      if (parsed.data.source === 'portal' && parsed.data.visitor.homeAddress && existingVisitor.home_address) {
-        if (coalesceString(existingVisitor.home_address) !== parsed.data.visitor.homeAddress.trim()) {
+      if (existingVisitor.arrival_mode && existingVisitor.arrival_mode !== parsed.data.arrivalMode) {
+        return jsonResponse(409, { error: 'payload_mismatch' });
+      }
+
+      if (parsed.data.source === 'portal' && parsed.data.addressProvenance?.placeId && existingVisitor.address_place_id) {
+        if (existingVisitor.address_place_id !== parsed.data.addressProvenance.placeId) {
+          return jsonResponse(409, { error: 'payload_mismatch' });
+        }
+      }
+
+      if (parsed.data.arrivalMode === 'vehicle' && normalizedPlateKey) {
+        const { data: existingDecl } = await admin
+          .from('visit_vehicle_declarations')
+          .select('plate_key, vehicle_type')
+          .eq('pass_id', existingPass.id)
+          .maybeSingle();
+        if (existingDecl && (existingDecl.plate_key !== normalizedPlateKey || existingDecl.vehicle_type !== parsed.data.vehicle?.vehicleType)) {
           return jsonResponse(409, { error: 'payload_mismatch' });
         }
       }
@@ -352,7 +325,7 @@ async function handleRequest(request: Request): Promise<Response> {
         return jsonResponse(409, { error: 'pass_token_secret_rotated' });
       }
 
-      // Return existing pass with 200 OK (idempotent replay)
+      // Return existing pass with 200 OK (idempotent replay without external Geoapify call)
       return jsonResponse(200, {
         passId: existingPass.public_reference,
         publicReference: existingPass.public_reference,
@@ -362,7 +335,7 @@ async function handleRequest(request: Request): Promise<Response> {
       });
     }
 
-    // Rate limiting for portal operations
+    // Rate limiting for portal operations (only for new pass issuances)
     if (parsed.data.source === 'portal') {
       const actorKeyHex = createHash('sha256').update(`actor:${actorId}`).digest('hex');
       const { data: actorAllowed, error: actorRlError } = await admin.schema('api').rpc('consume_rate_limit', {
@@ -407,6 +380,54 @@ async function handleRequest(request: Request): Promise<Response> {
         return jsonResponse(429, {
           error: 'rate_limit_exceeded',
           message: 'Too many pass issuance requests from this network. Please wait before requesting another pass.',
+        });
+      }
+    }
+
+    // Home address & provenance check for portal (only for new issuances)
+    let verifiedAddress: VerifiedAddressDetails | null = null;
+    if (parsed.data.source === 'portal') {
+      if (parsed.data.addressProvenance?.placeId) {
+        try {
+          verifiedAddress = await verifyPlaceDetails(
+            parsed.data.addressProvenance.placeId,
+            parsed.data.addressProvenance.addressDetail
+          );
+        } catch (addrErr) {
+          const msg = addrErr instanceof Error ? addrErr.message : 'address_verification_failed';
+          if (msg === 'address_too_broad') {
+            return jsonResponse(422, {
+              error: 'address_insufficient_specificity',
+              message: 'Please select a more specific address including your street, barangay, or building.',
+            });
+          }
+          if (msg === 'address_must_be_philippines' || msg === 'address_coordinates_out_of_bounds') {
+            return jsonResponse(422, {
+              error: msg,
+              message: 'Address must be within the Philippines.',
+            });
+          }
+          if (msg === 'address_rate_limited') {
+            return jsonResponse(429, {
+              error: 'rate_limit_exceeded',
+              message: 'Address verification rate limit reached. Please wait a moment.',
+            });
+          }
+          if (msg === 'address_verification_unavailable') {
+            return jsonResponse(503, {
+              error: 'address_verification_unavailable',
+              message: 'Address verification is temporarily unavailable. Please try again shortly.',
+            });
+          }
+          return jsonResponse(422, {
+            error: 'address_verification_failed',
+            message: 'The selected address could not be verified. Please search and select your address again.',
+          });
+        }
+      } else {
+        return jsonResponse(422, {
+          error: 'address_verification_required',
+          message: 'Address must be selected from verified suggestions.',
         });
       }
     }
@@ -512,7 +533,7 @@ async function handleRequest(request: Request): Promise<Response> {
           requested_id_bytes: parsed.data.registrationMode === 'new' ? (identification?.bytes ?? null) : null,
           requested_id_sha256: parsed.data.registrationMode === 'new' ? (identification?.sha256 ?? null) : null,
           requested_token_digest: tokenDigest,
-          requested_arrival_mode: parsed.data.arrivalMode || 'no_vehicle',
+          requested_arrival_mode: parsed.data.arrivalMode!,
           // Address provenance
           requested_address_provider: 'geoapify',
           requested_address_place_id: verifiedAddress.placeId,
@@ -530,7 +551,7 @@ async function handleRequest(request: Request): Promise<Response> {
           requested_plate_number: parsed.data.arrivalMode === 'vehicle' ? normalizedPlateDisplay : null,
           requested_plate_key: parsed.data.arrivalMode === 'vehicle' ? normalizedPlateKey : null,
           requested_color: parsed.data.arrivalMode === 'vehicle' ? (parsed.data.vehicle?.color ?? null) : null,
-          requested_make_model: parsed.data.arrivalMode === 'vehicle' ? (parsed.data.vehicle?.makeModel ?? null) : null,
+          requested_make_model: parsed.data.arrivalMode === 'vehicle' ? (parsed.data.vehicle?.makeModel?.trim() ?? null) : null,
           requested_vehicle_catalog_status: parsed.data.arrivalMode === 'vehicle' ? (parsed.data.vehicle?.catalogStatus ?? 'catalog') : 'catalog',
           requested_vehicle_photo_intent_id: vehiclePhotoIntentId ?? null,
           requested_vehicle_photo_bytes: vehiclePhoto?.bytes ?? null,
@@ -609,7 +630,7 @@ async function handleRequest(request: Request): Promise<Response> {
           const { descriptor, modelName, modelVersion } = await extractFaceDescriptorFromBuffer(photo.buffer);
           const encrypted = encryptFaceTemplate(descriptor, templateKey);
 
-          // Insert returning profile
+          // Insert returning profile with canonical verified address provenance (Section 18)
           const { data: newProfile, error: profileErr } = await admin
             .from('returning_visitor_profiles')
             .insert({
@@ -617,8 +638,20 @@ async function handleRequest(request: Request): Promise<Response> {
               middle_name: visitor.middleName || null,
               last_name: visitor.lastName,
               contact_number_e164: canonicalContact,
-              home_address: visitor.homeAddress?.trim() || '',
+              home_address: verifiedAddress ? verifiedAddress.formatted : (visitor.homeAddress?.trim() || ''),
               consent_version: 'v1',
+              address_provider: verifiedAddress ? 'geoapify' : null,
+              address_place_id: verifiedAddress ? verifiedAddress.placeId : null,
+              address_result_type: verifiedAddress ? verifiedAddress.resultType : null,
+              address_confidence: verifiedAddress ? verifiedAddress.confidence : null,
+              address_lat: verifiedAddress ? verifiedAddress.lat : null,
+              address_lon: verifiedAddress ? verifiedAddress.lon : null,
+              address_city: verifiedAddress ? verifiedAddress.city : null,
+              address_state: verifiedAddress ? verifiedAddress.state : null,
+              address_postcode: verifiedAddress ? verifiedAddress.postcode : null,
+              address_country_code: verifiedAddress ? verifiedAddress.countryCode : null,
+              address_verified_at: verifiedAddress ? new Date().toISOString() : null,
+              address_detail: verifiedAddress ? (verifiedAddress.addressDetail || null) : null,
             })
             .select('id')
             .single();
@@ -663,13 +696,28 @@ async function handleRequest(request: Request): Promise<Response> {
       const ret = parsed.data.returning;
       if (ret?.saveUpdates && ret.profileId) {
         try {
+          const profileUpdate: Record<string, any> = {
+            contact_number_e164: canonicalContact,
+            updated_at: new Date().toISOString(),
+          };
+          if (verifiedAddress) {
+            profileUpdate.home_address = verifiedAddress.formatted;
+            profileUpdate.address_provider = 'geoapify';
+            profileUpdate.address_place_id = verifiedAddress.placeId;
+            profileUpdate.address_result_type = verifiedAddress.resultType;
+            profileUpdate.address_confidence = verifiedAddress.confidence;
+            profileUpdate.address_lat = verifiedAddress.lat;
+            profileUpdate.address_lon = verifiedAddress.lon;
+            profileUpdate.address_city = verifiedAddress.city;
+            profileUpdate.address_state = verifiedAddress.state;
+            profileUpdate.address_postcode = verifiedAddress.postcode;
+            profileUpdate.address_country_code = verifiedAddress.countryCode;
+            profileUpdate.address_verified_at = new Date().toISOString();
+            profileUpdate.address_detail = verifiedAddress.addressDetail || null;
+          }
           await admin
             .from('returning_visitor_profiles')
-            .update({
-              contact_number_e164: canonicalContact,
-              home_address: visitor.homeAddress?.trim() || '',
-              updated_at: new Date().toISOString(),
-            })
+            .update(profileUpdate)
             .eq('id', ret.profileId);
         } catch (updErr) {
           console.warn('Failed to update returning profile info:', updErr);
@@ -715,34 +763,166 @@ async function handleRequest(request: Request): Promise<Response> {
     const errMessage = typeof errObj.message === 'string' ? errObj.message : (error instanceof Error ? error.message : 'unknown_error');
     console.error('Pass issuance failed.', errCode || errMessage);
 
-    if (errCode === '22023' || errMessage.includes('outside scheduling window') || errMessage.includes('visit date outside scheduling window')) {
-      return jsonResponse(422, { error: 'visit_date_out_of_range' });
-    }
-    if (
-      errMessage.includes('portal passes require') ||
-      errMessage.includes('portal identity verification matching record required') ||
-      errMessage.includes('identity verification')
-    ) {
-      return jsonResponse(422, { error: 'identity_verification_required' });
-    }
-    if (errCode === '42501' || errMessage.includes('permission denied') || errMessage.includes('identity required')) {
-      return jsonResponse(403, { error: 'forbidden' });
-    }
-    if (errMessage === 'pass_token_secret_rotated') {
-      return jsonResponse(409, { error: 'pass_token_secret_rotated' });
-    }
-    if (errMessage.startsWith('invalid_') || errMessage === 'missing_uploaded_object' || errMessage === 'pass_has_expired') {
-      return jsonResponse(422, { error: errMessage });
-    }
-    if (errMessage === 'pass_token_secret_unavailable') {
-      return jsonResponse(503, { error: errMessage });
-    }
-    return jsonResponse(503, { error: 'service_unavailable' });
+    const mapped = mapDatabaseIssueError(errCode, errMessage);
+    return jsonResponse(mapped.status, { error: mapped.error, message: mapped.message });
   }
 }
 
-function coalesceString(val: unknown): string {
-  return typeof val === 'string' ? val.trim() : '';
+export function mapDatabaseIssueError(
+  errOrCode: any,
+  maybeMessage?: string
+): { status: number; error: string; message?: string } {
+  let errCode = '';
+  let errMessage = '';
+  if (typeof errOrCode === 'string') {
+    errCode = errOrCode;
+    errMessage = maybeMessage || '';
+  } else if (errOrCode && typeof errOrCode === 'object') {
+    errCode = typeof errOrCode.code === 'string' ? errOrCode.code : '';
+    errMessage = typeof errOrCode.message === 'string' ? errOrCode.message : '';
+  }
+  const msg = (errMessage || '').toLowerCase();
+
+  // Scheduling window / Visit date
+  if (
+    msg.includes('visit date out of range') ||
+    msg.includes('outside scheduling window') ||
+    msg.includes('visit date outside scheduling window') ||
+    msg === 'visit_date_out_of_range'
+  ) {
+    return { status: 422, error: 'visit_date_out_of_range', message: 'Visit date is outside the allowed scheduling window.' };
+  }
+
+  // Arrival mode
+  if (
+    msg.includes('invalid arrival mode') ||
+    msg.includes('explicit selection required') ||
+    msg.includes('invalid_arrival_mode') ||
+    msg === 'arrival_mode_required'
+  ) {
+    return { status: 422, error: 'invalid_arrival_mode', message: 'Explicit arrival mode selection is required.' };
+  }
+
+  // Vehicle inside campus / unique constraint
+  if (
+    msg.includes('vehicle already inside') ||
+    msg.includes('vehicle_already_inside') ||
+    (errCode === '23505' && msg.includes('vehicle'))
+  ) {
+    return { status: 409, error: 'vehicle_already_inside', message: 'This vehicle is currently recorded inside campus.' };
+  }
+
+  // Vehicle details required
+  if (msg.includes('vehicle details required') || msg.includes('vehicle_details_required')) {
+    return { status: 422, error: 'vehicle_details_required', message: 'Vehicle details are required for vehicle arrival.' };
+  }
+
+  // Vehicle photo
+  if (msg.includes('vehicle photo required') || msg === 'vehicle_photo_required') {
+    return { status: 422, error: 'vehicle_photo_required', message: 'A photo of the vehicle is required when bringing a vehicle.' };
+  }
+
+  // Plate number required
+  if (msg.includes('plate number required') || msg.includes('plate number is required') || msg.includes('plate_number_required')) {
+    return { status: 422, error: 'plate_number_required', message: 'Vehicle plate number is required.' };
+  }
+
+  // Invalid vehicle type
+  if (msg.includes('invalid vehicle type') || msg.includes('invalid_vehicle_type')) {
+    return { status: 422, error: 'invalid_vehicle_type', message: 'Invalid vehicle type specified.' };
+  }
+
+  // Vehicle make & model required
+  if (
+    msg.includes('make and model required') ||
+    msg.includes('make_model_required') ||
+    msg.includes('vehicle_make_model_required')
+  ) {
+    return { status: 422, error: 'vehicle_make_model_required', message: 'Vehicle make and model must be between 2 and 100 characters.' };
+  }
+
+  // Vehicle declaration / make & model general
+  if (
+    msg.includes('invalid vehicle declaration') ||
+    msg.includes('vehicle details not permitted') ||
+    msg.includes('invalid_vehicle_declaration') ||
+    msg.includes('invalid_vehicle_plate')
+  ) {
+    return { status: 422, error: 'invalid_vehicle_declaration', message: 'Vehicle declaration details are incomplete or invalid.' };
+  }
+
+  // Address verification
+  if (
+    msg.includes('verified address provenance required') ||
+    msg.includes('address_verification_required') ||
+    msg === 'address_verification_required'
+  ) {
+    return { status: 422, error: 'address_verification_required', message: 'Address must be selected from verified suggestions.' };
+  }
+  if (msg === 'address_insufficient_specificity' || msg.includes('address_too_broad')) {
+    return { status: 422, error: 'address_insufficient_specificity', message: 'Please select a more specific address including your street, barangay, or building.' };
+  }
+  if (msg === 'address_verification_unavailable') {
+    return { status: 503, error: 'address_verification_unavailable', message: 'Address verification is temporarily unavailable. Please try again shortly.' };
+  }
+  if (msg === 'abuse_control_unavailable') {
+    return { status: 503, error: 'abuse_control_unavailable', message: 'Abuse control is temporarily unavailable. Please try again shortly.' };
+  }
+
+  // Upload intent
+  if (
+    msg.includes('upload intent') ||
+    msg.includes('missing_uploaded_object') ||
+    msg.includes('invalid_uploaded_content') ||
+    msg === 'invalid_upload_intent'
+  ) {
+    return { status: 422, error: 'invalid_upload_intent', message: 'Uploaded evidence could not be verified. Please retry uploading.' };
+  }
+
+  // Identity verification
+  if (
+    msg.includes('identity verification') ||
+    msg.includes('portal passes require') ||
+    msg.includes('matched identity verification required') ||
+    msg.includes('identification image required') ||
+    msg.includes('returning match') ||
+    msg === 'identity_verification_required'
+  ) {
+    return { status: 422, error: 'identity_verification_required', message: 'Identity verification must pass before a pass can be issued.' };
+  }
+
+  // Rate limit
+  if (msg.includes('rate limit exceeded') || msg.includes('rate_limit_exceeded')) {
+    return { status: 429, error: 'rate_limit_exceeded', message: 'Too many requests. Please try again later.' };
+  }
+
+  // Permissions / service role
+  if (
+    errCode === '42501' ||
+    msg.includes('insufficient privilege') ||
+    msg.includes('insufficient_privilege') ||
+    msg.includes('permission denied') ||
+    msg.includes('identity required')
+  ) {
+    return { status: 403, error: 'forbidden' };
+  }
+
+  // Replay secret rotated
+  if (msg === 'pass_token_secret_rotated') {
+    return { status: 409, error: 'pass_token_secret_rotated' };
+  }
+
+  // Pass expired
+  if (msg === 'pass_has_expired' || msg.includes('pass has expired')) {
+    return { status: 422, error: 'pass_has_expired', message: 'The requested pass has expired.' };
+  }
+
+  // Generic 22023 without matching above
+  if (errCode === '22023') {
+    return { status: 422, error: 'invalid_request', message: 'The request parameters were invalid.' };
+  }
+
+  return { status: 503, error: 'service_unavailable' };
 }
 
 export default { fetch: handleRequest };

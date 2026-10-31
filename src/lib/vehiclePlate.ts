@@ -19,6 +19,20 @@ export interface PlateNormalizationResult {
   error?: string;
 }
 
+export const PLACEHOLDER_PLATE_DENYLIST = new Set([
+  'NONE',
+  'NOPLATE',
+  'NOPLATES',
+  'NO PLATE',
+  'UNKNOWN',
+  'TEST',
+  'TEST123',
+  'N/A',
+  'NA',
+  'XXXX',
+  'XXX',
+]);
+
 /**
  * Normalizes a plate number into display format (e.g. "ABC 1234") and canonical comparison key ("ABC1234").
  */
@@ -32,13 +46,29 @@ export function normalizePlateNumber(input: string | null | undefined): PlateNor
     return { valid: false, displayPlate: '', plateKey: '', error: 'Plate number is required.' };
   }
 
+  const upperTrimmed = trimmed.toUpperCase();
   // Comparison key: uppercase alphanumeric only
-  const plateKey = trimmed.toUpperCase().replace(/[^A-Z0-9]/g, '');
+  const plateKey = upperTrimmed.replace(/[^A-Z0-9]/g, '');
+  const normalizedWithSpaces = upperTrimmed.replace(/[\s\-_]+/g, ' ');
+
+  // Obvious placeholder denylist check
+  if (
+    PLACEHOLDER_PLATE_DENYLIST.has(plateKey) ||
+    PLACEHOLDER_PLATE_DENYLIST.has(normalizedWithSpaces) ||
+    PLACEHOLDER_PLATE_DENYLIST.has(upperTrimmed)
+  ) {
+    return {
+      valid: false,
+      displayPlate: upperTrimmed,
+      plateKey,
+      error: 'Please enter a real vehicle plate number, not a placeholder.',
+    };
+  }
 
   if (plateKey.length < 3) {
     return {
       valid: false,
-      displayPlate: trimmed.toUpperCase(),
+      displayPlate: upperTrimmed,
       plateKey,
       error: 'Plate number is too short (minimum 3 characters).',
     };
@@ -47,7 +77,7 @@ export function normalizePlateNumber(input: string | null | undefined): PlateNor
   if (plateKey.length > 10) {
     return {
       valid: false,
-      displayPlate: trimmed.toUpperCase(),
+      displayPlate: upperTrimmed,
       plateKey,
       error: 'Plate number is too long (maximum 10 characters).',
     };
