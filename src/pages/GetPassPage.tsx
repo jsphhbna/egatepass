@@ -17,6 +17,7 @@ import {
   invalidatePortalEvidenceCheckpoint,
   PortalSessionError,
   type PortalIssueTransaction,
+  type IssueTransactionPhase,
   type AddressProvenance,
 } from '@/services/visitorRegistration';
 import { TurnstileWidget, type TurnstileWidgetRef } from '@/components/TurnstileWidget';
@@ -304,8 +305,9 @@ export function GetPassPage() {
   const [selectedMake, setSelectedMake] = useState<string>('');
   const [availableModels, setAvailableModels] = useState<string[]>([]);
   const [selectedModel, setSelectedModel] = useState<string>('');
-  const [customMakeModel, setCustomMakeModel] = useState<string>('');
-  const [isManualVehicle, setIsManualVehicle] = useState<boolean>(false);
+  const [customMake, setCustomMake] = useState<string>('');
+  const [customModel, setCustomModel] = useState<string>('');
+  const [vehicleCatalogMode, setVehicleCatalogMode] = useState<'catalog' | 'manual_make' | 'manual_model'>('catalog');
   const [isLoadingMakes, setIsLoadingMakes] = useState<boolean>(false);
   const [isLoadingModels, setIsLoadingModels] = useState<boolean>(false);
 
@@ -346,6 +348,8 @@ export function GetPassPage() {
   const [schedulingDaysAhead, setSchedulingDaysAhead] = useState(MAX_VISIT_ADVANCE_DAYS);
   const issueRequestId = useRef(crypto.randomUUID());
   const portalTransactionRef = useRef<PortalIssueTransaction | null>(null);
+  const [transactionPhase, setTransactionPhase] = useState<IssueTransactionPhase | null>(null);
+  const currentPhase = transactionPhase ?? portalTransactionRef.current?.phase;
   const livePhotoIntentIdRef = useRef<string | null>(null);
 
   const [visitorInstructions, setVisitorInstructions] = useState<string[]>([
@@ -377,35 +381,6 @@ export function GetPassPage() {
     setVerificationError(null);
     setIdQualityError(null);
     setStep('id');
-  }
-
-  function resetRegistrationFlow() {
-    ocrGenerationRef.current += 1;
-    void terminateLocalOcrWorker();
-    invalidatePortalEvidenceCheckpoint(portalTransactionRef.current, 'photo');
-    invalidatePortalEvidenceCheckpoint(portalTransactionRef.current, 'id');
-    invalidatePortalEvidenceCheckpoint(portalTransactionRef.current, 'vehicle');
-    portalTransactionRef.current = null;
-    livePhotoIntentIdRef.current = null;
-    setStep('arrival_setup');
-    setPhotoBlob(null);
-    setIdBlob(null);
-    setVehiclePhotoBlob(null);
-    photoUrl.clear();
-    idUrl.clear();
-    vehiclePhotoUrl.clear();
-    setIdentityVerified(false);
-    setVerificationError(null);
-    setLiveFaceError(null);
-    setIdQualityError(null);
-    setVehiclePhotoError(null);
-    setIdReusedFromOcr(false);
-    setOcrSuccessNotice(null);
-    setRegistrationSecurityError(null);
-    setSelectedAddress(null);
-    setAddressQuery('');
-    setAddressSuggestions([]);
-    setSetupArrivalMode(null);
   }
 
   // Unmount cleanup for OCR worker
@@ -487,6 +462,7 @@ export function GetPassPage() {
     setError,
     clearErrors,
     watch,
+    reset,
     formState: { errors },
   } = useForm<GetPassFormData>({
     resolver: zodResolver(formSchema),
@@ -513,8 +489,9 @@ export function GetPassPage() {
     setValue('vehicleType', 'car');
     setSelectedMake('');
     setSelectedModel('');
-    setCustomMakeModel('');
-    setIsManualVehicle(false);
+    setCustomMake('');
+    setCustomModel('');
+    setVehicleCatalogMode('catalog');
     setVehiclePhotoBlob(null);
     vehiclePhotoUrl.clear();
     setVehiclePhotoError(null);
@@ -522,6 +499,111 @@ export function GetPassPage() {
     if (vehicleFileInputRef.current) {
       vehicleFileInputRef.current.value = '';
     }
+  }
+
+  function beginNewVisitorSetup() {
+    setRegistrationMode('new');
+    setReturningProfile(null);
+    setReturningIdentifyError(null);
+    setSelectedSavedVehicleId('none');
+    setSetupArrivalMode(null);
+    setValue('arrivalMode', undefined as any, { shouldValidate: false });
+    clearVehicleDeclarationState();
+    setStep('arrival_setup');
+  }
+
+  function resetRegistrationSession() {
+    ocrGenerationRef.current += 1;
+    void terminateLocalOcrWorker();
+
+    // 1. Reset React Hook Form values to clean defaults
+    reset({
+      purpose: '',
+      arrivalMode: undefined as any,
+      vehicleType: 'car',
+      plateNumber: '',
+      vehicleColor: '',
+      makeModel: '',
+      firstName: '',
+      middleName: '',
+      lastName: '',
+      contactNumber: '',
+      homeAddress: '',
+      visitDate: '',
+      consent: false as any,
+    });
+    clearErrors();
+
+    // 2. Clear address state
+    if (activeSearchRef.current) {
+      activeSearchRef.current.controller.abort();
+      activeSearchRef.current = null;
+    }
+    addressCacheRef.current.clear();
+    setSelectedAddress(null);
+    setAddressQuery('');
+    setAddressSuggestions([]);
+    setAddressDetail('');
+    setAddressSearchError(null);
+    setIsSearchingAddress(false);
+
+    // 3. Clear vehicle state
+    clearVehicleDeclarationState();
+    setAvailableMakes([]);
+    setAvailableModels([]);
+    setSelectedSavedVehicleId('none');
+
+    // 4. Clear returning visitor state
+    setRegistrationMode('new');
+    setReturningProfile(null);
+    setReturningIdentifyError(null);
+    setSaveReturningUpdates(false);
+    setRememberVisitor(false);
+    setSaveVehicle(false);
+    setShowReturningGateModal(false);
+
+    // 5. Clear identity evidence & stop webcam
+    invalidatePortalEvidenceCheckpoint(portalTransactionRef.current, 'photo');
+    invalidatePortalEvidenceCheckpoint(portalTransactionRef.current, 'id');
+    invalidatePortalEvidenceCheckpoint(portalTransactionRef.current, 'vehicle');
+    setPhotoBlob(null);
+    setIdBlob(null);
+    setVehiclePhotoBlob(null);
+    photoUrl.clear();
+    idUrl.clear();
+    vehiclePhotoUrl.clear();
+    setIdentityVerified(false);
+    setVerificationError(null);
+    setLiveFaceError(null);
+    setIdQualityError(null);
+    setVehiclePhotoError(null);
+    setIdReusedFromOcr(false);
+    setOcrSuccessNotice(null);
+    setRegistrationSecurityError(null);
+    faceWebcam.stop();
+
+    // 6. Clear pass & delivery
+    setPassId(null);
+    setQrDataUrl(null);
+    setRawQrToken(null);
+    setPassPresentation(null);
+    setShowEmailModal(false);
+    setShowSkipWarning(false);
+    setEmailDeliverySecured(false);
+    setEmailSkipped(false);
+    setEmailOutcomeUnknown(false);
+    setIsDownloaded(false);
+    setSubmitError(null);
+
+    // 7. Rotate request ID and nullify transaction
+    issueRequestId.current = crypto.randomUUID();
+    portalTransactionRef.current = null;
+    setTransactionPhase(null);
+    livePhotoIntentIdRef.current = null;
+    setSetupArrivalMode(null);
+
+    // 8. Navigate to Front Door
+    setStep('frontdoor');
   }
 
   // Address autocomplete debounced search effect
@@ -593,6 +675,15 @@ export function GetPassPage() {
   useEffect(() => {
     let active = true;
     setIsLoadingMakes(true);
+    setSelectedMake('');
+    setSelectedModel('');
+    setCustomMake('');
+    setCustomModel('');
+    setVehicleCatalogMode('catalog');
+    setValue('makeModel', '');
+    clearErrors('makeModel');
+    setAvailableModels([]);
+
     fetch(`/api/vehicles/makes?type=${encodeURIComponent(selectedVehicleType)}`)
       .then((res) => (res.ok ? res.json() : null))
       .then((data) => {
@@ -603,9 +694,6 @@ export function GetPassPage() {
             ? data
             : [];
         setAvailableMakes(list);
-        if (!list.includes(selectedMake) && selectedMake !== 'Other / Not Listed') {
-          setSelectedMake(list[0] || 'Other / Not Listed');
-        }
       })
       .catch(() => {
         if (active) setAvailableMakes([]);
@@ -619,14 +707,23 @@ export function GetPassPage() {
   }, [selectedVehicleType]);
 
   useEffect(() => {
-    if (!selectedMake || selectedMake === 'Other / Not Listed') {
+    if (!selectedMake) {
       setAvailableModels([]);
-      setIsManualVehicle(true);
+      setSelectedModel('');
+      setVehicleCatalogMode('catalog');
       return;
     }
-    setIsManualVehicle(false);
+    if (selectedMake === 'Other / Not Listed') {
+      setAvailableModels([]);
+      setSelectedModel('');
+      setVehicleCatalogMode('manual_make');
+      return;
+    }
+
+    setVehicleCatalogMode((prev) => (prev === 'manual_make' ? 'catalog' : prev));
     let active = true;
     setIsLoadingModels(true);
+    setSelectedModel('');
     fetch(
       `/api/vehicles/models?make=${encodeURIComponent(selectedMake)}&type=${encodeURIComponent(selectedVehicleType)}`
     )
@@ -639,9 +736,6 @@ export function GetPassPage() {
             ? data
             : [];
         setAvailableModels(list);
-        if (!list.includes(selectedModel) && selectedModel !== 'Other / Not Listed') {
-          setSelectedModel(list[0] || 'Other / Not Listed');
-        }
       })
       .catch(() => {
         if (active) setAvailableModels([]);
@@ -656,13 +750,25 @@ export function GetPassPage() {
 
   // Sync displayed makeModel to form state
   useEffect(() => {
-    if (isManualVehicle) {
-      setValue('makeModel', customMakeModel.trim());
-    } else {
-      const full = [selectedMake, selectedModel].filter((x) => x && x !== 'Other / Not Listed').join(' ');
+    if (vehicleCatalogMode === 'manual_make') {
+      const full = [customMake.trim(), customModel.trim()].filter(Boolean).join(' ');
       setValue('makeModel', full);
+    } else if (vehicleCatalogMode === 'manual_model') {
+      const full = [selectedMake.trim(), customModel.trim()].filter(Boolean).join(' ');
+      setValue('makeModel', full);
+    } else {
+      if (
+        selectedMake &&
+        selectedModel &&
+        selectedMake !== 'Other / Not Listed' &&
+        selectedModel !== 'Other / Not Listed'
+      ) {
+        setValue('makeModel', `${selectedMake.trim()} ${selectedModel.trim()}`);
+      } else {
+        setValue('makeModel', '');
+      }
     }
-  }, [isManualVehicle, customMakeModel, selectedMake, selectedModel, setValue]);
+  }, [vehicleCatalogMode, customMake, customModel, selectedMake, selectedModel, setValue]);
 
   async function handleVehiclePhotoSelected(file: File | Blob) {
     setIsProcessingVehiclePhoto(true);
@@ -1300,17 +1406,16 @@ export function GetPassPage() {
   }
 
   function handleStartOver() {
-    portalTransactionRef.current = null;
-    livePhotoIntentIdRef.current = null;
-    issueRequestId.current = crypto.randomUUID();
-    setRegistrationMode('new');
-    resetRegistrationFlow();
-    setStep('frontdoor');
+    resetRegistrationSession();
   }
 
   function handleAmbiguousCancelAndAskGuard() {
-    toast.info('Submission cancelled. The previous pass may have been created. Please proceed to the Guard Station with your valid ID for assistance.');
-    setStep('form');
+    if (portalTransactionRef.current) {
+      portalTransactionRef.current.phase = 'submission_uncertain_hold';
+    }
+    setTransactionPhase('submission_uncertain_hold');
+    toast.info('Submission placed on hold. The previous pass may have been created. Please proceed to the Guard Station with your valid ID for assistance.');
+    setStep('review');
   }
 
   function handleRetryExactSubmission() {
@@ -1321,6 +1426,11 @@ export function GetPassPage() {
   // STEP 6: PASS ISSUANCE (onSubmit)
   // ============================================================
   async function onSubmit() {
+    if (portalTransactionRef.current?.phase === 'submission_uncertain_hold') {
+      toast.error('This submission is held for guard verification. Please start over to register a new pass.');
+      return;
+    }
+
     if (portalTransactionRef.current?.phase === 'existing_pass_conflict') {
       toast.error('An existing pass was already created for this request. Please ask the Guard for assistance.');
       return;
@@ -1378,7 +1488,7 @@ export function GetPassPage() {
               plateNumber: plateResult?.displayPlate || rawFormData.plateNumber || '',
               color: rawFormData.vehicleColor || '',
               makeModel: rawFormData.makeModel || null,
-              catalogStatus: isManualVehicle ? 'manual' : 'catalog',
+              catalogStatus: vehicleCatalogMode === 'catalog' ? 'catalog' : 'manual',
               saveVehicle,
             }
           : undefined,
@@ -1393,6 +1503,10 @@ export function GetPassPage() {
       };
 
       const result = await issueVisitorPass('portal', formData, photoBlob, idBlob, issueRequestId.current, undefined, portalTransactionRef.current, vehiclePhotoBlob);
+
+      if (result.returningEnrollment === 'failed') {
+        toast.warning('Pass created successfully, but your returning visitor profile could not be enrolled. You may enroll on your next visit.');
+      }
 
       setPassId(result.passId);
       setRawQrToken(result.qrToken);
@@ -1440,6 +1554,7 @@ export function GetPassPage() {
       console.error('Pass generation error:', err);
       const errMsg = err instanceof Error ? err.message : 'An unexpected error occurred.';
       setSubmitError(errMsg);
+      setTransactionPhase(portalTransactionRef.current?.phase ?? null);
       setStep('review');
       toast.error('Failed to generate pass. Please try again.');
     } finally {
@@ -1540,10 +1655,18 @@ export function GetPassPage() {
           {/* Stepper only for 6-step New Visitor or verification phases */}
           {step !== 'frontdoor' && step !== 'arrival_setup' && step !== 'returning_capture' && step !== 'returning_confirm' && step !== 'done' && step !== 'delivery' && step !== 'generating' && (
             <div className="mb-8">
-              <div className="mb-3 text-center">
+              <div className="mb-3 flex items-center justify-between">
                 <span className="inline-block rounded-full bg-[#F8EEEE] px-3 py-1 text-xs font-bold text-[#7A0A0A]">
                   {currentStepTitle} • Step {currentStepIndex + 1} of 6
                 </span>
+                <button
+                  type="button"
+                  onClick={handleStartOver}
+                  className="text-xs font-semibold text-[var(--color-text-secondary)] hover:text-[#7A0A0A] hover:underline inline-flex items-center gap-1"
+                >
+                  <RotateCcw className="h-3.5 w-3.5" />
+                  Start Over
+                </button>
               </div>
               <Stepper steps={steps} currentStepIndex={currentStepIndex} className="px-2" />
             </div>
@@ -1568,8 +1691,7 @@ export function GetPassPage() {
                 {/* Option 1: New Visitor */}
                 <div
                   onClick={() => {
-                    setRegistrationMode('new');
-                    setStep('arrival_setup');
+                    beginNewVisitorSetup();
                   }}
                   role="button"
                   tabIndex={0}
@@ -1904,13 +2026,16 @@ export function GetPassPage() {
                         <div>
                           <div className="flex items-center gap-2">
                             <span className="font-bold text-sm text-[var(--color-text-primary)]">
-                              Verified Address
+                              Validated Location
                             </span>
                             <span className="inline-flex items-center gap-1 rounded-full bg-emerald-100 text-emerald-800 px-2 py-0.5 text-[10px] font-bold">
                               <CheckCircle2 className="h-3 w-3 text-emerald-600" />
-                              Geoapify Verified
+                              Matched through Geoapify
                             </span>
                           </div>
+                          <p className="text-[11px] text-slate-500 mt-1 italic">
+                            This validates the mapped location, not proof of residence.
+                          </p>
                           <p className="text-sm text-[var(--color-text-primary)] mt-1 leading-relaxed">
                             {selectedAddress.formatted}
                           </p>
@@ -2159,18 +2284,22 @@ export function GetPassPage() {
                   {/* Make and Model Selectors */}
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                     <div>
-                      <label className="block text-xs font-bold uppercase tracking-wider text-[var(--color-text-muted)] mb-1">
+                      <label htmlFor="vehicle-make-select" className="block text-xs font-bold uppercase tracking-wider text-[var(--color-text-muted)] mb-1">
                         Vehicle Make <span className="text-[var(--color-danger)]">*</span>
                       </label>
                       <select
+                        id="vehicle-make-select"
+                        aria-label="Vehicle Make"
                         value={selectedMake}
                         onChange={(e) => {
-                          setSelectedMake(e.target.value);
+                          const val = e.target.value;
+                          setSelectedMake(val);
                           clearErrors('makeModel');
                         }}
                         disabled={isLoadingMakes}
                         className="box-border w-full min-w-0 max-w-full rounded-xl border border-[var(--color-border)] bg-white px-3.5 py-2.5 text-base sm:text-sm text-[var(--color-text-primary)] focus:border-[#7A0A0A] focus:outline-none focus:ring-1 focus:ring-[#7A0A0A]"
                       >
+                        <option value="">Select vehicle make</option>
                         {availableMakes.map((m) => (
                           <option key={m} value={m}>
                             {m}
@@ -2180,20 +2309,29 @@ export function GetPassPage() {
                       </select>
                     </div>
 
-                    {!isManualVehicle && (
+                    {vehicleCatalogMode !== 'manual_make' && (
                       <div>
-                        <label className="block text-xs font-bold uppercase tracking-wider text-[var(--color-text-muted)] mb-1">
-                          Vehicle Model
+                        <label htmlFor="vehicle-model-select" className="block text-xs font-bold uppercase tracking-wider text-[var(--color-text-muted)] mb-1">
+                          Vehicle Model <span className="text-[var(--color-danger)]">*</span>
                         </label>
                         <select
+                          id="vehicle-model-select"
+                          aria-label="Vehicle Model"
                           value={selectedModel}
                           onChange={(e) => {
-                            setSelectedModel(e.target.value);
+                            const val = e.target.value;
+                            setSelectedModel(val);
+                            if (val === 'Other / Not Listed') {
+                              setVehicleCatalogMode('manual_model');
+                            } else if (val !== '') {
+                              setVehicleCatalogMode('catalog');
+                            }
                             clearErrors('makeModel');
                           }}
-                          disabled={isLoadingModels || availableModels.length === 0}
+                          disabled={isLoadingModels || !selectedMake || selectedMake === 'Other / Not Listed'}
                           className="box-border w-full min-w-0 max-w-full rounded-xl border border-[var(--color-border)] bg-white px-3.5 py-2.5 text-base sm:text-sm text-[var(--color-text-primary)] focus:border-[#7A0A0A] focus:outline-none focus:ring-1 focus:ring-[#7A0A0A]"
                         >
+                          <option value="">Select vehicle model</option>
                           {availableModels.map((m) => (
                             <option key={m} value={m}>
                               {m}
@@ -2204,29 +2342,70 @@ export function GetPassPage() {
                       </div>
                     )}
                   </div>
-                  {!isManualVehicle && errors.makeModel && (
-                    <p className="text-xs text-[var(--color-danger-dark)] font-medium -mt-2">
-                      {errors.makeModel.message}
-                    </p>
+
+                  {/* Manual Make / Model Inputs */}
+                  {vehicleCatalogMode === 'manual_make' && (
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                      <FormField
+                        label="Custom Make"
+                        requirement="required"
+                        error={errors.makeModel?.message}
+                        hint="Specify vehicle manufacturer"
+                      >
+                        <Input
+                          id="vehicle-custom-make"
+                          aria-label="Custom Make"
+                          placeholder="e.g. Ducati, Piaggio, Geely"
+                          value={customMake}
+                          onChange={(e) => {
+                            setCustomMake(e.target.value);
+                            clearErrors('makeModel');
+                          }}
+                        />
+                      </FormField>
+                      <FormField
+                        label="Custom Model"
+                        requirement="required"
+                        hint="Specify model name"
+                      >
+                        <Input
+                          id="vehicle-custom-model"
+                          aria-label="Custom Model"
+                          placeholder="e.g. Panigale, Vespa GTS, Emgrand"
+                          value={customModel}
+                          onChange={(e) => {
+                            setCustomModel(e.target.value);
+                            clearErrors('makeModel');
+                          }}
+                        />
+                      </FormField>
+                    </div>
                   )}
 
-                  {/* Manual Make / Model Input when "Other" selected */}
-                  {isManualVehicle && (
+                  {vehicleCatalogMode === 'manual_model' && (
                     <FormField
-                      label="Custom Make & Model"
+                      label={`Custom Model for ${selectedMake}`}
                       requirement="required"
                       error={errors.makeModel?.message}
-                      hint="Specify make and model (e.g. Isuzu D-Max, Yamaha NMAX)"
+                      hint="Specify vehicle model name"
                     >
                       <Input
-                        placeholder="e.g. Isuzu D-Max"
-                        value={customMakeModel}
+                        id="vehicle-custom-model"
+                        aria-label="Custom Model"
+                        placeholder="e.g. Custom / Unlisted Model"
+                        value={customModel}
                         onChange={(e) => {
-                          setCustomMakeModel(e.target.value);
+                          setCustomModel(e.target.value);
                           clearErrors('makeModel');
                         }}
                       />
                     </FormField>
+                  )}
+
+                  {vehicleCatalogMode === 'catalog' && errors.makeModel && (
+                    <p className="text-xs text-[var(--color-danger-dark)] font-medium -mt-2">
+                      {errors.makeModel.message}
+                    </p>
                   )}
 
                   {/* Color Selector */}
@@ -2658,7 +2837,24 @@ export function GetPassPage() {
                 </p>
               </div>
 
-              {portalTransactionRef.current?.phase === 'existing_pass_conflict' ? (
+              {currentPhase === 'submission_uncertain_hold' ? (
+                <div className="rounded-xl border-2 border-amber-500 bg-amber-50 p-5 space-y-3 text-sm text-amber-950" role="alert">
+                  <div className="flex items-center gap-2.5 font-bold text-base text-amber-900">
+                    <AlertCircle className="h-6 w-6 text-amber-600 shrink-0" />
+                    <span>Submission Held for Guard Verification</span>
+                  </div>
+                  <p className="text-xs leading-relaxed text-amber-900">
+                    Your pass generation was interrupted and may have been processed by the server. To prevent duplicate pass creation or security locks, this submission is frozen.
+                  </p>
+                  <div className="rounded-lg bg-white/80 p-3 border border-amber-200 text-xs space-y-1 font-mono">
+                    <p><span className="text-slate-500 font-sans">Visitor:</span> <strong className="font-sans">{getValues('firstName')} {getValues('lastName')}</strong></p>
+                    <p><span className="text-slate-500 font-sans">Request Reference:</span> <span className="text-slate-800 break-all">{portalTransactionRef.current?.requestId ?? issueRequestId.current}</span></p>
+                  </div>
+                  <p className="text-xs text-amber-800">
+                    Please show your valid physical ID to the campus gate guard to look up or verify your entry pass.
+                  </p>
+                </div>
+              ) : currentPhase === 'existing_pass_conflict' ? (
                 <div className="rounded-lg border border-amber-300 bg-amber-50 p-4 space-y-2 text-sm text-amber-900" role="alert">
                   <div className="flex items-center gap-2 font-semibold text-amber-950">
                     <AlertCircle className="h-5 w-5 text-amber-600 shrink-0" />
@@ -2668,7 +2864,7 @@ export function GetPassPage() {
                     An existing pass was already created for this request, but the local retry no longer matches it. Do not create another pass. Please ask the Guard for assistance.
                   </p>
                 </div>
-              ) : portalTransactionRef.current?.phase === 'ambiguous' ? (
+              ) : currentPhase === 'ambiguous' ? (
                 <div className="rounded-lg border border-amber-300 bg-amber-50 p-4 space-y-2 text-sm text-amber-900" role="alert">
                   <div className="flex items-center gap-2 font-semibold text-amber-950">
                     <AlertCircle className="h-5 w-5 text-amber-600 shrink-0" />
@@ -2712,8 +2908,9 @@ export function GetPassPage() {
                   <span className="font-bold text-xs uppercase tracking-wider text-[var(--color-text-secondary)]">
                     Visitor Information
                   </span>
-                  {portalTransactionRef.current?.phase !== 'existing_pass_conflict' &&
-                    portalTransactionRef.current?.phase !== 'ambiguous' && (
+                  {currentPhase !== 'existing_pass_conflict' &&
+                    currentPhase !== 'ambiguous' &&
+                    currentPhase !== 'submission_uncertain_hold' && (
                     <button
                       type="button"
                       onClick={() => setStep('form')}
@@ -2742,7 +2939,7 @@ export function GetPassPage() {
                       {selectedAddress && (
                         <span className="inline-flex items-center gap-1 rounded-full bg-emerald-100 text-emerald-800 px-2 py-0.5 text-[10px] font-bold">
                           <CheckCircle2 className="h-3 w-3 text-emerald-600" />
-                          Geoapify Verified
+                          Matched through Geoapify
                         </span>
                       )}
                     </div>
@@ -2761,8 +2958,9 @@ export function GetPassPage() {
                   <span className="font-bold text-xs uppercase tracking-wider text-[var(--color-text-secondary)]">
                     Visit Information
                   </span>
-                  {portalTransactionRef.current?.phase !== 'existing_pass_conflict' &&
-                    portalTransactionRef.current?.phase !== 'ambiguous' && (
+                  {currentPhase !== 'existing_pass_conflict' &&
+                    currentPhase !== 'ambiguous' &&
+                    currentPhase !== 'submission_uncertain_hold' && (
                     <button
                       type="button"
                       onClick={() => setStep('visit')}
@@ -2790,8 +2988,9 @@ export function GetPassPage() {
                   <span className="font-bold text-xs uppercase tracking-wider text-[var(--color-text-secondary)]">
                     Arrival & Vehicle
                   </span>
-                  {portalTransactionRef.current?.phase !== 'existing_pass_conflict' &&
-                    portalTransactionRef.current?.phase !== 'ambiguous' && (
+                  {currentPhase !== 'existing_pass_conflict' &&
+                    currentPhase !== 'ambiguous' &&
+                    currentPhase !== 'submission_uncertain_hold' && (
                     <button
                       type="button"
                       onClick={() => setStep('visit')}
@@ -2830,7 +3029,7 @@ export function GetPassPage() {
                         />
                         <div className="text-xs">
                           <span className="font-semibold text-[var(--color-text-primary)] block">Vehicle Photo Attached</span>
-                          <span className="text-[11px] text-[var(--color-text-secondary)]">Captured and verified for gate inspection</span>
+                          <span className="text-[11px] text-[var(--color-text-secondary)]">Vehicle photo captured for physical gate inspection.</span>
                         </div>
                       </div>
                     )}
@@ -2859,7 +3058,8 @@ export function GetPassPage() {
                         alt="Your live face photo"
                         className="h-24 w-20 object-cover rounded-lg border border-[var(--color-border)] shadow-sm mx-auto"
                       />
-                      {portalTransactionRef.current?.phase !== 'ambiguous' && (
+                      {currentPhase !== 'ambiguous' &&
+                        currentPhase !== 'submission_uncertain_hold' && (
                         <button
                           type="button"
                           onClick={() => {
@@ -2882,7 +3082,8 @@ export function GetPassPage() {
                         alt="Valid ID"
                         className="h-24 w-36 object-cover rounded-lg border border-[var(--color-border)] shadow-sm mx-auto"
                       />
-                      {portalTransactionRef.current?.phase !== 'ambiguous' && (
+                      {currentPhase !== 'ambiguous' &&
+                        currentPhase !== 'submission_uncertain_hold' && (
                         <button
                           type="button"
                           onClick={onRetakeId}
@@ -2908,57 +3109,83 @@ export function GetPassPage() {
               </div>
 
               {/* Biometric & Vehicle Retention Checkboxes */}
-              <div className="space-y-3 rounded-xl border border-[var(--color-border)] bg-[var(--color-canvas)] p-4 text-xs">
-                <label className="flex items-start gap-2.5 cursor-pointer">
-                  <input
-                    type="checkbox"
-                    checked={rememberVisitor}
-                    onChange={(e) => setRememberVisitor(e.target.checked)}
-                    className="mt-0.5 h-4 w-4 rounded text-[var(--color-brand)] focus:ring-[var(--color-brand)]"
-                  />
-                  <div className="text-[var(--color-text-secondary)]">
-                    <strong className="text-[var(--color-text-primary)]">Remember me for faster future visits</strong> (optional)
-                    <p className="text-[11px] mt-0.5">
-                      Securely enrolls encrypted facial biometric features so you can quickly check in on subsequent visits.
-                    </p>
-                  </div>
-                </label>
-
-                {getValues('arrivalMode') === 'vehicle' && (
-                  <label className="flex items-start gap-2.5 cursor-pointer pt-2 border-t border-[var(--color-border)]">
+              {returningAvailable !== true ? (
+                <div className="rounded-xl border border-slate-200 bg-slate-50 p-4 text-xs text-slate-600">
+                  <p className="font-semibold text-slate-800">Returning Visitor enrollment is temporarily unavailable.</p>
+                  <p className="text-[11px] mt-1">Facial profile enrollment is temporarily paused. Your visit pass will be generated normally for today's visit.</p>
+                </div>
+              ) : (
+                <div className="space-y-3 rounded-xl border border-[var(--color-border)] bg-[var(--color-canvas)] p-4 text-xs">
+                  <label className="flex items-start gap-2.5 cursor-pointer">
                     <input
                       type="checkbox"
-                      checked={saveVehicle}
-                      onChange={(e) => setSaveVehicle(e.target.checked)}
+                      checked={rememberVisitor}
+                      onChange={(e) => {
+                        const checked = e.target.checked;
+                        setRememberVisitor(checked);
+                        if (!checked) {
+                          setSaveVehicle(false);
+                        }
+                      }}
                       className="mt-0.5 h-4 w-4 rounded text-[var(--color-brand)] focus:ring-[var(--color-brand)]"
                     />
                     <div className="text-[var(--color-text-secondary)]">
-                      <strong className="text-[var(--color-text-primary)]">Save this vehicle to my profile</strong> (optional)
+                      <strong className="text-[var(--color-text-primary)]">Remember me for faster future visits</strong> (optional)
                       <p className="text-[11px] mt-0.5">
-                        Stores this vehicle for 1-click selection on future visits.
+                        Securely enrolls encrypted facial biometric features so you can quickly check in on subsequent visits.
                       </p>
                     </div>
                   </label>
-                )}
-              </div>
+
+                  {rememberVisitor && getValues('arrivalMode') === 'vehicle' && (
+                    <label className="flex items-start gap-2.5 cursor-pointer pt-2 border-t border-[var(--color-border)]">
+                      <input
+                        type="checkbox"
+                        checked={saveVehicle}
+                        onChange={(e) => setSaveVehicle(e.target.checked)}
+                        className="mt-0.5 h-4 w-4 rounded text-[var(--color-brand)] focus:ring-[var(--color-brand)]"
+                      />
+                      <div className="text-[var(--color-text-secondary)]">
+                        <strong className="text-[var(--color-text-primary)]">Save this vehicle to my profile</strong> (optional)
+                        <p className="text-[11px] mt-0.5">
+                          Stores this vehicle for 1-click selection on future visits.
+                        </p>
+                      </div>
+                    </label>
+                  )}
+                </div>
+              )}
 
               <div className="flex flex-col sm:flex-row gap-3">
-                <Button
-                  variant="secondary"
-                  onClick={() => setStep('visit')}
-                  className="flex-1"
-                  icon={<ArrowLeft className="h-4 w-4" />}
-                >
-                  Back to Details
-                </Button>
-                <Button
-                  onClick={onSubmit}
-                  disabled={!identityVerified}
-                  className="flex-1"
-                  icon={<CheckCircle2 className="h-4 w-4" />}
-                >
-                  Generate E-GatePass
-                </Button>
+                {currentPhase === 'submission_uncertain_hold' ? (
+                  <Button
+                    onClick={handleStartOver}
+                    className="flex-1"
+                    icon={<RotateCcw className="h-4 w-4" />}
+                  >
+                    Start Over
+                  </Button>
+                ) : (
+                  <>
+                    <Button
+                      variant="secondary"
+                      onClick={() => setStep('visit')}
+                      className="flex-1"
+                      disabled={currentPhase === 'existing_pass_conflict' || currentPhase === 'ambiguous'}
+                      icon={<ArrowLeft className="h-4 w-4" />}
+                    >
+                      Back to Details
+                    </Button>
+                    <Button
+                      onClick={onSubmit}
+                      disabled={!identityVerified || currentPhase === 'existing_pass_conflict'}
+                      className="flex-1"
+                      icon={<CheckCircle2 className="h-4 w-4" />}
+                    >
+                      Generate E-GatePass
+                    </Button>
+                  </>
+                )}
               </div>
             </div>
           )}
@@ -3336,8 +3563,7 @@ export function GetPassPage() {
               <Button
                 onClick={() => {
                   setShowReturningGateModal(false);
-                  setRegistrationMode('new');
-                  setStep('form');
+                  beginNewVisitorSetup();
                 }}
                 className="flex-1"
                 icon={<ArrowRight className="h-4 w-4" />}

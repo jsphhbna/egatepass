@@ -19,11 +19,11 @@ async function handleRequest(request: Request): Promise<Response> {
     const { admin } = getServerSupabaseClients();
     const networkKeyHex = getClientNetworkIdentifier(request);
 
-    // Bounded rate limit per network: 60 requests per 2 minutes
+    // Bounded rate limit per network: campus-safe ceiling of 300 requests per 2 minutes
     const { data: netAllowed, error: netRlError } = await admin.schema('api').rpc('consume_rate_limit', {
       requested_key_hex: networkKeyHex,
       requested_action: 'portal.address_autocomplete',
-      requested_max_requests: 60,
+      requested_max_requests: 300,
       requested_window_seconds: 120,
     });
 
@@ -34,10 +34,14 @@ async function handleRequest(request: Request): Promise<Response> {
         message: 'Address verification abuse protection is temporarily unavailable. Please try again shortly.',
       });
     } else if (netAllowed === false) {
-      return jsonResponse(429, {
-        error: 'rate_limit_exceeded',
-        message: 'Too many address search requests from this network. Please wait a moment.',
-      });
+      return jsonResponse(
+        429,
+        {
+          error: 'rate_limit_exceeded',
+          message: 'Too many address search requests from this network. Please wait a moment.',
+        },
+        { 'Retry-After': '120' }
+      );
     }
 
     const suggestions = await searchAddressAutocomplete(q);

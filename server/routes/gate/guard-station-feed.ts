@@ -1,6 +1,18 @@
 import { getVerifiedSessionContext, HttpError } from '../../actors.js';
 import { jsonResponse, readBearerToken } from '../../http.js';
 import { getServerSupabaseClients } from '../../supabase.js';
+import { decodeCursorStrict, encodeCursor } from '../../cursor.js';
+
+export function getManilaDayBounds(now = new Date()): { startUtc: string; endUtc: string } {
+  const manilaOffsetMs = 8 * 60 * 60 * 1000;
+  const manilaNow = new Date(now.getTime() + manilaOffsetMs);
+  const year = manilaNow.getUTCFullYear();
+  const month = manilaNow.getUTCMonth();
+  const date = manilaNow.getUTCDate();
+  const startUtc = new Date(Date.UTC(year, month, date) - manilaOffsetMs).toISOString();
+  const endUtc = new Date(Date.UTC(year, month, date, 23, 59, 59, 999) - manilaOffsetMs).toISOString();
+  return { startUtc, endUtc };
+}
 
 async function handleRequest(request: Request): Promise<Response> {
   if (request.method !== 'GET') {
@@ -22,6 +34,20 @@ async function handleRequest(request: Request): Promise<Response> {
 
     if (session.isRecoverySession || session.isAnonymous) {
       return jsonResponse(403, { error: 'access_denied' });
+    }
+
+    const url = new URL(request.url);
+    const rawLimit = parseInt(url.searchParams.get('limit') || '50', 10);
+    const limit = Math.max(1, Math.min(Number.isFinite(rawLimit) ? rawLimit : 50, 100));
+    const rawCursor = url.searchParams.get('cursor')?.trim();
+
+    let decodedCursor = null;
+    if (rawCursor) {
+      try {
+        decodedCursor = decodeCursorStrict(rawCursor, { idType: 'uuid' });
+      } catch {
+        return jsonResponse(400, { error: 'invalid_cursor' });
+      }
     }
 
     // 1. Authorize caller: must be an active guard_station device, or admin/superadmin
@@ -61,7 +87,6 @@ async function handleRequest(request: Request): Promise<Response> {
         staff.privacy_accepted_at &&
         (staff.role === 'admin' || staff.role === 'superadmin')
       ) {
-        const url = new URL(request.url);
         const requestedGate = url.searchParams.get('gate')?.trim();
 
         // Validate gate against configured active devices to prevent spoofing
@@ -103,22 +128,55 @@ async function handleRequest(request: Request): Promise<Response> {
       return jsonResponse(400, { error: 'invalid_gate' });
     }
 
-    // 2. Fetch passes scanned at this gate today (last 24 hours), strictly portal entries
-    const twentyFourHoursAgo = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
-    const { data: passes, error: passesError } = await admin
+    // 2. Fetch passes scanned at this gate today (Asia/Manila calendar day)
+    const { startUtc, endUtc } = getManilaDayBounds();
+
+    // Query authoritative total count for today
+    const { count: totalCount, error: countErr } = await admin
+      .from('passes')
+      .select('id', { count: 'exact', head: true })
+      .eq('gate', stationGate)
+      .eq('source', 'portal')
+      .in('status', ['inside', 'exited'])
+      .not('entry_scanned_at', 'is', null)
+      .gte('entry_scanned_at', startUtc)
+      .lte('entry_scanned_at', endUtc);
+
+    if (countErr) throw countErr;
+
+    // Keyset query with limit + 1
+    let query = admin
       .from('passes')
       .select('id, public_reference, status, source, entry_scanned_at, time_in, time_out, visitor_id, gate')
       .eq('gate', stationGate)
       .eq('source', 'portal')
       .in('status', ['inside', 'exited'])
       .not('entry_scanned_at', 'is', null)
-      .gte('entry_scanned_at', twentyFourHoursAgo)
-      .order('entry_scanned_at', { ascending: false })
-      .limit(50);
+      .gte('entry_scanned_at', startUtc)
+      .lte('entry_scanned_at', endUtc);
 
+    if (decodedCursor && decodedCursor.id) {
+      query = query.or(`entry_scanned_at.lt.${decodedCursor.timestamp},and(entry_scanned_at.eq.${decodedCursor.timestamp},id.lt.${decodedCursor.id})`);
+    } else if (decodedCursor) {
+      query = query.lt('entry_scanned_at', decodedCursor.timestamp);
+    }
+
+    query = query
+      .order('entry_scanned_at', { ascending: false })
+      .order('id', { ascending: false })
+      .limit(limit + 1);
+
+    const { data: passes, error: passesError } = await query;
     if (passesError) throw passesError;
 
-    const passList = passes || [];
+    const rawList = passes || [];
+    const hasMore = rawList.length > limit;
+    const passList = hasMore ? rawList.slice(0, limit) : rawList;
+    const lastItem = passList[passList.length - 1];
+    const nextCursor = hasMore && lastItem && lastItem.entry_scanned_at
+      ? encodeCursor(lastItem.entry_scanned_at, lastItem.id)
+      : null;
+
     const visitorIds = Array.from(new Set(passList.map((p) => p.visitor_id)));
     const passIds = passList.map((p) => p.id);
 
@@ -175,7 +233,7 @@ async function handleRequest(request: Request): Promise<Response> {
       return {
         passId: p.id,
         publicReference: p.public_reference,
-        status: p.status,
+        status: p.status, // 'inside' | 'exited'
         source: p.source,
         enteredAt: p.time_in || p.entry_scanned_at,
         visitorName: v?.full_name || 'Visitor',
@@ -198,6 +256,9 @@ async function handleRequest(request: Request): Promise<Response> {
     return jsonResponse(200, {
       station: stationInfo,
       entries,
+      hasMore,
+      nextCursor,
+      total: totalCount ?? entries.length,
     });
   } catch (error) {
     if (error instanceof HttpError) return jsonResponse(error.status, { error: error.code });

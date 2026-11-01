@@ -41,11 +41,11 @@ const requestSchema = z.object({
     addressDetail: z.string().max(200).optional(),
   }).optional(),
   vehicle: z.object({
-    vehicleType: z.enum(['car', 'motorcycle', 'van', 'pickup', 'suv', 'truck', 'bicycle', 'other']).optional(),
+    vehicleType: z.string().trim().min(1).max(40).optional(),
     plateNumber: z.string().trim().min(3).max(16).optional(),
     color: z.string().trim().min(2).max(40).optional(),
     makeModel: z.string().trim().max(100).optional(),
-    catalogStatus: z.enum(['catalog', 'manual']).optional(),
+    catalogStatus: z.string().trim().optional(),
     photoIntentId: z.string().uuid().optional(),
     savedVehicleId: z.string().uuid().optional(),
     saveVehicle: z.boolean().optional(),
@@ -209,23 +209,73 @@ async function handleRequest(request: Request): Promise<Response> {
     let canonicalContact = parsed.data.visitor.contactNumber.trim();
     if (parsed.data.source === 'portal') {
       const canonical = normalizePhMobile(canonicalContact);
-      if (canonical) {
-        canonicalContact = canonical;
+      if (!canonical) {
+        return jsonResponse(422, {
+          error: 'invalid_contact_number',
+          message: 'Please provide a valid 11-digit Philippine mobile number starting with 09.',
+        });
       }
+      canonicalContact = canonical;
     }
 
     // Vehicle normalization (Section 23: Plate normalization & Photo requirement)
+    const CONTROLLED_VEHICLE_COLORS = [
+      'White',
+      'Black',
+      'Silver',
+      'Gray',
+      'Red',
+      'Blue',
+      'Brown',
+      'Green',
+      'Yellow',
+      'Orange',
+      'Gold',
+      'Beige',
+      'Other',
+    ] as const;
+
+    const CONTROLLED_VEHICLE_TYPES = [
+      'car',
+      'motorcycle',
+      'van',
+      'pickup',
+      'suv',
+      'truck',
+      'other',
+    ] as const;
+
     let normalizedPlateDisplay: string | null = null;
     let normalizedPlateKey: string | null = null;
+    let normalizedVehicleColor: string | null = null;
     let vehiclePhotoIntentId: string | null = null;
     if (parsed.data.arrivalMode === 'vehicle') {
       const v = parsed.data.vehicle;
-      if (!v?.vehicleType || !v?.plateNumber || !v?.color) {
+      if (!v?.vehicleType || !CONTROLLED_VEHICLE_TYPES.includes(v.vehicleType as any) || !v?.plateNumber || !v?.color) {
         return jsonResponse(422, {
           error: 'invalid_vehicle_declaration',
           message: 'Vehicle type, plate number, and color are required when bringing a vehicle.',
         });
       }
+
+      const matchedColor = CONTROLLED_VEHICLE_COLORS.find(
+        (c) => c.toLowerCase() === v.color!.trim().toLowerCase()
+      );
+      if (!matchedColor) {
+        return jsonResponse(422, {
+          error: 'invalid_vehicle_declaration',
+          message: 'Please select a valid vehicle color from the allowed options.',
+        });
+      }
+      normalizedVehicleColor = matchedColor;
+
+      if (!v.catalogStatus || (v.catalogStatus !== 'catalog' && v.catalogStatus !== 'manual')) {
+        return jsonResponse(422, {
+          error: 'invalid_vehicle_declaration',
+          message: 'Vehicle catalog status must be explicitly specified as catalog or manual.',
+        });
+      }
+
       const makeModel = v.makeModel?.trim() || '';
       if (makeModel.length < 2 || makeModel.length > 100) {
         return jsonResponse(422, {
@@ -267,7 +317,7 @@ async function handleRequest(request: Request): Promise<Response> {
       // Replay found. Validate owner, source, and payload consistency (Section 50).
       const { data: existingVisitor, error: visitorError } = await admin
         .from('visitors')
-        .select('id, owner_id, source, full_name, contact_number, purpose, visit_date, home_address, registration_mode, arrival_mode, returning_profile_id, address_place_id')
+        .select('id, owner_id, source, full_name, contact_number, purpose, visit_date, home_address, registration_mode, arrival_mode, returning_profile_id, address_place_id, address_detail')
         .eq('id', existingPass.visitor_id)
         .maybeSingle();
 
@@ -279,6 +329,10 @@ async function handleRequest(request: Request): Promise<Response> {
       }
       if (existingVisitor.source !== parsed.data.source) {
         return jsonResponse(409, { error: 'source_mismatch' });
+      }
+
+      if (existingVisitor.registration_mode && existingVisitor.registration_mode !== parsed.data.registrationMode) {
+        return jsonResponse(409, { error: 'payload_mismatch' });
       }
 
       const expectedFullName = [parsed.data.visitor.firstName, parsed.data.visitor.middleName, parsed.data.visitor.lastName].filter(Boolean).join(' ');
@@ -295,20 +349,68 @@ async function handleRequest(request: Request): Promise<Response> {
         return jsonResponse(409, { error: 'payload_mismatch' });
       }
 
-      if (parsed.data.source === 'portal' && parsed.data.addressProvenance?.placeId && existingVisitor.address_place_id) {
-        if (existingVisitor.address_place_id !== parsed.data.addressProvenance.placeId) {
+      if (parsed.data.source === 'portal') {
+        if (parsed.data.addressProvenance?.placeId && existingVisitor.address_place_id) {
+          if (existingVisitor.address_place_id !== parsed.data.addressProvenance.placeId) {
+            return jsonResponse(409, { error: 'payload_mismatch' });
+          }
+        }
+        const expectedAddrDetail = (parsed.data.addressProvenance?.addressDetail || '').trim();
+        const actualAddrDetail = (existingVisitor.address_detail || '').trim();
+        if (expectedAddrDetail !== actualAddrDetail) {
           return jsonResponse(409, { error: 'payload_mismatch' });
         }
+      }
+
+      const expectedReturningId = parsed.data.returning?.profileId || null;
+      if ((existingVisitor.returning_profile_id || null) !== expectedReturningId) {
+        return jsonResponse(409, { error: 'payload_mismatch' });
       }
 
       if (parsed.data.arrivalMode === 'vehicle' && normalizedPlateKey) {
         const { data: existingDecl } = await admin
           .from('visit_vehicle_declarations')
-          .select('plate_key, vehicle_type')
+          .select('plate_key, vehicle_type, color, make_model, vehicle_catalog_status, saved_vehicle_id, vehicle_photo_evidence_id')
           .eq('pass_id', existingPass.id)
           .maybeSingle();
-        if (existingDecl && (existingDecl.plate_key !== normalizedPlateKey || existingDecl.vehicle_type !== parsed.data.vehicle?.vehicleType)) {
+
+        if (!existingDecl) {
           return jsonResponse(409, { error: 'payload_mismatch' });
+        }
+        if (
+          existingDecl.plate_key !== normalizedPlateKey ||
+          existingDecl.vehicle_type !== parsed.data.vehicle?.vehicleType ||
+          existingDecl.color.toLowerCase() !== (normalizedVehicleColor || parsed.data.vehicle?.color || '').toLowerCase() ||
+          (existingDecl.make_model || '').trim() !== (parsed.data.vehicle?.makeModel || '').trim() ||
+          existingDecl.vehicle_catalog_status !== (parsed.data.vehicle?.catalogStatus || 'catalog') ||
+          (existingDecl.saved_vehicle_id || null) !== (parsed.data.vehicle?.savedVehicleId || null)
+        ) {
+          return jsonResponse(409, { error: 'payload_mismatch' });
+        }
+      }
+
+      // Check evidence upload_intent_ids
+      const { data: attachedEvidence, error: evError } = await admin
+        .from('visitor_evidence')
+        .select('kind, upload_intent_id')
+        .eq('visitor_id', existingVisitor.id)
+        .is('purged_at', null);
+
+      if (evError) throw evError;
+      if (attachedEvidence) {
+        const evMap = new Map(attachedEvidence.map((e) => [e.kind, e.upload_intent_id]));
+        const photoIntent = evMap.get('photo');
+        const idIntent = evMap.get('id');
+        const vehicleIntent = evMap.get('vehicle_photo');
+
+        if (parsed.data.photoIntentId && photoIntent && photoIntent !== parsed.data.photoIntentId) {
+          return jsonResponse(409, { error: 'intent_mismatch' });
+        }
+        if (parsed.data.idIntentId && idIntent && idIntent !== parsed.data.idIntentId) {
+          return jsonResponse(409, { error: 'intent_mismatch' });
+        }
+        if (vehiclePhotoIntentId && vehicleIntent && vehicleIntent !== vehiclePhotoIntentId) {
+          return jsonResponse(409, { error: 'intent_mismatch' });
         }
       }
 
@@ -354,17 +456,21 @@ async function handleRequest(request: Request): Promise<Response> {
       }
 
       if (actorAllowed === false) {
-        return jsonResponse(429, {
-          error: 'rate_limit_exceeded',
-          message: 'Too many pass issuance requests for this session. Please wait before requesting another pass.',
-        });
+        return jsonResponse(
+          429,
+          {
+            error: 'rate_limit_exceeded',
+            message: 'Too many pass issuance requests for this session. Please wait before requesting another pass.',
+          },
+          { 'Retry-After': '3600' }
+        );
       }
 
       const networkKeyHex = getClientNetworkIdentifier(request);
       const { data: netAllowed, error: netRlError } = await admin.schema('api').rpc('consume_rate_limit', {
         requested_key_hex: networkKeyHex,
         requested_action: 'portal.network_issue',
-        requested_max_requests: 10,
+        requested_max_requests: 120,
         requested_window_seconds: 600,
       });
 
@@ -377,10 +483,14 @@ async function handleRequest(request: Request): Promise<Response> {
       }
 
       if (netAllowed === false) {
-        return jsonResponse(429, {
-          error: 'rate_limit_exceeded',
-          message: 'Too many pass issuance requests from this network. Please wait before requesting another pass.',
-        });
+        return jsonResponse(
+          429,
+          {
+            error: 'rate_limit_exceeded',
+            message: 'Too many pass issuance requests from this network. Please wait before requesting another pass.',
+          },
+          { 'Retry-After': '600' }
+        );
       }
     }
 
@@ -550,7 +660,7 @@ async function handleRequest(request: Request): Promise<Response> {
           requested_vehicle_type: parsed.data.arrivalMode === 'vehicle' ? (parsed.data.vehicle?.vehicleType ?? null) : null,
           requested_plate_number: parsed.data.arrivalMode === 'vehicle' ? normalizedPlateDisplay : null,
           requested_plate_key: parsed.data.arrivalMode === 'vehicle' ? normalizedPlateKey : null,
-          requested_color: parsed.data.arrivalMode === 'vehicle' ? (parsed.data.vehicle?.color ?? null) : null,
+          requested_color: parsed.data.arrivalMode === 'vehicle' ? (normalizedVehicleColor ?? parsed.data.vehicle?.color ?? null) : null,
           requested_make_model: parsed.data.arrivalMode === 'vehicle' ? (parsed.data.vehicle?.makeModel?.trim() ?? null) : null,
           requested_vehicle_catalog_status: parsed.data.arrivalMode === 'vehicle' ? (parsed.data.vehicle?.catalogStatus ?? 'catalog') : 'catalog',
           requested_vehicle_photo_intent_id: vehiclePhotoIntentId ?? null,
@@ -588,7 +698,7 @@ async function handleRequest(request: Request): Promise<Response> {
           requested_vehicle_type: parsed.data.arrivalMode === 'vehicle' ? (parsed.data.vehicle?.vehicleType ?? null) : null,
           requested_plate_number: parsed.data.arrivalMode === 'vehicle' ? normalizedPlateDisplay : null,
           requested_plate_key: parsed.data.arrivalMode === 'vehicle' ? normalizedPlateKey : null,
-          requested_color: parsed.data.arrivalMode === 'vehicle' ? (parsed.data.vehicle?.color ?? null) : null,
+          requested_color: parsed.data.arrivalMode === 'vehicle' ? (normalizedVehicleColor ?? parsed.data.vehicle?.color ?? null) : null,
           requested_make_model: parsed.data.arrivalMode === 'vehicle' ? (parsed.data.vehicle?.makeModel ?? null) : null,
           requested_saved_vehicle_id: parsed.data.arrivalMode === 'vehicle' ? (parsed.data.vehicle?.savedVehicleId ?? null) : null,
           requested_returning_profile_id: parsed.data.registrationMode === 'returning' ? (parsed.data.returning?.profileId ?? null) : null,
@@ -680,7 +790,7 @@ async function handleRequest(request: Request): Promise<Response> {
               vehicle_type: parsed.data.vehicle.vehicleType,
               plate_number: normalizedPlateDisplay,
               plate_key: normalizedPlateKey,
-              color: parsed.data.vehicle.color,
+              color: normalizedVehicleColor || parsed.data.vehicle.color,
               make_model: parsed.data.vehicle.makeModel || '',
             });
           }
@@ -739,7 +849,7 @@ async function handleRequest(request: Request): Promise<Response> {
             vehicle_type: parsed.data.vehicle.vehicleType,
             plate_number: normalizedPlateDisplay,
             plate_key: normalizedPlateKey,
-            color: parsed.data.vehicle.color,
+            color: normalizedVehicleColor || parsed.data.vehicle.color,
             make_model: parsed.data.vehicle.makeModel || '',
           });
         } catch (vehErr) {

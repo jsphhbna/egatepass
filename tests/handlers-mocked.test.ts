@@ -61,6 +61,7 @@ describe('Behavioral Mocked-Handler Tests [PASS (MOCKED HANDLER)]', () => {
     pass_email_verifications: any[];
     maintenance_state: any[];
     pass_email_verification_codes: any[];
+    visit_vehicle_declarations: any[];
   };
 
   let mockAuthUsers: Record<string, any>;
@@ -948,6 +949,7 @@ describe('Behavioral Mocked-Handler Tests [PASS (MOCKED HANDLER)]', () => {
       pass_email_verifications: [],
       maintenance_state: [],
       pass_email_verification_codes: [],
+      visit_vehicle_declarations: [],
     };
 
     mockAuthUsers = {
@@ -2701,6 +2703,247 @@ describe('Behavioral Mocked-Handler Tests [PASS (MOCKED HANDLER)]', () => {
 
       expect(res.status).toBe(409);
       expect(json.error).toBe('pass_token_secret_rotated');
+    });
+
+    it('rejects portal issuance with invalid contact number with 422 invalid_contact_number', async () => {
+      const req = new Request('http://localhost/api/passes/issue', {
+        method: 'POST',
+        headers: {
+          authorization: VALID_VISITOR_BEARER,
+          'content-type': 'application/json',
+        },
+        body: JSON.stringify({
+          requestId: randomUUID(),
+          source: 'portal',
+          arrivalMode: 'no_vehicle',
+          visitor: {
+            firstName: 'Juan',
+            lastName: 'Cruz',
+            contactNumber: '1234567',
+            purpose: 'Official Business',
+            visitDate: '2026-10-25',
+          },
+          photoIntentId: PHOTO_INTENT_ID,
+          idIntentId: ID_INTENT_ID,
+        }),
+      });
+
+      const res = await invokeHandler(issuePassHandler, req);
+      const json = await res.json();
+      expect(res.status).toBe(422);
+      expect(json.error).toBe('invalid_contact_number');
+    });
+
+    it('rejects vehicle declaration with bicycle vehicleType with 422 invalid_vehicle_declaration', async () => {
+      const req = new Request('http://localhost/api/passes/issue', {
+        method: 'POST',
+        headers: {
+          authorization: VALID_VISITOR_BEARER,
+          'content-type': 'application/json',
+        },
+        body: JSON.stringify({
+          requestId: randomUUID(),
+          source: 'portal',
+          arrivalMode: 'vehicle',
+          visitor: {
+            firstName: 'Juan',
+            lastName: 'Cruz',
+            contactNumber: '09123456789',
+            purpose: 'Official Business',
+            visitDate: '2026-10-25',
+          },
+          vehicle: {
+            vehicleType: 'bicycle',
+            plateNumber: 'ABC 1234',
+            color: 'black',
+            makeModel: 'Trek Marlin',
+            catalogStatus: 'catalog',
+          },
+          photoIntentId: PHOTO_INTENT_ID,
+          idIntentId: ID_INTENT_ID,
+          vehiclePhotoIntentId: randomUUID(),
+        }),
+      });
+
+      const res = await invokeHandler(issuePassHandler, req);
+      const json = await res.json();
+      expect(res.status).toBe(422);
+      expect(json.error).toBe('invalid_vehicle_declaration');
+    });
+
+    it('rejects vehicle declaration with uncontrolled color with 422 invalid_vehicle_declaration', async () => {
+      const req = new Request('http://localhost/api/passes/issue', {
+        method: 'POST',
+        headers: {
+          authorization: VALID_VISITOR_BEARER,
+          'content-type': 'application/json',
+        },
+        body: JSON.stringify({
+          requestId: randomUUID(),
+          source: 'portal',
+          arrivalMode: 'vehicle',
+          visitor: {
+            firstName: 'Juan',
+            lastName: 'Cruz',
+            contactNumber: '09123456789',
+            purpose: 'Official Business',
+            visitDate: '2026-10-25',
+          },
+          vehicle: {
+            vehicleType: 'car',
+            plateNumber: 'ABC 1234',
+            color: 'Neon Pink',
+            makeModel: 'Toyota Vios',
+            catalogStatus: 'catalog',
+          },
+          photoIntentId: PHOTO_INTENT_ID,
+          idIntentId: ID_INTENT_ID,
+          vehiclePhotoIntentId: randomUUID(),
+        }),
+      });
+
+      const res = await invokeHandler(issuePassHandler, req);
+      const json = await res.json();
+      expect(res.status).toBe(422);
+      expect(json.error).toBe('invalid_vehicle_declaration');
+    });
+
+    it('rejects vehicle declaration with missing catalogStatus with 422 invalid_vehicle_declaration', async () => {
+      const req = new Request('http://localhost/api/passes/issue', {
+        method: 'POST',
+        headers: {
+          authorization: VALID_VISITOR_BEARER,
+          'content-type': 'application/json',
+        },
+        body: JSON.stringify({
+          requestId: randomUUID(),
+          source: 'portal',
+          arrivalMode: 'vehicle',
+          visitor: {
+            firstName: 'Juan',
+            lastName: 'Cruz',
+            contactNumber: '09123456789',
+            purpose: 'Official Business',
+            visitDate: '2026-10-25',
+          },
+          vehicle: {
+            vehicleType: 'car',
+            plateNumber: 'ABC 1234',
+            color: 'black',
+            makeModel: 'Toyota Vios',
+          },
+          photoIntentId: PHOTO_INTENT_ID,
+          idIntentId: ID_INTENT_ID,
+          vehiclePhotoIntentId: randomUUID(),
+        }),
+      });
+
+      const res = await invokeHandler(issuePassHandler, req);
+      const json = await res.json();
+      expect(res.status).toBe(422);
+      expect(json.error).toBe('invalid_vehicle_declaration');
+    });
+
+    it('rejects replay with altered vehicle color or makeModel with 409 payload_mismatch', async () => {
+      const existing = mockDbData.passes.find((p) => p.issue_request_id === TEST_REQ_ID);
+      const existingVis = mockDbData.visitors.find((v) => v.id === VISITOR_ID);
+      if (existingVis) {
+        existingVis.arrival_mode = 'vehicle';
+      }
+      mockDbData.visit_vehicle_declarations = [
+        {
+          pass_id: existing?.id,
+          plate_key: 'ABC1234',
+          vehicle_type: 'car',
+          color: 'black',
+          make_model: 'Toyota Vios',
+          vehicle_catalog_status: 'catalog',
+          saved_vehicle_id: null,
+        },
+      ];
+
+      const req = new Request('http://localhost/api/passes/issue', {
+        method: 'POST',
+        headers: {
+          authorization: VALID_VISITOR_BEARER,
+          'content-type': 'application/json',
+        },
+        body: JSON.stringify({
+          requestId: TEST_REQ_ID,
+          source: 'portal',
+          arrivalMode: 'vehicle',
+          visitor: {
+            firstName: 'Juan',
+            middleName: 'Dela',
+            lastName: 'Cruz',
+            contactNumber: '09123456789',
+            purpose: 'Official Business',
+            visitDate: '2026-10-25',
+          },
+          vehicle: {
+            vehicleType: 'car',
+            plateNumber: 'ABC 1234',
+            color: 'white', // Altered
+            makeModel: 'Toyota Vios',
+            catalogStatus: 'catalog',
+          },
+          photoIntentId: PHOTO_INTENT_ID,
+          idIntentId: ID_INTENT_ID,
+          vehiclePhotoIntentId: randomUUID(),
+        }),
+      });
+
+      const res = await invokeHandler(issuePassHandler, req);
+      const json = await res.json();
+      expect(res.status).toBe(409);
+      expect(json.error).toBe('payload_mismatch');
+    });
+
+    it('rejects replay with altered upload intent IDs with 409 intent_mismatch', async () => {
+      mockDbData.visitor_evidence = [
+        {
+          id: randomUUID(),
+          visitor_id: VISITOR_ID,
+          kind: 'photo',
+          upload_intent_id: PHOTO_INTENT_ID,
+          purged_at: null,
+        },
+        {
+          id: randomUUID(),
+          visitor_id: VISITOR_ID,
+          kind: 'id',
+          upload_intent_id: ID_INTENT_ID,
+          purged_at: null,
+        },
+      ];
+
+      const req = new Request('http://localhost/api/passes/issue', {
+        method: 'POST',
+        headers: {
+          authorization: VALID_VISITOR_BEARER,
+          'content-type': 'application/json',
+        },
+        body: JSON.stringify({
+          requestId: TEST_REQ_ID,
+          source: 'portal',
+          arrivalMode: 'no_vehicle',
+          visitor: {
+            firstName: 'Juan',
+            middleName: 'Dela',
+            lastName: 'Cruz',
+            contactNumber: '09123456789',
+            purpose: 'Official Business',
+            visitDate: '2026-10-25',
+          },
+          photoIntentId: randomUUID(), // Altered photo intent ID
+          idIntentId: ID_INTENT_ID,
+        }),
+      });
+
+      const res = await invokeHandler(issuePassHandler, req);
+      const json = await res.json();
+      expect(res.status).toBe(409);
+      expect(json.error).toBe('intent_mismatch');
     });
   });
 

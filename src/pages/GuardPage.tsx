@@ -29,7 +29,7 @@ interface StationInfo {
 interface StationEntry {
   passId: string;
   publicReference: string;
-  status: string;
+  status: 'inside' | 'exited' | string;
   source: 'portal' | 'kiosk';
   enteredAt: string;
   visitorName: string;
@@ -49,32 +49,56 @@ interface StationEntry {
 interface FeedResponse {
   station: StationInfo;
   entries: StationEntry[];
+  hasMore?: boolean;
+  nextCursor?: string | null;
+  total?: number;
 }
 
 export function GuardPage() {
   const [station, setStation] = useState<StationInfo | null>(null);
   const [entries, setEntries] = useState<StationEntry[]>([]);
+  const [totalCount, setTotalCount] = useState<number>(0);
+  const [nextCursor, setNextCursor] = useState<string | null>(null);
+  const [hasMore, setHasMore] = useState(false);
+  const [loadingMore, setLoadingMore] = useState(false);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [isOnline, setIsOnline] = useState(navigator.onLine);
   const [showSignOutModal, setShowSignOutModal] = useState(false);
   const [isSigningOut, setIsSigningOut] = useState(false);
-  const pollIntervalRef = useRef<NodeJS.Timeout | null>(null);
+
+  const pollTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const activeControllerRef = useRef<AbortController | null>(null);
+  const requestSeqRef = useRef<number>(0);
+  const isMountedRef = useRef<boolean>(true);
 
   useEffect(() => {
+    isMountedRef.current = true;
     const handleOnline = () => setIsOnline(true);
     const handleOffline = () => setIsOnline(false);
     window.addEventListener('online', handleOnline);
     window.addEventListener('offline', handleOffline);
     return () => {
+      isMountedRef.current = false;
       window.removeEventListener('online', handleOnline);
       window.removeEventListener('offline', handleOffline);
+      if (pollTimeoutRef.current) clearTimeout(pollTimeoutRef.current);
+      if (activeControllerRef.current) activeControllerRef.current.abort();
     };
   }, []);
 
   const fetchFeed = useCallback(async (isBackground = false) => {
+    if (!isMountedRef.current) return;
     if (!isBackground) setRefreshing(true);
+
+    const seq = ++requestSeqRef.current;
+    if (activeControllerRef.current) {
+      activeControllerRef.current.abort();
+    }
+    const controller = new AbortController();
+    activeControllerRef.current = controller;
+
     try {
       const token = localStorage.getItem('egatepass_token') || sessionStorage.getItem('egatepass_token');
       const res = await fetch('/api/guard-station-feed', {
@@ -82,7 +106,10 @@ export function GuardPage() {
           ...(token ? { Authorization: `Bearer ${token}` } : {}),
           Accept: 'application/json',
         },
+        signal: controller.signal,
       });
+
+      if (seq !== requestSeqRef.current || !isMountedRef.current) return;
 
       if (!res.ok) {
         if (res.status === 401 || res.status === 403) {
@@ -94,30 +121,75 @@ export function GuardPage() {
       }
 
       const data = (await res.json()) as FeedResponse;
+      if (seq !== requestSeqRef.current || !isMountedRef.current) return;
+
       setStation(data.station);
       setEntries(data.entries);
+      setHasMore(Boolean(data.hasMore));
+      setNextCursor(data.nextCursor || null);
+      setTotalCount(typeof data.total === 'number' ? data.total : data.entries.length);
       setError(null);
-    } catch (err) {
+    } catch (err: any) {
+      if (err?.name === 'AbortError') return;
+      if (seq !== requestSeqRef.current || !isMountedRef.current) return;
       console.error('Failed to load guard station feed:', err);
       if (!isBackground) {
         setError('Network interruption. Please check connection.');
       }
     } finally {
-      setLoading(false);
-      setRefreshing(false);
+      if (seq === requestSeqRef.current && isMountedRef.current) {
+        setLoading(false);
+        setRefreshing(false);
+
+        // Self-scheduling poll: run after previous request completes
+        if (pollTimeoutRef.current) clearTimeout(pollTimeoutRef.current);
+        pollTimeoutRef.current = setTimeout(() => {
+          if (isMountedRef.current && navigator.onLine) {
+            void fetchFeed(true);
+          }
+        }, 4000);
+      }
     }
   }, []);
 
   useEffect(() => {
     void fetchFeed();
-    pollIntervalRef.current = setInterval(() => {
-      void fetchFeed(true);
-    }, 4000);
-
-    return () => {
-      if (pollIntervalRef.current) clearInterval(pollIntervalRef.current);
-    };
   }, [fetchFeed]);
+
+  const handleManualRefresh = () => {
+    if (pollTimeoutRef.current) clearTimeout(pollTimeoutRef.current);
+    void fetchFeed(false);
+  };
+
+  const handleLoadMore = async () => {
+    if (!nextCursor || loadingMore) return;
+    setLoadingMore(true);
+    try {
+      const token = localStorage.getItem('egatepass_token') || sessionStorage.getItem('egatepass_token');
+      const res = await fetch(`/api/guard-station-feed?cursor=${encodeURIComponent(nextCursor)}`, {
+        headers: {
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+          Accept: 'application/json',
+        },
+      });
+      if (res.ok && isMountedRef.current) {
+        const data = (await res.json()) as FeedResponse;
+        setEntries((prev) => {
+          const existingIds = new Set(prev.map((e) => e.passId));
+          const newEntries = data.entries.filter((e) => !existingIds.has(e.passId));
+          return [...prev, ...newEntries];
+        });
+        setHasMore(Boolean(data.hasMore));
+        setNextCursor(data.nextCursor || null);
+      }
+    } catch (err) {
+      console.error('Failed to load more feed entries:', err);
+    } finally {
+      if (isMountedRef.current) {
+        setLoadingMore(false);
+      }
+    }
+  };
 
   const latestEntry = entries[0] || null;
   const recentEntries = entries.slice(1);
@@ -162,7 +234,7 @@ export function GuardPage() {
             <Button
               size="sm"
               variant="secondary"
-              onClick={() => fetchFeed()}
+              onClick={handleManualRefresh}
               disabled={refreshing}
               icon={<RefreshCw className={`h-3.5 w-3.5 ${refreshing ? 'animate-spin' : ''}`} />}
             >
@@ -190,7 +262,7 @@ export function GuardPage() {
               <p className="font-semibold">{error}</p>
               <p className="text-xs mt-0.5">Check device enrollment and ensure this device is assigned type Guard Station.</p>
             </div>
-            <Button size="sm" variant="secondary" onClick={() => fetchFeed()}>
+            <Button size="sm" variant="secondary" onClick={handleManualRefresh}>
               Retry
             </Button>
           </div>
@@ -213,13 +285,13 @@ export function GuardPage() {
           </Card>
         ) : (
           <div className="grid gap-6 lg:grid-cols-12">
-            {/* Left: Latest Arrival (Prominent Hero Photo View) */}
+            {/* Left: Latest Scanned Visitor (Prominent Hero Photo View) */}
             <div className="lg:col-span-7">
               <Card className="overflow-hidden border-2 border-[var(--color-brand)] shadow-md">
                 <div className="bg-[var(--color-brand)] px-5 py-3 text-white flex items-center justify-between">
                   <div className="flex items-center gap-2">
                     <UserCheck className="h-5 w-5" />
-                    <span className="font-bold text-sm tracking-wide uppercase">Current Arrival</span>
+                    <span className="font-bold text-sm tracking-wide uppercase">Latest Scanned Visitor</span>
                   </div>
                   <span className="text-xs bg-white/20 px-2.5 py-0.5 rounded-full font-medium">
                     {latestEntry?.enteredAt ? formatManilaTime(latestEntry.enteredAt) : 'Just now'}
@@ -321,15 +393,27 @@ export function GuardPage() {
                         </div>
                       )}
 
-                      <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-4 text-emerald-900">
-                        <div className="flex items-center gap-2 font-bold text-sm">
-                          <CheckCircle2 className="h-5 w-5 text-emerald-600 flex-shrink-0" />
-                          Entry Recorded
+                      {latestEntry?.status === 'exited' ? (
+                        <div className="rounded-xl border border-slate-300 bg-slate-100 p-4 text-slate-800">
+                          <div className="flex items-center gap-2 font-bold text-sm">
+                            <CheckCircle2 className="h-5 w-5 text-slate-600 flex-shrink-0" />
+                            Exited Campus
+                          </div>
+                          <p className="text-xs text-slate-600 mt-1 leading-relaxed">
+                            Visitor has scanned exit and departed the campus.
+                          </p>
                         </div>
-                        <p className="text-xs text-emerald-800 mt-1 leading-relaxed">
-                          Identity was verified online during registration. Please perform the standard security physical inspection.
-                        </p>
-                      </div>
+                      ) : (
+                        <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-4 text-emerald-900">
+                          <div className="flex items-center gap-2 font-bold text-sm">
+                            <CheckCircle2 className="h-5 w-5 text-emerald-600 flex-shrink-0" />
+                            Currently Inside Campus
+                          </div>
+                          <p className="text-xs text-emerald-800 mt-1 leading-relaxed">
+                            Identity was verified online during registration. Please perform the standard security physical inspection.
+                          </p>
+                        </div>
+                      )}
                     </div>
                   </div>
                 </div>
@@ -344,7 +428,7 @@ export function GuardPage() {
                   Recent Entries at {station?.gate || 'This Gate'}
                 </h3>
                 <span className="text-xs text-[var(--color-text-muted)]">
-                  Today's total: {entries.length}
+                  Today's total: {totalCount} (Showing {entries.length})
                 </span>
               </div>
 
@@ -390,11 +474,31 @@ export function GuardPage() {
                         )}
                       </div>
 
-                      <span className="flex-shrink-0 rounded-md bg-emerald-50 px-2 py-0.5 text-[11px] font-semibold text-emerald-700 border border-emerald-200">
-                        Inside
-                      </span>
+                      {entry.status === 'inside' ? (
+                        <span className="flex-shrink-0 rounded-md bg-emerald-50 px-2 py-0.5 text-[11px] font-semibold text-emerald-700 border border-emerald-200">
+                          Inside
+                        </span>
+                      ) : (
+                        <span className="flex-shrink-0 rounded-md bg-slate-100 px-2 py-0.5 text-[11px] font-semibold text-slate-700 border border-slate-300">
+                          Exited
+                        </span>
+                      )}
                     </Card>
                   ))}
+
+                  {hasMore && (
+                    <div className="pt-2 text-center">
+                      <Button
+                        size="sm"
+                        variant="secondary"
+                        onClick={handleLoadMore}
+                        loading={loadingMore}
+                        className="w-full"
+                      >
+                        {loadingMore ? 'Loading older entries…' : 'Load More Entries'}
+                      </Button>
+                    </div>
+                  )}
                 </div>
               )}
             </div>

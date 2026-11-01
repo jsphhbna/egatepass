@@ -228,16 +228,31 @@ export async function verifyPlaceDetails(
     throw new Error('invalid_address_place');
   }
 
-  // Specificity check: reject excessively broad results such as country or state level only
+  // Specificity check: reject excessively broad results such as country, state, or city/municipality-only
   const resultType = String(props.result_type || '').toLowerCase();
-  const broadTypes = ['country', 'state'];
-  if (broadTypes.includes(resultType)) {
+  const broadTypes = ['country', 'state', 'region', 'county', 'city', 'municipality', 'postcode'];
+  
+  const hasSubCityComponent = Boolean(
+    String(props.housenumber || props.house_number || '').trim() ||
+    String(props.street || '').trim() ||
+    String(props.suburb || '').trim() ||
+    String(props.district || '').trim() ||
+    String(props.neighbourhood || '').trim() ||
+    String(props.quarter || '').trim() ||
+    String(props.village || '').trim() ||
+    String(props.hamlet || '').trim() ||
+    String(props.residential || '').trim() ||
+    String(props.amenity || '').trim() ||
+    String(props.building || '').trim()
+  );
+
+  if (broadTypes.includes(resultType) && !hasSubCityComponent) {
     throw new Error('address_too_broad');
   }
 
   // Check if formatted text is only country/island/state without local context
   const broadNames = ['philippines', 'pilipinas', 'metro manila', 'national capital region', 'luzon', 'visayas', 'mindanao'];
-  if (broadNames.includes(formatted.toLowerCase())) {
+  if (broadNames.includes(formatted.toLowerCase()) && !hasSubCityComponent) {
     throw new Error('address_too_broad');
   }
 

@@ -497,6 +497,15 @@ test.describe('Section 17: Full Front-Door Vehicle Registration Browser Workflow
     await expect(colorSelect).toBeVisible();
     await colorSelect.selectOption('White');
 
+    // Make and Model
+    const makeSelect = page.locator('#vehicle-make-select');
+    await expect(makeSelect).toBeVisible();
+    await makeSelect.selectOption('Toyota');
+
+    const modelSelect = page.locator('#vehicle-model-select');
+    await expect(modelSelect).toBeEnabled({ timeout: 10_000 });
+    await modelSelect.selectOption('Vios');
+
     // Attach Vehicle Photo (using fixture)
     const vehicleFileInput = page.locator('#vehicle-photo-input');
     await vehicleFileInput.setInputFiles(path.resolve('tests/fixtures/face-sample-1.jpg'));
@@ -562,5 +571,425 @@ test.describe('Section 17: Full Front-Door Vehicle Registration Browser Workflow
     expect(capturedIssuePayload.vehicle?.plateNumber).toBe('ABC 1234');
     expect(capturedIssuePayload.vehicle?.color).toBe('White');
     expect(capturedIssuePayload.vehicle?.vehicleType).toBe('car');
+    expect(capturedIssuePayload.vehicle?.makeModel).toBe('Toyota Vios');
+    expect(capturedIssuePayload.vehicle?.catalogStatus).toBe('catalog');
+  });
+});
+
+test.describe('Section 18: Returning Visitor Unavailable Modal Navigation', () => {
+  test('clicking Register as New Visitor from Returning Unavailable modal lands on arrival setup with neither preselected', async ({
+    page,
+  }) => {
+    await setupPageMocks(page);
+
+    await page.goto('/get-pass');
+    await expect(page.getByText('Setup Step 1 of 2')).toBeVisible({ timeout: 15_000 });
+
+    // Click Returning Visitor card
+    const returningVisitorCard = page.getByRole('button', { name: /Check Availability|Returning Visitor/i }).first();
+    await returningVisitorCard.click();
+
+    // Verify modal is visible
+    const modalHeading = page.getByRole('heading', { name: /Feature Under Maintenance|Returning Visitor/i });
+    await expect(modalHeading).toBeVisible({ timeout: 10_000 });
+
+    // Click "Register as New Visitor" in modal
+    const registerAsNewBtn = page.getByRole('button', { name: /Register as New Visitor/i }).last();
+    await registerAsNewBtn.click();
+
+    // Verify modal is closed
+    await expect(modalHeading).not.toBeVisible();
+
+    // Verifies user lands on Setup Step 2 of 2 (Arrival Method)
+    await expect(page.getByText('Setup Step 2 of 2')).toBeVisible({ timeout: 10_000 });
+    await expect(page.getByRole('heading', { name: 'Arrival Method' })).toBeVisible();
+
+    // Verifies neither option is preselected
+    const onFootRadio = page.locator('div[role="radio"]').filter({ hasText: /On Foot \/ Commute/i });
+    const vehicleRadio = page.locator('div[role="radio"]').filter({ hasText: /Bringing a Vehicle/i });
+
+    await expect(onFootRadio).toHaveAttribute('aria-checked', 'false');
+    await expect(vehicleRadio).toHaveAttribute('aria-checked', 'false');
+
+    const continueBtn = page.getByRole('button', { name: /Continue to Personal Details/i });
+    await expect(continueBtn).toBeDisabled();
+  });
+});
+
+test.describe('Section 19: Complete "Start Over" Session & State Reset', () => {
+  test('clears all React Hook Form state, address cache, and lands on frontdoor', async ({
+    page,
+  }) => {
+    await setupPageMocks(page);
+
+    // Mock address autocomplete
+    await page.route('**/api/address/autocomplete**', async (route: any) => {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          suggestions: [
+            {
+              placeId: 'geo-nagtahan-1008',
+              formatted: 'Nagtahan St, Sampaloc, Manila, Philippines',
+              addressLine1: 'Nagtahan St',
+              addressLine2: 'Sampaloc, Manila',
+              city: 'Manila',
+              state: 'Metro Manila',
+              countryCode: 'ph',
+              lat: 14.5995,
+              lon: 120.9842,
+              resultType: 'street',
+              confidence: 0.98,
+              matchType: 'full_match',
+            },
+          ],
+        }),
+      });
+    });
+
+    // Start registration
+    await page.goto('/get-pass?mode=new&arrival=no_vehicle');
+
+    const firstName = page.locator('#first-name, #firstName');
+    const lastName = page.locator('#last-name, #lastName');
+    const contact = page.locator('#contact-number, #contactNumber');
+    const addressInput = page.locator('#home-address, #homeAddress');
+    const consent = page.locator('input[type="checkbox"]#consent, input[name="consent"]');
+    const nextBtn = page.getByRole('button', { name: /Next: Visit Details|Continue/i });
+
+    await expect(firstName).toBeVisible({ timeout: 15_000 });
+    await firstName.fill('Pedro');
+    await lastName.fill('Penduko');
+    await contact.fill('09181234567');
+
+    await addressInput.fill('Nagtahan');
+    const suggestionItem = page.locator('div[role="button"]:has-text("Nagtahan St")').first();
+    await expect(suggestionItem).toBeVisible({ timeout: 10_000 });
+    await suggestionItem.click();
+
+    await consent.check();
+    await nextBtn.click();
+
+    // Now on Step 2 (Visit Details)
+    await expect(page.getByRole('heading', { name: /Visit & Vehicle Details|Visit Details/i })).toBeVisible({ timeout: 10_000 });
+
+    // Click "Start Over" button in header
+    const startOverBtn = page.getByRole('button', { name: /Start Over/i }).first();
+    await expect(startOverBtn).toBeVisible();
+    await startOverBtn.click();
+
+    // Lands back on Front Door Setup Step 1 of 2
+    await expect(page.getByText('Setup Step 1 of 2')).toBeVisible({ timeout: 15_000 });
+
+    // Navigate into New Visitor -> On Foot -> Personal Details
+    const newVisitorCard = page.getByRole('button', { name: /Register as New Visitor|New Visitor/i }).first();
+    await newVisitorCard.click();
+
+    const onFootRadio = page.locator('div[role="radio"]').filter({ hasText: /On Foot \/ Commute/i });
+    await onFootRadio.click();
+
+    const continueBtn = page.getByRole('button', { name: /Continue to Personal Details/i });
+    await continueBtn.click();
+
+    // Verify all fields are completely blank / reset
+    await expect(firstName).toBeVisible({ timeout: 10_000 });
+    await expect(firstName).toHaveValue('');
+    await expect(lastName).toHaveValue('');
+    await expect(contact).toHaveValue('');
+    await expect(addressInput).toBeVisible();
+    await expect(addressInput).toHaveValue('');
+    await expect(page.getByRole('button', { name: /Change/i })).not.toBeVisible();
+  });
+});
+
+test.describe('Section 20: Vehicle Catalog 3-State Machine & Explicit Selection', () => {
+  test('enforces explicit selection, supports manual make/model, and resets on vehicle type change', async ({
+    page,
+  }) => {
+    await setupPageMocks(page);
+
+    await page.route('**/api/vehicles/makes**', async (route) => {
+      const url = new URL(route.request().url());
+      const type = url.searchParams.get('type');
+      if (type === 'motorcycle') {
+        await route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify({ makes: ['Yamaha', 'Kawasaki'] }),
+        });
+        return;
+      }
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ makes: ['Toyota', 'Honda'] }),
+      });
+    });
+
+    await page.route('**/api/vehicles/models**', async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ models: ['Vios', 'Corolla'] }),
+      });
+    });
+
+    await page.route('**/api/address/autocomplete**', async (route: any) => {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          suggestions: [
+            {
+              placeId: 'geo-nagtahan-1008',
+              formatted: 'Nagtahan St, Sampaloc, Manila, Philippines',
+              addressLine1: 'Nagtahan St',
+              addressLine2: 'Sampaloc, Manila',
+              city: 'Manila',
+              state: 'Metro Manila',
+              countryCode: 'ph',
+              lat: 14.5995,
+              lon: 120.9842,
+              resultType: 'street',
+              confidence: 0.98,
+              matchType: 'full_match',
+            },
+          ],
+        }),
+      });
+    });
+
+    await page.goto('/get-pass?mode=new&arrival=vehicle');
+
+    // Fill Step 1
+    const firstName = page.locator('#first-name, #firstName');
+    const lastName = page.locator('#last-name, #lastName');
+    const contact = page.locator('#contact-number, #contactNumber');
+    const addressInput = page.locator('#home-address, #homeAddress');
+    const consent = page.locator('input[type="checkbox"]#consent, input[name="consent"]');
+    const nextBtn = page.getByRole('button', { name: /Next: Visit Details|Continue/i });
+
+    await expect(firstName).toBeVisible({ timeout: 15_000 });
+    await firstName.fill('Maria');
+    await lastName.fill('Clara');
+    await contact.fill('09191234567');
+
+    await addressInput.fill('Nagtahan');
+    const suggestionItem = page.locator('div[role="button"]:has-text("Nagtahan St")').first();
+    await expect(suggestionItem).toBeVisible({ timeout: 10_000 });
+    await suggestionItem.click();
+
+    await consent.check();
+    await nextBtn.click();
+
+    // Now on Step 2 (Visit & Vehicle Details)
+    await expect(page.getByRole('heading', { name: /Visit & Vehicle Details/i })).toBeVisible({ timeout: 10_000 });
+
+    // Fill plate, purpose, date
+    await page.locator('#visit-purpose-choice').selectOption({ index: 1 });
+    const today = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Manila' }).format(new Date());
+    await page.locator('#visit-date').fill(today);
+    await page.getByPlaceholder('ABC 1234').fill('XYZ 7890');
+    await page.locator('select[name="vehicleColor"]').selectOption('Black');
+
+    // 1. Check placeholder state
+    const makeSelect = page.locator('#vehicle-make-select');
+    const modelSelect = page.locator('#vehicle-model-select');
+
+    await expect(makeSelect).toHaveValue('');
+    await expect(modelSelect).toBeDisabled();
+
+    // Try advancing to face capture without choosing make/model -> blocked
+    const toFaceCaptureBtn = page.getByRole('button', { name: /Continue to Live Face Capture|Continue/i });
+    await toFaceCaptureBtn.click();
+    await expect(page.getByText(/Vehicle make and model must be between 2 and 100 characters/i).first()).toBeVisible();
+
+    // 2. Select "Other / Not Listed" make
+    await makeSelect.selectOption('Other / Not Listed');
+    const customMakeInput = page.locator('#vehicle-custom-make');
+    const customModelInput = page.locator('#vehicle-custom-model');
+
+    await expect(customMakeInput).toBeVisible({ timeout: 5_000 });
+    await expect(customModelInput).toBeVisible({ timeout: 5_000 });
+
+    await customMakeInput.fill('Geely');
+    await customModelInput.fill('Coolray');
+
+    // 3. Switch back to known make "Toyota"
+    await makeSelect.selectOption('Toyota');
+    await expect(customMakeInput).not.toBeVisible();
+    await expect(modelSelect).toBeEnabled({ timeout: 5_000 });
+    await expect(modelSelect).toHaveValue('');
+
+    // 4. Select "Other / Not Listed" model
+    await modelSelect.selectOption('Other / Not Listed');
+    await expect(customModelInput).toBeVisible({ timeout: 5_000 });
+    await customModelInput.fill('Custom Prototype');
+
+    // 5. Switch vehicle type from Car to Motorcycle
+    const typeSelect = page.locator('select').filter({ hasText: /Car \(Sedan/i });
+    await typeSelect.selectOption({ label: 'Motorcycle / Scooter' });
+
+    // Verify make and model are reset
+    await expect(makeSelect).toHaveValue('');
+    await expect(customModelInput).not.toBeVisible();
+  });
+});
+
+test.describe('Section 21: Ambiguous Generation Failure and "Cancel & Ask Guard" Terminal Hold', () => {
+  test('enters terminal hold alert, hides Edit/Generate buttons, and enables only Start Over', async ({
+    page,
+  }) => {
+    await setupPageMocks(page);
+
+    await page.route('**/api/address/autocomplete**', async (route: any) => {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          suggestions: [
+            {
+              placeId: 'geo-nagtahan-1008',
+              formatted: 'Nagtahan St, Sampaloc, Manila, Philippines',
+              addressLine1: 'Nagtahan St',
+              addressLine2: 'Sampaloc, Manila',
+              city: 'Manila',
+              state: 'Metro Manila',
+              countryCode: 'ph',
+              lat: 14.5995,
+              lon: 120.9842,
+              resultType: 'street',
+              confidence: 0.98,
+              matchType: 'full_match',
+            },
+          ],
+        }),
+      });
+    });
+
+    // Mock upload intents
+    let intentCounter = 0;
+    await page.route('**/rest/v1/rpc/create_upload_intent**', async (route) => {
+      intentCounter++;
+      const kind = intentCounter === 1 ? 'photo' : 'id';
+      const bucket = kind === 'photo' ? 'visitor-photos' : 'visitor-ids';
+      const intentId = `intent-e2e-${intentCounter}`;
+
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          intent_id: intentId,
+          bucket_id: bucket,
+          object_path: `mock-user/${intentId}/${kind}.jpg`,
+          expires_at: new Date(Date.now() + 900000).toISOString(),
+          max_bytes: 5242880,
+        }),
+      });
+    });
+
+    await page.route('**/storage/v1/object/**', async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ Key: 'visitor-photos/mock.jpg' }),
+      });
+    });
+
+    await page.route('**/api/passes/verify-identity**', async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          ok: true,
+          outcome: 'matched',
+          result: 'matched',
+          score: 0.92,
+          reason: null,
+        }),
+      });
+    });
+
+    // Fail pass issuance with 500 server error
+    await page.route('**/api/passes/issue**', async (route) => {
+      await route.fulfill({
+        status: 500,
+        contentType: 'application/json',
+        body: JSON.stringify({ error: 'internal_server_error', message: 'Database query timed out' }),
+      });
+    });
+
+    // Complete flow up to review
+    await page.goto('/get-pass?mode=new&arrival=no_vehicle');
+
+    const firstName = page.locator('#first-name, #firstName');
+    const lastName = page.locator('#last-name, #lastName');
+    const contact = page.locator('#contact-number, #contactNumber');
+    const addressInput = page.locator('#home-address, #homeAddress');
+    const consent = page.locator('input[type="checkbox"]#consent, input[name="consent"]');
+    const nextBtn = page.getByRole('button', { name: /Next: Visit Details|Continue/i });
+
+    await expect(firstName).toBeVisible({ timeout: 15_000 });
+    await firstName.fill('Crisostomo');
+    await lastName.fill('Ibarra');
+    await contact.fill('09201234567');
+
+    await addressInput.fill('Nagtahan');
+    const suggestionItem = page.locator('div[role="button"]:has-text("Nagtahan St")').first();
+    await expect(suggestionItem).toBeVisible({ timeout: 10_000 });
+    await suggestionItem.click();
+
+    await consent.check();
+    await nextBtn.click();
+
+    // Step 2 Visit Details
+    await page.locator('#visit-purpose-choice').selectOption({ index: 1 });
+    const today = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Manila' }).format(new Date());
+    await page.locator('#visit-date').fill(today);
+    await page.getByRole('button', { name: /Continue to Live Face Capture|Continue/i }).click();
+
+    // Step 3 Live Face Capture
+    await expect(page.getByRole('heading', { name: /Verify Your Identity/i })).toBeVisible({ timeout: 15_000 });
+    await page.getByRole('button', { name: /Take Live Photo/i }).click();
+    await page.getByRole('button', { name: /Use This Photo/i }).click();
+
+    // Step 4 Valid ID Document
+    await expect(page.getByRole('heading', { name: /Valid ID Document/i })).toBeVisible({ timeout: 10_000 });
+    await page.locator('#id-file-input').setInputFiles(path.resolve('tests/fixtures/synthetic-philippine-id.png'));
+    await page.getByRole('button', { name: /Verify Identity/i }).click();
+
+    // Step 5 Identity Verified
+    await expect(page.getByRole('heading', { name: 'Identity Verified Successfully' })).toBeVisible({ timeout: 15_000 });
+    await page.getByRole('button', { name: /Continue to Review/i }).click();
+
+    // Review Screen
+    await expect(page.getByRole('heading', { name: /Review Your Information/i })).toBeVisible({ timeout: 15_000 });
+
+    // Click Generate Pass -> triggers 500 error
+    const generateBtn = page.getByRole('button', { name: /Generate E-GatePass/i });
+    await generateBtn.click();
+
+    // Ambiguous error banner / dialog appears
+    await expect(page.getByText(/Generation result could not be confirmed/i)).toBeVisible({ timeout: 10_000 });
+
+    // Click "Cancel & Ask Guard"
+    const cancelAndAskGuardBtn = page.getByRole('button', { name: /Cancel & Ask Guard/i });
+    await expect(cancelAndAskGuardBtn).toBeVisible();
+    await cancelAndAskGuardBtn.click();
+
+    // Review Screen now enters submission_uncertain_hold:
+    // 1. Prominent hold banner
+    await expect(page.getByText('Submission Held for Guard Verification')).toBeVisible();
+    await expect(page.getByText(/Crisostomo Ibarra/i).first()).toBeVisible();
+
+    // 2. Action buttons: Generate E-GatePass and Back to Details are hidden
+    await expect(page.getByRole('button', { name: /Generate E-GatePass/i })).not.toBeVisible();
+    await expect(page.getByRole('button', { name: /Back to Details/i })).not.toBeVisible();
+
+    // 3. Only "Start Over" button is available in action row
+    const startOverBtn = page.getByRole('button', { name: 'Start Over' }).last();
+    await expect(startOverBtn).toBeVisible();
+    await expect(startOverBtn).toBeEnabled();
   });
 });

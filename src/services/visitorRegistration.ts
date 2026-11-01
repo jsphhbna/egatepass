@@ -54,6 +54,7 @@ export interface IssuedPass {
   qrToken: string;
   validFrom: string;
   validUntil: string;
+  returningEnrollment?: 'enrolled' | 'failed' | 'not_requested';
 }
 
 interface UploadIntent {
@@ -97,7 +98,8 @@ export type IssueTransactionPhase =
   | 'dispatched'
   | 'ambiguous'
   | 'committed'
-  | 'existing_pass_conflict';
+  | 'existing_pass_conflict'
+  | 'submission_uncertain_hold';
 
 export type PortalIssueTransactionPhase = IssueTransactionPhase;
 
@@ -129,6 +131,7 @@ export type SubmissionOutcomeType =
   | 'committed'
   | 'ambiguous'
   | 'rejected_correctable_field'
+  | 'rejected_requires_reverification'
   | 'rejected_requires_new_transaction'
   | 'existing_pass_replay_conflict';
 
@@ -148,34 +151,73 @@ export function classifySubmissionOutcome(
     }
   }
 
-  // 1. Authoritative pre-commit rejections
-  if (code === 'visit_date_out_of_range') {
+  // Group A: Authoritative pre-commit field / rate-limit rejections (user can correct fields in place)
+  const CORRECTABLE_CODES = new Set([
+    'visit_date_out_of_range',
+    'invalid_vehicle_declaration',
+    'invalid_vehicle_plate',
+    'vehicle_photo_required',
+    'address_verification_required',
+    'address_verification_failed',
+    'address_insufficient_specificity',
+    'address_must_be_philippines',
+    'address_coordinates_out_of_bounds',
+    'invalid_contact_number',
+    'rate_limit_exceeded',
+    'abuse_control_unavailable',
+  ]);
+
+  if (code && CORRECTABLE_CODES.has(code)) {
     return 'rejected_correctable_field';
   }
-  if (status === 429 || code === 'rate_limit_exceeded') {
-    return 'rejected_correctable_field';
-  }
-  if (code === 'abuse_control_unavailable') {
+  if (status === 429) {
     return 'rejected_correctable_field';
   }
 
-  // 2. Existing pass replay conflicts (same-request-id replay payload or intent mismatch)
-  if (code === 'payload_mismatch' || code === 'intent_mismatch') {
+  // Group B: Identity re-verification required (biometric expired or missing)
+  const REVERIFICATION_CODES = new Set([
+    'identity_verification_required',
+    'identity_verification_expired',
+  ]);
+  if (code && REVERIFICATION_CODES.has(code)) {
+    return 'rejected_requires_reverification';
+  }
+
+  // Group D: Existing pass replay conflicts (same-request-id replay payload or intent mismatch)
+  const REPLAY_CONFLICT_CODES = new Set([
+    'payload_mismatch',
+    'intent_mismatch',
+    'cross_actor_replay',
+    'source_mismatch',
+    'pass_token_secret_rotated',
+  ]);
+  if (code && REPLAY_CONFLICT_CODES.has(code)) {
     return 'existing_pass_replay_conflict';
   }
 
-  // 3. Authoritative replay consistency / session mismatches / expiration (Section 10)
-  if (
-    code === 'cross_actor_replay' ||
-    code === 'source_mismatch' ||
-    code === 'pass_has_expired' ||
-    status === 409 ||
-    status === 422
-  ) {
+  // Group C: Authoritative upload / session mismatches requiring brand-new transaction
+  const NEW_TRANSACTION_CODES = new Set([
+    'invalid_upload_intent',
+    'missing_uploaded_object',
+    'invalid_uploaded_content',
+    'pass_has_expired',
+    'expired_upload_intent',
+  ]);
+  if (code && NEW_TRANSACTION_CODES.has(code)) {
     return 'rejected_requires_new_transaction';
   }
 
-  // 3. Ambiguous outcomes: generic 5xx, service_unavailable, network timeout, unknown server failure
+  // Generic 409: replay conflict
+  if (status === 409) {
+    return 'existing_pass_replay_conflict';
+  }
+
+  // Generic 422 / 400: field validation
+  if (status === 422 || status === 400) {
+    return 'rejected_correctable_field';
+  }
+
+  // Group E: Ambiguous outcomes: generic 5xx, service_unavailable, network timeout, unknown server failure
   if (status >= 500 || code === 'service_unavailable' || code === 'network_interruption') {
     return 'ambiguous';
   }
@@ -942,8 +984,28 @@ export async function issueVisitorPass(
         message = 'Too many pass requests from this visitor session. Please wait before requesting another pass.';
       } else if (errCode === 'abuse_control_unavailable') {
         message = 'Pass service is temporarily unavailable.';
+      } else if (errCode === 'invalid_contact_number') {
+        message = 'Please provide a valid Philippine mobile number (e.g., 0917 123 4567).';
+      } else if (errCode === 'address_insufficient_specificity') {
+        message = 'Please provide a specific street address or building, not just the city name.';
+      } else if (errCode?.includes('vehicle')) {
+        message = 'Please check your vehicle declaration details.';
+      } else if (body && (body as any).message) {
+        message = (body as any).message;
       }
       throw new PassIssuanceError(message, errCode, outcome);
+    }
+
+    if (outcome === 'rejected_requires_reverification') {
+      if (transaction) {
+        transaction.phase = 'editable';
+        transaction.submittedPayload = null;
+      }
+      throw new PassIssuanceError(
+        'Identity verification has expired or is required. Please verify your identity again.',
+        errCode,
+        outcome
+      );
     }
 
     if (outcome === 'existing_pass_replay_conflict') {
@@ -964,8 +1026,10 @@ export async function issueVisitorPass(
         transaction.requestId = crypto.randomUUID();
         transaction.photoIntentId = null;
         transaction.idIntentId = null;
+        transaction.vehiclePhotoIntentId = null;
         transaction.photoCheckpoint = null;
         transaction.idCheckpoint = null;
+        transaction.vehiclePhotoCheckpoint = null;
         transaction.phase = 'editable';
         transaction.submittedPayload = null;
       }

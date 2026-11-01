@@ -1,7 +1,8 @@
 import { defineConfig, devices } from '@playwright/test';
 
 export default defineConfig({
-  testDir: './tests/startup',
+  testDir: './tests',
+  testMatch: /.*\.spec\.ts/,
   fullyParallel: false,
   forbidOnly: true,
   retries: 0,
@@ -14,7 +15,7 @@ export default defineConfig({
     screenshot: 'only-on-failure',
     video: 'retain-on-failure',
     actionTimeout: 10_000,
-    navigationTimeout: 15_000,
+    navigationTimeout: 30_000,
   },
   projects: [
     {

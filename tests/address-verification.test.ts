@@ -204,6 +204,65 @@ describe('Address Verification & Geoapify Integration', () => {
       await expect(verifyPlaceDetails('metro_manila_state')).rejects.toThrow('address_too_broad');
     });
 
+    it('rejects city-only place details lacking sub-city geographic specificity', async () => {
+      const cityOnly = {
+        type: 'FeatureCollection',
+        features: [
+          {
+            properties: {
+              place_id: 'manila_city_only',
+              formatted: 'Manila, Metro Manila, Philippines',
+              city: 'Manila',
+              state: 'Metro Manila',
+              country_code: 'ph',
+              lat: 14.5995,
+              lon: 120.9842,
+              result_type: 'city',
+            },
+          },
+        ],
+      };
+
+      global.fetch = vi.fn().mockResolvedValue({
+        ok: true,
+        status: 200,
+        json: async () => cityOnly,
+      } as any);
+
+      await expect(verifyPlaceDetails('manila_city_only')).rejects.toThrow('address_too_broad');
+    });
+
+    it('accepts city-level results that contain a sub-city component like barangay or suburb', async () => {
+      const cityWithBarangay = {
+        type: 'FeatureCollection',
+        features: [
+          {
+            properties: {
+              place_id: 'sampaloc_manila',
+              formatted: 'Sampaloc, Manila, Metro Manila, Philippines',
+              suburb: 'Sampaloc',
+              city: 'Manila',
+              state: 'Metro Manila',
+              country_code: 'ph',
+              lat: 14.601,
+              lon: 120.992,
+              result_type: 'city',
+            },
+          },
+        ],
+      };
+
+      global.fetch = vi.fn().mockResolvedValue({
+        ok: true,
+        status: 200,
+        json: async () => cityWithBarangay,
+      } as any);
+
+      const verified = await verifyPlaceDetails('sampaloc_manila');
+      expect(verified.placeId).toBe('sampaloc_manila');
+      expect(verified.formatted).toBe('Sampaloc, Manila, Metro Manila, Philippines');
+    });
+
     it('rejects coordinates outside Philippines bounding box', async () => {
       const outOfBounds = {
         type: 'FeatureCollection',

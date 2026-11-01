@@ -20,8 +20,34 @@ export function clearVpicCacheForTesting(): void {
   modelsCache.clear();
 }
 
+const CANONICAL_ACRONYMS: Record<string, string> = {
+  bmw: 'BMW',
+  byd: 'BYD',
+  mg: 'MG',
+  gac: 'GAC',
+  gmc: 'GMC',
+  ktm: 'KTM',
+  tvs: 'TVS',
+};
+
+export function formatVehicleName(raw: string): string {
+  const trimmed = raw.trim();
+  if (!trimmed) return '';
+  const lower = trimmed.toLowerCase();
+  if (CANONICAL_ACRONYMS[lower]) {
+    return CANONICAL_ACRONYMS[lower];
+  }
+  return lower
+    .split(' ')
+    .map((word) => {
+      if (CANONICAL_ACRONYMS[word]) return CANONICAL_ACRONYMS[word];
+      return word.charAt(0).toUpperCase() + word.slice(1);
+    })
+    .join(' ');
+}
+
 // Common Philippine-market makes fallback when vPIC is slow or offline
-export const POPULAR_PH_MAKES = [
+export const POPULAR_PH_MAKES_FOUR_WHEEL = [
   'Toyota',
   'Mitsubishi',
   'Honda',
@@ -40,25 +66,63 @@ export const POPULAR_PH_MAKES = [
   'GAC',
   'Changan',
   'Foton',
-  'Yamaha',
-  'Kawasaki',
-  'Kymco',
-  'Vespa',
   'BMW',
   'Mercedes-Benz',
 ];
 
-export const POPULAR_PH_MODELS: Record<string, string[]> = {
-  Toyota: ['Vios', 'Innova', 'Fortuner', 'Hilux', 'Wigo', 'Rush', 'Corolla Altis', 'Avanza', 'Raize', 'Yaris Cross', 'Hiace'],
-  Mitsubishi: ['Mirage', 'Mirage G4', 'Montero Sport', 'Xpander', 'Strada', 'Triton', 'L300'],
-  Honda: ['City', 'Civic', 'CR-V', 'BR-V', 'HR-V', 'Brio', 'Click 125', 'Click 160', 'Beat', 'PCX 160', 'ADV 160'],
-  Nissan: ['Navara', 'Terra', 'Almera', 'Urvan', 'Kicks'],
-  Suzuki: ['Ertiga', 'Dzire', 'Jimny', 'S-Presso', 'Celerio', 'Raider 150', 'Burgman Street', 'Smash'],
-  Ford: ['Ranger', 'Everest', 'Territory', 'Explorer'],
-  Isuzu: ['D-Max', 'mu-X', 'Traviz', 'Elf'],
-  Hyundai: ['Stargazer', 'Creta', 'Tucson', 'Santa Fe', 'H-100'],
-  Yamaha: ['NMAX', 'Aerox', 'Mio', 'Sniper 155', 'Mio Gravis', 'Fazzio'],
+export const POPULAR_PH_MAKES_TWO_WHEEL = [
+  'Honda',
+  'Yamaha',
+  'Kawasaki',
+  'Suzuki',
+  'Kymco',
+  'Vespa',
+  'BMW',
+  'KTM',
+  'TVS',
+];
+
+// Backwards compatibility export
+export const POPULAR_PH_MAKES = POPULAR_PH_MAKES_FOUR_WHEEL;
+
+export const POPULAR_PH_MODELS_BY_TYPE_AND_MAKE: Record<string, Record<string, string[]>> = {
+  motorcycle: {
+    Honda: ['Click 125', 'Click 160', 'Beat', 'PCX 160', 'ADV 160', 'Wave 110', 'XRM 125', 'Winner X'],
+    Yamaha: ['NMAX', 'Aerox', 'Mio', 'Sniper 155', 'Mio Gravis', 'Fazzio'],
+    Suzuki: ['Raider 150', 'Burgman Street', 'Smash', 'Gixxer'],
+    Kawasaki: ['Barako II', 'Ninja 400', 'Versys', 'Z400'],
+    Kymco: ['Like 150i', 'Super Z', 'AK550'],
+    Vespa: ['Primavera', 'Sprint', 'GTS'],
+    BMW: ['G 310 R', 'G 310 GS', 'R 1250 GS'],
+    KTM: ['Duke 200', 'Duke 390', 'RC 390'],
+    TVS: ['Dazz', 'Apache RTR', 'Ntorq 125'],
+  },
+  four_wheel: {
+    Toyota: ['Vios', 'Innova', 'Fortuner', 'Hilux', 'Wigo', 'Rush', 'Corolla Altis', 'Avanza', 'Raize', 'Yaris Cross', 'Hiace', 'Camry'],
+    Mitsubishi: ['Mirage', 'Mirage G4', 'Montero Sport', 'Xpander', 'Strada', 'Triton', 'L300'],
+    Honda: ['City', 'Civic', 'CR-V', 'BR-V', 'HR-V', 'Brio', 'Accord'],
+    Nissan: ['Navara', 'Terra', 'Almera', 'Urvan', 'Kicks'],
+    Suzuki: ['Ertiga', 'Dzire', 'Jimny', 'S-Presso', 'Celerio'],
+    Ford: ['Ranger', 'Everest', 'Territory', 'Explorer'],
+    Isuzu: ['D-Max', 'mu-X', 'Traviz', 'Elf'],
+    Hyundai: ['Stargazer', 'Creta', 'Tucson', 'Santa Fe', 'H-100'],
+    Kia: ['Seltos', 'Sonet', 'Carnival', 'Stonic'],
+    Mazda: ['Mazda 2', 'Mazda 3', 'CX-30', 'CX-5'],
+    MG: ['MG 5', 'ZS', 'One', 'Cyberster'],
+    Geely: ['Coolray', 'Okavango', 'Emgrand'],
+    Subaru: ['Forester', 'XV', 'Outback', 'WRX'],
+    Chevrolet: ['Tracker', 'Trailblazer', 'Tahoe'],
+    BYD: ['Atto 3', 'Dolphin', 'Seal', 'Sealion 6'],
+    GAC: ['Empow', 'Emkoo', 'GS3 Emzoom'],
+    Changan: ['Alsvin', 'CS35 Plus', 'CS55 Plus'],
+    Foton: ['Transvan', 'Thunder', 'Gratour'],
+    BMW: ['3 Series', '5 Series', 'X1', 'X3', 'X5'],
+    'Mercedes-Benz': ['A-Class', 'C-Class', 'E-Class', 'GLA', 'GLC'],
+  },
 };
+
+// Backwards compatibility export
+export const POPULAR_PH_MODELS = POPULAR_PH_MODELS_BY_TYPE_AND_MAKE.four_wheel;
 
 export function mapInternalVehicleTypeToVpic(type?: string | null): string {
   const norm = (type || '').toLowerCase().trim();
@@ -82,12 +146,18 @@ export function mapInternalVehicleTypeToVpic(type?: string | null): string {
  * Fetches vehicle makes for a vehicle type from vPIC, with caching and fallback.
  */
 export async function getVehicleMakes(internalType?: string | null): Promise<string[]> {
-  const cacheKey = (internalType || 'all').toLowerCase().trim();
+  const normType = (internalType || 'all').toLowerCase().trim();
+  if (normType === 'other') {
+    return [];
+  }
+
+  const cacheKey = normType;
   const cached = makesCache.get(cacheKey);
   if (cached && Date.now() - cached.cachedAt < CACHE_TTL_MS) {
     return cached.data;
   }
 
+  const isMotorcycle = normType === 'motorcycle';
   const vpicType = mapInternalVehicleTypeToVpic(internalType);
   const endpoint = vpicType
     ? `https://vpic.nhtsa.dot.gov/api/vehicles/GetMakesForVehicleType/${encodeURIComponent(vpicType)}?format=json`
@@ -110,34 +180,28 @@ export async function getVehicleMakes(internalType?: string | null): Promise<str
     const json = await res.json();
     const results = Array.isArray(json.Results) ? json.Results : [];
 
-    const makeSet = new Set<string>();
-
-    // Prioritize popular Philippine makes
-    for (const phMake of POPULAR_PH_MAKES) {
-      makeSet.add(phMake);
-    }
+    // Case-insensitive deduplication using canonical formatted name
+    const makeMap = new Map<string, string>();
 
     for (const r of results) {
       const name = (r.MakeName || r.Make_Name || '').trim();
       if (name && name.length >= 2) {
-        // Title-case name for presentation
-        const formatted = name
-          .toLowerCase()
-          .split(' ')
-          .map((word: string) => word.charAt(0).toUpperCase() + word.slice(1))
-          .join(' ');
-        makeSet.add(formatted);
+        const formatted = formatVehicleName(name);
+        const lowerKey = formatted.toLowerCase();
+        if (!makeMap.has(lowerKey)) {
+          makeMap.set(lowerKey, formatted);
+        }
       }
     }
 
-    const sorted = Array.from(makeSet).sort((a, b) => a.localeCompare(b));
+    const sorted = Array.from(makeMap.values()).sort((a, b) => a.localeCompare(b));
     makesCache.set(cacheKey, { data: sorted, cachedAt: Date.now() });
     return sorted;
   } catch (err) {
     console.warn('vPIC fetch makes fallback triggered:', err instanceof Error ? err.message : 'timeout');
-    // Return cached if expired, or popular PH makes
     if (cached) return cached.data;
-    return POPULAR_PH_MAKES.slice().sort((a, b) => a.localeCompare(b));
+    const fallbackList = isMotorcycle ? POPULAR_PH_MAKES_TWO_WHEEL : POPULAR_PH_MAKES_FOUR_WHEEL;
+    return fallbackList.slice().sort((a, b) => a.localeCompare(b));
   }
 }
 
@@ -146,14 +210,21 @@ export async function getVehicleMakes(internalType?: string | null): Promise<str
  */
 export async function getVehicleModels(make: string, internalType?: string | null): Promise<string[]> {
   const trimmedMake = make.trim();
-  if (!trimmedMake) return [];
+  if (!trimmedMake || trimmedMake === 'Other / Not Listed') return [];
 
-  const cacheKey = `${trimmedMake.toLowerCase()}:${(internalType || 'all').toLowerCase()}`;
+  const normType = (internalType || 'all').toLowerCase().trim();
+  if (normType === 'other') {
+    return [];
+  }
+
+  const cacheKey = `${trimmedMake.toLowerCase()}:${normType}`;
   const cached = modelsCache.get(cacheKey);
   if (cached && Date.now() - cached.cachedAt < CACHE_TTL_MS) {
     return cached.data;
   }
 
+  const isMotorcycle = normType === 'motorcycle';
+  const categoryKey = isMotorcycle ? 'motorcycle' : 'four_wheel';
   const vpicType = mapInternalVehicleTypeToVpic(internalType);
   const endpoint = vpicType
     ? `https://vpic.nhtsa.dot.gov/api/vehicles/GetModelsForMakeYear/make/${encodeURIComponent(trimmedMake)}/vehicleType/${encodeURIComponent(vpicType)}?format=json`
@@ -176,28 +247,26 @@ export async function getVehicleModels(make: string, internalType?: string | nul
     const json = await res.json();
     const results = Array.isArray(json.Results) ? json.Results : [];
 
-    const modelSet = new Set<string>();
-
-    // Add popular PH models if available
-    const phModels = POPULAR_PH_MODELS[trimmedMake];
-    if (phModels) {
-      for (const m of phModels) modelSet.add(m);
-    }
+    const modelMap = new Map<string, string>();
 
     for (const r of results) {
       const name = (r.Model_Name || r.ModelName || '').trim();
       if (name && name.length >= 1) {
-        modelSet.add(name);
+        const lowerKey = name.toLowerCase();
+        if (!modelMap.has(lowerKey)) {
+          modelMap.set(lowerKey, name);
+        }
       }
     }
 
-    const sorted = Array.from(modelSet).sort((a, b) => a.localeCompare(b));
+    const sorted = Array.from(modelMap.values()).sort((a, b) => a.localeCompare(b));
     modelsCache.set(cacheKey, { data: sorted, cachedAt: Date.now() });
     return sorted;
   } catch (err) {
     console.warn('vPIC fetch models fallback triggered:', err instanceof Error ? err.message : 'timeout');
     if (cached) return cached.data;
-    const phModels = POPULAR_PH_MODELS[trimmedMake];
+    const typeModels = POPULAR_PH_MODELS_BY_TYPE_AND_MAKE[categoryKey];
+    const phModels = typeModels?.[trimmedMake];
     if (phModels) return phModels.slice().sort((a, b) => a.localeCompare(b));
     return [];
   }

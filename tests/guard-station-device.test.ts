@@ -113,4 +113,102 @@ describe('Guard Station Device, Feed & Evidence Boundaries (Executable + Contrac
     expect(feedResults.rows[0]?.source).toBe('portal');
     expect(feedResults.rows[0]?.status).toBe('inside');
   }, 60000);
+
+  it('5. Keyset pagination: queries page 1 (50) and page 2 (5) without duplicate or missing rows', async () => {
+    const db = new PGlite();
+    await db.exec(`
+      create type pass_source as enum ('portal', 'kiosk');
+      create type visit_status as enum ('issued', 'pending', 'inside', 'exited', 'rejected', 'expired');
+
+      create table visitors (
+        id uuid primary key default gen_random_uuid(),
+        full_name text not null,
+        contact_number text not null,
+        purpose text not null
+      );
+
+      create table passes (
+        id uuid primary key default gen_random_uuid(),
+        public_reference text not null,
+        visitor_id uuid not null references visitors(id),
+        source pass_source not null,
+        status visit_status not null,
+        gate text not null,
+        entry_scanned_at timestamptz not null,
+        time_in timestamptz,
+        time_out timestamptz
+      );
+    `);
+
+    const vId = (await db.query<{ id: string }>(`insert into visitors (full_name, contact_number, purpose) values ('Visitor Batch', '09171234567', 'Official') returning id;`)).rows[0]!.id;
+
+    // Insert 55 passes with strictly descending timestamps
+    const baseTime = Date.now();
+    for (let i = 0; i < 55; i++) {
+      const ts = new Date(baseTime - i * 1000).toISOString();
+      await db.query(`
+        insert into passes (public_reference, visitor_id, source, status, gate, entry_scanned_at)
+        values ($1, $2, 'portal', 'inside', 'Gate 1', $3);
+      `, [`REF-${i.toString().padStart(3, '0')}`, vId, ts]);
+    }
+
+    // Page 1: limit 50 + 1
+    const p1Raw = await db.query<{ id: string; public_reference: string; entry_scanned_at: string }>(`
+      select id, public_reference, entry_scanned_at
+      from passes
+      where gate = 'Gate 1' and source = 'portal' and status in ('inside', 'exited')
+      order by entry_scanned_at desc, id desc
+      limit 51;
+    `);
+
+    expect(p1Raw.rows.length).toBe(51);
+    const p1 = p1Raw.rows.slice(0, 50);
+    const hasMore = p1Raw.rows.length > 50;
+    expect(hasMore).toBe(true);
+
+    const cursorItem = p1[49]!;
+
+    // Page 2: with cursor
+    const p2Raw = await db.query<{ id: string; public_reference: string; entry_scanned_at: string }>(`
+      select id, public_reference, entry_scanned_at
+      from passes
+      where gate = 'Gate 1' and source = 'portal' and status in ('inside', 'exited')
+        and (entry_scanned_at < $1 or (entry_scanned_at = $1 and id < $2))
+      order by entry_scanned_at desc, id desc
+      limit 51;
+    `, [cursorItem.entry_scanned_at, cursorItem.id]);
+
+    expect(p2Raw.rows.length).toBe(5);
+
+    // Verify union is exactly 55 unique items
+    const allRefs = new Set([...p1.map((p) => p.public_reference), ...p2Raw.rows.map((p) => p.public_reference)]);
+    expect(allRefs.size).toBe(55);
+  }, 60000);
+
+  it('6. Guard Station Feed & Page: Manila calendar day bounds and dynamic badges verified in source', () => {
+    const guardPageSource = fs.readFileSync(path.resolve('src/pages/GuardPage.tsx'), 'utf-8');
+
+    // Feed source must use getManilaDayBounds
+    expect(feedSource).toContain('getManilaDayBounds');
+    expect(feedSource).toContain('manilaOffsetMs = 8 * 60 * 60 * 1000');
+    expect(feedSource).toContain('decodeCursorStrict');
+
+    // Feed source must return total, hasMore, nextCursor
+    expect(feedSource).toContain('total: totalCount ?? entries.length');
+    expect(feedSource).toContain('hasMore');
+    expect(feedSource).toContain('nextCursor');
+
+    // GuardPage must not use setInterval
+    expect(guardPageSource).not.toMatch(/setInterval\s*\(/);
+    // GuardPage must use AbortController and sequence tracking
+    expect(guardPageSource).toContain('requestSeqRef');
+    expect(guardPageSource).toContain('activeControllerRef');
+    // GuardPage must display authoritative total
+    expect(guardPageSource).toContain("Today's total:");
+    // GuardPage must have Load More
+    expect(guardPageSource).toContain('handleLoadMore');
+    // GuardPage must render dynamic Inside vs Exited badges
+    expect(guardPageSource).toContain('Currently Inside Campus');
+    expect(guardPageSource).toContain('Exited Campus');
+  });
 });
