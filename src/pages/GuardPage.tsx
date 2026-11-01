@@ -26,7 +26,7 @@ interface StationInfo {
   gate: string;
 }
 
-interface StationEntry {
+export interface StationEntry {
   passId: string;
   publicReference: string;
   status: 'inside' | 'exited' | string;
@@ -46,12 +46,47 @@ interface StationEntry {
   } | null;
 }
 
-interface FeedResponse {
+export type FeedEntry = StationEntry;
+
+export interface FeedResponse {
   station: StationInfo;
   entries: StationEntry[];
   hasMore?: boolean;
   nextCursor?: string | null;
   total?: number;
+}
+
+export function compareFeedEntries(a: StationEntry, b: StationEntry): number {
+  const timeA = Number.isFinite(new Date(a.enteredAt).getTime()) ? new Date(a.enteredAt).getTime() : 0;
+  const timeB = Number.isFinite(new Date(b.enteredAt).getTime()) ? new Date(b.enteredAt).getTime() : 0;
+  if (timeA !== timeB) {
+    return timeB - timeA; // descending (newest enteredAt first)
+  }
+  return b.passId.localeCompare(a.passId); // descending
+}
+
+export function mergeFeedHead(currentEntries: StationEntry[], headEntries: StationEntry[]): StationEntry[] {
+  const map = new Map<string, StationEntry>();
+  for (const entry of currentEntries) {
+    map.set(entry.passId, entry);
+  }
+  for (const entry of headEntries) {
+    map.set(entry.passId, entry);
+  }
+  return Array.from(map.values()).sort(compareFeedEntries);
+}
+
+export function mergeLoadMore(currentEntries: StationEntry[], olderEntries: StationEntry[]): StationEntry[] {
+  const map = new Map<string, StationEntry>();
+  for (const entry of currentEntries) {
+    map.set(entry.passId, entry);
+  }
+  for (const entry of olderEntries) {
+    if (!map.has(entry.passId)) {
+      map.set(entry.passId, entry);
+    }
+  }
+  return Array.from(map.values()).sort(compareFeedEntries);
 }
 
 export function GuardPage() {
@@ -71,6 +106,11 @@ export function GuardPage() {
   const pollTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const activeControllerRef = useRef<AbortController | null>(null);
   const requestSeqRef = useRef<number>(0);
+  const loadMoreControllerRef = useRef<AbortController | null>(null);
+  const loadMoreSeqRef = useRef<number>(0);
+  const continuationCursorRef = useRef<string | null>(null);
+  const hasLoadedOlderPagesRef = useRef<boolean>(false);
+  const currentStationIdRef = useRef<string | null>(null);
   const isMountedRef = useRef<boolean>(true);
 
   useEffect(() => {
@@ -85,6 +125,7 @@ export function GuardPage() {
       window.removeEventListener('offline', handleOffline);
       if (pollTimeoutRef.current) clearTimeout(pollTimeoutRef.current);
       if (activeControllerRef.current) activeControllerRef.current.abort();
+      if (loadMoreControllerRef.current) loadMoreControllerRef.current.abort();
     };
   }, []);
 
@@ -123,10 +164,31 @@ export function GuardPage() {
       const data = (await res.json()) as FeedResponse;
       if (seq !== requestSeqRef.current || !isMountedRef.current) return;
 
+      // Station or gate context switch
+      if (data.station?.id && currentStationIdRef.current && currentStationIdRef.current !== data.station.id) {
+        hasLoadedOlderPagesRef.current = false;
+        continuationCursorRef.current = null;
+        if (loadMoreControllerRef.current) {
+          loadMoreControllerRef.current.abort();
+        }
+        setEntries(data.entries);
+        setHasMore(Boolean(data.hasMore));
+        setNextCursor(data.nextCursor || null);
+        continuationCursorRef.current = data.nextCursor || null;
+      } else {
+        // Head refresh: merge with existing entries preserving loaded older pages
+        setEntries((prev) => mergeFeedHead(prev, data.entries));
+
+        // Protect pagination continuation state if older pages have been loaded
+        if (!hasLoadedOlderPagesRef.current) {
+          setHasMore(Boolean(data.hasMore));
+          setNextCursor(data.nextCursor || null);
+          continuationCursorRef.current = data.nextCursor || null;
+        }
+      }
+
+      currentStationIdRef.current = data.station?.id || null;
       setStation(data.station);
-      setEntries(data.entries);
-      setHasMore(Boolean(data.hasMore));
-      setNextCursor(data.nextCursor || null);
       setTotalCount(typeof data.total === 'number' ? data.total : data.entries.length);
       setError(null);
     } catch (err: any) {
@@ -162,8 +224,16 @@ export function GuardPage() {
   };
 
   const handleLoadMore = async () => {
-    if (!nextCursor || loadingMore) return;
+    if (!nextCursor || loadingMore || !isMountedRef.current) return;
     setLoadingMore(true);
+
+    const seq = ++loadMoreSeqRef.current;
+    if (loadMoreControllerRef.current) {
+      loadMoreControllerRef.current.abort();
+    }
+    const controller = new AbortController();
+    loadMoreControllerRef.current = controller;
+
     try {
       const token = localStorage.getItem('egatepass_token') || sessionStorage.getItem('egatepass_token');
       const res = await fetch(`/api/guard-station-feed?cursor=${encodeURIComponent(nextCursor)}`, {
@@ -171,21 +241,27 @@ export function GuardPage() {
           ...(token ? { Authorization: `Bearer ${token}` } : {}),
           Accept: 'application/json',
         },
+        signal: controller.signal,
       });
-      if (res.ok && isMountedRef.current) {
+
+      if (seq !== loadMoreSeqRef.current || !isMountedRef.current) return;
+
+      if (res.ok) {
         const data = (await res.json()) as FeedResponse;
-        setEntries((prev) => {
-          const existingIds = new Set(prev.map((e) => e.passId));
-          const newEntries = data.entries.filter((e) => !existingIds.has(e.passId));
-          return [...prev, ...newEntries];
-        });
+        if (seq !== loadMoreSeqRef.current || !isMountedRef.current) return;
+
+        hasLoadedOlderPagesRef.current = true;
+        setEntries((prev) => mergeLoadMore(prev, data.entries));
         setHasMore(Boolean(data.hasMore));
         setNextCursor(data.nextCursor || null);
+        continuationCursorRef.current = data.nextCursor || null;
       }
-    } catch (err) {
+    } catch (err: any) {
+      if (err?.name === 'AbortError') return;
+      if (seq !== loadMoreSeqRef.current || !isMountedRef.current) return;
       console.error('Failed to load more feed entries:', err);
     } finally {
-      if (isMountedRef.current) {
+      if (seq === loadMoreSeqRef.current && isMountedRef.current) {
         setLoadingMore(false);
       }
     }

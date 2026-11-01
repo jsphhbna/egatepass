@@ -169,13 +169,11 @@ test.describe('Section 1 & 2: Real Front-Door Flow and Address Autocomplete UI C
     await expect(page.getByText('Setup Step 2 of 2')).toBeVisible();
 
     // Test Keyboard navigation: Focus and Arrow keys
-    await onFootRadio.focus();
-    await page.keyboard.press('ArrowRight');
+    await onFootRadio.press('ArrowRight');
     await expect(vehicleRadio).toHaveAttribute('aria-checked', 'true');
     await expect(onFootRadio).toHaveAttribute('aria-checked', 'false');
 
-    await vehicleRadio.focus();
-    await page.keyboard.press('ArrowLeft');
+    await vehicleRadio.press('ArrowLeft');
     await expect(onFootRadio).toHaveAttribute('aria-checked', 'true');
     await expect(vehicleRadio).toHaveAttribute('aria-checked', 'false');
 
@@ -991,5 +989,160 @@ test.describe('Section 21: Ambiguous Generation Failure and "Cancel & Ask Guard"
     const startOverBtn = page.getByRole('button', { name: 'Start Over' }).last();
     await expect(startOverBtn).toBeVisible();
     await expect(startOverBtn).toBeEnabled();
+  });
+
+  test('Section 22: Guard Station Load More entries persist across background polling and manual refresh', async ({ page }) => {
+    page.on('console', (msg) => {
+      console.log(`[BROWSER ${msg.type()}]:`, msg.text());
+    });
+
+    const adminId = '00000000-0000-4000-a000-000000000077';
+    const nowSec = Math.floor(Date.now() / 1000);
+    const sessionObj = {
+      access_token: 'mock-admin-operator-token',
+      token_type: 'bearer',
+      expires_in: 3600,
+      expires_at: nowSec + 3600,
+      refresh_token: 'mock-refresh-token',
+      user: {
+        id: adminId,
+        aud: 'authenticated',
+        role: 'authenticated',
+        email: 'opadmin@earist.edu.ph',
+        email_confirmed_at: '2026-01-01T00:00:00Z',
+      },
+    };
+
+    // 1. Mock authentication session
+    await page.route('**/auth/v1/**', async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify(sessionObj.user),
+      });
+    });
+
+    await page.route('**/rest/v1/staff_profiles*', async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          display_name: 'Operational Admin',
+          role: 'admin',
+          active: true,
+          must_change_password: false,
+          privacy_accepted_at: '2026-01-01T00:00:00Z',
+        }),
+      });
+    });
+
+    // 2. Mock guard station feed with 2-page keyset pagination
+    let headPollCount = 0;
+    await page.route('**/api/guard-station-feed*', async (route) => {
+      const url = new URL(route.request().url());
+      const cursor = url.searchParams.get('cursor');
+
+      if (cursor === 'cursor-page-2') {
+        // Page 2 response (older entry)
+        return route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify({
+            station: { id: 'station-01', name: 'Main Gate Station', alias: 'station-gate1', gate: 'Gate 1' },
+            entries: [
+              {
+                passId: 'pass-03',
+                publicReference: 'REF-PAGE-TWO',
+                status: 'inside',
+                source: 'portal',
+                enteredAt: '2026-11-01T08:00:00.000Z',
+                visitorName: 'Visitor 3 Older Page Two Entry',
+                purpose: 'Campus Tour',
+                photoEvidenceId: null,
+                gate: 'Gate 1',
+              },
+            ],
+            hasMore: false,
+            nextCursor: null,
+            total: 3,
+          }),
+        });
+      }
+
+      // Page 1 (Head poll: 2 entries so recentEntries has items)
+      headPollCount++;
+      return route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          station: { id: 'station-01', name: 'Main Gate Station', alias: 'station-gate1', gate: 'Gate 1' },
+          entries: [
+            {
+              passId: 'pass-01',
+              publicReference: 'REF-PAGE-ONE-A',
+              status: headPollCount > 1 ? 'exited' : 'inside',
+              source: 'portal',
+              enteredAt: '2026-11-01T10:00:00.000Z',
+              visitorName: 'Visitor 1 Latest Hero Entry',
+              purpose: 'Official Business',
+              photoEvidenceId: null,
+              gate: 'Gate 1',
+            },
+            {
+              passId: 'pass-02',
+              publicReference: 'REF-PAGE-ONE-B',
+              status: 'inside',
+              source: 'portal',
+              enteredAt: '2026-11-01T09:00:00.000Z',
+              visitorName: 'Visitor 2 Recent Entry',
+              purpose: 'Registrar',
+              photoEvidenceId: null,
+              gate: 'Gate 1',
+            },
+          ],
+          hasMore: true,
+          nextCursor: 'cursor-page-2',
+          total: 3,
+        }),
+      });
+    });
+
+    // Set mock tokens in localStorage before loading page
+    await page.addInitScript((session) => {
+      localStorage.setItem('egatepass_token', 'mock-admin-operator-token');
+      localStorage.setItem('egatepass-operator-auth', JSON.stringify(session));
+    }, sessionObj);
+
+    await page.goto('/guard');
+
+    // 3. Verify Page 1 renders initially
+    await expect(page.getByText('Main Gate Station').first()).toBeVisible({ timeout: 15_000 });
+    await expect(page.getByText(/Today's total:\s*3/i)).toBeVisible();
+    await expect(page.getByText('Visitor 1 Latest Hero Entry')).toBeVisible();
+    await expect(page.getByText('Visitor 2 Recent Entry')).toBeVisible();
+
+    // Verify "Load More Entries" button is available
+    const loadMoreBtn = page.getByRole('button', { name: /Load More Entries/i });
+    await expect(loadMoreBtn).toBeVisible({ timeout: 10_000 });
+
+    // 4. Click Load More
+    await loadMoreBtn.click();
+
+    // Verify Page 2 entry is loaded and rendered alongside Page 1 entries
+    await expect(page.getByText('Visitor 3 Older Page Two Entry')).toBeVisible({ timeout: 10_000 });
+    await expect(page.getByText('Visitor 2 Recent Entry')).toBeVisible();
+    await expect(page.getByText('Visitor 1 Latest Hero Entry')).toBeVisible();
+
+    // 5. Trigger manual refresh
+    const refreshBtn = page.getByRole('button', { name: 'Refresh' });
+    await refreshBtn.click();
+
+    // Wait for refreshed data to update: Hero entry status is updated to Exited
+    await expect(page.getByText('Exited Campus').first()).toBeVisible({ timeout: 10_000 });
+
+    // CRITICAL INVARIANT: Page 2 older entry is STILL visible after refresh!
+    await expect(page.getByText('Visitor 3 Older Page Two Entry')).toBeVisible();
+    await expect(page.getByText('Visitor 2 Recent Entry')).toBeVisible();
+    await expect(page.getByText('Visitor 1 Latest Hero Entry')).toBeVisible();
   });
 });

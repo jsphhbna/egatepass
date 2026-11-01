@@ -2528,6 +2528,25 @@ describe('Behavioral Mocked-Handler Tests [PASS (MOCKED HANDLER)]', () => {
         },
       ];
 
+      mockDbData.visitor_evidence = [
+        {
+          id: randomUUID(),
+          visitor_id: VISITOR_ID,
+          kind: 'photo',
+          upload_intent_id: PHOTO_INTENT_ID,
+          purged_at: null,
+        },
+        {
+          id: randomUUID(),
+          visitor_id: VISITOR_ID,
+          kind: 'id',
+          upload_intent_id: ID_INTENT_ID,
+          purged_at: null,
+        },
+      ];
+      mockDbData.visit_vehicle_declarations = [];
+
+      mockDbData.passes = (mockDbData.passes || []).filter((p) => p.issue_request_id !== TEST_REQ_ID);
       mockDbData.passes.push({
         id: randomUUID(),
         issue_request_id: TEST_REQ_ID,
@@ -2944,6 +2963,567 @@ describe('Behavioral Mocked-Handler Tests [PASS (MOCKED HANDLER)]', () => {
       const json = await res.json();
       expect(res.status).toBe(409);
       expect(json.error).toBe('intent_mismatch');
+    });
+  });
+
+  // =========================================================================
+  // DEFECT B CLOSURE: Symmetric Idempotent Issuance Replay Bindings (api/passes/issue.ts)
+  // =========================================================================
+  describe('DEFECT B CLOSURE: Symmetric Idempotent Issuance Replay Bindings (api/passes/issue.ts)', () => {
+    const TEST_PASS_ID_B = '00000000-0000-4000-b000-000000000888';
+    const TEST_PUBLIC_REF_B = '10000000-0000-4000-b000-000000000888';
+    const TEST_REQ_ID = '00000000-0000-4000-b000-000000000111';
+    const PHOTO_INTENT_ID = '00000000-0000-4000-b000-000000000222';
+    const ID_INTENT_ID = '00000000-0000-4000-b000-000000000333';
+    const VEHICLE_PHOTO_INTENT_ID = '00000000-0000-4000-b000-000000000444';
+    const VISITOR_ID = '00000000-0000-4000-b000-000000000555';
+    const TEST_SECRET = '01234567890123456789012345678901';
+
+    beforeEach(() => {
+      process.env.PASS_TOKEN_SECRET = TEST_SECRET;
+      const qrToken = createHmac('sha256', TEST_SECRET)
+        .update(`${VISITOR_OWNER_ID}:${TEST_REQ_ID}`)
+        .digest('base64url');
+      const tokenDigest = createHash('sha256').update(qrToken).digest('hex');
+
+      mockDbData.visitors = [
+        {
+          id: VISITOR_ID,
+          owner_id: VISITOR_OWNER_ID,
+          source: 'portal',
+          registration_mode: 'new',
+          arrival_mode: 'no_vehicle',
+          full_name: 'Juan Dela Cruz',
+          contact_number: '09123456789',
+          purpose: 'Official Business',
+          visit_date: '2026-10-25',
+          consent_accepted_at: new Date().toISOString(),
+          address_place_id: null,
+          address_detail: null,
+          returning_profile_id: null,
+        },
+      ];
+
+      mockDbData.upload_intents = [
+        {
+          id: PHOTO_INTENT_ID,
+          owner_id: VISITOR_OWNER_ID,
+          source: 'portal',
+          kind: 'photo',
+          status: 'claimed',
+          visitor_id: VISITOR_ID,
+          bucket_id: 'visitor-photos',
+          object_path: `${VISITOR_OWNER_ID}/${PHOTO_INTENT_ID}/photo.jpg`,
+          content_type: 'image/jpeg',
+          max_bytes: 5242880,
+          expires_at: new Date(Date.now() + 3600000).toISOString(),
+        },
+        {
+          id: ID_INTENT_ID,
+          owner_id: VISITOR_OWNER_ID,
+          source: 'portal',
+          kind: 'id',
+          status: 'claimed',
+          visitor_id: VISITOR_ID,
+          bucket_id: 'visitor-ids',
+          object_path: `${VISITOR_OWNER_ID}/${ID_INTENT_ID}/id.jpg`,
+          content_type: 'image/jpeg',
+          max_bytes: 5242880,
+          expires_at: new Date(Date.now() + 3600000).toISOString(),
+        },
+        {
+          id: VEHICLE_PHOTO_INTENT_ID,
+          owner_id: VISITOR_OWNER_ID,
+          source: 'portal',
+          kind: 'vehicle_photo',
+          status: 'claimed',
+          visitor_id: VISITOR_ID,
+          bucket_id: 'visitor-vehicle-photos',
+          object_path: `${VISITOR_OWNER_ID}/${VEHICLE_PHOTO_INTENT_ID}/veh.jpg`,
+          content_type: 'image/jpeg',
+          max_bytes: 5242880,
+          expires_at: new Date(Date.now() + 3600000).toISOString(),
+        },
+      ];
+
+      mockDbData.visitor_evidence = [
+        {
+          id: randomUUID(),
+          visitor_id: VISITOR_ID,
+          kind: 'photo',
+          upload_intent_id: PHOTO_INTENT_ID,
+          purged_at: null,
+        },
+        {
+          id: randomUUID(),
+          visitor_id: VISITOR_ID,
+          kind: 'id',
+          upload_intent_id: ID_INTENT_ID,
+          purged_at: null,
+        },
+      ];
+
+      mockDbData.passes = (mockDbData.passes || []).filter((p) => p.issue_request_id !== TEST_REQ_ID);
+      mockDbData.passes.push({
+        id: TEST_PASS_ID_B,
+        issue_request_id: TEST_REQ_ID,
+        public_reference: TEST_PUBLIC_REF_B,
+        visitor_id: VISITOR_ID,
+        token_digest: `\\x${tokenDigest}`,
+        source: 'portal',
+        status: 'issued',
+        valid_from: new Date(Date.now() - 3600000).toISOString(),
+        valid_until: new Date(Date.now() + 86400000).toISOString(),
+      });
+      mockDbData.visit_vehicle_declarations = [];
+    });
+
+    it('B1: rejects replay omitting addressProvenance on transaction with verified address with 409 payload_mismatch', async () => {
+      const vis = mockDbData.visitors.find((v) => v.id === VISITOR_ID)!;
+      vis.address_place_id = 'place_manila_123';
+      vis.address_detail = '123 Manila St';
+
+      const req = new Request('http://localhost/api/passes/issue', {
+        method: 'POST',
+        headers: {
+          authorization: VALID_VISITOR_BEARER,
+          'content-type': 'application/json',
+        },
+        body: JSON.stringify({
+          requestId: TEST_REQ_ID,
+          source: 'portal',
+          arrivalMode: 'no_vehicle',
+          visitor: {
+            firstName: 'Juan',
+            middleName: 'Dela',
+            lastName: 'Cruz',
+            contactNumber: '09123456789',
+            purpose: 'Official Business',
+            visitDate: '2026-10-25',
+          },
+          photoIntentId: PHOTO_INTENT_ID,
+          idIntentId: ID_INTENT_ID,
+          // addressProvenance omitted!
+        }),
+      });
+
+      const res = await invokeHandler(issuePassHandler, req);
+      const json = await res.json();
+      expect(res.status).toBe(409);
+      expect(json.error).toBe('payload_mismatch');
+    });
+
+    it('B2: rejects replay with different placeId with 409 payload_mismatch', async () => {
+      const vis = mockDbData.visitors.find((v) => v.id === VISITOR_ID)!;
+      vis.address_place_id = 'place_manila_123';
+      vis.address_detail = '123 Manila St';
+
+      const req = new Request('http://localhost/api/passes/issue', {
+        method: 'POST',
+        headers: {
+          authorization: VALID_VISITOR_BEARER,
+          'content-type': 'application/json',
+        },
+        body: JSON.stringify({
+          requestId: TEST_REQ_ID,
+          source: 'portal',
+          arrivalMode: 'no_vehicle',
+          visitor: {
+            firstName: 'Juan',
+            middleName: 'Dela',
+            lastName: 'Cruz',
+            contactNumber: '09123456789',
+            purpose: 'Official Business',
+            visitDate: '2026-10-25',
+          },
+          addressProvenance: {
+            provider: 'geoapify',
+            placeId: 'place_cebu_999', // Different placeId
+            addressDetail: '123 Manila St',
+          },
+          photoIntentId: PHOTO_INTENT_ID,
+          idIntentId: ID_INTENT_ID,
+          vehiclePhotoIntentId: VEHICLE_PHOTO_INTENT_ID,
+        }),
+      });
+
+      const res = await invokeHandler(issuePassHandler, req);
+      const json = await res.json();
+      expect(res.status).toBe(409);
+      expect(json.error).toBe('payload_mismatch');
+    });
+
+    it('B3: rejects replay omitting idIntentId on transaction with ID intent with 409 intent_mismatch', async () => {
+      const req = new Request('http://localhost/api/passes/issue', {
+        method: 'POST',
+        headers: {
+          authorization: VALID_VISITOR_BEARER,
+          'content-type': 'application/json',
+        },
+        body: JSON.stringify({
+          requestId: TEST_REQ_ID,
+          source: 'portal',
+          arrivalMode: 'no_vehicle',
+          visitor: {
+            firstName: 'Juan',
+            middleName: 'Dela',
+            lastName: 'Cruz',
+            contactNumber: '09123456789',
+            purpose: 'Official Business',
+            visitDate: '2026-10-25',
+          },
+          photoIntentId: PHOTO_INTENT_ID,
+          // idIntentId omitted
+        }),
+      });
+
+      const res = await invokeHandler(issuePassHandler, req);
+      const json = await res.json();
+      expect(res.status).toBe(409);
+      expect(json.error).toBe('intent_mismatch');
+    });
+
+    it('B4: rejects replay with different idIntentId with 409 intent_mismatch', async () => {
+      const req = new Request('http://localhost/api/passes/issue', {
+        method: 'POST',
+        headers: {
+          authorization: VALID_VISITOR_BEARER,
+          'content-type': 'application/json',
+        },
+        body: JSON.stringify({
+          requestId: TEST_REQ_ID,
+          source: 'portal',
+          arrivalMode: 'no_vehicle',
+          visitor: {
+            firstName: 'Juan',
+            middleName: 'Dela',
+            lastName: 'Cruz',
+            contactNumber: '09123456789',
+            purpose: 'Official Business',
+            visitDate: '2026-10-25',
+          },
+          photoIntentId: PHOTO_INTENT_ID,
+          idIntentId: randomUUID(), // Altered
+        }),
+      });
+
+      const res = await invokeHandler(issuePassHandler, req);
+      const json = await res.json();
+      expect(res.status).toBe(409);
+      expect(json.error).toBe('intent_mismatch');
+    });
+
+    it('B5: rejects replay with different photoIntentId with 409 intent_mismatch', async () => {
+      const req = new Request('http://localhost/api/passes/issue', {
+        method: 'POST',
+        headers: {
+          authorization: VALID_VISITOR_BEARER,
+          'content-type': 'application/json',
+        },
+        body: JSON.stringify({
+          requestId: TEST_REQ_ID,
+          source: 'portal',
+          arrivalMode: 'no_vehicle',
+          visitor: {
+            firstName: 'Juan',
+            middleName: 'Dela',
+            lastName: 'Cruz',
+            contactNumber: '09123456789',
+            purpose: 'Official Business',
+            visitDate: '2026-10-25',
+          },
+          photoIntentId: randomUUID(), // Altered
+          idIntentId: ID_INTENT_ID,
+        }),
+      });
+
+      const res = await invokeHandler(issuePassHandler, req);
+      const json = await res.json();
+      expect(res.status).toBe(409);
+      expect(json.error).toBe('intent_mismatch');
+    });
+
+    it('B6: rejects replay with altered vehiclePhotoIntentId on vehicle transaction with 409 intent_mismatch', async () => {
+      const vis = mockDbData.visitors.find((v) => v.id === VISITOR_ID)!;
+      vis.arrival_mode = 'vehicle';
+      const existingPass = mockDbData.passes.find((p) => p.issue_request_id === TEST_REQ_ID)!;
+
+      mockDbData.visit_vehicle_declarations = [
+        {
+          pass_id: existingPass.id,
+          plate_key: 'ABC1234',
+          vehicle_type: 'car',
+          color: 'black',
+          make_model: 'Toyota Vios',
+          vehicle_catalog_status: 'catalog',
+          saved_vehicle_id: null,
+          vehicle_photo_evidence_id: randomUUID(),
+        },
+      ];
+
+      mockDbData.visitor_evidence.push({
+        id: randomUUID(),
+        visitor_id: VISITOR_ID,
+        kind: 'vehicle_photo',
+        upload_intent_id: VEHICLE_PHOTO_INTENT_ID,
+        purged_at: null,
+      });
+
+      const req = new Request('http://localhost/api/passes/issue', {
+        method: 'POST',
+        headers: {
+          authorization: VALID_VISITOR_BEARER,
+          'content-type': 'application/json',
+        },
+        body: JSON.stringify({
+          requestId: TEST_REQ_ID,
+          source: 'portal',
+          arrivalMode: 'vehicle',
+          visitor: {
+            firstName: 'Juan',
+            middleName: 'Dela',
+            lastName: 'Cruz',
+            contactNumber: '09123456789',
+            purpose: 'Official Business',
+            visitDate: '2026-10-25',
+          },
+          vehicle: {
+            vehicleType: 'car',
+            plateNumber: 'ABC 1234',
+            color: 'Black',
+            makeModel: 'Toyota Vios',
+            catalogStatus: 'catalog',
+          },
+          photoIntentId: PHOTO_INTENT_ID,
+          idIntentId: ID_INTENT_ID,
+          vehiclePhotoIntentId: randomUUID(), // Altered vehicle photo intent ID
+        }),
+      });
+
+      const res = await invokeHandler(issuePassHandler, req);
+      const json = await res.json();
+      expect(res.status).toBe(409);
+      expect(json.error).toBe('intent_mismatch');
+    });
+
+    it('B7: allows kiosk transaction replay without address provenance with 200 OK', async () => {
+      const existingPass = mockDbData.passes.find((p) => p.issue_request_id === TEST_REQ_ID)!;
+      existingPass.source = 'kiosk';
+      const vis = mockDbData.visitors.find((v) => v.id === VISITOR_ID)!;
+      vis.source = 'kiosk';
+      vis.owner_id = KIOSK_ID;
+      vis.address_place_id = null;
+      vis.address_detail = null;
+
+      // Update stored token digest to match KIOSK_ID actor
+      const kioskQrToken = createHmac('sha256', TEST_SECRET)
+        .update(`${KIOSK_ID}:${TEST_REQ_ID}`)
+        .digest('base64url');
+      existingPass.token_digest = `\\x${createHash('sha256').update(kioskQrToken).digest('hex')}`;
+
+      const req = new Request('http://localhost/api/passes/issue', {
+        method: 'POST',
+        headers: {
+          authorization: VALID_KIOSK_BEARER,
+          'content-type': 'application/json',
+        },
+        body: JSON.stringify({
+          requestId: TEST_REQ_ID,
+          source: 'kiosk',
+          arrivalMode: 'no_vehicle',
+          visitor: {
+            firstName: 'Juan',
+            middleName: 'Dela',
+            lastName: 'Cruz',
+            contactNumber: '09123456789',
+            purpose: 'Official Business',
+            visitDate: '2026-10-25',
+          },
+          photoIntentId: PHOTO_INTENT_ID,
+          idIntentId: ID_INTENT_ID,
+        }),
+      });
+
+      const res = await invokeHandler(issuePassHandler, req);
+      const json = await res.json();
+      expect(res.status).toBe(200);
+      expect(json.passId).toBe(TEST_PUBLIC_REF_B);
+      expect(json.publicReference).toBe(TEST_PUBLIC_REF_B);
+    });
+
+    it('B8: allows returning visitor transaction replay without ID intent with 200 OK', async () => {
+      const vis = mockDbData.visitors.find((v) => v.id === VISITOR_ID)!;
+      vis.registration_mode = 'returning';
+      const profileId = randomUUID();
+      vis.returning_profile_id = profileId;
+
+      mockDbData.visitor_evidence = [
+        {
+          id: randomUUID(),
+          visitor_id: VISITOR_ID,
+          kind: 'photo',
+          upload_intent_id: PHOTO_INTENT_ID,
+          purged_at: null,
+        },
+      ];
+
+      const req = new Request('http://localhost/api/passes/issue', {
+        method: 'POST',
+        headers: {
+          authorization: VALID_VISITOR_BEARER,
+          'content-type': 'application/json',
+        },
+        body: JSON.stringify({
+          requestId: TEST_REQ_ID,
+          source: 'portal',
+          registrationMode: 'returning',
+          arrivalMode: 'no_vehicle',
+          visitor: {
+            firstName: 'Juan',
+            middleName: 'Dela',
+            lastName: 'Cruz',
+            contactNumber: '09123456789',
+            purpose: 'Official Business',
+            visitDate: '2026-10-25',
+          },
+          returning: {
+            profileId,
+          },
+          photoIntentId: PHOTO_INTENT_ID,
+        }),
+      });
+
+      const res = await invokeHandler(issuePassHandler, req);
+      const json = await res.json();
+      expect(res.status).toBe(200);
+      expect(json.passId).toBeDefined();
+    });
+
+    it('B9a: rejects replay adding address provenance when original had none with 409 payload_mismatch', async () => {
+      const vis = mockDbData.visitors.find((v) => v.id === VISITOR_ID)!;
+      vis.address_place_id = null;
+      vis.address_detail = null;
+
+      const req = new Request('http://localhost/api/passes/issue', {
+        method: 'POST',
+        headers: {
+          authorization: VALID_VISITOR_BEARER,
+          'content-type': 'application/json',
+        },
+        body: JSON.stringify({
+          requestId: TEST_REQ_ID,
+          source: 'portal',
+          arrivalMode: 'no_vehicle',
+          visitor: {
+            firstName: 'Juan',
+            middleName: 'Dela',
+            lastName: 'Cruz',
+            contactNumber: '09123456789',
+            purpose: 'Official Business',
+            visitDate: '2026-10-25',
+          },
+          addressProvenance: {
+            provider: 'geoapify',
+            placeId: 'unexpected_place_id',
+          },
+          photoIntentId: PHOTO_INTENT_ID,
+          idIntentId: ID_INTENT_ID,
+        }),
+      });
+
+      const res = await invokeHandler(issuePassHandler, req);
+      const json = await res.json();
+      expect(res.status).toBe(409);
+      expect(json.error).toBe('payload_mismatch');
+    });
+
+    it('B9b: rejects replay adding vehicle declaration when original had none with 409 payload_mismatch', async () => {
+      const vis = mockDbData.visitors.find((v) => v.id === VISITOR_ID)!;
+      vis.arrival_mode = 'no_vehicle';
+
+      const req = new Request('http://localhost/api/passes/issue', {
+        method: 'POST',
+        headers: {
+          authorization: VALID_VISITOR_BEARER,
+          'content-type': 'application/json',
+        },
+        body: JSON.stringify({
+          requestId: TEST_REQ_ID,
+          source: 'portal',
+          arrivalMode: 'vehicle',
+          visitor: {
+            firstName: 'Juan',
+            middleName: 'Dela',
+            lastName: 'Cruz',
+            contactNumber: '09123456789',
+            purpose: 'Official Business',
+            visitDate: '2026-10-25',
+          },
+          vehicle: {
+            vehicleType: 'car',
+            plateNumber: 'ABC 1234',
+            color: 'Black',
+            makeModel: 'Toyota Vios',
+            catalogStatus: 'catalog',
+          },
+          photoIntentId: PHOTO_INTENT_ID,
+          idIntentId: ID_INTENT_ID,
+          vehiclePhotoIntentId: VEHICLE_PHOTO_INTENT_ID,
+        }),
+      });
+
+      const res = await invokeHandler(issuePassHandler, req);
+      const json = await res.json();
+      expect(res.status).toBe(409);
+      expect(json.error).toBe('payload_mismatch');
+    });
+
+    it('B10: allows exact replay without Geoapify availability with 200 OK', async () => {
+      const vis = mockDbData.visitors.find((v) => v.id === VISITOR_ID)!;
+      vis.address_place_id = 'place_manila_exact';
+      vis.address_detail = 'Sampaloc Manila';
+
+      const originalKey = process.env.GEOAPIFY_API_KEY;
+      delete process.env.GEOAPIFY_API_KEY;
+
+      try {
+        const req = new Request('http://localhost/api/passes/issue', {
+          method: 'POST',
+          headers: {
+            authorization: VALID_VISITOR_BEARER,
+            'content-type': 'application/json',
+          },
+          body: JSON.stringify({
+            requestId: TEST_REQ_ID,
+            source: 'portal',
+            arrivalMode: 'no_vehicle',
+            visitor: {
+              firstName: 'Juan',
+              middleName: 'Dela',
+              lastName: 'Cruz',
+              contactNumber: '09123456789',
+              purpose: 'Official Business',
+              visitDate: '2026-10-25',
+            },
+            addressProvenance: {
+              provider: 'geoapify',
+              placeId: 'place_manila_exact',
+              addressDetail: 'Sampaloc Manila',
+            },
+            photoIntentId: PHOTO_INTENT_ID,
+            idIntentId: ID_INTENT_ID,
+          }),
+        });
+
+        const res = await invokeHandler(issuePassHandler, req);
+        const json = await res.json();
+        expect(res.status).toBe(200);
+        expect(json.passId).toBeDefined();
+      } finally {
+        if (originalKey) {
+          process.env.GEOAPIFY_API_KEY = originalKey;
+        }
+      }
     });
   });
 
@@ -3998,6 +4578,10 @@ describe('Behavioral Mocked-Handler Tests [PASS (MOCKED HANDLER)]', () => {
       mockDbData.upload_intents.push(
         { id: photoIntentId, kind: 'photo', status: 'claimed', visitor_id: VISITOR_OWNER_ID },
         { id: idIntentId, kind: 'id', status: 'claimed', visitor_id: VISITOR_OWNER_ID }
+      );
+      mockDbData.visitor_evidence.push(
+        { id: randomUUID(), visitor_id: VISITOR_OWNER_ID, kind: 'photo', upload_intent_id: photoIntentId, purged_at: null },
+        { id: randomUUID(), visitor_id: VISITOR_OWNER_ID, kind: 'id', upload_intent_id: idIntentId, purged_at: null }
       );
 
       mockRpcFailures['consume_rate_limit'] = { code: '500', message: 'Rate limiter unavailable' };

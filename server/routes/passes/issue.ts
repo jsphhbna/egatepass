@@ -331,7 +331,9 @@ async function handleRequest(request: Request): Promise<Response> {
         return jsonResponse(409, { error: 'source_mismatch' });
       }
 
-      if (existingVisitor.registration_mode && existingVisitor.registration_mode !== parsed.data.registrationMode) {
+      const existingRegMode = existingVisitor.registration_mode || 'new';
+      const incomingRegMode = parsed.data.registrationMode || 'new';
+      if (existingRegMode !== incomingRegMode) {
         return jsonResponse(409, { error: 'payload_mismatch' });
       }
 
@@ -345,19 +347,24 @@ async function handleRequest(request: Request): Promise<Response> {
         return jsonResponse(409, { error: 'payload_mismatch' });
       }
 
-      if (existingVisitor.arrival_mode && existingVisitor.arrival_mode !== parsed.data.arrivalMode) {
+      const existingArrival = existingVisitor.arrival_mode || 'no_vehicle';
+      const incomingArrival = parsed.data.arrivalMode || 'no_vehicle';
+      if (existingArrival !== incomingArrival) {
         return jsonResponse(409, { error: 'payload_mismatch' });
       }
 
-      if (parsed.data.source === 'portal') {
-        if (parsed.data.addressProvenance?.placeId && existingVisitor.address_place_id) {
-          if (existingVisitor.address_place_id !== parsed.data.addressProvenance.placeId) {
-            return jsonResponse(409, { error: 'payload_mismatch' });
-          }
-        }
-        const expectedAddrDetail = (parsed.data.addressProvenance?.addressDetail || '').trim();
-        const actualAddrDetail = (existingVisitor.address_detail || '').trim();
-        if (expectedAddrDetail !== actualAddrDetail) {
+      // Symmetrically normalize both sides
+      const existingPlaceId = (existingVisitor.address_place_id || '').trim() || null;
+      const incomingPlaceId = (parsed.data.addressProvenance?.placeId || '').trim() || null;
+      if (existingPlaceId !== incomingPlaceId) {
+        return jsonResponse(409, { error: 'payload_mismatch' });
+      }
+
+      // If placeId is present, also verify address detail if original had it
+      if (existingPlaceId && existingVisitor.address_detail) {
+        const incomingDetail = (parsed.data.addressProvenance?.addressDetail || '').trim();
+        const existingDetail = (existingVisitor.address_detail || '').trim();
+        if (incomingDetail !== existingDetail) {
           return jsonResponse(409, { error: 'payload_mismatch' });
         }
       }
@@ -367,29 +374,33 @@ async function handleRequest(request: Request): Promise<Response> {
         return jsonResponse(409, { error: 'payload_mismatch' });
       }
 
-      if (parsed.data.arrivalMode === 'vehicle' && normalizedPlateKey) {
+      if (existingArrival === 'vehicle') {
         const { data: existingDecl } = await admin
           .from('visit_vehicle_declarations')
           .select('plate_key, vehicle_type, color, make_model, vehicle_catalog_status, saved_vehicle_id, vehicle_photo_evidence_id')
           .eq('pass_id', existingPass.id)
           .maybeSingle();
 
-        if (!existingDecl) {
+        if (!existingDecl || !normalizedPlateKey || !parsed.data.vehicle) {
           return jsonResponse(409, { error: 'payload_mismatch' });
         }
         if (
           existingDecl.plate_key !== normalizedPlateKey ||
-          existingDecl.vehicle_type !== parsed.data.vehicle?.vehicleType ||
-          existingDecl.color.toLowerCase() !== (normalizedVehicleColor || parsed.data.vehicle?.color || '').toLowerCase() ||
-          (existingDecl.make_model || '').trim() !== (parsed.data.vehicle?.makeModel || '').trim() ||
-          existingDecl.vehicle_catalog_status !== (parsed.data.vehicle?.catalogStatus || 'catalog') ||
-          (existingDecl.saved_vehicle_id || null) !== (parsed.data.vehicle?.savedVehicleId || null)
+          existingDecl.vehicle_type !== parsed.data.vehicle.vehicleType ||
+          existingDecl.color.toLowerCase() !== (normalizedVehicleColor || parsed.data.vehicle.color || '').toLowerCase() ||
+          (existingDecl.make_model || '').trim() !== (parsed.data.vehicle.makeModel || '').trim() ||
+          existingDecl.vehicle_catalog_status !== (parsed.data.vehicle.catalogStatus || 'catalog') ||
+          (existingDecl.saved_vehicle_id || null) !== (parsed.data.vehicle.savedVehicleId || null)
         ) {
+          return jsonResponse(409, { error: 'payload_mismatch' });
+        }
+      } else {
+        if (parsed.data.vehicle || normalizedPlateKey) {
           return jsonResponse(409, { error: 'payload_mismatch' });
         }
       }
 
-      // Check evidence upload_intent_ids
+      // Symmetric evidence upload_intent_ids comparison
       const { data: attachedEvidence, error: evError } = await admin
         .from('visitor_evidence')
         .select('kind, upload_intent_id')
@@ -397,21 +408,23 @@ async function handleRequest(request: Request): Promise<Response> {
         .is('purged_at', null);
 
       if (evError) throw evError;
-      if (attachedEvidence) {
-        const evMap = new Map(attachedEvidence.map((e) => [e.kind, e.upload_intent_id]));
-        const photoIntent = evMap.get('photo');
-        const idIntent = evMap.get('id');
-        const vehicleIntent = evMap.get('vehicle_photo');
+      const evMap = new Map((attachedEvidence || []).map((e) => [e.kind, e.upload_intent_id]));
+      const actualPhotoIntent = (evMap.get('photo') || '').trim() || null;
+      const actualIdIntent = (evMap.get('id') || '').trim() || null;
+      const actualVehicleIntent = (evMap.get('vehicle_photo') || '').trim() || null;
 
-        if (parsed.data.photoIntentId && photoIntent && photoIntent !== parsed.data.photoIntentId) {
-          return jsonResponse(409, { error: 'intent_mismatch' });
-        }
-        if (parsed.data.idIntentId && idIntent && idIntent !== parsed.data.idIntentId) {
-          return jsonResponse(409, { error: 'intent_mismatch' });
-        }
-        if (vehiclePhotoIntentId && vehicleIntent && vehicleIntent !== vehiclePhotoIntentId) {
-          return jsonResponse(409, { error: 'intent_mismatch' });
-        }
+      const incomingPhotoIntent = (parsed.data.photoIntentId || '').trim() || null;
+      const incomingIdIntent = (parsed.data.idIntentId || '').trim() || null;
+      const incomingVehicleIntent = (vehiclePhotoIntentId || '').trim() || null;
+
+      if (actualPhotoIntent !== incomingPhotoIntent) {
+        return jsonResponse(409, { error: 'intent_mismatch' });
+      }
+      if (actualIdIntent !== incomingIdIntent) {
+        return jsonResponse(409, { error: 'intent_mismatch' });
+      }
+      if (actualVehicleIntent !== incomingVehicleIntent) {
+        return jsonResponse(409, { error: 'intent_mismatch' });
       }
 
       // Check pass validity window

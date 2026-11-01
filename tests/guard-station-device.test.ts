@@ -2,6 +2,12 @@ import { describe, it, expect } from 'vitest';
 import fs from 'node:fs';
 import path from 'node:path';
 import { PGlite } from '@electric-sql/pglite';
+import {
+  compareFeedEntries,
+  mergeFeedHead,
+  mergeLoadMore,
+  type StationEntry,
+} from '../src/pages/GuardPage';
 
 describe('Guard Station Device, Feed & Evidence Boundaries (Executable + Contract)', () => {
   const feedSource = fs.readFileSync(
@@ -210,5 +216,134 @@ describe('Guard Station Device, Feed & Evidence Boundaries (Executable + Contrac
     // GuardPage must render dynamic Inside vs Exited badges
     expect(guardPageSource).toContain('Currently Inside Campus');
     expect(guardPageSource).toContain('Exited Campus');
+  });
+
+  function makeMockEntry(id: string, ref: string, enteredAt: string, status: 'inside' | 'exited' = 'inside'): StationEntry {
+    return {
+      passId: id,
+      publicReference: ref,
+      status,
+      source: 'portal',
+      enteredAt,
+      visitorName: `Visitor ${ref}`,
+      purpose: 'Official Business',
+      photoEvidenceId: null,
+      gate: 'Gate 1',
+      vehicle: null,
+    };
+  }
+
+  it('7. (Test A1) mergeFeedHead preserves page 2 entries when page 1 is refreshed', () => {
+    // Current displayed feed has Page 1 (e1, e2) and Page 2 (e3, e4)
+    const e1 = makeMockEntry('uuid-001', 'REF-001', '2026-11-01T10:00:00.000Z');
+    const e2 = makeMockEntry('uuid-002', 'REF-002', '2026-11-01T09:50:00.000Z');
+    const e3 = makeMockEntry('uuid-003', 'REF-003', '2026-11-01T09:40:00.000Z');
+    const e4 = makeMockEntry('uuid-004', 'REF-004', '2026-11-01T09:30:00.000Z');
+    const currentFeed = [e1, e2, e3, e4];
+
+    // Background poll returns latest Page 1 (e1, e2)
+    const headPoll = [e1, e2];
+    const merged = mergeFeedHead(currentFeed, headPoll);
+
+    expect(merged.length).toBe(4);
+    expect(merged.map((e) => e.publicReference)).toEqual(['REF-001', 'REF-002', 'REF-003', 'REF-004']);
+  });
+
+  it('8. (Test A2) mergeFeedHead updates existing entry statuses in-place while preserving page 2', () => {
+    const e1Inside = makeMockEntry('uuid-001', 'REF-001', '2026-11-01T10:00:00.000Z', 'inside');
+    const e2 = makeMockEntry('uuid-002', 'REF-002', '2026-11-01T09:50:00.000Z', 'inside');
+    const e3 = makeMockEntry('uuid-003', 'REF-003', '2026-11-01T09:40:00.000Z', 'inside');
+    const currentFeed = [e1Inside, e2, e3];
+
+    // Visitor 1 exits campus; head poll returns updated status
+    const e1Exited = makeMockEntry('uuid-001', 'REF-001', '2026-11-01T10:00:00.000Z', 'exited');
+    const headPoll = [e1Exited, e2];
+    const merged = mergeFeedHead(currentFeed, headPoll);
+
+    expect(merged.length).toBe(3);
+    expect(merged[0]?.status).toBe('exited');
+    expect(merged[1]?.status).toBe('inside');
+    expect(merged[2]?.publicReference).toBe('REF-003');
+    expect(merged[2]?.status).toBe('inside');
+  });
+
+  it('9. (Test A3) mergeFeedHead prepends newly arriving visitors while keeping older page 2 entries in canonical keyset order', () => {
+    const e1 = makeMockEntry('uuid-001', 'REF-001', '2026-11-01T10:00:00.000Z');
+    const e2 = makeMockEntry('uuid-002', 'REF-002', '2026-11-01T09:50:00.000Z');
+    const e3 = makeMockEntry('uuid-003', 'REF-003', '2026-11-01T09:40:00.000Z');
+    const currentFeed = [e1, e2, e3];
+
+    // New visitor arrives at 10:15
+    const eNew = makeMockEntry('uuid-000', 'REF-000', '2026-11-01T10:15:00.000Z');
+    const headPoll = [eNew, e1];
+    const merged = mergeFeedHead(currentFeed, headPoll);
+
+    expect(merged.length).toBe(4);
+    expect(merged.map((e) => e.publicReference)).toEqual(['REF-000', 'REF-001', 'REF-002', 'REF-003']);
+  });
+
+  it('10. (Test A4) GuardPage source contract: continuation cursor and hasMore are preserved when older pages are loaded', () => {
+    const guardPageSource = fs.readFileSync(path.resolve('src/pages/GuardPage.tsx'), 'utf-8');
+
+    // Continuation cursor ref and hasLoadedOlderPagesRef must exist
+    expect(guardPageSource).toContain('const continuationCursorRef = useRef<string | null>(null);');
+    expect(guardPageSource).toContain('const hasLoadedOlderPagesRef = useRef<boolean>(false);');
+
+    // Head refresh must guard continuation cursor overwrite
+    expect(guardPageSource).toContain('if (!hasLoadedOlderPagesRef.current) {');
+    expect(guardPageSource).toContain('continuationCursorRef.current = data.nextCursor || null;');
+    expect(guardPageSource).toContain('setHasMore(Boolean(data.hasMore));');
+
+    // Load more must update continuation cursor and mark hasLoadedOlderPagesRef = true
+    expect(guardPageSource).toContain('hasLoadedOlderPagesRef.current = true;');
+    expect(guardPageSource).toContain('mergeLoadMore');
+  });
+
+  it('11. (Test A5) Concurrent in-flight requests: Load More and head poll interleaving produces deterministic union', () => {
+    const e0 = makeMockEntry('uuid-000', 'REF-000', '2026-11-01T10:15:00.000Z');
+    const e1 = makeMockEntry('uuid-001', 'REF-001', '2026-11-01T10:00:00.000Z');
+    const e2 = makeMockEntry('uuid-002', 'REF-002', '2026-11-01T09:50:00.000Z');
+    const e3 = makeMockEntry('uuid-003', 'REF-003', '2026-11-01T09:40:00.000Z');
+    const e4 = makeMockEntry('uuid-004', 'REF-004', '2026-11-01T09:30:00.000Z');
+
+    const initial = [e1, e2];
+
+    // Permutation 1: Head poll completes first, then Load More completes
+    const afterHead1 = mergeFeedHead(initial, [e0, e1]);
+    const final1 = mergeLoadMore(afterHead1, [e3, e4]);
+
+    // Permutation 2: Load More completes first, then Head poll completes
+    const afterLoadMore2 = mergeLoadMore(initial, [e3, e4]);
+    const final2 = mergeFeedHead(afterLoadMore2, [e0, e1]);
+
+    const expectedOrder = ['REF-000', 'REF-001', 'REF-002', 'REF-003', 'REF-004'];
+    expect(final1.map((e) => e.publicReference)).toEqual(expectedOrder);
+    expect(final2.map((e) => e.publicReference)).toEqual(expectedOrder);
+  });
+
+  it('12. (Test A6) Network failure during head refresh preserves existing entries and continuation cursor', () => {
+    const guardPageSource = fs.readFileSync(path.resolve('src/pages/GuardPage.tsx'), 'utf-8');
+
+    // Verify fetchFeed error handling does not wipe entries or reset cursor
+    expect(guardPageSource).toContain('Failed to load guard station feed:');
+    // Verify that catch block does not clear entries or cursor
+    const catchIndex = guardPageSource.indexOf('Failed to load guard station feed:');
+    const catchSnippet = guardPageSource.slice(catchIndex, catchIndex + 200);
+    expect(catchSnippet).not.toContain('setEntries');
+    expect(catchSnippet).not.toContain('continuationCursorRef');
+    expect(catchSnippet).not.toContain('setHasMore');
+  });
+
+  it('13. (Test A7) Station change or gate switch resets pagination and feed entries cleanly', () => {
+    const guardPageSource = fs.readFileSync(path.resolve('src/pages/GuardPage.tsx'), 'utf-8');
+
+    // On unmount/station change or initial load, state is cleanly reset
+    expect(guardPageSource).toContain('if (activeControllerRef.current) activeControllerRef.current.abort();');
+    expect(guardPageSource).toContain('if (loadMoreControllerRef.current) loadMoreControllerRef.current.abort();');
+    expect(guardPageSource).toContain('currentStationIdRef.current !== data.station.id');
+    expect(guardPageSource).toContain('continuationCursorRef.current = null;');
+    expect(guardPageSource).toContain('hasLoadedOlderPagesRef.current = false;');
+    expect(guardPageSource).toContain('setEntries(data.entries);');
+    expect(guardPageSource).toContain('setHasMore(Boolean(data.hasMore));');
   });
 });
