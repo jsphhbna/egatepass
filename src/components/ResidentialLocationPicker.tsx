@@ -9,13 +9,13 @@ import {
   Check,
   Loader2,
   Info,
+  Search,
 } from 'lucide-react';
 import { Button } from './ui';
 import {
   type HomeLocation,
   DEFAULT_OSM_TILE_URL,
   DEFAULT_OSM_ATTRIBUTION,
-  DEFAULT_CAMPUS_COORDINATES,
   normalizeCoordinates,
 } from '../lib/homeLocation';
 
@@ -26,6 +26,16 @@ export interface ResidentialLocationPickerProps {
   disabled?: boolean;
   tileUrl?: string;
 }
+
+interface SearchPlace {
+  displayName: string;
+  lat: number;
+  lon: number;
+}
+
+// Neutral central viewing coordinates for the Philippines when no location is selected
+const NEUTRAL_PH_VIEW_CENTER: [number, number] = [14.5995, 120.9842];
+const NEUTRAL_PH_VIEW_ZOOM = 12;
 
 // Custom crisp SVG pin divIcon to avoid broken Vite image bundle paths
 function createPinIcon() {
@@ -53,21 +63,32 @@ export function ResidentialLocationPicker({
   tileUrl = DEFAULT_OSM_TILE_URL,
 }: ResidentialLocationPickerProps) {
   const [isOpen, setIsOpen] = useState(false);
+  // P0 Fix: For new visitors (value is null), draftLocation starts as null.
+  // Never default new visitors to EARIST campus coordinates.
   const [draftLocation, setDraftLocation] = useState<HomeLocation | null>(value || null);
   const [geoLoading, setGeoLoading] = useState(false);
   const [geoError, setGeoError] = useState<string | null>(null);
   const [tileError, setTileError] = useState(false);
 
+  // In-map search state
+  const [searchQuery, setSearchQuery] = useState('');
+  const [isSearching, setIsSearching] = useState(false);
+  const [searchResults, setSearchResults] = useState<SearchPlace[]>([]);
+  const [searchError, setSearchError] = useState<string | null>(null);
+
   const mapContainerRef = useRef<HTMLDivElement>(null);
   const mapInstanceRef = useRef<L.Map | null>(null);
   const markerRef = useRef<L.Marker | null>(null);
 
-  // Synchronize draftLocation with value whenever modal opens (or default campus coordinates)
+  // Synchronize draftLocation with value whenever modal opens (restoring saved location for returning visitors)
   useEffect(() => {
     if (isOpen) {
-      setDraftLocation(value || DEFAULT_CAMPUS_COORDINATES);
+      setDraftLocation(value || null);
       setGeoError(null);
       setTileError(false);
+      setSearchQuery('');
+      setSearchResults([]);
+      setSearchError(null);
     }
   }, [isOpen, value]);
 
@@ -75,10 +96,11 @@ export function ResidentialLocationPicker({
   useEffect(() => {
     if (!isOpen || !mapContainerRef.current) return;
 
-    // Center coordinates: saved location or EARIST campus default
-    const initialLoc = draftLocation || value || DEFAULT_CAMPUS_COORDINATES;
-    const initialCenter: [number, number] = [initialLoc.lat, initialLoc.lon];
-    const initialZoom = value ? 14 : 13;
+    // Center coordinates: saved location if returning visitor, else neutral viewing position
+    const initialCenter: [number, number] = value
+      ? [value.lat, value.lon]
+      : NEUTRAL_PH_VIEW_CENTER;
+    const initialZoom = value ? 14 : NEUTRAL_PH_VIEW_ZOOM;
 
     // Clean up any stale map instance
     if (mapInstanceRef.current) {
@@ -131,8 +153,10 @@ export function ResidentialLocationPicker({
       }
     }
 
-    // Place initial marker centered on location
-    setOrUpdateMarker(initialLoc.lat, initialLoc.lon);
+    // Only restore/place marker if a saved location already exists (returning visitor)
+    if (value) {
+      setOrUpdateMarker(value.lat, value.lon);
+    }
 
     // Tap/Click on map places or moves marker
     map.on('click', (e: L.LeafletMouseEvent) => {
@@ -157,9 +181,9 @@ export function ResidentialLocationPicker({
       map.remove();
       mapInstanceRef.current = null;
     };
-  }, [isOpen, tileUrl]);
+  }, [isOpen, tileUrl, value]);
 
-  // Request browser geolocation on user click
+  // Method A: Request browser geolocation on user click
   const handleUseMyLocation = useCallback(() => {
     if (!navigator.geolocation) {
       setGeoError('Geolocation is not supported by your browser.');
@@ -228,6 +252,73 @@ export function ResidentialLocationPicker({
       }
     );
   }, []);
+
+  // Method B: Search within map (explicit submission only, compliant with Nominatim policy)
+  const handleSearchSubmit = async (e?: React.FormEvent) => {
+    if (e) e.preventDefault();
+    const query = searchQuery.trim();
+    if (query.length < 2) {
+      setSearchError('Please enter at least 2 characters to search.');
+      return;
+    }
+
+    setIsSearching(true);
+    setSearchError(null);
+    setSearchResults([]);
+
+    try {
+      const res = await fetch(`/api/location/search?q=${encodeURIComponent(query)}`);
+      const data = await res.json().catch(() => null);
+
+      if (!res.ok) {
+        setSearchError(data?.message || 'Search service temporarily busy. Please tap the map directly.');
+        return;
+      }
+
+      if (!data?.results || data.results.length === 0) {
+        setSearchError('No matching places found. Try a broader area or tap the map directly.');
+      } else {
+        setSearchResults(data.results);
+      }
+    } catch {
+      setSearchError('Could not connect to search service. Please tap the map directly.');
+    } finally {
+      setIsSearching(false);
+    }
+  };
+
+  // When a search result is selected, reposition map and marker but do NOT auto-confirm
+  const handleSelectSearchResult = (place: SearchPlace) => {
+    const norm = normalizeCoordinates(place.lat, place.lon);
+    if (!norm.valid) return;
+    const { lat, lon } = norm.location;
+
+    setDraftLocation({ lat, lon });
+    setSearchResults([]);
+
+    if (mapInstanceRef.current) {
+      mapInstanceRef.current.flyTo([lat, lon], 14, { duration: 1 });
+
+      if (markerRef.current) {
+        markerRef.current.setLatLng([lat, lon]);
+      } else {
+        const marker = L.marker([lat, lon], {
+          draggable: true,
+          icon: createPinIcon(),
+        }).addTo(mapInstanceRef.current);
+
+        marker.on('dragend', () => {
+          const p = marker.getLatLng();
+          const dNorm = normalizeCoordinates(p.lat, p.lng);
+          if (dNorm.valid) {
+            setDraftLocation(dNorm.location);
+          }
+        });
+
+        markerRef.current = marker;
+      }
+    }
+  };
 
   const handleConfirm = () => {
     if (!draftLocation) return;
@@ -316,7 +407,7 @@ export function ResidentialLocationPicker({
                     Select Approximate Home Location
                   </h3>
                   <p className="text-[11px] text-[var(--color-text-secondary)]">
-                    Tap the map or move the pin to indicate your general residential area.
+                    Choose via GPS, map search, or tap directly on the map.
                   </p>
                 </div>
               </div>
@@ -334,8 +425,57 @@ export function ResidentialLocationPicker({
             <div className="px-4 py-2 bg-blue-50/80 border-b border-blue-100 flex items-start gap-2 text-[11px] text-blue-900 leading-snug">
               <Info className="h-3.5 w-3.5 text-blue-600 flex-shrink-0 mt-0.5" />
               <span>
-                <strong>Privacy Notice:</strong> Your location is stored as an approximate coordinate rounded to ~100m. You do not need to pinpoint your exact house. Street addresses are never recorded.
+                <strong>Privacy Notice:</strong> Coordinates are saved with ~100m approximate precision. GPS access is optional, manual pin placement is always available, and exact residence is never verified. OpenStreetMap servers receive map tile and search requests.
               </span>
+            </div>
+
+            {/* Compact Search Control (Explicit submission only) */}
+            <div className="p-3 bg-slate-50 border-b border-slate-200">
+              <form onSubmit={handleSearchSubmit} className="flex gap-2">
+                <div className="relative flex-1">
+                  <input
+                    type="text"
+                    value={searchQuery}
+                    onChange={(e) => setSearchQuery(e.target.value)}
+                    placeholder="Search neighborhood, barangay, city in PH..."
+                    className="w-full pl-8 pr-3 py-1.5 text-xs rounded-lg border border-slate-300 bg-white focus:outline-none focus:ring-2 focus:ring-[var(--color-brand)]"
+                  />
+                  <Search className="h-3.5 w-3.5 text-slate-400 absolute left-2.5 top-2.5" />
+                </div>
+                <Button
+                  type="submit"
+                  size="sm"
+                  variant="secondary"
+                  disabled={isSearching || searchQuery.trim().length < 2}
+                  className="text-xs h-8 px-3"
+                >
+                  {isSearching ? <Loader2 className="h-3 w-3 animate-spin" /> : 'Search'}
+                </Button>
+              </form>
+
+              {/* Search dropdown results */}
+              {searchResults.length > 0 && (
+                <div className="mt-2 bg-white rounded-lg border border-slate-200 shadow-lg max-h-36 overflow-y-auto divide-y divide-slate-100 z-10">
+                  {searchResults.map((place, idx) => (
+                    <button
+                      key={idx}
+                      type="button"
+                      onClick={() => handleSelectSearchResult(place)}
+                      className="w-full text-left px-3 py-2 text-xs hover:bg-blue-50 transition-colors flex items-center justify-between"
+                    >
+                      <span className="truncate pr-2 text-slate-800">{place.displayName}</span>
+                      <span className="text-[10px] text-blue-600 font-medium flex-shrink-0">Place Pin</span>
+                    </button>
+                  ))}
+                </div>
+              )}
+
+              {searchError && (
+                <p className="text-[11px] text-amber-700 mt-1 flex items-center gap-1">
+                  <AlertCircle className="h-3 w-3 flex-shrink-0" />
+                  <span>{searchError}</span>
+                </p>
+              )}
             </div>
 
             {/* Map canvas */}
@@ -418,7 +558,7 @@ export function ResidentialLocationPicker({
                   disabled={!draftLocation}
                   className="flex-1 sm:flex-none"
                 >
-                  Confirm Location
+                  {draftLocation ? 'Confirm Location' : 'Select approximate location'}
                 </Button>
               </div>
             </div>

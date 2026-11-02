@@ -44,6 +44,7 @@ export interface ParsedIdNames {
   firstName: string;
   middleName: string;
   lastName: string;
+  address?: string;
   confidence: number;
   rawText?: string;
   documentFamily?: string;
@@ -51,6 +52,7 @@ export interface ParsedIdNames {
     firstName?: FieldCandidate;
     middleName?: FieldCandidate;
     lastName?: FieldCandidate;
+    address?: FieldCandidate;
   };
 }
 
@@ -145,9 +147,12 @@ export function isFuzzyLabel(text: string): boolean {
   if (KNOWN_LABEL_CORRUPTIONS.has(norm)) return true;
   for (const target of BILINGUAL_LABEL_TARGETS) {
     if (norm === target) return true;
-    if (Math.abs(norm.length - target.length) <= 2) {
+    // Single words or shorter targets must have stricter thresholds so names
+    // like 'ANDRES' are never misidentified as corruptions of 'ADDRESS'.
+    const maxDist = target.length <= 4 ? 0 : target.length >= 9 ? 2 : 1;
+    if (Math.abs(norm.length - target.length) <= maxDist) {
       const dist = levenshteinDistance(norm, target);
-      if (dist <= 2) return true;
+      if (dist <= maxDist) return true;
     }
   }
   return false;
@@ -500,6 +505,23 @@ export async function recognizeIdImage(
     onProgress(5);
   }
 
+  // 1. Primary Engine: Browser-local PaddleOCR.js (PP-OCRv6 Small, Tagalog/English)
+  if (typeof window !== 'undefined' && typeof imageSource !== 'string' && (imageSource as any) instanceof Blob) {
+    try {
+      const { recognizeIdImageWithPaddle } = await import('./paddleOcr.js');
+      const paddleResult = await recognizeIdImageWithPaddle(imageSource, onProgress);
+      if (jobId != null && jobId !== globalOcrJobCounter) {
+        return { firstName: '', middleName: '', lastName: '', confidence: 0 };
+      }
+      if (paddleResult && (paddleResult.firstName || paddleResult.lastName)) {
+        return paddleResult;
+      }
+    } catch (paddleErr) {
+      console.warn('PaddleOCR engine unready or failed, falling back to Tesseract:', paddleErr);
+    }
+  }
+
+  // 2. Secondary / Fallback Engine: Tesseract.js
   let worker: any;
   try {
     worker = await getLocalOcrWorker(onProgress);

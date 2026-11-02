@@ -8,6 +8,7 @@ import { normalizeVehiclePlate } from '../../../src/lib/vehiclePlate.js';
 import {
   encryptFaceTemplate,
   extractFaceDescriptorFromBuffer,
+  getActiveTemplateKeyVersion,
 } from '../../lib/face-engine.js';
 import { computeMatchTokenDigest } from './identify-returning.js';
 import { normalizeCoordinates, type HomeLocation } from '../../lib/home-location.js';
@@ -685,7 +686,8 @@ async function handleRequest(request: Request): Promise<Response> {
         const templateKey = process.env.RETURNING_VISITOR_TEMPLATE_KEY?.trim();
         if (templateKey && photo.buffer) {
           const { descriptor, modelName, modelVersion } = await extractFaceDescriptorFromBuffer(photo.buffer);
-          const encrypted = encryptFaceTemplate(descriptor, templateKey);
+          const activeKeyVersion = getActiveTemplateKeyVersion();
+          const encrypted = encryptFaceTemplate(descriptor, templateKey, activeKeyVersion);
 
           // Insert returning profile with approximate home coordinates
           const { data: newProfile, error: profileErr } = await admin

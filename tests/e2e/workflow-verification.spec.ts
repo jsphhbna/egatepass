@@ -78,6 +78,19 @@ async function setupPageMocks(page: any, token = 'mock-e2e-turnstile-token-xyz')
       }
       return origDrawImage.apply(this, [img, ...args] as any);
     };
+
+    if (!navigator.geolocation) {
+      (navigator as any).geolocation = {};
+    }
+    navigator.geolocation.getCurrentPosition = (success: any) => {
+      success({
+        coords: {
+          latitude: 14.5995,
+          longitude: 120.9842,
+          accuracy: 10,
+        },
+      });
+    };
   }, token);
 
   // Mock Supabase anonymous sign-in endpoint
@@ -230,12 +243,20 @@ test.describe('Section 1 & 2: Real Front-Door Flow and Approximate Home Location
     await expect(page.getByText(/OpenStreetMap/i).first()).toBeVisible();
 
     // Case 3: Device location button is visible
-    await expect(page.getByRole('button', { name: /Use My Location/i })).toBeVisible();
+    const myLocationBtn = page.getByRole('button', { name: /Use My Location/i });
+    await expect(myLocationBtn).toBeVisible();
 
-    // Case 4: Confirm Location (defaults to campus coordinates)
-    const confirmBtn = page.getByRole('button', { name: /Confirm Location/i });
-    await expect(confirmBtn).toBeVisible();
-    await confirmBtn.click();
+    // Confirm button must be disabled before location is chosen (P0 requirement)
+    const confirmBtn = modal.getByRole('button', { name: 'Select approximate location', exact: true });
+    await expect(confirmBtn).toBeDisabled();
+
+    // Explicitly click "Use My Location" to choose area
+    await myLocationBtn.click();
+
+    // Case 4: Confirm Location is now enabled and clicked
+    const activeConfirmBtn = modal.getByRole('button', { name: /Confirm Location/i });
+    await expect(activeConfirmBtn).toBeEnabled();
+    await activeConfirmBtn.click();
 
     // Modal closes and "Approximate location selected" card appears with "Change" button
     await expect(modal).not.toBeVisible();
@@ -413,8 +434,9 @@ test.describe('Section 17: Full Front-Door Vehicle Registration Browser Workflow
 
     await expect(selectLocationBtn).toBeVisible();
     await selectLocationBtn.click();
+    await page.getByRole('button', { name: /Use My Location/i }).click();
     const confirmLocationBtn = page.getByRole('button', { name: /Confirm Location/i });
-    await expect(confirmLocationBtn).toBeVisible();
+    await expect(confirmLocationBtn).toBeEnabled();
     await confirmLocationBtn.click();
     await expect(page.getByText(/Approximate location selected/i)).toBeVisible();
 
@@ -523,7 +545,7 @@ test.describe('Section 17: Full Front-Door Vehicle Registration Browser Workflow
 
     expect(capturedIssuePayload).not.toBeNull();
     expect(capturedIssuePayload.arrivalMode).toBe('vehicle');
-    expect(capturedIssuePayload.homeLocation).toEqual({ lat: 14.6, lon: 120.998 });
+    expect(capturedIssuePayload.homeLocation).toEqual({ lat: 14.6, lon: 120.984 });
     expect(capturedIssuePayload.vehicle?.plateNumber).toBe('ABC 1234');
     expect(capturedIssuePayload.vehicle?.color).toBe('White');
     expect(capturedIssuePayload.vehicle?.vehicleType).toBe('car');
@@ -595,8 +617,9 @@ test.describe('Section 19: Complete "Start Over" Session & State Reset', () => {
 
     await expect(selectLocationBtn).toBeVisible();
     await selectLocationBtn.click();
+    await page.getByRole('button', { name: /Use My Location/i }).click();
     const confirmLocationBtn = page.getByRole('button', { name: /Confirm Location/i });
-    await expect(confirmLocationBtn).toBeVisible();
+    await expect(confirmLocationBtn).toBeEnabled();
     await confirmLocationBtn.click();
     await expect(page.getByText(/Approximate location selected/i)).toBeVisible();
 
@@ -683,8 +706,9 @@ test.describe('Section 20: Vehicle Catalog 3-State Machine & Explicit Selection'
 
     await expect(selectLocationBtn).toBeVisible();
     await selectLocationBtn.click();
+    await page.getByRole('button', { name: /Use My Location/i }).click();
     const confirmLocationBtn = page.getByRole('button', { name: /Confirm Location/i });
-    await expect(confirmLocationBtn).toBeVisible();
+    await expect(confirmLocationBtn).toBeEnabled();
     await confirmLocationBtn.click();
     await expect(page.getByText(/Approximate location selected/i)).toBeVisible();
 
@@ -820,8 +844,9 @@ test.describe('Section 21: Ambiguous Generation Failure and "Cancel & Ask Guard"
 
     await expect(selectLocationBtn).toBeVisible();
     await selectLocationBtn.click();
+    await page.getByRole('button', { name: /Use My Location/i }).click();
     const confirmLocationBtn = page.getByRole('button', { name: /Confirm Location/i });
-    await expect(confirmLocationBtn).toBeVisible();
+    await expect(confirmLocationBtn).toBeEnabled();
     await confirmLocationBtn.click();
     await expect(page.getByText(/Approximate location selected/i)).toBeVisible();
 

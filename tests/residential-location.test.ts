@@ -135,4 +135,36 @@ describe('Approximate Residential Location & Coordinate Normalization Contract',
       expect(DEFAULT_CAMPUS_COORDINATES.lon).toBe(120.998);
     });
   });
+
+  describe('3. Nominatim Location Search Proxy Contract', () => {
+    it('rejects non-GET methods with 405 Method Not Allowed', async () => {
+      const { handleLocationSearch } = await import('../server/routes/location/search.js');
+      const req = new Request('https://egatepass.tech/api/location/search?q=Manila', { method: 'POST' });
+      const res = await handleLocationSearch(req);
+      expect(res.status).toBe(405);
+      const json = await res.json();
+      expect(json.error).toBe('method_not_allowed');
+    });
+
+    it('rejects short or empty query with 400 Bad Request', async () => {
+      const { handleLocationSearch } = await import('../server/routes/location/search.js');
+      const req1 = new Request('https://egatepass.tech/api/location/search?q=', { method: 'GET' });
+      const res1 = await handleLocationSearch(req1);
+      expect(res1.status).toBe(400);
+
+      const req2 = new Request('https://egatepass.tech/api/location/search?q=a', { method: 'GET' });
+      const res2 = await handleLocationSearch(req2);
+      expect(res2.status).toBe(400);
+    });
+
+    it('rejects queries longer than 100 characters with 400 Bad Request', async () => {
+      const { handleLocationSearch } = await import('../server/routes/location/search.js');
+      const longQuery = 'A'.repeat(101);
+      const req = new Request(`https://egatepass.tech/api/location/search?q=${longQuery}`, { method: 'GET' });
+      const res = await handleLocationSearch(req);
+      expect(res.status).toBe(400);
+      const json = await res.json();
+      expect(json.error).toBe('query_too_long');
+    });
+  });
 });

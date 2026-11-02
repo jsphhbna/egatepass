@@ -1,6 +1,7 @@
 import * as ort from 'onnxruntime-node';
 import sharp, { type Metadata } from 'sharp';
 import path from 'node:path';
+import fs from 'node:fs';
 import crypto from 'node:crypto';
 
 export type QualityResultCode =
@@ -110,6 +111,23 @@ export async function getInferenceSessions() {
  */
 export function resetInferenceSessions() {
   sessionsPromise = null;
+}
+
+/**
+ * Determines whether the 1:1 new-visitor face verification pipeline is operational.
+ * Checks model availability on disk and configuration environment flags.
+ */
+export function isFaceVerificationConfigured(): boolean {
+  if (process.env.FACE_VERIFICATION_DISABLED === 'true') {
+    return false;
+  }
+  try {
+    const yunetPath = path.resolve('server/models/face_detection_yunet_2023mar.onnx');
+    const sfacePath = path.resolve('server/models/face_recognition_sface_2021dec.onnx');
+    return fs.existsSync(yunetPath) && fs.existsSync(sfacePath);
+  } catch {
+    return false;
+  }
 }
 
 // Compute Laplacian variance on grayscale buffer for blur detection
@@ -470,12 +488,20 @@ export async function getAlignedFaceDescriptor(imageBuffer: Buffer, face: Detect
 }
 
 // Evaluate face crop region for sharpness, exposure, and dimension
-async function evaluateFaceCropQuality(
+export async function evaluateFaceCropQuality(
   originalBuffer: Buffer,
   meta: Metadata,
   face: DetectedFace,
   kind: 'selfie' | 'id'
 ): Promise<{ passed: boolean; code: QualityResultCode; message: string }> {
+  if (!face || !face.landmarks || face.w < 1 || face.h < 1) {
+    return {
+      passed: false,
+      code: kind === 'selfie' ? 'no_face' : 'portrait_missing',
+      message: kind === 'selfie' ? 'No face detected in the image.' : 'ID portrait not found.',
+    };
+  }
+
   const origW = meta.width ?? 0;
   const origH = meta.height ?? 0;
   if (origW < 1 || origH < 1) {
@@ -547,7 +573,14 @@ async function evaluateFaceCropQuality(
       };
     }
   } catch (err) {
-    console.warn('Face crop quality evaluation fallback:', err);
+    console.error('Face crop quality evaluation exception (failing closed):', err);
+    return {
+      passed: false,
+      code: 'decode_failed',
+      message: kind === 'selfie'
+        ? 'Could not process face region. Please ensure your face is clearly visible and try again.'
+        : 'Could not process ID portrait region. Please upload a clear photo.',
+    };
   }
 
   return { passed: true, code: 'ok', message: 'Face crop quality passed.' };
@@ -956,23 +989,33 @@ export function parseTemplateKey(keyInput: string): Buffer {
 }
 
 /**
+ * Returns the configured active encryption key version.
+ */
+export function getActiveTemplateKeyVersion(): string {
+  const envVersion = process.env.RETURNING_VISITOR_ACTIVE_KEY_VERSION?.trim();
+  if (envVersion) return envVersion;
+  return 'v1';
+}
+
+/**
  * Resolves an active or version-specific template key from a keyring or secret.
  */
 export function getVersionedTemplateKey(
-  keyVersion = 'v1',
+  keyVersion?: string,
   keyringOrSecret?: string | Record<string, string>
 ): string {
+  const version = keyVersion || getActiveTemplateKeyVersion();
   if (keyringOrSecret && typeof keyringOrSecret === 'object') {
-    const key = keyringOrSecret[keyVersion];
-    if (!key) throw new Error(`unsupported_template_key_version:${keyVersion}`);
+    const key = keyringOrSecret[version];
+    if (!key) throw new Error(`unsupported_template_key_version:${version}`);
     return key;
   }
 
   if (process.env.RETURNING_VISITOR_KEYRING) {
     try {
       const parsedRing = JSON.parse(process.env.RETURNING_VISITOR_KEYRING);
-      if (parsedRing && typeof parsedRing === 'object' && parsedRing[keyVersion]) {
-        return parsedRing[keyVersion];
+      if (parsedRing && typeof parsedRing === 'object' && parsedRing[version]) {
+        return parsedRing[version];
       }
     } catch {
       // Fall through on JSON parse error
@@ -984,20 +1027,21 @@ export function getVersionedTemplateKey(
     throw new Error('template_key_missing');
   }
 
-  const activeVersion = process.env.RETURNING_VISITOR_ACTIVE_KEY_VERSION || 'v1';
-  if (keyVersion === activeVersion || keyVersion === 'v1') {
+  const activeVersion = getActiveTemplateKeyVersion();
+  if (version === activeVersion || version === 'v1') {
     return primaryKey;
   }
 
-  throw new Error(`unsupported_template_key_version:${keyVersion}`);
+  throw new Error(`unsupported_template_key_version:${version}`);
 }
 
 export function encryptFaceTemplate(
   descriptor: Float32Array,
   keyHexOrSecret: string,
-  keyVersion = 'v1'
+  keyVersion?: string
 ): { encryptedEmbedding: string; iv: string; authTag: string; keyVersion: string } {
-  const resolvedKey = getVersionedTemplateKey(keyVersion, keyHexOrSecret);
+  const version = keyVersion || getActiveTemplateKeyVersion();
+  const resolvedKey = getVersionedTemplateKey(version, keyHexOrSecret);
   const key = parseTemplateKey(resolvedKey);
   const iv = crypto.randomBytes(12);
   const cipher = crypto.createCipheriv('aes-256-gcm', key, iv);
@@ -1009,7 +1053,7 @@ export function encryptFaceTemplate(
     encryptedEmbedding: encrypted.toString('hex'),
     iv: iv.toString('hex'),
     authTag: authTag.toString('hex'),
-    keyVersion,
+    keyVersion: version,
   };
 }
 

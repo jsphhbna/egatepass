@@ -2352,4 +2352,77 @@ describe('Permanent PostgreSQL Migration Chain & Schema Contracts (PGlite)', () 
     `);
     expect(rpcCheck.rows.length).toBe(1);
   }, 60000);
+
+  it('Migration 48: verifies upload_intents and visitor_evidence vehicle_photo constraints and staff policy', async () => {
+    const db = new PGlite();
+    await applyAllMigrations(db);
+
+    const testUserId = '66666666-6666-6666-6666-666666666666';
+    await db.exec(`insert into auth.users (id, is_anonymous) values ('${testUserId}', true);`);
+
+    // 1. Test upload_intents with vehicle_photo -> visitor-photos (MUST SUCCEED)
+    const validVehicleIntent = '77777777-7777-7777-7777-777777777777';
+    await db.exec(`
+      insert into public.upload_intents (
+        id, owner_id, source, kind, bucket_id, object_path, content_type, max_bytes, status, expires_at
+      ) values (
+        '${validVehicleIntent}', '${testUserId}', 'portal', 'vehicle_photo', 'visitor-photos', 'portal/${testUserId}/veh.jpg', 'image/jpeg', 5242880, 'pending', now() + interval '10 minutes'
+      );
+    `);
+    const checkIntent = await db.query<{ kind: string; bucket_id: string }>(`select kind, bucket_id from public.upload_intents where id = '${validVehicleIntent}';`);
+    expect(checkIntent.rows.length).toBe(1);
+    expect(checkIntent.rows[0].kind).toBe('vehicle_photo');
+    expect(checkIntent.rows[0].bucket_id).toBe('visitor-photos');
+
+    // 2. Test upload_intents with invalid kind/bucket combo (MUST FAIL)
+    await expect(
+      db.exec(`
+        insert into public.upload_intents (
+          id, owner_id, source, kind, bucket_id, object_path, content_type, max_bytes, status, expires_at
+        ) values (
+          gen_random_uuid(), '${testUserId}', 'portal', 'vehicle_photo', 'visitor-ids', 'portal/${testUserId}/inv1.jpg', 'image/jpeg', 5242880, 'pending', now() + interval '10 minutes'
+        );
+      `)
+    ).rejects.toThrow();
+
+    await expect(
+      db.exec(`
+        insert into public.upload_intents (
+          id, owner_id, source, kind, bucket_id, object_path, content_type, max_bytes, status, expires_at
+        ) values (
+          gen_random_uuid(), '${testUserId}', 'portal', 'invalid_kind', 'visitor-photos', 'portal/${testUserId}/inv2.jpg', 'image/jpeg', 5242880, 'pending', now() + interval '10 minutes'
+        );
+      `)
+    ).rejects.toThrow();
+
+    // 3. Test visitor_evidence with vehicle_photo -> visitor-photos (MUST SUCCEED)
+    const evidId = '88888888-8888-8888-8888-888888888888';
+    await db.exec(`
+      insert into public.visitors (
+        id, owner_id, source, full_name, contact_number, visit_date, purpose, consent_accepted_at
+      ) values (
+        '${testUserId}', '${testUserId}', 'portal', 'Evid Visitor', '+639175555555', current_date, 'Visit', now()
+      );
+      insert into public.visitor_evidence (
+        id, visitor_id, upload_intent_id, kind, bucket_id, object_path, content_type, byte_size, sha256_hex, verified_at, expires_at
+      ) values (
+        '${evidId}', '${testUserId}', '${validVehicleIntent}', 'vehicle_photo', 'visitor-photos', 'portal/${testUserId}/veh.jpg', 'image/jpeg', 1024, repeat('d', 64), now(), now() + interval '30 days'
+      );
+    `);
+    const evidCheck = await db.query<{ kind: string; bucket_id: string }>(`select kind, bucket_id from public.visitor_evidence where id = '${evidId}';`);
+    expect(evidCheck.rows.length).toBe(1);
+    expect(evidCheck.rows[0].kind).toBe('vehicle_photo');
+    expect(evidCheck.rows[0].bucket_id).toBe('visitor-photos');
+
+    // 4. Test visitor_evidence with invalid kind/bucket combo (MUST FAIL)
+    await expect(
+      db.exec(`
+        insert into public.visitor_evidence (
+          id, visitor_id, upload_intent_id, kind, bucket_id, object_path, content_type, byte_size, sha256_hex, verified_at, expires_at
+        ) values (
+          gen_random_uuid(), '${testUserId}', '${validVehicleIntent}', 'vehicle_photo', 'visitor-ids', 'portal/${testUserId}/bad.jpg', 'image/jpeg', 1024, repeat('e', 64), now(), now() + interval '30 days'
+        );
+      `)
+    ).rejects.toThrow();
+  }, 60000);
 });

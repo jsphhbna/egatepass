@@ -36,7 +36,8 @@ describe('Returning Visitor Biometrics & Safety Gate Contract', () => {
       expect(res.status).toBe(200);
       const data = await res.json();
       expect(data.returningVisitorAvailable).toBe(false);
-      expect(data.facialRecognitionConfigured).toBe(false);
+      // facialRecognitionConfigured is independent of returning visitor env vars (reflects 1:1 model files on disk)
+      expect(typeof data.facialRecognitionConfigured).toBe('boolean');
     });
 
     it('rejects invalid or unsafe calibration values', () => {

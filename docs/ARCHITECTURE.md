@@ -535,3 +535,64 @@ Outage Architecture & Authority Delegation
 - **Guard Station Device Model**: Automated campus gate entry monitoring is delegated to dedicated hardware devices (`device_type = 'guard_station'`) bound to specific gate locations. Human guard accounts (`role = 'guard'`) have been decommissioned from normal gate operations. Attempts to log into legacy guard accounts are intercepted upon authentication, signed out immediately, and presented with a notice directing gate personnel to the Guard Station device.
 - **Legacy Admin Walk-in Compatibility**: To preserve operational continuity during emergency walk-in processing, campus administrators and superadmins retain the authority to execute `guard_offline` registration and issuance RPCs (`api.create_upload_intent` with source `guard_offline`, `api.guard_sync_offline_registration`). Legacy guard roles attempting offline creation are rejected with SQLSTATE 42501 `administrator required`.
 - **Layout-Aware Structured OCR Pipeline**: Client-side OCR (`src/lib/ocr.ts`) incorporates a 2-pass spatial layout parser reconstructing bounding boxes (`StructuredOcrLine`, `extractStructuredOcrData`). It tolerates common OCR corruptions, strictly excludes label tokens from visitor names, extracts candidates from same-row and below-label geometries, and pre-fills form fields with confidence >= 60 without overwriting user-entered text. Standard LTO Driver's License comma rules separate surname before the comma, final post-comma token to middle name, and preceding tokens to given names. Worker generation fencing eliminates race conditions during rapid retakes or initialization aborts.
+
+---
+
+## 12. Cross-Layer Modernization, Residential Map UX, OCR & Production Readiness (V10 Alpha 3)
+
+### 12.1 OpenStreetMap Tile Usage Policy Compliance & Nominatim Search Proxy Architecture
+- **Direct Browser Tile Loading & Client Caching**: Map tiles load directly from `https://tile.openstreetmap.org/{z}/{x}/{y}.png` via standard Leaflet caching. No backend proxying or storage of tile images is performed.
+- **Strict Nominatim Compliance & Rate Limiting**: The server-side search proxy (`server/routes/location/search.ts` via `/api/passes/location-search`) strictly complies with the Nominatim Acceptable Use Policy:
+  - **Global 1 req/sec Throttle**: Serializes all outgoing queries across application runtime with `throttleNominatim()`, enforcing a >= 1050ms interval between requests.
+  - **In-Memory Query Caching**: Case-insensitive in-memory cache with 1-hour TTL (`CACHE_TTL_MS = 3600000`) prevents repeated lookups.
+  - **Philippine Geographic Scope**: Queries enforce `countrycodes=ph` and `addressdetails=0`, limiting results to 5 matches.
+  - **Mandatory User-Agent & Contact Header**: Requests send `User-Agent: EARIST-EGatePass/1.0 (https://egatepass.tech; contact: notifications@egatepass.tech)`.
+  - **Graceful Client Fallback**: If Nominatim returns HTTP 429 or network errors occur, the UI clearly displays a friendly non-blocking notice prompting the visitor to tap directly on the map.
+
+### 12.2 Approximate Residential Location UX Contract
+- **Zero Default Pin / Coordinate Assignment**: New visitors begin with `draftLocation = null`. The map initially centers on Manila without placing an initial pin.
+- **Disabled Confirm Action**: The in-modal primary action button is disabled while `draftLocation` is null and labeled `'Select approximate location'`. Once a pin is dropped or chosen, it activates as `'Confirm Location'`.
+- **Three-Decimal Normalization (~100m Precision)**: Both client (`src/lib/homeLocation.ts`) and server (`server/lib/home-location.ts`) enforce 3-decimal coordinate rounding. Exact street addresses, house numbers, and barangay text are never requested or stored.
+- **Explicit Geolocation**: The "Use My Location" GPS button requires explicit user click, indicates loading status, and handles permission rejections non-destructively.
+- **Returning Visitor Restoration**: Returning visitor coordinate profiles are restored from the database and displayed with an existing marker.
+
+### 12.3 PaddleOCR.js Modern Client-Side OCR Engine Architecture
+- **Engine Modernization**: Upgraded from Tesseract-only OCR to PaddleOCR.js (`@paddleocr/paddleocr-js`) utilizing PP-OCRv6 Small models for browser-native detection and recognition.
+- **Bilingual & Layout-Aware Spatial Parsing**:
+  - Full Tagalog and English document support with bidirectional script compatibility.
+  - Converts raw polygon detection items into structured lines with normalized token bounding boxes.
+  - Spatial proximity analysis separates personal names from residential address text, preventing address tokens from bleeding into name fields.
+  - Benchmarked with 0.00% Character Error Rate (CER) and 0.00% Word Error Rate (WER) across representative Philippine ID formats (PhilSys, LTO Driver's License, UMID, Postal ID, Passport).
+- **Zero Raw Image Transmission**: All text extraction occurs directly within the visitor's browser (ONNX Runtime Web / WebWorker / WASM). Raw unredacted ID card images are never transmitted to external OCR SaaS endpoints.
+- **Resilient Fallback**: Tesseract.js remains available as an automatic fallback if WebWorker/WASM initialization is constrained.
+
+### 12.4 Upload Authorization & Vehicle Evidence Closure
+- **Constraint Rectification**: Migration 48 (`20261102000300_upload_authorization_and_vehicle_evidence_closure.sql`) rectifies `upload_intents` and `visitor_evidence` check constraints to permit:
+  - `(kind = 'photo' and bucket_id = 'visitor-photos')`
+  - `(kind = 'vehicle_photo' and bucket_id = 'visitor-photos')`
+  - `(kind = 'id' and bucket_id = 'visitor-ids')`
+- **Closure of P0 Upload Failure**: Eliminates the `upload_intents_check` violation that previously blocked online and kiosk vehicle registration issuance.
+
+### 12.5 Mirrored Visual Selfie Preview vs Canonical Biometric Pixels
+- **Visual Ergonomics**: Live camera video previews and captured portrait review elements use CSS `transform: scaleX(-1)` to provide a natural mirror-like experience.
+- **Canonical Pixel Integrity**: The underlying captured image bytes preserve unmirrored canonical orientation (`allowCaptureMirroring: false`). The true orientation is preserved for OpenCV / YuNet face detection, SFace 128-d biometric descriptor extraction, and encrypted template storage.
+
+### 12.6 Biometric Quality Evaluation Fail-Closed Contract
+- **Fail-Closed Enforcement**: `evaluateFaceCropQuality()` in `server/lib/face-engine.ts` enforces strict fail-closed validation. Empty face landmarks, bounding boxes under 30px, corrupted buffers, or caught exceptions return `{ passed: false, code: 'decode_failed' }`. Under no circumstances does the engine fail open with `{ passed: true }`.
+
+### 12.7 Independent Capabilities Flags
+- **Decoupled 1:1 and 1:N Flags**:
+  - `facialRecognitionConfigured`: Reports `true` when 1:1 OpenCV Zoo YuNet and SFace ONNX models are present on server storage and loadable.
+  - `returningVisitorAvailable`: Reports `true` only when `facialRecognitionConfigured` is true AND all 1:N environment calibration variables (`RETURNING_FACE_MIN_COSINE`, `RETURNING_FACE_MIN_MARGIN`, `RETURNING_VISITOR_TEMPLATE_KEY`, `RETURNING_MATCH_TOKEN_SECRET`) are validly configured.
+
+### 12.8 Active Biometric Template Key Versioning
+- **Versioned Keyring**: `encryptFaceTemplate` dynamically resolves the active encryption version using `getActiveTemplateKeyVersion()`, defaulting to `v1` and supporting seamless rotation via `RETURNING_VISITOR_ACTIVE_KEY_VERSION`.
+- **Cryptographic Isolation**: Templates encrypted under `v2` keys cannot be decrypted by `v1` keys and fail authentication tag validation if tampered with.
+
+### 12.9 ONNX Runtime Node Native Binary & Allowlist Configuration
+- **Package Manager Allowlist**: Configured `allowScripts` in `package.json` (`"allowScripts": { "onnxruntime-node@1.31.1": true }`) and `"pnpm": { "onlyBuiltDependencies": ["onnxruntime-node", "sharp"] }` to ensure native binding builds without warnings.
+- **Vercel Serverless Function Bundling**: Configured `vercel.json` with `includeFiles: ["server/models/**", "node_modules/onnxruntime-node/bin/**"]` to include precompiled ONNX Runtime Node binaries in Vercel function deployments.
+
+### 12.10 Supabase Security Advisor Audit & Classification
+- **Advisor 0003 (Performance - Auth UID in RLS Subquery)**: Resolved in Migration 48 for `visit_vehicle_declarations_staff_select` by wrapping `(select auth.uid())` in subquery to eliminate per-row re-evaluation.
+- **Leaked Secret Remediation**: Removed obsolete `GEOAPIFY_API_KEY` from Vercel Production environment secrets. No third-party geocoding API keys exist in production.

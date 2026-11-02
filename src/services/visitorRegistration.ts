@@ -19,7 +19,6 @@ export interface ReturningIdentifyProfile {
   middleName?: string | null;
   lastName: string;
   contactNumber: string;
-  homeAddress?: string | null;
   homeLocation?: HomeLocation | null;
 }
 
@@ -45,7 +44,6 @@ export interface VisitorRegistration {
   visitDate: string;
   email?: string;
   consent?: boolean;
-  homeAddress?: string;
   homeLocation?: HomeLocation | null;
   registrationMode?: 'new' | 'returning';
   arrivalMode?: 'no_vehicle' | 'vehicle';
@@ -1004,7 +1002,6 @@ export async function issueVisitorPass(
           middleName: effectiveVisitor.middleName,
           lastName: effectiveVisitor.lastName,
           contactNumber: effectiveVisitor.contactNumber,
-          homeAddress: effectiveVisitor.homeAddress,
           purpose: effectiveVisitor.purpose,
           visitDate: effectiveVisitor.visitDate,
         },

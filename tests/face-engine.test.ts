@@ -15,6 +15,9 @@ import {
   encryptFaceTemplate,
   decryptFaceTemplate,
   SFACE_COSINE_THRESHOLD,
+  evaluateFaceCropQuality,
+  getActiveTemplateKeyVersion,
+  isFaceVerificationConfigured,
 } from '../server/lib/face-engine.js';
 
 describe('Local Face Engine Contract (YuNet + SFace)', () => {
@@ -210,5 +213,41 @@ describe('Local Face Engine Contract (YuNet + SFace)', () => {
     expect(analysis.faces).toHaveLength(1);
     expect(analysis.dominantFace).toBe(analysis.faces[0]);
     expect(analysis.descriptor).toHaveLength(128);
+  });
+
+  it('12. evaluateFaceCropQuality fail-closed contract', async () => {
+    // 12.1 Missing or empty face must fail closed
+    const emptyFaceResult = await evaluateFaceCropQuality(sample1, { width: 640, height: 640 }, null as any, 'selfie');
+    expect(emptyFaceResult.passed).toBe(false);
+    expect(emptyFaceResult.code).toBe('no_face');
+
+    // 12.2 Corrupted buffer must fail closed with decode_failed, NEVER pass
+    const corruptedBuffer = Buffer.from('not-an-image');
+    const dummyFace = {
+      x: 100,
+      y: 100,
+      w: 120,
+      h: 120,
+      score: 0.9,
+      landmarks: [[110, 110], [150, 110], [130, 130], [115, 150], [145, 150]] as Array<[number, number]>,
+    };
+    const errorResult = await evaluateFaceCropQuality(corruptedBuffer, { width: 640, height: 640 }, dummyFace, 'selfie');
+    expect(errorResult.passed).toBe(false);
+    expect(errorResult.code).toBe('decode_failed');
+  });
+
+  it('13. Template key versioning active defaults and environment override', () => {
+    const defaultVer = getActiveTemplateKeyVersion();
+    expect(defaultVer).toBe('v1');
+
+    process.env.RETURNING_VISITOR_ACTIVE_KEY_VERSION = 'v2';
+    expect(getActiveTemplateKeyVersion()).toBe('v2');
+    delete process.env.RETURNING_VISITOR_ACTIVE_KEY_VERSION;
+    expect(getActiveTemplateKeyVersion()).toBe('v1');
+  });
+
+  it('14. Independent capability checks', () => {
+    const isConfigured = isFaceVerificationConfigured();
+    expect(typeof isConfigured).toBe('boolean');
   });
 });

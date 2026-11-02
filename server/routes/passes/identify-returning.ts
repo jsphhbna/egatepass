@@ -6,10 +6,10 @@ import { getServerSupabaseClients } from '../../supabase.js';
 import { getClientNetworkIdentifier } from './issue.js';
 import { inspectAndDownloadUpload } from './verify-identity.js';
 import {
-  evaluateLiveFaceQuality,
-  extractFaceDescriptorFromBuffer,
+  analyzeFaceImage,
   decryptFaceTemplate,
   computeCosineSimilarity,
+  isFaceVerificationConfigured,
 } from '../../lib/face-engine.js';
 
 const requestSchema = z.object({
@@ -32,6 +32,7 @@ export function isReturningVisitorAvailable(): boolean {
   if (isNaN(marginNum) || marginNum <= 0 || marginNum >= 1) return false;
   if (templateKey.trim().length < 32) return false;
   if (matchSecret.trim().length < 16) return false;
+  if (!isFaceVerificationConfigured()) return false;
 
   return true;
 }
@@ -132,35 +133,29 @@ async function handleRequest(request: Request): Promise<Response> {
     // 3. Inspect and download photo (live selfie)
     const photoResult = await inspectAndDownloadUpload(admin, parsed.data.photoIntentId, actorId, 'photo');
 
-    // 4. Quality preflight on live face
-    const quality = await evaluateLiveFaceQuality(photoResult.buffer);
-    if (!quality.passed) {
+    // 4. Single-pass live face quality evaluation and descriptor extraction (avoids redundant inference)
+    const analysis = await analyzeFaceImage(photoResult.buffer, 'selfie');
+    if (!analysis.quality.passed) {
       return jsonResponse(422, {
         ok: false,
         error: 'quality_rejected',
-        reasonCode: quality.code,
-        message: quality.message,
+        reasonCode: analysis.quality.code,
+        message: analysis.quality.message,
       });
     }
 
-    // 5. Extract normalized face embedding
-    let queryEmbedding: Float32Array;
-    let modelName: string;
-    let modelVersion: string;
-    try {
-      const ext = await extractFaceDescriptorFromBuffer(photoResult.buffer);
-      queryEmbedding = ext.descriptor;
-      modelName = ext.modelName;
-      modelVersion = ext.modelVersion;
-    } catch (extErr) {
-      const msg = extErr instanceof Error ? extErr.message : 'no_face_in_selfie';
+    if (!analysis.descriptor) {
       return jsonResponse(422, {
         ok: false,
         error: 'quality_rejected',
-        reasonCode: msg,
+        reasonCode: 'no_face_in_selfie',
         message: 'Could not extract face descriptor. Please retake photo.',
       });
     }
+
+    const queryEmbedding = analysis.descriptor;
+    const modelName = analysis.modelName;
+    const modelVersion = analysis.modelVersion;
 
     // 6. Complete gallery pagination with safety cap (Phase 4A)
     const PAGE_SIZE = 500;
@@ -311,7 +306,6 @@ async function handleRequest(request: Request): Promise<Response> {
           middleName: bestProfile.middle_name,
           lastName: bestProfile.last_name,
           contactNumber: bestProfile.contact_number_e164,
-          homeAddress: bestProfile.home_address,
           homeLocation: (bestProfile.home_location_lat != null && bestProfile.home_location_lon != null)
             ? {
                 lat: Number(bestProfile.home_location_lat),

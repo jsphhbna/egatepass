@@ -137,7 +137,6 @@ export function createGetPassSchema(schedulingDaysAhead: number = MAX_VISIT_ADVA
             });
           }
         }),
-      homeAddress: z.string().optional(),
       purpose: z
         .string()
         .max(300, 'Purpose description is too long')
@@ -234,7 +233,6 @@ export function GetPassPage() {
     middleName?: string;
     lastName: string;
     contactNumber: string;
-    homeAddress?: string;
     homeLocation?: HomeLocation | null;
     matchToken: string;
     savedVehicles: Array<{
@@ -520,7 +518,6 @@ export function GetPassPage() {
       middleName: '',
       lastName: '',
       contactNumber: '',
-      homeAddress: '',
       visitDate: '',
       consent: false as any,
     });
@@ -889,7 +886,6 @@ export function GetPassPage() {
         middleName: p.middleName || '',
         lastName: p.lastName,
         contactNumber: p.contactNumber,
-        homeAddress: p.homeAddress || '',
         homeLocation: p.homeLocation || null,
         matchToken: data.matchToken,
         savedVehicles: (data.savedVehicles || []).map((v) => ({
@@ -906,7 +902,6 @@ export function GetPassPage() {
       if (p.middleName) setValue('middleName', p.middleName);
       setValue('lastName', p.lastName, { shouldValidate: true });
       setValue('contactNumber', p.contactNumber, { shouldValidate: true });
-      if (p.homeAddress) setValue('homeAddress', p.homeAddress);
       if (p.homeLocation) {
         setHomeLocation(p.homeLocation);
         setValue('homeLocation', p.homeLocation, { shouldValidate: true });
@@ -2366,7 +2361,7 @@ export function GetPassPage() {
               {photoPreview ? (
                 <div className="space-y-4">
                   <div className="relative mx-auto max-w-xs overflow-hidden rounded-2xl border-2 border-[var(--color-border)] shadow-sm aspect-[4/3] bg-black">
-                    <img src={photoPreview} alt="Captured face" className="w-full h-full object-cover" />
+                    <img src={photoPreview} alt="Captured face" className="w-full h-full object-cover" style={{ transform: 'scaleX(-1)' }} />
                   </div>
 
                   <div className="flex gap-3">
@@ -2868,6 +2863,7 @@ export function GetPassPage() {
                         src={photoPreview}
                         alt="Your live face photo"
                         className="h-24 w-20 object-cover rounded-lg border border-[var(--color-border)] shadow-sm mx-auto"
+                        style={{ transform: 'scaleX(-1)' }}
                       />
                       {currentPhase !== 'ambiguous' &&
                         currentPhase !== 'submission_uncertain_hold' && (

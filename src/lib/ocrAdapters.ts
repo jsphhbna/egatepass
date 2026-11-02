@@ -393,10 +393,50 @@ export class DriverLicenseAdapter implements DocumentAdapter {
 
     const lines = text.split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
 
-    // Primary: Comma separated format "SURNAME, GIVEN NAMES (one or more) MIDDLE NAME"
+    // Primary: Comma separated format "SURNAME, GIVEN NAMES, MIDDLE NAME" or "SURNAME, GIVEN NAMES MIDDLE NAME"
     for (const line of lines) {
       if (line.includes(',')) {
         const parts = line.split(',');
+        if (parts.length >= 3) {
+          const p0 = parts[0]?.trim() || '';
+          const p1 = parts[1]?.trim() || '';
+          const p2 = parts.slice(2).join(' ').trim() || '';
+          const lastWords = cleanNameCandidate(p0).split(' ').filter(isValidNameWord);
+          const firstWords = cleanNameCandidate(p1).split(' ').filter(isValidNameWord);
+          const middleWords = cleanNameCandidate(p2).split(' ').filter(isValidNameWord);
+
+          if (lastWords.length >= 1 && firstWords.length >= 1) {
+            result.lastName = toTitleCase(lastWords.join(' '));
+            result.firstName = toTitleCase(firstWords.join(' '));
+            result.middleName = middleWords.length >= 1 ? toTitleCase(middleWords.join(' ')) : '';
+
+            fieldCandidates.lastName = {
+              value: result.lastName,
+              confidence: overallConfidence,
+              sourcePass,
+              documentFamily: this.family,
+              extractionMode: 'combined_field',
+            };
+            fieldCandidates.firstName = {
+              value: result.firstName,
+              confidence: overallConfidence,
+              sourcePass,
+              documentFamily: this.family,
+              extractionMode: 'combined_field',
+            };
+            if (result.middleName) {
+              fieldCandidates.middleName = {
+                value: result.middleName,
+                confidence: Math.max(30, overallConfidence - 10),
+                sourcePass,
+                documentFamily: this.family,
+                extractionMode: 'combined_field',
+              };
+            }
+            return result;
+          }
+        }
+
         const p0 = parts[0]?.trim();
         const p1 = parts.slice(1).join(' ').trim();
         if (p0 && p1) {

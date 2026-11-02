@@ -208,7 +208,7 @@ export function KioskPage() {
     void loadSettings();
   }, [loadSettings]);
 
-  const faceWebcam = useWebcam({ facingMode: 'user', width: 640, height: 480, allowCaptureMirroring: true });
+  const faceWebcam = useWebcam({ facingMode: 'user', width: 640, height: 480, allowCaptureMirroring: false });
   const idWebcam = useWebcam({ facingMode: 'environment', width: 1280, height: 720, allowCaptureMirroring: false });
   const ocrGenerationRef = useRef(0);
 
@@ -1196,7 +1196,7 @@ export function KioskPage() {
                   {photoPreview && (
                     <div className="text-center">
                       <p className="text-xs text-[var(--color-text-secondary)] mb-1">Face Photo</p>
-                      <img src={photoPreview} alt="Face photo" className="h-24 w-20 object-cover rounded-lg border border-[var(--color-border)] shadow-sm mx-auto" />
+                      <img src={photoPreview} alt="Face photo" className="h-24 w-20 object-cover rounded-lg border border-[var(--color-border)] shadow-sm mx-auto" style={{ transform: 'scaleX(-1)' }} />
                       {kioskTransactionRef.current?.phase !== 'ambiguous' && kioskTransactionRef.current?.phase !== 'existing_pass_conflict' && (
                         <button
                           type="button"
