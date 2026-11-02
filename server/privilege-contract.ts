@@ -218,6 +218,7 @@ export const SERVER_DIRECT_TABLE_OPERATIONS: DirectServerTableOperation[] = [
   { file: 'server/routes/passes/identify-returning.ts', table: 'returning_face_templates', operations: ['SELECT'], purpose: 'Query active encrypted face templates for 1:N comparison' },
   { file: 'server/routes/passes/identify-returning.ts', table: 'returning_visitor_vehicles', operations: ['SELECT'], purpose: 'Fetch saved vehicles for identified returning visitor' },
   { file: 'server/routes/passes/identify-returning.ts', table: 'returning_identity_attempts', operations: ['INSERT'], purpose: 'Record returning visitor identification attempt and match token' },
+  { file: 'server/routes/passes/lookup-returning.ts', table: 'returning_visitor_profiles', operations: ['SELECT'], purpose: 'Discover active returning profiles for 1:1 verification frontdoor' },
   { file: 'server/routes/passes/verify-identity.ts', table: 'upload_intents', operations: ['SELECT'], purpose: 'Validate photo and ID upload intents belong to session' },
   { file: 'server/routes/passes/verify-identity.ts', table: 'portal_identity_verification_attempts', operations: ['INSERT'], purpose: 'Record identity comparison attempt' },
   { file: 'server/routes/passes/email.ts', table: 'passes', operations: ['SELECT'], purpose: 'Lookup pass for email dispatch' },

@@ -658,3 +658,47 @@ The shared pure SVG template generator (`src/lib/digitalPassArtifact.ts`) uses s
 - **Legacy Guard Decommissioning**: Personal human guard accounts (`role = 'guard'`) have been decommissioned. Attempts to authenticate with a guard account are rejected and immediately signed out.
 - **Strict Administrator Role Boundary**: System user creation (`server/routes/system/create-user.ts`) schema enforces `role: z.literal('admin')` and requires superadmin caller privileges.
 - **Legacy Admin Walk-in Compatibility**: Administrators and superadmins retain the authority to issue `guard_offline` upload intents and execute emergency offline registrations. Ordinary guards are rejected with SQLSTATE 42501 `administrator required`.
+
+---
+
+## 25. 1:1 Returning Visitor Biometric Verification, PSGC Address Invariants & Advisor Hardening (Migrations 50 & 51)
+
+### 25.1 Returning Visitor 1:1 Biometric Verification Architecture
+- **Frontdoor Discovery Without Plaintext PII Leakage (`/api/passes/lookup-returning`)**:
+  - Unauthenticated attackers cannot enumerate visitor records. Lookup requires an active Supabase Auth anonymous session and is governed by dual token-bucket rate limits:
+    - **Actor limit**: 10 lookup attempts per 5 minutes per anonymous session (`portal.lookup_returning`).
+    - **Network limit**: 30 lookup attempts per 5 minutes per client network IP/subnet (`portal.network_lookup`).
+  - Search results return privacy-masked candidate records only:
+    - `maskedName`: Initial and truncated asterisks (e.g., `Juan D. C***`). Full middle and last names are never returned.
+    - `maskedContact`: Truncated Philippine mobile number (e.g., `0917***1234`).
+    - `partialLocality`: Barangay and City/Municipality names only. Specific building, street, or house numbers are excluded from discovery.
+- **Strict 1:1 Biometric Matching (`/api/passes/identify-returning`)**:
+  - Full retirement of 1:N gallery matching and arbitrary 1st-to-2nd candidate margin checks (`RETURNING_FACE_MIN_MARGIN`).
+  - Visitor captures a fresh live selfie. No government ID re-upload is required or permitted for returning visitors.
+  - The server decrypts the selected profile's enrolled face template from `returning_face_templates` using AES-256-GCM. Decryption failures fail closed with HTTP 500 `biometric_decryption_failed`.
+  - Performs 1:1 cosine similarity comparison against the fresh selfie descriptor using calibrated threshold `RETURNING_FACE_MIN_COSINE` (0.45).
+  - Cosine score `< 0.45` fails closed with HTTP 200 `{ matched: false, reason: "low_similarity" }` and records an audit attempt with outcome `low_similarity`.
+  - Successful comparison issues a single-use, cryptographically signed `matchToken` (HMAC-SHA256) bound to `actorId`, `requestId`, `profileId`, and `photoIntentId` with 15-minute expiration.
+- **Pass Issuance Token Binding (`/api/passes/issue`)**:
+  - When `registrationMode === 'returning'`, pass issuance requires both `profileId` and `matchToken`.
+  - The server verifies that the token matches the stored HMAC digest in `returning_identity_attempts`, matches the active actor session, has not expired, and has not been previously consumed.
+
+### 25.2 Philippine Standard Geographic Code (PSGC) Structured Address Invariants
+- **Zero Fallback & Elimination of Silent Substitution**:
+  - Pass issuance rejects new portal registrations without complete PSGC address components (`psgc_region_code`, `psgc_city_code`, `psgc_barangay_code`) with HTTP 422 `psgc_address_required`.
+  - Silent default fallback to Manila / EARIST Barangay 408 is eliminated.
+  - Legacy Leaflet map coordinates, Nominatim reverse geocoding, and browser GPS prompts are retired from online registration.
+- **Symmetric Idempotency Replay**:
+  - Replay requests on `/api/passes/issue` compare all incoming PSGC fields (`psgc_region_code`, `psgc_province_code`, `psgc_city_code`, `psgc_barangay_code`, `home_building`, `home_street`, `postal_code`) against the stored `visitors` record.
+  - Any discrepancy in address or vehicle declaration returns HTTP 409 `payload_mismatch`.
+
+### 25.3 Migration 51 Database Hardening & Performance Advisor
+- **Covering Indexes on Foreign Keys**:
+  - Supabase Database Advisor unindexed foreign key warnings resolved by adding covering indexes across `staff_profiles`, `devices`, `app_settings`, `visitors`, `audit_events`, `thermal_templates`, `offline_sync_receipts`, `portal_identity_verification_attempts`, `visit_vehicle_declarations`, and `returning_identity_attempts`.
+  - Eliminates full-table share locks on parent updates/deletions.
+- **Functional Lookup Indexes**:
+  - Added expression index `returning_visitor_profiles (lower(first_name), lower(last_name)) where revoked_at is null` to accelerate 1:1 name lookups without sequential table scans.
+  - Added covering index `returning_visitor_profiles (contact_number_e164) where revoked_at is null`.
+- **Default-Deny RLS Reinforcement**:
+  - Internal utility tables `public.nominatim_rate_limiter` and `public.location_search_cache` have RLS enabled with default-deny policies, revoking all permissions from `public`, `anon`, and `authenticated`, with access granted strictly to `service_role`.
+

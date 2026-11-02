@@ -147,7 +147,7 @@ describe('Returning Visitor Fail-Closed Gallery & Descriptor Validation (Priorit
       return arr;
     }
 
-    it('returns 503 gallery_evaluation_incomplete if ANY template fails decryption', async () => {
+    it('returns 500 biometric_decryption_failed if target template fails decryption', async () => {
       vi.spyOn(actorsModule, 'getVerifiedSessionContext').mockResolvedValue({
         actorId,
         role: 'visitor',
@@ -174,42 +174,21 @@ describe('Returning Visitor Fail-Closed Gallery & Descriptor Validation (Priorit
         modelVersion: 'v1',
       });
 
-      // Encrypt valid template 2
-      const validDesc = makeDescriptor(1.0); // Exact match
-      const encryptedValid = encryptFaceTemplate(validDesc, testKey, 'v1');
-
       // Template 1 has corrupted ciphertext and invalid auth tag
+      const badProfileId = '55555555-5555-4555-8555-555555555555';
       const corruptedTemplate = {
-        id: 'tpl-bad-1',
-        profile_id: 'prof-bad',
+        id: '22222222-2222-4222-8222-222222222222',
+        profile_id: badProfileId,
         encrypted_embedding: 'deadbeef1234',
         iv: '0102030405060708090a0b0c',
         auth_tag: '0102030405060708090a0b0c0d0e0f10',
         key_version: 'v1',
         returning_visitor_profiles: {
-          id: 'prof-bad',
+          id: badProfileId,
           first_name: 'Corrupt',
           middle_name: null,
           last_name: 'Visitor',
           contact_number_e164: '+639171111111',
-          expires_at: '2099-01-01T00:00:00Z',
-          revoked_at: null,
-        },
-      };
-
-      const validTemplate = {
-        id: 'tpl-good-2',
-        profile_id: 'prof-good',
-        encrypted_embedding: encryptedValid.encryptedEmbedding,
-        iv: encryptedValid.iv,
-        auth_tag: encryptedValid.authTag,
-        key_version: encryptedValid.keyVersion,
-        returning_visitor_profiles: {
-          id: 'prof-good',
-          first_name: 'Good',
-          middle_name: null,
-          last_name: 'Match',
-          contact_number_e164: '+639172222222',
           expires_at: '2099-01-01T00:00:00Z',
           revoked_at: null,
         },
@@ -223,11 +202,9 @@ describe('Returning Visitor Fail-Closed Gallery & Descriptor Validation (Priorit
           if (table === 'returning_face_templates') {
             return {
               select: vi.fn().mockReturnThis(),
-              is: vi.fn().mockReturnThis(),
-              gt: vi.fn().mockReturnThis(),
-              order: vi.fn().mockReturnThis(),
-              range: vi.fn().mockResolvedValue({
-                data: [corruptedTemplate, validTemplate],
+              eq: vi.fn().mockReturnThis(),
+              maybeSingle: vi.fn().mockResolvedValue({
+                data: corruptedTemplate,
                 error: null,
               }),
             };
@@ -252,18 +229,17 @@ describe('Returning Visitor Fail-Closed Gallery & Descriptor Validation (Priorit
           authorization: 'Bearer dummy-token',
           'content-type': 'application/json',
         },
-        body: JSON.stringify({ requestId, photoIntentId }),
+        body: JSON.stringify({ requestId, profileId: badProfileId, photoIntentId }),
       });
 
       const res = await identifyReturningHandler.fetch(req);
-      expect(res.status).toBe(503);
       const json = await res.json();
-      expect(json.error).toBe('gallery_evaluation_incomplete');
-      expect(json.message).toContain('Guard Station');
+      expect(res.status).toBe(500);
+      expect(json.error).toBe('biometric_decryption_failed');
       expect(json.matchToken).toBeUndefined();
     });
 
-    it('returns 503 gallery_evaluation_incomplete if ANY template has non-finite descriptor', async () => {
+    it('returns 200 matched=true on 1:1 match with valid candidate profile', async () => {
       vi.spyOn(actorsModule, 'getVerifiedSessionContext').mockResolvedValue({
         actorId,
         role: 'visitor',
@@ -290,24 +266,23 @@ describe('Returning Visitor Fail-Closed Gallery & Descriptor Validation (Priorit
         modelVersion: 'v1',
       });
 
-      // Encrypt template with NaN element
-      const nanDesc = makeDescriptor(2.0);
-      nanDesc[5] = NaN;
-      const encryptedNan = encryptFaceTemplate(nanDesc, testKey, 'v1');
+      const validDesc = makeDescriptor(1.0); // Exact match
+      const encryptedValid = encryptFaceTemplate(validDesc, testKey, 'v1');
 
-      const nanTemplate = {
-        id: 'tpl-nan-1',
-        profile_id: 'prof-nan',
-        encrypted_embedding: encryptedNan.encryptedEmbedding,
-        iv: encryptedNan.iv,
-        auth_tag: encryptedNan.authTag,
-        key_version: encryptedNan.keyVersion,
+      const goodProfileId = '66666666-6666-4666-8666-666666666666';
+      const validTemplate = {
+        id: '77777777-7777-4777-8777-777777777777',
+        profile_id: goodProfileId,
+        encrypted_embedding: encryptedValid.encryptedEmbedding,
+        iv: encryptedValid.iv,
+        auth_tag: encryptedValid.authTag,
+        key_version: encryptedValid.keyVersion,
         returning_visitor_profiles: {
-          id: 'prof-nan',
-          first_name: 'Nan',
+          id: goodProfileId,
+          first_name: 'Good',
           middle_name: null,
-          last_name: 'Visitor',
-          contact_number_e164: '+639173333333',
+          last_name: 'Match',
+          contact_number_e164: '+639172222222',
           expires_at: '2099-01-01T00:00:00Z',
           revoked_at: null,
         },
@@ -321,13 +296,23 @@ describe('Returning Visitor Fail-Closed Gallery & Descriptor Validation (Priorit
           if (table === 'returning_face_templates') {
             return {
               select: vi.fn().mockReturnThis(),
-              is: vi.fn().mockReturnThis(),
-              gt: vi.fn().mockReturnThis(),
-              order: vi.fn().mockReturnThis(),
-              range: vi.fn().mockResolvedValue({
-                data: [nanTemplate],
+              eq: vi.fn().mockReturnThis(),
+              maybeSingle: vi.fn().mockResolvedValue({
+                data: validTemplate,
                 error: null,
               }),
+            };
+          }
+          if (table === 'returning_identity_attempts') {
+            return {
+              insert: vi.fn().mockResolvedValue({ error: null }),
+            };
+          }
+          if (table === 'returning_visitor_vehicles') {
+            return {
+              select: vi.fn().mockReturnThis(),
+              eq: vi.fn().mockReturnThis(),
+              is: vi.fn().mockResolvedValue({ data: [], error: null }),
             };
           }
           return {};
@@ -345,14 +330,15 @@ describe('Returning Visitor Fail-Closed Gallery & Descriptor Validation (Priorit
           authorization: 'Bearer dummy-token',
           'content-type': 'application/json',
         },
-        body: JSON.stringify({ requestId, photoIntentId }),
+        body: JSON.stringify({ requestId, profileId: goodProfileId, photoIntentId }),
       });
 
       const res = await identifyReturningHandler.fetch(req);
-      expect(res.status).toBe(503);
+      expect(res.status).toBe(200);
       const json = await res.json();
-      expect(json.error).toBe('gallery_evaluation_incomplete');
-      expect(json.matchToken).toBeUndefined();
+      expect(json.matched).toBe(true);
+      expect(typeof json.matchToken).toBe('string');
+      expect(json.profile.id).toBe(goodProfileId);
     });
   });
 });

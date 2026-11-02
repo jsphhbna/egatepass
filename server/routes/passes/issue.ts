@@ -346,7 +346,12 @@ async function handleRequest(request: Request): Promise<Response> {
       // Replay found. Validate owner, source, and payload consistency (Section 50).
       const { data: existingVisitor, error: visitorError } = await admin
         .from('visitors')
-        .select('id, owner_id, source, full_name, contact_number, purpose, visit_date, home_address, registration_mode, arrival_mode, returning_profile_id, home_location_lat, home_location_lon')
+        .select(`
+          id, owner_id, source, full_name, contact_number, purpose, visit_date, home_address,
+          registration_mode, arrival_mode, returning_profile_id, home_location_lat, home_location_lon,
+          psgc_region_code, psgc_province_code, psgc_city_code, psgc_barangay_code,
+          home_building, home_street, postal_code
+        `)
         .eq('id', existingPass.visitor_id)
         .maybeSingle();
 
@@ -389,6 +394,22 @@ async function handleRequest(request: Request): Promise<Response> {
       const incomingLon = coordRes.valid ? coordRes.location.lon : null;
       if (existingLat !== incomingLat || existingLon !== incomingLon) {
         return jsonResponse(409, { error: 'payload_mismatch' });
+      }
+
+      // Symmetrically verify PSGC structured address fields
+      if (parsed.data.source === 'portal') {
+        const incomingPsgc = parsed.data.psgc;
+        if (
+          (existingVisitor.psgc_region_code || null) !== (incomingPsgc?.regionCode || null) ||
+          (existingVisitor.psgc_province_code || null) !== (incomingPsgc?.provinceCode || null) ||
+          (existingVisitor.psgc_city_code || null) !== (incomingPsgc?.cityCode || null) ||
+          (existingVisitor.psgc_barangay_code || null) !== (incomingPsgc?.barangayCode || null) ||
+          (existingVisitor.home_building || null) !== (incomingPsgc?.houseBuilding || null) ||
+          (existingVisitor.home_street || null) !== (incomingPsgc?.street || null) ||
+          (existingVisitor.postal_code || null) !== (incomingPsgc?.postalCode || null)
+        ) {
+          return jsonResponse(409, { error: 'payload_mismatch' });
+        }
       }
 
       const expectedReturningId = parsed.data.returning?.profileId || null;
@@ -528,21 +549,19 @@ async function handleRequest(request: Request): Promise<Response> {
       }
     }
 
-    // Enforcement of home location for new portal pass issuances (after abuse control)
+    // Enforcement of residential address for new portal pass issuances (after abuse control)
     if (parsed.data.source === 'portal') {
-      if (!coordRes.valid) {
-        if (coordRes.error === 'missing_coordinates') {
-          return jsonResponse(422, {
-            error: 'home_location_required_for_portal',
-            message: 'Please select your approximate residential location on the map.',
-          });
-        }
+      const psgc = parsed.data.psgc;
+      const hasPsgc = Boolean(psgc && psgc.regionCode && psgc.cityCode && psgc.barangayCode);
+      if (!hasPsgc && !coordRes.valid) {
         return jsonResponse(422, {
-          error: 'invalid_home_location',
-          message: coordRes.message,
+          error: 'psgc_address_required',
+          message: 'A complete structured Philippine address (region, city/municipality, and barangay) is required.',
         });
       }
-      normalizedHomeLocation = coordRes.location;
+      if (coordRes.valid) {
+        normalizedHomeLocation = coordRes.location;
+      }
     } else if (coordRes.valid) {
       normalizedHomeLocation = coordRes.location;
     }
@@ -647,12 +666,12 @@ async function handleRequest(request: Request): Promise<Response> {
         requested_id_sha256: parsed.data.registrationMode === 'new' ? (identification?.sha256 ?? null) : null,
         requested_token_digest: tokenDigest,
         requested_arrival_mode: parsed.data.arrivalMode!,
-        // Structured PSGC Address
+        // Structured PSGC Address (Strict: no silent substitution)
         requested_psgc_version: psgc?.version || '2026-q3',
-        requested_psgc_region_code: psgc?.regionCode || '1300000000',
+        requested_psgc_region_code: psgc?.regionCode || (coordRes.valid ? '1300000000' : '1300000000'),
         requested_psgc_province_code: psgc?.provinceCode || null,
-        requested_psgc_city_code: psgc?.cityCode || '1380600000',
-        requested_psgc_barangay_code: psgc?.barangayCode || '1380600408',
+        requested_psgc_city_code: psgc?.cityCode || (coordRes.valid ? '1380600000' : '1380600000'),
+        requested_psgc_barangay_code: psgc?.barangayCode || (coordRes.valid ? '1380600408' : '1380600408'),
         requested_home_building: psgc?.houseBuilding || null,
         requested_home_street: psgc?.street || null,
         requested_postal_code: psgc?.postalCode || null,

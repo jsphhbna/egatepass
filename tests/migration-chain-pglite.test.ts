@@ -105,7 +105,12 @@ async function applyAllMigrations(db: PGlite): Promise<string[]> {
   for (const file of files) {
     let sql = readFileSync(join(MIGRATIONS_DIR, file), 'utf8');
     sql = sql.replace(/create extension if not exists pgcrypto[^;]*;/gi, '-- pgcrypto no-op');
-    await db.exec(sql);
+    try {
+      await db.exec(sql);
+    } catch (err) {
+      console.error(`Error executing migration ${file}:`, err);
+      throw err;
+    }
   }
   return files;
 }
@@ -2579,5 +2584,39 @@ describe('Permanent PostgreSQL Migration Chain & Schema Contracts (PGlite)', () 
     expect(visCheck.rows[0].home_street).toBe('Nagtahan St.');
     expect(visCheck.rows[0].postal_code).toBe('1008');
     expect(visCheck.rows[0].home_address).toContain('Unit 401, Nagtahan St.');
+  }, 60000);
+
+  it('Migration 51: verifies advisor foreign key indexes, 1:1 lookup indexes, and default-deny RLS', async () => {
+    const db = new PGlite();
+    await applyAllMigrations(db);
+
+    // 1. Check foreign key covering indexes and 1:1 lookup indexes
+    const fkIndexCheck = await db.query<{ indexname: string }>(`
+      select indexname from pg_indexes
+      where schemaname = 'public' and indexname in (
+        'staff_profiles_created_by_idx',
+        'devices_created_by_idx',
+        'app_settings_updated_by_idx',
+        'visitors_returning_profile_id_idx',
+        'audit_events_actor_id_idx',
+        'returning_identity_attempts_photo_intent_id_idx',
+        'returning_identity_attempts_matched_profile_id_idx',
+        'returning_visitor_profiles_name_lookup_idx',
+        'returning_visitor_profiles_contact_idx'
+      );
+    `);
+
+    expect(fkIndexCheck.rows.length).toBe(9);
+
+    // 2. Check default-deny RLS enabled on rate limiter & location search cache
+    const rlsCheck = await db.query<{ tablename: string; rowsecurity: boolean }>(`
+      select tablename, rowsecurity from pg_tables
+      where schemaname = 'public' and tablename in ('nominatim_rate_limiter', 'location_search_cache');
+    `);
+
+    expect(rlsCheck.rows.length).toBe(2);
+    for (const row of rlsCheck.rows) {
+      expect(row.rowsecurity).toBe(true);
+    }
   }, 60000);
 });

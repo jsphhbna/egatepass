@@ -3,6 +3,7 @@ import email from '../../server/routes/passes/email.js';
 import issue from '../../server/routes/passes/issue.js';
 import verifyIdentity from '../../server/routes/passes/verify-identity.js';
 import identifyReturning from '../../server/routes/passes/identify-returning.js';
+import lookupReturning from '../../server/routes/passes/lookup-returning.js';
 import capabilities from '../../server/routes/passes/capabilities.js';
 import vehiclesMakes from '../../server/routes/vehicles/makes.js';
 import vehiclesModels from '../../server/routes/vehicles/models.js';
@@ -12,6 +13,8 @@ const router = createGroupedRouter('passes', {
   email,
   issue,
   'verify-identity': verifyIdentity,
+  'lookup-returning': lookupReturning,
+  'lookup/returning': lookupReturning,
   'identify-returning': identifyReturning,
   capabilities,
   'vehicles-makes': vehiclesMakes,

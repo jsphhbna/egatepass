@@ -16,6 +16,8 @@ import {
   validatePortalSession,
   invalidatePortalEvidenceCheckpoint,
   identifyReturningVisitor,
+  lookupReturningVisitor,
+  type ReturningLookupCandidate,
   PortalSessionError,
   UploadAuthorizationError,
   StorageUploadError,
@@ -52,6 +54,8 @@ import {
   UserCheck,
   Car,
   ShieldAlert,
+  Search,
+  UserPlus,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { Button, Card, Input, FormField, Stepper, PageShell } from '@/components/ui';
@@ -133,14 +137,7 @@ export function createGetPassSchema(schedulingDaysAhead: number = MAX_VISIT_ADVA
           lon: z.number(),
         })
         .nullable()
-        .superRefine((val, ctx) => {
-          if (!val || typeof val.lat !== 'number' || typeof val.lon !== 'number') {
-            ctx.addIssue({
-              code: z.ZodIssueCode.custom,
-              message: 'Please select your approximate residential location on the map',
-            });
-          }
-        }),
+        .optional(),
       purpose: z
         .string()
         .max(300, 'Purpose description is too long')
@@ -200,6 +197,7 @@ type Step =
   | 'generating'
   | 'delivery'
   | 'done'
+  | 'returning_lookup'
   | 'returning_capture'
   | 'returning_confirm';
 
@@ -253,6 +251,16 @@ export function GetPassPage() {
   const [selectedSavedVehicleId, setSelectedSavedVehicleId] = useState<string>('none');
   const [rememberVisitor, setRememberVisitor] = useState(false);
   const [saveVehicle, setSaveVehicle] = useState(false);
+
+  // Returning visitor 1:1 lookup state
+  const [returningLookupFirst, setReturningLookupFirst] = useState('');
+  const [returningLookupMiddle, setReturningLookupMiddle] = useState('');
+  const [returningLookupLast, setReturningLookupLast] = useState('');
+  const [returningCandidates, setReturningCandidates] = useState<ReturningLookupCandidate[]>([]);
+  const [selectedReturningCandidate, setSelectedReturningCandidate] = useState<ReturningLookupCandidate | null>(null);
+  const [isSearchingReturning, setIsSearchingReturning] = useState(false);
+  const [returningSearchError, setReturningSearchError] = useState<string | null>(null);
+  const [returningSearchDone, setReturningSearchDone] = useState(false);
 
   // Live Face State (Single custom camera)
   const [photoBlob, setPhotoBlob] = useState<Blob | null>(null);
@@ -853,9 +861,58 @@ export function GetPassPage() {
   }
 
   // ============================================================
-  // RETURNING VISITOR CAPTURE & IDENTIFY
+  // RETURNING VISITOR 1:1 LOOKUP & IDENTIFY
   // ============================================================
+  async function onSearchReturningProfile() {
+    if (!returningLookupFirst.trim() || !returningLookupLast.trim()) {
+      setReturningSearchError('Please enter both your First Name and Last Name.');
+      return;
+    }
+    setReturningSearchError(null);
+    setIsSearchingReturning(true);
+    setReturningCandidates([]);
+    setSelectedReturningCandidate(null);
+
+    try {
+      let tx = portalTransactionRef.current;
+      if (!tx || !(await validatePortalSession(tx))) {
+        let freshCaptchaToken: string | undefined;
+        if (turnstileRef.current) {
+          freshCaptchaToken = await turnstileRef.current.executeChallenge();
+        }
+        tx = await createPortalIssueTransaction(freshCaptchaToken);
+        portalTransactionRef.current = tx;
+        issueRequestId.current = tx.requestId as ReturnType<typeof crypto.randomUUID>;
+      }
+
+      const res = await lookupReturningVisitor(tx, {
+        firstName: returningLookupFirst.trim(),
+        lastName: returningLookupLast.trim(),
+        middleName: returningLookupMiddle.trim() || undefined,
+      });
+
+      setReturningSearchDone(true);
+      if (res.found && res.candidates.length > 0) {
+        setReturningCandidates(res.candidates);
+        if (res.candidates.length === 1 && res.candidates[0]) {
+          setSelectedReturningCandidate(res.candidates[0]);
+        }
+      } else {
+        setReturningCandidates([]);
+      }
+    } catch (err: any) {
+      setReturningSearchError(err.message || 'Unable to search for visitor profiles. Please try again.');
+    } finally {
+      setIsSearchingReturning(false);
+    }
+  }
+
   async function onCaptureReturningFace() {
+    if (!selectedReturningCandidate) {
+      toast.error('Please select your profile before capturing your face.');
+      return;
+    }
+
     const blob = faceWebcam.capture({ mirror: false });
     if (!blob) {
       toast.error('Failed to capture photo. Please hold steady and try again.');
@@ -883,8 +940,8 @@ export function GetPassPage() {
       tx.photoIntentId = photoRes.intentId;
       tx.photoCheckpoint = photoRes.checkpoint;
 
-      // 3. Identify returning visitor via authenticated endpoint
-      const data = await identifyReturningVisitor(tx, photoRes.intentId);
+      // 3. Identify returning visitor via authenticated 1:1 endpoint
+      const data = await identifyReturningVisitor(tx, photoRes.intentId, selectedReturningCandidate.profileId);
 
       if (!data?.matched || !data.profile || !data.matchToken) {
         setReturningIdentifyError(
@@ -1759,8 +1816,11 @@ export function GetPassPage() {
                       return;
                     }
                     setRegistrationMode('returning');
-                    setStep('returning_capture');
-                    void faceWebcam.start();
+                    setReturningSearchDone(false);
+                    setReturningSearchError(null);
+                    setReturningCandidates([]);
+                    setSelectedReturningCandidate(null);
+                    setStep('returning_lookup');
                   }}
                   role="button"
                   tabIndex={0}
@@ -3143,13 +3203,187 @@ export function GetPassPage() {
             </div>
           )}
 
+          {/* ============================== RETURNING VISITOR 1:1 LOOKUP ============================== */}
+          {step === 'returning_lookup' && (
+            <div className="space-y-6">
+              <div className="text-center">
+                <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-[#F8EEEE] text-[#7A0A0A] text-xs font-semibold mb-2">
+                  <UserCheck className="h-3.5 w-3.5" />
+                  <span>Returning Visitor Frontdoor</span>
+                </div>
+                <h2 className="text-xl font-bold text-[var(--color-text-primary)]">
+                  Find Your Enrolled Profile
+                </h2>
+                <p className="text-sm text-[var(--color-text-secondary)] mt-1.5">
+                  Enter your registered full name to locate your profile for 1:1 live facial verification.
+                </p>
+              </div>
+
+              {returningSearchError && (
+                <div className="rounded-xl border border-[var(--color-danger)] bg-[var(--color-danger-light)] p-4 text-xs text-[var(--color-danger-dark)] flex items-start gap-2" role="alert">
+                  <AlertCircle className="h-4 w-4 text-[var(--color-danger)] flex-shrink-0 mt-0.5" />
+                  <span>{returningSearchError}</span>
+                </div>
+              )}
+
+              <div className="rounded-2xl border border-[var(--color-border)] bg-white p-5 space-y-4 shadow-xs">
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <FormField label="First Name" requirement="required">
+                    <Input
+                      placeholder="e.g. Juan"
+                      value={returningLookupFirst}
+                      onChange={(e) => setReturningLookupFirst(e.target.value)}
+                      disabled={isSearchingReturning}
+                    />
+                  </FormField>
+                  <FormField label="Middle Name" requirement="optional">
+                    <Input
+                      placeholder="e.g. Dela"
+                      value={returningLookupMiddle}
+                      onChange={(e) => setReturningLookupMiddle(e.target.value)}
+                      disabled={isSearchingReturning}
+                    />
+                  </FormField>
+                </div>
+                <FormField label="Last Name" requirement="required">
+                  <Input
+                    placeholder="e.g. Cruz"
+                    value={returningLookupLast}
+                    onChange={(e) => setReturningLookupLast(e.target.value)}
+                    disabled={isSearchingReturning}
+                  />
+                </FormField>
+
+                <Button
+                  onClick={onSearchReturningProfile}
+                  disabled={!returningLookupFirst.trim() || !returningLookupLast.trim() || isSearchingReturning}
+                  loading={isSearchingReturning}
+                  className="w-full"
+                  icon={<Search className="h-4 w-4" />}
+                >
+                  Search Profile
+                </Button>
+              </div>
+
+              {returningSearchDone && (
+                <div className="space-y-3">
+                  {returningCandidates.length === 0 ? (
+                    <div className="rounded-2xl border border-amber-200 bg-amber-50 p-5 text-center space-y-3">
+                      <p className="text-sm font-semibold text-amber-900">
+                        No active returning visitor profile found for "{returningLookupFirst.trim()} {returningLookupLast.trim()}".
+                      </p>
+                      <p className="text-xs text-amber-800">
+                        Please check the spelling of your registered name, or proceed as a new visitor.
+                      </p>
+                      <div className="pt-2">
+                        <Button
+                          variant="secondary"
+                          onClick={() => {
+                            beginNewVisitorSetup();
+                          }}
+                          icon={<UserPlus className="h-4 w-4" />}
+                        >
+                          Register as New Visitor
+                        </Button>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="space-y-3">
+                      <div className="flex items-center justify-between">
+                        <span className="text-xs font-bold uppercase tracking-wider text-[var(--color-text-muted)]">
+                          Select Your Profile ({returningCandidates.length} found)
+                        </span>
+                        <span className="text-[11px] text-[var(--color-text-secondary)]">
+                          Privacy-masked for safety
+                        </span>
+                      </div>
+
+                      <div className="grid gap-2.5">
+                        {returningCandidates.map((cand) => {
+                          const isSelected = selectedReturningCandidate?.profileId === cand.profileId;
+                          return (
+                            <div
+                              key={cand.profileId}
+                              onClick={() => setSelectedReturningCandidate(cand)}
+                              role="button"
+                              tabIndex={0}
+                              className={`p-4 rounded-xl border-2 transition-all cursor-pointer flex items-center justify-between ${
+                                isSelected
+                                  ? 'border-[#7A0A0A] bg-[#F8EEEE]/40 shadow-xs'
+                                  : 'border-[var(--color-border)] bg-white hover:border-slate-300'
+                              }`}
+                            >
+                              <div className="space-y-1">
+                                <div className="flex items-center gap-2">
+                                  <span className="font-bold text-sm text-[var(--color-text-primary)]">
+                                    {cand.maskedName}
+                                  </span>
+                                  {isSelected && (
+                                    <span className="bg-[#7A0A0A] text-white text-[10px] font-bold px-2 py-0.5 rounded-full">
+                                      Selected
+                                    </span>
+                                  )}
+                                </div>
+                                <div className="text-xs text-[var(--color-text-secondary)] flex items-center gap-3">
+                                  <span>Phone: {cand.maskedContact}</span>
+                                  <span>•</span>
+                                  <span>{cand.partialLocality}</span>
+                                </div>
+                              </div>
+                              <div className={`h-5 w-5 rounded-full border flex items-center justify-center ${
+                                isSelected ? 'border-[#7A0A0A] bg-[#7A0A0A] text-white' : 'border-slate-300 bg-white'
+                              }`}>
+                                {isSelected && <div className="h-2 w-2 rounded-full bg-white" />}
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+
+                      <Button
+                        onClick={() => {
+                          setStep('returning_capture');
+                          void faceWebcam.start();
+                        }}
+                        disabled={!selectedReturningCandidate}
+                        className="w-full mt-2"
+                        icon={<Camera className="h-4 w-4" />}
+                      >
+                        Proceed to Live Face Verification
+                      </Button>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              <div className="flex gap-3 pt-2">
+                <Button
+                  variant="secondary"
+                  onClick={() => {
+                    setStep('frontdoor');
+                  }}
+                  className="flex-1"
+                  icon={<ArrowLeft className="h-4 w-4" />}
+                >
+                  Back to Setup
+                </Button>
+              </div>
+            </div>
+          )}
+
           {/* ============================== RETURNING VISITOR CAPTURE ============================== */}
           {step === 'returning_capture' && (
             <div className="space-y-6">
               <div className="text-center">
-                <h2 className="text-lg font-bold text-[var(--color-text-primary)]">Returning Visitor Biometric Check-In</h2>
+                {selectedReturningCandidate && (
+                  <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-emerald-50 text-emerald-900 border border-emerald-200 text-xs font-semibold mb-2">
+                    <UserCheck className="h-3.5 w-3.5 text-emerald-700" />
+                    <span>Verifying Profile: {selectedReturningCandidate.maskedName}</span>
+                  </div>
+                )}
+                <h2 className="text-lg font-bold text-[var(--color-text-primary)]">Live Face 1:1 Verification</h2>
                 <p className="text-sm text-[var(--color-text-secondary)] mt-1">
-                  Look directly at the camera to verify your previously enrolled visitor profile.
+                  Look directly at the camera to verify your face against your selected profile.
                 </p>
               </div>
 
@@ -3210,7 +3444,7 @@ export function GetPassPage() {
                   variant="secondary"
                   onClick={() => {
                     faceWebcam.stop();
-                    setStep('frontdoor');
+                    setStep('returning_lookup');
                   }}
                   className="flex-1"
                   icon={<ArrowLeft className="h-4 w-4" />}

@@ -41,15 +41,14 @@ describe('Returning Visitor Biometrics & Safety Gate Contract', () => {
     });
 
     it('rejects invalid or unsafe calibration values', () => {
-      // Incomplete configuration
+      // Incomplete configuration (missing matchSecret)
       process.env.RETURNING_FACE_MIN_COSINE = '0.45';
-      delete process.env.RETURNING_FACE_MIN_MARGIN;
+      process.env.RETURNING_VISITOR_TEMPLATE_KEY = '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef';
+      delete process.env.RETURNING_MATCH_TOKEN_SECRET;
       expect(isReturningVisitorAvailable()).toBe(false);
 
       // Negative or out of bounds threshold
       process.env.RETURNING_FACE_MIN_COSINE = '-0.1';
-      process.env.RETURNING_FACE_MIN_MARGIN = '0.05';
-      process.env.RETURNING_VISITOR_TEMPLATE_KEY = '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef';
       process.env.RETURNING_MATCH_TOKEN_SECRET = 'super-secret-match-token-secret-123';
       expect(isReturningVisitorAvailable()).toBe(false);
 

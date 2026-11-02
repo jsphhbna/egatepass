@@ -613,3 +613,36 @@ Outage Architecture & Authority Delegation
   - Online visitor registration completely retires Leaflet map rendering, Nominatim lookups, and GPS browser permission prompts.
   - Zero external geographic API keys required (no Geoapify key, no PSGC API token, no Google Maps billing).
 
+### 12.12 Nationwide PSGC Reference Ingestion & Address Enforcement
+- **Nationwide PSA PSGC Ingestion**:
+  - Full PSA PSGC nationwide dataset ingested into remote Supabase `psgc_locations` (43,848 total locations: 18 regions, 82 provinces, 1,670 cities/municipalities, 42,078 barangays).
+  - Canonical NCR hierarchy maps all 16 HUCs and Pateros municipality directly under National Capital Region (`1300000000`) without intermediate provinces, with `City of Manila` (`1380600000`) as canonical parent for EARIST Barangay 408 (`1380600408`).
+  - Offline client fallback bundle `data/reference/psgc/cities.json` updated with all 1,642 unique nationwide cities and municipalities.
+- **Symmetric Idempotency & Zero Fallback**:
+  - Pass issuance (`POST /api/passes/issue`) requires a complete structured PSGC address (region, city/municipality, and barangay) for all new portal registrations.
+  - Eliminated silent fallback defaults (no silent substitution of Manila / Barangay 408).
+  - Exact symmetric idempotency: replay requests compare all PSGC address fields (`psgc_region_code`, `psgc_province_code`, `psgc_city_code`, `psgc_barangay_code`, `home_building`, `home_street`, `postal_code`), returning 409 `payload_mismatch` if the replay payload differs.
+
+### 12.13 Returning Visitor 1:1 Verification Workflow & Migration 51 Hardening
+- **Frontdoor Name Lookup & Privacy-Masked Discovery**:
+  - `POST /api/passes/lookup-returning`: Accepts registered first and last name (optional middle name) from an active anonymous session.
+  - Rate-limited with dual token buckets (10 lookups per 5 minutes per actor session, 30 per 5 minutes per network identifier).
+  - Queries `returning_visitor_profiles` using indexed functional matching (`lower(first_name)`, `lower(last_name)`).
+  - Returns masked disambiguation records (`maskedName`: e.g. "Juan D. C***", `maskedContact`: e.g. "0917***1234", `partialLocality`: e.g. "Barangay 408, City of Manila"). Prevents plaintext PII enumeration.
+- **Controlled 1:1 Biometric Verification**:
+  - Fresh selfie capture using live camera. NO government ID re-upload is required for returning visitors.
+  - `POST /api/passes/identify-returning`: Accepts `requestId`, `profileId`, and `photoIntentId`.
+  - Fetches the target profile's encrypted face template from `returning_face_templates` and decrypts using AES-256-GCM.
+  - Evaluates 1:1 cosine similarity against fresh selfie descriptor using calibrated threshold `RETURNING_FACE_MIN_COSINE` (0.45).
+  - Obsolete 1:N gallery matching and 1st-to-2nd candidate margin checks (`RETURNING_FACE_MIN_MARGIN`) are fully retired.
+  - Generates single-use, cryptographically signed `matchToken` bound to `actorId`, `requestId`, `profileId`, and `photoIntentId`.
+- **Profile Confirmation & Vehicle Convenience**:
+  - Multi-step returning visitor flow: `returning_lookup` -> `returning_capture` -> `returning_confirm`.
+  - Profile confirmation view displays verified name badge, editable contact number and PSGC structured address, and mandatory fresh purpose and visit date.
+  - Independent On Foot vs With Vehicle selection: visitors can reuse previously declared vehicles with one click or declare a new vehicle.
+- **Supabase Advisor & Migration 51 Hardening**:
+  - Covering indexes on 16 foreign key relationships across `staff_profiles`, `devices`, `app_settings`, `visitors`, `audit_events`, `thermal_templates`, `offline_sync_receipts`, `portal_identity_verification_attempts`, `visit_vehicle_declarations`, and `returning_identity_attempts`.
+  - Functional lookup indexes on `returning_visitor_profiles (lower(first_name), lower(last_name))` and `(contact_number_e164)`.
+  - Default-deny RLS enabled on `nominatim_rate_limiter` and `location_search_cache` (`revoke all from public, anon, authenticated; grant all to service_role`).
+
+

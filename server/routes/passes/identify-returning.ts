@@ -1,3 +1,14 @@
+/**
+ * server/routes/passes/identify-returning.ts
+ *
+ * 1:1 Biometric Verification for Returning Visitors:
+ * Compares a freshly captured live selfie directly against the selected returning visitor profile's
+ * encrypted facial template.
+ *
+ * Eliminates 1:N gallery scanning, scale bottlenecks, and false-match margins.
+ * Issues a single-use opaque match token upon successful 1:1 verification.
+ */
+
 import { createHash, randomBytes } from 'node:crypto';
 import { z } from 'zod';
 import { getVerifiedSessionContext, HttpError } from '../../actors.js';
@@ -15,22 +26,20 @@ import {
 
 const requestSchema = z.object({
   requestId: z.string().uuid(),
+  profileId: z.string().uuid(),
   photoIntentId: z.string().uuid(),
 }).strict();
 
 export function isReturningVisitorAvailable(): boolean {
   const minCosine = process.env.RETURNING_FACE_MIN_COSINE;
-  const minMargin = process.env.RETURNING_FACE_MIN_MARGIN;
   const templateKey = process.env.RETURNING_VISITOR_TEMPLATE_KEY;
   const matchSecret = process.env.RETURNING_MATCH_TOKEN_SECRET;
 
-  if (!minCosine || !minMargin || !templateKey || !matchSecret) {
+  if (!minCosine || !templateKey || !matchSecret) {
     return false;
   }
   const cosineNum = Number(minCosine);
-  const marginNum = Number(minMargin);
   if (isNaN(cosineNum) || cosineNum <= 0 || cosineNum >= 1) return false;
-  if (isNaN(marginNum) || marginNum <= 0 || marginNum >= 1) return false;
   if (templateKey.trim().length < 32) return false;
   if (matchSecret.trim().length < 16) return false;
   if (!isFaceVerificationConfigured()) return false;
@@ -51,7 +60,7 @@ async function handleRequest(request: Request): Promise<Response> {
   if (!token) return jsonResponse(401, { error: 'authentication_required' });
 
   const parsed = requestSchema.safeParse(await request.json().catch(() => null));
-  if (!parsed.success) return jsonResponse(400, { error: 'invalid_request' });
+  if (!parsed.success) return jsonResponse(400, { error: 'invalid_request', details: parsed.error.issues });
 
   try {
     const { admin } = getServerSupabaseClients();
@@ -79,11 +88,10 @@ async function handleRequest(request: Request): Promise<Response> {
     }
 
     const minCosine = Number(process.env.RETURNING_FACE_MIN_COSINE);
-    const minMargin = Number(process.env.RETURNING_FACE_MIN_MARGIN);
     const templateKey = process.env.RETURNING_VISITOR_TEMPLATE_KEY!;
     const matchSecret = process.env.RETURNING_MATCH_TOKEN_SECRET!;
 
-    // 1. Rate limiting - Actor Bucket (5 attempts per 10 minutes)
+    // 1. Rate limiting - Actor Bucket (5 verification attempts per 10 minutes)
     const actorKeyHex = createHash('sha256').update(`actor:${actorId}`).digest('hex');
     const { data: actorAllowed, error: actorRlError } = await admin.schema('api').rpc('consume_rate_limit', {
       requested_key_hex: actorKeyHex,
@@ -107,7 +115,7 @@ async function handleRequest(request: Request): Promise<Response> {
       });
     }
 
-    // 2. Rate limiting - Network Bucket (15 attempts per 10 minutes)
+    // 2. Rate limiting - Network Bucket (15 verification attempts per 10 minutes)
     const networkKeyHex = getClientNetworkIdentifier(request);
     const { data: netAllowed, error: netRlError } = await admin.schema('api').rpc('consume_rate_limit', {
       requested_key_hex: networkKeyHex,
@@ -134,7 +142,7 @@ async function handleRequest(request: Request): Promise<Response> {
     // 3. Inspect and download photo (live selfie)
     const photoResult = await inspectAndDownloadUpload(admin, parsed.data.photoIntentId, actorId, 'photo');
 
-    // 4. Single-pass live face quality evaluation and descriptor extraction (avoids redundant inference)
+    // 4. Single-pass live face quality evaluation and descriptor extraction
     const analysis = await analyzeFaceImage(photoResult.buffer, 'selfie');
     if (!analysis.quality.passed) {
       return jsonResponse(422, {
@@ -168,164 +176,78 @@ async function handleRequest(request: Request): Promise<Response> {
     const modelName = analysis.modelName;
     const modelVersion = analysis.modelVersion;
 
-    // 6. Complete gallery pagination with safety cap (Phase 4A)
-    const PAGE_SIZE = 500;
-    const SAFETY_CAP = 5000;
-    const allTemplates: Array<any> = [];
-    let from = 0;
-    let hasMore = true;
-    const nowIso = new Date().toISOString();
+    // 5. Query candidate returning profile and its single template (1:1 verification)
+    const { data: targetTemplate, error: templateError } = await admin
+      .from('returning_face_templates')
+      .select(`
+        id, profile_id, encrypted_embedding, iv, auth_tag, key_version,
+        returning_visitor_profiles!inner(
+          id, first_name, middle_name, last_name, contact_number_e164, home_address,
+          home_location_lat, home_location_lon,
+          psgc_version, psgc_region_code, psgc_province_code, psgc_city_code, psgc_barangay_code,
+          psgc_region_name, psgc_province_name, psgc_city_municipality_name, psgc_barangay_name,
+          home_building, home_street, postal_code, postal_code_source,
+          expires_at, revoked_at
+        )
+      `)
+      .eq('profile_id', parsed.data.profileId)
+      .maybeSingle();
 
-    while (hasMore) {
-      if (allTemplates.length >= SAFETY_CAP) {
-        console.warn(`Returning visitor gallery reached safety cap of ${SAFETY_CAP} templates.`);
-        return jsonResponse(503, {
-          error: 'gallery_capacity_exceeded',
-          message: 'Returning visitor search capacity exceeded. Please consult guard station.',
-        });
-      }
-
-      const { data: pageData, error: pageError } = await admin
-        .from('returning_face_templates')
-        .select(`
-          id, profile_id, encrypted_embedding, iv, auth_tag, key_version,
-          returning_visitor_profiles!inner(
-            id, first_name, middle_name, last_name, contact_number_e164, home_address,
-            home_location_lat, home_location_lon,
-            psgc_version, psgc_region_code, psgc_province_code, psgc_city_code, psgc_barangay_code,
-            psgc_region_name, psgc_province_name, psgc_city_municipality_name, psgc_barangay_name,
-            home_building, home_street, postal_code, postal_code_source,
-            expires_at, revoked_at
-          )
-        `)
-        .is('returning_visitor_profiles.revoked_at', null)
-        .gt('returning_visitor_profiles.expires_at', nowIso)
-        .order('id', { ascending: true })
-        .range(from, from + PAGE_SIZE - 1);
-
-      if (pageError) {
-        console.error('Failed to load returning templates page:', pageError);
-        return jsonResponse(500, { error: 'template_query_failed' });
-      }
-
-      if (!pageData || pageData.length === 0) {
-        hasMore = false;
-        break;
-      }
-
-      allTemplates.push(...pageData);
-      if (pageData.length < PAGE_SIZE) {
-        hasMore = false;
-        break;
-      }
-      from += PAGE_SIZE;
+    if (templateError) {
+      console.error('Error fetching returning template:', templateError);
+      return jsonResponse(500, { error: 'profile_lookup_failed' });
     }
 
-    let bestScore = -1;
-    let secondScore = -1;
-    let bestProfile: {
-      id: string;
-      first_name: string;
-      middle_name: string | null;
-      last_name: string;
-      contact_number_e164: string;
-      home_address?: string | null;
-      home_location_lat?: number | null;
-      home_location_lon?: number | null;
-      psgc_version?: string | null;
-      psgc_region_code?: string | null;
-      psgc_province_code?: string | null;
-      psgc_city_code?: string | null;
-      psgc_barangay_code?: string | null;
-      psgc_region_name?: string | null;
-      psgc_province_name?: string | null;
-      psgc_city_municipality_name?: string | null;
-      psgc_barangay_name?: string | null;
-      home_building?: string | null;
-      home_street?: string | null;
-      postal_code?: string | null;
-      postal_code_source?: string | null;
-    } | null = null;
-
-    // Priority 1: Gallery evaluation must fail closed if ANY template fails decryption or validation.
-    // A partial gallery evaluation must never proceed to pick a match from a subset.
-    for (const t of allTemplates) {
-      let candidateEmbedding: Float32Array;
-      try {
-        candidateEmbedding = decryptFaceTemplate(
-          t.encrypted_embedding,
-          t.iv,
-          t.auth_tag,
-          templateKey,
-          t.key_version || 'v1'
-        );
-      } catch (decErr) {
-        // Operational log only: privacy-safe, zero biometric data logged
-        console.error(
-          `Gallery template decryption failure for template ${t.id} (version: ${t.key_version || 'v1'}):`,
-          decErr instanceof Error ? decErr.message : 'decryption_failed'
-        );
-        return jsonResponse(503, {
-          error: 'gallery_evaluation_incomplete',
-          message:
-            'Returning visitor verification is temporarily unavailable. Please proceed to the Guard Station for manual verification.',
-        });
-      }
-
-      const valRes = validateFaceDescriptor(candidateEmbedding, 128);
-      if (!valRes.valid) {
-        console.error(
-          `Gallery template descriptor validation failure for template ${t.id}: ${valRes.reason}`
-        );
-        return jsonResponse(503, {
-          error: 'gallery_evaluation_incomplete',
-          message:
-            'Returning visitor verification is temporarily unavailable. Please proceed to the Guard Station for manual verification.',
-        });
-      }
-
-      const score = computeCosineSimilarity(queryEmbedding, candidateEmbedding);
-
-      if (score > bestScore) {
-        secondScore = bestScore;
-        bestScore = score;
-        const p = t.returning_visitor_profiles as unknown as {
-          id: string;
-          first_name: string;
-          middle_name: string | null;
-          last_name: string;
-          contact_number_e164: string;
-          home_address?: string | null;
-          home_location_lat?: number | null;
-          home_location_lon?: number | null;
-        };
-        bestProfile = p;
-      } else if (score > secondScore) {
-        secondScore = score;
-      }
+    if (!targetTemplate || !targetTemplate.returning_visitor_profiles) {
+      return jsonResponse(404, {
+        available: true,
+        matched: false,
+        message: 'The selected returning visitor profile could not be found.',
+      });
     }
 
-    const margin = bestScore - (secondScore > -1 ? secondScore : 0);
-    const isConfidentMatch =
-      bestProfile !== null &&
-      bestScore >= minCosine &&
-      margin >= minMargin;
+    const profile = targetTemplate.returning_visitor_profiles as any;
+    if (profile.revoked_at || new Date(profile.expires_at).getTime() <= Date.now()) {
+      return jsonResponse(422, {
+        available: true,
+        matched: false,
+        message: 'The selected returning visitor profile has expired or been revoked.',
+      });
+    }
 
-    if (isConfidentMatch && bestProfile) {
-      // Confident match: issue short-lived opaque match token
+    // 6. Decrypt profile template and compute 1:1 cosine similarity
+    let targetEmbedding: Float32Array;
+    try {
+      targetEmbedding = decryptFaceTemplate(
+        targetTemplate.encrypted_embedding,
+        targetTemplate.iv,
+        targetTemplate.auth_tag,
+        templateKey,
+        targetTemplate.key_version
+      );
+    } catch (decErr) {
+      console.error('Decryption failed for template:', targetTemplate.id, decErr);
+      return jsonResponse(500, { error: 'biometric_decryption_failed' });
+    }
+
+    const cosineScore = computeCosineSimilarity(queryEmbedding, targetEmbedding);
+    const isMatch = cosineScore >= minCosine;
+
+    if (isMatch) {
+      // 1:1 Match succeeded: generate single-use opaque match token
       const matchToken = randomBytes(32).toString('hex');
       const matchTokenDigest = computeMatchTokenDigest(matchToken, matchSecret);
       const expiresAt = new Date(Date.now() + 15 * 60 * 1000).toISOString();
 
-      // Fail-closed persistence: never return match token if attempt failed to persist
+      // Persist attempt with outcome = 'matched'
       const { error: insertErr } = await admin.from('returning_identity_attempts').insert({
         owner_id: actorId,
         request_id: parsed.data.requestId,
         photo_intent_id: parsed.data.photoIntentId,
-        matched_profile_id: bestProfile.id,
+        matched_profile_id: profile.id,
         outcome: 'matched',
-        best_score: Number(bestScore.toFixed(4)),
-        second_score: secondScore > -1 ? Number(secondScore.toFixed(4)) : null,
+        best_score: Number(cosineScore.toFixed(4)),
+        second_score: null,
         model_name: modelName,
         model_version: modelVersion,
         match_token_digest: matchTokenDigest,
@@ -344,7 +266,7 @@ async function handleRequest(request: Request): Promise<Response> {
       const { data: vehicles } = await admin
         .from('returning_visitor_vehicles')
         .select('id, vehicle_type, plate_number, plate_key, color, make_model')
-        .eq('profile_id', bestProfile.id)
+        .eq('profile_id', profile.id)
         .is('archived_at', null);
 
       return jsonResponse(200, {
@@ -353,27 +275,27 @@ async function handleRequest(request: Request): Promise<Response> {
         matchToken,
         expiresAt,
         profile: {
-          id: bestProfile.id,
-          firstName: bestProfile.first_name,
-          middleName: bestProfile.middle_name,
-          lastName: bestProfile.last_name,
-          contactNumber: bestProfile.contact_number_e164,
-          homeAddress: bestProfile.home_address,
-          psgc: bestProfile.psgc_region_code && bestProfile.psgc_city_code && bestProfile.psgc_barangay_code ? {
-            version: bestProfile.psgc_version || '2026-q3',
-            region: { code: bestProfile.psgc_region_code, name: bestProfile.psgc_region_name || '' },
-            province: bestProfile.psgc_province_code ? { code: bestProfile.psgc_province_code, name: bestProfile.psgc_province_name || '' } : null,
-            city: { code: bestProfile.psgc_city_code, name: bestProfile.psgc_city_municipality_name || '' },
-            barangay: { code: bestProfile.psgc_barangay_code, name: bestProfile.psgc_barangay_name || '' },
-            houseBuilding: bestProfile.home_building || undefined,
-            street: bestProfile.home_street || undefined,
-            postalCode: bestProfile.postal_code || undefined,
-            postalCodeSource: bestProfile.postal_code_source || undefined,
+          id: profile.id,
+          firstName: profile.first_name,
+          middleName: profile.middle_name,
+          lastName: profile.last_name,
+          contactNumber: profile.contact_number_e164,
+          homeAddress: profile.home_address,
+          psgc: profile.psgc_region_code && profile.psgc_city_code && profile.psgc_barangay_code ? {
+            version: profile.psgc_version || '2026-q3',
+            region: { code: profile.psgc_region_code, name: profile.psgc_region_name || '' },
+            province: profile.psgc_province_code ? { code: profile.psgc_province_code, name: profile.psgc_province_name || '' } : null,
+            city: { code: profile.psgc_city_code, name: profile.psgc_city_municipality_name || '' },
+            barangay: { code: profile.psgc_barangay_code, name: profile.psgc_barangay_name || '' },
+            houseBuilding: profile.home_building || undefined,
+            street: profile.home_street || undefined,
+            postalCode: profile.postal_code || undefined,
+            postalCodeSource: profile.postal_code_source || undefined,
           } : null,
-          homeLocation: (bestProfile.home_location_lat != null && bestProfile.home_location_lon != null)
+          homeLocation: (profile.home_location_lat != null && profile.home_location_lon != null)
             ? {
-                lat: Number(bestProfile.home_location_lat),
-                lon: Number(bestProfile.home_location_lon),
+                lat: Number(profile.home_location_lat),
+                lon: Number(profile.home_location_lon),
               }
             : null,
         },
@@ -388,16 +310,15 @@ async function handleRequest(request: Request): Promise<Response> {
       });
     }
 
-    // No confident match: record neutral failure attempt without leaking candidate scores
-    const outcome = bestScore >= minCosine ? 'ambiguous_margin' : 'low_similarity';
+    // 1:1 Match failed: record neutral failure attempt
     const { error: failInsertErr } = await admin.from('returning_identity_attempts').insert({
       owner_id: actorId,
       request_id: parsed.data.requestId,
       photo_intent_id: parsed.data.photoIntentId,
-      matched_profile_id: null,
-      outcome,
-      best_score: bestScore > -1 ? Number(bestScore.toFixed(4)) : null,
-      second_score: secondScore > -1 ? Number(secondScore.toFixed(4)) : null,
+      matched_profile_id: profile.id,
+      outcome: 'low_similarity',
+      best_score: Number(cosineScore.toFixed(4)),
+      second_score: null,
       model_name: modelName,
       model_version: modelVersion,
       match_token_digest: null,
@@ -411,12 +332,12 @@ async function handleRequest(request: Request): Promise<Response> {
     return jsonResponse(200, {
       available: true,
       matched: false,
-      message: "We couldn't confidently find a saved visitor profile.",
+      message: 'Photo did not match the selected returning visitor profile. Please retake photo or register as a new visitor.',
     });
   } catch (error) {
     if (error instanceof HttpError) return jsonResponse(error.status, { error: error.code });
     const errMessage = error instanceof Error ? error.message : 'unknown_error';
-    console.error('Returning visitor identification failed:', errMessage);
+    console.error('Returning visitor 1:1 verification failed:', errMessage);
 
     if (errMessage.startsWith('invalid_upload_intent_') || errMessage.startsWith('missing_uploaded_object_') || errMessage.startsWith('invalid_uploaded_content_')) {
       return jsonResponse(422, { error: errMessage });

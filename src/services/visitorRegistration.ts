@@ -986,9 +986,72 @@ export async function preflightLiveFace(
   return { ok: true, message: body.message };
 }
 
+export interface ReturningLookupCandidate {
+  profileId: string;
+  maskedName: string;
+  maskedContact: string;
+  partialLocality: string;
+}
+
+export interface ReturningLookupResult {
+  found: boolean;
+  count: number;
+  candidates: ReturningLookupCandidate[];
+  error?: string;
+  message?: string;
+}
+
+export async function lookupReturningVisitor(
+  transaction: PortalIssueTransaction,
+  payload: { firstName: string; lastName: string; middleName?: string }
+): Promise<ReturningLookupResult> {
+  const { token } = await getVerifiedPortalSession(transaction);
+
+  let res: Response;
+  try {
+    res = await withTimeout(
+      fetch('/api/passes/lookup-returning', {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${token}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(payload),
+      }),
+      15000,
+      'Returning visitor lookup timed out after 15s'
+    );
+  } catch (err: any) {
+    throw new Error('Network connection interrupted during visitor search. Please try again.');
+  }
+
+  const body = (await res.json().catch(() => null)) as ReturningLookupResult | null;
+
+  if (res.status === 401) {
+    throw new PortalSessionError('portal_session_expired', 'Visitor registration session expired or unavailable.');
+  }
+
+  if (res.status === 429) {
+    throw new Error(body?.message || 'Too many search attempts. Please wait before retrying.');
+  }
+
+  if (!res.ok || !body) {
+    return {
+      found: false,
+      count: 0,
+      candidates: [],
+      error: body?.error || 'lookup_failed',
+      message: body?.message || 'Could not find returning visitor profile.',
+    };
+  }
+
+  return body;
+}
+
 export async function identifyReturningVisitor(
   transaction: PortalIssueTransaction,
-  photoIntentId: string
+  photoIntentId: string,
+  profileId: string
 ): Promise<ReturningIdentifyResult> {
   const { token } = await getVerifiedPortalSession(transaction);
 
@@ -1003,6 +1066,7 @@ export async function identifyReturningVisitor(
         },
         body: JSON.stringify({
           requestId: transaction.requestId,
+          profileId,
           photoIntentId,
         }),
       }),
