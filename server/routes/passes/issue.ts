@@ -33,6 +33,17 @@ const requestSchema = z.object({
     lat: z.number(),
     lon: z.number(),
   }).nullable().optional(),
+  psgc: z.object({
+    version: z.string().trim().default('2026-q3'),
+    regionCode: z.string().regex(/^\d{10}$/),
+    provinceCode: z.string().regex(/^\d{10}$/).nullable().optional(),
+    cityCode: z.string().regex(/^\d{10}$/),
+    barangayCode: z.string().regex(/^\d{10}$/),
+    houseBuilding: z.string().trim().max(100).optional(),
+    street: z.string().trim().max(150).optional(),
+    postalCode: z.string().trim().max(10).optional(),
+    postalCodeSource: z.string().trim().max(50).optional(),
+  }).optional(),
   vehicle: z.object({
     vehicleType: z.string().trim().min(1).max(40).optional(),
     plateNumber: z.string().trim().min(3).max(16).optional(),
@@ -617,7 +628,8 @@ async function handleRequest(request: Request): Promise<Response> {
     let data: IssueResult | null = null;
 
     if (parsed.data.source === 'portal') {
-      const rpcRes = await admin.schema('api').rpc('issue_online_pass_v5', {
+      const psgc = parsed.data.psgc;
+      const rpcRes = await admin.schema('api').rpc('issue_online_pass_v6', {
         requested_actor_id: actorId,
         requested_registration_mode: parsed.data.registrationMode,
         requested_request_id: parsed.data.requestId,
@@ -625,7 +637,6 @@ async function handleRequest(request: Request): Promise<Response> {
         requested_middle_name: visitor.middleName || null,
         requested_last_name: visitor.lastName,
         requested_contact_number: canonicalContact,
-        requested_home_address: visitor.homeAddress?.trim() || null,
         requested_purpose: visitor.purpose,
         requested_visit_date: visitor.visitDate,
         requested_photo_intent_id: parsed.data.photoIntentId,
@@ -636,7 +647,17 @@ async function handleRequest(request: Request): Promise<Response> {
         requested_id_sha256: parsed.data.registrationMode === 'new' ? (identification?.sha256 ?? null) : null,
         requested_token_digest: tokenDigest,
         requested_arrival_mode: parsed.data.arrivalMode!,
-        // Approximate residential coordinates (~100m)
+        // Structured PSGC Address
+        requested_psgc_version: psgc?.version || '2026-q3',
+        requested_psgc_region_code: psgc?.regionCode || '1300000000',
+        requested_psgc_province_code: psgc?.provinceCode || null,
+        requested_psgc_city_code: psgc?.cityCode || '1380600000',
+        requested_psgc_barangay_code: psgc?.barangayCode || '1380600408',
+        requested_home_building: psgc?.houseBuilding || null,
+        requested_home_street: psgc?.street || null,
+        requested_postal_code: psgc?.postalCode || null,
+        requested_postal_code_source: psgc?.postalCodeSource || null,
+        // Legacy coordinates (optional)
         requested_home_location_lat: normalizedHomeLocation?.lat ?? null,
         requested_home_location_lon: normalizedHomeLocation?.lon ?? null,
         // Vehicle declaration
@@ -694,7 +715,8 @@ async function handleRequest(request: Request): Promise<Response> {
           const activeKeyVersion = getActiveTemplateKeyVersion();
           const encrypted = encryptFaceTemplate(descriptor, templateKey, activeKeyVersion);
 
-          // Insert returning profile with approximate home coordinates
+          // Insert returning profile with structured PSGC address
+          const psgc = parsed.data.psgc;
           const { data: newProfile, error: profileErr } = await admin
             .from('returning_visitor_profiles')
             .insert({
@@ -705,6 +727,15 @@ async function handleRequest(request: Request): Promise<Response> {
               home_address: visitor.homeAddress?.trim() || null,
               home_location_lat: normalizedHomeLocation?.lat ?? null,
               home_location_lon: normalizedHomeLocation?.lon ?? null,
+              psgc_version: psgc?.version || '2026-q3',
+              psgc_region_code: psgc?.regionCode || null,
+              psgc_province_code: psgc?.provinceCode || null,
+              psgc_city_code: psgc?.cityCode || null,
+              psgc_barangay_code: psgc?.barangayCode || null,
+              home_building: psgc?.houseBuilding || null,
+              home_street: psgc?.street || null,
+              postal_code: psgc?.postalCode || null,
+              postal_code_source: psgc?.postalCodeSource || null,
               consent_version: 'v1',
             })
             .select('id')

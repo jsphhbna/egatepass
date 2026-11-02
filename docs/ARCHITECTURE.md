@@ -596,3 +596,20 @@ Outage Architecture & Authority Delegation
 ### 12.10 Supabase Security Advisor Audit & Classification
 - **Advisor 0003 (Performance - Auth UID in RLS Subquery)**: Resolved in Migration 48 for `visit_vehicle_declarations_staff_select` by wrapping `(select auth.uid())` in subquery to eliminate per-row re-evaluation.
 - **Leaked Secret Remediation**: Removed obsolete `GEOAPIFY_API_KEY` from Vercel Production environment secrets. No third-party geocoding API keys exist in production.
+
+### 12.11 Official PSA PSGC & PHLPost Reference System (Migration 50)
+- **Database Tables**:
+  - `public.psgc_reference_versions`: Provenance metadata and active snapshot tracking (`psgc-2026-q3`, effective 2026-09-30, release 2026-10-12).
+  - `public.psgc_locations`: Self-referencing 10-digit PSGC hierarchy (`region`, `province`, `city`, `municipality`, `sub_municipality`, `barangay`). Level and parentage constraints enforced.
+  - `public.postal_code_reference`: PHLPost mapping table (`exact_barangay`, `unique_city`, `multi_code_city`, `unmapped`, `ambiguous`).
+- **RLS & Security Invariants**:
+  - Public, anon, and authenticated read-only access limited strictly to `is_active = true` records.
+  - Insert, update, and delete granted strictly to `service_role`.
+- **Pass Issuance v6 Contract (`api.issue_online_pass_v6`)**:
+  - Validates PSGC hierarchy integrity directly against `psgc_locations` (verifying region, province existence or NCR province-less validation, city, and barangay parentage).
+  - Stores immutable address snapshots (`psgc_region_name`, `psgc_province_name`, `psgc_city_municipality_name`, `psgc_barangay_name`, `home_building`, `home_street`, `postal_code`, `postal_code_source`) on `public.visitors` and `public.returning_visitor_profiles`.
+  - Service-role only execution (`revoke all from public, anon, authenticated`).
+- **Complete Map & Geolocation Retirement**:
+  - Online visitor registration completely retires Leaflet map rendering, Nominatim lookups, and GPS browser permission prompts.
+  - Zero external geographic API keys required (no Geoapify key, no PSGC API token, no Google Maps billing).
+

@@ -1,0 +1,9 @@
+{
+  "source": "Philippine Postal Corporation (PHLPost)",
+  "officialPortal": "https://phlpost.gov.ph/zip-code-locator/",
+  "datasetVersion": "2026-q3",
+  "sourceSha256": "18a0af5e3c6a62de1defaca449e31f62b12a6670f6900690edc37fc743a77767",
+  "recordCount": 109,
+  "description": "Official PHLPost 4-digit postal code reference data mapped to Philippine localities and barangays",
+  "updatedAt": "2026-11-02T18:34:49.176Z"
+}

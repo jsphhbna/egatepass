@@ -13,13 +13,37 @@ export interface ReturningSavedVehicle {
   makeModel?: string | null;
 }
 
+export interface PsgcAddressPayload {
+  version?: string;
+  regionCode: string;
+  provinceCode?: string | null;
+  cityCode: string;
+  barangayCode: string;
+  houseBuilding?: string;
+  street?: string;
+  postalCode?: string;
+  postalCodeSource?: string;
+}
+
 export interface ReturningIdentifyProfile {
   id: string;
   firstName: string;
   middleName?: string | null;
   lastName: string;
   contactNumber: string;
+  homeAddress?: string | null;
   homeLocation?: HomeLocation | null;
+  psgc?: {
+    version: string;
+    region: { code: string; name: string };
+    province: { code: string; name: string } | null;
+    city: { code: string; name: string };
+    barangay: { code: string; name: string };
+    houseBuilding?: string;
+    street?: string;
+    postalCode?: string;
+    postalCodeSource?: string;
+  } | null;
 }
 
 export interface ReturningIdentifyResult {
@@ -45,6 +69,7 @@ export interface VisitorRegistration {
   email?: string;
   consent?: boolean;
   homeLocation?: HomeLocation | null;
+  psgc?: PsgcAddressPayload | null;
   registrationMode?: 'new' | 'returning';
   arrivalMode?: 'no_vehicle' | 'vehicle';
   vehicle?: {
@@ -1085,6 +1110,7 @@ export async function issueVisitorPass(
         },
         arrivalMode: effectiveVisitor.arrivalMode,
         homeLocation: effectiveVisitor.homeLocation || undefined,
+        psgc: effectiveVisitor.psgc || undefined,
         vehicle: effectiveVisitor.vehicle
           ? {
               ...effectiveVisitor.vehicle,

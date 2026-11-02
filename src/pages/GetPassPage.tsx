@@ -23,8 +23,9 @@ import {
   type PortalIssueTransaction,
   type IssueTransactionPhase,
 } from '@/services/visitorRegistration';
-import { ResidentialLocationPicker } from '@/components/ResidentialLocationPicker';
-import type { HomeLocation } from '@/lib/homeLocation';
+import { StructuredAddressField } from '@/components/StructuredAddressField';
+import type { SelectedPsgcAddress } from '@/components/AddressCascadingSelector';
+import { formatStructuredAddress } from '@/lib/psgc';
 import { TurnstileWidget, type TurnstileWidgetRef } from '@/components/TurnstileWidget';
 import { generateBrandedQrDataUrl } from '@/lib/brandedQr';
 import QRCode from 'qrcode';
@@ -236,7 +237,7 @@ export function GetPassPage() {
     middleName?: string;
     lastName: string;
     contactNumber: string;
-    homeLocation?: HomeLocation | null;
+    homeLocation?: { lat: number; lon: number } | null;
     matchToken: string;
     savedVehicles: Array<{
       id: string;
@@ -290,7 +291,14 @@ export function GetPassPage() {
   const [setupArrivalMode, setSetupArrivalMode] = useState<'no_vehicle' | 'vehicle' | null>(validArrival);
 
   // Approximate Residential Location State
-  const [homeLocation, setHomeLocation] = useState<HomeLocation | null>(null);
+  const [homeLocation, setHomeLocation] = useState<any | null>(null);
+
+  // Structured PSGC Residential Address State
+  const [selectedPsgc, setSelectedPsgc] = useState<SelectedPsgcAddress | null>(null);
+  const [homeBuilding, setHomeBuilding] = useState('');
+  const [homeStreet, setHomeStreet] = useState('');
+  const [postalCode, setPostalCode] = useState('');
+  const [addressError, setAddressError] = useState<string | null>(null);
 
   // Controlled Vehicle Catalog State
   const [availableMakes, setAvailableMakes] = useState<string[]>([]);
@@ -529,6 +537,11 @@ export function GetPassPage() {
     // 2. Clear residential location state
     setHomeLocation(null);
     setValue('homeLocation', null);
+    setSelectedPsgc(null);
+    setHomeBuilding('');
+    setHomeStreet('');
+    setPostalCode('');
+    setAddressError(null);
 
     // 3. Clear vehicle state
     clearVehicleDeclarationState();
@@ -738,11 +751,12 @@ export function GetPassPage() {
       return;
     }
     setValue('contactNumber', phRes, { shouldValidate: true });
-    const loc = homeLocation || getValues('homeLocation');
-    if (!loc) {
-      toast.error('Please select your approximate residential location on the map.');
+    if (!selectedPsgc) {
+      setAddressError('Please select your residential barangay and city.');
+      toast.error('Please select your residential barangay and city.');
       return;
     }
+    setAddressError(null);
     if (!data.consent) {
       toast.error('You must accept the Data Privacy Act notice to proceed.');
       return;
@@ -905,6 +919,26 @@ export function GetPassPage() {
       if (p.middleName) setValue('middleName', p.middleName);
       setValue('lastName', p.lastName, { shouldValidate: true });
       setValue('contactNumber', p.contactNumber, { shouldValidate: true });
+      if (p.psgc) {
+        setSelectedPsgc({
+          version: p.psgc.version || '2026-q3',
+          region: p.psgc.region,
+          province: p.psgc.province || null,
+          city: p.psgc.city,
+          barangay: p.psgc.barangay,
+          postalCode: p.psgc.postalCode || null,
+          postalCodeSource: p.psgc.postalCodeSource || null,
+        });
+        if (p.psgc.houseBuilding) setHomeBuilding(p.psgc.houseBuilding);
+        if (p.psgc.street) setHomeStreet(p.psgc.street);
+        if (p.psgc.postalCode) setPostalCode(p.psgc.postalCode);
+      } else {
+        setSelectedPsgc(null);
+        setHomeBuilding('');
+        setHomeStreet('');
+        setPostalCode('');
+      }
+
       if (p.homeLocation) {
         setHomeLocation(p.homeLocation);
         setValue('homeLocation', p.homeLocation, { shouldValidate: true });
@@ -941,11 +975,12 @@ export function GetPassPage() {
       toast.error('Please enter a valid Philippine mobile number.');
       return;
     }
-    const loc = homeLocation || getValues('homeLocation');
-    if (!loc) {
-      toast.error('Please select your approximate residential location on the map.');
+    if (!selectedPsgc) {
+      setAddressError('Please select your residential barangay and city.');
+      toast.error('Please select your residential barangay and city.');
       return;
     }
+    setAddressError(null);
     if (!vals.purpose || vals.purpose.trim().length < 3) {
       toast.error('Please describe the purpose of your visit.');
       return;
@@ -1464,6 +1499,26 @@ export function GetPassPage() {
         contactNumber: phNormalized,
         arrivalMode: rawFormData.arrivalMode,
         homeLocation: loc || undefined,
+        psgc: selectedPsgc ? {
+          version: selectedPsgc.version || '2026-q3',
+          regionCode: selectedPsgc.region.code,
+          provinceCode: selectedPsgc.province?.code || null,
+          cityCode: selectedPsgc.city.code,
+          barangayCode: selectedPsgc.barangay.code,
+          houseBuilding: homeBuilding.trim() || undefined,
+          street: homeStreet.trim() || undefined,
+          postalCode: postalCode.trim() || selectedPsgc.postalCode || undefined,
+          postalCodeSource: selectedPsgc.postalCodeSource || undefined,
+        } : undefined,
+        homeAddress: selectedPsgc ? formatStructuredAddress({
+          regionName: selectedPsgc.region.name,
+          provinceName: selectedPsgc.province?.name,
+          cityName: selectedPsgc.city.name,
+          barangayName: selectedPsgc.barangay.name,
+          houseBuilding: homeBuilding,
+          street: homeStreet,
+          postalCode: postalCode || selectedPsgc.postalCode,
+        }) : undefined,
         vehicle: rawFormData.arrivalMode === 'vehicle'
           ? {
               vehicleType: rawFormData.vehicleType || 'car',
@@ -2003,14 +2058,20 @@ export function GetPassPage() {
                 </FormField>
               </div>
 
-              {/* Approximate Residential Location Picker */}
-              <ResidentialLocationPicker
-                value={homeLocation}
-                onChange={(loc) => {
-                  setHomeLocation(loc);
-                  setValue('homeLocation', loc, { shouldValidate: true });
+              {/* Structured Residential Address */}
+              <StructuredAddressField
+                value={selectedPsgc}
+                onChange={(val) => {
+                  setSelectedPsgc(val);
+                  setAddressError(null);
                 }}
-                error={errors.homeLocation?.message}
+                houseBuilding={homeBuilding}
+                onHouseBuildingChange={setHomeBuilding}
+                street={homeStreet}
+                onStreetChange={setHomeStreet}
+                postalCode={postalCode}
+                onPostalCodeChange={setPostalCode}
+                error={addressError || undefined}
               />
 
               {/* Data Privacy Notice */}
@@ -2825,9 +2886,17 @@ export function GetPassPage() {
                     </p>
                   </div>
                   <div className="sm:col-span-2">
-                    <span className="text-[var(--color-text-secondary)] block">Residential Location:</span>
+                    <span className="text-[var(--color-text-secondary)] block">Residential Address:</span>
                     <p className="font-semibold text-sm text-[var(--color-text-primary)] mt-0.5 leading-relaxed">
-                      {homeLocation ? 'Approximate residential location selected' : 'Not specified'}
+                      {selectedPsgc ? formatStructuredAddress({
+                        regionName: selectedPsgc.region.name,
+                        provinceName: selectedPsgc.province?.name,
+                        cityName: selectedPsgc.city.name,
+                        barangayName: selectedPsgc.barangay.name,
+                        houseBuilding: homeBuilding,
+                        street: homeStreet,
+                        postalCode: postalCode || selectedPsgc.postalCode,
+                      }) : 'Not specified'}
                     </p>
                   </div>
                 </div>
@@ -3190,13 +3259,19 @@ export function GetPassPage() {
                   <Input type="tel" {...register('contactNumber')} />
                 </FormField>
 
-                <ResidentialLocationPicker
-                  value={homeLocation}
-                  onChange={(loc) => {
-                    setHomeLocation(loc);
-                    setValue('homeLocation', loc, { shouldValidate: true });
+                <StructuredAddressField
+                  value={selectedPsgc}
+                  onChange={(val) => {
+                    setSelectedPsgc(val);
+                    setAddressError(null);
                   }}
-                  error={errors.homeLocation?.message}
+                  houseBuilding={homeBuilding}
+                  onHouseBuildingChange={setHomeBuilding}
+                  street={homeStreet}
+                  onStreetChange={setHomeStreet}
+                  postalCode={postalCode}
+                  onPostalCodeChange={setPostalCode}
+                  error={addressError || undefined}
                 />
               </div>
 

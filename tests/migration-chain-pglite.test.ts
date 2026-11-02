@@ -2458,4 +2458,126 @@ describe('Permanent PostgreSQL Migration Chain & Schema Contracts (PGlite)', () 
     expect(cacheCheck.rows.length).toBe(1);
     expect(cacheCheck.rows[0].query).toBe('Manila');
   }, 60000);
+
+  it('Migration 50: verifies PSGC reference versions, 10-digit locations, postal codes, and api.issue_online_pass_v6', async () => {
+    const db = new PGlite();
+    await applyAllMigrations(db);
+
+    // 1. Check version table
+    const verRes = await db.query<{ id: string; is_active: boolean }>(
+      `select id, is_active from public.psgc_reference_versions where is_active = true;`
+    );
+    expect(verRes.rows.length).toBe(1);
+    expect(verRes.rows[0].id).toBe('2026-q3');
+
+    // 2. Check region count (18 regions)
+    const regRes = await db.query<{ count: string }>(
+      `select count(*) as count from public.psgc_locations where level = 'region';`
+    );
+    expect(Number(regRes.rows[0].count)).toBe(18);
+
+    // 3. Check province count (82 provinces)
+    const provRes = await db.query<{ count: string }>(
+      `select count(*) as count from public.psgc_locations where level = 'province';`
+    );
+    expect(Number(provRes.rows[0].count)).toBe(82);
+
+    // 4. Check NCR has no provinces
+    const ncrProvRes = await db.query<{ count: string }>(
+      `select count(*) as count from public.psgc_locations where parent_psgc_code = '1300000000' and level = 'province';`
+    );
+    expect(Number(ncrProvRes.rows[0].count)).toBe(0);
+
+    // 5. Check City of Manila is under NCR
+    const manilaRes = await db.query<{ psgc_code: string; parent_psgc_code: string; name: string }>(
+      `select psgc_code, parent_psgc_code, name from public.psgc_locations where psgc_code = '1380600000';`
+    );
+    expect(manilaRes.rows.length).toBe(1);
+    expect(manilaRes.rows[0].parent_psgc_code).toBe('1300000000');
+    expect(manilaRes.rows[0].name).toBe('City of Manila');
+
+    // 6. Check Barangay 408 (Sampaloc / EARIST) is under City of Manila
+    const bgy408Res = await db.query<{ psgc_code: string; parent_psgc_code: string; name: string }>(
+      `select psgc_code, parent_psgc_code, name from public.psgc_locations where psgc_code = '1380600408';`
+    );
+    expect(bgy408Res.rows.length).toBe(1);
+    expect(bgy408Res.rows[0].parent_psgc_code).toBe('1380600000');
+    expect(bgy408Res.rows[0].name).toContain('EARIST');
+
+    // 7. Check postal code mappings
+    const postalRes = await db.query<{ count: string }>(
+      `select count(*) as count from public.postal_code_reference;`
+    );
+    expect(Number(postalRes.rows[0].count)).toBeGreaterThanOrEqual(100);
+
+    // 8. Check exact barangay postal mapping for EARIST (1008)
+    const earistZip = await db.query<{ postal_code: string; mapping_type: string }>(
+      `select postal_code, mapping_type from public.postal_code_reference where barangay_psgc_code = '1380600408';`
+    );
+    expect(earistZip.rows.length).toBe(1);
+    expect(earistZip.rows[0].postal_code).toBe('1008');
+    expect(earistZip.rows[0].mapping_type).toBe('exact_barangay');
+
+    // 9. Check api.issue_online_pass_v6 registration and hierarchy validation
+    const testUserId = '11111111-1111-1111-1111-111111111111';
+    await db.exec(`insert into auth.users (id, is_anonymous) values ('${testUserId}', true);`);
+
+    const photoIntentId = '22222222-2222-2222-2222-222222222222';
+    const idIntentId = '33333333-3333-3333-3333-333333333333';
+    const reqId = '44444444-4444-4444-4444-444444444444';
+
+    await db.exec(`
+      insert into public.upload_intents (id, owner_id, source, kind, bucket_id, object_path, content_type, max_bytes, status, expires_at)
+      values
+        ('${photoIntentId}', '${testUserId}', 'portal', 'photo', 'visitor-photos', 'portal/${testUserId}/photo.jpg', 'image/jpeg', 5242880, 'pending', now() + interval '10 minutes'),
+        ('${idIntentId}', '${testUserId}', 'portal', 'id', 'visitor-ids', 'portal/${testUserId}/id.jpg', 'image/jpeg', 5242880, 'pending', now() + interval '10 minutes');
+
+      insert into public.portal_identity_verification_attempts (
+        id, owner_id, request_id, photo_intent_id, id_intent_id, outcome, model_name, model_version, verified_at, expires_at
+      ) values (
+        gen_random_uuid(), '${testUserId}', '${reqId}', '${photoIntentId}', '${idIntentId}', 'matched', 'opencv_zoo_yunet_sface', 'yunet_2023mar_sface_2021dec', now(), now() + interval '15 minutes'
+      );
+    `);
+
+    // Verify issue_online_pass_v6 succeeds and writes snapshot
+    const passRes = await db.query<{ pass_id: string; public_reference: string }>(`
+      select * from api.issue_online_pass_v6(
+        '${testUserId}'::uuid, 'new', '${reqId}'::uuid,
+        'Juan', 'Santos', 'Dela Cruz', '+639171234567', 'Campus Inquiry', (current_date + interval '1 day')::date,
+        '${photoIntentId}'::uuid, 1024, repeat('a', 64),
+        '${idIntentId}'::uuid, 2048, repeat('b', 64),
+        repeat('c', 64), 'no_vehicle',
+        '2026-q3', '1300000000', null, '1380600000', '1380600408',
+        'Unit 401', 'Nagtahan St.', '1008', 'PHLPost'
+      );
+    `);
+
+    expect(passRes.rows.length).toBe(1);
+    expect(passRes.rows[0].pass_id).toBeDefined();
+
+    const visCheck = await db.query<{
+      psgc_region_name: string;
+      psgc_city_municipality_name: string;
+      psgc_barangay_name: string;
+      home_building: string;
+      home_street: string;
+      postal_code: string;
+      home_address: string;
+    }>(`
+      select
+        psgc_region_name, psgc_city_municipality_name, psgc_barangay_name,
+        home_building, home_street, postal_code, home_address
+      from public.visitors
+      where owner_id = '${testUserId}';
+    `);
+
+    expect(visCheck.rows.length).toBe(1);
+    expect(visCheck.rows[0].psgc_region_name).toBe('National Capital Region (NCR)');
+    expect(visCheck.rows[0].psgc_city_municipality_name).toBe('City of Manila');
+    expect(visCheck.rows[0].psgc_barangay_name).toContain('EARIST');
+    expect(visCheck.rows[0].home_building).toBe('Unit 401');
+    expect(visCheck.rows[0].home_street).toBe('Nagtahan St.');
+    expect(visCheck.rows[0].postal_code).toBe('1008');
+    expect(visCheck.rows[0].home_address).toContain('Unit 401, Nagtahan St.');
+  }, 60000);
 });

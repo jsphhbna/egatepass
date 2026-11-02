@@ -192,6 +192,9 @@ async function handleRequest(request: Request): Promise<Response> {
           returning_visitor_profiles!inner(
             id, first_name, middle_name, last_name, contact_number_e164, home_address,
             home_location_lat, home_location_lon,
+            psgc_version, psgc_region_code, psgc_province_code, psgc_city_code, psgc_barangay_code,
+            psgc_region_name, psgc_province_name, psgc_city_municipality_name, psgc_barangay_name,
+            home_building, home_street, postal_code, postal_code_source,
             expires_at, revoked_at
           )
         `)
@@ -229,6 +232,19 @@ async function handleRequest(request: Request): Promise<Response> {
       home_address?: string | null;
       home_location_lat?: number | null;
       home_location_lon?: number | null;
+      psgc_version?: string | null;
+      psgc_region_code?: string | null;
+      psgc_province_code?: string | null;
+      psgc_city_code?: string | null;
+      psgc_barangay_code?: string | null;
+      psgc_region_name?: string | null;
+      psgc_province_name?: string | null;
+      psgc_city_municipality_name?: string | null;
+      psgc_barangay_name?: string | null;
+      home_building?: string | null;
+      home_street?: string | null;
+      postal_code?: string | null;
+      postal_code_source?: string | null;
     } | null = null;
 
     // Priority 1: Gallery evaluation must fail closed if ANY template fails decryption or validation.
@@ -342,6 +358,18 @@ async function handleRequest(request: Request): Promise<Response> {
           middleName: bestProfile.middle_name,
           lastName: bestProfile.last_name,
           contactNumber: bestProfile.contact_number_e164,
+          homeAddress: bestProfile.home_address,
+          psgc: bestProfile.psgc_region_code && bestProfile.psgc_city_code && bestProfile.psgc_barangay_code ? {
+            version: bestProfile.psgc_version || '2026-q3',
+            region: { code: bestProfile.psgc_region_code, name: bestProfile.psgc_region_name || '' },
+            province: bestProfile.psgc_province_code ? { code: bestProfile.psgc_province_code, name: bestProfile.psgc_province_name || '' } : null,
+            city: { code: bestProfile.psgc_city_code, name: bestProfile.psgc_city_municipality_name || '' },
+            barangay: { code: bestProfile.psgc_barangay_code, name: bestProfile.psgc_barangay_name || '' },
+            houseBuilding: bestProfile.home_building || undefined,
+            street: bestProfile.home_street || undefined,
+            postalCode: bestProfile.postal_code || undefined,
+            postalCodeSource: bestProfile.postal_code_source || undefined,
+          } : null,
           homeLocation: (bestProfile.home_location_lat != null && bestProfile.home_location_lon != null)
             ? {
                 lat: Number(bestProfile.home_location_lat),

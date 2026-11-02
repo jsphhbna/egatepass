@@ -124,6 +124,15 @@ flowchart TD
 
 > **Scheduling Note**: Visitors may schedule visits within the institutionally configured scheduling window. The current deployment default uses 30 days ahead.
 
+#### 3.1.1 Official PSGC Structured Residential Address System
+
+Online visitor registration collects standardized Philippine residential locality data using official Philippine Statistics Authority (PSA) PSGC reference data and PHLPost postal codes, completely retiring legacy map tiles and GPS permissions:
+- **Official Reference Data**: Comprehensive snapshot of all 18 administrative regions (including Negros Island Region / NIR), 82 provinces, cities, municipalities, and barangays using official 10-digit codes (`text` representation).
+- **Shopee-Style Cascading Selector**: A compact modal (desktop) and bottom sheet (mobile) that shows only the active selection step (`Region` -> `Province` [automatically bypassed for NCR] -> `City/Municipality` -> `Barangay` -> `Confirmation`).
+- **Postal Code Resolution**: Automatic determination of PHLPost postal codes for exact barangay matches (e.g. Barangay 408 / EARIST Nagtahan -> `1008`) and unique cities (e.g. Mandaluyong -> `1550`, Malolos -> `3000`), with manual fallback for multi-code areas.
+- **Zero Third-Party APIs**: Pure database-backed and bundled reference execution requiring no Geoapify key, Google Maps key, or runtime geocoding services.
+- **Server Verification**: Validated server-side in `api.issue_online_pass_v6` with immutable address snapshot fields stored on the visitor record.
+
 ---
 
 ### 3.2 Walk-in Kiosk ID OCR Flow

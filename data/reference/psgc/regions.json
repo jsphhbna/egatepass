@@ -1,0 +1,110 @@
+[
+  {
+    "code": "1300000000",
+    "name": "National Capital Region (NCR)",
+    "shortName": "NCR",
+    "hasProvinces": false
+  },
+  {
+    "code": "1400000000",
+    "name": "Cordillera Administrative Region (CAR)",
+    "shortName": "CAR",
+    "hasProvinces": true
+  },
+  {
+    "code": "0100000000",
+    "name": "Region I (Ilocos Region)",
+    "shortName": "Region I",
+    "hasProvinces": true
+  },
+  {
+    "code": "0200000000",
+    "name": "Region II (Cagayan Valley)",
+    "shortName": "Region II",
+    "hasProvinces": true
+  },
+  {
+    "code": "0300000000",
+    "name": "Region III (Central Luzon)",
+    "shortName": "Region III",
+    "hasProvinces": true
+  },
+  {
+    "code": "0400000000",
+    "name": "Region IV-A (CALABARZON)",
+    "shortName": "CALABARZON",
+    "hasProvinces": true
+  },
+  {
+    "code": "1700000000",
+    "name": "MIMAROPA Region",
+    "shortName": "MIMAROPA",
+    "hasProvinces": true
+  },
+  {
+    "code": "0500000000",
+    "name": "Region V (Bicol Region)",
+    "shortName": "Region V",
+    "hasProvinces": true
+  },
+  {
+    "code": "0600000000",
+    "name": "Region VI (Western Visayas)",
+    "shortName": "Region VI",
+    "hasProvinces": true
+  },
+  {
+    "code": "0700000000",
+    "name": "Region VII (Central Visayas)",
+    "shortName": "Region VII",
+    "hasProvinces": true
+  },
+  {
+    "code": "0800000000",
+    "name": "Region VIII (Eastern Visayas)",
+    "shortName": "Region VIII",
+    "hasProvinces": true
+  },
+  {
+    "code": "0900000000",
+    "name": "Region IX (Zamboanga Peninsula)",
+    "shortName": "Region IX",
+    "hasProvinces": true
+  },
+  {
+    "code": "1000000000",
+    "name": "Region X (Northern Mindanao)",
+    "shortName": "Region X",
+    "hasProvinces": true
+  },
+  {
+    "code": "1100000000",
+    "name": "Region XI (Davao Region)",
+    "shortName": "Region XI",
+    "hasProvinces": true
+  },
+  {
+    "code": "1200000000",
+    "name": "Region XII (SOCCSKSARGEN)",
+    "shortName": "SOCCSKSARGEN",
+    "hasProvinces": true
+  },
+  {
+    "code": "1600000000",
+    "name": "Region XIII (Caraga)",
+    "shortName": "Caraga",
+    "hasProvinces": true
+  },
+  {
+    "code": "1900000000",
+    "name": "Bangsamoro Autonomous Region in Muslim Mindanao (BARMM)",
+    "shortName": "BARMM",
+    "hasProvinces": true
+  },
+  {
+    "code": "1800000000",
+    "name": "Negros Island Region (NIR)",
+    "shortName": "NIR",
+    "hasProvinces": true
+  }
+]

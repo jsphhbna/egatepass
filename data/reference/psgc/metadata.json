@@ -1,0 +1,24 @@
+{
+  "source": "Philippine Statistics Authority (PSA)",
+  "officialPortal": "https://psa.gov.ph/classification/psgc",
+  "datasetVersion": "2026-q3",
+  "effectiveDate": "2026-09-30",
+  "publicationDate": "2026-10-12",
+  "sourceSha256": "31cbd260912720f1b2f537dd3862bf5c2d907b71ffb9b340987e6f9066b2a318",
+  "officialTotals": {
+    "regions": 18,
+    "provinces": 82,
+    "highlyUrbanizedCities": 33,
+    "independentComponentCities": 5,
+    "componentCities": 111,
+    "municipalities": 1493,
+    "barangays": 42010
+  },
+  "normalizedTotals": {
+    "regions": 18,
+    "provinces": 82,
+    "citiesAndMunicipalities": 45,
+    "barangays": 111
+  },
+  "updatedAt": "2026-11-02T18:34:49.174Z"
+}
