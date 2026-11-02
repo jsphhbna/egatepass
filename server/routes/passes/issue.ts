@@ -9,6 +9,7 @@ import {
   encryptFaceTemplate,
   extractFaceDescriptorFromBuffer,
   getActiveTemplateKeyVersion,
+  validateFaceDescriptor,
 } from '../../lib/face-engine.js';
 import { computeMatchTokenDigest } from './identify-returning.js';
 import { normalizeCoordinates, type HomeLocation } from '../../lib/home-location.js';
@@ -686,6 +687,10 @@ async function handleRequest(request: Request): Promise<Response> {
         const templateKey = process.env.RETURNING_VISITOR_TEMPLATE_KEY?.trim();
         if (templateKey && photo.buffer) {
           const { descriptor, modelName, modelVersion } = await extractFaceDescriptorFromBuffer(photo.buffer);
+          const descriptorValidation = validateFaceDescriptor(descriptor, 128);
+          if (!descriptorValidation.valid) {
+            throw new Error(`invalid_face_descriptor:${descriptorValidation.reason}`);
+          }
           const activeKeyVersion = getActiveTemplateKeyVersion();
           const encrypted = encryptFaceTemplate(descriptor, templateKey, activeKeyVersion);
 

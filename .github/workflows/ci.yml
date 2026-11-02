@@ -1,0 +1,42 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    name: Verify & Test
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Typecheck Server & API
+        run: npm run typecheck:api
+
+      - name: Test PostgreSQL Migrations (PGlite Chain)
+        run: npm run test:migrations
+
+      - name: Run Full Unit & Integration Test Suite
+        run: npm run test:unit
+
+      - name: Build Production Frontend & Bundle
+        run: npm run build

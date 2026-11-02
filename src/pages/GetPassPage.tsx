@@ -17,6 +17,9 @@ import {
   invalidatePortalEvidenceCheckpoint,
   identifyReturningVisitor,
   PortalSessionError,
+  UploadAuthorizationError,
+  StorageUploadError,
+  PreflightQualityError,
   type PortalIssueTransaction,
   type IssueTransactionPhase,
 } from '@/services/visitorRegistration';
@@ -1166,11 +1169,19 @@ export function GetPassPage() {
     } catch (err: any) {
       console.warn('Live face quality check error:', err);
       const msg = err?.message?.toLowerCase() || '';
-      if (err instanceof PortalSessionError || err?.code?.startsWith?.('portal_session') || msg.includes('session') || msg.includes('visitor registration')) {
+
+      // 1. Session / token expiration
+      if (
+        err instanceof PortalSessionError ||
+        err?.code?.startsWith?.('portal_session') ||
+        msg.includes('session expired') ||
+        msg.includes('session missing')
+      ) {
         setLiveFaceError({
           category: 'session',
           title: 'Registration Session Error',
-          message: 'Your visitor registration session changed or expired. Please continue again to securely restart this registration.',
+          message:
+            'Your visitor registration session changed or expired. Please continue again to securely restart this registration.',
           reasonCode: err?.code || 'portal_session_mismatch',
         });
         const tx = portalTransactionRef.current;
@@ -1184,26 +1195,67 @@ export function GetPassPage() {
         toast.error('Registration session expired. Returning to visitor details.');
         return;
       }
-      if (msg.includes('upload') || msg.includes('authorized') || msg.includes('403') || msg.includes('401') || msg.includes('visitor identity required')) {
+
+      // 2. Storage upload errors (temporary network timeout or retryable storage failure)
+      if (err instanceof StorageUploadError) {
+        setLiveFaceError({
+          category: err.retryable ? 'network' : 'upload',
+          title: err.code === 'storage_timeout' ? 'Connection Problem' : 'Photo Upload Failed',
+          message: err.message,
+          reasonCode: err.code,
+        });
+        toast.error(err.message);
+        return;
+      }
+
+      // 3. Upload intent authorization failure (explicit policy / permission rejection)
+      if (
+        err instanceof UploadAuthorizationError ||
+        err?.code === 'upload_intent_unauthorized' ||
+        msg.includes('upload could not be authorized')
+      ) {
         setLiveFaceError({
           category: 'upload',
-          title: 'Photo Upload Error',
-          message: 'The photo could not be authorized for this visitor session. Please restart the registration session and try again.',
-          reasonCode: 'upload_intent_unauthorized',
+          title: 'Photo Upload Authorization Failed',
+          message:
+            'The photo upload could not be authorized for this visitor session. Please restart the registration session and try again.',
+          reasonCode: err?.code || 'upload_intent_unauthorized',
         });
         toast.error('Photo upload could not be authorized.');
         return;
       }
-      if (msg.includes('network') || msg.includes('fetch') || msg.includes('timeout') || msg.includes('failed to fetch')) {
+
+      // 4. Preflight quality error
+      if (err instanceof PreflightQualityError) {
+        setLiveFaceError({
+          category: 'quality',
+          title: 'Photo Quality Check Failed',
+          message: err.message,
+          reasonCode: err.reasonCode,
+        });
+        toast.error(err.message);
+        return;
+      }
+
+      // 5. Network / timeout interruptions
+      if (
+        msg.includes('network') ||
+        msg.includes('fetch') ||
+        msg.includes('timeout') ||
+        msg.includes('failed to fetch')
+      ) {
         setLiveFaceError({
           category: 'network',
           title: 'Connection Problem',
-          message: 'Network interruption occurred while communicating with the server. Please check your connection and try again.',
+          message:
+            'Network interruption occurred while communicating with the server. Please check your connection and try again.',
           reasonCode: 'network_interruption',
         });
         toast.error('Network connection problem.');
         return;
       }
+
+      // 6. Service unavailable
       if (msg.includes('service') || msg.includes('unavailable') || msg.includes('503')) {
         setLiveFaceError({
           category: 'service',
@@ -1214,6 +1266,8 @@ export function GetPassPage() {
         toast.error('Verification service unavailable.');
         return;
       }
+
+      // 7. General fallback (Technical/Quality)
       setLiveFaceError({
         category: 'quality',
         title: 'Photo Quality Check Failed',
@@ -2389,6 +2443,20 @@ export function GetPassPage() {
                       </Button>
                     </div>
                   )}
+
+                  {/* Visitor framing instructions checklist */}
+                  <div className="rounded-xl border border-blue-200 bg-blue-50/60 p-3 text-xs text-blue-950 space-y-1.5">
+                    <p className="font-semibold text-[11px] text-blue-900 uppercase tracking-wider flex items-center gap-1.5">
+                      <Sparkles className="h-3.5 w-3.5 text-blue-600" />
+                      Selfie Framing Guidelines
+                    </p>
+                    <ul className="grid grid-cols-1 sm:grid-cols-2 gap-1 text-[11px] text-blue-900/90 list-disc list-inside">
+                      <li>Keep entire head & hair inside oval</li>
+                      <li>Center face and look forward</li>
+                      <li>Keep forehead and chin visible</li>
+                      <li>Use clear, even lighting</li>
+                    </ul>
+                  </div>
 
                   {/* Single camera viewport with oval guide */}
                   <div className="mx-auto w-full max-w-md overflow-hidden rounded-2xl border-2 border-[var(--color-brand)] bg-black aspect-[4/3] relative flex items-center justify-center shadow-inner">

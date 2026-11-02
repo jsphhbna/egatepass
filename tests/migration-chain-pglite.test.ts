@@ -2353,7 +2353,7 @@ describe('Permanent PostgreSQL Migration Chain & Schema Contracts (PGlite)', () 
     expect(rpcCheck.rows.length).toBe(1);
   }, 60000);
 
-  it('Migration 48: verifies upload_intents and visitor_evidence vehicle_photo constraints and staff policy', async () => {
+  it('Migration 48 & 49: verifies upload_intents, visitor_evidence vehicle_photo constraints, and distributed nominatim rate limiter', async () => {
     const db = new PGlite();
     await applyAllMigrations(db);
 
@@ -2424,5 +2424,38 @@ describe('Permanent PostgreSQL Migration Chain & Schema Contracts (PGlite)', () 
         );
       `)
     ).rejects.toThrow();
+
+    // 5. Migration 49: Distributed Nominatim rate limiter and location search cache
+    const limiterCheck = await db.query<{ id: number; last_request_at: string }>(
+      `select id, last_request_at from public.nominatim_rate_limiter where id = 1;`
+    );
+    expect(limiterCheck.rows.length).toBe(1);
+    expect(limiterCheck.rows[0].id).toBe(1);
+
+    // First call must acquire slot
+    const slotRes1 = await db.query<{ acquire_nominatim_slot: { acquired: boolean; wait_ms: number } }>(
+      `select api.acquire_nominatim_slot(1100);`
+    );
+    expect(slotRes1.rows[0].acquire_nominatim_slot.acquired).toBe(true);
+    expect(slotRes1.rows[0].acquire_nominatim_slot.wait_ms).toBe(0);
+
+    // Immediate second call must NOT acquire slot and return positive wait_ms
+    const slotRes2 = await db.query<{ acquire_nominatim_slot: { acquired: boolean; wait_ms: number } }>(
+      `select api.acquire_nominatim_slot(1100);`
+    );
+    expect(slotRes2.rows[0].acquire_nominatim_slot.acquired).toBe(false);
+    expect(slotRes2.rows[0].acquire_nominatim_slot.wait_ms).toBeGreaterThan(0);
+
+    // Test location_search_cache insertion and lookup
+    const testHash = 'test-hash-manila-sample';
+    await db.exec(`
+      insert into public.location_search_cache (query_hash, query, results, expires_at)
+      values ('${testHash}', 'Manila', '[{"displayName": "City of Manila", "lat": 14.5995, "lon": 120.9842}]'::jsonb, now() + interval '1 hour');
+    `);
+    const cacheCheck = await db.query<{ query: string; results: any }>(
+      `select query, results from public.location_search_cache where query_hash = '${testHash}';`
+    );
+    expect(cacheCheck.rows.length).toBe(1);
+    expect(cacheCheck.rows[0].query).toBe('Manila');
   }, 60000);
 });

@@ -10,6 +10,7 @@ import {
   decryptFaceTemplate,
   computeCosineSimilarity,
   isFaceVerificationConfigured,
+  validateFaceDescriptor,
 } from '../../lib/face-engine.js';
 
 const requestSchema = z.object({
@@ -154,6 +155,16 @@ async function handleRequest(request: Request): Promise<Response> {
     }
 
     const queryEmbedding = analysis.descriptor;
+    const queryValidation = validateFaceDescriptor(queryEmbedding, 128);
+    if (!queryValidation.valid) {
+      return jsonResponse(422, {
+        ok: false,
+        error: 'quality_rejected',
+        reasonCode: 'no_face_in_selfie',
+        message: 'Could not extract valid face descriptor. Please retake photo.',
+      });
+    }
+
     const modelName = analysis.modelName;
     const modelVersion = analysis.modelVersion;
 
@@ -220,36 +231,61 @@ async function handleRequest(request: Request): Promise<Response> {
       home_location_lon?: number | null;
     } | null = null;
 
+    // Priority 1: Gallery evaluation must fail closed if ANY template fails decryption or validation.
+    // A partial gallery evaluation must never proceed to pick a match from a subset.
     for (const t of allTemplates) {
+      let candidateEmbedding: Float32Array;
       try {
-        const candidateEmbedding = decryptFaceTemplate(
+        candidateEmbedding = decryptFaceTemplate(
           t.encrypted_embedding,
           t.iv,
           t.auth_tag,
           templateKey,
           t.key_version || 'v1'
         );
-        const score = computeCosineSimilarity(queryEmbedding, candidateEmbedding);
-
-        if (score > bestScore) {
-          secondScore = bestScore;
-          bestScore = score;
-          const p = t.returning_visitor_profiles as unknown as {
-            id: string;
-            first_name: string;
-            middle_name: string | null;
-            last_name: string;
-            contact_number_e164: string;
-            home_address?: string | null;
-            home_location_lat?: number | null;
-            home_location_lon?: number | null;
-          };
-          bestProfile = p;
-        } else if (score > secondScore) {
-          secondScore = score;
-        }
       } catch (decErr) {
-        console.warn(`Failed to decrypt template ${t.id} (version: ${t.key_version}):`, decErr);
+        // Operational log only: privacy-safe, zero biometric data logged
+        console.error(
+          `Gallery template decryption failure for template ${t.id} (version: ${t.key_version || 'v1'}):`,
+          decErr instanceof Error ? decErr.message : 'decryption_failed'
+        );
+        return jsonResponse(503, {
+          error: 'gallery_evaluation_incomplete',
+          message:
+            'Returning visitor verification is temporarily unavailable. Please proceed to the Guard Station for manual verification.',
+        });
+      }
+
+      const valRes = validateFaceDescriptor(candidateEmbedding, 128);
+      if (!valRes.valid) {
+        console.error(
+          `Gallery template descriptor validation failure for template ${t.id}: ${valRes.reason}`
+        );
+        return jsonResponse(503, {
+          error: 'gallery_evaluation_incomplete',
+          message:
+            'Returning visitor verification is temporarily unavailable. Please proceed to the Guard Station for manual verification.',
+        });
+      }
+
+      const score = computeCosineSimilarity(queryEmbedding, candidateEmbedding);
+
+      if (score > bestScore) {
+        secondScore = bestScore;
+        bestScore = score;
+        const p = t.returning_visitor_profiles as unknown as {
+          id: string;
+          first_name: string;
+          middle_name: string | null;
+          last_name: string;
+          contact_number_e164: string;
+          home_address?: string | null;
+          home_location_lat?: number | null;
+          home_location_lon?: number | null;
+        };
+        bestProfile = p;
+      } else if (score > secondScore) {
+        secondScore = score;
       }
     }
 

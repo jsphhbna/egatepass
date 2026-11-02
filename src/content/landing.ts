@@ -45,23 +45,21 @@ export const LANDING_CONTENT = {
   dressCode: {
     heading: 'Visitor Dress Code',
     eyebrow: 'Before visiting campus',
-    intro: 'Please arrive in decent, campus-appropriate attire. Security personnel may enforce current EARIST entry policies at the gate.',
+    intro: 'Please arrive in decent, campus-appropriate attire. Security personnel enforce institutional EARIST entry policies at the gate.',
     proper: {
       title: 'Proper Campus Attire',
       items: [
-        'Decent, campus-appropriate clothing',
-        'Proper top/shirt',
-        'Appropriate long lower garment',
-        'Proper footwear',
+        'T-shirt',
+        'Full-length pants or trousers',
+        'Shoes',
       ],
     },
     avoid: {
       title: 'Please Avoid',
       items: [
         'Shorts',
-        'Sando',
-        'Sleeveless tops',
-        'Slippers',
+        'Sandals / slippers',
+        'Sleeveless tops / sando',
       ],
     },
     note: 'Final admission remains subject to identity verification and current campus security policies at the gate.',

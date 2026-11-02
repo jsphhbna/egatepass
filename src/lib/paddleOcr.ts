@@ -174,7 +174,8 @@ export function convertPaddleItemsToStructuredData(
 }
 
 /**
- * Extracts address lines from structured lines using spatial proximity to address labels.
+ * Extracts address lines from structured lines using spatial proximity to address labels,
+ * strictly enforcing column boundaries and line-spacing constraints (Priority 3).
  */
 export function extractAddressFromOcrLines(lines: OcrLine[]): string {
   const addressLabelIdx = lines.findIndex((l) =>
@@ -185,6 +186,10 @@ export function extractAddressFromOcrLines(lines: OcrLine[]): string {
 
   const labelLine = lines[addressLabelIdx]!;
   const addressParts: string[] = [];
+  const addressLines: OcrLine[] = [];
+
+  const labelHeight = Math.max(12, labelLine.bbox.y1 - labelLine.bbox.y0);
+  const colLeft = labelLine.bbox.x0;
 
   // Check if address text continues on the same line after the label
   const cleanedSameLine = labelLine.text
@@ -192,22 +197,44 @@ export function extractAddressFromOcrLines(lines: OcrLine[]): string {
     .trim();
   if (cleanedSameLine.length > 2 && !/^(?:date|sex|birth|valid|expiry|kasarian|petsa)/i.test(cleanedSameLine)) {
     addressParts.push(cleanedSameLine);
+    addressLines.push(labelLine);
+  } else {
+    addressLines.push(labelLine);
   }
 
-  // Look for lines stacked immediately below the address label
-  for (let i = addressLabelIdx + 1; i < lines.length && i <= addressLabelIdx + 3; i++) {
+  // Priority 3: Spatial column boundary and line-spacing enforcement
+  for (let i = addressLabelIdx + 1; i < lines.length && addressParts.length < 4 && i <= addressLabelIdx + 8; i++) {
     const nextLine = lines[i]!;
-    // Stop if encountering another standard field label
+
+    // 1. Column alignment check: candidate line must start in the same column (not an adjacent column)
+    if (nextLine.bbox.x0 > colLeft + 80 || nextLine.bbox.x1 < colLeft - 40) {
+      // Candidate line belongs to an adjacent column (e.g. right-side photo or secondary column)
+      continue;
+    }
+
+    // 2. Stop if encountering another standard field label in the address column
     if (
-      /(?:date\s*of\s*birth|petsa|sex|kasarian|blood|date\s*of\s*issue|valid|crn|signature)/i.test(
+      /(?:date\s*of\s*birth|petsa|sex|kasarian|blood|date\s*of\s*issue|issue|expiry|valid|crn|signature|tin|philhealth|sss)\b/i.test(
         nextLine.text
       )
     ) {
       break;
     }
+
+    const lastLine = addressLines[addressLines.length - 1]!;
+
+    // 3. Line spacing check: vertical distance between lines must be reasonable (not jumping sections)
+    const verticalGap = nextLine.bbox.y0 - lastLine.bbox.y1;
+    const maxGap = Math.max(30, labelHeight * 2.5);
+    if (verticalGap > maxGap || verticalGap < -10) {
+      // Discontinuous vertical gap; section ended
+      break;
+    }
+
     const cleanLine = nextLine.text.trim();
     if (cleanLine.length > 1) {
       addressParts.push(cleanLine);
+      addressLines.push(nextLine);
     }
   }
 

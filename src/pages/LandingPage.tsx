@@ -17,9 +17,9 @@ import {
   CreditCard,
   QrCode,
   User,
-  X,
 } from 'lucide-react';
 import { LANDING_CONTENT } from '@/content/landing';
+import { DressCodeInfographic } from '@/components/DressCodeInfographic';
 
 const processIcons = [FileText, Camera, QrCode, UserCheck, ScanLine];
 const needIcons = [User, Camera, CreditCard, Clock];
@@ -333,55 +333,9 @@ export function LandingPage() {
               description={LANDING_CONTENT.dressCode.intro}
             />
 
-            <div className="mt-10 grid gap-6 sm:grid-cols-2 lg:gap-8">
-              {/* Proper Campus Attire */}
-              <div className="rounded-2xl border border-emerald-200 bg-emerald-50/50 p-6 sm:p-8 shadow-sm">
-                <div className="flex items-center gap-3 mb-6">
-                  <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-emerald-100 text-emerald-800">
-                    <CheckCircle2 className="h-5 w-5" aria-hidden="true" />
-                  </div>
-                  <h3 className="text-xl font-bold text-slate-900">
-                    {LANDING_CONTENT.dressCode.proper.title}
-                  </h3>
-                </div>
-                <ul className="space-y-3.5 text-sm font-medium text-slate-700">
-                  {LANDING_CONTENT.dressCode.proper.items.map((item) => (
-                    <li key={item} className="flex items-start gap-3">
-                      <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-emerald-200/70 text-emerald-800 text-xs font-bold" aria-hidden="true">
-                        ✓
-                      </span>
-                      <span>{item}</span>
-                    </li>
-                  ))}
-                </ul>
-              </div>
-
-              {/* Please Avoid */}
-              <div className="rounded-2xl border border-amber-200 bg-amber-50/50 p-6 sm:p-8 shadow-sm">
-                <div className="flex items-center gap-3 mb-6">
-                  <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-amber-100 text-amber-800">
-                    <X className="h-5 w-5" aria-hidden="true" />
-                  </div>
-                  <h3 className="text-xl font-bold text-slate-900">
-                    {LANDING_CONTENT.dressCode.avoid.title}
-                  </h3>
-                </div>
-                <ul className="space-y-3.5 text-sm font-medium text-slate-700">
-                  {LANDING_CONTENT.dressCode.avoid.items.map((item) => (
-                    <li key={item} className="flex items-start gap-3">
-                      <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-amber-200/70 text-amber-800 text-xs font-bold" aria-hidden="true">
-                        ✕
-                      </span>
-                      <span>{item}</span>
-                    </li>
-                  ))}
-                </ul>
-              </div>
-            </div>
-
-            <p className="mt-8 text-center text-xs text-[var(--color-text-secondary)]">
-              {LANDING_CONTENT.dressCode.note}
-            </p>
+            <h3 className="sr-only">Proper Campus Attire</h3>
+            <h3 className="sr-only">Please Avoid</h3>
+            <DressCodeInfographic />
           </div>
         </section>
 

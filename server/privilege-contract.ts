@@ -145,6 +145,18 @@ export const SERVICE_ROLE_TABLE_CONTRACT: Record<string, ServerTablePrivilegeCon
     forbiddenPrivileges: ['INSERT', 'DELETE'],
     justification: 'Server reads vehicle declarations for guard station feed and anonymizes plate details during retention maintenance. Insertion is restricted to api.issue_online_pass_v2 RPC.',
   },
+  location_search_cache: {
+    table: 'location_search_cache',
+    allowedPrivileges: ['SELECT', 'INSERT', 'UPDATE', 'DELETE'],
+    forbiddenPrivileges: [],
+    justification: 'Server caches location search results from Nominatim with 1-hour TTL and cleans up expired entries.',
+  },
+  nominatim_rate_limiter: {
+    table: 'nominatim_rate_limiter',
+    allowedPrivileges: ['SELECT', 'UPDATE'],
+    forbiddenPrivileges: ['INSERT', 'DELETE'],
+    justification: 'Server manages single-slot rate limiter for OpenStreetMap Nominatim compliance.',
+  },
 };
 
 /**
@@ -230,5 +242,6 @@ export const SERVER_DIRECT_TABLE_OPERATIONS: DirectServerTableOperation[] = [
   { file: 'server/routes/system/reconciliation-items.ts', table: 'reconciliation_tasks', operations: ['SELECT'], purpose: 'Query pending reconciliation tasks for superadmin' },
   { file: 'server/routes/system/create-user.ts', table: 'staff_profiles', operations: ['SELECT'], purpose: 'Check if existing Auth user already has a staff profile' },
   { file: 'server/routes/system/create-user.ts', table: 'devices', operations: ['SELECT'], purpose: 'Check if existing Auth user is a registered device' },
+  { file: 'server/routes/location/search.ts', table: 'location_search_cache', operations: ['SELECT', 'UPSERT'], purpose: 'Read and update distributed Nominatim location search cache' },
   { file: 'server/upload-inspection.ts', table: 'upload_intents', operations: ['SELECT'], purpose: 'Inspect upload intent metadata and expiration' },
 ];

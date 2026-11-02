@@ -1,5 +1,7 @@
+import { createHash } from 'node:crypto';
 import { jsonResponse } from '../../http.js';
 import { normalizeCoordinates } from '../../lib/home-location.js';
+import { getServerSupabaseClients } from '../../supabase.js';
 
 interface NominatimResult {
   place_id: number;
@@ -19,27 +21,25 @@ export interface LocationSearchResult {
   lon: number;
 }
 
-// In-memory cache for repeated search queries (1 hour TTL)
-const searchCache = new Map<string, { results: LocationSearchResult[]; timestamp: number }>();
+// In-memory fallback cache for repeated search queries (1 hour TTL)
+const inMemoryCache = new Map<string, { results: LocationSearchResult[]; timestamp: number }>();
 const CACHE_TTL_MS = 60 * 60 * 1000; // 1 hour
 
-// Global Nominatim rate limiter: Maximum 1 request per second across the entire application
-let lastNominatimRequestTime = 0;
-const MIN_REQUEST_INTERVAL_MS = 1050; // slightly > 1000ms for safety margin
+// In-memory fallback rate limiter if database is temporarily unavailable
+let localLastRequestTime = 0;
+const MIN_REQUEST_INTERVAL_MS = 1100;
+let localQueue: Promise<void> = Promise.resolve();
 
-let pendingQueue: Promise<void> = Promise.resolve();
-
-function throttleNominatim(): Promise<void> {
-  const next = pendingQueue.then(async () => {
+function localThrottle(): Promise<void> {
+  const next = localQueue.then(async () => {
     const now = Date.now();
-    const elapsed = now - lastNominatimRequestTime;
+    const elapsed = now - localLastRequestTime;
     if (elapsed < MIN_REQUEST_INTERVAL_MS) {
-      const waitTime = MIN_REQUEST_INTERVAL_MS - elapsed;
-      await new Promise((resolve) => setTimeout(resolve, waitTime));
+      await new Promise((resolve) => setTimeout(resolve, MIN_REQUEST_INTERVAL_MS - elapsed));
     }
-    lastNominatimRequestTime = Date.now();
+    localLastRequestTime = Date.now();
   });
-  pendingQueue = next.catch(() => {});
+  localQueue = next.catch(() => {});
   return next;
 }
 
@@ -59,17 +59,81 @@ export async function handleLocationSearch(request: Request): Promise<Response> 
     return jsonResponse(400, { error: 'query_too_long', message: 'Search query is too long.' });
   }
 
-  // Normalize query key for cache lookup
-  const cacheKey = rawQuery.toLowerCase();
-  const cached = searchCache.get(cacheKey);
-  if (cached && Date.now() - cached.timestamp < CACHE_TTL_MS) {
-    return jsonResponse(200, { results: cached.results, cached: true });
+  const normalizedQuery = rawQuery.toLowerCase();
+  const queryHash = createHash('sha256').update(normalizedQuery).digest('hex');
+
+  let adminClient: any = null;
+  try {
+    const { admin } = getServerSupabaseClients();
+    adminClient = admin;
+  } catch {
+    // Database client unavailable; gracefully fallback to in-memory mechanisms
+  }
+
+  // 1. Check distributed database cache first
+  if (adminClient) {
+    try {
+      const { data: cachedRow, error: cacheLookupErr } = await adminClient
+        .from('location_search_cache')
+        .select('results')
+        .eq('query_hash', queryHash)
+        .gt('expires_at', new Date().toISOString())
+        .maybeSingle();
+
+      if (!cacheLookupErr && cachedRow?.results && Array.isArray(cachedRow.results)) {
+        return jsonResponse(200, { results: cachedRow.results as LocationSearchResult[], cached: true });
+      }
+    } catch (cacheErr) {
+      console.warn('Location search distributed cache lookup failed:', cacheErr);
+    }
+  }
+
+  // 2. Check local in-memory fallback cache
+  const cachedLocal = inMemoryCache.get(queryHash);
+  if (cachedLocal && Date.now() - cachedLocal.timestamp < CACHE_TTL_MS) {
+    return jsonResponse(200, { results: cachedLocal.results, cached: true });
+  }
+
+  // 3. Acquire rate-limiting slot (Priority 2: Enforces OpenStreetMap 1 req/sec policy across all serverless instances)
+  let slotAcquired = false;
+  if (adminClient) {
+    try {
+      const rpcCaller = typeof adminClient.schema === 'function' ? adminClient.schema('api') : adminClient;
+      const { data: slotRes, error: slotErr } = await rpcCaller.rpc('acquire_nominatim_slot', {
+        p_min_interval_ms: 1100,
+      });
+
+      if (!slotErr && slotRes) {
+        if (slotRes.acquired === true) {
+          slotAcquired = true;
+        } else if (typeof slotRes.wait_ms === 'number' && slotRes.wait_ms <= 2000) {
+          // Bounded wait and single retry
+          await new Promise((resolve) => setTimeout(resolve, slotRes.wait_ms + 50));
+          const { data: retryRes, error: retryErr } = await rpcCaller.rpc('acquire_nominatim_slot', {
+            p_min_interval_ms: 1100,
+          });
+          if (!retryErr && retryRes?.acquired === true) {
+            slotAcquired = true;
+          }
+        }
+
+        if (!slotAcquired) {
+          return jsonResponse(429, {
+            error: 'rate_limited',
+            message: 'Location search is momentarily busy. Please tap the map directly to place your pin.',
+          });
+        }
+      }
+    } catch (rpcErr) {
+      console.warn('Distributed rate limiter RPC failed, using local fallback:', rpcErr);
+    }
+  }
+
+  if (!slotAcquired) {
+    await localThrottle();
   }
 
   try {
-    // Enforce global 1 req/sec rate limit per Nominatim policy
-    await throttleNominatim();
-
     const nominatimUrl = new URL('https://nominatim.openstreetmap.org/search');
     nominatimUrl.searchParams.set('format', 'json');
     nominatimUrl.searchParams.set('countrycodes', 'ph');
@@ -119,13 +183,26 @@ export async function handleLocationSearch(request: Request): Promise<Response> 
       }
     }
 
-    // Cache results
-    searchCache.set(cacheKey, { results, timestamp: Date.now() });
+    // 4. Update in-memory fallback cache
+    inMemoryCache.set(queryHash, { results, timestamp: Date.now() });
+    if (inMemoryCache.size > 500) {
+      const oldestKey = inMemoryCache.keys().next().value;
+      if (oldestKey) inMemoryCache.delete(oldestKey);
+    }
 
-    // Limit cache size to 500 entries
-    if (searchCache.size > 500) {
-      const oldestKey = searchCache.keys().next().value;
-      if (oldestKey) searchCache.delete(oldestKey);
+    // 5. Update distributed database cache asynchronously (fire-and-forget)
+    if (adminClient) {
+      const expiresAt = new Date(Date.now() + CACHE_TTL_MS).toISOString();
+      adminClient
+        .from('location_search_cache')
+        .upsert({
+          query_hash: queryHash,
+          query: rawQuery,
+          results,
+          expires_at: expiresAt,
+        })
+        .then(() => {})
+        .catch((err: any) => console.warn('Failed to persist location search cache:', err));
     }
 
     return jsonResponse(200, { results, cached: false });

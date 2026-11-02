@@ -17,6 +17,9 @@ export type QualityResultCode =
   | 'face_too_small'
   | 'face_cropped'
   | 'pose_unsuitable'
+  | 'head_outside_guide'
+  | 'face_outside_guide'
+  | 'face_off_center'
   | 'portrait_missing'
   | 'ambiguous_portrait';
 
@@ -113,12 +116,124 @@ export function resetInferenceSessions() {
   sessionsPromise = null;
 }
 
+interface RuntimeReadiness {
+  ready: boolean;
+  reason?: string;
+  checkedAt: number;
+}
+
+let cachedReadiness: RuntimeReadiness | null = null;
+const READINESS_TTL_MS = 30000; // 30 second cache / cooldown
+
+/**
+ * Validates that a face descriptor is a Float32Array with expected dimensions,
+ * containing only finite numbers, and possessing a strictly non-zero L2 norm.
+ */
+export function validateFaceDescriptor(
+  descriptor: unknown,
+  expectedDim = 128
+): { valid: boolean; reason?: string } {
+  if (!(descriptor instanceof Float32Array)) {
+    return { valid: false, reason: 'not_float32array' };
+  }
+  if (descriptor.length !== expectedDim) {
+    return { valid: false, reason: `dimension_mismatch:${descriptor.length}_expected_${expectedDim}` };
+  }
+  let sumSq = 0;
+  for (let i = 0; i < descriptor.length; i++) {
+    const val = descriptor[i];
+    if (val === undefined || !Number.isFinite(val)) {
+      return { valid: false, reason: `non_finite_element_at_${i}` };
+    }
+    sumSq += val * val;
+  }
+  const norm = Math.sqrt(sumSq);
+  if (!Number.isFinite(norm) || norm < 1e-6) {
+    return { valid: false, reason: 'zero_or_non_finite_l2_norm' };
+  }
+  return { valid: true };
+}
+
+/**
+ * Resets cached face runtime readiness status and ONNX inference sessions.
+ * Primarily used in test environments.
+ */
+export function resetFaceRuntimeReadiness(): void {
+  cachedReadiness = null;
+  resetInferenceSessions();
+}
+
+/**
+ * Performs actual runtime readiness verification of the ONNX face verification models.
+ * Tests model file presence, loads native ONNX Runtime sessions, and runs a smoke
+ * inference through SFace to ensure tensor operations succeed on the current platform.
+ */
+export async function checkFaceRuntimeReadiness(
+  forceCheck = false
+): Promise<{ ready: boolean; reason?: string }> {
+  if (process.env.FACE_VERIFICATION_DISABLED === 'true') {
+    return { ready: false, reason: 'disabled_by_env' };
+  }
+
+  const now = Date.now();
+  if (!forceCheck && cachedReadiness && now - cachedReadiness.checkedAt < READINESS_TTL_MS) {
+    return { ready: cachedReadiness.ready, reason: cachedReadiness.reason };
+  }
+
+  const yunetPath = path.resolve('server/models/face_detection_yunet_2023mar.onnx');
+  const sfacePath = path.resolve('server/models/face_recognition_sface_2021dec.onnx');
+
+  try {
+    if (!fs.existsSync(yunetPath) || !fs.existsSync(sfacePath)) {
+      cachedReadiness = { ready: false, reason: 'model_files_missing', checkedAt: now };
+      return { ready: false, reason: 'model_files_missing' };
+    }
+
+    const sessions = await getInferenceSessions();
+    if (!sessions?.yunet || !sessions?.sface) {
+      throw new Error('sessions_initialization_incomplete');
+    }
+
+    // Run lightweight smoke test on SFace with synthetic aligned dummy chip
+    const dummyChip = new Float32Array(3 * 112 * 112);
+    // Fill with gentle gradient to exercise weights
+    for (let i = 0; i < dummyChip.length; i++) {
+      dummyChip[i] = (i % 256) / 255.0;
+    }
+    const dummyTensor = new ort.Tensor('float32', dummyChip, [1, 3, 112, 112]);
+    const out = await sessions.sface.run({ data: dummyTensor });
+    const feat = out.fc1?.data as Float32Array | undefined;
+    if (!feat || !(feat instanceof Float32Array) || feat.length !== 128) {
+      throw new Error('sface_smoke_inference_contract_failed');
+    }
+
+    cachedReadiness = { ready: true, checkedAt: now };
+    return { ready: true };
+  } catch (err: any) {
+    const reason = err?.message || 'onnx_runtime_initialization_failed';
+    console.error('Face verification runtime readiness check failed:', reason);
+    cachedReadiness = { ready: false, reason, checkedAt: now };
+    return { ready: false, reason };
+  }
+}
+
+/**
+ * Async check for complete runtime readiness of face verification pipeline.
+ */
+export async function isFaceVerificationReady(): Promise<boolean> {
+  const result = await checkFaceRuntimeReadiness();
+  return result.ready;
+}
+
 /**
  * Determines whether the 1:1 new-visitor face verification pipeline is operational.
- * Checks model availability on disk and configuration environment flags.
+ * Checks model availability on disk, configuration environment flags, and cached runtime state.
  */
 export function isFaceVerificationConfigured(): boolean {
   if (process.env.FACE_VERIFICATION_DISABLED === 'true') {
+    return false;
+  }
+  if (cachedReadiness && !cachedReadiness.ready) {
     return false;
   }
   try {
@@ -216,6 +331,7 @@ export async function detectFaces(imageBuffer: Buffer): Promise<DetectedFace[]> 
   const targetH = 640;
 
   const resizedBuffer = await sharp(imageBuffer)
+    .rotate()
     .resize(targetW, targetH, { fit: 'contain', background: { r: 0, g: 0, b: 0 } })
     .removeAlpha()
     .raw()
@@ -477,6 +593,7 @@ export async function extractSFaceDescriptor(alignedBuffer: Uint8Array): Promise
 // Align face and extract descriptor
 export async function getAlignedFaceDescriptor(imageBuffer: Buffer, face: DetectedFace): Promise<Float32Array> {
   const resized640 = await sharp(imageBuffer)
+    .rotate()
     .resize(640, 640, { fit: 'contain', background: { r: 0, g: 0, b: 0 } })
     .removeAlpha()
     .raw()
@@ -509,13 +626,21 @@ export async function evaluateFaceCropQuality(
   }
 
   const scale = Math.min(640 / origW, 640 / origH);
+  if (!Number.isFinite(scale) || scale <= 0) {
+    return { passed: false, code: 'decode_failed', message: 'Invalid image dimensions.' };
+  }
   const padX = (640 - origW * scale) / 2;
   const padY = (640 - origH * scale) / 2;
 
-  const realFaceX = Math.max(0, Math.floor((face.x - padX) / scale));
-  const realFaceY = Math.max(0, Math.floor((face.y - padY) / scale));
-  const realFaceW = Math.min(origW - realFaceX, Math.ceil(face.w / scale));
-  const realFaceH = Math.min(origH - realFaceY, Math.ceil(face.h / scale));
+  const rawX = Math.floor((face.x - padX) / scale);
+  const rawY = Math.floor((face.y - padY) / scale);
+  const rawW = Math.ceil(face.w / scale);
+  const rawH = Math.ceil(face.h / scale);
+
+  const realFaceX = Math.max(0, Math.min(origW - 1, Number.isFinite(rawX) ? rawX : 0));
+  const realFaceY = Math.max(0, Math.min(origH - 1, Number.isFinite(rawY) ? rawY : 0));
+  const realFaceW = Math.max(1, Math.min(origW - realFaceX, Number.isFinite(rawW) ? rawW : 1));
+  const realFaceH = Math.max(1, Math.min(origH - realFaceY, Number.isFinite(rawH) ? rawH : 1));
 
   if (realFaceW < 30 || realFaceH < 30) {
     return {
@@ -586,6 +711,250 @@ export async function evaluateFaceCropQuality(
   return { passed: true, code: 'ok', message: 'Face crop quality passed.' };
 }
 
+export interface OvalFramingGeometry {
+  cx: number;
+  cy: number;
+  rx: number;
+  ry: number;
+}
+
+/**
+ * Computes the normalized [0, 1] oval geometry corresponding to the on-screen camera guide.
+ * Takes into account:
+ * - Image width & height (origW, origH)
+ * - Container 4:3 aspect ratio
+ * - CSS object-fit: cover viewport mapping
+ */
+export function computeNormalizedOvalGeometry(origW: number, origH: number): OvalFramingGeometry {
+  const rOrig = origW / Math.max(1, origH);
+  const rView = 4 / 3;
+
+  // Viewport base oval relative radii inside the visible 4:3 camera window
+  const rxView = 0.28;
+  const ryView = 0.42;
+
+  let wVisible = 1.0;
+  let hVisible = 1.0;
+
+  if (rOrig >= rView) {
+    // Wider image (e.g. 16:9) cropped horizontally by 4:3 container
+    wVisible = rView / rOrig;
+    hVisible = 1.0;
+  } else {
+    // Taller image (e.g. 9:16 portrait) cropped vertically by 4:3 container
+    wVisible = 1.0;
+    hVisible = rOrig / rView;
+  }
+
+  return {
+    cx: 0.5,
+    cy: 0.5,
+    rx: rxView * wVisible,
+    ry: ryView * hVisible,
+  };
+}
+
+/**
+ * Mathematically evaluates whether the detected face and conservatively expanded head envelope
+ * fit inside the normalized official guide oval ((x - cx) / rx)^2 + ((y - cy) / ry)^2 <= 1.0.
+ */
+export function evaluateFaceFramingInOval(
+  origW: number,
+  origH: number,
+  face: DetectedFace
+): { passed: boolean; code: QualityResultCode; message: string } {
+  if (!face || face.w < 1 || face.h < 1) {
+    return { passed: false, code: 'no_face', message: 'No face detected in the image.' };
+  }
+
+  const scale = Math.min(640 / origW, 640 / origH);
+  const padX = (640 - origW * scale) / 2;
+  const padY = (640 - origH * scale) / 2;
+
+  // Convert face bounding box from 640x640 to normalized [0, 1] original image coordinates
+  const uX = (face.x - padX) / (scale * origW);
+  const vY = (face.y - padY) / (scale * origH);
+  const uW = face.w / (scale * origW);
+  const vH = face.h / (scale * origH);
+
+  const faceCenterX = uX + uW / 2;
+  const faceCenterY = vY + vH / 2;
+
+  // Check 1: Boundary clipping (at image boundaries)
+  if (uX < 0.015 || vY < 0.015 || uX + uW > 0.985 || vY + vH > 0.985) {
+    return {
+      passed: false,
+      code: 'face_cropped',
+      message: 'Your face is cut off at the edge of the camera view. Step into full view.',
+    };
+  }
+
+  // Check 2: Head pose and landmarks
+  if (!face.landmarks || face.landmarks.length < 5) {
+    return {
+      passed: false,
+      code: 'pose_unsuitable',
+      message: 'Look directly at the camera with both eyes and facial features visible.',
+    };
+  }
+
+  const landmarksNorm: Array<[number, number]> = face.landmarks.map(([lx, ly]) => [
+    (lx - padX) / (scale * origW),
+    (ly - padY) / (scale * origH),
+  ]);
+
+  const rightEye = landmarksNorm[0]!;
+  const leftEye = landmarksNorm[1]!;
+  const nose = landmarksNorm[2]!;
+
+  // Eye distance check
+  const eyeDist = Math.hypot(leftEye[0] - rightEye[0], leftEye[1] - rightEye[1]);
+  if (eyeDist < 0.04) {
+    return {
+      passed: false,
+      code: 'face_too_small',
+      message: 'Move slightly closer to the camera so your face is clearly visible.',
+    };
+  }
+
+  // Eye line tilt angle
+  const dX = leftEye[0] - rightEye[0];
+  const dY = leftEye[1] - rightEye[1];
+  const tiltDeg = Math.abs((Math.atan2(dY, dX) * 180) / Math.PI);
+  if (tiltDeg > 20) {
+    return {
+      passed: false,
+      code: 'pose_unsuitable',
+      message: 'Please keep your head upright and level without tilting.',
+    };
+  }
+
+  // Yaw / side profile check
+  const minEyeX = Math.min(rightEye[0], leftEye[0]);
+  const maxEyeX = Math.max(rightEye[0], leftEye[0]);
+  if (nose[0] < minEyeX || nose[0] > maxEyeX) {
+    return {
+      passed: false,
+      code: 'pose_unsuitable',
+      message: 'Please face directly forward towards the camera.',
+    };
+  }
+
+  const distToLeft = Math.abs(nose[0] - leftEye[0]);
+  const distToRight = Math.abs(nose[0] - rightEye[0]);
+  const yawRatio = Math.max(distToLeft, distToRight) / Math.max(0.001, Math.min(distToLeft, distToRight));
+  if (yawRatio > 3.2) {
+    return {
+      passed: false,
+      code: 'pose_unsuitable',
+      message: 'Please face directly forward without turning your head sideways.',
+    };
+  }
+
+  // Calculate oval geometry
+  const oval = computeNormalizedOvalGeometry(origW, origH);
+
+  // Helper for oval normalized quadratic distance: ((x - cx) / rx)^2 + ((y - cy) / ry)^2
+  const ovalDist = (u: number, v: number): number => {
+    const du = (u - oval.cx) / oval.rx;
+    const dv = (v - oval.cy) / oval.ry;
+    return du * du + dv * dv;
+  };
+
+  // Check 3: Centering within tolerance
+  const centerDu = Math.abs(faceCenterX - oval.cx) / oval.rx;
+  const centerDv = Math.abs(faceCenterY - oval.cy) / oval.ry;
+  if (centerDu > 0.40 || centerDv > 0.40) {
+    return {
+      passed: false,
+      code: 'face_off_center',
+      message: 'Center your face inside the oval guide.',
+    };
+  }
+
+  // Check 4: Face size relative to oval
+  const faceOvalHeightRatio = vH / (2 * oval.ry);
+  if (faceOvalHeightRatio < 0.25) {
+    return {
+      passed: false,
+      code: 'face_too_small',
+      message: 'Move closer to the camera so your face fills the guide.',
+    };
+  }
+  if (faceOvalHeightRatio > 0.88) {
+    return {
+      passed: false,
+      code: 'face_outside_guide',
+      message: 'Move slightly farther from the camera so your full head fits inside the guide.',
+    };
+  }
+
+  // Check 5: Direct face boundaries inside oval
+  const faceTopDist = ovalDist(faceCenterX, vY);
+  const faceBottomDist = ovalDist(faceCenterX, vY + vH);
+  const faceLeftDist = ovalDist(uX, faceCenterY);
+  const faceRightDist = ovalDist(uX + uW, faceCenterY);
+
+  if (faceTopDist > 1.0 || faceBottomDist > 1.0 || faceLeftDist > 1.0 || faceRightDist > 1.0) {
+    return {
+      passed: false,
+      code: 'face_outside_guide',
+      message: 'Keep your entire face within the oval guide.',
+    };
+  }
+
+  // Check 6: Expanded head envelope (accounting for forehead, hair top, and chin)
+  const headTop = Math.max(0, vY - 0.30 * vH);
+  const headBottom = Math.min(1, vY + vH + 0.05 * vH);
+  const headLeft = Math.max(0, uX - 0.12 * uW);
+  const headRight = Math.min(1, uX + uW + 0.12 * uW);
+
+  // If head envelope hits image edge, it is cropped
+  if (vY - 0.30 * vH < 0 || uX - 0.12 * uW < 0 || uX + uW + 0.12 * uW > 1) {
+    return {
+      passed: false,
+      code: 'head_outside_guide',
+      message: 'Keep your entire head, forehead, and hair inside the view.',
+    };
+  }
+
+  // Check head top against oval
+  const headTopDist = ovalDist(faceCenterX, headTop);
+  if (headTopDist > 1.0) {
+    return {
+      passed: false,
+      code: 'head_outside_guide',
+      message: 'Your forehead or hair is outside the top of the guide. Move down slightly.',
+    };
+  }
+
+  // Check chin envelope against bottom of oval
+  const headBottomDist = ovalDist(faceCenterX, headBottom);
+  if (headBottomDist > 1.0) {
+    return {
+      passed: false,
+      code: 'head_outside_guide',
+      message: 'Your chin is outside the bottom of the guide. Move up slightly.',
+    };
+  }
+
+  const headLeftDist = ovalDist(headLeft, faceCenterY);
+  const headRightDist = ovalDist(headRight, faceCenterY);
+  if (headLeftDist > 1.0 || headRightDist > 1.0) {
+    return {
+      passed: false,
+      code: 'head_outside_guide',
+      message: 'Keep your entire head inside the oval guide.',
+    };
+  }
+
+  return {
+    passed: true,
+    code: 'ok',
+    message: 'Face and head framing verified.',
+  };
+}
+
 // Single-pass Image Analysis: decodes, detects faces, validates quality, and extracts descriptor
 export async function analyzeFaceImage(
   imageBuffer: Buffer,
@@ -594,10 +963,15 @@ export async function analyzeFaceImage(
   const modelName = 'opencv_zoo_yunet_sface';
   const modelVersion = 'yunet_2023mar_sface_2021dec';
 
+  let normalizedBuffer: Buffer;
   let meta: Metadata;
   let raw: Buffer;
   try {
-    const image = sharp(imageBuffer);
+    // Priority 5: EXIF orientation normalization.
+    // Apply .rotate() to rotate according to EXIF and clear the orientation tag,
+    // ensuring consistent coordinate space for detection, landmarks, and cropping.
+    normalizedBuffer = await sharp(imageBuffer).rotate().toBuffer();
+    const image = sharp(normalizedBuffer);
     meta = await image.metadata();
     raw = await image.removeAlpha().raw().toBuffer();
   } catch {
@@ -684,7 +1058,7 @@ export async function analyzeFaceImage(
   }
 
   // Blur
-  const grayscale = await sharp(imageBuffer).grayscale().raw().toBuffer();
+  const grayscale = await sharp(normalizedBuffer).grayscale().raw().toBuffer();
   const blurScore = computeLaplacianVariance(new Uint8Array(grayscale), width, height);
   const minBlur = kind === 'selfie' ? 35 : 25;
   if (blurScore < minBlur) {
@@ -707,7 +1081,7 @@ export async function analyzeFaceImage(
   // Face Detection via YuNet
   let faces: DetectedFace[];
   try {
-    faces = await detectFaces(imageBuffer);
+    faces = await detectFaces(normalizedBuffer);
   } catch (err: any) {
     return {
       quality: { passed: false, code: 'decode_failed', message: `Face detection engine error: ${err?.message || 'unknown'}` },
@@ -754,45 +1128,14 @@ export async function analyzeFaceImage(
     }
     dominantFace = faces[0]!;
 
-    if (dominantFace.w < 70 || dominantFace.h < 70) {
-      return {
-        quality: { passed: false, code: 'face_too_small', message: 'Move slightly closer to the camera.' },
-        faces,
-        dominantFace,
-        descriptor: null,
-        modelName,
-        modelVersion,
-      };
-    }
+    const origW = meta.width ?? 640;
+    const origH = meta.height ?? 480;
 
-    if (dominantFace.x < 10 || dominantFace.y < 10 || dominantFace.x + dominantFace.w > 630 || dominantFace.y + dominantFace.h > 630) {
+    // Strict official oval & head framing check
+    const framing = evaluateFaceFramingInOval(origW, origH, dominantFace);
+    if (!framing.passed) {
       return {
-        quality: { passed: false, code: 'face_cropped', message: 'Position your full face inside the guide and try again.' },
-        faces,
-        dominantFace,
-        descriptor: null,
-        modelName,
-        modelVersion,
-      };
-    }
-
-    if (!dominantFace.landmarks || dominantFace.landmarks.length < 5) {
-      return {
-        quality: { passed: false, code: 'pose_unsuitable', message: 'Look directly at the camera with a neutral expression.' },
-        faces,
-        dominantFace,
-        descriptor: null,
-        modelName,
-        modelVersion,
-      };
-    }
-
-    const re = dominantFace.landmarks[0]!;
-    const le = dominantFace.landmarks[1]!;
-    const eyeDist = Math.hypot((le[0] ?? 0) - (re[0] ?? 0), (le[1] ?? 0) - (re[1] ?? 0));
-    if (eyeDist < 25) {
-      return {
-        quality: { passed: false, code: 'pose_unsuitable', message: 'Look directly at the camera with your face clearly visible.' },
+        quality: framing,
         faces,
         dominantFace,
         descriptor: null,
@@ -828,7 +1171,7 @@ export async function analyzeFaceImage(
   }
 
   // Face crop quality evaluation
-  const cropQuality = await evaluateFaceCropQuality(imageBuffer, meta, dominantFace, kind);
+  const cropQuality = await evaluateFaceCropQuality(normalizedBuffer, meta, dominantFace, kind);
   if (!cropQuality.passed) {
     return {
       quality: cropQuality,
@@ -843,7 +1186,7 @@ export async function analyzeFaceImage(
   // Extract SFace descriptor once
   let descriptor: Float32Array;
   try {
-    descriptor = await getAlignedFaceDescriptor(imageBuffer, dominantFace);
+    descriptor = await getAlignedFaceDescriptor(normalizedBuffer, dominantFace);
   } catch (err: any) {
     return {
       quality: { passed: false, code: 'decode_failed', message: `Descriptor extraction failed: ${err?.message || 'unknown'}` },
@@ -940,19 +1283,25 @@ export async function compareFaces(
 // ----------------------------------------------------------------------------
 
 export function computeCosineSimilarity(a: Float32Array, b: Float32Array): number {
-  if (a.length !== b.length) return 0;
+  if (!a || !b || !(a instanceof Float32Array) || !(b instanceof Float32Array)) return 0;
+  if (a.length !== b.length || a.length === 0) return 0;
   let dot = 0;
   let normA = 0;
   let normB = 0;
   for (let i = 0; i < a.length; i++) {
     const valA = a[i] ?? 0;
     const valB = b[i] ?? 0;
+    if (!Number.isFinite(valA) || !Number.isFinite(valB)) {
+      return 0;
+    }
     dot += valA * valB;
     normA += valA * valA;
     normB += valB * valB;
   }
   const denominator = Math.sqrt(normA) * Math.sqrt(normB);
-  return denominator > 0 ? dot / denominator : 0;
+  if (!Number.isFinite(denominator) || denominator < 1e-6) return 0;
+  const sim = dot / denominator;
+  return Number.isFinite(sim) ? Math.max(-1, Math.min(1, sim)) : 0;
 }
 
 export async function extractFaceDescriptorFromBuffer(

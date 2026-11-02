@@ -7,8 +7,8 @@ import {
 import { extractNamesFromIdText } from '../src/lib/ocr.js';
 import { getDocumentAdapter } from '../src/lib/ocrAdapters.js';
 
-// Levenshtein distance for CER/WER computation
-function computeLevenshtein(a: string, b: string): number {
+// Levenshtein distance for CER/WER computation (generic over arrays)
+function computeLevenshtein<T>(a: T[], b: T[]): number {
   const m = a.length;
   const n = b.length;
   const dp: number[][] = Array.from({ length: m + 1 }, () => Array(n + 1).fill(0));
@@ -24,17 +24,19 @@ function computeLevenshtein(a: string, b: string): number {
 }
 
 export function computeCER(groundTruth: string, recognized: string): number {
-  if (groundTruth.length === 0) return recognized.length === 0 ? 0 : 1;
-  const dist = computeLevenshtein(groundTruth.toLowerCase(), recognized.toLowerCase());
-  return dist / groundTruth.length;
+  const gtChars = Array.from(groundTruth.toLowerCase());
+  const recChars = Array.from(recognized.toLowerCase());
+  if (gtChars.length === 0) return recChars.length === 0 ? 0 : 1;
+  const dist = computeLevenshtein(gtChars, recChars);
+  return dist / gtChars.length;
 }
 
 export function computeWER(groundTruth: string, recognized: string): number {
   const gtWords = groundTruth.trim().toLowerCase().split(/\s+/).filter(Boolean);
   const recWords = recognized.trim().toLowerCase().split(/\s+/).filter(Boolean);
   if (gtWords.length === 0) return recWords.length === 0 ? 0 : 1;
-  const dist = computeLevenshtein(gtWords.join(' '), recWords.join(' '));
-  return dist / gtWords.join(' ').length;
+  const dist = computeLevenshtein(gtWords, recWords);
+  return dist / gtWords.length;
 }
 
 interface BenchmarkSample {
@@ -275,5 +277,76 @@ describe('PaddleOCR.js vs Tesseract Accuracy & Benchmark Evaluation', () => {
     expect(avgWER).toBeLessThan(0.05); // Less than 5% WER
     expect(nameMatchRate).toBe(100);   // 100% exact name field match on evaluation set
     expect(falseAssignmentCount).toBe(0); // 0 false field assignments
+  });
+
+  it('D. Layer B: Spatial Column Boundary & Line-Spacing Isolation (Priority 3)', () => {
+    // Construct multi-column ID lines: address on left column, DOB & Sex on right column, signature far below
+    const multiColumnLines = [
+      {
+        text: 'Tirahan / Address',
+        confidence: 98,
+        bbox: { x0: 50, y0: 100, x1: 200, y1: 120 },
+        tokens: [],
+      },
+      {
+        text: 'Petsa ng Kapanganakan / DOB',
+        confidence: 96,
+        bbox: { x0: 350, y0: 100, x1: 580, y1: 120 }, // Right column
+        tokens: [],
+      },
+      {
+        text: '123 Rizal St',
+        confidence: 99,
+        bbox: { x0: 50, y0: 126, x1: 220, y1: 145 },
+        tokens: [],
+      },
+      {
+        text: '1992-06-12',
+        confidence: 97,
+        bbox: { x0: 350, y0: 126, x1: 450, y1: 145 }, // Right column
+        tokens: [],
+      },
+      {
+        text: 'Barangay 143 Sampaloc',
+        confidence: 98,
+        bbox: { x0: 50, y0: 152, x1: 260, y1: 172 },
+        tokens: [],
+      },
+      {
+        text: 'Kasarian / Sex: M',
+        confidence: 95,
+        bbox: { x0: 350, y0: 152, x1: 480, y1: 172 }, // Right column
+        tokens: [],
+      },
+      {
+        text: 'Lagda ng May-ari / Signature of Bearer',
+        confidence: 92,
+        bbox: { x0: 50, y0: 320, x1: 300, y1: 340 }, // Far below (> 100px gap)
+        tokens: [],
+      },
+    ];
+
+    const extracted = extractAddressFromOcrLines(multiColumnLines);
+    expect(extracted).toBe('123 Rizal St Barangay 143 Sampaloc');
+    // Verify right column never bled in
+    expect(extracted).not.toContain('DOB');
+    expect(extracted).not.toContain('1992-06-12');
+    expect(extracted).not.toContain('Sex');
+    // Verify distant section never bled in
+    expect(extracted).not.toContain('Signature');
+  });
+
+  it('E. Layer D: Engine Fallback Architecture Verification (Priority 3)', async () => {
+    // Verify that ocr.ts has clean fallback wiring from PaddleOCR to Tesseract
+    const ocrSource = await import('node:fs').then((fs) =>
+      fs.readFileSync('src/lib/ocr.ts', 'utf-8')
+    );
+
+    // 1. Primary engine imports paddleOcr
+    expect(ocrSource).toContain("import('./paddleOcr.js')");
+    // 2. Failure is caught with warning
+    expect(ocrSource).toContain('falling back to Tesseract');
+    // 3. Fallback calls getLocalOcrWorker
+    expect(ocrSource).toContain('getLocalOcrWorker');
   });
 });

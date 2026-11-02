@@ -305,6 +305,41 @@ export class PortalSessionError extends Error {
   }
 }
 
+export class UploadAuthorizationError extends Error {
+  readonly code: string;
+  readonly status: number;
+  constructor(code: string, message: string, status = 403) {
+    super(message);
+    this.name = 'UploadAuthorizationError';
+    this.code = code;
+    this.status = status;
+  }
+}
+
+export class StorageUploadError extends Error {
+  readonly code: string;
+  readonly status?: number;
+  readonly retryable: boolean;
+  constructor(code: string, message: string, status?: number, retryable = true) {
+    super(message);
+    this.name = 'StorageUploadError';
+    this.code = code;
+    this.status = status;
+    this.retryable = retryable;
+  }
+}
+
+export class PreflightQualityError extends Error {
+  readonly code: string;
+  readonly reasonCode: string;
+  constructor(code: string, message: string, reasonCode?: string) {
+    super(message);
+    this.name = 'PreflightQualityError';
+    this.code = code;
+    this.reasonCode = reasonCode || code;
+  }
+}
+
 export async function createPortalIssueTransaction(captchaToken?: string): Promise<PortalIssueTransaction> {
   const client = requirePortalSupabase();
   const siteKey = (import.meta as any).env?.VITE_TURNSTILE_SITE_KEY?.trim();
@@ -476,10 +511,25 @@ export async function uploadCheckpointedEvidence(
 
     if (error || !data) {
       const detail = error?.message ? ` ${error.message}` : '';
-      throw new Error(`Image upload could not be authorized.${detail}`);
+      const errMsg = (error?.message || '').toLowerCase();
+      if (
+        errMsg.includes('session required') ||
+        errMsg.includes('not authenticated') ||
+        error?.code === 'P0001'
+      ) {
+        throw new PortalSessionError(
+          'portal_session_expired',
+          `Visitor registration session expired or unavailable.${detail}`
+        );
+      }
+      throw new UploadAuthorizationError(
+        'upload_intent_unauthorized',
+        `Image upload could not be authorized.${detail}`,
+        error?.status || 403
+      );
     }
     if (blob.size < 1 || blob.size > data.max_bytes) {
-      throw new Error('Image exceeds the 5 MB upload limit.');
+      throw new StorageUploadError('file_size_exceeded', 'Image exceeds the 5 MB upload limit.', 413, false);
     }
 
     checkpoint = {
@@ -523,29 +573,57 @@ export async function uploadCheckpointedEvidence(
       if (uploadRes.error) {
         const errMsg = uploadRes.error.message?.toLowerCase() || '';
         const statusCode = (uploadRes.error as any).statusCode || (uploadRes.error as any).status;
+        const numStatus = Number(statusCode);
         if (
-          statusCode === 409 ||
+          numStatus === 409 ||
+          statusCode === '409' ||
           errMsg.includes('already exists') ||
           errMsg.includes('duplicate') ||
-          errMsg.includes('resourcealreadyexists')
+          errMsg.includes('resourcealreadyexists') ||
+          (uploadRes.error as any)?.error === 'Duplicate'
         ) {
           checkpoint.uploaded = true;
         } else {
-          throw new Error('Image upload failed. Please try again.');
+          throw new StorageUploadError(
+            'storage_upload_failed',
+            'Image upload failed. Please try again.',
+            numStatus || undefined,
+            true
+          );
         }
       } else {
         checkpoint.uploaded = true;
       }
     } catch (err: any) {
       const errMsg = err?.message?.toLowerCase() || '';
+      const numStatus = Number(err?.status || err?.statusCode);
       if (
+        numStatus === 409 ||
         errMsg.includes('already exists') ||
         errMsg.includes('resourcealreadyexists') ||
         errMsg.includes('409')
       ) {
         checkpoint.uploaded = true;
-      } else {
+      } else if (
+        err instanceof StorageUploadError ||
+        err instanceof UploadAuthorizationError ||
+        err instanceof PortalSessionError
+      ) {
         throw err;
+      } else if (errMsg.includes('timed out') || errMsg.includes('timeout')) {
+        throw new StorageUploadError(
+          'storage_timeout',
+          'Image upload timed out after 15s. Please check your connection and try again.',
+          408,
+          true
+        );
+      } else {
+        throw new StorageUploadError(
+          'storage_upload_failed',
+          err?.message || 'Image upload failed. Please try again.',
+          numStatus || undefined,
+          true
+        );
       }
     }
   }

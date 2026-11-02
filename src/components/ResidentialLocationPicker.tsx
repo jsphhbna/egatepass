@@ -37,6 +37,29 @@ interface SearchPlace {
 const NEUTRAL_PH_VIEW_CENTER: [number, number] = [14.5995, 120.9842];
 const NEUTRAL_PH_VIEW_ZOOM = 12;
 
+// Approximate reference centers for major Greater Manila / Philippine areas (~100m approximate area)
+const POPULAR_AREAS: Array<{ name: string; lat: number; lon: number }> = [
+  { name: 'Manila (City Center)', lat: 14.599, lon: 120.984 },
+  { name: 'Sampaloc / Nagtahan (near EARIST)', lat: 14.604, lon: 120.995 },
+  { name: 'Quezon City', lat: 14.676, lon: 121.044 },
+  { name: 'Caloocan', lat: 14.650, lon: 120.983 },
+  { name: 'Pasig', lat: 14.576, lon: 121.085 },
+  { name: 'Makati', lat: 14.555, lon: 121.024 },
+  { name: 'Taguig / BGC', lat: 14.518, lon: 121.051 },
+  { name: 'Mandaluyong', lat: 14.579, lon: 121.036 },
+  { name: 'Marikina', lat: 14.650, lon: 121.100 },
+  { name: 'Pasay', lat: 14.538, lon: 121.001 },
+  { name: 'Parañaque', lat: 14.480, lon: 121.017 },
+  { name: 'Las Piñas', lat: 14.445, lon: 120.983 },
+  { name: 'Muntinlupa', lat: 14.408, lon: 121.042 },
+  { name: 'Valenzuela', lat: 14.701, lon: 120.983 },
+  { name: 'Malabon / Navotas', lat: 14.663, lon: 120.957 },
+  { name: 'Rizal (Antipolo / Cainta)', lat: 14.587, lon: 121.176 },
+  { name: 'Cavite (Bacoor / Imus)', lat: 14.416, lon: 120.940 },
+  { name: 'Bulacan (Meycauayan)', lat: 14.735, lon: 120.961 },
+  { name: 'Laguna (San Pedro / Biñan)', lat: 14.360, lon: 121.050 },
+];
+
 // Custom crisp SVG pin divIcon to avoid broken Vite image bundle paths
 function createPinIcon() {
   return L.divIcon({
@@ -69,6 +92,10 @@ export function ResidentialLocationPicker({
   const [geoLoading, setGeoLoading] = useState(false);
   const [geoError, setGeoError] = useState<string | null>(null);
   const [tileError, setTileError] = useState(false);
+  const [showFallback, setShowFallback] = useState(false);
+  const [manualLat, setManualLat] = useState('');
+  const [manualLon, setManualLon] = useState('');
+  const [manualError, setManualError] = useState<string | null>(null);
 
   // In-map search state
   const [searchQuery, setSearchQuery] = useState('');
@@ -171,9 +198,23 @@ export function ResidentialLocationPicker({
       map.invalidateSize();
     }, 200);
 
+    // ResizeObserver guarantees map renders properly regardless of animation timing
+    let resizeObserver: ResizeObserver | null = null;
+    if (typeof ResizeObserver !== 'undefined' && mapContainerRef.current) {
+      resizeObserver = new ResizeObserver(() => {
+        if (mapInstanceRef.current) {
+          mapInstanceRef.current.invalidateSize();
+        }
+      });
+      resizeObserver.observe(mapContainerRef.current);
+    }
+
     return () => {
       cancelAnimationFrame(rafId);
       clearTimeout(timer);
+      if (resizeObserver) {
+        resizeObserver.disconnect();
+      }
       if (markerRef.current) {
         markerRef.current.remove();
         markerRef.current = null;
@@ -485,8 +526,17 @@ export function ResidentialLocationPicker({
                 className="w-full h-full min-h-[300px] sm:min-h-[360px] z-0"
               />
 
-              {/* Geolocation Button Overlay */}
-              <div className="absolute top-3 right-3 z-[1000]">
+              {/* Geolocation & Fallback Area Selector Overlays */}
+              <div className="absolute top-3 right-3 z-[1000] flex gap-2">
+                <button
+                  type="button"
+                  onClick={() => setShowFallback(!showFallback)}
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white/95 shadow-md border border-slate-200 text-xs font-semibold text-slate-800 hover:bg-white active:bg-slate-50 transition-colors"
+                  title="Select approximate area or enter coordinates"
+                >
+                  <MapPin className="h-3.5 w-3.5 text-slate-600" />
+                  <span>{showFallback ? 'Show Map' : 'Select Area'}</span>
+                </button>
                 <button
                   type="button"
                   onClick={handleUseMyLocation}
@@ -503,20 +553,115 @@ export function ResidentialLocationPicker({
                 </button>
               </div>
 
+              {/* Accessible Manual Area / Coordinate Fallback View */}
+              {showFallback && (
+                <div className="absolute inset-0 z-[1001] bg-white p-4 overflow-y-auto">
+                  <div className="flex items-center justify-between mb-3 border-b pb-2">
+                    <h4 className="font-semibold text-xs text-slate-900">Choose Approximate Area or Enter Coordinates</h4>
+                    <button
+                      type="button"
+                      onClick={() => setShowFallback(false)}
+                      className="text-xs text-slate-500 hover:text-slate-900 font-medium"
+                    >
+                      Back to Map
+                    </button>
+                  </div>
+                  <div className="space-y-3">
+                    <div>
+                      <p className="text-[11px] text-slate-600 mb-2">Select a general city or municipality in Metro Manila / Greater Manila:</p>
+                      <div className="grid grid-cols-2 gap-1.5 max-h-48 overflow-y-auto pr-1">
+                        {POPULAR_AREAS.map((area) => (
+                          <button
+                            key={area.name}
+                            type="button"
+                            onClick={() => {
+                              const norm = normalizeCoordinates(area.lat, area.lon);
+                              if (norm.valid) {
+                                setDraftLocation(norm.location);
+                                setShowFallback(false);
+                                if (mapInstanceRef.current) {
+                                  mapInstanceRef.current.flyTo([norm.location.lat, norm.location.lon], 14);
+                                }
+                              }
+                            }}
+                            className="text-left px-2.5 py-1.5 text-xs rounded-lg border border-slate-200 hover:border-blue-400 hover:bg-blue-50/50 transition-colors truncate"
+                          >
+                            {area.name}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                    <div className="pt-2 border-t border-slate-100">
+                      <p className="text-[11px] text-slate-600 mb-1.5">Or enter approximate coordinates directly (~100m rounded):</p>
+                      <div className="flex gap-2">
+                        <input
+                          type="number"
+                          step="0.001"
+                          placeholder="Latitude (e.g. 14.599)"
+                          value={manualLat}
+                          onChange={(e) => setManualLat(e.target.value)}
+                          className="flex-1 px-2.5 py-1.5 text-xs rounded-lg border border-slate-300"
+                        />
+                        <input
+                          type="number"
+                          step="0.001"
+                          placeholder="Longitude (e.g. 120.984)"
+                          value={manualLon}
+                          onChange={(e) => setManualLon(e.target.value)}
+                          className="flex-1 px-2.5 py-1.5 text-xs rounded-lg border border-slate-300"
+                        />
+                        <Button
+                          type="button"
+                          size="sm"
+                          onClick={() => {
+                            const norm = normalizeCoordinates(manualLat, manualLon);
+                            if (norm.valid) {
+                              setDraftLocation(norm.location);
+                              setManualError(null);
+                              setShowFallback(false);
+                              if (mapInstanceRef.current) {
+                                mapInstanceRef.current.flyTo([norm.location.lat, norm.location.lon], 14);
+                              }
+                            } else {
+                              setManualError(norm.message);
+                            }
+                          }}
+                          className="text-xs h-8 px-3"
+                        >
+                          Apply
+                        </Button>
+                      </div>
+                      {manualError && (
+                        <p className="text-[11px] text-red-600 mt-1">{manualError}</p>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              )}
+
               {/* Tile Load Error Notification */}
               {tileError && (
-                <div className="absolute bottom-6 left-3 right-3 z-[1000] p-2.5 rounded-lg bg-amber-50 border border-amber-300 text-amber-900 text-xs flex items-center justify-between">
+                <div className="absolute bottom-6 left-3 right-3 z-[1000] p-3 rounded-xl bg-amber-50 border border-amber-300 text-amber-950 text-xs shadow-lg flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2">
                   <span className="flex items-center gap-1.5">
-                    <AlertCircle className="h-3.5 w-3.5 text-amber-600 flex-shrink-0" />
-                    <span>Some map tiles could not be loaded. You can still place or move the marker.</span>
+                    <AlertCircle className="h-4 w-4 text-amber-600 flex-shrink-0" />
+                    <span>Map tiles could not load. You can tap the map or use the quick area selector.</span>
                   </span>
-                  <button
-                    type="button"
-                    onClick={() => setTileError(false)}
-                    className="text-[11px] font-semibold text-amber-800 hover:underline ml-2"
-                  >
-                    Dismiss
-                  </button>
+                  <div className="flex items-center gap-2 self-end sm:self-auto">
+                    <button
+                      type="button"
+                      onClick={() => setShowFallback(true)}
+                      className="px-2.5 py-1 rounded bg-amber-600 hover:bg-amber-700 text-white font-medium text-[11px] transition-colors"
+                    >
+                      Quick Area Selector
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setTileError(false)}
+                      className="text-[11px] font-semibold text-amber-800 hover:underline"
+                    >
+                      Dismiss
+                    </button>
+                  </div>
                 </div>
               )}
             </div>
