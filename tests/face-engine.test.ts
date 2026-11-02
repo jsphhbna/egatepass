@@ -6,6 +6,14 @@ import {
   evaluateLiveFaceQuality,
   evaluateIdImageQuality,
   compareFaces,
+  analyzeFaceImage,
+  getInferenceSessions,
+  getSimilarityTransformMatrix,
+  SFACE_REFERENCE_LANDMARKS,
+  extractFaceDescriptorFromBuffer,
+  getVersionedTemplateKey,
+  encryptFaceTemplate,
+  decryptFaceTemplate,
   SFACE_COSINE_THRESHOLD,
 } from '../server/lib/face-engine.js';
 
@@ -71,7 +79,6 @@ describe('Local Face Engine Contract (YuNet + SFace)', () => {
   });
 
   it('6. Privacy minimization: results contain NO raw embeddings or facial landmark tensors', () => {
-    // VerificationResult must only export outcome, matched, score, model info, error
     const keys = Object.keys({
       outcome: 'matched',
       matched: true,
@@ -83,5 +90,125 @@ describe('Local Face Engine Contract (YuNet + SFace)', () => {
     expect(keys).not.toContain('descriptor');
     expect(keys).not.toContain('landmarks');
     expect(keys).not.toContain('tensor');
+  });
+
+  it('7. Exact 2D similarity transform parity & mathematical stability', () => {
+    // 7.1 Identity / reference mapping has zero error
+    const M_identity = getSimilarityTransformMatrix(SFACE_REFERENCE_LANDMARKS, SFACE_REFERENCE_LANDMARKS);
+    expect(M_identity[0][0]).toBeCloseTo(1.0, 5);
+    expect(M_identity[0][1]).toBeCloseTo(0.0, 5);
+    expect(M_identity[0][2]).toBeCloseTo(0.0, 5);
+    expect(M_identity[1][0]).toBeCloseTo(0.0, 5);
+    expect(M_identity[1][1]).toBeCloseTo(1.0, 5);
+    expect(M_identity[1][2]).toBeCloseTo(0.0, 5);
+
+    // 7.2 Scaled and translated landmarks
+    const scaledSrc = SFACE_REFERENCE_LANDMARKS.map(([x, y]) => [x * 2 + 15, y * 2 - 25] as [number, number]);
+    const M_scaled = getSimilarityTransformMatrix(scaledSrc, SFACE_REFERENCE_LANDMARKS);
+    // Scale should be 0.5 (from 2x down to 1x)
+    const scale = Math.hypot(M_scaled[0][0], M_scaled[1][0]);
+    expect(scale).toBeCloseTo(0.5, 4);
+
+    // 7.3 Diagonal / near-zero off-diagonal covariance matrix (reproduces and proves fix for ata01 bug)
+    // Points where dominant eigenvector aligns to Y axis
+    const yAlignedPoints: Array<[number, number]> = [
+      [100, 50],
+      [100, 150],
+      [100, 250],
+      [100, 350],
+      [100, 450],
+    ];
+    const dstPoints: Array<[number, number]> = [
+      [50, 100],
+      [50, 200],
+      [50, 300],
+      [50, 400],
+      [50, 500],
+    ];
+    const M_y = getSimilarityTransformMatrix(yAlignedPoints, dstPoints);
+    expect(Number.isFinite(M_y[0][0])).toBe(true);
+    expect(Number.isFinite(M_y[1][1])).toBe(true);
+    expect(Number.isNaN(M_y[0][2])).toBe(false);
+
+    // 7.4 Degenerate collocated points throw error
+    const collocated: Array<[number, number]> = [
+      [50, 50],
+      [50, 50],
+      [50, 50],
+      [50, 50],
+      [50, 50],
+    ];
+    expect(() => getSimilarityTransformMatrix(collocated)).toThrow(/degenerate/i);
+  });
+
+  it('8. Concurrency-safe inference session initialization', async () => {
+    const [sess1, sess2, sess3] = await Promise.all([
+      getInferenceSessions(),
+      getInferenceSessions(),
+      getInferenceSessions(),
+    ]);
+
+    // All concurrent cold callers must receive the exact same singleton instance
+    expect(sess1.yunet).toBe(sess2.yunet);
+    expect(sess2.yunet).toBe(sess3.yunet);
+    expect(sess1.sface).toBe(sess2.sface);
+    expect(sess2.sface).toBe(sess3.sface);
+  });
+
+  it('9. SFace descriptor contract, unit-norm and finite numeric values', async () => {
+    const { descriptor, modelName, modelVersion } = await extractFaceDescriptorFromBuffer(sample1);
+    expect(modelName).toBe('opencv_zoo_yunet_sface');
+    expect(modelVersion).toBe('yunet_2023mar_sface_2021dec');
+    expect(descriptor).toBeInstanceOf(Float32Array);
+    expect(descriptor).toHaveLength(128);
+
+    // Check finite numbers
+    for (let i = 0; i < descriptor.length; i++) {
+      expect(Number.isFinite(descriptor[i])).toBe(true);
+    }
+
+    // Check L2 unit-norm
+    let sumSq = 0;
+    for (let i = 0; i < descriptor.length; i++) {
+      sumSq += descriptor[i]! * descriptor[i]!;
+    }
+    expect(Math.sqrt(sumSq)).toBeCloseTo(1.0, 5);
+  });
+
+  it('10. Versioned keyring and template encryption / decryption contract', () => {
+    const keyV1 = '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef';
+    const keyV2 = 'fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210';
+    const keyring = {
+      v1: keyV1,
+      v2: keyV2,
+    };
+
+    expect(getVersionedTemplateKey('v1', keyring)).toBe(keyV1);
+    expect(getVersionedTemplateKey('v2', keyring)).toBe(keyV2);
+    expect(() => getVersionedTemplateKey('v3', keyring)).toThrow(/unsupported_template_key_version/);
+
+    // Test encryption with v2 key
+    const dummyDescriptor = new Float32Array(128);
+    for (let i = 0; i < 128; i++) dummyDescriptor[i] = i * 0.005;
+
+    const enc = encryptFaceTemplate(dummyDescriptor, keyring as any, 'v2');
+    expect(enc.keyVersion).toBe('v2');
+
+    const dec = decryptFaceTemplate(enc.encryptedEmbedding, enc.iv, enc.authTag, keyring as any, 'v2');
+    expect(dec).toHaveLength(128);
+    for (let i = 0; i < 128; i++) {
+      expect(dec[i]).toBeCloseTo(dummyDescriptor[i]!, 4);
+    }
+
+    // Tampering with key version or attempting to decrypt v2 with v1 fails auth tag check
+    expect(() => decryptFaceTemplate(enc.encryptedEmbedding, enc.iv, enc.authTag, keyring as any, 'v1')).toThrow();
+  });
+
+  it('11. Single-pass image analysis efficiency & dominant face extraction', async () => {
+    const analysis = await analyzeFaceImage(sample1, 'selfie');
+    expect(analysis.quality.passed).toBe(true);
+    expect(analysis.faces).toHaveLength(1);
+    expect(analysis.dominantFace).toBe(analysis.faces[0]);
+    expect(analysis.descriptor).toHaveLength(128);
   });
 });

@@ -227,6 +227,10 @@
       "destination": "/api/passes/address-autocomplete"
     },
     {
+      "source": "/api/address/psgc",
+      "destination": "/api/passes/address-psgc"
+    },
+    {
       "source": "/api/vehicles/makes",
       "destination": "/api/passes/vehicles-makes"
     },

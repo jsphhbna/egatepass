@@ -10,6 +10,9 @@ async function handleRequest(request: Request): Promise<Response> {
 
   const url = new URL(request.url);
   const q = url.searchParams.get('q');
+  const city = url.searchParams.get('city')?.trim() || undefined;
+  const province = url.searchParams.get('province')?.trim() || undefined;
+  const barangay = url.searchParams.get('barangay')?.trim() || undefined;
 
   if (!q || q.trim().length < 4) {
     return jsonResponse(200, { suggestions: [] });
@@ -44,7 +47,7 @@ async function handleRequest(request: Request): Promise<Response> {
       );
     }
 
-    const suggestions = await searchAddressAutocomplete(q);
+    const suggestions = await searchAddressAutocomplete(q, { city, province, barangay });
 
     return jsonResponse(
       200,

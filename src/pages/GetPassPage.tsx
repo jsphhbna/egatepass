@@ -15,11 +15,13 @@ import {
   preflightPortalLiveFace,
   validatePortalSession,
   invalidatePortalEvidenceCheckpoint,
+  identifyReturningVisitor,
   PortalSessionError,
   type PortalIssueTransaction,
   type IssueTransactionPhase,
   type AddressProvenance,
 } from '@/services/visitorRegistration';
+import { CompactAddressPicker } from '@/components/CompactAddressPicker';
 import { TurnstileWidget, type TurnstileWidgetRef } from '@/components/TurnstileWidget';
 import { generateBrandedQrDataUrl } from '@/lib/brandedQr';
 import QRCode from 'qrcode';
@@ -295,6 +297,7 @@ export function GetPassPage() {
   const [addressSuggestions, setAddressSuggestions] = useState<AddressSuggestionDto[]>([]);
   const [isSearchingAddress, setIsSearchingAddress] = useState(false);
   const [selectedAddress, setSelectedAddress] = useState<AddressSuggestionDto | null>(null);
+  const [addressProvenance, setAddressProvenance] = useState<AddressProvenance | null>(null);
   const [addressDetail, setAddressDetail] = useState('');
   const [addressSearchError, setAddressSearchError] = useState<string | null>(null);
   const addressCacheRef = useRef<Map<string, AddressSuggestionDto[]>>(new Map());
@@ -512,7 +515,7 @@ export function GetPassPage() {
     setStep('arrival_setup');
   }
 
-  function resetRegistrationSession() {
+  function resetRegistrationFlow() {
     ocrGenerationRef.current += 1;
     void terminateLocalOcrWorker();
 
@@ -931,23 +934,27 @@ export function GetPassPage() {
     setReturningIdentifyError(null);
 
     try {
-      let freshCaptchaToken: string | undefined;
-      if (turnstileRef.current) {
-        freshCaptchaToken = await turnstileRef.current.executeChallenge();
+      // 1. Ensure verified anonymous portal session & transaction
+      let tx = portalTransactionRef.current;
+      if (!tx || !(await validatePortalSession(tx))) {
+        let freshCaptchaToken: string | undefined;
+        if (turnstileRef.current) {
+          freshCaptchaToken = await turnstileRef.current.executeChallenge();
+        }
+        tx = await createPortalIssueTransaction(freshCaptchaToken);
+        portalTransactionRef.current = tx;
+        issueRequestId.current = tx.requestId as ReturnType<typeof crypto.randomUUID>;
       }
 
-      const formData = new FormData();
-      formData.append('photo', blob, 'face.jpg');
-      if (freshCaptchaToken) formData.append('captchaToken', freshCaptchaToken);
+      // 2. Upload captured face blob via portal evidence checkpoint
+      const photoRes = await uploadPortalEvidence(tx, 'photo', blob);
+      tx.photoIntentId = photoRes.intentId;
+      tx.photoCheckpoint = photoRes.checkpoint;
 
-      const res = await fetch('/api/passes/identify-returning', {
-        method: 'POST',
-        body: formData,
-      });
+      // 3. Identify returning visitor via authenticated endpoint
+      const data = await identifyReturningVisitor(tx, photoRes.intentId);
 
-      const data = await res.json().catch(() => null);
-
-      if (!res.ok || !data?.matched) {
+      if (!data?.matched || !data.profile || !data.matchToken) {
         setReturningIdentifyError(
           data?.message || 'We could not find a matching profile. Please register as a New Visitor.'
         );
@@ -955,46 +962,62 @@ export function GetPassPage() {
       }
 
       // Profile matched!
+      const p = data.profile;
+      const fullName = [p.firstName, p.middleName, p.lastName].filter(Boolean).join(' ');
       setReturningProfile({
-        profileId: data.profile.id,
-        fullName: data.profile.fullName,
-        firstName: data.profile.firstName,
-        middleName: data.profile.middleName,
-        lastName: data.profile.lastName,
-        contactNumber: data.profile.contactNumber,
-        homeAddress: data.profile.homeAddress,
+        profileId: p.id,
+        fullName,
+        firstName: p.firstName,
+        middleName: p.middleName || '',
+        lastName: p.lastName,
+        contactNumber: p.contactNumber,
+        homeAddress: p.homeAddress || '',
         matchToken: data.matchToken,
-        savedVehicles: data.profile.savedVehicles || [],
+        savedVehicles: (data.savedVehicles || []).map((v) => ({
+          id: v.id,
+          vehicleType: v.vehicleType,
+          plateNumber: v.plateNumber,
+          color: v.color || 'White',
+          makeModel: v.makeModel || null,
+        })),
       });
 
       // Prepopulate form values
-      setValue('firstName', data.profile.firstName, { shouldValidate: true });
-      if (data.profile.middleName) setValue('middleName', data.profile.middleName);
-      setValue('lastName', data.profile.lastName, { shouldValidate: true });
-      setValue('contactNumber', data.profile.contactNumber, { shouldValidate: true });
-      if (data.profile.homeAddress) setValue('homeAddress', data.profile.homeAddress, { shouldValidate: true });
+      setValue('firstName', p.firstName, { shouldValidate: true });
+      if (p.middleName) setValue('middleName', p.middleName);
+      setValue('lastName', p.lastName, { shouldValidate: true });
+      setValue('contactNumber', p.contactNumber, { shouldValidate: true });
+      if (p.homeAddress) setValue('homeAddress', p.homeAddress, { shouldValidate: true });
+
+      // Restore address provenance if present
+      if (p.addressProvenance) {
+        const prov = p.addressProvenance;
+        setAddressProvenance(prov);
+        setSelectedAddress({
+          placeId: prov.placeId,
+          formatted: p.homeAddress || '',
+          lat: prov.lat || 0,
+          lon: prov.lon || 0,
+          resultType: prov.resultType || 'unknown',
+          confidence: prov.confidence ?? undefined,
+          countryCode: 'ph',
+        });
+        setAddressDetail(prov.addressDetail || '');
+      }
 
       setPhotoBlob(blob);
       photoUrl.setFromBlob(blob);
       setIdentityVerified(true);
       faceWebcam.stop();
 
-      // If they have saved vehicles, default to the first one or 'none'
-      if (data.profile.savedVehicles && data.profile.savedVehicles.length > 0) {
-        const firstVeh = data.profile.savedVehicles[0];
-        setSelectedSavedVehicleId(firstVeh.id);
-        setValue('arrivalMode', 'vehicle');
-        setValue('vehicleType', firstVeh.vehicleType);
-        setValue('plateNumber', firstVeh.plateNumber);
-        setValue('vehicleColor', firstVeh.color);
-        setValue('makeModel', firstVeh.makeModel || '');
-      } else {
-        setSelectedSavedVehicleId('none');
-        setValue('arrivalMode', 'no_vehicle');
-      }
+      // Explicit vehicle choice defaults to on foot until visitor explicitly selects vehicle
+      setSelectedSavedVehicleId('none');
+      setValue('arrivalMode', 'no_vehicle');
+      setVehiclePhotoBlob(null);
+      vehiclePhotoUrl.clear();
 
       setStep('returning_confirm');
-      toast.success(`Welcome back, ${data.profile.firstName}!`);
+      toast.success(`Welcome back, ${p.firstName}!`);
     } catch (err: any) {
       setReturningIdentifyError(err?.message || 'Identification failed. Please try again or register as a New Visitor.');
     } finally {
@@ -1010,8 +1033,8 @@ export function GetPassPage() {
       toast.error('Please enter a valid Philippine mobile number.');
       return;
     }
-    if (!vals.homeAddress || vals.homeAddress.trim().length < 5) {
-      toast.error('Please enter your complete home address.');
+    if (!vals.homeAddress || vals.homeAddress.trim().length < 5 || !selectedAddress) {
+      toast.error('Please select and verify your complete home address.');
       return;
     }
     if (!vals.purpose || vals.purpose.trim().length < 3) {
@@ -1033,6 +1056,16 @@ export function GetPassPage() {
         toast.error('Please enter vehicle color.');
         return;
       }
+      if (!vehiclePhotoBlob) {
+        toast.error('A current photo of your vehicle is required for this visit.');
+        return;
+      }
+    } else {
+      setValue('plateNumber', '');
+      setValue('vehicleColor', '');
+      setValue('makeModel', '');
+      setVehiclePhotoBlob(null);
+      vehiclePhotoUrl.clear();
     }
 
     setStep('review');
@@ -1406,7 +1439,7 @@ export function GetPassPage() {
   }
 
   function handleStartOver() {
-    resetRegistrationSession();
+    resetRegistrationFlow();
   }
 
   function handleAmbiguousCancelAndAskGuard() {
@@ -2854,7 +2887,7 @@ export function GetPassPage() {
                     Please show your valid physical ID to the campus gate guard to look up or verify your entry pass.
                   </p>
                 </div>
-              ) : currentPhase === 'existing_pass_conflict' ? (
+              ) : (currentPhase === 'existing_pass_conflict' || portalTransactionRef.current?.phase === 'existing_pass_conflict') ? (
                 <div className="rounded-lg border border-amber-300 bg-amber-50 p-4 space-y-2 text-sm text-amber-900" role="alert">
                   <div className="flex items-center gap-2 font-semibold text-amber-950">
                     <AlertCircle className="h-5 w-5 text-amber-600 shrink-0" />
@@ -2864,7 +2897,7 @@ export function GetPassPage() {
                     An existing pass was already created for this request, but the local retry no longer matches it. Do not create another pass. Please ask the Guard for assistance.
                   </p>
                 </div>
-              ) : currentPhase === 'ambiguous' ? (
+              ) : (currentPhase === 'ambiguous' || portalTransactionRef.current?.phase === 'ambiguous') ? (
                 <div className="rounded-lg border border-amber-300 bg-amber-50 p-4 space-y-2 text-sm text-amber-900" role="alert">
                   <div className="flex items-center gap-2 font-semibold text-amber-950">
                     <AlertCircle className="h-5 w-5 text-amber-600 shrink-0" />
@@ -2909,8 +2942,9 @@ export function GetPassPage() {
                     Visitor Information
                   </span>
                   {currentPhase !== 'existing_pass_conflict' &&
+                    portalTransactionRef.current?.phase !== 'existing_pass_conflict' &&
                     currentPhase !== 'ambiguous' &&
-                    currentPhase !== 'submission_uncertain_hold' && (
+                    portalTransactionRef.current?.phase !== 'ambiguous' && (
                     <button
                       type="button"
                       onClick={() => setStep('form')}
@@ -2959,8 +2993,9 @@ export function GetPassPage() {
                     Visit Information
                   </span>
                   {currentPhase !== 'existing_pass_conflict' &&
+                    portalTransactionRef.current?.phase !== 'existing_pass_conflict' &&
                     currentPhase !== 'ambiguous' &&
-                    currentPhase !== 'submission_uncertain_hold' && (
+                    portalTransactionRef.current?.phase !== 'ambiguous' && (
                     <button
                       type="button"
                       onClick={() => setStep('visit')}
@@ -2989,8 +3024,9 @@ export function GetPassPage() {
                     Arrival & Vehicle
                   </span>
                   {currentPhase !== 'existing_pass_conflict' &&
+                    portalTransactionRef.current?.phase !== 'existing_pass_conflict' &&
                     currentPhase !== 'ambiguous' &&
-                    currentPhase !== 'submission_uncertain_hold' && (
+                    portalTransactionRef.current?.phase !== 'ambiguous' && (
                     <button
                       type="button"
                       onClick={() => setStep('visit')}
@@ -3301,12 +3337,66 @@ export function GetPassPage() {
               </div>
 
               {/* Editable Contact & Address for Today */}
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <div className="space-y-4">
                 <FormField label="Mobile Number" requirement="required" error={errors.contactNumber?.message}>
                   <Input type="tel" {...register('contactNumber')} />
                 </FormField>
-                <FormField label="Home Address" requirement="required" error={errors.homeAddress?.message}>
-                  <Input {...register('homeAddress')} />
+
+                <FormField label="Home Address (Official PSGC & Verified Map)" requirement="required" error={errors.homeAddress?.message}>
+                  <CompactAddressPicker
+                    value={selectedAddress ? {
+                      formattedAddress: getValues('homeAddress') || selectedAddress.formatted,
+                      addressDetail: addressDetail || undefined,
+                      placeId: selectedAddress.placeId,
+                      lat: selectedAddress.lat,
+                      lon: selectedAddress.lon,
+                      confidence: selectedAddress.confidence,
+                      resultType: selectedAddress.resultType,
+                      regionCode: addressProvenance?.regionCode,
+                      provinceCode: addressProvenance?.provinceCode,
+                      cityCode: addressProvenance?.cityCode,
+                      barangayCode: addressProvenance?.barangayCode,
+                      psgcVersion: addressProvenance?.psgcVersion || '2026-Q3',
+                    } : null}
+                    onChange={(val) => {
+                      if (val) {
+                        setValue('homeAddress', val.formattedAddress, { shouldValidate: true });
+                        setSelectedAddress({
+                          placeId: val.placeId,
+                          formatted: val.formattedAddress,
+                          lat: val.lat || 0,
+                          lon: val.lon || 0,
+                          resultType: val.resultType || 'unknown',
+                          confidence: val.confidence ?? undefined,
+                          countryCode: 'ph' as const,
+                        });
+                        setAddressDetail(val.addressDetail || '');
+                        setAddressProvenance({
+                          provider: 'geoapify',
+                          placeId: val.placeId,
+                          lat: val.lat,
+                          lon: val.lon,
+                          confidence: val.confidence,
+                          resultType: val.resultType,
+                          city: val.cityName,
+                          state: val.provinceName || val.regionName,
+                          countryCode: 'ph',
+                          addressDetail: val.addressDetail,
+                          regionCode: val.regionCode,
+                          provinceCode: val.provinceCode,
+                          cityCode: val.cityCode,
+                          barangayCode: val.barangayCode,
+                          psgcVersion: val.psgcVersion,
+                        });
+                      } else {
+                        setValue('homeAddress', '', { shouldValidate: true });
+                        setSelectedAddress(null);
+                        setAddressDetail('');
+                        setAddressProvenance(null);
+                      }
+                    }}
+                    error={errors.homeAddress?.message}
+                  />
                 </FormField>
               </div>
 
@@ -3334,86 +3424,243 @@ export function GetPassPage() {
                 <Input type="date" min={today} max={latestVisitDate} {...register('visitDate')} />
               </FormField>
 
-              {/* Saved Vehicles Selection */}
-              {returningProfile.savedVehicles && returningProfile.savedVehicles.length > 0 ? (
-                <div className="space-y-3">
-                  <label className="block text-xs font-bold uppercase tracking-wider text-[var(--color-text-muted)]">
-                    Vehicle for Today
-                  </label>
-                  <div className="grid grid-cols-1 gap-2.5">
-                    <div
-                      onClick={() => {
-                        setSelectedSavedVehicleId('none');
-                        setValue('arrivalMode', 'no_vehicle');
-                      }}
-                      role="button"
-                      tabIndex={0}
-                      className={`p-3 rounded-xl border text-xs cursor-pointer flex items-center justify-between transition-all ${
-                        selectedSavedVehicleId === 'none'
-                          ? 'border-[var(--color-brand)] bg-[var(--color-brand-light)] font-bold'
-                          : 'border-[var(--color-border)] bg-white'
-                      }`}
-                    >
-                      <div className="flex items-center gap-2">
-                        <User className="h-4 w-4" />
-                        <span>No Vehicle (Pedestrian / Transit)</span>
-                      </div>
-                      {selectedSavedVehicleId === 'none' && <CheckCircle2 className="h-4 w-4 text-[var(--color-brand)]" />}
-                    </div>
+              {/* Explicit Arrival Method For Today's Visit */}
+              <div className="space-y-3 pt-2 border-t border-[var(--color-border)]">
+                <label className="block text-xs font-bold uppercase tracking-wider text-[var(--color-text-muted)]">
+                  Arrival Method For Today's Visit *
+                </label>
+                <div className="grid grid-cols-2 gap-3">
+                  <Button
+                    type="button"
+                    variant={arrivalMode === 'no_vehicle' ? 'primary' : 'secondary'}
+                    onClick={() => {
+                      setValue('arrivalMode', 'no_vehicle');
+                      setSelectedSavedVehicleId('none');
+                      setValue('plateNumber', '');
+                      setValue('vehicleColor', '');
+                      setValue('makeModel', '');
+                      setVehiclePhotoBlob(null);
+                      vehiclePhotoUrl.clear();
+                    }}
+                    className="flex items-center justify-center gap-2 text-xs font-bold"
+                  >
+                    <User className="h-4 w-4" />
+                    <span>On Foot / Transit</span>
+                  </Button>
+                  <Button
+                    type="button"
+                    variant={arrivalMode === 'vehicle' ? 'primary' : 'secondary'}
+                    onClick={() => {
+                      setValue('arrivalMode', 'vehicle');
+                      if (returningProfile.savedVehicles && returningProfile.savedVehicles.length > 0) {
+                        const firstVeh = returningProfile.savedVehicles[0];
+                        if (firstVeh) {
+                          setSelectedSavedVehicleId(firstVeh.id);
+                          setValue('vehicleType', firstVeh.vehicleType);
+                          setValue('plateNumber', firstVeh.plateNumber);
+                          setValue('vehicleColor', firstVeh.color);
+                          setValue('makeModel', firstVeh.makeModel || '');
+                        }
+                      } else {
+                        setSelectedSavedVehicleId('new');
+                      }
+                    }}
+                    className="flex items-center justify-center gap-2 text-xs font-bold"
+                  >
+                    <Car className="h-4 w-4" />
+                    <span>With Vehicle</span>
+                  </Button>
+                </div>
 
-                    {returningProfile.savedVehicles.map((veh) => (
-                      <div
-                        key={veh.id}
-                        onClick={() => {
-                          setSelectedSavedVehicleId(veh.id);
-                          setValue('arrivalMode', 'vehicle');
-                          setValue('vehicleType', veh.vehicleType);
-                          setValue('plateNumber', veh.plateNumber);
-                          setValue('vehicleColor', veh.color);
-                          setValue('makeModel', veh.makeModel || '');
-                        }}
-                        role="button"
-                        tabIndex={0}
-                        className={`p-3 rounded-xl border text-xs cursor-pointer flex items-center justify-between transition-all ${
-                          selectedSavedVehicleId === veh.id
-                            ? 'border-[var(--color-brand)] bg-[var(--color-brand-light)] font-bold'
-                            : 'border-[var(--color-border)] bg-white'
-                        }`}
-                      >
-                        <div className="flex items-center gap-2">
-                          <Car className="h-4 w-4 text-blue-700" />
-                          <span>
-                            <strong>{veh.plateNumber}</strong> ({veh.vehicleType}) • {veh.color} {veh.makeModel ? `• ${veh.makeModel}` : ''}
-                          </span>
+                {arrivalMode === 'vehicle' && (
+                  <div className="space-y-4 rounded-xl border border-slate-200 bg-slate-50/70 p-4 mt-3">
+                    {/* Saved vehicles choice if available */}
+                    {returningProfile.savedVehicles && returningProfile.savedVehicles.length > 0 && (
+                      <div className="space-y-2">
+                        <label className="block text-xs font-bold uppercase tracking-wider text-slate-700">
+                          Select Vehicle
+                        </label>
+                        <div className="grid grid-cols-1 gap-2">
+                          {returningProfile.savedVehicles.map((veh) => (
+                            <div
+                              key={veh.id}
+                              onClick={() => {
+                                setSelectedSavedVehicleId(veh.id);
+                                setValue('vehicleType', veh.vehicleType);
+                                setValue('plateNumber', veh.plateNumber);
+                                setValue('vehicleColor', veh.color);
+                                setValue('makeModel', veh.makeModel || '');
+                              }}
+                              role="button"
+                              tabIndex={0}
+                              className={`p-3 rounded-xl border text-xs cursor-pointer flex items-center justify-between transition-all ${
+                                selectedSavedVehicleId === veh.id
+                                  ? 'border-[var(--color-brand)] bg-[var(--color-brand-light)] font-bold shadow-xs'
+                                  : 'border-slate-200 bg-white hover:border-slate-300'
+                              }`}
+                            >
+                              <div className="flex items-center gap-2">
+                                <Car className="h-4 w-4 text-[#7A0A0A]" />
+                                <span>
+                                  <strong>{veh.plateNumber}</strong> ({veh.vehicleType}) • {veh.color} {veh.makeModel ? `• ${veh.makeModel}` : ''}
+                                </span>
+                              </div>
+                              {selectedSavedVehicleId === veh.id && <CheckCircle2 className="h-4 w-4 text-[var(--color-brand)]" />}
+                            </div>
+                          ))}
+
+                          <div
+                            onClick={() => {
+                              setSelectedSavedVehicleId('new');
+                              setValue('plateNumber', '');
+                              setValue('vehicleColor', '');
+                              setValue('makeModel', '');
+                            }}
+                            role="button"
+                            tabIndex={0}
+                            className={`p-3 rounded-xl border text-xs cursor-pointer flex items-center justify-between transition-all ${
+                              selectedSavedVehicleId === 'new'
+                                ? 'border-[var(--color-brand)] bg-[var(--color-brand-light)] font-bold shadow-xs'
+                                : 'border-slate-200 bg-white hover:border-slate-300'
+                            }`}
+                          >
+                            <span>+ Enter a Different Vehicle</span>
+                            {selectedSavedVehicleId === 'new' && <CheckCircle2 className="h-4 w-4 text-[var(--color-brand)]" />}
+                          </div>
                         </div>
-                        {selectedSavedVehicleId === veh.id && <CheckCircle2 className="h-4 w-4 text-[var(--color-brand)]" />}
                       </div>
-                    ))}
+                    )}
+
+                    {/* Manual vehicle inputs if new vehicle selected or no saved vehicles */}
+                    {(!returningProfile.savedVehicles || returningProfile.savedVehicles.length === 0 || selectedSavedVehicleId === 'new') && (
+                      <div className="space-y-3 pt-2 border-t border-slate-200">
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                          <FormField label="Vehicle Type" requirement="required">
+                            <select
+                              value={getValues('vehicleType') || 'car'}
+                              onChange={(e) => setValue('vehicleType', e.target.value as any)}
+                              className="w-full text-xs rounded-xl border border-slate-300 bg-white px-3 py-2 text-slate-900 font-medium"
+                            >
+                              <option value="car">Car / Sedan</option>
+                              <option value="motorcycle">Motorcycle</option>
+                              <option value="suv">SUV</option>
+                              <option value="van">Van</option>
+                              <option value="pickup">Pickup</option>
+                              <option value="truck">Truck</option>
+                              <option value="other">Other</option>
+                            </select>
+                          </FormField>
+
+                          <FormField label="Plate Number" requirement="required" error={errors.plateNumber?.message}>
+                            <Input
+                              placeholder="e.g. ABC 1234 or 123ABC"
+                              {...register('plateNumber')}
+                            />
+                          </FormField>
+                        </div>
+
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                          <FormField label="Color" requirement="required" error={errors.vehicleColor?.message}>
+                            <select
+                              value={getValues('vehicleColor') || 'White'}
+                              onChange={(e) => setValue('vehicleColor', e.target.value)}
+                              className="w-full text-xs rounded-xl border border-slate-300 bg-white px-3 py-2 text-slate-900 font-medium"
+                            >
+                              {CONTROLLED_VEHICLE_COLORS.map((col) => (
+                                <option key={col} value={col}>{col}</option>
+                              ))}
+                            </select>
+                          </FormField>
+
+                          <FormField label="Make & Model" requirement="required" error={errors.makeModel?.message}>
+                            <Input
+                              placeholder="e.g. Toyota Vios"
+                              {...register('makeModel')}
+                            />
+                          </FormField>
+                        </div>
+
+                        <label className="flex items-center gap-2 cursor-pointer text-xs text-slate-600">
+                          <input
+                            type="checkbox"
+                            checked={saveVehicle}
+                            onChange={(e) => setSaveVehicle(e.target.checked)}
+                            className="rounded text-[var(--color-brand)]"
+                          />
+                          <span>Save this vehicle to my returning profile</span>
+                        </label>
+                      </div>
+                    )}
+
+                    {/* CURRENT VISIT VEHICLE PHOTO CAPTURE (Required for all vehicles) */}
+                    <div className="space-y-2 pt-3 border-t border-slate-200">
+                      <div className="flex items-center justify-between">
+                        <label className="block text-xs font-bold uppercase tracking-wider text-slate-800 flex items-center gap-1.5">
+                          <Camera className="h-4 w-4 text-[#7A0A0A]" />
+                          Current Visit Vehicle Photo *
+                        </label>
+                        <span className="text-[10px] font-bold text-red-700 bg-red-100 px-2 py-0.5 rounded-full">
+                          Required
+                        </span>
+                      </div>
+                      <p className="text-[11px] text-slate-600">
+                        A real-time photo of your vehicle is required for gate security verification today.
+                      </p>
+
+                      {vehiclePhotoPreview ? (
+                        <div className="relative rounded-xl overflow-hidden border border-slate-200 aspect-video max-h-48 bg-slate-900 flex items-center justify-center">
+                          <img
+                            src={vehiclePhotoPreview}
+                            alt="Current vehicle photo"
+                            className="h-full w-full object-cover"
+                          />
+                          <button
+                            type="button"
+                            onClick={handleRemoveVehiclePhoto}
+                            className="absolute top-2 right-2 rounded-full bg-red-600 text-white p-1.5 shadow-md hover:bg-red-700 transition-colors"
+                            title="Remove photo"
+                          >
+                            <X className="h-4 w-4" />
+                          </button>
+                        </div>
+                      ) : (
+                        <div>
+                          <input
+                            ref={vehicleFileInputRef}
+                            type="file"
+                            accept="image/jpeg,image/png,image/webp"
+                            onChange={(e) => {
+                              const f = e.target.files?.[0];
+                              if (f) void handleVehiclePhotoSelected(f);
+                            }}
+                            className="hidden"
+                            id="returning-vehicle-photo-input"
+                          />
+                          <Button
+                            type="button"
+                            variant="secondary"
+                            onClick={() => vehicleFileInputRef.current?.click()}
+                            disabled={isProcessingVehiclePhoto}
+                            icon={
+                              isProcessingVehiclePhoto ? (
+                                <Loader2 className="h-4 w-4 animate-spin" />
+                              ) : (
+                                <Camera className="h-4 w-4" />
+                              )
+                            }
+                            className="w-full text-xs font-bold"
+                          >
+                            {isProcessingVehiclePhoto ? 'Processing photo…' : 'Take or Upload Vehicle Photo'}
+                          </Button>
+                        </div>
+                      )}
+                      {vehiclePhotoError && (
+                        <p className="text-xs text-red-600 font-medium">{vehiclePhotoError}</p>
+                      )}
+                    </div>
                   </div>
-                </div>
-              ) : (
-                <div className="space-y-3">
-                  <label className="block text-xs font-bold uppercase tracking-wider text-[var(--color-text-muted)]">
-                    Arrival Method
-                  </label>
-                  <div className="grid grid-cols-2 gap-3">
-                    <Button
-                      type="button"
-                      variant={arrivalMode === 'no_vehicle' ? 'primary' : 'secondary'}
-                      onClick={() => setValue('arrivalMode', 'no_vehicle')}
-                    >
-                      No Vehicle
-                    </Button>
-                    <Button
-                      type="button"
-                      variant={arrivalMode === 'vehicle' ? 'primary' : 'secondary'}
-                      onClick={() => setValue('arrivalMode', 'vehicle')}
-                    >
-                      Bringing a Vehicle
-                    </Button>
-                  </div>
-                </div>
-              )}
+                )}
+              </div>
 
               <div className="flex gap-3 pt-2">
                 <Button

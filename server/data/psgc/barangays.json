@@ -1,0 +1,542 @@
+[
+  {
+    "code": "1380600408",
+    "cityCode": "1380600000",
+    "name": "Barangay 408 (Sampaloc / EARIST Nagtahan)"
+  },
+  {
+    "code": "1380600409",
+    "cityCode": "1380600000",
+    "name": "Barangay 409 (Sampaloc)"
+  },
+  {
+    "code": "1380600410",
+    "cityCode": "1380600000",
+    "name": "Barangay 410 (Sampaloc)"
+  },
+  {
+    "code": "1380600411",
+    "cityCode": "1380600000",
+    "name": "Barangay 411 (Sampaloc)"
+  },
+  {
+    "code": "1380600412",
+    "cityCode": "1380600000",
+    "name": "Barangay 412 (Sampaloc)"
+  },
+  {
+    "code": "1380600413",
+    "cityCode": "1380600000",
+    "name": "Barangay 413 (Sampaloc)"
+  },
+  {
+    "code": "1380600414",
+    "cityCode": "1380600000",
+    "name": "Barangay 414 (Sampaloc)"
+  },
+  {
+    "code": "1380600415",
+    "cityCode": "1380600000",
+    "name": "Barangay 415 (Sampaloc)"
+  },
+  {
+    "code": "1380600587",
+    "cityCode": "1380600000",
+    "name": "Barangay 587 (Santa Mesa)"
+  },
+  {
+    "code": "1380600588",
+    "cityCode": "1380600000",
+    "name": "Barangay 588 (Santa Mesa)"
+  },
+  {
+    "code": "1380600629",
+    "cityCode": "1380600000",
+    "name": "Barangay 629 (Santa Mesa)"
+  },
+  {
+    "code": "1380600830",
+    "cityCode": "1380600000",
+    "name": "Barangay 830 (Pandacan)"
+  },
+  {
+    "code": "1380600831",
+    "cityCode": "1380600000",
+    "name": "Barangay 831 (Pandacan)"
+  },
+  {
+    "code": "1380600659",
+    "cityCode": "1380600000",
+    "name": "Barangay 659 (Ermita)"
+  },
+  {
+    "code": "1380600660",
+    "cityCode": "1380600000",
+    "name": "Barangay 660 (Ermita)"
+  },
+  {
+    "code": "1380600661",
+    "cityCode": "1380600000",
+    "name": "Barangay 661 (Rizal Park / Ermita)"
+  },
+  {
+    "code": "1380600667",
+    "cityCode": "1380600000",
+    "name": "Barangay 667 (Ermita)"
+  },
+  {
+    "code": "1380600696",
+    "cityCode": "1380600000",
+    "name": "Barangay 696 (Malate)"
+  },
+  {
+    "code": "1380600697",
+    "cityCode": "1380600000",
+    "name": "Barangay 697 (Malate)"
+  },
+  {
+    "code": "1380600700",
+    "cityCode": "1380600000",
+    "name": "Barangay 700 (Malate)"
+  },
+  {
+    "code": "1380600821",
+    "cityCode": "1380600000",
+    "name": "Barangay 821 (Paco)"
+  },
+  {
+    "code": "1380600822",
+    "cityCode": "1380600000",
+    "name": "Barangay 822 (Paco)"
+  },
+  {
+    "code": "1380600823",
+    "cityCode": "1380600000",
+    "name": "Barangay 823 (Paco)"
+  },
+  {
+    "code": "1380600287",
+    "cityCode": "1380600000",
+    "name": "Barangay 287 (Binondo)"
+  },
+  {
+    "code": "1380600306",
+    "cityCode": "1380600000",
+    "name": "Barangay 306 (Santa Cruz)"
+  },
+  {
+    "code": "1381200001",
+    "cityCode": "1381200000",
+    "name": "Batasan Hills"
+  },
+  {
+    "code": "1381200002",
+    "cityCode": "1381200000",
+    "name": "Commonwealth"
+  },
+  {
+    "code": "1381200003",
+    "cityCode": "1381200000",
+    "name": "Holy Spirit"
+  },
+  {
+    "code": "1381200004",
+    "cityCode": "1381200000",
+    "name": "Bagong Silangan"
+  },
+  {
+    "code": "1381200005",
+    "cityCode": "1381200000",
+    "name": "Payatas"
+  },
+  {
+    "code": "1381200006",
+    "cityCode": "1381200000",
+    "name": "U.P. Campus"
+  },
+  {
+    "code": "1381200007",
+    "cityCode": "1381200000",
+    "name": "Loyola Heights"
+  },
+  {
+    "code": "1381200008",
+    "cityCode": "1381200000",
+    "name": "Socorro (Cubao)"
+  },
+  {
+    "code": "1381200009",
+    "cityCode": "1381200000",
+    "name": "South Triangle"
+  },
+  {
+    "code": "1381200010",
+    "cityCode": "1381200000",
+    "name": "Kamuning"
+  },
+  {
+    "code": "1381200011",
+    "cityCode": "1381200000",
+    "name": "Pinyahan"
+  },
+  {
+    "code": "1381200012",
+    "cityCode": "1381200000",
+    "name": "Tandang Sora"
+  },
+  {
+    "code": "1380800001",
+    "cityCode": "1380800000",
+    "name": "Bel-Air"
+  },
+  {
+    "code": "1380800002",
+    "cityCode": "1380800000",
+    "name": "Poblacion"
+  },
+  {
+    "code": "1380800003",
+    "cityCode": "1380800000",
+    "name": "San Lorenzo"
+  },
+  {
+    "code": "1380800004",
+    "cityCode": "1380800000",
+    "name": "San Antonio"
+  },
+  {
+    "code": "1380800005",
+    "cityCode": "1380800000",
+    "name": "Pio del Pilar"
+  },
+  {
+    "code": "1380800006",
+    "cityCode": "1380800000",
+    "name": "Palanan"
+  },
+  {
+    "code": "1381900001",
+    "cityCode": "1381900000",
+    "name": "Fort Bonifacio (BGC)"
+  },
+  {
+    "code": "1381900002",
+    "cityCode": "1381900000",
+    "name": "Pinagsama"
+  },
+  {
+    "code": "1381900003",
+    "cityCode": "1381900000",
+    "name": "Western Bicutan"
+  },
+  {
+    "code": "1381900004",
+    "cityCode": "1381900000",
+    "name": "Ususan"
+  },
+  {
+    "code": "1381600001",
+    "cityCode": "1381600000",
+    "name": "San Antonio (Ortigas)"
+  },
+  {
+    "code": "1381600002",
+    "cityCode": "1381600000",
+    "name": "Kapitolyo"
+  },
+  {
+    "code": "1381600003",
+    "cityCode": "1381600000",
+    "name": "Ugong"
+  },
+  {
+    "code": "1381600004",
+    "cityCode": "1381600000",
+    "name": "Rosario"
+  },
+  {
+    "code": "1380700001",
+    "cityCode": "1380700000",
+    "name": "Wack-Wack Greenhills"
+  },
+  {
+    "code": "1380700002",
+    "cityCode": "1380700000",
+    "name": "Highway Hills"
+  },
+  {
+    "code": "1380700003",
+    "cityCode": "1380700000",
+    "name": "Barangka Ilaya"
+  },
+  {
+    "code": "1380300001",
+    "cityCode": "1380300000",
+    "name": "Barangay 1"
+  },
+  {
+    "code": "1380300002",
+    "cityCode": "1380300000",
+    "name": "Barangay 2"
+  },
+  {
+    "code": "1380300171",
+    "cityCode": "1380300000",
+    "name": "Barangay 171 (Bagumbong)"
+  },
+  {
+    "code": "1380300176",
+    "cityCode": "1380300000",
+    "name": "Barangay 176 (Bagong Silang)"
+  },
+  {
+    "code": "1381500001",
+    "cityCode": "1381500000",
+    "name": "Barangay 1 (Poblacion)"
+  },
+  {
+    "code": "1381500076",
+    "cityCode": "1381500000",
+    "name": "Barangay 76 (Mall of Asia Complex)"
+  },
+  {
+    "code": "1381500183",
+    "cityCode": "1381500000",
+    "name": "Barangay 183 (Villamor Airbase)"
+  },
+  {
+    "code": "1381400001",
+    "cityCode": "1381400000",
+    "name": "BF Homes"
+  },
+  {
+    "code": "1381400002",
+    "cityCode": "1381400000",
+    "name": "San Antonio"
+  },
+  {
+    "code": "1381400003",
+    "cityCode": "1381400000",
+    "name": "Don Bosco"
+  },
+  {
+    "code": "1381400004",
+    "cityCode": "1381400000",
+    "name": "Baclaran"
+  },
+  {
+    "code": "1381100001",
+    "cityCode": "1381100000",
+    "name": "Alabang"
+  },
+  {
+    "code": "1381100002",
+    "cityCode": "1381100000",
+    "name": "Ayala Alabang"
+  },
+  {
+    "code": "1381100003",
+    "cityCode": "1381100000",
+    "name": "Putatan"
+  },
+  {
+    "code": "1381000001",
+    "cityCode": "1381000000",
+    "name": "Concepcion Uno"
+  },
+  {
+    "code": "1381000002",
+    "cityCode": "1381000000",
+    "name": "Marikina Heights"
+  },
+  {
+    "code": "1381000003",
+    "cityCode": "1381000000",
+    "name": "Santo Niño"
+  },
+  {
+    "code": "1382000001",
+    "cityCode": "1382000000",
+    "name": "Karuhatan"
+  },
+  {
+    "code": "1382000002",
+    "cityCode": "1382000000",
+    "name": "Malinta"
+  },
+  {
+    "code": "1382000003",
+    "cityCode": "1382000000",
+    "name": "Malanday"
+  },
+  {
+    "code": "1380500001",
+    "cityCode": "1380500000",
+    "name": "Pamplona Uno"
+  },
+  {
+    "code": "1380500002",
+    "cityCode": "1380500000",
+    "name": "BF International Village"
+  },
+  {
+    "code": "1381800001",
+    "cityCode": "1381800000",
+    "name": "Greenhills"
+  },
+  {
+    "code": "1381800002",
+    "cityCode": "1381800000",
+    "name": "West Crame"
+  },
+  {
+    "code": "1380900001",
+    "cityCode": "1380900000",
+    "name": "Potrero"
+  },
+  {
+    "code": "1380900002",
+    "cityCode": "1380900000",
+    "name": "Concepcion"
+  },
+  {
+    "code": "1381300001",
+    "cityCode": "1381300000",
+    "name": "San Jose"
+  },
+  {
+    "code": "1381300002",
+    "cityCode": "1381300000",
+    "name": "North Bay Boulevard South"
+  },
+  {
+    "code": "1381700001",
+    "cityCode": "1381700000",
+    "name": "Aguho"
+  },
+  {
+    "code": "1381700002",
+    "cityCode": "1381700000",
+    "name": "San Roque"
+  },
+  {
+    "code": "1411020001",
+    "cityCode": "1411020000",
+    "name": "Session Road Area"
+  },
+  {
+    "code": "1411020002",
+    "cityCode": "1411020000",
+    "name": "Camp 7"
+  },
+  {
+    "code": "1411020003",
+    "cityCode": "1411020000",
+    "name": "Loakan Proper"
+  },
+  {
+    "code": "0421030001",
+    "cityCode": "0421030000",
+    "name": "Molino I"
+  },
+  {
+    "code": "0421030002",
+    "cityCode": "0421030000",
+    "name": "Molino II"
+  },
+  {
+    "code": "0421030003",
+    "cityCode": "0421030000",
+    "name": "Molino III"
+  },
+  {
+    "code": "0421030004",
+    "cityCode": "0421030000",
+    "name": "Habay I"
+  },
+  {
+    "code": "0421060001",
+    "cityCode": "0421060000",
+    "name": "Salitran I"
+  },
+  {
+    "code": "0421060002",
+    "cityCode": "0421060000",
+    "name": "Salitran II"
+  },
+  {
+    "code": "0421060003",
+    "cityCode": "0421060000",
+    "name": "Burol I"
+  },
+  {
+    "code": "0434040001",
+    "cityCode": "0434040000",
+    "name": "Bucal"
+  },
+  {
+    "code": "0434040002",
+    "cityCode": "0434040000",
+    "name": "Pansol"
+  },
+  {
+    "code": "0434040003",
+    "cityCode": "0434040000",
+    "name": "Canlubang"
+  },
+  {
+    "code": "0434280001",
+    "cityCode": "0434280000",
+    "name": "Balibago"
+  },
+  {
+    "code": "0434280002",
+    "cityCode": "0434280000",
+    "name": "Don Jose"
+  },
+  {
+    "code": "0458010001",
+    "cityCode": "0458010000",
+    "name": "San Roque"
+  },
+  {
+    "code": "0458010002",
+    "cityCode": "0458010000",
+    "name": "Dela Paz"
+  },
+  {
+    "code": "0458010003",
+    "cityCode": "0458010000",
+    "name": "Mayamot"
+  },
+  {
+    "code": "0722170001",
+    "cityCode": "0722170000",
+    "name": "Lahug"
+  },
+  {
+    "code": "0722170002",
+    "cityCode": "0722170000",
+    "name": "Mabolo"
+  },
+  {
+    "code": "0722170003",
+    "cityCode": "0722170000",
+    "name": "Guadalupe"
+  },
+  {
+    "code": "1124020001",
+    "cityCode": "1124020000",
+    "name": "Poblacion"
+  },
+  {
+    "code": "1124020002",
+    "cityCode": "1124020000",
+    "name": "Buhangin"
+  },
+  {
+    "code": "1124020003",
+    "cityCode": "1124020000",
+    "name": "Talomo"
+  }
+]

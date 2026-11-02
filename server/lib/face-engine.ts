@@ -54,32 +54,66 @@ export interface DetectedFace {
   landmarks: Array<[number, number]>;
 }
 
+export interface AnalyzedFaceImage {
+  quality: QualityEvaluation;
+  faces: DetectedFace[];
+  dominantFace: DetectedFace | null;
+  descriptor: Float32Array | null;
+  modelName: string;
+  modelVersion: string;
+}
+
 // SFace baseline threshold documented in OpenCV Zoo
 export const SFACE_COSINE_THRESHOLD = 0.363;
 
-let yunetSession: ort.InferenceSession | null = null;
-let sfaceSession: ort.InferenceSession | null = null;
+// Canonical 5-point destination landmarks for SFace 112x112 aligned face chip
+export const SFACE_REFERENCE_LANDMARKS: Array<[number, number]> = [
+  [38.2946, 51.6963], // right eye
+  [73.5318, 51.5014], // left eye
+  [56.0252, 71.7366], // nose tip
+  [41.5493, 92.3655], // right mouth corner
+  [70.7299, 92.2041], // left mouth corner
+];
 
-async function getInferenceSessions() {
-  if (!yunetSession) {
-    const yunetPath = path.resolve('server/models/face_detection_yunet_2023mar.onnx');
-    const options: ort.InferenceSession.SessionOptions = {
-      logSeverityLevel: 3, // Suppress verbose initializer warnings
-    };
-    yunetSession = await ort.InferenceSession.create(yunetPath, options);
+let sessionsPromise: Promise<{ yunet: ort.InferenceSession; sface: ort.InferenceSession }> | null = null;
+
+/**
+ * Concurrency-safe inference session loader.
+ * Uses a shared promise so concurrent cold starts create exactly one pair of sessions.
+ * Resets the promise on failure so subsequent requests have a clean retry path.
+ */
+export async function getInferenceSessions() {
+  if (!sessionsPromise) {
+    sessionsPromise = (async () => {
+      try {
+        const yunetPath = path.resolve('server/models/face_detection_yunet_2023mar.onnx');
+        const sfacePath = path.resolve('server/models/face_recognition_sface_2021dec.onnx');
+        const options: ort.InferenceSession.SessionOptions = {
+          logSeverityLevel: 3, // Suppress verbose initializer warnings
+        };
+        const [yunet, sface] = await Promise.all([
+          ort.InferenceSession.create(yunetPath, options),
+          ort.InferenceSession.create(sfacePath, options),
+        ]);
+        return { yunet, sface };
+      } catch (err) {
+        sessionsPromise = null;
+        throw err;
+      }
+    })();
   }
-  if (!sfaceSession) {
-    const sfacePath = path.resolve('server/models/face_recognition_sface_2021dec.onnx');
-    const options: ort.InferenceSession.SessionOptions = {
-      logSeverityLevel: 3,
-    };
-    sfaceSession = await ort.InferenceSession.create(sfacePath, options);
-  }
-  return { yunet: yunetSession, sface: sfaceSession };
+  return sessionsPromise;
+}
+
+/**
+ * Reset sessions for testing or re-initialization.
+ */
+export function resetInferenceSessions() {
+  sessionsPromise = null;
 }
 
 // Compute Laplacian variance on grayscale buffer for blur detection
-function computeLaplacianVariance(grayscale: Uint8Array, width: number, height: number): number {
+export function computeLaplacianVariance(grayscale: Uint8Array, width: number, height: number): number {
   if (width < 3 || height < 3) return 0;
   let sum = 0;
   let sumSq = 0;
@@ -107,7 +141,7 @@ function computeLaplacianVariance(grayscale: Uint8Array, width: number, height: 
 }
 
 // Compute luminance statistics
-function computeLuminanceStats(rgb: Uint8Array, totalPixels: number) {
+export function computeLuminanceStats(rgb: Uint8Array, totalPixels: number) {
   let sum = 0;
   let clippedHigh = 0;
 
@@ -126,7 +160,7 @@ function computeLuminanceStats(rgb: Uint8Array, totalPixels: number) {
 }
 
 // Non-maximum suppression
-function nms(boxes: DetectedFace[], iouThreshold = 0.4): DetectedFace[] {
+export function nms(boxes: DetectedFace[], iouThreshold = 0.4): DetectedFace[] {
   const sorted = [...boxes].sort((a, b) => b.score - a.score);
   const selected: DetectedFace[] = [];
 
@@ -201,7 +235,15 @@ export async function detectFaces(imageBuffer: Buffer): Promise<DetectedFace[]> 
     const obj = results[`obj_${stride}`]?.data as Float32Array | undefined;
     const bbox = results[`bbox_${stride}`]?.data as Float32Array | undefined;
     const kps = results[`kps_${stride}`]?.data as Float32Array | undefined;
-    if (!cls || !obj || !bbox || !kps) continue;
+
+    if (!cls || !obj || !bbox || !kps) {
+      throw new Error(`yunet_missing_output:cls_${stride}`);
+    }
+
+    const expectedLength = rows * cols;
+    if (cls.length < expectedLength || obj.length < expectedLength || bbox.length < expectedLength * 4 || kps.length < expectedLength * 10) {
+      throw new Error(`yunet_malformed_output:stride_${stride}`);
+    }
 
     for (let r = 0; r < rows; r++) {
       for (let c = 0; c < cols; c++) {
@@ -213,7 +255,7 @@ export async function detectFaces(imageBuffer: Buffer): Promise<DetectedFace[]> 
         obj_score = Math.min(Math.max(obj_score, 0), 1);
         const score = Math.sqrt(cls_score * obj_score);
 
-        if (score < scoreThreshold) continue;
+        if (!Number.isFinite(score) || score < scoreThreshold) continue;
 
         const bx0 = bbox[idx * 4 + 0] ?? 0;
         const bx1 = bbox[idx * 4 + 1] ?? 0;
@@ -245,276 +287,71 @@ export async function detectFaces(imageBuffer: Buffer): Promise<DetectedFace[]> 
   return nms(candidates);
 }
 
-// Evaluate Live Face technical image quality
-export async function evaluateLiveFaceQuality(imageBuffer: Buffer): Promise<QualityEvaluation> {
-  let meta: Metadata;
-  let raw: Buffer;
-  try {
-    const image = sharp(imageBuffer);
-    meta = await image.metadata();
-    raw = await image.removeAlpha().raw().toBuffer();
-  } catch {
-    return { passed: false, code: 'decode_failed', message: 'The captured image could not be decoded.' };
+/**
+ * Mathematically exact 2D similarity transformation matrix (Umeyama / OpenCV parity).
+ * Finds the optimal 2x3 matrix [a -b tx; b a ty] minimizing least-squares error between src and dst.
+ * Completely immune to diagonal/axis-aligned singular branches.
+ */
+export function getSimilarityTransformMatrix(
+  src: Array<[number, number]>,
+  dst: Array<[number, number]> = SFACE_REFERENCE_LANDMARKS
+): [[number, number, number], [number, number, number]] {
+  if (!src || src.length < 5 || !dst || dst.length < 5) {
+    throw new Error('Similarity transform requires at least 5 landmark points');
   }
-
-  const format = meta.format?.toLowerCase();
-  if (!format || !['jpeg', 'jpg', 'png', 'webp'].includes(format)) {
-    return { passed: false, code: 'unsupported_format', message: 'Unsupported image format.' };
-  }
-
-  const width = meta.width ?? 0;
-  const height = meta.height ?? 0;
-  if (width < 200 || height < 200) {
-    return { passed: false, code: 'too_small', message: 'Photo resolution is too small. Please retake the photo.' };
-  }
-
-  // Exposure evaluation
-  const { mean: luminanceMean, clippedRatio } = computeLuminanceStats(new Uint8Array(raw), width * height);
-  if (luminanceMean < 35) {
-    return { passed: false, code: 'too_dark', message: 'Your face is too dark. Please move to better lighting and retake the photo.' };
-  }
-  if (luminanceMean > 225 && clippedRatio > 0.3) {
-    return { passed: false, code: 'overexposed', message: 'Your photo is overexposed. Please adjust lighting and retake the photo.' };
-  }
-
-  // Blur evaluation via grayscale Laplacian
-  const grayscale = await sharp(imageBuffer).grayscale().raw().toBuffer();
-  const blurScore = computeLaplacianVariance(new Uint8Array(grayscale), width, height);
-  if (blurScore < 40) {
-    return { passed: false, code: 'blurry', message: 'Your photo is too blurry. Please hold the device steady and try again.' };
-  }
-
-  // Detect faces
-  let faces: DetectedFace[];
-  try {
-    faces = await detectFaces(imageBuffer);
-  } catch {
-    return { passed: false, code: 'decode_failed', message: 'Face detection engine error.' };
-  }
-
-  if (faces.length === 0) {
-    return { passed: false, code: 'no_face', message: 'No face was detected. Please position your face inside the guide and try again.' };
-  }
-  if (faces.length > 1) {
-    return { passed: false, code: 'multiple_faces', message: 'More than one face was detected. Only the visitor should be visible.' };
-  }
-
-  const face = faces[0];
-  if (!face) {
-    return { passed: false, code: 'no_face', message: 'No face was detected. Please position your face inside the guide and try again.' };
-  }
-  // Face size check (in 640x640 space)
-  if (face.w < 70 || face.h < 70) {
-    return { passed: false, code: 'face_too_small', message: 'Move slightly closer to the camera.' };
-  }
-
-  // Face boundary framing
-  if (face.x < 10 || face.y < 10 || face.x + face.w > 630 || face.y + face.h > 630) {
-    return { passed: false, code: 'face_cropped', message: 'Position your full face inside the guide and try again.' };
-  }
-
-  // Landmark pose check
-  if (!face.landmarks || face.landmarks.length < 5) {
-    return { passed: false, code: 'pose_unsuitable', message: 'Look directly at the camera with a neutral expression.' };
-  }
-
-  const re = face.landmarks[0]!;
-  const le = face.landmarks[1]!;
-  const eyeDist = Math.hypot((le[0] ?? 0) - (re[0] ?? 0), (le[1] ?? 0) - (re[1] ?? 0));
-  if (eyeDist < 25) {
-    return { passed: false, code: 'pose_unsuitable', message: 'Look directly at the camera with your face clearly visible.' };
-  }
-
-  return { passed: true, code: 'ok', message: 'Live face quality passed.' };
-}
-
-// Evaluate Valid ID image technical quality
-export async function evaluateIdImageQuality(imageBuffer: Buffer): Promise<QualityEvaluation> {
-  let meta: Metadata;
-  let raw: Buffer;
-  try {
-    const image = sharp(imageBuffer);
-    meta = await image.metadata();
-    raw = await image.removeAlpha().raw().toBuffer();
-  } catch {
-    return { passed: false, code: 'decode_failed', message: 'The ID image could not be decoded.' };
-  }
-
-  const format = meta.format?.toLowerCase();
-  if (!format || !['jpeg', 'jpg', 'png', 'webp'].includes(format)) {
-    return { passed: false, code: 'unsupported_format', message: 'Unsupported ID image format.' };
-  }
-
-  const width = meta.width ?? 0;
-  const height = meta.height ?? 0;
-  const longEdge = Math.max(width, height);
-  if (longEdge < 400) {
-    return { passed: false, code: 'too_small', message: 'The ID image resolution is too low. Please use a clearer image.' };
-  }
-
-  // Exposure evaluation
-  const { mean: luminanceMean, clippedRatio } = computeLuminanceStats(new Uint8Array(raw), width * height);
-  if (luminanceMean < 30) {
-    return { passed: false, code: 'too_dark', message: 'The ID image is too dark. Please use a brighter image.' };
-  }
-  if (luminanceMean > 235 && clippedRatio > 0.4) {
-    return { passed: false, code: 'overexposed', message: 'The ID image has severe glare or overexposure. Please use a clearer image.' };
-  }
-
-  // Blur evaluation
-  const grayscale = await sharp(imageBuffer).grayscale().raw().toBuffer();
-  const blurScore = computeLaplacianVariance(new Uint8Array(grayscale), width, height);
-  if (blurScore < 30) {
-    return { passed: false, code: 'blurry', message: 'The ID image is too blurry. Please use a clearer image of the front of your valid ID.' };
-  }
-
-  // Plausible portrait face detection on ID
-  let faces: DetectedFace[];
-  try {
-    faces = await detectFaces(imageBuffer);
-  } catch {
-    return { passed: false, code: 'decode_failed', message: 'ID face detection error.' };
-  }
-
-  if (faces.length === 0) {
-    return { passed: false, code: 'portrait_missing', message: "We couldn't clearly locate the portrait on this ID. Please use a clearer image of the front of your valid ID." };
-  }
-
-  if (faces.length > 1) {
-    // Check if one dominant portrait exists (e.g. area >= 2x any second face or confidence much higher)
-    const sorted = [...faces].sort((a, b) => b.w * b.h - a.w * a.h);
-    const dominant = sorted[0];
-    const second = sorted[1];
-    if (dominant && second) {
-      const areaRatio = (dominant.w * dominant.h) / (second.w * second.h || 1);
-      if (areaRatio < 1.8 && Math.abs(dominant.score - second.score) < 0.15) {
-        return { passed: false, code: 'ambiguous_portrait', message: 'Multiple competing portraits were detected on the ID. Please frame the front of your ID clearly.' };
-      }
-    }
-  }
-
-  return { passed: true, code: 'ok', message: 'ID image quality passed.' };
-}
-
-// Compute Umeyama similarity transform matrix (standard ArcFace/SFace 5-point alignment)
-function getSimilarityTransformMatrix(src: Array<[number, number]>): [[number, number, number], [number, number, number]] {
-  const dst = [
-    [38.2946, 51.6963],
-    [73.5318, 51.5014],
-    [56.0252, 71.7366],
-    [41.5493, 92.3655],
-    [70.7299, 92.2041],
-  ];
 
   let srcMeanX = 0, srcMeanY = 0;
-  const dstMeanX = 56.0262, dstMeanY = 71.9008;
+  let dstMeanX = 0, dstMeanY = 0;
   for (let i = 0; i < 5; i++) {
-    const pt = src[i];
-    if (pt) {
-      srcMeanX += pt[0];
-      srcMeanY += pt[1];
-    }
+    const s = src[i]!;
+    const d = dst[i]!;
+    srcMeanX += s[0];
+    srcMeanY += s[1];
+    dstMeanX += d[0];
+    dstMeanY += d[1];
   }
   srcMeanX /= 5;
   srcMeanY /= 5;
+  dstMeanX /= 5;
+  dstMeanY /= 5;
 
-  const srcDemean = src.map((pt) => [(pt[0] ?? 0) - srcMeanX, (pt[1] ?? 0) - srcMeanY]);
-  const dstDemean = dst.map((pt) => [(pt[0] ?? 0) - dstMeanX, (pt[1] ?? 0) - dstMeanY]);
+  let sum_ux_vy = 0;
+  let sum_vx_uy = 0;
+  let S_xx = 0;
 
-  let A00 = 0, A01 = 0, A10 = 0, A11 = 0;
   for (let i = 0; i < 5; i++) {
-    const dPt = dstDemean[i];
-    const sPt = srcDemean[i];
-    if (dPt && sPt) {
-      A00 += (dPt[0] ?? 0) * (sPt[0] ?? 0);
-      A01 += (dPt[0] ?? 0) * (sPt[1] ?? 0);
-      A10 += (dPt[1] ?? 0) * (sPt[0] ?? 0);
-      A11 += (dPt[1] ?? 0) * (sPt[1] ?? 0);
-    }
-  }
-  A00 /= 5; A01 /= 5; A10 /= 5; A11 /= 5;
+    const xi = src[i]![0] - srcMeanX;
+    const yi = src[i]![1] - srcMeanY;
+    const ui = dst[i]![0] - dstMeanX;
+    const vi = dst[i]![1] - dstMeanY;
 
-  const detA = A00 * A11 - A01 * A10;
-  const d0 = 1.0;
-  const d1 = detA < 0 ? -1.0 : 1.0;
-
-  const ata00 = A00 * A00 + A10 * A10;
-  const ata01 = A00 * A01 + A10 * A11;
-  const ata11 = A01 * A01 + A11 * A11;
-
-  const tr = ata00 + ata11;
-  const diff = ata00 - ata11;
-  const disc = Math.sqrt(diff * diff + 4 * ata01 * ata01);
-  const l1 = (tr + disc) / 2;
-  const l2 = Math.max((tr - disc) / 2, 0);
-
-  const s0 = Math.sqrt(Math.max(l1, 0));
-  const s1 = Math.sqrt(Math.max(l2, 0));
-
-  let v00 = 1, v01 = 0, v10 = 0, v11 = 1;
-  if (Math.abs(ata01) > 1e-7) {
-    const v1_x = ata01;
-    const v1_y = l1 - ata00;
-    const norm1 = Math.hypot(v1_x, v1_y);
-    v00 = v1_x / (norm1 || 1);
-    v10 = v1_y / (norm1 || 1);
-
-    const v2_x = ata01;
-    const v2_y = l2 - ata00;
-    const norm2 = Math.hypot(v2_x, v2_y);
-    v01 = v2_x / (norm2 || 1);
-    v11 = v2_y / (norm2 || 1);
+    sum_ux_vy += ui * xi + vi * yi;
+    sum_vx_uy += vi * xi - ui * yi;
+    S_xx += xi * xi + yi * yi;
   }
 
-  let u00 = 0, u01 = 0, u10 = 0, u11 = 0;
-  if (s0 > 1e-7) {
-    u00 = (A00 * v00 + A01 * v10) / s0;
-    u10 = (A10 * v00 + A11 * v10) / s0;
-  }
-  if (s1 > 1e-7) {
-    u01 = (A00 * v01 + A01 * v11) / s1;
-    u11 = (A10 * v01 + A11 * v11) / s1;
+  if (S_xx < 1e-7) {
+    throw new Error('Degenerate landmark configuration: points are collocated');
   }
 
-  const dvt00 = v00;
-  const dvt01 = v10;
-  const dvt10 = d1 * v01;
-  const dvt11 = d1 * v11;
-
-  const R00 = u00 * dvt00 + u01 * dvt10;
-  const R01 = u00 * dvt01 + u01 * dvt11;
-  const R10 = u10 * dvt00 + u11 * dvt10;
-  const R11 = u10 * dvt01 + u11 * dvt11;
-
-  let var1 = 0, var2 = 0;
-  for (let i = 0; i < 5; i++) {
-    const sPt = srcDemean[i];
-    if (sPt) {
-      var1 += (sPt[0] ?? 0) * (sPt[0] ?? 0);
-      var2 += (sPt[1] ?? 0) * (sPt[1] ?? 0);
-    }
-  }
-  var1 /= 5;
-  var2 /= 5;
-
-  const scale = (s0 * d0 + s1 * d1) / (var1 + var2 || 1);
-
-  const T00 = R00 * scale;
-  const T01 = R01 * scale;
-  const T10 = R10 * scale;
-  const T11 = R11 * scale;
-
-  const T02 = dstMeanX - scale * (R00 * srcMeanX + R01 * srcMeanY);
-  const T12 = dstMeanY - scale * (R10 * srcMeanX + R11 * srcMeanY);
+  const a = sum_ux_vy / S_xx;
+  const b = sum_vx_uy / S_xx;
+  const tx = dstMeanX - (a * srcMeanX - b * srcMeanY);
+  const ty = dstMeanY - (b * srcMeanX + a * srcMeanY);
 
   return [
-    [T00, T01, T02],
-    [T10, T11, T12],
+    [a, -b, tx],
+    [b, a, ty],
   ];
 }
 
 // Warp affine image to 112x112 using bilinear interpolation
-function warpAffine112(srcBuffer: Uint8Array, srcW: number, srcH: number, matrix: [[number, number, number], [number, number, number]]): Uint8Array {
+export function warpAffine112(
+  srcBuffer: Uint8Array,
+  srcW: number,
+  srcH: number,
+  matrix: [[number, number, number], [number, number, number]]
+): Uint8Array {
   const a = matrix[0][0], b = matrix[0][1], tx = matrix[0][2];
   const c = matrix[1][0], d = matrix[1][1], ty = matrix[1][2];
 
@@ -572,8 +409,12 @@ function warpAffine112(srcBuffer: Uint8Array, srcW: number, srcH: number, matrix
 }
 
 // Extract normalized SFace feature descriptor from an aligned 112x112 chip
-async function extractSFaceDescriptor(alignedBuffer: Uint8Array): Promise<Float32Array> {
+export async function extractSFaceDescriptor(alignedBuffer: Uint8Array): Promise<Float32Array> {
   const { sface } = await getInferenceSessions();
+  if (alignedBuffer.length !== 112 * 112 * 3) {
+    throw new Error('invalid_aligned_face_dimensions');
+  }
+
   const sfaceData = new Float32Array(3 * 112 * 112);
   const plane = 112 * 112;
   for (let i = 0; i < plane; i++) {
@@ -585,7 +426,16 @@ async function extractSFaceDescriptor(alignedBuffer: Uint8Array): Promise<Float3
   const sfaceTensor = new ort.Tensor('float32', sfaceData, [1, 3, 112, 112]);
   const sfaceOut = await sface.run({ data: sfaceTensor });
   const rawFeat = sfaceOut.fc1?.data as Float32Array | undefined;
-  if (!rawFeat) throw new Error('SFace model failed to return feature embedding');
+  if (!rawFeat || !(rawFeat instanceof Float32Array) || rawFeat.length !== 128) {
+    throw new Error('sface_output_contract_violation');
+  }
+
+  // Validate finite values
+  for (let i = 0; i < rawFeat.length; i++) {
+    if (!Number.isFinite(rawFeat[i])) {
+      throw new Error('sface_non_finite_descriptor');
+    }
+  }
 
   // L2-normalize
   let norm = 0;
@@ -594,16 +444,20 @@ async function extractSFaceDescriptor(alignedBuffer: Uint8Array): Promise<Float3
     norm += val * val;
   }
   norm = Math.sqrt(norm);
+  if (norm < 1e-6) {
+    throw new Error('sface_zero_norm_descriptor');
+  }
+
   const normalized = new Float32Array(rawFeat.length);
   for (let i = 0; i < rawFeat.length; i++) {
-    normalized[i] = (rawFeat[i] ?? 0) / (norm || 1);
+    normalized[i] = (rawFeat[i] ?? 0) / norm;
   }
 
   return normalized;
 }
 
 // Align face and extract descriptor
-async function getAlignedFaceDescriptor(imageBuffer: Buffer, face: DetectedFace): Promise<Float32Array> {
+export async function getAlignedFaceDescriptor(imageBuffer: Buffer, face: DetectedFace): Promise<Float32Array> {
   const resized640 = await sharp(imageBuffer)
     .resize(640, 640, { fit: 'contain', background: { r: 0, g: 0, b: 0 } })
     .removeAlpha()
@@ -615,7 +469,382 @@ async function getAlignedFaceDescriptor(imageBuffer: Buffer, face: DetectedFace)
   return extractSFaceDescriptor(alignedBuffer);
 }
 
-// Compare live selfie face vs ID portrait
+// Evaluate face crop region for sharpness, exposure, and dimension
+async function evaluateFaceCropQuality(
+  originalBuffer: Buffer,
+  meta: Metadata,
+  face: DetectedFace,
+  kind: 'selfie' | 'id'
+): Promise<{ passed: boolean; code: QualityResultCode; message: string }> {
+  const origW = meta.width ?? 0;
+  const origH = meta.height ?? 0;
+  if (origW < 1 || origH < 1) {
+    return { passed: false, code: 'decode_failed', message: 'Invalid image dimensions.' };
+  }
+
+  const scale = Math.min(640 / origW, 640 / origH);
+  const padX = (640 - origW * scale) / 2;
+  const padY = (640 - origH * scale) / 2;
+
+  const realFaceX = Math.max(0, Math.floor((face.x - padX) / scale));
+  const realFaceY = Math.max(0, Math.floor((face.y - padY) / scale));
+  const realFaceW = Math.min(origW - realFaceX, Math.ceil(face.w / scale));
+  const realFaceH = Math.min(origH - realFaceY, Math.ceil(face.h / scale));
+
+  if (realFaceW < 30 || realFaceH < 30) {
+    return {
+      passed: false,
+      code: kind === 'selfie' ? 'face_too_small' : 'portrait_missing',
+      message: kind === 'selfie'
+        ? 'Move closer to the camera so your face is clearly visible.'
+        : 'The portrait on your ID is too small. Please use a clearer, higher-resolution photo.',
+    };
+  }
+
+  try {
+    const faceCropBuffer = await sharp(originalBuffer)
+      .extract({ left: realFaceX, top: realFaceY, width: realFaceW, height: realFaceH })
+      .toBuffer();
+
+    const faceMeta = await sharp(faceCropBuffer).metadata();
+    const faceRaw = await sharp(faceCropBuffer).removeAlpha().raw().toBuffer();
+    const faceW = faceMeta.width ?? realFaceW;
+    const faceH = faceMeta.height ?? realFaceH;
+
+    // 1. Exposure of face crop
+    const { mean: faceLum, clippedRatio: faceClipped } = computeLuminanceStats(new Uint8Array(faceRaw), faceW * faceH);
+    if (faceLum < 25) {
+      return {
+        passed: false,
+        code: 'too_dark',
+        message: kind === 'selfie'
+          ? 'Your face is too dark. Please face a light source.'
+          : 'The ID portrait is too dark. Please take the photo in good lighting.',
+      };
+    }
+    if (faceLum > 240 && faceClipped > 0.4) {
+      return {
+        passed: false,
+        code: 'overexposed',
+        message: kind === 'selfie'
+          ? 'Too much glare on your face. Please move away from harsh lighting.'
+          : 'Glare or overexposure detected on the ID portrait.',
+      };
+    }
+
+    // 2. Sharpness of face crop
+    const faceGrayscale = await sharp(faceCropBuffer).grayscale().raw().toBuffer();
+    const faceBlur = computeLaplacianVariance(new Uint8Array(faceGrayscale), faceW, faceH);
+
+    const minBlur = kind === 'selfie' ? 25 : 20;
+    if (faceBlur < minBlur) {
+      return {
+        passed: false,
+        code: 'blurry',
+        message: kind === 'selfie'
+          ? 'Your face is blurry. Please hold steady and try again.'
+          : 'The portrait on your ID is blurry. Please upload a clear, focused photo.',
+      };
+    }
+  } catch (err) {
+    console.warn('Face crop quality evaluation fallback:', err);
+  }
+
+  return { passed: true, code: 'ok', message: 'Face crop quality passed.' };
+}
+
+// Single-pass Image Analysis: decodes, detects faces, validates quality, and extracts descriptor
+export async function analyzeFaceImage(
+  imageBuffer: Buffer,
+  kind: 'selfie' | 'id'
+): Promise<AnalyzedFaceImage> {
+  const modelName = 'opencv_zoo_yunet_sface';
+  const modelVersion = 'yunet_2023mar_sface_2021dec';
+
+  let meta: Metadata;
+  let raw: Buffer;
+  try {
+    const image = sharp(imageBuffer);
+    meta = await image.metadata();
+    raw = await image.removeAlpha().raw().toBuffer();
+  } catch {
+    return {
+      quality: { passed: false, code: 'decode_failed', message: 'The image could not be decoded.' },
+      faces: [],
+      dominantFace: null,
+      descriptor: null,
+      modelName,
+      modelVersion,
+    };
+  }
+
+  const format = meta.format?.toLowerCase();
+  if (!format || !['jpeg', 'jpg', 'png', 'webp'].includes(format)) {
+    return {
+      quality: { passed: false, code: 'unsupported_format', message: 'Unsupported image format.' },
+      faces: [],
+      dominantFace: null,
+      descriptor: null,
+      modelName,
+      modelVersion,
+    };
+  }
+
+  const width = meta.width ?? 0;
+  const height = meta.height ?? 0;
+  const minDim = kind === 'selfie' ? 200 : 400;
+  const longEdge = Math.max(width, height);
+  if ((kind === 'selfie' && (width < minDim || height < minDim)) || (kind === 'id' && longEdge < minDim)) {
+    return {
+      quality: {
+        passed: false,
+        code: 'too_small',
+        message: kind === 'selfie'
+          ? 'Photo resolution is too small. Please retake the photo.'
+          : 'The ID image resolution is too low. Please use a clearer image.',
+      },
+      faces: [],
+      dominantFace: null,
+      descriptor: null,
+      modelName,
+      modelVersion,
+    };
+  }
+
+  // Exposure
+  const { mean: lumMean, clippedRatio } = computeLuminanceStats(new Uint8Array(raw), width * height);
+  const minLum = kind === 'selfie' ? 35 : 30;
+  if (lumMean < minLum) {
+    return {
+      quality: {
+        passed: false,
+        code: 'too_dark',
+        message: kind === 'selfie'
+          ? 'Your face is too dark. Please move to better lighting and retake the photo.'
+          : 'The ID image is too dark. Please use a brighter image.',
+      },
+      faces: [],
+      dominantFace: null,
+      descriptor: null,
+      modelName,
+      modelVersion,
+    };
+  }
+
+  const maxLum = kind === 'selfie' ? 225 : 235;
+  const maxClipped = kind === 'selfie' ? 0.3 : 0.4;
+  if (lumMean > maxLum && clippedRatio > maxClipped) {
+    return {
+      quality: {
+        passed: false,
+        code: 'overexposed',
+        message: kind === 'selfie'
+          ? 'Your photo is overexposed. Please adjust lighting and retake the photo.'
+          : 'The ID image has severe glare or overexposure. Please use a clearer image.',
+      },
+      faces: [],
+      dominantFace: null,
+      descriptor: null,
+      modelName,
+      modelVersion,
+    };
+  }
+
+  // Blur
+  const grayscale = await sharp(imageBuffer).grayscale().raw().toBuffer();
+  const blurScore = computeLaplacianVariance(new Uint8Array(grayscale), width, height);
+  const minBlur = kind === 'selfie' ? 35 : 25;
+  if (blurScore < minBlur) {
+    return {
+      quality: {
+        passed: false,
+        code: 'blurry',
+        message: kind === 'selfie'
+          ? 'Your photo is too blurry. Please hold the device steady and try again.'
+          : 'The ID image is too blurry. Please use a clearer image of the front of your valid ID.',
+      },
+      faces: [],
+      dominantFace: null,
+      descriptor: null,
+      modelName,
+      modelVersion,
+    };
+  }
+
+  // Face Detection via YuNet
+  let faces: DetectedFace[];
+  try {
+    faces = await detectFaces(imageBuffer);
+  } catch (err: any) {
+    return {
+      quality: { passed: false, code: 'decode_failed', message: `Face detection engine error: ${err?.message || 'unknown'}` },
+      faces: [],
+      dominantFace: null,
+      descriptor: null,
+      modelName,
+      modelVersion,
+    };
+  }
+
+  if (faces.length === 0) {
+    return {
+      quality: {
+        passed: false,
+        code: kind === 'selfie' ? 'no_face' : 'portrait_missing',
+        message: kind === 'selfie'
+          ? 'No face was detected. Please position your face inside the guide and try again.'
+          : "We couldn't clearly locate the portrait on this ID. Please use a clearer image of the front of your valid ID.",
+      },
+      faces: [],
+      dominantFace: null,
+      descriptor: null,
+      modelName,
+      modelVersion,
+    };
+  }
+
+  let dominantFace: DetectedFace | null = null;
+  if (kind === 'selfie') {
+    if (faces.length > 1) {
+      return {
+        quality: {
+          passed: false,
+          code: 'multiple_faces',
+          message: 'More than one face was detected. Only the visitor should be visible.',
+        },
+        faces,
+        dominantFace: null,
+        descriptor: null,
+        modelName,
+        modelVersion,
+      };
+    }
+    dominantFace = faces[0]!;
+
+    if (dominantFace.w < 70 || dominantFace.h < 70) {
+      return {
+        quality: { passed: false, code: 'face_too_small', message: 'Move slightly closer to the camera.' },
+        faces,
+        dominantFace,
+        descriptor: null,
+        modelName,
+        modelVersion,
+      };
+    }
+
+    if (dominantFace.x < 10 || dominantFace.y < 10 || dominantFace.x + dominantFace.w > 630 || dominantFace.y + dominantFace.h > 630) {
+      return {
+        quality: { passed: false, code: 'face_cropped', message: 'Position your full face inside the guide and try again.' },
+        faces,
+        dominantFace,
+        descriptor: null,
+        modelName,
+        modelVersion,
+      };
+    }
+
+    if (!dominantFace.landmarks || dominantFace.landmarks.length < 5) {
+      return {
+        quality: { passed: false, code: 'pose_unsuitable', message: 'Look directly at the camera with a neutral expression.' },
+        faces,
+        dominantFace,
+        descriptor: null,
+        modelName,
+        modelVersion,
+      };
+    }
+
+    const re = dominantFace.landmarks[0]!;
+    const le = dominantFace.landmarks[1]!;
+    const eyeDist = Math.hypot((le[0] ?? 0) - (re[0] ?? 0), (le[1] ?? 0) - (re[1] ?? 0));
+    if (eyeDist < 25) {
+      return {
+        quality: { passed: false, code: 'pose_unsuitable', message: 'Look directly at the camera with your face clearly visible.' },
+        faces,
+        dominantFace,
+        descriptor: null,
+        modelName,
+        modelVersion,
+      };
+    }
+  } else {
+    // ID document portrait selection
+    if (faces.length > 1) {
+      const sorted = [...faces].sort((a, b) => b.w * b.h - a.w * a.h);
+      const top1 = sorted[0]!;
+      const top2 = sorted[1]!;
+      const areaRatio = (top1.w * top1.h) / (top2.w * top2.h || 1);
+      if (areaRatio < 1.8 && Math.abs(top1.score - top2.score) < 0.15) {
+        return {
+          quality: {
+            passed: false,
+            code: 'ambiguous_portrait',
+            message: 'Multiple competing portraits were detected on the ID. Please frame the front of your ID clearly.',
+          },
+          faces,
+          dominantFace: null,
+          descriptor: null,
+          modelName,
+          modelVersion,
+        };
+      }
+      dominantFace = top1;
+    } else {
+      dominantFace = faces[0]!;
+    }
+  }
+
+  // Face crop quality evaluation
+  const cropQuality = await evaluateFaceCropQuality(imageBuffer, meta, dominantFace, kind);
+  if (!cropQuality.passed) {
+    return {
+      quality: cropQuality,
+      faces,
+      dominantFace,
+      descriptor: null,
+      modelName,
+      modelVersion,
+    };
+  }
+
+  // Extract SFace descriptor once
+  let descriptor: Float32Array;
+  try {
+    descriptor = await getAlignedFaceDescriptor(imageBuffer, dominantFace);
+  } catch (err: any) {
+    return {
+      quality: { passed: false, code: 'decode_failed', message: `Descriptor extraction failed: ${err?.message || 'unknown'}` },
+      faces,
+      dominantFace,
+      descriptor: null,
+      modelName,
+      modelVersion,
+    };
+  }
+
+  return {
+    quality: { passed: true, code: 'ok', message: kind === 'selfie' ? 'Live face quality passed.' : 'ID image quality passed.' },
+    faces,
+    dominantFace,
+    descriptor,
+    modelName,
+    modelVersion,
+  };
+}
+
+// Evaluate Live Face technical image quality
+export async function evaluateLiveFaceQuality(imageBuffer: Buffer): Promise<QualityEvaluation> {
+  const analysis = await analyzeFaceImage(imageBuffer, 'selfie');
+  return analysis.quality;
+}
+
+// Evaluate Valid ID image technical quality
+export async function evaluateIdImageQuality(imageBuffer: Buffer): Promise<QualityEvaluation> {
+  const analysis = await analyzeFaceImage(imageBuffer, 'id');
+  return analysis.quality;
+}
+
+// Compare live selfie face vs ID portrait using single-pass analysis
 export async function compareFaces(
   liveFaceBuffer: Buffer,
   idImageBuffer: Buffer
@@ -624,63 +853,36 @@ export async function compareFaces(
   const modelVersion = 'yunet_2023mar_sface_2021dec';
 
   try {
-    // 1. Revalidate live face quality on server
-    const liveQuality = await evaluateLiveFaceQuality(liveFaceBuffer);
-    if (!liveQuality.passed) {
-      if (liveQuality.code === 'no_face') return { outcome: 'no_face_in_selfie', matched: false, modelName, modelVersion };
-      if (liveQuality.code === 'multiple_faces') return { outcome: 'multiple_selfie_faces', matched: false, modelName, modelVersion };
-      return { outcome: 'low_quality_selfie', matched: false, modelName, modelVersion, error: liveQuality.message };
+    const [liveAnalysis, idAnalysis] = await Promise.all([
+      analyzeFaceImage(liveFaceBuffer, 'selfie'),
+      analyzeFaceImage(idImageBuffer, 'id'),
+    ]);
+
+    if (!liveAnalysis.quality.passed) {
+      if (liveAnalysis.quality.code === 'no_face') return { outcome: 'no_face_in_selfie', matched: false, modelName, modelVersion };
+      if (liveAnalysis.quality.code === 'multiple_faces') return { outcome: 'multiple_selfie_faces', matched: false, modelName, modelVersion };
+      return { outcome: 'low_quality_selfie', matched: false, modelName, modelVersion, error: liveAnalysis.quality.message };
     }
 
-    // 2. Revalidate ID quality on server
-    const idQuality = await evaluateIdImageQuality(idImageBuffer);
-    if (!idQuality.passed) {
-      if (idQuality.code === 'portrait_missing') return { outcome: 'no_face_in_id', matched: false, modelName, modelVersion };
-      if (idQuality.code === 'ambiguous_portrait') return { outcome: 'ambiguous_id_faces', matched: false, modelName, modelVersion };
-      return { outcome: 'low_quality_id', matched: false, modelName, modelVersion, error: idQuality.message };
+    if (!idAnalysis.quality.passed) {
+      if (idAnalysis.quality.code === 'portrait_missing') return { outcome: 'no_face_in_id', matched: false, modelName, modelVersion };
+      if (idAnalysis.quality.code === 'ambiguous_portrait') return { outcome: 'ambiguous_id_faces', matched: false, modelName, modelVersion };
+      return { outcome: 'low_quality_id', matched: false, modelName, modelVersion, error: idAnalysis.quality.message };
     }
 
-    // 3. Detect faces on both
-    const liveFaces = await detectFaces(liveFaceBuffer);
-    if (liveFaces.length !== 1) {
+    if (!liveAnalysis.descriptor || !idAnalysis.descriptor) {
       return {
-        outcome: liveFaces.length === 0 ? 'no_face_in_selfie' : 'multiple_selfie_faces',
+        outcome: 'engine_error',
         matched: false,
         modelName,
         modelVersion,
+        error: 'Descriptor extraction failed',
       };
     }
 
-    const idFaces = await detectFaces(idImageBuffer);
-    if (idFaces.length === 0) {
-      return { outcome: 'no_face_in_id', matched: false, modelName, modelVersion };
-    }
-
-    // Select dominant portrait on ID
-    const sortedIdFaces = [...idFaces].sort((a, b) => b.w * b.h - a.w * a.h);
-    const chosenIdFace = sortedIdFaces[0];
-    const liveFace = liveFaces[0];
-
-    if (!chosenIdFace || !liveFace) {
-      return {
-        outcome: !liveFace ? 'no_face_in_selfie' : 'no_face_in_id',
-        matched: false,
-        modelName,
-        modelVersion,
-      };
-    }
-
-    // 4. Align both faces & extract descriptors
-    const liveDescriptor = await getAlignedFaceDescriptor(liveFaceBuffer, liveFace);
-    const idDescriptor = await getAlignedFaceDescriptor(idImageBuffer, chosenIdFace);
-
-    // 5. Cosine similarity
-    let cosineSim = 0;
-    for (let i = 0; i < liveDescriptor.length; i++) {
-      cosineSim += (liveDescriptor[i] ?? 0) * (idDescriptor[i] ?? 0);
-    }
-
+    const cosineSim = computeCosineSimilarity(liveAnalysis.descriptor, idAnalysis.descriptor);
     const matched = cosineSim >= SFACE_COSINE_THRESHOLD;
+
     return {
       outcome: matched ? 'matched' : 'mismatch',
       matched,
@@ -723,19 +925,18 @@ export function computeCosineSimilarity(a: Float32Array, b: Float32Array): numbe
 export async function extractFaceDescriptorFromBuffer(
   imageBuffer: Buffer
 ): Promise<{ descriptor: Float32Array; modelName: string; modelVersion: string }> {
-  const modelName = 'opencv_zoo_yunet_sface';
-  const modelVersion = 'yunet_2023mar_sface_2021dec';
-
-  const faces = await detectFaces(imageBuffer);
-  if (faces.length === 0) {
-    throw new Error('no_face_in_selfie');
+  const analysis = await analyzeFaceImage(imageBuffer, 'selfie');
+  if (!analysis.quality.passed) {
+    throw new Error(analysis.quality.code);
   }
-  if (faces.length > 1) {
-    throw new Error('multiple_selfie_faces');
+  if (!analysis.descriptor) {
+    throw new Error('descriptor_unavailable');
   }
-
-  const descriptor = await getAlignedFaceDescriptor(imageBuffer, faces[0]!);
-  return { descriptor, modelName, modelVersion };
+  return {
+    descriptor: analysis.descriptor,
+    modelName: analysis.modelName,
+    modelVersion: analysis.modelVersion,
+  };
 }
 
 export function parseTemplateKey(keyInput: string): Buffer {
@@ -754,12 +955,50 @@ export function parseTemplateKey(keyInput: string): Buffer {
   return crypto.createHash('sha256').update(trimmed).digest();
 }
 
+/**
+ * Resolves an active or version-specific template key from a keyring or secret.
+ */
+export function getVersionedTemplateKey(
+  keyVersion = 'v1',
+  keyringOrSecret?: string | Record<string, string>
+): string {
+  if (keyringOrSecret && typeof keyringOrSecret === 'object') {
+    const key = keyringOrSecret[keyVersion];
+    if (!key) throw new Error(`unsupported_template_key_version:${keyVersion}`);
+    return key;
+  }
+
+  if (process.env.RETURNING_VISITOR_KEYRING) {
+    try {
+      const parsedRing = JSON.parse(process.env.RETURNING_VISITOR_KEYRING);
+      if (parsedRing && typeof parsedRing === 'object' && parsedRing[keyVersion]) {
+        return parsedRing[keyVersion];
+      }
+    } catch {
+      // Fall through on JSON parse error
+    }
+  }
+
+  const primaryKey = (typeof keyringOrSecret === 'string' && keyringOrSecret) || process.env.RETURNING_VISITOR_TEMPLATE_KEY;
+  if (!primaryKey) {
+    throw new Error('template_key_missing');
+  }
+
+  const activeVersion = process.env.RETURNING_VISITOR_ACTIVE_KEY_VERSION || 'v1';
+  if (keyVersion === activeVersion || keyVersion === 'v1') {
+    return primaryKey;
+  }
+
+  throw new Error(`unsupported_template_key_version:${keyVersion}`);
+}
+
 export function encryptFaceTemplate(
   descriptor: Float32Array,
   keyHexOrSecret: string,
   keyVersion = 'v1'
 ): { encryptedEmbedding: string; iv: string; authTag: string; keyVersion: string } {
-  const key = parseTemplateKey(keyHexOrSecret);
+  const resolvedKey = getVersionedTemplateKey(keyVersion, keyHexOrSecret);
+  const key = parseTemplateKey(resolvedKey);
   const iv = crypto.randomBytes(12);
   const cipher = crypto.createCipheriv('aes-256-gcm', key, iv);
   const rawBytes = Buffer.from(descriptor.buffer, descriptor.byteOffset, descriptor.byteLength);
@@ -778,9 +1017,11 @@ export function decryptFaceTemplate(
   encryptedHex: string,
   ivHex: string,
   authTagHex: string,
-  keyHexOrSecret: string
+  keyHexOrSecret: string,
+  keyVersion = 'v1'
 ): Float32Array {
-  const key = parseTemplateKey(keyHexOrSecret);
+  const resolvedKey = getVersionedTemplateKey(keyVersion, keyHexOrSecret);
+  const key = parseTemplateKey(resolvedKey);
   const iv = Buffer.from(ivHex, 'hex');
   const authTag = Buffer.from(authTagHex, 'hex');
   const decipher = crypto.createDecipheriv('aes-256-gcm', key, iv);
@@ -796,4 +1037,3 @@ export function decryptFaceTemplate(
   }
   return floatArr;
 }
-

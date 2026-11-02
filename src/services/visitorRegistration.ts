@@ -15,6 +15,43 @@ export interface AddressProvenance {
   postcode?: string | null;
   countryCode?: string;
   addressDetail?: string;
+  regionCode?: string;
+  provinceCode?: string;
+  cityCode?: string;
+  barangayCode?: string;
+  psgcVersion?: string;
+}
+
+export interface ReturningSavedVehicle {
+  id: string;
+  vehicleType: string;
+  plateNumber: string;
+  plateKey?: string;
+  color?: string | null;
+  makeModel?: string | null;
+}
+
+export interface ReturningIdentifyProfile {
+  id: string;
+  firstName: string;
+  middleName?: string | null;
+  lastName: string;
+  contactNumber: string;
+  homeAddress?: string | null;
+  addressProvenance?: AddressProvenance | null;
+}
+
+export interface ReturningIdentifyResult {
+  available?: boolean;
+  matched: boolean;
+  matchToken?: string;
+  expiresAt?: string;
+  profile?: ReturningIdentifyProfile;
+  savedVehicles?: ReturningSavedVehicle[];
+  reason?: string;
+  message?: string;
+  error?: string;
+  reasonCode?: string;
 }
 
 export interface VisitorRegistration {
@@ -28,6 +65,7 @@ export interface VisitorRegistration {
   consent?: boolean;
   homeAddress?: string;
   addressProvenance?: AddressProvenance;
+  registrationMode?: 'new' | 'returning';
   arrivalMode?: 'no_vehicle' | 'vehicle';
   vehicle?: {
     vehicleType?: 'car' | 'motorcycle' | 'van' | 'pickup' | 'suv' | 'truck' | 'bicycle' | 'other' | string;
@@ -187,8 +225,6 @@ export function classifySubmissionOutcome(
   const REPLAY_CONFLICT_CODES = new Set([
     'payload_mismatch',
     'intent_mismatch',
-    'cross_actor_replay',
-    'source_mismatch',
     'pass_token_secret_rotated',
   ]);
   if (code && REPLAY_CONFLICT_CODES.has(code)) {
@@ -202,6 +238,8 @@ export function classifySubmissionOutcome(
     'invalid_uploaded_content',
     'pass_has_expired',
     'expired_upload_intent',
+    'cross_actor_replay',
+    'source_mismatch',
   ]);
   if (code && NEW_TRANSACTION_CODES.has(code)) {
     return 'rejected_requires_new_transaction';
@@ -868,6 +906,55 @@ export async function preflightLiveFace(
   return { ok: true, message: body.message };
 }
 
+export async function identifyReturningVisitor(
+  transaction: PortalIssueTransaction,
+  photoIntentId: string
+): Promise<ReturningIdentifyResult> {
+  const { token } = await getVerifiedPortalSession(transaction);
+
+  let res: Response;
+  try {
+    res = await withTimeout(
+      fetch('/api/passes/identify-returning', {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${token}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          requestId: transaction.requestId,
+          photoIntentId,
+        }),
+      }),
+      30000,
+      'Returning visitor identification timed out after 30s'
+    );
+  } catch (err: any) {
+    throw new Error('Network connection interrupted during visitor identification. Please try again.');
+  }
+
+  const body = (await res.json().catch(() => null)) as ReturningIdentifyResult | null;
+
+  if (res.status === 401) {
+    throw new PortalSessionError('portal_session_expired', 'Visitor registration session expired or unavailable.');
+  }
+
+  if (res.status === 429) {
+    throw new Error(body?.message || 'Too many identification attempts. Please wait before retrying.');
+  }
+
+  if (!res.ok || !body) {
+    return {
+      matched: false,
+      error: body?.error || 'identify_failed',
+      message: body?.message || 'Could not verify returning visitor.',
+      reasonCode: (body as any)?.reasonCode,
+    };
+  }
+
+  return body;
+}
+
 export async function issueVisitorPass(
   source: RegistrationSource,
   visitor: VisitorRegistration,
@@ -932,6 +1019,7 @@ export async function issueVisitorPass(
       body: JSON.stringify({
         requestId: effectiveRequestId,
         source,
+        registrationMode: effectiveVisitor.registrationMode || (effectiveVisitor.returning?.profileId ? 'returning' : 'new'),
         visitor: {
           firstName: effectiveVisitor.firstName,
           middleName: effectiveVisitor.middleName,

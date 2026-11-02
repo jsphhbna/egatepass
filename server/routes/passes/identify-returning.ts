@@ -162,21 +162,54 @@ async function handleRequest(request: Request): Promise<Response> {
       });
     }
 
-    // 6. Linear search against active returning face templates
-    const { data: templates, error: templatesError } = await admin
-      .from('returning_face_templates')
-      .select(`
-        id, profile_id, encrypted_embedding, iv, auth_tag, key_version,
-        returning_visitor_profiles!inner(
-          id, first_name, middle_name, last_name, contact_number_e164, home_address, expires_at, revoked_at
-        )
-      `)
-      .is('returning_visitor_profiles.revoked_at', null)
-      .gt('returning_visitor_profiles.expires_at', new Date().toISOString());
+    // 6. Complete gallery pagination with safety cap (Phase 4A)
+    const PAGE_SIZE = 500;
+    const SAFETY_CAP = 5000;
+    const allTemplates: Array<any> = [];
+    let from = 0;
+    let hasMore = true;
+    const nowIso = new Date().toISOString();
 
-    if (templatesError) {
-      console.error('Failed to load returning templates:', templatesError);
-      return jsonResponse(500, { error: 'template_query_failed' });
+    while (hasMore) {
+      if (allTemplates.length >= SAFETY_CAP) {
+        console.warn(`Returning visitor gallery reached safety cap of ${SAFETY_CAP} templates.`);
+        return jsonResponse(503, {
+          error: 'gallery_capacity_exceeded',
+          message: 'Returning visitor search capacity exceeded. Please consult guard station.',
+        });
+      }
+
+      const { data: pageData, error: pageError } = await admin
+        .from('returning_face_templates')
+        .select(`
+          id, profile_id, encrypted_embedding, iv, auth_tag, key_version,
+          returning_visitor_profiles!inner(
+            id, first_name, middle_name, last_name, contact_number_e164, home_address,
+            address_place_id, address_detail, psgc_region_code, psgc_province_code, psgc_city_code, psgc_barangay_code, psgc_version,
+            expires_at, revoked_at
+          )
+        `)
+        .is('returning_visitor_profiles.revoked_at', null)
+        .gt('returning_visitor_profiles.expires_at', nowIso)
+        .order('id', { ascending: true })
+        .range(from, from + PAGE_SIZE - 1);
+
+      if (pageError) {
+        console.error('Failed to load returning templates page:', pageError);
+        return jsonResponse(500, { error: 'template_query_failed' });
+      }
+
+      if (!pageData || pageData.length === 0) {
+        hasMore = false;
+        break;
+      }
+
+      allTemplates.push(...pageData);
+      if (pageData.length < PAGE_SIZE) {
+        hasMore = false;
+        break;
+      }
+      from += PAGE_SIZE;
     }
 
     let bestScore = -1;
@@ -188,11 +221,24 @@ async function handleRequest(request: Request): Promise<Response> {
       last_name: string;
       contact_number_e164: string;
       home_address: string;
+      address_place_id: string | null;
+      address_detail: string | null;
+      psgc_region_code?: string | null;
+      psgc_province_code?: string | null;
+      psgc_city_code?: string | null;
+      psgc_barangay_code?: string | null;
+      psgc_version?: string | null;
     } | null = null;
 
-    for (const t of templates || []) {
+    for (const t of allTemplates) {
       try {
-        const candidateEmbedding = decryptFaceTemplate(t.encrypted_embedding, t.iv, t.auth_tag, templateKey);
+        const candidateEmbedding = decryptFaceTemplate(
+          t.encrypted_embedding,
+          t.iv,
+          t.auth_tag,
+          templateKey,
+          t.key_version || 'v1'
+        );
         const score = computeCosineSimilarity(queryEmbedding, candidateEmbedding);
 
         if (score > bestScore) {
@@ -205,13 +251,20 @@ async function handleRequest(request: Request): Promise<Response> {
             last_name: string;
             contact_number_e164: string;
             home_address: string;
+            address_place_id: string | null;
+            address_detail: string | null;
+            psgc_region_code?: string | null;
+            psgc_province_code?: string | null;
+            psgc_city_code?: string | null;
+            psgc_barangay_code?: string | null;
+            psgc_version?: string | null;
           };
           bestProfile = p;
         } else if (score > secondScore) {
           secondScore = score;
         }
       } catch (decErr) {
-        console.warn(`Failed to decrypt template ${t.id}:`, decErr);
+        console.warn(`Failed to decrypt template ${t.id} (version: ${t.key_version}):`, decErr);
       }
     }
 
@@ -227,7 +280,8 @@ async function handleRequest(request: Request): Promise<Response> {
       const matchTokenDigest = computeMatchTokenDigest(matchToken, matchSecret);
       const expiresAt = new Date(Date.now() + 15 * 60 * 1000).toISOString();
 
-      await admin.from('returning_identity_attempts').insert({
+      // Fail-closed persistence: never return match token if attempt failed to persist
+      const { error: insertErr } = await admin.from('returning_identity_attempts').insert({
         owner_id: actorId,
         request_id: parsed.data.requestId,
         photo_intent_id: parsed.data.photoIntentId,
@@ -240,6 +294,14 @@ async function handleRequest(request: Request): Promise<Response> {
         match_token_digest: matchTokenDigest,
         expires_at: expiresAt,
       });
+
+      if (insertErr) {
+        console.error('Failed to persist matched returning identity attempt:', insertErr);
+        return jsonResponse(500, {
+          error: 'attempt_persistence_failed',
+          message: 'Unable to secure identity verification attempt.',
+        });
+      }
 
       // Load saved convenience vehicles
       const { data: vehicles } = await admin
@@ -260,6 +322,18 @@ async function handleRequest(request: Request): Promise<Response> {
           lastName: bestProfile.last_name,
           contactNumber: bestProfile.contact_number_e164,
           homeAddress: bestProfile.home_address,
+          addressProvenance: bestProfile.address_place_id
+            ? {
+                provider: 'geoapify' as const,
+                placeId: bestProfile.address_place_id,
+                addressDetail: bestProfile.address_detail || undefined,
+                regionCode: bestProfile.psgc_region_code || undefined,
+                provinceCode: bestProfile.psgc_province_code || undefined,
+                cityCode: bestProfile.psgc_city_code || undefined,
+                barangayCode: bestProfile.psgc_barangay_code || undefined,
+                psgcVersion: bestProfile.psgc_version || undefined,
+              }
+            : null,
         },
         savedVehicles: (vehicles || []).map((v) => ({
           id: v.id,
@@ -274,7 +348,7 @@ async function handleRequest(request: Request): Promise<Response> {
 
     // No confident match: record neutral failure attempt without leaking candidate scores
     const outcome = bestScore >= minCosine ? 'ambiguous_margin' : 'low_similarity';
-    await admin.from('returning_identity_attempts').insert({
+    const { error: failInsertErr } = await admin.from('returning_identity_attempts').insert({
       owner_id: actorId,
       request_id: parsed.data.requestId,
       photo_intent_id: parsed.data.photoIntentId,
@@ -287,6 +361,10 @@ async function handleRequest(request: Request): Promise<Response> {
       match_token_digest: null,
       expires_at: new Date(Date.now() + 15 * 60 * 1000).toISOString(),
     });
+
+    if (failInsertErr) {
+      console.warn('Failed to persist non-matched returning identity attempt:', failInsertErr);
+    }
 
     return jsonResponse(200, {
       available: true,

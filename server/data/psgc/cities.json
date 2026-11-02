@@ -1,0 +1,362 @@
+[
+  {
+    "code": "1380600000",
+    "regionCode": "1300000000",
+    "provinceCode": null,
+    "name": "City of Manila",
+    "isCity": true,
+    "isHuc": true
+  },
+  {
+    "code": "1381200000",
+    "regionCode": "1300000000",
+    "provinceCode": null,
+    "name": "Quezon City",
+    "isCity": true,
+    "isHuc": true
+  },
+  {
+    "code": "1380300000",
+    "regionCode": "1300000000",
+    "provinceCode": null,
+    "name": "Caloocan City",
+    "isCity": true,
+    "isHuc": true
+  },
+  {
+    "code": "1380800000",
+    "regionCode": "1300000000",
+    "provinceCode": null,
+    "name": "Makati City",
+    "isCity": true,
+    "isHuc": true
+  },
+  {
+    "code": "1380900000",
+    "regionCode": "1300000000",
+    "provinceCode": null,
+    "name": "Malabon City",
+    "isCity": true,
+    "isHuc": true
+  },
+  {
+    "code": "1380700000",
+    "regionCode": "1300000000",
+    "provinceCode": null,
+    "name": "Mandaluyong City",
+    "isCity": true,
+    "isHuc": true
+  },
+  {
+    "code": "1381000000",
+    "regionCode": "1300000000",
+    "provinceCode": null,
+    "name": "Marikina City",
+    "isCity": true,
+    "isHuc": true
+  },
+  {
+    "code": "1381100000",
+    "regionCode": "1300000000",
+    "provinceCode": null,
+    "name": "Muntinlupa City",
+    "isCity": true,
+    "isHuc": true
+  },
+  {
+    "code": "1381300000",
+    "regionCode": "1300000000",
+    "provinceCode": null,
+    "name": "Navotas City",
+    "isCity": true,
+    "isHuc": true
+  },
+  {
+    "code": "1381400000",
+    "regionCode": "1300000000",
+    "provinceCode": null,
+    "name": "Parañaque City",
+    "isCity": true,
+    "isHuc": true
+  },
+  {
+    "code": "1381500000",
+    "regionCode": "1300000000",
+    "provinceCode": null,
+    "name": "Pasay City",
+    "isCity": true,
+    "isHuc": true
+  },
+  {
+    "code": "1381600000",
+    "regionCode": "1300000000",
+    "provinceCode": null,
+    "name": "Pasig City",
+    "isCity": true,
+    "isHuc": true
+  },
+  {
+    "code": "1381700000",
+    "regionCode": "1300000000",
+    "provinceCode": null,
+    "name": "Municipality of Pateros",
+    "isCity": false,
+    "isHuc": false
+  },
+  {
+    "code": "1381800000",
+    "regionCode": "1300000000",
+    "provinceCode": null,
+    "name": "San Juan City",
+    "isCity": true,
+    "isHuc": true
+  },
+  {
+    "code": "1381900000",
+    "regionCode": "1300000000",
+    "provinceCode": null,
+    "name": "Taguig City",
+    "isCity": true,
+    "isHuc": true
+  },
+  {
+    "code": "1382000000",
+    "regionCode": "1300000000",
+    "provinceCode": null,
+    "name": "Valenzuela City",
+    "isCity": true,
+    "isHuc": true
+  },
+  {
+    "code": "1380500000",
+    "regionCode": "1300000000",
+    "provinceCode": null,
+    "name": "Las Piñas City",
+    "isCity": true,
+    "isHuc": true
+  },
+  {
+    "code": "1411020000",
+    "regionCode": "1400000000",
+    "provinceCode": "1411000000",
+    "name": "Baguio City",
+    "isCity": true,
+    "isHuc": true
+  },
+  {
+    "code": "1411010000",
+    "regionCode": "1400000000",
+    "provinceCode": "1411000000",
+    "name": "La Trinidad",
+    "isCity": false,
+    "isHuc": false
+  },
+  {
+    "code": "0314010000",
+    "regionCode": "0300000000",
+    "provinceCode": "0314000000",
+    "name": "City of Malolos",
+    "isCity": true,
+    "isHuc": false
+  },
+  {
+    "code": "0314020000",
+    "regionCode": "0300000000",
+    "provinceCode": "0314000000",
+    "name": "City of Meycauayan",
+    "isCity": true,
+    "isHuc": false
+  },
+  {
+    "code": "0314030000",
+    "regionCode": "0300000000",
+    "provinceCode": "0314000000",
+    "name": "City of San Jose del Monte",
+    "isCity": true,
+    "isHuc": false
+  },
+  {
+    "code": "0314040000",
+    "regionCode": "0300000000",
+    "provinceCode": "0314000000",
+    "name": "Marilao",
+    "isCity": false,
+    "isHuc": false
+  },
+  {
+    "code": "0354010000",
+    "regionCode": "0300000000",
+    "provinceCode": "0354000000",
+    "name": "Angeles City",
+    "isCity": true,
+    "isHuc": true
+  },
+  {
+    "code": "0354020000",
+    "regionCode": "0300000000",
+    "provinceCode": "0354000000",
+    "name": "City of San Fernando",
+    "isCity": true,
+    "isHuc": false
+  },
+  {
+    "code": "0421030000",
+    "regionCode": "0400000000",
+    "provinceCode": "0421000000",
+    "name": "Bacoor City",
+    "isCity": true,
+    "isHuc": false
+  },
+  {
+    "code": "0421060000",
+    "regionCode": "0400000000",
+    "provinceCode": "0421000000",
+    "name": "Dasmariñas City",
+    "isCity": true,
+    "isHuc": false
+  },
+  {
+    "code": "0421080000",
+    "regionCode": "0400000000",
+    "provinceCode": "0421000000",
+    "name": "Imus City",
+    "isCity": true,
+    "isHuc": false
+  },
+  {
+    "code": "0421190000",
+    "regionCode": "0400000000",
+    "provinceCode": "0421000000",
+    "name": "Tagaytay City",
+    "isCity": true,
+    "isHuc": false
+  },
+  {
+    "code": "0421050000",
+    "regionCode": "0400000000",
+    "provinceCode": "0421000000",
+    "name": "Cavite City",
+    "isCity": true,
+    "isHuc": false
+  },
+  {
+    "code": "0434040000",
+    "regionCode": "0400000000",
+    "provinceCode": "0434000000",
+    "name": "Calamba City",
+    "isCity": true,
+    "isHuc": false
+  },
+  {
+    "code": "0434280000",
+    "regionCode": "0400000000",
+    "provinceCode": "0434000000",
+    "name": "Santa Rosa City",
+    "isCity": true,
+    "isHuc": false
+  },
+  {
+    "code": "0434030000",
+    "regionCode": "0400000000",
+    "provinceCode": "0434000000",
+    "name": "Biñan City",
+    "isCity": true,
+    "isHuc": false
+  },
+  {
+    "code": "0434240000",
+    "regionCode": "0400000000",
+    "provinceCode": "0434000000",
+    "name": "San Pedro City",
+    "isCity": true,
+    "isHuc": false
+  },
+  {
+    "code": "0434250000",
+    "regionCode": "0400000000",
+    "provinceCode": "0434000000",
+    "name": "City of San Pablo",
+    "isCity": true,
+    "isHuc": false
+  },
+  {
+    "code": "0458010000",
+    "regionCode": "0400000000",
+    "provinceCode": "0458000000",
+    "name": "Antipolo City",
+    "isCity": true,
+    "isHuc": false
+  },
+  {
+    "code": "0458020000",
+    "regionCode": "0400000000",
+    "provinceCode": "0458000000",
+    "name": "Cainta",
+    "isCity": false,
+    "isHuc": false
+  },
+  {
+    "code": "0458130000",
+    "regionCode": "0400000000",
+    "provinceCode": "0458000000",
+    "name": "Taytay",
+    "isCity": false,
+    "isHuc": false
+  },
+  {
+    "code": "0458080000",
+    "regionCode": "0400000000",
+    "provinceCode": "0458000000",
+    "name": "San Mateo",
+    "isCity": false,
+    "isHuc": false
+  },
+  {
+    "code": "0410050000",
+    "regionCode": "0400000000",
+    "provinceCode": "0410000000",
+    "name": "Batangas City",
+    "isCity": true,
+    "isHuc": false
+  },
+  {
+    "code": "0410140000",
+    "regionCode": "0400000000",
+    "provinceCode": "0410000000",
+    "name": "Lipa City",
+    "isCity": true,
+    "isHuc": false
+  },
+  {
+    "code": "0722170000",
+    "regionCode": "0700000000",
+    "provinceCode": "0722000000",
+    "name": "Cebu City",
+    "isCity": true,
+    "isHuc": true
+  },
+  {
+    "code": "0722260000",
+    "regionCode": "0700000000",
+    "provinceCode": "0722000000",
+    "name": "Lapu-Lapu City",
+    "isCity": true,
+    "isHuc": true
+  },
+  {
+    "code": "0722300000",
+    "regionCode": "0700000000",
+    "provinceCode": "0722000000",
+    "name": "Mandaue City",
+    "isCity": true,
+    "isHuc": true
+  },
+  {
+    "code": "1124020000",
+    "regionCode": "1100000000",
+    "provinceCode": "1124000000",
+    "name": "Davao City",
+    "isCity": true,
+    "isHuc": true
+  }
+]

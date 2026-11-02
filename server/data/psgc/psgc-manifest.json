@@ -1,0 +1,10 @@
+{
+  "source": "Philippine Statistics Authority (PSA)",
+  "officialPortal": "https://psa.gov.ph/classification/psgc",
+  "datasetVersion": "2026-q3",
+  "releaseDate": "2026-09-30",
+  "publicationDate": "2026-10-12",
+  "standard": "PSGC 10-Digit Revision 1",
+  "description": "Official Philippine Standard Geographic Code dataset normalized for E-GatePass address provenance",
+  "updatedAt": "2026-11-02T04:28:27.950Z"
+}

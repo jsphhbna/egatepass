@@ -39,6 +39,11 @@ const requestSchema = z.object({
     postcode: z.string().nullable().optional(),
     countryCode: z.string().max(10).optional(),
     addressDetail: z.string().max(200).optional(),
+    regionCode: z.string().max(20).optional(),
+    provinceCode: z.string().max(20).optional(),
+    cityCode: z.string().max(20).optional(),
+    barangayCode: z.string().max(20).optional(),
+    psgcVersion: z.string().max(20).optional(),
   }).optional(),
   vehicle: z.object({
     vehicleType: z.string().trim().min(1).max(40).optional(),
@@ -203,6 +208,23 @@ async function handleRequest(request: Request): Promise<Response> {
           message: 'Explicit arrival mode selection is required.',
         });
       }
+
+      // Registration mode validation & symmetry
+      if (parsed.data.registrationMode === 'returning') {
+        if (!parsed.data.returning?.profileId) {
+          return jsonResponse(422, {
+            error: 'returning_credentials_required',
+            message: 'Returning visitor credentials are required when registration mode is returning.',
+          });
+        }
+      } else if (parsed.data.registrationMode === 'new') {
+        if (parsed.data.returning?.profileId || parsed.data.returning?.matchToken) {
+          return jsonResponse(422, {
+            error: 'returning_metadata_forbidden',
+            message: 'Returning visitor metadata cannot be provided for new visitor registration.',
+          });
+        }
+      }
     }
 
     // Phone normalization (Section 19: PH mobile contract)
@@ -360,13 +382,11 @@ async function handleRequest(request: Request): Promise<Response> {
         return jsonResponse(409, { error: 'payload_mismatch' });
       }
 
-      // If placeId is present, also verify address detail if original had it
-      if (existingPlaceId && existingVisitor.address_detail) {
-        const incomingDetail = (parsed.data.addressProvenance?.addressDetail || '').trim();
-        const existingDetail = (existingVisitor.address_detail || '').trim();
-        if (incomingDetail !== existingDetail) {
-          return jsonResponse(409, { error: 'payload_mismatch' });
-        }
+      // Symmetrically verify address detail (including null-vs-non-null)
+      const existingDetail = (existingVisitor.address_detail || '').trim() || null;
+      const incomingDetail = (parsed.data.addressProvenance?.addressDetail || '').trim() || null;
+      if (existingDetail !== incomingDetail) {
+        return jsonResponse(409, { error: 'payload_mismatch' });
       }
 
       const expectedReturningId = parsed.data.returning?.profileId || null;
@@ -400,12 +420,11 @@ async function handleRequest(request: Request): Promise<Response> {
         }
       }
 
-      // Symmetric evidence upload_intent_ids comparison
+      // Symmetric evidence upload_intent_ids comparison (including retained metadata after image purge)
       const { data: attachedEvidence, error: evError } = await admin
         .from('visitor_evidence')
         .select('kind, upload_intent_id')
-        .eq('visitor_id', existingVisitor.id)
-        .is('purged_at', null);
+        .eq('visitor_id', existingVisitor.id);
 
       if (evError) throw evError;
       const evMap = new Map((attachedEvidence || []).map((e) => [e.kind, e.upload_intent_id]));
@@ -637,8 +656,8 @@ async function handleRequest(request: Request): Promise<Response> {
 
     if (parsed.data.source === 'portal') {
       if (verifiedAddress) {
-        // Use online v3 RPC with verified address provenance and vehicle evidence
-        const rpcRes = await admin.schema('api').rpc('issue_online_pass_v3', {
+        // Attempt online v4 RPC with PSGC structured provenance
+        let rpcRes = await admin.schema('api').rpc('issue_online_pass_v4', {
           requested_actor_id: actorId,
           requested_registration_mode: parsed.data.registrationMode,
           requested_request_id: parsed.data.requestId,
@@ -669,6 +688,12 @@ async function handleRequest(request: Request): Promise<Response> {
           requested_address_postcode: verifiedAddress.postcode,
           requested_address_country_code: 'ph',
           requested_address_detail: verifiedAddress.addressDetail || null,
+          // PSGC provenance
+          requested_psgc_region_code: parsed.data.addressProvenance?.regionCode || null,
+          requested_psgc_province_code: parsed.data.addressProvenance?.provinceCode || null,
+          requested_psgc_city_code: parsed.data.addressProvenance?.cityCode || null,
+          requested_psgc_barangay_code: parsed.data.addressProvenance?.barangayCode || null,
+          requested_psgc_version: parsed.data.addressProvenance?.psgcVersion || '2026-Q3',
           // Vehicle declaration
           requested_vehicle_type: parsed.data.arrivalMode === 'vehicle' ? (parsed.data.vehicle?.vehicleType ?? null) : null,
           requested_plate_number: parsed.data.arrivalMode === 'vehicle' ? normalizedPlateDisplay : null,
@@ -684,6 +709,56 @@ async function handleRequest(request: Request): Promise<Response> {
           requested_returning_profile_id: parsed.data.registrationMode === 'returning' ? (parsed.data.returning?.profileId ?? null) : null,
           requested_returning_match_token_digest: parsed.data.registrationMode === 'returning' ? returningMatchDigest : null,
         }).single<IssueResult>();
+
+        if (rpcRes.error && (rpcRes.error.code === 'PGRST202' || rpcRes.error.message?.includes('issue_online_pass_v4'))) {
+          // Fallback to online v3 RPC
+          rpcRes = await admin.schema('api').rpc('issue_online_pass_v3', {
+            requested_actor_id: actorId,
+            requested_registration_mode: parsed.data.registrationMode,
+            requested_request_id: parsed.data.requestId,
+            requested_first_name: visitor.firstName,
+            requested_middle_name: visitor.middleName || null,
+            requested_last_name: visitor.lastName,
+            requested_contact_number: canonicalContact,
+            requested_home_address: verifiedAddress.formatted,
+            requested_purpose: visitor.purpose,
+            requested_visit_date: visitor.visitDate,
+            requested_photo_intent_id: parsed.data.photoIntentId,
+            requested_photo_bytes: photo.bytes,
+            requested_photo_sha256: photo.sha256,
+            requested_id_intent_id: parsed.data.registrationMode === 'new' ? (parsed.data.idIntentId ?? null) : null,
+            requested_id_bytes: parsed.data.registrationMode === 'new' ? (identification?.bytes ?? null) : null,
+            requested_id_sha256: parsed.data.registrationMode === 'new' ? (identification?.sha256 ?? null) : null,
+            requested_token_digest: tokenDigest,
+            requested_arrival_mode: parsed.data.arrivalMode!,
+            // Address provenance
+            requested_address_provider: 'geoapify',
+            requested_address_place_id: verifiedAddress.placeId,
+            requested_address_result_type: verifiedAddress.resultType,
+            requested_address_confidence: verifiedAddress.confidence,
+            requested_address_lat: verifiedAddress.lat,
+            requested_address_lon: verifiedAddress.lon,
+            requested_address_city: verifiedAddress.city,
+            requested_address_state: verifiedAddress.state,
+            requested_address_postcode: verifiedAddress.postcode,
+            requested_address_country_code: 'ph',
+            requested_address_detail: verifiedAddress.addressDetail || null,
+            // Vehicle declaration
+            requested_vehicle_type: parsed.data.arrivalMode === 'vehicle' ? (parsed.data.vehicle?.vehicleType ?? null) : null,
+            requested_plate_number: parsed.data.arrivalMode === 'vehicle' ? normalizedPlateDisplay : null,
+            requested_plate_key: parsed.data.arrivalMode === 'vehicle' ? normalizedPlateKey : null,
+            requested_color: parsed.data.arrivalMode === 'vehicle' ? (normalizedVehicleColor ?? parsed.data.vehicle?.color ?? null) : null,
+            requested_make_model: parsed.data.arrivalMode === 'vehicle' ? (parsed.data.vehicle?.makeModel?.trim() ?? null) : null,
+            requested_vehicle_catalog_status: parsed.data.arrivalMode === 'vehicle' ? (parsed.data.vehicle?.catalogStatus ?? 'catalog') : 'catalog',
+            requested_vehicle_photo_intent_id: vehiclePhotoIntentId ?? null,
+            requested_vehicle_photo_bytes: vehiclePhoto?.bytes ?? null,
+            requested_vehicle_photo_sha256: vehiclePhoto?.sha256 ?? null,
+            // Returning
+            requested_saved_vehicle_id: parsed.data.arrivalMode === 'vehicle' ? (parsed.data.vehicle?.savedVehicleId ?? null) : null,
+            requested_returning_profile_id: parsed.data.registrationMode === 'returning' ? (parsed.data.returning?.profileId ?? null) : null,
+            requested_returning_match_token_digest: parsed.data.registrationMode === 'returning' ? returningMatchDigest : null,
+          }).single<IssueResult>();
+        }
 
         if (rpcRes.error || !rpcRes.data) throw rpcRes.error ?? new Error('issue_failed');
         data = rpcRes.data;
@@ -775,6 +850,11 @@ async function handleRequest(request: Request): Promise<Response> {
               address_country_code: verifiedAddress ? verifiedAddress.countryCode : null,
               address_verified_at: verifiedAddress ? new Date().toISOString() : null,
               address_detail: verifiedAddress ? (verifiedAddress.addressDetail || null) : null,
+              psgc_region_code: parsed.data.addressProvenance?.regionCode || null,
+              psgc_province_code: parsed.data.addressProvenance?.provinceCode || null,
+              psgc_city_code: parsed.data.addressProvenance?.cityCode || null,
+              psgc_barangay_code: parsed.data.addressProvenance?.barangayCode || null,
+              psgc_version: parsed.data.addressProvenance?.psgcVersion || (parsed.data.addressProvenance?.regionCode ? '2026-Q3' : null),
             })
             .select('id')
             .single();
@@ -837,6 +917,13 @@ async function handleRequest(request: Request): Promise<Response> {
             profileUpdate.address_country_code = verifiedAddress.countryCode;
             profileUpdate.address_verified_at = new Date().toISOString();
             profileUpdate.address_detail = verifiedAddress.addressDetail || null;
+            if (parsed.data.addressProvenance?.regionCode) {
+              profileUpdate.psgc_region_code = parsed.data.addressProvenance.regionCode;
+              profileUpdate.psgc_province_code = parsed.data.addressProvenance.provinceCode || null;
+              profileUpdate.psgc_city_code = parsed.data.addressProvenance.cityCode || null;
+              profileUpdate.psgc_barangay_code = parsed.data.addressProvenance.barangayCode || null;
+              profileUpdate.psgc_version = parsed.data.addressProvenance.psgcVersion || '2026-Q3';
+            }
           }
           await admin
             .from('returning_visitor_profiles')

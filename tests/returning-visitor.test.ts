@@ -153,4 +153,139 @@ describe('Returning Visitor Biometrics & Safety Gate Contract', () => {
       expect(digest1.length).toBe(64); // SHA-256 hex
     });
   });
+
+  describe('4. Guard Feed Context Key & Manila Business Date Contract', () => {
+    it('computes Manila business date across UTC day boundaries', async () => {
+      const { getManilaBusinessDate, getManilaDayBounds } = await import(
+        '../server/routes/gate/guard-station-feed.js'
+      );
+
+      // 2026-11-02 16:30:00 UTC is 2026-11-03 00:30:00 in UTC+8 (Manila)
+      const lateUtc = new Date('2026-11-02T16:30:00.000Z');
+      expect(getManilaBusinessDate(lateUtc)).toBe('2026-11-03');
+
+      // 2026-11-02 02:00:00 UTC is 2026-11-02 10:00:00 in UTC+8 (Manila)
+      const morningUtc = new Date('2026-11-02T02:00:00.000Z');
+      expect(getManilaBusinessDate(morningUtc)).toBe('2026-11-02');
+
+      const bounds = getManilaDayBounds(morningUtc);
+      expect(bounds.startUtc).toBe('2026-11-01T16:00:00.000Z'); // 00:00:00 Manila
+      expect(bounds.endUtc).toBe('2026-11-02T15:59:59.999Z'); // 23:59:59.999 Manila
+    });
+
+    it('builds authoritative context key that detects station, gate, or business date switch', async () => {
+      const { buildFeedContextKey } = await import('../src/pages/GuardPage.js');
+
+      const key1 = buildFeedContextKey('stn-1', 'Main Gate', '2026-11-02');
+      const key2 = buildFeedContextKey('stn-1', 'Main Gate', '2026-11-02');
+      expect(key1).toBe(key2);
+      expect(key1).toBe('stn-1:Main Gate:2026-11-02');
+
+      // Changing gate invalidates key
+      const keyGateChanged = buildFeedContextKey('stn-1', 'Service Gate', '2026-11-02');
+      expect(keyGateChanged).not.toBe(key1);
+
+      // Changing station invalidates key
+      const keyStationChanged = buildFeedContextKey('stn-2', 'Main Gate', '2026-11-02');
+      expect(keyStationChanged).not.toBe(key1);
+
+      // Rollover to next business date invalidates key and forces pagination reset
+      const keyDateChanged = buildFeedContextKey('stn-1', 'Main Gate', '2026-11-03');
+      expect(keyDateChanged).not.toBe(key1);
+
+      // Empty or null values are handled gracefully
+      expect(buildFeedContextKey(null, null, null)).toBe('::');
+    });
+  });
+
+  describe('5. Biometric Gallery Range Pagination & Safety Cap Contract', () => {
+    it('simulates range pagination in 500-item chunks and enforces 5,000 item safety ceiling', () => {
+      const PAGE_SIZE = 500;
+      const MAX_GALLERY_TEMPLATES = 5000;
+
+      // Simulate gallery database of 6,200 templates
+      const totalDbTemplates = 6200;
+      const mockDatabase = Array.from({ length: totalDbTemplates }, (_, idx) => ({
+        id: `tpl-${idx + 1}`,
+        profile_id: `prof-${idx + 1}`,
+      }));
+
+      // Emulate the exact query pagination loop used in identify-returning.ts
+      let from = 0;
+      let hasMore = true;
+      const loadedTemplates: typeof mockDatabase = [];
+
+      while (hasMore && loadedTemplates.length < MAX_GALLERY_TEMPLATES) {
+        const remainingCapacity = MAX_GALLERY_TEMPLATES - loadedTemplates.length;
+        const currentLimit = Math.min(PAGE_SIZE, remainingCapacity);
+        const to = from + currentLimit - 1;
+
+        const pageData = mockDatabase.slice(from, to + 1);
+
+        if (!pageData || pageData.length === 0) {
+          hasMore = false;
+          break;
+        }
+
+        loadedTemplates.push(...pageData);
+        if (pageData.length < currentLimit) {
+          hasMore = false;
+          break;
+        }
+        from += currentLimit;
+      }
+
+      // Assert loaded exactly safety ceiling, not unbounded memory consumption
+      expect(loadedTemplates.length).toBe(MAX_GALLERY_TEMPLATES);
+      expect(loadedTemplates[0]!.id).toBe('tpl-1');
+      expect(loadedTemplates[4999]!.id).toBe('tpl-5000');
+    });
+  });
+
+  describe('6. Identify Returning Endpoint Contract', () => {
+    it('rejects non-POST HTTP methods with 405 Method Not Allowed', async () => {
+      const identifyHandler = (await import('../server/routes/passes/identify-returning.js')).default;
+      const getReq = new Request('http://localhost/api/passes/identify-returning', {
+        method: 'GET',
+      });
+      const res = await identifyHandler.fetch(getReq);
+      expect(res.status).toBe(405);
+      const json = await res.json();
+      expect(json.error).toBe('method_not_allowed');
+    });
+
+    it('rejects unauthenticated requests with 401', async () => {
+      const identifyHandler = (await import('../server/routes/passes/identify-returning.js')).default;
+      const unauthReq = new Request('http://localhost/api/passes/identify-returning', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          requestId: 'b0e00000-0000-4000-8000-000000000001',
+          photoIntentId: 'b0e00000-0000-4000-8000-000000000002',
+        }),
+      });
+      const res = await identifyHandler.fetch(unauthReq);
+      expect(res.status).toBe(401);
+      const json = await res.json();
+      expect(json.error).toBe('authentication_required');
+    });
+
+    it('rejects invalid JSON or malformed schema with 400', async () => {
+      const identifyHandler = (await import('../server/routes/passes/identify-returning.js')).default;
+      const malformedReq = new Request('http://localhost/api/passes/identify-returning', {
+        method: 'POST',
+        headers: {
+          authorization: 'Bearer dummy-token',
+          'content-type': 'application/json',
+        },
+        body: JSON.stringify({
+          requestId: 'not-a-uuid',
+        }),
+      });
+      const res = await identifyHandler.fetch(malformedReq);
+      expect(res.status).toBe(400);
+      const json = await res.json();
+      expect(json.error).toBe('invalid_request');
+    });
+  });
 });

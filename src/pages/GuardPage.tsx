@@ -50,10 +50,19 @@ export type FeedEntry = StationEntry;
 
 export interface FeedResponse {
   station: StationInfo;
+  businessDate?: string;
   entries: StationEntry[];
   hasMore?: boolean;
   nextCursor?: string | null;
   total?: number;
+}
+
+export function buildFeedContextKey(
+  stationId?: string | null,
+  gate?: string | null,
+  businessDate?: string | null
+): string {
+  return `${stationId || ''}:${gate || ''}:${businessDate || ''}`;
 }
 
 export function compareFeedEntries(a: StationEntry, b: StationEntry): number {
@@ -111,6 +120,7 @@ export function GuardPage() {
   const continuationCursorRef = useRef<string | null>(null);
   const hasLoadedOlderPagesRef = useRef<boolean>(false);
   const currentStationIdRef = useRef<string | null>(null);
+  const currentContextKeyRef = useRef<string | null>(null);
   const isMountedRef = useRef<boolean>(true);
 
   useEffect(() => {
@@ -164,8 +174,12 @@ export function GuardPage() {
       const data = (await res.json()) as FeedResponse;
       if (seq !== requestSeqRef.current || !isMountedRef.current) return;
 
-      // Station or gate context switch
-      if (data.station?.id && currentStationIdRef.current && currentStationIdRef.current !== data.station.id) {
+      // Station, gate, or business-date context switch
+      const contextKey = buildFeedContextKey(data.station?.id, data.station?.gate, data.businessDate);
+      if (
+        (currentStationIdRef.current && currentStationIdRef.current !== data.station.id) ||
+        (currentContextKeyRef.current && currentContextKeyRef.current !== contextKey)
+      ) {
         hasLoadedOlderPagesRef.current = false;
         continuationCursorRef.current = null;
         if (loadMoreControllerRef.current) {
@@ -187,6 +201,7 @@ export function GuardPage() {
         }
       }
 
+      currentContextKeyRef.current = contextKey;
       currentStationIdRef.current = data.station?.id || null;
       setStation(data.station);
       setTotalCount(typeof data.total === 'number' ? data.total : data.entries.length);

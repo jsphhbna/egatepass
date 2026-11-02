@@ -5,6 +5,7 @@ import verifyIdentity from '../../server/routes/passes/verify-identity.js';
 import identifyReturning from '../../server/routes/passes/identify-returning.js';
 import capabilities from '../../server/routes/passes/capabilities.js';
 import addressAutocomplete from '../../server/routes/address/autocomplete.js';
+import addressPsgc from '../../server/routes/address/psgc.js';
 import vehiclesMakes from '../../server/routes/vehicles/makes.js';
 import vehiclesModels from '../../server/routes/vehicles/models.js';
 
@@ -15,9 +16,11 @@ const router = createGroupedRouter('passes', {
   'identify-returning': identifyReturning,
   capabilities,
   'address-autocomplete': addressAutocomplete,
+  'address-psgc': addressPsgc,
   'vehicles-makes': vehiclesMakes,
   'vehicles-models': vehiclesModels,
   'address/autocomplete': addressAutocomplete,
+  'address/psgc': addressPsgc,
   'vehicles/makes': vehiclesMakes,
   'vehicles/models': vehiclesModels,
 });

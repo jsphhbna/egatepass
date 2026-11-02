@@ -59,10 +59,19 @@ function getApiKey(): string {
   return key.trim();
 }
 
+export interface AutocompleteContext {
+  city?: string;
+  province?: string;
+  barangay?: string;
+}
+
 /**
  * Searches Geoapify address autocomplete for Philippines locations.
  */
-export async function searchAddressAutocomplete(query: string): Promise<AddressSuggestionDto[]> {
+export async function searchAddressAutocomplete(
+  query: string,
+  context?: AutocompleteContext
+): Promise<AddressSuggestionDto[]> {
   const trimmed = query.trim();
   if (trimmed.length < 4) {
     return [];
@@ -70,7 +79,16 @@ export async function searchAddressAutocomplete(query: string): Promise<AddressS
 
   const apiKey = getApiKey();
   const endpoint = new URL('https://api.geoapify.com/v1/geocode/autocomplete');
-  endpoint.searchParams.set('text', trimmed);
+
+  let searchText = trimmed;
+  if (context?.city && !trimmed.toLowerCase().includes(context.city.toLowerCase())) {
+    searchText = `${trimmed}, ${context.city}`;
+  }
+  if (context?.province && !searchText.toLowerCase().includes(context.province.toLowerCase())) {
+    searchText = `${searchText}, ${context.province}`;
+  }
+
+  endpoint.searchParams.set('text', searchText);
   endpoint.searchParams.set('filter', 'countrycode:ph');
   endpoint.searchParams.set('format', 'json');
   endpoint.searchParams.set('limit', '5');
@@ -78,6 +96,7 @@ export async function searchAddressAutocomplete(query: string): Promise<AddressS
   endpoint.searchParams.set('apiKey', apiKey);
 
   let res: Response;
+  let data: any = null;
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), GEOAPIFY_TIMEOUT_MS);
   try {
@@ -88,22 +107,26 @@ export async function searchAddressAutocomplete(query: string): Promise<AddressS
       },
       signal: controller.signal,
     });
+
+    if (res.status === 429) {
+      throw new Error('address_rate_limited');
+    }
+    if (!res.ok) {
+      console.error('Geoapify autocomplete response status:', res.status);
+      throw new Error('address_verification_unavailable');
+    }
+
+    data = await res.json().catch(() => null);
   } catch (err) {
+    if (err instanceof Error && (err.message === 'address_rate_limited' || err.message === 'address_verification_unavailable')) {
+      throw err;
+    }
     console.error('Geoapify autocomplete network error:', err instanceof Error ? err.message : 'network_error');
     throw new Error('address_verification_unavailable');
   } finally {
     clearTimeout(timer);
   }
 
-  if (res.status === 429) {
-    throw new Error('address_rate_limited');
-  }
-  if (!res.ok) {
-    console.error('Geoapify autocomplete response status:', res.status);
-    throw new Error('address_verification_unavailable');
-  }
-
-  const data = await res.json().catch(() => null);
   if (!data) return [];
 
   // Support both format=json (`results`) and GeoJSON (`features`)
@@ -171,6 +194,7 @@ export async function verifyPlaceDetails(
   endpoint.searchParams.set('apiKey', apiKey);
 
   let res: Response;
+  let data: any = null;
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), GEOAPIFY_TIMEOUT_MS);
   try {
@@ -181,25 +205,34 @@ export async function verifyPlaceDetails(
       },
       signal: controller.signal,
     });
+
+    if (res.status === 429) {
+      throw new Error('address_rate_limited');
+    }
+    if (res.status === 404) {
+      throw new Error('invalid_address_place');
+    }
+    if (!res.ok) {
+      console.error('Geoapify Place Details error status:', res.status);
+      throw new Error('address_verification_unavailable');
+    }
+
+    data = await res.json().catch(() => null);
   } catch (err) {
+    if (
+      err instanceof Error &&
+      (err.message === 'address_rate_limited' ||
+        err.message === 'invalid_address_place' ||
+        err.message === 'address_verification_unavailable')
+    ) {
+      throw err;
+    }
     console.error('Geoapify Place Details network error:', err instanceof Error ? err.message : 'network_error');
     throw new Error('address_verification_unavailable');
   } finally {
     clearTimeout(timer);
   }
 
-  if (res.status === 429) {
-    throw new Error('address_rate_limited');
-  }
-  if (res.status === 404) {
-    throw new Error('invalid_address_place');
-  }
-  if (!res.ok) {
-    console.error('Geoapify Place Details error status:', res.status);
-    throw new Error('address_verification_unavailable');
-  }
-
-  const data = await res.json().catch(() => null);
   if (!data) {
     throw new Error('invalid_address_place');
   }

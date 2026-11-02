@@ -14,6 +14,15 @@ export function getManilaDayBounds(now = new Date()): { startUtc: string; endUtc
   return { startUtc, endUtc };
 }
 
+export function getManilaBusinessDate(now = new Date()): string {
+  const manilaOffsetMs = 8 * 60 * 60 * 1000;
+  const manilaNow = new Date(now.getTime() + manilaOffsetMs);
+  const year = manilaNow.getUTCFullYear();
+  const month = String(manilaNow.getUTCMonth() + 1).padStart(2, '0');
+  const date = String(manilaNow.getUTCDate()).padStart(2, '0');
+  return `${year}-${month}-${date}`;
+}
+
 async function handleRequest(request: Request): Promise<Response> {
   if (request.method !== 'GET') {
     return jsonResponse(405, { error: 'method_not_allowed' }, { Allow: 'GET' });
@@ -255,6 +264,7 @@ async function handleRequest(request: Request): Promise<Response> {
 
     return jsonResponse(200, {
       station: stationInfo,
+      businessDate: getManilaBusinessDate(),
       entries,
       hasMore,
       nextCursor,

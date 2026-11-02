@@ -40,6 +40,9 @@ export function extractRouteKey(pathname: string, group: RouteGroup): string | n
     if (parts[1] === 'address' && parts[2] === 'autocomplete') {
       return 'address-autocomplete';
     }
+    if (parts[1] === 'address' && parts[2] === 'psgc') {
+      return 'address-psgc';
+    }
     if (parts[1] === 'vehicles' && parts[2] === 'makes') {
       return 'vehicles-makes';
     }
