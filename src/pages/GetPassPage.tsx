@@ -19,9 +19,9 @@ import {
   PortalSessionError,
   type PortalIssueTransaction,
   type IssueTransactionPhase,
-  type AddressProvenance,
 } from '@/services/visitorRegistration';
-import { CompactAddressPicker } from '@/components/CompactAddressPicker';
+import { ResidentialLocationPicker } from '@/components/ResidentialLocationPicker';
+import type { HomeLocation } from '@/lib/homeLocation';
 import { TurnstileWidget, type TurnstileWidgetRef } from '@/components/TurnstileWidget';
 import { generateBrandedQrDataUrl } from '@/lib/brandedQr';
 import QRCode from 'qrcode';
@@ -48,7 +48,6 @@ import {
   UserCheck,
   Car,
   ShieldAlert,
-  MapPin,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { Button, Card, Input, FormField, Stepper, PageShell } from '@/components/ui';
@@ -90,20 +89,6 @@ export const CONTROLLED_VEHICLE_TYPES = [
   { value: 'other', label: 'Other Motor Vehicle' },
 ] as const;
 
-export interface AddressSuggestionDto {
-  placeId: string;
-  formatted: string;
-  addressLine1?: string;
-  city?: string;
-  state?: string;
-  postcode?: string;
-  countryCode: 'ph';
-  lat: number;
-  lon: number;
-  resultType: string;
-  confidence?: number;
-}
-
 // ============================================================
 // FORM SCHEMA (Zod)
 // ============================================================
@@ -138,11 +123,21 @@ export function createGetPassSchema(schedulingDaysAhead: number = MAX_VISIT_ADVA
         .refine((val) => validatePhMobile(val), {
           message: 'Please enter a valid Philippine mobile number (e.g. 09171234567 or +639171234567)',
         }),
-      homeAddress: z
-        .string()
-        .trim()
-        .min(5, 'Please select a verified home address from search suggestions')
-        .max(300, 'Home address is too long'),
+      homeLocation: z
+        .object({
+          lat: z.number(),
+          lon: z.number(),
+        })
+        .nullable()
+        .superRefine((val, ctx) => {
+          if (!val || typeof val.lat !== 'number' || typeof val.lon !== 'number') {
+            ctx.addIssue({
+              code: z.ZodIssueCode.custom,
+              message: 'Please select your approximate residential location on the map',
+            });
+          }
+        }),
+      homeAddress: z.string().optional(),
       purpose: z
         .string()
         .max(300, 'Purpose description is too long')
@@ -240,6 +235,7 @@ export function GetPassPage() {
     lastName: string;
     contactNumber: string;
     homeAddress?: string;
+    homeLocation?: HomeLocation | null;
     matchToken: string;
     savedVehicles: Array<{
       id: string;
@@ -292,16 +288,8 @@ export function GetPassPage() {
   // Setup Decisions State
   const [setupArrivalMode, setSetupArrivalMode] = useState<'no_vehicle' | 'vehicle' | null>(validArrival);
 
-  // Address Search & Autocomplete State
-  const [addressQuery, setAddressQuery] = useState('');
-  const [addressSuggestions, setAddressSuggestions] = useState<AddressSuggestionDto[]>([]);
-  const [isSearchingAddress, setIsSearchingAddress] = useState(false);
-  const [selectedAddress, setSelectedAddress] = useState<AddressSuggestionDto | null>(null);
-  const [addressProvenance, setAddressProvenance] = useState<AddressProvenance | null>(null);
-  const [addressDetail, setAddressDetail] = useState('');
-  const [addressSearchError, setAddressSearchError] = useState<string | null>(null);
-  const addressCacheRef = useRef<Map<string, AddressSuggestionDto[]>>(new Map());
-  const activeSearchRef = useRef<{ query: string; controller: AbortController } | null>(null);
+  // Approximate Residential Location State
+  const [homeLocation, setHomeLocation] = useState<HomeLocation | null>(null);
 
   // Controlled Vehicle Catalog State
   const [availableMakes, setAvailableMakes] = useState<string[]>([]);
@@ -473,6 +461,7 @@ export function GetPassPage() {
     defaultValues: {
       purpose: '',
       arrivalMode: (validArrival || undefined) as any,
+      homeLocation: null,
       vehicleType: 'car',
       plateNumber: '',
       vehicleColor: '',
@@ -537,18 +526,9 @@ export function GetPassPage() {
     });
     clearErrors();
 
-    // 2. Clear address state
-    if (activeSearchRef.current) {
-      activeSearchRef.current.controller.abort();
-      activeSearchRef.current = null;
-    }
-    addressCacheRef.current.clear();
-    setSelectedAddress(null);
-    setAddressQuery('');
-    setAddressSuggestions([]);
-    setAddressDetail('');
-    setAddressSearchError(null);
-    setIsSearchingAddress(false);
+    // 2. Clear residential location state
+    setHomeLocation(null);
+    setValue('homeLocation', null);
 
     // 3. Clear vehicle state
     clearVehicleDeclarationState();
@@ -608,69 +588,6 @@ export function GetPassPage() {
     // 8. Navigate to Front Door
     setStep('frontdoor');
   }
-
-  // Address autocomplete debounced search effect
-  useEffect(() => {
-    const trimmed = addressQuery.trim();
-    if (selectedAddress || trimmed.length < 4) {
-      setAddressSuggestions([]);
-      setIsSearchingAddress(false);
-      return;
-    }
-
-    const cached = addressCacheRef.current.get(trimmed.toLowerCase());
-    if (cached) {
-      setAddressSuggestions(cached);
-      setIsSearchingAddress(false);
-      setAddressSearchError(null);
-      return;
-    }
-
-    const controller = new AbortController();
-    activeSearchRef.current = { query: trimmed, controller };
-
-    const timer = setTimeout(async () => {
-      setIsSearchingAddress(true);
-      setAddressSearchError(null);
-      try {
-        const res = await fetch(`/api/address/autocomplete?q=${encodeURIComponent(trimmed)}`, {
-          signal: controller.signal,
-        });
-        if (!res.ok) {
-          if (res.status === 429) {
-            setAddressSearchError('Address search rate limit reached. Please wait a moment.');
-          } else {
-            setAddressSearchError('Address suggestions temporarily unavailable.');
-          }
-          setAddressSuggestions([]);
-          return;
-        }
-        const data = await res.json();
-        const suggestions = Array.isArray(data?.suggestions)
-          ? data.suggestions
-          : Array.isArray(data)
-            ? data
-            : [];
-        addressCacheRef.current.set(trimmed.toLowerCase(), suggestions);
-        if (activeSearchRef.current?.query === trimmed) {
-          setAddressSuggestions(suggestions);
-        }
-      } catch (err: any) {
-        if (err.name === 'AbortError') return;
-        setAddressSearchError('Unable to connect to address search service.');
-        setAddressSuggestions([]);
-      } finally {
-        if (activeSearchRef.current?.query === trimmed) {
-          setIsSearchingAddress(false);
-        }
-      }
-    }, 350);
-
-    return () => {
-      clearTimeout(timer);
-      controller.abort();
-    };
-  }, [addressQuery, selectedAddress]);
 
   // Vehicle makes and models loading
   const selectedVehicleType = watch('vehicleType') || 'car';
@@ -821,8 +738,9 @@ export function GetPassPage() {
       return;
     }
     setValue('contactNumber', phRes, { shouldValidate: true });
-    if (!selectedAddress) {
-      toast.error('Please search and select a verified home address from the suggestions.');
+    const loc = homeLocation || getValues('homeLocation');
+    if (!loc) {
+      toast.error('Please select your approximate residential location on the map.');
       return;
     }
     if (!data.consent) {
@@ -972,6 +890,7 @@ export function GetPassPage() {
         lastName: p.lastName,
         contactNumber: p.contactNumber,
         homeAddress: p.homeAddress || '',
+        homeLocation: p.homeLocation || null,
         matchToken: data.matchToken,
         savedVehicles: (data.savedVehicles || []).map((v) => ({
           id: v.id,
@@ -987,22 +906,13 @@ export function GetPassPage() {
       if (p.middleName) setValue('middleName', p.middleName);
       setValue('lastName', p.lastName, { shouldValidate: true });
       setValue('contactNumber', p.contactNumber, { shouldValidate: true });
-      if (p.homeAddress) setValue('homeAddress', p.homeAddress, { shouldValidate: true });
-
-      // Restore address provenance if present
-      if (p.addressProvenance) {
-        const prov = p.addressProvenance;
-        setAddressProvenance(prov);
-        setSelectedAddress({
-          placeId: prov.placeId,
-          formatted: p.homeAddress || '',
-          lat: prov.lat || 0,
-          lon: prov.lon || 0,
-          resultType: prov.resultType || 'unknown',
-          confidence: prov.confidence ?? undefined,
-          countryCode: 'ph',
-        });
-        setAddressDetail(prov.addressDetail || '');
+      if (p.homeAddress) setValue('homeAddress', p.homeAddress);
+      if (p.homeLocation) {
+        setHomeLocation(p.homeLocation);
+        setValue('homeLocation', p.homeLocation, { shouldValidate: true });
+      } else {
+        setHomeLocation(null);
+        setValue('homeLocation', null);
       }
 
       setPhotoBlob(blob);
@@ -1033,8 +943,9 @@ export function GetPassPage() {
       toast.error('Please enter a valid Philippine mobile number.');
       return;
     }
-    if (!vals.homeAddress || vals.homeAddress.trim().length < 5 || !selectedAddress) {
-      toast.error('Please select and verify your complete home address.');
+    const loc = homeLocation || getValues('homeLocation');
+    if (!loc) {
+      toast.error('Please select your approximate residential location on the map.');
       return;
     }
     if (!vals.purpose || vals.purpose.trim().length < 3) {
@@ -1496,25 +1407,13 @@ export function GetPassPage() {
         ? normalizeVehiclePlate(rawFormData.plateNumber)
         : null;
 
-      const addressProv: AddressProvenance | undefined = selectedAddress ? {
-        provider: 'geoapify',
-        placeId: selectedAddress.placeId,
-        resultType: selectedAddress.resultType,
-        confidence: selectedAddress.confidence,
-        lat: selectedAddress.lat,
-        lon: selectedAddress.lon,
-        city: selectedAddress.city,
-        state: selectedAddress.state,
-        postcode: selectedAddress.postcode,
-        countryCode: 'ph',
-        addressDetail: addressDetail.trim() || undefined,
-      } : undefined;
+      const loc = homeLocation || rawFormData.homeLocation;
 
       const formData: any = {
         ...rawFormData,
         contactNumber: phNormalized,
         arrivalMode: rawFormData.arrivalMode,
-        addressProvenance: addressProv,
+        homeLocation: loc || undefined,
         vehicle: rawFormData.arrivalMode === 'vehicle'
           ? {
               vehicleType: rawFormData.vehicleType || 'car',
@@ -2046,129 +1945,15 @@ export function GetPassPage() {
                 </FormField>
               </div>
 
-              {/* Address Field: Controlled Autocomplete & Verified Provenance */}
-              <div className="space-y-2">
-                <label className="block text-xs font-bold uppercase tracking-wider text-[var(--color-text-muted)]">
-                  Home Address <span className="text-[var(--color-danger)]">*</span>
-                </label>
-                {selectedAddress ? (
-                  <div className="rounded-xl border-2 border-[#7A0A0A]/30 bg-[#F8EEEE]/40 p-4 space-y-3">
-                    <div className="flex items-start justify-between gap-3">
-                      <div className="flex items-start gap-2.5">
-                        <MapPin className="h-5 w-5 text-[#7A0A0A] mt-0.5 flex-shrink-0" />
-                        <div>
-                          <div className="flex items-center gap-2">
-                            <span className="font-bold text-sm text-[var(--color-text-primary)]">
-                              Validated Location
-                            </span>
-                            <span className="inline-flex items-center gap-1 rounded-full bg-emerald-100 text-emerald-800 px-2 py-0.5 text-[10px] font-bold">
-                              <CheckCircle2 className="h-3 w-3 text-emerald-600" />
-                              Matched through Geoapify
-                            </span>
-                          </div>
-                          <p className="text-[11px] text-slate-500 mt-1 italic">
-                            This validates the mapped location, not proof of residence.
-                          </p>
-                          <p className="text-sm text-[var(--color-text-primary)] mt-1 leading-relaxed">
-                            {selectedAddress.formatted}
-                          </p>
-                          {(selectedAddress.city || selectedAddress.state) && (
-                            <p className="text-xs text-[var(--color-text-secondary)] mt-0.5">
-                              {[selectedAddress.city, selectedAddress.state, selectedAddress.postcode].filter(Boolean).join(', ')}
-                            </p>
-                          )}
-                        </div>
-                      </div>
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setSelectedAddress(null);
-                          setValue('homeAddress', '', { shouldValidate: true });
-                          setAddressQuery('');
-                        }}
-                        className="text-xs font-bold text-[#7A0A0A] hover:underline px-2 py-1 rounded-lg hover:bg-white/60 transition-colors"
-                      >
-                        Change
-                      </button>
-                    </div>
-
-                    <div className="pt-2 border-t border-[#7A0A0A]/15">
-                      <label className="block text-[11px] font-semibold text-[var(--color-text-secondary)] mb-1">
-                        Unit / Room / House No. / Building (Optional)
-                      </label>
-                      <Input
-                        placeholder="e.g. Unit 302, Building A"
-                        value={addressDetail}
-                        onChange={(e) => setAddressDetail(e.target.value)}
-                      />
-                    </div>
-                  </div>
-                ) : (
-                  <div className="relative space-y-1.5">
-                    <div className="relative">
-                      <Input
-                        id="home-address"
-                        data-testid="address-search-input"
-                        placeholder="Type street, barangay, city, or place name in Philippines..."
-                        value={addressQuery}
-                        onChange={(e) => {
-                          setAddressQuery(e.target.value);
-                          setSelectedAddress(null);
-                          setValue('homeAddress', e.target.value, { shouldValidate: true });
-                          setAddressSearchError(null);
-                        }}
-                        autoComplete="off"
-                      />
-                      {isSearchingAddress && (
-                        <div className="absolute right-3 top-3">
-                          <Loader2 className="h-4 w-4 animate-spin text-[#7A0A0A]" />
-                        </div>
-                      )}
-                    </div>
-
-                    <p className="text-xs text-[var(--color-text-secondary)]">
-                      Please search and select your address from official map suggestions (min. 4 characters).
-                    </p>
-
-                    {addressSearchError && (
-                      <p className="text-xs text-[var(--color-danger)] font-medium">
-                        {addressSearchError}
-                      </p>
-                    )}
-
-                    {addressSuggestions.length > 0 && (
-                      <div className="absolute z-20 w-full mt-1 bg-white rounded-xl border border-[var(--color-border)] shadow-lg overflow-hidden max-h-60 overflow-y-auto">
-                        {addressSuggestions.map((item) => (
-                          <div
-                            key={item.placeId}
-                            onClick={() => {
-                              setSelectedAddress(item);
-                              setValue('homeAddress', item.formatted, { shouldValidate: true });
-                              setAddressSuggestions([]);
-                              setAddressQuery('');
-                            }}
-                            role="button"
-                            tabIndex={0}
-                            className="p-3 hover:bg-[#F8EEEE]/60 cursor-pointer border-b border-slate-100 last:border-b-0 text-left transition-colors"
-                          >
-                            <div className="flex items-start gap-2">
-                              <MapPin className="h-4 w-4 text-[#7A0A0A] mt-0.5 flex-shrink-0" />
-                              <div>
-                                <p className="text-xs font-bold text-[var(--color-text-primary)]">
-                                  {item.addressLine1 || item.formatted}
-                                </p>
-                                <p className="text-[11px] text-[var(--color-text-secondary)] mt-0.5">
-                                  {[item.city, item.state, item.postcode].filter(Boolean).join(', ')}
-                                </p>
-                              </div>
-                            </div>
-                          </div>
-                        ))}
-                      </div>
-                    )}
-                  </div>
-                )}
-              </div>
+              {/* Approximate Residential Location Picker */}
+              <ResidentialLocationPicker
+                value={homeLocation}
+                onChange={(loc) => {
+                  setHomeLocation(loc);
+                  setValue('homeLocation', loc, { shouldValidate: true });
+                }}
+                error={errors.homeLocation?.message}
+              />
 
               {/* Data Privacy Notice */}
               <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-canvas)] p-4 text-xs text-[var(--color-text-secondary)] space-y-2">
@@ -2968,19 +2753,9 @@ export function GetPassPage() {
                     </p>
                   </div>
                   <div className="sm:col-span-2">
-                    <div className="flex items-center gap-2">
-                      <span className="text-[var(--color-text-secondary)] block">Home Address:</span>
-                      {selectedAddress && (
-                        <span className="inline-flex items-center gap-1 rounded-full bg-emerald-100 text-emerald-800 px-2 py-0.5 text-[10px] font-bold">
-                          <CheckCircle2 className="h-3 w-3 text-emerald-600" />
-                          Matched through Geoapify
-                        </span>
-                      )}
-                    </div>
-                    <p className="font-semibold text-[var(--color-text-primary)] mt-0.5 leading-relaxed">
-                      {selectedAddress
-                        ? [addressDetail.trim(), selectedAddress.formatted].filter(Boolean).join(', ')
-                        : getValues('homeAddress')}
+                    <span className="text-[var(--color-text-secondary)] block">Residential Location:</span>
+                    <p className="font-semibold text-sm text-[var(--color-text-primary)] mt-0.5 leading-relaxed">
+                      {homeLocation ? 'Approximate residential location selected' : 'Not specified'}
                     </p>
                   </div>
                 </div>
@@ -3342,62 +3117,14 @@ export function GetPassPage() {
                   <Input type="tel" {...register('contactNumber')} />
                 </FormField>
 
-                <FormField label="Home Address (Official PSGC & Verified Map)" requirement="required" error={errors.homeAddress?.message}>
-                  <CompactAddressPicker
-                    value={selectedAddress ? {
-                      formattedAddress: getValues('homeAddress') || selectedAddress.formatted,
-                      addressDetail: addressDetail || undefined,
-                      placeId: selectedAddress.placeId,
-                      lat: selectedAddress.lat,
-                      lon: selectedAddress.lon,
-                      confidence: selectedAddress.confidence,
-                      resultType: selectedAddress.resultType,
-                      regionCode: addressProvenance?.regionCode,
-                      provinceCode: addressProvenance?.provinceCode,
-                      cityCode: addressProvenance?.cityCode,
-                      barangayCode: addressProvenance?.barangayCode,
-                      psgcVersion: addressProvenance?.psgcVersion || '2026-Q3',
-                    } : null}
-                    onChange={(val) => {
-                      if (val) {
-                        setValue('homeAddress', val.formattedAddress, { shouldValidate: true });
-                        setSelectedAddress({
-                          placeId: val.placeId,
-                          formatted: val.formattedAddress,
-                          lat: val.lat || 0,
-                          lon: val.lon || 0,
-                          resultType: val.resultType || 'unknown',
-                          confidence: val.confidence ?? undefined,
-                          countryCode: 'ph' as const,
-                        });
-                        setAddressDetail(val.addressDetail || '');
-                        setAddressProvenance({
-                          provider: 'geoapify',
-                          placeId: val.placeId,
-                          lat: val.lat,
-                          lon: val.lon,
-                          confidence: val.confidence,
-                          resultType: val.resultType,
-                          city: val.cityName,
-                          state: val.provinceName || val.regionName,
-                          countryCode: 'ph',
-                          addressDetail: val.addressDetail,
-                          regionCode: val.regionCode,
-                          provinceCode: val.provinceCode,
-                          cityCode: val.cityCode,
-                          barangayCode: val.barangayCode,
-                          psgcVersion: val.psgcVersion,
-                        });
-                      } else {
-                        setValue('homeAddress', '', { shouldValidate: true });
-                        setSelectedAddress(null);
-                        setAddressDetail('');
-                        setAddressProvenance(null);
-                      }
-                    }}
-                    error={errors.homeAddress?.message}
-                  />
-                </FormField>
+                <ResidentialLocationPicker
+                  value={homeLocation}
+                  onChange={(loc) => {
+                    setHomeLocation(loc);
+                    setValue('homeLocation', loc, { shouldValidate: true });
+                  }}
+                  error={errors.homeLocation?.message}
+                />
               </div>
 
               <label className="flex items-center gap-2 cursor-pointer text-xs text-[var(--color-text-secondary)]">

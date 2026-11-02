@@ -2998,8 +2998,8 @@ describe('Behavioral Mocked-Handler Tests [PASS (MOCKED HANDLER)]', () => {
           purpose: 'Official Business',
           visit_date: '2026-10-25',
           consent_accepted_at: new Date().toISOString(),
-          address_place_id: null,
-          address_detail: null,
+          home_location_lat: null,
+          home_location_lon: null,
           returning_profile_id: null,
         },
       ];
@@ -3078,10 +3078,10 @@ describe('Behavioral Mocked-Handler Tests [PASS (MOCKED HANDLER)]', () => {
       mockDbData.visit_vehicle_declarations = [];
     });
 
-    it('B1: rejects replay omitting addressProvenance on transaction with verified address with 409 payload_mismatch', async () => {
+    it('B1: rejects replay omitting homeLocation on transaction with location with 409 payload_mismatch', async () => {
       const vis = mockDbData.visitors.find((v) => v.id === VISITOR_ID)!;
-      vis.address_place_id = 'place_manila_123';
-      vis.address_detail = '123 Manila St';
+      vis.home_location_lat = 14.600;
+      vis.home_location_lon = 120.998;
 
       const req = new Request('http://localhost/api/passes/issue', {
         method: 'POST',
@@ -3103,7 +3103,7 @@ describe('Behavioral Mocked-Handler Tests [PASS (MOCKED HANDLER)]', () => {
           },
           photoIntentId: PHOTO_INTENT_ID,
           idIntentId: ID_INTENT_ID,
-          // addressProvenance omitted!
+          // homeLocation omitted!
         }),
       });
 
@@ -3113,10 +3113,10 @@ describe('Behavioral Mocked-Handler Tests [PASS (MOCKED HANDLER)]', () => {
       expect(json.error).toBe('payload_mismatch');
     });
 
-    it('B2: rejects replay with different placeId with 409 payload_mismatch', async () => {
+    it('B2: rejects replay with different coordinates with 409 payload_mismatch', async () => {
       const vis = mockDbData.visitors.find((v) => v.id === VISITOR_ID)!;
-      vis.address_place_id = 'place_manila_123';
-      vis.address_detail = '123 Manila St';
+      vis.home_location_lat = 14.600;
+      vis.home_location_lon = 120.998;
 
       const req = new Request('http://localhost/api/passes/issue', {
         method: 'POST',
@@ -3136,10 +3136,9 @@ describe('Behavioral Mocked-Handler Tests [PASS (MOCKED HANDLER)]', () => {
             purpose: 'Official Business',
             visitDate: '2026-10-25',
           },
-          addressProvenance: {
-            provider: 'geoapify',
-            placeId: 'place_cebu_999', // Different placeId
-            addressDetail: '123 Manila St',
+          homeLocation: {
+            lat: 14.700,
+            lon: 121.000,
           },
           photoIntentId: PHOTO_INTENT_ID,
           idIntentId: ID_INTENT_ID,
@@ -3312,8 +3311,8 @@ describe('Behavioral Mocked-Handler Tests [PASS (MOCKED HANDLER)]', () => {
       const vis = mockDbData.visitors.find((v) => v.id === VISITOR_ID)!;
       vis.source = 'kiosk';
       vis.owner_id = KIOSK_ID;
-      vis.address_place_id = null;
-      vis.address_detail = null;
+      vis.home_location_lat = null;
+      vis.home_location_lon = null;
 
       // Update stored token digest to match KIOSK_ID actor
       const kioskQrToken = createHmac('sha256', TEST_SECRET)
@@ -3399,10 +3398,10 @@ describe('Behavioral Mocked-Handler Tests [PASS (MOCKED HANDLER)]', () => {
       expect(json.passId).toBeDefined();
     });
 
-    it('B9a: rejects replay adding address provenance when original had none with 409 payload_mismatch', async () => {
+    it('B9a: rejects replay adding home location when original had none with 409 payload_mismatch', async () => {
       const vis = mockDbData.visitors.find((v) => v.id === VISITOR_ID)!;
-      vis.address_place_id = null;
-      vis.address_detail = null;
+      vis.home_location_lat = null;
+      vis.home_location_lon = null;
 
       const req = new Request('http://localhost/api/passes/issue', {
         method: 'POST',
@@ -3422,9 +3421,9 @@ describe('Behavioral Mocked-Handler Tests [PASS (MOCKED HANDLER)]', () => {
             purpose: 'Official Business',
             visitDate: '2026-10-25',
           },
-          addressProvenance: {
-            provider: 'geoapify',
-            placeId: 'unexpected_place_id',
+          homeLocation: {
+            lat: 14.600,
+            lon: 120.998,
           },
           photoIntentId: PHOTO_INTENT_ID,
           idIntentId: ID_INTENT_ID,
@@ -3478,52 +3477,42 @@ describe('Behavioral Mocked-Handler Tests [PASS (MOCKED HANDLER)]', () => {
       expect(json.error).toBe('payload_mismatch');
     });
 
-    it('B10: allows exact replay without Geoapify availability with 200 OK', async () => {
+    it('B10: allows exact replay with identical home location with 200 OK', async () => {
       const vis = mockDbData.visitors.find((v) => v.id === VISITOR_ID)!;
-      vis.address_place_id = 'place_manila_exact';
-      vis.address_detail = 'Sampaloc Manila';
+      vis.home_location_lat = 14.600;
+      vis.home_location_lon = 120.998;
 
-      const originalKey = process.env.GEOAPIFY_API_KEY;
-      delete process.env.GEOAPIFY_API_KEY;
-
-      try {
-        const req = new Request('http://localhost/api/passes/issue', {
-          method: 'POST',
-          headers: {
-            authorization: VALID_VISITOR_BEARER,
-            'content-type': 'application/json',
+      const req = new Request('http://localhost/api/passes/issue', {
+        method: 'POST',
+        headers: {
+          authorization: VALID_VISITOR_BEARER,
+          'content-type': 'application/json',
+        },
+        body: JSON.stringify({
+          requestId: TEST_REQ_ID,
+          source: 'portal',
+          arrivalMode: 'no_vehicle',
+          visitor: {
+            firstName: 'Juan',
+            middleName: 'Dela',
+            lastName: 'Cruz',
+            contactNumber: '09123456789',
+            purpose: 'Official Business',
+            visitDate: '2026-10-25',
           },
-          body: JSON.stringify({
-            requestId: TEST_REQ_ID,
-            source: 'portal',
-            arrivalMode: 'no_vehicle',
-            visitor: {
-              firstName: 'Juan',
-              middleName: 'Dela',
-              lastName: 'Cruz',
-              contactNumber: '09123456789',
-              purpose: 'Official Business',
-              visitDate: '2026-10-25',
-            },
-            addressProvenance: {
-              provider: 'geoapify',
-              placeId: 'place_manila_exact',
-              addressDetail: 'Sampaloc Manila',
-            },
-            photoIntentId: PHOTO_INTENT_ID,
-            idIntentId: ID_INTENT_ID,
-          }),
-        });
+          homeLocation: {
+            lat: 14.600,
+            lon: 120.998,
+          },
+          photoIntentId: PHOTO_INTENT_ID,
+          idIntentId: ID_INTENT_ID,
+        }),
+      });
 
-        const res = await invokeHandler(issuePassHandler, req);
-        const json = await res.json();
-        expect(res.status).toBe(200);
-        expect(json.passId).toBeDefined();
-      } finally {
-        if (originalKey) {
-          process.env.GEOAPIFY_API_KEY = originalKey;
-        }
-      }
+      const res = await invokeHandler(issuePassHandler, req);
+      const json = await res.json();
+      expect(res.status).toBe(200);
+      expect(json.passId).toBeDefined();
     });
   });
 

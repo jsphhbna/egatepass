@@ -10,7 +10,7 @@ import {
   extractFaceDescriptorFromBuffer,
 } from '../../lib/face-engine.js';
 import { computeMatchTokenDigest } from './identify-returning.js';
-import { verifyPlaceDetails, type VerifiedAddressDetails } from '../../lib/geoapify.js';
+import { normalizeCoordinates, type HomeLocation } from '../../lib/home-location.js';
 
 const namePart = z.string().trim().min(1).max(50);
 const requestSchema = z.object({
@@ -22,29 +22,15 @@ const requestSchema = z.object({
     middleName: z.string().trim().max(50).optional(),
     lastName: namePart,
     contactNumber: z.string().min(7).max(32),
-    homeAddress: z.string().trim().min(5).max(300).optional(),
+    homeAddress: z.string().trim().max(300).optional(),
     purpose: z.string().trim().min(3).max(300),
     visitDate: z.iso.date(),
   }),
   arrivalMode: z.enum(['no_vehicle', 'vehicle']).optional(),
-  addressProvenance: z.object({
-    provider: z.literal('geoapify'),
-    placeId: z.string().min(1).max(200),
-    resultType: z.string().min(1).max(100).optional(),
-    confidence: z.number().nullable().optional(),
-    lat: z.number().optional(),
-    lon: z.number().optional(),
-    city: z.string().nullable().optional(),
-    state: z.string().nullable().optional(),
-    postcode: z.string().nullable().optional(),
-    countryCode: z.string().max(10).optional(),
-    addressDetail: z.string().max(200).optional(),
-    regionCode: z.string().max(20).optional(),
-    provinceCode: z.string().max(20).optional(),
-    cityCode: z.string().max(20).optional(),
-    barangayCode: z.string().max(20).optional(),
-    psgcVersion: z.string().max(20).optional(),
-  }).optional(),
+  homeLocation: z.object({
+    lat: z.number(),
+    lon: z.number(),
+  }).nullable().optional(),
   vehicle: z.object({
     vehicleType: z.string().trim().min(1).max(40).optional(),
     plateNumber: z.string().trim().min(3).max(16).optional(),
@@ -326,7 +312,15 @@ async function handleRequest(request: Request): Promise<Response> {
       }
     }
 
-    // Safe idempotent replay check BEFORE external network calls (Geoapify) and before rate limiting
+    // Home location validation
+    let normalizedHomeLocation: HomeLocation | null = null;
+    const coordRes = normalizeCoordinates(
+      parsed.data.homeLocation?.lat,
+      parsed.data.homeLocation?.lon,
+      false
+    );
+
+    // Safe idempotent replay check BEFORE rate limiting
     const { data: existingPass, error: existingPassError } = await admin
       .from('passes')
       .select('id, public_reference, valid_from, valid_until, token_digest, visitor_id, status')
@@ -339,7 +333,7 @@ async function handleRequest(request: Request): Promise<Response> {
       // Replay found. Validate owner, source, and payload consistency (Section 50).
       const { data: existingVisitor, error: visitorError } = await admin
         .from('visitors')
-        .select('id, owner_id, source, full_name, contact_number, purpose, visit_date, home_address, registration_mode, arrival_mode, returning_profile_id, address_place_id, address_detail')
+        .select('id, owner_id, source, full_name, contact_number, purpose, visit_date, home_address, registration_mode, arrival_mode, returning_profile_id, home_location_lat, home_location_lon')
         .eq('id', existingPass.visitor_id)
         .maybeSingle();
 
@@ -375,17 +369,12 @@ async function handleRequest(request: Request): Promise<Response> {
         return jsonResponse(409, { error: 'payload_mismatch' });
       }
 
-      // Symmetrically normalize both sides
-      const existingPlaceId = (existingVisitor.address_place_id || '').trim() || null;
-      const incomingPlaceId = (parsed.data.addressProvenance?.placeId || '').trim() || null;
-      if (existingPlaceId !== incomingPlaceId) {
-        return jsonResponse(409, { error: 'payload_mismatch' });
-      }
-
-      // Symmetrically verify address detail (including null-vs-non-null)
-      const existingDetail = (existingVisitor.address_detail || '').trim() || null;
-      const incomingDetail = (parsed.data.addressProvenance?.addressDetail || '').trim() || null;
-      if (existingDetail !== incomingDetail) {
+      // Symmetrically verify home location coordinates
+      const existingLat = existingVisitor.home_location_lat != null ? Number(existingVisitor.home_location_lat) : null;
+      const existingLon = existingVisitor.home_location_lon != null ? Number(existingVisitor.home_location_lon) : null;
+      const incomingLat = coordRes.valid ? coordRes.location.lat : null;
+      const incomingLon = coordRes.valid ? coordRes.location.lon : null;
+      if (existingLat !== incomingLat || existingLon !== incomingLon) {
         return jsonResponse(409, { error: 'payload_mismatch' });
       }
 
@@ -526,52 +515,23 @@ async function handleRequest(request: Request): Promise<Response> {
       }
     }
 
-    // Home address & provenance check for portal (only for new issuances)
-    let verifiedAddress: VerifiedAddressDetails | null = null;
+    // Enforcement of home location for new portal pass issuances (after abuse control)
     if (parsed.data.source === 'portal') {
-      if (parsed.data.addressProvenance?.placeId) {
-        try {
-          verifiedAddress = await verifyPlaceDetails(
-            parsed.data.addressProvenance.placeId,
-            parsed.data.addressProvenance.addressDetail
-          );
-        } catch (addrErr) {
-          const msg = addrErr instanceof Error ? addrErr.message : 'address_verification_failed';
-          if (msg === 'address_too_broad') {
-            return jsonResponse(422, {
-              error: 'address_insufficient_specificity',
-              message: 'Please select a more specific address including your street, barangay, or building.',
-            });
-          }
-          if (msg === 'address_must_be_philippines' || msg === 'address_coordinates_out_of_bounds') {
-            return jsonResponse(422, {
-              error: msg,
-              message: 'Address must be within the Philippines.',
-            });
-          }
-          if (msg === 'address_rate_limited') {
-            return jsonResponse(429, {
-              error: 'rate_limit_exceeded',
-              message: 'Address verification rate limit reached. Please wait a moment.',
-            });
-          }
-          if (msg === 'address_verification_unavailable') {
-            return jsonResponse(503, {
-              error: 'address_verification_unavailable',
-              message: 'Address verification is temporarily unavailable. Please try again shortly.',
-            });
-          }
+      if (!coordRes.valid) {
+        if (coordRes.error === 'missing_coordinates') {
           return jsonResponse(422, {
-            error: 'address_verification_failed',
-            message: 'The selected address could not be verified. Please search and select your address again.',
+            error: 'home_location_required_for_portal',
+            message: 'Please select your approximate residential location on the map.',
           });
         }
-      } else {
         return jsonResponse(422, {
-          error: 'address_verification_required',
-          message: 'Address must be selected from verified suggestions.',
+          error: 'invalid_home_location',
+          message: coordRes.message,
         });
       }
+      normalizedHomeLocation = coordRes.location;
+    } else if (coordRes.valid) {
+      normalizedHomeLocation = coordRes.location;
     }
 
     // Mode-specific verification checks
@@ -655,147 +615,46 @@ async function handleRequest(request: Request): Promise<Response> {
     let data: IssueResult | null = null;
 
     if (parsed.data.source === 'portal') {
-      if (verifiedAddress) {
-        // Attempt online v4 RPC with PSGC structured provenance
-        let rpcRes = await admin.schema('api').rpc('issue_online_pass_v4', {
-          requested_actor_id: actorId,
-          requested_registration_mode: parsed.data.registrationMode,
-          requested_request_id: parsed.data.requestId,
-          requested_first_name: visitor.firstName,
-          requested_middle_name: visitor.middleName || null,
-          requested_last_name: visitor.lastName,
-          requested_contact_number: canonicalContact,
-          requested_home_address: verifiedAddress.formatted,
-          requested_purpose: visitor.purpose,
-          requested_visit_date: visitor.visitDate,
-          requested_photo_intent_id: parsed.data.photoIntentId,
-          requested_photo_bytes: photo.bytes,
-          requested_photo_sha256: photo.sha256,
-          requested_id_intent_id: parsed.data.registrationMode === 'new' ? (parsed.data.idIntentId ?? null) : null,
-          requested_id_bytes: parsed.data.registrationMode === 'new' ? (identification?.bytes ?? null) : null,
-          requested_id_sha256: parsed.data.registrationMode === 'new' ? (identification?.sha256 ?? null) : null,
-          requested_token_digest: tokenDigest,
-          requested_arrival_mode: parsed.data.arrivalMode!,
-          // Address provenance
-          requested_address_provider: 'geoapify',
-          requested_address_place_id: verifiedAddress.placeId,
-          requested_address_result_type: verifiedAddress.resultType,
-          requested_address_confidence: verifiedAddress.confidence,
-          requested_address_lat: verifiedAddress.lat,
-          requested_address_lon: verifiedAddress.lon,
-          requested_address_city: verifiedAddress.city,
-          requested_address_state: verifiedAddress.state,
-          requested_address_postcode: verifiedAddress.postcode,
-          requested_address_country_code: 'ph',
-          requested_address_detail: verifiedAddress.addressDetail || null,
-          // PSGC provenance
-          requested_psgc_region_code: parsed.data.addressProvenance?.regionCode || null,
-          requested_psgc_province_code: parsed.data.addressProvenance?.provinceCode || null,
-          requested_psgc_city_code: parsed.data.addressProvenance?.cityCode || null,
-          requested_psgc_barangay_code: parsed.data.addressProvenance?.barangayCode || null,
-          requested_psgc_version: parsed.data.addressProvenance?.psgcVersion || '2026-Q3',
-          // Vehicle declaration
-          requested_vehicle_type: parsed.data.arrivalMode === 'vehicle' ? (parsed.data.vehicle?.vehicleType ?? null) : null,
-          requested_plate_number: parsed.data.arrivalMode === 'vehicle' ? normalizedPlateDisplay : null,
-          requested_plate_key: parsed.data.arrivalMode === 'vehicle' ? normalizedPlateKey : null,
-          requested_color: parsed.data.arrivalMode === 'vehicle' ? (normalizedVehicleColor ?? parsed.data.vehicle?.color ?? null) : null,
-          requested_make_model: parsed.data.arrivalMode === 'vehicle' ? (parsed.data.vehicle?.makeModel?.trim() ?? null) : null,
-          requested_vehicle_catalog_status: parsed.data.arrivalMode === 'vehicle' ? (parsed.data.vehicle?.catalogStatus ?? 'catalog') : 'catalog',
-          requested_vehicle_photo_intent_id: vehiclePhotoIntentId ?? null,
-          requested_vehicle_photo_bytes: vehiclePhoto?.bytes ?? null,
-          requested_vehicle_photo_sha256: vehiclePhoto?.sha256 ?? null,
-          // Returning
-          requested_saved_vehicle_id: parsed.data.arrivalMode === 'vehicle' ? (parsed.data.vehicle?.savedVehicleId ?? null) : null,
-          requested_returning_profile_id: parsed.data.registrationMode === 'returning' ? (parsed.data.returning?.profileId ?? null) : null,
-          requested_returning_match_token_digest: parsed.data.registrationMode === 'returning' ? returningMatchDigest : null,
-        }).single<IssueResult>();
+      const rpcRes = await admin.schema('api').rpc('issue_online_pass_v5', {
+        requested_actor_id: actorId,
+        requested_registration_mode: parsed.data.registrationMode,
+        requested_request_id: parsed.data.requestId,
+        requested_first_name: visitor.firstName,
+        requested_middle_name: visitor.middleName || null,
+        requested_last_name: visitor.lastName,
+        requested_contact_number: canonicalContact,
+        requested_home_address: visitor.homeAddress?.trim() || null,
+        requested_purpose: visitor.purpose,
+        requested_visit_date: visitor.visitDate,
+        requested_photo_intent_id: parsed.data.photoIntentId,
+        requested_photo_bytes: photo.bytes,
+        requested_photo_sha256: photo.sha256,
+        requested_id_intent_id: parsed.data.registrationMode === 'new' ? (parsed.data.idIntentId ?? null) : null,
+        requested_id_bytes: parsed.data.registrationMode === 'new' ? (identification?.bytes ?? null) : null,
+        requested_id_sha256: parsed.data.registrationMode === 'new' ? (identification?.sha256 ?? null) : null,
+        requested_token_digest: tokenDigest,
+        requested_arrival_mode: parsed.data.arrivalMode!,
+        // Approximate residential coordinates (~100m)
+        requested_home_location_lat: normalizedHomeLocation?.lat ?? null,
+        requested_home_location_lon: normalizedHomeLocation?.lon ?? null,
+        // Vehicle declaration
+        requested_vehicle_type: parsed.data.arrivalMode === 'vehicle' ? (parsed.data.vehicle?.vehicleType ?? null) : null,
+        requested_plate_number: parsed.data.arrivalMode === 'vehicle' ? normalizedPlateDisplay : null,
+        requested_plate_key: parsed.data.arrivalMode === 'vehicle' ? normalizedPlateKey : null,
+        requested_color: parsed.data.arrivalMode === 'vehicle' ? (normalizedVehicleColor ?? parsed.data.vehicle?.color ?? null) : null,
+        requested_make_model: parsed.data.arrivalMode === 'vehicle' ? (parsed.data.vehicle?.makeModel?.trim() ?? null) : null,
+        requested_vehicle_catalog_status: parsed.data.arrivalMode === 'vehicle' ? (parsed.data.vehicle?.catalogStatus ?? 'catalog') : 'catalog',
+        requested_vehicle_photo_intent_id: vehiclePhotoIntentId ?? null,
+        requested_vehicle_photo_bytes: vehiclePhoto?.bytes ?? null,
+        requested_vehicle_photo_sha256: vehiclePhoto?.sha256 ?? null,
+        // Returning
+        requested_saved_vehicle_id: parsed.data.arrivalMode === 'vehicle' ? (parsed.data.vehicle?.savedVehicleId ?? null) : null,
+        requested_returning_profile_id: parsed.data.registrationMode === 'returning' ? (parsed.data.returning?.profileId ?? null) : null,
+        requested_returning_match_token_digest: parsed.data.registrationMode === 'returning' ? returningMatchDigest : null,
+      }).single<IssueResult>();
 
-        if (rpcRes.error && (rpcRes.error.code === 'PGRST202' || rpcRes.error.message?.includes('issue_online_pass_v4'))) {
-          // Fallback to online v3 RPC
-          rpcRes = await admin.schema('api').rpc('issue_online_pass_v3', {
-            requested_actor_id: actorId,
-            requested_registration_mode: parsed.data.registrationMode,
-            requested_request_id: parsed.data.requestId,
-            requested_first_name: visitor.firstName,
-            requested_middle_name: visitor.middleName || null,
-            requested_last_name: visitor.lastName,
-            requested_contact_number: canonicalContact,
-            requested_home_address: verifiedAddress.formatted,
-            requested_purpose: visitor.purpose,
-            requested_visit_date: visitor.visitDate,
-            requested_photo_intent_id: parsed.data.photoIntentId,
-            requested_photo_bytes: photo.bytes,
-            requested_photo_sha256: photo.sha256,
-            requested_id_intent_id: parsed.data.registrationMode === 'new' ? (parsed.data.idIntentId ?? null) : null,
-            requested_id_bytes: parsed.data.registrationMode === 'new' ? (identification?.bytes ?? null) : null,
-            requested_id_sha256: parsed.data.registrationMode === 'new' ? (identification?.sha256 ?? null) : null,
-            requested_token_digest: tokenDigest,
-            requested_arrival_mode: parsed.data.arrivalMode!,
-            // Address provenance
-            requested_address_provider: 'geoapify',
-            requested_address_place_id: verifiedAddress.placeId,
-            requested_address_result_type: verifiedAddress.resultType,
-            requested_address_confidence: verifiedAddress.confidence,
-            requested_address_lat: verifiedAddress.lat,
-            requested_address_lon: verifiedAddress.lon,
-            requested_address_city: verifiedAddress.city,
-            requested_address_state: verifiedAddress.state,
-            requested_address_postcode: verifiedAddress.postcode,
-            requested_address_country_code: 'ph',
-            requested_address_detail: verifiedAddress.addressDetail || null,
-            // Vehicle declaration
-            requested_vehicle_type: parsed.data.arrivalMode === 'vehicle' ? (parsed.data.vehicle?.vehicleType ?? null) : null,
-            requested_plate_number: parsed.data.arrivalMode === 'vehicle' ? normalizedPlateDisplay : null,
-            requested_plate_key: parsed.data.arrivalMode === 'vehicle' ? normalizedPlateKey : null,
-            requested_color: parsed.data.arrivalMode === 'vehicle' ? (normalizedVehicleColor ?? parsed.data.vehicle?.color ?? null) : null,
-            requested_make_model: parsed.data.arrivalMode === 'vehicle' ? (parsed.data.vehicle?.makeModel?.trim() ?? null) : null,
-            requested_vehicle_catalog_status: parsed.data.arrivalMode === 'vehicle' ? (parsed.data.vehicle?.catalogStatus ?? 'catalog') : 'catalog',
-            requested_vehicle_photo_intent_id: vehiclePhotoIntentId ?? null,
-            requested_vehicle_photo_bytes: vehiclePhoto?.bytes ?? null,
-            requested_vehicle_photo_sha256: vehiclePhoto?.sha256 ?? null,
-            // Returning
-            requested_saved_vehicle_id: parsed.data.arrivalMode === 'vehicle' ? (parsed.data.vehicle?.savedVehicleId ?? null) : null,
-            requested_returning_profile_id: parsed.data.registrationMode === 'returning' ? (parsed.data.returning?.profileId ?? null) : null,
-            requested_returning_match_token_digest: parsed.data.registrationMode === 'returning' ? returningMatchDigest : null,
-          }).single<IssueResult>();
-        }
-
-        if (rpcRes.error || !rpcRes.data) throw rpcRes.error ?? new Error('issue_failed');
-        data = rpcRes.data;
-      } else {
-        // Fallback to online v2 RPC for tests without address provenance
-        const rpcRes = await admin.schema('api').rpc('issue_online_pass_v2', {
-          requested_actor_id: actorId,
-          requested_registration_mode: parsed.data.registrationMode,
-          requested_request_id: parsed.data.requestId,
-          requested_first_name: visitor.firstName,
-          requested_middle_name: visitor.middleName || null,
-          requested_last_name: visitor.lastName,
-          requested_contact_number: canonicalContact,
-          requested_home_address: visitor.homeAddress?.trim() || '',
-          requested_purpose: visitor.purpose,
-          requested_visit_date: visitor.visitDate,
-          requested_photo_intent_id: parsed.data.photoIntentId,
-          requested_photo_bytes: photo.bytes,
-          requested_photo_sha256: photo.sha256,
-          requested_id_intent_id: parsed.data.registrationMode === 'new' ? (parsed.data.idIntentId ?? null) : null,
-          requested_id_bytes: parsed.data.registrationMode === 'new' ? (identification?.bytes ?? null) : null,
-          requested_id_sha256: parsed.data.registrationMode === 'new' ? (identification?.sha256 ?? null) : null,
-          requested_token_digest: tokenDigest,
-          requested_arrival_mode: parsed.data.arrivalMode || 'no_vehicle',
-          requested_vehicle_type: parsed.data.arrivalMode === 'vehicle' ? (parsed.data.vehicle?.vehicleType ?? null) : null,
-          requested_plate_number: parsed.data.arrivalMode === 'vehicle' ? normalizedPlateDisplay : null,
-          requested_plate_key: parsed.data.arrivalMode === 'vehicle' ? normalizedPlateKey : null,
-          requested_color: parsed.data.arrivalMode === 'vehicle' ? (normalizedVehicleColor ?? parsed.data.vehicle?.color ?? null) : null,
-          requested_make_model: parsed.data.arrivalMode === 'vehicle' ? (parsed.data.vehicle?.makeModel ?? null) : null,
-          requested_saved_vehicle_id: parsed.data.arrivalMode === 'vehicle' ? (parsed.data.vehicle?.savedVehicleId ?? null) : null,
-          requested_returning_profile_id: parsed.data.registrationMode === 'returning' ? (parsed.data.returning?.profileId ?? null) : null,
-          requested_returning_match_token_digest: parsed.data.registrationMode === 'returning' ? returningMatchDigest : null,
-        }).single<IssueResult>();
-
-        if (rpcRes.error || !rpcRes.data) throw rpcRes.error ?? new Error('issue_failed');
-        data = rpcRes.data;
-      }
+      if (rpcRes.error || !rpcRes.data) throw rpcRes.error ?? new Error('issue_failed');
+      data = rpcRes.data;
     } else {
       // Kiosk backward-compatible RPC
       const rpcRes = await admin.schema('api').rpc('issue_pass', {
@@ -828,7 +687,7 @@ async function handleRequest(request: Request): Promise<Response> {
           const { descriptor, modelName, modelVersion } = await extractFaceDescriptorFromBuffer(photo.buffer);
           const encrypted = encryptFaceTemplate(descriptor, templateKey);
 
-          // Insert returning profile with canonical verified address provenance (Section 18)
+          // Insert returning profile with approximate home coordinates
           const { data: newProfile, error: profileErr } = await admin
             .from('returning_visitor_profiles')
             .insert({
@@ -836,25 +695,10 @@ async function handleRequest(request: Request): Promise<Response> {
               middle_name: visitor.middleName || null,
               last_name: visitor.lastName,
               contact_number_e164: canonicalContact,
-              home_address: verifiedAddress ? verifiedAddress.formatted : (visitor.homeAddress?.trim() || ''),
+              home_address: visitor.homeAddress?.trim() || null,
+              home_location_lat: normalizedHomeLocation?.lat ?? null,
+              home_location_lon: normalizedHomeLocation?.lon ?? null,
               consent_version: 'v1',
-              address_provider: verifiedAddress ? 'geoapify' : null,
-              address_place_id: verifiedAddress ? verifiedAddress.placeId : null,
-              address_result_type: verifiedAddress ? verifiedAddress.resultType : null,
-              address_confidence: verifiedAddress ? verifiedAddress.confidence : null,
-              address_lat: verifiedAddress ? verifiedAddress.lat : null,
-              address_lon: verifiedAddress ? verifiedAddress.lon : null,
-              address_city: verifiedAddress ? verifiedAddress.city : null,
-              address_state: verifiedAddress ? verifiedAddress.state : null,
-              address_postcode: verifiedAddress ? verifiedAddress.postcode : null,
-              address_country_code: verifiedAddress ? verifiedAddress.countryCode : null,
-              address_verified_at: verifiedAddress ? new Date().toISOString() : null,
-              address_detail: verifiedAddress ? (verifiedAddress.addressDetail || null) : null,
-              psgc_region_code: parsed.data.addressProvenance?.regionCode || null,
-              psgc_province_code: parsed.data.addressProvenance?.provinceCode || null,
-              psgc_city_code: parsed.data.addressProvenance?.cityCode || null,
-              psgc_barangay_code: parsed.data.addressProvenance?.barangayCode || null,
-              psgc_version: parsed.data.addressProvenance?.psgcVersion || (parsed.data.addressProvenance?.regionCode ? '2026-Q3' : null),
             })
             .select('id')
             .single();
@@ -903,27 +747,12 @@ async function handleRequest(request: Request): Promise<Response> {
             contact_number_e164: canonicalContact,
             updated_at: new Date().toISOString(),
           };
-          if (verifiedAddress) {
-            profileUpdate.home_address = verifiedAddress.formatted;
-            profileUpdate.address_provider = 'geoapify';
-            profileUpdate.address_place_id = verifiedAddress.placeId;
-            profileUpdate.address_result_type = verifiedAddress.resultType;
-            profileUpdate.address_confidence = verifiedAddress.confidence;
-            profileUpdate.address_lat = verifiedAddress.lat;
-            profileUpdate.address_lon = verifiedAddress.lon;
-            profileUpdate.address_city = verifiedAddress.city;
-            profileUpdate.address_state = verifiedAddress.state;
-            profileUpdate.address_postcode = verifiedAddress.postcode;
-            profileUpdate.address_country_code = verifiedAddress.countryCode;
-            profileUpdate.address_verified_at = new Date().toISOString();
-            profileUpdate.address_detail = verifiedAddress.addressDetail || null;
-            if (parsed.data.addressProvenance?.regionCode) {
-              profileUpdate.psgc_region_code = parsed.data.addressProvenance.regionCode;
-              profileUpdate.psgc_province_code = parsed.data.addressProvenance.provinceCode || null;
-              profileUpdate.psgc_city_code = parsed.data.addressProvenance.cityCode || null;
-              profileUpdate.psgc_barangay_code = parsed.data.addressProvenance.barangayCode || null;
-              profileUpdate.psgc_version = parsed.data.addressProvenance.psgcVersion || '2026-Q3';
-            }
+          if (normalizedHomeLocation) {
+            profileUpdate.home_location_lat = normalizedHomeLocation.lat;
+            profileUpdate.home_location_lon = normalizedHomeLocation.lon;
+          }
+          if (visitor.homeAddress) {
+            profileUpdate.home_address = visitor.homeAddress.trim();
           }
           await admin
             .from('returning_visitor_profiles')
@@ -1061,19 +890,21 @@ export function mapDatabaseIssueError(
     return { status: 422, error: 'invalid_vehicle_declaration', message: 'Vehicle declaration details are incomplete or invalid.' };
   }
 
-  // Address verification
+  // Home location
   if (
-    msg.includes('verified address provenance required') ||
-    msg.includes('address_verification_required') ||
-    msg === 'address_verification_required'
+    msg.includes('home_location_required') ||
+    msg.includes('home location required') ||
+    msg === 'home_location_required_for_portal'
   ) {
-    return { status: 422, error: 'address_verification_required', message: 'Address must be selected from verified suggestions.' };
+    return { status: 422, error: 'home_location_required', message: 'Please select your approximate residential location on the map.' };
   }
-  if (msg === 'address_insufficient_specificity' || msg.includes('address_too_broad')) {
-    return { status: 422, error: 'address_insufficient_specificity', message: 'Please select a more specific address including your street, barangay, or building.' };
-  }
-  if (msg === 'address_verification_unavailable') {
-    return { status: 503, error: 'address_verification_unavailable', message: 'Address verification is temporarily unavailable. Please try again shortly.' };
+  if (
+    msg.includes('invalid_home_location') ||
+    msg.includes('invalid home location') ||
+    msg.includes('approximate coordinates must be paired') ||
+    msg.includes('invalid_home_coordinates')
+  ) {
+    return { status: 422, error: 'invalid_home_location', message: 'Approximate residential coordinates are invalid.' };
   }
   if (msg === 'abuse_control_unavailable') {
     return { status: 503, error: 'abuse_control_unavailable', message: 'Abuse control is temporarily unavailable. Please try again shortly.' };

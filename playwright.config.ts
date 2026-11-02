@@ -7,6 +7,7 @@ export default defineConfig({
   forbidOnly: true,
   retries: 0,
   workers: 1,
+  timeout: 60_000,
   reporter: [['list']],
   outputDir: 'test-results',
   use: {

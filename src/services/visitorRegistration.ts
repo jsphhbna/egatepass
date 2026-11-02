@@ -1,26 +1,8 @@
 import type { SupabaseClient, Session } from '@supabase/supabase-js';
 import { requirePortalSupabase, requireSupabase } from '@/lib/supabase';
+import type { HomeLocation } from '@/lib/homeLocation';
 
 export type RegistrationSource = 'portal' | 'kiosk';
-
-export interface AddressProvenance {
-  provider: 'geoapify';
-  placeId: string;
-  resultType?: string;
-  confidence?: number | null;
-  lat?: number;
-  lon?: number;
-  city?: string | null;
-  state?: string | null;
-  postcode?: string | null;
-  countryCode?: string;
-  addressDetail?: string;
-  regionCode?: string;
-  provinceCode?: string;
-  cityCode?: string;
-  barangayCode?: string;
-  psgcVersion?: string;
-}
 
 export interface ReturningSavedVehicle {
   id: string;
@@ -38,7 +20,7 @@ export interface ReturningIdentifyProfile {
   lastName: string;
   contactNumber: string;
   homeAddress?: string | null;
-  addressProvenance?: AddressProvenance | null;
+  homeLocation?: HomeLocation | null;
 }
 
 export interface ReturningIdentifyResult {
@@ -64,7 +46,7 @@ export interface VisitorRegistration {
   email?: string;
   consent?: boolean;
   homeAddress?: string;
-  addressProvenance?: AddressProvenance;
+  homeLocation?: HomeLocation | null;
   registrationMode?: 'new' | 'returning';
   arrivalMode?: 'no_vehicle' | 'vehicle';
   vehicle?: {
@@ -195,11 +177,8 @@ export function classifySubmissionOutcome(
     'invalid_vehicle_declaration',
     'invalid_vehicle_plate',
     'vehicle_photo_required',
-    'address_verification_required',
-    'address_verification_failed',
-    'address_insufficient_specificity',
-    'address_must_be_philippines',
-    'address_coordinates_out_of_bounds',
+    'invalid_home_location',
+    'home_location_required_for_portal',
     'invalid_contact_number',
     'rate_limit_exceeded',
     'abuse_control_unavailable',
@@ -1030,7 +1009,7 @@ export async function issueVisitorPass(
           visitDate: effectiveVisitor.visitDate,
         },
         arrivalMode: effectiveVisitor.arrivalMode,
-        addressProvenance: effectiveVisitor.addressProvenance,
+        homeLocation: effectiveVisitor.homeLocation || undefined,
         vehicle: effectiveVisitor.vehicle
           ? {
               ...effectiveVisitor.vehicle,
@@ -1074,8 +1053,10 @@ export async function issueVisitorPass(
         message = 'Pass service is temporarily unavailable.';
       } else if (errCode === 'invalid_contact_number') {
         message = 'Please provide a valid Philippine mobile number (e.g., 0917 123 4567).';
-      } else if (errCode === 'address_insufficient_specificity') {
-        message = 'Please provide a specific street address or building, not just the city name.';
+      } else if (errCode === 'home_location_required_for_portal' || errCode === 'home_location_required') {
+        message = 'Please select your approximate residential location on the map.';
+      } else if (errCode === 'invalid_home_location') {
+        message = 'Approximate residential coordinates are invalid.';
       } else if (errCode?.includes('vehicle')) {
         message = 'Please check your vehicle declaration details.';
       } else if (body && (body as any).message) {

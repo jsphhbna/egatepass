@@ -65,28 +65,13 @@ test.describe('Workstream H: Real Online Pre-Registration Runtime & Turnstile JI
       await route.continue();
     });
 
-    // 3. Mock address autocomplete endpoint
-    await page.route('**/api/address/autocomplete**', async (route) => {
+    // 3. Mock OSM tile requests
+    await page.route('**/tile.openstreetmap.org/**', async (route: any) => {
+      const png1x1 = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==', 'base64');
       await route.fulfill({
         status: 200,
-        contentType: 'application/json',
-        body: JSON.stringify({
-          suggestions: [
-            {
-              formatted: '123 Sampaloc St, Manila, Metro Manila, Philippines',
-              addressLine1: '123 Sampaloc St',
-              placeId: 'geoapify-place-12345',
-              resultType: 'street',
-              confidence: 0.95,
-              lat: 14.6042,
-              lon: 120.9942,
-              city: 'Manila',
-              state: 'Metro Manila',
-              postcode: '1008',
-              countryCode: 'ph',
-            },
-          ],
-        }),
+        contentType: 'image/png',
+        body: png1x1,
       });
     });
 
@@ -97,17 +82,19 @@ test.describe('Workstream H: Real Online Pre-Registration Runtime & Turnstile JI
     const firstNameInput = page.locator('#first-name, #firstName');
     const lastNameInput = page.locator('#last-name, #lastName');
     const contactInput = page.locator('#contact-number, #contactNumber');
-    const addressInput = page.locator('#home-address, #homeAddress');
+    const selectLocationBtn = page.getByRole('button', { name: /Select approximate location/i });
     const consentCheckbox = page.locator('input[type="checkbox"]#consent, input[name="consent"]');
 
     await expect(firstNameInput).toBeVisible({ timeout: 15_000 });
     await firstNameInput.fill('Maria');
     await lastNameInput.fill('Santos');
     await contactInput.fill('09171234567');
-    await addressInput.fill('Sampaloc');
-    const suggestionItem = page.locator('div[role="button"]:has-text("123 Sampaloc St")');
-    await expect(suggestionItem).toBeVisible({ timeout: 10_000 });
-    await suggestionItem.click();
+    await expect(selectLocationBtn).toBeVisible();
+    await selectLocationBtn.click();
+    const confirmLocationBtn = page.getByRole('button', { name: /Confirm Location/i });
+    await expect(confirmLocationBtn).toBeVisible();
+    await confirmLocationBtn.click();
+    await expect(page.getByText(/Approximate location selected/i)).toBeVisible();
     await expect(consentCheckbox).toBeVisible();
     await consentCheckbox.check();
 
@@ -312,28 +299,13 @@ test.describe('Workstream H: Real Online Pre-Registration Runtime & Turnstile JI
       });
     });
 
-    // 8. Mock address autocomplete endpoint
-    await page.route('**/api/address/autocomplete**', async (route) => {
+    // 8. Mock OSM tile requests
+    await page.route('**/tile.openstreetmap.org/**', async (route: any) => {
+      const png1x1 = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==', 'base64');
       await route.fulfill({
         status: 200,
-        contentType: 'application/json',
-        body: JSON.stringify({
-          suggestions: [
-            {
-              formatted: '456 Sampaloc St, Manila, Metro Manila, Philippines',
-              addressLine1: '456 Sampaloc St',
-              placeId: 'geoapify-place-67890',
-              resultType: 'street',
-              confidence: 0.95,
-              lat: 14.6042,
-              lon: 120.9942,
-              city: 'Manila',
-              state: 'Metro Manila',
-              postcode: '1008',
-              countryCode: 'ph',
-            },
-          ],
-        }),
+        contentType: 'image/png',
+        body: png1x1,
       });
     });
 
@@ -345,10 +317,13 @@ test.describe('Workstream H: Real Online Pre-Registration Runtime & Turnstile JI
     await page.locator('#first-name, #firstName').fill('Juan');
     await page.locator('#last-name, #lastName').fill('Dela Cruz');
     await page.locator('#contact-number, #contactNumber').fill('09181234567');
-    await page.locator('#home-address, #homeAddress').fill('Sampaloc');
-    const suggestion2 = page.locator('div[role="button"]:has-text("456 Sampaloc St")');
-    await expect(suggestion2).toBeVisible({ timeout: 10_000 });
-    await suggestion2.click();
+    const selectLocationBtn = page.getByRole('button', { name: /Select approximate location/i });
+    await expect(selectLocationBtn).toBeVisible();
+    await selectLocationBtn.click();
+    const confirmLocationBtn = page.getByRole('button', { name: /Confirm Location/i });
+    await expect(confirmLocationBtn).toBeVisible();
+    await confirmLocationBtn.click();
+    await expect(page.getByText(/Approximate location selected/i)).toBeVisible();
     await page.locator('input[type="checkbox"]#consent, input[name="consent"]').check();
 
     const continueToVisitBtn = page.getByRole('button', { name: /Next: Visit Details|Continue to Visit Details|Continue/i });

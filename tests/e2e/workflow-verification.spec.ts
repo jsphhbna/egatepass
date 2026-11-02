@@ -115,9 +115,19 @@ async function setupPageMocks(page: any, token = 'mock-e2e-turnstile-token-xyz')
       }),
     });
   });
+
+  // Mock OSM tile requests to avoid network dependency in E2E tests
+  await page.route('**/tile.openstreetmap.org/**', async (route: any) => {
+    const png1x1 = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==', 'base64');
+    await route.fulfill({
+      status: 200,
+      contentType: 'image/png',
+      body: png1x1,
+    });
+  });
 }
 
-test.describe('Section 1 & 2: Real Front-Door Flow and Address Autocomplete UI Contract', () => {
+test.describe('Section 1 & 2: Real Front-Door Flow and Approximate Home Location UI Contract', () => {
   test('navigates Visitor Type -> Arrival Method, validates radio selection, back navigation, and keyboard controls', async ({
     page,
   }) => {
@@ -186,51 +196,17 @@ test.describe('Section 1 & 2: Real Front-Door Flow and Address Autocomplete UI C
     await expect(page.getByRole('heading', { name: 'Personal Details' })).toBeVisible();
   });
 
-  test('address autocomplete contract: dropdown selection, unselected block, edit invalidation, and error fail-closed', async ({
+  test('approximate residential location contract: modal launch, attribution, unselected block, pin confirmation, and change', async ({
     page,
   }) => {
     await setupPageMocks(page);
-
-    // Mock autocomplete route
-    await page.route('**/api/address/autocomplete**', async (route: any) => {
-      const url = new URL(route.request().url());
-      const q = url.searchParams.get('q') || '';
-
-      if (q.includes('Error500')) {
-        await route.fulfill({ status: 500, contentType: 'application/json', body: JSON.stringify({ error: 'internal_error' }) });
-        return;
-      }
-
-      await route.fulfill({
-        status: 200,
-        contentType: 'application/json',
-        body: JSON.stringify({
-          suggestions: [
-            {
-              placeId: 'geo-nagtahan-1008',
-              formatted: 'Nagtahan St, Sampaloc, Manila, Philippines',
-              addressLine1: 'Nagtahan St',
-              addressLine2: 'Sampaloc, Manila',
-              city: 'Manila',
-              state: 'Metro Manila',
-              countryCode: 'ph',
-              lat: 14.5995,
-              lon: 120.9842,
-              resultType: 'street',
-              confidence: 0.98,
-              matchType: 'full_match',
-            },
-          ],
-        }),
-      });
-    });
 
     await page.goto('/get-pass?mode=new&arrival=no_vehicle');
 
     const firstName = page.locator('#first-name, #firstName');
     const lastName = page.locator('#last-name, #lastName');
     const contact = page.locator('#contact-number, #contactNumber');
-    const addressInput = page.locator('#home-address, #homeAddress');
+    const selectLocationBtn = page.getByRole('button', { name: /Select approximate location/i });
     const consent = page.locator('input[type="checkbox"]#consent, input[name="consent"]');
     const nextBtn = page.getByRole('button', { name: /Next: Visit Details|Continue/i });
 
@@ -240,37 +216,35 @@ test.describe('Section 1 & 2: Real Front-Door Flow and Address Autocomplete UI C
     await contact.fill('09171234567');
     await consent.check();
 
-    // Case 1: Typed address WITHOUT selecting suggestion -> BLOCKED
-    await addressInput.fill('123 Unverified Street Nowhere');
+    // Case 1: Form submission WITHOUT selecting approximate location -> BLOCKED
     await nextBtn.click();
-    await expect(page.getByText(/select a verified home address from the suggestions/i).first()).toBeVisible({ timeout: 5_000 });
+    await expect(page.getByText(/select your approximate residential location on the map/i).first()).toBeVisible({ timeout: 5_000 });
 
-    // Case 2: Type valid prefix, dropdown suggestion appears visually, and select it
-    await addressInput.fill('Nagtahan');
-    const suggestionItem = page.locator('div[role="button"]:has-text("Nagtahan St")').first();
-    await expect(suggestionItem).toBeVisible({ timeout: 10_000 });
-    await suggestionItem.click();
+    // Case 2: Open modal, check UI elements (attribution, helper text, title)
+    await expect(selectLocationBtn).toBeVisible();
+    await selectLocationBtn.click();
 
-    // Verified address card is now rendered with a "Change" button
+    const modal = page.locator('div[role="dialog"]');
+    await expect(modal).toBeVisible();
+    await expect(page.getByRole('heading', { name: /Select Approximate Home Location/i })).toBeVisible();
+    await expect(page.getByText(/OpenStreetMap/i).first()).toBeVisible();
+
+    // Case 3: Device location button is visible
+    await expect(page.getByRole('button', { name: /Use My Location/i })).toBeVisible();
+
+    // Case 4: Confirm Location (defaults to campus coordinates)
+    const confirmBtn = page.getByRole('button', { name: /Confirm Location/i });
+    await expect(confirmBtn).toBeVisible();
+    await confirmBtn.click();
+
+    // Modal closes and "Approximate location selected" card appears with "Change" button
+    await expect(modal).not.toBeVisible();
+    await expect(page.getByText(/Approximate location selected/i)).toBeVisible();
     const changeBtn = page.getByRole('button', { name: /Change/i });
     await expect(changeBtn).toBeVisible();
 
-    // Case 3: Clicking "Change" clears verification and restores search input
-    await changeBtn.click();
-    await expect(addressInput).toBeVisible();
-
-    // If user types without selecting a suggestion -> BLOCKED
-    await addressInput.fill('Unverified typed address after change');
+    // Case 5: Advance to Visit Details
     await nextBtn.click();
-    await expect(page.getByText(/select a verified home address from the suggestions/i).first()).toBeVisible({ timeout: 5_000 });
-
-    // Re-select suggestion to proceed
-    await addressInput.fill('Nagtahan');
-    await expect(suggestionItem).toBeVisible({ timeout: 10_000 });
-    await suggestionItem.click();
-    await nextBtn.click();
-
-    // Advances to Visit Details
     await expect(page.getByRole('heading', { name: /Visit & Vehicle Details|Visit Details/i })).toBeVisible({ timeout: 10_000 });
   });
 });
@@ -318,6 +292,7 @@ test.describe('Section 17: Full Front-Door Vehicle Registration Browser Workflow
   test('executes end-to-end vehicle registration from clean front-door, verifies Step 1 to Step 2 advancement, displays vehicle details on review, and proves issue payload contract', async ({
     page,
   }) => {
+    test.setTimeout(60_000);
     await setupPageMocks(page);
 
     // Mock vehicle catalog endpoints
@@ -337,38 +312,16 @@ test.describe('Section 17: Full Front-Door Vehicle Registration Browser Workflow
       });
     });
 
-    // Mock address autocomplete endpoint
-    await page.route('**/api/address/autocomplete**', async (route) => {
-      await route.fulfill({
-        status: 200,
-        contentType: 'application/json',
-        body: JSON.stringify({
-          suggestions: [
-            {
-              placeId: 'geo-nagtahan-1008',
-              formatted: 'Nagtahan St, Sampaloc, Manila, Philippines',
-              addressLine1: 'Nagtahan St',
-              addressLine2: 'Sampaloc, Manila',
-              city: 'Manila',
-              state: 'Metro Manila',
-              countryCode: 'ph',
-              lat: 14.5995,
-              lon: 120.9842,
-              resultType: 'street',
-              confidence: 0.98,
-              matchType: 'full_match',
-            },
-          ],
-        }),
-      });
-    });
-
     // Mock upload intents
     let intentCounter = 0;
     await page.route('**/rest/v1/rpc/create_upload_intent**', async (route) => {
       intentCounter++;
-      const kind = intentCounter === 1 ? 'vehicle' : intentCounter === 2 ? 'photo' : 'id';
-      const bucket = kind === 'photo' ? 'visitor-photos' : kind === 'id' ? 'visitor-ids' : 'visitor-vehicles';
+      let kind = 'photo';
+      try {
+        const body = JSON.parse(route.request().postData() || '{}');
+        kind = body.p_kind || body.requested_kind || (intentCounter === 1 ? 'photo' : intentCounter === 2 ? 'id' : 'vehicle_photo');
+      } catch {}
+      const bucket = kind === 'id' ? 'visitor-ids' : (kind === 'vehicle_photo' || kind === 'vehicle') ? 'visitor-vehicles' : 'visitor-photos';
       const intentId = `intent-e2e-${intentCounter}`;
 
       await route.fulfill({
@@ -451,17 +404,19 @@ test.describe('Section 17: Full Front-Door Vehicle Registration Browser Workflow
     const firstNameInput = page.locator('#first-name, #firstName');
     const lastNameInput = page.locator('#last-name, #lastName');
     const contactInput = page.locator('#contact-number, #contactNumber');
-    const addressInput = page.locator('#home-address, #homeAddress');
+    const selectLocationBtn = page.getByRole('button', { name: /Select approximate location/i });
     const consentCheckbox = page.locator('input[type="checkbox"]#consent, input[name="consent"]');
 
     await firstNameInput.fill('Juan');
     await lastNameInput.fill('Dela Cruz');
     await contactInput.fill('09171234567');
 
-    await addressInput.fill('Nagtahan');
-    const suggestionItem = page.locator('div[role="button"]:has-text("Nagtahan St")').first();
-    await expect(suggestionItem).toBeVisible({ timeout: 10_000 });
-    await suggestionItem.click();
+    await expect(selectLocationBtn).toBeVisible();
+    await selectLocationBtn.click();
+    const confirmLocationBtn = page.getByRole('button', { name: /Confirm Location/i });
+    await expect(confirmLocationBtn).toBeVisible();
+    await confirmLocationBtn.click();
+    await expect(page.getByText(/Approximate location selected/i)).toBeVisible();
 
     await consentCheckbox.check();
 
@@ -552,6 +507,8 @@ test.describe('Section 17: Full Front-Door Vehicle Registration Browser Workflow
     await expect(reviewHeading).toBeVisible({ timeout: 15_000 });
 
     // Assert Vehicle Declaration card on review screen
+    await expect(page.getByText('Residential Location:')).toBeVisible();
+    await expect(page.getByText('Approximate residential location selected')).toBeVisible();
     await expect(page.getByText('Arrival & Vehicle')).toBeVisible();
     await expect(page.getByText('ABC 1234')).toBeVisible();
     await expect(page.getByText('White')).toBeVisible();
@@ -566,6 +523,7 @@ test.describe('Section 17: Full Front-Door Vehicle Registration Browser Workflow
 
     expect(capturedIssuePayload).not.toBeNull();
     expect(capturedIssuePayload.arrivalMode).toBe('vehicle');
+    expect(capturedIssuePayload.homeLocation).toEqual({ lat: 14.6, lon: 120.998 });
     expect(capturedIssuePayload.vehicle?.plateNumber).toBe('ABC 1234');
     expect(capturedIssuePayload.vehicle?.color).toBe('White');
     expect(capturedIssuePayload.vehicle?.vehicleType).toBe('car');
@@ -615,36 +573,10 @@ test.describe('Section 18: Returning Visitor Unavailable Modal Navigation', () =
 });
 
 test.describe('Section 19: Complete "Start Over" Session & State Reset', () => {
-  test('clears all React Hook Form state, address cache, and lands on frontdoor', async ({
+  test('clears all React Hook Form state, location selection, and lands on frontdoor', async ({
     page,
   }) => {
     await setupPageMocks(page);
-
-    // Mock address autocomplete
-    await page.route('**/api/address/autocomplete**', async (route: any) => {
-      await route.fulfill({
-        status: 200,
-        contentType: 'application/json',
-        body: JSON.stringify({
-          suggestions: [
-            {
-              placeId: 'geo-nagtahan-1008',
-              formatted: 'Nagtahan St, Sampaloc, Manila, Philippines',
-              addressLine1: 'Nagtahan St',
-              addressLine2: 'Sampaloc, Manila',
-              city: 'Manila',
-              state: 'Metro Manila',
-              countryCode: 'ph',
-              lat: 14.5995,
-              lon: 120.9842,
-              resultType: 'street',
-              confidence: 0.98,
-              matchType: 'full_match',
-            },
-          ],
-        }),
-      });
-    });
 
     // Start registration
     await page.goto('/get-pass?mode=new&arrival=no_vehicle');
@@ -652,7 +584,7 @@ test.describe('Section 19: Complete "Start Over" Session & State Reset', () => {
     const firstName = page.locator('#first-name, #firstName');
     const lastName = page.locator('#last-name, #lastName');
     const contact = page.locator('#contact-number, #contactNumber');
-    const addressInput = page.locator('#home-address, #homeAddress');
+    const selectLocationBtn = page.getByRole('button', { name: /Select approximate location/i });
     const consent = page.locator('input[type="checkbox"]#consent, input[name="consent"]');
     const nextBtn = page.getByRole('button', { name: /Next: Visit Details|Continue/i });
 
@@ -661,10 +593,12 @@ test.describe('Section 19: Complete "Start Over" Session & State Reset', () => {
     await lastName.fill('Penduko');
     await contact.fill('09181234567');
 
-    await addressInput.fill('Nagtahan');
-    const suggestionItem = page.locator('div[role="button"]:has-text("Nagtahan St")').first();
-    await expect(suggestionItem).toBeVisible({ timeout: 10_000 });
-    await suggestionItem.click();
+    await expect(selectLocationBtn).toBeVisible();
+    await selectLocationBtn.click();
+    const confirmLocationBtn = page.getByRole('button', { name: /Confirm Location/i });
+    await expect(confirmLocationBtn).toBeVisible();
+    await confirmLocationBtn.click();
+    await expect(page.getByText(/Approximate location selected/i)).toBeVisible();
 
     await consent.check();
     await nextBtn.click();
@@ -695,8 +629,7 @@ test.describe('Section 19: Complete "Start Over" Session & State Reset', () => {
     await expect(firstName).toHaveValue('');
     await expect(lastName).toHaveValue('');
     await expect(contact).toHaveValue('');
-    await expect(addressInput).toBeVisible();
-    await expect(addressInput).toHaveValue('');
+    await expect(page.getByRole('button', { name: /Select approximate location/i })).toBeVisible();
     await expect(page.getByRole('button', { name: /Change/i })).not.toBeVisible();
   });
 });
@@ -733,38 +666,13 @@ test.describe('Section 20: Vehicle Catalog 3-State Machine & Explicit Selection'
       });
     });
 
-    await page.route('**/api/address/autocomplete**', async (route: any) => {
-      await route.fulfill({
-        status: 200,
-        contentType: 'application/json',
-        body: JSON.stringify({
-          suggestions: [
-            {
-              placeId: 'geo-nagtahan-1008',
-              formatted: 'Nagtahan St, Sampaloc, Manila, Philippines',
-              addressLine1: 'Nagtahan St',
-              addressLine2: 'Sampaloc, Manila',
-              city: 'Manila',
-              state: 'Metro Manila',
-              countryCode: 'ph',
-              lat: 14.5995,
-              lon: 120.9842,
-              resultType: 'street',
-              confidence: 0.98,
-              matchType: 'full_match',
-            },
-          ],
-        }),
-      });
-    });
-
     await page.goto('/get-pass?mode=new&arrival=vehicle');
 
     // Fill Step 1
     const firstName = page.locator('#first-name, #firstName');
     const lastName = page.locator('#last-name, #lastName');
     const contact = page.locator('#contact-number, #contactNumber');
-    const addressInput = page.locator('#home-address, #homeAddress');
+    const selectLocationBtn = page.getByRole('button', { name: /Select approximate location/i });
     const consent = page.locator('input[type="checkbox"]#consent, input[name="consent"]');
     const nextBtn = page.getByRole('button', { name: /Next: Visit Details|Continue/i });
 
@@ -773,10 +681,12 @@ test.describe('Section 20: Vehicle Catalog 3-State Machine & Explicit Selection'
     await lastName.fill('Clara');
     await contact.fill('09191234567');
 
-    await addressInput.fill('Nagtahan');
-    const suggestionItem = page.locator('div[role="button"]:has-text("Nagtahan St")').first();
-    await expect(suggestionItem).toBeVisible({ timeout: 10_000 });
-    await suggestionItem.click();
+    await expect(selectLocationBtn).toBeVisible();
+    await selectLocationBtn.click();
+    const confirmLocationBtn = page.getByRole('button', { name: /Confirm Location/i });
+    await expect(confirmLocationBtn).toBeVisible();
+    await confirmLocationBtn.click();
+    await expect(page.getByText(/Approximate location selected/i)).toBeVisible();
 
     await consent.check();
     await nextBtn.click();
@@ -841,31 +751,6 @@ test.describe('Section 21: Ambiguous Generation Failure and "Cancel & Ask Guard"
   }) => {
     await setupPageMocks(page);
 
-    await page.route('**/api/address/autocomplete**', async (route: any) => {
-      await route.fulfill({
-        status: 200,
-        contentType: 'application/json',
-        body: JSON.stringify({
-          suggestions: [
-            {
-              placeId: 'geo-nagtahan-1008',
-              formatted: 'Nagtahan St, Sampaloc, Manila, Philippines',
-              addressLine1: 'Nagtahan St',
-              addressLine2: 'Sampaloc, Manila',
-              city: 'Manila',
-              state: 'Metro Manila',
-              countryCode: 'ph',
-              lat: 14.5995,
-              lon: 120.9842,
-              resultType: 'street',
-              confidence: 0.98,
-              matchType: 'full_match',
-            },
-          ],
-        }),
-      });
-    });
-
     // Mock upload intents
     let intentCounter = 0;
     await page.route('**/rest/v1/rpc/create_upload_intent**', async (route) => {
@@ -924,7 +809,7 @@ test.describe('Section 21: Ambiguous Generation Failure and "Cancel & Ask Guard"
     const firstName = page.locator('#first-name, #firstName');
     const lastName = page.locator('#last-name, #lastName');
     const contact = page.locator('#contact-number, #contactNumber');
-    const addressInput = page.locator('#home-address, #homeAddress');
+    const selectLocationBtn = page.getByRole('button', { name: /Select approximate location/i });
     const consent = page.locator('input[type="checkbox"]#consent, input[name="consent"]');
     const nextBtn = page.getByRole('button', { name: /Next: Visit Details|Continue/i });
 
@@ -933,10 +818,12 @@ test.describe('Section 21: Ambiguous Generation Failure and "Cancel & Ask Guard"
     await lastName.fill('Ibarra');
     await contact.fill('09201234567');
 
-    await addressInput.fill('Nagtahan');
-    const suggestionItem = page.locator('div[role="button"]:has-text("Nagtahan St")').first();
-    await expect(suggestionItem).toBeVisible({ timeout: 10_000 });
-    await suggestionItem.click();
+    await expect(selectLocationBtn).toBeVisible();
+    await selectLocationBtn.click();
+    const confirmLocationBtn = page.getByRole('button', { name: /Confirm Location/i });
+    await expect(confirmLocationBtn).toBeVisible();
+    await confirmLocationBtn.click();
+    await expect(page.getByText(/Approximate location selected/i)).toBeVisible();
 
     await consent.check();
     await nextBtn.click();

@@ -2278,4 +2278,78 @@ describe('Permanent PostgreSQL Migration Chain & Schema Contracts (PGlite)', () 
     const secondDecl = await db.query(`select plate_key from public.visit_vehicle_declarations where pass_id = '${passId2}';`);
     expect(secondDecl.rows.length).toBe(1);
   }, 60000);
+
+  it('Migration 47: verifies approximate home location coordinates, paired constraints, and issue_online_pass_v5', async () => {
+    const db = new PGlite();
+    await applyAllMigrations(db);
+
+    // 1. Verify coordinate columns on visitors
+    const visitorCoords = await db.query<{ column_name: string; data_type: string }>(`
+      select column_name, data_type from information_schema.columns
+      where table_schema = 'public' and table_name = 'visitors' and column_name in ('home_location_lat', 'home_location_lon');
+    `);
+    expect(visitorCoords.rows.length).toBe(2);
+    expect(visitorCoords.rows.map((r) => r.column_name)).toContain('home_location_lat');
+    expect(visitorCoords.rows.map((r) => r.column_name)).toContain('home_location_lon');
+
+    // 2. Verify coordinate columns on returning_visitor_profiles
+    const profileCoords = await db.query<{ column_name: string; data_type: string }>(`
+      select column_name, data_type from information_schema.columns
+      where table_schema = 'public' and table_name = 'returning_visitor_profiles' and column_name in ('home_location_lat', 'home_location_lon');
+    `);
+    expect(profileCoords.rows.length).toBe(2);
+
+    // 3. Test coordinate pairing constraint (one null, one present MUST throw)
+    const testUserId = '55555555-5555-5555-5555-555555555555';
+    await db.exec(`insert into auth.users (id, is_anonymous) values ('${testUserId}', true);`);
+
+    await expect(
+      db.exec(`
+        insert into public.visitors (
+          id, owner_id, source, full_name, contact_number, visit_date, purpose, consent_accepted_at,
+          home_location_lat, home_location_lon
+        ) values (
+          '${testUserId}', '${testUserId}', 'portal', 'Unpaired Visitor', '+639175555555', current_date, 'Visit', now(),
+          14.600, null
+        );
+      `)
+    ).rejects.toThrow();
+
+    // 4. Test coordinate bounds constraint (lat > 90 MUST throw)
+    await expect(
+      db.exec(`
+        insert into public.visitors (
+          id, owner_id, source, full_name, contact_number, visit_date, purpose, consent_accepted_at,
+          home_location_lat, home_location_lon
+        ) values (
+          '${testUserId}', '${testUserId}', 'portal', 'Out of Bounds', '+639175555555', current_date, 'Visit', now(),
+          95.000, 120.984
+        );
+      `)
+    ).rejects.toThrow();
+
+    // 5. Test valid coordinates insert and 3-decimal precision
+    await db.exec(`
+      insert into public.visitors (
+        id, owner_id, source, full_name, contact_number, visit_date, purpose, consent_accepted_at,
+        home_location_lat, home_location_lon
+      ) values (
+        '${testUserId}', '${testUserId}', 'portal', 'Valid Coords', '+639175555555', current_date, 'Visit', now(),
+        14.600, 120.984
+      );
+    `);
+    const saved = await db.query<{ home_location_lat: string; home_location_lon: string }>(`
+      select home_location_lat, home_location_lon from public.visitors where id = '${testUserId}';
+    `);
+    expect(Number(saved.rows[0].home_location_lat)).toBe(14.6);
+    expect(Number(saved.rows[0].home_location_lon)).toBe(120.984);
+
+    // 6. Verify api.issue_online_pass_v5 function exists
+    const rpcCheck = await db.query(`
+      select routine_name
+      from information_schema.routines
+      where routine_schema = 'api' and routine_name = 'issue_online_pass_v5';
+    `);
+    expect(rpcCheck.rows.length).toBe(1);
+  }, 60000);
 });

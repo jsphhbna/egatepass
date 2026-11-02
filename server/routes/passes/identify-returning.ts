@@ -185,7 +185,7 @@ async function handleRequest(request: Request): Promise<Response> {
           id, profile_id, encrypted_embedding, iv, auth_tag, key_version,
           returning_visitor_profiles!inner(
             id, first_name, middle_name, last_name, contact_number_e164, home_address,
-            address_place_id, address_detail, psgc_region_code, psgc_province_code, psgc_city_code, psgc_barangay_code, psgc_version,
+            home_location_lat, home_location_lon,
             expires_at, revoked_at
           )
         `)
@@ -220,14 +220,9 @@ async function handleRequest(request: Request): Promise<Response> {
       middle_name: string | null;
       last_name: string;
       contact_number_e164: string;
-      home_address: string;
-      address_place_id: string | null;
-      address_detail: string | null;
-      psgc_region_code?: string | null;
-      psgc_province_code?: string | null;
-      psgc_city_code?: string | null;
-      psgc_barangay_code?: string | null;
-      psgc_version?: string | null;
+      home_address?: string | null;
+      home_location_lat?: number | null;
+      home_location_lon?: number | null;
     } | null = null;
 
     for (const t of allTemplates) {
@@ -250,14 +245,9 @@ async function handleRequest(request: Request): Promise<Response> {
             middle_name: string | null;
             last_name: string;
             contact_number_e164: string;
-            home_address: string;
-            address_place_id: string | null;
-            address_detail: string | null;
-            psgc_region_code?: string | null;
-            psgc_province_code?: string | null;
-            psgc_city_code?: string | null;
-            psgc_barangay_code?: string | null;
-            psgc_version?: string | null;
+            home_address?: string | null;
+            home_location_lat?: number | null;
+            home_location_lon?: number | null;
           };
           bestProfile = p;
         } else if (score > secondScore) {
@@ -322,16 +312,10 @@ async function handleRequest(request: Request): Promise<Response> {
           lastName: bestProfile.last_name,
           contactNumber: bestProfile.contact_number_e164,
           homeAddress: bestProfile.home_address,
-          addressProvenance: bestProfile.address_place_id
+          homeLocation: (bestProfile.home_location_lat != null && bestProfile.home_location_lon != null)
             ? {
-                provider: 'geoapify' as const,
-                placeId: bestProfile.address_place_id,
-                addressDetail: bestProfile.address_detail || undefined,
-                regionCode: bestProfile.psgc_region_code || undefined,
-                provinceCode: bestProfile.psgc_province_code || undefined,
-                cityCode: bestProfile.psgc_city_code || undefined,
-                barangayCode: bestProfile.psgc_barangay_code || undefined,
-                psgcVersion: bestProfile.psgc_version || undefined,
+                lat: Number(bestProfile.home_location_lat),
+                lon: Number(bestProfile.home_location_lon),
               }
             : null,
         },
