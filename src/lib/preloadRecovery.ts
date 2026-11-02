@@ -22,6 +22,12 @@ export function handlePreloadError(
     return false;
   }
 
+  // Preserve active visitor registration state: NEVER automatically reload the page while on /get-pass
+  if (typeof window !== 'undefined' && window.location.pathname.startsWith('/get-pass')) {
+    console.warn('[PreloadRecovery] Suppressing auto-reload on /get-pass to preserve active visitor registration state.');
+    return false;
+  }
+
   const storage = context.storage !== undefined
     ? context.storage
     : (typeof window !== 'undefined' ? window.sessionStorage : null);

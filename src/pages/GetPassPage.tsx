@@ -984,6 +984,7 @@ export function GetPassPage() {
   // OPTIONAL OCR EXTRACTION (In Memory)
   // ============================================================
   async function handleOcrFileSelected(e: React.ChangeEvent<HTMLInputElement>) {
+    e.stopPropagation();
     const file = e.target.files?.[0];
     e.target.value = '';
     if (!file) return;
@@ -1939,7 +1940,11 @@ export function GetPassPage() {
                     ref={ocrFileInputRef}
                     type="file"
                     accept="image/jpeg,image/png,image/webp"
-                    onChange={handleOcrFileSelected}
+                    onClick={(e) => e.stopPropagation()}
+                    onChange={(e) => {
+                      e.stopPropagation();
+                      void handleOcrFileSelected(e);
+                    }}
                     className="hidden"
                   />
 
@@ -1949,7 +1954,11 @@ export function GetPassPage() {
                     size="sm"
                     disabled={isProcessingOcr}
                     loading={isProcessingOcr}
-                    onClick={() => ocrFileInputRef.current?.click()}
+                    onClick={(e) => {
+                      e.preventDefault();
+                      e.stopPropagation();
+                      ocrFileInputRef.current?.click();
+                    }}
                     icon={<Upload className="h-3.5 w-3.5" />}
                   >
                     Upload ID Image

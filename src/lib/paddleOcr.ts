@@ -55,13 +55,12 @@ export async function getPaddleOcrInstance(
       const { PaddleOCR } = await import('@paddleocr/paddleocr-js');
       if (onProgress) onProgress(25);
 
-      const isWorkerSupported = typeof Worker !== 'undefined';
-
       // Explicitly configure PP-OCRv6 with Tagalog ('tl') / English language support
+      // worker: false avoids spawning Vite worker chunk with unhashed URL that triggers 404/reload
       const ocr = await PaddleOCR.create({
         ocrVersion: 'PP-OCRv6',
         lang: 'tl',
-        worker: isWorkerSupported,
+        worker: false,
         ortOptions: {
           backend: 'auto', // WebGPU where supported, graceful fallback to WASM
         },
