@@ -231,6 +231,10 @@
       "destination": "/api/passes/vehicles-models"
     },
     {
+      "source": "/api/location/search",
+      "destination": "/api/passes/location-search"
+    },
+    {
       "source": "/((?!api/).*)",
       "destination": "/index.html"
     }
