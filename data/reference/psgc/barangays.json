@@ -1,128 +1,4488 @@
 [
   {
-    "code": "1380600408",
+    "code": "1380601001",
     "cityCode": "1380600000",
-    "name": "Barangay 408 (Sampaloc / EARIST Nagtahan)"
+    "name": "Barangay 1"
   },
   {
-    "code": "1380600409",
+    "code": "1380601002",
     "cityCode": "1380600000",
-    "name": "Barangay 409 (Sampaloc)"
+    "name": "Barangay 2"
   },
   {
-    "code": "1380600410",
+    "code": "1380601003",
     "cityCode": "1380600000",
-    "name": "Barangay 410 (Sampaloc)"
+    "name": "Barangay 3"
   },
   {
-    "code": "1380600411",
+    "code": "1380601004",
     "cityCode": "1380600000",
-    "name": "Barangay 411 (Sampaloc)"
+    "name": "Barangay 4"
   },
   {
-    "code": "1380600412",
+    "code": "1380601005",
     "cityCode": "1380600000",
-    "name": "Barangay 412 (Sampaloc)"
+    "name": "Barangay 5"
   },
   {
-    "code": "1380600413",
+    "code": "1380601006",
     "cityCode": "1380600000",
-    "name": "Barangay 413 (Sampaloc)"
+    "name": "Barangay 6"
   },
   {
-    "code": "1380600414",
+    "code": "1380601007",
     "cityCode": "1380600000",
-    "name": "Barangay 414 (Sampaloc)"
+    "name": "Barangay 7"
   },
   {
-    "code": "1380600415",
+    "code": "1380601008",
     "cityCode": "1380600000",
-    "name": "Barangay 415 (Sampaloc)"
+    "name": "Barangay 8"
   },
   {
-    "code": "1380600587",
+    "code": "1380601009",
     "cityCode": "1380600000",
-    "name": "Barangay 587 (Santa Mesa)"
+    "name": "Barangay 9"
   },
   {
-    "code": "1380600588",
+    "code": "1380601010",
     "cityCode": "1380600000",
-    "name": "Barangay 588 (Santa Mesa)"
+    "name": "Barangay 10"
   },
   {
-    "code": "1380600629",
+    "code": "1380601011",
     "cityCode": "1380600000",
-    "name": "Barangay 629 (Santa Mesa)"
+    "name": "Barangay 11"
   },
   {
-    "code": "1380600830",
+    "code": "1380601012",
     "cityCode": "1380600000",
-    "name": "Barangay 830 (Pandacan)"
+    "name": "Barangay 12"
   },
   {
-    "code": "1380600831",
+    "code": "1380601013",
     "cityCode": "1380600000",
-    "name": "Barangay 831 (Pandacan)"
+    "name": "Barangay 13"
   },
   {
-    "code": "1380600659",
+    "code": "1380601014",
     "cityCode": "1380600000",
-    "name": "Barangay 659 (Ermita)"
+    "name": "Barangay 14"
   },
   {
-    "code": "1380600660",
+    "code": "1380601015",
     "cityCode": "1380600000",
-    "name": "Barangay 660 (Ermita)"
+    "name": "Barangay 15"
   },
   {
-    "code": "1380600661",
+    "code": "1380601016",
     "cityCode": "1380600000",
-    "name": "Barangay 661 (Rizal Park / Ermita)"
+    "name": "Barangay 16"
   },
   {
-    "code": "1380600667",
+    "code": "1380601017",
     "cityCode": "1380600000",
-    "name": "Barangay 667 (Ermita)"
+    "name": "Barangay 17"
   },
   {
-    "code": "1380600696",
+    "code": "1380601018",
     "cityCode": "1380600000",
-    "name": "Barangay 696 (Malate)"
+    "name": "Barangay 18"
   },
   {
-    "code": "1380600697",
+    "code": "1380601019",
     "cityCode": "1380600000",
-    "name": "Barangay 697 (Malate)"
+    "name": "Barangay 19"
   },
   {
-    "code": "1380600700",
+    "code": "1380601020",
     "cityCode": "1380600000",
-    "name": "Barangay 700 (Malate)"
+    "name": "Barangay 20"
   },
   {
-    "code": "1380600821",
+    "code": "1380601025",
     "cityCode": "1380600000",
-    "name": "Barangay 821 (Paco)"
+    "name": "Barangay 25"
   },
   {
-    "code": "1380600822",
+    "code": "1380601026",
     "cityCode": "1380600000",
-    "name": "Barangay 822 (Paco)"
+    "name": "Barangay 26"
   },
   {
-    "code": "1380600823",
+    "code": "1380601028",
     "cityCode": "1380600000",
-    "name": "Barangay 823 (Paco)"
+    "name": "Barangay 28"
   },
   {
-    "code": "1380600287",
+    "code": "1380601029",
     "cityCode": "1380600000",
-    "name": "Barangay 287 (Binondo)"
+    "name": "Barangay 29"
   },
   {
-    "code": "1380600306",
+    "code": "1380601030",
     "cityCode": "1380600000",
-    "name": "Barangay 306 (Santa Cruz)"
+    "name": "Barangay 30"
+  },
+  {
+    "code": "1380601031",
+    "cityCode": "1380600000",
+    "name": "Barangay 31"
+  },
+  {
+    "code": "1380601032",
+    "cityCode": "1380600000",
+    "name": "Barangay 32"
+  },
+  {
+    "code": "1380601033",
+    "cityCode": "1380600000",
+    "name": "Barangay 33"
+  },
+  {
+    "code": "1380601034",
+    "cityCode": "1380600000",
+    "name": "Barangay 34"
+  },
+  {
+    "code": "1380601035",
+    "cityCode": "1380600000",
+    "name": "Barangay 35"
+  },
+  {
+    "code": "1380601036",
+    "cityCode": "1380600000",
+    "name": "Barangay 36"
+  },
+  {
+    "code": "1380601037",
+    "cityCode": "1380600000",
+    "name": "Barangay 37"
+  },
+  {
+    "code": "1380601038",
+    "cityCode": "1380600000",
+    "name": "Barangay 38"
+  },
+  {
+    "code": "1380601039",
+    "cityCode": "1380600000",
+    "name": "Barangay 39"
+  },
+  {
+    "code": "1380601041",
+    "cityCode": "1380600000",
+    "name": "Barangay 41"
+  },
+  {
+    "code": "1380601042",
+    "cityCode": "1380600000",
+    "name": "Barangay 42"
+  },
+  {
+    "code": "1380601043",
+    "cityCode": "1380600000",
+    "name": "Barangay 43"
+  },
+  {
+    "code": "1380601044",
+    "cityCode": "1380600000",
+    "name": "Barangay 44"
+  },
+  {
+    "code": "1380601045",
+    "cityCode": "1380600000",
+    "name": "Barangay 45"
+  },
+  {
+    "code": "1380601046",
+    "cityCode": "1380600000",
+    "name": "Barangay 46"
+  },
+  {
+    "code": "1380601047",
+    "cityCode": "1380600000",
+    "name": "Barangay 47"
+  },
+  {
+    "code": "1380601048",
+    "cityCode": "1380600000",
+    "name": "Barangay 48"
+  },
+  {
+    "code": "1380601049",
+    "cityCode": "1380600000",
+    "name": "Barangay 49"
+  },
+  {
+    "code": "1380601050",
+    "cityCode": "1380600000",
+    "name": "Barangay 50"
+  },
+  {
+    "code": "1380601051",
+    "cityCode": "1380600000",
+    "name": "Barangay 51"
+  },
+  {
+    "code": "1380601052",
+    "cityCode": "1380600000",
+    "name": "Barangay 52"
+  },
+  {
+    "code": "1380601053",
+    "cityCode": "1380600000",
+    "name": "Barangay 53"
+  },
+  {
+    "code": "1380601054",
+    "cityCode": "1380600000",
+    "name": "Barangay 54"
+  },
+  {
+    "code": "1380601055",
+    "cityCode": "1380600000",
+    "name": "Barangay 55"
+  },
+  {
+    "code": "1380601056",
+    "cityCode": "1380600000",
+    "name": "Barangay 56"
+  },
+  {
+    "code": "1380601057",
+    "cityCode": "1380600000",
+    "name": "Barangay 57"
+  },
+  {
+    "code": "1380601058",
+    "cityCode": "1380600000",
+    "name": "Barangay 58"
+  },
+  {
+    "code": "1380601059",
+    "cityCode": "1380600000",
+    "name": "Barangay 59"
+  },
+  {
+    "code": "1380601060",
+    "cityCode": "1380600000",
+    "name": "Barangay 60"
+  },
+  {
+    "code": "1380601061",
+    "cityCode": "1380600000",
+    "name": "Barangay 61"
+  },
+  {
+    "code": "1380601062",
+    "cityCode": "1380600000",
+    "name": "Barangay 62"
+  },
+  {
+    "code": "1380601063",
+    "cityCode": "1380600000",
+    "name": "Barangay 63"
+  },
+  {
+    "code": "1380601064",
+    "cityCode": "1380600000",
+    "name": "Barangay 64"
+  },
+  {
+    "code": "1380601065",
+    "cityCode": "1380600000",
+    "name": "Barangay 65"
+  },
+  {
+    "code": "1380601066",
+    "cityCode": "1380600000",
+    "name": "Barangay 66"
+  },
+  {
+    "code": "1380601067",
+    "cityCode": "1380600000",
+    "name": "Barangay 67"
+  },
+  {
+    "code": "1380601068",
+    "cityCode": "1380600000",
+    "name": "Barangay 68"
+  },
+  {
+    "code": "1380601069",
+    "cityCode": "1380600000",
+    "name": "Barangay 69"
+  },
+  {
+    "code": "1380601070",
+    "cityCode": "1380600000",
+    "name": "Barangay 70"
+  },
+  {
+    "code": "1380601071",
+    "cityCode": "1380600000",
+    "name": "Barangay 71"
+  },
+  {
+    "code": "1380601072",
+    "cityCode": "1380600000",
+    "name": "Barangay 72"
+  },
+  {
+    "code": "1380601073",
+    "cityCode": "1380600000",
+    "name": "Barangay 73"
+  },
+  {
+    "code": "1380601074",
+    "cityCode": "1380600000",
+    "name": "Barangay 74"
+  },
+  {
+    "code": "1380601075",
+    "cityCode": "1380600000",
+    "name": "Barangay 75"
+  },
+  {
+    "code": "1380601076",
+    "cityCode": "1380600000",
+    "name": "Barangay 76"
+  },
+  {
+    "code": "1380601077",
+    "cityCode": "1380600000",
+    "name": "Barangay 77"
+  },
+  {
+    "code": "1380601078",
+    "cityCode": "1380600000",
+    "name": "Barangay 78"
+  },
+  {
+    "code": "1380601079",
+    "cityCode": "1380600000",
+    "name": "Barangay 79"
+  },
+  {
+    "code": "1380601080",
+    "cityCode": "1380600000",
+    "name": "Barangay 80"
+  },
+  {
+    "code": "1380601081",
+    "cityCode": "1380600000",
+    "name": "Barangay 81"
+  },
+  {
+    "code": "1380601082",
+    "cityCode": "1380600000",
+    "name": "Barangay 82"
+  },
+  {
+    "code": "1380601083",
+    "cityCode": "1380600000",
+    "name": "Barangay 83"
+  },
+  {
+    "code": "1380601084",
+    "cityCode": "1380600000",
+    "name": "Barangay 84"
+  },
+  {
+    "code": "1380601085",
+    "cityCode": "1380600000",
+    "name": "Barangay 85"
+  },
+  {
+    "code": "1380601086",
+    "cityCode": "1380600000",
+    "name": "Barangay 86"
+  },
+  {
+    "code": "1380601087",
+    "cityCode": "1380600000",
+    "name": "Barangay 87"
+  },
+  {
+    "code": "1380601088",
+    "cityCode": "1380600000",
+    "name": "Barangay 88"
+  },
+  {
+    "code": "1380601089",
+    "cityCode": "1380600000",
+    "name": "Barangay 89"
+  },
+  {
+    "code": "1380601090",
+    "cityCode": "1380600000",
+    "name": "Barangay 90"
+  },
+  {
+    "code": "1380601091",
+    "cityCode": "1380600000",
+    "name": "Barangay 91"
+  },
+  {
+    "code": "1380601092",
+    "cityCode": "1380600000",
+    "name": "Barangay 92"
+  },
+  {
+    "code": "1380601093",
+    "cityCode": "1380600000",
+    "name": "Barangay 93"
+  },
+  {
+    "code": "1380601094",
+    "cityCode": "1380600000",
+    "name": "Barangay 94"
+  },
+  {
+    "code": "1380601095",
+    "cityCode": "1380600000",
+    "name": "Barangay 95"
+  },
+  {
+    "code": "1380601096",
+    "cityCode": "1380600000",
+    "name": "Barangay 96"
+  },
+  {
+    "code": "1380601097",
+    "cityCode": "1380600000",
+    "name": "Barangay 97"
+  },
+  {
+    "code": "1380601098",
+    "cityCode": "1380600000",
+    "name": "Barangay 98"
+  },
+  {
+    "code": "1380601099",
+    "cityCode": "1380600000",
+    "name": "Barangay 99"
+  },
+  {
+    "code": "1380601100",
+    "cityCode": "1380600000",
+    "name": "Barangay 100"
+  },
+  {
+    "code": "1380601101",
+    "cityCode": "1380600000",
+    "name": "Barangay 101"
+  },
+  {
+    "code": "1380601102",
+    "cityCode": "1380600000",
+    "name": "Barangay 102"
+  },
+  {
+    "code": "1380601103",
+    "cityCode": "1380600000",
+    "name": "Barangay 103"
+  },
+  {
+    "code": "1380601104",
+    "cityCode": "1380600000",
+    "name": "Barangay 104"
+  },
+  {
+    "code": "1380601105",
+    "cityCode": "1380600000",
+    "name": "Barangay 105"
+  },
+  {
+    "code": "1380601106",
+    "cityCode": "1380600000",
+    "name": "Barangay 106"
+  },
+  {
+    "code": "1380601107",
+    "cityCode": "1380600000",
+    "name": "Barangay 107"
+  },
+  {
+    "code": "1380601108",
+    "cityCode": "1380600000",
+    "name": "Barangay 108"
+  },
+  {
+    "code": "1380601109",
+    "cityCode": "1380600000",
+    "name": "Barangay 109"
+  },
+  {
+    "code": "1380601110",
+    "cityCode": "1380600000",
+    "name": "Barangay 110"
+  },
+  {
+    "code": "1380601111",
+    "cityCode": "1380600000",
+    "name": "Barangay 111"
+  },
+  {
+    "code": "1380601112",
+    "cityCode": "1380600000",
+    "name": "Barangay 112"
+  },
+  {
+    "code": "1380601116",
+    "cityCode": "1380600000",
+    "name": "Barangay 116"
+  },
+  {
+    "code": "1380601117",
+    "cityCode": "1380600000",
+    "name": "Barangay 117"
+  },
+  {
+    "code": "1380601118",
+    "cityCode": "1380600000",
+    "name": "Barangay 118"
+  },
+  {
+    "code": "1380601119",
+    "cityCode": "1380600000",
+    "name": "Barangay 119"
+  },
+  {
+    "code": "1380601120",
+    "cityCode": "1380600000",
+    "name": "Barangay 120"
+  },
+  {
+    "code": "1380601121",
+    "cityCode": "1380600000",
+    "name": "Barangay 121"
+  },
+  {
+    "code": "1380601122",
+    "cityCode": "1380600000",
+    "name": "Barangay 122"
+  },
+  {
+    "code": "1380601123",
+    "cityCode": "1380600000",
+    "name": "Barangay 123"
+  },
+  {
+    "code": "1380601124",
+    "cityCode": "1380600000",
+    "name": "Barangay 124"
+  },
+  {
+    "code": "1380601125",
+    "cityCode": "1380600000",
+    "name": "Barangay 125"
+  },
+  {
+    "code": "1380601126",
+    "cityCode": "1380600000",
+    "name": "Barangay 126"
+  },
+  {
+    "code": "1380601127",
+    "cityCode": "1380600000",
+    "name": "Barangay 127"
+  },
+  {
+    "code": "1380601128",
+    "cityCode": "1380600000",
+    "name": "Barangay 128"
+  },
+  {
+    "code": "1380601129",
+    "cityCode": "1380600000",
+    "name": "Barangay 129"
+  },
+  {
+    "code": "1380601130",
+    "cityCode": "1380600000",
+    "name": "Barangay 130"
+  },
+  {
+    "code": "1380601131",
+    "cityCode": "1380600000",
+    "name": "Barangay 131"
+  },
+  {
+    "code": "1380601132",
+    "cityCode": "1380600000",
+    "name": "Barangay 132"
+  },
+  {
+    "code": "1380601133",
+    "cityCode": "1380600000",
+    "name": "Barangay 133"
+  },
+  {
+    "code": "1380601134",
+    "cityCode": "1380600000",
+    "name": "Barangay 134"
+  },
+  {
+    "code": "1380601135",
+    "cityCode": "1380600000",
+    "name": "Barangay 135"
+  },
+  {
+    "code": "1380601136",
+    "cityCode": "1380600000",
+    "name": "Barangay 136"
+  },
+  {
+    "code": "1380601137",
+    "cityCode": "1380600000",
+    "name": "Barangay 137"
+  },
+  {
+    "code": "1380601138",
+    "cityCode": "1380600000",
+    "name": "Barangay 138"
+  },
+  {
+    "code": "1380601139",
+    "cityCode": "1380600000",
+    "name": "Barangay 139"
+  },
+  {
+    "code": "1380601140",
+    "cityCode": "1380600000",
+    "name": "Barangay 140"
+  },
+  {
+    "code": "1380601141",
+    "cityCode": "1380600000",
+    "name": "Barangay 141"
+  },
+  {
+    "code": "1380601142",
+    "cityCode": "1380600000",
+    "name": "Barangay 142"
+  },
+  {
+    "code": "1380601143",
+    "cityCode": "1380600000",
+    "name": "Barangay 143"
+  },
+  {
+    "code": "1380601144",
+    "cityCode": "1380600000",
+    "name": "Barangay 144"
+  },
+  {
+    "code": "1380601145",
+    "cityCode": "1380600000",
+    "name": "Barangay 145"
+  },
+  {
+    "code": "1380601146",
+    "cityCode": "1380600000",
+    "name": "Barangay 146"
+  },
+  {
+    "code": "1380601147",
+    "cityCode": "1380600000",
+    "name": "Barangay 147"
+  },
+  {
+    "code": "1380601148",
+    "cityCode": "1380600000",
+    "name": "Barangay 148"
+  },
+  {
+    "code": "1380601149",
+    "cityCode": "1380600000",
+    "name": "Barangay 149"
+  },
+  {
+    "code": "1380601150",
+    "cityCode": "1380600000",
+    "name": "Barangay 150"
+  },
+  {
+    "code": "1380601151",
+    "cityCode": "1380600000",
+    "name": "Barangay 151"
+  },
+  {
+    "code": "1380601152",
+    "cityCode": "1380600000",
+    "name": "Barangay 152"
+  },
+  {
+    "code": "1380601153",
+    "cityCode": "1380600000",
+    "name": "Barangay 153"
+  },
+  {
+    "code": "1380601154",
+    "cityCode": "1380600000",
+    "name": "Barangay 154"
+  },
+  {
+    "code": "1380601155",
+    "cityCode": "1380600000",
+    "name": "Barangay 155"
+  },
+  {
+    "code": "1380601156",
+    "cityCode": "1380600000",
+    "name": "Barangay 156"
+  },
+  {
+    "code": "1380601157",
+    "cityCode": "1380600000",
+    "name": "Barangay 157"
+  },
+  {
+    "code": "1380601158",
+    "cityCode": "1380600000",
+    "name": "Barangay 158"
+  },
+  {
+    "code": "1380601159",
+    "cityCode": "1380600000",
+    "name": "Barangay 159"
+  },
+  {
+    "code": "1380601160",
+    "cityCode": "1380600000",
+    "name": "Barangay 160"
+  },
+  {
+    "code": "1380601161",
+    "cityCode": "1380600000",
+    "name": "Barangay 161"
+  },
+  {
+    "code": "1380601162",
+    "cityCode": "1380600000",
+    "name": "Barangay 162"
+  },
+  {
+    "code": "1380601163",
+    "cityCode": "1380600000",
+    "name": "Barangay 163"
+  },
+  {
+    "code": "1380601164",
+    "cityCode": "1380600000",
+    "name": "Barangay 164"
+  },
+  {
+    "code": "1380601165",
+    "cityCode": "1380600000",
+    "name": "Barangay 165"
+  },
+  {
+    "code": "1380601166",
+    "cityCode": "1380600000",
+    "name": "Barangay 166"
+  },
+  {
+    "code": "1380601167",
+    "cityCode": "1380600000",
+    "name": "Barangay 167"
+  },
+  {
+    "code": "1380601168",
+    "cityCode": "1380600000",
+    "name": "Barangay 168"
+  },
+  {
+    "code": "1380601169",
+    "cityCode": "1380600000",
+    "name": "Barangay 169"
+  },
+  {
+    "code": "1380601170",
+    "cityCode": "1380600000",
+    "name": "Barangay 170"
+  },
+  {
+    "code": "1380601171",
+    "cityCode": "1380600000",
+    "name": "Barangay 171"
+  },
+  {
+    "code": "1380601172",
+    "cityCode": "1380600000",
+    "name": "Barangay 172"
+  },
+  {
+    "code": "1380601173",
+    "cityCode": "1380600000",
+    "name": "Barangay 173"
+  },
+  {
+    "code": "1380601174",
+    "cityCode": "1380600000",
+    "name": "Barangay 174"
+  },
+  {
+    "code": "1380601175",
+    "cityCode": "1380600000",
+    "name": "Barangay 175"
+  },
+  {
+    "code": "1380601176",
+    "cityCode": "1380600000",
+    "name": "Barangay 176"
+  },
+  {
+    "code": "1380601177",
+    "cityCode": "1380600000",
+    "name": "Barangay 177"
+  },
+  {
+    "code": "1380601178",
+    "cityCode": "1380600000",
+    "name": "Barangay 178"
+  },
+  {
+    "code": "1380601179",
+    "cityCode": "1380600000",
+    "name": "Barangay 179"
+  },
+  {
+    "code": "1380601180",
+    "cityCode": "1380600000",
+    "name": "Barangay 180"
+  },
+  {
+    "code": "1380601181",
+    "cityCode": "1380600000",
+    "name": "Barangay 181"
+  },
+  {
+    "code": "1380601182",
+    "cityCode": "1380600000",
+    "name": "Barangay 182"
+  },
+  {
+    "code": "1380601183",
+    "cityCode": "1380600000",
+    "name": "Barangay 183"
+  },
+  {
+    "code": "1380601184",
+    "cityCode": "1380600000",
+    "name": "Barangay 184"
+  },
+  {
+    "code": "1380601185",
+    "cityCode": "1380600000",
+    "name": "Barangay 185"
+  },
+  {
+    "code": "1380601186",
+    "cityCode": "1380600000",
+    "name": "Barangay 186"
+  },
+  {
+    "code": "1380601187",
+    "cityCode": "1380600000",
+    "name": "Barangay 187"
+  },
+  {
+    "code": "1380601188",
+    "cityCode": "1380600000",
+    "name": "Barangay 188"
+  },
+  {
+    "code": "1380601189",
+    "cityCode": "1380600000",
+    "name": "Barangay 189"
+  },
+  {
+    "code": "1380601190",
+    "cityCode": "1380600000",
+    "name": "Barangay 190"
+  },
+  {
+    "code": "1380601191",
+    "cityCode": "1380600000",
+    "name": "Barangay 191"
+  },
+  {
+    "code": "1380601192",
+    "cityCode": "1380600000",
+    "name": "Barangay 192"
+  },
+  {
+    "code": "1380601193",
+    "cityCode": "1380600000",
+    "name": "Barangay 193"
+  },
+  {
+    "code": "1380601194",
+    "cityCode": "1380600000",
+    "name": "Barangay 194"
+  },
+  {
+    "code": "1380601195",
+    "cityCode": "1380600000",
+    "name": "Barangay 195"
+  },
+  {
+    "code": "1380601196",
+    "cityCode": "1380600000",
+    "name": "Barangay 196"
+  },
+  {
+    "code": "1380601197",
+    "cityCode": "1380600000",
+    "name": "Barangay 197"
+  },
+  {
+    "code": "1380601198",
+    "cityCode": "1380600000",
+    "name": "Barangay 198"
+  },
+  {
+    "code": "1380601199",
+    "cityCode": "1380600000",
+    "name": "Barangay 199"
+  },
+  {
+    "code": "1380601200",
+    "cityCode": "1380600000",
+    "name": "Barangay 200"
+  },
+  {
+    "code": "1380601201",
+    "cityCode": "1380600000",
+    "name": "Barangay 201"
+  },
+  {
+    "code": "1380601202",
+    "cityCode": "1380600000",
+    "name": "Barangay 202"
+  },
+  {
+    "code": "1380601203",
+    "cityCode": "1380600000",
+    "name": "Barangay 202-A"
+  },
+  {
+    "code": "1380601204",
+    "cityCode": "1380600000",
+    "name": "Barangay 203"
+  },
+  {
+    "code": "1380601205",
+    "cityCode": "1380600000",
+    "name": "Barangay 204"
+  },
+  {
+    "code": "1380601206",
+    "cityCode": "1380600000",
+    "name": "Barangay 205"
+  },
+  {
+    "code": "1380601207",
+    "cityCode": "1380600000",
+    "name": "Barangay 206"
+  },
+  {
+    "code": "1380601208",
+    "cityCode": "1380600000",
+    "name": "Barangay 207"
+  },
+  {
+    "code": "1380601209",
+    "cityCode": "1380600000",
+    "name": "Barangay 208"
+  },
+  {
+    "code": "1380601210",
+    "cityCode": "1380600000",
+    "name": "Barangay 209"
+  },
+  {
+    "code": "1380601211",
+    "cityCode": "1380600000",
+    "name": "Barangay 210"
+  },
+  {
+    "code": "1380601212",
+    "cityCode": "1380600000",
+    "name": "Barangay 211"
+  },
+  {
+    "code": "1380601213",
+    "cityCode": "1380600000",
+    "name": "Barangay 212"
+  },
+  {
+    "code": "1380601214",
+    "cityCode": "1380600000",
+    "name": "Barangay 213"
+  },
+  {
+    "code": "1380601215",
+    "cityCode": "1380600000",
+    "name": "Barangay 214"
+  },
+  {
+    "code": "1380601216",
+    "cityCode": "1380600000",
+    "name": "Barangay 215"
+  },
+  {
+    "code": "1380601217",
+    "cityCode": "1380600000",
+    "name": "Barangay 216"
+  },
+  {
+    "code": "1380601218",
+    "cityCode": "1380600000",
+    "name": "Barangay 217"
+  },
+  {
+    "code": "1380601219",
+    "cityCode": "1380600000",
+    "name": "Barangay 218"
+  },
+  {
+    "code": "1380601220",
+    "cityCode": "1380600000",
+    "name": "Barangay 219"
+  },
+  {
+    "code": "1380601221",
+    "cityCode": "1380600000",
+    "name": "Barangay 220"
+  },
+  {
+    "code": "1380601222",
+    "cityCode": "1380600000",
+    "name": "Barangay 221"
+  },
+  {
+    "code": "1380601223",
+    "cityCode": "1380600000",
+    "name": "Barangay 222"
+  },
+  {
+    "code": "1380601224",
+    "cityCode": "1380600000",
+    "name": "Barangay 223"
+  },
+  {
+    "code": "1380601225",
+    "cityCode": "1380600000",
+    "name": "Barangay 224"
+  },
+  {
+    "code": "1380601226",
+    "cityCode": "1380600000",
+    "name": "Barangay 225"
+  },
+  {
+    "code": "1380601227",
+    "cityCode": "1380600000",
+    "name": "Barangay 226"
+  },
+  {
+    "code": "1380601228",
+    "cityCode": "1380600000",
+    "name": "Barangay 227"
+  },
+  {
+    "code": "1380601229",
+    "cityCode": "1380600000",
+    "name": "Barangay 228"
+  },
+  {
+    "code": "1380601230",
+    "cityCode": "1380600000",
+    "name": "Barangay 229"
+  },
+  {
+    "code": "1380601231",
+    "cityCode": "1380600000",
+    "name": "Barangay 230"
+  },
+  {
+    "code": "1380601232",
+    "cityCode": "1380600000",
+    "name": "Barangay 231"
+  },
+  {
+    "code": "1380601233",
+    "cityCode": "1380600000",
+    "name": "Barangay 232"
+  },
+  {
+    "code": "1380601234",
+    "cityCode": "1380600000",
+    "name": "Barangay 233"
+  },
+  {
+    "code": "1380601235",
+    "cityCode": "1380600000",
+    "name": "Barangay 234"
+  },
+  {
+    "code": "1380601236",
+    "cityCode": "1380600000",
+    "name": "Barangay 235"
+  },
+  {
+    "code": "1380601237",
+    "cityCode": "1380600000",
+    "name": "Barangay 236"
+  },
+  {
+    "code": "1380601238",
+    "cityCode": "1380600000",
+    "name": "Barangay 237"
+  },
+  {
+    "code": "1380601239",
+    "cityCode": "1380600000",
+    "name": "Barangay 238"
+  },
+  {
+    "code": "1380601240",
+    "cityCode": "1380600000",
+    "name": "Barangay 239"
+  },
+  {
+    "code": "1380601241",
+    "cityCode": "1380600000",
+    "name": "Barangay 240"
+  },
+  {
+    "code": "1380601242",
+    "cityCode": "1380600000",
+    "name": "Barangay 241"
+  },
+  {
+    "code": "1380601243",
+    "cityCode": "1380600000",
+    "name": "Barangay 242"
+  },
+  {
+    "code": "1380601244",
+    "cityCode": "1380600000",
+    "name": "Barangay 243"
+  },
+  {
+    "code": "1380601245",
+    "cityCode": "1380600000",
+    "name": "Barangay 244"
+  },
+  {
+    "code": "1380601246",
+    "cityCode": "1380600000",
+    "name": "Barangay 245"
+  },
+  {
+    "code": "1380601247",
+    "cityCode": "1380600000",
+    "name": "Barangay 246"
+  },
+  {
+    "code": "1380601248",
+    "cityCode": "1380600000",
+    "name": "Barangay 247"
+  },
+  {
+    "code": "1380601249",
+    "cityCode": "1380600000",
+    "name": "Barangay 248"
+  },
+  {
+    "code": "1380601250",
+    "cityCode": "1380600000",
+    "name": "Barangay 249"
+  },
+  {
+    "code": "1380601251",
+    "cityCode": "1380600000",
+    "name": "Barangay 250"
+  },
+  {
+    "code": "1380601252",
+    "cityCode": "1380600000",
+    "name": "Barangay 251"
+  },
+  {
+    "code": "1380601253",
+    "cityCode": "1380600000",
+    "name": "Barangay 252"
+  },
+  {
+    "code": "1380601254",
+    "cityCode": "1380600000",
+    "name": "Barangay 253"
+  },
+  {
+    "code": "1380601255",
+    "cityCode": "1380600000",
+    "name": "Barangay 254"
+  },
+  {
+    "code": "1380601256",
+    "cityCode": "1380600000",
+    "name": "Barangay 255"
+  },
+  {
+    "code": "1380601257",
+    "cityCode": "1380600000",
+    "name": "Barangay 256"
+  },
+  {
+    "code": "1380601258",
+    "cityCode": "1380600000",
+    "name": "Barangay 257"
+  },
+  {
+    "code": "1380601259",
+    "cityCode": "1380600000",
+    "name": "Barangay 258"
+  },
+  {
+    "code": "1380601260",
+    "cityCode": "1380600000",
+    "name": "Barangay 259"
+  },
+  {
+    "code": "1380601261",
+    "cityCode": "1380600000",
+    "name": "Barangay 260"
+  },
+  {
+    "code": "1380601262",
+    "cityCode": "1380600000",
+    "name": "Barangay 261"
+  },
+  {
+    "code": "1380601263",
+    "cityCode": "1380600000",
+    "name": "Barangay 262"
+  },
+  {
+    "code": "1380601264",
+    "cityCode": "1380600000",
+    "name": "Barangay 263"
+  },
+  {
+    "code": "1380601265",
+    "cityCode": "1380600000",
+    "name": "Barangay 264"
+  },
+  {
+    "code": "1380601266",
+    "cityCode": "1380600000",
+    "name": "Barangay 265"
+  },
+  {
+    "code": "1380601267",
+    "cityCode": "1380600000",
+    "name": "Barangay 266"
+  },
+  {
+    "code": "1380601268",
+    "cityCode": "1380600000",
+    "name": "Barangay 267"
+  },
+  {
+    "code": "1380602001",
+    "cityCode": "1380600000",
+    "name": "Barangay 287"
+  },
+  {
+    "code": "1380602002",
+    "cityCode": "1380600000",
+    "name": "Barangay 288"
+  },
+  {
+    "code": "1380602003",
+    "cityCode": "1380600000",
+    "name": "Barangay 289"
+  },
+  {
+    "code": "1380602004",
+    "cityCode": "1380600000",
+    "name": "Barangay 290"
+  },
+  {
+    "code": "1380602005",
+    "cityCode": "1380600000",
+    "name": "Barangay 291"
+  },
+  {
+    "code": "1380602006",
+    "cityCode": "1380600000",
+    "name": "Barangay 292"
+  },
+  {
+    "code": "1380602007",
+    "cityCode": "1380600000",
+    "name": "Barangay 293"
+  },
+  {
+    "code": "1380602008",
+    "cityCode": "1380600000",
+    "name": "Barangay 294"
+  },
+  {
+    "code": "1380602009",
+    "cityCode": "1380600000",
+    "name": "Barangay 295"
+  },
+  {
+    "code": "1380602010",
+    "cityCode": "1380600000",
+    "name": "Barangay 296"
+  },
+  {
+    "code": "1380603003",
+    "cityCode": "1380600000",
+    "name": "Barangay 383"
+  },
+  {
+    "code": "1380603004",
+    "cityCode": "1380600000",
+    "name": "Barangay 384"
+  },
+  {
+    "code": "1380603005",
+    "cityCode": "1380600000",
+    "name": "Barangay 385"
+  },
+  {
+    "code": "1380603006",
+    "cityCode": "1380600000",
+    "name": "Barangay 386"
+  },
+  {
+    "code": "1380603007",
+    "cityCode": "1380600000",
+    "name": "Barangay 387"
+  },
+  {
+    "code": "1380603008",
+    "cityCode": "1380600000",
+    "name": "Barangay 388"
+  },
+  {
+    "code": "1380603009",
+    "cityCode": "1380600000",
+    "name": "Barangay 389"
+  },
+  {
+    "code": "1380603010",
+    "cityCode": "1380600000",
+    "name": "Barangay 390"
+  },
+  {
+    "code": "1380603011",
+    "cityCode": "1380600000",
+    "name": "Barangay 391"
+  },
+  {
+    "code": "1380603012",
+    "cityCode": "1380600000",
+    "name": "Barangay 392"
+  },
+  {
+    "code": "1380603013",
+    "cityCode": "1380600000",
+    "name": "Barangay 393"
+  },
+  {
+    "code": "1380603014",
+    "cityCode": "1380600000",
+    "name": "Barangay 394"
+  },
+  {
+    "code": "1380603015",
+    "cityCode": "1380600000",
+    "name": "Barangay 306"
+  },
+  {
+    "code": "1380603016",
+    "cityCode": "1380600000",
+    "name": "Barangay 307"
+  },
+  {
+    "code": "1380603017",
+    "cityCode": "1380600000",
+    "name": "Barangay 308"
+  },
+  {
+    "code": "1380603018",
+    "cityCode": "1380600000",
+    "name": "Barangay 309"
+  },
+  {
+    "code": "1380604001",
+    "cityCode": "1380600000",
+    "name": "Barangay 268"
+  },
+  {
+    "code": "1380604002",
+    "cityCode": "1380600000",
+    "name": "Barangay 269"
+  },
+  {
+    "code": "1380604003",
+    "cityCode": "1380600000",
+    "name": "Barangay 270"
+  },
+  {
+    "code": "1380604004",
+    "cityCode": "1380600000",
+    "name": "Barangay 271"
+  },
+  {
+    "code": "1380604005",
+    "cityCode": "1380600000",
+    "name": "Barangay 272"
+  },
+  {
+    "code": "1380604006",
+    "cityCode": "1380600000",
+    "name": "Barangay 273"
+  },
+  {
+    "code": "1380604007",
+    "cityCode": "1380600000",
+    "name": "Barangay 274"
+  },
+  {
+    "code": "1380604008",
+    "cityCode": "1380600000",
+    "name": "Barangay 275"
+  },
+  {
+    "code": "1380604009",
+    "cityCode": "1380600000",
+    "name": "Barangay 276"
+  },
+  {
+    "code": "1380604014",
+    "cityCode": "1380600000",
+    "name": "Barangay 281"
+  },
+  {
+    "code": "1380604015",
+    "cityCode": "1380600000",
+    "name": "Barangay 282"
+  },
+  {
+    "code": "1380604016",
+    "cityCode": "1380600000",
+    "name": "Barangay 283"
+  },
+  {
+    "code": "1380604017",
+    "cityCode": "1380600000",
+    "name": "Barangay 284"
+  },
+  {
+    "code": "1380604018",
+    "cityCode": "1380600000",
+    "name": "Barangay 285"
+  },
+  {
+    "code": "1380604019",
+    "cityCode": "1380600000",
+    "name": "Barangay 286"
+  },
+  {
+    "code": "1380605001",
+    "cityCode": "1380600000",
+    "name": "Barangay 297"
+  },
+  {
+    "code": "1380605002",
+    "cityCode": "1380600000",
+    "name": "Barangay 298"
+  },
+  {
+    "code": "1380605003",
+    "cityCode": "1380600000",
+    "name": "Barangay 299"
+  },
+  {
+    "code": "1380605004",
+    "cityCode": "1380600000",
+    "name": "Barangay 300"
+  },
+  {
+    "code": "1380605005",
+    "cityCode": "1380600000",
+    "name": "Barangay 301"
+  },
+  {
+    "code": "1380605006",
+    "cityCode": "1380600000",
+    "name": "Barangay 302"
+  },
+  {
+    "code": "1380605007",
+    "cityCode": "1380600000",
+    "name": "Barangay 303"
+  },
+  {
+    "code": "1380605008",
+    "cityCode": "1380600000",
+    "name": "Barangay 304"
+  },
+  {
+    "code": "1380605009",
+    "cityCode": "1380600000",
+    "name": "Barangay 305"
+  },
+  {
+    "code": "1380605012",
+    "cityCode": "1380600000",
+    "name": "Barangay 310"
+  },
+  {
+    "code": "1380605013",
+    "cityCode": "1380600000",
+    "name": "Barangay 311"
+  },
+  {
+    "code": "1380605014",
+    "cityCode": "1380600000",
+    "name": "Barangay 312"
+  },
+  {
+    "code": "1380605015",
+    "cityCode": "1380600000",
+    "name": "Barangay 313"
+  },
+  {
+    "code": "1380605016",
+    "cityCode": "1380600000",
+    "name": "Barangay 314"
+  },
+  {
+    "code": "1380605017",
+    "cityCode": "1380600000",
+    "name": "Barangay 315"
+  },
+  {
+    "code": "1380605018",
+    "cityCode": "1380600000",
+    "name": "Barangay 316"
+  },
+  {
+    "code": "1380605019",
+    "cityCode": "1380600000",
+    "name": "Barangay 317"
+  },
+  {
+    "code": "1380605020",
+    "cityCode": "1380600000",
+    "name": "Barangay 318"
+  },
+  {
+    "code": "1380605021",
+    "cityCode": "1380600000",
+    "name": "Barangay 319"
+  },
+  {
+    "code": "1380605022",
+    "cityCode": "1380600000",
+    "name": "Barangay 320"
+  },
+  {
+    "code": "1380605023",
+    "cityCode": "1380600000",
+    "name": "Barangay 321"
+  },
+  {
+    "code": "1380605024",
+    "cityCode": "1380600000",
+    "name": "Barangay 322"
+  },
+  {
+    "code": "1380605025",
+    "cityCode": "1380600000",
+    "name": "Barangay 323"
+  },
+  {
+    "code": "1380605026",
+    "cityCode": "1380600000",
+    "name": "Barangay 324"
+  },
+  {
+    "code": "1380605027",
+    "cityCode": "1380600000",
+    "name": "Barangay 325"
+  },
+  {
+    "code": "1380605028",
+    "cityCode": "1380600000",
+    "name": "Barangay 326"
+  },
+  {
+    "code": "1380605029",
+    "cityCode": "1380600000",
+    "name": "Barangay 327"
+  },
+  {
+    "code": "1380605030",
+    "cityCode": "1380600000",
+    "name": "Barangay 328"
+  },
+  {
+    "code": "1380605031",
+    "cityCode": "1380600000",
+    "name": "Barangay 329"
+  },
+  {
+    "code": "1380605032",
+    "cityCode": "1380600000",
+    "name": "Barangay 330"
+  },
+  {
+    "code": "1380605033",
+    "cityCode": "1380600000",
+    "name": "Barangay 331"
+  },
+  {
+    "code": "1380605034",
+    "cityCode": "1380600000",
+    "name": "Barangay 332"
+  },
+  {
+    "code": "1380605035",
+    "cityCode": "1380600000",
+    "name": "Barangay 333"
+  },
+  {
+    "code": "1380605036",
+    "cityCode": "1380600000",
+    "name": "Barangay 334"
+  },
+  {
+    "code": "1380605037",
+    "cityCode": "1380600000",
+    "name": "Barangay 335"
+  },
+  {
+    "code": "1380605038",
+    "cityCode": "1380600000",
+    "name": "Barangay 336"
+  },
+  {
+    "code": "1380605039",
+    "cityCode": "1380600000",
+    "name": "Barangay 337"
+  },
+  {
+    "code": "1380605040",
+    "cityCode": "1380600000",
+    "name": "Barangay 338"
+  },
+  {
+    "code": "1380605041",
+    "cityCode": "1380600000",
+    "name": "Barangay 339"
+  },
+  {
+    "code": "1380605042",
+    "cityCode": "1380600000",
+    "name": "Barangay 340"
+  },
+  {
+    "code": "1380605043",
+    "cityCode": "1380600000",
+    "name": "Barangay 341"
+  },
+  {
+    "code": "1380605044",
+    "cityCode": "1380600000",
+    "name": "Barangay 342"
+  },
+  {
+    "code": "1380605045",
+    "cityCode": "1380600000",
+    "name": "Barangay 343"
+  },
+  {
+    "code": "1380605046",
+    "cityCode": "1380600000",
+    "name": "Barangay 344"
+  },
+  {
+    "code": "1380605047",
+    "cityCode": "1380600000",
+    "name": "Barangay 345"
+  },
+  {
+    "code": "1380605048",
+    "cityCode": "1380600000",
+    "name": "Barangay 346"
+  },
+  {
+    "code": "1380605049",
+    "cityCode": "1380600000",
+    "name": "Barangay 347"
+  },
+  {
+    "code": "1380605050",
+    "cityCode": "1380600000",
+    "name": "Barangay 348"
+  },
+  {
+    "code": "1380605051",
+    "cityCode": "1380600000",
+    "name": "Barangay 349"
+  },
+  {
+    "code": "1380605052",
+    "cityCode": "1380600000",
+    "name": "Barangay 350"
+  },
+  {
+    "code": "1380605053",
+    "cityCode": "1380600000",
+    "name": "Barangay 351"
+  },
+  {
+    "code": "1380605054",
+    "cityCode": "1380600000",
+    "name": "Barangay 352"
+  },
+  {
+    "code": "1380605055",
+    "cityCode": "1380600000",
+    "name": "Barangay 353"
+  },
+  {
+    "code": "1380605056",
+    "cityCode": "1380600000",
+    "name": "Barangay 354"
+  },
+  {
+    "code": "1380605057",
+    "cityCode": "1380600000",
+    "name": "Barangay 355"
+  },
+  {
+    "code": "1380605058",
+    "cityCode": "1380600000",
+    "name": "Barangay 356"
+  },
+  {
+    "code": "1380605059",
+    "cityCode": "1380600000",
+    "name": "Barangay 357"
+  },
+  {
+    "code": "1380605060",
+    "cityCode": "1380600000",
+    "name": "Barangay 358"
+  },
+  {
+    "code": "1380605061",
+    "cityCode": "1380600000",
+    "name": "Barangay 359"
+  },
+  {
+    "code": "1380605062",
+    "cityCode": "1380600000",
+    "name": "Barangay 360"
+  },
+  {
+    "code": "1380605063",
+    "cityCode": "1380600000",
+    "name": "Barangay 361"
+  },
+  {
+    "code": "1380605064",
+    "cityCode": "1380600000",
+    "name": "Barangay 362"
+  },
+  {
+    "code": "1380605065",
+    "cityCode": "1380600000",
+    "name": "Barangay 363"
+  },
+  {
+    "code": "1380605066",
+    "cityCode": "1380600000",
+    "name": "Barangay 364"
+  },
+  {
+    "code": "1380605067",
+    "cityCode": "1380600000",
+    "name": "Barangay 365"
+  },
+  {
+    "code": "1380605069",
+    "cityCode": "1380600000",
+    "name": "Barangay 366"
+  },
+  {
+    "code": "1380605070",
+    "cityCode": "1380600000",
+    "name": "Barangay 367"
+  },
+  {
+    "code": "1380605071",
+    "cityCode": "1380600000",
+    "name": "Barangay 368"
+  },
+  {
+    "code": "1380605072",
+    "cityCode": "1380600000",
+    "name": "Barangay 369"
+  },
+  {
+    "code": "1380605073",
+    "cityCode": "1380600000",
+    "name": "Barangay 370"
+  },
+  {
+    "code": "1380605074",
+    "cityCode": "1380600000",
+    "name": "Barangay 371"
+  },
+  {
+    "code": "1380605075",
+    "cityCode": "1380600000",
+    "name": "Barangay 372"
+  },
+  {
+    "code": "1380605076",
+    "cityCode": "1380600000",
+    "name": "Barangay 373"
+  },
+  {
+    "code": "1380605077",
+    "cityCode": "1380600000",
+    "name": "Barangay 374"
+  },
+  {
+    "code": "1380605078",
+    "cityCode": "1380600000",
+    "name": "Barangay 375"
+  },
+  {
+    "code": "1380605079",
+    "cityCode": "1380600000",
+    "name": "Barangay 376"
+  },
+  {
+    "code": "1380605080",
+    "cityCode": "1380600000",
+    "name": "Barangay 377"
+  },
+  {
+    "code": "1380605081",
+    "cityCode": "1380600000",
+    "name": "Barangay 378"
+  },
+  {
+    "code": "1380605082",
+    "cityCode": "1380600000",
+    "name": "Barangay 379"
+  },
+  {
+    "code": "1380605083",
+    "cityCode": "1380600000",
+    "name": "Barangay 380"
+  },
+  {
+    "code": "1380605084",
+    "cityCode": "1380600000",
+    "name": "Barangay 381"
+  },
+  {
+    "code": "1380605085",
+    "cityCode": "1380600000",
+    "name": "Barangay 382"
+  },
+  {
+    "code": "1380606001",
+    "cityCode": "1380600000",
+    "name": "Barangay 395"
+  },
+  {
+    "code": "1380606002",
+    "cityCode": "1380600000",
+    "name": "Barangay 396"
+  },
+  {
+    "code": "1380606003",
+    "cityCode": "1380600000",
+    "name": "Barangay 397"
+  },
+  {
+    "code": "1380606004",
+    "cityCode": "1380600000",
+    "name": "Barangay 398"
+  },
+  {
+    "code": "1380606005",
+    "cityCode": "1380600000",
+    "name": "Barangay 399"
+  },
+  {
+    "code": "1380606006",
+    "cityCode": "1380600000",
+    "name": "Barangay 400"
+  },
+  {
+    "code": "1380606007",
+    "cityCode": "1380600000",
+    "name": "Barangay 401"
+  },
+  {
+    "code": "1380606008",
+    "cityCode": "1380600000",
+    "name": "Barangay 402"
+  },
+  {
+    "code": "1380606009",
+    "cityCode": "1380600000",
+    "name": "Barangay 403"
+  },
+  {
+    "code": "1380606010",
+    "cityCode": "1380600000",
+    "name": "Barangay 404"
+  },
+  {
+    "code": "1380606011",
+    "cityCode": "1380600000",
+    "name": "Barangay 405"
+  },
+  {
+    "code": "1380606012",
+    "cityCode": "1380600000",
+    "name": "Barangay 406"
+  },
+  {
+    "code": "1380606013",
+    "cityCode": "1380600000",
+    "name": "Barangay 407"
+  },
+  {
+    "code": "1380606014",
+    "cityCode": "1380600000",
+    "name": "Barangay 408"
+  },
+  {
+    "code": "1380606015",
+    "cityCode": "1380600000",
+    "name": "Barangay 409"
+  },
+  {
+    "code": "1380606016",
+    "cityCode": "1380600000",
+    "name": "Barangay 410"
+  },
+  {
+    "code": "1380606017",
+    "cityCode": "1380600000",
+    "name": "Barangay 411"
+  },
+  {
+    "code": "1380606018",
+    "cityCode": "1380600000",
+    "name": "Barangay 412"
+  },
+  {
+    "code": "1380606019",
+    "cityCode": "1380600000",
+    "name": "Barangay 413"
+  },
+  {
+    "code": "1380606020",
+    "cityCode": "1380600000",
+    "name": "Barangay 414"
+  },
+  {
+    "code": "1380606021",
+    "cityCode": "1380600000",
+    "name": "Barangay 415"
+  },
+  {
+    "code": "1380606022",
+    "cityCode": "1380600000",
+    "name": "Barangay 416"
+  },
+  {
+    "code": "1380606023",
+    "cityCode": "1380600000",
+    "name": "Barangay 417"
+  },
+  {
+    "code": "1380606024",
+    "cityCode": "1380600000",
+    "name": "Barangay 418"
+  },
+  {
+    "code": "1380606025",
+    "cityCode": "1380600000",
+    "name": "Barangay 419"
+  },
+  {
+    "code": "1380606026",
+    "cityCode": "1380600000",
+    "name": "Barangay 420"
+  },
+  {
+    "code": "1380606027",
+    "cityCode": "1380600000",
+    "name": "Barangay 421"
+  },
+  {
+    "code": "1380606028",
+    "cityCode": "1380600000",
+    "name": "Barangay 422"
+  },
+  {
+    "code": "1380606029",
+    "cityCode": "1380600000",
+    "name": "Barangay 423"
+  },
+  {
+    "code": "1380606030",
+    "cityCode": "1380600000",
+    "name": "Barangay 424"
+  },
+  {
+    "code": "1380606031",
+    "cityCode": "1380600000",
+    "name": "Barangay 425"
+  },
+  {
+    "code": "1380606032",
+    "cityCode": "1380600000",
+    "name": "Barangay 426"
+  },
+  {
+    "code": "1380606033",
+    "cityCode": "1380600000",
+    "name": "Barangay 427"
+  },
+  {
+    "code": "1380606034",
+    "cityCode": "1380600000",
+    "name": "Barangay 428"
+  },
+  {
+    "code": "1380606035",
+    "cityCode": "1380600000",
+    "name": "Barangay 429"
+  },
+  {
+    "code": "1380606036",
+    "cityCode": "1380600000",
+    "name": "Barangay 430"
+  },
+  {
+    "code": "1380606037",
+    "cityCode": "1380600000",
+    "name": "Barangay 431"
+  },
+  {
+    "code": "1380606038",
+    "cityCode": "1380600000",
+    "name": "Barangay 432"
+  },
+  {
+    "code": "1380606039",
+    "cityCode": "1380600000",
+    "name": "Barangay 433"
+  },
+  {
+    "code": "1380606040",
+    "cityCode": "1380600000",
+    "name": "Barangay 434"
+  },
+  {
+    "code": "1380606041",
+    "cityCode": "1380600000",
+    "name": "Barangay 435"
+  },
+  {
+    "code": "1380606042",
+    "cityCode": "1380600000",
+    "name": "Barangay 436"
+  },
+  {
+    "code": "1380606043",
+    "cityCode": "1380600000",
+    "name": "Barangay 437"
+  },
+  {
+    "code": "1380606044",
+    "cityCode": "1380600000",
+    "name": "Barangay 438"
+  },
+  {
+    "code": "1380606045",
+    "cityCode": "1380600000",
+    "name": "Barangay 439"
+  },
+  {
+    "code": "1380606046",
+    "cityCode": "1380600000",
+    "name": "Barangay 440"
+  },
+  {
+    "code": "1380606047",
+    "cityCode": "1380600000",
+    "name": "Barangay 441"
+  },
+  {
+    "code": "1380606048",
+    "cityCode": "1380600000",
+    "name": "Barangay 442"
+  },
+  {
+    "code": "1380606049",
+    "cityCode": "1380600000",
+    "name": "Barangay 443"
+  },
+  {
+    "code": "1380606050",
+    "cityCode": "1380600000",
+    "name": "Barangay 444"
+  },
+  {
+    "code": "1380606051",
+    "cityCode": "1380600000",
+    "name": "Barangay 445"
+  },
+  {
+    "code": "1380606052",
+    "cityCode": "1380600000",
+    "name": "Barangay 446"
+  },
+  {
+    "code": "1380606053",
+    "cityCode": "1380600000",
+    "name": "Barangay 447"
+  },
+  {
+    "code": "1380606054",
+    "cityCode": "1380600000",
+    "name": "Barangay 448"
+  },
+  {
+    "code": "1380606055",
+    "cityCode": "1380600000",
+    "name": "Barangay 449"
+  },
+  {
+    "code": "1380606056",
+    "cityCode": "1380600000",
+    "name": "Barangay 450"
+  },
+  {
+    "code": "1380606057",
+    "cityCode": "1380600000",
+    "name": "Barangay 451"
+  },
+  {
+    "code": "1380606058",
+    "cityCode": "1380600000",
+    "name": "Barangay 452"
+  },
+  {
+    "code": "1380606059",
+    "cityCode": "1380600000",
+    "name": "Barangay 453"
+  },
+  {
+    "code": "1380606060",
+    "cityCode": "1380600000",
+    "name": "Barangay 454"
+  },
+  {
+    "code": "1380606061",
+    "cityCode": "1380600000",
+    "name": "Barangay 455"
+  },
+  {
+    "code": "1380606062",
+    "cityCode": "1380600000",
+    "name": "Barangay 456"
+  },
+  {
+    "code": "1380606063",
+    "cityCode": "1380600000",
+    "name": "Barangay 457"
+  },
+  {
+    "code": "1380606064",
+    "cityCode": "1380600000",
+    "name": "Barangay 458"
+  },
+  {
+    "code": "1380606065",
+    "cityCode": "1380600000",
+    "name": "Barangay 459"
+  },
+  {
+    "code": "1380606066",
+    "cityCode": "1380600000",
+    "name": "Barangay 460"
+  },
+  {
+    "code": "1380606067",
+    "cityCode": "1380600000",
+    "name": "Barangay 461"
+  },
+  {
+    "code": "1380606068",
+    "cityCode": "1380600000",
+    "name": "Barangay 462"
+  },
+  {
+    "code": "1380606069",
+    "cityCode": "1380600000",
+    "name": "Barangay 463"
+  },
+  {
+    "code": "1380606070",
+    "cityCode": "1380600000",
+    "name": "Barangay 464"
+  },
+  {
+    "code": "1380606071",
+    "cityCode": "1380600000",
+    "name": "Barangay 465"
+  },
+  {
+    "code": "1380606072",
+    "cityCode": "1380600000",
+    "name": "Barangay 466"
+  },
+  {
+    "code": "1380606073",
+    "cityCode": "1380600000",
+    "name": "Barangay 467"
+  },
+  {
+    "code": "1380606074",
+    "cityCode": "1380600000",
+    "name": "Barangay 468"
+  },
+  {
+    "code": "1380606075",
+    "cityCode": "1380600000",
+    "name": "Barangay 469"
+  },
+  {
+    "code": "1380606076",
+    "cityCode": "1380600000",
+    "name": "Barangay 470"
+  },
+  {
+    "code": "1380606077",
+    "cityCode": "1380600000",
+    "name": "Barangay 471"
+  },
+  {
+    "code": "1380606078",
+    "cityCode": "1380600000",
+    "name": "Barangay 472"
+  },
+  {
+    "code": "1380606079",
+    "cityCode": "1380600000",
+    "name": "Barangay 473"
+  },
+  {
+    "code": "1380606080",
+    "cityCode": "1380600000",
+    "name": "Barangay 474"
+  },
+  {
+    "code": "1380606081",
+    "cityCode": "1380600000",
+    "name": "Barangay 475"
+  },
+  {
+    "code": "1380606082",
+    "cityCode": "1380600000",
+    "name": "Barangay 476"
+  },
+  {
+    "code": "1380606083",
+    "cityCode": "1380600000",
+    "name": "Barangay 477"
+  },
+  {
+    "code": "1380606084",
+    "cityCode": "1380600000",
+    "name": "Barangay 478"
+  },
+  {
+    "code": "1380606085",
+    "cityCode": "1380600000",
+    "name": "Barangay 479"
+  },
+  {
+    "code": "1380606086",
+    "cityCode": "1380600000",
+    "name": "Barangay 480"
+  },
+  {
+    "code": "1380606087",
+    "cityCode": "1380600000",
+    "name": "Barangay 481"
+  },
+  {
+    "code": "1380606088",
+    "cityCode": "1380600000",
+    "name": "Barangay 482"
+  },
+  {
+    "code": "1380606089",
+    "cityCode": "1380600000",
+    "name": "Barangay 483"
+  },
+  {
+    "code": "1380606090",
+    "cityCode": "1380600000",
+    "name": "Barangay 484"
+  },
+  {
+    "code": "1380606091",
+    "cityCode": "1380600000",
+    "name": "Barangay 485"
+  },
+  {
+    "code": "1380606092",
+    "cityCode": "1380600000",
+    "name": "Barangay 486"
+  },
+  {
+    "code": "1380606093",
+    "cityCode": "1380600000",
+    "name": "Barangay 487"
+  },
+  {
+    "code": "1380606094",
+    "cityCode": "1380600000",
+    "name": "Barangay 488"
+  },
+  {
+    "code": "1380606095",
+    "cityCode": "1380600000",
+    "name": "Barangay 489"
+  },
+  {
+    "code": "1380606096",
+    "cityCode": "1380600000",
+    "name": "Barangay 490"
+  },
+  {
+    "code": "1380606097",
+    "cityCode": "1380600000",
+    "name": "Barangay 491"
+  },
+  {
+    "code": "1380606098",
+    "cityCode": "1380600000",
+    "name": "Barangay 492"
+  },
+  {
+    "code": "1380606099",
+    "cityCode": "1380600000",
+    "name": "Barangay 493"
+  },
+  {
+    "code": "1380606100",
+    "cityCode": "1380600000",
+    "name": "Barangay 494"
+  },
+  {
+    "code": "1380606101",
+    "cityCode": "1380600000",
+    "name": "Barangay 495"
+  },
+  {
+    "code": "1380606102",
+    "cityCode": "1380600000",
+    "name": "Barangay 496"
+  },
+  {
+    "code": "1380606103",
+    "cityCode": "1380600000",
+    "name": "Barangay 497"
+  },
+  {
+    "code": "1380606104",
+    "cityCode": "1380600000",
+    "name": "Barangay 498"
+  },
+  {
+    "code": "1380606105",
+    "cityCode": "1380600000",
+    "name": "Barangay 499"
+  },
+  {
+    "code": "1380606106",
+    "cityCode": "1380600000",
+    "name": "Barangay 500"
+  },
+  {
+    "code": "1380606107",
+    "cityCode": "1380600000",
+    "name": "Barangay 501"
+  },
+  {
+    "code": "1380606108",
+    "cityCode": "1380600000",
+    "name": "Barangay 502"
+  },
+  {
+    "code": "1380606109",
+    "cityCode": "1380600000",
+    "name": "Barangay 503"
+  },
+  {
+    "code": "1380606110",
+    "cityCode": "1380600000",
+    "name": "Barangay 504"
+  },
+  {
+    "code": "1380606111",
+    "cityCode": "1380600000",
+    "name": "Barangay 505"
+  },
+  {
+    "code": "1380606112",
+    "cityCode": "1380600000",
+    "name": "Barangay 506"
+  },
+  {
+    "code": "1380606113",
+    "cityCode": "1380600000",
+    "name": "Barangay 507"
+  },
+  {
+    "code": "1380606114",
+    "cityCode": "1380600000",
+    "name": "Barangay 508"
+  },
+  {
+    "code": "1380606115",
+    "cityCode": "1380600000",
+    "name": "Barangay 509"
+  },
+  {
+    "code": "1380606116",
+    "cityCode": "1380600000",
+    "name": "Barangay 510"
+  },
+  {
+    "code": "1380606117",
+    "cityCode": "1380600000",
+    "name": "Barangay 511"
+  },
+  {
+    "code": "1380606118",
+    "cityCode": "1380600000",
+    "name": "Barangay 512"
+  },
+  {
+    "code": "1380606119",
+    "cityCode": "1380600000",
+    "name": "Barangay 513"
+  },
+  {
+    "code": "1380606120",
+    "cityCode": "1380600000",
+    "name": "Barangay 514"
+  },
+  {
+    "code": "1380606121",
+    "cityCode": "1380600000",
+    "name": "Barangay 515"
+  },
+  {
+    "code": "1380606122",
+    "cityCode": "1380600000",
+    "name": "Barangay 516"
+  },
+  {
+    "code": "1380606123",
+    "cityCode": "1380600000",
+    "name": "Barangay 517"
+  },
+  {
+    "code": "1380606124",
+    "cityCode": "1380600000",
+    "name": "Barangay 518"
+  },
+  {
+    "code": "1380606125",
+    "cityCode": "1380600000",
+    "name": "Barangay 519"
+  },
+  {
+    "code": "1380606126",
+    "cityCode": "1380600000",
+    "name": "Barangay 520"
+  },
+  {
+    "code": "1380606127",
+    "cityCode": "1380600000",
+    "name": "Barangay 521"
+  },
+  {
+    "code": "1380606128",
+    "cityCode": "1380600000",
+    "name": "Barangay 522"
+  },
+  {
+    "code": "1380606129",
+    "cityCode": "1380600000",
+    "name": "Barangay 523"
+  },
+  {
+    "code": "1380606130",
+    "cityCode": "1380600000",
+    "name": "Barangay 524"
+  },
+  {
+    "code": "1380606131",
+    "cityCode": "1380600000",
+    "name": "Barangay 525"
+  },
+  {
+    "code": "1380606132",
+    "cityCode": "1380600000",
+    "name": "Barangay 526"
+  },
+  {
+    "code": "1380606133",
+    "cityCode": "1380600000",
+    "name": "Barangay 527"
+  },
+  {
+    "code": "1380606134",
+    "cityCode": "1380600000",
+    "name": "Barangay 528"
+  },
+  {
+    "code": "1380606135",
+    "cityCode": "1380600000",
+    "name": "Barangay 529"
+  },
+  {
+    "code": "1380606136",
+    "cityCode": "1380600000",
+    "name": "Barangay 530"
+  },
+  {
+    "code": "1380606137",
+    "cityCode": "1380600000",
+    "name": "Barangay 531"
+  },
+  {
+    "code": "1380606138",
+    "cityCode": "1380600000",
+    "name": "Barangay 532"
+  },
+  {
+    "code": "1380606139",
+    "cityCode": "1380600000",
+    "name": "Barangay 533"
+  },
+  {
+    "code": "1380606140",
+    "cityCode": "1380600000",
+    "name": "Barangay 534"
+  },
+  {
+    "code": "1380606141",
+    "cityCode": "1380600000",
+    "name": "Barangay 535"
+  },
+  {
+    "code": "1380606142",
+    "cityCode": "1380600000",
+    "name": "Barangay 536"
+  },
+  {
+    "code": "1380606143",
+    "cityCode": "1380600000",
+    "name": "Barangay 537"
+  },
+  {
+    "code": "1380606144",
+    "cityCode": "1380600000",
+    "name": "Barangay 538"
+  },
+  {
+    "code": "1380606145",
+    "cityCode": "1380600000",
+    "name": "Barangay 539"
+  },
+  {
+    "code": "1380606146",
+    "cityCode": "1380600000",
+    "name": "Barangay 540"
+  },
+  {
+    "code": "1380606147",
+    "cityCode": "1380600000",
+    "name": "Barangay 541"
+  },
+  {
+    "code": "1380606148",
+    "cityCode": "1380600000",
+    "name": "Barangay 542"
+  },
+  {
+    "code": "1380606149",
+    "cityCode": "1380600000",
+    "name": "Barangay 543"
+  },
+  {
+    "code": "1380606150",
+    "cityCode": "1380600000",
+    "name": "Barangay 544"
+  },
+  {
+    "code": "1380606151",
+    "cityCode": "1380600000",
+    "name": "Barangay 545"
+  },
+  {
+    "code": "1380606152",
+    "cityCode": "1380600000",
+    "name": "Barangay 546"
+  },
+  {
+    "code": "1380606153",
+    "cityCode": "1380600000",
+    "name": "Barangay 547"
+  },
+  {
+    "code": "1380606154",
+    "cityCode": "1380600000",
+    "name": "Barangay 548"
+  },
+  {
+    "code": "1380606155",
+    "cityCode": "1380600000",
+    "name": "Barangay 549"
+  },
+  {
+    "code": "1380606156",
+    "cityCode": "1380600000",
+    "name": "Barangay 550"
+  },
+  {
+    "code": "1380606157",
+    "cityCode": "1380600000",
+    "name": "Barangay 551"
+  },
+  {
+    "code": "1380606158",
+    "cityCode": "1380600000",
+    "name": "Barangay 552"
+  },
+  {
+    "code": "1380606159",
+    "cityCode": "1380600000",
+    "name": "Barangay 553"
+  },
+  {
+    "code": "1380606160",
+    "cityCode": "1380600000",
+    "name": "Barangay 554"
+  },
+  {
+    "code": "1380606161",
+    "cityCode": "1380600000",
+    "name": "Barangay 555"
+  },
+  {
+    "code": "1380606162",
+    "cityCode": "1380600000",
+    "name": "Barangay 556"
+  },
+  {
+    "code": "1380606163",
+    "cityCode": "1380600000",
+    "name": "Barangay 557"
+  },
+  {
+    "code": "1380606164",
+    "cityCode": "1380600000",
+    "name": "Barangay 558"
+  },
+  {
+    "code": "1380606165",
+    "cityCode": "1380600000",
+    "name": "Barangay 559"
+  },
+  {
+    "code": "1380606166",
+    "cityCode": "1380600000",
+    "name": "Barangay 560"
+  },
+  {
+    "code": "1380606167",
+    "cityCode": "1380600000",
+    "name": "Barangay 561"
+  },
+  {
+    "code": "1380606168",
+    "cityCode": "1380600000",
+    "name": "Barangay 562"
+  },
+  {
+    "code": "1380606169",
+    "cityCode": "1380600000",
+    "name": "Barangay 563"
+  },
+  {
+    "code": "1380606170",
+    "cityCode": "1380600000",
+    "name": "Barangay 564"
+  },
+  {
+    "code": "1380606171",
+    "cityCode": "1380600000",
+    "name": "Barangay 565"
+  },
+  {
+    "code": "1380606172",
+    "cityCode": "1380600000",
+    "name": "Barangay 566"
+  },
+  {
+    "code": "1380606173",
+    "cityCode": "1380600000",
+    "name": "Barangay 567"
+  },
+  {
+    "code": "1380606174",
+    "cityCode": "1380600000",
+    "name": "Barangay 568"
+  },
+  {
+    "code": "1380606175",
+    "cityCode": "1380600000",
+    "name": "Barangay 569"
+  },
+  {
+    "code": "1380606176",
+    "cityCode": "1380600000",
+    "name": "Barangay 570"
+  },
+  {
+    "code": "1380606177",
+    "cityCode": "1380600000",
+    "name": "Barangay 571"
+  },
+  {
+    "code": "1380606178",
+    "cityCode": "1380600000",
+    "name": "Barangay 572"
+  },
+  {
+    "code": "1380606179",
+    "cityCode": "1380600000",
+    "name": "Barangay 573"
+  },
+  {
+    "code": "1380606180",
+    "cityCode": "1380600000",
+    "name": "Barangay 574"
+  },
+  {
+    "code": "1380606181",
+    "cityCode": "1380600000",
+    "name": "Barangay 575"
+  },
+  {
+    "code": "1380606182",
+    "cityCode": "1380600000",
+    "name": "Barangay 576"
+  },
+  {
+    "code": "1380606183",
+    "cityCode": "1380600000",
+    "name": "Barangay 577"
+  },
+  {
+    "code": "1380606184",
+    "cityCode": "1380600000",
+    "name": "Barangay 578"
+  },
+  {
+    "code": "1380606185",
+    "cityCode": "1380600000",
+    "name": "Barangay 579"
+  },
+  {
+    "code": "1380606186",
+    "cityCode": "1380600000",
+    "name": "Barangay 580"
+  },
+  {
+    "code": "1380606187",
+    "cityCode": "1380600000",
+    "name": "Barangay 581"
+  },
+  {
+    "code": "1380606188",
+    "cityCode": "1380600000",
+    "name": "Barangay 582"
+  },
+  {
+    "code": "1380606189",
+    "cityCode": "1380600000",
+    "name": "Barangay 583"
+  },
+  {
+    "code": "1380606190",
+    "cityCode": "1380600000",
+    "name": "Barangay 584"
+  },
+  {
+    "code": "1380606191",
+    "cityCode": "1380600000",
+    "name": "Barangay 585"
+  },
+  {
+    "code": "1380606192",
+    "cityCode": "1380600000",
+    "name": "Barangay 586"
+  },
+  {
+    "code": "1380606193",
+    "cityCode": "1380600000",
+    "name": "Barangay 587"
+  },
+  {
+    "code": "1380606194",
+    "cityCode": "1380600000",
+    "name": "Barangay 587-A"
+  },
+  {
+    "code": "1380606195",
+    "cityCode": "1380600000",
+    "name": "Barangay 588"
+  },
+  {
+    "code": "1380606196",
+    "cityCode": "1380600000",
+    "name": "Barangay 589"
+  },
+  {
+    "code": "1380606197",
+    "cityCode": "1380600000",
+    "name": "Barangay 590"
+  },
+  {
+    "code": "1380606198",
+    "cityCode": "1380600000",
+    "name": "Barangay 591"
+  },
+  {
+    "code": "1380606199",
+    "cityCode": "1380600000",
+    "name": "Barangay 592"
+  },
+  {
+    "code": "1380606200",
+    "cityCode": "1380600000",
+    "name": "Barangay 593"
+  },
+  {
+    "code": "1380606201",
+    "cityCode": "1380600000",
+    "name": "Barangay 594"
+  },
+  {
+    "code": "1380606202",
+    "cityCode": "1380600000",
+    "name": "Barangay 595"
+  },
+  {
+    "code": "1380606203",
+    "cityCode": "1380600000",
+    "name": "Barangay 596"
+  },
+  {
+    "code": "1380606204",
+    "cityCode": "1380600000",
+    "name": "Barangay 597"
+  },
+  {
+    "code": "1380606205",
+    "cityCode": "1380600000",
+    "name": "Barangay 598"
+  },
+  {
+    "code": "1380606206",
+    "cityCode": "1380600000",
+    "name": "Barangay 599"
+  },
+  {
+    "code": "1380606207",
+    "cityCode": "1380600000",
+    "name": "Barangay 600"
+  },
+  {
+    "code": "1380606208",
+    "cityCode": "1380600000",
+    "name": "Barangay 601"
+  },
+  {
+    "code": "1380606209",
+    "cityCode": "1380600000",
+    "name": "Barangay 602"
+  },
+  {
+    "code": "1380606210",
+    "cityCode": "1380600000",
+    "name": "Barangay 603"
+  },
+  {
+    "code": "1380606211",
+    "cityCode": "1380600000",
+    "name": "Barangay 604"
+  },
+  {
+    "code": "1380606212",
+    "cityCode": "1380600000",
+    "name": "Barangay 605"
+  },
+  {
+    "code": "1380606213",
+    "cityCode": "1380600000",
+    "name": "Barangay 606"
+  },
+  {
+    "code": "1380606214",
+    "cityCode": "1380600000",
+    "name": "Barangay 607"
+  },
+  {
+    "code": "1380606215",
+    "cityCode": "1380600000",
+    "name": "Barangay 608"
+  },
+  {
+    "code": "1380606216",
+    "cityCode": "1380600000",
+    "name": "Barangay 609"
+  },
+  {
+    "code": "1380606217",
+    "cityCode": "1380600000",
+    "name": "Barangay 610"
+  },
+  {
+    "code": "1380606218",
+    "cityCode": "1380600000",
+    "name": "Barangay 611"
+  },
+  {
+    "code": "1380606219",
+    "cityCode": "1380600000",
+    "name": "Barangay 612"
+  },
+  {
+    "code": "1380606220",
+    "cityCode": "1380600000",
+    "name": "Barangay 613"
+  },
+  {
+    "code": "1380606221",
+    "cityCode": "1380600000",
+    "name": "Barangay 614"
+  },
+  {
+    "code": "1380606222",
+    "cityCode": "1380600000",
+    "name": "Barangay 615"
+  },
+  {
+    "code": "1380606223",
+    "cityCode": "1380600000",
+    "name": "Barangay 616"
+  },
+  {
+    "code": "1380606224",
+    "cityCode": "1380600000",
+    "name": "Barangay 617"
+  },
+  {
+    "code": "1380606225",
+    "cityCode": "1380600000",
+    "name": "Barangay 618"
+  },
+  {
+    "code": "1380606226",
+    "cityCode": "1380600000",
+    "name": "Barangay 619"
+  },
+  {
+    "code": "1380606227",
+    "cityCode": "1380600000",
+    "name": "Barangay 620"
+  },
+  {
+    "code": "1380606228",
+    "cityCode": "1380600000",
+    "name": "Barangay 621"
+  },
+  {
+    "code": "1380606229",
+    "cityCode": "1380600000",
+    "name": "Barangay 622"
+  },
+  {
+    "code": "1380606230",
+    "cityCode": "1380600000",
+    "name": "Barangay 623"
+  },
+  {
+    "code": "1380606231",
+    "cityCode": "1380600000",
+    "name": "Barangay 624"
+  },
+  {
+    "code": "1380606232",
+    "cityCode": "1380600000",
+    "name": "Barangay 625"
+  },
+  {
+    "code": "1380606233",
+    "cityCode": "1380600000",
+    "name": "Barangay 626"
+  },
+  {
+    "code": "1380606234",
+    "cityCode": "1380600000",
+    "name": "Barangay 627"
+  },
+  {
+    "code": "1380606235",
+    "cityCode": "1380600000",
+    "name": "Barangay 628"
+  },
+  {
+    "code": "1380606236",
+    "cityCode": "1380600000",
+    "name": "Barangay 629"
+  },
+  {
+    "code": "1380606237",
+    "cityCode": "1380600000",
+    "name": "Barangay 630"
+  },
+  {
+    "code": "1380606238",
+    "cityCode": "1380600000",
+    "name": "Barangay 631"
+  },
+  {
+    "code": "1380606239",
+    "cityCode": "1380600000",
+    "name": "Barangay 632"
+  },
+  {
+    "code": "1380606240",
+    "cityCode": "1380600000",
+    "name": "Barangay 633"
+  },
+  {
+    "code": "1380606241",
+    "cityCode": "1380600000",
+    "name": "Barangay 634"
+  },
+  {
+    "code": "1380606242",
+    "cityCode": "1380600000",
+    "name": "Barangay 635"
+  },
+  {
+    "code": "1380606243",
+    "cityCode": "1380600000",
+    "name": "Barangay 636"
+  },
+  {
+    "code": "1380607001",
+    "cityCode": "1380600000",
+    "name": "Barangay 637"
+  },
+  {
+    "code": "1380607002",
+    "cityCode": "1380600000",
+    "name": "Barangay 638"
+  },
+  {
+    "code": "1380607003",
+    "cityCode": "1380600000",
+    "name": "Barangay 639"
+  },
+  {
+    "code": "1380607004",
+    "cityCode": "1380600000",
+    "name": "Barangay 640"
+  },
+  {
+    "code": "1380607005",
+    "cityCode": "1380600000",
+    "name": "Barangay 641"
+  },
+  {
+    "code": "1380607006",
+    "cityCode": "1380600000",
+    "name": "Barangay 642"
+  },
+  {
+    "code": "1380607007",
+    "cityCode": "1380600000",
+    "name": "Barangay 643"
+  },
+  {
+    "code": "1380607008",
+    "cityCode": "1380600000",
+    "name": "Barangay 644"
+  },
+  {
+    "code": "1380607009",
+    "cityCode": "1380600000",
+    "name": "Barangay 645"
+  },
+  {
+    "code": "1380607010",
+    "cityCode": "1380600000",
+    "name": "Barangay 646"
+  },
+  {
+    "code": "1380607011",
+    "cityCode": "1380600000",
+    "name": "Barangay 647"
+  },
+  {
+    "code": "1380607012",
+    "cityCode": "1380600000",
+    "name": "Barangay 648"
+  },
+  {
+    "code": "1380608001",
+    "cityCode": "1380600000",
+    "name": "Barangay 659"
+  },
+  {
+    "code": "1380608002",
+    "cityCode": "1380600000",
+    "name": "Barangay 659-A"
+  },
+  {
+    "code": "1380608003",
+    "cityCode": "1380600000",
+    "name": "Barangay 660"
+  },
+  {
+    "code": "1380608004",
+    "cityCode": "1380600000",
+    "name": "Barangay 660-A"
+  },
+  {
+    "code": "1380608005",
+    "cityCode": "1380600000",
+    "name": "Barangay 661"
+  },
+  {
+    "code": "1380608008",
+    "cityCode": "1380600000",
+    "name": "Barangay 666"
+  },
+  {
+    "code": "1380608009",
+    "cityCode": "1380600000",
+    "name": "Barangay 667"
+  },
+  {
+    "code": "1380608010",
+    "cityCode": "1380600000",
+    "name": "Barangay 668"
+  },
+  {
+    "code": "1380608011",
+    "cityCode": "1380600000",
+    "name": "Barangay 669"
+  },
+  {
+    "code": "1380608012",
+    "cityCode": "1380600000",
+    "name": "Barangay 670"
+  },
+  {
+    "code": "1380608013",
+    "cityCode": "1380600000",
+    "name": "Barangay 663"
+  },
+  {
+    "code": "1380608014",
+    "cityCode": "1380600000",
+    "name": "Barangay 663-A"
+  },
+  {
+    "code": "1380608015",
+    "cityCode": "1380600000",
+    "name": "Barangay 664"
+  },
+  {
+    "code": "1380609001",
+    "cityCode": "1380600000",
+    "name": "Barangay 654"
+  },
+  {
+    "code": "1380609002",
+    "cityCode": "1380600000",
+    "name": "Barangay 655"
+  },
+  {
+    "code": "1380609003",
+    "cityCode": "1380600000",
+    "name": "Barangay 656"
+  },
+  {
+    "code": "1380609004",
+    "cityCode": "1380600000",
+    "name": "Barangay 657"
+  },
+  {
+    "code": "1380609005",
+    "cityCode": "1380600000",
+    "name": "Barangay 658"
+  },
+  {
+    "code": "1380610004",
+    "cityCode": "1380600000",
+    "name": "Barangay 689"
+  },
+  {
+    "code": "1380610005",
+    "cityCode": "1380600000",
+    "name": "Barangay 690"
+  },
+  {
+    "code": "1380610006",
+    "cityCode": "1380600000",
+    "name": "Barangay 691"
+  },
+  {
+    "code": "1380610007",
+    "cityCode": "1380600000",
+    "name": "Barangay 692"
+  },
+  {
+    "code": "1380610008",
+    "cityCode": "1380600000",
+    "name": "Barangay 693"
+  },
+  {
+    "code": "1380610009",
+    "cityCode": "1380600000",
+    "name": "Barangay 694"
+  },
+  {
+    "code": "1380610010",
+    "cityCode": "1380600000",
+    "name": "Barangay 695"
+  },
+  {
+    "code": "1380610011",
+    "cityCode": "1380600000",
+    "name": "Barangay 696"
+  },
+  {
+    "code": "1380610012",
+    "cityCode": "1380600000",
+    "name": "Barangay 697"
+  },
+  {
+    "code": "1380610013",
+    "cityCode": "1380600000",
+    "name": "Barangay 698"
+  },
+  {
+    "code": "1380610014",
+    "cityCode": "1380600000",
+    "name": "Barangay 699"
+  },
+  {
+    "code": "1380610015",
+    "cityCode": "1380600000",
+    "name": "Barangay 700"
+  },
+  {
+    "code": "1380610016",
+    "cityCode": "1380600000",
+    "name": "Barangay 701"
+  },
+  {
+    "code": "1380610017",
+    "cityCode": "1380600000",
+    "name": "Barangay 702"
+  },
+  {
+    "code": "1380610018",
+    "cityCode": "1380600000",
+    "name": "Barangay 703"
+  },
+  {
+    "code": "1380610019",
+    "cityCode": "1380600000",
+    "name": "Barangay 704"
+  },
+  {
+    "code": "1380610020",
+    "cityCode": "1380600000",
+    "name": "Barangay 705"
+  },
+  {
+    "code": "1380610021",
+    "cityCode": "1380600000",
+    "name": "Barangay 706"
+  },
+  {
+    "code": "1380610022",
+    "cityCode": "1380600000",
+    "name": "Barangay 707"
+  },
+  {
+    "code": "1380610023",
+    "cityCode": "1380600000",
+    "name": "Barangay 708"
+  },
+  {
+    "code": "1380610024",
+    "cityCode": "1380600000",
+    "name": "Barangay 709"
+  },
+  {
+    "code": "1380610025",
+    "cityCode": "1380600000",
+    "name": "Barangay 710"
+  },
+  {
+    "code": "1380610026",
+    "cityCode": "1380600000",
+    "name": "Barangay 711"
+  },
+  {
+    "code": "1380610027",
+    "cityCode": "1380600000",
+    "name": "Barangay 712"
+  },
+  {
+    "code": "1380610028",
+    "cityCode": "1380600000",
+    "name": "Barangay 713"
+  },
+  {
+    "code": "1380610029",
+    "cityCode": "1380600000",
+    "name": "Barangay 714"
+  },
+  {
+    "code": "1380610030",
+    "cityCode": "1380600000",
+    "name": "Barangay 715"
+  },
+  {
+    "code": "1380610031",
+    "cityCode": "1380600000",
+    "name": "Barangay 716"
+  },
+  {
+    "code": "1380610032",
+    "cityCode": "1380600000",
+    "name": "Barangay 717"
+  },
+  {
+    "code": "1380610033",
+    "cityCode": "1380600000",
+    "name": "Barangay 718"
+  },
+  {
+    "code": "1380610034",
+    "cityCode": "1380600000",
+    "name": "Barangay 719"
+  },
+  {
+    "code": "1380610035",
+    "cityCode": "1380600000",
+    "name": "Barangay 720"
+  },
+  {
+    "code": "1380610036",
+    "cityCode": "1380600000",
+    "name": "Barangay 721"
+  },
+  {
+    "code": "1380610037",
+    "cityCode": "1380600000",
+    "name": "Barangay 722"
+  },
+  {
+    "code": "1380610038",
+    "cityCode": "1380600000",
+    "name": "Barangay 723"
+  },
+  {
+    "code": "1380610039",
+    "cityCode": "1380600000",
+    "name": "Barangay 724"
+  },
+  {
+    "code": "1380610040",
+    "cityCode": "1380600000",
+    "name": "Barangay 725"
+  },
+  {
+    "code": "1380610041",
+    "cityCode": "1380600000",
+    "name": "Barangay 726"
+  },
+  {
+    "code": "1380610042",
+    "cityCode": "1380600000",
+    "name": "Barangay 727"
+  },
+  {
+    "code": "1380610043",
+    "cityCode": "1380600000",
+    "name": "Barangay 728"
+  },
+  {
+    "code": "1380610044",
+    "cityCode": "1380600000",
+    "name": "Barangay 729"
+  },
+  {
+    "code": "1380610045",
+    "cityCode": "1380600000",
+    "name": "Barangay 730"
+  },
+  {
+    "code": "1380610046",
+    "cityCode": "1380600000",
+    "name": "Barangay 731"
+  },
+  {
+    "code": "1380610047",
+    "cityCode": "1380600000",
+    "name": "Barangay 732"
+  },
+  {
+    "code": "1380610048",
+    "cityCode": "1380600000",
+    "name": "Barangay 733"
+  },
+  {
+    "code": "1380610052",
+    "cityCode": "1380600000",
+    "name": "Barangay 738"
+  },
+  {
+    "code": "1380610053",
+    "cityCode": "1380600000",
+    "name": "Barangay 739"
+  },
+  {
+    "code": "1380610054",
+    "cityCode": "1380600000",
+    "name": "Barangay 740"
+  },
+  {
+    "code": "1380610055",
+    "cityCode": "1380600000",
+    "name": "Barangay 741"
+  },
+  {
+    "code": "1380610056",
+    "cityCode": "1380600000",
+    "name": "Barangay 742"
+  },
+  {
+    "code": "1380610057",
+    "cityCode": "1380600000",
+    "name": "Barangay 743"
+  },
+  {
+    "code": "1380610058",
+    "cityCode": "1380600000",
+    "name": "Barangay 744"
+  },
+  {
+    "code": "1380610059",
+    "cityCode": "1380600000",
+    "name": "Barangay 688"
+  },
+  {
+    "code": "1380610060",
+    "cityCode": "1380600000",
+    "name": "Barangay 735"
+  },
+  {
+    "code": "1380610061",
+    "cityCode": "1380600000",
+    "name": "Barangay 736"
+  },
+  {
+    "code": "1380610062",
+    "cityCode": "1380600000",
+    "name": "Barangay 737"
+  },
+  {
+    "code": "1380610063",
+    "cityCode": "1380600000",
+    "name": "Barangay 734"
+  },
+  {
+    "code": "1380611001",
+    "cityCode": "1380600000",
+    "name": "Barangay 662"
+  },
+  {
+    "code": "1380611004",
+    "cityCode": "1380600000",
+    "name": "Barangay 664-A"
+  },
+  {
+    "code": "1380611005",
+    "cityCode": "1380600000",
+    "name": "Barangay 671"
+  },
+  {
+    "code": "1380611006",
+    "cityCode": "1380600000",
+    "name": "Barangay 672"
+  },
+  {
+    "code": "1380611007",
+    "cityCode": "1380600000",
+    "name": "Barangay 673"
+  },
+  {
+    "code": "1380611008",
+    "cityCode": "1380600000",
+    "name": "Barangay 674"
+  },
+  {
+    "code": "1380611009",
+    "cityCode": "1380600000",
+    "name": "Barangay 675"
+  },
+  {
+    "code": "1380611010",
+    "cityCode": "1380600000",
+    "name": "Barangay 676"
+  },
+  {
+    "code": "1380611011",
+    "cityCode": "1380600000",
+    "name": "Barangay 677"
+  },
+  {
+    "code": "1380611012",
+    "cityCode": "1380600000",
+    "name": "Barangay 678"
+  },
+  {
+    "code": "1380611013",
+    "cityCode": "1380600000",
+    "name": "Barangay 679"
+  },
+  {
+    "code": "1380611014",
+    "cityCode": "1380600000",
+    "name": "Barangay 680"
+  },
+  {
+    "code": "1380611015",
+    "cityCode": "1380600000",
+    "name": "Barangay 681"
+  },
+  {
+    "code": "1380611016",
+    "cityCode": "1380600000",
+    "name": "Barangay 682"
+  },
+  {
+    "code": "1380611017",
+    "cityCode": "1380600000",
+    "name": "Barangay 683"
+  },
+  {
+    "code": "1380611018",
+    "cityCode": "1380600000",
+    "name": "Barangay 684"
+  },
+  {
+    "code": "1380611019",
+    "cityCode": "1380600000",
+    "name": "Barangay 685"
+  },
+  {
+    "code": "1380611023",
+    "cityCode": "1380600000",
+    "name": "Barangay 809"
+  },
+  {
+    "code": "1380611024",
+    "cityCode": "1380600000",
+    "name": "Barangay 810"
+  },
+  {
+    "code": "1380611025",
+    "cityCode": "1380600000",
+    "name": "Barangay 811"
+  },
+  {
+    "code": "1380611026",
+    "cityCode": "1380600000",
+    "name": "Barangay 812"
+  },
+  {
+    "code": "1380611027",
+    "cityCode": "1380600000",
+    "name": "Barangay 813"
+  },
+  {
+    "code": "1380611028",
+    "cityCode": "1380600000",
+    "name": "Barangay 814"
+  },
+  {
+    "code": "1380611029",
+    "cityCode": "1380600000",
+    "name": "Barangay 815"
+  },
+  {
+    "code": "1380611030",
+    "cityCode": "1380600000",
+    "name": "Barangay 816"
+  },
+  {
+    "code": "1380611031",
+    "cityCode": "1380600000",
+    "name": "Barangay 817"
+  },
+  {
+    "code": "1380611032",
+    "cityCode": "1380600000",
+    "name": "Barangay 818"
+  },
+  {
+    "code": "1380611034",
+    "cityCode": "1380600000",
+    "name": "Barangay 819"
+  },
+  {
+    "code": "1380611035",
+    "cityCode": "1380600000",
+    "name": "Barangay 820"
+  },
+  {
+    "code": "1380611036",
+    "cityCode": "1380600000",
+    "name": "Barangay 821"
+  },
+  {
+    "code": "1380611037",
+    "cityCode": "1380600000",
+    "name": "Barangay 822"
+  },
+  {
+    "code": "1380611038",
+    "cityCode": "1380600000",
+    "name": "Barangay 823"
+  },
+  {
+    "code": "1380611039",
+    "cityCode": "1380600000",
+    "name": "Barangay 824"
+  },
+  {
+    "code": "1380611040",
+    "cityCode": "1380600000",
+    "name": "Barangay 825"
+  },
+  {
+    "code": "1380611041",
+    "cityCode": "1380600000",
+    "name": "Barangay 826"
+  },
+  {
+    "code": "1380611042",
+    "cityCode": "1380600000",
+    "name": "Barangay 827"
+  },
+  {
+    "code": "1380611043",
+    "cityCode": "1380600000",
+    "name": "Barangay 828"
+  },
+  {
+    "code": "1380611044",
+    "cityCode": "1380600000",
+    "name": "Barangay 829"
+  },
+  {
+    "code": "1380611045",
+    "cityCode": "1380600000",
+    "name": "Barangay 830"
+  },
+  {
+    "code": "1380611046",
+    "cityCode": "1380600000",
+    "name": "Barangay 831"
+  },
+  {
+    "code": "1380611047",
+    "cityCode": "1380600000",
+    "name": "Barangay 832"
+  },
+  {
+    "code": "1380611048",
+    "cityCode": "1380600000",
+    "name": "Barangay 686"
+  },
+  {
+    "code": "1380611049",
+    "cityCode": "1380600000",
+    "name": "Barangay 687"
+  },
+  {
+    "code": "1380612001",
+    "cityCode": "1380600000",
+    "name": "Barangay 833"
+  },
+  {
+    "code": "1380612002",
+    "cityCode": "1380600000",
+    "name": "Barangay 834"
+  },
+  {
+    "code": "1380612003",
+    "cityCode": "1380600000",
+    "name": "Barangay 835"
+  },
+  {
+    "code": "1380612004",
+    "cityCode": "1380600000",
+    "name": "Barangay 836"
+  },
+  {
+    "code": "1380612005",
+    "cityCode": "1380600000",
+    "name": "Barangay 837"
+  },
+  {
+    "code": "1380612006",
+    "cityCode": "1380600000",
+    "name": "Barangay 838"
+  },
+  {
+    "code": "1380612007",
+    "cityCode": "1380600000",
+    "name": "Barangay 839"
+  },
+  {
+    "code": "1380612008",
+    "cityCode": "1380600000",
+    "name": "Barangay 840"
+  },
+  {
+    "code": "1380612009",
+    "cityCode": "1380600000",
+    "name": "Barangay 841"
+  },
+  {
+    "code": "1380612010",
+    "cityCode": "1380600000",
+    "name": "Barangay 842"
+  },
+  {
+    "code": "1380612011",
+    "cityCode": "1380600000",
+    "name": "Barangay 843"
+  },
+  {
+    "code": "1380612012",
+    "cityCode": "1380600000",
+    "name": "Barangay 844"
+  },
+  {
+    "code": "1380612013",
+    "cityCode": "1380600000",
+    "name": "Barangay 845"
+  },
+  {
+    "code": "1380612014",
+    "cityCode": "1380600000",
+    "name": "Barangay 846"
+  },
+  {
+    "code": "1380612015",
+    "cityCode": "1380600000",
+    "name": "Barangay 847"
+  },
+  {
+    "code": "1380612016",
+    "cityCode": "1380600000",
+    "name": "Barangay 848"
+  },
+  {
+    "code": "1380612017",
+    "cityCode": "1380600000",
+    "name": "Barangay 849"
+  },
+  {
+    "code": "1380612018",
+    "cityCode": "1380600000",
+    "name": "Barangay 850"
+  },
+  {
+    "code": "1380612019",
+    "cityCode": "1380600000",
+    "name": "Barangay 851"
+  },
+  {
+    "code": "1380612020",
+    "cityCode": "1380600000",
+    "name": "Barangay 852"
+  },
+  {
+    "code": "1380612021",
+    "cityCode": "1380600000",
+    "name": "Barangay 853"
+  },
+  {
+    "code": "1380612023",
+    "cityCode": "1380600000",
+    "name": "Barangay 855"
+  },
+  {
+    "code": "1380612024",
+    "cityCode": "1380600000",
+    "name": "Barangay 856"
+  },
+  {
+    "code": "1380612025",
+    "cityCode": "1380600000",
+    "name": "Barangay 857"
+  },
+  {
+    "code": "1380612026",
+    "cityCode": "1380600000",
+    "name": "Barangay 858"
+  },
+  {
+    "code": "1380612027",
+    "cityCode": "1380600000",
+    "name": "Barangay 859"
+  },
+  {
+    "code": "1380612028",
+    "cityCode": "1380600000",
+    "name": "Barangay 860"
+  },
+  {
+    "code": "1380612029",
+    "cityCode": "1380600000",
+    "name": "Barangay 861"
+  },
+  {
+    "code": "1380612030",
+    "cityCode": "1380600000",
+    "name": "Barangay 862"
+  },
+  {
+    "code": "1380612031",
+    "cityCode": "1380600000",
+    "name": "Barangay 863"
+  },
+  {
+    "code": "1380612032",
+    "cityCode": "1380600000",
+    "name": "Barangay 864"
+  },
+  {
+    "code": "1380612033",
+    "cityCode": "1380600000",
+    "name": "Barangay 865"
+  },
+  {
+    "code": "1380612034",
+    "cityCode": "1380600000",
+    "name": "Barangay 867"
+  },
+  {
+    "code": "1380612035",
+    "cityCode": "1380600000",
+    "name": "Barangay 868"
+  },
+  {
+    "code": "1380612036",
+    "cityCode": "1380600000",
+    "name": "Barangay 870"
+  },
+  {
+    "code": "1380612037",
+    "cityCode": "1380600000",
+    "name": "Barangay 871"
+  },
+  {
+    "code": "1380612038",
+    "cityCode": "1380600000",
+    "name": "Barangay 872"
+  },
+  {
+    "code": "1380612039",
+    "cityCode": "1380600000",
+    "name": "Barangay 869"
+  },
+  {
+    "code": "1380613001",
+    "cityCode": "1380600000",
+    "name": "Barangay 649"
+  },
+  {
+    "code": "1380613002",
+    "cityCode": "1380600000",
+    "name": "Barangay 650"
+  },
+  {
+    "code": "1380613003",
+    "cityCode": "1380600000",
+    "name": "Barangay 651"
+  },
+  {
+    "code": "1380613004",
+    "cityCode": "1380600000",
+    "name": "Barangay 652"
+  },
+  {
+    "code": "1380613005",
+    "cityCode": "1380600000",
+    "name": "Barangay 653"
+  },
+  {
+    "code": "1380614002",
+    "cityCode": "1380600000",
+    "name": "Barangay 745"
+  },
+  {
+    "code": "1380614003",
+    "cityCode": "1380600000",
+    "name": "Barangay 746"
+  },
+  {
+    "code": "1380614004",
+    "cityCode": "1380600000",
+    "name": "Barangay 747"
+  },
+  {
+    "code": "1380614005",
+    "cityCode": "1380600000",
+    "name": "Barangay 748"
+  },
+  {
+    "code": "1380614006",
+    "cityCode": "1380600000",
+    "name": "Barangay 749"
+  },
+  {
+    "code": "1380614007",
+    "cityCode": "1380600000",
+    "name": "Barangay 750"
+  },
+  {
+    "code": "1380614008",
+    "cityCode": "1380600000",
+    "name": "Barangay 751"
+  },
+  {
+    "code": "1380614009",
+    "cityCode": "1380600000",
+    "name": "Barangay 752"
+  },
+  {
+    "code": "1380614010",
+    "cityCode": "1380600000",
+    "name": "Barangay 753"
+  },
+  {
+    "code": "1380614011",
+    "cityCode": "1380600000",
+    "name": "Barangay 755"
+  },
+  {
+    "code": "1380614012",
+    "cityCode": "1380600000",
+    "name": "Barangay 756"
+  },
+  {
+    "code": "1380614013",
+    "cityCode": "1380600000",
+    "name": "Barangay 757"
+  },
+  {
+    "code": "1380614014",
+    "cityCode": "1380600000",
+    "name": "Barangay 758"
+  },
+  {
+    "code": "1380614015",
+    "cityCode": "1380600000",
+    "name": "Barangay 759"
+  },
+  {
+    "code": "1380614016",
+    "cityCode": "1380600000",
+    "name": "Barangay 760"
+  },
+  {
+    "code": "1380614017",
+    "cityCode": "1380600000",
+    "name": "Barangay 761"
+  },
+  {
+    "code": "1380614018",
+    "cityCode": "1380600000",
+    "name": "Barangay 762"
+  },
+  {
+    "code": "1380614019",
+    "cityCode": "1380600000",
+    "name": "Barangay 763"
+  },
+  {
+    "code": "1380614020",
+    "cityCode": "1380600000",
+    "name": "Barangay 764"
+  },
+  {
+    "code": "1380614021",
+    "cityCode": "1380600000",
+    "name": "Barangay 765"
+  },
+  {
+    "code": "1380614022",
+    "cityCode": "1380600000",
+    "name": "Barangay 766"
+  },
+  {
+    "code": "1380614023",
+    "cityCode": "1380600000",
+    "name": "Barangay 767"
+  },
+  {
+    "code": "1380614024",
+    "cityCode": "1380600000",
+    "name": "Barangay 768"
+  },
+  {
+    "code": "1380614025",
+    "cityCode": "1380600000",
+    "name": "Barangay 769"
+  },
+  {
+    "code": "1380614026",
+    "cityCode": "1380600000",
+    "name": "Barangay 770"
+  },
+  {
+    "code": "1380614027",
+    "cityCode": "1380600000",
+    "name": "Barangay 771"
+  },
+  {
+    "code": "1380614028",
+    "cityCode": "1380600000",
+    "name": "Barangay 772"
+  },
+  {
+    "code": "1380614029",
+    "cityCode": "1380600000",
+    "name": "Barangay 773"
+  },
+  {
+    "code": "1380614030",
+    "cityCode": "1380600000",
+    "name": "Barangay 774"
+  },
+  {
+    "code": "1380614031",
+    "cityCode": "1380600000",
+    "name": "Barangay 775"
+  },
+  {
+    "code": "1380614032",
+    "cityCode": "1380600000",
+    "name": "Barangay 776"
+  },
+  {
+    "code": "1380614033",
+    "cityCode": "1380600000",
+    "name": "Barangay 777"
+  },
+  {
+    "code": "1380614034",
+    "cityCode": "1380600000",
+    "name": "Barangay 778"
+  },
+  {
+    "code": "1380614035",
+    "cityCode": "1380600000",
+    "name": "Barangay 779"
+  },
+  {
+    "code": "1380614036",
+    "cityCode": "1380600000",
+    "name": "Barangay 780"
+  },
+  {
+    "code": "1380614037",
+    "cityCode": "1380600000",
+    "name": "Barangay 781"
+  },
+  {
+    "code": "1380614038",
+    "cityCode": "1380600000",
+    "name": "Barangay 782"
+  },
+  {
+    "code": "1380614039",
+    "cityCode": "1380600000",
+    "name": "Barangay 783"
+  },
+  {
+    "code": "1380614040",
+    "cityCode": "1380600000",
+    "name": "Barangay 784"
+  },
+  {
+    "code": "1380614041",
+    "cityCode": "1380600000",
+    "name": "Barangay 785"
+  },
+  {
+    "code": "1380614042",
+    "cityCode": "1380600000",
+    "name": "Barangay 786"
+  },
+  {
+    "code": "1380614043",
+    "cityCode": "1380600000",
+    "name": "Barangay 787"
+  },
+  {
+    "code": "1380614044",
+    "cityCode": "1380600000",
+    "name": "Barangay 788"
+  },
+  {
+    "code": "1380614045",
+    "cityCode": "1380600000",
+    "name": "Barangay 789"
+  },
+  {
+    "code": "1380614046",
+    "cityCode": "1380600000",
+    "name": "Barangay 790"
+  },
+  {
+    "code": "1380614047",
+    "cityCode": "1380600000",
+    "name": "Barangay 791"
+  },
+  {
+    "code": "1380614048",
+    "cityCode": "1380600000",
+    "name": "Barangay 792"
+  },
+  {
+    "code": "1380614049",
+    "cityCode": "1380600000",
+    "name": "Barangay 793"
+  },
+  {
+    "code": "1380614050",
+    "cityCode": "1380600000",
+    "name": "Barangay 794"
+  },
+  {
+    "code": "1380614051",
+    "cityCode": "1380600000",
+    "name": "Barangay 795"
+  },
+  {
+    "code": "1380614052",
+    "cityCode": "1380600000",
+    "name": "Barangay 796"
+  },
+  {
+    "code": "1380614053",
+    "cityCode": "1380600000",
+    "name": "Barangay 797"
+  },
+  {
+    "code": "1380614054",
+    "cityCode": "1380600000",
+    "name": "Barangay 798"
+  },
+  {
+    "code": "1380614055",
+    "cityCode": "1380600000",
+    "name": "Barangay 799"
+  },
+  {
+    "code": "1380614056",
+    "cityCode": "1380600000",
+    "name": "Barangay 800"
+  },
+  {
+    "code": "1380614057",
+    "cityCode": "1380600000",
+    "name": "Barangay 801"
+  },
+  {
+    "code": "1380614058",
+    "cityCode": "1380600000",
+    "name": "Barangay 802"
+  },
+  {
+    "code": "1380614059",
+    "cityCode": "1380600000",
+    "name": "Barangay 803"
+  },
+  {
+    "code": "1380614060",
+    "cityCode": "1380600000",
+    "name": "Barangay 804"
+  },
+  {
+    "code": "1380614061",
+    "cityCode": "1380600000",
+    "name": "Barangay 805"
+  },
+  {
+    "code": "1380614062",
+    "cityCode": "1380600000",
+    "name": "Barangay 806"
+  },
+  {
+    "code": "1380614063",
+    "cityCode": "1380600000",
+    "name": "Barangay 807"
+  },
+  {
+    "code": "1380614064",
+    "cityCode": "1380600000",
+    "name": "Barangay 866"
+  },
+  {
+    "code": "1380614066",
+    "cityCode": "1380600000",
+    "name": "Barangay 873"
+  },
+  {
+    "code": "1380614067",
+    "cityCode": "1380600000",
+    "name": "Barangay 874"
+  },
+  {
+    "code": "1380614068",
+    "cityCode": "1380600000",
+    "name": "Barangay 875"
+  },
+  {
+    "code": "1380614069",
+    "cityCode": "1380600000",
+    "name": "Barangay 876"
+  },
+  {
+    "code": "1380614070",
+    "cityCode": "1380600000",
+    "name": "Barangay 877"
+  },
+  {
+    "code": "1380614071",
+    "cityCode": "1380600000",
+    "name": "Barangay 878"
+  },
+  {
+    "code": "1380614072",
+    "cityCode": "1380600000",
+    "name": "Barangay 879"
+  },
+  {
+    "code": "1380614073",
+    "cityCode": "1380600000",
+    "name": "Barangay 880"
+  },
+  {
+    "code": "1380614074",
+    "cityCode": "1380600000",
+    "name": "Barangay 881"
+  },
+  {
+    "code": "1380614075",
+    "cityCode": "1380600000",
+    "name": "Barangay 882"
+  },
+  {
+    "code": "1380614076",
+    "cityCode": "1380600000",
+    "name": "Barangay 883"
+  },
+  {
+    "code": "1380614077",
+    "cityCode": "1380600000",
+    "name": "Barangay 884"
+  },
+  {
+    "code": "1380614078",
+    "cityCode": "1380600000",
+    "name": "Barangay 885"
+  },
+  {
+    "code": "1380614079",
+    "cityCode": "1380600000",
+    "name": "Barangay 886"
+  },
+  {
+    "code": "1380614080",
+    "cityCode": "1380600000",
+    "name": "Barangay 887"
+  },
+  {
+    "code": "1380614081",
+    "cityCode": "1380600000",
+    "name": "Barangay 888"
+  },
+  {
+    "code": "1380614082",
+    "cityCode": "1380600000",
+    "name": "Barangay 889"
+  },
+  {
+    "code": "1380614083",
+    "cityCode": "1380600000",
+    "name": "Barangay 890"
+  },
+  {
+    "code": "1380614084",
+    "cityCode": "1380600000",
+    "name": "Barangay 891"
+  },
+  {
+    "code": "1380614085",
+    "cityCode": "1380600000",
+    "name": "Barangay 892"
+  },
+  {
+    "code": "1380614086",
+    "cityCode": "1380600000",
+    "name": "Barangay 893"
+  },
+  {
+    "code": "1380614087",
+    "cityCode": "1380600000",
+    "name": "Barangay 894"
+  },
+  {
+    "code": "1380614088",
+    "cityCode": "1380600000",
+    "name": "Barangay 895"
+  },
+  {
+    "code": "1380614089",
+    "cityCode": "1380600000",
+    "name": "Barangay 896"
+  },
+  {
+    "code": "1380614090",
+    "cityCode": "1380600000",
+    "name": "Barangay 897"
+  },
+  {
+    "code": "1380614091",
+    "cityCode": "1380600000",
+    "name": "Barangay 898"
+  },
+  {
+    "code": "1380614092",
+    "cityCode": "1380600000",
+    "name": "Barangay 899"
+  },
+  {
+    "code": "1380614093",
+    "cityCode": "1380600000",
+    "name": "Barangay 900"
+  },
+  {
+    "code": "1380614094",
+    "cityCode": "1380600000",
+    "name": "Barangay 901"
+  },
+  {
+    "code": "1380614095",
+    "cityCode": "1380600000",
+    "name": "Barangay 902"
+  },
+  {
+    "code": "1380614096",
+    "cityCode": "1380600000",
+    "name": "Barangay 903"
+  },
+  {
+    "code": "1380614097",
+    "cityCode": "1380600000",
+    "name": "Barangay 904"
+  },
+  {
+    "code": "1380614098",
+    "cityCode": "1380600000",
+    "name": "Barangay 905"
+  },
+  {
+    "code": "1380614099",
+    "cityCode": "1380600000",
+    "name": "Barangay 754"
+  },
+  {
+    "code": "1380614100",
+    "cityCode": "1380600000",
+    "name": "Barangay 808"
+  },
+  {
+    "code": "1380614101",
+    "cityCode": "1380600000",
+    "name": "Barangay 818-A"
   },
   {
     "code": "1381200001",

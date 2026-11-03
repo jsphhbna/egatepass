@@ -728,6 +728,7 @@ async function handleRequest(request: Request): Promise<Response> {
     let returningEnrollmentStatus: 'enrolled' | 'failed' | 'not_requested' = 'not_requested';
     let returningProfileUpdateStatus: 'updated' | 'failed' | 'not_requested' = 'not_requested';
     if (parsed.data.source === 'portal' && parsed.data.registrationMode === 'new' && parsed.data.enrollReturning === true) {
+      let createdProfileId: string | null = null;
       try {
         const templateKey = process.env.RETURNING_VISITOR_TEMPLATE_KEY?.trim();
         if (templateKey && photo.buffer) {
@@ -738,6 +739,29 @@ async function handleRequest(request: Request): Promise<Response> {
           }
           const activeKeyVersion = getActiveTemplateKeyVersion();
           const encrypted = encryptFaceTemplate(descriptor, templateKey, activeKeyVersion);
+
+          // Locate authoritative issued visitor from passes table
+          let authoritativeVisitorId: string | null = null;
+          if (data.pass_id) {
+            const { data: passRow } = await admin
+              .from('passes')
+              .select('id, visitor_id, issue_request_id')
+              .eq('id', data.pass_id)
+              .eq('issue_request_id', parsed.data.requestId)
+              .maybeSingle();
+
+            if (passRow?.visitor_id) {
+              const { data: visitorRow } = await admin
+                .from('visitors')
+                .select('id, owner_id')
+                .eq('id', passRow.visitor_id)
+                .eq('owner_id', actorId)
+                .maybeSingle();
+              if (visitorRow) {
+                authoritativeVisitorId = visitorRow.id;
+              }
+            }
+          }
 
           // Insert returning profile with structured PSGC address
           const psgc = parsed.data.psgc;
@@ -765,6 +789,18 @@ async function handleRequest(request: Request): Promise<Response> {
             }
           }
 
+          const formattedFromPsgc = [
+            psgc?.houseBuilding?.trim(),
+            psgc?.street?.trim(),
+            enrollBarangayName ? `Brgy. ${enrollBarangayName}` : undefined,
+            enrollCityName,
+            enrollProvinceName,
+            enrollRegionName,
+            psgc?.postalCode ? psgc.postalCode.trim() : undefined,
+          ].filter(Boolean).join(', ');
+
+          const effectiveHomeAddress = visitor.homeAddress?.trim() || (formattedFromPsgc || null);
+
           const { data: newProfile, error: profileErr } = await admin
             .from('returning_visitor_profiles')
             .insert({
@@ -772,7 +808,7 @@ async function handleRequest(request: Request): Promise<Response> {
               middle_name: visitor.middleName || null,
               last_name: visitor.lastName,
               contact_number_e164: canonicalContact,
-              home_address: visitor.homeAddress?.trim() || null,
+              home_address: effectiveHomeAddress,
               home_location_lat: normalizedHomeLocation?.lat ?? null,
               home_location_lon: normalizedHomeLocation?.lon ?? null,
               psgc_version: psgc?.version || '2026-q3',
@@ -794,6 +830,7 @@ async function handleRequest(request: Request): Promise<Response> {
             .single();
 
           if (profileErr) throw profileErr;
+          createdProfileId = newProfile.id;
 
           // Insert encrypted template
           const { error: templateErr } = await admin
@@ -809,6 +846,18 @@ async function handleRequest(request: Request): Promise<Response> {
             });
 
           if (templateErr) throw templateErr;
+
+          // Authoritatively link the newly issued visitor to this returning profile
+          if (authoritativeVisitorId) {
+            const { error: linkErr } = await admin
+              .from('visitors')
+              .update({ returning_profile_id: newProfile.id })
+              .eq('id', authoritativeVisitorId)
+              .eq('owner_id', actorId)
+              .is('returning_profile_id', null);
+
+            if (linkErr) throw linkErr;
+          }
 
           // If vehicle chosen and user opted to save vehicle
           if (parsed.data.arrivalMode === 'vehicle' && parsed.data.vehicle?.saveVehicle === true && normalizedPlateDisplay && normalizedPlateKey) {
@@ -827,6 +876,15 @@ async function handleRequest(request: Request): Promise<Response> {
       } catch (enrollErr) {
         console.error('Returning visitor enrollment failed after pass issuance (pass preserved):', enrollErr);
         returningEnrollmentStatus = 'failed';
+        if (createdProfileId) {
+          try {
+            await admin.from('returning_face_templates').delete().eq('profile_id', createdProfileId);
+            await admin.from('returning_visitor_vehicles').delete().eq('profile_id', createdProfileId);
+            await admin.from('returning_visitor_profiles').delete().eq('id', createdProfileId);
+          } catch (cleanupErr) {
+            console.error('Compensating cleanup failed for returning profile:', cleanupErr);
+          }
+        }
       }
     } else if (parsed.data.source === 'portal' && parsed.data.registrationMode === 'returning') {
       // Returning visitor: apply optional updates
@@ -904,6 +962,21 @@ async function handleRequest(request: Request): Promise<Response> {
             profileUpdate.home_street = psgc.street && psgc.street.trim() ? psgc.street.trim() : null;
             profileUpdate.postal_code = psgc.postalCode && psgc.postalCode.trim() ? psgc.postalCode.trim() : null;
             profileUpdate.postal_code_source = psgc.postalCodeSource && psgc.postalCodeSource.trim() ? psgc.postalCodeSource.trim() : null;
+
+            if (!visitor.homeAddress || !visitor.homeAddress.trim()) {
+              const formattedUpdateAddress = [
+                psgc.houseBuilding?.trim(),
+                psgc.street?.trim(),
+                updateBarangayName ? `Brgy. ${updateBarangayName}` : undefined,
+                updateCityName,
+                updateProvinceName,
+                updateRegionName,
+                psgc.postalCode?.trim(),
+              ].filter(Boolean).join(', ');
+              if (formattedUpdateAddress) {
+                profileUpdate.home_address = formattedUpdateAddress;
+              }
+            }
           }
 
           const { data: updatedRows, error: updateErr } = await admin

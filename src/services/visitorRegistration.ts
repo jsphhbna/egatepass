@@ -68,6 +68,7 @@ export interface VisitorRegistration {
   middleName?: string;
   lastName: string;
   contactNumber: string;
+  homeAddress?: string;
   purpose: string;
   visitDate: string;
   email?: string;
@@ -1531,6 +1532,7 @@ export async function issueVisitorPass(
           contactNumber: effectiveVisitor.contactNumber,
           purpose: effectiveVisitor.purpose,
           visitDate: effectiveVisitor.visitDate,
+          homeAddress: effectiveVisitor.homeAddress?.trim() || undefined,
         },
         arrivalMode: effectiveVisitor.arrivalMode,
         homeLocation: effectiveVisitor.homeLocation || undefined,

@@ -9,6 +9,7 @@
  */
 
 import type { PsgcLocation } from './psgc';
+import { MANILA_BARANGAY_DIRECTORY } from './manilaBarangayDirectory';
 
 export const MANILA_CITY_PSGC_CODE = '1380600000';
 
@@ -106,6 +107,7 @@ export const MANILA_AREAS: readonly ManilaAreaDef[] = [
     congressionalDistrict: 'District V',
     minBarangay: 671,
     maxBarangay: 685,
+    specificBarangays: [671, 672, 673, 674, 675, 676, 677, 678, 679, 680, 681, 682, 683, 684, 685, 687],
     aliases: ['Paco (South)', 'Paco South'],
   },
   {
@@ -118,7 +120,7 @@ export const MANILA_AREAS: readonly ManilaAreaDef[] = [
     administrativeDistrict: 'San Andres',
     congressionalDistrict: 'District V',
     minBarangay: 745,
-    maxBarangay: 818,
+    maxBarangay: 820,
     aliases: ['San Andres Bukid'],
   },
   // District VI
@@ -212,9 +214,30 @@ export function lookupManilaDistrictForBarangay(
 ): { congressionalDistrict: string; administrativeDistrict: string } | null {
   const name = typeof barangay === 'string' ? barangay : barangay.name || '';
   const code = typeof barangay === 'object' ? barangay.code : undefined;
+
+  // 1. Authoritative lookup from compiled PSA directory by PSGC code
+  if (code && MANILA_BARANGAY_DIRECTORY[code]) {
+    const entry = MANILA_BARANGAY_DIRECTORY[code];
+    return {
+      congressionalDistrict: entry.congressionalDistrict,
+      administrativeDistrict: entry.administrativeDistrict,
+    };
+  }
+
   const bgyNumber = extractBarangayNumber(name) || (code ? extractBarangayNumber(code) : null);
 
-  // 1. Check for explicit area name in parentheses/slashes, e.g. "Barangay 306 (Santa Cruz)"
+  // 2. Authoritative lookup from compiled PSA directory by barangay number
+  if (bgyNumber !== null) {
+    const match = Object.values(MANILA_BARANGAY_DIRECTORY).find((e) => e.bgyNumber === bgyNumber);
+    if (match) {
+      return {
+        congressionalDistrict: match.congressionalDistrict,
+        administrativeDistrict: match.administrativeDistrict,
+      };
+    }
+  }
+
+  // 3. Fallback: check explicit area name in parentheses/slashes, e.g. "Barangay 306 (Santa Cruz)"
   for (const area of MANILA_AREAS) {
     const targets = [area.administrativeDistrict, ...(area.aliases || [])];
     for (const target of targets) {

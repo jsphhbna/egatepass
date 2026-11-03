@@ -258,6 +258,7 @@ export function GetPassPage() {
     middleName?: string;
     lastName: string;
     contactNumber: string;
+    homeAddress?: string | null;
     homeLocation?: { lat: number; lon: number } | null;
     matchToken: string;
     savedVehicles: Array<{
@@ -279,7 +280,9 @@ export function GetPassPage() {
   const [returningCaptureStage, setReturningCaptureStage] = useState<'live' | 'review'>('live');
   const [returningSelfieBlob, setReturningSelfieBlob] = useState<Blob | null>(null);
   const [returningSelfieUrl, setReturningSelfieUrl] = useState<string | null>(null);
-  const [historicalIdUrl, setHistoricalIdUrl] = useState<string | null>(null);
+  const historicalIdUrl = useObjectUrl();
+  const historicalIdPreview = historicalIdUrl.url;
+  const historicalIdRequestGeneration = useRef(0);
   const [loadingHistoricalId, setLoadingHistoricalId] = useState(false);
 
   // Returning visitor 1:1 lookup state
@@ -628,10 +631,8 @@ export function GetPassPage() {
       URL.revokeObjectURL(returningSelfieUrl);
       setReturningSelfieUrl(null);
     }
-    if (historicalIdUrl) {
-      URL.revokeObjectURL(historicalIdUrl);
-      setHistoricalIdUrl(null);
-    }
+    historicalIdRequestGeneration.current++;
+    historicalIdUrl.clear();
     setLoadingHistoricalId(false);
     setReturningCandidates([]);
     setSelectedReturningCandidate(null);
@@ -1035,10 +1036,8 @@ export function GetPassPage() {
       URL.revokeObjectURL(returningSelfieUrl);
       setReturningSelfieUrl(null);
     }
-    if (historicalIdUrl) {
-      URL.revokeObjectURL(historicalIdUrl);
-      setHistoricalIdUrl(null);
-    }
+    historicalIdRequestGeneration.current++;
+    historicalIdUrl.clear();
     setLoadingHistoricalId(false);
 
     // 3. Clear old blob and error message
@@ -1134,6 +1133,7 @@ export function GetPassPage() {
         middleName: p.middleName || '',
         lastName: p.lastName,
         contactNumber: p.contactNumber,
+        homeAddress: p.homeAddress || null,
         homeLocation: p.homeLocation || null,
         matchToken: data.matchToken,
         savedVehicles: (data.savedVehicles || []).map((v) => ({
@@ -1245,20 +1245,30 @@ export function GetPassPage() {
     }
 
     if (returningProfile?.profileId && returningProfile?.matchToken && portalTransactionRef.current) {
+      const currentGen = ++historicalIdRequestGeneration.current;
       setLoadingHistoricalId(true);
       fetchHistoricalIdPreview(portalTransactionRef.current, returningProfile.profileId, returningProfile.matchToken)
         .then((url) => {
-          if (historicalIdUrl && historicalIdUrl !== url) {
-            URL.revokeObjectURL(historicalIdUrl);
+          if (currentGen !== historicalIdRequestGeneration.current) {
+            if (url) URL.revokeObjectURL(url);
+            return;
           }
-          setHistoricalIdUrl(url);
+          historicalIdUrl.setUrl(url);
         })
         .catch(() => {
-          setHistoricalIdUrl(null);
+          if (currentGen === historicalIdRequestGeneration.current) {
+            historicalIdUrl.clear();
+          }
         })
         .finally(() => {
-          setLoadingHistoricalId(false);
+          if (currentGen === historicalIdRequestGeneration.current) {
+            setLoadingHistoricalId(false);
+          }
         });
+    } else {
+      historicalIdRequestGeneration.current++;
+      historicalIdUrl.clear();
+      setLoadingHistoricalId(false);
     }
 
     setStep('returning_review');
@@ -4263,10 +4273,18 @@ export function GetPassPage() {
                   </div>
                   <div className="sm:col-span-2">
                     <span className="text-[var(--color-text-secondary)] block">Residential Address:</span>
-                    <p className="font-semibold text-sm text-[var(--color-text-primary)] mt-0.5">
+                    <p className="font-semibold text-sm text-[var(--color-text-primary)] mt-0.5 leading-relaxed">
                       {selectedPsgc
-                        ? `${homeBuilding ? `${homeBuilding}, ` : ''}${homeStreet ? `${homeStreet}, ` : ''}${selectedPsgc.barangay.name}, ${selectedPsgc.city.name}${selectedPsgc.province ? `, ${selectedPsgc.province.name}` : ''}${postalCode ? ` (${postalCode})` : ''}`
-                        : 'No residential address specified'}
+                        ? formatStructuredAddress({
+                            regionName: selectedPsgc.region.name,
+                            provinceName: selectedPsgc.province?.name,
+                            cityName: selectedPsgc.city.name,
+                            barangayName: selectedPsgc.barangay.name,
+                            houseBuilding: homeBuilding,
+                            street: homeStreet,
+                            postalCode: postalCode.trim() || undefined,
+                          })
+                        : (returningProfile?.homeAddress || 'No residential address specified')}
                     </p>
                   </div>
                   <div className="sm:col-span-2">
@@ -4368,10 +4386,10 @@ export function GetPassPage() {
                         <Loader2 className="w-5 h-5 animate-spin text-[#7A0A0A] mb-2" />
                         <span>Loading previously submitted ID…</span>
                       </div>
-                    ) : historicalIdUrl ? (
+                    ) : historicalIdPreview ? (
                       <div className="rounded-lg overflow-hidden border border-[var(--color-border)] aspect-[3/4] max-h-48 bg-slate-100 flex items-center justify-center">
                         <img
-                          src={historicalIdUrl}
+                          src={historicalIdPreview}
                           alt="Previously submitted ID document"
                           className="h-full w-full object-cover"
                         />
@@ -4379,10 +4397,7 @@ export function GetPassPage() {
                     ) : (
                       <div className="rounded-lg border border-amber-200 bg-amber-50/70 aspect-[3/4] max-h-48 flex flex-col items-center justify-center text-center p-3 text-xs text-amber-900">
                         <Info className="w-5 h-5 text-amber-700 mb-1.5" />
-                        <span className="font-semibold">Previous ID image is no longer available</span>
-                        <p className="text-[10px] text-amber-800 mt-1">
-                          Retained in secure audit record according to institutional data retention policy.
-                        </p>
+                        <span className="font-semibold">Previous ID document is not available for preview.</span>
                       </div>
                     )}
                   </div>

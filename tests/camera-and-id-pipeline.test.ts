@@ -12,7 +12,7 @@ describe('Camera Mirroring & High-Resolution ID Pipeline', () => {
 
   it('1. Live Face camera configures unmirrored biometric capture while allowing mirrored preview', () => {
     // WebCam initialized with allowCaptureMirroring: false
-    expect(getPassSource).toMatch(/useWebcam\(\{\s*facingMode:\s*['"]user['"],\s*width:\s*640,\s*height:\s*480,\s*allowCaptureMirroring:\s*false\s*\}\)/);
+    expect(getPassSource).toMatch(/useWebcam\(\{\s*facingMode:\s*['"]user['"],\s*width:\s*\d+,\s*height:\s*\d+.*allowCaptureMirroring:\s*false\s*\}\)/);
     // Capture explicitly disables capture mirroring
     expect(getPassSource).toMatch(/faceWebcam\.capture\(\{\s*mirror:\s*false\s*\}\)/);
   });

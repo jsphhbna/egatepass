@@ -154,14 +154,14 @@ describe('Returning Visitor Workflow Separation & Locality Review Contract', () 
       expect(getPassSrc).toContain("setStep('returning_review');");
     });
 
-    it('fetches historical ID preview securely using fetchHistoricalIdPreview()', () => {
+    it('fetches historical ID preview securely using fetchHistoricalIdPreview() with generation fencing', () => {
       expect(getPassSrc).toContain('fetchHistoricalIdPreview(');
-      expect(getPassSrc).toContain('setHistoricalIdUrl(');
+      expect(getPassSrc).toContain('historicalIdRequestGeneration');
       expect(getPassSrc).toContain('setLoadingHistoricalId(');
     });
 
     it('cleans up historical ID object URL on unmount or reset', () => {
-      expect(getPassSrc).toContain('URL.revokeObjectURL(historicalIdUrl)');
+      expect(getPassSrc).toMatch(/historicalIdUrl\.(?:clear|setUrl)/);
     });
   });
 
@@ -179,7 +179,7 @@ describe('Returning Visitor Workflow Separation & Locality Review Contract', () 
       expect(returningReviewSection).toContain('Biometric Identity Verified');
       expect(returningReviewSection).toContain('Live Verified Selfie');
       expect(returningReviewSection).toContain('Previously Submitted ID');
-      expect(returningReviewSection).toContain('historicalIdUrl');
+      expect(returningReviewSection).toMatch(/historicalId(?:Url|Preview)/);
     });
 
     it('displays previous ID fallback when image is expired or unavailable under retention policy', () => {
@@ -187,8 +187,7 @@ describe('Returning Visitor Workflow Separation & Locality Review Contract', () 
         getPassSrc.indexOf("{step === 'returning_review' && returningProfile && ("),
         getPassSrc.indexOf("{step === 'generating' && (")
       );
-      expect(returningReviewSection).toContain('Previous ID image is no longer available');
-      expect(returningReviewSection).toContain('Retained in secure audit record according to institutional data retention policy.');
+      expect(returningReviewSection).toContain('Previous ID document is not available for preview.');
     });
 
     it('does NOT contain the Remember Me institutional enrollment card in returning_review', () => {

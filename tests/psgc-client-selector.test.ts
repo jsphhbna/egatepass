@@ -60,7 +60,7 @@ describe('PSGC Client Library & Address Resolution Contract', () => {
     const barangays = await fetchPsgcBarangays('1380600000');
     expect(barangays.length).toBeGreaterThan(0);
 
-    const brgy408 = barangays.find((b) => b.code === '1380600408');
+    const brgy408 = barangays.find((b) => b.code === '1380606014' || b.code === '1380600408');
     expect(brgy408).toBeDefined();
     expect(brgy408?.name).toContain('Barangay 408');
     expect(brgy408?.level).toBe('barangay');
@@ -69,7 +69,7 @@ describe('PSGC Client Library & Address Resolution Contract', () => {
 
   describe('Postal Code Resolution Confidence Contract', () => {
     it('resolves exact barangay match with 1008 for Barangay 408, Manila (EARIST)', async () => {
-      const result = await resolvePostalCode('1380600000', '1380600408');
+      const result = await resolvePostalCode('1380600000', '1380606014');
       expect(result.postalCode).toBe('1008');
       expect(result.mappingType).toBe('exact_barangay');
       expect(result.isAutoFilled).toBe(true);
