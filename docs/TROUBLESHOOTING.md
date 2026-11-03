@@ -352,3 +352,21 @@ flowchart TD
 - **Safe Resolution**:
   Inspect the conflicting payload and prior state. The server intentionally did NOT overwrite data. The administrator reviews and marks the task resolved.
 
+
+
+---
+
+### 2.21 Returning Visitor Search Fails with "Verification challenge required to start registration"
+
+- **Symptom**:
+  A returning visitor enters their First and Last Name on the Returning Visitor frontdoor search screen (`returning_lookup`) and clicks "Search Profile". The form fails with:
+  ```text
+  Verification challenge required to start registration.
+  ```
+- **Root Cause**:
+  The Cloudflare Turnstile widget (`TurnstileWidget`) was previously conditionally mounted only inside `step === 'id'` (New Visitor step 2) and `step === 'returning_capture'` (Returning Visitor step 2). On `step === 'returning_lookup'`, no Turnstile widget was mounted in the DOM, leaving `turnstileRef.current` as `null`. When `onSearchReturningProfile()` executed, it attempted to obtain a fresh CAPTCHA token, found `turnstileRef.current === null`, and passed `undefined` to `createPortalIssueTransaction()`. The production `evaluateTurnstilePolicy()` correctly and strictly failed closed, throwing the challenge required error.
+- **Safe Resolution**:
+  1. Refactor `GetPassPage.tsx` to maintain a single persistent `TurnstileWidget` instance mounted at the root of the active registration `<Card>` container.
+  2. The single widget remains mounted continuously throughout all navigation between `frontdoor`, `returning_lookup`, `returning_capture`, `returning_confirm`, and New Visitor steps (`form`, `visit`, `id`, `photo`, `verify`, `review`).
+  3. Remove duplicate step-specific Turnstile instances to prevent widget ID collisions or stale refs.
+  4. Once established via `createPortalIssueTransaction(freshCaptchaToken)`, the authenticated anonymous Supabase portal session is retained in `portalTransactionRef` and reused across lookup and selfie capture without redundant challenges. If expired, `validatePortalSession` detects invalidity and triggers a fresh challenge.

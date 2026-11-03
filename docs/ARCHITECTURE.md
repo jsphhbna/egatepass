@@ -670,3 +670,15 @@ Outage Architecture & Authority Delegation
 
 
 
+
+
+### 12.16 Persistent Turnstile Widget Lifecycle Architecture & Fail-Closed Session Binding
+- **Persistent Turnstile Widget Architecture**:
+  - Mounted once at the stable registration container level (`GetPassPage` active `<Card>`) with `execution="execute"` and `appearance="interaction-only"`.
+  - Stays persistently mounted and initialized throughout all registration phases: `frontdoor`, `returning_lookup`, `returning_capture`, `returning_confirm`, and New Visitor steps (`form`, `visit`, `id`, `photo`, `verify`, `review`).
+  - Eliminates duplicate step-specific Turnstile instances, guaranteeing only one Cloudflare widget ID is active in the DOM, preventing iframe race conditions, initialization delays, and stale `turnstileRef.current === null` bugs.
+- **Fail-Closed Session Creation & Authenticated Reuse Contract**:
+  - `onSearchReturningProfile()` on `returning_lookup` executes `turnstileRef.current.executeChallenge()`, acquiring a fresh Cloudflare token before calling `createPortalIssueTransaction(freshCaptchaToken)`.
+  - In production, `evaluateTurnstilePolicy('portal', isProd, siteKey, captchaToken)` strictly fails closed: missing tokens or missing site keys throw immediate security errors before contacting Supabase auth.
+  - The resulting authenticated anonymous session (`PortalIssueTransaction`) is stored in `portalTransactionRef` and securely reused for `lookupReturningVisitor()` and `identifyReturningVisitor()` without redundant challenges.
+  - If an anonymous session expires, `validatePortalSession(tx)` detects the invalidity and automatically triggers a fresh challenge before re-authenticating.

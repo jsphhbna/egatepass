@@ -123,6 +123,7 @@ export const TurnstileWidget = forwardRef<TurnstileWidgetRef, TurnstileWidgetPro
           // ignore
         }
       }
+      setStatus('ready');
       if (pendingChallengeRef.current) {
         pendingChallengeRef.current.reject(new Error('challenge_reset'));
         pendingChallengeRef.current = null;
@@ -301,7 +302,11 @@ export const TurnstileWidget = forwardRef<TurnstileWidgetRef, TurnstileWidgetPro
   }
 
   return (
-    <div className="my-3 flex w-full max-w-full flex-col items-center justify-center overflow-hidden">
+    <div
+      className={`flex w-full max-w-full flex-col items-center justify-center overflow-hidden ${
+        appearance === 'interaction-only' && status !== 'error' ? 'my-0' : 'my-3'
+      }`}
+    >
       {status === 'loading' && appearance !== 'interaction-only' && (
         <div
           aria-live="polite"

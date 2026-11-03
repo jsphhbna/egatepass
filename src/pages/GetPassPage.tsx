@@ -628,6 +628,7 @@ export function GetPassPage() {
     issueRequestId.current = crypto.randomUUID();
     portalTransactionRef.current = null;
     setTransactionPhase(null);
+    turnstileRef.current?.resetChallenge();
     livePhotoIntentIdRef.current = null;
     setSetupArrivalMode(null);
 
@@ -864,6 +865,8 @@ export function GetPassPage() {
       let freshCaptchaToken: string | undefined;
       if (turnstileRef.current) {
         freshCaptchaToken = await turnstileRef.current.executeChallenge();
+      } else {
+        throw new Error('Security verification widget is initializing. Please wait a moment and try again.');
       }
 
       const tx = await createPortalIssueTransaction(freshCaptchaToken);
@@ -904,6 +907,8 @@ export function GetPassPage() {
         let freshCaptchaToken: string | undefined;
         if (turnstileRef.current) {
           freshCaptchaToken = await turnstileRef.current.executeChallenge();
+        } else {
+          throw new Error('Security verification widget is initializing. Please wait a moment and try again.');
         }
         tx = await createPortalIssueTransaction(freshCaptchaToken);
         portalTransactionRef.current = tx;
@@ -926,7 +931,13 @@ export function GetPassPage() {
         setReturningCandidates([]);
       }
     } catch (err: any) {
-      setReturningSearchError(err.message || 'Unable to search for visitor profiles. Please try again.');
+      console.warn('Returning visitor profile search error:', err);
+      turnstileRef.current?.resetChallenge();
+      let msg = err?.message || 'Unable to search for visitor profiles. Please try again.';
+      if (msg.includes('challenge') || msg.includes('Security verification') || msg.includes('Turnstile')) {
+        msg = 'Security verification could not be completed. Please try again or register as a New Visitor.';
+      }
+      setReturningSearchError(msg);
     } finally {
       setIsSearchingReturning(false);
     }
@@ -954,6 +965,8 @@ export function GetPassPage() {
         let freshCaptchaToken: string | undefined;
         if (turnstileRef.current) {
           freshCaptchaToken = await turnstileRef.current.executeChallenge();
+        } else {
+          throw new Error('Security verification widget is initializing. Please wait a moment and try again.');
         }
         tx = await createPortalIssueTransaction(freshCaptchaToken);
         portalTransactionRef.current = tx;
@@ -2527,12 +2540,6 @@ export function GetPassPage() {
                 </div>
               )}
 
-              <TurnstileWidget
-                ref={turnstileRef}
-                execution="execute"
-                appearance="interaction-only"
-              />
-
               <div className="flex gap-3 pt-2">
                 <Button
                   type="button"
@@ -3490,12 +3497,6 @@ export function GetPassPage() {
                 </div>
               </div>
 
-              <TurnstileWidget
-                ref={turnstileRef}
-                execution="execute"
-                appearance="interaction-only"
-              />
-
               <div className="flex gap-3">
                 <Button
                   variant="secondary"
@@ -3941,6 +3942,13 @@ export function GetPassPage() {
               </div>
             </div>
           )}
+
+          {/* Persistent security verification widget shared across all registration phases */}
+          <TurnstileWidget
+            ref={turnstileRef}
+            execution="execute"
+            appearance="interaction-only"
+          />
         </Card>
       )}
 
