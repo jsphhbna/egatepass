@@ -2728,4 +2728,63 @@ describe('Permanent PostgreSQL Migration Chain & Schema Contracts (PGlite)', () 
       db.query(`select * from api.abandon_upload_intent('${claimedIntentId}'::uuid);`)
     ).rejects.toThrow(/cannot abandon claimed intent/);
   }, 60000);
+
+  it('53. Migration 20261104000300_upload_intent_storage_cleaned_tracking adds storage_cleaned_at column and partial index', async () => {
+    const db = new PGlite();
+    await applyAllMigrations(db);
+
+    // 1. Column exists and has timestamptz type
+    const colCheck = await db.query<{ column_name: string; data_type: string; is_nullable: string }>(`
+      select column_name, data_type, is_nullable
+      from information_schema.columns
+      where table_schema = 'public' and table_name = 'upload_intents' and column_name = 'storage_cleaned_at';
+    `);
+
+    expect(colCheck.rows.length).toBe(1);
+    expect(colCheck.rows[0].data_type).toBe('timestamp with time zone');
+    expect(colCheck.rows[0].is_nullable).toBe('YES');
+
+    // 2. Partial index exists
+    const idxCheck = await db.query<{ indexname: string; indexdef: string }>(`
+      select indexname, indexdef
+      from pg_indexes
+      where schemaname = 'public' and tablename = 'upload_intents' and indexname = 'upload_intents_uncleaned_retention_idx';
+    `);
+
+    expect(idxCheck.rows.length).toBe(1);
+    expect(idxCheck.rows[0].indexdef).toContain('storage_cleaned_at IS NULL');
+    expect(idxCheck.rows[0].indexdef).toContain('visitor_id IS NULL');
+
+    // 3. Insert and verify default NULL and update
+    const visitorId = '22222222-2222-4222-8222-222222222222';
+    await db.exec(`
+      insert into auth.users (id, email, is_anonymous)
+      values ('${visitorId}', null, true)
+      on conflict (id) do nothing;
+    `);
+
+    const intentId = '88888888-8888-4888-8888-888888888888';
+    await db.exec(`
+      insert into public.upload_intents (id, owner_id, source, kind, bucket_id, object_path, content_type, max_bytes, status, expires_at)
+      values ('${intentId}', '${visitorId}', 'portal', 'photo', 'visitor-photos', 'portal/${visitorId}/photo.jpg', 'image/jpeg', 5242880, 'expired', now() - interval '1 hour');
+    `);
+
+    const defaultCheck = await db.query<{ storage_cleaned_at: string | null }>(`
+      select storage_cleaned_at from public.upload_intents where id = '${intentId}';
+    `);
+    expect(defaultCheck.rows[0].storage_cleaned_at).toBeNull();
+
+    // 4. Update storage_cleaned_at
+    const cleanedTimestamp = '2026-11-04T00:03:00.000Z';
+    await db.exec(`
+      update public.upload_intents
+      set storage_cleaned_at = '${cleanedTimestamp}'
+      where id = '${intentId}' and visitor_id is null and status = 'expired';
+    `);
+
+    const updatedCheck = await db.query<{ storage_cleaned_at: string }>(`
+      select storage_cleaned_at from public.upload_intents where id = '${intentId}';
+    `);
+    expect(new Date(updatedCheck.rows[0].storage_cleaned_at).toISOString()).toBe(cleanedTimestamp);
+  }, 60000);
 });

@@ -263,8 +263,16 @@ describe('Upload Intent Abandonment API Contract (abandon-intent)', () => {
       return { data: [{ name: 'portal/file.jpg' }], error: null };
     });
 
+    const mockUpdate = vi.fn().mockReturnValue({
+      eq: vi.fn().mockReturnValue({
+        is: vi.fn().mockReturnValue({
+          eq: vi.fn().mockResolvedValue({ error: null }),
+        }),
+      }),
+    });
+
     const mockAdmin = {
-      from: vi.fn().mockReturnValue({
+      from: vi.fn().mockImplementation(() => ({
         select: vi.fn().mockReturnThis(),
         eq: vi.fn().mockReturnThis(),
         maybeSingle: vi.fn().mockResolvedValue({
@@ -279,7 +287,8 @@ describe('Upload Intent Abandonment API Contract (abandon-intent)', () => {
           },
           error: null,
         }),
-      }),
+        update: mockUpdate,
+      })),
       storage: {
         from: vi.fn().mockReturnValue({
           remove: mockStorageRemove,
@@ -330,6 +339,11 @@ describe('Upload Intent Abandonment API Contract (abandon-intent)', () => {
     // Strict execution order: DB RPC must complete BEFORE storage removal
     expect(callOrder).toEqual(['db.abandon_upload_intent', 'storage.remove']);
     expect(mockStorageRemove).toHaveBeenCalledWith(['portal/visitor-uuid/photo.jpg']);
+    expect(mockUpdate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        storage_cleaned_at: expect.any(String),
+      })
+    );
   });
 
   it('10. records reconciliation task and returns 200 with storageCleaned=false when storage removal fails', async () => {
@@ -343,8 +357,16 @@ describe('Upload Intent Abandonment API Contract (abandon-intent)', () => {
 
     const recordReconciliationSpy = vi.spyOn(actorsModule, 'recordReconciliation').mockResolvedValue(true);
 
+    const mockUpdate = vi.fn().mockReturnValue({
+      eq: vi.fn().mockReturnValue({
+        is: vi.fn().mockReturnValue({
+          eq: vi.fn().mockResolvedValue({ error: null }),
+        }),
+      }),
+    });
+
     const mockAdmin = {
-      from: vi.fn().mockReturnValue({
+      from: vi.fn().mockImplementation(() => ({
         select: vi.fn().mockReturnThis(),
         eq: vi.fn().mockReturnThis(),
         maybeSingle: vi.fn().mockResolvedValue({
@@ -359,12 +381,13 @@ describe('Upload Intent Abandonment API Contract (abandon-intent)', () => {
           },
           error: null,
         }),
-      }),
+        update: mockUpdate,
+      })),
       storage: {
         from: vi.fn().mockReturnValue({
           remove: vi.fn().mockResolvedValue({
             data: null,
-            error: { message: 'Object not found or storage error' },
+            error: { message: 'Internal S3 storage error' },
           }),
         }),
       },
@@ -402,12 +425,13 @@ describe('Upload Intent Abandonment API Contract (abandon-intent)', () => {
       'upload_intent.abandon_storage_failed',
       'upload_intent',
       testIntentId,
-      'Object not found or storage error',
+      'Internal S3 storage error',
       expect.objectContaining({
         bucketId: 'visitor-evidence',
         objectPath: 'portal/visitor-uuid/photo.jpg',
       })
     );
+    expect(mockUpdate).not.toHaveBeenCalled();
   });
 
   it('11. never attempts storage deletion if database RPC fails', async () => {
@@ -472,5 +496,82 @@ describe('Upload Intent Abandonment API Contract (abandon-intent)', () => {
 
     // Storage removal MUST NOT be called!
     expect(mockStorageRemove).not.toHaveBeenCalled();
+  });
+
+  it('12. treats 404 / object not found as successfully cleaned and updates storage_cleaned_at', async () => {
+    vi.spyOn(actorsModule, 'getVerifiedSessionContext').mockResolvedValue({
+      user: { id: visitorUserId, is_anonymous: true } as any,
+      claims: { is_anonymous: true },
+      amr: [{ method: 'anonymous' }],
+      isRecoverySession: false,
+      isAnonymous: true,
+    });
+
+    const mockUpdate = vi.fn().mockReturnValue({
+      eq: vi.fn().mockReturnValue({
+        is: vi.fn().mockReturnValue({
+          eq: vi.fn().mockResolvedValue({ error: null }),
+        }),
+      }),
+    });
+
+    const mockAdmin = {
+      from: vi.fn().mockImplementation(() => ({
+        select: vi.fn().mockReturnThis(),
+        eq: vi.fn().mockReturnThis(),
+        maybeSingle: vi.fn().mockResolvedValue({
+          data: {
+            id: testIntentId,
+            owner_id: visitorUserId,
+            source: 'portal',
+            status: 'pending',
+            visitor_id: null,
+            bucket_id: 'visitor-evidence',
+            object_path: 'portal/visitor-uuid/photo.jpg',
+          },
+          error: null,
+        }),
+        update: mockUpdate,
+      })),
+      storage: {
+        from: vi.fn().mockReturnValue({
+          remove: vi.fn().mockResolvedValue({
+            data: null,
+            error: { message: 'Object not found', statusCode: '404' },
+          }),
+        }),
+      },
+    } as any;
+    supabaseModule.setServerSupabaseClientsForTest({ admin: mockAdmin, passwordVerifier: mockAdmin });
+
+    supabaseModule.setVisitorClientFactoryForTest(() => ({
+      schema: vi.fn().mockReturnValue({
+        rpc: vi.fn().mockResolvedValue({
+          data: [{ ok: true, code: 'abandoned', message: 'Intent abandoned' }],
+          error: null,
+        }),
+      }),
+    } as any));
+
+    const req = new Request('http://localhost/api/passes/abandon-intent', {
+      method: 'POST',
+      headers: {
+        authorization: `Bearer ${testToken}`,
+        'content-type': 'application/json',
+      },
+      body: JSON.stringify({ intentId: testIntentId }),
+    });
+
+    const res = await abandonIntentHandler.fetch(req);
+    expect(res.status).toBe(200);
+    const json = await res.json();
+    expect(json.ok).toBe(true);
+    expect(json.databaseExpired).toBe(true);
+    expect(json.storageCleaned).toBe(true);
+    expect(mockUpdate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        storage_cleaned_at: expect.any(String),
+      })
+    );
   });
 });

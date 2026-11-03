@@ -21,6 +21,7 @@ import {
   PortalSessionError,
   UploadAuthorizationError,
   UploadQuotaExceededError,
+  PendingAbandonmentError,
   abandonPortalEvidence,
   StorageUploadError,
   PreflightQualityError,
@@ -1163,6 +1164,11 @@ export function GetPassPage() {
       toast.success(`Welcome back, ${p.firstName}!`);
     } catch (err: any) {
       if (
+        err instanceof PendingAbandonmentError ||
+        err?.code === 'pending_abandonment_unconfirmed'
+      ) {
+        setReturningIdentifyError('Previous selfie upload cleanup is still completing. Please wait a moment and try again.');
+      } else if (
         err instanceof UploadQuotaExceededError ||
         err?.code === 'too_many_pending_intents' ||
         err?.message?.toLowerCase().includes('too many upload attempts')
@@ -1457,7 +1463,23 @@ export function GetPassPage() {
         return;
       }
 
-      // 2b. Quota exceeded (pending intents limit reached)
+      // 2b. Pending abandonment cleanup unconfirmed
+      if (
+        err instanceof PendingAbandonmentError ||
+        err?.code === 'pending_abandonment_unconfirmed'
+      ) {
+        setLiveFaceError({
+          category: 'upload',
+          title: 'Cleanup In Progress',
+          message:
+            'Previous photo cleanup is still processing. Please wait a moment and try again.',
+          reasonCode: 'pending_abandonment_unconfirmed',
+        });
+        toast.error('Previous photo cleanup is completing. Please retry in a moment.');
+        return;
+      }
+
+      // 2c. Quota exceeded (pending intents limit reached)
       if (
         err instanceof UploadQuotaExceededError ||
         err?.code === 'too_many_pending_intents' ||

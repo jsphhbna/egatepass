@@ -99,20 +99,30 @@ async function handleRequest(request: Request): Promise<Response> {
           .remove([intent.object_path]);
 
         if (storageErr) {
-          storageCleaned = false;
-          console.warn('Storage cleanup on abandon-intent encountered error (DB expired):', storageErr);
-          await recordReconciliation(
-            admin,
-            'upload_intent.abandon_storage_failed',
-            'upload_intent',
-            intent.id,
-            storageErr.message || 'storage_remove_failed',
-            {
-              bucketId: intent.bucket_id,
-              objectPath: intent.object_path,
-            },
-          );
-          warning = 'Storage object removal pending background retention cleanup';
+          const msg = storageErr.message || String(storageErr);
+          if (
+            msg.toLowerCase().includes('not found') ||
+            msg.toLowerCase().includes('does not exist') ||
+            (storageErr as any).statusCode === '404' ||
+            (storageErr as any).status === 404
+          ) {
+            storageCleaned = true;
+          } else {
+            storageCleaned = false;
+            console.warn('Storage cleanup on abandon-intent encountered error (DB expired):', storageErr);
+            await recordReconciliation(
+              admin,
+              'upload_intent.abandon_storage_failed',
+              'upload_intent',
+              intent.id,
+              storageErr.message || 'storage_remove_failed',
+              {
+                bucketId: intent.bucket_id,
+                objectPath: intent.object_path,
+              },
+            );
+            warning = 'Storage object removal pending background retention cleanup';
+          }
         }
       } catch (storageException) {
         storageCleaned = false;
@@ -130,6 +140,39 @@ async function handleRequest(request: Request): Promise<Response> {
         );
         warning = 'Storage object removal pending background retention cleanup';
       }
+
+      // Persist completion marker if storage cleanup confirmed
+      if (storageCleaned) {
+        const cleanedAt = new Date().toISOString();
+        const { error: markErr } = await admin
+          .from('upload_intents')
+          .update({ storage_cleaned_at: cleanedAt })
+          .eq('id', intent.id)
+          .is('visitor_id', null)
+          .eq('status', 'expired');
+
+        if (markErr) {
+          storageCleaned = false;
+          console.warn('Failed to update storage_cleaned_at on abandon-intent:', markErr);
+          await recordReconciliation(
+            admin,
+            'upload_intent.storage_cleaned_marker_failed',
+            'upload_intent',
+            intent.id,
+            markErr.message,
+            { bucketId: intent.bucket_id, objectPath: intent.object_path },
+          );
+          warning = 'Storage cleaned but marker persistence pending background retention check';
+        }
+      }
+    } else {
+      const cleanedAt = new Date().toISOString();
+      await admin
+        .from('upload_intents')
+        .update({ storage_cleaned_at: cleanedAt })
+        .eq('id', intent.id)
+        .is('visitor_id', null)
+        .eq('status', 'expired');
     }
 
     const rpcResult = Array.isArray(rpcRows) ? rpcRows[0] : rpcRows;

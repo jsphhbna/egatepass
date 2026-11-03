@@ -220,7 +220,7 @@ export const SERVER_DIRECT_TABLE_OPERATIONS: DirectServerTableOperation[] = [
   { file: 'server/routes/gate/guard-station-feed.ts', table: 'visitors', operations: ['SELECT'], purpose: 'Fetch visitor names and purpose' },
   { file: 'server/routes/gate/guard-station-feed.ts', table: 'visitor_evidence', operations: ['SELECT'], purpose: 'Lookup visitor registration photo evidence' },
   { file: 'server/routes/gate/guard-station-feed.ts', table: 'visit_vehicle_declarations', operations: ['SELECT'], purpose: 'Attach declared vehicle details to guard station feed' },
-  { file: 'server/routes/passes/abandon-intent.ts', table: 'upload_intents', operations: ['SELECT'], purpose: 'Inspect upload intent metadata before abandonment' },
+  { file: 'server/routes/passes/abandon-intent.ts', table: 'upload_intents', operations: ['SELECT', 'UPDATE'], purpose: 'Inspect upload intent metadata and record storage cleanup marker' },
   { file: 'server/routes/passes/identify-returning.ts', table: 'upload_intents', operations: ['SELECT'], purpose: 'Validate photo upload intent for returning visitor recognition' },
   { file: 'server/routes/passes/identify-returning.ts', table: 'returning_face_templates', operations: ['SELECT'], purpose: 'Query active encrypted face templates for 1:N comparison' },
   { file: 'server/routes/passes/identify-returning.ts', table: 'returning_visitor_vehicles', operations: ['SELECT'], purpose: 'Fetch saved vehicles for identified returning visitor' },

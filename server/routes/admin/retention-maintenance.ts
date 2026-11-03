@@ -353,14 +353,15 @@ async function handleRequest(request: Request): Promise<Response> {
     }
 
     // =========================================================================
-    // 2. ABANDONED UPLOAD INTENTS (REPAIR I: Validate Both Storage and DB Ops)
+    // 2. ABANDONED UPLOAD INTENTS (Durable storage cleanup tracking & DB-first safety)
     // =========================================================================
     const oneHourAgo = new Date(Date.now() - 3600000).toISOString();
     const { data: abandonedIntents, error: intentError } = await admin
       .from('upload_intents')
-      .select('id, bucket_id, object_path')
+      .select('id, bucket_id, object_path, status, visitor_id')
       .in('status', ['pending', 'expired'])
       .is('visitor_id', null)
+      .is('storage_cleaned_at', null)
       .lt('expires_at', oneHourAgo)
       .limit(batchSize);
 
@@ -369,34 +370,119 @@ async function handleRequest(request: Request): Promise<Response> {
     } else if (abandonedIntents && abandonedIntents.length > 0) {
       if (!dryRun) {
         for (const intent of abandonedIntents) {
-          const { error: removeErr } = await admin.storage.from(intent.bucket_id).remove([intent.object_path]);
-          if (removeErr) {
-            metrics.errors.push(`intent_storage_failed_${intent.id}: ${removeErr.message}`);
+          // 1. Database-first safety: If intent is currently 'pending', conditionally mark it 'expired'
+          // before any storage operations.
+          if (intent.status === 'pending') {
+            const { data: transitionRows, error: transErr } = await admin
+              .from('upload_intents')
+              .update({ status: 'expired' })
+              .eq('id', intent.id)
+              .eq('status', 'pending')
+              .is('visitor_id', null)
+              .select('id, status, visitor_id');
+
+            if (transErr || !transitionRows || transitionRows.length === 0) {
+              metrics.errors.push(`intent_db_expire_failed_${intent.id}: ${transErr?.message || 'State conflict or already claimed'}`);
+              await recordReconciliation(
+                admin,
+                'upload_intent.db_expire_failed',
+                'upload_intents',
+                intent.id,
+                transErr?.message || 'conditional_transition_failed',
+                { bucket_id: intent.bucket_id, object_path: intent.object_path }
+              ).catch(() => undefined);
+              continue; // Abort storage removal if database transition was not confirmed
+            }
+          }
+
+          // 2. Double-check fresh row state to verify it is expired and strictly unclaimed
+          const { data: freshIntent, error: freshErr } = await admin
+            .from('upload_intents')
+            .select('id, status, visitor_id, bucket_id, object_path, storage_cleaned_at')
+            .eq('id', intent.id)
+            .maybeSingle();
+
+          if (freshErr || !freshIntent) {
+            metrics.errors.push(`intent_verify_failed_${intent.id}: ${freshErr?.message || 'not found'}`);
+            continue;
+          }
+
+          // Never delete storage if claimed or associated with a visitor profile
+          if (freshIntent.status === 'claimed' || freshIntent.visitor_id !== null) {
+            metrics.errors.push(`intent_claimed_guard_${intent.id}: Intent was claimed, skipping storage deletion`);
+            continue;
+          }
+
+          // If already cleaned by concurrent worker or endpoint, skip
+          if (freshIntent.storage_cleaned_at !== null) {
+            continue;
+          }
+
+          if (freshIntent.status !== 'expired') {
+            metrics.errors.push(`intent_invalid_status_${intent.id}: Status is ${freshIntent.status}, skipping storage deletion`);
+            continue;
+          }
+
+          // 3. Attempt physical storage removal
+          let storageSuccess = false;
+          let storageErrMsg: string | null = null;
+
+          try {
+            const { error: removeErr } = await admin.storage
+              .from(freshIntent.bucket_id)
+              .remove([freshIntent.object_path]);
+
+            if (removeErr) {
+              const msg = removeErr.message || String(removeErr);
+              // Supabase storage object-not-found is idempotent success (already absent)
+              if (
+                msg.toLowerCase().includes('not found') ||
+                msg.toLowerCase().includes('does not exist') ||
+                (removeErr as any).statusCode === '404' ||
+                (removeErr as any).status === 404
+              ) {
+                storageSuccess = true;
+              } else {
+                storageErrMsg = msg;
+              }
+            } else {
+              storageSuccess = true;
+            }
+          } catch (storageException) {
+            storageErrMsg = storageException instanceof Error ? storageException.message : String(storageException);
+          }
+
+          if (!storageSuccess) {
+            metrics.errors.push(`intent_storage_failed_${intent.id}: ${storageErrMsg || 'storage_removal_failed'}`);
             await recordReconciliation(
               admin,
               'upload_intent.storage_delete_failed',
               'upload_intents',
               intent.id,
-              removeErr.message,
-              { bucket_id: intent.bucket_id, object_path: intent.object_path }
+              storageErrMsg || 'storage_removal_failed',
+              { bucket_id: freshIntent.bucket_id, object_path: freshIntent.object_path }
             ).catch(() => undefined);
             continue;
           }
 
-          const { error: updateErr } = await admin
+          // 4. Record persistent storage cleanup completion marker
+          const cleanedAt = new Date().toISOString();
+          const { error: cleanMarkerErr } = await admin
             .from('upload_intents')
-            .update({ status: 'expired' })
-            .eq('id', intent.id);
+            .update({ storage_cleaned_at: cleanedAt })
+            .eq('id', intent.id)
+            .is('visitor_id', null)
+            .eq('status', 'expired');
 
-          if (updateErr) {
-            metrics.errors.push(`intent_db_failed_${intent.id}: ${updateErr.message}`);
+          if (cleanMarkerErr) {
+            metrics.errors.push(`intent_marker_failed_${intent.id}: ${cleanMarkerErr.message}`);
             await recordReconciliation(
               admin,
-              'upload_intent.db_expire_failed',
+              'upload_intent.storage_cleaned_marker_failed',
               'upload_intents',
               intent.id,
-              updateErr.message,
-              { bucket_id: intent.bucket_id, object_path: intent.object_path, physical_deletion: true }
+              cleanMarkerErr.message,
+              { bucket_id: freshIntent.bucket_id, object_path: freshIntent.object_path }
             ).catch(() => undefined);
           } else {
             metrics.abandonedIntentsCleaned++;

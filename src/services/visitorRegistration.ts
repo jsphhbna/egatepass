@@ -359,6 +359,17 @@ export class UploadQuotaExceededError extends Error {
   }
 }
 
+export class PendingAbandonmentError extends Error {
+  readonly code: string;
+  readonly pendingCount: number;
+  constructor(code: string, message: string, pendingCount = 0) {
+    super(message);
+    this.name = 'PendingAbandonmentError';
+    this.code = code;
+    this.pendingCount = pendingCount;
+  }
+}
+
 export class StorageUploadError extends Error {
   readonly code: string;
   readonly status?: number;
@@ -426,6 +437,7 @@ export async function createPortalIssueTransaction(captchaToken?: string): Promi
     idCheckpoint: null,
     vehiclePhotoCheckpoint: null,
     phase: 'editable',
+    pendingAbandonments: [],
     submittedPayload: null,
   };
 }
@@ -508,9 +520,17 @@ export async function uploadPortalEvidence(
   blob: Blob,
 ): Promise<{ intentId: string; checkpoint: UploadCheckpoint }> {
   const { client } = await getVerifiedPortalSession(transaction);
-  if (transaction.pendingAbandonments && transaction.pendingAbandonments.length > 0) {
-    void drainPendingAbandonments(transaction, client);
+
+  // Await deterministic bounded draining before creating new intent to protect quota
+  const drain = await drainPendingAbandonments(transaction, client);
+  if (!drain.safeToContinue) {
+    throw new PendingAbandonmentError(
+      'pending_abandonment_unconfirmed',
+      drain.message || 'Previous upload cleanup could not be confirmed. Please check your connection and retry.',
+      drain.pendingCount,
+    );
   }
+
   return uploadCheckpointedEvidence(client, 'portal', kind, blob, transaction);
 }
 
@@ -768,6 +788,17 @@ export interface AbandonEvidenceResult {
   message?: string;
 }
 
+export interface DrainPendingAbandonmentsResult {
+  safeToContinue: boolean;
+  pendingCount: number;
+  confirmedExpired: string[];
+  failed: string[];
+  message?: string;
+}
+
+const inFlightAbandonments = new WeakMap<IssueTransaction, Map<string, Promise<AbandonEvidenceResult>>>();
+const inFlightDrains = new WeakMap<IssueTransaction, Promise<DrainPendingAbandonmentsResult>>();
+
 /**
  * Informs the backend to abandon a pending or rejected upload intent,
  * releasing the visitor's quota immediately and cleaning up orphaned storage objects.
@@ -812,137 +843,234 @@ export async function abandonPortalEvidence(
     };
   }
 
-  try {
-    const sb = client || requirePortalSupabase();
-    const token = transaction.token || (await sb.auth.getSession()).data.session?.access_token;
-    const headers: Record<string, string> = {
-      'Content-Type': 'application/json',
-    };
-    if (token) {
-      headers['Authorization'] = `Bearer ${token}`;
-    }
-
-    const res = await fetch('/api/passes/abandon-intent', {
-      method: 'POST',
-      headers,
-      body: JSON.stringify({ intentId }),
-    });
-
-    const json = await res.json().catch(() => null);
-
-    if (res.ok && (json?.ok || json?.success)) {
-      if (transaction.pendingAbandonments) {
-        transaction.pendingAbandonments = transaction.pendingAbandonments.filter((id) => id !== intentId);
-      }
-      return {
-        success: true,
-        status:
-          json.code === 'already_expired'
-            ? 'already_expired'
-            : json.code === 'not_found'
-            ? 'not_found'
-            : 'abandoned',
-        intentId,
-        databaseExpired: json.databaseExpired ?? true,
-        storageCleaned: json.storageCleaned ?? true,
-        message: json.warning || json.message,
-      };
-    }
-
-    if (res.status === 409 || json?.error === 'intent_claimed') {
-      return {
-        success: false,
-        status: 'claimed',
-        intentId,
-        databaseExpired: false,
-        storageCleaned: false,
-        message: json?.message || 'Intent is already claimed by an issued pass',
-      };
-    }
-
-    if (res.status === 403) {
-      return {
-        success: false,
-        status: 'forbidden',
-        intentId,
-        databaseExpired: false,
-        storageCleaned: false,
-        message: json?.message || 'Not authorized to abandon this intent',
-      };
-    }
-
-    if (res.status === 401) {
-      return {
-        success: false,
-        status: 'unauthorized',
-        intentId,
-        databaseExpired: false,
-        storageCleaned: false,
-        message: json?.message || 'Authentication required',
-      };
-    }
-
-    transaction.pendingAbandonments ??= [];
-    if (!transaction.pendingAbandonments.includes(intentId)) {
-      transaction.pendingAbandonments.push(intentId);
-    }
-
-    return {
-      success: false,
-      status: 'error',
-      intentId,
-      databaseExpired: false,
-      storageCleaned: false,
-      message: json?.message || `Abandonment failed with status ${res.status}`,
-    };
-  } catch (netErr) {
-    transaction.pendingAbandonments ??= [];
-    if (!transaction.pendingAbandonments.includes(intentId)) {
-      transaction.pendingAbandonments.push(intentId);
-    }
-    return {
-      success: false,
-      status: 'network_error',
-      intentId,
-      databaseExpired: false,
-      storageCleaned: false,
-      message: netErr instanceof Error ? netErr.message : 'Network error during abandonment',
-    };
-  }
-}
-
-export async function drainPendingAbandonments(
-  transaction: IssueTransaction | null | undefined,
-  client?: SupabaseClient
-): Promise<void> {
-  if (!transaction || !transaction.pendingAbandonments || transaction.pendingAbandonments.length === 0) {
-    return;
+  // Synchronously enqueue into pendingAbandonments BEFORE the async request begins
+  transaction.pendingAbandonments ??= [];
+  if (!transaction.pendingAbandonments.includes(intentId)) {
+    transaction.pendingAbandonments.push(intentId);
   }
 
-  const toDrain = [...transaction.pendingAbandonments];
-  const sb = client || requirePortalSupabase();
-  const token = transaction.token || (await sb.auth.getSession()).data.session?.access_token;
-  const headers: Record<string, string> = {
-    'Content-Type': 'application/json',
-  };
-  if (token) {
-    headers['Authorization'] = `Bearer ${token}`;
+  // Deduplicate concurrent abandonment calls for the same transaction & intentId
+  let txInFlight = inFlightAbandonments.get(transaction);
+  if (!txInFlight) {
+    txInFlight = new Map();
+    inFlightAbandonments.set(transaction, txInFlight);
+  }
+  const existingPromise = txInFlight.get(intentId);
+  if (existingPromise) {
+    return existingPromise;
   }
 
-  for (const intentId of toDrain) {
+  const promise = (async (): Promise<AbandonEvidenceResult> => {
     try {
+      const sb = client || requirePortalSupabase();
+      const token = transaction.token || (await sb.auth.getSession()).data.session?.access_token;
+      const headers: Record<string, string> = {
+        'Content-Type': 'application/json',
+      };
+      if (token) {
+        headers['Authorization'] = `Bearer ${token}`;
+      }
+
       const res = await fetch('/api/passes/abandon-intent', {
         method: 'POST',
         headers,
         body: JSON.stringify({ intentId }),
       });
-      if (res.ok) {
-        transaction.pendingAbandonments = transaction.pendingAbandonments.filter((id) => id !== intentId);
+
+      const json = await res.json().catch(() => null);
+
+      if (res.ok && (json?.ok || json?.success)) {
+        if (transaction.pendingAbandonments) {
+          transaction.pendingAbandonments = transaction.pendingAbandonments.filter((id) => id !== intentId);
+        }
+        return {
+          success: true,
+          status:
+            json.code === 'already_expired'
+              ? 'already_expired'
+              : json.code === 'not_found'
+              ? 'not_found'
+              : 'abandoned',
+          intentId,
+          databaseExpired: json.databaseExpired ?? true,
+          storageCleaned: json.storageCleaned ?? true,
+          message: json.warning || json.message,
+        };
       }
-    } catch {
-      // Retain for subsequent drain attempt
+
+      if (res.status === 409 || json?.error === 'intent_claimed') {
+        if (transaction.pendingAbandonments) {
+          transaction.pendingAbandonments = transaction.pendingAbandonments.filter((id) => id !== intentId);
+        }
+        return {
+          success: false,
+          status: 'claimed',
+          intentId,
+          databaseExpired: false,
+          storageCleaned: false,
+          message: json?.message || 'Intent is already claimed by an issued pass',
+        };
+      }
+
+      if (res.status === 403) {
+        if (transaction.pendingAbandonments) {
+          transaction.pendingAbandonments = transaction.pendingAbandonments.filter((id) => id !== intentId);
+        }
+        return {
+          success: false,
+          status: 'forbidden',
+          intentId,
+          databaseExpired: false,
+          storageCleaned: false,
+          message: json?.message || 'Not authorized to abandon this intent',
+        };
+      }
+
+      if (res.status === 401) {
+        return {
+          success: false,
+          status: 'unauthorized',
+          intentId,
+          databaseExpired: false,
+          storageCleaned: false,
+          message: json?.message || 'Authentication required',
+        };
+      }
+
+      return {
+        success: false,
+        status: 'error',
+        intentId,
+        databaseExpired: false,
+        storageCleaned: false,
+        message: json?.message || `Abandonment failed with status ${res.status}`,
+      };
+    } catch (netErr) {
+      return {
+        success: false,
+        status: 'network_error',
+        intentId,
+        databaseExpired: false,
+        storageCleaned: false,
+        message: netErr instanceof Error ? netErr.message : 'Network error during abandonment',
+      };
+    } finally {
+      txInFlight?.delete(intentId);
     }
+  })();
+
+  txInFlight.set(intentId, promise);
+  return promise;
+}
+
+export async function drainPendingAbandonments(
+  transaction: IssueTransaction | null | undefined,
+  client?: SupabaseClient
+): Promise<DrainPendingAbandonmentsResult> {
+  if (!transaction || !transaction.pendingAbandonments || transaction.pendingAbandonments.length === 0) {
+    return {
+      safeToContinue: true,
+      pendingCount: 0,
+      confirmedExpired: [],
+      failed: [],
+    };
   }
+
+  // Deduplicate concurrent drain calls for the same transaction
+  const existingDrain = inFlightDrains.get(transaction);
+  if (existingDrain) {
+    return existingDrain;
+  }
+
+  const drainPromise = (async (): Promise<DrainPendingAbandonmentsResult> => {
+    try {
+      // 1. Await any in-flight individual abandonment promises for this transaction
+      const txInFlight = inFlightAbandonments.get(transaction);
+      if (txInFlight && txInFlight.size > 0) {
+        await Promise.allSettled(Array.from(txInFlight.values()));
+      }
+
+      if (!transaction.pendingAbandonments || transaction.pendingAbandonments.length === 0) {
+        return {
+          safeToContinue: true,
+          pendingCount: 0,
+          confirmedExpired: [],
+          failed: [],
+        };
+      }
+
+      const confirmedExpired: string[] = [];
+      const failed: string[] = [];
+
+      // 2. Perform bounded retry loop for remaining pending items (up to 2 passes with 150ms backoff)
+      const MAX_ATTEMPTS = 2;
+      for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+        const remaining: string[] = [...(transaction.pendingAbandonments || [])];
+        if (remaining.length === 0) break;
+
+        const sb = client || requirePortalSupabase();
+        const token = transaction.token || (await sb.auth.getSession()).data.session?.access_token;
+        const headers: Record<string, string> = {
+          'Content-Type': 'application/json',
+        };
+        if (token) {
+          headers['Authorization'] = `Bearer ${token}`;
+        }
+
+        for (const intentId of remaining) {
+          try {
+            const res = await fetch('/api/passes/abandon-intent', {
+              method: 'POST',
+              headers,
+              body: JSON.stringify({ intentId }),
+            });
+            const json = await res.json().catch(() => null);
+
+            if (res.ok && (json?.ok || json?.success)) {
+              if (!confirmedExpired.includes(intentId)) {
+                confirmedExpired.push(intentId);
+              }
+              transaction.pendingAbandonments = transaction.pendingAbandonments.filter((id) => id !== intentId);
+            } else if (res.status === 409 || json?.error === 'intent_claimed') {
+              transaction.pendingAbandonments = transaction.pendingAbandonments.filter((id) => id !== intentId);
+            } else if (res.status === 403) {
+              transaction.pendingAbandonments = transaction.pendingAbandonments.filter((id) => id !== intentId);
+            } else {
+              if (attempt === MAX_ATTEMPTS && !failed.includes(intentId)) {
+                failed.push(intentId);
+              }
+            }
+          } catch {
+            if (attempt === MAX_ATTEMPTS && !failed.includes(intentId)) {
+              failed.push(intentId);
+            }
+          }
+        }
+
+        if (transaction.pendingAbandonments.length > 0 && attempt < MAX_ATTEMPTS) {
+          await new Promise((r) => setTimeout(r, 150));
+        }
+      }
+
+      const pendingCount = transaction.pendingAbandonments?.length || 0;
+      const safeToContinue = pendingCount === 0;
+
+      return {
+        safeToContinue,
+        pendingCount,
+        confirmedExpired,
+        failed,
+        message: safeToContinue
+          ? undefined
+          : `Unable to confirm release of ${pendingCount} previous upload attempt(s). Please retry.`,
+      };
+    } finally {
+      inFlightDrains.delete(transaction);
+    }
+  })();
+
+  inFlightDrains.set(transaction, drainPromise);
+  return drainPromise;
 }
 
 export type PortalPreflightCategory =
