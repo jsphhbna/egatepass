@@ -17,6 +17,7 @@ import {
   invalidatePortalEvidenceCheckpoint,
   identifyReturningVisitor,
   lookupReturningVisitor,
+  fetchHistoricalIdPreview,
   type ReturningLookupCandidate,
   PortalSessionError,
   UploadAuthorizationError,
@@ -207,8 +208,10 @@ type Step =
   | 'delivery'
   | 'done'
   | 'returning_lookup'
+  | 'returning_results'
   | 'returning_capture'
-  | 'returning_confirm';
+  | 'returning_confirm'
+  | 'returning_review';
 
 // ============================================================
 // COMPONENT
@@ -276,6 +279,8 @@ export function GetPassPage() {
   const [returningCaptureStage, setReturningCaptureStage] = useState<'live' | 'review'>('live');
   const [returningSelfieBlob, setReturningSelfieBlob] = useState<Blob | null>(null);
   const [returningSelfieUrl, setReturningSelfieUrl] = useState<string | null>(null);
+  const [historicalIdUrl, setHistoricalIdUrl] = useState<string | null>(null);
+  const [loadingHistoricalId, setLoadingHistoricalId] = useState(false);
 
   // Returning visitor 1:1 lookup state
   const [returningLookupFirst, setReturningLookupFirst] = useState('');
@@ -285,7 +290,6 @@ export function GetPassPage() {
   const [selectedReturningCandidate, setSelectedReturningCandidate] = useState<ReturningLookupCandidate | null>(null);
   const [isSearchingReturning, setIsSearchingReturning] = useState(false);
   const [returningSearchError, setReturningSearchError] = useState<string | null>(null);
-  const [returningSearchDone, setReturningSearchDone] = useState(false);
 
   // Live Face State (Single custom camera)
   const [photoBlob, setPhotoBlob] = useState<Blob | null>(null);
@@ -624,6 +628,14 @@ export function GetPassPage() {
       URL.revokeObjectURL(returningSelfieUrl);
       setReturningSelfieUrl(null);
     }
+    if (historicalIdUrl) {
+      URL.revokeObjectURL(historicalIdUrl);
+      setHistoricalIdUrl(null);
+    }
+    setLoadingHistoricalId(false);
+    setReturningCandidates([]);
+    setSelectedReturningCandidate(null);
+    setReturningSearchError(null);
 
     // 5. Clear identity evidence & stop webcam
     void abandonPortalEvidence(portalTransactionRef.current, 'photo');
@@ -958,7 +970,6 @@ export function GetPassPage() {
         middleName: returningLookupMiddle.trim() || undefined,
       });
 
-      setReturningSearchDone(true);
       if (res.found && res.candidates.length > 0) {
         setReturningCandidates(res.candidates);
         if (res.candidates.length === 1 && res.candidates[0]) {
@@ -967,6 +978,7 @@ export function GetPassPage() {
       } else {
         setReturningCandidates([]);
       }
+      setStep('returning_results');
     } catch (err: any) {
       console.warn('Returning visitor profile search error:', err);
       turnstileRef.current?.resetChallenge();
@@ -1023,6 +1035,11 @@ export function GetPassPage() {
       URL.revokeObjectURL(returningSelfieUrl);
       setReturningSelfieUrl(null);
     }
+    if (historicalIdUrl) {
+      URL.revokeObjectURL(historicalIdUrl);
+      setHistoricalIdUrl(null);
+    }
+    setLoadingHistoricalId(false);
 
     // 3. Clear old blob and error message
     setReturningSelfieBlob(null);
@@ -1227,7 +1244,24 @@ export function GetPassPage() {
       vehiclePhotoUrl.clear();
     }
 
-    setStep('review');
+    if (returningProfile?.profileId && returningProfile?.matchToken && portalTransactionRef.current) {
+      setLoadingHistoricalId(true);
+      fetchHistoricalIdPreview(portalTransactionRef.current, returningProfile.profileId, returningProfile.matchToken)
+        .then((url) => {
+          if (historicalIdUrl && historicalIdUrl !== url) {
+            URL.revokeObjectURL(historicalIdUrl);
+          }
+          setHistoricalIdUrl(url);
+        })
+        .catch(() => {
+          setHistoricalIdUrl(null);
+        })
+        .finally(() => {
+          setLoadingHistoricalId(false);
+        });
+    }
+
+    setStep('returning_review');
   }
 
   // ============================================================
@@ -1700,7 +1734,7 @@ export function GetPassPage() {
     }
     setTransactionPhase('submission_uncertain_hold');
     toast.info('Submission placed on hold. The previous pass may have been created. Please proceed to the Guard Station with your valid ID for assistance.');
-    setStep('review');
+    setStep(registrationMode === 'returning' ? 'returning_review' : 'review');
   }
 
   function handleRetryExactSubmission() {
@@ -1803,7 +1837,7 @@ export function GetPassPage() {
               saveUpdates: saveReturningUpdates,
             }
           : undefined,
-        rememberVisitor,
+        rememberVisitor: registrationMode === 'returning' ? false : rememberVisitor,
       };
 
       const result = await issueVisitorPass('portal', formData, photoBlob, idBlob, issueRequestId.current, undefined, portalTransactionRef.current, vehiclePhotoBlob);
@@ -1867,7 +1901,7 @@ export function GetPassPage() {
       const errMsg = err instanceof Error ? err.message : 'An unexpected error occurred.';
       setSubmitError(errMsg);
       setTransactionPhase(portalTransactionRef.current?.phase ?? null);
-      setStep('review');
+      setStep(registrationMode === 'returning' ? 'returning_review' : 'review');
       toast.error('Failed to generate pass. Please try again.');
     } finally {
       // Submission finalized
@@ -1904,6 +1938,9 @@ export function GetPassPage() {
       }
     }
   }
+
+  const NEW_VISITOR_STEPPER_STEPS = ['form', 'visit', 'photo', 'id', 'verify', 'review'] as const;
+  const isNewVisitorStepper = registrationMode === 'new' && (NEW_VISITOR_STEPPER_STEPS as readonly string[]).includes(step);
 
   const steps = [
     { id: 'form', title: 'Personal' },
@@ -1964,8 +2001,8 @@ export function GetPassPage() {
 
       {configState === 'ready' && (
         <Card className="max-w-2xl mx-auto p-6 sm:p-8">
-          {/* Stepper only for 6-step New Visitor or verification phases */}
-          {step !== 'frontdoor' && step !== 'arrival_setup' && step !== 'returning_capture' && step !== 'returning_confirm' && step !== 'done' && step !== 'delivery' && step !== 'generating' && (
+          {/* Stepper only for 6-step New Visitor */}
+          {isNewVisitorStepper && (
             <div className="mb-8">
               <div className="mb-3 flex items-center justify-between">
                 <span className="inline-block rounded-full bg-[#F8EEEE] px-3 py-1 text-xs font-bold text-[#7A0A0A]">
@@ -2034,7 +2071,6 @@ export function GetPassPage() {
                       return;
                     }
                     setRegistrationMode('returning');
-                    setReturningSearchDone(false);
                     setReturningSearchError(null);
                     setReturningCandidates([]);
                     setSelectedReturningCandidate(null);
@@ -2442,14 +2478,12 @@ export function GetPassPage() {
               </div>
 
               {/* Purpose of Visit */}
-              <FormField label="Purpose of Visit" requirement="required" error={errors.purpose?.message}>
-                <VisitPurposeField
-                  value={purpose || ''}
-                  onChange={(val) => setValue('purpose', val, { shouldValidate: true })}
-                  purposes={visitPurposes}
-                  error={errors.purpose?.message}
-                />
-              </FormField>
+              <VisitPurposeField
+                value={purpose || ''}
+                onChange={(val) => setValue('purpose', val, { shouldValidate: true })}
+                purposes={visitPurposes}
+                error={errors.purpose?.message}
+              />
 
               {/* Visit Date */}
               <FormField
@@ -3522,105 +3556,6 @@ export function GetPassPage() {
                 </Button>
               </div>
 
-              {returningSearchDone && (
-                <div className="space-y-3">
-                  {returningCandidates.length === 0 ? (
-                    <div className="rounded-2xl border border-amber-200 bg-amber-50 p-5 text-center space-y-3">
-                      <p className="text-sm font-semibold text-amber-900">
-                        No active returning visitor profile found for "{returningLookupFirst.trim()} {returningLookupLast.trim()}".
-                      </p>
-                      <p className="text-xs text-amber-800">
-                        Please check the spelling of your registered name, or proceed as a new visitor.
-                      </p>
-                      <div className="pt-2">
-                        <Button
-                          variant="secondary"
-                          onClick={() => {
-                            beginNewVisitorSetup();
-                          }}
-                          icon={<UserPlus className="h-4 w-4" />}
-                        >
-                          Register as New Visitor
-                        </Button>
-                      </div>
-                    </div>
-                  ) : (
-                    <div className="space-y-3">
-                      <div className="flex items-center justify-between">
-                        <span className="text-xs font-bold uppercase tracking-wider text-[var(--color-text-muted)]">
-                          Select Your Profile ({returningCandidates.length} found)
-                        </span>
-                        <span className="text-[11px] text-[var(--color-text-secondary)]">
-                          Privacy-masked for safety
-                        </span>
-                      </div>
-
-                      <div className="grid gap-2.5">
-                        {returningCandidates.map((cand) => {
-                          const isSelected = selectedReturningCandidate?.profileId === cand.profileId;
-                          return (
-                            <div
-                              key={cand.profileId}
-                              onClick={() => setSelectedReturningCandidate(cand)}
-                              role="button"
-                              tabIndex={0}
-                              className={`p-4 rounded-xl border-2 transition-all cursor-pointer flex items-center justify-between ${
-                                isSelected
-                                  ? 'border-[#7A0A0A] bg-[#F8EEEE]/40 shadow-xs'
-                                  : 'border-[var(--color-border)] bg-white hover:border-slate-300'
-                              }`}
-                            >
-                              <div className="space-y-1">
-                                <div className="flex items-center gap-2">
-                                  <span className="font-bold text-sm text-[var(--color-text-primary)]">
-                                    {cand.maskedName}
-                                  </span>
-                                  {isSelected && (
-                                    <span className="bg-[#7A0A0A] text-white text-[10px] font-bold px-2 py-0.5 rounded-full">
-                                      Selected
-                                    </span>
-                                  )}
-                                </div>
-                                <div className="text-xs text-[var(--color-text-secondary)] flex items-center gap-3">
-                                  <span>Phone: {cand.maskedContact}</span>
-                                  <span>•</span>
-                                  <span>{cand.partialLocality}</span>
-                                </div>
-                              </div>
-                              <div className={`h-5 w-5 rounded-full border flex items-center justify-center ${
-                                isSelected ? 'border-[#7A0A0A] bg-[#7A0A0A] text-white' : 'border-slate-300 bg-white'
-                              }`}>
-                                {isSelected && <div className="h-2 w-2 rounded-full bg-white" />}
-                              </div>
-                            </div>
-                          );
-                        })}
-                      </div>
-
-                      <Button
-                        onClick={() => {
-                          invalidatePortalEvidenceCheckpoint(portalTransactionRef.current, 'photo');
-                          setReturningCaptureStage('live');
-                          setReturningSelfieBlob(null);
-                          if (returningSelfieUrl) {
-                            URL.revokeObjectURL(returningSelfieUrl);
-                            setReturningSelfieUrl(null);
-                          }
-                          setReturningIdentifyError(null);
-                          setStep('returning_capture');
-                          void faceWebcam.start();
-                        }}
-                        disabled={!selectedReturningCandidate}
-                        className="w-full mt-2 min-h-[56px] sm:min-h-11 text-[15px] sm:text-sm"
-                        icon={<Camera className="h-5 w-5" />}
-                      >
-                        Proceed to Live Face Verification
-                      </Button>
-                    </div>
-                  )}
-                </div>
-              )}
-
               <div className="flex gap-3 pt-2">
                 <Button
                   variant="secondary"
@@ -3633,6 +3568,149 @@ export function GetPassPage() {
                   Back to Setup
                 </Button>
               </div>
+            </div>
+          )}
+
+          {/* ============================== RETURNING VISITOR SEARCH RESULTS ============================== */}
+          {step === 'returning_results' && (
+            <div className="space-y-6">
+              <div className="text-center">
+                <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-[#F8EEEE] text-[#7A0A0A] text-xs font-semibold mb-2">
+                  <UserCheck className="h-3.5 w-3.5" />
+                  <span>Returning Visitor Frontdoor</span>
+                </div>
+                <h2 className="text-xl font-bold text-[var(--color-text-primary)]">
+                  {returningCandidates.length === 0 ? 'No Matching Profiles Found' : 'Select Your Profile'}
+                </h2>
+                <p className="text-sm text-[var(--color-text-secondary)] mt-1.5">
+                  {returningCandidates.length === 0
+                    ? `No active returning visitor profile found for "${returningLookupFirst.trim()} ${returningLookupLast.trim()}".`
+                    : 'Choose your profile to proceed with 1:1 live facial verification.'}
+                </p>
+              </div>
+
+              {returningCandidates.length === 0 ? (
+                <div className="rounded-2xl border border-amber-200 bg-amber-50 p-6 text-center space-y-4 shadow-xs">
+                  <div className="mx-auto w-12 h-12 rounded-full bg-amber-100 flex items-center justify-center text-amber-700">
+                    <User className="w-6 h-6" />
+                  </div>
+                  <div className="space-y-1">
+                    <h3 className="text-base font-bold text-amber-950">No Enrolled Profile Matched</h3>
+                    <p className="text-xs text-amber-800 max-w-md mx-auto leading-relaxed">
+                      We could not find an enrolled returning visitor profile under "{returningLookupFirst.trim()} {returningLookupLast.trim()}". Please check your spelling or register as a new visitor.
+                    </p>
+                  </div>
+                  <div className="pt-2 flex flex-col sm:flex-row gap-3 justify-center">
+                    <Button
+                      variant="secondary"
+                      onClick={() => {
+                        setSelectedReturningCandidate(null);
+                        setStep('returning_lookup');
+                      }}
+                      icon={<ArrowLeft className="h-4 w-4" />}
+                    >
+                      Back to Search
+                    </Button>
+                    <Button
+                      variant="primary"
+                      onClick={() => {
+                        beginNewVisitorSetup();
+                      }}
+                      icon={<UserPlus className="h-4 w-4" />}
+                    >
+                      Register as New Visitor
+                    </Button>
+                  </div>
+                </div>
+              ) : (
+                <div className="space-y-4">
+                  <div className="flex items-center justify-between px-1">
+                    <span className="text-xs font-bold uppercase tracking-wider text-[var(--color-text-muted)]">
+                      {returningCandidates.length} {returningCandidates.length === 1 ? 'profile' : 'profiles'} found
+                    </span>
+                    <span className="text-[11px] text-[var(--color-text-secondary)] font-medium">
+                      Privacy-masked for safety
+                    </span>
+                  </div>
+
+                  <div className="max-h-[360px] overflow-y-auto space-y-2.5 pr-1">
+                    {returningCandidates.map((cand) => {
+                      const isSelected = selectedReturningCandidate?.profileId === cand.profileId;
+                      return (
+                        <div
+                          key={cand.profileId}
+                          onClick={() => setSelectedReturningCandidate(cand)}
+                          role="button"
+                          tabIndex={0}
+                          className={`p-4 rounded-xl border-2 transition-all cursor-pointer flex items-center justify-between ${
+                            isSelected
+                              ? 'border-[#7A0A0A] bg-[#F8EEEE]/40 shadow-xs'
+                              : 'border-[var(--color-border)] bg-white hover:border-slate-300'
+                          }`}
+                        >
+                          <div className="space-y-1">
+                            <div className="flex items-center gap-2">
+                              <span className="font-bold text-sm text-[var(--color-text-primary)]">
+                                {cand.maskedName}
+                              </span>
+                              {isSelected && (
+                                <span className="bg-[#7A0A0A] text-white text-[10px] font-bold px-2 py-0.5 rounded-full">
+                                  Selected
+                                </span>
+                              )}
+                            </div>
+                            <div className="text-xs text-[var(--color-text-secondary)] flex items-center gap-3">
+                              <span>Phone: {cand.maskedContact}</span>
+                              <span>•</span>
+                              <span>{cand.partialLocality}</span>
+                            </div>
+                          </div>
+                          <div
+                            className={`h-5 w-5 rounded-full border flex items-center justify-center ${
+                              isSelected ? 'border-[#7A0A0A] bg-[#7A0A0A] text-white' : 'border-slate-300 bg-white'
+                            }`}
+                          >
+                            {isSelected && <div className="h-2 w-2 rounded-full bg-white" />}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+
+                  <div className="pt-2 space-y-2">
+                    <Button
+                      onClick={() => {
+                        invalidatePortalEvidenceCheckpoint(portalTransactionRef.current, 'photo');
+                        setReturningCaptureStage('live');
+                        setReturningSelfieBlob(null);
+                        if (returningSelfieUrl) {
+                          URL.revokeObjectURL(returningSelfieUrl);
+                          setReturningSelfieUrl(null);
+                        }
+                        setReturningIdentifyError(null);
+                        setStep('returning_capture');
+                        void faceWebcam.start();
+                      }}
+                      disabled={!selectedReturningCandidate}
+                      className="w-full min-h-[50px] text-sm font-bold"
+                      icon={<Camera className="h-4 w-4" />}
+                    >
+                      Proceed to Live Face Verification
+                    </Button>
+                    <Button
+                      variant="secondary"
+                      onClick={() => {
+                        setSelectedReturningCandidate(null);
+                        setStep('returning_lookup');
+                      }}
+                      className="w-full"
+                      icon={<ArrowLeft className="h-4 w-4" />}
+                    >
+                      Back to Search
+                    </Button>
+                  </div>
+                </div>
+              )}
             </div>
           )}
 
@@ -3655,15 +3733,6 @@ export function GetPassPage() {
                     : 'Look directly at the camera with good lighting. Position your face inside the guide.'}
                 </p>
               </div>
-
-              {thresholdMode === 'provisional' && (
-                <div className="rounded-xl border border-blue-200 bg-blue-50/70 p-3 text-xs text-blue-900 flex items-start gap-2.5">
-                  <Info className="h-4 w-4 text-blue-700 flex-shrink-0 mt-0.5" />
-                  <div className="text-[11px] leading-relaxed">
-                    <strong>Provisional Verification Mode</strong>: 1:1 cosine similarity evaluated against reference threshold (0.363). Guard face-to-photo verification remains required at campus gates.
-                  </div>
-                </div>
-              )}
 
               {returningIdentifyError && returningCaptureStage === 'review' && (
                 <div className="rounded-xl border border-[var(--color-danger)] bg-[var(--color-danger-light)] p-4 text-xs text-[var(--color-danger-dark)] space-y-2" role="alert">
@@ -3860,14 +3929,12 @@ export function GetPassPage() {
               </label>
 
               {/* Visit Purpose & Date */}
-              <FormField label="Purpose of Visit" requirement="required" error={errors.purpose?.message}>
-                <VisitPurposeField
-                  value={purpose || ''}
-                  onChange={(val) => setValue('purpose', val, { shouldValidate: true })}
-                  purposes={visitPurposes}
-                  error={errors.purpose?.message}
-                />
-              </FormField>
+              <VisitPurposeField
+                value={purpose || ''}
+                onChange={(val) => setValue('purpose', val, { shouldValidate: true })}
+                purposes={visitPurposes}
+                error={errors.purpose?.message}
+              />
 
               <FormField label="Visit Date" requirement="required" error={errors.visitDate?.message}>
                 <Input type="date" min={today} max={latestVisitDate} {...register('visitDate')} />
@@ -4126,6 +4193,235 @@ export function GetPassPage() {
                   icon={<ArrowRight className="h-4 w-4" />}
                 >
                   Review Pass Details
+                </Button>
+              </div>
+            </div>
+          )}
+
+          {/* ============================== RETURNING VISITOR REVIEW ============================== */}
+          {step === 'returning_review' && returningProfile && (
+            <div className="space-y-6">
+              <div className="text-center">
+                <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-[#F8EEEE] text-[#7A0A0A] text-xs font-semibold mb-2">
+                  <UserCheck className="h-3.5 w-3.5" />
+                  <span>Returning Visitor Pass</span>
+                </div>
+                <h2 className="text-xl font-bold text-[var(--color-text-primary)]">
+                  Review Your Visit Details
+                </h2>
+                <p className="text-sm text-[var(--color-text-secondary)] mt-1">
+                  Please verify your information before generating your E-GatePass.
+                </p>
+              </div>
+
+              {submitError && (
+                <div className="rounded-md border border-[var(--color-danger)] bg-[var(--color-danger-light)] p-3 text-sm text-[var(--color-danger-dark)]" role="alert">
+                  {submitError}
+                </div>
+              )}
+
+              {/* Verification Badge */}
+              <div className="rounded-xl border border-emerald-300 bg-emerald-50 p-3.5 flex items-center justify-between text-xs text-emerald-900">
+                <div className="flex items-center gap-2">
+                  <CheckCircle2 className="h-5 w-5 text-emerald-600 flex-shrink-0" />
+                  <div>
+                    <span className="font-bold block">Biometric Identity Verified</span>
+                    <span className="text-[11px] text-emerald-800">Your live face matches your enrolled returning profile.</span>
+                  </div>
+                </div>
+                <span className="rounded-full bg-emerald-600 text-white font-bold text-[10px] px-2.5 py-0.5 uppercase tracking-wide">
+                  Verified
+                </span>
+              </div>
+
+              {/* Group 1: Verified Visitor Information */}
+              <div className="rounded-xl bg-[var(--color-surface)] p-4 text-sm border border-[var(--color-border)] space-y-3">
+                <div className="flex items-center justify-between border-b border-[var(--color-border)] pb-2">
+                  <span className="font-bold text-xs uppercase tracking-wider text-[var(--color-text-secondary)]">
+                    Visitor Information
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => setStep('returning_confirm')}
+                    className="text-xs font-semibold text-[var(--color-brand)] hover:underline"
+                  >
+                    Edit Details
+                  </button>
+                </div>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
+                  <div>
+                    <span className="text-[var(--color-text-secondary)] block">Full Name:</span>
+                    <p className="font-semibold text-sm text-[var(--color-text-primary)] mt-0.5">
+                      {returningProfile.fullName}
+                    </p>
+                  </div>
+                  <div>
+                    <span className="text-[var(--color-text-secondary)] block">Contact Number:</span>
+                    <p className="font-semibold text-sm text-[var(--color-text-primary)] mt-0.5">
+                      {getValues('contactNumber') || returningProfile.contactNumber}
+                    </p>
+                  </div>
+                  <div className="sm:col-span-2">
+                    <span className="text-[var(--color-text-secondary)] block">Residential Address:</span>
+                    <p className="font-semibold text-sm text-[var(--color-text-primary)] mt-0.5">
+                      {selectedPsgc
+                        ? `${homeBuilding ? `${homeBuilding}, ` : ''}${homeStreet ? `${homeStreet}, ` : ''}${selectedPsgc.barangay.name}, ${selectedPsgc.city.name}${selectedPsgc.province ? `, ${selectedPsgc.province.name}` : ''}${postalCode ? ` (${postalCode})` : ''}`
+                        : 'No residential address specified'}
+                    </p>
+                  </div>
+                  <div className="sm:col-span-2">
+                    <span className="text-[var(--color-text-secondary)] block">Profile Update for Future Visits:</span>
+                    <p className="font-semibold text-xs text-[var(--color-text-primary)] mt-0.5">
+                      {saveReturningUpdates
+                        ? 'Yes, updated contact details will be saved to your profile'
+                        : 'No, using today\'s details for this visit only'}
+                    </p>
+                  </div>
+                </div>
+              </div>
+
+              {/* Group 2: Visit Details */}
+              <div className="rounded-xl bg-[var(--color-surface)] p-4 text-sm border border-[var(--color-border)] space-y-3">
+                <div className="flex items-center justify-between border-b border-[var(--color-border)] pb-2">
+                  <span className="font-bold text-xs uppercase tracking-wider text-[var(--color-text-secondary)]">
+                    Visit Details
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => setStep('returning_confirm')}
+                    className="text-xs font-semibold text-[var(--color-brand)] hover:underline"
+                  >
+                    Edit Details
+                  </button>
+                </div>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
+                  <div className="sm:col-span-2">
+                    <span className="text-[var(--color-text-secondary)] block">Purpose of Visit:</span>
+                    <p className="font-semibold text-sm text-[var(--color-text-primary)] mt-0.5">
+                      {getValues('purpose') || 'Campus Visit'}
+                    </p>
+                  </div>
+                  <div>
+                    <span className="text-[var(--color-text-secondary)] block">Visit Date:</span>
+                    <p className="font-semibold text-sm text-[var(--color-text-primary)] mt-0.5">
+                      {getValues('visitDate') || 'Today'}
+                    </p>
+                  </div>
+                  <div>
+                    <span className="text-[var(--color-text-secondary)] block">Arrival Method:</span>
+                    <p className="font-semibold text-sm text-[var(--color-text-primary)] mt-0.5">
+                      {getValues('arrivalMode') === 'vehicle' ? 'With Vehicle' : 'On Foot / Transit'}
+                    </p>
+                  </div>
+                  {getValues('arrivalMode') === 'vehicle' && (
+                    <>
+                      <div>
+                        <span className="text-[var(--color-text-secondary)] block">Vehicle:</span>
+                        <p className="font-semibold text-sm text-[var(--color-text-primary)] mt-0.5">
+                          {getValues('plateNumber')} ({getValues('vehicleType')})
+                        </p>
+                      </div>
+                      <div>
+                        <span className="text-[var(--color-text-secondary)] block">Color & Model:</span>
+                        <p className="font-semibold text-sm text-[var(--color-text-primary)] mt-0.5">
+                          {getValues('vehicleColor')} {getValues('makeModel') ? `• ${getValues('makeModel')}` : ''}
+                        </p>
+                      </div>
+                    </>
+                  )}
+                </div>
+              </div>
+
+              {/* Group 3: Verification Evidence */}
+              <div className="rounded-xl bg-[var(--color-surface)] p-4 text-sm border border-[var(--color-border)] space-y-3">
+                <span className="font-bold text-xs uppercase tracking-wider text-[var(--color-text-secondary)] block border-b border-[var(--color-border)] pb-2">
+                  Verification Evidence
+                </span>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  {/* Verified Selfie */}
+                  <div className="space-y-1.5">
+                    <span className="text-xs font-semibold text-[var(--color-text-secondary)] block">
+                      Live Verified Selfie
+                    </span>
+                    {(returningSelfieUrl || photoUrl.url) ? (
+                      <div className="rounded-lg overflow-hidden border border-[var(--color-border)] aspect-[3/4] max-h-48 bg-slate-100 flex items-center justify-center">
+                        <img
+                          src={returningSelfieUrl || photoUrl.url || ''}
+                          alt="Verified selfie portrait"
+                          className="h-full w-full object-cover"
+                        />
+                      </div>
+                    ) : (
+                      <div className="rounded-lg border border-dashed border-[var(--color-border)] aspect-[3/4] max-h-48 flex items-center justify-center text-xs text-[var(--color-text-muted)]">
+                        Selfie image unavailable
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Previously Submitted ID */}
+                  <div className="space-y-1.5">
+                    <span className="text-xs font-semibold text-[var(--color-text-secondary)] block">
+                      Previously Submitted ID
+                    </span>
+                    {loadingHistoricalId ? (
+                      <div className="rounded-lg border border-[var(--color-border)] aspect-[3/4] max-h-48 bg-slate-50 flex flex-col items-center justify-center text-center p-3 text-xs text-[var(--color-text-secondary)]">
+                        <Loader2 className="w-5 h-5 animate-spin text-[#7A0A0A] mb-2" />
+                        <span>Loading previously submitted ID…</span>
+                      </div>
+                    ) : historicalIdUrl ? (
+                      <div className="rounded-lg overflow-hidden border border-[var(--color-border)] aspect-[3/4] max-h-48 bg-slate-100 flex items-center justify-center">
+                        <img
+                          src={historicalIdUrl}
+                          alt="Previously submitted ID document"
+                          className="h-full w-full object-cover"
+                        />
+                      </div>
+                    ) : (
+                      <div className="rounded-lg border border-amber-200 bg-amber-50/70 aspect-[3/4] max-h-48 flex flex-col items-center justify-center text-center p-3 text-xs text-amber-900">
+                        <Info className="w-5 h-5 text-amber-700 mb-1.5" />
+                        <span className="font-semibold">Previous ID image is no longer available</span>
+                        <p className="text-[10px] text-amber-800 mt-1">
+                          Retained in secure audit record according to institutional data retention policy.
+                        </p>
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Current Vehicle Photo if applicable */}
+                  {getValues('arrivalMode') === 'vehicle' && vehiclePhotoPreview && (
+                    <div className="sm:col-span-2 space-y-1.5 pt-2 border-t border-[var(--color-border)]">
+                      <span className="text-xs font-semibold text-[var(--color-text-secondary)] block">
+                        Today's Vehicle Photo
+                      </span>
+                      <div className="rounded-lg overflow-hidden border border-[var(--color-border)] aspect-video max-h-40 bg-slate-100 flex items-center justify-center">
+                        <img
+                          src={vehiclePhotoPreview}
+                          alt="Today's vehicle photo"
+                          className="h-full w-full object-cover"
+                        />
+                      </div>
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {/* Action Buttons */}
+              <div className="flex gap-3 pt-2">
+                <Button
+                  variant="secondary"
+                  onClick={() => setStep('returning_confirm')}
+                  className="flex-1"
+                  icon={<ArrowLeft className="h-4 w-4" />}
+                >
+                  Edit Visit Details
+                </Button>
+                <Button
+                  onClick={onSubmit}
+                  disabled={!identityVerified || currentPhase === 'existing_pass_conflict'}
+                  className="flex-1"
+                  icon={<CheckCircle2 className="h-4 w-4" />}
+                >
+                  Generate E-GatePass
                 </Button>
               </div>
             </div>

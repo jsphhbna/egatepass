@@ -3,6 +3,7 @@ import {
   AddressCascadingSelector,
   type SelectedPsgcAddress,
 } from './AddressCascadingSelector';
+import { isCityOfManila, lookupManilaDistrictForBarangay } from '@/lib/manilaDistricts';
 import { MapPin, ChevronRight, CheckCircle2, AlertCircle } from 'lucide-react';
 import { FormField, Input } from '@/components/ui';
 
@@ -100,7 +101,14 @@ export function StructuredAddressField({
                   {value.barangay.name}, {value.city.name}
                 </p>
                 <p className="text-xs text-[var(--color-text-secondary,#5F6B7F)] truncate mt-0.5">
-                  {value.province ? `${value.province.name}, ` : ''}{value.region.name}
+                  {isCityOfManila(value.city?.code, value.city?.name) ? (
+                    (() => {
+                      const m = lookupManilaDistrictForBarangay(value.barangay);
+                      return m ? `${m.congressionalDistrict} • ${m.administrativeDistrict} • ${value.region.name}` : value.region.name;
+                    })()
+                  ) : (
+                    <>{value.province ? `${value.province.name}, ` : ''}{value.region.name}</>
+                  )}
                 </p>
               </div>
             </div>

@@ -1704,3 +1704,48 @@ export async function loadRegistrationSettings(source: RegistrationSource): Prom
     visitor_retention_days: typeof raw.visitor_retention_days === 'number' ? raw.visitor_retention_days : null,
   };
 }
+
+/**
+ * Securely fetch previously submitted ID preview for a matched returning visitor.
+ * Authenticated via visitor bearer token, bound to profileId, requestId, and matchToken.
+ * Returns an object URL for the image blob, or null if unavailable/expired.
+ */
+export async function fetchHistoricalIdPreview(
+  transaction: PortalIssueTransaction,
+  profileId: string,
+  matchToken: string
+): Promise<string | null> {
+  const { token } = await getVerifiedPortalSession(transaction);
+  const params = new URLSearchParams({
+    profileId,
+    requestId: transaction.requestId,
+    matchToken,
+  });
+
+  try {
+    const res = await withTimeout(
+      fetch(`/api/passes/returning-id-preview?${params.toString()}`, {
+        method: 'GET',
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+      }),
+      15000,
+      'Historical ID preview request timed out'
+    );
+
+    if (!res.ok) {
+      return null;
+    }
+
+    const blob = await res.blob();
+    if (!blob || blob.size === 0) {
+      return null;
+    }
+    return URL.createObjectURL(blob);
+  } catch (err) {
+    console.warn('Historical ID preview fetch error:', err);
+    return null;
+  }
+}
+

@@ -5,6 +5,7 @@ import verifyIdentity from '../../server/routes/passes/verify-identity.js';
 import abandonIntent from '../../server/routes/passes/abandon-intent.js';
 import identifyReturning from '../../server/routes/passes/identify-returning.js';
 import lookupReturning from '../../server/routes/passes/lookup-returning.js';
+import returningIdPreview from '../../server/routes/passes/returning-id-preview.js';
 import capabilities from '../../server/routes/passes/capabilities.js';
 import vehiclesMakes from '../../server/routes/vehicles/makes.js';
 import vehiclesModels from '../../server/routes/vehicles/models.js';
@@ -19,6 +20,8 @@ const router = createGroupedRouter('passes', {
   'lookup-returning': lookupReturning,
   'lookup/returning': lookupReturning,
   'identify-returning': identifyReturning,
+  'returning-id-preview': returningIdPreview,
+  'returning/id-preview': returningIdPreview,
   capabilities,
   'vehicles-makes': vehiclesMakes,
   'vehicles-models': vehiclesModels,

@@ -104,7 +104,7 @@ export const ROUTE_CONTRACT_MATRIX: readonly RouteContract[] = [
     handlerModule: 'server/routes/auth/resend-webhook.ts',
   },
 
-  // Passes Router (3 routes)
+  // Passes Router (5 routes)
   {
     path: '/api/passes/email',
     group: 'passes',
@@ -132,6 +132,13 @@ export const ROUTE_CONTRACT_MATRIX: readonly RouteContract[] = [
     subpath: 'abandon-intent',
     allowedMethods: ['POST'],
     handlerModule: 'server/routes/passes/abandon-intent.ts',
+  },
+  {
+    path: '/api/passes/returning-id-preview',
+    group: 'passes',
+    subpath: 'returning-id-preview',
+    allowedMethods: ['GET'],
+    handlerModule: 'server/routes/passes/returning-id-preview.ts',
   },
 
   // Device Router (6 routes)
