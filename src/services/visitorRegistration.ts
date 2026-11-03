@@ -346,6 +346,17 @@ export class UploadAuthorizationError extends Error {
   }
 }
 
+export class UploadQuotaExceededError extends Error {
+  readonly code: string;
+  readonly status: number;
+  constructor(code = 'too_many_pending_intents', message = 'Too many upload attempts are in progress. Please wait a moment or retake your photo.') {
+    super(message);
+    this.name = 'UploadQuotaExceededError';
+    this.code = code;
+    this.status = 429;
+  }
+}
+
 export class StorageUploadError extends Error {
   readonly code: string;
   readonly status?: number;
@@ -543,10 +554,22 @@ export async function uploadCheckpointedEvidence(
     if (error || !data) {
       const detail = error?.message ? ` ${error.message}` : '';
       const errMsg = (error?.message || '').toLowerCase();
+      const errCode = (error?.code || '').toUpperCase();
+
+      if (
+        errMsg.includes('too many pending') ||
+        errMsg.includes('too_many_pending_intents') ||
+        errCode === 'P0003'
+      ) {
+        throw new UploadQuotaExceededError(
+          'too_many_pending_intents',
+          'Too many upload attempts are currently pending. Retaking or waiting a moment will reset your upload session.'
+        );
+      }
       if (
         errMsg.includes('session required') ||
         errMsg.includes('not authenticated') ||
-        error?.code === 'P0001'
+        errCode === 'P0001'
       ) {
         throw new PortalSessionError(
           'portal_session_expired',
@@ -717,6 +740,52 @@ export function invalidatePortalEvidenceCheckpoint(
   } else if (kind === 'vehicle_photo' || kind === 'vehicle') {
     transaction.vehiclePhotoCheckpoint = null;
     transaction.vehiclePhotoIntentId = null;
+  }
+}
+
+/**
+ * Asynchronously informs the backend to abandon a pending or rejected upload intent,
+ * releasing the visitor's quota immediately and cleaning up orphaned storage objects.
+ * Also invalidates the in-memory checkpoint.
+ */
+export async function abandonPortalEvidence(
+  transaction: IssueTransaction | null | undefined,
+  kind: 'photo' | 'id' | 'vehicle_photo' | 'vehicle',
+  client?: SupabaseClient
+): Promise<void> {
+  if (!transaction) return;
+
+  let intentId: string | null = null;
+  if (kind === 'photo') {
+    intentId = transaction.photoIntentId || transaction.photoCheckpoint?.intentId || null;
+  } else if (kind === 'id') {
+    intentId = transaction.idIntentId || transaction.idCheckpoint?.intentId || null;
+  } else if (kind === 'vehicle_photo' || kind === 'vehicle') {
+    intentId = transaction.vehiclePhotoIntentId || transaction.vehiclePhotoCheckpoint?.intentId || null;
+  }
+
+  // Clear in-memory references immediately so subsequent attempts are clean
+  invalidatePortalEvidenceCheckpoint(transaction, kind);
+
+  if (!intentId) return;
+
+  try {
+    const sb = client || requirePortalSupabase();
+    const token = transaction.token || (await sb.auth.getSession()).data.session?.access_token;
+    const headers: Record<string, string> = {
+      'Content-Type': 'application/json',
+    };
+    if (token) {
+      headers['Authorization'] = `Bearer ${token}`;
+    }
+
+    await fetch('/api/passes/abandon-intent', {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ intentId }),
+    }).catch(() => undefined);
+  } catch {
+    // Non-blocking best-effort cleanup
   }
 }
 

@@ -108,7 +108,7 @@ describe('PART B: iPhone Email Modal Touch Interactions & Lifecycle Contract', (
     expect(getPassSrc).toContain('isOpen={showEmailModal && !showSkipWarning}');
     expect(getPassSrc).toContain('isOpen={showSkipWarning}');
     expect(getPassSrc).toContain('onCancel={() => setShowSkipWarning(false)}');
-    expect(getPassSrc).toContain('setShowSkipWarning(false);\n          setShowEmailModal(false);');
+    expect(getPassSrc).toMatch(/setShowSkipWarning\(false\);[\r\n\s]+setShowEmailModal\(false\);/);
   });
 
   it('TimedSkipWarningModal enforces 56px touch target and 5s countdown safety', () => {

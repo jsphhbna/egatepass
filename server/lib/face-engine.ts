@@ -3,6 +3,23 @@ import sharp, { type Metadata } from 'sharp';
 import path from 'node:path';
 import fs from 'node:fs';
 import crypto from 'node:crypto';
+import {
+  computeNormalizedOvalGeometry,
+  HEAD_BOTTOM_EXPANSION_RATIO,
+  HEAD_SIDE_EXPANSION_RATIO,
+  HEAD_TOP_EXPANSION_RATIO,
+  MAX_CENTER_OFFSET_X,
+  MAX_CENTER_OFFSET_Y,
+  MAX_FACE_OVAL_HEIGHT_RATIO,
+  MIN_FACE_OVAL_HEIGHT_RATIO,
+  OVAL_ENVELOPE_TOLERANCE,
+  type OvalFramingGeometry,
+} from '../../src/lib/selfieFramingContract.js';
+
+export {
+  computeNormalizedOvalGeometry,
+  type OvalFramingGeometry,
+};
 
 export type QualityResultCode =
   | 'ok'
@@ -715,49 +732,6 @@ export async function evaluateFaceCropQuality(
   return { passed: true, code: 'ok', message: 'Face crop quality passed.', details: { faceBlur, minBlur } };
 }
 
-export interface OvalFramingGeometry {
-  cx: number;
-  cy: number;
-  rx: number;
-  ry: number;
-}
-
-/**
- * Computes the normalized [0, 1] oval geometry corresponding to the on-screen camera guide.
- * Takes into account:
- * - Image width & height (origW, origH)
- * - Container 4:3 aspect ratio
- * - CSS object-fit: cover viewport mapping
- */
-export function computeNormalizedOvalGeometry(origW: number, origH: number): OvalFramingGeometry {
-  const rOrig = origW / Math.max(1, origH);
-  const rView = 4 / 3;
-
-  // Viewport base oval relative radii inside the visible 4:3 camera window
-  const rxView = 0.28;
-  const ryView = 0.42;
-
-  let wVisible = 1.0;
-  let hVisible = 1.0;
-
-  if (rOrig >= rView) {
-    // Wider image (e.g. 16:9) cropped horizontally by 4:3 container
-    wVisible = rView / rOrig;
-    hVisible = 1.0;
-  } else {
-    // Taller image (e.g. 9:16 portrait) cropped vertically by 4:3 container
-    wVisible = 1.0;
-    hVisible = rOrig / rView;
-  }
-
-  return {
-    cx: 0.5,
-    cy: 0.5,
-    rx: rxView * wVisible,
-    ry: ryView * hVisible,
-  };
-}
-
 /**
  * Mathematically evaluates whether the detected face and conservatively expanded head envelope
  * fit inside the normalized official guide oval ((x - cx) / rx)^2 + ((y - cy) / ry)^2 <= 1.0.
@@ -868,7 +842,7 @@ export function evaluateFaceFramingInOval(
   // Check 3: Centering within tolerance
   const centerDu = Math.abs(faceCenterX - oval.cx) / oval.rx;
   const centerDv = Math.abs(faceCenterY - oval.cy) / oval.ry;
-  if (centerDu > 0.40 || centerDv > 0.40) {
+  if (centerDu > MAX_CENTER_OFFSET_X || centerDv > MAX_CENTER_OFFSET_Y) {
     return {
       passed: false,
       code: 'face_off_center',
@@ -878,14 +852,14 @@ export function evaluateFaceFramingInOval(
 
   // Check 4: Face size relative to oval
   const faceOvalHeightRatio = vH / (2 * oval.ry);
-  if (faceOvalHeightRatio < 0.25) {
+  if (faceOvalHeightRatio < MIN_FACE_OVAL_HEIGHT_RATIO) {
     return {
       passed: false,
       code: 'face_too_small',
       message: 'Move closer to the camera so your face fills the guide.',
     };
   }
-  if (faceOvalHeightRatio > 0.88) {
+  if (faceOvalHeightRatio > MAX_FACE_OVAL_HEIGHT_RATIO) {
     return {
       passed: false,
       code: 'face_outside_guide',
@@ -908,13 +882,13 @@ export function evaluateFaceFramingInOval(
   }
 
   // Check 6: Expanded head envelope (accounting for forehead, hair top, and chin)
-  const headTop = Math.max(0, vY - 0.30 * vH);
-  const headBottom = Math.min(1, vY + vH + 0.05 * vH);
-  const headLeft = Math.max(0, uX - 0.12 * uW);
-  const headRight = Math.min(1, uX + uW + 0.12 * uW);
+  const headTop = Math.max(0, vY - HEAD_TOP_EXPANSION_RATIO * vH);
+  const headBottom = Math.min(1, vY + vH + HEAD_BOTTOM_EXPANSION_RATIO * vH);
+  const headLeft = Math.max(0, uX - HEAD_SIDE_EXPANSION_RATIO * uW);
+  const headRight = Math.min(1, uX + uW + HEAD_SIDE_EXPANSION_RATIO * uW);
 
   // If head envelope hits image edge, it is cropped
-  if (vY - 0.30 * vH < 0 || uX - 0.12 * uW < 0 || uX + uW + 0.12 * uW > 1) {
+  if (vY - HEAD_TOP_EXPANSION_RATIO * vH < 0 || uX - HEAD_SIDE_EXPANSION_RATIO * uW < 0 || uX + uW + HEAD_SIDE_EXPANSION_RATIO * uW > 1) {
     return {
       passed: false,
       code: 'head_outside_guide',
@@ -924,7 +898,7 @@ export function evaluateFaceFramingInOval(
 
   // Check head top against oval
   const headTopDist = ovalDist(faceCenterX, headTop);
-  if (headTopDist > 1.0) {
+  if (headTopDist > OVAL_ENVELOPE_TOLERANCE) {
     return {
       passed: false,
       code: 'head_outside_guide',
@@ -934,7 +908,7 @@ export function evaluateFaceFramingInOval(
 
   // Check chin envelope against bottom of oval
   const headBottomDist = ovalDist(faceCenterX, headBottom);
-  if (headBottomDist > 1.0) {
+  if (headBottomDist > OVAL_ENVELOPE_TOLERANCE) {
     return {
       passed: false,
       code: 'head_outside_guide',
@@ -944,7 +918,7 @@ export function evaluateFaceFramingInOval(
 
   const headLeftDist = ovalDist(headLeft, faceCenterY);
   const headRightDist = ovalDist(headRight, faceCenterY);
-  if (headLeftDist > 1.0 || headRightDist > 1.0) {
+  if (headLeftDist > OVAL_ENVELOPE_TOLERANCE || headRightDist > OVAL_ENVELOPE_TOLERANCE) {
     return {
       passed: false,
       code: 'head_outside_guide',

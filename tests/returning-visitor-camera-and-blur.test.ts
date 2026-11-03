@@ -593,9 +593,9 @@ describe('PART F: Mobile Matrix Viewports & Touch Target Contract', () => {
   ];
 
   for (const vp of mobileViewports) {
-    it(`supports ${vp.name} (${vp.width}x${vp.height}) with 4:3 camera aspect ratio and min-height >= 56px action buttons`, () => {
-      // 4:3 aspect ratio container for camera and preview
-      expect(getPassSrc).toContain('aspect-[4/3]');
+    it(`supports ${vp.name} (${vp.width}x${vp.height}) with 3:4 portrait camera aspect ratio and min-height >= 56px action buttons`, () => {
+      // 3:4 portrait aspect ratio container for camera and preview
+      expect(getPassSrc).toContain('aspect-[3/4]');
       // Primary touch actions on mobile enforce min-h-[56px]
       expect(getPassSrc).toContain('min-h-[56px] sm:min-h-11');
       // Full width column-reverse on mobile with >=12px vertical gap

@@ -2,8 +2,11 @@ import { describe, it, expect, vi } from 'vitest';
 import {
   uploadCheckpointedEvidence,
   createIssueTransaction,
+  abandonPortalEvidence,
+  invalidatePortalEvidenceCheckpoint,
   PortalSessionError,
   UploadAuthorizationError,
+  UploadQuotaExceededError,
   StorageUploadError,
   PreflightQualityError,
 } from '../src/services/visitorRegistration.js';
@@ -18,6 +21,11 @@ describe('Upload Authorization & Storage Resilience Contract', () => {
     expect(authErr.name).toBe('UploadAuthorizationError');
     expect(authErr.code).toBe('upload_intent_unauthorized');
     expect(authErr.status).toBe(403);
+
+    const quotaErr = new UploadQuotaExceededError('too_many_pending_intents', 'Quota exceeded');
+    expect(quotaErr.name).toBe('UploadQuotaExceededError');
+    expect(quotaErr.code).toBe('too_many_pending_intents');
+    expect(quotaErr.status).toBe(429);
 
     const storageRetryable = new StorageUploadError('storage_timeout', 'Timeout 15s', 408, true);
     expect(storageRetryable.name).toBe('StorageUploadError');
@@ -157,5 +165,92 @@ describe('Upload Authorization & Storage Resilience Contract', () => {
     await expect(
       uploadCheckpointedEvidence(mockClient, 'portal', 'photo', mockBlob, tx)
     ).rejects.toThrow(StorageUploadError);
+  });
+
+  it('6. Reclassifies P0003 too_many_pending_intents as UploadQuotaExceededError (429)', async () => {
+    const tx = createIssueTransaction('portal');
+    const mockBlob = new Blob(['sample-image-data'], { type: 'image/jpeg' });
+
+    // Simulate quota exceeded error from PostgreSQL create_upload_intent
+    const mockRpc = vi.fn().mockReturnValue({
+      abortSignal: vi.fn().mockReturnThis(),
+      single: vi.fn().mockResolvedValue({
+        data: null,
+        error: {
+          code: 'P0003',
+          message: 'too_many_pending_intents: pending upload quota exceeded (maximum 10 active intents allowed per session)',
+        },
+      }),
+    });
+
+    const mockClient = {
+      schema: vi.fn().mockReturnValue({ rpc: mockRpc }),
+      storage: { from: vi.fn() },
+    } as any;
+
+    await expect(
+      uploadCheckpointedEvidence(mockClient, 'portal', 'photo', mockBlob, tx)
+    ).rejects.toThrow(UploadQuotaExceededError);
+  });
+
+  it('7. abandonPortalEvidence calls abandon-intent endpoint and clears in-memory transaction', async () => {
+    const tx = createIssueTransaction('portal');
+    tx.photoIntentId = 'intent-to-abandon-123';
+    tx.photoCheckpoint = {
+      intentId: 'intent-to-abandon-123',
+      bucketId: 'visitor-evidence',
+      objectPath: 'portal/intent-to-abandon-123/photo.jpg',
+      contentType: 'image/webp',
+      maxBytes: 5242880,
+      uploaded: true,
+    };
+
+    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      new Response(JSON.stringify({ success: true, intentId: 'intent-to-abandon-123' }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      })
+    );
+
+    const mockClient = {
+      auth: {
+        getSession: vi.fn().mockResolvedValue({ data: { session: { access_token: 'test-session-jwt' } } }),
+      },
+    } as any;
+
+    await abandonPortalEvidence(tx, 'photo', mockClient);
+
+    expect(tx.photoIntentId).toBeNull();
+    expect(tx.photoCheckpoint).toBeNull();
+    expect(fetchSpy).toHaveBeenCalledWith(
+      '/api/passes/abandon-intent',
+      expect.objectContaining({
+        method: 'POST',
+        headers: expect.objectContaining({
+          Authorization: 'Bearer test-session-jwt',
+          'Content-Type': 'application/json',
+        }),
+        body: JSON.stringify({ intentId: 'intent-to-abandon-123' }),
+      })
+    );
+
+    fetchSpy.mockRestore();
+  });
+
+  it('8. Invalidation and retake properly isolates subsequent upload attempts', () => {
+    const tx = createIssueTransaction('portal');
+    tx.photoIntentId = 'old-intent-id';
+    tx.photoCheckpoint = {
+      intentId: 'old-intent-id',
+      bucketId: 'visitor-evidence',
+      objectPath: 'portal/old-intent-id/photo.jpg',
+      contentType: 'image/webp',
+      maxBytes: 5242880,
+      uploaded: true,
+    };
+
+    invalidatePortalEvidenceCheckpoint(tx, 'photo');
+    expect(tx.photoIntentId).toBeNull();
+    expect(tx.photoCheckpoint).toBeNull();
   });
 });

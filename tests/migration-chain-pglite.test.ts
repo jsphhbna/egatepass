@@ -200,6 +200,11 @@ describe('Permanent PostgreSQL Migration Chain & Schema Contracts (PGlite)', () 
     // 7. dashboard aggregates RPCs (Repair Group N)
     expect(funcMap.has('dashboard_calendar_counts')).toBe(true);
     expect(funcMap.has('dashboard_today_insights')).toBe(true);
+
+    // 8. abandon_upload_intent signature
+    expect(funcMap.has('abandon_upload_intent')).toBe(true);
+    const abandonArgs = funcMap.get('abandon_upload_intent')!;
+    expect(abandonArgs).toContain('requested_intent_id');
   }, 60000);
 
   it('C. Enum contract: verifies visit_event_type and pass_status values', async () => {
@@ -704,7 +709,23 @@ describe('Permanent PostgreSQL Migration Chain & Schema Contracts (PGlite)', () 
       "select * from api.create_upload_intent('portal'::public.pass_source, 'photo'::public.evidence_kind, 'image/jpeg');"
     );
     expect(uploadRes.rows.length).toBe(1);
+    const createdIntentId = uploadRes.rows[0].intent_id;
+
+    // Can abandon the upload intent via RPC, setting status to expired
+    const abandonRes = await db.query(
+      `select * from api.abandon_upload_intent('${createdIntentId}'::uuid);`
+    );
+    expect(abandonRes.rows.length).toBe(1);
+    expect(abandonRes.rows[0].ok).toBe(true);
+    expect(abandonRes.rows[0].code).toBe('abandoned');
+
     await db.exec('reset role;');
+
+    // Verify under service_role that status was transitioned to 'expired'
+    const checkStatus = await db.query(
+      `select status from public.upload_intents where id = '${createdIntentId}'::uuid;`
+    );
+    expect(checkStatus.rows[0].status).toBe('expired');
 
     // Verify private.is_portal_actor() under service_role
     await db.exec(`set request.jwt.claims = '{"sub": "${ANON_VISITOR_UID}"}';`);

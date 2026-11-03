@@ -2,6 +2,7 @@ import { createGroupedRouter } from '../../server/router.js';
 import email from '../../server/routes/passes/email.js';
 import issue from '../../server/routes/passes/issue.js';
 import verifyIdentity from '../../server/routes/passes/verify-identity.js';
+import abandonIntent from '../../server/routes/passes/abandon-intent.js';
 import identifyReturning from '../../server/routes/passes/identify-returning.js';
 import lookupReturning from '../../server/routes/passes/lookup-returning.js';
 import capabilities from '../../server/routes/passes/capabilities.js';
@@ -13,6 +14,8 @@ const router = createGroupedRouter('passes', {
   email,
   issue,
   'verify-identity': verifyIdentity,
+  'abandon-intent': abandonIntent,
+  'abandon/intent': abandonIntent,
   'lookup-returning': lookupReturning,
   'lookup/returning': lookupReturning,
   'identify-returning': identifyReturning,

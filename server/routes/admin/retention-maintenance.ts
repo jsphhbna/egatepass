@@ -359,7 +359,8 @@ async function handleRequest(request: Request): Promise<Response> {
     const { data: abandonedIntents, error: intentError } = await admin
       .from('upload_intents')
       .select('id, bucket_id, object_path')
-      .eq('status', 'pending')
+      .in('status', ['pending', 'expired'])
+      .is('visitor_id', null)
       .lt('expires_at', oneHourAgo)
       .limit(batchSize);
 

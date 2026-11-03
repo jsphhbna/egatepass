@@ -126,6 +126,13 @@ export const ROUTE_CONTRACT_MATRIX: readonly RouteContract[] = [
     allowedMethods: ['POST'],
     handlerModule: 'server/routes/passes/verify-identity.ts',
   },
+  {
+    path: '/api/passes/abandon-intent',
+    group: 'passes',
+    subpath: 'abandon-intent',
+    allowedMethods: ['POST'],
+    handlerModule: 'server/routes/passes/abandon-intent.ts',
+  },
 
   // Device Router (6 routes)
   {

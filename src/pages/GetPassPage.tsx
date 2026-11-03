@@ -20,11 +20,18 @@ import {
   type ReturningLookupCandidate,
   PortalSessionError,
   UploadAuthorizationError,
+  UploadQuotaExceededError,
+  abandonPortalEvidence,
   StorageUploadError,
   PreflightQualityError,
   type PortalIssueTransaction,
   type IssueTransactionPhase,
 } from '@/services/visitorRegistration';
+import {
+  SELFIE_TARGET_ASPECT_RATIO,
+  SELFIE_OVAL_WIDTH_PERCENT,
+  SELFIE_OVAL_HEIGHT_PERCENT,
+} from '@/lib/selfieFramingContract';
 import { StructuredAddressField } from '@/components/StructuredAddressField';
 import type { SelectedPsgcAddress } from '@/components/AddressCascadingSelector';
 import { formatStructuredAddress } from '@/lib/psgc';
@@ -466,7 +473,7 @@ export function GetPassPage() {
   }, [loadConfig]);
 
   // SINGLE CAMERA RULE: Live face camera is the ONLY custom camera in the entire flow
-  const faceWebcam = useWebcam({ facingMode: 'user', width: 640, height: 480, allowCaptureMirroring: false });
+  const faceWebcam = useWebcam({ facingMode: 'user', width: 720, height: 960, targetAspectRatio: SELFIE_TARGET_ASPECT_RATIO, allowCaptureMirroring: false });
 
   // Camera unmount cleanup only: stop camera tracks when the page actually unmounts
   useEffect(() => {
@@ -1001,7 +1008,8 @@ export function GetPassPage() {
   function onRetakeReturningSelfie() {
     if (isIdentifyingReturning) return;
 
-    // 1. Invalidate previous upload checkpoint
+    // 1. Invalidate and abandon previous upload checkpoint
+    void abandonPortalEvidence(portalTransactionRef.current, 'photo');
     invalidatePortalEvidenceCheckpoint(portalTransactionRef.current, 'photo');
 
     // 2. Revoke previous preview URL exactly once
@@ -1066,6 +1074,7 @@ export function GetPassPage() {
       const data = await identifyReturningVisitor(tx, photoRes.intentId, selectedReturningCandidate.profileId);
 
       if (!data?.matched || !data.profile || !data.matchToken) {
+        void abandonPortalEvidence(tx, 'photo');
         const reasonCode = (data as any)?.reasonCode || '';
         const rawMsg = data?.message || '';
         let userFriendlyMsg = 'Make sure your face is clearly visible, look directly at the camera and use even lighting. You can retake your selfie and try again.';
@@ -1148,7 +1157,15 @@ export function GetPassPage() {
       setStep('returning_confirm');
       toast.success(`Welcome back, ${p.firstName}!`);
     } catch (err: any) {
-      setReturningIdentifyError(err?.message || 'Identification failed. Please retake your selfie or try again.');
+      if (
+        err instanceof UploadQuotaExceededError ||
+        err?.code === 'too_many_pending_intents' ||
+        err?.message?.toLowerCase().includes('too many upload attempts')
+      ) {
+        setReturningIdentifyError('Too many selfie attempts are pending. Please wait a moment or retake your selfie.');
+      } else {
+        setReturningIdentifyError(err?.message || 'Identification failed. Please retake your selfie or try again.');
+      }
     } finally {
       setIsIdentifyingReturning(false);
       turnstileRef.current?.resetChallenge();
@@ -1325,6 +1342,7 @@ export function GetPassPage() {
   }
 
   function onRetakeLivePhoto() {
+    void abandonPortalEvidence(portalTransactionRef.current, 'photo');
     invalidatePortalEvidenceCheckpoint(portalTransactionRef.current, 'photo');
     photoUrl.clear();
     setPhotoBlob(null);
@@ -1377,6 +1395,8 @@ export function GetPassPage() {
       // 3. Call trusted server face-presence/geometry preflight
       const preflight = await preflightPortalLiveFace(tx, livePhotoIntentIdRef.current);
       if (!preflight.ok) {
+        void abandonPortalEvidence(portalTransactionRef.current, 'photo');
+        livePhotoIntentIdRef.current = null;
         setLiveFaceError({
           category: 'quality',
           title: 'Photo Quality Check Failed',
@@ -1431,6 +1451,24 @@ export function GetPassPage() {
         return;
       }
 
+      // 2b. Quota exceeded (pending intents limit reached)
+      if (
+        err instanceof UploadQuotaExceededError ||
+        err?.code === 'too_many_pending_intents' ||
+        msg.includes('too many pending') ||
+        msg.includes('too many upload attempts')
+      ) {
+        setLiveFaceError({
+          category: 'upload',
+          title: 'Too Many Upload Attempts',
+          message:
+            'Too many pending photo attempts have accumulated. Please wait a moment or retake your selfie to continue.',
+          reasonCode: 'too_many_pending_intents',
+        });
+        toast.error('Too many upload attempts in progress. Please wait a moment.');
+        return;
+      }
+
       // 3. Upload intent authorization failure (explicit policy / permission rejection)
       if (
         err instanceof UploadAuthorizationError ||
@@ -1450,6 +1488,8 @@ export function GetPassPage() {
 
       // 4. Preflight quality error
       if (err instanceof PreflightQualityError) {
+        void abandonPortalEvidence(portalTransactionRef.current, 'photo');
+        livePhotoIntentIdRef.current = null;
         setLiveFaceError({
           category: 'quality',
           title: 'Photo Quality Check Failed',
@@ -2699,7 +2739,7 @@ export function GetPassPage() {
 
               {photoPreview ? (
                 <div className="space-y-4">
-                  <div className="relative mx-auto max-w-xs overflow-hidden rounded-2xl border-2 border-[var(--color-border)] shadow-sm aspect-[4/3] bg-black">
+                  <div className="relative mx-auto max-w-sm overflow-hidden rounded-2xl border-2 border-[var(--color-border)] shadow-sm aspect-[3/4] bg-black">
                     <img src={photoPreview} alt="Captured face" className="w-full h-full object-cover" style={{ transform: 'scaleX(-1)' }} />
                   </div>
 
@@ -2744,7 +2784,7 @@ export function GetPassPage() {
                   </div>
 
                   {/* Single camera viewport with oval guide */}
-                  <div className="mx-auto w-full max-w-md overflow-hidden rounded-2xl border-2 border-[var(--color-brand)] bg-black aspect-[4/3] relative flex items-center justify-center shadow-inner">
+                  <div className="mx-auto w-full max-w-sm overflow-hidden rounded-2xl border-2 border-[var(--color-brand)] bg-black aspect-[3/4] relative flex items-center justify-center shadow-inner">
                     {faceWebcam.isStarting && (
                       <div className="absolute inset-0 z-20 flex flex-col items-center justify-center bg-black/60 text-white text-xs">
                         <Loader2 className="h-6 w-6 animate-spin mb-1 text-[var(--color-brand)]" />
@@ -2764,7 +2804,7 @@ export function GetPassPage() {
 
                     {/* Face Guide Oval */}
                     <div className="absolute inset-0 pointer-events-none flex items-center justify-center">
-                      <div className="w-48 h-64 sm:w-56 sm:h-72 border-2 border-dashed border-white/80 rounded-[50%] shadow-[0_0_0_9999px_rgba(0,0,0,0.45)] flex items-center justify-center">
+                      <div style={{ width: `${SELFIE_OVAL_WIDTH_PERCENT}%`, height: `${SELFIE_OVAL_HEIGHT_PERCENT}%` }} className="border-2 border-dashed border-white/80 rounded-[50%] shadow-[0_0_0_9999px_rgba(0,0,0,0.45)] flex items-center justify-center">
                         <span className="sr-only">Center face in oval</span>
                       </div>
                     </div>
@@ -3631,7 +3671,7 @@ export function GetPassPage() {
               {/* STAGE 1: Live Camera Stream */}
               {returningCaptureStage === 'live' && (
                 <div className="space-y-4">
-                  <div className="mx-auto w-full max-w-md overflow-hidden rounded-2xl border-2 border-[var(--color-brand)] bg-black aspect-[4/3] relative flex items-center justify-center shadow-inner">
+                  <div className="mx-auto w-full max-w-sm overflow-hidden rounded-2xl border-2 border-[var(--color-brand)] bg-black aspect-[3/4] relative flex items-center justify-center shadow-inner">
                     {faceWebcam.isStarting && (
                       <div className="absolute inset-0 z-20 flex flex-col items-center justify-center bg-black/60 text-white text-xs">
                         <Loader2 className="h-6 w-6 animate-spin mb-1 text-[var(--color-brand)]" />
@@ -3649,7 +3689,7 @@ export function GetPassPage() {
                       />
                     )}
                     <div className="absolute inset-0 pointer-events-none flex items-center justify-center">
-                      <div className="w-48 h-64 sm:w-56 sm:h-72 border-2 border-dashed border-white/80 rounded-[50%] shadow-[0_0_0_9999px_rgba(0,0,0,0.45)] flex items-center justify-center">
+                      <div style={{ width: `${SELFIE_OVAL_WIDTH_PERCENT}%`, height: `${SELFIE_OVAL_HEIGHT_PERCENT}%` }} className="border-2 border-dashed border-white/80 rounded-[50%] shadow-[0_0_0_9999px_rgba(0,0,0,0.45)] flex items-center justify-center">
                         <span className="sr-only">Center face in oval</span>
                       </div>
                     </div>
@@ -3691,7 +3731,7 @@ export function GetPassPage() {
               {/* STAGE 2: Still-Photo Review & Explicit Confirmation */}
               {returningCaptureStage === 'review' && (
                 <div className="space-y-4">
-                  <div className="mx-auto w-full max-w-md overflow-hidden rounded-2xl border-2 border-[var(--color-border-strong)] bg-black aspect-[4/3] relative flex items-center justify-center shadow-inner">
+                  <div className="mx-auto w-full max-w-sm overflow-hidden rounded-2xl border-2 border-[var(--color-border-strong)] bg-black aspect-[3/4] relative flex items-center justify-center shadow-inner">
                     {isIdentifyingReturning && (
                       <div className="absolute inset-0 z-20 flex flex-col items-center justify-center bg-black/60 text-white text-xs p-4 text-center">
                         <Loader2 className="h-7 w-7 animate-spin mb-2 text-[var(--color-brand)]" />

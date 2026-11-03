@@ -5,6 +5,7 @@ export interface UseWebcamOptions {
   width?: number;
   height?: number;
   allowCaptureMirroring?: boolean;
+  targetAspectRatio?: number;
 }
 
 export interface UseWebcamStartOptions {
@@ -13,6 +14,7 @@ export interface UseWebcamStartOptions {
 
 export interface UseWebcamCaptureOptions {
   mirror?: boolean;
+  targetAspectRatio?: number;
 }
 
 export interface UseWebcamResult {
@@ -35,7 +37,7 @@ export interface UseWebcamResult {
 }
 
 export function useWebcam(options: UseWebcamOptions = {}): UseWebcamResult {
-  const { facingMode = 'user', width = 640, height = 480, allowCaptureMirroring = true } = options;
+  const { facingMode = 'user', width = 640, height = 480, allowCaptureMirroring = true, targetAspectRatio } = options;
   const videoRef = useRef<HTMLVideoElement>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const isStartingRef = useRef(false);
@@ -265,9 +267,36 @@ export function useWebcam(options: UseWebcamOptions = {}): UseWebcamResult {
       const video = videoRef.current;
       if (!video || !isActive) return null;
 
+      const videoW = video.videoWidth || width;
+      const videoH = video.videoHeight || height;
+
+      const effectiveTargetAspectRatio = captureOptions?.targetAspectRatio ?? targetAspectRatio;
+
+      let cropX = 0;
+      let cropY = 0;
+      let cropW = videoW;
+      let cropH = videoH;
+
+      if (effectiveTargetAspectRatio && effectiveTargetAspectRatio > 0) {
+        const streamRatio = videoW / Math.max(1, videoH);
+        if (streamRatio > effectiveTargetAspectRatio) {
+          // Stream is wider than target aspect ratio (crop horizontally, centered)
+          cropW = Math.round(videoH * effectiveTargetAspectRatio);
+          cropH = videoH;
+          cropX = Math.round((videoW - cropW) / 2);
+          cropY = 0;
+        } else if (streamRatio < effectiveTargetAspectRatio) {
+          // Stream is taller than target aspect ratio (crop vertically, centered)
+          cropW = videoW;
+          cropH = Math.round(videoW / effectiveTargetAspectRatio);
+          cropX = 0;
+          cropY = Math.round((videoH - cropH) / 2);
+        }
+      }
+
       const canvas = document.createElement('canvas');
-      canvas.width = video.videoWidth || width;
-      canvas.height = video.videoHeight || height;
+      canvas.width = cropW;
+      canvas.height = cropH;
 
       const ctx = canvas.getContext('2d');
       if (!ctx) return null;
@@ -284,7 +313,7 @@ export function useWebcam(options: UseWebcamOptions = {}): UseWebcamResult {
         ctx.scale(-1, 1);
       }
 
-      ctx.drawImage(video, 0, 0);
+      ctx.drawImage(video, cropX, cropY, cropW, cropH, 0, 0, cropW, cropH);
 
       // Convert to blob synchronously via dataURL for immediate use
       const dataUrl = canvas.toDataURL('image/webp', 0.85);
@@ -297,7 +326,7 @@ export function useWebcam(options: UseWebcamOptions = {}): UseWebcamResult {
       }
       return new Blob([ab], { type: mimeString });
     },
-    [isActive, mirrorCapture, allowCaptureMirroring, width, height]
+    [isActive, mirrorCapture, allowCaptureMirroring, width, height, targetAspectRatio]
   );
 
   // Cleanup on unmount
