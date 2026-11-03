@@ -71,12 +71,12 @@ export function TimedSkipWarningModal({
           {countdown > 0 ? `Please wait ${countdown} seconds before continuing without an email.` : 'You can now choose to continue without an email.'}
         </div>
 
-        <div className="flex w-full flex-col-reverse gap-3 sm:flex-row sm:justify-end">
+        <div className="flex w-full flex-col-reverse gap-3 sm:flex-row sm:justify-end pt-2">
           <Button
             type="button"
             variant="secondary"
             onClick={onCancel}
-            className="w-full sm:w-auto flex-1"
+            className="w-full sm:w-auto flex-1 min-h-[56px] sm:min-h-11 text-[15px] sm:text-sm"
           >
             Go Back
           </Button>
@@ -85,7 +85,7 @@ export function TimedSkipWarningModal({
             variant="primary"
             onClick={onConfirmSkip}
             disabled={countdown > 0}
-            className="w-full sm:w-auto flex-1"
+            className="w-full sm:w-auto flex-1 min-h-[56px] sm:min-h-11 text-[15px] sm:text-sm"
           >
             {countdown > 0 ? `Continue Without Email — ${countdown}` : 'Continue Without Email'}
           </Button>

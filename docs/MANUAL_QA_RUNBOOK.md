@@ -664,3 +664,36 @@ stateDiagram-v2
    - Verify names are extracted without label corruption.
    - Verify existing entered fields are not overwritten.
    - Verify Driver's License comma format correctly assigns surname before comma, middle name to final token, and given name to preceding tokens.
+
+### 16.9 Mobile UX, Remember Me Enrollment & Returning Visitor 1:1 Verification QA (iPhone 12 Safari Checklist)
+1. **iPhone 12 Safari Device / Viewport Setup**:
+   - Test device: iPhone 12 (or Mobile Safari viewport 390 × 844, devicePixelRatio: 3).
+   - Ensure iOS Safari bottom toolbar or dynamic tab bar is enabled.
+2. **Prominent Remember Me Biometric Enrollment**:
+   - Navigate to `/get-pass` and complete New Visitor steps through to Review.
+   - Confirm the institutional enrollment card ("Remember me for faster future visits") is visible immediately below the Biometric Identity Verified badge before scrolling into visitor information summaries.
+   - Verify visual elements: EARIST maroon border (`#7A0A0A`), amber "Optional" badge, 28px custom checkbox, 16px title, 14px description.
+   - Tap anywhere on the card surface to toggle: confirm state changes cleanly between checked (maroon/amber gradient) and unchecked (neutral white surface).
+   - Tap directly on the 28px checkbox: confirm it does not double-toggle.
+   - If bringing a vehicle, confirm the "Save this vehicle to my profile" sub-option appears within the card when checked.
+   - Complete pass issuance: confirm pass generates normally and toast confirms profile enrollment.
+3. **iPhone Email Delivery Modal & Non-Overlapping Skip Warning**:
+   - On the delivery step after pass generation, open the Email Pass modal.
+   - Confirm the iOS virtual keyboard DOES NOT open automatically on modal mount (no autoFocus popup obscuring modal buttons).
+   - Tap the recipient email input: confirm keyboard opens smoothly, font size does not trigger auto-zoom (≥ 16px), and modal scrolls comfortably.
+   - Confirm action buttons on mobile form a full-width vertical stack with `min-h-[56px]` and ≥ 12px vertical separation.
+   - Tap "Continue without email": confirm `EmailPassModal` closes and `TimedSkipWarningModal` opens cleanly as the SOLE active dialog in DOM (no stacked dark backdrops or trapped focus).
+   - Tap "Go Back": confirm skip warning closes and `EmailPassModal` reopens with previously entered email and consent intact.
+   - Wait for 5-second countdown on skip warning: tap "Continue Without Email" to confirm skip and proceed to completed pass screen.
+4. **Returning Visitor 7-Stage Capture, Freeze, Review & Verify Workflow**:
+   - Navigate to `/get-pass` and select "I Am a Returning Visitor".
+   - Search for an enrolled name (e.g. registered during New Visitor test). Select the masked candidate profile.
+   - Tap "Proceed to Live Face Verification":
+     - *Stage 1 (Live)*: Confirm live camera view starts inside the guided oval with "Capture Your Selfie" heading and "Capture Selfie" action. Verify NO network or biometric calls occur during live camera stream.
+     - *Stage 2 (Freeze)*: Tap "Capture Selfie". Confirm live video immediately stops, camera stream closes, and the captured frame remains frozen on screen.
+     - *Stage 3 (Review)*: Confirm heading changes to "Review Your Selfie" with two prominent actions: "Retake Photo" and "Verify This Photo" (both `min-h-[56px]`).
+     - *Retake Check*: Tap "Retake Photo". Confirm frozen photo is discarded, object URL revoked, webcam restarts, and UI returns to live stage. Tap "Capture Selfie" again.
+     - *Stage 4 (Verify)*: Tap "Verify This Photo". Confirm loading overlay appears ("Verifying facial identity…"), client-side quality evaluation runs, photo is uploaded to upload intent, and single 1:1 biometric comparison request is sent.
+     - *Stage 5 (Match Accepted)*: Confirm matching returns profile, pre-fills form, advances to `returning_confirm`, and displays "Welcome back, [First Name]!" toast. Verify the verified photo blob is reused for subsequent pass issuance.
+     - *Stage 6 (Match Rejected / Low Quality)*: If an unmatching face is presented, confirm UI displays "We could not verify this photo" error alert near frozen image with a prominent "Retake Selfie" button without navigating away or losing candidate profile.
+

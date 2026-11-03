@@ -294,25 +294,27 @@ export function EmailPassModal({
             <Input
               id="recipient-email"
               type="email"
+              autoComplete="email"
+              inputMode="email"
               value={recipientEmail}
               onChange={(e) => setRecipientEmail(e.target.value)}
               placeholder="visitor@example.com"
               required
               aria-required="true"
-              autoFocus
+              className="min-h-[52px] text-base"
             />
           </FormField>
 
-          <label className="flex items-start gap-2.5 text-xs text-[var(--color-text-secondary)]">
+          <label className="flex items-start gap-3 p-2 -mx-2 rounded-lg cursor-pointer hover:bg-slate-50 transition-colors text-xs sm:text-sm text-[var(--color-text-secondary)] select-none">
             <input
               type="checkbox"
               checked={consent}
               onChange={(e) => setConsent(e.target.checked)}
               required
               aria-required="true"
-              className="mt-0.5 rounded border-[var(--color-border)] text-[var(--color-brand)] focus:ring-[var(--color-brand)]"
+              className="mt-0.5 h-5 w-5 rounded border-[var(--color-border)] text-[var(--color-brand)] focus:ring-[var(--color-brand)] shrink-0 cursor-pointer"
             />
-            <span>
+            <span className="leading-relaxed">
               I consent to receive my EARIST gate pass QR code and visit instructions at this email address. <span className="text-red-500 font-bold">*</span>
             </span>
           </label>
@@ -323,18 +325,36 @@ export function EmailPassModal({
               : 'Email delivery is optional. You can always download or save your pass directly.'}
           </p>
 
-          <div className="flex gap-2 pt-2">
+          <div className="flex flex-col-reverse sm:flex-row gap-3 pt-2">
             {isDeliveryGate && onSkip ? (
-              <Button type="button" variant="secondary" onClick={handleSkip} disabled={loading} className="flex-1">
+              <Button
+                type="button"
+                variant="secondary"
+                onClick={handleSkip}
+                disabled={loading}
+                className="w-full sm:flex-1 min-h-[56px] sm:min-h-11 text-[15px] sm:text-sm"
+              >
                 Continue without email
               </Button>
             ) : (
-              <Button type="button" variant="secondary" onClick={handleClose} disabled={loading} className="flex-1">
+              <Button
+                type="button"
+                variant="secondary"
+                onClick={handleClose}
+                disabled={loading}
+                className="w-full sm:flex-1 min-h-[56px] sm:min-h-11 text-[15px] sm:text-sm"
+              >
                 Cancel
               </Button>
             )}
-            <Button type="submit" loading={loading} disabled={loading || !consent} className="flex-1" icon={<Mail className="h-4 w-4" />}>
-              Send Code
+            <Button
+              type="submit"
+              loading={loading}
+              disabled={loading || !consent}
+              className="w-full sm:flex-1 min-h-[56px] sm:min-h-11 text-[15px] sm:text-sm"
+              icon={<Mail className="h-5 w-5" />}
+            >
+              Send Verification Code
             </Button>
           </div>
         </form>
@@ -357,14 +377,13 @@ export function EmailPassModal({
               value={code}
               onChange={(e) => setCode(e.target.value.replace(/\D/g, ''))}
               placeholder="123456"
-              className="text-center text-lg font-mono tracking-widest"
+              className="text-center text-xl font-mono tracking-widest min-h-[52px] text-base"
               required
               aria-required="true"
-              autoFocus
             />
           </FormField>
 
-          <div className="flex items-center justify-between text-xs">
+          <div className="flex items-center justify-between text-xs py-1">
             <button
               type="button"
               onClick={() => {
@@ -376,7 +395,7 @@ export function EmailPassModal({
                 requestCodeRequestIdRef.current = crypto.randomUUID();
                 sendRequestIdRef.current = crypto.randomUUID();
               }}
-              className="text-[var(--color-brand)] hover:underline"
+              className="text-[var(--color-brand)] hover:underline p-1 -m-1 font-medium"
             >
               Change email address
             </button>
@@ -388,52 +407,53 @@ export function EmailPassModal({
                 void executeRequestCode(true);
               }}
               disabled={loading || resendCooldown > 0}
-              className="text-[var(--color-brand)] hover:underline disabled:opacity-50 disabled:no-underline font-medium"
+              className="text-[var(--color-brand)] hover:underline disabled:opacity-50 disabled:no-underline font-medium p-1 -m-1"
             >
               {resendCooldown > 0 ? `Resend code in ${resendCooldown}s` : 'Resend code'}
             </button>
           </div>
 
-          <div className="flex gap-2 pt-2">
-            <Button
-              type="button"
-              variant="secondary"
-              onClick={() => {
-                setStep('input');
-                setVerificationId(null);
-                requestCodeAttemptStateRef.current = 'ready';
-                requestCodeRequestIdRef.current = crypto.randomUUID();
-                sendRequestIdRef.current = crypto.randomUUID();
-              }}
-              disabled={loading}
-              className="flex-1"
-              icon={<ArrowLeft className="h-4 w-4" />}
-            >
-              Back
-            </Button>
-            <Button
-              type="submit"
-              loading={loading}
-              disabled={loading || code.trim().length !== 6}
-              className="flex-1"
-              icon={<CheckCircle2 className="h-4 w-4" />}
-            >
-              Verify &amp; Send
-            </Button>
-          </div>
-
-          {isDeliveryGate && onSkip && (
-            <div className="text-center pt-1">
-              <button
+          <div className="space-y-3 pt-2">
+            <div className="flex flex-col-reverse sm:flex-row gap-3">
+              <Button
                 type="button"
+                variant="secondary"
+                onClick={() => {
+                  setStep('input');
+                  setVerificationId(null);
+                  requestCodeAttemptStateRef.current = 'ready';
+                  requestCodeRequestIdRef.current = crypto.randomUUID();
+                  sendRequestIdRef.current = crypto.randomUUID();
+                }}
+                disabled={loading}
+                className="w-full sm:flex-1 min-h-[56px] sm:min-h-11 text-[15px] sm:text-sm"
+                icon={<ArrowLeft className="h-5 w-5" />}
+              >
+                Back
+              </Button>
+              <Button
+                type="submit"
+                loading={loading}
+                disabled={loading || code.trim().length !== 6}
+                className="w-full sm:flex-1 min-h-[56px] sm:min-h-11 text-[15px] sm:text-sm"
+                icon={<CheckCircle2 className="h-5 w-5" />}
+              >
+                Verify &amp; Send
+              </Button>
+            </div>
+
+            {isDeliveryGate && onSkip && (
+              <Button
+                type="button"
+                variant="secondary"
                 onClick={handleSkip}
                 disabled={loading}
-                className="text-xs text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)] hover:underline disabled:opacity-50 disabled:cursor-not-allowed disabled:no-underline"
+                className="w-full min-h-[56px] sm:min-h-10 text-[15px] sm:text-xs text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)]"
               >
                 Continue without email
-              </button>
-            </div>
-          )}
+              </Button>
+            )}
+          </div>
         </form>
       )}
 

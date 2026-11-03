@@ -263,6 +263,11 @@ export function GetPassPage() {
   const [rememberVisitor, setRememberVisitor] = useState(false);
   const [saveVehicle, setSaveVehicle] = useState(false);
 
+  // Returning visitor capture/freeze/review workflow state
+  const [returningCaptureStage, setReturningCaptureStage] = useState<'live' | 'review'>('live');
+  const [returningSelfieBlob, setReturningSelfieBlob] = useState<Blob | null>(null);
+  const [returningSelfieUrl, setReturningSelfieUrl] = useState<string | null>(null);
+
   // Returning visitor 1:1 lookup state
   const [returningLookupFirst, setReturningLookupFirst] = useState('');
   const [returningLookupMiddle, setReturningLookupMiddle] = useState('');
@@ -465,8 +470,11 @@ export function GetPassPage() {
   useEffect(() => {
     return () => {
       faceWebcam.stop();
+      if (returningSelfieUrl) {
+        URL.revokeObjectURL(returningSelfieUrl);
+      }
     };
-  }, []);
+  }, [returningSelfieUrl]);
 
   // Accidental refresh/close protection before pass delivery is secured
   const isDeliverySecured = emailDeliverySecured || isDownloaded;
@@ -590,6 +598,12 @@ export function GetPassPage() {
     setRememberVisitor(false);
     setSaveVehicle(false);
     setShowReturningGateModal(false);
+    setReturningCaptureStage('live');
+    setReturningSelfieBlob(null);
+    if (returningSelfieUrl) {
+      URL.revokeObjectURL(returningSelfieUrl);
+      setReturningSelfieUrl(null);
+    }
 
     // 5. Clear identity evidence & stop webcam
     invalidatePortalEvidenceCheckpoint(portalTransactionRef.current, 'photo');
@@ -943,7 +957,7 @@ export function GetPassPage() {
     }
   }
 
-  async function onCaptureReturningFace() {
+  async function onCaptureReturningSelfie() {
     if (!selectedReturningCandidate) {
       toast.error('Please select your profile before capturing your face.');
       return;
@@ -955,11 +969,52 @@ export function GetPassPage() {
       return;
     }
 
+    if (returningSelfieUrl) {
+      URL.revokeObjectURL(returningSelfieUrl);
+    }
+    const url = URL.createObjectURL(blob);
+    setReturningSelfieBlob(blob);
+    setReturningSelfieUrl(url);
+    faceWebcam.stop();
+    setReturningIdentifyError(null);
+    setReturningCaptureStage('review');
+  }
+
+  function onRetakeReturningSelfie() {
+    if (returningSelfieUrl) {
+      URL.revokeObjectURL(returningSelfieUrl);
+      setReturningSelfieUrl(null);
+    }
+    setReturningSelfieBlob(null);
+    setReturningIdentifyError(null);
+    setReturningCaptureStage('live');
+    void faceWebcam.start();
+  }
+
+  async function onConfirmReturningVerification() {
+    if (!selectedReturningCandidate) {
+      toast.error('Please select your profile before capturing your face.');
+      return;
+    }
+
+    if (!returningSelfieBlob) {
+      toast.error('No captured photo found. Please capture your selfie first.');
+      return;
+    }
+
     setIsIdentifyingReturning(true);
     setReturningIdentifyError(null);
 
     try {
-      // 1. Ensure verified anonymous portal session & transaction
+      // 1. Client-side technical image quality check
+      const evaluation = await evaluateLiveFaceQuality(returningSelfieBlob);
+      if (!evaluation.passed) {
+        setReturningIdentifyError(evaluation.message);
+        toast.error(evaluation.message);
+        return;
+      }
+
+      // 2. Ensure verified anonymous portal session & transaction
       let tx = portalTransactionRef.current;
       if (!tx || !(await validatePortalSession(tx))) {
         let freshCaptchaToken: string | undefined;
@@ -973,18 +1028,27 @@ export function GetPassPage() {
         issueRequestId.current = tx.requestId as ReturnType<typeof crypto.randomUUID>;
       }
 
-      // 2. Upload captured face blob via portal evidence checkpoint
-      const photoRes = await uploadPortalEvidence(tx, 'photo', blob);
+      // 3. Upload captured face blob via portal evidence checkpoint
+      const photoRes = await uploadPortalEvidence(tx, 'photo', returningSelfieBlob);
       tx.photoIntentId = photoRes.intentId;
       tx.photoCheckpoint = photoRes.checkpoint;
 
-      // 3. Identify returning visitor via authenticated 1:1 endpoint
+      // 4. Identify returning visitor via authenticated 1:1 endpoint
       const data = await identifyReturningVisitor(tx, photoRes.intentId, selectedReturningCandidate.profileId);
 
       if (!data?.matched || !data.profile || !data.matchToken) {
-        setReturningIdentifyError(
-          data?.message || 'We could not find a matching profile. Please register as a New Visitor.'
-        );
+        let userFriendlyMsg = 'Make sure your face is clearly visible, look directly at the camera and use even lighting. You can retake your selfie and try again.';
+        const rawMsg = data?.message || '';
+        if (/no face/i.test(rawMsg)) {
+          userFriendlyMsg = 'No face was detected in your selfie. Look directly at the camera with good lighting and retake your photo.';
+        } else if (/multiple/i.test(rawMsg)) {
+          userFriendlyMsg = 'Multiple faces were detected in the photo. Please make sure only you are in frame and retake your selfie.';
+        } else if (/blurry|quality|dark|light/i.test(rawMsg)) {
+          userFriendlyMsg = 'The photo quality was insufficient for biometric verification. Make sure your face is well-lit and not blurry, then retake.';
+        } else if (rawMsg) {
+          userFriendlyMsg = rawMsg;
+        }
+        setReturningIdentifyError(userFriendlyMsg);
         return;
       }
 
@@ -1042,8 +1106,8 @@ export function GetPassPage() {
         setValue('homeLocation', null);
       }
 
-      setPhotoBlob(blob);
-      photoUrl.setFromBlob(blob);
+      setPhotoBlob(returningSelfieBlob);
+      photoUrl.setFromBlob(returningSelfieBlob);
       setIdentityVerified(true);
       faceWebcam.stop();
 
@@ -1056,7 +1120,7 @@ export function GetPassPage() {
       setStep('returning_confirm');
       toast.success(`Welcome back, ${p.firstName}!`);
     } catch (err: any) {
-      setReturningIdentifyError(err?.message || 'Identification failed. Please try again or register as a New Visitor.');
+      setReturningIdentifyError(err?.message || 'Identification failed. Please retake your selfie or try again.');
     } finally {
       setIsIdentifyingReturning(false);
       turnstileRef.current?.resetChallenge();
@@ -2959,6 +3023,78 @@ export function GetPassPage() {
                 </span>
               </div>
 
+              {/* Institutional Biometric Enrollment Card (Remember Me) */}
+              {enrollmentAvailable !== true ? (
+                <div className="rounded-xl border border-slate-200 bg-slate-50 p-4 text-xs text-slate-600">
+                  <div className="flex items-center gap-2 font-semibold text-slate-800">
+                    <Info className="h-4 w-4 text-slate-500 shrink-0" />
+                    <span>Returning Visitor enrollment is temporarily unavailable</span>
+                  </div>
+                  <p className="text-[11px] mt-1 pl-6">
+                    Facial profile encryption setup is pending. Your visit pass will be generated normally for today's visit.
+                  </p>
+                </div>
+              ) : (
+                <div
+                  className={`rounded-2xl border-2 transition-all min-h-[72px] focus-within:ring-2 focus-within:ring-[var(--color-brand)] focus-within:ring-offset-2 overflow-hidden ${
+                    rememberVisitor
+                      ? 'border-[#7A0A0A] bg-gradient-to-r from-[#7A0A0A]/5 via-amber-50/40 to-amber-100/30 shadow-xs'
+                      : 'border-[var(--color-border-strong)] bg-white hover:border-[#7A0A0A]/40 hover:bg-slate-50/60'
+                  }`}
+                >
+                  <label className="flex items-start gap-3.5 p-4 sm:p-4.5 cursor-pointer select-none">
+                    <div className="pt-0.5 shrink-0">
+                      <input
+                        type="checkbox"
+                        checked={rememberVisitor}
+                        onChange={(e) => {
+                          const checked = e.target.checked;
+                          setRememberVisitor(checked);
+                          if (!checked) {
+                            setSaveVehicle(false);
+                          }
+                        }}
+                        className="h-7 w-7 rounded-md border-2 border-[#7A0A0A] text-[#7A0A0A] focus:ring-[#7A0A0A] focus:ring-offset-1 cursor-pointer transition-colors"
+                        aria-describedby="remember-me-description"
+                      />
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center justify-between gap-2 flex-wrap">
+                        <span className="font-bold text-base text-[var(--color-text-primary)] leading-tight">
+                          Remember me for faster future visits
+                        </span>
+                        <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-[11px] font-semibold bg-amber-100 text-amber-900 border border-amber-300">
+                          Optional
+                        </span>
+                      </div>
+                      <p id="remember-me-description" className="text-sm text-[var(--color-text-secondary)] mt-1.5 leading-relaxed">
+                        Securely save an encrypted facial recognition template so you can verify your identity more quickly on your next visit without uploading your ID again.
+                      </p>
+                    </div>
+                  </label>
+
+                  {rememberVisitor && getValues('arrivalMode') === 'vehicle' && (
+                    <div className="px-4 pb-3.5 pt-1 sm:px-4.5 border-t border-amber-200/60 bg-amber-50/50">
+                      <label className="flex items-start gap-2.5 cursor-pointer select-none">
+                        <input
+                          type="checkbox"
+                          checked={saveVehicle}
+                          onChange={(e) => setSaveVehicle(e.target.checked)}
+                          className="mt-0.5 h-5 w-5 rounded border-[var(--color-border)] text-[#7A0A0A] focus:ring-[#7A0A0A] cursor-pointer"
+                        />
+                        <div className="text-xs text-[var(--color-text-secondary)]">
+                          <strong className="text-[var(--color-text-primary)]">Save this vehicle to my profile</strong>{' '}
+                          <span className="text-[11px] font-medium text-amber-800">(optional)</span>
+                          <p className="text-[11px] mt-0.5 text-[var(--color-text-muted)]">
+                            Stores this vehicle for 1-click selection on future visits.
+                          </p>
+                        </div>
+                      </label>
+                    </div>
+                  )}
+                </div>
+              )}
+
               {/* Group 1: Visitor Information */}
               <div className="rounded-xl bg-[var(--color-surface)] p-4 text-sm border border-[var(--color-border)] space-y-3">
                 <div className="flex items-center justify-between border-b border-[var(--color-border)] pb-2">
@@ -3167,54 +3303,6 @@ export function GetPassPage() {
                 </div>
               </div>
 
-              {/* Biometric & Vehicle Retention Checkboxes */}
-              {enrollmentAvailable !== true ? (
-                <div className="rounded-xl border border-slate-200 bg-slate-50 p-4 text-xs text-slate-600">
-                  <p className="font-semibold text-slate-800">Returning Visitor enrollment is temporarily unavailable.</p>
-                  <p className="text-[11px] mt-1">Facial profile encryption setup is pending. Your visit pass will be generated normally for today's visit.</p>
-                </div>
-              ) : (
-                <div className="space-y-3 rounded-xl border border-[var(--color-border)] bg-[var(--color-canvas)] p-4 text-xs">
-                  <label className="flex items-start gap-2.5 cursor-pointer">
-                    <input
-                      type="checkbox"
-                      checked={rememberVisitor}
-                      onChange={(e) => {
-                        const checked = e.target.checked;
-                        setRememberVisitor(checked);
-                        if (!checked) {
-                          setSaveVehicle(false);
-                        }
-                      }}
-                      className="mt-0.5 h-4 w-4 rounded text-[var(--color-brand)] focus:ring-[var(--color-brand)]"
-                    />
-                    <div className="text-[var(--color-text-secondary)]">
-                      <strong className="text-[var(--color-text-primary)]">Remember me for faster future visits</strong> (optional)
-                      <p className="text-[11px] mt-0.5">
-                        Securely enrolls encrypted facial biometric features so you can quickly check in on subsequent visits.
-                      </p>
-                    </div>
-                  </label>
-
-                  {rememberVisitor && getValues('arrivalMode') === 'vehicle' && (
-                    <label className="flex items-start gap-2.5 cursor-pointer pt-2 border-t border-[var(--color-border)]">
-                      <input
-                        type="checkbox"
-                        checked={saveVehicle}
-                        onChange={(e) => setSaveVehicle(e.target.checked)}
-                        className="mt-0.5 h-4 w-4 rounded text-[var(--color-brand)] focus:ring-[var(--color-brand)]"
-                      />
-                      <div className="text-[var(--color-text-secondary)]">
-                        <strong className="text-[var(--color-text-primary)]">Save this vehicle to my profile</strong> (optional)
-                        <p className="text-[11px] mt-0.5">
-                          Stores this vehicle for 1-click selection on future visits.
-                        </p>
-                      </div>
-                    </label>
-                  )}
-                </div>
-              )}
-
               <div className="flex flex-col sm:flex-row gap-3">
                 {currentPhase === 'submission_uncertain_hold' ? (
                   <Button
@@ -3397,12 +3485,19 @@ export function GetPassPage() {
 
                       <Button
                         onClick={() => {
+                          setReturningCaptureStage('live');
+                          setReturningSelfieBlob(null);
+                          if (returningSelfieUrl) {
+                            URL.revokeObjectURL(returningSelfieUrl);
+                            setReturningSelfieUrl(null);
+                          }
+                          setReturningIdentifyError(null);
                           setStep('returning_capture');
                           void faceWebcam.start();
                         }}
                         disabled={!selectedReturningCandidate}
-                        className="w-full mt-2"
-                        icon={<Camera className="h-4 w-4" />}
+                        className="w-full mt-2 min-h-[56px] sm:min-h-11 text-[15px] sm:text-sm"
+                        icon={<Camera className="h-5 w-5" />}
                       >
                         Proceed to Live Face Verification
                       </Button>
@@ -3436,9 +3531,13 @@ export function GetPassPage() {
                     <span>Verifying Profile: {selectedReturningCandidate.maskedName}</span>
                   </div>
                 )}
-                <h2 className="text-lg font-bold text-[var(--color-text-primary)]">Live Face 1:1 Verification</h2>
+                <h2 className="text-lg font-bold text-[var(--color-text-primary)]">
+                  {returningCaptureStage === 'review' ? 'Review Your Selfie' : 'Capture Your Selfie'}
+                </h2>
                 <p className="text-sm text-[var(--color-text-secondary)] mt-1">
-                  Look directly at the camera to verify your face against your selected profile.
+                  {returningCaptureStage === 'review'
+                    ? 'Check your photo. Make sure your full face is visible, clearly focused, and well-lit before submitting.'
+                    : 'Look directly at the camera with good lighting. Position your face inside the guide.'}
                 </p>
               </div>
 
@@ -3451,21 +3550,31 @@ export function GetPassPage() {
                 </div>
               )}
 
-              {returningIdentifyError && (
+              {returningIdentifyError && returningCaptureStage === 'review' && (
                 <div className="rounded-xl border border-[var(--color-danger)] bg-[var(--color-danger-light)] p-4 text-xs text-[var(--color-danger-dark)] space-y-2" role="alert">
-                  <div className="flex items-center gap-2 font-bold">
-                    <AlertCircle className="h-4 w-4 text-[var(--color-danger)] flex-shrink-0" />
-                    <span>Identification Unsuccessful</span>
+                  <div className="flex items-center gap-2 font-bold text-sm">
+                    <AlertCircle className="h-5 w-5 text-[var(--color-danger)] flex-shrink-0" />
+                    <span>We could not verify this photo.</span>
                   </div>
-                  <p>{returningIdentifyError}</p>
-                  <div className="pt-2">
+                  <p className="text-xs leading-relaxed">{returningIdentifyError}</p>
+                  <div className="pt-2 flex flex-wrap gap-2">
                     <Button
                       size="sm"
+                      onClick={onRetakeReturningSelfie}
+                      className="min-h-[44px]"
+                      icon={<RotateCcw className="h-4 w-4" />}
+                    >
+                      Retake Selfie
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="ghost"
                       onClick={() => {
+                        onRetakeReturningSelfie();
                         setRegistrationMode('new');
                         setStep('form');
                       }}
-                      icon={<ArrowRight className="h-3.5 w-3.5" />}
+                      className="min-h-[44px]"
                     >
                       Register as New Visitor
                     </Button>
@@ -3473,52 +3582,103 @@ export function GetPassPage() {
                 </div>
               )}
 
-              <div className="mx-auto w-full max-w-md overflow-hidden rounded-2xl border-2 border-[var(--color-brand)] bg-black aspect-[4/3] relative flex items-center justify-center shadow-inner">
-                {isIdentifyingReturning && (
-                  <div className="absolute inset-0 z-20 flex flex-col items-center justify-center bg-black/60 text-white text-xs">
-                    <Loader2 className="h-6 w-6 animate-spin mb-1 text-[var(--color-brand)]" />
-                    <span>Verifying biometric template…</span>
+              {/* STAGE 1: Live Camera Stream */}
+              {returningCaptureStage === 'live' && (
+                <div className="space-y-4">
+                  <div className="mx-auto w-full max-w-md overflow-hidden rounded-2xl border-2 border-[var(--color-brand)] bg-black aspect-[4/3] relative flex items-center justify-center shadow-inner">
+                    {faceWebcam.isStarting && (
+                      <div className="absolute inset-0 z-20 flex flex-col items-center justify-center bg-black/60 text-white text-xs">
+                        <Loader2 className="h-6 w-6 animate-spin mb-1 text-[var(--color-brand)]" />
+                        <span>Starting camera…</span>
+                      </div>
+                    )}
+                    {faceWebcam.videoRef && (
+                      <video
+                        ref={faceWebcam.videoRef}
+                        autoPlay
+                        playsInline
+                        muted
+                        style={{ transform: faceWebcam.mirrorPreview ? 'scaleX(-1)' : 'none' }}
+                        className="h-full w-full object-cover"
+                      />
+                    )}
+                    <div className="absolute inset-0 pointer-events-none flex items-center justify-center">
+                      <div className="w-48 h-64 sm:w-56 sm:h-72 border-2 border-dashed border-white/80 rounded-[50%] shadow-[0_0_0_9999px_rgba(0,0,0,0.45)] flex items-center justify-center">
+                        <span className="sr-only">Center face in oval</span>
+                      </div>
+                    </div>
                   </div>
-                )}
-                {faceWebcam.videoRef && (
-                  <video
-                    ref={faceWebcam.videoRef}
-                    autoPlay
-                    playsInline
-                    muted
-                    style={{ transform: faceWebcam.mirrorPreview ? 'scaleX(-1)' : 'none' }}
-                    className="h-full w-full object-cover"
-                  />
-                )}
-                <div className="absolute inset-0 pointer-events-none flex items-center justify-center">
-                  <div className="w-48 h-64 sm:w-56 sm:h-72 border-2 border-dashed border-white/80 rounded-[50%] shadow-[0_0_0_9999px_rgba(0,0,0,0.45)] flex items-center justify-center">
-                    <span className="sr-only">Center face in oval</span>
+
+                  <div className="flex flex-col-reverse sm:flex-row gap-3 pt-2">
+                    <Button
+                      type="button"
+                      variant="secondary"
+                      onClick={() => {
+                        faceWebcam.stop();
+                        setStep('returning_lookup');
+                      }}
+                      className="w-full sm:flex-1 min-h-[56px] sm:min-h-11 text-[15px] sm:text-sm"
+                      icon={<ArrowLeft className="h-5 w-5" />}
+                    >
+                      Back
+                    </Button>
+                    <Button
+                      type="button"
+                      onClick={onCaptureReturningSelfie}
+                      disabled={!faceWebcam.isActive}
+                      className="w-full sm:flex-1 min-h-[56px] sm:min-h-11 text-[15px] sm:text-sm"
+                      icon={<Camera className="h-5 w-5" />}
+                    >
+                      Capture Selfie
+                    </Button>
                   </div>
                 </div>
-              </div>
+              )}
 
-              <div className="flex gap-3">
-                <Button
-                  variant="secondary"
-                  onClick={() => {
-                    faceWebcam.stop();
-                    setStep('returning_lookup');
-                  }}
-                  className="flex-1"
-                  icon={<ArrowLeft className="h-4 w-4" />}
-                >
-                  Back
-                </Button>
-                <Button
-                  onClick={onCaptureReturningFace}
-                  disabled={!faceWebcam.isActive || isIdentifyingReturning}
-                  loading={isIdentifyingReturning}
-                  className="flex-1"
-                  icon={<Camera className="h-4 w-4" />}
-                >
-                  Verify My Face
-                </Button>
-              </div>
+              {/* STAGE 2: Still-Photo Review & Explicit Confirmation */}
+              {returningCaptureStage === 'review' && (
+                <div className="space-y-4">
+                  <div className="mx-auto w-full max-w-md overflow-hidden rounded-2xl border-2 border-[var(--color-border-strong)] bg-black aspect-[4/3] relative flex items-center justify-center shadow-inner">
+                    {isIdentifyingReturning && (
+                      <div className="absolute inset-0 z-20 flex flex-col items-center justify-center bg-black/60 text-white text-xs p-4 text-center">
+                        <Loader2 className="h-7 w-7 animate-spin mb-2 text-[var(--color-brand)]" />
+                        <span className="font-semibold text-sm">Verifying facial identity…</span>
+                        <span className="text-xs text-white/80 mt-1">Comparing photo against saved template</span>
+                      </div>
+                    )}
+                    {returningSelfieUrl && (
+                      <img
+                        src={returningSelfieUrl}
+                        alt="Captured selfie preview"
+                        className="h-full w-full object-cover"
+                      />
+                    )}
+                  </div>
+
+                  <div className="flex flex-col-reverse sm:flex-row gap-3 pt-2">
+                    <Button
+                      type="button"
+                      variant="secondary"
+                      onClick={onRetakeReturningSelfie}
+                      disabled={isIdentifyingReturning}
+                      className="w-full sm:flex-1 min-h-[56px] sm:min-h-11 text-[15px] sm:text-sm"
+                      icon={<RotateCcw className="h-5 w-5" />}
+                    >
+                      Retake Photo
+                    </Button>
+                    <Button
+                      type="button"
+                      onClick={onConfirmReturningVerification}
+                      disabled={isIdentifyingReturning || !returningSelfieBlob}
+                      loading={isIdentifyingReturning}
+                      className="w-full sm:flex-1 min-h-[56px] sm:min-h-11 text-[15px] sm:text-sm"
+                      icon={<CheckCircle2 className="h-5 w-5" />}
+                    >
+                      Verify This Photo
+                    </Button>
+                  </div>
+                </div>
+              )}
             </div>
           )}
 
@@ -4040,7 +4200,7 @@ export function GetPassPage() {
       {/* Email Pass Modal */}
       {passId && (
         <EmailPassModal
-          isOpen={showEmailModal}
+          isOpen={showEmailModal && !showSkipWarning}
           onClose={() => setShowEmailModal(false)}
           passId={passId || ''}
           qrToken={rawQrToken || ''}

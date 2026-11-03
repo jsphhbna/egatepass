@@ -682,3 +682,28 @@ Outage Architecture & Authority Delegation
   - In production, `evaluateTurnstilePolicy('portal', isProd, siteKey, captchaToken)` strictly fails closed: missing tokens or missing site keys throw immediate security errors before contacting Supabase auth.
   - The resulting authenticated anonymous session (`PortalIssueTransaction`) is stored in `portalTransactionRef` and securely reused for `lookupReturningVisitor()` and `identifyReturningVisitor()` without redundant challenges.
   - If an anonymous session expires, `validatePortalSession(tx)` detects the invalidity and automatically triggers a fresh challenge before re-authenticating.
+
+### 12.17 Mobile UX Hardening, Remember Me Enrollment Architecture & Returning 1:1 Freeze/Review Workflow
+- **Prominent Institutional Biometric Enrollment Card**:
+  - Replaced the legacy small native checkbox with an institutional enrollment card positioned at the very top of `step === 'review'` (immediately following the Biometric Identity Verified badge).
+  - Styled in EARIST institutional maroon (`#7A0A0A`) with subtle gold/amber accents, min-height ≥ 72px, 28px custom checkbox, 16px title ("Remember me for faster future visits"), 14px description, and gold "Optional" badge.
+  - Entire card acts as a single cohesive tap target with native toggle semantics, preventing double-toggle events.
+  - Preserves explicit consent: default remains unchecked (`rememberVisitor: false`), pass issuance passes `enrollReturning: true` only when explicitly checked, and enrollment unavailable states are communicated clearly without blocking normal pass issuance.
+  - When visitor declares a vehicle (`arrivalMode === 'vehicle'`) and checks Remember Me, an integrated sub-option allows saving the vehicle to the visitor's profile.
+- **iPhone Mobile-Safe Modal & Keyboard Interaction Architecture**:
+  - `Modal.tsx` incorporates dynamic viewport sizing (`max-h-[calc(100dvh-2rem)]`), iOS safe-area spacing (`pt-[max(1rem,env(safe-area-inset-top))]`, `pb-[max(1rem,env(safe-area-inset-bottom))]`), and internal overscroll containment.
+  - Autopopup prevention: `onOpenAutoFocus` suppresses input focus events on touch devices (`'ontouchstart' in window || navigator.maxTouchPoints > 0`), ensuring the on-screen software keyboard does not open automatically on modal display, preserving full visibility of modal contents and actions until intentional tap.
+  - Input field ergonomics: email input and verification code input enforce `min-h-[52px]` and font size `text-base` (≥ 16px) to eliminate iOS Safari automatic viewport zooming.
+  - Mobile action layouts: replaced narrow side-by-side buttons on mobile viewports with full-width vertical stacks (`flex-col-reverse sm:flex-row`, `min-h-[56px]`, `gap-3` [12px separation]), giving primary actions clear visual prominence.
+- **Sequential Non-Overlapping Skip Warning Dialog Lifecycle**:
+  - Bound `EmailPassModal` to `isOpen={showEmailModal && !showSkipWarning}`.
+  - When the visitor selects "Continue without email", the email dialog unmounts its portal and backdrop from the DOM before `TimedSkipWarningModal` mounts, preventing competing Radix dialog instances, trapped focus, or overlapping transparent layers.
+  - All form state inside `EmailPassModal` (email address, consent, verification code, timer) is preserved in memory. If the visitor cancels the skip warning, the email modal immediately reopens with intact data. Confirming skip closes both dialogs and advances to the completed pass screen with a verified 5-second deliberate countdown.
+- **Returning Visitor 7-Stage Capture, Freeze, Review & 1:1 Verification Workflow**:
+  - **Stage 1 (Live Camera)**: Live webcam feed with oval guide, "Capture Your Selfie" heading, and "Capture Selfie" action button. Absolutely no biometric or network comparison calls occur during live streaming.
+  - **Stage 2 (Capture & Freeze)**: Pressing "Capture Selfie" captures 1 frame via `faceWebcam.capture({ mirror: false })`, stores the blob in `returningSelfieBlob`, creates an object URL, immediately stops the webcam stream, and transitions UI to still-photo review (`returningCaptureStage = 'review'`).
+  - **Stage 3 (Still-Photo Review)**: Displays frozen selfie preview with two prominent actions: "Retake Photo" (discards image, revokes URL, restarts camera, returns to live stage) and "Verify This Photo" (explicit confirmation to submit).
+  - **Stage 4 (Quality Preflight & 1:1 Compare)**: Pressing "Verify This Photo" locks review controls, runs client-side `evaluateLiveFaceQuality(returningSelfieBlob)`, restores/validates authenticated portal session, uploads the verified blob to portal storage, and issues exactly ONE `identifyReturningVisitor()` request.
+  - **Stage 5 (Match Accepted)**: Retains the exact matched selfie blob as `photoBlob` and upload intent in `tx.photoIntentId` for subsequent pass issuance (ensuring no second photo is captured), populates profile and form fields, and navigates to `returning_confirm` with Welcome Back feedback.
+  - **Stage 6 (Match Rejected)**: On low similarity score or image defect, displays clear inline error ("We could not verify this photo...") with a prominent "Retake Selfie" button. The selected profile candidate remains active, allowing immediate retake without searching again, and the user is not forced into New Visitor registration.
+  - **Stage 7 (State Cleanup)**: Ensures all camera streams are stopped, blobs cleared, and object URLs revoked on component unmount, navigation, or start-over.

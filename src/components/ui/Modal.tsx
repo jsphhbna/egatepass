@@ -13,6 +13,7 @@ interface ModalProps {
   preventClose?: boolean;
   size?: 'sm' | 'md' | 'lg';
   hideTitleRow?: boolean;
+  disableAutoFocus?: boolean;
 }
 
 const sizeClasses = {
@@ -30,7 +31,8 @@ export function Modal({
   preventClose = false,
   size = 'md',
   hideTitleRow = false,
-  description
+  description,
+  disableAutoFocus = false
 }: ModalProps) {
   return (
     <Dialog.Root open={isOpen} onOpenChange={(open) => !preventClose && !open && onClose()}>
@@ -38,14 +40,23 @@ export function Modal({
         {/* Backdrop */}
         <Dialog.Overlay className="fixed inset-0 z-[100] bg-[var(--color-overlay-strong)] backdrop-blur-sm data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 duration-150" />
         {/* Content wrapper for centering */}
-        <div className="fixed inset-0 z-[100] grid h-dvh place-items-center overflow-y-auto p-4 sm:p-6">
+        <div className="fixed inset-0 z-[100] grid h-dvh place-items-center overflow-y-auto p-4 sm:p-6 pt-[max(1rem,env(safe-area-inset-top))] pb-[max(1rem,env(safe-area-inset-bottom))]">
           <Dialog.Content 
-            className={`relative flex max-h-[90dvh] w-full flex-col overflow-hidden rounded-2xl border border-[var(--color-border)] bg-white shadow-lg focus:outline-none data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95 ${sizeClasses[size]} ${className}`}
+            className={`relative flex max-h-[calc(100dvh-2rem)] sm:max-h-[90dvh] w-full flex-col overflow-hidden rounded-2xl border border-[var(--color-border)] bg-white shadow-lg focus:outline-none data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95 ${sizeClasses[size]} ${className}`}
             onPointerDownOutside={(e) => {
               if (preventClose) e.preventDefault();
             }}
             onEscapeKeyDown={(e) => {
               if (preventClose) e.preventDefault();
+            }}
+            onOpenAutoFocus={(e) => {
+              if (
+                disableAutoFocus ||
+                (typeof window !== 'undefined' &&
+                  ('ontouchstart' in window || (navigator?.maxTouchPoints ?? 0) > 0))
+              ) {
+                e.preventDefault();
+              }
             }}
           >
             {hideTitleRow && (
@@ -75,7 +86,7 @@ export function Modal({
             )}
             
             {/* Scrollable Body */}
-            <div className="flex-1 overflow-y-auto overscroll-contain p-4 sm:p-6">
+            <div className="flex-1 overflow-y-auto overscroll-contain p-4 sm:p-6 pb-[max(1rem,env(safe-area-inset-bottom))]">
               {children}
             </div>
             

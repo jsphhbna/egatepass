@@ -370,3 +370,29 @@ flowchart TD
   2. The single widget remains mounted continuously throughout all navigation between `frontdoor`, `returning_lookup`, `returning_capture`, `returning_confirm`, and New Visitor steps (`form`, `visit`, `id`, `photo`, `verify`, `review`).
   3. Remove duplicate step-specific Turnstile instances to prevent widget ID collisions or stale refs.
   4. Once established via `createPortalIssueTransaction(freshCaptchaToken)`, the authenticated anonymous Supabase portal session is retained in `portalTransactionRef` and reused across lookup and selfie capture without redundant challenges. If expired, `validatePortalSession` detects invalidity and triggers a fresh challenge.
+
+---
+
+### 2.22 iPhone Mobile UX: Email Modal Keyboard Layout & Returning Visitor Freeze/Review Workflow
+
+- **Symptoms**:
+  1. **Remember Me Overlooked**: Visitors completing registration fail to enroll for Returning Visitor status because the enrollment checkbox was small, low-contrast, and placed at the very bottom of the Review step after extensive information sections.
+  2. **Email Modal Touch & Overlapping Dialogs**: On iPhone Safari (e.g. iPhone 12, 390px width), autofocus on email inputs immediately opened the iOS software keyboard, obscuring primary actions. Tapping "Continue without email" mounted `TimedSkipWarningModal` while `EmailPassModal` remained open in the DOM, creating competing focus traps and backdrop overlaps. Action buttons were side-by-side with narrow touch targets.
+  3. **Returning Visitor Verification Without Preview**: Capturing a selfie in `returning_capture` immediately submitted the image to the biometric comparison endpoint while the live camera remained active with a loading spinner, offering no frozen preview, retake option, or explicit confirmation before biometric evaluation.
+- **Root Causes**:
+  - `rememberVisitor` checkbox was rendered late in `step === 'review'` with minimal visual hierarchy and native `<input type="checkbox">` sizing (~16px).
+  - `EmailPassModal` and `TimedSkipWarningModal` were both controlled independently with Radix `Dialog`, causing DOM collisions when both were open (`showEmailModal && showSkipWarning`).
+  - Inputs used `autoFocus`, triggering native WebKit virtual keyboard focus events on modal mount.
+  - `onCaptureReturningFace()` combined frame capture, upload, and 1:1 comparison into an atomic function without an intermediate review sub-stage.
+- **Safe Resolutions**:
+  1. **Institutional Remember Me Card**: Replaced the small checkbox with a prominent institutional enrollment card styled in EARIST maroon (`#7A0A0A`) with gold/amber accents, min-height ≥ 72px, 28px custom checkbox, 16px title, 14px description, and gold "Optional" badge. Moved to the very top of `step === 'review'` (immediately following the Biometric Identity Verified badge).
+  2. **Sequential Email Skip Lifecycle**: Bound `EmailPassModal` to `isOpen={showEmailModal && !showSkipWarning}`. Selecting "Continue without email" closes the email modal portal while preserving component state; canceling the warning reopens the email modal with input values and consent intact; confirming skip advances to completed pass screen.
+  3. **Mobile-Hardened Inputs & Buttons**: Removed `autoFocus` from recipient email and verification code inputs. Added `min-h-[52px]` and `text-base` (≥ 16px) to prevent iOS auto-zoom. Replaced side-by-side modal buttons on mobile with a full-width vertical stack with `min-h-[56px]`, `gap-3` (12px vertical spacing), and full button styling for skip actions.
+  4. **Returning Visitor 7-Stage Workflow**:
+     - *Stage 1 (Live)*: Live camera feed with oval guide, "Capture Your Selfie" heading, and "Capture Selfie" action.
+     - *Stage 2 (Freeze)*: Capturing a frame freezes the still image into state, stops the camera, and transitions to review.
+     - *Stage 3 (Review)*: Displays frozen selfie preview with prominent "Retake Photo" and "Verify This Photo" buttons.
+     - *Stage 4 (Verify)*: "Verify This Photo" runs client-side quality evaluation, validates session, uploads still image, and calls `identifyReturningVisitor()`.
+     - *Stage 5 (Match Accepted)*: Retains matched selfie blob for subsequent pass issuance and advances to `returning_confirm`.
+     - *Stage 6 (Match Rejected)*: Displays clear inline error near still image preview with "Retake Selfie" button without navigating away or losing selected profile candidate.
+     - *Stage 7 (Cleanup)*: Cleans up object URLs and camera streams on navigation, reset, or unmount.
