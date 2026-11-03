@@ -24,6 +24,7 @@ import {
   isFaceVerificationConfigured,
   validateFaceDescriptor,
 } from '../../lib/face-engine.js';
+import { normalizePsgcLevel } from '../../lib/psgc-reference.js';
 
 const requestSchema = z.object({
   requestId: z.string().uuid(),
@@ -122,13 +123,14 @@ export function resolvePsgcLocalityFallback(
       const trimmedLocName = (loc.name || '').trim();
       const code = loc.psgc_code || loc.code;
       if (!trimmedLocName || !code) continue;
-      if (loc.level === 'region' && needsRegion && code === profile.psgc_region_code) {
+      const normalizedLevel = normalizePsgcLevel(loc.level);
+      if ((normalizedLevel === 'region' || loc.level === 'region') && needsRegion && code === profile.psgc_region_code) {
         regionName = trimmedLocName;
-      } else if (loc.level === 'province' && needsProvince && code === profile.psgc_province_code) {
+      } else if ((normalizedLevel === 'province' || loc.level === 'province') && needsProvince && code === profile.psgc_province_code) {
         provinceName = trimmedLocName;
-      } else if ((loc.level === 'city' || loc.level === 'municipality' || loc.level === 'city_municipality') && needsCity && code === profile.psgc_city_code) {
+      } else if (normalizedLevel === 'city_municipality' && needsCity && code === profile.psgc_city_code) {
         cityName = trimmedLocName;
-      } else if (loc.level === 'barangay' && needsBarangay && code === profile.psgc_barangay_code) {
+      } else if ((normalizedLevel === 'barangay' || loc.level === 'barangay') && needsBarangay && code === profile.psgc_barangay_code) {
         barangayName = trimmedLocName;
       }
     }

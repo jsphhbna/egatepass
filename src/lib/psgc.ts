@@ -24,7 +24,7 @@ export interface PsgcLocation {
 
 export interface PostalResolution {
   postalCode: string | null;
-  mappingType: 'exact_barangay' | 'unique_city' | 'multi_code_city' | 'unmapped' | 'ambiguous' | 'service_unavailable';
+  mappingType: 'exact_barangay' | 'unique_city' | 'multi_code_city' | 'unmapped' | 'ambiguous' | 'service_unavailable' | 'unknown';
   isAutoFilled: boolean;
   requiresConfirmation: boolean;
   message?: string;

@@ -61,11 +61,20 @@ export function hydrateReturningAddress(
     let postalResolution: SelectedPsgcAddress['postalResolution'] = undefined;
     if (cleanPostal) {
       if (cleanSource === 'PHLPost') {
+        const candidateMapping =
+          psgc.postalResolution?.mappingType ||
+          (psgc as any).postalMappingType;
+
+        const knownMapping =
+          candidateMapping === 'exact_barangay' || candidateMapping === 'unique_city'
+            ? candidateMapping
+            : 'unknown';
+
         postalResolution = {
           postalCode: cleanPostal,
           isAutoFilled: true,
           requiresConfirmation: false,
-          mappingType: 'exact_barangay',
+          mappingType: knownMapping,
           message: 'PHLPost standard postal code',
         };
       } else {

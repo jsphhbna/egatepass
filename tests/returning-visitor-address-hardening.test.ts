@@ -2,18 +2,126 @@
  * tests/returning-visitor-address-hardening.test.ts
  *
  * Comprehensive integration and unit tests for Returning Visitor Address Hardening:
- * - Part 2: Address normalization and PSGC locality fallback in identify-returning.ts
- * - Part 4: Returning profile persistence in issue.ts with 9 failure/success permutations
- * - Part 5: Postal code metadata preservation and PHLPost source stability
+ * - PART 1: PSGC locality level normalization, city_municipality consistency, and validation
+ * - PART 2: Address normalization and PSGC locality fallback in identify-returning.ts
+ * - PART 3: Postal code mapping metadata reconstruction & honest provenance
+ * - PART 4: Returning profile persistence in issue.ts with complete fail-closed validation permutations
  */
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { createHash, createHmac, randomBytes } from 'node:crypto';
+import { createHmac, randomBytes } from 'node:crypto';
 import { resolvePsgcLocalityFallback, computeMatchTokenDigest } from '../server/routes/passes/identify-returning.js';
+import {
+  normalizePsgcLevel,
+  buildExpectedPsgcReferences,
+  validatePsgcReferences,
+} from '../server/lib/psgc-reference.js';
 import { hydrateReturningAddress } from '../src/lib/returningAddressHydration.js';
 import * as supabaseModule from '../server/supabase.js';
 import * as actorsModule from '../server/actors.js';
 import issuePassHandler from '../server/routes/passes/issue.js';
+
+// ---------------------------------------------------------------------------
+// PART 1: PSGC Locality Level Normalization & Reference Validation Helpers
+// ---------------------------------------------------------------------------
+
+describe('PART 1: PSGC Locality Normalization & Reference Validation Helpers', () => {
+  it('1. normalizePsgcLevel recognizes city, municipality, and city_municipality', () => {
+    expect(normalizePsgcLevel('city')).toBe('city_municipality');
+    expect(normalizePsgcLevel('municipality')).toBe('city_municipality');
+    expect(normalizePsgcLevel('city_municipality')).toBe('city_municipality');
+    expect(normalizePsgcLevel('CITY')).toBe('city_municipality');
+    expect(normalizePsgcLevel('  Municipality  ')).toBe('city_municipality');
+  });
+
+  it('2. normalizePsgcLevel correctly identifies region, province, barangay, and unknown', () => {
+    expect(normalizePsgcLevel('region')).toBe('region');
+    expect(normalizePsgcLevel('province')).toBe('province');
+    expect(normalizePsgcLevel('barangay')).toBe('barangay');
+    expect(normalizePsgcLevel('sub_municipality')).toBe('unknown');
+    expect(normalizePsgcLevel(null)).toBe('unknown');
+    expect(normalizePsgcLevel('')).toBe('unknown');
+  });
+
+  const validExpectedRefs = buildExpectedPsgcReferences({
+    regionCode: '0400000000',
+    provinceCode: '0434200000',
+    cityCode: '0434203000',
+    barangayCode: '0434203001',
+  });
+
+  it('3. A city record resolves successfully in validatePsgcReferences', () => {
+    const records = [
+      { psgc_code: '0400000000', level: 'region', name: 'CALABARZON' },
+      { psgc_code: '0434200000', level: 'province', name: 'Laguna' },
+      { psgc_code: '0434203000', level: 'city', name: 'City of Biñan' },
+      { psgc_code: '0434203001', level: 'barangay', name: 'Biñan Proper' },
+    ];
+    const result = validatePsgcReferences(validExpectedRefs, records);
+    expect(result.valid).toBe(true);
+    if (result.valid) {
+      expect(result.cityName).toBe('City of Biñan');
+    }
+  });
+
+  it('4. A municipality record resolves successfully in validatePsgcReferences', () => {
+    const records = [
+      { psgc_code: '0400000000', level: 'region', name: 'CALABARZON' },
+      { psgc_code: '0434200000', level: 'province', name: 'Laguna' },
+      { psgc_code: '0434203000', level: 'municipality', name: 'Municipality of Biñan' },
+      { psgc_code: '0434203001', level: 'barangay', name: 'Biñan Proper' },
+    ];
+    const result = validatePsgcReferences(validExpectedRefs, records);
+    expect(result.valid).toBe(true);
+    if (result.valid) {
+      expect(result.cityName).toBe('Municipality of Biñan');
+    }
+  });
+
+  it('5. A city_municipality record resolves successfully in validatePsgcReferences', () => {
+    const records = [
+      { psgc_code: '0400000000', level: 'region', name: 'CALABARZON' },
+      { psgc_code: '0434200000', level: 'province', name: 'Laguna' },
+      { psgc_code: '0434203000', level: 'city_municipality', name: 'Biñan City' },
+      { psgc_code: '0434203001', level: 'barangay', name: 'Biñan Proper' },
+    ];
+    const result = validatePsgcReferences(validExpectedRefs, records);
+    expect(result.valid).toBe(true);
+    if (result.valid) {
+      expect(result.cityName).toBe('Biñan City');
+    }
+  });
+
+  it('6. An unrelated or mismatched code cannot supply a locality name', () => {
+    const records = [
+      { psgc_code: '0400000000', level: 'region', name: 'CALABARZON' },
+      { psgc_code: '0434200000', level: 'province', name: 'Laguna' },
+      // Unrelated code: 0434999999 instead of 0434203000
+      { psgc_code: '0434999999', level: 'city', name: 'Unrelated City' },
+      { psgc_code: '0434203001', level: 'barangay', name: 'Biñan Proper' },
+    ];
+    const result = validatePsgcReferences(validExpectedRefs, records);
+    expect(result.valid).toBe(false);
+    if (!result.valid) {
+      expect(result.error).toContain('missing_expected_psgc_record_city_municipality');
+    }
+  });
+
+  it('7. Duplicate conflicting records for the same code fail validation as ambiguous', () => {
+    const records = [
+      { psgc_code: '0400000000', level: 'region', name: 'CALABARZON' },
+      { psgc_code: '0434200000', level: 'province', name: 'Laguna' },
+      { psgc_code: '0434203000', level: 'city', name: 'City of Biñan' },
+      { psgc_code: '0434203000', level: 'city', name: 'Conflicting Biñan Name' },
+      { psgc_code: '0434203001', level: 'barangay', name: 'Biñan Proper' },
+    ];
+    const result = validatePsgcReferences(validExpectedRefs, records);
+    expect(result.valid).toBe(false);
+    if (!result.valid) {
+      expect(result.error).toContain('ambiguous_psgc_records_for_code_0434203000');
+    }
+  });
+});
 
 // ---------------------------------------------------------------------------
 // PART 2: Locality Fallback & Address Normalization
@@ -93,7 +201,6 @@ describe('PART 2: resolvePsgcLocalityFallback & Address Normalization', () => {
       psgc_province_name: '',
       psgc_city_municipality_name: '',
     };
-    // No matching reference locations found
     const resolved = resolvePsgcLocalityFallback(profile, []);
     expect(resolved.provinceName).toBe('');
     expect(resolved.cityName).toBe('');
@@ -125,11 +232,11 @@ describe('PART 2: resolvePsgcLocalityFallback & Address Normalization', () => {
 });
 
 // ---------------------------------------------------------------------------
-// PART 5: Postal Code Metadata & Source Stability
+// PART 3: Postal Code Metadata & Source Stability
 // ---------------------------------------------------------------------------
 
-describe('PART 5: Postal Code Metadata Preservation', () => {
-  it('reconstructs postalResolution when postalCode exists with PHLPost source', () => {
+describe('PART 3: Postal Code Metadata Preservation', () => {
+  it('1. An exact barangay mapping remains exact when its type is genuinely available', () => {
     const hydrated = hydrateReturningAddress({
       psgc: {
         version: '2026-q3',
@@ -137,20 +244,72 @@ describe('PART 5: Postal Code Metadata Preservation', () => {
         province: null,
         city: { code: '1380600000', name: 'City of Manila' },
         barangay: { code: '1380601001', name: 'Barangay 1' },
-        houseBuilding: 'Unit 4B',
-        street: 'Nagtahan St.',
+        postalCode: '1008',
+        postalCodeSource: 'PHLPost',
+        postalMappingType: 'exact_barangay',
+      },
+    });
+
+    expect(hydrated.selectedPsgc?.postalResolution?.mappingType).toBe('exact_barangay');
+    expect(hydrated.selectedPsgc?.postalResolution?.isAutoFilled).toBe(true);
+    expect(hydrated.selectedPsgc?.postalCodeSource).toBe('PHLPost');
+  });
+
+  it('2. A unique city mapping remains unique when its type is genuinely available', () => {
+    const hydrated = hydrateReturningAddress({
+      psgc: {
+        version: '2026-q3',
+        region: { code: '0400000000', name: 'CALABARZON' },
+        province: { code: '0434200000', name: 'Laguna' },
+        city: { code: '0434203000', name: 'City of Biñan' },
+        barangay: { code: '0434203001', name: 'Biñan Proper' },
+        postalCode: '4024',
+        postalCodeSource: 'PHLPost',
+        postalMappingType: 'unique_city',
+      },
+    });
+
+    expect(hydrated.selectedPsgc?.postalResolution?.mappingType).toBe('unique_city');
+    expect(hydrated.selectedPsgc?.postalResolution?.isAutoFilled).toBe(true);
+    expect(hydrated.selectedPsgc?.postalCodeSource).toBe('PHLPost');
+  });
+
+  it('3. Unknown mapping metadata is represented as unknown, not falsely as exact barangay', () => {
+    const hydrated = hydrateReturningAddress({
+      psgc: {
+        version: '2026-q3',
+        region: { code: '1300000000', name: 'NCR' },
+        province: null,
+        city: { code: '1380600000', name: 'City of Manila' },
+        barangay: { code: '1380601001', name: 'Barangay 1' },
         postalCode: '1008',
         postalCodeSource: 'PHLPost',
       },
     });
 
-    expect(hydrated.selectedPsgc?.postalResolution).toBeDefined();
     expect(hydrated.selectedPsgc?.postalResolution?.isAutoFilled).toBe(true);
-    expect(hydrated.selectedPsgc?.postalResolution?.mappingType).toBe('exact_barangay');
-    expect(hydrated.selectedPsgc?.postalCodeSource).toBe('PHLPost');
+    expect(hydrated.selectedPsgc?.postalResolution?.mappingType).toBe('unknown');
+    expect(hydrated.selectedPsgc?.postalResolution?.mappingType).not.toBe('exact_barangay');
   });
 
-  it('does not reconstruct PHLPost auto-fill when source is manual', () => {
+  it('4. PHLPost postal source survives hydration', () => {
+    const hydrated = hydrateReturningAddress({
+      psgc: {
+        version: '2026-q3',
+        region: { code: '1300000000', name: 'NCR' },
+        province: null,
+        city: { code: '1380600000', name: 'City of Manila' },
+        barangay: { code: '1380601001', name: 'Barangay 1' },
+        postalCode: '1008',
+        postalCodeSource: 'PHLPost',
+      },
+    });
+
+    expect(hydrated.selectedPsgc?.postalCodeSource).toBe('PHLPost');
+    expect(hydrated.selectedPsgc?.postalCode).toBe('1008');
+  });
+
+  it('5. Manual postal source stays manual', () => {
     const hydrated = hydrateReturningAddress({
       psgc: {
         version: '2026-q3',
@@ -164,17 +323,42 @@ describe('PART 5: Postal Code Metadata Preservation', () => {
     });
 
     expect(hydrated.selectedPsgc?.postalResolution?.isAutoFilled).toBe(false);
+    expect(hydrated.selectedPsgc?.postalResolution?.mappingType).toBe('unmapped');
     expect(hydrated.selectedPsgc?.postalCodeSource).toBe('manual');
   });
 
-  it('preserves postalCodeSource PHLPost and postalResolution when address is confirmed without changes', async () => {
-    // Read AddressCascadingSelector to verify preservation logic contract
+  it('6. Reopening and confirming an unchanged address preserves the source without degrading to manual', async () => {
     const src = await import('fs').then((fs) =>
       fs.readFileSync('src/components/AddressCascadingSelector.tsx', 'utf-8')
     );
     expect(src).toContain('initialAddress?.postalCodeSource && initialAddress.postalCode === finalPostalCode');
     expect(src).toContain("initialAddress.postalCodeSource === 'PHLPost'");
-    expect(src).toContain('initialAddress.postalResolution');
+    expect(src).toContain('initialAddress?.postalResolution?.mappingType || \'unknown\'');
+  });
+
+  it('7. Editing the postal code follows the existing correct manual-versus-auto-fill rules', async () => {
+    const src = await import('fs').then((fs) =>
+      fs.readFileSync('src/pages/GetPassPage.tsx', 'utf-8')
+    );
+    expect(src).toContain('if (selPostal && trimmed && trimmed !== selPostal) return \'manual\';');
+  });
+
+  it('8. Unknown mapping metadata does not break the postal-code UI or selector', () => {
+    const hydrated = hydrateReturningAddress({
+      psgc: {
+        version: '2026-q3',
+        region: { code: '1300000000', name: 'NCR' },
+        province: null,
+        city: { code: '1380600000', name: 'City of Manila' },
+        barangay: { code: '1380601001', name: 'Barangay 1' },
+        postalCode: '1008',
+        postalCodeSource: 'PHLPost',
+      },
+    });
+
+    expect(hydrated.selectedPsgc?.postalResolution).toBeDefined();
+    expect(hydrated.selectedPsgc?.postalResolution?.isAutoFilled).toBe(true);
+    expect(hydrated.selectedPsgc?.postalResolution?.message).toBe('PHLPost standard postal code');
   });
 });
 
@@ -202,7 +386,6 @@ describe('PART 4: Returning Profile Persistence in issue.ts', () => {
     process.env.PASS_TOKEN_SECRET = PASS_SECRET;
     process.env.RETURNING_MATCH_TOKEN_SECRET = MATCH_SECRET;
 
-    // Generate valid match token for ACTOR_ID + REQ_ID + PROFILE_ID
     const randomHex = randomBytes(16).toString('hex');
     const hmacSig = createHmac('sha256', MATCH_SECRET)
       .update(`${ACTOR_ID}:${REQ_ID}:${PROFILE_ID}:${randomHex}`)
@@ -237,7 +420,6 @@ describe('PART 4: Returning Profile Persistence in issue.ts', () => {
     let capturedProfileUpdate: any = null;
     let capturedProfileTargetId: any = null;
 
-    // Standard valid JPEG buffer (starts with 0xFF, 0xD8, 0xFF)
     const validJpegBytes = new Uint8Array([0xFF, 0xD8, 0xFF, 0xE0, 0x00, 0x10, 0x4A, 0x46, 0x49, 0x46, 0x00, 0x01, 0x01, 0x01, 0x00, 0x48]);
 
     const mockAdmin: any = {
@@ -467,7 +649,7 @@ describe('PART 4: Returning Profile Persistence in issue.ts', () => {
     });
   }
 
-  it('1. Successful structured profile update persists all 13 fields and returns returningProfileUpdate: updated', async () => {
+  it('1. Complete PSGC lookup: all required records resolve and profile update persists all 13 fields with updated status', async () => {
     const { getCapturedUpdate, getCapturedTargetId } = createMockSupabase();
     const req = makeIssueRequest();
     const res = await issuePassHandler.fetch(req);
@@ -494,19 +676,223 @@ describe('PART 4: Returning Profile Persistence in issue.ts', () => {
     expect(update.postal_code_source).toBe('PHLPost');
   });
 
-  it('2. Supabase returning { error } reports returningProfileUpdate: failed without failing pass issuance', async () => {
+  it('2. City locality with level "municipality" is recognized and persisted in psgc_city_municipality_name', async () => {
+    const { getCapturedUpdate } = createMockSupabase({
+      psgcLocations: [
+        { psgc_code: '0400000000', level: 'region', name: 'CALABARZON' },
+        { psgc_code: '0434200000', level: 'province', name: 'Laguna' },
+        { psgc_code: '0434203000', level: 'municipality', name: 'Municipality of Biñan' },
+        { psgc_code: '0434203001', level: 'barangay', name: 'Biñan Proper' },
+      ],
+    });
+    const req = makeIssueRequest();
+    const res = await issuePassHandler.fetch(req);
+
+    expect(res.status).toBe(201);
+    const json = await res.json();
+    expect(json.returningProfileUpdate).toBe('updated');
+    const update = getCapturedUpdate();
+    expect(update.psgc_city_municipality_name).toBe('Municipality of Biñan');
+  });
+
+  it('3. City locality with level "city_municipality" is recognized and persisted in psgc_city_municipality_name', async () => {
+    const { getCapturedUpdate } = createMockSupabase({
+      psgcLocations: [
+        { psgc_code: '0400000000', level: 'region', name: 'CALABARZON' },
+        { psgc_code: '0434200000', level: 'province', name: 'Laguna' },
+        { psgc_code: '0434203000', level: 'city_municipality', name: 'Biñan City' },
+        { psgc_code: '0434203001', level: 'barangay', name: 'Biñan Proper' },
+      ],
+    });
+    const req = makeIssueRequest();
+    const res = await issuePassHandler.fetch(req);
+
+    expect(res.status).toBe(201);
+    const json = await res.json();
+    expect(json.returningProfileUpdate).toBe('updated');
+    const update = getCapturedUpdate();
+    expect(update.psgc_city_municipality_name).toBe('Biñan City');
+  });
+
+  it('4. Missing region record fails closed: update fails, pass preserved with 201', async () => {
+    const { getCapturedUpdate } = createMockSupabase({
+      psgcLocations: [
+        // Missing region 0400000000
+        { psgc_code: '0434200000', level: 'province', name: 'Laguna' },
+        { psgc_code: '0434203000', level: 'city', name: 'City of Biñan' },
+        { psgc_code: '0434203001', level: 'barangay', name: 'Biñan Proper' },
+      ],
+    });
+    const req = makeIssueRequest();
+    const res = await issuePassHandler.fetch(req);
+
+    expect(res.status).toBe(201);
+    const json = await res.json();
+    expect(json.passId).toBeDefined();
+    expect(json.returningProfileUpdate).toBe('failed');
+    expect(getCapturedUpdate()).toBeNull();
+  });
+
+  it('5. Missing province record when provinceCode supplied fails closed: update fails, pass preserved with 201', async () => {
+    const { getCapturedUpdate } = createMockSupabase({
+      psgcLocations: [
+        { psgc_code: '0400000000', level: 'region', name: 'CALABARZON' },
+        // Missing province 0434200000
+        { psgc_code: '0434203000', level: 'city', name: 'City of Biñan' },
+        { psgc_code: '0434203001', level: 'barangay', name: 'Biñan Proper' },
+      ],
+    });
+    const req = makeIssueRequest();
+    const res = await issuePassHandler.fetch(req);
+
+    expect(res.status).toBe(201);
+    const json = await res.json();
+    expect(json.passId).toBeDefined();
+    expect(json.returningProfileUpdate).toBe('failed');
+    expect(getCapturedUpdate()).toBeNull();
+  });
+
+  it('6. Missing city/municipality record fails closed: update fails, pass preserved with 201', async () => {
+    const { getCapturedUpdate } = createMockSupabase({
+      psgcLocations: [
+        { psgc_code: '0400000000', level: 'region', name: 'CALABARZON' },
+        { psgc_code: '0434200000', level: 'province', name: 'Laguna' },
+        // Missing city 0434203000
+        { psgc_code: '0434203001', level: 'barangay', name: 'Biñan Proper' },
+      ],
+    });
+    const req = makeIssueRequest();
+    const res = await issuePassHandler.fetch(req);
+
+    expect(res.status).toBe(201);
+    const json = await res.json();
+    expect(json.passId).toBeDefined();
+    expect(json.returningProfileUpdate).toBe('failed');
+    expect(getCapturedUpdate()).toBeNull();
+  });
+
+  it('7. Missing barangay record fails closed: update fails, pass preserved with 201', async () => {
+    const { getCapturedUpdate } = createMockSupabase({
+      psgcLocations: [
+        { psgc_code: '0400000000', level: 'region', name: 'CALABARZON' },
+        { psgc_code: '0434200000', level: 'province', name: 'Laguna' },
+        { psgc_code: '0434203000', level: 'city', name: 'City of Biñan' },
+        // Missing barangay 0434203001
+      ],
+    });
+    const req = makeIssueRequest();
+    const res = await issuePassHandler.fetch(req);
+
+    expect(res.status).toBe(201);
+    const json = await res.json();
+    expect(json.passId).toBeDefined();
+    expect(json.returningProfileUpdate).toBe('failed');
+    expect(getCapturedUpdate()).toBeNull();
+  });
+
+  it('8. Wrong PSGC code returned for requested locality fails closed: update fails, pass preserved with 201', async () => {
+    const { getCapturedUpdate } = createMockSupabase({
+      psgcLocations: [
+        { psgc_code: '0400000000', level: 'region', name: 'CALABARZON' },
+        { psgc_code: '0434200000', level: 'province', name: 'Laguna' },
+        { psgc_code: '9999999999', level: 'city', name: 'Mismatched Code City' },
+        { psgc_code: '0434203001', level: 'barangay', name: 'Biñan Proper' },
+      ],
+    });
+    const req = makeIssueRequest();
+    const res = await issuePassHandler.fetch(req);
+
+    expect(res.status).toBe(201);
+    const json = await res.json();
+    expect(json.passId).toBeDefined();
+    expect(json.returningProfileUpdate).toBe('failed');
+    expect(getCapturedUpdate()).toBeNull();
+  });
+
+  it('9. Wrong geographic level returned for requested code fails closed: update fails, pass preserved with 201', async () => {
+    const { getCapturedUpdate } = createMockSupabase({
+      psgcLocations: [
+        { psgc_code: '0400000000', level: 'region', name: 'CALABARZON' },
+        { psgc_code: '0434200000', level: 'province', name: 'Laguna' },
+        // Code 0434203000 returned with wrong level 'barangay' instead of city/municipality
+        { psgc_code: '0434203000', level: 'barangay', name: 'Wrong Level City' },
+        { psgc_code: '0434203001', level: 'barangay', name: 'Biñan Proper' },
+      ],
+    });
+    const req = makeIssueRequest();
+    const res = await issuePassHandler.fetch(req);
+
+    expect(res.status).toBe(201);
+    const json = await res.json();
+    expect(json.passId).toBeDefined();
+    expect(json.returningProfileUpdate).toBe('failed');
+    expect(getCapturedUpdate()).toBeNull();
+  });
+
+  it('10. Empty or whitespace-only locality name fails closed: update fails, pass preserved with 201', async () => {
+    const { getCapturedUpdate } = createMockSupabase({
+      psgcLocations: [
+        { psgc_code: '0400000000', level: 'region', name: 'CALABARZON' },
+        { psgc_code: '0434200000', level: 'province', name: 'Laguna' },
+        { psgc_code: '0434203000', level: 'city', name: '   \t  ' },
+        { psgc_code: '0434203001', level: 'barangay', name: 'Biñan Proper' },
+      ],
+    });
+    const req = makeIssueRequest();
+    const res = await issuePassHandler.fetch(req);
+
+    expect(res.status).toBe(201);
+    const json = await res.json();
+    expect(json.passId).toBeDefined();
+    expect(json.returningProfileUpdate).toBe('failed');
+    expect(getCapturedUpdate()).toBeNull();
+  });
+
+  it('11. Partial lookup results with no PostgREST error fails closed: update fails, pass preserved with 201', async () => {
+    const { getCapturedUpdate } = createMockSupabase({
+      // Only 2 of 4 requested locations returned, error is null
+      psgcLocations: [
+        { psgc_code: '0400000000', level: 'region', name: 'CALABARZON' },
+        { psgc_code: '0434200000', level: 'province', name: 'Laguna' },
+      ],
+      psgcError: null,
+    });
+    const req = makeIssueRequest();
+    const res = await issuePassHandler.fetch(req);
+
+    expect(res.status).toBe(201);
+    const json = await res.json();
+    expect(json.passId).toBeDefined();
+    expect(json.returningProfileUpdate).toBe('failed');
+    expect(getCapturedUpdate()).toBeNull();
+  });
+
+  it('12. Database lookup error fails closed: update fails, pass preserved with 201', async () => {
+    const { getCapturedUpdate } = createMockSupabase({
+      psgcError: { message: 'Failed to lookup psgc locations' },
+    });
+    const req = makeIssueRequest();
+    const res = await issuePassHandler.fetch(req);
+
+    expect(res.status).toBe(201);
+    const json = await res.json();
+    expect(json.passId).toBeDefined();
+    expect(json.returningProfileUpdate).toBe('failed');
+    expect(getCapturedUpdate()).toBeNull();
+  });
+
+  it('13. Supabase returning { error } reports returningProfileUpdate: failed without failing pass issuance', async () => {
     createMockSupabase({ updateError: { message: 'Database connection timeout' } });
     const req = makeIssueRequest();
     const res = await issuePassHandler.fetch(req);
 
-    // CRITICAL: Pass issuance must succeed!
     expect(res.status).toBe(201);
     const json = await res.json();
     expect(json.passId).toBeDefined();
     expect(json.returningProfileUpdate).toBe('failed');
   });
 
-  it('3. Profile update affecting zero rows reports returningProfileUpdate: failed without failing pass issuance', async () => {
+  it('14. Profile update affecting zero rows reports returningProfileUpdate: failed without failing pass issuance', async () => {
     createMockSupabase({ updatedRows: [] });
     const req = makeIssueRequest();
     const res = await issuePassHandler.fetch(req);
@@ -517,18 +903,7 @@ describe('PART 4: Returning Profile Persistence in issue.ts', () => {
     expect(json.returningProfileUpdate).toBe('failed');
   });
 
-  it('4. PSGC reference lookup failure fails closed: reports returningProfileUpdate: failed and preserves safe pass issuance', async () => {
-    createMockSupabase({ psgcError: { message: 'Failed to lookup psgc locations' } });
-    const req = makeIssueRequest();
-    const res = await issuePassHandler.fetch(req);
-
-    expect(res.status).toBe(201);
-    const json = await res.json();
-    expect(json.passId).toBeDefined();
-    expect(json.returningProfileUpdate).toBe('failed');
-  });
-
-  it('5. Optional address fields intentionally cleared are safely trimmed to empty/null', async () => {
+  it('15. Optional address fields intentionally cleared are safely trimmed to empty/null', async () => {
     const { getCapturedUpdate } = createMockSupabase();
     const req = makeIssueRequest(
       {},
@@ -546,7 +921,7 @@ describe('PART 4: Returning Profile Persistence in issue.ts', () => {
     expect(update.postal_code).toBeNull();
   });
 
-  it('6. saveUpdates: false causes no profile update and returns returningProfileUpdate: not_requested', async () => {
+  it('16. saveUpdates: false causes no profile update and returns returningProfileUpdate: not_requested', async () => {
     const { getCapturedUpdate } = createMockSupabase();
     const req = makeIssueRequest({ saveUpdates: false });
     const res = await issuePassHandler.fetch(req);
@@ -557,18 +932,17 @@ describe('PART 4: Returning Profile Persistence in issue.ts', () => {
     expect(getCapturedUpdate()).toBeNull();
   });
 
-  it('7. Invalid or tampered match-token authorization rejects profile updates and requests', async () => {
+  it('17. Invalid or tampered match-token authorization rejects profile updates and requests', async () => {
     createMockSupabase();
     const req = makeIssueRequest({ matchToken: 'invalid.match.token.here' });
     const res = await issuePassHandler.fetch(req);
 
-    // Fails authorization
     expect(res.status).toBe(422);
     const json = await res.json();
     expect(json.error).toBe('returning_match_required');
   });
 
-  it('8. Critical pass-issuance invariant: Pass issuance always survives profile update failure', async () => {
+  it('18. Critical pass-issuance invariant: Pass issuance always survives profile update failure', async () => {
     createMockSupabase({ updateError: { message: 'Simulated deadlock' } });
     const req = makeIssueRequest();
     const res = await issuePassHandler.fetch(req);
@@ -579,7 +953,7 @@ describe('PART 4: Returning Profile Persistence in issue.ts', () => {
     expect(json.returningProfileUpdate).toBe('failed');
   });
 
-  it('9. Accurate update-status reporting: response includes honest status', async () => {
+  it('19. Accurate update-status reporting: response includes honest status', async () => {
     createMockSupabase();
     const req = makeIssueRequest();
     const res = await issuePassHandler.fetch(req);
@@ -588,7 +962,7 @@ describe('PART 4: Returning Profile Persistence in issue.ts', () => {
     expect(['updated', 'failed', 'not_requested']).toContain(json.returningProfileUpdate);
   });
 
-  it('10. Update target is strictly bound to matched profileId and never modifies a different visitor', async () => {
+  it('20. Update target is strictly bound to matched profileId and never modifies a different visitor', async () => {
     const { getCapturedTargetId } = createMockSupabase();
     const req = makeIssueRequest({ profileId: PROFILE_ID });
     await issuePassHandler.fetch(req);

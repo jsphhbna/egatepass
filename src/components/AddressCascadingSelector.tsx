@@ -97,7 +97,7 @@ export function AddressCascadingSelector({
                 postalCode: initialAddress.postalCode,
                 isAutoFilled: true,
                 requiresConfirmation: false,
-                mappingType: 'exact_barangay',
+                mappingType: 'unknown',
                 message: 'PHLPost standard postal code',
               }
             : null)
@@ -293,7 +293,7 @@ export function AddressCascadingSelector({
                   postalCode: finalPostalCode,
                   isAutoFilled: true,
                   requiresConfirmation: false,
-                  mappingType: 'exact_barangay' as const,
+                  mappingType: (initialAddress?.postalResolution?.mappingType || 'unknown'),
                   message: 'PHLPost standard postal code',
                 }
               : undefined));

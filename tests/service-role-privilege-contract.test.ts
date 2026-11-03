@@ -37,6 +37,7 @@ describe('Service Role Least-Privilege Architecture Contract', () => {
       'pass_email_verifications',
       'passes',
       'portal_identity_verification_attempts',
+      'psgc_locations',
       'rate_limit_buckets',
       'resend_webhook_events',
       'reconciliation_tasks',

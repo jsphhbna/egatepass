@@ -1694,8 +1694,14 @@ export function GetPassPage() {
           barangayCode: selectedPsgc.barangay.code,
           houseBuilding: homeBuilding.trim() || undefined,
           street: homeStreet.trim() || undefined,
-          postalCode: postalCode.trim() || selectedPsgc.postalCode || undefined,
-          postalCodeSource: selectedPsgc.postalCodeSource || undefined,
+          postalCode: (postalCode.trim() || selectedPsgc.postalCode || undefined),
+          postalCodeSource: (() => {
+            const trimmed = postalCode.trim();
+            const selPostal = selectedPsgc.postalCode ? selectedPsgc.postalCode.trim() : '';
+            if (!trimmed && !selPostal) return undefined;
+            if (selPostal && trimmed && trimmed !== selPostal) return 'manual';
+            return selectedPsgc.postalCodeSource || (trimmed ? 'manual' : undefined);
+          })(),
         } : undefined,
         homeAddress: selectedPsgc ? formatStructuredAddress({
           regionName: selectedPsgc.region.name,

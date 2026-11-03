@@ -153,9 +153,15 @@ export const SERVICE_ROLE_TABLE_CONTRACT: Record<string, ServerTablePrivilegeCon
   },
   nominatim_rate_limiter: {
     table: 'nominatim_rate_limiter',
-    allowedPrivileges: ['SELECT', 'UPDATE'],
+    allowedPrivileges: ['SELECT'],
     forbiddenPrivileges: ['INSERT', 'DELETE'],
     justification: 'Server manages single-slot rate limiter for OpenStreetMap Nominatim compliance.',
+  },
+  psgc_locations: {
+    table: 'psgc_locations',
+    allowedPrivileges: ['SELECT'],
+    forbiddenPrivileges: ['INSERT', 'UPDATE', 'DELETE'],
+    justification: 'Server reads official PSA PSGC geographic hierarchy records for address validation and locality name resolution.',
   },
 };
 
@@ -218,6 +224,7 @@ export const SERVER_DIRECT_TABLE_OPERATIONS: DirectServerTableOperation[] = [
   { file: 'server/routes/passes/identify-returning.ts', table: 'returning_face_templates', operations: ['SELECT'], purpose: 'Query active encrypted face templates for 1:N comparison' },
   { file: 'server/routes/passes/identify-returning.ts', table: 'returning_visitor_vehicles', operations: ['SELECT'], purpose: 'Fetch saved vehicles for identified returning visitor' },
   { file: 'server/routes/passes/identify-returning.ts', table: 'returning_identity_attempts', operations: ['INSERT'], purpose: 'Record returning visitor identification attempt and match token' },
+  { file: 'server/routes/passes/identify-returning.ts', table: 'psgc_locations', operations: ['SELECT'], purpose: 'Lookup missing PSGC locality names during returning profile fallback' },
   { file: 'server/routes/passes/lookup-returning.ts', table: 'returning_visitor_profiles', operations: ['SELECT'], purpose: 'Discover active returning profiles for 1:1 verification frontdoor' },
   { file: 'server/routes/passes/verify-identity.ts', table: 'upload_intents', operations: ['SELECT'], purpose: 'Validate photo and ID upload intents belong to session' },
   { file: 'server/routes/passes/verify-identity.ts', table: 'portal_identity_verification_attempts', operations: ['INSERT'], purpose: 'Record identity comparison attempt' },
@@ -232,6 +239,7 @@ export const SERVER_DIRECT_TABLE_OPERATIONS: DirectServerTableOperation[] = [
   { file: 'server/routes/passes/issue.ts', table: 'visitor_evidence', operations: ['SELECT'], purpose: 'Verify upload intent IDs match on replay' },
   { file: 'server/routes/passes/issue.ts', table: 'returning_identity_attempts', operations: ['SELECT'], purpose: 'Verify returning match token attempt before pass issuance' },
   { file: 'server/routes/passes/issue.ts', table: 'returning_visitor_profiles', operations: ['INSERT', 'UPDATE'], purpose: 'Enroll new returning profile or update returning visitor details' },
+  { file: 'server/routes/passes/issue.ts', table: 'psgc_locations', operations: ['SELECT'], purpose: 'Validate PSGC geographic hierarchy and resolve locality names for profile enrollment and update' },
   { file: 'server/routes/passes/issue.ts', table: 'returning_face_templates', operations: ['INSERT'], purpose: 'Save encrypted face template on optional returning enrollment' },
   { file: 'server/routes/passes/issue.ts', table: 'returning_visitor_vehicles', operations: ['INSERT'], purpose: 'Save vehicle on optional returning enrollment' },
   { file: 'server/routes/system/purge-images.ts', table: 'app_settings', operations: ['SELECT'], purpose: 'Read image retention days' },
