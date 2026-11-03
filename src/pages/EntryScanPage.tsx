@@ -4,14 +4,14 @@ import { getAccessToken, signOutCurrentActor } from '@/services/auth';
 import { Html5Qrcode } from 'html5-qrcode';
 import { LogOut as LogOutIcon } from 'lucide-react';
 import { toast } from 'sonner';
-import { Clock3, QrCode, XCircle, AlertTriangle } from 'lucide-react';
+import { Clock3, QrCode, XCircle, AlertTriangle, CheckCircle2 } from 'lucide-react';
 import { BrandMark } from '@/components/BrandMark';
 import { createOptimizedQrScanner, enableContinuousFocus, QR_SCAN_CONFIG } from '@/lib/qrScanner';
 import { RefreshCw, AlertCircle } from 'lucide-react';
 import { Modal, Button } from '@/components/ui';
 import { fetchWithTimeout, RequestTimeoutError } from '@/lib/fetchWithTimeout';
 
-type ScanStatus = 'ready' | 'processing' | 'pending' | 'warning' | 'error';
+type ScanStatus = 'ready' | 'processing' | 'granted' | 'pending' | 'warning' | 'error';
 
 export function EntryScanPage() {
   const { userData } = useAuth();
@@ -82,13 +82,20 @@ export function EntryScanPage() {
         throw new Error('network_unavailable');
       }
 
-      const result = await response.json().catch(() => null) as { code?: string; error?: string; message?: string } | null;
+      const result = await response.json().catch(() => null) as { status?: string; code?: string; error?: string; message?: string } | null;
       if (!response.ok) {
         throw { code: result?.code || 'scan_failed', message: result?.error || 'Scan failed' };
       }
-      setStatus('pending');
-      setStatusMessage(result?.message || 'Scanned! Waiting for guard approval…');
-      toast.success('Pass scanned — pending guard approval');
+
+      if (result?.status === 'inside') {
+        setStatus('granted');
+        setStatusMessage(result.message || 'Entry recorded. Please proceed through the normal security inspection.');
+        toast.success(result.message || 'Pass scanned — entry granted');
+      } else {
+        setStatus('pending');
+        setStatusMessage(result?.message || 'Scanned! Waiting for guard approval…');
+        toast.success('Pass scanned — pending guard approval');
+      }
     } catch (error: unknown) {
       if (isTimeout) {
         setStatus('error');
@@ -173,6 +180,7 @@ export function EntryScanPage() {
       bg: 'var(--color-warning)',
       icon: <div className="h-8 w-8 animate-spin rounded-full border-3 border-white border-t-transparent" />,
     },
+    granted: { bg: 'var(--color-success)', icon: <CheckCircle2 className="h-8 w-8 text-white" /> },
     pending: { bg: 'var(--color-warning-dark)', icon: <Clock3 className="h-8 w-8 text-white" /> },
     warning: { bg: 'var(--color-warning-dark)', icon: <AlertTriangle className="h-8 w-8 text-white" /> },
     error: { bg: 'var(--color-danger)', icon: <XCircle className="h-8 w-8 text-white" /> },

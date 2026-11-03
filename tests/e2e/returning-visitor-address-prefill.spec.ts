@@ -128,6 +128,14 @@ test.describe('Returning Visitor Address Prefill & UI Hydration Integration Suit
         }),
       });
     });
+
+    // Mock PostgREST PSGC & Postal Reference to immediately use bundled client-side data
+    await page.route('**/rest/v1/psgc_locations**', async (route) => {
+      await route.fulfill({ status: 200, contentType: 'application/json', body: '[]' });
+    });
+    await page.route('**/rest/v1/postal_code_reference**', async (route) => {
+      await route.fulfill({ status: 200, contentType: 'application/json', body: '[]' });
+    });
   });
 
   test('1. Proves Welcome Back screen hydrates full address, synchronizes manual postal override, preserves on re-opening selector, and clears properly', async ({ page }) => {
@@ -498,5 +506,126 @@ test.describe('Returning Visitor Address Prefill & UI Hydration Integration Suit
     expect(capturedPassRequest.psgc.postalCodeSource).toBe('manual');
     expect(capturedPassRequest.psgc.cityCode).toBe('1380600000');
     expect(capturedPassRequest.psgc.barangayCode).toBe('1380601001');
+  });
+
+  test('3. Proves re-opening address selector and re-confirming same locality preserves manual postal code override', async ({ page }) => {
+    test.setTimeout(120_000);
+
+    const testProfile = {
+      id: '44444444-4444-4444-8444-444444444444',
+      firstName: 'Juan',
+      middleName: 'Dela',
+      lastName: 'Cruz',
+      contactNumber: '09123456789',
+      homeAddress: 'Unit 4B, Nagtahan St., Barangay 408 (Sampaloc / EARIST Nagtahan), City of Manila, 1008',
+      psgc: {
+        version: '2026-q3',
+        region: { code: '1300000000', name: 'NCR' },
+        province: null,
+        city: { code: '1380600000', name: 'City of Manila' },
+        barangay: { code: '1380600408', name: 'Barangay 408 (Sampaloc / EARIST Nagtahan)' },
+        houseBuilding: 'Unit 4B',
+        street: 'Nagtahan St.',
+        postalCode: '1008',
+        postalCodeSource: 'PHLPost',
+      },
+    };
+
+    await page.route('**/api/passes/lookup-returning', async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          found: true,
+          count: 1,
+          candidates: [
+            {
+              profileId: testProfile.id,
+              maskedName: 'J*** D*** C***',
+              maskedContact: '0912***6789',
+              partialLocality: 'City of Manila',
+            },
+          ],
+        }),
+      });
+    });
+
+    await page.route('**/api/passes/identify-returning', async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          available: true,
+          matched: true,
+          matchToken: 'mock-token-reselect-test',
+          profile: testProfile,
+          savedVehicles: [],
+        }),
+      });
+    });
+
+    await page.setViewportSize({ width: 1280, height: 800 });
+    await page.goto('/get-pass', { waitUntil: 'domcontentloaded' });
+
+    // Lookup and face verify Juan
+    const returningBtn = page.getByRole('button', { name: /Returning Visitor/i }).first();
+    await expect(returningBtn).toBeVisible({ timeout: 15_000 });
+    await returningBtn.click();
+
+    await page.locator('input[placeholder*="Juan"]').or(page.locator('input[name="firstName"]')).first().fill('Juan');
+    await page.locator('input[placeholder*="Cruz"]').or(page.locator('input[name="lastName"]')).first().fill('Cruz');
+    await page.getByRole('button', { name: /Find My Profile|Search Profile|Search/i }).first().click();
+
+    const proceedBtn = page.getByRole('button', { name: /Proceed to Live Face Verification/i });
+    await expect(proceedBtn).toBeVisible({ timeout: 15_000 });
+    await proceedBtn.click();
+
+    const captureBtn = page.getByRole('button', { name: /Capture Selfie/i });
+    await expect(captureBtn).toBeVisible({ timeout: 15_000 });
+    await captureBtn.click();
+
+    const verifyPhotoBtn = page.getByRole('button', { name: /Verify This Photo/i });
+    await expect(verifyPhotoBtn).toBeVisible({ timeout: 10_000 });
+    await verifyPhotoBtn.click();
+
+    await expect(page.getByRole('heading', { name: /Welcome back, Juan!/i })).toBeVisible({ timeout: 15_000 });
+
+    // 1. Manually override postal code to 1009 on the form
+    const postalInput = page.getByPlaceholder(/4-digit postal code/i);
+    await postalInput.fill('1009');
+    await expect(page.getByText(/^Manual entry$/i)).toBeVisible();
+
+    // 2. Open the cascading selector modal via Change button
+    const changeLocalityBtn = page.getByRole('button', { name: /^Change$/i }).first();
+    await expect(changeLocalityBtn).toBeVisible();
+    await changeLocalityBtn.click();
+
+    // Modal opens at 'Confirm Residential Address' step
+    const modalTitle = page.locator('#cascading-address-title');
+    await expect(modalTitle).toContainText('Confirm Residential Address');
+
+    // Click 'Change' inside the modal to go back to barangay list
+    const modalChangeBtn = page.locator('button', { hasText: 'Change' }).last();
+    await modalChangeBtn.click();
+
+    // Re-select 'Barangay 408' from the list (not the breadcrumbs)
+    const bgy408Option = page.locator('.divide-y button', { hasText: 'Barangay 408' }).first();
+    await expect(bgy408Option).toBeVisible({ timeout: 10_000 });
+    await bgy408Option.click();
+
+    // Verify confirmation view reappears and still preserves manual code 1009
+    await expect(modalTitle).toContainText('Confirm Residential Address');
+    const modalPostalInput = page.locator('#confirm-modal-postal');
+    if (await modalPostalInput.isVisible().catch(() => false)) {
+      expect(await modalPostalInput.inputValue()).toBe('1009');
+    }
+
+    // Click 'Confirm Address' to close modal
+    const confirmAddrBtn = page.getByRole('button', { name: /Confirm Address/i });
+    await confirmAddrBtn.click();
+
+    // 3. Verify on the main form that postal code is still 1009 and badge is Manual entry
+    expect(await postalInput.inputValue()).toBe('1009');
+    await expect(page.getByText(/^Manual entry$/i)).toBeVisible();
   });
 });
