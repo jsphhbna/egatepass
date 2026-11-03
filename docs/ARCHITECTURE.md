@@ -645,23 +645,28 @@ Outage Architecture & Authority Delegation
   - Functional lookup indexes on `returning_visitor_profiles (lower(first_name), lower(last_name))` and `(contact_number_e164)`.
   - Default-deny RLS enabled on `nominatim_rate_limiter` and `location_search_cache` (`revoke all from public, anon, authenticated; grant all to service_role`).
 
-### 12.14 Returning Visitor Production Readiness & Residential Address UX Hardening
-- **Diagnostic Capability Flags & Fail-Closed Safety Gate (`GET /api/passes/capabilities`)**:
-  - Exposes safe boolean flags without leaking credentials, keys, or threshold scores:
-    - `returningVisitorAvailable`: Strict conjunction of facial engine readiness, crypto key provisioning, and calibration configuration.
-    - `facialRecognitionConfigured`: Native ONNX runtime readiness, YuNet and SFace model presence, and smoke inference check.
-    - `returningCryptoConfigured`: 32-byte template encryption key (`RETURNING_VISITOR_TEMPLATE_KEY`) and HMAC secret (`RETURNING_MATCH_TOKEN_SECRET`) provisioned.
-    - `returningCalibrationConfigured`: Empirical cosine threshold (`RETURNING_FACE_MIN_COSINE`) set to a valid numeric score.
-  - Frontdoor UI accurately presents "Setup Pending" badge and transparent diagnostic explanation if campus calibration or keys are pending, eliminating misleading "Scheduled Maintenance" claims.
-- **Empirical 1:1 Pairwise Biometric Calibration Harness (`scripts/calibrate-returning-face.mjs`)**:
-  - Replaces obsolete 1:N gallery matching stub and margin checks with true 1:1 pairwise verification.
-  - Evaluates genuine intra-person matches (same subject across poses/lighting) and impostor inter-person matches (distinct subjects).
-  - Sweeps candidate thresholds [0.30 - 0.70] computing empirical FAR, FRR, and Equal Error Rate (EER) to determine optimal operating threshold.
-  - Fail-closed operational policy: `RETURNING_FACE_MIN_COSINE` must remain unset in production until calibrated against real campus entrance cameras and physical test subjects.
-- **Institutional Design Tokens & Residential Address Confirmation UX**:
-  - Removed hardcoded dark theme classes (`bg-[var(--color-surface,#18181b)]`, `text-white`, `border-slate-700`) in `AddressCascadingSelector` and `StructuredAddressField` that caused illegible white-on-white text against E-GatePass's light theme (`--color-surface` #FFFFFF, `--color-brand` #7A0A0A, `--color-text-primary` #172033).
-  - Address Confirmation Step UX: When an exact PHLPost postal mapping is not published (e.g. City of Manila, Barangay 856), an interactive 4-digit numeric input is displayed directly inside the modal confirmation card, allowing visitors to confirm or enter their delivery postal code before finalizing the address.
-  - Multi-level cascading state invalidation: Selecting a new Region, Province, or City resets downstream barangay and postal resolutions, synchronizing directly with the parent form.
+### 12.15 Provisional SFace Verification Architecture & Enrollment Decoupling
+- **Capability Decoupling (Enrollment vs Verification)**:
+  - Eliminated the circular dependency between returning visitor verification availability and first-time visitor enrollment:
+    - **Face Extraction Readiness**: Native ONNX runtime readiness, YuNet 2023mar detection model, and SFace 2021dec model present on disk with valid smoke inference (`facialRecognitionConfigured`).
+    - **Returning Enrollment Readiness**: Face extraction is ready and 32-byte AES-256-GCM template encryption key is configured (`returningEnrollmentAvailable`). Does NOT depend on verification thresholds or match token secrets.
+    - **Returning Verification Readiness**: Face extraction is ready, both template key and match token secret are valid, and similarity threshold is configured (`returningVisitorAvailable`).
+  - New Visitor registration now displays the optional biometric enrollment checkbox (`rememberVisitor`) whenever `returningEnrollmentAvailable` is true, enabling the first legitimate enrollment without requiring verification to already be active.
+- **Provisional SFace Reference Threshold Model**:
+  - Threshold: `0.363` (`RETURNING_FACE_MIN_COSINE=0.363`, `RETURNING_FACE_THRESHOLD_MODE=provisional`).
+  - **Compatibility Proof**: Matches the official OpenCV Zoo SFace 2021dec reference specification:
+    - 128-dimensional Float32Array embedding.
+    - Explicit L2-normalization of descriptors ($\|v\|_2 = 1.0$).
+    - Umeyama 2D similarity transform mapping 5 detected landmarks to canonical SFace reference coordinates on 112x112 chip.
+    - Mathematical cosine similarity calculation $\frac{a \cdot b}{\|a\|_2 \|b\|_2}$.
+    - Matches the existing 1:1 ID vs Selfie verification threshold (`SFACE_COSINE_THRESHOLD = 0.363`).
+  - **Governance Limitation**: The 0.363 threshold is explicitly marked as *provisional reference*, not an empirical EARIST campus-calibrated threshold. Physical guard face-to-photo verification remains mandatory at the gate.
+- **Troubleshooting Unsuccessful Matching**:
+  - If a returning visitor fails matching (`matched: false`), the portal provides actionable guidance:
+    1. Lighting and angle: Ensure uniform facial lighting without heavy backlighting or shadows.
+    2. Framing: Hold camera steady at eye level within the guided oval.
+    3. Retake or Fallback: Visitor can retry selfie capture or seamlessly click **Register as New Visitor** with standard government ID.
+
 
 
 

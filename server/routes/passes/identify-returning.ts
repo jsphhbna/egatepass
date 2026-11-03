@@ -30,24 +30,59 @@ const requestSchema = z.object({
   photoIntentId: z.string().uuid(),
 }).strict();
 
-export function isReturningCryptoConfigured(): boolean {
-  const templateKey = process.env.RETURNING_VISITOR_TEMPLATE_KEY;
-  const matchSecret = process.env.RETURNING_MATCH_TOKEN_SECRET;
+export const SFACE_PROVISIONAL_COSINE_THRESHOLD = 0.363;
 
-  if (!templateKey || !matchSecret) return false;
-  return templateKey.trim().length >= 32 && matchSecret.trim().length >= 16;
+export function isTemplateKeyConfigured(): boolean {
+  const templateKey = process.env.RETURNING_VISITOR_TEMPLATE_KEY;
+  return Boolean(templateKey && templateKey.trim().length >= 32);
+}
+
+export function isMatchSecretConfigured(): boolean {
+  const matchSecret = process.env.RETURNING_MATCH_TOKEN_SECRET;
+  return Boolean(matchSecret && matchSecret.trim().length >= 16);
+}
+
+export function isReturningCryptoConfigured(): boolean {
+  return isTemplateKeyConfigured() && isMatchSecretConfigured();
+}
+
+export function getResolvedCosineThreshold(): number | null {
+  const envVal = process.env.RETURNING_FACE_MIN_COSINE?.trim();
+  if (envVal) {
+    const num = Number(envVal);
+    if (!isNaN(num) && num > 0 && num < 1) {
+      return num;
+    }
+  }
+  const mode = process.env.RETURNING_FACE_THRESHOLD_MODE?.trim().toLowerCase();
+  if (mode === 'provisional') {
+    return SFACE_PROVISIONAL_COSINE_THRESHOLD;
+  }
+  return null;
+}
+
+export function isThresholdConfigured(): boolean {
+  return getResolvedCosineThreshold() !== null;
+}
+
+export function getThresholdMode(): 'provisional' | 'calibrated' | 'unconfigured' {
+  if (!isThresholdConfigured()) return 'unconfigured';
+  const mode = (process.env.RETURNING_FACE_THRESHOLD_MODE || '').trim().toLowerCase();
+  if (mode === 'calibrated') return 'calibrated';
+  return 'provisional';
 }
 
 export function isReturningCalibrationConfigured(): boolean {
-  const minCosine = process.env.RETURNING_FACE_MIN_COSINE;
-  if (!minCosine) return false;
-  const cosineNum = Number(minCosine);
-  return !isNaN(cosineNum) && cosineNum > 0 && cosineNum < 1;
+  return isThresholdConfigured();
+}
+
+export function isReturningEnrollmentAvailable(): boolean {
+  return isFaceVerificationConfigured() && isTemplateKeyConfigured();
 }
 
 export function isReturningVisitorAvailable(): boolean {
   return (
-    isReturningCalibrationConfigured() &&
+    isThresholdConfigured() &&
     isReturningCryptoConfigured() &&
     isFaceVerificationConfigured()
   );
@@ -89,11 +124,11 @@ async function handleRequest(request: Request): Promise<Response> {
       return jsonResponse(200, {
         available: false,
         matched: false,
-        message: 'Returning visitor biometrics are currently unavailable pending calibration.',
+        message: 'Returning visitor biometrics are currently unavailable pending configuration.',
       });
     }
 
-    const minCosine = Number(process.env.RETURNING_FACE_MIN_COSINE);
+    const minCosine = getResolvedCosineThreshold()!;
     const templateKey = process.env.RETURNING_VISITOR_TEMPLATE_KEY!;
     const matchSecret = process.env.RETURNING_MATCH_TOKEN_SECRET!;
 

@@ -133,6 +133,16 @@ Online visitor registration collects standardized Philippine residential localit
 - **Zero Third-Party APIs**: Pure database-backed and bundled reference execution requiring no Geoapify key, Google Maps key, or runtime geocoding services.
 - **Server Verification**: Validated server-side in `api.issue_online_pass_v6` with immutable address snapshot fields stored on the visitor record.
 
+#### 3.1.2 Returning Visitor 1:1 Biometric Verification (Provisional Reference Mode)
+
+Visitors who previously registered and explicitly opted in to remember their credentials can quickly check in on subsequent visits without re-uploading a government ID:
+- **Decoupled Enrollment**: First-time visitors can optionally consent to encrypt and store their facial template during normal New Visitor pass issuance as long as template cryptography is ready. Enrollment does not require verification to be pre-calibrated.
+- **Frontdoor Discovery**: Registered first and last name lookup returns privacy-masked candidates (`Juan S. D****`, `0917***4567`, `Barangay 856, City of Manila`), protecting PII.
+- **1:1 Facial Comparison**: The visitor selects their profile and captures a fresh live selfie. The server decrypts the selected profile's template from AES-256-GCM storage and performs a direct 1:1 cosine similarity comparison.
+- **Provisional SFace Threshold (0.363)**: Uses the official OpenCV Zoo SFace reference baseline threshold (`0.363`) for supervised capstone evaluation. This threshold is explicitly labeled as *provisional reference* (not an empirical campus-calibrated threshold).
+- **Single-Use Match Tokens**: A successful 1:1 match issues a 15-minute, single-use `matchToken` that unlocks profile prefilling, fresh purpose selection, and pass issuance.
+- **Guard View Invariant**: Biometric matching is an assistive check-in convenience. Campus entrance security strictly requires on-duty security guards to perform physical face-to-photo verification at the gate.
+
 ---
 
 ### 3.2 Walk-in Kiosk ID OCR Flow

@@ -724,4 +724,31 @@ The shared pure SVG template generator (`src/lib/digitalPassArtifact.ts`) uses s
     - `service_unavailable`: Database reference table connection failure. Informs user and gracefully permits manual entry without blocking registration.
   - Institutional Light Design System Integrity: Full contrast compliance across all address selection and confirmation dialogs using institutional maroon (`#7A0A0A`), gold accent (`#F2C94C`), dark text (`#172033`), and white surfaces (`#FFFFFF`).
 
+## 27. Provisional Biometric Threshold Governance & Decoupled Enrollment Security
+
+### 27.1 Provisional SFace Threshold Governance
+- **Provisional Reference vs Campus Calibration**:
+  - The threshold `0.363` (`RETURNING_FACE_MIN_COSINE=0.363`) is derived from OpenCV Zoo's published baseline for SFace 2021dec on LFW/CASIA-WebFace.
+  - It is labeled strictly as `provisional` (`RETURNING_FACE_THRESHOLD_MODE=provisional`).
+  - It is NOT an empirically calibrated EARIST campus threshold. Campus calibration on real EARIST turnstile hardware with physical test subjects across daylight, artificial, and nocturnal lighting remains required before institutional production reliance.
+- **Physical Guard Verification Retained**:
+  - Biometric 1:1 match alone DOES NOT authorize campus entry.
+  - Guards on duty at physical gate stations perform mandatory visual face-to-photo verification against the digital pass displayed on the Guard terminal.
+  - Pass QR validity, business-hour enforcement, and single-entry/exit rules remain strictly active.
+
+### 27.2 Decoupled Enrollment Security Boundaries
+- **Explicit Consent Mandate**:
+  - Facial biometric features are NEVER captured or enrolled automatically.
+  - Enrollment requires explicit visitor checkbox selection (`rememberVisitor`) during New Visitor registration.
+  - Purpose of future biometric identification is clearly displayed before submission.
+- **Safe Template Key Management**:
+  - Face templates are encrypted with AES-256-GCM using `RETURNING_VISITOR_TEMPLATE_KEY` (32 bytes / 64 hex characters).
+  - Enrollment requires ONLY the template key and does not depend on verification threshold or match token secret readiness.
+  - Decryption occurs transiently in RAM during 1:1 verification; raw embeddings and decrypted vectors are never persisted or returned to the browser.
+- **Match Token Cryptographic Defense**:
+  - Upon successful 1:1 verification, server issues a single-use opaque `matchToken`.
+  - Database stores only `match_token_digest` (HMAC/SHA-256 with `RETURNING_MATCH_TOKEN_SECRET`).
+  - Single-use and expiration (15 minutes) prevent token replay, cross-actor replay, and profile impersonation.
+
+
 

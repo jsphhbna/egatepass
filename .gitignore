@@ -61,3 +61,4 @@ scripts/*
 !scripts/generate-build-meta.mjs
 !scripts/calibrate-returning-face.mjs
 !scripts/build-reference-datasets.mjs
+!scripts/generate-returning-secrets.mjs

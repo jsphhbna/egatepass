@@ -225,9 +225,15 @@ export function GetPassPage() {
     initialMode === 'returning' ? 'returning' : 'new'
   );
   const [returningAvailable, setReturningAvailable] = useState<boolean | null>(null);
+  const [enrollmentAvailable, setEnrollmentAvailable] = useState<boolean | null>(null);
+  const [thresholdMode, setThresholdMode] = useState<'provisional' | 'calibrated' | 'unconfigured'>('unconfigured');
   const [capabilitiesDiagnostics, setCapabilitiesDiagnostics] = useState<{
+    returningVisitorAvailable?: boolean;
+    returningEnrollmentAvailable?: boolean;
     facialRecognitionConfigured?: boolean;
     returningCryptoConfigured?: boolean;
+    thresholdConfigured?: boolean;
+    thresholdMode?: 'provisional' | 'calibrated' | 'unconfigured';
     returningCalibrationConfigured?: boolean;
   } | null>(null);
   const [showReturningGateModal, setShowReturningGateModal] = useState(false);
@@ -378,17 +384,24 @@ export function GetPassPage() {
     fetch('/api/passes/capabilities')
       .then((res) => (res.ok ? res.json() : null))
       .then((data) => {
-        setReturningAvailable(Boolean(data?.returningVisitorAvailable));
         if (data) {
+          setReturningAvailable(Boolean(data?.returningVisitorAvailable));
+          setEnrollmentAvailable(Boolean(data?.returningEnrollmentAvailable));
+          setThresholdMode(data?.thresholdMode || 'unconfigured');
           setCapabilitiesDiagnostics({
+            returningVisitorAvailable: Boolean(data.returningVisitorAvailable),
+            returningEnrollmentAvailable: Boolean(data.returningEnrollmentAvailable),
             facialRecognitionConfigured: Boolean(data.facialRecognitionConfigured),
             returningCryptoConfigured: Boolean(data.returningCryptoConfigured),
+            thresholdConfigured: Boolean(data.thresholdConfigured),
+            thresholdMode: data.thresholdMode || 'unconfigured',
             returningCalibrationConfigured: Boolean(data.returningCalibrationConfigured),
           });
         }
       })
       .catch(() => {
         setReturningAvailable(false);
+        setEnrollmentAvailable(false);
       });
   }, []);
 
@@ -1610,7 +1623,9 @@ export function GetPassPage() {
 
       const result = await issueVisitorPass('portal', formData, photoBlob, idBlob, issueRequestId.current, undefined, portalTransactionRef.current, vehiclePhotoBlob);
 
-      if (result.returningEnrollment === 'failed') {
+      if (result.returningEnrollment === 'enrolled') {
+        toast.success('Your returning visitor profile was securely enrolled for future visits.');
+      } else if (result.returningEnrollment === 'failed') {
         toast.warning('Pass created successfully, but your returning visitor profile could not be enrolled. You may enroll on your next visit.');
       }
 
@@ -1847,9 +1862,17 @@ export function GetPassPage() {
                       <div className="h-12 w-12 rounded-xl bg-slate-100 text-slate-700 flex items-center justify-center">
                         <UserCheck className="h-6 w-6" />
                       </div>
-                      {returningAvailable === false && (
+                      {returningAvailable === false ? (
                         <span className="rounded-full bg-amber-50 text-amber-900 border border-amber-300 px-2.5 py-0.5 text-[10px] font-bold">
                           Setup Pending
+                        </span>
+                      ) : thresholdMode === 'provisional' ? (
+                        <span className="rounded-full bg-blue-50 text-blue-900 border border-blue-200 px-2.5 py-0.5 text-[10px] font-bold">
+                          Provisional Mode (0.363)
+                        </span>
+                      ) : (
+                        <span className="rounded-full bg-emerald-50 text-emerald-900 border border-emerald-300 px-2.5 py-0.5 text-[10px] font-bold">
+                          Ready
                         </span>
                       )}
                     </div>
@@ -1858,11 +1881,15 @@ export function GetPassPage() {
                       <p className="text-xs text-[var(--color-text-secondary)] mt-1 leading-relaxed">
                         Fast check-in using your previously enrolled facial profile and saved visitor credentials.
                       </p>
-                      {returningAvailable === false && (
+                      {returningAvailable === false ? (
                         <p className="text-[11px] text-amber-900/80 mt-2 font-medium leading-relaxed">
-                          Returning visitor 1:1 facial verification is not yet operational pending campus physical sensor calibration and security key provisioning. Please proceed as a New Visitor.
+                          Returning visitor 1:1 facial verification is not yet operational pending configuration. Please proceed as a New Visitor.
                         </p>
-                      )}
+                      ) : thresholdMode === 'provisional' ? (
+                        <p className="text-[11px] text-blue-900/80 mt-2 font-medium leading-relaxed">
+                          Operating with OpenCV SFace reference threshold (0.363) for supervised testing. Guard face-to-photo check remains required at the gate.
+                        </p>
+                      ) : null}
                     </div>
                   </div>
                   <div className="mt-5 pt-3 border-t border-[var(--color-border)] flex items-center justify-between text-xs font-bold text-slate-700">
@@ -3134,10 +3161,10 @@ export function GetPassPage() {
               </div>
 
               {/* Biometric & Vehicle Retention Checkboxes */}
-              {returningAvailable !== true ? (
+              {enrollmentAvailable !== true ? (
                 <div className="rounded-xl border border-slate-200 bg-slate-50 p-4 text-xs text-slate-600">
                   <p className="font-semibold text-slate-800">Returning Visitor enrollment is temporarily unavailable.</p>
-                  <p className="text-[11px] mt-1">Facial profile enrollment is temporarily paused. Your visit pass will be generated normally for today's visit.</p>
+                  <p className="text-[11px] mt-1">Facial profile encryption setup is pending. Your visit pass will be generated normally for today's visit.</p>
                 </div>
               ) : (
                 <div className="space-y-3 rounded-xl border border-[var(--color-border)] bg-[var(--color-canvas)] p-4 text-xs">
@@ -3230,6 +3257,15 @@ export function GetPassPage() {
                   Enter your registered full name to locate your profile for 1:1 live facial verification.
                 </p>
               </div>
+
+              {thresholdMode === 'provisional' && (
+                <div className="rounded-xl border border-blue-200 bg-blue-50/70 p-3 text-xs text-blue-900 flex items-start gap-2.5">
+                  <Info className="h-4 w-4 text-blue-700 flex-shrink-0 mt-0.5" />
+                  <div className="text-[11px] leading-relaxed">
+                    <strong>Provisional Verification Mode</strong>: Comparing against OpenCV SFace reference threshold (0.363) for supervised testing. Physical guard face-to-photo verification remains mandatory at the gate.
+                  </div>
+                </div>
+              )}
 
               {returningSearchError && (
                 <div className="rounded-xl border border-[var(--color-danger)] bg-[var(--color-danger-light)] p-4 text-xs text-[var(--color-danger-dark)] flex items-start gap-2" role="alert">
@@ -3398,6 +3434,15 @@ export function GetPassPage() {
                   Look directly at the camera to verify your face against your selected profile.
                 </p>
               </div>
+
+              {thresholdMode === 'provisional' && (
+                <div className="rounded-xl border border-blue-200 bg-blue-50/70 p-3 text-xs text-blue-900 flex items-start gap-2.5">
+                  <Info className="h-4 w-4 text-blue-700 flex-shrink-0 mt-0.5" />
+                  <div className="text-[11px] leading-relaxed">
+                    <strong>Provisional Verification Mode</strong>: 1:1 cosine similarity evaluated against reference threshold (0.363). Guard face-to-photo verification remains required at campus gates.
+                  </div>
+                </div>
+              )}
 
               {returningIdentifyError && (
                 <div className="rounded-xl border border-[var(--color-danger)] bg-[var(--color-danger-light)] p-4 text-xs text-[var(--color-danger-dark)] space-y-2" role="alert">
@@ -3927,18 +3972,36 @@ export function GetPassPage() {
 
             {capabilitiesDiagnostics && (
               <div className="rounded-xl border border-amber-200 bg-amber-50/60 p-3 text-[11px] space-y-1.5 text-amber-900">
-                <div className="font-semibold text-amber-950">Readiness Status:</div>
+                <div className="font-semibold text-amber-950">Readiness Breakdown:</div>
                 <div className="flex items-center justify-between">
                   <span>Facial Model Inference Engine:</span>
                   <span className="font-bold">{capabilitiesDiagnostics.facialRecognitionConfigured ? 'Ready' : 'Pending'}</span>
+                </div>
+                <div className="flex items-center justify-between">
+                  <span>Facial Profile Enrollment:</span>
+                  <span className="font-bold">{capabilitiesDiagnostics.returningEnrollmentAvailable ? 'Ready' : 'Pending Provisioning'}</span>
                 </div>
                 <div className="flex items-center justify-between">
                   <span>Template Crypto Keys:</span>
                   <span className="font-bold">{capabilitiesDiagnostics.returningCryptoConfigured ? 'Configured' : 'Pending Provisioning'}</span>
                 </div>
                 <div className="flex items-center justify-between">
-                  <span>Physical Camera Calibration:</span>
-                  <span className="font-bold">{capabilitiesDiagnostics.returningCalibrationConfigured ? 'Calibrated' : 'Pending Campus Drill'}</span>
+                  <span>Verification Threshold:</span>
+                  <span className="font-bold">
+                    {capabilitiesDiagnostics.thresholdMode === 'calibrated'
+                      ? 'Calibrated'
+                      : capabilitiesDiagnostics.thresholdMode === 'provisional'
+                      ? 'Provisional (0.363)'
+                      : 'Pending Calibration'}
+                  </span>
+                </div>
+                <div className="flex items-center justify-between border-t border-amber-200/80 pt-1 mt-1">
+                  <span>Verification Status:</span>
+                  <span className="font-bold">
+                    {capabilitiesDiagnostics.returningVisitorAvailable
+                      ? (capabilitiesDiagnostics.thresholdMode === 'provisional' ? 'Active (Provisional)' : 'Active')
+                      : 'Setup Pending'}
+                  </span>
                 </div>
               </div>
             )}

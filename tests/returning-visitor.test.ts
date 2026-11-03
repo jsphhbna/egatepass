@@ -4,14 +4,27 @@ import {
   encryptFaceTemplate,
   decryptFaceTemplate,
   computeCosineSimilarity,
+  SFACE_COSINE_THRESHOLD,
+  SFACE_REFERENCE_LANDMARKS,
 } from '../server/lib/face-engine.js';
 import {
   isReturningVisitorAvailable,
+  isReturningEnrollmentAvailable,
+  isTemplateKeyConfigured,
   isReturningCryptoConfigured,
+  isThresholdConfigured,
+  getThresholdMode,
+  getResolvedCosineThreshold,
   isReturningCalibrationConfigured,
   computeMatchTokenDigest,
+  SFACE_PROVISIONAL_COSINE_THRESHOLD,
 } from '../server/routes/passes/identify-returning.js';
 import capabilitiesHandler from '../server/routes/passes/capabilities.js';
+import {
+  generateCryptoSecrets,
+  maskSecretSummary,
+  updateEnvLocalFile,
+} from '../scripts/generate-returning-secrets.mjs';
 
 describe('Returning Visitor Biometrics & Safety Gate Contract', () => {
   const originalEnv = { ...process.env };
@@ -27,44 +40,98 @@ describe('Returning Visitor Biometrics & Safety Gate Contract', () => {
   describe('1. Safety Gate & Capabilities Configuration', () => {
     it('reports returning visitor unavailable when env vars are missing', async () => {
       delete process.env.RETURNING_FACE_MIN_COSINE;
+      delete process.env.RETURNING_FACE_THRESHOLD_MODE;
       delete process.env.RETURNING_FACE_MIN_MARGIN;
       delete process.env.RETURNING_VISITOR_TEMPLATE_KEY;
       delete process.env.RETURNING_MATCH_TOKEN_SECRET;
 
       expect(isReturningVisitorAvailable()).toBe(false);
+      expect(isReturningEnrollmentAvailable()).toBe(false);
+      expect(isThresholdConfigured()).toBe(false);
+      expect(getThresholdMode()).toBe('unconfigured');
 
       const req = new Request('http://localhost/api/passes/capabilities', { method: 'GET' });
       const res = await capabilitiesHandler.fetch(req);
       expect(res.status).toBe(200);
       const data = await res.json();
       expect(data.returningVisitorAvailable).toBe(false);
+      expect(data.returningEnrollmentAvailable).toBe(false);
       expect(data.returningCryptoConfigured).toBe(false);
+      expect(data.thresholdConfigured).toBe(false);
+      expect(data.thresholdMode).toBe('unconfigured');
       expect(data.returningCalibrationConfigured).toBe(false);
       // facialRecognitionConfigured is independent of returning visitor env vars (reflects 1:1 model files on disk)
       expect(typeof data.facialRecognitionConfigured).toBe('boolean');
+
+      // Crucial: capabilities endpoint NEVER exposes secrets, keys, or similarity scores
+      expect(data.RETURNING_VISITOR_TEMPLATE_KEY).toBeUndefined();
+      expect(data.RETURNING_MATCH_TOKEN_SECRET).toBeUndefined();
+      expect(data.minCosine).toBeUndefined();
+      expect(data.score).toBeUndefined();
     });
 
-    it('distinguishes crypto configuration and calibration configuration independently', async () => {
-      // Configure crypto only
+    it('decouples enrollment readiness from verification threshold readiness (Priority 3)', async () => {
+      // Step A: Configure template key only (no match token secret, no threshold)
       process.env.RETURNING_VISITOR_TEMPLATE_KEY = '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef';
-      process.env.RETURNING_MATCH_TOKEN_SECRET = 'super-secret-match-token-secret-123';
+      delete process.env.RETURNING_MATCH_TOKEN_SECRET;
       delete process.env.RETURNING_FACE_MIN_COSINE;
+      delete process.env.RETURNING_FACE_THRESHOLD_MODE;
 
-      expect(isReturningCryptoConfigured()).toBe(true);
-      expect(isReturningCalibrationConfigured()).toBe(false);
-      expect(isReturningVisitorAvailable()).toBe(false);
+      expect(isTemplateKeyConfigured()).toBe(true);
+      expect(isReturningEnrollmentAvailable()).toBe(true); // Enrollment is ready!
+      expect(isReturningCryptoConfigured()).toBe(false); // Verification crypto is incomplete
+      expect(isThresholdConfigured()).toBe(false);
+      expect(isReturningVisitorAvailable()).toBe(false); // Verification gate remains closed
 
       const req = new Request('http://localhost/api/passes/capabilities', { method: 'GET' });
       const res = await capabilitiesHandler.fetch(req);
       const data = await res.json();
-      expect(data.returningCryptoConfigured).toBe(true);
-      expect(data.returningCalibrationConfigured).toBe(false);
+      expect(data.returningEnrollmentAvailable).toBe(true);
       expect(data.returningVisitorAvailable).toBe(false);
+      expect(data.thresholdMode).toBe('unconfigured');
+    });
 
-      // Now configure calibration
-      process.env.RETURNING_FACE_MIN_COSINE = '0.45';
-      expect(isReturningCalibrationConfigured()).toBe(true);
+    it('supports provisional threshold mode with OpenCV SFace reference value 0.363 (Priority 2 & 5)', async () => {
+      process.env.RETURNING_VISITOR_TEMPLATE_KEY = '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef';
+      process.env.RETURNING_MATCH_TOKEN_SECRET = 'super-secret-match-token-secret-123';
+      process.env.RETURNING_FACE_MIN_COSINE = '0.363';
+      process.env.RETURNING_FACE_THRESHOLD_MODE = 'provisional';
+
+      expect(isReturningCryptoConfigured()).toBe(true);
+      expect(isThresholdConfigured()).toBe(true);
+      expect(getThresholdMode()).toBe('provisional');
+      expect(getResolvedCosineThreshold()).toBe(0.363);
       expect(isReturningVisitorAvailable()).toBe(true);
+
+      const req = new Request('http://localhost/api/passes/capabilities', { method: 'GET' });
+      const res = await capabilitiesHandler.fetch(req);
+      const data = await res.json();
+      expect(data.returningVisitorAvailable).toBe(true);
+      expect(data.returningEnrollmentAvailable).toBe(true);
+      expect(data.returningCryptoConfigured).toBe(true);
+      expect(data.thresholdConfigured).toBe(true);
+      expect(data.thresholdMode).toBe('provisional');
+    });
+
+    it('distinguishes provisional vs calibrated threshold modes cleanly', () => {
+      // 1. Explicit calibrated mode
+      process.env.RETURNING_FACE_MIN_COSINE = '0.45';
+      process.env.RETURNING_FACE_THRESHOLD_MODE = 'calibrated';
+      expect(getThresholdMode()).toBe('calibrated');
+      expect(getResolvedCosineThreshold()).toBe(0.45);
+
+      // 2. Provisional mode via env flag without explicit numeric cosine
+      delete process.env.RETURNING_FACE_MIN_COSINE;
+      process.env.RETURNING_FACE_THRESHOLD_MODE = 'provisional';
+      expect(getThresholdMode()).toBe('provisional');
+      expect(getResolvedCosineThreshold()).toBe(SFACE_PROVISIONAL_COSINE_THRESHOLD);
+      expect(isThresholdConfigured()).toBe(true);
+
+      // 3. Unconfigured mode
+      delete process.env.RETURNING_FACE_THRESHOLD_MODE;
+      expect(getThresholdMode()).toBe('unconfigured');
+      expect(getResolvedCosineThreshold()).toBeNull();
+      expect(isThresholdConfigured()).toBe(false);
     });
 
     it('rejects invalid or unsafe calibration values', () => {
@@ -79,14 +146,35 @@ describe('Returning Visitor Biometrics & Safety Gate Contract', () => {
       process.env.RETURNING_MATCH_TOKEN_SECRET = 'super-secret-match-token-secret-123';
       expect(isReturningVisitorAvailable()).toBe(false);
 
+      // Threshold >= 1.0
+      process.env.RETURNING_FACE_MIN_COSINE = '1.05';
+      expect(isReturningVisitorAvailable()).toBe(false);
+
       // Short template key (< 32 chars)
       process.env.RETURNING_FACE_MIN_COSINE = '0.45';
       process.env.RETURNING_VISITOR_TEMPLATE_KEY = 'short-key';
       expect(isReturningVisitorAvailable()).toBe(false);
 
       // Valid configuration
+      process.env.RETURNING_FACE_MIN_COSINE = '0.363';
       process.env.RETURNING_VISITOR_TEMPLATE_KEY = '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef';
       expect(isReturningVisitorAvailable()).toBe(true);
+    });
+  });
+
+  describe('2. OpenCV SFace Reference Specification Parity (Section 2)', () => {
+    it('verifies exact reference cosine threshold and 112x112 chip reference landmarks', () => {
+      // OpenCV Zoo reference cosine threshold for SFace is 0.363
+      expect(SFACE_COSINE_THRESHOLD).toBe(0.363);
+      expect(SFACE_PROVISIONAL_COSINE_THRESHOLD).toBe(0.363);
+
+      // 5 canonical 2D facial landmarks on 112x112 aligned face chip
+      expect(SFACE_REFERENCE_LANDMARKS).toHaveLength(5);
+      expect(SFACE_REFERENCE_LANDMARKS[0]).toEqual([38.2946, 51.6963]); // right eye
+      expect(SFACE_REFERENCE_LANDMARKS[1]).toEqual([73.5318, 51.5014]); // left eye
+      expect(SFACE_REFERENCE_LANDMARKS[2]).toEqual([56.0252, 71.7366]); // nose tip
+      expect(SFACE_REFERENCE_LANDMARKS[3]).toEqual([41.5493, 92.3655]); // right mouth corner
+      expect(SFACE_REFERENCE_LANDMARKS[4]).toEqual([70.7299, 92.2041]); // left mouth corner
     });
   });
 
@@ -350,6 +438,35 @@ describe('Returning Visitor Biometrics & Safety Gate Contract', () => {
       // EER threshold should lie between highest impostor (0.25) and lowest genuine (0.55)
       expect(evaluation.eerThreshold).toBeGreaterThanOrEqual(0.30);
       expect(evaluation.eerThreshold).toBeLessThanOrEqual(0.56);
+    });
+  });
+
+  describe('7. Secrets Generator and Safe Masking Contract (Priority 4)', () => {
+    it('generates 32-byte 64-char hex cryptographically random keys and secrets', () => {
+      const secrets = generateCryptoSecrets();
+      expect(secrets.templateKey).toHaveLength(64);
+      expect(/^[0-9a-f]{64}$/.test(secrets.templateKey)).toBe(true);
+
+      expect(secrets.matchSecret).toHaveLength(64);
+      expect(/^[0-9a-f]{64}$/.test(secrets.matchSecret)).toBe(true);
+
+      expect(secrets.minCosine).toBe('0.363');
+      expect(secrets.thresholdMode).toBe('provisional');
+      expect(secrets.keyVersion).toBe('v1');
+
+      // Two consecutive generations must produce distinct keys (entropy check)
+      const second = generateCryptoSecrets();
+      expect(secrets.templateKey).not.toBe(second.templateKey);
+      expect(secrets.matchSecret).not.toBe(second.matchSecret);
+    });
+
+    it('masks secret summaries safely without printing raw key bytes', () => {
+      const summary = maskSecretSummary('0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef');
+      expect(summary).toContain('length=64');
+      expect(summary).toContain('sha256_prefix=');
+      expect(summary).not.toContain('0123456789abcdef');
+
+      expect(maskSecretSummary(undefined)).toBe('missing');
     });
   });
 });
