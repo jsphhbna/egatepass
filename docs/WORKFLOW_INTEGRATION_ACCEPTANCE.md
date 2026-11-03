@@ -72,11 +72,11 @@ This document serves as the authoritative integration closure and verification c
 [ Admin & Super Admin Consoles: /admin ]
               ├── Realtime Dashboard: GET /api/admin/dashboard
               ├── Visitor Records: GET /api/admin/records
-              ├── Device Management: GET /api/admin/devices, POST /api/create-device, POST /api/update-device
-              ├── User Management: GET /api/admin/users, POST /api/create-user, POST /api/update-user
+              ├── Device Management: GET /api/admin/devices, POST /api/create-device, POST /api/update-device, DELETE /api/delete-device
+              ├── User Management: GET /api/admin/users, POST /api/create-user, POST /api/update-user, POST /api/decommission-user
               ├── Staff Kiosk Approval: POST /api/decide-visit (/admin/legacy-guard)
               ├── System Settings: GET /api/admin/settings, POST /api/update-settings
-              ├── Emergency Lockdown: POST /api/admin/emergency
+              ├── Emergency Evacuation Snapshot: GET /api/admin/emergency
               ├── Incident Holds: GET /api/admin/holds
               └── Audit Logs: GET /api/admin/activity
 ```
@@ -109,8 +109,8 @@ This document serves as the authoritative integration closure and verification c
      ```
    - Invokes `api.scan_pass(..., requested_token_digest: digest, requested_mode: mode)`.
 4. **Database Matching (`api.scan_pass` RPC):**
+   - The scanner computes a SHA-256 digest of the presented QR token and passes the digest to `api.scan_pass()`. The database matches it against the stored binary token digest under a row-level lock.
    - Queries `public.passes p WHERE p.token_digest = decode(requested_token_digest, 'hex') FOR UPDATE`.
-   - Compares constant-time indexed binary digests under row-level lock.
 
 ---
 
@@ -119,7 +119,7 @@ This document serves as the authoritative integration closure and verification c
 | Stage | Subsystem | Endpoint / Event | Source & Target Roles | State Transition | Security & Privacy Boundary | Verification Evidence |
 | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
 | **1. Visitor Registration** | Online Portal (`/get-pass`) | `POST /api/passes/issue` | Anonymous visitor -> API Service | `null` -> `issued` | Turnstile token check; PSGC reference validation; stores SHA-256 token digest. | **PASS** (Playwright + Vitest) |
-| **2. Returning Biometrics** | Online Portal (`/get-pass`) | `POST /api/passes/identify-returning` | Anonymous visitor -> API Service | 1:1 Biometric Verification | Euclidean distance thresholding; HMAC matchToken digest fail-closed check. | **PASS** (`tests/returning-visitor.test.ts`) |
+| **2. Returning Biometrics** | Online Portal (`/get-pass`) | `POST /api/passes/identify-returning` | Anonymous visitor -> API Service | 1:1 Biometric Verification | Cosine similarity thresholding (SFace reference >= 0.363); HMAC matchToken digest fail-closed check. | **PASS** (`tests/returning-visitor.test.ts`) |
 | **3. Address & Postal State** | Cascading Selector | Pure Resolution Hook | Client React State | Locality restored / preserved | `src/lib/psgcAddressResolution.ts` pure state machine preserves manual overrides on same-locality selection. | **PASS** (Playwright + Vitest) |
 | **4. Gate Entry Scan** | Entry Scanner (`/scan/entry`) | `POST /api/scan-pass` | Entry Device (`device_type = entry`) -> API | `issued` -> `inside` (Portal) OR `issued` -> `pending` (Kiosk) | Device session auth; token digest verification; prevents replay; atomic vehicle duplicate entry lock. | **PASS** (Vitest unit + PGlite DB RPC) |
 | **5. Entry Scanner UI** | Entry Scanner UI | Shared Decision Helper (`entryScanFeedback.ts`) | Scan Result -> Operator Display | `ready` -> `granted` / `pending` / `error` | Only explicit `inside` yields `'granted'`; only explicit `pending` yields `'pending'`; unknown/missing fails closed to `'error'`. | **PASS** (`tests/entry-scan-feedback.test.ts`) |
@@ -137,10 +137,10 @@ Rather than a generic query endpoint, the administrative console communicates th
 
 - **Dashboard Realtime Metrics:** `GET /api/admin/dashboard`
 - **Visitor Records & Audit Search:** `GET /api/admin/records`
-- **Device Management & Enrollment:** `GET /api/admin/devices`, `POST /api/create-device`, `POST /api/update-device`, `POST /api/delete-device`, `POST /api/update-device-auth`, `POST /api/device/reauthenticate`
+- **Device Management & Enrollment:** `GET /api/admin/devices`, `POST /api/create-device`, `POST /api/update-device`, `DELETE /api/delete-device`, `POST /api/update-device-auth`, `POST /api/device/reauthenticate`
 - **Staff User Accounts:** `GET /api/admin/users`, `POST /api/create-user`, `POST /api/update-user`, `POST /api/decommission-user`
 - **Campus Settings & Capacities:** `GET /api/admin/settings`, `POST /api/update-settings`
-- **Emergency Lockdown / Evacuation:** `POST /api/admin/emergency`
+- **Emergency Evacuation Snapshot:** `GET /api/admin/emergency` (retrieves active campus evacuation roster; read-only evacuation telemetry, does not trigger lockdown or mutate pass states)
 - **Incident Holds:** `GET /api/admin/holds`
 - **Security Audit Trail Activity:** `GET /api/admin/activity`
 - **Automated Image Purge & Retention:** `POST /api/purge-images`, `POST /api/admin/retention-maintenance`
@@ -152,15 +152,15 @@ Rather than a generic query endpoint, the administrative console communicates th
 
 | Test Suite File | Feature & Scope Covered | Declared Tests | Test Type | Invariants Proven |
 | :--- | :--- | :--- | :--- | :--- |
-| `tests/entry-scan-feedback.test.ts` | Production scanner response mapping ([`src/lib/entryScanFeedback.ts`](file:///c:/Users/Administrator/Downloads/egatepass/src/lib/entryScanFeedback.ts)) | 13 | Unit | Proves `inside` -> `granted`, `pending` -> `pending`, unknown/missing statuses fail closed to `error`, timeouts & network failures provide proper operator guidance. |
+| `tests/entry-scan-feedback.test.ts` | Production scanner response mapping ([`src/lib/entryScanFeedback.ts`](../src/lib/entryScanFeedback.ts)) | 13 | Unit | Proves `inside` -> `granted`, `pending` -> `pending`, unknown/missing statuses fail closed to `error`, timeouts & network failures provide proper operator guidance. |
 | `tests/returning-visitor-address-hardening.test.ts` | PSGC normalization, reference validation, postal code reconstruction, profile persistence | 58 | Integration / Unit | Proves PSGC 10-digit locality normalization, fail-closed persistence in `issue.ts`, honest PHLPost provenance, and same-locality manual override preservation. |
-| `tests/returning-visitor.test.ts` | 1:1 facial biometric matching & token digest verification | 14 | Unit / Integration | Proves Euclidean distance comparison against enrollment embeddings, threshold boundaries, and fail-closed match token validation. |
-| `tests/returning-visitor-lookup.test.ts` | Returning visitor profile lookup & privacy masking | 4 | Integration | Proves name masking, contact number redaction, and lookup rate-limiting. |
-| `tests/returning-visitor-provisional-workflow.test.ts` | Provisional enrollment activation & configuration | 6 | Integration | Proves biometric enrollment capability flags and fallback modes. |
-| `tests/returning-visitor-turnstile-lifecycle.test.ts` | Cloudflare Turnstile token validation on returning flows | 3 | Integration | Proves Turnstile token verification lifecycle and replay rejection. |
+| `tests/returning-visitor.test.ts` | Returning visitor biometric, cryptographic, configuration, and related utility behavior | 20 | Unit / Integration | Proves 1:1 biometric threshold readiness, provisional vs calibrated cosine matching, AES-256-GCM embedding encryption/decryption, Manila business date calculation, safety ceilings, token digest verification, and cryptographic utilities. |
+| `tests/returning-visitor-lookup.test.ts` | Returning visitor profile lookup & privacy masking | 7 | Integration | Proves method enforcement (405), token auth (401), payload validation (400), non-anonymous session rejection (403), rate-limiting (429), and candidate masking without leaking plaintext PII. |
+| `tests/returning-visitor-provisional-workflow.test.ts` | Provisional enrollment activation, capabilities & 1:1 cosine matching | 8 | Integration | Proves decoupled enrollment readiness, key length guards, verification secret guards, candidate masking, 1:1 cosine similarity matching, low-quality/multi-face rejection (422), and expired/revoked profile rejection. |
+| `tests/returning-visitor-turnstile-lifecycle.test.ts` | Cloudflare Turnstile token validation on returning flows | 6 | Integration | Proves Turnstile session initialization, session reuse, expired session refresh, fail-closed handling on challenge errors/missing site key, preflight execution, and single widget instance persistence. |
 | `tests/guard-station-device.test.ts` | Guard Station feed criteria, gate confinement, keyset pagination | 13 | Integration (PGlite + API) | Proves Asia/Manila current calendar day filtering, gate scoping, `status IN ('inside', 'exited')`, and cursor pagination without row duplication. |
 | `tests/migration-chain-pglite.test.ts` | PostgreSQL schema migrations (000100 through 001400) | 24 | Database Contract (PGlite) | Proves sequential migration execution, RPC signatures, RLS policies, least-privilege table grants, D1-D10 credential triggers, and pass status enums. |
-| `tests/e2e/returning-visitor-address-prefill.spec.ts` | Full browser end-to-end returning visitor address flow | 3 | Browser E2E (Playwright) | Proves Welcome Back address hydration, manual postal override synchronization, payload serialization on pass issue, and selector modal re-selection preservation. |
+| `tests/e2e/returning-visitor-address-prefill.spec.ts` | Returning visitor address flow with mocked API responses | 3 | Browser E2E with mocked API responses (Playwright) | Proves browser-level Welcome Back address hydration, manual postal override synchronization, selector modal re-selection preservation, and pass issuance payload serialization using mocked API routes. |
 
 ---
 
@@ -170,9 +170,9 @@ This checklist documents verification status across all system requirements, cle
 
 | Requirement ID | Verification Item | Target Subsystem / Device | Test Method | Status | Notes / Evidence |
 | :--- | :--- | :--- | :--- | :--- | :--- |
-| **AC-01** | Same-locality postal override preservation | Visitor Portal (`/get-pass`) | Playwright E2E + Vitest Unit | **PASS** | Verified in `returning-visitor-address-prefill.spec.ts` & `returning-visitor-address-hardening.test.ts`. |
+| **AC-01** | Same-locality postal override preservation | Visitor Portal (`/get-pass`) | Playwright E2E (Mocked API) + Vitest Unit | **PASS** | Verified in `returning-visitor-address-prefill.spec.ts` (mocked browser E2E) & `returning-visitor-address-hardening.test.ts`. |
 | **AC-02** | Locality change resets postal state to fresh lookup | Visitor Portal (`/get-pass`) | Vitest Unit | **PASS** | Verified in Part 5 of `tests/returning-visitor-address-hardening.test.ts`. |
-| **AC-03** | Pass issuance payload captures accurate postal provenance | Pass API (`/api/passes/issue`) | Playwright E2E + Vitest Integration | **PASS** | Intercepted payload verifies `postalCodeSource: 'manual'` when overridden. |
+| **AC-03** | Pass issuance payload captures accurate postal provenance | Pass API (`/api/passes/issue`) | Playwright E2E (Mocked API) + Vitest Integration | **PASS** | Intercepted payload in browser E2E verifies `postalCodeSource: 'manual'` when overridden; server persistence verified in hardening suite. |
 | **AC-04** | Entry Scanner grants instant entry for online passes | Entry Scanner (`/scan/entry`) | Vitest Unit (Shared Helper) | **PASS** | Verified in `tests/entry-scan-feedback.test.ts`. `inside` resolves to `'granted'` (green). |
 | **AC-05** | Entry Scanner reflects pending status for kiosk passes | Entry Scanner (`/scan/entry`) | Vitest Unit (Shared Helper) | **PASS** | Verified in `tests/entry-scan-feedback.test.ts`. `pending` resolves to `'pending'` (amber). |
 | **AC-06** | Entry Scanner fails closed on unrecognized status | Entry Scanner (`/scan/entry`) | Vitest Unit (Shared Helper) | **PASS** | Verified in `tests/entry-scan-feedback.test.ts`. Unrecognized status resolves to `'error'`. |
