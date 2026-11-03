@@ -10,8 +10,11 @@ import { createOptimizedQrScanner, enableContinuousFocus, QR_SCAN_CONFIG } from 
 import { RefreshCw, AlertCircle } from 'lucide-react';
 import { Modal, Button } from '@/components/ui';
 import { fetchWithTimeout, RequestTimeoutError } from '@/lib/fetchWithTimeout';
-
-type ScanStatus = 'ready' | 'processing' | 'granted' | 'pending' | 'warning' | 'error';
+import {
+  type ScanStatus,
+  resolveEntryScanSuccess,
+  resolveEntryScanFailure,
+} from '@/lib/entryScanFeedback';
 
 export function EntryScanPage() {
   const { userData } = useAuth();
@@ -87,32 +90,20 @@ export function EntryScanPage() {
         throw { code: result?.code || 'scan_failed', message: result?.error || 'Scan failed' };
       }
 
-      if (result?.status === 'inside') {
-        setStatus('granted');
-        setStatusMessage(result.message || 'Entry recorded. Please proceed through the normal security inspection.');
-        toast.success(result.message || 'Pass scanned — entry granted');
+      const feedback = resolveEntryScanSuccess(result);
+      setStatus(feedback.status);
+      setStatusMessage(feedback.statusMessage);
+      if (feedback.toast.type === 'success') {
+        toast.success(feedback.toast.message);
       } else {
-        setStatus('pending');
-        setStatusMessage(result?.message || 'Scanned! Waiting for guard approval…');
-        toast.success('Pass scanned — pending guard approval');
+        toast.error(feedback.toast.message);
       }
     } catch (error: unknown) {
-      if (isTimeout) {
-        setStatus('error');
-        setStatusMessage('Scan verification timed out. Result could not be confirmed. Please try scanning again.');
-        toast.error('Scan request timed out. Result could not be confirmed.');
-      } else if (isNetworkError || (typeof error === 'object' && error !== null && 'code' in error && (error as any).code === 'network_unavailable')) {
-        setStatus('error');
-        setStatusMessage('Entry verification is temporarily unavailable. Please proceed directly to the Guard for manual verification.');
-        toast.error('Network unavailable. Proceed to Guard for manual entry.');
-      } else {
-        const scanError = error as { code?: string; message?: string };
-        const message = scanError.message ?? 'Scan failed';
-        const warningCodes = ['already_scanned', 'already_used', 'early'];
-        setStatus(warningCodes.includes(scanError.code || '') ? 'warning' : 'error');
-        setStatusMessage(message);
-        toast.error(message);
-      }
+      const failureMode = isTimeout ? 'timeout' : (isNetworkError ? 'network' : null);
+      const feedback = resolveEntryScanFailure(error, failureMode);
+      setStatus(feedback.status);
+      setStatusMessage(feedback.statusMessage);
+      toast.error(feedback.toast.message);
     } finally {
       resetTimerRef.current = setTimeout(() => {
         setStatus('ready');

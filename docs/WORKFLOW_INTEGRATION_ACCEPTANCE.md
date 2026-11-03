@@ -5,9 +5,9 @@
 - **Repository:** `jsphhbna/egatepass`
 - **Branch:** `main`
 - **Production URL:** `https://egatepass.tech`
-- **Production Scope:** Online Visitor Portal, Kiosk Pass Portal, Entry Scanner, Exit Scanner, Guard Station, Admin Console, and Super Admin Management.
+- **Scope:** Online Visitor Portal, Kiosk Pass Portal, Entry Scanner, Exit Scanner, Guard Station, Admin Console, and Super Admin Management.
 
-This document serves as the authoritative integration closure and verification contract connecting all subsystems of E-GatePass. It details the data contracts, operational state machines, security boundaries, and validation results across each workflow stage.
+This document serves as the authoritative integration closure and verification contract connecting all subsystems of E-GatePass. It details the actual data contracts, operational state machines, security boundaries, and validation results across each workflow stage verified against source code and database RPC definitions.
 
 ---
 
@@ -22,109 +22,164 @@ This document serves as the authoritative integration closure and verification c
               ▼
     [ API: /api/passes/issue ]
               │
+              ├── Computes qrToken: HMAC-SHA256(PASS_TOKEN_SECRET, actorId:requestId)
+              ├── Computes token_digest: SHA-256(qrToken) stored in public.passes
+              │
               ▼ (Atomic Transaction: passes, visitors, vehicle_declarations)
-     Status: 'issued' (source: 'portal')
+     Pass Status: 'issued' (source: 'portal')
               │
               ▼
-   [ Visitor Pass QR Issued ] (HMAC-SHA256 Token Digest)
+   [ Visitor Pass QR Issued ] (Encodes raw qrToken string)
               │
               ▼
     [ Entry Scanner: /scan/entry ] (Dedicated Device Session Auth)
               │
-              ├── POST /api/scan-pass (mode: 'entry')
+              ├── POST /api/scan-pass (mode: 'entry', passId: qrToken)
               │     │
+              │     ├── Computes digest: SHA-256(passId)
               │     ▼
-              │   Database RPC: api.scan_pass()
+              │   Database RPC: api.scan_pass(requested_token_digest, mode: 'entry')
+              │     ├── Matches passes p WHERE p.token_digest = decode(digest, 'hex')
               │     │
               │     ├── Portal Pass -> Status: 'inside' (time_in: now(), gate assigned)
-              │     │                  Entry Scanner Feedback: 'granted' (Green check UI)
+              │     │                  Entry Scanner UI: 'granted' (Green check UI via entryScanFeedback.ts)
               │     │
               │     └── Kiosk Pass  -> Status: 'pending' (entry_scanned_at: now())
-              │                        Entry Scanner Feedback: 'pending' (Amber waiting UI)
+              │                        Entry Scanner UI: 'pending' (Amber waiting UI via entryScanFeedback.ts)
               │
               ▼
    [ Guard Station: /guard ] (Guard Station Device Session Auth)
               │
-              ├── GET /api/guard-station-feed?gate=... (Active 'inside' portal visitors today)
+              ├── GET /api/guard-station-feed?limit=50 (HTTP Polling every 4s, status IN ('inside', 'exited'))
               │     │
               │     ▼
               │   Photo Inspection: GET /api/evidence?id=<photo_evidence_id>
               │   (Physical photo-to-face visual comparison at physical gate barrier)
-              │   *Government ID images strictly inaccessible to guard station*
+              │   *Permits 'photo' and 'vehicle_photo'; Government ID ('id_document') strictly rejected with 403*
               │
               ▼
    [ Exit Scanner: /scan/exit ] (Dedicated Device Session Auth)
               │
-              ├── POST /api/scan-pass (mode: 'exit')
+              ├── POST /api/scan-pass (mode: 'exit', passId: qrToken)
               │     │
               │     ▼
-              │   Database RPC: api.scan_pass()
-              │     ├── Checks matching gate / valid pass
-              │     ├── Passes status -> 'completed' (time_out: now())
-              │     └── Vehicle declarations -> exit_scanned_at: now()
+              │   Database RPC: api.scan_pass(mode: 'exit')
+              │     ├── Validates entry gate matches scanner gate (wrong_gate fail-closed)
+              │     ├── Passes status -> 'exited' (time_out: now(), exit_device_id recorded)
+              │     └── Vehicle declarations -> exit_scanned_at: now(), exit_recorded_at: now()
               │
               ▼
 [ Admin & Super Admin Consoles: /admin ]
-              ├── Realtime Dashboard (Occupancy, arrivals, departures by gate)
-              ├── Visitor Records (Search, filter, audit trails, export)
-              ├── Device Management (Gate provisioning, enrollment, status revocation)
-              ├── User Management (Role-based access: admin, superadmin, device accounts)
-              └── System Settings (Campus capacity, operating hours, emergency lockdown)
+              ├── Realtime Dashboard: GET /api/admin/dashboard
+              ├── Visitor Records: GET /api/admin/records
+              ├── Device Management: GET /api/admin/devices, POST /api/create-device, POST /api/update-device
+              ├── User Management: GET /api/admin/users, POST /api/create-user, POST /api/update-user
+              ├── Staff Kiosk Approval: POST /api/decide-visit (/admin/legacy-guard)
+              ├── System Settings: GET /api/admin/settings, POST /api/update-settings
+              ├── Emergency Lockdown: POST /api/admin/emergency
+              ├── Incident Holds: GET /api/admin/holds
+              └── Audit Logs: GET /api/admin/activity
 ```
 
 ---
 
-## 3. Workflow Connection & Security Boundary Matrix
+## 3. Cryptographic Token & Verification Lifecycle (Source Verified)
 
-| Stage | Subsystem | Endpoint / Event | Source & Target Roles | State Transition | Security & Privacy Boundary | Verification Status |
+1. **Token Generation (Issuance — `server/routes/passes/issue.ts`):**
+   - The server reads `PASS_TOKEN_SECRET` (minimum 32 characters).
+   - Generates an HMAC-SHA256 signature over `${actorId}:${parsed.data.requestId}`:
+     ```ts
+     const qrToken = createHmac('sha256', secret)
+       .update(`${actorId}:${parsed.data.requestId}`)
+       .digest('base64url');
+     ```
+   - The generated `qrToken` is returned in the API response and rendered into the visitor's QR code.
+2. **Database Storage (`public.passes`):**
+   - The raw `qrToken` is **never stored** in the database.
+   - The issuance handler computes a standard unsalted SHA-256 hash digest of the `qrToken`:
+     ```ts
+     const tokenDigest = createHash('sha256').update(qrToken).digest('hex');
+     ```
+   - This 64-character hex string is decoded and stored as a 32-byte binary column `token_digest bytea` in `public.passes`.
+3. **Scanner Submission & Verification (`server/routes/gate/scan-pass.ts`):**
+   - The scanner optical reader decodes the QR code and submits `passId` (`qrToken`) over TLS with its device bearer token.
+   - The API handler computes:
+     ```ts
+     const digest = createHash('sha256').update(parsed.data.passId).digest('hex');
+     ```
+   - Invokes `api.scan_pass(..., requested_token_digest: digest, requested_mode: mode)`.
+4. **Database Matching (`api.scan_pass` RPC):**
+   - Queries `public.passes p WHERE p.token_digest = decode(requested_token_digest, 'hex') FOR UPDATE`.
+   - Compares constant-time indexed binary digests under row-level lock.
+
+---
+
+## 4. Subsystem Integration & Security Boundary Matrix
+
+| Stage | Subsystem | Endpoint / Event | Source & Target Roles | State Transition | Security & Privacy Boundary | Verification Evidence |
 | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
-| **1. Visitor Registration** | Online Portal (`/get-pass`) | `POST /api/passes/issue` | Anonymous visitor -> API Service | `null` -> `issued` | Zod schema validation; Cloudflare Turnstile token verification; PSGC reference integrity check. | **PASS** (Playwright + Vitest) |
-| **2. Returning Visitor Biometrics** | Online Portal (`/get-pass`) | `POST /api/passes/identify-returning` | Anonymous visitor -> API Service | 1:1 Biometric Verification | Fail-closed HMAC match token digest; Euclidean embedding distance thresholding; private facial vectors never stored in plaintext client cookies. | **PASS** (58 Vitest tests) |
-| **3. Address & Postal Hydration** | Online Portal (`/get-pass`) | Client Hydration + Selector | Client React State | Locality restored; manual override preserved | `src/lib/psgcAddressResolution.ts` pure state machine guarantees same-locality preservation across modal re-selections. | **PASS** (Playwright + Vitest) |
-| **4. Gate Entry Scan** | Entry Scanner (`/scan/entry`) | `POST /api/scan-pass` | Entry Device (`device_type = entry`) -> API | `issued` -> `inside` (Portal) OR `issued` -> `pending` (Kiosk) | Device session authentication; token digest verification; prevents replay (`already_scanned`, `already_used`); vehicle duplicate entry lock. | **PASS** (Vitest unit + PGlite DB RPC) |
-| **5. Entry Scanner Feedback** | Entry Scanner UI | Client Status Hook | Scan Result -> Operator Display | `ready` -> `processing` -> `granted` / `pending` | Differentiates admitted portal visitors (`granted`, green) from kiosk visitors awaiting approval (`pending`, amber). | **PASS** (Vitest unit) |
-| **6. Guard Station Feed** | Guard Station (`/guard`) | `GET /api/guard-station-feed` | Guard Station Device (`guard_station`) -> API | Feed read (read-only monitoring) | Restricted to Asia/Manila current date; scoped to assigned gate; strictly returns portal passes in `inside` state. | **PASS** (13 Vitest tests) |
-| **7. Evidence Photo Inspection** | Guard Station (`/guard`) | `GET /api/evidence?id=...` | Guard Station Device -> API | Photo delivery | Only delivers visitor face photos (`visitor_photo`); Government ID evidence requests rejected with 403. | **PASS** (Contract tested in PGlite) |
-| **8. Gate Exit Scan** | Exit Scanner (`/scan/exit`) | `POST /api/scan-pass` | Exit Device (`device_type = exit`) -> API | `inside` -> `completed` | Exit device authentication; records departure timestamp; frees campus occupancy slots; clears vehicle campus flag. | **PASS** (PGlite contract test) |
-| **9. Kiosk Approval (Admin)** | Legacy Guard Console (`/admin/legacy-guard`) | `POST /api/guard-approve-pass` | Staff / Admin (`role in admin, superadmin`) -> API | `pending` -> `approved` / `inside` | Ordinary guard station accounts deprecated from approval authority; requires authenticated staff administrator. | **PASS** (Migration 41 & 42 tests) |
-| **10. Admin Realtime & Records** | Admin (`/admin/dashboard`, `/admin/records`) | `POST /api/admin-query` | Authenticated Admin / Super Admin | Realtime read / export | RLS policies enforce tenant/institutional boundary; immutable audit logging on sensitive actions. | **PASS** (TypeScript build + unit) |
+| **1. Visitor Registration** | Online Portal (`/get-pass`) | `POST /api/passes/issue` | Anonymous visitor -> API Service | `null` -> `issued` | Turnstile token check; PSGC reference validation; stores SHA-256 token digest. | **PASS** (Playwright + Vitest) |
+| **2. Returning Biometrics** | Online Portal (`/get-pass`) | `POST /api/passes/identify-returning` | Anonymous visitor -> API Service | 1:1 Biometric Verification | Euclidean distance thresholding; HMAC matchToken digest fail-closed check. | **PASS** (`tests/returning-visitor.test.ts`) |
+| **3. Address & Postal State** | Cascading Selector | Pure Resolution Hook | Client React State | Locality restored / preserved | `src/lib/psgcAddressResolution.ts` pure state machine preserves manual overrides on same-locality selection. | **PASS** (Playwright + Vitest) |
+| **4. Gate Entry Scan** | Entry Scanner (`/scan/entry`) | `POST /api/scan-pass` | Entry Device (`device_type = entry`) -> API | `issued` -> `inside` (Portal) OR `issued` -> `pending` (Kiosk) | Device session auth; token digest verification; prevents replay; atomic vehicle duplicate entry lock. | **PASS** (Vitest unit + PGlite DB RPC) |
+| **5. Entry Scanner UI** | Entry Scanner UI | Shared Decision Helper (`entryScanFeedback.ts`) | Scan Result -> Operator Display | `ready` -> `granted` / `pending` / `error` | Only explicit `inside` yields `'granted'`; only explicit `pending` yields `'pending'`; unknown/missing fails closed to `'error'`. | **PASS** (`tests/entry-scan-feedback.test.ts`) |
+| **6. Guard Station Feed** | Guard Station (`/guard`) | `GET /api/guard-station-feed` | Guard Station Device (`guard_station`) -> API | Feed read (`status IN ('inside', 'exited')`) | Asia/Manila current calendar day filter; assigned gate scope; HTTP self-scheduling polling (4s delay). | **PASS** (`tests/guard-station-device.test.ts`) |
+| **7. Photo Inspection** | Guard Station (`/guard`) | `GET /api/evidence?id=...` | Guard Station Device -> API | Photo delivery | Strictly delivers `photo` and `vehicle_photo` for active/exited visits at gate; Government ID (`id_document`) returns 403. | **PASS** (Contract tested in PGlite) |
+| **8. Gate Exit Scan** | Exit Scanner (`/scan/exit`) | `POST /api/scan-pass` | Exit Device (`device_type = exit`) -> API | `inside` -> `exited` | Exit device auth; gate match validation (`wrong_gate` check); sets `time_out` and vehicle exit timestamps. | **PASS** (PGlite contract test) |
+| **9. Kiosk Approval** | Legacy Guard Console (`/admin/legacy-guard`) | `POST /api/decide-visit` | Staff Administrator (`role in admin, superadmin`) -> API | `pending` -> `inside` (Approved) OR `pending` -> `rejected` | Ordinary guard station accounts deprecated from approval; requires authenticated staff administrator. | **PASS** (Migration 41 & 42 tests) |
+| **10. Admin Console** | Admin (`/admin/dashboard`, `/admin/records`, etc.) | Specific `/api/admin/*` routes | Authenticated Admin / Super Admin | Realtime read / write / export | Role-based access control; immutable audit logging on sensitive operations. | **PASS** (TypeScript build + unit) |
 
 ---
 
-## 4. Key Cross-System Repairs Implemented
+## 5. Subsystem Source-Code & API Map
 
-### A. Same-Locality Postal Code Preservation
-- **Defect:** In `AddressCascadingSelector.tsx`, re-selecting the same barangay (or clicking "Change" within the same locality) allowed the automatic PHLPost resolution lookup (`resolution.isAutoFilled`) to take precedence over the visitor's existing state, overwriting manual postal overrides (e.g. `1009`) or cleared states back to default codes (`1008`).
-- **Correction:** Extracted pure deterministic resolution logic into `src/lib/psgcAddressResolution.ts`. Precedence rule enforces that when `isSameLocality` evaluates to `true`, the user's initial address postal state (override or cleared) is strictly preserved. When a different locality is selected, fresh resolution applies cleanly.
+Rather than a generic query endpoint, the administrative console communicates through distinct, purpose-specific API routes:
 
-### B. Entry Scanner Online Portal Feedback
-- **Defect:** `src/pages/EntryScanPage.tsx` previously hardcoded `setStatus('pending')` with the text `"Scanned! Waiting for guard approval…"`, even when scanning online portal passes that had already transitioned to `inside` on the backend.
-- **Correction:** Expanded `ScanStatus` to include `'granted'`. The scanner inspects `result.status`:
-  - `status === 'inside'`: triggers `'granted'` status, green visual indicator (`var(--color-success)`), and confirmation message `"Entry recorded. Please proceed through the normal security inspection."`
-  - `status === 'pending'`: triggers `'pending'` status, amber visual indicator (`var(--color-warning-dark)`), and waiting message for kiosk passes.
-
-### C. Guard Station Inspection Security Boundary
-- Guard Station devices use device-level session authentication.
-- Guard Station receives live photo evidence feeds via `/api/guard-station-feed` and `/api/evidence`.
-- Under no circumstances does the guard station receive or display government identification images or sensitive ID metadata; inspection is strictly visual photo-to-face matching at the physical turnstile/barrier.
+- **Dashboard Realtime Metrics:** `GET /api/admin/dashboard`
+- **Visitor Records & Audit Search:** `GET /api/admin/records`
+- **Device Management & Enrollment:** `GET /api/admin/devices`, `POST /api/create-device`, `POST /api/update-device`, `POST /api/delete-device`, `POST /api/update-device-auth`, `POST /api/device/reauthenticate`
+- **Staff User Accounts:** `GET /api/admin/users`, `POST /api/create-user`, `POST /api/update-user`, `POST /api/decommission-user`
+- **Campus Settings & Capacities:** `GET /api/admin/settings`, `POST /api/update-settings`
+- **Emergency Lockdown / Evacuation:** `POST /api/admin/emergency`
+- **Incident Holds:** `GET /api/admin/holds`
+- **Security Audit Trail Activity:** `GET /api/admin/activity`
+- **Automated Image Purge & Retention:** `POST /api/purge-images`, `POST /api/admin/retention-maintenance`
+- **Kiosk Pass Review & Decision:** `POST /api/decide-visit` (Admin / Super Admin role required)
 
 ---
 
-## 5. Physical Device Acceptance Checklist
+## 6. Comprehensive Test Suite Evidence Map
 
-This checklist documents the verification status across all system requirements, clearly distinguishing between automated test evidence and physical on-site hardware checks.
+| Test Suite File | Feature & Scope Covered | Declared Tests | Test Type | Invariants Proven |
+| :--- | :--- | :--- | :--- | :--- |
+| `tests/entry-scan-feedback.test.ts` | Production scanner response mapping ([`src/lib/entryScanFeedback.ts`](file:///c:/Users/Administrator/Downloads/egatepass/src/lib/entryScanFeedback.ts)) | 13 | Unit | Proves `inside` -> `granted`, `pending` -> `pending`, unknown/missing statuses fail closed to `error`, timeouts & network failures provide proper operator guidance. |
+| `tests/returning-visitor-address-hardening.test.ts` | PSGC normalization, reference validation, postal code reconstruction, profile persistence | 58 | Integration / Unit | Proves PSGC 10-digit locality normalization, fail-closed persistence in `issue.ts`, honest PHLPost provenance, and same-locality manual override preservation. |
+| `tests/returning-visitor.test.ts` | 1:1 facial biometric matching & token digest verification | 14 | Unit / Integration | Proves Euclidean distance comparison against enrollment embeddings, threshold boundaries, and fail-closed match token validation. |
+| `tests/returning-visitor-lookup.test.ts` | Returning visitor profile lookup & privacy masking | 4 | Integration | Proves name masking, contact number redaction, and lookup rate-limiting. |
+| `tests/returning-visitor-provisional-workflow.test.ts` | Provisional enrollment activation & configuration | 6 | Integration | Proves biometric enrollment capability flags and fallback modes. |
+| `tests/returning-visitor-turnstile-lifecycle.test.ts` | Cloudflare Turnstile token validation on returning flows | 3 | Integration | Proves Turnstile token verification lifecycle and replay rejection. |
+| `tests/guard-station-device.test.ts` | Guard Station feed criteria, gate confinement, keyset pagination | 13 | Integration (PGlite + API) | Proves Asia/Manila current calendar day filtering, gate scoping, `status IN ('inside', 'exited')`, and cursor pagination without row duplication. |
+| `tests/migration-chain-pglite.test.ts` | PostgreSQL schema migrations (000100 through 001400) | 24 | Database Contract (PGlite) | Proves sequential migration execution, RPC signatures, RLS policies, least-privilege table grants, D1-D10 credential triggers, and pass status enums. |
+| `tests/e2e/returning-visitor-address-prefill.spec.ts` | Full browser end-to-end returning visitor address flow | 3 | Browser E2E (Playwright) | Proves Welcome Back address hydration, manual postal override synchronization, payload serialization on pass issue, and selector modal re-selection preservation. |
+
+---
+
+## 7. Physical Device Acceptance Checklist
+
+This checklist documents verification status across all system requirements, clearly distinguishing between automated test evidence and physical on-site hardware checks.
 
 | Requirement ID | Verification Item | Target Subsystem / Device | Test Method | Status | Notes / Evidence |
 | :--- | :--- | :--- | :--- | :--- | :--- |
-| **AC-01** | Same-locality postal override preservation | Visitor Portal (`/get-pass`) | Playwright E2E + Vitest Unit | **PASS** | Proved in `tests/e2e/returning-visitor-address-prefill.spec.ts` & `tests/returning-visitor-address-hardening.test.ts`. |
-| **AC-02** | Locality change resets postal state to fresh lookup | Visitor Portal (`/get-pass`) | Vitest Unit | **PASS** | Proved in Part 5 of `tests/returning-visitor-address-hardening.test.ts`. |
+| **AC-01** | Same-locality postal override preservation | Visitor Portal (`/get-pass`) | Playwright E2E + Vitest Unit | **PASS** | Verified in `returning-visitor-address-prefill.spec.ts` & `returning-visitor-address-hardening.test.ts`. |
+| **AC-02** | Locality change resets postal state to fresh lookup | Visitor Portal (`/get-pass`) | Vitest Unit | **PASS** | Verified in Part 5 of `tests/returning-visitor-address-hardening.test.ts`. |
 | **AC-03** | Pass issuance payload captures accurate postal provenance | Pass API (`/api/passes/issue`) | Playwright E2E + Vitest Integration | **PASS** | Intercepted payload verifies `postalCodeSource: 'manual'` when overridden. |
-| **AC-04** | Entry Scanner grants instant entry for online passes | Entry Scanner (`/scan/entry`) | Vitest Unit + Simulation | **PASS** | Verified in `tests/entry-scan-feedback.test.ts`. Status resolves to `'granted'`. |
-| **AC-05** | Entry Scanner reflects pending status for kiosk passes | Entry Scanner (`/scan/entry`) | Vitest Unit + Simulation | **PASS** | Verified in `tests/entry-scan-feedback.test.ts`. Status resolves to `'pending'`. |
-| **AC-06** | Optical camera QR scanning on physical Android / iOS handheld | Entry Scanner (`/scan/entry`) | Physical Smartphone / Scanner Tablet | **NOT TESTED (PHYSICAL HARDWARE)** | Tested via software emulation and synthetic stream; requires field validation on physical camera rig. |
-| **AC-07** | Physical ESC/POS thermal receipt printing at kiosk | Kiosk Portal (`/kiosk`) | Physical USB / Network Thermal Printer | **NOT TESTED (PHYSICAL HARDWARE)** | Thermal printer canvas and ESC/POS raster generation verified via unit tests; physical printer requires on-site hardware. |
-| **AC-08** | Mobile WebKit / Safari layout & touch interactions | iPhone 12, iOS 27 Safari | Playwright Mobile WebKit Emulation | **PASS** | Full responsive viewport, tap targets, and touch gestures verified via Playwright. |
-| **AC-09** | Guard Station live feed updates on pass entry | Guard Station (`/guard`) | Vitest + PostgreSQL PGlite | **PASS** | Proved in `tests/guard-station-device.test.ts` (Asia/Manila date and gate filtering). |
-| **AC-10** | Guard Station photo evidence access control | Guard Station (`/guard`) | Vitest + PGlite DB Contract | **PASS** | `/api/evidence` strictly permits `visitor_photo` and blocks government ID retrieval. |
-| **AC-11** | Exit Scanner validates departure and frees occupancy | Exit Scanner (`/scan/exit`) | PGlite DB RPC Contract | **PASS** | Verified in `tests/migration-chain-pglite.test.ts` (RPC `scan_pass`). |
-| **AC-12** | Full TypeScript compilation & production bundle build | Whole Repository | `tsc` + `vite build` | **PASS** | Client and API build succeed with 0 errors. |
+| **AC-04** | Entry Scanner grants instant entry for online passes | Entry Scanner (`/scan/entry`) | Vitest Unit (Shared Helper) | **PASS** | Verified in `tests/entry-scan-feedback.test.ts`. `inside` resolves to `'granted'` (green). |
+| **AC-05** | Entry Scanner reflects pending status for kiosk passes | Entry Scanner (`/scan/entry`) | Vitest Unit (Shared Helper) | **PASS** | Verified in `tests/entry-scan-feedback.test.ts`. `pending` resolves to `'pending'` (amber). |
+| **AC-06** | Entry Scanner fails closed on unrecognized status | Entry Scanner (`/scan/entry`) | Vitest Unit (Shared Helper) | **PASS** | Verified in `tests/entry-scan-feedback.test.ts`. Unrecognized status resolves to `'error'`. |
+| **AC-07** | Optical camera QR scanning on physical Android / iOS handheld | Entry Scanner (`/scan/entry`) | Physical Smartphone / Scanner Tablet | **NOT TESTED (PHYSICAL HARDWARE)** | Barcode decoder verified via synthetic stream; requires on-site testing on physical gate hardware rig. |
+| **AC-08** | Physical ESC/POS thermal receipt printing at kiosk | Kiosk Portal (`/kiosk`) | Physical USB / Network Thermal Printer | **NOT TESTED (PHYSICAL HARDWARE)** | Thermal printer canvas and ESC/POS raster generation verified via unit tests; requires physical printer. |
+| **AC-09** | Mobile WebKit / Safari layout & touch interactions | iPhone 12, iOS 27 Safari | Playwright Mobile WebKit Emulation | **PASS (EMULATION)** | Responsive layout and touch targets verified via Playwright WebKit emulation. Physical iPhone 12 testing is **NOT TESTED (PHYSICAL HARDWARE)**. |
+| **AC-10** | Guard Station live feed updates on pass entry | Guard Station (`/guard`) | Vitest + PostgreSQL PGlite | **PASS (AUTOMATED)** | Proved in `tests/guard-station-device.test.ts` (Asia/Manila date and gate filtering via 4s polling). Real-world security booth continuous operation is **NOT TESTED (PHYSICAL HARDWARE)**. |
+| **AC-11** | Guard Station photo evidence access control | Guard Station (`/guard`) | Vitest + PGlite DB Contract | **PASS** | `/api/evidence` strictly permits `photo` and `vehicle_photo` and blocks government ID retrieval. |
+| **AC-12** | Exit Scanner validates departure and transitions to exited | Exit Scanner (`/scan/exit`) | PGlite DB RPC Contract | **PASS** | Verified in `tests/migration-chain-pglite.test.ts`. Passes transition `inside -> exited`. |
+| **AC-13** | Full TypeScript compilation & production bundle build | Whole Repository | `tsc` + `vite build` | **PASS** | Client and API build succeed with 0 errors. |
