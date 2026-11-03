@@ -302,6 +302,7 @@ export interface IssueTransaction {
   idCheckpoint?: UploadCheckpoint | null;
   vehiclePhotoCheckpoint?: UploadCheckpoint | null;
   phase: IssueTransactionPhase;
+  pendingAbandonments?: string[];
   submittedPayload?: {
     visitor: VisitorRegistration;
     source?: RegistrationSource;
@@ -321,6 +322,7 @@ export function createIssueTransaction(_source: 'kiosk' | 'portal' = 'kiosk'): I
     idCheckpoint: null,
     vehiclePhotoCheckpoint: null,
     phase: 'editable',
+    pendingAbandonments: [],
   };
 }
 
@@ -506,6 +508,9 @@ export async function uploadPortalEvidence(
   blob: Blob,
 ): Promise<{ intentId: string; checkpoint: UploadCheckpoint }> {
   const { client } = await getVerifiedPortalSession(transaction);
+  if (transaction.pendingAbandonments && transaction.pendingAbandonments.length > 0) {
+    void drainPendingAbandonments(transaction, client);
+  }
   return uploadCheckpointedEvidence(client, 'portal', kind, blob, transaction);
 }
 
@@ -743,8 +748,28 @@ export function invalidatePortalEvidenceCheckpoint(
   }
 }
 
+export type AbandonEvidenceStatus =
+  | 'abandoned'
+  | 'already_expired'
+  | 'not_found'
+  | 'no_intent'
+  | 'claimed'
+  | 'forbidden'
+  | 'unauthorized'
+  | 'network_error'
+  | 'error';
+
+export interface AbandonEvidenceResult {
+  success: boolean;
+  status: AbandonEvidenceStatus;
+  intentId: string | null;
+  databaseExpired: boolean;
+  storageCleaned: boolean;
+  message?: string;
+}
+
 /**
- * Asynchronously informs the backend to abandon a pending or rejected upload intent,
+ * Informs the backend to abandon a pending or rejected upload intent,
  * releasing the visitor's quota immediately and cleaning up orphaned storage objects.
  * Also invalidates the in-memory checkpoint.
  */
@@ -752,8 +777,17 @@ export async function abandonPortalEvidence(
   transaction: IssueTransaction | null | undefined,
   kind: 'photo' | 'id' | 'vehicle_photo' | 'vehicle',
   client?: SupabaseClient
-): Promise<void> {
-  if (!transaction) return;
+): Promise<AbandonEvidenceResult> {
+  if (!transaction) {
+    return {
+      success: true,
+      status: 'no_intent',
+      intentId: null,
+      databaseExpired: false,
+      storageCleaned: false,
+      message: 'No active transaction',
+    };
+  }
 
   let intentId: string | null = null;
   if (kind === 'photo') {
@@ -767,7 +801,16 @@ export async function abandonPortalEvidence(
   // Clear in-memory references immediately so subsequent attempts are clean
   invalidatePortalEvidenceCheckpoint(transaction, kind);
 
-  if (!intentId) return;
+  if (!intentId) {
+    return {
+      success: true,
+      status: 'no_intent',
+      intentId: null,
+      databaseExpired: false,
+      storageCleaned: false,
+      message: 'No intent registered for kind',
+    };
+  }
 
   try {
     const sb = client || requirePortalSupabase();
@@ -779,13 +822,126 @@ export async function abandonPortalEvidence(
       headers['Authorization'] = `Bearer ${token}`;
     }
 
-    await fetch('/api/passes/abandon-intent', {
+    const res = await fetch('/api/passes/abandon-intent', {
       method: 'POST',
       headers,
       body: JSON.stringify({ intentId }),
-    }).catch(() => undefined);
-  } catch {
-    // Non-blocking best-effort cleanup
+    });
+
+    const json = await res.json().catch(() => null);
+
+    if (res.ok && (json?.ok || json?.success)) {
+      if (transaction.pendingAbandonments) {
+        transaction.pendingAbandonments = transaction.pendingAbandonments.filter((id) => id !== intentId);
+      }
+      return {
+        success: true,
+        status:
+          json.code === 'already_expired'
+            ? 'already_expired'
+            : json.code === 'not_found'
+            ? 'not_found'
+            : 'abandoned',
+        intentId,
+        databaseExpired: json.databaseExpired ?? true,
+        storageCleaned: json.storageCleaned ?? true,
+        message: json.warning || json.message,
+      };
+    }
+
+    if (res.status === 409 || json?.error === 'intent_claimed') {
+      return {
+        success: false,
+        status: 'claimed',
+        intentId,
+        databaseExpired: false,
+        storageCleaned: false,
+        message: json?.message || 'Intent is already claimed by an issued pass',
+      };
+    }
+
+    if (res.status === 403) {
+      return {
+        success: false,
+        status: 'forbidden',
+        intentId,
+        databaseExpired: false,
+        storageCleaned: false,
+        message: json?.message || 'Not authorized to abandon this intent',
+      };
+    }
+
+    if (res.status === 401) {
+      return {
+        success: false,
+        status: 'unauthorized',
+        intentId,
+        databaseExpired: false,
+        storageCleaned: false,
+        message: json?.message || 'Authentication required',
+      };
+    }
+
+    transaction.pendingAbandonments ??= [];
+    if (!transaction.pendingAbandonments.includes(intentId)) {
+      transaction.pendingAbandonments.push(intentId);
+    }
+
+    return {
+      success: false,
+      status: 'error',
+      intentId,
+      databaseExpired: false,
+      storageCleaned: false,
+      message: json?.message || `Abandonment failed with status ${res.status}`,
+    };
+  } catch (netErr) {
+    transaction.pendingAbandonments ??= [];
+    if (!transaction.pendingAbandonments.includes(intentId)) {
+      transaction.pendingAbandonments.push(intentId);
+    }
+    return {
+      success: false,
+      status: 'network_error',
+      intentId,
+      databaseExpired: false,
+      storageCleaned: false,
+      message: netErr instanceof Error ? netErr.message : 'Network error during abandonment',
+    };
+  }
+}
+
+export async function drainPendingAbandonments(
+  transaction: IssueTransaction | null | undefined,
+  client?: SupabaseClient
+): Promise<void> {
+  if (!transaction || !transaction.pendingAbandonments || transaction.pendingAbandonments.length === 0) {
+    return;
+  }
+
+  const toDrain = [...transaction.pendingAbandonments];
+  const sb = client || requirePortalSupabase();
+  const token = transaction.token || (await sb.auth.getSession()).data.session?.access_token;
+  const headers: Record<string, string> = {
+    'Content-Type': 'application/json',
+  };
+  if (token) {
+    headers['Authorization'] = `Bearer ${token}`;
+  }
+
+  for (const intentId of toDrain) {
+    try {
+      const res = await fetch('/api/passes/abandon-intent', {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({ intentId }),
+      });
+      if (res.ok) {
+        transaction.pendingAbandonments = transaction.pendingAbandonments.filter((id) => id !== intentId);
+      }
+    } catch {
+      // Retain for subsequent drain attempt
+    }
   }
 }
 

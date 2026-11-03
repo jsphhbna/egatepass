@@ -3,6 +3,7 @@ import {
   uploadCheckpointedEvidence,
   createIssueTransaction,
   abandonPortalEvidence,
+  drainPendingAbandonments,
   invalidatePortalEvidenceCheckpoint,
   PortalSessionError,
   UploadAuthorizationError,
@@ -218,8 +219,13 @@ describe('Upload Authorization & Storage Resilience Contract', () => {
       },
     } as any;
 
-    await abandonPortalEvidence(tx, 'photo', mockClient);
+    const result = await abandonPortalEvidence(tx, 'photo', mockClient);
 
+    expect(result.success).toBe(true);
+    expect(result.status).toBe('abandoned');
+    expect(result.intentId).toBe('intent-to-abandon-123');
+    expect(result.databaseExpired).toBe(true);
+    expect(result.storageCleaned).toBe(true);
     expect(tx.photoIntentId).toBeNull();
     expect(tx.photoCheckpoint).toBeNull();
     expect(fetchSpy).toHaveBeenCalledWith(
@@ -252,5 +258,45 @@ describe('Upload Authorization & Storage Resilience Contract', () => {
     invalidatePortalEvidenceCheckpoint(tx, 'photo');
     expect(tx.photoIntentId).toBeNull();
     expect(tx.photoCheckpoint).toBeNull();
+  });
+
+  it('9. queues pending abandonment on network failure and drains on next action', async () => {
+    const tx = createIssueTransaction('portal');
+    tx.photoIntentId = 'network-failed-intent';
+    tx.photoCheckpoint = {
+      intentId: 'network-failed-intent',
+      bucketId: 'visitor-evidence',
+      objectPath: 'portal/network-failed-intent/photo.jpg',
+      contentType: 'image/webp',
+      maxBytes: 5242880,
+      uploaded: true,
+    };
+
+    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockRejectedValue(new Error('Network offline'));
+
+    const mockClient = {
+      auth: {
+        getSession: vi.fn().mockResolvedValue({ data: { session: { access_token: 'test-session-jwt' } } }),
+      },
+    } as any;
+
+    const res = await abandonPortalEvidence(tx, 'photo', mockClient);
+    expect(res.success).toBe(false);
+    expect(res.status).toBe('network_error');
+    expect(tx.pendingAbandonments).toContain('network-failed-intent');
+    expect(tx.photoIntentId).toBeNull(); // memory cleared immediately
+
+    // Mock successful drain
+    fetchSpy.mockResolvedValueOnce(
+      new Response(JSON.stringify({ ok: true, code: 'abandoned' }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      })
+    );
+
+    await drainPendingAbandonments(tx, mockClient);
+    expect(tx.pendingAbandonments).not.toContain('network-failed-intent');
+
+    fetchSpy.mockRestore();
   });
 });

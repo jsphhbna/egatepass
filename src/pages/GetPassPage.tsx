@@ -419,6 +419,7 @@ export function GetPassPage() {
   }, []);
 
   function onRetakeId() {
+    void abandonPortalEvidence(portalTransactionRef.current, 'id');
     invalidatePortalEvidenceCheckpoint(portalTransactionRef.current, 'id');
     setIdBlob(null);
     idUrl.clear();
@@ -554,6 +555,7 @@ export function GetPassPage() {
     setVehiclePhotoBlob(null);
     vehiclePhotoUrl.clear();
     setVehiclePhotoError(null);
+    void abandonPortalEvidence(portalTransactionRef.current, 'vehicle');
     invalidatePortalEvidenceCheckpoint(portalTransactionRef.current, 'vehicle');
     if (vehicleFileInputRef.current) {
       vehicleFileInputRef.current.value = '';
@@ -623,6 +625,9 @@ export function GetPassPage() {
     }
 
     // 5. Clear identity evidence & stop webcam
+    void abandonPortalEvidence(portalTransactionRef.current, 'photo');
+    void abandonPortalEvidence(portalTransactionRef.current, 'id');
+    void abandonPortalEvidence(portalTransactionRef.current, 'vehicle');
     invalidatePortalEvidenceCheckpoint(portalTransactionRef.current, 'photo');
     invalidatePortalEvidenceCheckpoint(portalTransactionRef.current, 'id');
     invalidatePortalEvidenceCheckpoint(portalTransactionRef.current, 'vehicle');
@@ -1248,6 +1253,7 @@ export function GetPassPage() {
       const normalized = await normalizeIdentityDocumentImage(file);
       if (generation !== ocrGenerationRef.current) return;
 
+      void abandonPortalEvidence(portalTransactionRef.current, 'id');
       invalidatePortalEvidenceCheckpoint(portalTransactionRef.current, 'id');
       setIdBlob(normalized);
       idUrl.setFromBlob(normalized);
@@ -1574,6 +1580,7 @@ export function GetPassPage() {
         return;
       }
 
+      void abandonPortalEvidence(portalTransactionRef.current, 'id');
       invalidatePortalEvidenceCheckpoint(portalTransactionRef.current, 'id');
       setIdBlob(normalized);
       idUrl.setFromBlob(normalized);

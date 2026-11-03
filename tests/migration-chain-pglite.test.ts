@@ -2640,4 +2640,92 @@ describe('Permanent PostgreSQL Migration Chain & Schema Contracts (PGlite)', () 
       expect(row.rowsecurity).toBe(true);
     }
   }, 60000);
+
+  it('Migration 52: verifies least-privilege execute grants and abandonment behavior for api.abandon_upload_intent', async () => {
+    const db = new PGlite();
+    await applyAllMigrations(db);
+
+    // 1. Verify execute permissions on api.abandon_upload_intent
+    // Must be granted to 'authenticated', and revoked from 'anon', 'public', 'service_role'
+    const permCheck = await db.query<{ grantee: string; privilege_type: string }>(`
+      select grantee, privilege_type
+      from information_schema.routine_privileges
+      where routine_schema = 'api' and routine_name = 'abandon_upload_intent';
+    `);
+
+    const grantees = permCheck.rows.map((r) => r.grantee);
+    expect(grantees).toContain('authenticated');
+    expect(grantees).not.toContain('anon');
+    expect(grantees).not.toContain('service_role');
+
+    // 2. Setup test visitor
+    const visitorId = '11111111-1111-4111-8111-111111111111';
+    await db.exec(`
+      insert into auth.users (id, email, is_anonymous)
+      values ('${visitorId}', null, true)
+      on conflict (id) do nothing;
+    `);
+
+    const intentId = '55555555-5555-5555-5555-555555555555';
+    await db.exec(`
+      insert into public.upload_intents (id, owner_id, source, kind, bucket_id, object_path, content_type, max_bytes, status, expires_at)
+      values ('${intentId}', '${visitorId}', 'portal', 'photo', 'visitor-photos', 'portal/${visitorId}/photo.jpg', 'image/jpeg', 5242880, 'pending', now() + interval '10 minutes');
+    `);
+
+    // 3. Under authenticated visitor role, abandon_upload_intent succeeds
+    await db.exec(`
+      set role authenticated;
+      set request.jwt.claims = '{"sub": "${visitorId}", "role": "authenticated", "is_anonymous": true}';
+    `);
+
+    const abandonRes = await db.query<{ ok: boolean; code: string; message: string }>(`
+      select * from api.abandon_upload_intent('${intentId}'::uuid);
+    `);
+
+    expect(abandonRes.rows.length).toBe(1);
+    expect(abandonRes.rows[0].ok).toBe(true);
+    expect(abandonRes.rows[0].code).toBe('abandoned');
+
+    // 4. Calling again is idempotent and returns already_expired
+    const idempotentRes = await db.query<{ ok: boolean; code: string; message: string }>(`
+      select * from api.abandon_upload_intent('${intentId}'::uuid);
+    `);
+    expect(idempotentRes.rows.length).toBe(1);
+    expect(idempotentRes.rows[0].ok).toBe(true);
+    expect(idempotentRes.rows[0].code).toBe('already_expired');
+
+    // Reset role
+    await db.exec(`reset role;`);
+
+    // Verify row status in table
+    const checkRow = await db.query<{ status: string }>(`
+      select status from public.upload_intents where id = '${intentId}';
+    `);
+    expect(checkRow.rows[0].status).toBe('expired');
+
+    // 5. Under service_role, executing api.abandon_upload_intent is forbidden by privilege revocation
+    await db.exec(`
+      set role service_role;
+      set request.jwt.claims = '{"role": "service_role"}';
+    `);
+    await expect(
+      db.query(`select * from api.abandon_upload_intent('${intentId}'::uuid);`)
+    ).rejects.toThrow(/permission denied/);
+
+    // 6. Attempting to abandon a claimed intent throws 22023
+    const claimedIntentId = '66666666-6666-6666-6666-666666666666';
+    const visitorProfileId = '77777777-7777-7777-7777-777777777777';
+    await db.exec(`
+      reset role;
+      insert into public.visitors (id, owner_id, source, full_name, contact_number, purpose, visit_date, consent_accepted_at)
+      values ('${visitorProfileId}', '${visitorId}', 'portal', 'Juan Dela Cruz', '+639171234567', 'Campus Visit', current_date, now());
+      insert into public.upload_intents (id, owner_id, source, kind, bucket_id, object_path, content_type, max_bytes, status, claimed_at, visitor_id, expires_at)
+      values ('${claimedIntentId}', '${visitorId}', 'portal', 'photo', 'visitor-photos', 'portal/${visitorId}/claimed.jpg', 'image/jpeg', 5242880, 'claimed', now(), '${visitorProfileId}', now() + interval '10 minutes');
+      set role authenticated;
+      set request.jwt.claims = '{"sub": "${visitorId}", "role": "authenticated", "is_anonymous": true}';
+    `);
+    await expect(
+      db.query(`select * from api.abandon_upload_intent('${claimedIntentId}'::uuid);`)
+    ).rejects.toThrow(/cannot abandon claimed intent/);
+  }, 60000);
 });
