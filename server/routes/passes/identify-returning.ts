@@ -330,6 +330,37 @@ async function handleRequest(request: Request): Promise<Response> {
         .eq('profile_id', profile.id)
         .is('archived_at', null);
 
+      // Resolve PSGC locality names if they are empty or null on the returning profile
+      let regionName = profile.psgc_region_name || '';
+      let provinceName = profile.psgc_province_name || '';
+      let cityName = profile.psgc_city_municipality_name || '';
+      let barangayName = profile.psgc_barangay_name || '';
+
+      if (profile.psgc_region_code && (!regionName || !cityName || !barangayName)) {
+        const codes = [
+          profile.psgc_region_code,
+          profile.psgc_province_code,
+          profile.psgc_city_code,
+          profile.psgc_barangay_code,
+        ].filter(Boolean);
+        try {
+          const { data: locs } = await admin
+            .from('psgc_locations')
+            .select('psgc_code, name, level')
+            .in('psgc_code', codes);
+          if (locs) {
+            for (const loc of locs) {
+              if (loc.level === 'region' && !regionName) regionName = loc.name;
+              else if (loc.level === 'province' && !provinceName) provinceName = loc.name;
+              else if ((loc.level === 'city' || loc.level === 'municipality') && !cityName) cityName = loc.name;
+              else if (loc.level === 'barangay' && !barangayName) barangayName = loc.name;
+            }
+          }
+        } catch (locErr) {
+          console.warn('Failed to resolve PSGC locality names for returning profile:', locErr);
+        }
+      }
+
       return jsonResponse(200, {
         available: true,
         matched: true,
@@ -344,10 +375,10 @@ async function handleRequest(request: Request): Promise<Response> {
           homeAddress: profile.home_address,
           psgc: profile.psgc_region_code && profile.psgc_city_code && profile.psgc_barangay_code ? {
             version: profile.psgc_version || '2026-q3',
-            region: { code: profile.psgc_region_code, name: profile.psgc_region_name || '' },
-            province: profile.psgc_province_code ? { code: profile.psgc_province_code, name: profile.psgc_province_name || '' } : null,
-            city: { code: profile.psgc_city_code, name: profile.psgc_city_municipality_name || '' },
-            barangay: { code: profile.psgc_barangay_code, name: profile.psgc_barangay_name || '' },
+            region: { code: profile.psgc_region_code, name: regionName },
+            province: profile.psgc_province_code ? { code: profile.psgc_province_code, name: provinceName } : null,
+            city: { code: profile.psgc_city_code, name: cityName },
+            barangay: { code: profile.psgc_barangay_code, name: barangayName },
             houseBuilding: profile.home_building || undefined,
             street: profile.home_street || undefined,
             postalCode: profile.postal_code || undefined,

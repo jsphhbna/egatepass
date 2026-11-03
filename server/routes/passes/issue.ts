@@ -736,6 +736,30 @@ async function handleRequest(request: Request): Promise<Response> {
 
           // Insert returning profile with structured PSGC address
           const psgc = parsed.data.psgc;
+          let enrollRegionName: string | null = null;
+          let enrollProvinceName: string | null = null;
+          let enrollCityName: string | null = null;
+          let enrollBarangayName: string | null = null;
+          if (psgc?.regionCode && psgc?.cityCode && psgc?.barangayCode) {
+            const codes = [psgc.regionCode, psgc.provinceCode, psgc.cityCode, psgc.barangayCode].filter(Boolean) as string[];
+            try {
+              const { data: locs } = await admin
+                .from('psgc_locations')
+                .select('psgc_code, name, level')
+                .in('psgc_code', codes);
+              if (locs) {
+                for (const loc of locs) {
+                  if (loc.level === 'region') enrollRegionName = loc.name;
+                  else if (loc.level === 'province') enrollProvinceName = loc.name;
+                  else if (loc.level === 'city' || loc.level === 'municipality') enrollCityName = loc.name;
+                  else if (loc.level === 'barangay') enrollBarangayName = loc.name;
+                }
+              }
+            } catch (nameErr) {
+              console.warn('Failed to resolve PSGC names during returning profile enrollment:', nameErr);
+            }
+          }
+
           const { data: newProfile, error: profileErr } = await admin
             .from('returning_visitor_profiles')
             .insert({
@@ -751,6 +775,10 @@ async function handleRequest(request: Request): Promise<Response> {
               psgc_province_code: psgc?.provinceCode || null,
               psgc_city_code: psgc?.cityCode || null,
               psgc_barangay_code: psgc?.barangayCode || null,
+              psgc_region_name: enrollRegionName,
+              psgc_province_name: enrollProvinceName,
+              psgc_city_municipality_name: enrollCityName,
+              psgc_barangay_name: enrollBarangayName,
               home_building: psgc?.houseBuilding || null,
               home_street: psgc?.street || null,
               postal_code: psgc?.postalCode || null,
@@ -810,6 +838,45 @@ async function handleRequest(request: Request): Promise<Response> {
           }
           if (visitor.homeAddress) {
             profileUpdate.home_address = visitor.homeAddress.trim();
+          }
+          // Persist updated structured PSGC address fields when visitor edits them on the Welcome Back screen
+          const psgc = parsed.data.psgc;
+          if (psgc?.regionCode && psgc?.cityCode && psgc?.barangayCode) {
+            let updateRegionName: string | null = null;
+            let updateProvinceName: string | null = null;
+            let updateCityName: string | null = null;
+            let updateBarangayName: string | null = null;
+            const codes = [psgc.regionCode, psgc.provinceCode, psgc.cityCode, psgc.barangayCode].filter(Boolean) as string[];
+            try {
+              const { data: locs } = await admin
+                .from('psgc_locations')
+                .select('psgc_code, name, level')
+                .in('psgc_code', codes);
+              if (locs) {
+                for (const loc of locs) {
+                  if (loc.level === 'region') updateRegionName = loc.name;
+                  else if (loc.level === 'province') updateProvinceName = loc.name;
+                  else if (loc.level === 'city' || loc.level === 'municipality') updateCityName = loc.name;
+                  else if (loc.level === 'barangay') updateBarangayName = loc.name;
+                }
+              }
+            } catch (nameErr) {
+              console.warn('Failed to resolve PSGC names during returning profile update:', nameErr);
+            }
+
+            profileUpdate.psgc_version = psgc.version || '2026-q3';
+            profileUpdate.psgc_region_code = psgc.regionCode;
+            profileUpdate.psgc_province_code = psgc.provinceCode ?? null;
+            profileUpdate.psgc_city_code = psgc.cityCode;
+            profileUpdate.psgc_barangay_code = psgc.barangayCode;
+            if (updateRegionName) profileUpdate.psgc_region_name = updateRegionName;
+            if (updateProvinceName !== undefined) profileUpdate.psgc_province_name = updateProvinceName;
+            if (updateCityName) profileUpdate.psgc_city_municipality_name = updateCityName;
+            if (updateBarangayName) profileUpdate.psgc_barangay_name = updateBarangayName;
+            profileUpdate.home_building = psgc.houseBuilding ?? null;
+            profileUpdate.home_street = psgc.street ?? null;
+            profileUpdate.postal_code = psgc.postalCode ?? null;
+            profileUpdate.postal_code_source = psgc.postalCodeSource ?? null;
           }
           await admin
             .from('returning_visitor_profiles')

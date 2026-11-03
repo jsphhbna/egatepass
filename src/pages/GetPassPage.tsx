@@ -33,6 +33,7 @@ import { generateBrandedQrDataUrl } from '@/lib/brandedQr';
 import QRCode from 'qrcode';
 import { recognizeIdImage, terminateLocalOcrWorker, getNextOcrJobId } from '@/lib/ocr';
 import { evaluateLiveFaceQuality, evaluateIdImageQuality, evaluateReturningSelfiePrecheck } from '@/lib/imageQuality';
+import { hydrateReturningAddress } from '@/lib/returningAddressHydration';
 import { normalizePhMobile, validatePhMobile } from '@/lib/phPhone';
 import { normalizeVehiclePlate } from '@/lib/vehiclePlate';
 import {
@@ -1114,28 +1115,16 @@ export function GetPassPage() {
 
       // Prepopulate form values
       setValue('firstName', p.firstName, { shouldValidate: true });
-      if (p.middleName) setValue('middleName', p.middleName);
+      setValue('middleName', p.middleName || '');
       setValue('lastName', p.lastName, { shouldValidate: true });
       setValue('contactNumber', p.contactNumber, { shouldValidate: true });
-      if (p.psgc) {
-        setSelectedPsgc({
-          version: p.psgc.version || '2026-q3',
-          region: p.psgc.region,
-          province: p.psgc.province || null,
-          city: p.psgc.city,
-          barangay: p.psgc.barangay,
-          postalCode: p.psgc.postalCode || null,
-          postalCodeSource: p.psgc.postalCodeSource || null,
-        });
-        if (p.psgc.houseBuilding) setHomeBuilding(p.psgc.houseBuilding);
-        if (p.psgc.street) setHomeStreet(p.psgc.street);
-        if (p.psgc.postalCode) setPostalCode(p.psgc.postalCode);
-      } else {
-        setSelectedPsgc(null);
-        setHomeBuilding('');
-        setHomeStreet('');
-        setPostalCode('');
-      }
+      // Address hydration: unconditional explicit assignments prevent stale session values
+      // from leaking into a new visitor's Welcome Back screen.
+      const hydratedAddr = hydrateReturningAddress(p);
+      setSelectedPsgc(hydratedAddr.selectedPsgc);
+      setHomeBuilding(hydratedAddr.homeBuilding);
+      setHomeStreet(hydratedAddr.homeStreet);
+      setPostalCode(hydratedAddr.postalCode);
 
       if (p.homeLocation) {
         setHomeLocation(p.homeLocation);
