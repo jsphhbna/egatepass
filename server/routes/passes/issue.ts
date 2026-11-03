@@ -722,6 +722,7 @@ async function handleRequest(request: Request): Promise<Response> {
 
     // Post-issuance Returning Visitor conveniences (Section 51: Failure must NOT destroy pass issuance)
     let returningEnrollmentStatus: 'enrolled' | 'failed' | 'not_requested' = 'not_requested';
+    let returningProfileUpdateStatus: 'updated' | 'failed' | 'not_requested' = 'not_requested';
     if (parsed.data.source === 'portal' && parsed.data.registrationMode === 'new' && parsed.data.enrollReturning === true) {
       try {
         const templateKey = process.env.RETURNING_VISITOR_TEMPLATE_KEY?.trim();
@@ -839,8 +840,10 @@ async function handleRequest(request: Request): Promise<Response> {
           if (visitor.homeAddress) {
             profileUpdate.home_address = visitor.homeAddress.trim();
           }
+
           // Persist updated structured PSGC address fields when visitor edits them on the Welcome Back screen
           const psgc = parsed.data.psgc;
+          let psgcLookupFailed = false;
           if (psgc?.regionCode && psgc?.cityCode && psgc?.barangayCode) {
             let updateRegionName: string | null = null;
             let updateProvinceName: string | null = null;
@@ -848,11 +851,15 @@ async function handleRequest(request: Request): Promise<Response> {
             let updateBarangayName: string | null = null;
             const codes = [psgc.regionCode, psgc.provinceCode, psgc.cityCode, psgc.barangayCode].filter(Boolean) as string[];
             try {
-              const { data: locs } = await admin
+              const { data: locs, error: locErr } = await admin
                 .from('psgc_locations')
                 .select('psgc_code, name, level')
                 .in('psgc_code', codes);
-              if (locs) {
+
+              if (locErr || !locs || locs.length === 0) {
+                psgcLookupFailed = true;
+                console.warn('Failed to resolve PSGC names during returning profile update:', locErr?.message || 'empty locs');
+              } else {
                 for (const loc of locs) {
                   if (loc.level === 'region') updateRegionName = loc.name;
                   else if (loc.level === 'province') updateProvinceName = loc.name;
@@ -861,29 +868,48 @@ async function handleRequest(request: Request): Promise<Response> {
                 }
               }
             } catch (nameErr) {
+              psgcLookupFailed = true;
               console.warn('Failed to resolve PSGC names during returning profile update:', nameErr);
             }
 
-            profileUpdate.psgc_version = psgc.version || '2026-q3';
-            profileUpdate.psgc_region_code = psgc.regionCode;
-            profileUpdate.psgc_province_code = psgc.provinceCode ?? null;
-            profileUpdate.psgc_city_code = psgc.cityCode;
-            profileUpdate.psgc_barangay_code = psgc.barangayCode;
-            if (updateRegionName) profileUpdate.psgc_region_name = updateRegionName;
-            if (updateProvinceName !== undefined) profileUpdate.psgc_province_name = updateProvinceName;
-            if (updateCityName) profileUpdate.psgc_city_municipality_name = updateCityName;
-            if (updateBarangayName) profileUpdate.psgc_barangay_name = updateBarangayName;
-            profileUpdate.home_building = psgc.houseBuilding ?? null;
-            profileUpdate.home_street = psgc.street ?? null;
-            profileUpdate.postal_code = psgc.postalCode ?? null;
-            profileUpdate.postal_code_source = psgc.postalCodeSource ?? null;
+            if (psgcLookupFailed) {
+              // A failed PSGC lookup cannot silently produce a partially inconsistent profile update
+              throw new Error('psgc_reference_lookup_failed');
+            }
+
+            profileUpdate.psgc_version = (psgc.version || '2026-q3').trim();
+            profileUpdate.psgc_region_code = psgc.regionCode.trim();
+            profileUpdate.psgc_province_code = psgc.provinceCode ? psgc.provinceCode.trim() : null;
+            profileUpdate.psgc_city_code = psgc.cityCode.trim();
+            profileUpdate.psgc_barangay_code = psgc.barangayCode.trim();
+            profileUpdate.psgc_region_name = updateRegionName ? updateRegionName.trim() : null;
+            profileUpdate.psgc_province_name = updateProvinceName ? updateProvinceName.trim() : null;
+            profileUpdate.psgc_city_municipality_name = updateCityName ? updateCityName.trim() : null;
+            profileUpdate.psgc_barangay_name = updateBarangayName ? updateBarangayName.trim() : null;
+            profileUpdate.home_building = psgc.houseBuilding && psgc.houseBuilding.trim() ? psgc.houseBuilding.trim() : null;
+            profileUpdate.home_street = psgc.street && psgc.street.trim() ? psgc.street.trim() : null;
+            profileUpdate.postal_code = psgc.postalCode && psgc.postalCode.trim() ? psgc.postalCode.trim() : null;
+            profileUpdate.postal_code_source = psgc.postalCodeSource && psgc.postalCodeSource.trim() ? psgc.postalCodeSource.trim() : null;
           }
-          await admin
+
+          const { data: updatedRows, error: updateErr } = await admin
             .from('returning_visitor_profiles')
             .update(profileUpdate)
-            .eq('id', ret.profileId);
+            .eq('id', ret.profileId)
+            .select('id');
+
+          if (updateErr) {
+            console.error('PostgREST error updating returning profile info:', updateErr.message);
+            returningProfileUpdateStatus = 'failed';
+          } else if (!updatedRows || updatedRows.length === 0) {
+            console.warn('Returning profile update affected 0 rows for profile ID:', ret.profileId);
+            returningProfileUpdateStatus = 'failed';
+          } else {
+            returningProfileUpdateStatus = 'updated';
+          }
         } catch (updErr) {
           console.warn('Failed to update returning profile info:', updErr);
+          returningProfileUpdateStatus = 'failed';
         }
       }
 
@@ -918,6 +944,7 @@ async function handleRequest(request: Request): Promise<Response> {
       validFrom: data.valid_from,
       validUntil: data.valid_until,
       returningEnrollment: returningEnrollmentStatus,
+      returningProfileUpdate: returningProfileUpdateStatus,
     });
   } catch (error) {
     if (error instanceof HttpError) return jsonResponse(error.status, { error: error.code });

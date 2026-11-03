@@ -1734,6 +1734,12 @@ export function GetPassPage() {
         toast.warning('Pass created successfully, but your returning visitor profile could not be enrolled. You may enroll on your next visit.');
       }
 
+      if (result.returningProfileUpdate === 'updated') {
+        toast.success('Your saved returning profile was updated with today\'s contact details.');
+      } else if (result.returningProfileUpdate === 'failed') {
+        toast.warning('Pass created successfully, but your saved profile could not be updated. Your pass is valid for today\'s visit.');
+      }
+
       setPassId(result.passId);
       setRawQrToken(result.qrToken);
       const validity = result.validFrom && result.validUntil

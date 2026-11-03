@@ -90,7 +90,18 @@ export function AddressCascadingSelector({
           name: initialAddress.barangay.name,
           level: 'barangay',
         });
-        setPostalResolution(initialAddress.postalResolution || null);
+        setPostalResolution(
+          initialAddress.postalResolution ||
+          (initialAddress.postalCodeSource === 'PHLPost' && initialAddress.postalCode
+            ? {
+                postalCode: initialAddress.postalCode,
+                isAutoFilled: true,
+                requiresConfirmation: false,
+                mappingType: 'exact_barangay',
+                message: 'PHLPost standard postal code',
+              }
+            : null)
+        );
         setManualPostalCode(initialAddress.postalCode || '');
         setCurrentStep('confirm');
       } else {
@@ -264,7 +275,28 @@ export function AddressCascadingSelector({
       : (manualPostalCode.trim() || null);
     const finalSource = postalResolution?.isAutoFilled
       ? 'PHLPost'
-      : (finalPostalCode ? 'manual' : null);
+      : (finalPostalCode
+          ? (initialAddress?.postalCodeSource && initialAddress.postalCode === finalPostalCode
+              ? initialAddress.postalCodeSource
+              : 'manual')
+          : null);
+
+    const finalResolution = postalResolution
+      ? {
+          ...postalResolution,
+          postalCode: finalPostalCode,
+        }
+      : (initialAddress?.postalResolution && initialAddress.postalCode === finalPostalCode
+          ? initialAddress.postalResolution
+          : (finalSource === 'PHLPost' && finalPostalCode
+              ? {
+                  postalCode: finalPostalCode,
+                  isAutoFilled: true,
+                  requiresConfirmation: false,
+                  mappingType: 'exact_barangay' as const,
+                  message: 'PHLPost standard postal code',
+                }
+              : undefined));
 
     onSelect({
       version: '2026-q3',
@@ -274,12 +306,7 @@ export function AddressCascadingSelector({
       barangay: { code: selectedBarangay.code, name: selectedBarangay.name },
       postalCode: finalPostalCode,
       postalCodeSource: finalSource,
-      postalResolution: postalResolution
-        ? {
-            ...postalResolution,
-            postalCode: finalPostalCode,
-          }
-        : undefined,
+      postalResolution: finalResolution,
     });
     onClose();
   }

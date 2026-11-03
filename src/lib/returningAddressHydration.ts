@@ -11,7 +11,10 @@
  *
  * Design rules:
  *  - All four outputs are always fully specified — never conditionally absent.
- *  - stale values from a prior visitor session cannot survive into a new match.
+ *  - Whitespace-only optional fields are trimmed to clean empty strings.
+ *  - Stale values from a prior visitor session cannot survive into a new match.
+ *  - Reconstructs postalResolution metadata so auto-fill badges and provenance
+ *    survive re-opening the selector.
  *  - Does NOT read or write React state directly; callers apply the result.
  *  - Does NOT fabricate locality codes, postal codes, or names.
  */
@@ -46,24 +49,63 @@ export function hydrateReturningAddress(
 
   if (
     psgc &&
-    psgc.region?.code &&
-    psgc.city?.code &&
-    psgc.barangay?.code
+    psgc.region?.code?.trim() &&
+    psgc.city?.code?.trim() &&
+    psgc.barangay?.code?.trim()
   ) {
+    const cleanBuilding = typeof psgc.houseBuilding === 'string' ? psgc.houseBuilding.trim() : '';
+    const cleanStreet = typeof psgc.street === 'string' ? psgc.street.trim() : '';
+    const cleanPostal = typeof psgc.postalCode === 'string' ? psgc.postalCode.trim() : '';
+    const cleanSource = typeof psgc.postalCodeSource === 'string' ? psgc.postalCodeSource.trim() : null;
+
+    let postalResolution: SelectedPsgcAddress['postalResolution'] = undefined;
+    if (cleanPostal) {
+      if (cleanSource === 'PHLPost') {
+        postalResolution = {
+          postalCode: cleanPostal,
+          isAutoFilled: true,
+          requiresConfirmation: false,
+          mappingType: 'exact_barangay',
+          message: 'PHLPost standard postal code',
+        };
+      } else {
+        postalResolution = {
+          postalCode: cleanPostal,
+          isAutoFilled: false,
+          requiresConfirmation: false,
+          mappingType: 'unmapped',
+        };
+      }
+    }
+
     return {
       selectedPsgc: {
-        version: psgc.version || '2026-q3',
-        region: psgc.region,
-        province: psgc.province || null,
-        city: psgc.city,
-        barangay: psgc.barangay,
-        postalCode: psgc.postalCode ?? null,
-        postalCodeSource: psgc.postalCodeSource ?? null,
+        version: (psgc.version || '2026-q3').trim(),
+        region: {
+          code: psgc.region.code.trim(),
+          name: (psgc.region.name || '').trim(),
+        },
+        province: psgc.province?.code?.trim()
+          ? {
+              code: psgc.province.code.trim(),
+              name: (psgc.province.name || '').trim(),
+            }
+          : null,
+        city: {
+          code: psgc.city.code.trim(),
+          name: (psgc.city.name || '').trim(),
+        },
+        barangay: {
+          code: psgc.barangay.code.trim(),
+          name: (psgc.barangay.name || '').trim(),
+        },
+        postalCode: cleanPostal || null,
+        postalCodeSource: cleanSource || (cleanPostal ? 'manual' : null),
+        postalResolution,
       },
-      // Always assign — ?? '' guarantees empty string for absent/null/undefined
-      homeBuilding: psgc.houseBuilding ?? '',
-      homeStreet: psgc.street ?? '',
-      postalCode: psgc.postalCode ?? '',
+      homeBuilding: cleanBuilding,
+      homeStreet: cleanStreet,
+      postalCode: cleanPostal,
     };
   }
 

@@ -359,21 +359,21 @@ describe('identify-returning.ts — profile query completeness', () => {
     const src = await import('fs').then((fs) =>
       fs.readFileSync('server/routes/passes/identify-returning.ts', 'utf-8')
     );
-    expect(src).toContain("houseBuilding: profile.home_building || undefined");
+    expect(src).toMatch(/houseBuilding:\s*(?:cleanHouseBuilding|profile\.home_building)/);
   });
 
   it('serializes street from home_street in the success response', async () => {
     const src = await import('fs').then((fs) =>
       fs.readFileSync('server/routes/passes/identify-returning.ts', 'utf-8')
     );
-    expect(src).toContain("street: profile.home_street || undefined");
+    expect(src).toMatch(/street:\s*(?:cleanStreet|profile\.home_street)/);
   });
 
   it('serializes postalCode from postal_code in the success response', async () => {
     const src = await import('fs').then((fs) =>
       fs.readFileSync('server/routes/passes/identify-returning.ts', 'utf-8')
     );
-    expect(src).toContain("postalCode: profile.postal_code || undefined");
+    expect(src).toMatch(/postalCode:\s*(?:cleanPostal|profile\.postal_code)/);
   });
 
   it('guards psgc serialization on region/city/barangay codes being present', async () => {

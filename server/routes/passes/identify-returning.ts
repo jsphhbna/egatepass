@@ -93,6 +93,50 @@ export function computeMatchTokenDigest(matchToken: string, secret: string): str
   return createHash('sha256').update(`${matchToken}:${secret}`).digest('hex');
 }
 
+export function resolvePsgcLocalityFallback(
+  profile: {
+    psgc_region_code?: string | null;
+    psgc_province_code?: string | null;
+    psgc_city_code?: string | null;
+    psgc_barangay_code?: string | null;
+    psgc_region_name?: string | null;
+    psgc_province_name?: string | null;
+    psgc_city_municipality_name?: string | null;
+    psgc_barangay_name?: string | null;
+  },
+  referenceLocs: Array<{ psgc_code?: string; code?: string; name: string; level: string }> | null
+): { regionName: string; provinceName: string; cityName: string; barangayName: string; needsLookup: boolean } {
+  let regionName = (profile.psgc_region_name || '').trim();
+  let provinceName = (profile.psgc_province_name || '').trim();
+  let cityName = (profile.psgc_city_municipality_name || '').trim();
+  let barangayName = (profile.psgc_barangay_name || '').trim();
+
+  const needsRegion = !regionName;
+  const needsProvince = Boolean(profile.psgc_province_code && !provinceName);
+  const needsCity = !cityName;
+  const needsBarangay = !barangayName;
+  const needsLookup = Boolean(profile.psgc_region_code && (needsRegion || needsProvince || needsCity || needsBarangay));
+
+  if (needsLookup && referenceLocs && referenceLocs.length > 0) {
+    for (const loc of referenceLocs) {
+      const trimmedLocName = (loc.name || '').trim();
+      const code = loc.psgc_code || loc.code;
+      if (!trimmedLocName || !code) continue;
+      if (loc.level === 'region' && needsRegion && code === profile.psgc_region_code) {
+        regionName = trimmedLocName;
+      } else if (loc.level === 'province' && needsProvince && code === profile.psgc_province_code) {
+        provinceName = trimmedLocName;
+      } else if ((loc.level === 'city' || loc.level === 'municipality' || loc.level === 'city_municipality') && needsCity && code === profile.psgc_city_code) {
+        cityName = trimmedLocName;
+      } else if (loc.level === 'barangay' && needsBarangay && code === profile.psgc_barangay_code) {
+        barangayName = trimmedLocName;
+      }
+    }
+  }
+
+  return { regionName, provinceName, cityName, barangayName, needsLookup };
+}
+
 async function handleRequest(request: Request): Promise<Response> {
   if (request.method !== 'POST') {
     return jsonResponse(405, { error: 'method_not_allowed' }, { Allow: 'POST' });
@@ -330,36 +374,37 @@ async function handleRequest(request: Request): Promise<Response> {
         .eq('profile_id', profile.id)
         .is('archived_at', null);
 
-      // Resolve PSGC locality names if they are empty or null on the returning profile
-      let regionName = profile.psgc_region_name || '';
-      let provinceName = profile.psgc_province_name || '';
-      let cityName = profile.psgc_city_municipality_name || '';
-      let barangayName = profile.psgc_barangay_name || '';
+      // Resolve PSGC locality names with safe fallback if any required name is missing, empty, or whitespace-only
+      let resolvedLocality = resolvePsgcLocalityFallback(profile, null);
 
-      if (profile.psgc_region_code && (!regionName || !cityName || !barangayName)) {
+      if (resolvedLocality.needsLookup) {
         const codes = [
-          profile.psgc_region_code,
-          profile.psgc_province_code,
-          profile.psgc_city_code,
-          profile.psgc_barangay_code,
-        ].filter(Boolean);
+          !resolvedLocality.regionName ? profile.psgc_region_code : null,
+          profile.psgc_province_code && !resolvedLocality.provinceName ? profile.psgc_province_code : null,
+          !resolvedLocality.cityName ? profile.psgc_city_code : null,
+          !resolvedLocality.barangayName ? profile.psgc_barangay_code : null,
+        ].filter(Boolean) as string[];
+
         try {
-          const { data: locs } = await admin
+          const { data: locs, error: locErr } = await admin
             .from('psgc_locations')
             .select('psgc_code, name, level')
             .in('psgc_code', codes);
-          if (locs) {
-            for (const loc of locs) {
-              if (loc.level === 'region' && !regionName) regionName = loc.name;
-              else if (loc.level === 'province' && !provinceName) provinceName = loc.name;
-              else if ((loc.level === 'city' || loc.level === 'municipality') && !cityName) cityName = loc.name;
-              else if (loc.level === 'barangay' && !barangayName) barangayName = loc.name;
-            }
+
+          if (locErr) {
+            console.warn('Non-sensitive diagnostic: PSGC location lookup returned error during returning profile fallback:', locErr.message);
+          } else if (locs) {
+            resolvedLocality = resolvePsgcLocalityFallback(profile, locs);
           }
-        } catch (locErr) {
-          console.warn('Failed to resolve PSGC locality names for returning profile:', locErr);
+        } catch (locErr: any) {
+          console.warn('Non-sensitive diagnostic: Exception resolving PSGC locality names for returning profile fallback:', locErr?.message || 'unknown');
         }
       }
+
+      const cleanHouseBuilding = typeof profile.home_building === 'string' ? profile.home_building.trim() : '';
+      const cleanStreet = typeof profile.home_street === 'string' ? profile.home_street.trim() : '';
+      const cleanPostal = typeof profile.postal_code === 'string' ? profile.postal_code.trim() : '';
+      const cleanPostalSource = typeof profile.postal_code_source === 'string' ? profile.postal_code_source.trim() : '';
 
       return jsonResponse(200, {
         available: true,
@@ -375,14 +420,14 @@ async function handleRequest(request: Request): Promise<Response> {
           homeAddress: profile.home_address,
           psgc: profile.psgc_region_code && profile.psgc_city_code && profile.psgc_barangay_code ? {
             version: profile.psgc_version || '2026-q3',
-            region: { code: profile.psgc_region_code, name: regionName },
-            province: profile.psgc_province_code ? { code: profile.psgc_province_code, name: provinceName } : null,
-            city: { code: profile.psgc_city_code, name: cityName },
-            barangay: { code: profile.psgc_barangay_code, name: barangayName },
-            houseBuilding: profile.home_building || undefined,
-            street: profile.home_street || undefined,
-            postalCode: profile.postal_code || undefined,
-            postalCodeSource: profile.postal_code_source || undefined,
+            region: { code: profile.psgc_region_code, name: resolvedLocality.regionName },
+            province: profile.psgc_province_code ? { code: profile.psgc_province_code, name: resolvedLocality.provinceName } : null,
+            city: { code: profile.psgc_city_code, name: resolvedLocality.cityName },
+            barangay: { code: profile.psgc_barangay_code, name: resolvedLocality.barangayName },
+            houseBuilding: cleanHouseBuilding || undefined,
+            street: cleanStreet || undefined,
+            postalCode: cleanPostal || undefined,
+            postalCodeSource: cleanPostalSource || undefined,
           } : null,
           homeLocation: (profile.home_location_lat != null && profile.home_location_lon != null)
             ? {

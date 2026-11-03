@@ -99,6 +99,7 @@ export interface IssuedPass {
   validFrom: string;
   validUntil: string;
   returningEnrollment?: 'enrolled' | 'failed' | 'not_requested';
+  returningProfileUpdate?: 'updated' | 'failed' | 'not_requested';
 }
 
 interface UploadIntent {
@@ -368,8 +369,9 @@ export class PreflightQualityError extends Error {
 
 export async function createPortalIssueTransaction(captchaToken?: string): Promise<PortalIssueTransaction> {
   const client = requirePortalSupabase();
-  const siteKey = ((import.meta as any).env?.VITE_TURNSTILE_SITE_KEY || process.env.VITE_TURNSTILE_SITE_KEY)?.trim();
-  const isProd = Boolean((import.meta as any).env?.PROD || process.env.PROD === 'true' || process.env.NODE_ENV === 'production');
+  const envProcess = typeof process !== 'undefined' ? process.env : undefined;
+  const siteKey = ((import.meta as any).env?.VITE_TURNSTILE_SITE_KEY || envProcess?.VITE_TURNSTILE_SITE_KEY)?.trim();
+  const isProd = Boolean((import.meta as any).env?.PROD || envProcess?.PROD === 'true' || envProcess?.NODE_ENV === 'production');
 
   const policy = evaluateTurnstilePolicy('portal', isProd, siteKey, captchaToken);
   if (!policy.allowed) {

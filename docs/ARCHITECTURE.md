@@ -708,3 +708,23 @@ Outage Architecture & Authority Delegation
   - **Stage 5 (Match Accepted)**: Retains the exact matched selfie blob as `photoBlob` and upload intent in `tx.photoIntentId` for subsequent pass issuance (ensuring no second photo is captured), populates profile and form fields, unconditionally hydrates the complete structured residential address (PSGC locality, house/building, street, postal code) via `hydrateReturningAddress()` to prevent stale session leakages, and navigates to `returning_confirm` with Welcome Back feedback. All address fields remain fully editable and are symmetrically submitted in `formData.psgc`. If opted-in via `saveReturningUpdates`, edited address fields are persisted back to `returning_visitor_profiles`.
   - **Stage 6 (Match Rejected)**: On low similarity score or image defect, displays specific, actionable feedback based on the exact rejection reason code (`no_face`, `multiple_faces`, `too_small`, `too_dark`, `overexposed`, `blurry`, `framing_failed`) with a prominent "Retake Selfie" button. The selected profile candidate remains active, allowing immediate retake without searching again, and the user is not forced into New Visitor registration.
   - **Stage 7 (State Cleanup & Decoupled Lifecycle)**: Camera unmount cleanup is isolated to genuine component unmount (`useEffect(() => () => faceWebcam.stop(), [])`) so URL changes during Retake never abort pending WebKit `getUserMedia()` requests. Invalidates previous photo checkpoints on retake and new capture, guaranteeing every attempt receives a fresh upload intent and storage path.
+
+### 12.18 Returning Address Hydration, Persistence Hardening & Postal Code Preservation
+- **Deterministic Pure Hydration Helper**:
+  - `hydrateReturningAddress(profile)` in `src/lib/returningAddressHydration.ts` provides pure, testable hydration from a successful 1:1 match profile into four state variables (`selectedPsgc`, `homeBuilding`, `homeStreet`, `postalCode`).
+  - Trims all optional address strings (`houseBuilding`, `street`, `postalCode`, `postalCodeSource`, locality names); whitespace-only strings evaluate to clean empty strings `''`, never visual blank spaces.
+  - Reconstructs `postalResolution` (`isAutoFilled: true`, `mappingType: 'exact_barangay'`, `message: 'PHLPost standard postal code'`) when `postalCode` exists and `postalCodeSource === 'PHLPost'`.
+- **Backend Locality Fallback Resolution**:
+  - `resolvePsgcLocalityFallback(profile, referenceLocs)` in `server/routes/passes/identify-returning.ts` executes whenever `psgc_province_code` exists without `psgc_province_name` or any required locality name is null/whitespace.
+  - Resolves administrative names via exact PSGC codes from `psgc_locations` without fabricating data or mutating database records.
+  - Non-sensitive server-side diagnostic logging on reference lookup errors.
+- **Returning Profile Persistence Hardening**:
+  - In `server/routes/passes/issue.ts`, the `saveUpdates` handler explicitly inspects the PostgREST `{ error: updateErr }` and verifies `updatedRows.length > 0` after `.update(profileUpdate).eq('id', ret.profileId).select('id')`.
+  - Fails closed (`throw new Error('psgc_reference_lookup_failed')`) if PSGC location lookup returns error or empty array, preventing partial or inconsistent profile updates.
+  - Symmetrically persists all 13 structured address fields: `psgc_version`, `psgc_region_code`, `psgc_province_code`, `psgc_city_code`, `psgc_barangay_code`, `psgc_region_name`, `psgc_province_name`, `psgc_city_municipality_name`, `psgc_barangay_name`, `home_building`, `home_street`, `postal_code`, and `postal_code_source`.
+  - Returns explicit update status in 201 response: `returningProfileUpdate: 'updated' | 'failed' | 'not_requested'`.
+- **Pass Issuance Survival Invariant**:
+  - A failure during returning profile update never fails, aborts, or rolls back an already issued visitor pass.
+  - Surfaces honest, non-blocking notification to the visitor if profile persistence fails without exposing database error details or residential PII.
+- **Postal Code Metadata Preservation**:
+  - In `src/components/AddressCascadingSelector.tsx`, `handleConfirm()` checks `isUnchangedPostal` and preserves `initialAddress.postalCodeSource` and `postalResolution` when the visitor re-opens and confirms the selector without changing the postal code, preventing silent degradation of `PHLPost` to `manual`.

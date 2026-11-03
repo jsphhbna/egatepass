@@ -435,3 +435,19 @@ flowchart TD
   3. **Backend Locality Name Fallback Resolution**: In `server/routes/passes/identify-returning.ts`, if `profile.psgc_region_name`, `profile.psgc_city_municipality_name`, or `profile.psgc_barangay_name` are missing, a query against `public.psgc_locations` resolves the exact administrative names from the dataset without altering existing database records.
   4. **Complete Profile Update Persistence**: In `server/routes/passes/issue.ts`, the `saveUpdates` handler now resolves and updates all structured address columns (`psgc_region_code`, `psgc_province_code`, `psgc_city_code`, `psgc_barangay_code`, `psgc_*_name`, `home_building`, `home_street`, `postal_code`, `postal_code_source`) in `returning_visitor_profiles` when the visitor opts in.
 
+---
+
+### 2.25 Returning Profile Persistence Verification & Postal Code Source Preservation
+
+- **Symptoms**:
+  1. **Silent Profile Update Failure**: A returning visitor opts in to update their saved profile on the Welcome Back screen (`saveReturningUpdates: true`), and pass issuance succeeds with a 201 response, but changes to their address or contact number are not saved to `returning_visitor_profiles`.
+  2. **Postal Code Source Degradation**: A returning visitor whose postal code was verified by PHLPost (`postalCodeSource: 'PHLPost'`) opens the AddressCascadingSelector and clicks "Confirm Address" without making changes; the saved postal code source changes from `'PHLPost'` to `'manual'`, losing its auto-filled badge.
+- **Root Causes**:
+  - *Unchecked PostgREST Error & Zero Row Update*: In `server/routes/passes/issue.ts`, `saveUpdates` awaited `.update(profileUpdate).eq('id', ret.profileId)` without checking `{ error }` and without verifying `updatedRows.length > 0`. If a database constraint failed or the profile ID did not match an active row, the failure was silently swallowed and the response claimed success.
+  - *Missing Postal Resolution in Address Hydration*: `hydrateReturningAddress()` initialized `postalCode` and `postalCodeSource`, but did not reconstruct `postalResolution`. Consequently, when `AddressCascadingSelector` opened, `postalResolution` was null, leading `handleConfirm()` to treat the postal code as a manual entry.
+- **Safe Resolutions**:
+  1. **PostgREST Inspection & Row Count Verification**: `issue.ts` executes `.update(profileUpdate).eq('id', ret.profileId).select('id')`, explicitly checks `updateErr`, checks `updatedRows.length === 0`, and fails closed if PSGC location lookup fails.
+  2. **Pass Issuance Survival & Status Reporting**: Pass issuance always succeeds regardless of profile update status. The 201 response includes `returningProfileUpdate: 'updated' | 'failed' | 'not_requested'`, allowing `GetPassPage.tsx` to surface an honest, non-blocking toast notification if profile persistence fails.
+  3. **PHLPost Metadata Reconstruction**: `hydrateReturningAddress()` reconstructs `postalResolution` (`isAutoFilled: true`, `mappingType: 'exact_barangay'`) whenever `postalCode` exists with source `PHLPost`.
+  4. **Preservation of Unchanged Source**: In `AddressCascadingSelector.tsx`, `handleConfirm()` verifies `isUnchangedPostal` and preserves `initialAddress.postalCodeSource` and `postalResolution`, preventing degradation to `'manual'`.
+
