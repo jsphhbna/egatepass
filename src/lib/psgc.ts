@@ -24,7 +24,7 @@ export interface PsgcLocation {
 
 export interface PostalResolution {
   postalCode: string | null;
-  mappingType: 'exact_barangay' | 'unique_city' | 'multi_code_city' | 'unmapped' | 'ambiguous';
+  mappingType: 'exact_barangay' | 'unique_city' | 'multi_code_city' | 'unmapped' | 'ambiguous' | 'service_unavailable';
   isAutoFilled: boolean;
   requiresConfirmation: boolean;
   message?: string;
@@ -245,12 +245,14 @@ export async function resolvePostalCode(
   cityCode: string,
   barangayCode?: string
 ): Promise<PostalResolution> {
+  let dbLookupFailed = false;
+
   try {
     const supabase = requirePortalSupabase();
 
     // 1. Check exact barangay match
     if (barangayCode) {
-      const { data: bgyMatch } = await supabase
+      const { data: bgyMatch, error: bgyError } = await supabase
         .from('postal_code_reference')
         .select('postal_code, mapping_type')
         .eq('barangay_psgc_code', barangayCode)
@@ -258,7 +260,9 @@ export async function resolvePostalCode(
         .limit(1)
         .maybeSingle();
 
-      if (bgyMatch) {
+      if (bgyError) {
+        dbLookupFailed = true;
+      } else if (bgyMatch) {
         return {
           postalCode: bgyMatch.postal_code,
           mappingType: 'exact_barangay',
@@ -269,13 +273,15 @@ export async function resolvePostalCode(
     }
 
     // 2. Check unique city match
-    const { data: cityMatches } = await supabase
+    const { data: cityMatches, error: cityError } = await supabase
       .from('postal_code_reference')
       .select('postal_code, mapping_type')
       .eq('psgc_locality_code', cityCode)
       .eq('is_active', true);
 
-    if (cityMatches && cityMatches.length > 0) {
+    if (cityError) {
+      dbLookupFailed = true;
+    } else if (cityMatches && cityMatches.length > 0) {
       const uniqueCodes = Array.from(new Set(cityMatches.map((m: any) => m.postal_code)));
       if (uniqueCodes.length === 1 && cityMatches[0]?.mapping_type === 'unique_city') {
         return {
@@ -295,7 +301,7 @@ export async function resolvePostalCode(
       }
     }
   } catch {
-    // Fall back to bundled postal data
+    dbLookupFailed = true;
   }
 
   // Fallback resolution using bundled dataset
@@ -335,6 +341,16 @@ export async function resolvePostalCode(
         message: 'Postal code varies by delivery area. Please confirm your applicable postal code.',
       };
     }
+  }
+
+  if (dbLookupFailed) {
+    return {
+      postalCode: null,
+      mappingType: 'service_unavailable',
+      isAutoFilled: false,
+      requiresConfirmation: true,
+      message: 'Postal lookup service could not be reached. Please enter your 4-digit postal code manually.',
+    };
   }
 
   return {

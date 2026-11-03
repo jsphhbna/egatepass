@@ -35,28 +35,26 @@ export function StructuredAddressField({
 
   function handleAddressSelected(selected: SelectedPsgcAddress) {
     onChange(selected);
-    if (selected.postalCode && (!postalCode || selected.postalResolution?.isAutoFilled)) {
-      onPostalCodeChange(selected.postalCode);
-    }
+    onPostalCodeChange(selected.postalCode || '');
   }
 
   return (
     <div className="space-y-4">
       {/* 1. Compact Locality Selector */}
       <div>
-        <label className="block text-sm font-semibold text-[var(--color-text-primary,#f4f4f5)] mb-1.5">
-          Residential Locality <span className="text-red-400">*</span>
+        <label className="block text-sm font-semibold text-[var(--color-text-primary,#172033)] mb-1.5">
+          Residential Locality <span className="text-red-500">*</span>
         </label>
 
         {value ? (
-          <div className="p-3.5 bg-[var(--color-surface,#18181b)] border border-amber-500/40 rounded-xl flex items-center justify-between shadow-sm">
+          <div className="p-3.5 bg-white border border-[var(--color-border,#E2E8F0)] rounded-xl flex items-center justify-between shadow-xs">
             <div className="flex items-start space-x-3 min-w-0 pr-2">
-              <MapPin className="w-5 h-5 text-amber-400 flex-shrink-0 mt-0.5" />
+              <MapPin className="w-5 h-5 text-[#7A0A0A] flex-shrink-0 mt-0.5" />
               <div className="min-w-0">
-                <p className="text-sm font-bold text-white truncate">
+                <p className="text-sm font-bold text-[var(--color-text-primary,#172033)] truncate">
                   {value.barangay.name}, {value.city.name}
                 </p>
-                <p className="text-xs text-[var(--color-text-secondary,#a1a1aa)] truncate mt-0.5">
+                <p className="text-xs text-[var(--color-text-secondary,#5F6B7F)] truncate mt-0.5">
                   {value.province ? `${value.province.name}, ` : ''}{value.region.name}
                 </p>
               </div>
@@ -65,7 +63,7 @@ export function StructuredAddressField({
               type="button"
               disabled={disabled}
               onClick={() => setIsModalOpen(true)}
-              className="px-3 py-1.5 text-xs font-bold bg-amber-500/10 hover:bg-amber-500/20 text-amber-400 border border-amber-500/30 rounded-lg transition-colors flex-shrink-0"
+              className="px-3 py-1.5 text-xs font-bold bg-[#7A0A0A]/10 hover:bg-[#7A0A0A]/15 text-[#7A0A0A] border border-[#7A0A0A]/20 rounded-lg transition-colors flex-shrink-0 disabled:opacity-50"
             >
               Change
             </button>
@@ -75,22 +73,22 @@ export function StructuredAddressField({
             type="button"
             disabled={disabled}
             onClick={() => setIsModalOpen(true)}
-            className={`w-full p-3.5 bg-[var(--color-surface-subtle,#202024)] hover:bg-[var(--color-surface,#18181b)] border ${
-              error ? 'border-red-500' : 'border-[var(--color-border,#27272a)]'
-            } border-dashed rounded-xl flex items-center justify-between text-left text-sm text-[var(--color-text-secondary,#a1a1aa)] hover:text-white transition-all group`}
+            className={`w-full p-3.5 bg-[var(--color-surface-subtle,#F8FAFC)] hover:bg-[var(--color-surface-hover,#F1F5F9)] border ${
+              error ? 'border-red-500' : 'border-[var(--color-border,#E2E8F0)]'
+            } border-dashed rounded-xl flex items-center justify-between text-left text-sm text-[var(--color-text-secondary,#5F6B7F)] hover:text-[var(--color-text-primary,#172033)] transition-all group disabled:opacity-50`}
           >
             <div className="flex items-center space-x-2.5">
-              <MapPin className="w-4 h-4 text-amber-400 group-hover:scale-110 transition-transform" />
-              <span className="font-medium">Select your barangay and city</span>
+              <MapPin className="w-4 h-4 text-[#7A0A0A] group-hover:scale-110 transition-transform" />
+              <span className="font-medium text-[var(--color-text-primary,#172033)]">Select your barangay and city</span>
             </div>
-            <ChevronRight className="w-4 h-4 text-[var(--color-text-muted,#71717a)] group-hover:text-amber-400 transition-colors" />
+            <ChevronRight className="w-4 h-4 text-[var(--color-text-muted,#687386)] group-hover:text-[#7A0A0A] transition-colors" />
           </button>
         )}
 
-        {error && <p className="text-xs text-red-400 mt-1.5">{error}</p>}
+        {error && <p className="text-xs text-red-500 mt-1.5">{error}</p>}
       </div>
 
-      {/* 2. House / Building & Street Details (Compact 2-col or stacked) */}
+      {/* 2. House / Building & Street Details */}
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
         <FormField label="House / Unit / Building No." requirement="optional">
           <Input
@@ -118,17 +116,17 @@ export function StructuredAddressField({
       {/* 3. Postal Code with Auto-fill Indicator */}
       <div>
         <div className="flex items-center justify-between mb-1.5">
-          <label className="text-sm font-semibold text-[var(--color-text-primary,#f4f4f5)]">
+          <label className="text-sm font-semibold text-[var(--color-text-primary,#172033)]">
             Postal Code
           </label>
           {value?.postalResolution?.isAutoFilled && (
-            <span className="inline-flex items-center space-x-1 text-[11px] text-emerald-400 font-medium">
+            <span className="inline-flex items-center space-x-1 text-[11px] font-semibold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-md border border-emerald-200">
               <CheckCircle2 className="w-3 h-3" />
               <span>PHLPost Auto-filled</span>
             </span>
           )}
-          {value?.postalResolution?.requiresConfirmation && (
-            <span className="inline-flex items-center space-x-1 text-[11px] text-amber-400 font-medium">
+          {value?.postalResolution && !value.postalResolution.isAutoFilled && (
+            <span className="inline-flex items-center space-x-1 text-[11px] font-semibold text-amber-800 bg-amber-50 px-2 py-0.5 rounded-md border border-amber-300">
               <AlertCircle className="w-3 h-3" />
               <span>Please confirm</span>
             </span>
@@ -143,7 +141,7 @@ export function StructuredAddressField({
           maxLength={4}
         />
         {value?.postalResolution?.message && (
-          <p className="text-[11px] text-[var(--color-text-secondary,#a1a1aa)] mt-1">
+          <p className="text-[11px] text-[var(--color-text-secondary,#5F6B7F)] mt-1">
             {value.postalResolution.message}
           </p>
         )}

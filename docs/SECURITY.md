@@ -702,3 +702,26 @@ The shared pure SVG template generator (`src/lib/digitalPassArtifact.ts`) uses s
 - **Default-Deny RLS Reinforcement**:
   - Internal utility tables `public.nominatim_rate_limiter` and `public.location_search_cache` have RLS enabled with default-deny policies, revoking all permissions from `public`, `anon`, and `authenticated`, with access granted strictly to `service_role`.
 
+## 26. Returning Visitor Production Readiness, 1:1 Calibration & Postal Address Governance
+
+### 26.1 Returning Visitor Calibration & Cryptographic Readiness Gate
+- **Safe Capability Introspection (`/api/passes/capabilities`)**:
+  - Returns safe diagnostic booleans (`returningVisitorAvailable`, `facialRecognitionConfigured`, `returningCryptoConfigured`, `returningCalibrationConfigured`).
+  - Strict secret isolation: never exposes raw encryption keys, HMAC secrets, or numeric cosine thresholds to client browsers.
+  - Fail-closed security rule: If `RETURNING_FACE_MIN_COSINE`, `RETURNING_VISITOR_TEMPLATE_KEY`, or `RETURNING_MATCH_TOKEN_SECRET` is unset or fails length checks, `returningVisitorAvailable` reports `false` and the safety gate modal blocks returning visitor entry.
+- **Pairwise 1:1 Biometric Calibration (`scripts/calibrate-returning-face.mjs`)**:
+  - Implements genuine vs impostor 1:1 pairwise cosine similarity distributions.
+  - Prevents arbitrary, unvalidated biometric thresholds from being deployed to production without empirical evidence.
+  - Test manifests and calibration image vectors are strictly gitignored (`*.manifest.json`, `calibration/`).
+
+### 26.2 Postal Code Resolution & Manila Barangay 856 Multi-Code Handling
+- **PHLPost Locality Resolution Architecture**:
+  - `resolvePostalCode(cityCode, barangayCode)` classifies resolution outcomes into:
+    - `exact_barangay`: Verified 1:1 barangay mapping (e.g. Barangay 408 -> 1008). Auto-filled.
+    - `unique_city`: Single postal code across all barangays in municipality (e.g. Mandaluyong -> 1550). Auto-filled.
+    - `multi_code_city`: Multiple postal delivery zones across the city without an authoritative barangay-level publication (e.g. City of Manila, Barangay 856). Prompts user entry/confirmation.
+    - `unmapped`: Locality absent from postal reference tables. Prompts manual entry.
+    - `service_unavailable`: Database reference table connection failure. Informs user and gracefully permits manual entry without blocking registration.
+  - Institutional Light Design System Integrity: Full contrast compliance across all address selection and confirmation dialogs using institutional maroon (`#7A0A0A`), gold accent (`#F2C94C`), dark text (`#172033`), and white surfaces (`#FFFFFF`).
+
+

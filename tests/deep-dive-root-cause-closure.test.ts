@@ -1060,6 +1060,8 @@ describe('Deep Dive 1 + Deep Dive 2 Root-Cause Closure Test Suite', () => {
 
     it('transient registration sync failure leaves dependent event pending and does NOT call event RPC', async () => {
       const regId = '00000000-0000-4000-8000-000000000002';
+      const todayDate = new Date().toISOString().slice(0, 10);
+      const recentOccurredAt = new Date(Date.now() - 3600000).toISOString();
       mockGetSession.mockResolvedValue({
         data: { session: {
           access_token: 'valid-guard-token',
@@ -1074,9 +1076,9 @@ describe('Deep Dive 1 + Deep Dive 2 Root-Cause Closure Test Suite', () => {
           lastName: 'Failure',
           contactNumber: '09171234567',
           purpose: 'Meeting',
-          visitDate: '2026-10-27',
+          visitDate: todayDate,
         },
-        occurredAt: '2026-10-27T10:00:00+08:00',
+        occurredAt: recentOccurredAt,
         action: 'approved',
         photoBlob: new Blob(['photo-bytes'], { type: 'image/jpeg' }),
       });

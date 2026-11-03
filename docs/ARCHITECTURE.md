@@ -645,4 +645,23 @@ Outage Architecture & Authority Delegation
   - Functional lookup indexes on `returning_visitor_profiles (lower(first_name), lower(last_name))` and `(contact_number_e164)`.
   - Default-deny RLS enabled on `nominatim_rate_limiter` and `location_search_cache` (`revoke all from public, anon, authenticated; grant all to service_role`).
 
+### 12.14 Returning Visitor Production Readiness & Residential Address UX Hardening
+- **Diagnostic Capability Flags & Fail-Closed Safety Gate (`GET /api/passes/capabilities`)**:
+  - Exposes safe boolean flags without leaking credentials, keys, or threshold scores:
+    - `returningVisitorAvailable`: Strict conjunction of facial engine readiness, crypto key provisioning, and calibration configuration.
+    - `facialRecognitionConfigured`: Native ONNX runtime readiness, YuNet and SFace model presence, and smoke inference check.
+    - `returningCryptoConfigured`: 32-byte template encryption key (`RETURNING_VISITOR_TEMPLATE_KEY`) and HMAC secret (`RETURNING_MATCH_TOKEN_SECRET`) provisioned.
+    - `returningCalibrationConfigured`: Empirical cosine threshold (`RETURNING_FACE_MIN_COSINE`) set to a valid numeric score.
+  - Frontdoor UI accurately presents "Setup Pending" badge and transparent diagnostic explanation if campus calibration or keys are pending, eliminating misleading "Scheduled Maintenance" claims.
+- **Empirical 1:1 Pairwise Biometric Calibration Harness (`scripts/calibrate-returning-face.mjs`)**:
+  - Replaces obsolete 1:N gallery matching stub and margin checks with true 1:1 pairwise verification.
+  - Evaluates genuine intra-person matches (same subject across poses/lighting) and impostor inter-person matches (distinct subjects).
+  - Sweeps candidate thresholds [0.30 - 0.70] computing empirical FAR, FRR, and Equal Error Rate (EER) to determine optimal operating threshold.
+  - Fail-closed operational policy: `RETURNING_FACE_MIN_COSINE` must remain unset in production until calibrated against real campus entrance cameras and physical test subjects.
+- **Institutional Design Tokens & Residential Address Confirmation UX**:
+  - Removed hardcoded dark theme classes (`bg-[var(--color-surface,#18181b)]`, `text-white`, `border-slate-700`) in `AddressCascadingSelector` and `StructuredAddressField` that caused illegible white-on-white text against E-GatePass's light theme (`--color-surface` #FFFFFF, `--color-brand` #7A0A0A, `--color-text-primary` #172033).
+  - Address Confirmation Step UX: When an exact PHLPost postal mapping is not published (e.g. City of Manila, Barangay 856), an interactive 4-digit numeric input is displayed directly inside the modal confirmation card, allowing visitors to confirm or enter their delivery postal code before finalizing the address.
+  - Multi-level cascading state invalidation: Selecting a new Region, Province, or City resets downstream barangay and postal resolutions, synchronizing directly with the parent form.
+
+
 

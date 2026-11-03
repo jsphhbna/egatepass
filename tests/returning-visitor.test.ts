@@ -7,6 +7,8 @@ import {
 } from '../server/lib/face-engine.js';
 import {
   isReturningVisitorAvailable,
+  isReturningCryptoConfigured,
+  isReturningCalibrationConfigured,
   computeMatchTokenDigest,
 } from '../server/routes/passes/identify-returning.js';
 import capabilitiesHandler from '../server/routes/passes/capabilities.js';
@@ -36,8 +38,33 @@ describe('Returning Visitor Biometrics & Safety Gate Contract', () => {
       expect(res.status).toBe(200);
       const data = await res.json();
       expect(data.returningVisitorAvailable).toBe(false);
+      expect(data.returningCryptoConfigured).toBe(false);
+      expect(data.returningCalibrationConfigured).toBe(false);
       // facialRecognitionConfigured is independent of returning visitor env vars (reflects 1:1 model files on disk)
       expect(typeof data.facialRecognitionConfigured).toBe('boolean');
+    });
+
+    it('distinguishes crypto configuration and calibration configuration independently', async () => {
+      // Configure crypto only
+      process.env.RETURNING_VISITOR_TEMPLATE_KEY = '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef';
+      process.env.RETURNING_MATCH_TOKEN_SECRET = 'super-secret-match-token-secret-123';
+      delete process.env.RETURNING_FACE_MIN_COSINE;
+
+      expect(isReturningCryptoConfigured()).toBe(true);
+      expect(isReturningCalibrationConfigured()).toBe(false);
+      expect(isReturningVisitorAvailable()).toBe(false);
+
+      const req = new Request('http://localhost/api/passes/capabilities', { method: 'GET' });
+      const res = await capabilitiesHandler.fetch(req);
+      const data = await res.json();
+      expect(data.returningCryptoConfigured).toBe(true);
+      expect(data.returningCalibrationConfigured).toBe(false);
+      expect(data.returningVisitorAvailable).toBe(false);
+
+      // Now configure calibration
+      process.env.RETURNING_FACE_MIN_COSINE = '0.45';
+      expect(isReturningCalibrationConfigured()).toBe(true);
+      expect(isReturningVisitorAvailable()).toBe(true);
     });
 
     it('rejects invalid or unsafe calibration values', () => {
@@ -286,6 +313,43 @@ describe('Returning Visitor Biometrics & Safety Gate Contract', () => {
       expect(res.status).toBe(400);
       const json = await res.json();
       expect(json.error).toBe('invalid_request');
+    });
+  });
+
+  describe('6. 1:1 Biometric Pairwise Calibration Contract', () => {
+    it('computes 1:1 pairwise genuine and impostor distributions, FAR, FRR, and EER correctly', async () => {
+      const {
+        computeCosineSimilarity: calCosine,
+        computeDistributionStats,
+        evaluatePairwiseMetrics,
+      } = await import('../scripts/calibrate-returning-face.mjs');
+
+      // Test identical vector
+      const v1 = new Float32Array([1, 0, 0]);
+      const v2 = new Float32Array([1, 0, 0]);
+      expect(calCosine(v1, v2)).toBeCloseTo(1.0, 4);
+
+      // Test orthogonal vector
+      const v3 = new Float32Array([0, 1, 0]);
+      expect(calCosine(v1, v3)).toBeCloseTo(0.0, 4);
+
+      // Test distribution stats
+      const scores = [0.4, 0.5, 0.6, 0.7, 0.8];
+      const stats = computeDistributionStats(scores);
+      expect(stats.count).toBe(5);
+      expect(stats.mean).toBe(0.6);
+      expect(stats.min).toBe(0.4);
+      expect(stats.max).toBe(0.8);
+      expect(stats.p50).toBe(0.6);
+
+      // Test pairwise FAR/FRR sweep with clear separation
+      const genuine = [0.55, 0.60, 0.65, 0.70];
+      const impostor = [0.10, 0.15, 0.20, 0.25];
+      const evaluation = evaluatePairwiseMetrics(genuine, impostor);
+      expect(evaluation.table.length).toBeGreaterThan(0);
+      // EER threshold should lie between highest impostor (0.25) and lowest genuine (0.55)
+      expect(evaluation.eerThreshold).toBeGreaterThanOrEqual(0.30);
+      expect(evaluation.eerThreshold).toBeLessThanOrEqual(0.56);
     });
   });
 });

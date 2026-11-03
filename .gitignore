@@ -26,6 +26,10 @@ server/templates/index.js.map
 .DS_Store
 Thumbs.db
 
+# Calibration datasets and manifests
+*.manifest.json
+calibration/
+
 # Logs
 *.log
 npm-debug.log*

@@ -47,6 +47,7 @@ export function AddressCascadingSelector({
   const [selectedCity, setSelectedCity] = useState<PsgcLocation | null>(null);
   const [selectedBarangay, setSelectedBarangay] = useState<PsgcLocation | null>(null);
   const [postalResolution, setPostalResolution] = useState<PostalResolution | null>(null);
+  const [manualPostalCode, setManualPostalCode] = useState('');
 
   // Available options per step
   const [regions, setRegions] = useState<PsgcLocation[]>([]);
@@ -89,6 +90,8 @@ export function AddressCascadingSelector({
           name: initialAddress.barangay.name,
           level: 'barangay',
         });
+        setPostalResolution(initialAddress.postalResolution || null);
+        setManualPostalCode(initialAddress.postalCode || '');
         setCurrentStep('confirm');
       } else {
         resetToRegion();
@@ -134,6 +137,7 @@ export function AddressCascadingSelector({
     setSelectedCity(null);
     setSelectedBarangay(null);
     setPostalResolution(null);
+    setManualPostalCode('');
     setProvinces([]);
     setCities([]);
     setBarangays([]);
@@ -146,6 +150,7 @@ export function AddressCascadingSelector({
     setSelectedCity(null);
     setSelectedBarangay(null);
     setPostalResolution(null);
+    setManualPostalCode('');
 
     // NCR check: NCR has NO provinces
     if (region.code === '1300000000' || !region.hasProvinces) {
@@ -174,6 +179,7 @@ export function AddressCascadingSelector({
     setSelectedCity(null);
     setSelectedBarangay(null);
     setPostalResolution(null);
+    setManualPostalCode('');
 
     setLoading(true);
     try {
@@ -189,6 +195,7 @@ export function AddressCascadingSelector({
     setSelectedCity(city);
     setSelectedBarangay(null);
     setPostalResolution(null);
+    setManualPostalCode('');
 
     setLoading(true);
     try {
@@ -207,6 +214,13 @@ export function AddressCascadingSelector({
       if (selectedCity) {
         const resolution = await resolvePostalCode(selectedCity.code, bgy.code);
         setPostalResolution(resolution);
+        if (resolution.isAutoFilled && resolution.postalCode) {
+          setManualPostalCode(resolution.postalCode);
+        } else if (initialAddress?.postalCode) {
+          setManualPostalCode(initialAddress.postalCode);
+        } else {
+          setManualPostalCode('');
+        }
       }
       setCurrentStep('confirm');
     } finally {
@@ -245,15 +259,27 @@ export function AddressCascadingSelector({
   function handleConfirm() {
     if (!selectedRegion || !selectedCity || !selectedBarangay) return;
 
+    const finalPostalCode = postalResolution?.isAutoFilled
+      ? postalResolution.postalCode
+      : (manualPostalCode.trim() || null);
+    const finalSource = postalResolution?.isAutoFilled
+      ? 'PHLPost'
+      : (finalPostalCode ? 'manual' : null);
+
     onSelect({
       version: '2026-q3',
       region: { code: selectedRegion.code, name: selectedRegion.name },
       province: selectedProvince ? { code: selectedProvince.code, name: selectedProvince.name } : null,
       city: { code: selectedCity.code, name: selectedCity.name },
       barangay: { code: selectedBarangay.code, name: selectedBarangay.name },
-      postalCode: postalResolution?.postalCode || null,
-      postalCodeSource: postalResolution?.isAutoFilled ? 'PHLPost' : null,
-      postalResolution: postalResolution || undefined,
+      postalCode: finalPostalCode,
+      postalCodeSource: finalSource,
+      postalResolution: postalResolution
+        ? {
+            ...postalResolution,
+            postalCode: finalPostalCode,
+          }
+        : undefined,
     });
     onClose();
   }
@@ -276,31 +302,31 @@ export function AddressCascadingSelector({
 
   return createPortal(
     <div
-      className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4 bg-black/60 backdrop-blur-sm transition-opacity"
+      className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4 bg-black/60 backdrop-blur-xs transition-opacity"
       onClick={onClose}
       role="dialog"
       aria-modal="true"
       aria-labelledby="cascading-address-title"
     >
       <div
-        className="w-full sm:max-w-lg bg-[var(--color-surface,#18181b)] border border-[var(--color-border,#27272a)] rounded-t-2xl sm:rounded-2xl shadow-2xl flex flex-col max-h-[85vh] sm:max-h-[640px] overflow-hidden text-[var(--color-text-primary,#f4f4f5)]"
+        className="w-full sm:max-w-lg bg-[var(--color-surface,#FFFFFF)] border border-[var(--color-border,#E2E8F0)] rounded-t-2xl sm:rounded-2xl shadow-2xl flex flex-col max-h-[85vh] sm:max-h-[640px] overflow-hidden text-[var(--color-text-primary,#172033)]"
         onClick={(e) => e.stopPropagation()}
       >
         {/* Header */}
-        <div className="flex items-center justify-between px-5 py-4 border-b border-[var(--color-border,#27272a)] bg-[var(--color-surface-subtle,#202024)]">
+        <div className="flex items-center justify-between px-5 py-4 border-b border-[var(--color-border,#E2E8F0)] bg-[var(--color-surface-subtle,#F8FAFC)]">
           <div className="flex items-center space-x-2.5">
             {currentStep !== 'region' && (
               <button
                 type="button"
                 onClick={handleBack}
-                className="p-1 -ml-1 text-[var(--color-text-secondary,#a1a1aa)] hover:text-white rounded-lg transition-colors"
+                className="p-1.5 -ml-1 text-[var(--color-text-secondary,#5F6B7F)] hover:text-[var(--color-text-primary,#172033)] hover:bg-slate-200/60 rounded-lg transition-colors"
                 aria-label="Go back"
               >
                 <ArrowLeft className="w-5 h-5" />
               </button>
             )}
-            <MapPin className="w-5 h-5 text-amber-400" />
-            <h3 id="cascading-address-title" className="text-base font-semibold text-white">
+            <MapPin className="w-5 h-5 text-[#7A0A0A]" />
+            <h3 id="cascading-address-title" className="text-base font-bold text-[var(--color-text-primary,#172033)]">
               {currentStep === 'region' && 'Select Region'}
               {currentStep === 'province' && 'Select Province'}
               {currentStep === 'city' && 'Select City / Municipality'}
@@ -311,7 +337,7 @@ export function AddressCascadingSelector({
           <button
             type="button"
             onClick={onClose}
-            className="p-1 text-[var(--color-text-secondary,#a1a1aa)] hover:text-white rounded-lg transition-colors"
+            className="p-1.5 text-[var(--color-text-secondary,#5F6B7F)] hover:text-[var(--color-text-primary,#172033)] hover:bg-slate-200/60 rounded-lg transition-colors"
             aria-label="Close dialog"
           >
             <X className="w-5 h-5" />
@@ -319,16 +345,16 @@ export function AddressCascadingSelector({
         </div>
 
         {/* Step Breadcrumbs */}
-        <div className="flex items-center space-x-1.5 px-5 py-2.5 text-xs bg-[var(--color-surface,#18181b)] border-b border-[var(--color-border,#27272a)] overflow-x-auto whitespace-nowrap scrollbar-none">
+        <div className="flex items-center space-x-1.5 px-5 py-2.5 text-xs bg-[var(--color-surface,#FFFFFF)] border-b border-[var(--color-border,#E2E8F0)] overflow-x-auto whitespace-nowrap scrollbar-none">
           <button
             type="button"
             onClick={() => handleBreadcrumbClick('region')}
             className={`transition-colors ${
               currentStep === 'region'
-                ? 'font-bold text-amber-400'
+                ? 'font-bold text-[#7A0A0A]'
                 : selectedRegion
-                ? 'text-[var(--color-text-primary,#f4f4f5)] hover:underline'
-                : 'text-[var(--color-text-muted,#71717a)]'
+                ? 'text-[var(--color-text-primary,#172033)] hover:text-[#7A0A0A] hover:underline font-medium'
+                : 'text-[var(--color-text-muted,#687386)]'
             }`}
           >
             {selectedRegion ? selectedRegion.name.replace(/\s*\(.*\)/, '') : 'Region'}
@@ -336,17 +362,17 @@ export function AddressCascadingSelector({
 
           {selectedRegion?.hasProvinces && (
             <>
-              <ChevronRight className="w-3.5 h-3.5 text-[var(--color-text-muted,#71717a)] flex-shrink-0" />
+              <ChevronRight className="w-3.5 h-3.5 text-[var(--color-text-muted,#687386)] flex-shrink-0" />
               <button
                 type="button"
                 onClick={() => handleBreadcrumbClick('province')}
                 disabled={!selectedRegion}
                 className={`transition-colors ${
                   currentStep === 'province'
-                    ? 'font-bold text-amber-400'
+                    ? 'font-bold text-[#7A0A0A]'
                     : selectedProvince
-                    ? 'text-[var(--color-text-primary,#f4f4f5)] hover:underline'
-                    : 'text-[var(--color-text-muted,#71717a)]'
+                    ? 'text-[var(--color-text-primary,#172033)] hover:text-[#7A0A0A] hover:underline font-medium'
+                    : 'text-[var(--color-text-muted,#687386)]'
                 }`}
               >
                 {selectedProvince ? selectedProvince.name : 'Province'}
@@ -356,17 +382,17 @@ export function AddressCascadingSelector({
 
           {(selectedProvince || (selectedRegion && !selectedRegion.hasProvinces)) && (
             <>
-              <ChevronRight className="w-3.5 h-3.5 text-[var(--color-text-muted,#71717a)] flex-shrink-0" />
+              <ChevronRight className="w-3.5 h-3.5 text-[var(--color-text-muted,#687386)] flex-shrink-0" />
               <button
                 type="button"
                 onClick={() => handleBreadcrumbClick('city')}
                 disabled={!selectedCity && currentStep !== 'city'}
                 className={`transition-colors ${
                   currentStep === 'city'
-                    ? 'font-bold text-amber-400'
+                    ? 'font-bold text-[#7A0A0A]'
                     : selectedCity
-                    ? 'text-[var(--color-text-primary,#f4f4f5)] hover:underline'
-                    : 'text-[var(--color-text-muted,#71717a)]'
+                    ? 'text-[var(--color-text-primary,#172033)] hover:text-[#7A0A0A] hover:underline font-medium'
+                    : 'text-[var(--color-text-muted,#687386)]'
                 }`}
               >
                 {selectedCity ? selectedCity.name : 'City'}
@@ -376,17 +402,17 @@ export function AddressCascadingSelector({
 
           {selectedCity && (
             <>
-              <ChevronRight className="w-3.5 h-3.5 text-[var(--color-text-muted,#71717a)] flex-shrink-0" />
+              <ChevronRight className="w-3.5 h-3.5 text-[var(--color-text-muted,#687386)] flex-shrink-0" />
               <button
                 type="button"
                 onClick={() => handleBreadcrumbClick('barangay')}
                 disabled={!selectedBarangay && currentStep !== 'barangay'}
                 className={`transition-colors ${
                   currentStep === 'barangay'
-                    ? 'font-bold text-amber-400'
+                    ? 'font-bold text-[#7A0A0A]'
                     : selectedBarangay
-                    ? 'text-[var(--color-text-primary,#f4f4f5)] hover:underline'
-                    : 'text-[var(--color-text-muted,#71717a)]'
+                    ? 'text-[var(--color-text-primary,#172033)] hover:text-[#7A0A0A] hover:underline font-medium'
+                    : 'text-[var(--color-text-muted,#687386)]'
                 }`}
               >
                 {selectedBarangay ? selectedBarangay.name.slice(0, 18) : 'Barangay'}
@@ -399,22 +425,22 @@ export function AddressCascadingSelector({
         {currentStep !== 'confirm' ? (
           <div className="flex flex-col flex-1 min-h-0">
             {/* Search Input Bar */}
-            <div className="p-3.5 border-b border-[var(--color-border,#27272a)]">
+            <div className="p-3.5 border-b border-[var(--color-border,#E2E8F0)] bg-[var(--color-surface,#FFFFFF)]">
               <div className="relative flex items-center">
-                <Search className="w-4 h-4 text-[var(--color-text-muted,#71717a)] absolute left-3.5 pointer-events-none" />
+                <Search className="w-4 h-4 text-[var(--color-text-muted,#687386)] absolute left-3.5 pointer-events-none" />
                 <input
                   ref={searchInputRef}
                   type="text"
                   value={searchTerm}
                   onChange={(e) => setSearchTerm(e.target.value)}
                   placeholder={`Search ${currentStep}...`}
-                  className="w-full pl-9 pr-9 py-2.5 bg-[var(--color-surface-subtle,#202024)] border border-[var(--color-border,#27272a)] rounded-xl text-sm text-white placeholder-[var(--color-text-muted,#71717a)] focus:outline-none focus:ring-2 focus:ring-amber-500/50 focus:border-amber-500 transition-all"
+                  className="w-full pl-9 pr-9 py-2.5 bg-[var(--color-surface-subtle,#F8FAFC)] border border-[var(--color-border,#E2E8F0)] rounded-xl text-sm text-[var(--color-text-primary,#172033)] placeholder-[var(--color-text-muted,#687386)] focus:outline-none focus:ring-2 focus:ring-[#7A0A0A]/20 focus:border-[#7A0A0A] transition-all"
                 />
                 {searchTerm && (
                   <button
                     type="button"
                     onClick={() => setSearchTerm('')}
-                    className="absolute right-3 p-0.5 text-[var(--color-text-muted,#71717a)] hover:text-white"
+                    className="absolute right-3 p-0.5 text-[var(--color-text-muted,#687386)] hover:text-[var(--color-text-primary,#172033)]"
                   >
                     <X className="w-4 h-4" />
                   </button>
@@ -423,17 +449,17 @@ export function AddressCascadingSelector({
             </div>
 
             {/* Scrollable Location List */}
-            <div className="flex-1 overflow-y-auto divide-y divide-[var(--color-border,#27272a)]/40 px-2 py-1">
+            <div className="flex-1 overflow-y-auto divide-y divide-[var(--color-border,#E2E8F0)] px-2 py-1">
               {loading ? (
-                <div className="py-12 flex flex-col items-center justify-center text-center text-[var(--color-text-secondary,#a1a1aa)]">
-                  <div className="w-6 h-6 border-2 border-amber-500 border-t-transparent rounded-full animate-spin mb-3" />
-                  <p className="text-sm">Loading official geographic records...</p>
+                <div className="py-12 flex flex-col items-center justify-center text-center text-[var(--color-text-secondary,#5F6B7F)]">
+                  <div className="w-6 h-6 border-2 border-[#7A0A0A] border-t-transparent rounded-full animate-spin mb-3" />
+                  <p className="text-sm font-medium">Loading official geographic records...</p>
                 </div>
               ) : filteredItems.length === 0 ? (
                 <div className="py-12 flex flex-col items-center justify-center text-center px-4">
-                  <AlertCircle className="w-8 h-8 text-[var(--color-text-muted,#71717a)] mb-2.5" />
-                  <p className="text-sm font-medium text-white">No locations found</p>
-                  <p className="text-xs text-[var(--color-text-secondary,#a1a1aa)] mt-1">
+                  <AlertCircle className="w-8 h-8 text-[var(--color-text-muted,#687386)] mb-2.5" />
+                  <p className="text-sm font-semibold text-[var(--color-text-primary,#172033)]">No locations found</p>
+                  <p className="text-xs text-[var(--color-text-secondary,#5F6B7F)] mt-1">
                     No results match &ldquo;{searchTerm}&rdquo;
                   </p>
                 </div>
@@ -448,12 +474,12 @@ export function AddressCascadingSelector({
                       else if (currentStep === 'city') handleSelectCity(item);
                       else if (currentStep === 'barangay') handleSelectBarangay(item);
                     }}
-                    className="w-full text-left px-3.5 py-3 hover:bg-amber-500/10 active:bg-amber-500/20 rounded-xl flex items-center justify-between group transition-colors"
+                    className="w-full text-left px-3.5 py-3 hover:bg-slate-100/80 active:bg-slate-200/70 rounded-xl flex items-center justify-between group transition-colors"
                   >
-                    <span className="text-sm text-[var(--color-text-primary,#f4f4f5)] group-hover:text-amber-400 font-medium">
+                    <span className="text-sm text-[var(--color-text-primary,#172033)] group-hover:text-[#7A0A0A] font-medium">
                       {item.name}
                     </span>
-                    <ChevronRight className="w-4 h-4 text-[var(--color-text-muted,#71717a)] group-hover:text-amber-400 transition-colors" />
+                    <ChevronRight className="w-4 h-4 text-[var(--color-text-muted,#687386)] group-hover:text-[#7A0A0A] transition-colors" />
                   </button>
                 ))
               )}
@@ -463,62 +489,90 @@ export function AddressCascadingSelector({
           /* Confirmation Step View */
           <div className="flex-1 overflow-y-auto p-5 flex flex-col justify-between">
             <div className="space-y-4">
-              <div className="p-4 bg-[var(--color-surface-subtle,#202024)] border border-[var(--color-border,#27272a)] rounded-xl space-y-3">
+              <div className="p-4 bg-[var(--color-surface-subtle,#F8FAFC)] border border-[var(--color-border,#E2E8F0)] rounded-xl space-y-3">
                 <div>
-                  <span className="text-xs text-[var(--color-text-secondary,#a1a1aa)] uppercase tracking-wider font-semibold">
+                  <span className="text-xs text-[var(--color-text-secondary,#5F6B7F)] uppercase tracking-wider font-semibold">
                     Region
                   </span>
-                  <p className="text-sm font-medium text-white mt-0.5">{selectedRegion?.name}</p>
+                  <p className="text-sm font-bold text-[var(--color-text-primary,#172033)] mt-0.5">{selectedRegion?.name}</p>
                 </div>
 
                 {selectedProvince && (
                   <div>
-                    <span className="text-xs text-[var(--color-text-secondary,#a1a1aa)] uppercase tracking-wider font-semibold">
+                    <span className="text-xs text-[var(--color-text-secondary,#5F6B7F)] uppercase tracking-wider font-semibold">
                       Province
                     </span>
-                    <p className="text-sm font-medium text-white mt-0.5">{selectedProvince.name}</p>
+                    <p className="text-sm font-bold text-[var(--color-text-primary,#172033)] mt-0.5">{selectedProvince.name}</p>
                   </div>
                 )}
 
                 <div>
-                  <span className="text-xs text-[var(--color-text-secondary,#a1a1aa)] uppercase tracking-wider font-semibold">
+                  <span className="text-xs text-[var(--color-text-secondary,#5F6B7F)] uppercase tracking-wider font-semibold">
                     City / Municipality
                   </span>
-                  <p className="text-sm font-medium text-white mt-0.5">{selectedCity?.name}</p>
+                  <p className="text-sm font-bold text-[var(--color-text-primary,#172033)] mt-0.5">{selectedCity?.name}</p>
                 </div>
 
                 <div>
-                  <span className="text-xs text-[var(--color-text-secondary,#a1a1aa)] uppercase tracking-wider font-semibold">
+                  <span className="text-xs text-[var(--color-text-secondary,#5F6B7F)] uppercase tracking-wider font-semibold">
                     Barangay
                   </span>
-                  <p className="text-sm font-medium text-white mt-0.5">{selectedBarangay?.name}</p>
+                  <p className="text-sm font-bold text-[var(--color-text-primary,#172033)] mt-0.5">{selectedBarangay?.name}</p>
                 </div>
 
-                <div className="pt-2 border-t border-[var(--color-border,#27272a)] flex items-center justify-between">
-                  <div>
-                    <span className="text-xs text-[var(--color-text-secondary,#a1a1aa)] uppercase tracking-wider font-semibold">
+                {/* Postal Code Display or In-Modal Input */}
+                <div className="pt-3 border-t border-[var(--color-border,#E2E8F0)] space-y-2">
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs text-[var(--color-text-secondary,#5F6B7F)] uppercase tracking-wider font-semibold">
                       Postal Code
                     </span>
-                    <p className="text-sm font-bold text-amber-400 mt-0.5">
-                      {postalResolution?.postalCode ? postalResolution.postalCode : 'Manual Entry'}
-                    </p>
+                    {postalResolution?.isAutoFilled ? (
+                      <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-200">
+                        PHLPost Verified
+                      </span>
+                    ) : (
+                      <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-50 text-amber-800 border border-amber-300">
+                        Manual Entry Needed
+                      </span>
+                    )}
                   </div>
-                  {postalResolution?.isAutoFilled && (
-                    <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-medium bg-emerald-500/20 text-emerald-400 border border-emerald-500/30">
-                      PHLPost Verified
-                    </span>
+
+                  {postalResolution?.isAutoFilled ? (
+                    <p className="text-base font-bold text-[#7A0A0A] tracking-wider">
+                      {postalResolution.postalCode}
+                    </p>
+                  ) : (
+                    <div className="space-y-1 pt-0.5">
+                      <label htmlFor="confirm-modal-postal" className="text-xs text-[var(--color-text-secondary,#5F6B7F)] font-medium block">
+                        Confirm or enter 4-digit postal code:
+                      </label>
+                      <input
+                        id="confirm-modal-postal"
+                        type="text"
+                        inputMode="numeric"
+                        pattern="[0-9]*"
+                        maxLength={4}
+                        value={manualPostalCode}
+                        onChange={(e) => setManualPostalCode(e.target.value.replace(/\D/g, '').slice(0, 4))}
+                        placeholder="e.g. 1011"
+                        className="w-full px-3 py-2 bg-white border border-[var(--color-border,#E2E8F0)] rounded-xl text-sm font-bold text-[var(--color-text-primary,#172033)] placeholder-[var(--color-text-muted,#687386)] focus:outline-none focus:ring-2 focus:ring-[#7A0A0A]/20 focus:border-[#7A0A0A]"
+                      />
+                      <p className="text-[11px] text-[var(--color-text-secondary,#5F6B7F)]">
+                        {postalResolution?.message || 'This locality has multiple delivery zones. Please verify your 4-digit code.'}
+                      </p>
+                    </div>
                   )}
                 </div>
               </div>
 
-              {postalResolution?.message && (
-                <div className="flex items-start space-x-2.5 p-3 bg-amber-500/10 border border-amber-500/20 rounded-xl text-xs text-amber-300">
-                  <AlertCircle className="w-4 h-4 flex-shrink-0 mt-0.5 text-amber-400" />
+              {postalResolution?.isAutoFilled && postalResolution?.message && (
+                <div className="flex items-start space-x-2.5 p-3 bg-amber-50 border border-amber-200 rounded-xl text-xs text-amber-900">
+                  <AlertCircle className="w-4 h-4 flex-shrink-0 mt-0.5 text-amber-700" />
                   <p>{postalResolution.message}</p>
                 </div>
               )}
 
-              <p className="text-xs text-[var(--color-text-secondary,#a1a1aa)] leading-relaxed">
+              <p className="text-xs text-[var(--color-text-secondary,#5F6B7F)] leading-relaxed">
                 Standardized administrative locality selected via PSA PSGC reference data. House/building
                 number and street will be entered on the main form.
               </p>
@@ -528,14 +582,14 @@ export function AddressCascadingSelector({
               <button
                 type="button"
                 onClick={() => setCurrentStep('barangay')}
-                className="w-1/3 py-2.5 px-4 bg-[var(--color-surface-subtle,#202024)] hover:bg-[var(--color-border,#27272a)] border border-[var(--color-border,#27272a)] text-sm font-medium text-white rounded-xl transition-colors"
+                className="w-1/3 py-2.5 px-4 bg-white hover:bg-slate-100 border border-[var(--color-border,#E2E8F0)] text-sm font-semibold text-[var(--color-text-primary,#172033)] rounded-xl transition-colors shadow-xs"
               >
                 Change
               </button>
               <button
                 type="button"
                 onClick={handleConfirm}
-                className="w-2/3 py-2.5 px-4 bg-amber-500 hover:bg-amber-400 text-slate-950 text-sm font-bold rounded-xl shadow-lg shadow-amber-500/20 flex items-center justify-center space-x-2 transition-all active:scale-[0.98]"
+                className="w-2/3 py-2.5 px-4 bg-[#7A0A0A] hover:bg-[#600808] text-white text-sm font-bold rounded-xl shadow-md shadow-[#7A0A0A]/20 flex items-center justify-center space-x-2 transition-all active:scale-[0.98]"
               >
                 <Check className="w-4 h-4" />
                 <span>Confirm Address</span>

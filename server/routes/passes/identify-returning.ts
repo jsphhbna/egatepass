@@ -30,21 +30,27 @@ const requestSchema = z.object({
   photoIntentId: z.string().uuid(),
 }).strict();
 
-export function isReturningVisitorAvailable(): boolean {
-  const minCosine = process.env.RETURNING_FACE_MIN_COSINE;
+export function isReturningCryptoConfigured(): boolean {
   const templateKey = process.env.RETURNING_VISITOR_TEMPLATE_KEY;
   const matchSecret = process.env.RETURNING_MATCH_TOKEN_SECRET;
 
-  if (!minCosine || !templateKey || !matchSecret) {
-    return false;
-  }
-  const cosineNum = Number(minCosine);
-  if (isNaN(cosineNum) || cosineNum <= 0 || cosineNum >= 1) return false;
-  if (templateKey.trim().length < 32) return false;
-  if (matchSecret.trim().length < 16) return false;
-  if (!isFaceVerificationConfigured()) return false;
+  if (!templateKey || !matchSecret) return false;
+  return templateKey.trim().length >= 32 && matchSecret.trim().length >= 16;
+}
 
-  return true;
+export function isReturningCalibrationConfigured(): boolean {
+  const minCosine = process.env.RETURNING_FACE_MIN_COSINE;
+  if (!minCosine) return false;
+  const cosineNum = Number(minCosine);
+  return !isNaN(cosineNum) && cosineNum > 0 && cosineNum < 1;
+}
+
+export function isReturningVisitorAvailable(): boolean {
+  return (
+    isReturningCalibrationConfigured() &&
+    isReturningCryptoConfigured() &&
+    isFaceVerificationConfigured()
+  );
 }
 
 export function computeMatchTokenDigest(matchToken: string, secret: string): string {

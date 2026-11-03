@@ -92,6 +92,16 @@ describe('PSGC Client Library & Address Resolution Contract', () => {
       expect(result.requiresConfirmation).toBe(false);
     });
 
+    it('resolves multi-code city requiring manual postal confirmation for City of Manila without exact barangay mapping (e.g. Barangay 856)', async () => {
+      // Barangay 856 has no exact barangay mapping; City of Manila has 8 different postal delivery zones
+      const result = await resolvePostalCode('1380600000', '1380612024');
+      expect(result.postalCode).toBeNull();
+      expect(result.mappingType).toBe('multi_code_city');
+      expect(result.isAutoFilled).toBe(false);
+      expect(result.requiresConfirmation).toBe(true);
+      expect(result.message).toContain('Postal code varies');
+    });
+
     it('returns empty with manual confirmation for unmapped location', async () => {
       const result = await resolvePostalCode('9999990000', '9999999999');
       expect(result.postalCode).toBeNull();
@@ -135,6 +145,18 @@ describe('PSGC Client Library & Address Resolution Contract', () => {
         postalCode: '1008',
       });
       expect(formatted).toBe('Barangay 408, City of Manila, National Capital Region, Postal Code 1008');
+    });
+
+    it('formats address with manually entered postal code for multi-code city (e.g. Barangay 856 with 1011)', () => {
+      const formatted = formatStructuredAddress({
+        regionName: 'National Capital Region',
+        cityName: 'City of Manila',
+        barangayName: 'Barangay 856',
+        houseBuilding: '123 Beata St.',
+        street: 'Pandacan',
+        postalCode: '1011',
+      });
+      expect(formatted).toBe('123 Beata St., Pandacan, Barangay 856, City of Manila, National Capital Region, Postal Code 1011');
     });
   });
 });

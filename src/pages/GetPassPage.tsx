@@ -225,6 +225,11 @@ export function GetPassPage() {
     initialMode === 'returning' ? 'returning' : 'new'
   );
   const [returningAvailable, setReturningAvailable] = useState<boolean | null>(null);
+  const [capabilitiesDiagnostics, setCapabilitiesDiagnostics] = useState<{
+    facialRecognitionConfigured?: boolean;
+    returningCryptoConfigured?: boolean;
+    returningCalibrationConfigured?: boolean;
+  } | null>(null);
   const [showReturningGateModal, setShowReturningGateModal] = useState(false);
 
   // Returning visitor profile state
@@ -374,6 +379,13 @@ export function GetPassPage() {
       .then((res) => (res.ok ? res.json() : null))
       .then((data) => {
         setReturningAvailable(Boolean(data?.returningVisitorAvailable));
+        if (data) {
+          setCapabilitiesDiagnostics({
+            facialRecognitionConfigured: Boolean(data.facialRecognitionConfigured),
+            returningCryptoConfigured: Boolean(data.returningCryptoConfigured),
+            returningCalibrationConfigured: Boolean(data.returningCalibrationConfigured),
+          });
+        }
       })
       .catch(() => {
         setReturningAvailable(false);
@@ -1836,8 +1848,8 @@ export function GetPassPage() {
                         <UserCheck className="h-6 w-6" />
                       </div>
                       {returningAvailable === false && (
-                        <span className="rounded-full bg-slate-100 text-slate-700 border border-slate-300 px-2.5 py-0.5 text-[10px] font-bold">
-                          Scheduled Maintenance
+                        <span className="rounded-full bg-amber-50 text-amber-900 border border-amber-300 px-2.5 py-0.5 text-[10px] font-bold">
+                          Setup Pending
                         </span>
                       )}
                     </div>
@@ -1847,8 +1859,8 @@ export function GetPassPage() {
                         Fast check-in using your previously enrolled facial profile and saved visitor credentials.
                       </p>
                       {returningAvailable === false && (
-                        <p className="text-[11px] text-slate-600 mt-2 font-medium">
-                          Returning visitor verification is currently undergoing scheduled campus maintenance. Please proceed as a New Visitor.
+                        <p className="text-[11px] text-amber-900/80 mt-2 font-medium leading-relaxed">
+                          Returning visitor 1:1 facial verification is not yet operational pending campus physical sensor calibration and security key provisioning. Please proceed as a New Visitor.
                         </p>
                       )}
                     </div>
@@ -3896,17 +3908,40 @@ export function GetPassPage() {
                 <ShieldAlert className="h-5 w-5" />
               </div>
               <div>
-                <h3 className="font-bold text-base text-[var(--color-text-primary)]">Biometric Check-In Unavailable</h3>
-                <p className="text-xs text-[var(--color-text-secondary)]">Safety Gate Enforced</p>
+                <h3 className="font-bold text-base text-[var(--color-text-primary)]">Biometric Verification Setup Pending</h3>
+                <p className="text-xs text-[var(--color-text-secondary)]">Production Readiness Gate Enforced</p>
               </div>
             </div>
 
-            <p className="text-xs text-[var(--color-text-secondary)] leading-relaxed">
-              Returning visitor facial recognition is temporarily closed pending on-campus physical sensor calibration and threshold verification.
-            </p>
-            <p className="text-xs text-[var(--color-text-secondary)] leading-relaxed">
-              Please register as a New Visitor to receive your official E-GatePass today.
-            </p>
+            <div className="text-xs text-[var(--color-text-secondary)] space-y-2 leading-relaxed">
+              <p>
+                Returning visitor 1:1 facial verification requires physical camera calibration on EARIST gate hardware and cryptographic key provisioning before it can be safely activated in production.
+              </p>
+              <p>
+                To maintain campus security standards and avoid false rejections or unauthorized entry, this feature remains gated until physical campus testing is complete.
+              </p>
+              <p className="font-medium text-[var(--color-text-primary)]">
+                Please register as a New Visitor to receive your official E-GatePass today.
+              </p>
+            </div>
+
+            {capabilitiesDiagnostics && (
+              <div className="rounded-xl border border-amber-200 bg-amber-50/60 p-3 text-[11px] space-y-1.5 text-amber-900">
+                <div className="font-semibold text-amber-950">Readiness Status:</div>
+                <div className="flex items-center justify-between">
+                  <span>Facial Model Inference Engine:</span>
+                  <span className="font-bold">{capabilitiesDiagnostics.facialRecognitionConfigured ? 'Ready' : 'Pending'}</span>
+                </div>
+                <div className="flex items-center justify-between">
+                  <span>Template Crypto Keys:</span>
+                  <span className="font-bold">{capabilitiesDiagnostics.returningCryptoConfigured ? 'Configured' : 'Pending Provisioning'}</span>
+                </div>
+                <div className="flex items-center justify-between">
+                  <span>Physical Camera Calibration:</span>
+                  <span className="font-bold">{capabilitiesDiagnostics.returningCalibrationConfigured ? 'Calibrated' : 'Pending Campus Drill'}</span>
+                </div>
+              </div>
+            )}
 
             <div className="flex gap-3 pt-2">
               <Button
