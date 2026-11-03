@@ -38,6 +38,51 @@ export function StructuredAddressField({
     onPostalCodeChange(selected.postalCode || '');
   }
 
+  function handlePostalInputChange(rawInput: string) {
+    const clean = rawInput.replace(/\D/g, '').slice(0, 4);
+    onPostalCodeChange(clean);
+
+    if (value) {
+      if (clean.length > 0) {
+        onChange({
+          ...value,
+          postalCode: clean,
+          postalCodeSource: 'manual',
+          postalResolution: {
+            postalCode: clean,
+            isAutoFilled: false,
+            requiresConfirmation: false,
+            mappingType: 'unmapped',
+          },
+        });
+      } else {
+        onChange({
+          ...value,
+          postalCode: null,
+          postalCodeSource: null,
+          postalResolution: undefined,
+        });
+      }
+    }
+  }
+
+  const trimmedPostal = postalCode.trim();
+  const isPhlPostAutoFilled = Boolean(
+    value?.postalCodeSource === 'PHLPost' &&
+    value?.postalResolution?.isAutoFilled &&
+    trimmedPostal.length > 0 &&
+    trimmedPostal === value?.postalResolution?.postalCode
+  );
+  const isConfirmationRequired = Boolean(
+    value?.postalResolution?.requiresConfirmation &&
+    !isPhlPostAutoFilled
+  );
+  const isManualEntry = Boolean(
+    trimmedPostal.length > 0 &&
+    !isPhlPostAutoFilled &&
+    !isConfirmationRequired
+  );
+
   return (
     <div className="space-y-4">
       {/* 1. Compact Locality Selector */}
@@ -119,28 +164,33 @@ export function StructuredAddressField({
           <label className="text-sm font-semibold text-[var(--color-text-primary,#172033)]">
             Postal Code
           </label>
-          {value?.postalResolution?.isAutoFilled && (
+          {isPhlPostAutoFilled && (
             <span className="inline-flex items-center space-x-1 text-[11px] font-semibold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-md border border-emerald-200">
               <CheckCircle2 className="w-3 h-3" />
               <span>PHLPost Auto-filled</span>
             </span>
           )}
-          {value?.postalResolution && !value.postalResolution.isAutoFilled && (
+          {isConfirmationRequired && (
             <span className="inline-flex items-center space-x-1 text-[11px] font-semibold text-amber-800 bg-amber-50 px-2 py-0.5 rounded-md border border-amber-300">
               <AlertCircle className="w-3 h-3" />
               <span>Please confirm</span>
+            </span>
+          )}
+          {isManualEntry && (
+            <span className="inline-flex items-center space-x-1 text-[11px] font-semibold text-[var(--color-text-secondary,#5F6B7F)] bg-[var(--color-surface-subtle,#F8FAFC)] px-2 py-0.5 rounded-md border border-[var(--color-border,#E2E8F0)]">
+              <span>Manual entry</span>
             </span>
           )}
         </div>
         <Input
           type="text"
           value={postalCode}
-          onChange={(e: ChangeEvent<HTMLInputElement>) => onPostalCodeChange(e.target.value.replace(/\D/g, '').slice(0, 4))}
+          onChange={(e: ChangeEvent<HTMLInputElement>) => handlePostalInputChange(e.target.value)}
           placeholder="4-digit postal code (e.g. 1008)"
           disabled={disabled}
           maxLength={4}
         />
-        {value?.postalResolution?.message && (
+        {value?.postalResolution?.message && !isManualEntry && (
           <p className="text-[11px] text-[var(--color-text-secondary,#5F6B7F)] mt-1">
             {value.postalResolution.message}
           </p>

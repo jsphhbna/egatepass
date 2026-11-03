@@ -1694,13 +1694,18 @@ export function GetPassPage() {
           barangayCode: selectedPsgc.barangay.code,
           houseBuilding: homeBuilding.trim() || undefined,
           street: homeStreet.trim() || undefined,
-          postalCode: (postalCode.trim() || selectedPsgc.postalCode || undefined),
+          postalCode: postalCode.trim() || undefined,
           postalCodeSource: (() => {
             const trimmed = postalCode.trim();
-            const selPostal = selectedPsgc.postalCode ? selectedPsgc.postalCode.trim() : '';
-            if (!trimmed && !selPostal) return undefined;
-            if (selPostal && trimmed && trimmed !== selPostal) return 'manual';
-            return selectedPsgc.postalCodeSource || (trimmed ? 'manual' : undefined);
+            if (!trimmed) return undefined;
+            if (
+              selectedPsgc.postalCodeSource === 'PHLPost' &&
+              selectedPsgc.postalCode &&
+              selectedPsgc.postalCode.trim() === trimmed
+            ) {
+              return 'PHLPost';
+            }
+            return 'manual';
           })(),
         } : undefined,
         homeAddress: selectedPsgc ? formatStructuredAddress({
@@ -1710,7 +1715,7 @@ export function GetPassPage() {
           barangayName: selectedPsgc.barangay.name,
           houseBuilding: homeBuilding,
           street: homeStreet,
-          postalCode: postalCode || selectedPsgc.postalCode,
+          postalCode: postalCode.trim() || undefined,
         }) : undefined,
         vehicle: rawFormData.arrivalMode === 'vehicle'
           ? {
@@ -3177,7 +3182,7 @@ export function GetPassPage() {
                         barangayName: selectedPsgc.barangay.name,
                         houseBuilding: homeBuilding,
                         street: homeStreet,
-                        postalCode: postalCode || selectedPsgc.postalCode,
+                        postalCode: postalCode.trim() || undefined,
                       }) : 'Not specified'}
                     </p>
                   </div>

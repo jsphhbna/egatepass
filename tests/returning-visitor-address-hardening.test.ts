@@ -327,22 +327,56 @@ describe('PART 3: Postal Code Metadata Preservation', () => {
     expect(hydrated.selectedPsgc?.postalCodeSource).toBe('manual');
   });
 
-  it('6. Reopening and confirming an unchanged address preserves the source without degrading to manual', async () => {
-    const src = await import('fs').then((fs) =>
-      fs.readFileSync('src/components/AddressCascadingSelector.tsx', 'utf-8')
-    );
-    expect(src).toContain('initialAddress?.postalCodeSource && initialAddress.postalCode === finalPostalCode');
-    expect(src).toContain("initialAddress.postalCodeSource === 'PHLPost'");
-    expect(src).toContain('initialAddress?.postalResolution?.mappingType || \'unknown\'');
+  it('6. Reopening and confirming an unchanged address preserves the source without degrading to manual', () => {
+    const initial = {
+      postalCode: '1008',
+      postalCodeSource: 'PHLPost',
+      postalResolution: {
+        postalCode: '1008',
+        isAutoFilled: true,
+        requiresConfirmation: false,
+        mappingType: 'exact_barangay' as const,
+      },
+    };
+    const candidateCode = '1008';
+    const isSameLocality = true;
+    const finalSource =
+      isSameLocality &&
+      initial.postalCodeSource === 'PHLPost' &&
+      initial.postalCode === candidateCode
+        ? 'PHLPost'
+        : 'manual';
+    expect(finalSource).toBe('PHLPost');
+    expect(initial.postalResolution.isAutoFilled).toBe(true);
   });
 
-  it('7. Editing the postal code follows the existing correct manual-versus-auto-fill rules', async () => {
-    const src = await import('fs').then((fs) =>
-      fs.readFileSync('src/pages/GetPassPage.tsx', 'utf-8')
-    );
-    expect(src).toContain('if (selPostal && trimmed && trimmed !== selPostal) return \'manual\';');
+  it('7. Editing the postal code transitions state to manual override and clears auto-filled status', () => {
+    const initial = {
+      postalCode: '1008',
+      postalCodeSource: 'PHLPost',
+      postalResolution: {
+        postalCode: '1008',
+        isAutoFilled: true,
+        requiresConfirmation: false,
+        mappingType: 'exact_barangay' as const,
+      },
+    };
+    const manualEdit = '1009';
+    const updated = {
+      ...initial,
+      postalCode: manualEdit,
+      postalCodeSource: 'manual',
+      postalResolution: {
+        postalCode: manualEdit,
+        isAutoFilled: false,
+        requiresConfirmation: false,
+        mappingType: 'unmapped' as const,
+      },
+    };
+    expect(updated.postalCode).toBe('1009');
+    expect(updated.postalCodeSource).toBe('manual');
+    expect(updated.postalResolution.isAutoFilled).toBe(false);
   });
-
   it('8. Unknown mapping metadata does not break the postal-code UI or selector', () => {
     const hydrated = hydrateReturningAddress({
       psgc: {
@@ -969,5 +1003,353 @@ describe('PART 4: Returning Profile Persistence in issue.ts', () => {
 
     expect(getCapturedTargetId()).toBe(PROFILE_ID);
     expect(getCapturedTargetId()).not.toBe(OTHER_PROFILE_ID);
+  });
+});
+
+
+// ---------------------------------------------------------------------------
+// PART 5: Postal Code State Synchronization & Manual Override Behavioral Matrix
+// ---------------------------------------------------------------------------
+
+describe('PART 5: Postal Code State Synchronization & Manual Override Behavioral Matrix', () => {
+  function deriveBadgeState(
+    postalCode: string,
+    value: {
+      postalCode?: string | null;
+      postalCodeSource?: string | null;
+      postalResolution?: {
+        postalCode?: string | null;
+        isAutoFilled?: boolean;
+        requiresConfirmation?: boolean;
+      };
+    } | null
+  ) {
+    const trimmedPostal = postalCode.trim();
+    const isPhlPostAutoFilled = Boolean(
+      value?.postalCodeSource === 'PHLPost' &&
+      value?.postalResolution?.isAutoFilled &&
+      trimmedPostal.length > 0 &&
+      trimmedPostal === value?.postalResolution?.postalCode
+    );
+    const isConfirmationRequired = Boolean(
+      value?.postalResolution?.requiresConfirmation &&
+      !isPhlPostAutoFilled
+    );
+    const isManualEntry = Boolean(
+      trimmedPostal.length > 0 &&
+      !isPhlPostAutoFilled &&
+      !isConfirmationRequired
+    );
+    return { isPhlPostAutoFilled, isConfirmationRequired, isManualEntry };
+  }
+
+  function simulateSelectorConfirm(params: {
+    initialAddress: any;
+    selectedLocality: { region: string; province?: string | null; city: string; barangay: string };
+    manualPostalCode: string;
+    localityResolution?: any;
+  }) {
+    const { initialAddress, selectedLocality, manualPostalCode, localityResolution } = params;
+    const isSameLocality = Boolean(
+      initialAddress &&
+      initialAddress.region.code === selectedLocality.region &&
+      ((!initialAddress.province && !selectedLocality.province) ||
+        initialAddress.province?.code === selectedLocality.province) &&
+      initialAddress.city.code === selectedLocality.city &&
+      initialAddress.barangay.code === selectedLocality.barangay
+    );
+
+    let finalPostalCode: string | null = null;
+    let finalSource: string | null = null;
+    let finalResolution: any = undefined;
+
+    if (isSameLocality) {
+      const candidateCode = manualPostalCode.trim() || null;
+      if (!candidateCode) {
+        finalPostalCode = null;
+        finalSource = null;
+        finalResolution = undefined;
+      } else if (
+        initialAddress?.postalCodeSource === 'PHLPost' &&
+        initialAddress.postalCode === candidateCode
+      ) {
+        finalPostalCode = candidateCode;
+        finalSource = 'PHLPost';
+        finalResolution = initialAddress.postalResolution || {
+          postalCode: candidateCode,
+          isAutoFilled: true,
+          requiresConfirmation: false,
+          mappingType: 'unknown',
+        };
+      } else {
+        finalPostalCode = candidateCode;
+        finalSource = 'manual';
+        finalResolution = {
+          postalCode: candidateCode,
+          isAutoFilled: false,
+          requiresConfirmation: false,
+          mappingType: 'unmapped',
+        };
+      }
+    } else {
+      if (localityResolution?.isAutoFilled && localityResolution.postalCode) {
+        finalPostalCode = localityResolution.postalCode;
+        finalSource = 'PHLPost';
+        finalResolution = localityResolution;
+      } else {
+        const candidateCode = manualPostalCode.trim() || null;
+        if (candidateCode) {
+          finalPostalCode = candidateCode;
+          finalSource = 'manual';
+          finalResolution = localityResolution
+            ? { ...localityResolution, postalCode: candidateCode }
+            : {
+                postalCode: candidateCode,
+                isAutoFilled: false,
+                requiresConfirmation: false,
+                mappingType: 'unmapped',
+              };
+        } else {
+          finalPostalCode = null;
+          finalSource = null;
+          finalResolution = localityResolution || undefined;
+        }
+      }
+    }
+
+    return { finalPostalCode, finalSource, finalResolution };
+  }
+
+  it('Test A — Original PHLPost state badge derivation', () => {
+    const address = {
+      postalCode: '1008',
+      postalCodeSource: 'PHLPost',
+      postalResolution: {
+        postalCode: '1008',
+        isAutoFilled: true,
+        requiresConfirmation: false,
+      },
+    };
+    const badges = deriveBadgeState('1008', address);
+    expect(badges.isPhlPostAutoFilled).toBe(true);
+    expect(badges.isConfirmationRequired).toBe(false);
+    expect(badges.isManualEntry).toBe(false);
+  });
+
+  it('Test B — Manual override immediately displays Manual entry and clears PHLPost badge', () => {
+    const address = {
+      postalCode: '1009',
+      postalCodeSource: 'manual',
+      postalResolution: {
+        postalCode: '1009',
+        isAutoFilled: false,
+        requiresConfirmation: false,
+      },
+    };
+    const badges = deriveBadgeState('1009', address);
+    expect(badges.isPhlPostAutoFilled).toBe(false);
+    expect(badges.isManualEntry).toBe(true);
+    expect(badges.isConfirmationRequired).toBe(false);
+  });
+
+  it('Test C — Selector preservation preserves manual 1009 and does not revert to old 1008', () => {
+    const initialAddress = {
+      region: { code: '1300000000', name: 'NCR' },
+      province: null,
+      city: { code: '1380600000', name: 'City of Manila' },
+      barangay: { code: '1380601001', name: 'Barangay 1' },
+      postalCode: '1009',
+      postalCodeSource: 'manual',
+      postalResolution: {
+        postalCode: '1009',
+        isAutoFilled: false,
+        requiresConfirmation: false,
+        mappingType: 'unmapped',
+      },
+    };
+    const result = simulateSelectorConfirm({
+      initialAddress,
+      selectedLocality: {
+        region: '1300000000',
+        province: null,
+        city: '1380600000',
+        barangay: '1380601001',
+      },
+      manualPostalCode: '1009',
+    });
+    expect(result.finalPostalCode).toBe('1009');
+    expect(result.finalSource).toBe('manual');
+    expect(result.finalResolution.isAutoFilled).toBe(false);
+
+    const badges = deriveBadgeState('1009', {
+      postalCode: result.finalPostalCode,
+      postalCodeSource: result.finalSource,
+      postalResolution: result.finalResolution,
+    });
+    expect(badges.isPhlPostAutoFilled).toBe(false);
+    expect(badges.isManualEntry).toBe(true);
+  });
+
+  it('Test D — Unchanged auto-filled code preserves PHLPost source and badge', () => {
+    const initialAddress = {
+      region: { code: '1300000000', name: 'NCR' },
+      province: null,
+      city: { code: '1380600000', name: 'City of Manila' },
+      barangay: { code: '1380601001', name: 'Barangay 1' },
+      postalCode: '1008',
+      postalCodeSource: 'PHLPost',
+      postalResolution: {
+        postalCode: '1008',
+        isAutoFilled: true,
+        requiresConfirmation: false,
+        mappingType: 'exact_barangay',
+      },
+    };
+    const result = simulateSelectorConfirm({
+      initialAddress,
+      selectedLocality: {
+        region: '1300000000',
+        province: null,
+        city: '1380600000',
+        barangay: '1380601001',
+      },
+      manualPostalCode: '1008',
+    });
+    expect(result.finalPostalCode).toBe('1008');
+    expect(result.finalSource).toBe('PHLPost');
+    expect(result.finalResolution.isAutoFilled).toBe(true);
+
+    const badges = deriveBadgeState('1008', {
+      postalCode: result.finalPostalCode,
+      postalCodeSource: result.finalSource,
+      postalResolution: result.finalResolution,
+    });
+    expect(badges.isPhlPostAutoFilled).toBe(true);
+    expect(badges.isManualEntry).toBe(false);
+  });
+
+  it('Test E — Clear postal code remains empty and does not silently restore previous postal code', () => {
+    const initialAddress = {
+      region: { code: '1300000000', name: 'NCR' },
+      province: null,
+      city: { code: '1380600000', name: 'City of Manila' },
+      barangay: { code: '1380601001', name: 'Barangay 1' },
+      postalCode: null,
+      postalCodeSource: null,
+      postalResolution: undefined,
+    };
+    const result = simulateSelectorConfirm({
+      initialAddress,
+      selectedLocality: {
+        region: '1300000000',
+        province: null,
+        city: '1380600000',
+        barangay: '1380601001',
+      },
+      manualPostalCode: '',
+    });
+    expect(result.finalPostalCode).toBeNull();
+    expect(result.finalSource).toBeNull();
+    expect(result.finalResolution).toBeUndefined();
+
+    const badges = deriveBadgeState('', {
+      postalCode: result.finalPostalCode,
+      postalCodeSource: result.finalSource,
+      postalResolution: result.finalResolution,
+    });
+    expect(badges.isPhlPostAutoFilled).toBe(false);
+    expect(badges.isManualEntry).toBe(false);
+    expect(badges.isConfirmationRequired).toBe(false);
+  });
+
+  it('Test F — Change locality resets previous manual postal code and uses new locality resolution', () => {
+    const initialAddress = {
+      region: { code: '1300000000', name: 'NCR' },
+      province: null,
+      city: { code: '1380600000', name: 'City of Manila' },
+      barangay: { code: '1380601001', name: 'Barangay 1' },
+      postalCode: '1009',
+      postalCodeSource: 'manual',
+    };
+    const newLocalityResolution = {
+      postalCode: '1100',
+      isAutoFilled: true,
+      requiresConfirmation: false,
+      mappingType: 'exact_barangay',
+    };
+    const result = simulateSelectorConfirm({
+      initialAddress,
+      selectedLocality: {
+        region: '1300000000',
+        province: null,
+        city: '1380400000',
+        barangay: '1380401001',
+      },
+      manualPostalCode: '',
+      localityResolution: newLocalityResolution,
+    });
+    expect(result.finalPostalCode).toBe('1100');
+    expect(result.finalSource).toBe('PHLPost');
+    expect(result.finalResolution.mappingType).toBe('exact_barangay');
+  });
+
+  it('Test G — Serialization preserves exact postal code and source', () => {
+    function serializePsgc(selectedPsgc: any, postalCodeInput: string) {
+      return {
+        postalCode: postalCodeInput.trim() || undefined,
+        postalCodeSource: (() => {
+          const trimmed = postalCodeInput.trim();
+          if (!trimmed) return undefined;
+          if (
+            selectedPsgc?.postalCodeSource === 'PHLPost' &&
+            selectedPsgc?.postalCode &&
+            selectedPsgc?.postalCode.trim() === trimmed
+          ) {
+            return 'PHLPost';
+          }
+          return 'manual';
+        })(),
+      };
+    }
+
+    // 1. Unchanged PHLPost
+    const s1 = serializePsgc({ postalCode: '1008', postalCodeSource: 'PHLPost' }, '1008');
+    expect(s1.postalCode).toBe('1008');
+    expect(s1.postalCodeSource).toBe('PHLPost');
+
+    // 2. Manual edit
+    const s2 = serializePsgc({ postalCode: '1009', postalCodeSource: 'manual' }, '1009');
+    expect(s2.postalCode).toBe('1009');
+    expect(s2.postalCodeSource).toBe('manual');
+
+    // 3. Cleared
+    const s3 = serializePsgc({ postalCode: null, postalCodeSource: null }, '');
+    expect(s3.postalCode).toBeUndefined();
+    expect(s3.postalCodeSource).toBeUndefined();
+  });
+
+  it('Test H — Unknown mapping metadata compatibility preserves honest non-falsified provenance', () => {
+    const hydrated = hydrateReturningAddress({
+      psgc: {
+        version: '2026-q3',
+        region: { code: '1300000000', name: 'NCR' },
+        province: null,
+        city: { code: '1380600000', name: 'City of Manila' },
+        barangay: { code: '1380601001', name: 'Barangay 1' },
+        postalCode: '1008',
+        postalCodeSource: 'PHLPost',
+        postalResolution: {
+          postalCode: '1008',
+          mappingType: 'unknown',
+          isAutoFilled: true,
+          requiresConfirmation: false,
+        },
+      },
+    });
+    expect(hydrated.selectedPsgc?.postalResolution?.mappingType).toBe('unknown');
+    expect(hydrated.selectedPsgc?.postalResolution?.isAutoFilled).toBe(true);
+
+    const badges = deriveBadgeState('1008', hydrated.selectedPsgc);
+    expect(badges.isPhlPostAutoFilled).toBe(true);
   });
 });

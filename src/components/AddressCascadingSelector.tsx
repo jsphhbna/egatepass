@@ -218,6 +218,23 @@ export function AddressCascadingSelector({
     }
   }
 
+  function isSameLocalityAsInitial(
+    initial: SelectedPsgcAddress | null | undefined,
+    region: PsgcLocation | null,
+    province: PsgcLocation | null,
+    city: PsgcLocation | null,
+    barangay: PsgcLocation | null
+  ): boolean {
+    if (!initial || !region || !city || !barangay) return false;
+    const sameRegion = initial.region.code === region.code;
+    const sameProvince =
+      (!initial.province && !province) ||
+      initial.province?.code === province?.code;
+    const sameCity = initial.city.code === city.code;
+    const sameBarangay = initial.barangay.code === barangay.code;
+    return sameRegion && sameProvince && sameCity && sameBarangay;
+  }
+
   async function handleSelectBarangay(bgy: PsgcLocation) {
     setSelectedBarangay(bgy);
     setLoading(true);
@@ -225,9 +242,16 @@ export function AddressCascadingSelector({
       if (selectedCity) {
         const resolution = await resolvePostalCode(selectedCity.code, bgy.code);
         setPostalResolution(resolution);
+        const isSame = isSameLocalityAsInitial(
+          initialAddress,
+          selectedRegion,
+          selectedProvince,
+          selectedCity,
+          bgy
+        );
         if (resolution.isAutoFilled && resolution.postalCode) {
           setManualPostalCode(resolution.postalCode);
-        } else if (initialAddress?.postalCode) {
+        } else if (isSame && initialAddress?.postalCode) {
           setManualPostalCode(initialAddress.postalCode);
         } else {
           setManualPostalCode('');
@@ -270,33 +294,79 @@ export function AddressCascadingSelector({
   function handleConfirm() {
     if (!selectedRegion || !selectedCity || !selectedBarangay) return;
 
-    const finalPostalCode = postalResolution?.isAutoFilled
-      ? postalResolution.postalCode
-      : (manualPostalCode.trim() || null);
-    const finalSource = postalResolution?.isAutoFilled
-      ? 'PHLPost'
-      : (finalPostalCode
-          ? (initialAddress?.postalCodeSource && initialAddress.postalCode === finalPostalCode
-              ? initialAddress.postalCodeSource
-              : 'manual')
-          : null);
+    const isSame = isSameLocalityAsInitial(
+      initialAddress,
+      selectedRegion,
+      selectedProvince,
+      selectedCity,
+      selectedBarangay
+    );
 
-    const finalResolution = postalResolution
-      ? {
-          ...postalResolution,
-          postalCode: finalPostalCode,
+    let finalPostalCode: string | null = null;
+    let finalSource: string | null = null;
+    let finalResolution: SelectedPsgcAddress['postalResolution'] = undefined;
+
+    if (isSame) {
+      // 1. Same locality confirmed
+      const candidateCode = manualPostalCode.trim() || null;
+      if (!candidateCode) {
+        // Cleared postal code
+        finalPostalCode = null;
+        finalSource = null;
+        finalResolution = undefined;
+      } else if (
+        initialAddress?.postalCodeSource === 'PHLPost' &&
+        initialAddress.postalCode === candidateCode
+      ) {
+        // Unchanged PHLPost auto-filled code
+        finalPostalCode = candidateCode;
+        finalSource = 'PHLPost';
+        finalResolution = initialAddress.postalResolution || {
+          postalCode: candidateCode,
+          isAutoFilled: true,
+          requiresConfirmation: false,
+          mappingType: 'unknown',
+          message: 'PHLPost standard postal code',
+        };
+      } else {
+        // Manually entered / edited override for the same locality
+        finalPostalCode = candidateCode;
+        finalSource = 'manual';
+        finalResolution = {
+          postalCode: candidateCode,
+          isAutoFilled: false,
+          requiresConfirmation: false,
+          mappingType: 'unmapped',
+        };
+      }
+    } else {
+      // 2. Different / newly selected locality
+      if (postalResolution?.isAutoFilled && postalResolution.postalCode) {
+        // New locality has an auto-filled PHLPost postal code
+        finalPostalCode = postalResolution.postalCode;
+        finalSource = 'PHLPost';
+        finalResolution = postalResolution;
+      } else {
+        // New locality does not auto-fill; check if user entered one in the modal
+        const candidateCode = manualPostalCode.trim() || null;
+        if (candidateCode) {
+          finalPostalCode = candidateCode;
+          finalSource = 'manual';
+          finalResolution = postalResolution
+            ? { ...postalResolution, postalCode: candidateCode }
+            : {
+                postalCode: candidateCode,
+                isAutoFilled: false,
+                requiresConfirmation: false,
+                mappingType: 'unmapped',
+              };
+        } else {
+          finalPostalCode = null;
+          finalSource = null;
+          finalResolution = postalResolution || undefined;
         }
-      : (initialAddress?.postalResolution && initialAddress.postalCode === finalPostalCode
-          ? initialAddress.postalResolution
-          : (finalSource === 'PHLPost' && finalPostalCode
-              ? {
-                  postalCode: finalPostalCode,
-                  isAutoFilled: true,
-                  requiresConfirmation: false,
-                  mappingType: (initialAddress?.postalResolution?.mappingType || 'unknown'),
-                  message: 'PHLPost standard postal code',
-                }
-              : undefined));
+      }
+    }
 
     onSelect({
       version: '2026-q3',

@@ -130,7 +130,7 @@ test.describe('Returning Visitor Address Prefill & UI Hydration Integration Suit
     });
   });
 
-  test('1. Proves Welcome Back screen hydrates full address, allows edits, and isolates secondary visitor profile', async ({ page }) => {
+  test('1. Proves Welcome Back screen hydrates full address, synchronizes manual postal override, preserves on re-opening selector, and clears properly', async ({ page }) => {
     test.setTimeout(120_000);
     let identifyCount = 0;
 
@@ -258,7 +258,7 @@ test.describe('Returning Visitor Address Prefill & UI Hydration Integration Suit
     // Welcome Back screen confirmation appears
     await expect(page.getByRole('heading', { name: /Welcome back, Juan!/i })).toBeVisible({ timeout: 15_000 });
 
-    // --- STEP 2: Read controlled input values ---
+    // --- SCENARIO A: Original PHLPost state ---
     const houseInput = page.getByPlaceholder(/Unit 4B, Bldg 2/i);
     const streetInput = page.getByPlaceholder(/Nagtahan St\./i);
     const postalInput = page.getByPlaceholder(/4-digit postal code/i);
@@ -271,21 +271,49 @@ test.describe('Returning Visitor Address Prefill & UI Hydration Integration Suit
     expect(await streetInput.inputValue()).toBe('Nagtahan St.');
     expect(await postalInput.inputValue()).toBe('1008');
 
-    // Verify Locality display shows Barangay 1, City of Manila and NCR
+    // Locality display shows Barangay 1, City of Manila
     await expect(page.getByText(/Barangay 1, City of Manila/i)).toBeVisible();
     await expect(page.getByText(/NCR/i)).toBeVisible();
 
-    // Verify PHLPost Auto-filled indicator
+    // PHLPost Auto-filled badge is visible
     await expect(page.getByText(/PHLPost Auto-filled/i)).toBeVisible();
+    await expect(page.getByText(/^Manual entry$/i)).not.toBeVisible();
 
-    // --- STEP 3: Edit each additional field and verify values remain visible ---
+    // --- SCENARIO B: Manual override ---
+    await postalInput.fill('1009');
+    expect(await postalInput.inputValue()).toBe('1009');
+    await expect(page.getByText(/PHLPost Auto-filled/i)).not.toBeVisible();
+    await expect(page.getByText(/^Manual entry$/i)).toBeVisible();
+
+    // --- SCENARIO C: Selector preservation (confirm unchanged locality) ---
+    const changeLocalityBtn = page.getByRole('button', { name: 'Change' }).first();
+    await changeLocalityBtn.click();
+    await expect(page.getByRole('heading', { name: /Confirm Residential Address/i })).toBeVisible();
+    const confirmAddressBtn = page.getByRole('button', { name: /Confirm Address/i });
+    await confirmAddressBtn.click();
+
+    expect(await postalInput.inputValue()).toBe('1009');
+    await expect(page.getByText(/^Manual entry$/i)).toBeVisible();
+    await expect(page.getByText(/PHLPost Auto-filled/i)).not.toBeVisible();
+
+    // --- SCENARIO E: Clear postal code ---
+    await postalInput.fill('');
+    expect(await postalInput.inputValue()).toBe('');
+    await expect(page.getByText(/PHLPost Auto-filled/i)).not.toBeVisible();
+    await expect(page.getByText(/^Manual entry$/i)).not.toBeVisible();
+
+    // Reopening and confirming unchanged locality keeps field empty
+    await changeLocalityBtn.click();
+    await expect(page.getByRole('heading', { name: /Confirm Residential Address/i })).toBeVisible();
+    await confirmAddressBtn.click();
+    expect(await postalInput.inputValue()).toBe('');
+    await expect(page.getByText(/PHLPost Auto-filled/i)).not.toBeVisible();
+
+    // --- SCENARIO D: Unchanged auto-filled code re-selection ---
+    await postalInput.fill('1005');
+    expect(await postalInput.inputValue()).toBe('1005');
     await houseInput.fill('Penthouse Suite');
     await streetInput.fill('Mendiola St.');
-    await postalInput.fill('1005');
-
-    expect(await houseInput.inputValue()).toBe('Penthouse Suite');
-    expect(await streetInput.inputValue()).toBe('Mendiola St.');
-    expect(await postalInput.inputValue()).toBe('1005');
 
     // --- STEP 4: Repeat with minimalProfile and verify NO address leakage ---
     // Click Start Over to cleanly return to frontdoor without page reload
@@ -333,5 +361,142 @@ test.describe('Returning Visitor Address Prefill & UI Hydration Integration Suit
 
     // Locality reflects Maria's address
     await expect(page.getByText(/Barangay 2, City of Manila/i)).toBeVisible();
+  });
+
+  test('2. Proves pass issuance serialization accurately captures manual postal override in request payload', async ({ page }) => {
+    test.setTimeout(120_000);
+
+    const testProfile = {
+      id: '44444444-4444-4444-8444-444444444444',
+      firstName: 'Juan',
+      middleName: 'Dela',
+      lastName: 'Cruz',
+      contactNumber: '09123456789',
+      homeAddress: 'Unit 4B, Nagtahan St., Barangay 1, City of Manila, 1008',
+      psgc: {
+        version: '2026-q3',
+        region: { code: '1300000000', name: 'NCR' },
+        province: null,
+        city: { code: '1380600000', name: 'City of Manila' },
+        barangay: { code: '1380601001', name: 'Barangay 1' },
+        houseBuilding: 'Unit 4B',
+        street: 'Nagtahan St.',
+        postalCode: '1008',
+        postalCodeSource: 'PHLPost',
+      },
+    };
+
+    let capturedPassRequest: any = null;
+    await page.route('**/api/passes/issue', async (route) => {
+      capturedPassRequest = JSON.parse(route.request().postData() || '{}');
+      await route.fulfill({
+        status: 201,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          passId: 'mock-pass-uuid-1234',
+          publicReference: 'mock-ref-5678',
+          status: 'issued',
+          returningProfileUpdate: 'updated',
+        }),
+      });
+    });
+
+    await page.route('**/api/passes/lookup-returning', async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          found: true,
+          count: 1,
+          candidates: [
+            {
+              profileId: testProfile.id,
+              maskedName: 'J*** D*** C***',
+              maskedContact: '0912***6789',
+              partialLocality: 'City of Manila',
+            },
+          ],
+        }),
+      });
+    });
+
+    await page.route('**/api/passes/identify-returning', async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          available: true,
+          matched: true,
+          matchToken: 'mock-token-serialize-test',
+          profile: testProfile,
+          savedVehicles: [],
+        }),
+      });
+    });
+
+    await page.setViewportSize({ width: 1280, height: 800 });
+    await page.goto('/get-pass', { waitUntil: 'domcontentloaded' });
+
+    // Lookup and face verify Juan
+    const returningBtn = page.getByRole('button', { name: /Returning Visitor/i }).first();
+    await expect(returningBtn).toBeVisible({ timeout: 15_000 });
+    await returningBtn.click();
+
+    await page.locator('input[placeholder*="Juan"]').or(page.locator('input[name="firstName"]')).first().fill('Juan');
+    await page.locator('input[placeholder*="Cruz"]').or(page.locator('input[name="lastName"]')).first().fill('Cruz');
+    await page.getByRole('button', { name: /Find My Profile|Search Profile|Search/i }).first().click();
+
+    const proceedBtn = page.getByRole('button', { name: /Proceed to Live Face Verification/i });
+    await expect(proceedBtn).toBeVisible({ timeout: 15_000 });
+    await proceedBtn.click();
+
+    const captureBtn = page.getByRole('button', { name: /Capture Selfie/i });
+    await expect(captureBtn).toBeVisible({ timeout: 15_000 });
+    await captureBtn.click();
+
+    const verifyPhotoBtn = page.getByRole('button', { name: /Verify This Photo/i });
+    await expect(verifyPhotoBtn).toBeVisible({ timeout: 10_000 });
+    await verifyPhotoBtn.click();
+
+    await expect(page.getByRole('heading', { name: /Welcome back, Juan!/i })).toBeVisible({ timeout: 15_000 });
+
+    // Manually override postal code from 1008 to 1009
+    const postalInput = page.getByPlaceholder(/4-digit postal code/i);
+    await postalInput.fill('1009');
+    await expect(page.getByText(/^Manual entry$/i)).toBeVisible();
+
+    // Select purpose
+    const purposeSelect = page.locator('#visit-purpose-choice');
+    await purposeSelect.selectOption('__other__');
+    const detailsArea = page.locator('#visit-purpose-details');
+    await detailsArea.fill('Official Document Submission');
+
+    // Fill visit date (today)
+    const todayStr = new Date().toISOString().split('T')[0];
+    await page.locator('input[type="date"]').fill(todayStr);
+
+    // On Foot arrival method is default or click it
+    const onFootBtn = page.getByRole('button', { name: /On Foot \/ Transit/i });
+    if (await onFootBtn.isVisible().catch(() => false)) {
+      await onFootBtn.click();
+    }
+
+    // Proceed to review
+    const reviewBtn = page.getByRole('button', { name: /Review Pass Details/i });
+    await expect(reviewBtn).toBeVisible();
+    await reviewBtn.click();
+
+    // On review screen, click Generate E-GatePass
+    const generateBtn = page.getByRole('button', { name: /Generate E-GatePass/i });
+    await expect(generateBtn).toBeVisible({ timeout: 10_000 });
+    await generateBtn.click();
+
+    // Assert the intercepted submission payload
+    await expect.poll(() => capturedPassRequest, { timeout: 15_000 }).not.toBeNull();
+    expect(capturedPassRequest.psgc).toBeDefined();
+    expect(capturedPassRequest.psgc.postalCode).toBe('1009');
+    expect(capturedPassRequest.psgc.postalCodeSource).toBe('manual');
+    expect(capturedPassRequest.psgc.cityCode).toBe('1380600000');
+    expect(capturedPassRequest.psgc.barangayCode).toBe('1380601001');
   });
 });
