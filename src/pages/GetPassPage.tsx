@@ -32,7 +32,7 @@ import { TurnstileWidget, type TurnstileWidgetRef } from '@/components/Turnstile
 import { generateBrandedQrDataUrl } from '@/lib/brandedQr';
 import QRCode from 'qrcode';
 import { recognizeIdImage, terminateLocalOcrWorker, getNextOcrJobId } from '@/lib/ocr';
-import { evaluateLiveFaceQuality, evaluateIdImageQuality } from '@/lib/imageQuality';
+import { evaluateLiveFaceQuality, evaluateIdImageQuality, evaluateReturningSelfiePrecheck } from '@/lib/imageQuality';
 import { normalizePhMobile, validatePhMobile } from '@/lib/phPhone';
 import { normalizeVehiclePlate } from '@/lib/vehiclePlate';
 import {
@@ -467,14 +467,23 @@ export function GetPassPage() {
   // SINGLE CAMERA RULE: Live face camera is the ONLY custom camera in the entire flow
   const faceWebcam = useWebcam({ facingMode: 'user', width: 640, height: 480, allowCaptureMirroring: false });
 
+  // Camera unmount cleanup only: stop camera tracks when the page actually unmounts
   useEffect(() => {
     return () => {
       faceWebcam.stop();
-      if (returningSelfieUrl) {
-        URL.revokeObjectURL(returningSelfieUrl);
+    };
+  }, []);
+
+  // Preview URL cleanup ref: safely revokes object URL on genuine unmount without interrupting camera lifecycle
+  const returningSelfieUrlRef = useRef<string | null>(null);
+  returningSelfieUrlRef.current = returningSelfieUrl;
+  useEffect(() => {
+    return () => {
+      if (returningSelfieUrlRef.current) {
+        URL.revokeObjectURL(returningSelfieUrlRef.current);
       }
     };
-  }, [returningSelfieUrl]);
+  }, []);
 
   // Accidental refresh/close protection before pass delivery is secured
   const isDeliverySecured = emailDeliverySecured || isDownloaded;
@@ -963,6 +972,14 @@ export function GetPassPage() {
       return;
     }
 
+    if (!faceWebcam.isActive) {
+      toast.error('Camera is not ready yet. Please wait a moment.');
+      return;
+    }
+
+    // Invalidate prior photo checkpoint so this new capture receives a fresh upload intent and storage object
+    invalidatePortalEvidenceCheckpoint(portalTransactionRef.current, 'photo');
+
     const blob = faceWebcam.capture({ mirror: false });
     if (!blob) {
       toast.error('Failed to capture photo. Please hold steady and try again.');
@@ -981,12 +998,22 @@ export function GetPassPage() {
   }
 
   function onRetakeReturningSelfie() {
+    if (isIdentifyingReturning) return;
+
+    // 1. Invalidate previous upload checkpoint
+    invalidatePortalEvidenceCheckpoint(portalTransactionRef.current, 'photo');
+
+    // 2. Revoke previous preview URL exactly once
     if (returningSelfieUrl) {
       URL.revokeObjectURL(returningSelfieUrl);
       setReturningSelfieUrl(null);
     }
+
+    // 3. Clear old blob and error message
     setReturningSelfieBlob(null);
     setReturningIdentifyError(null);
+
+    // 4. Return to live camera stage and start webcam
     setReturningCaptureStage('live');
     void faceWebcam.start();
   }
@@ -1006,11 +1033,12 @@ export function GetPassPage() {
     setReturningIdentifyError(null);
 
     try {
-      // 1. Client-side technical image quality check
-      const evaluation = await evaluateLiveFaceQuality(returningSelfieBlob);
-      if (!evaluation.passed) {
-        setReturningIdentifyError(evaluation.message);
-        toast.error(evaluation.message);
+      // 1. Client-side technical image quality precheck (decodability, min resolution >=240px, extreme darkness/glare)
+      // Authoritative facial sharpness is evaluated on the face crop by YuNet/SFace on the server
+      const precheck = await evaluateReturningSelfiePrecheck(returningSelfieBlob);
+      if (!precheck.passed) {
+        setReturningIdentifyError(precheck.message);
+        toast.error(precheck.message);
         return;
       }
 
@@ -1037,17 +1065,28 @@ export function GetPassPage() {
       const data = await identifyReturningVisitor(tx, photoRes.intentId, selectedReturningCandidate.profileId);
 
       if (!data?.matched || !data.profile || !data.matchToken) {
-        let userFriendlyMsg = 'Make sure your face is clearly visible, look directly at the camera and use even lighting. You can retake your selfie and try again.';
+        const reasonCode = (data as any)?.reasonCode || '';
         const rawMsg = data?.message || '';
-        if (/no face/i.test(rawMsg)) {
-          userFriendlyMsg = 'No face was detected in your selfie. Look directly at the camera with good lighting and retake your photo.';
-        } else if (/multiple/i.test(rawMsg)) {
-          userFriendlyMsg = 'Multiple faces were detected in the photo. Please make sure only you are in frame and retake your selfie.';
-        } else if (/blurry|quality|dark|light/i.test(rawMsg)) {
-          userFriendlyMsg = 'The photo quality was insufficient for biometric verification. Make sure your face is well-lit and not blurry, then retake.';
-        } else if (rawMsg) {
+        let userFriendlyMsg = 'Make sure your face is clearly visible, look directly at the camera and use even lighting. You can retake your selfie and try again.';
+
+        if (reasonCode === 'no_face' || reasonCode === 'no_face_in_selfie' || /no face/i.test(rawMsg)) {
+          userFriendlyMsg = 'No face was detected in your selfie. Please position your face inside the guide, look directly at the camera, and retake.';
+        } else if (reasonCode === 'multiple_faces' || /multiple/i.test(rawMsg)) {
+          userFriendlyMsg = 'More than one face was detected. Please make sure only you are in frame and retake your selfie.';
+        } else if (reasonCode === 'too_small' || reasonCode === 'face_too_small' || /small|closer/i.test(rawMsg)) {
+          userFriendlyMsg = 'Your face is too far away. Move closer to the camera and retake your selfie.';
+        } else if (reasonCode === 'too_dark' || /dark/i.test(rawMsg)) {
+          userFriendlyMsg = 'Your face is too dark. Please face a light source and retake your selfie.';
+        } else if (reasonCode === 'overexposed' || /glare|overexposed/i.test(rawMsg)) {
+          userFriendlyMsg = 'Too much glare or backlighting on your face. Please move away from harsh lighting and retake.';
+        } else if (reasonCode === 'blurry' || /blurry/i.test(rawMsg)) {
+          userFriendlyMsg = 'Your face is blurry. Please hold the device steady, allow the camera to focus, and try again.';
+        } else if (reasonCode === 'framing_failed' || /framing|center|oval/i.test(rawMsg)) {
+          userFriendlyMsg = 'Please center your face inside the oval guide and retake your selfie.';
+        } else if (rawMsg && !/could not verify/i.test(rawMsg)) {
           userFriendlyMsg = rawMsg;
         }
+
         setReturningIdentifyError(userFriendlyMsg);
         return;
       }
@@ -3485,6 +3524,7 @@ export function GetPassPage() {
 
                       <Button
                         onClick={() => {
+                          invalidatePortalEvidenceCheckpoint(portalTransactionRef.current, 'photo');
                           setReturningCaptureStage('live');
                           setReturningSelfieBlob(null);
                           if (returningSelfieUrl) {
@@ -3598,7 +3638,7 @@ export function GetPassPage() {
                         autoPlay
                         playsInline
                         muted
-                        style={{ transform: faceWebcam.mirrorPreview ? 'scaleX(-1)' : 'none' }}
+                        style={{ transform: 'none' }}
                         className="h-full w-full object-cover"
                       />
                     )}
@@ -3615,6 +3655,13 @@ export function GetPassPage() {
                       variant="secondary"
                       onClick={() => {
                         faceWebcam.stop();
+                        invalidatePortalEvidenceCheckpoint(portalTransactionRef.current, 'photo');
+                        if (returningSelfieUrl) {
+                          URL.revokeObjectURL(returningSelfieUrl);
+                          setReturningSelfieUrl(null);
+                        }
+                        setReturningSelfieBlob(null);
+                        setReturningIdentifyError(null);
                         setStep('returning_lookup');
                       }}
                       className="w-full sm:flex-1 min-h-[56px] sm:min-h-11 text-[15px] sm:text-sm"
@@ -3625,7 +3672,7 @@ export function GetPassPage() {
                     <Button
                       type="button"
                       onClick={onCaptureReturningSelfie}
-                      disabled={!faceWebcam.isActive}
+                      disabled={!faceWebcam.isActive || faceWebcam.isStarting}
                       className="w-full sm:flex-1 min-h-[56px] sm:min-h-11 text-[15px] sm:text-sm"
                       icon={<Camera className="h-5 w-5" />}
                     >

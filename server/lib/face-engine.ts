@@ -27,6 +27,7 @@ export interface QualityEvaluation {
   passed: boolean;
   code: QualityResultCode;
   message: string;
+  details?: Record<string, unknown>;
 }
 
 export type FaceVerificationOutcome =
@@ -610,7 +611,7 @@ export async function evaluateFaceCropQuality(
   meta: Metadata,
   face: DetectedFace,
   kind: 'selfie' | 'id'
-): Promise<{ passed: boolean; code: QualityResultCode; message: string }> {
+): Promise<QualityEvaluation> {
   if (!face || !face.landmarks || face.w < 1 || face.h < 1) {
     return {
       passed: false,
@@ -652,6 +653,9 @@ export async function evaluateFaceCropQuality(
     };
   }
 
+  const minBlur = kind === 'selfie' ? 25 : 20;
+  let faceBlur = 0;
+
   try {
     const faceCropBuffer = await sharp(originalBuffer)
       .extract({ left: realFaceX, top: realFaceY, width: realFaceW, height: realFaceH })
@@ -685,9 +689,8 @@ export async function evaluateFaceCropQuality(
 
     // 2. Sharpness of face crop
     const faceGrayscale = await sharp(faceCropBuffer).grayscale().raw().toBuffer();
-    const faceBlur = computeLaplacianVariance(new Uint8Array(faceGrayscale), faceW, faceH);
+    faceBlur = computeLaplacianVariance(new Uint8Array(faceGrayscale), faceW, faceH);
 
-    const minBlur = kind === 'selfie' ? 25 : 20;
     if (faceBlur < minBlur) {
       return {
         passed: false,
@@ -695,6 +698,7 @@ export async function evaluateFaceCropQuality(
         message: kind === 'selfie'
           ? 'Your face is blurry. Please hold steady and try again.'
           : 'The portrait on your ID is blurry. Please upload a clear, focused photo.',
+        details: { faceBlur, minBlur },
       };
     }
   } catch (err) {
@@ -708,7 +712,7 @@ export async function evaluateFaceCropQuality(
     };
   }
 
-  return { passed: true, code: 'ok', message: 'Face crop quality passed.' };
+  return { passed: true, code: 'ok', message: 'Face crop quality passed.', details: { faceBlur, minBlur } };
 }
 
 export interface OvalFramingGeometry {
@@ -1057,10 +1061,11 @@ export async function analyzeFaceImage(
     };
   }
 
-  // Blur
+  // Blur: Pre-detection filter catches extreme unrecoverable defocus before neural inference.
+  // For selfies, authoritative facial sharpness is evaluated on the extracted face crop (minBlur = 25).
   const grayscale = await sharp(normalizedBuffer).grayscale().raw().toBuffer();
   const blurScore = computeLaplacianVariance(new Uint8Array(grayscale), width, height);
-  const minBlur = kind === 'selfie' ? 35 : 25;
+  const minBlur = kind === 'selfie' ? 12 : 25;
   if (blurScore < minBlur) {
     return {
       quality: {
@@ -1069,6 +1074,7 @@ export async function analyzeFaceImage(
         message: kind === 'selfie'
           ? 'Your photo is too blurry. Please hold the device steady and try again.'
           : 'The ID image is too blurry. Please use a clearer image of the front of your valid ID.',
+        details: { blurScore, minBlur },
       },
       faces: [],
       dominantFace: null,
@@ -1199,7 +1205,12 @@ export async function analyzeFaceImage(
   }
 
   return {
-    quality: { passed: true, code: 'ok', message: kind === 'selfie' ? 'Live face quality passed.' : 'ID image quality passed.' },
+    quality: {
+      passed: true,
+      code: 'ok',
+      message: kind === 'selfie' ? 'Live face quality passed.' : 'ID image quality passed.',
+      details: cropQuality.details,
+    },
     faces,
     dominantFace,
     descriptor,

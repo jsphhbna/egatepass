@@ -396,3 +396,24 @@ flowchart TD
      - *Stage 5 (Match Accepted)*: Retains matched selfie blob for subsequent pass issuance and advances to `returning_confirm`.
      - *Stage 6 (Match Rejected)*: Displays clear inline error near still image preview with "Retake Selfie" button without navigating away or losing selected profile candidate.
      - *Stage 7 (Cleanup)*: Cleans up object URLs and camera streams on navigation, reset, or unmount.
+
+---
+
+### 2.23 Returning Visitor Camera Orientation, iPhone Retake Lifecycle & False Blur Rejection
+
+- **Symptoms**:
+  1. **Selfie Orientation Flipping**: Returning visitor sees a horizontally mirrored live preview, but capturing a selfie produces an unmirrored image; freezing the image flips the visitor's face horizontally.
+  2. **Blank Camera Viewport After Retake**: On iPhone 12 (Safari/WebKit), clicking "Retake Photo" leaves the camera preview permanently blank and non-functional.
+  3. **False Blurry Photo Rejections**: Clear, high-resolution iPhone front-camera selfies are repeatedly rejected with "Your photo is too blurry. Please hold the device steady and try again."
+  4. **Stale Evidence Reuse**: When Retake was clicked and a replacement photo was captured, the upload system reused the previous photo's upload intent ID and Storage object.
+- **Root Causes**:
+  - *Orientation Mismatch*: Live video element in `returningCaptureStage === 'live'` had CSS `style={{ transform: faceWebcam.mirrorPreview ? 'scaleX(-1)' : 'none' }}`, but `faceWebcam.capture({ mirror: false })` captured an unmirrored pixel buffer and the frozen review `<img src={returningSelfieUrl} />` had no transform.
+  - *Camera Startup Cancellation Race*: `GetPassPage.tsx` had an effect `useEffect(..., [returningSelfieUrl])` that called `faceWebcam.stop()`. When Retake called `setReturningSelfieUrl(null)` and `faceWebcam.start()`, the effect cleanup ran, incremented `generationRef.current`, and cancelled the active `getUserMedia()` call when it resolved, leaving `video.srcObject = null`.
+  - *Dual-Stage Sharpness Discrepancy*: Browser-side `evaluateLiveFaceQuality()` computed Laplacian variance across a 320×240 whole-image resize and strictly required `sharpness >= 45`. On mobile cameras, shallow depth of field or smooth indoor room walls easily diluted whole-frame Laplacian variance below 45 even when facial features were sharp. Furthermore, server-side pre-detection check had a whole-frame threshold of 35 that also blocked selfies before YuNet could isolate the face.
+  - *Missing Checkpoint Invalidation*: Retake cleared local component state but did not invoke `invalidatePortalEvidenceCheckpoint(portalTransactionRef.current, 'photo')`.
+- **Safe Resolutions**:
+  1. **Consistent Unmirrored Returning Orientation**: Removed CSS horizontal mirroring (`scaleX(-1)`) from Returning Visitor live camera `<video>` (`transform: 'none'`). Live preview, captured blob (`capture({ mirror: false })`), frozen preview `<img>`, and server face engine all share an identical 1:1 unmirrored coordinate space. New Visitor and Kiosk mirroring remain unchanged.
+  2. **Camera Lifecycle Separation**: Decoupled camera unmount cleanup (`useEffect(() => () => faceWebcam.stop(), [])`) from preview URL management. Retake now revokes the old URL without triggering camera teardown, surviving delayed WebKit `getUserMedia()` resolutions. Added `disabled={!faceWebcam.isActive || faceWebcam.isStarting}` to the Capture button.
+  3. **Authoritative Server Face-Crop Quality**: Introduced `evaluateReturningSelfiePrecheck(blob)` in `src/lib/imageQuality.ts`. The browser precheck strictly validates decodability, minimum resolution ($\ge 240\times 240$), extreme darkness ($< 25$), and extreme glare ($> 245$), while deferring fine-grained facial sharpness to the server's face-crop analysis. On the server (`server/lib/face-engine.ts`), whole-frame pre-blur threshold was adjusted to catch only severe defocus ($< 12$), while `evaluateFaceCropQuality` strictly enforces `faceBlur >= 25` on the extracted face bounding box. Diagnostic metadata (`origin`, `code`, `details`, `byteSize`, `mimeType`) is included in 422 responses.
+  4. **Strict Upload Checkpoint Invalidation**: Added `invalidatePortalEvidenceCheckpoint(portalTransactionRef.current, 'photo')` to Retake, Capture, Back, and candidate selection handlers, ensuring every new capture receives a new upload intent and storage path while preserving verified evidence after successful match.
+

@@ -11,6 +11,7 @@
 
 import { createHash, randomBytes } from 'node:crypto';
 import { z } from 'zod';
+import sharp from 'sharp';
 import { getVerifiedSessionContext, HttpError } from '../../actors.js';
 import { jsonResponse, readBearerToken } from '../../http.js';
 import { getServerSupabaseClients } from '../../supabase.js';
@@ -186,11 +187,30 @@ async function handleRequest(request: Request): Promise<Response> {
     // 4. Single-pass live face quality evaluation and descriptor extraction
     const analysis = await analyzeFaceImage(photoResult.buffer, 'selfie');
     if (!analysis.quality.passed) {
+      let dimensions: { width?: number; height?: number } | undefined;
+      let mimeType: string | undefined;
+      try {
+        const meta = await sharp(photoResult.buffer).metadata();
+        dimensions = { width: meta.width, height: meta.height };
+        mimeType = meta.format;
+      } catch {
+        // Safe fallback
+      }
+
       return jsonResponse(422, {
         ok: false,
+        matched: false,
         error: 'quality_rejected',
         reasonCode: analysis.quality.code,
         message: analysis.quality.message,
+        diagnostics: {
+          origin: 'server_quality_rejected',
+          code: analysis.quality.code,
+          details: analysis.quality.details,
+          dimensions,
+          mimeType,
+          byteSize: photoResult.buffer.length,
+        },
       });
     }
 

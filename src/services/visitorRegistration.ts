@@ -57,6 +57,7 @@ export interface ReturningIdentifyResult {
   message?: string;
   error?: string;
   reasonCode?: string;
+  diagnostics?: Record<string, unknown>;
 }
 
 export interface VisitorRegistration {
@@ -1093,6 +1094,7 @@ export async function identifyReturningVisitor(
       error: body?.error || 'identify_failed',
       message: body?.message || 'Could not verify returning visitor.',
       reasonCode: (body as any)?.reasonCode,
+      diagnostics: (body as any)?.diagnostics,
     };
   }
 

@@ -159,7 +159,7 @@ describe('PART C: Returning Visitor Capture, Freeze, Review & Verification Workf
 
   it('Stage 4 (Verification & 1:1 Compare) only runs when Verify This Photo is clicked, evaluating client quality first', () => {
     expect(getPassSrc).toContain('async function onConfirmReturningVerification()');
-    expect(getPassSrc).toContain('await evaluateLiveFaceQuality(returningSelfieBlob)');
+    expect(getPassSrc).toContain('await evaluateReturningSelfiePrecheck(returningSelfieBlob)');
     expect(getPassSrc).toContain('uploadPortalEvidence(tx, \'photo\', returningSelfieBlob)');
     expect(getPassSrc).toContain('identifyReturningVisitor(tx, photoRes.intentId, selectedReturningCandidate.profileId)');
   });

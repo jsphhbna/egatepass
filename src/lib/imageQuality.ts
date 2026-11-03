@@ -25,6 +25,21 @@ export interface QualityCheckResult {
   };
 }
 
+export interface ReturningSelfiePrecheckResult {
+  passed: boolean;
+  code: 'ok' | 'decode_failed' | 'too_small' | 'too_dark' | 'overexposed';
+  message: string;
+  diagnostics: {
+    origin: 'client_quality_rejected' | 'client_quality_passed';
+    mimeType?: string;
+    byteSize?: number;
+    width?: number;
+    height?: number;
+    brightness?: number;
+    sharpness?: number;
+  };
+}
+
 async function loadImageElement(source: Blob | File | string): Promise<HTMLImageElement> {
   return new Promise((resolve, reject) => {
     const img = new Image();
@@ -176,6 +191,105 @@ export async function evaluateLiveFaceQuality(source: Blob | File | string): Pro
     code: 'ok',
     message: 'Photo quality is good.',
     details: { width, height, brightness, sharpness },
+  };
+}
+
+/**
+ * Browser-side precheck for Returning Visitor selfies.
+ * Validates only reliable client-detectable technical criteria (decodability, minimum resolution >=240px, extreme darkness/glare).
+ * Defers facial sharpness to the authoritative server-side face crop evaluation (YuNet/SFace).
+ */
+export async function evaluateReturningSelfiePrecheck(
+  source: Blob | File
+): Promise<ReturningSelfiePrecheckResult> {
+  const mimeType = source.type || 'image/jpeg';
+  const byteSize = source.size;
+
+  let img: HTMLImageElement;
+  try {
+    img = await loadImageElement(source);
+  } catch {
+    return {
+      passed: false,
+      code: 'decode_failed',
+      message: 'Failed to read image. Please retake your photo.',
+      diagnostics: {
+        origin: 'client_quality_rejected',
+        mimeType,
+        byteSize,
+      },
+    };
+  }
+
+  const width = img.naturalWidth || img.width;
+  const height = img.naturalHeight || img.height;
+
+  if (width < 240 || height < 240) {
+    return {
+      passed: false,
+      code: 'too_small',
+      message: 'Photo resolution is too low. Move closer to the camera and try again.',
+      diagnostics: {
+        origin: 'client_quality_rejected',
+        mimeType,
+        byteSize,
+        width,
+        height,
+      },
+    };
+  }
+
+  const { brightness, sharpness } = analyzeImageQuality(img);
+
+  // Extreme darkness (< 25)
+  if (brightness < 25) {
+    return {
+      passed: false,
+      code: 'too_dark',
+      message: 'Your face is too dark. Please move to better lighting and retake the photo.',
+      diagnostics: {
+        origin: 'client_quality_rejected',
+        mimeType,
+        byteSize,
+        width,
+        height,
+        brightness,
+        sharpness,
+      },
+    };
+  }
+
+  // Extreme glare / overexposure (> 245)
+  if (brightness > 245) {
+    return {
+      passed: false,
+      code: 'overexposed',
+      message: 'The photo has excessive glare or backlighting. Please adjust your lighting.',
+      diagnostics: {
+        origin: 'client_quality_rejected',
+        mimeType,
+        byteSize,
+        width,
+        height,
+        brightness,
+        sharpness,
+      },
+    };
+  }
+
+  return {
+    passed: true,
+    code: 'ok',
+    message: 'Photo precheck passed.',
+    diagnostics: {
+      origin: 'client_quality_passed',
+      mimeType,
+      byteSize,
+      width,
+      height,
+      brightness,
+      sharpness,
+    },
   };
 }
 
