@@ -23,6 +23,7 @@ describe('Returning Visitor Fail-Closed Gallery & Descriptor Validation (Priorit
     process.env.RETURNING_FACE_MIN_MARGIN = '0.05';
     process.env.RETURNING_VISITOR_TEMPLATE_KEY = testKey;
     process.env.RETURNING_MATCH_TOKEN_SECRET = testSecret;
+    process.env.RETURNING_FACE_THRESHOLD_MODE = 'provisional';
     resetFaceRuntimeReadiness();
   });
 

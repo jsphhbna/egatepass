@@ -156,6 +156,7 @@ describe('Returning Visitor Biometrics & Safety Gate Contract', () => {
       expect(isReturningVisitorAvailable()).toBe(false);
 
       // Valid configuration
+      process.env.RETURNING_FACE_THRESHOLD_MODE = 'provisional';
       process.env.RETURNING_FACE_MIN_COSINE = '0.363';
       process.env.RETURNING_VISITOR_TEMPLATE_KEY = '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef';
       expect(isReturningVisitorAvailable()).toBe(true);

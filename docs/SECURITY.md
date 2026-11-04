@@ -737,18 +737,52 @@ The shared pure SVG template generator (`src/lib/digitalPassArtifact.ts`) uses s
   - Pass QR validity, business-hour enforcement, and single-entry/exit rules remain strictly active.
 
 ### 27.2 Decoupled Enrollment Security Boundaries
-- **Explicit Consent Mandate**:
-  - Facial biometric features are NEVER captured or enrolled automatically.
-  - Enrollment requires explicit visitor checkbox selection (`rememberVisitor`) during New Visitor registration.
-  - Purpose of future biometric identification is clearly displayed before submission.
+- **Transparent Institutional Retention**:
+  - Registration records and historical reference portraits/IDs are retained according to the institution's configured data retention policies.
 - **Safe Template Key Management**:
   - Face templates are encrypted with AES-256-GCM using `RETURNING_VISITOR_TEMPLATE_KEY` (32 bytes / 64 hex characters).
   - Enrollment requires ONLY the template key and does not depend on verification threshold or match token secret readiness.
   - Decryption occurs transiently in RAM during 1:1 verification; raw embeddings and decrypted vectors are never persisted or returned to the browser.
 - **Match Token Cryptographic Defense**:
-  - Upon successful 1:1 verification, server issues a single-use opaque `matchToken`.
-  - Database stores only `match_token_digest` (HMAC/SHA-256 with `RETURNING_MATCH_TOKEN_SECRET`).
-  - Single-use and expiration (15 minutes) prevent token replay, cross-actor replay, and profile impersonation.
+  - Upon successful 1:1 verification, server issues a short-lived opaque `matchToken` (300 seconds / 5 minutes TTL).
+  - Database stores only `match_token_digest` (SHA-256 of `${matchToken}:${RETURNING_MATCH_TOKEN_SECRET}`).
+  - Five-minute expiration and request binding prevent token replay, cross-actor replay, and profile impersonation.
+
+### 27.3 Ephemeral Selfie Handling & Memory Cleanup Boundaries
+- **Zero Durable Storage of Returning Selfies**:
+  - A returning visitor's fresh selfie is processed via transient in-memory multipart payload directly at `/api/passes/identify-returning`.
+  - It is NEVER uploaded to Supabase Storage, never written to `visitor_evidence`, never creates an upload intent, and never enrolls a new face template.
+  - The historical registration portrait and ID image remain the sole reference evidence under the configured institutional retention policy.
+- **Best-Effort In-Memory Clearing**:
+  - Processing buffers for live selfies undergo best-effort clearing in server route `finally` blocks (`selfieBuffer.fill(0)`).
+  - Note: V8 garbage collection and Node.js runtime memory management cannot guarantee immediate hardware-level RAM zeroing; documentation honestly reports this as best-effort in-memory clearing rather than guaranteed cryptographically secure memory erasure.
+
+### 27.4 V2 Preview Token Evidence-Kind Binding & Single-Use ID Consumption
+- **Evidence-Kind Binding in HMAC Payload**:
+  - Candidate preview tokens use format `v2.<profileId>.<kind>.<expiresAt>.<nonce>.<sig>` with an explicit 300-second (5-minute) TTL.
+  - Preview tokens issued for candidate selection are strictly bound to `kind=photo`. Calling the preview endpoint with `kind=id` using a photo token is rejected with 403 `forbidden_evidence_kind`.
+- **Atomic Single-Use Consumption for Historical ID Preview**:
+  - Access to a returning visitor's historical ID image requires a valid calibrated biometric match attempt.
+  - ID preview authorization is consumed atomically via database RPC `api.consume_id_preview_authorization_v1`. Replay attempts fail immediately with 403 `id_authorization_already_consumed`.
+  - In provisional mode (`RETURNING_FACE_THRESHOLD_MODE=provisional`), ID preview is strictly prohibited (403 `provisional_mode_cannot_authorize_id_access`) and historical ID URLs are never returned.
+
+### 27.5 Profile Linkage Isolation & "Continue as New Visitor" Boundaries
+- **Independent Identity on New Visitor Choice**:
+  - When a visitor selects "Continue as New Visitor", `api.issue_online_pass_v6` creates an independent identity record without searching for or linking to any existing returning profile, even if first name, last name, and contact number match.
+- **Strict Conditional Profile Updates (`saveUpdates`)**:
+  - The `saveUpdates` decision is passed into `api.issue_online_pass_v6` as `requested_save_profile_updates`.
+  - When `saveUpdates=false`, stored contact number and residential address in `returning_visitor_profiles` remain unchanged.
+  - When `saveUpdates=true`, only validated contact numbers and PSGC-verified residential addresses are updated.
+
+### 27.6 Calibration Prerequisites for Future Calibrated Mode
+- To advance from `provisional` mode to `calibrated` mode, the institution must fulfill the following prerequisites:
+  1. **Representative Consented Dataset**: Empirically measured against a consented sample of EARIST campus visitors.
+  2. **Controlled Quality Baseline**: Standardized lighting, distance, and resolution requirements.
+  3. **Measured FAR and FRR**: Documented False Acceptance Rate and False Rejection Rate curves.
+  4. **Threshold Selection Methodology**: Statistically justified operating point minimizing security risk and false rejections.
+  5. **Versioned Calibration Artifact**: Approved calibration artifact version configured via `RETURNING_FACE_CALIBRATION_VERSION`.
+- Without these prerequisites, the system fails closed and operates solely in provisional candidate-assistance mode with mandatory guard verification at the gate.
+
 
 
 

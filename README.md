@@ -135,12 +135,13 @@ Online visitor registration collects standardized Philippine residential localit
 
 #### 3.1.2 Returning Visitor 1:1 Biometric Verification (Provisional Reference Mode)
 
-Visitors who previously registered and explicitly opted in to remember their credentials can quickly check in on subsequent visits without re-uploading a government ID:
-- **Decoupled Enrollment**: First-time visitors can optionally consent to encrypt and store their facial template during normal New Visitor pass issuance as long as template cryptography is ready. Enrollment does not require verification to be pre-calibrated.
-- **Frontdoor Discovery**: Registered first and last name lookup returns privacy-masked candidates (`Juan S. D****`, `0917***4567`, `Barangay 856, City of Manila`), protecting PII.
-- **1:1 Facial Comparison**: The visitor selects their profile and captures a fresh live selfie. The server decrypts the selected profile's template from AES-256-GCM storage and performs a direct 1:1 cosine similarity comparison.
-- **Provisional SFace Threshold (0.363)**: Uses the official OpenCV Zoo SFace reference baseline threshold (`0.363`) for supervised capstone evaluation. This threshold is explicitly labeled as *provisional reference* (not an empirical campus-calibrated threshold).
-- **Single-Use Match Tokens**: A successful 1:1 match issues a 15-minute, single-use `matchToken` that unlocks profile prefilling, fresh purpose selection, and pass issuance.
+Visitors who previously registered can check in on subsequent visits without re-uploading a government ID:
+- **Registration Retention**: First-time visitor records and historical reference portraits/IDs are retained according to configured institutional retention policies.
+- **Protected Discovery**: Candidate lookup is protected by Cloudflare Turnstile, strictly rejects pattern wildcards (`%`, `_`), and requires a secondary factor (Philippine mobile number or PSGC city code) to prevent enumeration. Responses return at most 3 masked candidate profiles with signed, evidence-kind-bound photo preview tokens (`v2.<profileId>.photo.<expiresAt>.<nonce>.<sig>` with 300s TTL).
+- **Ephemeral 1:1 Comparison**: The visitor selects their candidate profile and captures a live selfie. The server processes the selfie entirely in RAM against the candidate's original reference portrait via a multipart payload, without persisting the selfie to storage or databases, and executes best-effort memory clearing on mutable buffers in a `finally` block.
+- **Provisional SFace Threshold (0.363)**: Uses the official OpenCV Zoo SFace reference baseline threshold (`0.363`) in provisional mode (`RETURNING_FACE_THRESHOLD_MODE=provisional`). The visitor is presented with an amber "Provisional Match (Guard Verification at Gate)" banner. Provisional mode cannot authorize ID preview access and leaves returning profile linkage unlinked until gate inspection.
+- **Single-Use Match Tokens & Atomic ID Consumption**: A match issues a 300-second (5-minute) `matchToken`. Access to historical ID images requires calibrated verification and is consumed atomically via `api.consume_id_preview_authorization_v1` to prevent replay.
+- **Profile Linkage & Save Updates Invariant**: "Continue as New Visitor" creates an independent identity record without searching or linking to existing profiles. When returning mode is used, `saveUpdates=false` guarantees that stored profile details remain strictly unchanged in the database.
 - **Guard View Invariant**: Biometric matching is an assistive check-in convenience. Campus entrance security strictly requires on-duty security guards to perform physical face-to-photo verification at the gate.
 
 ---

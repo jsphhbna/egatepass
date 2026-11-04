@@ -2890,7 +2890,7 @@ describe('Permanent PostgreSQL Migration Chain & Schema Contracts (PGlite)', () 
   it('56. Migration 20261104000800_ephemeral_returning_verification_and_profile_linkage relaxes returning photo intent and enables automatic profile linkage', async () => {
     const db = new PGlite();
     const files = await applyAllMigrations(db);
-    expect(files.length).toBe(59);
+    expect(files.length).toBe(60);
 
     // 1. Verify execute permissions on api.issue_online_pass_v6
     const permCheck = await db.query<{ grantee: string }>(`
@@ -2912,5 +2912,101 @@ describe('Permanent PostgreSQL Migration Chain & Schema Contracts (PGlite)', () 
       where n.nspname = 'api' and p.proname = 'issue_online_pass_v6';
     `);
     expect(procCheck.rows[0].proconfig).toEqual(['search_path=""']);
+  }, 60000);
+
+  it('57. Migration 20261104170754_returning_visitor_privacy_hardening_and_linkage_repair adds ID preview consumption RPC and saveUpdates support', async () => {
+    const db = new PGlite();
+    const files = await applyAllMigrations(db);
+    expect(files.length).toBe(60);
+
+    // 1. Verify consume_id_preview_authorization_v1 RPC
+    const permCheck = await db.query<{ grantee: string }>(`
+      select distinct grantee
+      from information_schema.routine_privileges
+      where routine_schema = 'api' and routine_name = 'consume_id_preview_authorization_v1';
+    `);
+    const grantees = permCheck.rows.map((r) => r.grantee);
+    expect(grantees).toContain('service_role');
+    expect(grantees).not.toContain('anon');
+    expect(grantees).not.toContain('authenticated');
+    expect(grantees).not.toContain('PUBLIC');
+
+    // 2. Verify search_path on consume_id_preview_authorization_v1
+    const procCheck = await db.query<{ proconfig: string[] }>(`
+      select p.proconfig
+      from pg_proc p
+      join pg_namespace n on n.oid = p.pronamespace
+      where n.nspname = 'api' and p.proname = 'consume_id_preview_authorization_v1';
+    `);
+    expect(procCheck.rows[0].proconfig).toEqual(['search_path=""']);
+
+    // 3. Verify columns on returning_identity_attempts
+    const colCheck = await db.query<{ column_name: string }>(`
+      select column_name
+      from information_schema.columns
+      where table_schema = 'public' and table_name = 'returning_identity_attempts'
+        and column_name in ('id_preview_consumed_at', 'threshold_mode');
+    `);
+    const cols = colCheck.rows.map((r) => r.column_name);
+    expect(cols).toContain('id_preview_consumed_at');
+    expect(cols).toContain('threshold_mode');
+
+    // 4. Test functional behavior of api.consume_id_preview_authorization_v1
+    const profRes = await db.query<{ id: string }>(`
+      insert into public.returning_visitor_profiles (
+        first_name, last_name, contact_number_e164, home_address, home_building, home_street,
+        psgc_region_code, psgc_city_code, psgc_barangay_code,
+        psgc_region_name, psgc_city_municipality_name, psgc_barangay_name,
+        expires_at
+      ) values (
+        'Maria', 'Santos', '+639171234567', 'Sampaloc, Manila', '123', 'Legarda St',
+        '130000000', '133900000', '133901001',
+        'National Capital Region', 'City of Manila', 'Barangay 408',
+        now() + interval '1 day'
+      ) returning id;
+    `);
+    const profId = profRes.rows[0].id;
+
+    // 4a. Calibrated attempt can be consumed exactly once
+    const actorId = '11111111-1111-4111-8111-111111111111';
+    const calDigest = 'calibrated_digest_abc_123';
+    await db.query(`
+      insert into public.returning_identity_attempts (
+        owner_id, request_id, matched_profile_id, outcome, best_score,
+        model_version, match_token_digest, expires_at, threshold_mode
+      ) values (
+        '${actorId}', gen_random_uuid()::text, '${profId}', 'matched', 0.85,
+        'v1', '${calDigest}', now() + interval '5 minutes', 'calibrated'
+      );
+    `);
+
+    // First consumption succeeds
+    const consume1 = await db.query<{ consume_id_preview_authorization_v1: boolean }>(`
+      select api.consume_id_preview_authorization_v1('${profId}'::uuid, '${calDigest}'::text, '${actorId}'::uuid);
+    `);
+    expect(consume1.rows[0].consume_id_preview_authorization_v1).toBe(true);
+
+    // Second consumption fails (atomic single-use)
+    const consume2 = await db.query<{ consume_id_preview_authorization_v1: boolean }>(`
+      select api.consume_id_preview_authorization_v1('${profId}'::uuid, '${calDigest}'::text, '${actorId}'::uuid);
+    `);
+    expect(consume2.rows[0].consume_id_preview_authorization_v1).toBe(false);
+
+    // 4b. Provisional attempt CANNOT authorize ID preview
+    const provDigest = 'provisional_digest_xyz_456';
+    await db.query(`
+      insert into public.returning_identity_attempts (
+        owner_id, request_id, matched_profile_id, outcome, best_score,
+        model_version, match_token_digest, expires_at, threshold_mode
+      ) values (
+        '${actorId}', gen_random_uuid()::text, '${profId}', 'matched', 0.45,
+        'v1', '${provDigest}', now() + interval '5 minutes', 'provisional'
+      );
+    `);
+
+    const provConsume = await db.query<{ consume_id_preview_authorization_v1: boolean }>(`
+      select api.consume_id_preview_authorization_v1('${profId}'::uuid, '${provDigest}'::text, '${actorId}'::uuid);
+    `);
+    expect(provConsume.rows[0].consume_id_preview_authorization_v1).toBe(false);
   }, 60000);
 });

@@ -30,7 +30,7 @@ describe('Returning Visitor 1:1 Profile Discovery & Masking Contract (lookup-ret
     const req = new Request('http://localhost/api/passes/lookup-returning', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ firstName: 'Juan', lastName: 'Cruz' }),
+      body: JSON.stringify({ firstName: 'Juan', lastName: 'Cruz', contactNumber: '09171234567' }),
     });
     const res = await lookupReturningHandler.fetch(req);
     expect(res.status).toBe(401);
@@ -79,7 +79,7 @@ describe('Returning Visitor 1:1 Profile Discovery & Masking Contract (lookup-ret
         authorization: 'Bearer token',
         'content-type': 'application/json',
       },
-      body: JSON.stringify({ firstName: 'Juan', lastName: 'Cruz' }),
+      body: JSON.stringify({ firstName: 'Juan', lastName: 'Cruz', contactNumber: '09171234567' }),
     });
 
     const res = await lookupReturningHandler.fetch(req);
@@ -115,7 +115,7 @@ describe('Returning Visitor 1:1 Profile Discovery & Masking Contract (lookup-ret
         authorization: 'Bearer token',
         'content-type': 'application/json',
       },
-      body: JSON.stringify({ firstName: 'Juan', lastName: 'Cruz' }),
+      body: JSON.stringify({ firstName: 'Juan', lastName: 'Cruz', contactNumber: '09171234567' }),
     });
 
     const res = await lookupReturningHandler.fetch(req);
@@ -182,6 +182,7 @@ describe('Returning Visitor 1:1 Profile Discovery & Masking Contract (lookup-ret
         firstName: 'Juan',
         lastName: 'Cruz',
         middleName: 'Dela',
+        contactNumber: '09171234567',
       }),
     });
 
@@ -198,6 +199,63 @@ describe('Returning Visitor 1:1 Profile Discovery & Masking Contract (lookup-ret
     expect(candidate.maskedContact).toBe('+639***4567');
     // Locality is partial
     expect(candidate.partialLocality).toBe('Barangay 408, City of Manila');
+  });
+
+  it('rejects wildcard characters (% and _) in name search with 400', async () => {
+    vi.spyOn(actorsModule, 'getVerifiedSessionContext').mockResolvedValue({
+      actorId,
+      role: 'visitor',
+      isAnonymous: true,
+      isRecoverySession: false,
+      user: { id: actorId },
+      identity: 'test-user',
+    } as any);
+
+    const req = new Request('http://localhost/api/passes/lookup-returning', {
+      method: 'POST',
+      headers: {
+        authorization: 'Bearer token',
+        'content-type': 'application/json',
+      },
+      body: JSON.stringify({
+        firstName: 'Ju%',
+        lastName: 'Cr_z',
+        contactNumber: '09171234567',
+      }),
+    });
+
+    const res = await lookupReturningHandler.fetch(req);
+    expect(res.status).toBe(400);
+    const json = await res.json();
+    expect(json.error).toBe('invalid_request');
+  });
+
+  it('rejects lookup without contactNumber or psgcCityCode with 400', async () => {
+    vi.spyOn(actorsModule, 'getVerifiedSessionContext').mockResolvedValue({
+      actorId,
+      role: 'visitor',
+      isAnonymous: true,
+      isRecoverySession: false,
+      user: { id: actorId },
+      identity: 'test-user',
+    } as any);
+
+    const req = new Request('http://localhost/api/passes/lookup-returning', {
+      method: 'POST',
+      headers: {
+        authorization: 'Bearer token',
+        'content-type': 'application/json',
+      },
+      body: JSON.stringify({
+        firstName: 'Juan',
+        lastName: 'Cruz',
+      }),
+    });
+
+    const res = await lookupReturningHandler.fetch(req);
+    expect(res.status).toBe(400);
+    const json = await res.json();
+    expect(json.error).toBe('invalid_request');
   });
 
   it('returns empty candidates array when no profiles match', async () => {
@@ -245,6 +303,7 @@ describe('Returning Visitor 1:1 Profile Discovery & Masking Contract (lookup-ret
       body: JSON.stringify({
         firstName: 'Nonexistent',
         lastName: 'Person',
+        contactNumber: '09171234567',
       }),
     });
 

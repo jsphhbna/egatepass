@@ -151,7 +151,7 @@ describe('Returning Visitor Provisional 1:1 Biometric & Enrollment Architecture 
           authorization: 'Bearer dummy-token',
           'content-type': 'application/json',
         },
-        body: JSON.stringify({ firstName: 'Juan', lastName: 'Dela Cruz' }),
+        body: JSON.stringify({ firstName: 'Juan', lastName: 'Dela Cruz', contactNumber: '09171234567' }),
       });
 
       const res = await lookupReturningHandler.fetch(req);

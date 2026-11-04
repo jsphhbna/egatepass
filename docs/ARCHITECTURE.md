@@ -704,10 +704,13 @@ Outage Architecture & Authority Delegation
   - **Stage 1 (Live Camera)**: Live webcam feed with oval guide, "Capture Your Selfie" heading, and "Capture Selfie" action button. Absolutely no biometric or network comparison calls occur during live streaming.
   - **Stage 2 (Capture & Freeze)**: Pressing "Capture Selfie" captures 1 frame via `faceWebcam.capture({ mirror: false })`, stores the blob in `returningSelfieBlob`, creates an object URL, immediately stops the webcam stream, and transitions UI to still-photo review (`returningCaptureStage = 'review'`).
   - **Stage 3 (Still-Photo Review)**: Displays frozen selfie preview with two prominent actions: "Retake Photo" (invalidates photo checkpoint, revokes URL, clears blob/error, restarts camera, returns to live stage) and "Verify This Photo" (explicit confirmation to submit).
-  - **Stage 4 (Quality Preflight & 1:1 Compare)**: Pressing "Verify This Photo" locks review controls, runs client-side `evaluateReturningSelfiePrecheck(returningSelfieBlob)` (validating decodability, resolution ≥ 240px, and extreme darkness/glare while deferring facial sharpness to the server), ensures authenticated portal session, uploads the verified blob to portal storage via a fresh upload intent, and issues exactly ONE `identifyReturningVisitor()` request.
-  - **Stage 5 (Match Accepted)**: Retains the exact matched selfie blob as `photoBlob` and upload intent in `tx.photoIntentId` for subsequent pass issuance (ensuring no second photo is captured), populates profile and form fields, unconditionally hydrates the complete structured residential address (PSGC locality, house/building, street, postal code) via `hydrateReturningAddress()` to prevent stale session leakages, and navigates to `returning_confirm` with Welcome Back feedback. All address fields remain fully editable and are symmetrically submitted in `formData.psgc`. If opted-in via `saveReturningUpdates`, edited address fields are persisted back to `returning_visitor_profiles`.
+  - **Stage 4 (Ephemeral In-Memory 1:1 Compare)**: Pressing "Verify This Photo" locks review controls, runs client-side `evaluateReturningSelfiePrecheck(returningSelfieBlob)` (validating decodability, resolution ≥ 240px, and extreme darkness/glare while deferring facial sharpness to the server), ensures authenticated portal session with Cloudflare Turnstile token, and sends the selfie as an in-memory multipart payload directly to `/api/passes/identify-returning`. The returning selfie is NEVER uploaded to Supabase Storage, never stored in `visitor_evidence`, and never enrolled as a new face template. The server performs a transient 1:1 facial comparison against the selected candidate's original historical registration portrait and performs best-effort memory clearing on mutable buffers in a `finally` block.
+  - **Stage 5 (Match Accepted & Verification Boundaries)**: If comparison meets or exceeds threshold:
+    - In **provisional mode** (`RETURNING_FACE_THRESHOLD_MODE=provisional`, default 0.363 cosine), the verification is marked provisional (`verificationState = 'provisional'`). The visitor is presented with an amber "Provisional Match (Guard Verification at Gate)" banner. Provisional mode CANNOT authorize ID preview access and does not authoritatively link the returning profile in PostgreSQL (`returning_profile_id` remains unlinked until gate inspection).
+    - In **calibrated mode** (requires verified calibration version artifact), the match authorizes profile linkage and allows atomic, single-use ID preview authorization via `api.consume_id_preview_authorization_v1`.
+    - Profile contact and address details are hydrated into the form via `hydrateReturningAddress()` to prevent stale session leakages. If opted-in via `saveReturningUpdates`, edited contact details are persisted back to `returning_visitor_profiles` through `api.issue_online_pass_v6`. If `saveUpdates=false`, stored profile details remain strictly unchanged.
   - **Stage 6 (Match Rejected)**: On low similarity score or image defect, displays specific, actionable feedback based on the exact rejection reason code (`no_face`, `multiple_faces`, `too_small`, `too_dark`, `overexposed`, `blurry`, `framing_failed`) with a prominent "Retake Selfie" button. The selected profile candidate remains active, allowing immediate retake without searching again, and the user is not forced into New Visitor registration.
-  - **Stage 7 (State Cleanup & Decoupled Lifecycle)**: Camera unmount cleanup is isolated to genuine component unmount (`useEffect(() => () => faceWebcam.stop(), [])`) so URL changes during Retake never abort pending WebKit `getUserMedia()` requests. Invalidates previous photo checkpoints on retake and new capture, guaranteeing every attempt receives a fresh upload intent and storage path.
+  - **Stage 7 (State Cleanup & Decoupled Lifecycle)**: Camera unmount cleanup is isolated to genuine component unmount (`useEffect(() => () => faceWebcam.stop(), [])`) so URL changes during Retake never abort pending WebKit `getUserMedia()` requests. Transient selfie buffers and object URLs are cleared on retake.
 
 ### 12.18 Returning Address Hydration, Persistence Hardening & Postal Code Preservation
 - **Deterministic Pure Hydration Helper**:
@@ -719,12 +722,29 @@ Outage Architecture & Authority Delegation
   - Resolves administrative names via exact PSGC codes from `psgc_locations` without fabricating data or mutating database records.
   - Non-sensitive server-side diagnostic logging on reference lookup errors.
 - **Returning Profile Persistence Hardening**:
-  - In `server/routes/passes/issue.ts`, the `saveUpdates` handler explicitly inspects the PostgREST `{ error: updateErr }` and verifies `updatedRows.length > 0` after `.update(profileUpdate).eq('id', ret.profileId).select('id')`.
-  - Fails closed (`throw new Error('psgc_reference_lookup_failed')`) if PSGC location lookup returns error or empty array, preventing partial or inconsistent profile updates.
-  - Symmetrically persists all 13 structured address fields: `psgc_version`, `psgc_region_code`, `psgc_province_code`, `psgc_city_code`, `psgc_barangay_code`, `psgc_region_name`, `psgc_province_name`, `psgc_city_municipality_name`, `psgc_barangay_name`, `home_building`, `home_street`, `postal_code`, and `postal_code_source`.
+  - In `server/routes/passes/issue.ts` and `api.issue_online_pass_v6`, `saveUpdates` is strictly respected: when `requested_save_profile_updates` is `false`, `returning_visitor_profiles` contact number and structured address are preserved completely. When `true`, the profile is updated with validated contact and PSGC address.
   - Returns explicit update status in 201 response: `returningProfileUpdate: 'updated' | 'failed' | 'not_requested'`.
 - **Pass Issuance Survival Invariant**:
   - A failure during returning profile update never fails, aborts, or rolls back an already issued visitor pass.
   - Surfaces honest, non-blocking notification to the visitor if profile persistence fails without exposing database error details or residential PII.
 - **Postal Code Metadata Preservation**:
   - In `src/components/AddressCascadingSelector.tsx`, `handleConfirm()` checks `isUnchangedPostal` and preserves `initialAddress.postalCodeSource` and `postalResolution` when the visitor re-opens and confirms the selector without changing the postal code, preventing silent degradation of `PHLPost` to `manual`.
+
+### 12.19 Returning Visitor Privacy Hardening, Ephemeral Selfie Lifecycle & Calibration Verification Boundaries
+- **Step 1 Turnstile Enforcement on Candidate Lookup**:
+  - Automatic candidate lookup executes `turnstileRef.current.executeChallenge()` and supplies a valid Cloudflare Turnstile token to `createPortalIssueTransaction(freshCaptchaToken)`.
+  - Challenge failure or expiration halts with a retryable toast error and never silently bypasses lookup protection or falls back to `step = 'visit'`.
+- **Independent Profile Creation for "Continue as New Visitor"**:
+  - Explicit choice to register as a New Visitor creates an independent identity record without searching or linking to any existing returning profile, preventing cross-profile leakage across shared family numbers or duplicate names.
+- **Wildcard Enumeration Defense**:
+  - Name parameters in `/api/passes/lookup-returning` strictly reject pattern wildcards (`%`, `_`, `*`, `\`) with 400 `invalid_request`.
+  - Candidate discovery requires an additional factor (either Philippine mobile contact number or PSGC city code) in both automatic and manual modes.
+  - Discovery responses are capped at a maximum of 3 candidates with masked PII.
+- **V2 Evidence-Kind Bound Preview Tokens & Single-Use ID Authorization**:
+  - Preview tokens use the format `v2.<profileId>.<kind>.<expiresAt>.<nonce>.<sig>` with an explicit 300-second (5-minute) TTL.
+  - Photo preview tokens cannot be used to retrieve ID documents (`kind=id` is rejected with 403 `forbidden_evidence_kind`).
+  - Historical ID document preview requires calibrated face verification and is atomically consumed via `api.consume_id_preview_authorization_v1` to prevent replay.
+  - Provisional mode verification cannot authorize ID document preview under any circumstance.
+- **Biometric Calibration Prerequisites**:
+  - The production default threshold `0.363` operates in provisional mode.
+  - Calibrated mode requires documented calibration evidence: representative consented EARIST test dataset, defined enrollment quality metrics, false-accept and false-reject rate measurements, approved calibration artifact (`RETURNING_FACE_CALIBRATION_VERSION`), and documented threshold selection methodology. Without these prerequisites, the system fails closed.

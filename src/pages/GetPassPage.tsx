@@ -260,6 +260,8 @@ export function GetPassPage() {
     homeAddress?: string | null;
     homeLocation?: { lat: number; lon: number } | null;
     matchToken: string;
+    verificationState?: 'calibrated' | 'provisional';
+    guardVerificationRequired?: boolean;
     savedVehicles: Array<{
       id: string;
       vehicleType: string;
@@ -300,6 +302,7 @@ export function GetPassPage() {
   const [returningLookupFirst, setReturningLookupFirst] = useState('');
   const [returningLookupMiddle, setReturningLookupMiddle] = useState('');
   const [returningLookupLast, setReturningLookupLast] = useState('');
+  const [returningLookupContact, setReturningLookupContact] = useState('');
   const [returningCandidates, setReturningCandidates] = useState<ReturningLookupCandidate[]>([]);
   const [selectedReturningCandidate, setSelectedReturningCandidate] = useState<ReturningLookupCandidate | null>(null);
   const [isSearchingReturning, setIsSearchingReturning] = useState(false);
@@ -861,11 +864,19 @@ export function GetPassPage() {
     // Automatic returning visitor candidate check (Step 1 -> Next)
     try {
       setIsCheckingReturningCandidate(true);
-      if (!portalTransactionRef.current) {
-        portalTransactionRef.current = await createPortalIssueTransaction();
-        issueRequestId.current = portalTransactionRef.current.requestId as ReturnType<typeof crypto.randomUUID>;
+      let tx = portalTransactionRef.current;
+      if (!tx || !(await validatePortalSession(tx))) {
+        let freshCaptchaToken: string | undefined;
+        if (turnstileRef.current) {
+          freshCaptchaToken = await turnstileRef.current.executeChallenge();
+        } else {
+          throw new Error('Security verification widget is initializing. Please wait a moment and try again.');
+        }
+        tx = await createPortalIssueTransaction(freshCaptchaToken);
+        portalTransactionRef.current = tx;
+        issueRequestId.current = tx.requestId as ReturnType<typeof crypto.randomUUID>;
       }
-      const lookupRes = await lookupReturningVisitor(portalTransactionRef.current, {
+      const lookupRes = await lookupReturningVisitor(tx, {
         firstName: data.firstName.trim(),
         lastName: data.lastName.trim(),
         middleName: data.middleName?.trim() || undefined,
@@ -880,8 +891,21 @@ export function GetPassPage() {
         setIsCheckingReturningCandidate(false);
         return;
       }
-    } catch (lookupErr) {
-      console.warn('Returning visitor auto-lookup non-blocking error:', lookupErr);
+    } catch (lookupErr: any) {
+      console.warn('Returning visitor auto-lookup error:', lookupErr);
+      turnstileRef.current?.resetChallenge();
+      const msg = lookupErr?.message || '';
+      if (
+        msg.includes('challenge') ||
+        msg.includes('Security verification') ||
+        msg.includes('Turnstile') ||
+        msg.includes('Too many search attempts') ||
+        msg.includes('rate_limit')
+      ) {
+        toast.error(msg || 'Security verification failed. Please try again.');
+        setIsCheckingReturningCandidate(false);
+        return;
+      }
     } finally {
       setIsCheckingReturningCandidate(false);
     }
@@ -905,6 +929,7 @@ export function GetPassPage() {
   function onDeclineReturningCandidate() {
     setShowCandidateMatchModal(false);
     setCandidateMatch(null);
+    setRegistrationMode('new');
     setStep('visit');
   }
 
@@ -1005,6 +1030,11 @@ export function GetPassPage() {
       setReturningSearchError('Please enter both your First Name and Last Name.');
       return;
     }
+    const normPhone = normalizePhMobile(returningLookupContact);
+    if (!normPhone) {
+      setReturningSearchError('Please enter a valid Philippine mobile number (e.g. 09171234567 or +639171234567) registered with your profile.');
+      return;
+    }
     setReturningSearchError(null);
     setIsSearchingReturning(true);
     setReturningCandidates([]);
@@ -1028,6 +1058,8 @@ export function GetPassPage() {
         firstName: returningLookupFirst.trim(),
         lastName: returningLookupLast.trim(),
         middleName: returningLookupMiddle.trim() || undefined,
+        contactNumber: normPhone,
+        mode: 'manual',
       });
 
       if (res.found && res.candidates.length > 0) {
@@ -1189,6 +1221,8 @@ export function GetPassPage() {
         homeAddress: p.homeAddress || null,
         homeLocation: p.homeLocation || null,
         matchToken: data.matchToken,
+        verificationState: data.verificationState || (data.thresholdMode === 'provisional' ? 'provisional' : 'calibrated'),
+        guardVerificationRequired: data.guardVerificationRequired ?? (data.thresholdMode === 'provisional'),
         savedVehicles: (data.savedVehicles || []).map((v) => ({
           id: v.id,
           vehicleType: v.vehicleType,
@@ -3532,9 +3566,19 @@ export function GetPassPage() {
                   />
                 </FormField>
 
+                <FormField label="Registered Mobile Number" requirement="required">
+                  <Input
+                    type="tel"
+                    placeholder="e.g. 09171234567"
+                    value={returningLookupContact}
+                    onChange={(e) => setReturningLookupContact(e.target.value)}
+                    disabled={isSearchingReturning}
+                  />
+                </FormField>
+
                 <Button
                   onClick={onSearchReturningProfile}
-                  disabled={!returningLookupFirst.trim() || !returningLookupLast.trim() || isSearchingReturning}
+                  disabled={!returningLookupFirst.trim() || !returningLookupLast.trim() || !returningLookupContact.trim() || isSearchingReturning}
                   loading={isSearchingReturning}
                   className="w-full"
                   icon={<Search className="h-4 w-4" />}
@@ -3868,20 +3912,34 @@ export function GetPassPage() {
                   Welcome back, {returningProfile.firstName}!
                 </h2>
                 <p className="text-sm text-[var(--color-text-secondary)] mt-1">
-                  Your identity has been verified via biometrics. Confirm today's visit details below.
+                  {returningProfile.verificationState === 'provisional'
+                    ? "Face match is provisional. Please present your physical ID at the gate upon arrival for security verification."
+                    : "Your identity has been verified via biometrics. Confirm today's visit details below."}
                 </p>
               </div>
 
-              {/* Verified Identity Badge */}
-              <div className="rounded-xl border border-emerald-300 bg-emerald-50 p-4 text-xs text-emerald-950 flex items-center justify-between">
-                <div>
-                  <span className="text-[11px] uppercase tracking-wider text-emerald-800 font-semibold block">Verified Name</span>
-                  <span className="font-bold text-base text-emerald-950">{returningProfile.fullName}</span>
+              {/* Verified / Provisional Identity Badge */}
+              {returningProfile.verificationState === 'provisional' ? (
+                <div className="rounded-xl border border-amber-300 bg-amber-50 p-4 text-xs text-amber-950 flex items-center justify-between">
+                  <div>
+                    <span className="text-[11px] uppercase tracking-wider text-amber-800 font-semibold block">Match Candidate</span>
+                    <span className="font-bold text-base text-amber-950">{returningProfile.fullName}</span>
+                  </div>
+                  <span className="rounded-full bg-amber-600 text-white font-bold text-[10px] px-2.5 py-0.5 uppercase tracking-wide">
+                    Provisional Match (Guard Verification at Gate)
+                  </span>
                 </div>
-                <span className="rounded-full bg-emerald-600 text-white font-bold text-[10px] px-2.5 py-0.5 uppercase tracking-wide">
-                  Verified Identity
-                </span>
-              </div>
+              ) : (
+                <div className="rounded-xl border border-emerald-300 bg-emerald-50 p-4 text-xs text-emerald-950 flex items-center justify-between">
+                  <div>
+                    <span className="text-[11px] uppercase tracking-wider text-emerald-800 font-semibold block">Verified Name</span>
+                    <span className="font-bold text-base text-emerald-950">{returningProfile.fullName}</span>
+                  </div>
+                  <span className="rounded-full bg-emerald-600 text-white font-bold text-[10px] px-2.5 py-0.5 uppercase tracking-wide">
+                    Verified Identity
+                  </span>
+                </div>
+              )}
 
               {/* Editable Contact & Address for Today */}
               <div className="space-y-4">

@@ -697,6 +697,7 @@ async function handleRequest(request: Request): Promise<Response> {
         requested_returning_profile_id: parsed.data.registrationMode === 'returning' ? (parsed.data.returning?.profileId ?? null) : null,
         requested_returning_match_token_digest: parsed.data.registrationMode === 'returning' ? returningMatchDigest : null,
         requested_save_vehicle: parsed.data.arrivalMode === 'vehicle' ? Boolean(parsed.data.vehicle?.saveVehicle ?? parsed.data.saveVehicle) : false,
+        requested_save_profile_updates: parsed.data.registrationMode === 'returning' ? Boolean(parsed.data.returning?.saveUpdates) : false,
       }).single<IssueResult>();
 
       if (rpcRes.error || !rpcRes.data) throw rpcRes.error ?? new Error('issue_failed');

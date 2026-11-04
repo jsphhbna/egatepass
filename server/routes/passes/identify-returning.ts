@@ -45,15 +45,28 @@ export function isReturningCryptoConfigured(): boolean {
   return isTemplateKeyConfigured() && isMatchSecretConfigured();
 }
 
+export function isCalibrationArtifactPresent(): boolean {
+  const version = process.env.RETURNING_FACE_CALIBRATION_VERSION?.trim();
+  const artifact = process.env.RETURNING_FACE_CALIBRATION_ARTIFACT?.trim();
+  return Boolean(
+    (version && version !== 'none' && version !== 'pending') ||
+    (artifact && artifact !== 'none' && artifact !== 'pending')
+  );
+}
+
 export function getResolvedCosineThreshold(): number | null {
+  const mode = process.env.RETURNING_FACE_THRESHOLD_MODE?.trim().toLowerCase();
+  if (!mode || (mode !== 'provisional' && mode !== 'calibrated')) {
+    return null;
+  }
   const envVal = process.env.RETURNING_FACE_MIN_COSINE?.trim();
   if (envVal) {
     const num = Number(envVal);
     if (!isNaN(num) && num > 0 && num < 1) {
       return num;
     }
+    return null; // Invalid numeric threshold fails closed
   }
-  const mode = process.env.RETURNING_FACE_THRESHOLD_MODE?.trim().toLowerCase();
   if (mode === 'provisional') {
     return SFACE_PROVISIONAL_COSINE_THRESHOLD;
   }
@@ -68,11 +81,12 @@ export function getThresholdMode(): 'provisional' | 'calibrated' | 'unconfigured
   if (!isThresholdConfigured()) return 'unconfigured';
   const mode = (process.env.RETURNING_FACE_THRESHOLD_MODE || '').trim().toLowerCase();
   if (mode === 'calibrated') return 'calibrated';
-  return 'provisional';
+  if (mode === 'provisional') return 'provisional';
+  return 'unconfigured';
 }
 
 export function isReturningCalibrationConfigured(): boolean {
-  return isThresholdConfigured();
+  return getThresholdMode() === 'calibrated' && isCalibrationArtifactPresent();
 }
 
 export function isReturningEnrollmentAvailable(): boolean {
@@ -542,22 +556,44 @@ async function handleRequest(request: Request): Promise<Response> {
     }
 
     // 7. Compute 1:1 cosine similarity in bounded memory
+    const thresholdMode = getThresholdMode();
+    if (thresholdMode === 'unconfigured') {
+      return jsonResponse(503, {
+        available: false,
+        matched: false,
+        error: 'threshold_unconfigured',
+        message: 'Facial recognition threshold mode is not properly configured.',
+      });
+    }
+
+    if (thresholdMode === 'calibrated' && !isCalibrationArtifactPresent()) {
+      return jsonResponse(422, {
+        available: false,
+        matched: false,
+        error: 'calibration_artifact_missing',
+        message: 'Calibrated facial verification is configured but lacks a verified calibration artifact. Operation failed closed.',
+      });
+    }
+
     const cosineScore = computeCosineSimilarity(queryEmbedding, targetEmbedding);
     const isMatch = cosineScore >= minCosine;
 
     if (isMatch) {
-      // 1:1 Match succeeded: generate single-use opaque match token
+      // 1:1 Match succeeded: generate single-use opaque match token with 5-minute TTL (300s)
       const matchToken = randomBytes(32).toString('hex');
       const matchTokenDigest = computeMatchTokenDigest(matchToken, matchSecret);
-      const expiresAt = new Date(Date.now() + 15 * 60 * 1000).toISOString();
+      const expiresAt = new Date(Date.now() + 5 * 60 * 1000).toISOString();
+      const isCalibrated = thresholdMode === 'calibrated';
+      const attemptOutcome = isCalibrated ? 'matched' : 'provisional_matched';
 
-      // Persist attempt with outcome = 'matched', photo_intent_id = null (ephemeral!)
+      // Persist attempt with photo_intent_id = null (ephemeral!)
       const { error: insertErr } = await admin.from('returning_identity_attempts').insert({
         owner_id: actorId,
         request_id: requestId,
         photo_intent_id: photoIntentId,
         matched_profile_id: profile.id,
-        outcome: 'matched',
+        outcome: attemptOutcome,
+        threshold_mode: thresholdMode,
         best_score: Number(cosineScore.toFixed(4)),
         second_score: null,
         model_name: modelName,
@@ -630,6 +666,12 @@ async function handleRequest(request: Request): Promise<Response> {
         expiresAt,
         similarity: Number(cosineScore.toFixed(4)),
         threshold: minCosine,
+        thresholdMode,
+        verificationState: isCalibrated ? 'calibrated' : 'provisional',
+        guardVerificationRequired: !isCalibrated,
+        message: isCalibrated
+          ? 'Identity verification completed successfully.'
+          : 'Identity verification is provisional. Please present your physical ID to the security guard upon arrival for gate verification.',
         profile: {
           id: profile.id,
           firstName: profile.first_name,
@@ -666,24 +708,29 @@ async function handleRequest(request: Request): Promise<Response> {
         })),
         originalPortraitUrl: `/api/passes/returning-photo-preview?profileId=${profile.id}&token=${matchToken}&kind=photo`,
         originalPortraitDate: origEvDate || profile.created_at,
-        historicalIdUrl: `/api/passes/returning-photo-preview?profileId=${profile.id}&token=${matchToken}&kind=id`,
-        historicalIdDate: historicalIdDate || profile.created_at,
+        historicalIdUrl: isCalibrated
+          ? `/api/passes/returning-photo-preview?profileId=${profile.id}&token=${matchToken}&kind=id`
+          : null,
+        historicalIdDate: isCalibrated
+          ? (historicalIdDate || profile.created_at)
+          : null,
       });
     }
 
-    // 1:1 Match failed: record neutral failure attempt
+    // 1:1 Match failed: record neutral failure attempt with 5-minute TTL
     const { error: failInsertErr } = await admin.from('returning_identity_attempts').insert({
       owner_id: actorId,
       request_id: requestId,
       photo_intent_id: photoIntentId,
       matched_profile_id: profile.id,
       outcome: 'low_similarity',
+      threshold_mode: thresholdMode,
       best_score: Number(cosineScore.toFixed(4)),
       second_score: null,
       model_name: modelName,
       model_version: modelVersion,
       match_token_digest: null,
-      expires_at: new Date(Date.now() + 15 * 60 * 1000).toISOString(),
+      expires_at: new Date(Date.now() + 5 * 60 * 1000).toISOString(),
     });
 
     if (failInsertErr) {
@@ -695,6 +742,7 @@ async function handleRequest(request: Request): Promise<Response> {
       matched: false,
       similarity: Number(cosineScore.toFixed(4)),
       threshold: minCosine,
+      thresholdMode,
       message: 'Photo did not match the selected returning visitor profile. Please retake photo or register as a new visitor.',
     });
   } catch (error) {
@@ -707,6 +755,15 @@ async function handleRequest(request: Request): Promise<Response> {
     }
 
     return jsonResponse(500, { error: 'identification_failed' });
+  } finally {
+    // Best-effort memory cleanup for ephemeral buffers
+    try {
+      if (selfieBuffer && Buffer.isBuffer(selfieBuffer)) {
+        selfieBuffer.fill(0);
+      }
+    } catch {
+      // Ignored
+    }
   }
 }
 

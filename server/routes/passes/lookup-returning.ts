@@ -2,16 +2,18 @@
  * server/routes/passes/lookup-returning.ts
  *
  * Frontdoor for Returning Visitor 1:1 Verification:
- * Accepts registered name (first, last, optional middle) and discovers
- * matching active returning profiles, returning privacy-masked disambiguation records.
+ * Accepts registered name (first, last, optional middle) and an additional matching factor
+ * (contact number or residential locality) to discover matching active returning profiles.
  *
- * Supports two modes:
- * - 'manual': User explicitly initiates lookup from Returning Visitor entry point.
- * - 'auto': Triggered automatically upon completing Step 1.
- *   Requires name match AND (phone match OR address match).
- *
- * Issues time-limited HMAC preview tokens enabling authorized portrait previews
- * without exposing unauthenticated photo endpoints or long-lived credentials.
+ * Anti-Abuse & Anti-Enumeration Protections:
+ * 1. Rejects SQL wildcard characters ('%', '_', '*', '\') to prevent pattern enumeration.
+ * 2. Normalizes input without damaging valid Filipino names, hyphens, spaces, apostrophes, and Unicode.
+ * 3. Requires an additional matching factor (Philippine mobile number or PSGC locality) in BOTH
+ *    'auto' and 'manual' lookup modes.
+ * 4. Limits discovered candidates to at most 3 records.
+ * 5. Returns privacy-masked attributes (maskedName, maskedContact, partialLocality).
+ * 6. Generates HMAC-signed portrait preview tokens strictly bound to kind='photo' and 300s TTL.
+ * 7. Enforces dual-bucket rate limiting (actor bucket and client network bucket).
  */
 
 import { createHash } from 'node:crypto';
@@ -23,6 +25,9 @@ import { normalizePhMobile } from '../../../src/lib/phPhone.js';
 import { getClientNetworkIdentifier } from './issue.js';
 import { createPreviewToken } from './returning-photo-preview.js';
 
+// Rejects wildcards, control characters, and common injection patterns
+const safeNameRegex = /^[^%_*\\<>=;`$[\]{}|]+$/u;
+
 const lookupSchema = z.object({
   firstName: z.string().trim().min(1).max(50),
   lastName: z.string().trim().min(1).max(50),
@@ -31,7 +36,41 @@ const lookupSchema = z.object({
   psgcCityCode: z.string().trim().optional(),
   psgcBarangayCode: z.string().trim().optional(),
   mode: z.enum(['auto', 'manual']).default('manual'),
-}).strict();
+}).strict().superRefine((val, ctx) => {
+  // Reject SQL pattern wildcard characters
+  if (!safeNameRegex.test(val.firstName) || /[%_\\]/.test(val.firstName)) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: 'First name contains invalid or wildcard characters.',
+      path: ['firstName'],
+    });
+  }
+  if (!safeNameRegex.test(val.lastName) || /[%_\\]/.test(val.lastName)) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: 'Last name contains invalid or wildcard characters.',
+      path: ['lastName'],
+    });
+  }
+  if (val.middleName && (!safeNameRegex.test(val.middleName) || /[%_\\]/.test(val.middleName))) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: 'Middle name contains invalid or wildcard characters.',
+      path: ['middleName'],
+    });
+  }
+
+  // Require additional matching factor in both auto and manual modes to prevent enumeration
+  const hasPhone = Boolean(val.contactNumber && val.contactNumber.trim().length > 0);
+  const hasLocation = Boolean(val.psgcCityCode && val.psgcCityCode.trim().length > 0);
+  if (!hasPhone && !hasLocation) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: 'Additional verification factor required (registered mobile number or locality).',
+      path: ['contactNumber'],
+    });
+  }
+});
 
 function maskContact(contact: string): string {
   const cleaned = contact.replace(/\s+/g, '');
@@ -59,7 +98,9 @@ async function handleRequest(request: Request): Promise<Response> {
   if (!token) return jsonResponse(401, { error: 'authentication_required' });
 
   const parsed = lookupSchema.safeParse(await request.json().catch(() => null));
-  if (!parsed.success) return jsonResponse(400, { error: 'invalid_request', details: parsed.error.issues });
+  if (!parsed.success) {
+    return jsonResponse(400, { error: 'invalid_request', details: parsed.error.issues });
+  }
 
   try {
     const { admin } = getServerSupabaseClients();
@@ -77,7 +118,7 @@ async function handleRequest(request: Request): Promise<Response> {
 
     const actorId = session.user.id;
 
-    // 1. Rate limiting - Actor Bucket (15 lookups per 5 minutes to accommodate automatic step-1 checks)
+    // 1. Rate limiting - Actor Bucket (15 lookups per 5 minutes)
     const actorKeyHex = createHash('sha256').update(`actor:${actorId}`).digest('hex');
     const { data: actorAllowed, error: actorRlError } = await admin.schema('api').rpc('consume_rate_limit', {
       requested_key_hex: actorKeyHex,
@@ -125,8 +166,24 @@ async function handleRequest(request: Request): Promise<Response> {
       });
     }
 
+    // Validate phone number if provided
+    let normalizedPhone: string | null = null;
+    if (parsed.data.contactNumber && parsed.data.contactNumber.trim().length > 0) {
+      normalizedPhone = normalizePhMobile(parsed.data.contactNumber);
+      if (!normalizedPhone) {
+        return jsonResponse(400, {
+          error: 'invalid_contact_number',
+          message: 'Please provide a valid Philippine mobile number (e.g. 09171234567 or +639171234567).',
+        });
+      }
+    }
+
     // 3. Search for matching active profiles (functional index lower(first_name), lower(last_name))
+    // Escapes any literal pattern characters to guarantee exact string matching
+    const safeFirst = parsed.data.firstName.trim().replace(/[%_\\]/g, '\\$&');
+    const safeLast = parsed.data.lastName.trim().replace(/[%_\\]/g, '\\$&');
     const nowIso = new Date().toISOString();
+
     let query = admin
       .from('returning_visitor_profiles')
       .select(`
@@ -135,15 +192,17 @@ async function handleRequest(request: Request): Promise<Response> {
         psgc_city_municipality_name, psgc_barangay_name, psgc_province_name, psgc_region_name,
         created_at
       `)
-      .ilike('first_name', parsed.data.firstName)
-      .ilike('last_name', parsed.data.lastName)
+      .ilike('first_name', safeFirst)
+      .ilike('last_name', safeLast)
       .gt('expires_at', nowIso)
       .is('revoked_at', null);
 
     if (parsed.data.middleName && parsed.data.middleName.trim().length > 0) {
-      query = query.ilike('middle_name', parsed.data.middleName.trim());
+      const safeMiddle = parsed.data.middleName.trim().replace(/[%_\\]/g, '\\$&');
+      query = query.ilike('middle_name', safeMiddle);
     }
 
+    // Limit preliminary database candidate set
     const { data: matches, error: searchError } = await query.limit(10);
 
     if (searchError) {
@@ -153,29 +212,35 @@ async function handleRequest(request: Request): Promise<Response> {
 
     let filtered = matches || [];
 
-    // In 'auto' mode, require strong candidate match:
-    // Name match AND (Phone match OR Address match)
-    if (parsed.data.mode === 'auto') {
-      const normalizedPhone = parsed.data.contactNumber ? normalizePhMobile(parsed.data.contactNumber) : null;
-      const cityCode = parsed.data.psgcCityCode?.trim();
-      const brgyCode = parsed.data.psgcBarangayCode?.trim();
+    // Filter by additional factor (phone match OR locality match)
+    const cityCode = parsed.data.psgcCityCode?.trim();
+    const brgyCode = parsed.data.psgcBarangayCode?.trim();
 
-      filtered = filtered.filter((m) => {
-        const phoneMatch = Boolean(normalizedPhone && m.contact_number_e164 === normalizedPhone);
-        const addressMatch = Boolean(cityCode && brgyCode && m.psgc_city_code === cityCode && m.psgc_barangay_code === brgyCode);
-        return phoneMatch || addressMatch;
-      });
-    }
+    filtered = filtered.filter((m) => {
+      const phoneMatch = Boolean(normalizedPhone && m.contact_number_e164 === normalizedPhone);
+      const addressMatch = Boolean(
+        cityCode && m.psgc_city_code === cityCode &&
+        (!brgyCode || m.psgc_barangay_code === brgyCode)
+      );
+      if (normalizedPhone && (cityCode || brgyCode)) {
+        return phoneMatch && addressMatch;
+      }
+      return phoneMatch || addressMatch;
+    });
+
+    // Enforce strict enumeration cap: at most 3 candidates returned
+    const cappedCandidates = filtered.slice(0, 3);
 
     const tokenSecret = process.env.PASS_TOKEN_SECRET || process.env.RETURNING_MATCH_TOKEN_SECRET || 'egatepass-fallback-secret-for-tokens-32chars!';
 
-    const candidates = filtered.map((m) => {
+    const candidates = cappedCandidates.map((m) => {
       const localityParts = [
         m.psgc_barangay_name,
         m.psgc_city_municipality_name || m.psgc_province_name,
       ].filter(Boolean);
 
-      const previewToken = createPreviewToken(m.id, tokenSecret);
+      // Create v2 preview token bound strictly to kind='photo' and 300s TTL
+      const previewToken = createPreviewToken(m.id, tokenSecret, 300, 'photo');
 
       return {
         profileId: m.id,

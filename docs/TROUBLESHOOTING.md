@@ -437,7 +437,24 @@ flowchart TD
 
 ---
 
-### 2.25 Returning Profile Persistence Verification & Postal Code Source Preservation
+### 2.26 Step 1 Candidate Lookup Turnstile Error, Profile Linkage Privacy & Calibration Fail-Closed Handling
+
+- **Symptoms**:
+  1. **Silent Fallback to Visit Step**: In New Visitor registration Step 1 (`form`), automatic candidate lookup fails silently without displaying matches or error toast, immediately progressing to `step = 'visit'`.
+  2. **Accidental Profile Linkage on "Continue as New Visitor"**: A visitor choosing "Continue as New Visitor" with identical name or contact number as an existing profile was previously linked to that returning profile in PostgreSQL.
+  3. **Photo Preview Token Substituted for ID Preview**: An attacker attempting to call `/api/passes/returning-photo-preview?kind=id` using a candidate photo preview token was previously able to retrieve the original ID document.
+  4. **Provisional Mode Claiming Full Verification**: A face match score in provisional mode (`0.363`) displaying a green "Verified Identity" badge.
+- **Root Causes**:
+  1. `onFormNext()` in `GetPassPage.tsx` called `createPortalIssueTransaction()` without obtaining a Cloudflare Turnstile token from `turnstileRef.current.executeChallenge()`, failing closed and being caught in a generic catch block that called `setStep('visit')`.
+  2. `api.issue_online_pass_v6` in Migration 56 linked existing returning profiles by name and contact even when `registration_mode = 'new'`.
+  3. Preview tokens in `returning-photo-preview.ts` were not bound to the `kind` parameter in the HMAC signature.
+  4. Provisional mode did not distinguish between calibrated verification and provisional assistance.
+- **Safe Resolutions**:
+  1. **Step 1 Turnstile Token Acquisition**: `onFormNext()` executes `turnstileRef.current.executeChallenge()` and provides the acquired token to `createPortalIssueTransaction(freshCaptchaToken)`. On challenge failure or expiration, it halts and displays an error toast without advancing to `step = 'visit'`.
+  2. **Profile Isolation for New Visitors**: Migration 60 (`20261104170754_returning_visitor_privacy_hardening_and_linkage_repair.sql`) updates `api.issue_online_pass_v6` so `registration_mode = 'new'` never links or reuses an existing returning profile, instead inserting an independent profile.
+  3. **V2 Evidence-Kind Binding & Single-Use ID Authorization**: Preview tokens use format `v2.<profileId>.<kind>.<expiresAt>.<nonce>.<sig>` with 300s TTL. Tokens issued for `kind=photo` are rejected with 403 `forbidden_evidence_kind` if requested for `kind=id`. ID preview requires calibrated verification and is consumed atomically via `api.consume_id_preview_authorization_v1`.
+  4. **Provisional Mode Separation**: Provisional mode returns `verificationState = 'provisional'`, `guardVerificationRequired = true`, and sets `historicalIdUrl = null`. The UI displays an amber "Provisional Match (Guard Verification at Gate)" banner. Calibrated mode requires documented calibration evidence (`RETURNING_FACE_CALIBRATION_VERSION`) or fails closed.
+
 
 - **Symptoms**:
   1. **Silent Profile Update Failure**: A returning visitor opts in to update their saved profile on the Welcome Back screen (`saveReturningUpdates: true`), and pass issuance succeeds with a 201 response, but changes to their address or contact number are not saved to `returning_visitor_profiles`.

@@ -67,6 +67,9 @@ export interface ReturningIdentifyResult {
   error?: string;
   reasonCode?: string;
   diagnostics?: Record<string, unknown>;
+  thresholdMode?: string;
+  verificationState?: 'calibrated' | 'provisional';
+  guardVerificationRequired?: boolean;
 }
 
 export interface VisitorRegistration {

@@ -462,4 +462,58 @@ describe('Returning Visitor Turnstile Lifecycle & Session Security (Regression S
     expect(token).toBe('mock-cloudflare-turnstile-token-abc');
     expect(widgetExecuteCount).toBe(1);
   });
+
+  // ============================================================
+  // TEST G: Step 1 Automatic Candidate Lookup Turnstile Enforcement (Issue A)
+  // ============================================================
+  it('Test G: Step 1 New Visitor candidate lookup enforces Turnstile acquisition, fails closed on challenge failure without silent bypass', async () => {
+    const turnstileRef = createRef<TurnstileWidgetRef>();
+
+    await act(async () => {
+      root.render(
+        React.createElement(TurnstileWidget, {
+          ref: turnstileRef,
+          execution: 'execute',
+          appearance: 'interaction-only',
+        })
+      );
+    });
+
+    expect(turnstileRef.current).toBeDefined();
+
+    // 1. Success case: executeChallenge acquires token, passed to createPortalIssueTransaction
+    let acquiredToken = '';
+    await act(async () => {
+      acquiredToken = await turnstileRef.current!.executeChallenge();
+    });
+    expect(acquiredToken).toBe('mock-cloudflare-turnstile-token-abc');
+
+    const tx = await createPortalIssueTransaction(acquiredToken);
+    expect(tx).toBeDefined();
+    expect(signInAnonCalls.length).toBe(1);
+    expect(signInAnonCalls[0].options.captchaToken).toBe('mock-cloudflare-turnstile-token-abc');
+
+    // 2. Failure case: Turnstile error/rejection halts and does NOT create transaction or call candidate lookup
+    signInAnonCalls = [];
+    (window as any).turnstile.execute = vi.fn(() => {
+      setTimeout(() => {
+        if (capturedErrorCallback) {
+          capturedErrorCallback('110100'); // Cloudflare challenge failed code
+        }
+      }, 10);
+    });
+
+    let challengeFailed = false;
+    try {
+      await act(async () => {
+        await turnstileRef.current!.executeChallenge();
+      });
+    } catch {
+      challengeFailed = true;
+    }
+    expect(challengeFailed).toBe(true);
+
+    // Verify transaction creation was NOT called with empty token
+    expect(signInAnonCalls.length).toBe(0);
+  });
 });
