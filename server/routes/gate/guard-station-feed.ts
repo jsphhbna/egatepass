@@ -189,7 +189,7 @@ async function handleRequest(request: Request): Promise<Response> {
     const visitorIds = Array.from(new Set(passList.map((p) => p.visitor_id)));
     const passIds = passList.map((p) => p.id);
 
-    let visitors: Array<{ id: string; full_name: string; purpose: string }> = [];
+    let visitors: Array<{ id: string; full_name: string; purpose: string; returning_profile_id?: string | null }> = [];
     let photoEvidence: Array<{ id: string; visitor_id: string }> = [];
     let vehicles: Array<{
       pass_id: string;
@@ -206,7 +206,7 @@ async function handleRequest(request: Request): Promise<Response> {
     if (visitorIds.length > 0) {
       fetchPromises.push(
         (async () => {
-          const { data, error } = await admin.from('visitors').select('id, full_name, purpose').in('id', visitorIds);
+          const { data, error } = await admin.from('visitors').select('id, full_name, purpose, returning_profile_id').in('id', visitorIds);
           if (error) throw error;
           visitors = data || [];
         })(),
@@ -234,6 +234,39 @@ async function handleRequest(request: Request): Promise<Response> {
 
     const visitorMap = new Map(visitors.map((v) => [v.id, v]));
     const photoMap = new Map(photoEvidence.map((e) => [e.visitor_id, e.id]));
+
+    // Resolve historical photo evidence for returning visitors without a direct photo in visitor_evidence
+    const returningProfileIds = Array.from(new Set(visitors.map((v) => v.returning_profile_id).filter(Boolean))) as string[];
+    if (returningProfileIds.length > 0) {
+      const { data: linkedVisitors } = await admin.from('visitors').select('id, returning_profile_id').in('returning_profile_id', returningProfileIds);
+      const linkedIds = (linkedVisitors || []).map((lv) => lv.id);
+      if (linkedIds.length > 0) {
+        const { data: origEv } = await admin.from('visitor_evidence')
+          .select('id, visitor_id, created_at')
+          .in('visitor_id', linkedIds)
+          .eq('kind', 'photo')
+          .is('purged_at', null)
+          .order('created_at', { ascending: true });
+
+        if (origEv && origEv.length > 0) {
+          const profileToEvMap = new Map<string, string>();
+          const vToProfileMap = new Map((linkedVisitors || []).map((lv) => [lv.id, lv.returning_profile_id!]));
+          for (const ev of origEv) {
+            const profId = vToProfileMap.get(ev.visitor_id);
+            if (profId && !profileToEvMap.has(profId)) {
+              profileToEvMap.set(profId, ev.id);
+            }
+          }
+          for (const v of visitors) {
+            if (v.returning_profile_id && profileToEvMap.has(v.returning_profile_id)) {
+              if (!photoMap.has(v.id)) {
+                photoMap.set(v.id, profileToEvMap.get(v.returning_profile_id)!);
+              }
+            }
+          }
+        }
+      }
+    }
     const vehicleMap = new Map(vehicles.map((v) => [v.pass_id, v]));
 
     const entries = passList.map((p) => {

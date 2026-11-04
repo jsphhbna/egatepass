@@ -66,6 +66,7 @@ import {
   ShieldAlert,
   Search,
   UserPlus,
+  ShieldCheck,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { Button, Card, Input, FormField, Stepper, PageShell } from '@/components/ui';
@@ -237,8 +238,6 @@ export function GetPassPage() {
     initialMode === 'returning' ? 'returning' : 'new'
   );
   const [returningAvailable, setReturningAvailable] = useState<boolean | null>(null);
-  const [enrollmentAvailable, setEnrollmentAvailable] = useState<boolean | null>(null);
-  const [thresholdMode, setThresholdMode] = useState<'provisional' | 'calibrated' | 'unconfigured'>('unconfigured');
   const [capabilitiesDiagnostics, setCapabilitiesDiagnostics] = useState<{
     returningVisitorAvailable?: boolean;
     returningEnrollmentAvailable?: boolean;
@@ -273,7 +272,6 @@ export function GetPassPage() {
   const [returningIdentifyError, setReturningIdentifyError] = useState<string | null>(null);
   const [saveReturningUpdates, setSaveReturningUpdates] = useState(false);
   const [selectedSavedVehicleId, setSelectedSavedVehicleId] = useState<string>('none');
-  const [rememberVisitor, setRememberVisitor] = useState(false);
   const [saveVehicle, setSaveVehicle] = useState(false);
 
   // Returning visitor capture/freeze/review workflow state
@@ -284,6 +282,19 @@ export function GetPassPage() {
   const historicalIdPreview = historicalIdUrl.url;
   const historicalIdRequestGeneration = useRef(0);
   const [loadingHistoricalId, setLoadingHistoricalId] = useState(false);
+
+  // Data Privacy Notice Modal state
+  const [showPrivacyModal, setShowPrivacyModal] = useState(false);
+
+  // Automatic Returning Visitor Candidate Match state (Step 1 -> Auto Check)
+  const [candidateMatch, setCandidateMatch] = useState<ReturningLookupCandidate | null>(null);
+  const [showCandidateMatchModal, setShowCandidateMatchModal] = useState(false);
+  const [isCheckingReturningCandidate, setIsCheckingReturningCandidate] = useState(false);
+
+  // Historical evidence URLs & metadata for Returning Visitor Welcome Back screen
+  const [originalPortraitUrl, setOriginalPortraitUrl] = useState<string | null>(null);
+  const [originalPortraitDate, setOriginalPortraitDate] = useState<string | null>(null);
+  const [historicalIdSubmittedDate, setHistoricalIdSubmittedDate] = useState<string | null>(null);
 
   // Returning visitor 1:1 lookup state
   const [returningLookupFirst, setReturningLookupFirst] = useState('');
@@ -406,8 +417,6 @@ export function GetPassPage() {
       .then((data) => {
         if (data) {
           setReturningAvailable(Boolean(data?.returningVisitorAvailable));
-          setEnrollmentAvailable(Boolean(data?.returningEnrollmentAvailable));
-          setThresholdMode(data?.thresholdMode || 'unconfigured');
           setCapabilitiesDiagnostics({
             returningVisitorAvailable: Boolean(data.returningVisitorAvailable),
             returningEnrollmentAvailable: Boolean(data.returningEnrollmentAvailable),
@@ -421,7 +430,6 @@ export function GetPassPage() {
       })
       .catch(() => {
         setReturningAvailable(false);
-        setEnrollmentAvailable(false);
       });
   }, []);
 
@@ -620,7 +628,6 @@ export function GetPassPage() {
     setReturningProfile(null);
     setReturningIdentifyError(null);
     setSaveReturningUpdates(false);
-    setRememberVisitor(false);
     setSaveVehicle(false);
     setShowReturningGateModal(false);
     setReturningCaptureStage('live');
@@ -635,6 +642,13 @@ export function GetPassPage() {
     setReturningCandidates([]);
     setSelectedReturningCandidate(null);
     setReturningSearchError(null);
+    setShowPrivacyModal(false);
+    setCandidateMatch(null);
+    setShowCandidateMatchModal(false);
+    setIsCheckingReturningCandidate(false);
+    setOriginalPortraitUrl(null);
+    setOriginalPortraitDate(null);
+    setHistoricalIdSubmittedDate(null);
 
     // 5. Clear identity evidence & stop webcam
     void abandonPortalEvidence(portalTransactionRef.current, 'photo');
@@ -844,6 +858,53 @@ export function GetPassPage() {
       return;
     }
 
+    // Automatic returning visitor candidate check (Step 1 -> Next)
+    try {
+      setIsCheckingReturningCandidate(true);
+      if (!portalTransactionRef.current) {
+        portalTransactionRef.current = await createPortalIssueTransaction();
+        issueRequestId.current = portalTransactionRef.current.requestId as ReturnType<typeof crypto.randomUUID>;
+      }
+      const lookupRes = await lookupReturningVisitor(portalTransactionRef.current, {
+        firstName: data.firstName.trim(),
+        lastName: data.lastName.trim(),
+        middleName: data.middleName?.trim() || undefined,
+        contactNumber: phRes,
+        psgcCityCode: selectedPsgc?.city?.code,
+        psgcBarangayCode: selectedPsgc?.barangay?.code,
+        mode: 'auto',
+      });
+      if (lookupRes.found && lookupRes.candidates && lookupRes.candidates.length > 0 && lookupRes.candidates[0]) {
+        setCandidateMatch(lookupRes.candidates[0]);
+        setShowCandidateMatchModal(true);
+        setIsCheckingReturningCandidate(false);
+        return;
+      }
+    } catch (lookupErr) {
+      console.warn('Returning visitor auto-lookup non-blocking error:', lookupErr);
+    } finally {
+      setIsCheckingReturningCandidate(false);
+    }
+
+    setStep('visit');
+  }
+
+  function onAcceptReturningCandidate() {
+    if (!candidateMatch) return;
+    const match = candidateMatch;
+    setShowCandidateMatchModal(false);
+    setRegistrationMode('returning');
+    setSelectedReturningCandidate(match);
+    setReturningIdentifyError(null);
+    setReturningCaptureStage('live');
+    setReturningSelfieBlob(null);
+    setStep('returning_capture');
+    void faceWebcam.start();
+  }
+
+  function onDeclineReturningCandidate() {
+    setShowCandidateMatchModal(false);
+    setCandidateMatch(null);
     setStep('visit');
   }
 
@@ -1085,16 +1146,10 @@ export function GetPassPage() {
         issueRequestId.current = tx.requestId as ReturnType<typeof crypto.randomUUID>;
       }
 
-      // 3. Upload captured face blob via portal evidence checkpoint
-      const photoRes = await uploadPortalEvidence(tx, 'photo', returningSelfieBlob);
-      tx.photoIntentId = photoRes.intentId;
-      tx.photoCheckpoint = photoRes.checkpoint;
-
-      // 4. Identify returning visitor via authenticated 1:1 endpoint
-      const data = await identifyReturningVisitor(tx, photoRes.intentId, selectedReturningCandidate.profileId);
+      // 3. Identify returning visitor via ephemeral 1:1 endpoint (in-memory comparison against original portrait)
+      const data = await identifyReturningVisitor(tx, returningSelfieBlob, selectedReturningCandidate.profileId);
 
       if (!data?.matched || !data.profile || !data.matchToken) {
-        void abandonPortalEvidence(tx, 'photo');
         const reasonCode = (data as any)?.reasonCode || '';
         const rawMsg = data?.message || '';
         let userFriendlyMsg = 'Make sure your face is clearly visible, look directly at the camera and use even lighting. You can retake your selfie and try again.';
@@ -1161,6 +1216,19 @@ export function GetPassPage() {
       } else {
         setHomeLocation(null);
         setValue('homeLocation', null);
+      }
+
+      if (data.originalPortraitUrl) {
+        setOriginalPortraitUrl(data.originalPortraitUrl);
+      }
+      if (data.originalPortraitDate) {
+        setOriginalPortraitDate(data.originalPortraitDate);
+      }
+      if (data.historicalIdUrl) {
+        historicalIdUrl.setUrl(data.historicalIdUrl);
+      }
+      if (data.historicalIdDate) {
+        setHistoricalIdSubmittedDate(data.historicalIdDate);
       }
 
       setPhotoBlob(returningSelfieBlob);
@@ -1830,7 +1898,7 @@ export function GetPassPage() {
               saveUpdates: saveReturningUpdates,
             }
           : undefined,
-        rememberVisitor: registrationMode === 'returning' ? false : rememberVisitor,
+        rememberVisitor: false,
       };
 
       const result = await issueVisitorPass('portal', formData, photoBlob, idBlob, issueRequestId.current, undefined, portalTransactionRef.current, vehiclePhotoBlob);
@@ -2086,10 +2154,6 @@ export function GetPassPage() {
                         <span className="rounded-full bg-amber-50 text-amber-900 border border-amber-300 px-2.5 py-0.5 text-[10px] font-bold">
                           Setup Pending
                         </span>
-                      ) : thresholdMode === 'provisional' ? (
-                        <span className="rounded-full bg-blue-50 text-blue-900 border border-blue-200 px-2.5 py-0.5 text-[10px] font-bold">
-                          Provisional Mode (0.363)
-                        </span>
                       ) : (
                         <span className="rounded-full bg-emerald-50 text-emerald-900 border border-emerald-300 px-2.5 py-0.5 text-[10px] font-bold">
                           Ready
@@ -2104,10 +2168,6 @@ export function GetPassPage() {
                       {returningAvailable === false ? (
                         <p className="text-[11px] text-amber-900/80 mt-2 font-medium leading-relaxed">
                           Returning visitor 1:1 facial verification is not yet operational pending configuration. Please proceed as a New Visitor.
-                        </p>
-                      ) : thresholdMode === 'provisional' ? (
-                        <p className="text-[11px] text-blue-900/80 mt-2 font-medium leading-relaxed">
-                          Operating with OpenCV SFace reference threshold (0.363) for supervised testing. Guard face-to-photo check remains required at the gate.
                         </p>
                       ) : null}
                     </div>
@@ -2391,22 +2451,17 @@ export function GetPassPage() {
                 error={addressError || undefined}
               />
 
-              {/* Data Privacy Notice */}
-              <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-canvas)] p-4 text-xs text-[var(--color-text-secondary)] space-y-2">
-                <p className="font-semibold text-[var(--color-text-primary)]">Data Privacy Notice</p>
-                <p>
-                  Visitor information is processed under EARIST institutional privacy procedures and applicable privacy requirements.{' '}
-                  {typeof photoRetentionDays === 'number'
-                    ? `Face photos are normally retained for ${photoRetentionDays} days.`
-                    : 'Face photos are normally retained under institutional policy.'}{' '}
-                  {typeof idRetentionDays === 'number'
-                    ? `Valid ID images, when collected, are normally retained for ${idRetentionDays} days.`
-                    : 'Valid ID images, when collected, are normally retained under institutional policy.'}{' '}
-                  {typeof visitorRetentionDays === 'number'
-                    ? `Visitor records are retained for ${visitorRetentionDays} days under institutional policy.`
-                    : 'Visitor records are retained under institutional policy.'}{' '}
-                  Evidence is retained at least through the scheduled visit, and authorized incident holds may extend retention when required.
-                </p>
+              {/* Data Privacy Notice Trigger Link */}
+              <div className="flex items-center justify-between rounded-xl border border-[var(--color-border)] bg-[var(--color-canvas)] p-3 text-xs text-[var(--color-text-secondary)]">
+                <span>By proceeding, you acknowledge our campus visitor privacy guidelines.</span>
+                <button
+                  type="button"
+                  onClick={() => setShowPrivacyModal(true)}
+                  className="font-bold text-[#7A0A0A] hover:underline inline-flex items-center gap-1.5 shrink-0 focus:outline-none"
+                >
+                  <ShieldCheck className="h-4 w-4 text-[#7A0A0A]" />
+                  Read our Data Privacy Notice
+                </button>
               </div>
 
               <div className="rounded-lg border border-[var(--color-border)] p-4 bg-[var(--color-surface)]">
@@ -2433,9 +2488,11 @@ export function GetPassPage() {
                 <Button
                   type="submit"
                   className="min-w-[160px]"
+                  loading={isCheckingReturningCandidate}
+                  disabled={isCheckingReturningCandidate}
                   icon={<ArrowRight className="h-4 w-4" />}
                 >
-                  Next: Visit Details
+                  {isCheckingReturningCandidate ? 'Checking...' : 'Next: Visit Details'}
                 </Button>
               </div>
             </form>
@@ -3162,78 +3219,24 @@ export function GetPassPage() {
                 </span>
               </div>
 
-              {/* Institutional Biometric Enrollment Card */}
-              {enrollmentAvailable !== true ? (
-                <div className="rounded-xl border border-slate-200 bg-slate-50 p-4 text-xs text-slate-600">
-                  <div className="flex items-center gap-2 font-semibold text-slate-800">
-                    <Info className="h-4 w-4 text-slate-500 shrink-0" />
-                    <span>Returning Visitor enrollment is temporarily unavailable</span>
-                  </div>
-                  <p className="text-[11px] mt-1 pl-6">
-                    Facial profile encryption setup is pending. Your visit pass will be generated normally for today's visit.
-                  </p>
-                </div>
-              ) : (
-                <div
-                  className={`rounded-2xl border-2 transition-all min-h-[72px] focus-within:ring-2 focus-within:ring-[var(--color-brand)] focus-within:ring-offset-2 overflow-hidden ${
-                    rememberVisitor
-                      ? 'border-[#7A0A0A] bg-gradient-to-r from-[#7A0A0A]/5 via-amber-50/40 to-amber-100/30 shadow-xs'
-                      : 'border-[var(--color-border-strong)] bg-white hover:border-[#7A0A0A]/40 hover:bg-slate-50/60'
-                  }`}
-                >
-                  <label className="flex items-start gap-3.5 p-4 sm:p-4.5 cursor-pointer select-none">
-                    <div className="pt-0.5 shrink-0">
-                      <input
-                        type="checkbox"
-                        checked={rememberVisitor}
-                        onChange={(e) => {
-                          const checked = e.target.checked;
-                          setRememberVisitor(checked);
-                          if (!checked) {
-                            setSaveVehicle(false);
-                          }
-                        }}
-                        className="h-7 w-7 rounded-md border-2 border-[#7A0A0A] text-[#7A0A0A] focus:ring-[#7A0A0A] focus:ring-offset-1 cursor-pointer transition-colors"
-                        aria-describedby="biometric-enrollment-description biometric-retention-notice"
-                      />
-                    </div>
-                    <div className="flex-1 min-w-0">
-                      <div className="flex items-center justify-between gap-2 flex-wrap">
-                        <span className="font-bold text-base text-[var(--color-text-primary)] leading-tight">
-                          Save Facial Biometric Template for Future Visits
-                        </span>
-                        <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-[11px] font-semibold bg-amber-100 text-amber-900 border border-amber-300">
-                          Optional
-                        </span>
-                      </div>
-                      <p id="biometric-enrollment-description" className="text-sm text-[var(--color-text-secondary)] mt-1.5 leading-relaxed">
-                        Securely save an encrypted facial recognition template so you can verify your identity quickly on your next visit without uploading an ID. Declining this option does not affect your gate pass issuance or today's visit.
-                      </p>
-                      <p id="biometric-retention-notice" className="text-xs text-[var(--color-text-muted)] mt-1.5 leading-relaxed">
-                        Ordinary visitor registration details are securely retained under the campus data retention policy regardless of this choice.
+              {/* Standalone Vehicle Save Option for Vehicles */}
+              {getValues('arrivalMode') === 'vehicle' && (
+                <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] p-4">
+                  <label className="flex items-start gap-3 cursor-pointer select-none">
+                    <input
+                      type="checkbox"
+                      checked={saveVehicle}
+                      onChange={(e) => setSaveVehicle(e.target.checked)}
+                      className="mt-0.5 h-4 w-4 rounded border-[var(--color-border)] text-[#7A0A0A] focus:ring-[#7A0A0A] cursor-pointer"
+                    />
+                    <div className="text-xs text-[var(--color-text-secondary)]">
+                      <strong className="text-[var(--color-text-primary)]">Save this vehicle for future visits</strong>{' '}
+                      <span className="text-[11px] font-medium text-[var(--color-text-muted)]">(optional)</span>
+                      <p className="text-[11px] mt-0.5 text-[var(--color-text-muted)]">
+                        Stores vehicle details for 1-click selection on future visits.
                       </p>
                     </div>
                   </label>
-
-                  {rememberVisitor && getValues('arrivalMode') === 'vehicle' && (
-                    <div className="px-4 pb-3.5 pt-1 sm:px-4.5 border-t border-amber-200/60 bg-amber-50/50">
-                      <label className="flex items-start gap-2.5 cursor-pointer select-none">
-                        <input
-                          type="checkbox"
-                          checked={saveVehicle}
-                          onChange={(e) => setSaveVehicle(e.target.checked)}
-                          className="mt-0.5 h-5 w-5 rounded border-[var(--color-border)] text-[#7A0A0A] focus:ring-[#7A0A0A] cursor-pointer"
-                        />
-                        <div className="text-xs text-[var(--color-text-secondary)]">
-                          <strong className="text-[var(--color-text-primary)]">Save this vehicle to my profile</strong>{' '}
-                          <span className="text-[11px] font-medium text-amber-800">(optional)</span>
-                          <p className="text-[11px] mt-0.5 text-[var(--color-text-muted)]">
-                            Stores this vehicle for 1-click selection on future visits.
-                          </p>
-                        </div>
-                      </label>
-                    </div>
-                  )}
                 </div>
               )}
 
@@ -3493,15 +3496,6 @@ export function GetPassPage() {
                   Enter your registered full name to locate your profile for 1:1 live facial verification.
                 </p>
               </div>
-
-              {thresholdMode === 'provisional' && (
-                <div className="rounded-xl border border-blue-200 bg-blue-50/70 p-3 text-xs text-blue-900 flex items-start gap-2.5">
-                  <Info className="h-4 w-4 text-blue-700 flex-shrink-0 mt-0.5" />
-                  <div className="text-[11px] leading-relaxed">
-                    <strong>Provisional Verification Mode</strong>: Comparing against OpenCV SFace reference threshold (0.363) for supervised testing. Physical guard face-to-photo verification remains mandatory at the gate.
-                  </div>
-                </div>
-              )}
 
               {returningSearchError && (
                 <div className="rounded-xl border border-[var(--color-danger)] bg-[var(--color-danger-light)] p-4 text-xs text-[var(--color-danger-dark)] flex items-start gap-2" role="alert">
@@ -4330,37 +4324,51 @@ export function GetPassPage() {
                 </div>
               </div>
 
-              {/* Group 3: Verification Evidence */}
+              {/* Group 3: Portrait and ID History */}
               <div className="rounded-xl bg-[var(--color-surface)] p-4 text-sm border border-[var(--color-border)] space-y-3">
                 <span className="font-bold text-xs uppercase tracking-wider text-[var(--color-text-secondary)] block border-b border-[var(--color-border)] pb-2">
-                  Verification Evidence
+                  Portrait and ID History
                 </span>
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                  {/* Verified Selfie */}
+                  {/* Original Registration Portrait */}
                   <div className="space-y-1.5">
-                    <span className="text-xs font-semibold text-[var(--color-text-secondary)] block">
-                      Live Verified Selfie
-                    </span>
-                    {(returningSelfieUrl || photoUrl.url) ? (
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs font-semibold text-[var(--color-text-secondary)] block">
+                        Original Registration Portrait
+                      </span>
+                      {originalPortraitDate && (
+                        <span className="text-[10px] text-[var(--color-text-muted)] font-medium">
+                          Registered: {new Date(originalPortraitDate).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}
+                        </span>
+                      )}
+                    </div>
+                    {originalPortraitUrl ? (
                       <div className="rounded-lg overflow-hidden border border-[var(--color-border)] aspect-[3/4] max-h-48 bg-slate-100 flex items-center justify-center">
                         <img
-                          src={returningSelfieUrl || photoUrl.url || ''}
-                          alt="Verified selfie portrait"
+                          src={originalPortraitUrl}
+                          alt="Original registration portrait"
                           className="h-full w-full object-cover"
                         />
                       </div>
                     ) : (
-                      <div className="rounded-lg border border-dashed border-[var(--color-border)] aspect-[3/4] max-h-48 flex items-center justify-center text-xs text-[var(--color-text-muted)]">
-                        Selfie image unavailable
+                      <div className="rounded-lg border border-dashed border-[var(--color-border)] aspect-[3/4] max-h-48 flex items-center justify-center text-xs text-[var(--color-text-muted)] p-3 text-center">
+                        Original portrait on file
                       </div>
                     )}
                   </div>
 
                   {/* Previously Submitted ID */}
                   <div className="space-y-1.5">
-                    <span className="text-xs font-semibold text-[var(--color-text-secondary)] block">
-                      Previously Submitted ID
-                    </span>
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs font-semibold text-[var(--color-text-secondary)] block">
+                        Previously Submitted ID
+                      </span>
+                      {historicalIdSubmittedDate && (
+                        <span className="text-[10px] text-[var(--color-text-muted)] font-medium">
+                          Submitted: {new Date(historicalIdSubmittedDate).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}
+                        </span>
+                      )}
+                    </div>
                     {loadingHistoricalId ? (
                       <div className="rounded-lg border border-[var(--color-border)] aspect-[3/4] max-h-48 bg-slate-50 flex flex-col items-center justify-center text-center p-3 text-xs text-[var(--color-text-secondary)]">
                         <Loader2 className="w-5 h-5 animate-spin text-[#7A0A0A] mb-2" />
@@ -4377,7 +4385,7 @@ export function GetPassPage() {
                     ) : (
                       <div className="rounded-lg border border-amber-200 bg-amber-50/70 aspect-[3/4] max-h-48 flex flex-col items-center justify-center text-center p-3 text-xs text-amber-900">
                         <Info className="w-5 h-5 text-amber-700 mb-1.5" />
-                        <span className="font-semibold">Previous ID document is not available for preview.</span>
+                        <span className="font-semibold">Previous ID document is on file with campus records.</span>
                       </div>
                     )}
                   </div>
@@ -4650,6 +4658,186 @@ export function GetPassPage() {
           setStep('done');
         }}
       />
+
+      {/* Automatic Returning Visitor Candidate Match Modal */}
+      {showCandidateMatchModal && candidateMatch && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-xs animate-in fade-in duration-200">
+          <div className="w-full max-w-md rounded-2xl bg-white p-6 shadow-2xl border border-[var(--color-border)] space-y-4">
+            <div className="flex items-center gap-3">
+              <div className="h-10 w-10 rounded-xl bg-amber-100 text-amber-900 flex items-center justify-center shrink-0">
+                <UserCheck className="h-5 w-5 text-[#7A0A0A]" />
+              </div>
+              <div>
+                <h3 className="font-bold text-base text-[var(--color-text-primary)]">
+                  You may have visited EARIST before!
+                </h3>
+                <p className="text-xs text-[var(--color-text-secondary)] mt-0.5">
+                  We found a matching visitor profile from a previous campus visit.
+                </p>
+              </div>
+            </div>
+
+            <div className="rounded-xl border border-amber-200/80 bg-amber-50/50 p-4 space-y-3">
+              <div className="flex items-center gap-4">
+                {candidateMatch.previewUrl ? (
+                  <div className="h-16 w-16 rounded-xl overflow-hidden border border-amber-300 bg-slate-100 shrink-0">
+                    <img
+                      src={candidateMatch.previewUrl}
+                      alt="Previous visit photo preview"
+                      className="h-full w-full object-cover"
+                    />
+                  </div>
+                ) : (
+                  <div className="h-16 w-16 rounded-xl border border-dashed border-amber-300 bg-amber-100/50 flex items-center justify-center shrink-0">
+                    <User className="h-7 w-7 text-amber-800" />
+                  </div>
+                )}
+                <div className="min-w-0 flex-1 space-y-1 text-xs">
+                  <div>
+                    <span className="text-[var(--color-text-muted)] block text-[10px] uppercase font-semibold">Matched Name</span>
+                    <p className="font-bold text-sm text-[var(--color-text-primary)] truncate">{candidateMatch.maskedName}</p>
+                  </div>
+                  <div>
+                    <span className="text-[var(--color-text-muted)] block text-[10px] uppercase font-semibold">Contact & Locality</span>
+                    <p className="text-[var(--color-text-secondary)] font-medium">
+                      {candidateMatch.maskedContact} • {candidateMatch.partialLocality || 'Manila'}
+                    </p>
+                  </div>
+                  {candidateMatch.registeredAt && (
+                    <p className="text-[10px] text-amber-800 font-medium">
+                      First visit: {new Date(candidateMatch.registeredAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}
+                    </p>
+                  )}
+                </div>
+              </div>
+              <p className="text-[11px] text-amber-900 leading-relaxed border-t border-amber-200/60 pt-2">
+                Verify with a quick live selfie against your original portrait to skip ID upload and use your saved preferences.
+              </p>
+            </div>
+
+            <div className="flex flex-col sm:flex-row gap-2.5 pt-2">
+              <Button
+                variant="primary"
+                onClick={onAcceptReturningCandidate}
+                className="flex-1 justify-center"
+                icon={<UserCheck className="h-4 w-4" />}
+              >
+                Verify as Returning Visitor
+              </Button>
+              <Button
+                variant="secondary"
+                onClick={onDeclineReturningCandidate}
+                className="flex-1 justify-center"
+                icon={<UserPlus className="h-4 w-4" />}
+              >
+                Continue as New Visitor
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Institutional Data Privacy Notice Modal */}
+      {showPrivacyModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-xs animate-in fade-in duration-200">
+          <div className="w-full max-w-lg max-h-[85vh] rounded-2xl bg-white p-6 shadow-2xl border border-[var(--color-border)] flex flex-col space-y-4">
+            <div className="flex items-center justify-between border-b border-[var(--color-border)] pb-3">
+              <div className="flex items-center gap-2.5">
+                <div className="h-9 w-9 rounded-xl bg-[#7A0A0A]/10 text-[#7A0A0A] flex items-center justify-center shrink-0">
+                  <ShieldCheck className="h-5 w-5" />
+                </div>
+                <div>
+                  <h3 className="font-bold text-base text-[var(--color-text-primary)]">
+                    Institutional Data Privacy Notice
+                  </h3>
+                  <p className="text-[11px] text-[var(--color-text-secondary)]">
+                    Eulogio "Amang" Rodriguez Institute of Science and Technology (EARIST)
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowPrivacyModal(false)}
+                className="text-[var(--color-text-muted)] hover:text-[var(--color-text-primary)] p-1 rounded-lg hover:bg-slate-100"
+                aria-label="Close"
+              >
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+
+            <div className="overflow-y-auto pr-2 space-y-3 text-xs text-[var(--color-text-secondary)] leading-relaxed">
+              <p>
+                In compliance with <strong>Republic Act No. 10173</strong> (Data Privacy Act of 2012) and its Implementing Rules and Regulations, EARIST is committed to protecting your personal data, privacy, and institutional security.
+              </p>
+
+              <div>
+                <h4 className="font-bold text-[var(--color-text-primary)] text-xs mb-1">1. Purpose of Data Collection</h4>
+                <p>
+                  We collect your full name, Philippine mobile number, residential locality, visit purpose, vehicle information (if applicable), live portrait photo, and government/valid ID image strictly for campus security, visitor verification, authorized emergency tracing, and gate pass issuance.
+                </p>
+              </div>
+
+              <div>
+                <h4 className="font-bold text-[var(--color-text-primary)] text-xs mb-1">2. Data Retention & Automatic Purging</h4>
+                <p>
+                  Your information is maintained under established institutional retention policies:
+                </p>
+                <ul className="list-disc pl-5 mt-1 space-y-1">
+                  <li>
+                    Face photos are normally retained for{' '}
+                    {typeof photoRetentionDays === 'number' ? `${photoRetentionDays} days` : '30 days'}{' '}
+                    under institutional policy.
+                  </li>
+                  <li>
+                    Valid ID images, when collected, are normally retained for{' '}
+                    {typeof idRetentionDays === 'number' ? `${idRetentionDays} days` : '30 days'}{' '}
+                    under institutional policy.
+                  </li>
+                  <li>
+                    Visitor records are retained for{' '}
+                    {typeof visitorRetentionDays === 'number' ? `${visitorRetentionDays} days` : '90 days'}{' '}
+                    under institutional policy.
+                  </li>
+                </ul>
+                <p className="mt-1">
+                  Evidence is retained at least through the scheduled visit, and authorized incident holds may extend retention when required.
+                </p>
+              </div>
+
+              <div>
+                <h4 className="font-bold text-[var(--color-text-primary)] text-xs mb-1">3. Ephemeral Biometric Verification</h4>
+                <p>
+                  Returning visitor facial verification operates ephemerally in transient memory. Live selfies captured during returning verification are never written to permanent storage, face templates are not stored indefinitely without consent, and comparisons are evaluated strictly in bounded memory against your original registration portrait.
+                </p>
+              </div>
+
+              <div>
+                <h4 className="font-bold text-[var(--color-text-primary)] text-xs mb-1">4. Rights of the Data Subject</h4>
+                <p>
+                  Under the Data Privacy Act, you have the right to be informed, to access, to object, to rectify, and to request reasonable erasure of your personal data, subject to legitimate institutional security and statutory retention requirements.
+                </p>
+              </div>
+
+              <div>
+                <h4 className="font-bold text-[var(--color-text-primary)] text-xs mb-1">5. Data Protection Officer</h4>
+                <p>
+                  For privacy inquiries, clarifications, or requests concerning your visitor records, please contact the EARIST Data Protection Office at <em>privacy@earist.edu.ph</em>.
+                </p>
+              </div>
+            </div>
+
+            <div className="pt-3 border-t border-[var(--color-border)] flex justify-end">
+              <Button
+                variant="primary"
+                onClick={() => setShowPrivacyModal(false)}
+                className="w-full sm:w-auto"
+              >
+                I Understand
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
     </PageShell>
   );
 }

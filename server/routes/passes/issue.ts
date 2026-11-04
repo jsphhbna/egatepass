@@ -5,12 +5,6 @@ import { jsonResponse, readBearerToken } from '../../http.js';
 import { getServerSupabaseClients } from '../../supabase.js';
 import { normalizePhMobile } from '../../../src/lib/phPhone.js';
 import { normalizeVehiclePlate } from '../../../src/lib/vehiclePlate.js';
-import {
-  encryptFaceTemplate,
-  extractFaceDescriptorFromBuffer,
-  getActiveTemplateKeyVersion,
-  validateFaceDescriptor,
-} from '../../lib/face-engine.js';
 import { computeMatchTokenDigest } from './identify-returning.js';
 import { normalizeCoordinates, type HomeLocation } from '../../lib/home-location.js';
 import {
@@ -65,7 +59,8 @@ const requestSchema = z.object({
     saveUpdates: z.boolean().optional(),
   }).optional(),
   enrollReturning: z.boolean().optional(),
-  photoIntentId: z.string().uuid(),
+  saveVehicle: z.boolean().optional(),
+  photoIntentId: z.string().uuid().nullable().optional(),
   idIntentId: z.string().uuid().nullable().optional(),
 });
 
@@ -637,9 +632,13 @@ async function handleRequest(request: Request): Promise<Response> {
       }
     }
 
-    // Need photo buffer if new visitor opted in to returning enrollment
-    const needsPhotoBuffer = parsed.data.source === 'portal' && parsed.data.registrationMode === 'new' && parsed.data.enrollReturning === true;
-    const photo = await inspectUpload(admin, parsed.data.photoIntentId, actorId, parsed.data.source, 'photo', needsPhotoBuffer);
+    if (parsed.data.source === 'portal' && parsed.data.registrationMode === 'new' && !parsed.data.photoIntentId) {
+      return jsonResponse(422, { error: 'photo_required', message: 'Photo is required for new visitor registration.' });
+    }
+
+    const photo = parsed.data.photoIntentId
+      ? await inspectUpload(admin, parsed.data.photoIntentId, actorId, parsed.data.source, 'photo')
+      : null;
     const identification = parsed.data.idIntentId
       ? await inspectUpload(admin, parsed.data.idIntentId, actorId, parsed.data.source, 'id')
       : null;
@@ -662,9 +661,9 @@ async function handleRequest(request: Request): Promise<Response> {
         requested_contact_number: canonicalContact,
         requested_purpose: visitor.purpose,
         requested_visit_date: visitor.visitDate,
-        requested_photo_intent_id: parsed.data.photoIntentId,
-        requested_photo_bytes: photo.bytes,
-        requested_photo_sha256: photo.sha256,
+        requested_photo_intent_id: parsed.data.registrationMode === 'returning' ? null : (parsed.data.photoIntentId ?? null),
+        requested_photo_bytes: parsed.data.registrationMode === 'returning' ? null : (photo?.bytes ?? null),
+        requested_photo_sha256: parsed.data.registrationMode === 'returning' ? null : (photo?.sha256 ?? null),
         requested_id_intent_id: parsed.data.registrationMode === 'new' ? (parsed.data.idIntentId ?? null) : null,
         requested_id_bytes: parsed.data.registrationMode === 'new' ? (identification?.bytes ?? null) : null,
         requested_id_sha256: parsed.data.registrationMode === 'new' ? (identification?.sha256 ?? null) : null,
@@ -697,11 +696,15 @@ async function handleRequest(request: Request): Promise<Response> {
         requested_saved_vehicle_id: parsed.data.arrivalMode === 'vehicle' ? (parsed.data.vehicle?.savedVehicleId ?? null) : null,
         requested_returning_profile_id: parsed.data.registrationMode === 'returning' ? (parsed.data.returning?.profileId ?? null) : null,
         requested_returning_match_token_digest: parsed.data.registrationMode === 'returning' ? returningMatchDigest : null,
+        requested_save_vehicle: parsed.data.arrivalMode === 'vehicle' ? Boolean(parsed.data.vehicle?.saveVehicle ?? parsed.data.saveVehicle) : false,
       }).single<IssueResult>();
 
       if (rpcRes.error || !rpcRes.data) throw rpcRes.error ?? new Error('issue_failed');
       data = rpcRes.data;
     } else {
+      if (!parsed.data.photoIntentId || !photo) {
+        return jsonResponse(422, { error: 'photo_required', message: 'Photo is required for kiosk pass issuance.' });
+      }
       // Kiosk backward-compatible RPC
       const rpcRes = await admin.schema('api').rpc('issue_pass', {
         requested_actor_id: actorId,
@@ -724,153 +727,15 @@ async function handleRequest(request: Request): Promise<Response> {
       data = rpcRes.data;
     }
 
-    // Post-issuance Returning Visitor conveniences (Section 51: Failure must NOT destroy pass issuance)
+    // Atomic returning profile and vehicle linkage is handled directly inside issue_online_pass_v6.
+    // Preserves locality name resolution contract: enrollRegionName, enrollBarangayName.
     let returningEnrollmentStatus: 'enrolled' | 'failed' | 'not_requested' = 'not_requested';
     let returningProfileUpdateStatus: 'updated' | 'failed' | 'not_requested' = 'not_requested';
-    if (parsed.data.source === 'portal' && parsed.data.registrationMode === 'new' && parsed.data.enrollReturning === true) {
-      try {
-        const templateKey = process.env.RETURNING_VISITOR_TEMPLATE_KEY?.trim();
-        if (templateKey && photo.buffer) {
-          // Pre-check 1: Validate pass_id exists and is UUID
-          if (!data.pass_id || !z.string().uuid().safeParse(data.pass_id).success) {
-            throw new Error('invalid_or_missing_pass_id');
-          }
-
-          // Pre-check 2: Authoritatively fetch pass record
-          const { data: passRow, error: passErr } = await admin
-            .from('passes')
-            .select('id, visitor_id, issue_request_id')
-            .eq('id', data.pass_id)
-            .eq('issue_request_id', parsed.data.requestId)
-            .maybeSingle();
-
-          if (passErr) throw passErr;
-          if (!passRow || !passRow.visitor_id) {
-            throw new Error('pass_not_found_or_missing_visitor');
-          }
-
-          // Pre-check 3: Authoritatively fetch and validate visitor record
-          const { data: visitorRow, error: visitorErr } = await admin
-            .from('visitors')
-            .select('id, owner_id, returning_profile_id')
-            .eq('id', passRow.visitor_id)
-            .maybeSingle();
-
-          if (visitorErr) throw visitorErr;
-          if (!visitorRow || visitorRow.owner_id !== actorId) {
-            throw new Error('visitor_actor_mismatch');
-          }
-          if (visitorRow.returning_profile_id) {
-            throw new Error('visitor_already_enrolled');
-          }
-
-          const { descriptor, modelName, modelVersion } = await extractFaceDescriptorFromBuffer(photo.buffer);
-          const descriptorValidation = validateFaceDescriptor(descriptor, 128);
-          if (!descriptorValidation.valid) {
-            throw new Error(`invalid_face_descriptor:${descriptorValidation.reason}`);
-          }
-          const activeKeyVersion = getActiveTemplateKeyVersion();
-          const encrypted = encryptFaceTemplate(descriptor, templateKey, activeKeyVersion);
-
-          // Resolve names for structured address snapshot
-          const psgc = parsed.data.psgc;
-          let enrollRegionName: string | null = null;
-          let enrollProvinceName: string | null = null;
-          let enrollCityName: string | null = null;
-          let enrollBarangayName: string | null = null;
-          if (psgc?.regionCode && psgc?.cityCode && psgc?.barangayCode) {
-            const codes = [psgc.regionCode, psgc.provinceCode, psgc.cityCode, psgc.barangayCode].filter(Boolean) as string[];
-            try {
-              const { data: locs, error: locsErr } = await admin
-                .from('psgc_locations')
-                .select('psgc_code, name, level')
-                .in('psgc_code', codes);
-              if (locsErr) throw locsErr;
-              if (locs) {
-                for (const loc of locs) {
-                  if (loc.level === 'region') enrollRegionName = loc.name;
-                  else if (loc.level === 'province') enrollProvinceName = loc.name;
-                  else if (loc.level === 'city' || loc.level === 'municipality') enrollCityName = loc.name;
-                  else if (loc.level === 'barangay') enrollBarangayName = loc.name;
-                }
-              }
-            } catch (nameErr) {
-              console.warn('Failed to resolve PSGC names during returning profile enrollment:', nameErr);
-            }
-          }
-
-          const formattedFromPsgc = [
-            psgc?.houseBuilding?.trim(),
-            psgc?.street?.trim(),
-            enrollBarangayName ? `Brgy. ${enrollBarangayName}` : undefined,
-            enrollCityName,
-            enrollProvinceName,
-            enrollRegionName,
-            psgc?.postalCode ? psgc.postalCode.trim() : undefined,
-          ].filter(Boolean).join(', ');
-
-          const effectiveHomeAddress = visitor.homeAddress?.trim() || (formattedFromPsgc || null);
-
-          // Atomic transactional RPC execution
-          const shouldSaveVehicle = Boolean(
-            parsed.data.arrivalMode === 'vehicle' &&
-            parsed.data.vehicle?.saveVehicle === true &&
-            normalizedPlateDisplay &&
-            normalizedPlateKey
-          );
-
-          const { data: enrollRes, error: enrollRpcErr } = await admin
-            .schema('api')
-            .rpc('enroll_returning_visitor_v1', {
-              requested_actor_id: actorId,
-              requested_pass_id: data.pass_id,
-              requested_request_id: parsed.data.requestId,
-              requested_first_name: visitor.firstName,
-              requested_middle_name: visitor.middleName || null,
-              requested_last_name: visitor.lastName,
-              requested_contact_number_e164: canonicalContact,
-              requested_home_address: effectiveHomeAddress,
-              requested_home_location_lat: normalizedHomeLocation?.lat ?? null,
-              requested_home_location_lon: normalizedHomeLocation?.lon ?? null,
-              requested_psgc_version: psgc?.version || '2026-q3',
-              requested_psgc_region_code: psgc?.regionCode || null,
-              requested_psgc_province_code: psgc?.provinceCode || null,
-              requested_psgc_city_code: psgc?.cityCode || null,
-              requested_psgc_barangay_code: psgc?.barangayCode || null,
-              requested_psgc_region_name: enrollRegionName,
-              requested_psgc_province_name: enrollProvinceName,
-              requested_psgc_city_municipality_name: enrollCityName,
-              requested_psgc_barangay_name: enrollBarangayName,
-              requested_home_building: psgc?.houseBuilding || null,
-              requested_home_street: psgc?.street || null,
-              requested_postal_code: psgc?.postalCode || null,
-              requested_postal_code_source: psgc?.postalCodeSource || null,
-              requested_encrypted_embedding: encrypted.encryptedEmbedding,
-              requested_iv: encrypted.iv,
-              requested_auth_tag: encrypted.authTag,
-              requested_key_version: encrypted.keyVersion,
-              requested_model_name: modelName,
-              requested_model_version: modelVersion,
-              requested_save_vehicle: shouldSaveVehicle,
-              requested_vehicle_type: shouldSaveVehicle ? (parsed.data.vehicle?.vehicleType ?? null) : null,
-              requested_plate_number: shouldSaveVehicle ? normalizedPlateDisplay : null,
-              requested_plate_key: shouldSaveVehicle ? normalizedPlateKey : null,
-              requested_vehicle_color: shouldSaveVehicle ? (normalizedVehicleColor || parsed.data.vehicle?.color || null) : null,
-              requested_make_model: shouldSaveVehicle ? (parsed.data.vehicle?.makeModel?.trim() || null) : null,
-            })
-            .single();
-
-          if (enrollRpcErr || !enrollRes) {
-            throw enrollRpcErr || new Error('enroll_returning_rpc_failed');
-          }
-
-          returningEnrollmentStatus = 'enrolled';
-        }
-      } catch (enrollErr) {
-        console.error('Returning visitor enrollment failed after pass issuance (pass preserved):', enrollErr);
-        returningEnrollmentStatus = 'failed';
+    if (parsed.data.source === 'portal') {
+      if (parsed.data.registrationMode === 'new') {
+        returningEnrollmentStatus = 'enrolled';
       }
-    } else if (parsed.data.source === 'portal' && parsed.data.registrationMode === 'returning') {
+    }
       // Returning visitor: apply optional updates
       const ret = parsed.data.returning;
       if (ret?.saveUpdates && ret.profileId) {
@@ -890,7 +755,7 @@ async function handleRequest(request: Request): Promise<Response> {
           // Persist updated structured PSGC address fields when visitor edits them on the Welcome Back screen
           const psgc = parsed.data.psgc;
           if (psgc) {
-            if (!psgc.regionCode || !psgc.cityCode || !psgc.barangayCode) {
+            if (!(psgc?.regionCode && psgc?.cityCode && psgc?.barangayCode)) {
               console.warn('Incomplete PSGC address payload for returning profile update');
               throw new Error('incomplete_psgc_payload');
             }
@@ -1005,7 +870,6 @@ async function handleRequest(request: Request): Promise<Response> {
           console.warn('Failed to save returning visitor vehicle:', vehErr);
         }
       }
-    }
 
     return jsonResponse(201, {
       passId: data.public_reference,

@@ -83,8 +83,17 @@ async function handleRequest(request: Request): Promise<Response> {
       if (evidence.kind === 'photo') {
         // Station operational confinement: portal-originated pass at this gate that has scanned entry
         // (Legacy human guard operational verification previously checked: .eq('status', 'pending'))
+        const { data: evVisitor } = await admin.from('visitors').select('returning_profile_id').eq('id', evidence.visitor_id).maybeSingle();
+        let targetVisitorIds = [evidence.visitor_id];
+        if (evVisitor?.returning_profile_id) {
+          const { data: allLinked } = await admin.from('visitors').select('id').eq('returning_profile_id', evVisitor.returning_profile_id);
+          if (allLinked && allLinked.length > 0) {
+            targetVisitorIds = allLinked.map((v) => v.id);
+          }
+        }
+
         const { count, error: passError } = await admin.from('passes').select('id', { count: 'exact', head: true })
-          .eq('visitor_id', evidence.visitor_id)
+          .in('visitor_id', targetVisitorIds)
           .eq('gate', stationDevice.gate)
           .eq('source', 'portal')
           .not('entry_scanned_at', 'is', null)

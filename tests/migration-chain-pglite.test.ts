@@ -2886,4 +2886,31 @@ describe('Permanent PostgreSQL Migration Chain & Schema Contracts (PGlite)', () 
     expect(rateGrantees).not.toContain('authenticated');
     expect(rateGrantees).not.toContain('PUBLIC');
   }, 60000);
+
+  it('56. Migration 20261104000800_ephemeral_returning_verification_and_profile_linkage relaxes returning photo intent and enables automatic profile linkage', async () => {
+    const db = new PGlite();
+    const files = await applyAllMigrations(db);
+    expect(files.length).toBe(59);
+
+    // 1. Verify execute permissions on api.issue_online_pass_v6
+    const permCheck = await db.query<{ grantee: string }>(`
+      select distinct grantee
+      from information_schema.routine_privileges
+      where routine_schema = 'api' and routine_name = 'issue_online_pass_v6';
+    `);
+    const grantees = permCheck.rows.map((r) => r.grantee);
+    expect(grantees).toContain('service_role');
+    expect(grantees).not.toContain('anon');
+    expect(grantees).not.toContain('authenticated');
+    expect(grantees).not.toContain('PUBLIC');
+
+    // 2. Verify search_path is locked down to empty string
+    const procCheck = await db.query<{ proconfig: string[] }>(`
+      select p.proconfig
+      from pg_proc p
+      join pg_namespace n on n.oid = p.pronamespace
+      where n.nspname = 'api' and p.proname = 'issue_online_pass_v6';
+    `);
+    expect(procCheck.rows[0].proconfig).toEqual(['search_path=""']);
+  }, 60000);
 });

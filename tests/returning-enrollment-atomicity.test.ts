@@ -3,8 +3,9 @@ import passIssueHandler from '../server/routes/passes/issue.js';
 import * as supabaseModule from '../server/supabase.js';
 import * as actorsModule from '../server/actors.js';
 import * as faceEngineModule from '../server/lib/face-engine.js';
+import { computeMatchTokenDigest } from '../server/routes/passes/identify-returning.js';
 
-describe('Returning Visitor Enrollment Fail-Closed & Atomicity Invariants', () => {
+describe('Returning Visitor & Ephemeral Verification Pass Issuance Invariants', () => {
   const originalEnv = process.env;
   const mockActorId = '11111111-1111-4111-8111-111111111111';
   const mockRequestId = '22222222-2222-4222-8222-222222222222';
@@ -12,12 +13,14 @@ describe('Returning Visitor Enrollment Fail-Closed & Atomicity Invariants', () =
   const mockVisitorId = '44444444-4444-4444-8444-444444444444';
   const mockPhotoIntentId = '55555555-5555-4555-8555-555555555555';
   const mockIdIntentId = '66666666-6666-4666-8666-666666666666';
+  const mockProfileId = '77777777-7777-4777-8777-777777777777';
+  const mockMatchToken = 'test-valid-match-token-abc123';
 
   beforeEach(() => {
     process.env = {
       ...originalEnv,
       PASS_TOKEN_SECRET: 'test-pass-token-secret-must-be-at-least-32-chars!',
-      RETURNING_VISITOR_TEMPLATE_KEY: '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef',
+      RETURNING_MATCH_TOKEN_SECRET: 'test-match-token-secret-must-be-at-least-32-chars!',
     };
     vi.restoreAllMocks();
   });
@@ -28,12 +31,8 @@ describe('Returning Visitor Enrollment Fail-Closed & Atomicity Invariants', () =
   });
 
   function setupMocks(overrides: {
-    passRow?: any;
-    passErr?: any;
-    visitorRow?: any;
-    visitorErr?: any;
-    enrollRpcRes?: any;
-    enrollRpcErr?: any;
+    issueRpcData?: any;
+    issueRpcErr?: any;
   } = {}) {
     vi.spyOn(actorsModule, 'getVerifiedSessionContext').mockResolvedValue({
       user: { id: mockActorId } as any,
@@ -41,20 +40,7 @@ describe('Returning Visitor Enrollment Fail-Closed & Atomicity Invariants', () =
       isRecoverySession: false,
     });
 
-    vi.spyOn(faceEngineModule, 'extractFaceDescriptorFromBuffer').mockResolvedValue({
-      descriptor: new Float32Array(128).fill(0.1),
-      modelName: 'sface-v1',
-      modelVersion: '1.0.0',
-    });
-
-    vi.spyOn(faceEngineModule, 'validateFaceDescriptor').mockReturnValue({ valid: true });
-    vi.spyOn(faceEngineModule, 'getActiveTemplateKeyVersion').mockReturnValue('v1');
-    vi.spyOn(faceEngineModule, 'encryptFaceTemplate').mockReturnValue({
-      encryptedEmbedding: 'a'.repeat(64),
-      iv: 'b'.repeat(32),
-      authTag: 'c'.repeat(32),
-      keyVersion: 'v1',
-    });
+    const encryptSpy = vi.spyOn(faceEngineModule, 'encryptFaceTemplate');
 
     function createQueryBuilder(table: string) {
       const q: any = {
@@ -106,37 +92,20 @@ describe('Returning Visitor Enrollment Fail-Closed & Atomicity Invariants', () =
             if (q._filters.issue_request_id && !q._filters.id) {
               return Promise.resolve({ data: null, error: null }); // No replay pass
             }
-            if (q._filters.id) {
-              return Promise.resolve({
-                data: overrides.passRow !== undefined ? overrides.passRow : {
-                  id: mockPassId,
-                  visitor_id: mockVisitorId,
-                  issue_request_id: mockRequestId,
-                },
-                error: overrides.passErr || null,
-              });
-            }
-          }
-          if (table === 'visitors') {
-            return Promise.resolve({
-              data: overrides.visitorRow !== undefined ? overrides.visitorRow : {
-                id: mockVisitorId,
-                owner_id: mockActorId,
-                returning_profile_id: null,
-              },
-              error: overrides.visitorErr || null,
-            });
           }
           if (table === 'upload_intents') {
             const isId = q._filters.id === mockIdIntentId;
+            const isVeh = q._filters.id === '99999999-9999-4999-8999-999999999999';
+            const kind = isVeh ? 'vehicle_photo' : (isId ? 'id' : 'photo');
+            const bucket = isVeh ? 'visitor-vehicle-photos' : (isId ? 'visitor-ids' : 'visitor-photos');
             return Promise.resolve({
               data: {
                 id: q._filters.id || mockPhotoIntentId,
                 owner_id: mockActorId,
                 source: 'portal',
-                kind: isId ? 'id' : 'photo',
-                bucket_id: isId ? 'visitor-ids' : 'visitor-photos',
-                object_path: `portal/${mockActorId}/${isId ? 'id' : 'photo'}.jpg`,
+                kind,
+                bucket_id: bucket,
+                object_path: `portal/${mockActorId}/${kind}.jpg`,
                 content_type: 'image/jpeg',
                 max_bytes: 5242880,
                 status: 'pending',
@@ -158,36 +127,55 @@ describe('Returning Visitor Enrollment Fail-Closed & Atomicity Invariants', () =
               error: null,
             });
           }
+          if (table === 'returning_identity_attempts') {
+            return Promise.resolve({
+              data: {
+                id: 'attempt-123',
+                matched_profile_id: mockProfileId,
+                outcome: 'matched',
+                expires_at: new Date(Date.now() + 600000).toISOString(),
+              },
+              error: null,
+            });
+          }
+          if (table === 'returning_visitor_profiles') {
+            return Promise.resolve({
+              data: {
+                id: mockProfileId,
+                revoked_at: null,
+              },
+              error: null,
+            });
+          }
           return Promise.resolve({ data: null, error: null });
         }),
+        update: vi.fn().mockImplementation((updates: any) => ({
+          eq: vi.fn().mockReturnValue({
+            select: vi.fn().mockResolvedValue({
+              data: [{ id: mockProfileId }],
+              error: null,
+            }),
+          }),
+        })),
+        insert: vi.fn().mockResolvedValue({ data: [{ id: 'veh-1' }], error: null }),
       };
       return q;
     }
 
-    const rpcMock = vi.fn().mockImplementation((fn: string) => {
+    const rpcMock = vi.fn().mockImplementation((fn: string, params: any) => {
       if (fn === 'consume_rate_limit') {
         return Promise.resolve({ data: true, error: null });
       }
       if (fn === 'issue_online_pass_v6') {
         return {
           single: vi.fn().mockResolvedValue({
-            data: {
+            data: overrides.issueRpcData !== undefined ? overrides.issueRpcData : {
               pass_id: mockPassId,
               public_reference: '77777777-7777-4777-8777-777777777777',
               valid_from: new Date().toISOString(),
               valid_until: new Date(Date.now() + 86400000).toISOString(),
             },
-            error: null,
-          }),
-        };
-      }
-      if (fn === 'enroll_returning_visitor_v1') {
-        return {
-          single: vi.fn().mockResolvedValue({
-            data: overrides.enrollRpcRes !== undefined ? overrides.enrollRpcRes : {
-              returning_profile_id: '88888888-8888-4888-8888-888888888888',
-            },
-            error: overrides.enrollRpcErr || null,
+            error: overrides.issueRpcErr || null,
           }),
         };
       }
@@ -213,6 +201,7 @@ describe('Returning Visitor Enrollment Fail-Closed & Atomicity Invariants', () =
         rpc: rpcMock,
       }),
       rpcMock,
+      encryptSpy,
     };
 
     vi.spyOn(supabaseModule, 'getServerSupabaseClients').mockReturnValue({
@@ -223,7 +212,7 @@ describe('Returning Visitor Enrollment Fail-Closed & Atomicity Invariants', () =
     return mockAdmin;
   }
 
-  function makeRequest(enrollReturning = true) {
+  function makeNewVisitorRequest(opts: { omitPhoto?: boolean } = {}) {
     return new Request('http://localhost/api/passes/issue', {
       method: 'POST',
       headers: {
@@ -249,129 +238,133 @@ describe('Returning Visitor Enrollment Fail-Closed & Atomicity Invariants', () =
           provinceCode: null,
           cityCode: '1380600000',
           barangayCode: '1380606014',
-          postalCode: '1008',
-          postalCodeSource: 'PHLPost',
         },
-        photoIntentId: mockPhotoIntentId,
+        photoIntentId: opts.omitPhoto ? undefined : mockPhotoIntentId,
         idIntentId: mockIdIntentId,
-        enrollReturning,
       }),
     });
   }
 
-  it('1. Successfully issues pass and enrolls returning profile in atomic transaction', async () => {
-    setupMocks();
-    const res = await passIssueHandler.fetch(makeRequest(true));
+  function makeReturningVisitorRequest(opts: { saveUpdates?: boolean; saveVehicle?: boolean } = {}) {
+    return new Request('http://localhost/api/passes/issue', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: 'Bearer valid.visitor.jwt',
+      },
+      body: JSON.stringify({
+        requestId: mockRequestId,
+        source: 'portal',
+        registrationMode: 'returning',
+        visitor: {
+          firstName: 'Juan',
+          lastName: 'Dela Cruz',
+          contactNumber: '+639171234567',
+          purpose: 'Official Campus Visit',
+          visitDate: new Date().toISOString().slice(0, 10),
+          homeAddress: 'Sampaloc, Manila',
+        },
+        arrivalMode: opts.saveVehicle ? 'vehicle' : 'no_vehicle',
+        vehicle: opts.saveVehicle ? {
+          vehicleType: 'motorcycle',
+          plateNumber: 'ABC 1234',
+          color: 'Black',
+          makeModel: 'Honda Click 125i',
+          catalogStatus: 'manual',
+          photoIntentId: '99999999-9999-4999-8999-999999999999',
+          saveVehicle: true,
+        } : undefined,
+        psgc: {
+          version: '2026-q3',
+          regionCode: '1300000000',
+          provinceCode: null,
+          cityCode: '1380600000',
+          barangayCode: '1380606014',
+        },
+        returning: {
+          profileId: mockProfileId,
+          matchToken: mockMatchToken,
+          saveUpdates: Boolean(opts.saveUpdates),
+        },
+        // In returning mode, photoIntentId and idIntentId are intentionally omitted (ephemeral verification)
+      }),
+    });
+  }
+
+  it('1. Successfully issues new visitor pass and links profile in atomic issue_online_pass_v6 transaction', async () => {
+    const admin = setupMocks();
+    const res = await passIssueHandler.fetch(makeNewVisitorRequest());
     expect(res.status).toBe(201);
     const body = await res.json();
     expect(body.publicReference).toBe('77777777-7777-4777-8777-777777777777');
     expect(body.returningEnrollment).toBe('enrolled');
+
+    // Verifies issue_online_pass_v6 was called with registrationMode = 'new' and photo/id intents
+    expect(admin.rpcMock).toHaveBeenCalledWith('issue_online_pass_v6', expect.objectContaining({
+      requested_registration_mode: 'new',
+      requested_photo_intent_id: mockPhotoIntentId,
+      requested_id_intent_id: mockIdIntentId,
+    }));
+
+    // Verifies obsolete biometric template encryption was NOT invoked
+    expect(admin.encryptSpy).not.toHaveBeenCalled();
+    expect(admin.rpcMock).not.toHaveBeenCalledWith('enroll_returning_visitor_v1', expect.anything());
   });
 
-  it('2. Fails closed when pass_id is missing: pass is preserved, enrollment marked failed', async () => {
+  it('2. Successfully issues returning visitor pass without photo or id upload intents', async () => {
     const admin = setupMocks();
-    // Simulate pass_id not returned by issuance RPC
-    admin.schema = vi.fn().mockReturnValue({
-      rpc: vi.fn().mockImplementation((fn: string) => {
-        if (fn === 'consume_rate_limit') {
-          return Promise.resolve({ data: true, error: null });
-        }
-        if (fn === 'issue_online_pass_v6') {
-          return {
-            single: vi.fn().mockResolvedValue({
-              data: {
-                pass_id: null, // missing pass_id
-                public_reference: '77777777-7777-4777-8777-777777777777',
-                valid_from: new Date().toISOString(),
-                valid_until: new Date(Date.now() + 86400000).toISOString(),
-              },
-              error: null,
-            }),
-          };
-        }
-        return { single: vi.fn().mockResolvedValue({ data: null, error: null }) };
-      }),
-    });
-
-    const res = await passIssueHandler.fetch(makeRequest(true));
-    expect(res.status).toBe(201);
-    const body = await res.json();
-    // Pass is preserved!
-    expect(body.publicReference).toBe('77777777-7777-4777-8777-777777777777');
-    expect(body.returningEnrollment).toBe('failed');
-  });
-
-  it('3. Fails closed when pass lookup throws error: enrollment marked failed', async () => {
-    setupMocks({ passErr: { message: 'Database connection failed', code: '500' } });
-    const res = await passIssueHandler.fetch(makeRequest(true));
+    const res = await passIssueHandler.fetch(makeReturningVisitorRequest());
     expect(res.status).toBe(201);
     const body = await res.json();
     expect(body.publicReference).toBe('77777777-7777-4777-8777-777777777777');
-    expect(body.returningEnrollment).toBe('failed');
+
+    // Verifies issue_online_pass_v6 was called with registrationMode = 'returning' and null photo/id intents
+    expect(admin.rpcMock).toHaveBeenCalledWith('issue_online_pass_v6', expect.objectContaining({
+      requested_registration_mode: 'returning',
+      requested_photo_intent_id: null,
+      requested_id_intent_id: null,
+      requested_returning_profile_id: mockProfileId,
+    }));
   });
 
-  it('4. Fails closed when visitor owner does not match actorId: enrollment aborted', async () => {
-    setupMocks({
-      visitorRow: {
-        id: mockVisitorId,
-        owner_id: '99999999-9999-4999-8999-999999999999', // Different actor!
-        returning_profile_id: null,
-      },
-    });
-
-    const res = await passIssueHandler.fetch(makeRequest(true));
-    expect(res.status).toBe(201);
-    const body = await res.json();
-    expect(body.publicReference).toBe('77777777-7777-4777-8777-777777777777');
-    expect(body.returningEnrollment).toBe('failed');
-  });
-
-  it('5. Fails closed when visitor is already linked to a returning profile: enrollment aborted', async () => {
-    setupMocks({
-      visitorRow: {
-        id: mockVisitorId,
-        owner_id: mockActorId,
-        returning_profile_id: 'existing-profile-id', // Already enrolled!
-      },
-    });
-
-    const res = await passIssueHandler.fetch(makeRequest(true));
-    expect(res.status).toBe(201);
-    const body = await res.json();
-    expect(body.publicReference).toBe('77777777-7777-4777-8777-777777777777');
-    expect(body.returningEnrollment).toBe('failed');
-  });
-
-  it('6. Fails closed when enroll_returning_visitor_v1 transactional RPC throws: enrollment marked failed', async () => {
-    setupMocks({
-      enrollRpcErr: { message: 'duplicate key value violates unique constraint', code: '23505' },
-    });
-
-    const res = await passIssueHandler.fetch(makeRequest(true));
-    expect(res.status).toBe(201);
-    const body = await res.json();
-    expect(body.publicReference).toBe('77777777-7777-4777-8777-777777777777');
-    expect(body.returningEnrollment).toBe('failed');
-  });
-
-  it('7. Does not attempt enrollment when enrollReturning is false or omitted', async () => {
+  it('3. Rejects new visitor registration when photoIntentId is missing (fail-closed)', async () => {
     setupMocks();
-    const res = await passIssueHandler.fetch(makeRequest(false));
-    expect(res.status).toBe(201);
+    const res = await passIssueHandler.fetch(makeNewVisitorRequest({ omitPhoto: true }));
+    expect(res.status).toBe(422);
     const body = await res.json();
-    expect(body.publicReference).toBe('77777777-7777-4777-8777-777777777777');
-    expect(body.returningEnrollment).toBe('not_requested');
+    expect(body.error).toBe('photo_required');
   });
 
-  it('8. Declining biometric enrollment creates normal pass and visitor records without touching returning profiles', async () => {
-    const mockAdmin = setupMocks();
-    const res = await passIssueHandler.fetch(makeRequest(false));
+  it('4. Allows returning visitor registration without photoIntentId', async () => {
+    const admin = setupMocks();
+    const res = await passIssueHandler.fetch(makeReturningVisitorRequest());
+    expect(res.status).toBe(201);
+    expect(admin.rpcMock).toHaveBeenCalledWith('issue_online_pass_v6', expect.anything());
+  });
+
+  it('5. Successfully updates profile info when returning visitor requests saveUpdates', async () => {
+    setupMocks();
+    const res = await passIssueHandler.fetch(makeReturningVisitorRequest({ saveUpdates: true }));
     expect(res.status).toBe(201);
     const body = await res.json();
-    expect(body.passId).toBe('77777777-7777-4777-8777-777777777777');
-    expect(body.publicReference).toBe('77777777-7777-4777-8777-777777777777');
-    expect(body.returningEnrollment).toBe('not_requested');
-    // Verify that the returning enrollment RPC is never invoked when biometric consent is false
-    expect(mockAdmin.rpcMock).not.toHaveBeenCalledWith('enroll_returning_visitor_v1', expect.anything());
+    expect(body.returningProfileUpdate).toBe('updated');
+  });
+
+  it('6. Saves declared vehicle independently when saveVehicle is true', async () => {
+    const admin = setupMocks();
+    const res = await passIssueHandler.fetch(makeReturningVisitorRequest({ saveVehicle: true }));
+    expect(res.status).toBe(201);
+
+    expect(admin.rpcMock).toHaveBeenCalledWith('issue_online_pass_v6', expect.objectContaining({
+      requested_save_vehicle: true,
+    }));
+  });
+
+  it('7. Fails closed when issue_online_pass_v6 throws database error', async () => {
+    setupMocks({
+      issueRpcErr: { message: 'Database connection failed', code: '500' },
+    });
+    const res = await passIssueHandler.fetch(makeNewVisitorRequest());
+    expect(res.status).toBe(503);
   });
 });

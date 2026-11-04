@@ -138,13 +138,13 @@ describe('Returning Visitor Workflow Separation & Locality Review Contract', () 
       expect(captureStep).not.toContain('Provisional Mode (0.363)');
     });
 
-    it('displays the provisional mode badge on frontdoor returning card', () => {
+    it('removes the user-facing provisional mode badge from frontdoor returning card', () => {
       const frontdoorStep = getPassSrc.slice(
         getPassSrc.indexOf("{step === 'frontdoor' && ("),
         getPassSrc.indexOf("{step === 'arrival_setup' && (")
       );
-      expect(frontdoorStep).toContain("thresholdMode === 'provisional'");
-      expect(frontdoorStep).toContain('Provisional Mode (0.363)');
+      expect(frontdoorStep).not.toContain('Provisional Mode (0.363)');
+      expect(frontdoorStep).toContain('Ready');
     });
   });
 
@@ -171,14 +171,16 @@ describe('Returning Visitor Workflow Separation & Locality Review Contract', () 
       expect(getPassSrc).toContain("{step === 'review' && (");
     });
 
-    it('displays verified identity badge, verified selfie, and historical ID preview', () => {
+    it('displays verified identity badge, original registration portrait, and historical ID preview', () => {
       const returningReviewSection = getPassSrc.slice(
         getPassSrc.indexOf("{step === 'returning_review' && returningProfile && ("),
         getPassSrc.indexOf("{step === 'generating' && (")
       );
       expect(returningReviewSection).toContain('Biometric Identity Verified');
-      expect(returningReviewSection).toContain('Live Verified Selfie');
+      expect(returningReviewSection).toContain('Portrait and ID History');
+      expect(returningReviewSection).toContain('Original Registration Portrait');
       expect(returningReviewSection).toContain('Previously Submitted ID');
+      expect(returningReviewSection).not.toContain('Live Verified Selfie');
       expect(returningReviewSection).toMatch(/historicalId(?:Url|Preview)/);
     });
 
@@ -187,7 +189,7 @@ describe('Returning Visitor Workflow Separation & Locality Review Contract', () 
         getPassSrc.indexOf("{step === 'returning_review' && returningProfile && ("),
         getPassSrc.indexOf("{step === 'generating' && (")
       );
-      expect(returningReviewSection).toContain('Previous ID document is not available for preview.');
+      expect(returningReviewSection).toContain('Previous ID document is on file with campus records.');
     });
 
     it('does NOT contain the Remember Me institutional enrollment card in returning_review', () => {
@@ -211,9 +213,9 @@ describe('Returning Visitor Workflow Separation & Locality Review Contract', () 
   });
 
   describe('8. Returning Pass Issuance Payload & Enrollment Guard', () => {
-    it('forces rememberVisitor to false in pass issuance payload for returning visitors', () => {
+    it('forces rememberVisitor to false in pass issuance payload', () => {
       expect(getPassSrc).toContain(
-        "rememberVisitor: registrationMode === 'returning' ? false : rememberVisitor,"
+        'rememberVisitor: false,'
       );
     });
 

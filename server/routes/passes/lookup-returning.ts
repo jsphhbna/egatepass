@@ -5,8 +5,13 @@
  * Accepts registered name (first, last, optional middle) and discovers
  * matching active returning profiles, returning privacy-masked disambiguation records.
  *
- * Prevents plaintext PII leakage while enabling visitors to select their profile
- * before capturing a fresh selfie for 1:1 biometric comparison.
+ * Supports two modes:
+ * - 'manual': User explicitly initiates lookup from Returning Visitor entry point.
+ * - 'auto': Triggered automatically upon completing Step 1.
+ *   Requires name match AND (phone match OR address match).
+ *
+ * Issues time-limited HMAC preview tokens enabling authorized portrait previews
+ * without exposing unauthenticated photo endpoints or long-lived credentials.
  */
 
 import { createHash } from 'node:crypto';
@@ -14,12 +19,18 @@ import { z } from 'zod';
 import { getVerifiedSessionContext, HttpError } from '../../actors.js';
 import { jsonResponse, readBearerToken } from '../../http.js';
 import { getServerSupabaseClients } from '../../supabase.js';
+import { normalizePhMobile } from '../../../src/lib/phPhone.js';
 import { getClientNetworkIdentifier } from './issue.js';
+import { createPreviewToken } from './returning-photo-preview.js';
 
 const lookupSchema = z.object({
   firstName: z.string().trim().min(1).max(50),
   lastName: z.string().trim().min(1).max(50),
   middleName: z.string().trim().max(50).optional(),
+  contactNumber: z.string().trim().optional(),
+  psgcCityCode: z.string().trim().optional(),
+  psgcBarangayCode: z.string().trim().optional(),
+  mode: z.enum(['auto', 'manual']).default('manual'),
 }).strict();
 
 function maskContact(contact: string): string {
@@ -66,12 +77,12 @@ async function handleRequest(request: Request): Promise<Response> {
 
     const actorId = session.user.id;
 
-    // 1. Rate limiting - Actor Bucket (10 lookups per 5 minutes)
+    // 1. Rate limiting - Actor Bucket (15 lookups per 5 minutes to accommodate automatic step-1 checks)
     const actorKeyHex = createHash('sha256').update(`actor:${actorId}`).digest('hex');
     const { data: actorAllowed, error: actorRlError } = await admin.schema('api').rpc('consume_rate_limit', {
       requested_key_hex: actorKeyHex,
       requested_action: 'portal.lookup_returning',
-      requested_max_requests: 10,
+      requested_max_requests: 15,
       requested_window_seconds: 300,
     });
 
@@ -90,12 +101,12 @@ async function handleRequest(request: Request): Promise<Response> {
       });
     }
 
-    // 2. Rate limiting - Network Bucket (30 lookups per 5 minutes)
+    // 2. Rate limiting - Network Bucket (45 lookups per 5 minutes)
     const networkKeyHex = getClientNetworkIdentifier(request);
     const { data: netAllowed, error: netRlError } = await admin.schema('api').rpc('consume_rate_limit', {
       requested_key_hex: networkKeyHex,
       requested_action: 'portal.network_lookup',
-      requested_max_requests: 30,
+      requested_max_requests: 45,
       requested_window_seconds: 300,
     });
 
@@ -120,7 +131,9 @@ async function handleRequest(request: Request): Promise<Response> {
       .from('returning_visitor_profiles')
       .select(`
         id, first_name, middle_name, last_name, contact_number_e164,
-        psgc_city_municipality_name, psgc_barangay_name, psgc_province_name, psgc_region_name
+        psgc_city_code, psgc_barangay_code,
+        psgc_city_municipality_name, psgc_barangay_name, psgc_province_name, psgc_region_name,
+        created_at
       `)
       .ilike('first_name', parsed.data.firstName)
       .ilike('last_name', parsed.data.lastName)
@@ -138,17 +151,39 @@ async function handleRequest(request: Request): Promise<Response> {
       return jsonResponse(500, { error: 'search_failed' });
     }
 
-    const candidates = (matches || []).map((m) => {
+    let filtered = matches || [];
+
+    // In 'auto' mode, require strong candidate match:
+    // Name match AND (Phone match OR Address match)
+    if (parsed.data.mode === 'auto') {
+      const normalizedPhone = parsed.data.contactNumber ? normalizePhMobile(parsed.data.contactNumber) : null;
+      const cityCode = parsed.data.psgcCityCode?.trim();
+      const brgyCode = parsed.data.psgcBarangayCode?.trim();
+
+      filtered = filtered.filter((m) => {
+        const phoneMatch = Boolean(normalizedPhone && m.contact_number_e164 === normalizedPhone);
+        const addressMatch = Boolean(cityCode && brgyCode && m.psgc_city_code === cityCode && m.psgc_barangay_code === brgyCode);
+        return phoneMatch || addressMatch;
+      });
+    }
+
+    const tokenSecret = process.env.PASS_TOKEN_SECRET || process.env.RETURNING_MATCH_TOKEN_SECRET || 'egatepass-fallback-secret-for-tokens-32chars!';
+
+    const candidates = filtered.map((m) => {
       const localityParts = [
         m.psgc_barangay_name,
         m.psgc_city_municipality_name || m.psgc_province_name,
       ].filter(Boolean);
+
+      const previewToken = createPreviewToken(m.id, tokenSecret);
 
       return {
         profileId: m.id,
         maskedName: maskName(m.first_name, m.middle_name, m.last_name),
         maskedContact: maskContact(m.contact_number_e164),
         partialLocality: localityParts.length > 0 ? localityParts.join(', ') : 'Philippines',
+        registeredAt: m.created_at,
+        previewUrl: `/api/passes/returning-photo-preview?profileId=${m.id}&token=${previewToken}&kind=photo`,
       };
     });
 

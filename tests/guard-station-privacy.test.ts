@@ -15,7 +15,7 @@ describe('Guard Station Privacy & Data Minimization Contracts', () => {
   it('1. Guard station feed never queries or exposes visitor contact number', () => {
     // DB query for visitors must NOT select contact_number
     expect(feedSource).not.toMatch(/select\([^)]*contact_number/);
-    expect(feedSource).toContain("admin.from('visitors').select('id, full_name, purpose')");
+    expect(feedSource).toMatch(/admin\.from\('visitors'\)\.select\('id,\s*full_name,\s*purpose(?:,\s*returning_profile_id)?'\)/);
 
     // Output entry object must NOT map contactNumber
     expect(feedSource).not.toContain('contactNumber:');

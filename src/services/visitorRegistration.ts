@@ -56,6 +56,12 @@ export interface ReturningIdentifyResult {
   expiresAt?: string;
   profile?: ReturningIdentifyProfile;
   savedVehicles?: ReturningSavedVehicle[];
+  originalPortraitUrl?: string;
+  originalPortraitDate?: string;
+  historicalIdUrl?: string;
+  historicalIdDate?: string;
+  similarity?: number;
+  threshold?: number;
   reason?: string;
   message?: string;
   error?: string;
@@ -77,6 +83,7 @@ export interface VisitorRegistration {
   psgc?: PsgcAddressPayload | null;
   registrationMode?: 'new' | 'returning';
   arrivalMode?: 'no_vehicle' | 'vehicle';
+  saveVehicle?: boolean;
   vehicle?: {
     vehicleType?: 'car' | 'motorcycle' | 'van' | 'pickup' | 'suv' | 'truck' | 'bicycle' | 'other' | string;
     plateNumber?: string;
@@ -1352,6 +1359,8 @@ export interface ReturningLookupCandidate {
   maskedName: string;
   maskedContact: string;
   partialLocality: string;
+  registeredAt?: string;
+  previewUrl?: string;
 }
 
 export interface ReturningLookupResult {
@@ -1364,7 +1373,15 @@ export interface ReturningLookupResult {
 
 export async function lookupReturningVisitor(
   transaction: PortalIssueTransaction,
-  payload: { firstName: string; lastName: string; middleName?: string }
+  payload: {
+    firstName: string;
+    lastName: string;
+    middleName?: string;
+    contactNumber?: string;
+    psgcCityCode?: string;
+    psgcBarangayCode?: string;
+    mode?: 'auto' | 'manual';
+  }
 ): Promise<ReturningLookupResult> {
   const { token } = await getVerifiedPortalSession(transaction);
 
@@ -1411,29 +1428,48 @@ export async function lookupReturningVisitor(
 
 export async function identifyReturningVisitor(
   transaction: PortalIssueTransaction,
-  photoIntentId: string,
+  photoBlobOrIntentId: Blob | string,
   profileId: string
 ): Promise<ReturningIdentifyResult> {
   const { token } = await getVerifiedPortalSession(transaction);
 
   let res: Response;
   try {
-    res = await withTimeout(
-      fetch('/api/passes/identify-returning', {
-        method: 'POST',
-        headers: {
-          Authorization: `Bearer ${token}`,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          requestId: transaction.requestId,
-          profileId,
-          photoIntentId,
+    if (typeof photoBlobOrIntentId === 'string') {
+      res = await withTimeout(
+        fetch('/api/passes/identify-returning', {
+          method: 'POST',
+          headers: {
+            Authorization: `Bearer ${token}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            requestId: transaction.requestId,
+            profileId,
+            photoIntentId: photoBlobOrIntentId,
+          }),
         }),
-      }),
-      30000,
-      'Returning visitor identification timed out after 30s'
-    );
+        30000,
+        'Returning visitor identification timed out after 30s'
+      );
+    } else {
+      const formData = new FormData();
+      formData.append('photo', photoBlobOrIntentId, 'selfie.jpg');
+      formData.append('profileId', profileId);
+      formData.append('requestId', transaction.requestId);
+
+      res = await withTimeout(
+        fetch('/api/passes/identify-returning', {
+          method: 'POST',
+          headers: {
+            Authorization: `Bearer ${token}`,
+          },
+          body: formData,
+        }),
+        30000,
+        'Returning visitor identification timed out after 30s'
+      );
+    }
   } catch (err: any) {
     throw new Error('Network connection interrupted during visitor identification. Please try again.');
   }
@@ -1464,7 +1500,7 @@ export async function identifyReturningVisitor(
 export async function issueVisitorPass(
   source: RegistrationSource,
   visitor: VisitorRegistration,
-  photo: Blob,
+  photo?: Blob | null,
   identification?: Blob | null,
   requestId: string = crypto.randomUUID(),
   captchaToken?: string,
@@ -1475,23 +1511,30 @@ export async function issueVisitorPass(
 
   const effectiveRequestId = transaction?.requestId ? transaction.requestId : requestId;
 
-  // Upload photo intent with retry-safe checkpointing (Section 8)
-  let photoIntentId: string;
-  if (shouldReuseUploadedIntentForIssue(transaction, transaction?.photoCheckpoint, transaction?.photoIntentId)) {
-    photoIntentId = transaction!.photoIntentId!;
-  } else {
-    const photoRes = await uploadCheckpointedEvidence(client, source, 'photo', photo, transaction);
-    photoIntentId = photoRes.intentId;
-  }
-
-  // Upload id intent with retry-safe checkpointing if provided (Section 8)
+  // Upload photo intent with retry-safe checkpointing for new visitor
+  let photoIntentId: string | null = null;
   let idIntentId: string | null = null;
-  if (identification) {
-    if (shouldReuseUploadedIntentForIssue(transaction, transaction?.idCheckpoint, transaction?.idIntentId)) {
-      idIntentId = transaction!.idIntentId!;
-    } else {
-      const idRes = await uploadCheckpointedEvidence(client, source, 'id', identification, transaction);
-      idIntentId = idRes.intentId;
+
+  if (visitor.registrationMode === 'returning') {
+    // Ephemeral returning visitor verification: no photo or ID upload intent created or reused
+    photoIntentId = null;
+    idIntentId = null;
+  } else {
+    if (shouldReuseUploadedIntentForIssue(transaction, transaction?.photoCheckpoint, transaction?.photoIntentId)) {
+      photoIntentId = transaction!.photoIntentId!;
+    } else if (photo) {
+      const photoRes = await uploadCheckpointedEvidence(client, source, 'photo', photo, transaction);
+      photoIntentId = photoRes.intentId;
+    }
+
+    // Upload id intent with retry-safe checkpointing if provided (Section 8)
+    if (identification) {
+      if (shouldReuseUploadedIntentForIssue(transaction, transaction?.idCheckpoint, transaction?.idIntentId)) {
+        idIntentId = transaction!.idIntentId!;
+      } else {
+        const idRes = await uploadCheckpointedEvidence(client, source, 'id', identification, transaction);
+        idIntentId = idRes.intentId;
+      }
     }
   }
 
@@ -1546,13 +1589,9 @@ export async function issueVisitorPass(
           : undefined,
         vehiclePhotoIntentId: vehiclePhotoIntentId || undefined,
         returning: effectiveVisitor.returning || undefined,
-        enrollReturning: Boolean(
-          effectiveVisitor.enrollReturning ||
-          effectiveVisitor.rememberVisitor ||
-          effectiveVisitor.enrollBiometric
-        ),
-        photoIntentId,
-        idIntentId,
+        saveVehicle: Boolean(effectiveVisitor.saveVehicle || effectiveVisitor.vehicle?.saveVehicle),
+        photoIntentId: effectiveVisitor.registrationMode === 'returning' ? undefined : (photoIntentId || undefined),
+        idIntentId: effectiveVisitor.registrationMode === 'returning' ? undefined : (idIntentId || undefined),
       }),
     }, 15000);
   } catch (networkErr) {

@@ -6,65 +6,45 @@ import { readFileSync } from 'node:fs';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
-describe('PART A: Remember Me Enrollment Card & Visibility Contract', () => {
+describe('PART A: Redesigned Registration, Privacy Notice & Ephemeral Returning Contract', () => {
   const getPassSrc = readFileSync('src/pages/GetPassPage.tsx', 'utf8');
 
-  it('places the institutional enrollment card near the top of the Review step before Group 1: Visitor Information', () => {
-    const reviewStepIndex = getPassSrc.indexOf("{step === 'review' && (");
-    expect(reviewStepIndex).toBeGreaterThan(0);
-
-    const verificationBadgeIndex = getPassSrc.indexOf('Biometric Identity Verified', reviewStepIndex);
-    expect(verificationBadgeIndex).toBeGreaterThan(reviewStepIndex);
-
-    const enrollmentCardIndex = getPassSrc.indexOf('Institutional Biometric Enrollment Card', verificationBadgeIndex);
-    expect(enrollmentCardIndex).toBeGreaterThan(verificationBadgeIndex);
-
-    const group1InfoIndex = getPassSrc.indexOf('Group 1: Visitor Information', enrollmentCardIndex);
-    expect(group1InfoIndex).toBeGreaterThan(enrollmentCardIndex);
-
-    // Verifies it is positioned above the fold before the extensive detail summaries
-    expect(enrollmentCardIndex).toBeLessThan(group1InfoIndex);
-  });
-
-  it('replaces redundant "Remember me" with explicit optional biometric template enrollment headline', () => {
+  it('eliminates persistent biometric enrollment card from New Visitor registration', () => {
     // Verifies the old confusing "Remember me for faster future visits" was removed
     const oldOccurrences = (getPassSrc.match(/Remember me for faster future visits/g) || []).length;
     expect(oldOccurrences).toBe(0);
 
-    // Explicit clear headline has exactly 1 occurrence in review step
-    const newOccurrences = (getPassSrc.match(/Save Facial Biometric Template for Future Visits/g) || []).length;
-    expect(newOccurrences).toBe(1);
+    // Verifies "Save Facial Biometric Template for Future Visits" card was eliminated
+    const templateOccurrences = (getPassSrc.match(/Save Facial Biometric Template for Future Visits/g) || []).length;
+    expect(templateOccurrences).toBe(0);
 
-    // Verifies clear notice that ordinary registration is retained under data retention policy
-    expect(getPassSrc).toContain('Ordinary visitor registration details are securely retained under the campus data retention policy regardless of this choice');
-    expect(getPassSrc).toContain("Declining this option does not affect your gate pass issuance or today's visit");
+    // Verifies rememberVisitor state is removed from New Visitor registration
+    expect(getPassSrc).not.toContain('const [rememberVisitor, setRememberVisitor]');
   });
 
-  it('implements institutional maroon styling, subtle gold accents, and min-height >= 72px', () => {
-    expect(getPassSrc).toContain('border-[#7A0A0A]');
-    expect(getPassSrc).toContain('min-h-[72px]');
-    expect(getPassSrc).toContain('bg-amber-100');
-    expect(getPassSrc).toContain('text-amber-900');
-    expect(getPassSrc).toContain('border-amber-300');
-    expect(getPassSrc).toContain('Optional');
+  it('provides accessible Data Privacy Notice modal trigger in Step 1', () => {
+    expect(getPassSrc).toContain('Read our Data Privacy Notice');
+    expect(getPassSrc).toContain('showPrivacyModal');
+    expect(getPassSrc).toContain('Institutional Data Privacy Notice');
   });
 
-  it('implements a comfortable 28px custom checkbox (h-7 w-7) with 16px title and 14px description', () => {
-    expect(getPassSrc).toContain('h-7 w-7 rounded-md border-2 border-[#7A0A0A]');
-    expect(getPassSrc).toContain('font-bold text-base');
-    expect(getPassSrc).toContain('text-sm text-[var(--color-text-secondary)]');
-    expect(getPassSrc).toContain('Securely save an encrypted facial recognition template');
+  it('provides standalone vehicle saving option when arrivalMode is vehicle', () => {
+    expect(getPassSrc).toContain("getValues('arrivalMode') === 'vehicle'");
+    expect(getPassSrc).toContain('Save this vehicle for future visits');
   });
 
-  it('makes the entire card a tap target and preserves explicit consent (default false)', () => {
-    expect(getPassSrc).toContain('const [rememberVisitor, setRememberVisitor] = useState(false)');
-    expect(getPassSrc).toContain('rememberVisitor,');
-    expect(getPassSrc).toContain('Save this vehicle to my profile');
+  it('provides automatic returning visitor candidate check and modal in Step 1', () => {
+    expect(getPassSrc).toContain('showCandidateMatchModal');
+    expect(getPassSrc).toContain('You may have visited EARIST before!');
+    expect(getPassSrc).toContain('Verify as Returning Visitor');
+    expect(getPassSrc).toContain('Continue as New Visitor');
   });
 
-  it('displays unavailable state when returning enrollment is not available', () => {
-    expect(getPassSrc).toContain('enrollmentAvailable !== true');
-    expect(getPassSrc).toContain('Returning Visitor enrollment is temporarily unavailable');
+  it('redesigns returning review card to Portrait and ID History without fresh selfie', () => {
+    expect(getPassSrc).toContain('Portrait and ID History');
+    expect(getPassSrc).toContain('Original Registration Portrait');
+    expect(getPassSrc).toContain('Previously Submitted ID');
+    expect(getPassSrc).not.toContain('Live Verified Selfie');
   });
 });
 
@@ -164,11 +144,10 @@ describe('PART C: Returning Visitor Capture, Freeze, Review & Verification Workf
     expect(getPassSrc).toContain('void faceWebcam.start()');
   });
 
-  it('Stage 4 (Verification & 1:1 Compare) only runs when Verify This Photo is clicked, evaluating client quality first', () => {
+  it('Stage 4 (Verification & 1:1 Compare) only runs when Verify This Photo is clicked, evaluating client quality first with ephemeral compare', () => {
     expect(getPassSrc).toContain('async function onConfirmReturningVerification()');
     expect(getPassSrc).toContain('await evaluateReturningSelfiePrecheck(returningSelfieBlob)');
-    expect(getPassSrc).toContain('uploadPortalEvidence(tx, \'photo\', returningSelfieBlob)');
-    expect(getPassSrc).toContain('identifyReturningVisitor(tx, photoRes.intentId, selectedReturningCandidate.profileId)');
+    expect(getPassSrc).toContain('identifyReturningVisitor(tx, returningSelfieBlob, selectedReturningCandidate.profileId)');
   });
 
   it('Stage 5 (Match accepted) reuses verified selfie blob for subsequent pass issuance and advances to returning_confirm', () => {
