@@ -94,6 +94,7 @@ export interface VisitorRegistration {
   };
   rememberVisitor?: boolean;
   enrollReturning?: boolean;
+  enrollBiometric?: boolean;
 }
 
 export interface IssuedPass {
@@ -1545,7 +1546,11 @@ export async function issueVisitorPass(
           : undefined,
         vehiclePhotoIntentId: vehiclePhotoIntentId || undefined,
         returning: effectiveVisitor.returning || undefined,
-        enrollReturning: Boolean(effectiveVisitor.enrollReturning || effectiveVisitor.rememberVisitor),
+        enrollReturning: Boolean(
+          effectiveVisitor.enrollReturning ||
+          effectiveVisitor.rememberVisitor ||
+          effectiveVisitor.enrollBiometric
+        ),
         photoIntentId,
         idIntentId,
       }),

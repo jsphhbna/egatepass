@@ -3162,7 +3162,7 @@ export function GetPassPage() {
                 </span>
               </div>
 
-              {/* Institutional Biometric Enrollment Card (Remember Me) */}
+              {/* Institutional Biometric Enrollment Card */}
               {enrollmentAvailable !== true ? (
                 <div className="rounded-xl border border-slate-200 bg-slate-50 p-4 text-xs text-slate-600">
                   <div className="flex items-center gap-2 font-semibold text-slate-800">
@@ -3194,20 +3194,23 @@ export function GetPassPage() {
                           }
                         }}
                         className="h-7 w-7 rounded-md border-2 border-[#7A0A0A] text-[#7A0A0A] focus:ring-[#7A0A0A] focus:ring-offset-1 cursor-pointer transition-colors"
-                        aria-describedby="remember-me-description"
+                        aria-describedby="biometric-enrollment-description biometric-retention-notice"
                       />
                     </div>
                     <div className="flex-1 min-w-0">
                       <div className="flex items-center justify-between gap-2 flex-wrap">
                         <span className="font-bold text-base text-[var(--color-text-primary)] leading-tight">
-                          Remember me for faster future visits
+                          Save Facial Biometric Template for Future Visits
                         </span>
                         <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-[11px] font-semibold bg-amber-100 text-amber-900 border border-amber-300">
                           Optional
                         </span>
                       </div>
-                      <p id="remember-me-description" className="text-sm text-[var(--color-text-secondary)] mt-1.5 leading-relaxed">
-                        Securely save an encrypted facial recognition template so you can verify your identity more quickly on your next visit without uploading your ID again.
+                      <p id="biometric-enrollment-description" className="text-sm text-[var(--color-text-secondary)] mt-1.5 leading-relaxed">
+                        Securely save an encrypted facial recognition template so you can verify your identity quickly on your next visit without uploading an ID. Declining this option does not affect your gate pass issuance or today's visit.
+                      </p>
+                      <p id="biometric-retention-notice" className="text-xs text-[var(--color-text-muted)] mt-1.5 leading-relaxed">
+                        Ordinary visitor registration details are securely retained under the campus data retention policy regardless of this choice.
                       </p>
                     </div>
                   </label>

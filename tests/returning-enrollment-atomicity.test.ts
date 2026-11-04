@@ -164,7 +164,37 @@ describe('Returning Visitor Enrollment Fail-Closed & Atomicity Invariants', () =
       return q;
     }
 
-    const mockAdmin = {
+    const rpcMock = vi.fn().mockImplementation((fn: string) => {
+      if (fn === 'consume_rate_limit') {
+        return Promise.resolve({ data: true, error: null });
+      }
+      if (fn === 'issue_online_pass_v6') {
+        return {
+          single: vi.fn().mockResolvedValue({
+            data: {
+              pass_id: mockPassId,
+              public_reference: '77777777-7777-4777-8777-777777777777',
+              valid_from: new Date().toISOString(),
+              valid_until: new Date(Date.now() + 86400000).toISOString(),
+            },
+            error: null,
+          }),
+        };
+      }
+      if (fn === 'enroll_returning_visitor_v1') {
+        return {
+          single: vi.fn().mockResolvedValue({
+            data: overrides.enrollRpcRes !== undefined ? overrides.enrollRpcRes : {
+              returning_profile_id: '88888888-8888-4888-8888-888888888888',
+            },
+            error: overrides.enrollRpcErr || null,
+          }),
+        };
+      }
+      return { single: vi.fn().mockResolvedValue({ data: null, error: null }) };
+    });
+
+    const mockAdmin: any = {
       from: vi.fn().mockImplementation((table: string) => createQueryBuilder(table)),
       storage: {
         from: vi.fn().mockReturnValue({
@@ -180,36 +210,9 @@ describe('Returning Visitor Enrollment Fail-Closed & Atomicity Invariants', () =
         }),
       },
       schema: vi.fn().mockReturnValue({
-        rpc: vi.fn().mockImplementation((fn: string) => {
-          if (fn === 'consume_rate_limit') {
-            return Promise.resolve({ data: true, error: null });
-          }
-          if (fn === 'issue_online_pass_v6') {
-            return {
-              single: vi.fn().mockResolvedValue({
-                data: {
-                  pass_id: mockPassId,
-                  public_reference: '77777777-7777-4777-8777-777777777777',
-                  valid_from: new Date().toISOString(),
-                  valid_until: new Date(Date.now() + 86400000).toISOString(),
-                },
-                error: null,
-              }),
-            };
-          }
-          if (fn === 'enroll_returning_visitor_v1') {
-            return {
-              single: vi.fn().mockResolvedValue({
-                data: overrides.enrollRpcRes !== undefined ? overrides.enrollRpcRes : {
-                  returning_profile_id: '88888888-8888-4888-8888-888888888888',
-                },
-                error: overrides.enrollRpcErr || null,
-              }),
-            };
-          }
-          return { single: vi.fn().mockResolvedValue({ data: null, error: null }) };
-        }),
+        rpc: rpcMock,
       }),
+      rpcMock,
     };
 
     vi.spyOn(supabaseModule, 'getServerSupabaseClients').mockReturnValue({
@@ -358,5 +361,17 @@ describe('Returning Visitor Enrollment Fail-Closed & Atomicity Invariants', () =
     const body = await res.json();
     expect(body.publicReference).toBe('77777777-7777-4777-8777-777777777777');
     expect(body.returningEnrollment).toBe('not_requested');
+  });
+
+  it('8. Declining biometric enrollment creates normal pass and visitor records without touching returning profiles', async () => {
+    const mockAdmin = setupMocks();
+    const res = await passIssueHandler.fetch(makeRequest(false));
+    expect(res.status).toBe(201);
+    const body = await res.json();
+    expect(body.passId).toBe('77777777-7777-4777-8777-777777777777');
+    expect(body.publicReference).toBe('77777777-7777-4777-8777-777777777777');
+    expect(body.returningEnrollment).toBe('not_requested');
+    // Verify that the returning enrollment RPC is never invoked when biometric consent is false
+    expect(mockAdmin.rpcMock).not.toHaveBeenCalledWith('enroll_returning_visitor_v1', expect.anything());
   });
 });

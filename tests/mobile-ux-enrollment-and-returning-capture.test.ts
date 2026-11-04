@@ -16,7 +16,7 @@ describe('PART A: Remember Me Enrollment Card & Visibility Contract', () => {
     const verificationBadgeIndex = getPassSrc.indexOf('Biometric Identity Verified', reviewStepIndex);
     expect(verificationBadgeIndex).toBeGreaterThan(reviewStepIndex);
 
-    const enrollmentCardIndex = getPassSrc.indexOf('Institutional Biometric Enrollment Card (Remember Me)', verificationBadgeIndex);
+    const enrollmentCardIndex = getPassSrc.indexOf('Institutional Biometric Enrollment Card', verificationBadgeIndex);
     expect(enrollmentCardIndex).toBeGreaterThan(verificationBadgeIndex);
 
     const group1InfoIndex = getPassSrc.indexOf('Group 1: Visitor Information', enrollmentCardIndex);
@@ -26,11 +26,18 @@ describe('PART A: Remember Me Enrollment Card & Visibility Contract', () => {
     expect(enrollmentCardIndex).toBeLessThan(group1InfoIndex);
   });
 
-  it('does not duplicate the enrollment checkbox at the bottom of the review step', () => {
-    // Verifies the old duplicate checkbox at the bottom was completely removed
-    const occurrences = (getPassSrc.match(/Remember me for faster future visits/g) || []).length;
-    // Exactly 1 occurrence in the review step JSX
-    expect(occurrences).toBe(1);
+  it('replaces redundant "Remember me" with explicit optional biometric template enrollment headline', () => {
+    // Verifies the old confusing "Remember me for faster future visits" was removed
+    const oldOccurrences = (getPassSrc.match(/Remember me for faster future visits/g) || []).length;
+    expect(oldOccurrences).toBe(0);
+
+    // Explicit clear headline has exactly 1 occurrence in review step
+    const newOccurrences = (getPassSrc.match(/Save Facial Biometric Template for Future Visits/g) || []).length;
+    expect(newOccurrences).toBe(1);
+
+    // Verifies clear notice that ordinary registration is retained under data retention policy
+    expect(getPassSrc).toContain('Ordinary visitor registration details are securely retained under the campus data retention policy regardless of this choice');
+    expect(getPassSrc).toContain("Declining this option does not affect your gate pass issuance or today's visit");
   });
 
   it('implements institutional maroon styling, subtle gold accents, and min-height >= 72px', () => {

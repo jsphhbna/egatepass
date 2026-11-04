@@ -2837,4 +2837,53 @@ describe('Permanent PostgreSQL Migration Chain & Schema Contracts (PGlite)', () 
     `);
     expect(resendCheck.rows[0].proconfig).toEqual(['search_path=""']);
   }, 60000);
+
+  it('55. Migration 20261104000700_security_advisor_and_biometric_consent consolidates thermal policies and tightens table privileges', async () => {
+    const db = new PGlite();
+    await applyAllMigrations(db);
+
+    // 1. Verify exactly one SELECT policy on thermal_templates (no multiple permissive policies)
+    const selectPolicies = await db.query<{ policyname: string; cmd: string }>(`
+      select policyname, cmd
+      from pg_policies
+      where tablename = 'thermal_templates' and cmd = 'SELECT';
+    `);
+    expect(selectPolicies.rows).toHaveLength(1);
+    expect(selectPolicies.rows[0].policyname).toBe('thermal_templates_select');
+
+    // 2. Verify superadmin write policies exist
+    const writePolicies = await db.query<{ policyname: string; cmd: string }>(`
+      select policyname, cmd
+      from pg_policies
+      where tablename = 'thermal_templates' and cmd in ('INSERT', 'UPDATE', 'DELETE')
+      order by cmd;
+    `);
+    expect(writePolicies.rows.map((r) => r.policyname)).toEqual([
+      'thermal_templates_superadmin_delete',
+      'thermal_templates_superadmin_insert',
+      'thermal_templates_superadmin_update',
+    ]);
+
+    // 3. Verify public.maintenance_state privileges
+    const maintPrivs = await db.query<{ grantee: string }>(`
+      select distinct grantee
+      from information_schema.table_privileges
+      where table_schema = 'public' and table_name = 'maintenance_state';
+    `);
+    const maintGrantees = maintPrivs.rows.map((r) => r.grantee);
+    expect(maintGrantees).not.toContain('anon');
+    expect(maintGrantees).not.toContain('authenticated');
+    expect(maintGrantees).not.toContain('PUBLIC');
+
+    // 4. Verify public.rate_limit_buckets privileges
+    const ratePrivs = await db.query<{ grantee: string }>(`
+      select distinct grantee
+      from information_schema.table_privileges
+      where table_schema = 'public' and table_name = 'rate_limit_buckets';
+    `);
+    const rateGrantees = ratePrivs.rows.map((r) => r.grantee);
+    expect(rateGrantees).not.toContain('anon');
+    expect(rateGrantees).not.toContain('authenticated');
+    expect(rateGrantees).not.toContain('PUBLIC');
+  }, 60000);
 });
