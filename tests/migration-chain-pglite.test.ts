@@ -2787,4 +2787,54 @@ describe('Permanent PostgreSQL Migration Chain & Schema Contracts (PGlite)', () 
     `);
     expect(new Date(updatedCheck.rows[0].storage_cleaned_at).toISOString()).toBe(cleanedTimestamp);
   }, 60000);
+
+  it('54. Migration 20261104000600_security_hardening_and_nominatim_slot locks down nominatim limiter and resolves column ambiguity', async () => {
+    const db = new PGlite();
+    await applyAllMigrations(db);
+
+    // 1. Verify routine privileges on api.acquire_nominatim_slot
+    const permCheck = await db.query<{ grantee: string; privilege_type: string }>(`
+      select grantee, privilege_type
+      from information_schema.routine_privileges
+      where routine_schema = 'api' and routine_name = 'acquire_nominatim_slot';
+    `);
+
+    const grantees = permCheck.rows.map((r) => r.grantee);
+    expect(grantees).toContain('service_role');
+    expect(grantees).not.toContain('anon');
+    expect(grantees).not.toContain('authenticated');
+    expect(grantees).not.toContain('PUBLIC');
+
+    // 2. Verify search_path is locked down to empty string
+    const procCheck = await db.query<{ proconfig: string[] }>(`
+      select p.proconfig
+      from pg_proc p
+      join pg_namespace n on n.oid = p.pronamespace
+      where n.nspname = 'api' and p.proname = 'acquire_nominatim_slot';
+    `);
+    expect(procCheck.rows[0].proconfig).toEqual(['search_path=""']);
+
+    // 3. Verify server-controlled interval bounding (cannot pass 0 or negative to bypass)
+    const slotRes = await db.query<{ acquire_nominatim_slot: { acquired: boolean; wait_ms: number } }>(`
+      select api.acquire_nominatim_slot(0);
+    `);
+    expect(slotRes.rows[0].acquire_nominatim_slot.acquired).toBe(true);
+    expect(slotRes.rows[0].acquire_nominatim_slot.wait_ms).toBe(0);
+
+    // Immediate second call with 0 interval must still be rejected and forced to wait >= 1000ms
+    const slotRes2 = await db.query<{ acquire_nominatim_slot: { acquired: boolean; wait_ms: number } }>(`
+      select api.acquire_nominatim_slot(0);
+    `);
+    expect(slotRes2.rows[0].acquire_nominatim_slot.acquired).toBe(false);
+    expect(slotRes2.rows[0].acquire_nominatim_slot.wait_ms).toBeGreaterThanOrEqual(950);
+
+    // 4. Verify search_path on api.record_resend_delivery_event
+    const resendCheck = await db.query<{ proconfig: string[] }>(`
+      select p.proconfig
+      from pg_proc p
+      join pg_namespace n on n.oid = p.pronamespace
+      where n.nspname = 'api' and p.proname = 'record_resend_delivery_event';
+    `);
+    expect(resendCheck.rows[0].proconfig).toEqual(['search_path=""']);
+  }, 60000);
 });

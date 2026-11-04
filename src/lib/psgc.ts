@@ -391,6 +391,5 @@ export function formatStructuredAddress(addr: {
   if (addr.cityName?.trim()) parts.push(addr.cityName.trim());
   if (addr.provinceName?.trim()) parts.push(addr.provinceName.trim());
   if (addr.regionName?.trim()) parts.push(addr.regionName.trim());
-  if (addr.postalCode?.trim()) parts.push(`Postal Code ${addr.postalCode.trim()}`);
   return parts.join(', ');
 }

@@ -4,7 +4,7 @@ import {
   type SelectedPsgcAddress,
 } from './AddressCascadingSelector';
 import { isCityOfManila, lookupManilaDistrictForBarangay } from '@/lib/manilaDistricts';
-import { MapPin, ChevronRight, CheckCircle2, AlertCircle } from 'lucide-react';
+import { MapPin, ChevronRight } from 'lucide-react';
 import { FormField, Input } from '@/components/ui';
 
 export interface StructuredAddressFieldProps {
@@ -14,8 +14,8 @@ export interface StructuredAddressFieldProps {
   onHouseBuildingChange: (val: string) => void;
   street: string;
   onStreetChange: (val: string) => void;
-  postalCode: string;
-  onPostalCodeChange: (val: string) => void;
+  postalCode?: string;
+  onPostalCodeChange?: (val: string) => void;
   error?: string;
   disabled?: boolean;
 }
@@ -27,8 +27,6 @@ export function StructuredAddressField({
   onHouseBuildingChange,
   street,
   onStreetChange,
-  postalCode,
-  onPostalCodeChange,
   error,
   disabled = false,
 }: StructuredAddressFieldProps) {
@@ -36,53 +34,7 @@ export function StructuredAddressField({
 
   function handleAddressSelected(selected: SelectedPsgcAddress) {
     onChange(selected);
-    onPostalCodeChange(selected.postalCode || '');
   }
-
-  function handlePostalInputChange(rawInput: string) {
-    const clean = rawInput.replace(/\D/g, '').slice(0, 4);
-    onPostalCodeChange(clean);
-
-    if (value) {
-      if (clean.length > 0) {
-        onChange({
-          ...value,
-          postalCode: clean,
-          postalCodeSource: 'manual',
-          postalResolution: {
-            postalCode: clean,
-            isAutoFilled: false,
-            requiresConfirmation: false,
-            mappingType: 'unmapped',
-          },
-        });
-      } else {
-        onChange({
-          ...value,
-          postalCode: null,
-          postalCodeSource: null,
-          postalResolution: undefined,
-        });
-      }
-    }
-  }
-
-  const trimmedPostal = postalCode.trim();
-  const isPhlPostAutoFilled = Boolean(
-    value?.postalCodeSource === 'PHLPost' &&
-    value?.postalResolution?.isAutoFilled &&
-    trimmedPostal.length > 0 &&
-    trimmedPostal === value?.postalResolution?.postalCode
-  );
-  const isConfirmationRequired = Boolean(
-    value?.postalResolution?.requiresConfirmation &&
-    !isPhlPostAutoFilled
-  );
-  const isManualEntry = Boolean(
-    trimmedPostal.length > 0 &&
-    !isPhlPostAutoFilled &&
-    !isConfirmationRequired
-  );
 
   return (
     <div className="space-y-4">
@@ -164,45 +116,6 @@ export function StructuredAddressField({
             maxLength={150}
           />
         </FormField>
-      </div>
-
-      {/* 3. Postal Code with Auto-fill Indicator */}
-      <div>
-        <div className="flex items-center justify-between mb-1.5">
-          <label className="text-sm font-semibold text-[var(--color-text-primary,#172033)]">
-            Postal Code
-          </label>
-          {isPhlPostAutoFilled && (
-            <span className="inline-flex items-center space-x-1 text-[11px] font-semibold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-md border border-emerald-200">
-              <CheckCircle2 className="w-3 h-3" />
-              <span>PHLPost Auto-filled</span>
-            </span>
-          )}
-          {isConfirmationRequired && (
-            <span className="inline-flex items-center space-x-1 text-[11px] font-semibold text-amber-800 bg-amber-50 px-2 py-0.5 rounded-md border border-amber-300">
-              <AlertCircle className="w-3 h-3" />
-              <span>Please confirm</span>
-            </span>
-          )}
-          {isManualEntry && (
-            <span className="inline-flex items-center space-x-1 text-[11px] font-semibold text-[var(--color-text-secondary,#5F6B7F)] bg-[var(--color-surface-subtle,#F8FAFC)] px-2 py-0.5 rounded-md border border-[var(--color-border,#E2E8F0)]">
-              <span>Manual entry</span>
-            </span>
-          )}
-        </div>
-        <Input
-          type="text"
-          value={postalCode}
-          onChange={(e: ChangeEvent<HTMLInputElement>) => handlePostalInputChange(e.target.value)}
-          placeholder="4-digit postal code (e.g. 1008)"
-          disabled={disabled}
-          maxLength={4}
-        />
-        {value?.postalResolution?.message && !isManualEntry && (
-          <p className="text-[11px] text-[var(--color-text-secondary,#5F6B7F)] mt-1">
-            {value.postalResolution.message}
-          </p>
-        )}
       </div>
 
       {/* Cascading Address Selector Modal */}

@@ -206,7 +206,7 @@ describe('Returning Visitor Address Hydration & Round-Trip Contract', () => {
     });
 
     expect(formatted).toBe(
-      'Unit 401, Nagtahan St., Barangay 408, City of Manila, National Capital Region (NCR), Postal Code 1008'
+      'Unit 401, Nagtahan St., Barangay 408, City of Manila, National Capital Region (NCR)'
     );
   });
 });

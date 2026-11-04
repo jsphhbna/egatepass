@@ -5,15 +5,9 @@ import {
   fetchPsgcProvinces,
   fetchPsgcCities,
   fetchPsgcBarangays,
-  resolvePostalCode,
   type PsgcLocation,
   type PostalResolution,
 } from '@/lib/psgc';
-import {
-  isSameLocality,
-  resolveBarangaySelectionPostalState,
-  resolveAddressConfirmation,
-} from '@/lib/psgcAddressResolution';
 import {
   isCityOfManila,
   getManilaCongressionalDistricts,
@@ -30,8 +24,8 @@ export interface SelectedPsgcAddress {
   province: { code: string; name: string } | null;
   city: { code: string; name: string };
   barangay: { code: string; name: string };
-  postalCode: string | null;
-  postalCodeSource: string | null;
+  postalCode?: string | null;
+  postalCodeSource?: string | null;
   postalResolution?: PostalResolution;
 }
 
@@ -59,8 +53,6 @@ export function AddressCascadingSelector({
   const [selectedProvince, setSelectedProvince] = useState<PsgcLocation | null>(null);
   const [selectedCity, setSelectedCity] = useState<PsgcLocation | null>(null);
   const [selectedBarangay, setSelectedBarangay] = useState<PsgcLocation | null>(null);
-  const [postalResolution, setPostalResolution] = useState<PostalResolution | null>(null);
-  const [manualPostalCode, setManualPostalCode] = useState('');
 
   // Manila specific filters
   const [selectedManilaDistrict, setSelectedManilaDistrict] = useState<string | null>(null);
@@ -111,19 +103,6 @@ export function AddressCascadingSelector({
           name: initialAddress.barangay.name,
           level: 'barangay',
         });
-        setPostalResolution(
-          initialAddress.postalResolution ||
-          (initialAddress.postalCodeSource === 'PHLPost' && initialAddress.postalCode
-            ? {
-                postalCode: initialAddress.postalCode,
-                isAutoFilled: true,
-                requiresConfirmation: false,
-                mappingType: 'unknown',
-                message: 'PHLPost standard postal code',
-              }
-            : null)
-        );
-        setManualPostalCode(initialAddress.postalCode || '');
 
         if (isCityOfManila(initialAddress.city?.code, initialAddress.city?.name) && initialAddress.barangay) {
           const manilaMatch = lookupManilaDistrictForBarangay(initialAddress.barangay);
@@ -197,8 +176,6 @@ export function AddressCascadingSelector({
     setSelectedProvince(null);
     setSelectedCity(null);
     setSelectedBarangay(null);
-    setPostalResolution(null);
-    setManualPostalCode('');
     setSelectedManilaDistrict(null);
     setSelectedManilaArea(null);
     setProvinces([]);
@@ -212,8 +189,6 @@ export function AddressCascadingSelector({
     setSelectedProvince(null);
     setSelectedCity(null);
     setSelectedBarangay(null);
-    setPostalResolution(null);
-    setManualPostalCode('');
     setSelectedManilaDistrict(null);
     setSelectedManilaArea(null);
 
@@ -243,8 +218,6 @@ export function AddressCascadingSelector({
     setSelectedProvince(province);
     setSelectedCity(null);
     setSelectedBarangay(null);
-    setPostalResolution(null);
-    setManualPostalCode('');
     setSelectedManilaDistrict(null);
     setSelectedManilaArea(null);
 
@@ -261,8 +234,6 @@ export function AddressCascadingSelector({
   async function handleSelectCity(city: PsgcLocation) {
     setSelectedCity(city);
     setSelectedBarangay(null);
-    setPostalResolution(null);
-    setManualPostalCode('');
     setSelectedManilaDistrict(null);
     setSelectedManilaArea(null);
 
@@ -284,20 +255,16 @@ export function AddressCascadingSelector({
     setSelectedManilaDistrict(district);
     setSelectedManilaArea(null);
     setSelectedBarangay(null);
-    setPostalResolution(null);
-    setManualPostalCode('');
     setCurrentStep('manila_area');
   }
 
   function handleSelectManilaArea(area: string) {
     setSelectedManilaArea(area);
     setSelectedBarangay(null);
-    setPostalResolution(null);
-    setManualPostalCode('');
     setCurrentStep('barangay');
   }
 
-  async function handleSelectBarangay(bgy: PsgcLocation) {
+  function handleSelectBarangay(bgy: PsgcLocation) {
     setSelectedBarangay(bgy);
     if (isCityOfManila(selectedCity?.code, selectedCity?.name)) {
       const manilaMatch = lookupManilaDistrictForBarangay(bgy);
@@ -306,29 +273,7 @@ export function AddressCascadingSelector({
         setSelectedManilaArea(manilaMatch.administrativeDistrict);
       }
     }
-    setLoading(true);
-    try {
-      if (selectedCity) {
-        const resolution = await resolvePostalCode(selectedCity.code, bgy.code);
-        const isSame = isSameLocality(initialAddress, {
-          region: selectedRegion,
-          province: selectedProvince,
-          city: selectedCity,
-          barangay: bgy,
-        });
-        const { manualPostalCode: resolvedPostal, postalResolution: resolvedResolution } =
-          resolveBarangaySelectionPostalState({
-            initialAddress,
-            isSameLocality: isSame,
-            freshResolution: resolution,
-          });
-        setPostalResolution(resolvedResolution as PostalResolution);
-        setManualPostalCode(resolvedPostal);
-      }
-      setCurrentStep('confirm');
-    } finally {
-      setLoading(false);
-    }
+    setCurrentStep('confirm');
   }
 
   function handleBreadcrumbClick(step: Step) {
@@ -378,25 +323,14 @@ export function AddressCascadingSelector({
   function handleConfirm() {
     if (!selectedRegion || !selectedCity || !selectedBarangay) return;
 
-    const result = resolveAddressConfirmation({
-      initialAddress,
-      selectedRegion,
-      selectedProvince,
-      selectedCity,
-      selectedBarangay,
-      postalResolution,
-      manualPostalCode,
-    });
-
     onSelect({
       version: '2026-q3',
       region: { code: selectedRegion.code, name: selectedRegion.name },
       province: selectedProvince ? { code: selectedProvince.code, name: selectedProvince.name } : null,
       city: { code: selectedCity.code, name: selectedCity.name },
       barangay: { code: selectedBarangay.code, name: selectedBarangay.name },
-      postalCode: result.finalPostalCode,
-      postalCodeSource: result.finalSource,
-      postalResolution: result.finalResolution as PostalResolution | undefined,
+      postalCode: null,
+      postalCodeSource: null,
     });
     onClose();
   }
@@ -771,58 +705,7 @@ export function AddressCascadingSelector({
                   </span>
                   <p className="text-sm font-bold text-[var(--color-text-primary,#172033)] mt-0.5">{selectedBarangay?.name}</p>
                 </div>
-
-                {/* Postal Code Display or In-Modal Input */}
-                <div className="pt-3 border-t border-[var(--color-border,#E2E8F0)] space-y-2">
-                  <div className="flex items-center justify-between">
-                    <span className="text-xs text-[var(--color-text-secondary,#5F6B7F)] uppercase tracking-wider font-semibold">
-                      Postal Code
-                    </span>
-                    {postalResolution?.isAutoFilled ? (
-                      <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-200">
-                        PHLPost Verified
-                      </span>
-                    ) : (
-                      <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-50 text-amber-800 border border-amber-300">
-                        Manual Entry Needed
-                      </span>
-                    )}
-                  </div>
-
-                  {postalResolution?.isAutoFilled ? (
-                    <p className="text-base font-bold text-[#7A0A0A] tracking-wider">
-                      {postalResolution.postalCode}
-                    </p>
-                  ) : (
-                    <div className="space-y-1 pt-0.5">
-                      <label htmlFor="confirm-modal-postal" className="text-xs text-[var(--color-text-secondary,#5F6B7F)] font-medium block">
-                        Confirm or enter 4-digit postal code:
-                      </label>
-                      <input
-                        id="confirm-modal-postal"
-                        type="text"
-                        inputMode="numeric"
-                        pattern="[0-9]*"
-                        maxLength={4}
-                        value={manualPostalCode}
-                        onChange={(e) => setManualPostalCode(e.target.value.replace(/\D/g, '').slice(0, 4))}
-                        placeholder="e.g. 1011"
-                        className="w-full px-3 py-2 bg-white border border-[var(--color-border,#E2E8F0)] rounded-xl text-sm font-bold text-[var(--color-text-primary,#172033)] placeholder-[var(--color-text-muted,#687386)] focus:outline-none focus:ring-2 focus:ring-[#7A0A0A]/20 focus:border-[#7A0A0A]"
-                      />
-                      <p className="text-[11px] text-[var(--color-text-secondary,#5F6B7F)]">
-                        {postalResolution?.message || 'This locality has multiple delivery zones. Please verify your 4-digit code.'}
-                      </p>
-                    </div>
-                  )}
-                </div>
               </div>
-
-              {postalResolution?.isAutoFilled && postalResolution?.message && (
-                <div className="flex items-start space-x-2.5 p-3 bg-amber-50 border border-amber-200 rounded-xl text-xs text-amber-900">
-                  <AlertCircle className="w-4 h-4 flex-shrink-0 mt-0.5 text-amber-700" />
-                  <p>{postalResolution.message}</p>
-                </div>
-              )}
 
               <p className="text-xs text-[var(--color-text-secondary,#5F6B7F)] leading-relaxed">
                 Standardized administrative locality selected via PSA PSGC reference data. House/building

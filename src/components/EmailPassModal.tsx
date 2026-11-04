@@ -94,8 +94,7 @@ export function EmailPassModal({
     return () => clearInterval(timer);
   }, [resendCooldown]);
 
-  function handleClose() {
-    if (loading) return;
+  const resetInternalState = () => {
     setStep('input');
     setRecipientEmail(initialEmail);
     setCode('');
@@ -106,6 +105,35 @@ export function EmailPassModal({
     requestCodeAttemptStateRef.current = 'ready';
     requestCodeRequestIdRef.current = crypto.randomUUID();
     sendRequestIdRef.current = crypto.randomUUID();
+  };
+
+  const prevIsOpenRef = useRef(isOpen);
+  useEffect(() => {
+    if (!prevIsOpenRef.current && isOpen) {
+      if (step === 'sent' || step === 'unknown') {
+        resetInternalState();
+      }
+    }
+    prevIsOpenRef.current = isOpen;
+  }, [isOpen, step, initialEmail]);
+
+  function handleClose() {
+    if (loading) return;
+    resetInternalState();
+    onClose();
+  }
+
+  function handleCompleteSuccess() {
+    if (loading) return;
+    resetInternalState();
+    onSuccess?.();
+    onClose();
+  }
+
+  function handleCompleteUnknown() {
+    if (loading) return;
+    resetInternalState();
+    onUnknown?.();
     onClose();
   }
 
@@ -463,19 +491,13 @@ export function EmailPassModal({
             <CheckCircle2 className="h-8 w-8" />
           </div>
           <h3 className="text-lg font-bold text-[var(--color-text-primary)]">
-            {isDeliveryGate ? 'E-GatePass Emailed!' : 'Pass Submitted'}
+            {isDeliveryGate ? 'Email Submitted Successfully' : 'Pass Submitted'}
           </h3>
           <p className="text-xs leading-relaxed text-[var(--color-text-secondary)]">
-            A scannable copy of your gate pass QR code was submitted to the email provider for <strong>{recipientEmail}</strong>. Check the inbox and spam folder.
+            A scannable copy of your gate pass QR code was submitted to the email provider for <strong>{recipientEmail}</strong>. Please check your inbox and spam folder.
           </p>
           <Button
-            onClick={() => {
-              if (onSuccess) {
-                onSuccess();
-              } else {
-                handleClose();
-              }
-            }}
+            onClick={handleCompleteSuccess}
             className="w-full"
           >
             {isDeliveryGate ? 'View My E-GatePass' : 'Done'}
@@ -491,13 +513,7 @@ export function EmailPassModal({
             The provider may have accepted the email, but confirmation was interrupted. To avoid sending the bearer QR twice, automatic retry is disabled. You can still download or save the issued pass.
           </p>
           <Button
-            onClick={() => {
-              if (onUnknown) {
-                onUnknown();
-              } else {
-                handleClose();
-              }
-            }}
+            onClick={handleCompleteUnknown}
             className="w-full"
           >
             {isDeliveryGate ? 'Continue to E-GatePass' : 'Close'}

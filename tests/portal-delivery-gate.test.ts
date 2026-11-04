@@ -49,7 +49,8 @@ describe('FEATURE 4 CONTRACT: Online Pass Delivery Gate, Timed Skip Warning & Re
 
   it('displays truthful confirmation when email was verified and accepted by provider', () => {
     expect(getPassSrc).toContain('emailDeliverySecured && (');
-    expect(getPassSrc).toContain('A copy of your E-GatePass was sent to your verified email.');
+    expect(getPassSrc).toContain('Email Submitted Successfully');
+    expect(getPassSrc).toContain('A copy of your E-GatePass was submitted to the email provider');
   });
 
   it('installs beforeunload guard on issued pass until email is verified or download is initiated', () => {
@@ -96,14 +97,15 @@ describe('FEATURE 4 CONTRACT: Online Pass Delivery Gate, Timed Skip Warning & Re
     expect(modalSrc).toContain('onUnknown?: () => void;');
     expect(modalSrc).toContain('onUnknown,');
 
-    // step === 'unknown' button strictly calls onUnknown, NOT onSuccess
+    // step === 'unknown' button strictly calls onUnknown handler, NOT onSuccess
     const unknownSection = modalSrc.match(/\{step === 'unknown' && \([\s\S]*?<\/Button>\s*<\/div>\s*\)\}/);
     expect(unknownSection).toBeTruthy();
     const unknownBlock = unknownSection![0];
 
-    expect(unknownBlock).toContain('if (onUnknown) {');
-    expect(unknownBlock).toContain('onUnknown();');
-    expect(unknownBlock).not.toContain('onSuccess()');
+    expect(unknownBlock).toContain('handleCompleteUnknown');
+    expect(modalSrc).toContain('function handleCompleteUnknown()');
+    expect(modalSrc).toContain('onUnknown?.();');
+    expect(unknownBlock).not.toContain('onSuccess');
 
     // GetPassPage configures onUnknown separately from onSuccess
     expect(getPassSrc).toContain('onSuccess={() => {');

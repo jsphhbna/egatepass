@@ -337,7 +337,6 @@ export function GetPassPage() {
   const [selectedPsgc, setSelectedPsgc] = useState<SelectedPsgcAddress | null>(null);
   const [homeBuilding, setHomeBuilding] = useState('');
   const [homeStreet, setHomeStreet] = useState('');
-  const [postalCode, setPostalCode] = useState('');
   const [addressError, setAddressError] = useState<string | null>(null);
 
   // Controlled Vehicle Catalog State
@@ -608,7 +607,6 @@ export function GetPassPage() {
     setSelectedPsgc(null);
     setHomeBuilding('');
     setHomeStreet('');
-    setPostalCode('');
     setAddressError(null);
 
     // 3. Clear vehicle state
@@ -1156,7 +1154,6 @@ export function GetPassPage() {
       setSelectedPsgc(hydratedAddr.selectedPsgc);
       setHomeBuilding(hydratedAddr.homeBuilding);
       setHomeStreet(hydratedAddr.homeStreet);
-      setPostalCode(hydratedAddr.postalCode);
 
       if (p.homeLocation) {
         setHomeLocation(p.homeLocation);
@@ -1807,19 +1804,6 @@ export function GetPassPage() {
           barangayCode: selectedPsgc.barangay.code,
           houseBuilding: homeBuilding.trim() || undefined,
           street: homeStreet.trim() || undefined,
-          postalCode: postalCode.trim() || undefined,
-          postalCodeSource: (() => {
-            const trimmed = postalCode.trim();
-            if (!trimmed) return undefined;
-            if (
-              selectedPsgc.postalCodeSource === 'PHLPost' &&
-              selectedPsgc.postalCode &&
-              selectedPsgc.postalCode.trim() === trimmed
-            ) {
-              return 'PHLPost';
-            }
-            return 'manual';
-          })(),
         } : undefined,
         homeAddress: selectedPsgc ? formatStructuredAddress({
           regionName: selectedPsgc.region.name,
@@ -1828,7 +1812,6 @@ export function GetPassPage() {
           barangayName: selectedPsgc.barangay.name,
           houseBuilding: homeBuilding,
           street: homeStreet,
-          postalCode: postalCode.trim() || undefined,
         }) : undefined,
         vehicle: rawFormData.arrivalMode === 'vehicle'
           ? {
@@ -2405,8 +2388,6 @@ export function GetPassPage() {
                 onHouseBuildingChange={setHomeBuilding}
                 street={homeStreet}
                 onStreetChange={setHomeStreet}
-                postalCode={postalCode}
-                onPostalCodeChange={setPostalCode}
                 error={addressError || undefined}
               />
 
@@ -3295,7 +3276,6 @@ export function GetPassPage() {
                         barangayName: selectedPsgc.barangay.name,
                         houseBuilding: homeBuilding,
                         street: homeStreet,
-                        postalCode: postalCode.trim() || undefined,
                       }) : 'Not specified'}
                     </p>
                   </div>
@@ -3922,8 +3902,6 @@ export function GetPassPage() {
                   onHouseBuildingChange={setHomeBuilding}
                   street={homeStreet}
                   onStreetChange={setHomeStreet}
-                  postalCode={postalCode}
-                  onPostalCodeChange={setPostalCode}
                   error={addressError || undefined}
                 />
               </div>
@@ -4282,7 +4260,6 @@ export function GetPassPage() {
                             barangayName: selectedPsgc.barangay.name,
                             houseBuilding: homeBuilding,
                             street: homeStreet,
-                            postalCode: postalCode.trim() || undefined,
                           })
                         : (returningProfile?.homeAddress || 'No residential address specified')}
                     </p>
@@ -4464,8 +4441,8 @@ export function GetPassPage() {
 
               {emailDeliverySecured && (
                 <div className="rounded-xl border border-emerald-300 bg-emerald-50 p-4 text-xs text-emerald-900">
-                  <p className="font-semibold text-sm text-emerald-950">Email Delivery Confirmed</p>
-                  <p>A copy of your E-GatePass was sent to your verified email.</p>
+                  <p className="font-semibold text-sm text-emerald-950">Email Submitted Successfully</p>
+                  <p>A copy of your E-GatePass was submitted to the email provider for your verified email. Please check your inbox and spam folder.</p>
                 </div>
               )}
 
@@ -4643,12 +4620,14 @@ export function GetPassPage() {
             setEmailDeliverySecured(true);
             setEmailOutcomeUnknown(false);
             setEmailSkipped(false);
+            setShowEmailModal(false);
             setStep('done');
           }}
           onUnknown={() => {
             setEmailDeliverySecured(false);
             setEmailOutcomeUnknown(true);
             setEmailSkipped(false);
+            setShowEmailModal(false);
             setStep('done');
           }}
           onSkip={() => setShowSkipWarning(true)}

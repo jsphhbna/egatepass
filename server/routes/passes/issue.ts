@@ -955,7 +955,6 @@ async function handleRequest(request: Request): Promise<Response> {
                 updateCityName,
                 updateProvinceName,
                 updateRegionName,
-                psgc.postalCode?.trim(),
               ].filter(Boolean).join(', ');
               if (formattedUpdateAddress) {
                 profileUpdate.home_address = formattedUpdateAddress;

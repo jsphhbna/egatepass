@@ -285,15 +285,15 @@ describe('GetPassPage address hydration — source contract', () => {
     expect(src).toContain('hydrateReturningAddress(p)');
   });
 
-  it('GetPassPage applies all four returned state values unconditionally', async () => {
+  it('GetPassPage applies returned address state values unconditionally without postalCode collection', async () => {
     const src = await import('fs').then((fs) =>
       fs.readFileSync('src/pages/GetPassPage.tsx', 'utf-8')
     );
-    // All four setters must reference the hydratedAddr result
+    // Address setters must reference the hydratedAddr result, with postalCode removed
     expect(src).toContain('setSelectedPsgc(hydratedAddr.selectedPsgc)');
     expect(src).toContain('setHomeBuilding(hydratedAddr.homeBuilding)');
     expect(src).toContain('setHomeStreet(hydratedAddr.homeStreet)');
-    expect(src).toContain('setPostalCode(hydratedAddr.postalCode)');
+    expect(src).not.toContain('setPostalCode(');
   });
 
   it('GetPassPage does NOT use conditional guards for houseBuilding/street/postalCode prefill', async () => {

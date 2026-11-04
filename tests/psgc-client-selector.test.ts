@@ -112,7 +112,7 @@ describe('PSGC Client Library & Address Resolution Contract', () => {
   });
 
   describe('formatStructuredAddress Helper', () => {
-    it('formats full structured address with building and street without province for NCR', () => {
+    it('formats full structured address with building and street without province for NCR (omitting postal code)', () => {
       const formatted = formatStructuredAddress({
         regionName: 'National Capital Region',
         cityName: 'City of Manila',
@@ -121,10 +121,10 @@ describe('PSGC Client Library & Address Resolution Contract', () => {
         street: 'Valencia St.',
         postalCode: '1008',
       });
-      expect(formatted).toBe('Unit 4B, EARIST Dorm, Valencia St., Barangay 408, City of Manila, National Capital Region, Postal Code 1008');
+      expect(formatted).toBe('Unit 4B, EARIST Dorm, Valencia St., Barangay 408, City of Manila, National Capital Region');
     });
 
-    it('formats structured address with province for provincial locations', () => {
+    it('formats structured address with province for provincial locations (omitting postal code)', () => {
       const formatted = formatStructuredAddress({
         regionName: 'CALABARZON',
         provinceName: 'Cavite',
@@ -134,20 +134,20 @@ describe('PSGC Client Library & Address Resolution Contract', () => {
         street: 'Aguinaldo Highway',
         postalCode: '4102',
       });
-      expect(formatted).toBe('Block 5 Lot 12, Aguinaldo Highway, Habay I, City of Bacoor, Cavite, CALABARZON, Postal Code 4102');
+      expect(formatted).toBe('Block 5 Lot 12, Aguinaldo Highway, Habay I, City of Bacoor, Cavite, CALABARZON');
     });
 
-    it('formats cleanly even when building and street are omitted', () => {
+    it('formats cleanly even when building and street are omitted (omitting postal code)', () => {
       const formatted = formatStructuredAddress({
         regionName: 'National Capital Region',
         cityName: 'City of Manila',
         barangayName: 'Barangay 408',
         postalCode: '1008',
       });
-      expect(formatted).toBe('Barangay 408, City of Manila, National Capital Region, Postal Code 1008');
+      expect(formatted).toBe('Barangay 408, City of Manila, National Capital Region');
     });
 
-    it('formats address with manually entered postal code for multi-code city (e.g. Barangay 856 with 1011)', () => {
+    it('formats address without postal code even when postalCode is provided in input object', () => {
       const formatted = formatStructuredAddress({
         regionName: 'National Capital Region',
         cityName: 'City of Manila',
@@ -156,7 +156,7 @@ describe('PSGC Client Library & Address Resolution Contract', () => {
         street: 'Pandacan',
         postalCode: '1011',
       });
-      expect(formatted).toBe('123 Beata St., Pandacan, Barangay 856, City of Manila, National Capital Region, Postal Code 1011');
+      expect(formatted).toBe('123 Beata St., Pandacan, Barangay 856, City of Manila, National Capital Region');
     });
   });
 });
