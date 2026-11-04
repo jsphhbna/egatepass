@@ -105,6 +105,28 @@ where not exists (
     and p.postal_code = v.postal_code
 );
 
+-- 4.1 Deactivate obsolete legacy Manila postal mappings referencing synthetic duplicate barangays
+update public.postal_code_reference
+set is_active = false
+where barangay_psgc_code in (
+  '1380600408', '1380600409', '1380600410', '1380600411', '1380600412',
+  '1380600413', '1380600414', '1380600415', '1380600587', '1380600588',
+  '1380600629', '1380600830', '1380600831', '1380600659', '1380600660',
+  '1380600661', '1380600667', '1380600696', '1380600697', '1380600700',
+  '1380600821', '1380600822', '1380600823', '1380600287', '1380600306'
+);
+
+-- 4.2 Deactivate any postal mappings referencing inactive or non-existent barangays
+update public.postal_code_reference p
+set is_active = false
+where p.barangay_psgc_code is not null
+  and exists (
+    select 1 from public.psgc_locations l
+    where l.psgc_code = p.barangay_psgc_code
+      and l.is_active = false
+  );
+
+
 -- 5. Update api.issue_online_pass_v6 to resolve legacy aliases seamlessly
 
 create or replace function api.issue_online_pass_v6(

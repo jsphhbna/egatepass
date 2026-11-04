@@ -728,10 +728,42 @@ async function handleRequest(request: Request): Promise<Response> {
     let returningEnrollmentStatus: 'enrolled' | 'failed' | 'not_requested' = 'not_requested';
     let returningProfileUpdateStatus: 'updated' | 'failed' | 'not_requested' = 'not_requested';
     if (parsed.data.source === 'portal' && parsed.data.registrationMode === 'new' && parsed.data.enrollReturning === true) {
-      let createdProfileId: string | null = null;
       try {
         const templateKey = process.env.RETURNING_VISITOR_TEMPLATE_KEY?.trim();
         if (templateKey && photo.buffer) {
+          // Pre-check 1: Validate pass_id exists and is UUID
+          if (!data.pass_id || !z.string().uuid().safeParse(data.pass_id).success) {
+            throw new Error('invalid_or_missing_pass_id');
+          }
+
+          // Pre-check 2: Authoritatively fetch pass record
+          const { data: passRow, error: passErr } = await admin
+            .from('passes')
+            .select('id, visitor_id, issue_request_id')
+            .eq('id', data.pass_id)
+            .eq('issue_request_id', parsed.data.requestId)
+            .maybeSingle();
+
+          if (passErr) throw passErr;
+          if (!passRow || !passRow.visitor_id) {
+            throw new Error('pass_not_found_or_missing_visitor');
+          }
+
+          // Pre-check 3: Authoritatively fetch and validate visitor record
+          const { data: visitorRow, error: visitorErr } = await admin
+            .from('visitors')
+            .select('id, owner_id, returning_profile_id')
+            .eq('id', passRow.visitor_id)
+            .maybeSingle();
+
+          if (visitorErr) throw visitorErr;
+          if (!visitorRow || visitorRow.owner_id !== actorId) {
+            throw new Error('visitor_actor_mismatch');
+          }
+          if (visitorRow.returning_profile_id) {
+            throw new Error('visitor_already_enrolled');
+          }
+
           const { descriptor, modelName, modelVersion } = await extractFaceDescriptorFromBuffer(photo.buffer);
           const descriptorValidation = validateFaceDescriptor(descriptor, 128);
           if (!descriptorValidation.valid) {
@@ -740,30 +772,7 @@ async function handleRequest(request: Request): Promise<Response> {
           const activeKeyVersion = getActiveTemplateKeyVersion();
           const encrypted = encryptFaceTemplate(descriptor, templateKey, activeKeyVersion);
 
-          // Locate authoritative issued visitor from passes table
-          let authoritativeVisitorId: string | null = null;
-          if (data.pass_id) {
-            const { data: passRow } = await admin
-              .from('passes')
-              .select('id, visitor_id, issue_request_id')
-              .eq('id', data.pass_id)
-              .eq('issue_request_id', parsed.data.requestId)
-              .maybeSingle();
-
-            if (passRow?.visitor_id) {
-              const { data: visitorRow } = await admin
-                .from('visitors')
-                .select('id, owner_id')
-                .eq('id', passRow.visitor_id)
-                .eq('owner_id', actorId)
-                .maybeSingle();
-              if (visitorRow) {
-                authoritativeVisitorId = visitorRow.id;
-              }
-            }
-          }
-
-          // Insert returning profile with structured PSGC address
+          // Resolve names for structured address snapshot
           const psgc = parsed.data.psgc;
           let enrollRegionName: string | null = null;
           let enrollProvinceName: string | null = null;
@@ -772,10 +781,11 @@ async function handleRequest(request: Request): Promise<Response> {
           if (psgc?.regionCode && psgc?.cityCode && psgc?.barangayCode) {
             const codes = [psgc.regionCode, psgc.provinceCode, psgc.cityCode, psgc.barangayCode].filter(Boolean) as string[];
             try {
-              const { data: locs } = await admin
+              const { data: locs, error: locsErr } = await admin
                 .from('psgc_locations')
                 .select('psgc_code, name, level')
                 .in('psgc_code', codes);
+              if (locsErr) throw locsErr;
               if (locs) {
                 for (const loc of locs) {
                   if (loc.level === 'region') enrollRegionName = loc.name;
@@ -801,74 +811,57 @@ async function handleRequest(request: Request): Promise<Response> {
 
           const effectiveHomeAddress = visitor.homeAddress?.trim() || (formattedFromPsgc || null);
 
-          const { data: newProfile, error: profileErr } = await admin
-            .from('returning_visitor_profiles')
-            .insert({
-              first_name: visitor.firstName,
-              middle_name: visitor.middleName || null,
-              last_name: visitor.lastName,
-              contact_number_e164: canonicalContact,
-              home_address: effectiveHomeAddress,
-              home_location_lat: normalizedHomeLocation?.lat ?? null,
-              home_location_lon: normalizedHomeLocation?.lon ?? null,
-              psgc_version: psgc?.version || '2026-q3',
-              psgc_region_code: psgc?.regionCode || null,
-              psgc_province_code: psgc?.provinceCode || null,
-              psgc_city_code: psgc?.cityCode || null,
-              psgc_barangay_code: psgc?.barangayCode || null,
-              psgc_region_name: enrollRegionName,
-              psgc_province_name: enrollProvinceName,
-              psgc_city_municipality_name: enrollCityName,
-              psgc_barangay_name: enrollBarangayName,
-              home_building: psgc?.houseBuilding || null,
-              home_street: psgc?.street || null,
-              postal_code: psgc?.postalCode || null,
-              postal_code_source: psgc?.postalCodeSource || null,
-              consent_version: 'v1',
+          // Atomic transactional RPC execution
+          const shouldSaveVehicle = Boolean(
+            parsed.data.arrivalMode === 'vehicle' &&
+            parsed.data.vehicle?.saveVehicle === true &&
+            normalizedPlateDisplay &&
+            normalizedPlateKey
+          );
+
+          const { data: enrollRes, error: enrollRpcErr } = await admin
+            .schema('api')
+            .rpc('enroll_returning_visitor_v1', {
+              requested_actor_id: actorId,
+              requested_pass_id: data.pass_id,
+              requested_request_id: parsed.data.requestId,
+              requested_first_name: visitor.firstName,
+              requested_middle_name: visitor.middleName || null,
+              requested_last_name: visitor.lastName,
+              requested_contact_number_e164: canonicalContact,
+              requested_home_address: effectiveHomeAddress,
+              requested_home_location_lat: normalizedHomeLocation?.lat ?? null,
+              requested_home_location_lon: normalizedHomeLocation?.lon ?? null,
+              requested_psgc_version: psgc?.version || '2026-q3',
+              requested_psgc_region_code: psgc?.regionCode || null,
+              requested_psgc_province_code: psgc?.provinceCode || null,
+              requested_psgc_city_code: psgc?.cityCode || null,
+              requested_psgc_barangay_code: psgc?.barangayCode || null,
+              requested_psgc_region_name: enrollRegionName,
+              requested_psgc_province_name: enrollProvinceName,
+              requested_psgc_city_municipality_name: enrollCityName,
+              requested_psgc_barangay_name: enrollBarangayName,
+              requested_home_building: psgc?.houseBuilding || null,
+              requested_home_street: psgc?.street || null,
+              requested_postal_code: psgc?.postalCode || null,
+              requested_postal_code_source: psgc?.postalCodeSource || null,
+              requested_encrypted_embedding: encrypted.encryptedEmbedding,
+              requested_iv: encrypted.iv,
+              requested_auth_tag: encrypted.authTag,
+              requested_key_version: encrypted.keyVersion,
+              requested_model_name: modelName,
+              requested_model_version: modelVersion,
+              requested_save_vehicle: shouldSaveVehicle,
+              requested_vehicle_type: shouldSaveVehicle ? (parsed.data.vehicle?.vehicleType ?? null) : null,
+              requested_plate_number: shouldSaveVehicle ? normalizedPlateDisplay : null,
+              requested_plate_key: shouldSaveVehicle ? normalizedPlateKey : null,
+              requested_vehicle_color: shouldSaveVehicle ? (normalizedVehicleColor || parsed.data.vehicle?.color || null) : null,
+              requested_make_model: shouldSaveVehicle ? (parsed.data.vehicle?.makeModel?.trim() || null) : null,
             })
-            .select('id')
             .single();
 
-          if (profileErr) throw profileErr;
-          createdProfileId = newProfile.id;
-
-          // Insert encrypted template
-          const { error: templateErr } = await admin
-            .from('returning_face_templates')
-            .insert({
-              profile_id: newProfile.id,
-              encrypted_embedding: encrypted.encryptedEmbedding,
-              iv: encrypted.iv,
-              auth_tag: encrypted.authTag,
-              key_version: encrypted.keyVersion,
-              model_name: modelName,
-              model_version: modelVersion,
-            });
-
-          if (templateErr) throw templateErr;
-
-          // Authoritatively link the newly issued visitor to this returning profile
-          if (authoritativeVisitorId) {
-            const { error: linkErr } = await admin
-              .from('visitors')
-              .update({ returning_profile_id: newProfile.id })
-              .eq('id', authoritativeVisitorId)
-              .eq('owner_id', actorId)
-              .is('returning_profile_id', null);
-
-            if (linkErr) throw linkErr;
-          }
-
-          // If vehicle chosen and user opted to save vehicle
-          if (parsed.data.arrivalMode === 'vehicle' && parsed.data.vehicle?.saveVehicle === true && normalizedPlateDisplay && normalizedPlateKey) {
-            await admin.from('returning_visitor_vehicles').insert({
-              profile_id: newProfile.id,
-              vehicle_type: parsed.data.vehicle.vehicleType,
-              plate_number: normalizedPlateDisplay,
-              plate_key: normalizedPlateKey,
-              color: normalizedVehicleColor || parsed.data.vehicle.color,
-              make_model: parsed.data.vehicle.makeModel || '',
-            });
+          if (enrollRpcErr || !enrollRes) {
+            throw enrollRpcErr || new Error('enroll_returning_rpc_failed');
           }
 
           returningEnrollmentStatus = 'enrolled';
@@ -876,15 +869,6 @@ async function handleRequest(request: Request): Promise<Response> {
       } catch (enrollErr) {
         console.error('Returning visitor enrollment failed after pass issuance (pass preserved):', enrollErr);
         returningEnrollmentStatus = 'failed';
-        if (createdProfileId) {
-          try {
-            await admin.from('returning_face_templates').delete().eq('profile_id', createdProfileId);
-            await admin.from('returning_visitor_vehicles').delete().eq('profile_id', createdProfileId);
-            await admin.from('returning_visitor_profiles').delete().eq('id', createdProfileId);
-          } catch (cleanupErr) {
-            console.error('Compensating cleanup failed for returning profile:', cleanupErr);
-          }
-        }
       }
     } else if (parsed.data.source === 'portal' && parsed.data.registrationMode === 'returning') {
       // Returning visitor: apply optional updates

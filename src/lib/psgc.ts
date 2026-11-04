@@ -304,10 +304,23 @@ export async function resolvePostalCode(
     dbLookupFailed = true;
   }
 
+  if (dbLookupFailed) {
+    return {
+      postalCode: null,
+      mappingType: 'service_unavailable',
+      isAutoFilled: false,
+      requiresConfirmation: true,
+      message: 'Postal lookup service could not be reached. Please enter your 4-digit postal code manually.',
+    };
+  }
+
   // Fallback resolution using bundled dataset
-  if (barangayCode) {
+  // Legacy synthetic barangay codes (e.g. 1380600%) cannot produce automatic matches
+  const isLegacySyntheticBarangay = Boolean(barangayCode && barangayCode.startsWith('1380600'));
+
+  if (barangayCode && !isLegacySyntheticBarangay) {
     const bgyMatch = (postalData as any[]).find(
-      (p) => p.barangayPsgcCode === barangayCode
+      (p) => p.barangayPsgcCode === barangayCode && p.psgcLocalityCode === cityCode
     );
     if (bgyMatch) {
       return {
@@ -341,16 +354,6 @@ export async function resolvePostalCode(
         message: 'Postal code varies by delivery area. Please confirm your applicable postal code.',
       };
     }
-  }
-
-  if (dbLookupFailed) {
-    return {
-      postalCode: null,
-      mappingType: 'service_unavailable',
-      isAutoFilled: false,
-      requiresConfirmation: true,
-      message: 'Postal lookup service could not be reached. Please enter your 4-digit postal code manually.',
-    };
   }
 
   return {
