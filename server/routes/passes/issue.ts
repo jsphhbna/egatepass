@@ -144,13 +144,9 @@ export function getClientNetworkIdentifier(request: Request): string {
   const rawIp = firstHop || realIp || '127.0.0.1';
 
   const dedicatedSecret = process.env.RATE_LIMIT_HMAC_SECRET?.trim();
-  const isProd = process.env.NODE_ENV === 'production' || process.env.VERCEL_ENV === 'production';
 
   if (!dedicatedSecret || dedicatedSecret.length < 32) {
-    if (isProd) {
-      throw new HttpError(503, 'abuse_control_unavailable');
-    }
-    return createHmac('sha256', 'test-rate-limit-secret-32-chars-minimum!').update(`network:${rawIp}`).digest('hex');
+    throw new HttpError(503, 'abuse_control_unavailable');
   }
 
   return createHmac('sha256', dedicatedSecret).update(`network:${rawIp}`).digest('hex');
@@ -606,7 +602,14 @@ async function handleRequest(request: Request): Promise<Response> {
           });
         }
 
-        const matchSecret = process.env.RETURNING_MATCH_TOKEN_SECRET || '';
+        const matchSecret = process.env.RETURNING_MATCH_TOKEN_SECRET?.trim();
+        if (!matchSecret || matchSecret.length < 32) {
+          console.error('RETURNING_MATCH_TOKEN_SECRET missing or insecure in pass issue');
+          return jsonResponse(503, {
+            error: 'service_unavailable',
+            message: 'Returning visitor verification service is temporarily unavailable.',
+          });
+        }
         returningMatchDigest = computeMatchTokenDigest(ret.matchToken, matchSecret);
 
         const { data: retAttempt, error: retAttemptErr } = await admin

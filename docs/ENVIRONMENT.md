@@ -10,21 +10,25 @@ This document is the authoritative specification for all configuration and secre
 
 | Variable | Scope | Secret? | Consumer / Used By | Production Required? | Purpose & Format Specification |
 |---|---|---|---|---|---|
-| `APP_BASE_URL` | Production, Preview, Local | No | Transactional email template branding (`server/templates/branding.ts`) | **Yes** | `https://gatepass.example.edu` (Public canonical application origin used for externally loaded transactional-email branding assets) |
+| `APP_BASE_URL` | Production, Preview, Local | No | Transactional email template branding (`server/templates/branding.ts`) | **Yes** | `https://egatepass.tech` (Public canonical application origin used for externally loaded transactional-email branding assets) |
 | `VITE_SUPABASE_URL` | Production, Preview, Local | No | Client application (`src/lib/supabase.ts`) | **Yes** | `https://<project-ref>.supabase.co` (Public Supabase API Gateway) |
 | `VITE_SUPABASE_PUBLISHABLE_KEY` | Production, Preview, Local | No | Client application (`src/lib/supabase.ts`) | **Yes** | `sb_publishable_...` (Supabase publishable browser key; intentionally public and safe for browser use when RLS is correctly enforced) |
-| `VITE_TURNSTILE_SITE_KEY` | Production, Local | No | Cloudflare Turnstile widget (`src/pages/GetPassPage.tsx`, `LoginPage.tsx`) | **Yes** (Prod) | `0x4AAAAAA...` (Public Cloudflare Turnstile Managed widget site key; scoped to Production in Vercel) |
+| `VITE_TURNSTILE_SITE_KEY` | Production, Local | No | Cloudflare Turnstile widget (`src/pages/GetPassPage.tsx`, `LoginPage.tsx`) | **Yes** (Prod) | `0x4AAAAAAFeETebgPENH6hgH` (Public Cloudflare Turnstile Managed widget site key; scoped to Production in Vercel) |
 | `SUPABASE_URL` | Production, Preview, Local | No | Serverless API Functions (`server/supabase.ts`) | **Yes** | `https://<project-ref>.supabase.co` (Backend Supabase endpoint) |
 | `SUPABASE_SECRET_KEY` | Production Only | **Yes** | Serverless admin client (`server/supabase.ts`) | **Yes** | High-privilege Supabase service-role secret; strictly isolated to Production |
 | `PASS_TOKEN_SECRET` | Production Only | **Yes** | QR bearer token derivation (`server/routes/passes/issue.ts`) | **Yes** | High-entropy cryptographic secret (**minimum 32 characters**) for HMAC-SHA256 QR tokens |
-| `RATE_LIMIT_HMAC_SECRET` | Production Only | **Yes** | Network abuse rate limiting (`server/routes/passes/issue.ts`) | **Yes** | Dedicated high-entropy key (**minimum 32 characters**) for hashing client IP/subnet |
+| `RETURNING_MATCH_TOKEN_SECRET` | Production Only | **Yes** | Returning preview tokens & biometric match tokens (`server/routes/passes/returning-photo-preview.ts`, `lookup-returning.ts`, `identify-returning.ts`, `returning-id-preview.ts`, `issue.ts`) | **Yes** | Dedicated high-entropy cryptographic secret (**minimum 32 characters**) strictly isolated from pass tokens |
+| `RETURNING_VISITOR_TEMPLATE_KEY` | Production Only | **Yes** | AES-256-GCM biometric template encryption (`server/lib/face-engine.ts`) | **Yes** | 32-byte (64-hex-character) encryption key for face descriptor protection at rest |
+| `RATE_LIMIT_HMAC_SECRET` | Production Only | **Yes** | Network abuse rate limiting (`server/routes/passes/issue.ts`, `lookup-returning.ts`) | **Yes** | Dedicated high-entropy key (**minimum 32 characters**) for hashing client IP/subnet |
+| `RETURNING_FACE_THRESHOLD_MODE` | Production, Local | No | Biometric verification safety gate (`server/routes/passes/identify-returning.ts`) | No | `provisional` (default) or `calibrated`. Production runs strictly in `provisional` mode |
+| `RETURNING_FACE_CALIBRATION_ARTIFACT` | Production, Local | No | Ed25519 signed calibration envelope (`server/lib/calibration-verifier.ts`) | No | Complete JSON envelope signed by `EARIST_BIOMETRICS_CALIBRATION_AUTHORITY`. Required for `calibrated` mode |
 | `RESEND_API_KEY` | Production Only | **Yes** | Resend REST API client (`server/email.ts`) | **Yes** | `re_...` provider-issued transactional email API key |
 | `RESEND_FROM_EMAIL` | Production, Local | No | Sender identity (`server/email.ts`) | **Yes** | Authoritative sender: `EARIST E-GatePass <notifications@egatepass.tech>` |
 | `SEND_EMAIL_HOOK_SECRET` | Production Only | **Yes** | Supabase Auth Send Email Hook (`server/routes/auth/send-email-hook.ts`) | **Yes** | Shared secret configured in Supabase Auth Webhook settings |
 | `RESEND_WEBHOOK_SECRET` | Production Only | **Yes** | Resend Delivery Webhook (`server/routes/auth/resend-webhook.ts`) | **Yes** | `whsec_...` signing secret for Resend delivery event verification |
 | `CRON_SECRET` | Production Only | **Yes** | Retention maintenance authorization (`server/routes/admin/retention-maintenance.ts`) | **Yes** | Shared bearer token (**minimum 32 characters**) for Vercel Cron invocations |
 
-> **Turnstile Private Key Note**: The Cloudflare Turnstile Secret Key is configured directly inside the Supabase Dashboard under **Authentication > Bot Protection / CAPTCHA**, where Supabase Auth verifies tokens for `signInAnonymously`. It is NEVER exposed to Vercel or frontend bundles.
+> **Turnstile Architecture Note**: The Cloudflare Turnstile Secret Key is configured directly inside the Supabase Dashboard under **Authentication > Bot Protection / CAPTCHA**, where Supabase Auth verifies tokens for `signInAnonymously`. It is NEVER exposed to frontend bundles. If optionally configured in Vercel environment variables, the server runtime module (`server/lib/turnstile.ts`) provides secondary per-lookup challenge verification with in-memory anti-replay protection and domain boundary validation.
 
 ---
 
@@ -36,7 +40,8 @@ Generic Vercel Preview deployments are protected by Vercel Deployment Protection
 Production Scope (egatepass.tech)
 ├─ Public / Non-sensitive configuration (APP_BASE_URL, VITE_SUPABASE_URL, SUPABASE_URL, etc.)
 └─ Full external provider credentials (SUPABASE_SECRET_KEY, RESEND_API_KEY, PASS_TOKEN_SECRET,
-     CRON_SECRET, RATE_LIMIT_HMAC_SECRET, SEND_EMAIL_HOOK_SECRET, RESEND_WEBHOOK_SECRET)
+     CRON_SECRET, RATE_LIMIT_HMAC_SECRET, RETURNING_MATCH_TOKEN_SECRET, RETURNING_VISITOR_TEMPLATE_KEY,
+     SEND_EMAIL_HOOK_SECRET, RESEND_WEBHOOK_SECRET)
 
 Generic Preview Scope (*.vercel.app)
 ├─ VITE_SUPABASE_URL
@@ -81,12 +86,32 @@ The platform utilizes two distinct, decoupled webhook flows:
 
 ## 4. Cryptographic Key Separation
 
-- **`PASS_TOKEN_SECRET`**: Used solely to derive visitor QR bearer tokens (`createHmac('sha256', PASS_TOKEN_SECRET)`). Rotating this key invalidates unexpired active passes.
-- **`RATE_LIMIT_HMAC_SECRET`**: Used exclusively for hashing client network identifiers in rate limiting. It NEVER falls back to `PASS_TOKEN_SECRET`. In Production, if `RATE_LIMIT_HMAC_SECRET` is missing or fewer than 32 characters, pass issuance fails closed with HTTP 503 `abuse_control_unavailable`.
+Each cryptographic purpose strictly requires its own dedicated environment variable. Cross-variable fallbacks and hardcoded default secrets are strictly prohibited:
+
+- **`PASS_TOKEN_SECRET`**: Used solely to derive visitor QR bearer tokens (`createHmac('sha256', PASS_TOKEN_SECRET)`). Rotating this key invalidates unexpired active passes. Must be >= 32 characters.
+- **`RETURNING_MATCH_TOKEN_SECRET`**: Used exclusively for signing V3 actor-bound preview tokens and computing biometric match token digests. It NEVER falls back to `PASS_TOKEN_SECRET`. In Production, if missing or fewer than 32 characters, endpoints fail closed with HTTP 503.
+- **`RATE_LIMIT_HMAC_SECRET`**: Used exclusively for hashing client network identifiers in rate limiting. It NEVER falls back to `PASS_TOKEN_SECRET` or test strings. In Production, if missing or fewer than 32 characters, pass issuance and lookup fail closed with HTTP 503 `abuse_control_unavailable`.
+- **`RETURNING_VISITOR_TEMPLATE_KEY`**: Used exclusively for AES-256-GCM encryption and decryption of face embedding vectors at rest in `returning_visitor_profiles`. Must be a valid 32-byte 64-hex string.
 
 ---
 
-## 5. Legacy Resend SMTP Credential Notice & Action
+## 5. Biometric Calibration Authority & Operational Thresholds
+
+Biometric verification modes are governed cryptographically:
+
+1. **Provisional Mode (Active Production Baseline)**:
+   - Cosine similarity threshold: `0.363` (`SFACE_PROVISIONAL_COSINE_THRESHOLD`).
+   - Requires physical guard station manual verification of the visitor.
+   - Historical identification document preview is strictly denied (`403 provisional_mode_cannot_authorize_id_access`).
+2. **Calibrated Mode**:
+   - Requires an authentic Ed25519-signed envelope in `RETURNING_FACE_CALIBRATION_ARTIFACT`.
+   - Verified against pinned authority public key (`PINNED_CALIBRATION_PUBLIC_KEY`).
+   - Issued by `EARIST_BIOMETRICS_CALIBRATION_AUTHORITY` with target model `yunet_sface` and inference engine `onnxruntime-node`.
+   - If unverified or missing, the system fails closed gracefully.
+
+---
+
+## 6. Legacy Resend SMTP Credential Notice & Action
 
 The historical Resend SMTP API credential (`RESEND_SUPABASE_SMTP_KEY`) was created during initial setup prior to enabling the Supabase Auth Send Email Hook. In the current architecture:
 - Supabase Auth dispatches all authentication emails directly to the Send Email Hook via HTTPS.
@@ -103,14 +128,15 @@ The historical Resend SMTP API credential (`RESEND_SUPABASE_SMTP_KEY`) was creat
 
 ---
 
-## 6. Node.js Production Runtime Policy
+## 7. Node.js Production Runtime Policy
 
 Production runtime policy: Node.js 24.x.
 
 Vercel manages patch-level runtime updates within the selected Node.js major line.
+
 ---
 
-## 6. Bundled Font Typography & Static Assets
+## 8. Bundled Font Typography & Static Assets
 
 The platform bundles official Google Noto Sans fonts in `public/fonts/`:
 - `public/fonts/NotoSans-Regular.ttf`

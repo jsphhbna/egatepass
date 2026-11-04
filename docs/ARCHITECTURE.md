@@ -740,11 +740,23 @@ Outage Architecture & Authority Delegation
   - Name parameters in `/api/passes/lookup-returning` strictly reject pattern wildcards (`%`, `_`, `*`, `\`) with 400 `invalid_request`.
   - Candidate discovery requires an additional factor (either Philippine mobile contact number or PSGC city code) in both automatic and manual modes.
   - Discovery responses are capped at a maximum of 3 candidates with masked PII.
-- **V2 Evidence-Kind Bound Preview Tokens & Single-Use ID Authorization**:
-  - Preview tokens use the format `v2.<profileId>.<kind>.<expiresAt>.<nonce>.<sig>` with an explicit 300-second (5-minute) TTL.
+- **V3 Actor-Bound Preview Tokens & Authenticated Image Fetching**:
+  - Preview tokens use the format `v3.<profileId>.<actorId>.<kind>.<expiresAt>.<nonce>.<sig>` with an explicit 300-second (5-minute) TTL signed with `RETURNING_MATCH_TOKEN_SECRET`.
+  - Preview tokens are cryptographically bound to the authenticated actor (`actorId`). Calling the preview endpoint from a different session or without Bearer authentication fails with 401/403 `actor_mismatch`.
   - Photo preview tokens cannot be used to retrieve ID documents (`kind=id` is rejected with 403 `forbidden_evidence_kind`).
   - Historical ID document preview requires calibrated face verification and is atomically consumed via `api.consume_id_preview_authorization_v1` to prevent replay.
+  - Image rendering in the browser uses `AuthenticatedImage.tsx`, which fetches image binary data via `Authorization: Bearer <sessionToken>`, creates an ephemeral `blob:` Object URL, and immediately revokes it upon component unmount (`URL.revokeObjectURL`).
   - Provisional mode verification cannot authorize ID document preview under any circumstance.
-- **Biometric Calibration Prerequisites**:
+- **Cryptographic Biometric Calibration Authority (Ed25519)**:
   - The production default threshold `0.363` operates in provisional mode.
-  - Calibrated mode requires documented calibration evidence: representative consented EARIST test dataset, defined enrollment quality metrics, false-accept and false-reject rate measurements, approved calibration artifact (`RETURNING_FACE_CALIBRATION_VERSION`), and documented threshold selection methodology. Without these prerequisites, the system fails closed.
+  - Calibrated mode strictly requires an authentic Ed25519-signed digital signature from `EARIST_BIOMETRICS_CALIBRATION_AUTHORITY` verified against `PINNED_CALIBRATION_PUBLIC_KEY`.
+  - Enforces schema version `1.0.0`, target model `yunet_sface`, inference engine `onnxruntime-node`, and checks revocation against `revokedVersions`. Without a valid artifact, explicit calibrated mode fails closed.
+
+### 12.20 Cloudflare Turnstile Architecture & Anti-Replay Defense
+- **Supabase Auth Boundary (Primary)**:
+  - Anonymous visitor sign-in is protected by Cloudflare Turnstile Managed Challenge in the Supabase Dashboard under **Authentication > Bot Protection / CAPTCHA**.
+  - `client.auth.signInAnonymously({ options: { captchaToken } })` verifies the Turnstile challenge at the Supabase Auth boundary before issuing an anonymous JWT.
+- **Server Runtime Siteverify (Secondary)**:
+  - If the server-side Turnstile verification secret is present in serverless environment variables, `server/lib/turnstile.ts` validates challenge tokens on returning visitor searches (`/api/passes/lookup-returning`).
+  - Employs an in-memory SHA-256 token replay cache (300-second TTL) to block duplicate or replayed tokens.
+  - Enforces permitted hostname validation (`egatepass.tech`, `localhost`, etc.) and 5000ms bounded HTTP timeouts via `AbortController`.

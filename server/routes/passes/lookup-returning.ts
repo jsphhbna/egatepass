@@ -24,6 +24,7 @@ import { getServerSupabaseClients } from '../../supabase.js';
 import { normalizePhMobile } from '../../../src/lib/phPhone.js';
 import { getClientNetworkIdentifier } from './issue.js';
 import { createPreviewToken } from './returning-photo-preview.js';
+import { verifyTurnstileToken } from '../../lib/turnstile.js';
 
 // Rejects wildcards, control characters, and common injection patterns
 const safeNameRegex = /^[^%_*\\<>=;`$[\]{}|]+$/u;
@@ -35,6 +36,7 @@ const lookupSchema = z.object({
   contactNumber: z.string().trim().optional(),
   psgcCityCode: z.string().trim().optional(),
   psgcBarangayCode: z.string().trim().optional(),
+  captchaToken: z.string().trim().optional(),
   mode: z.enum(['auto', 'manual']).default('manual'),
 }).strict().superRefine((val, ctx) => {
   // Reject SQL pattern wildcard characters
@@ -117,6 +119,31 @@ async function handleRequest(request: Request): Promise<Response> {
     }
 
     const actorId = session.user.id;
+
+    // 0. CAPTCHA verification: if TURNSTILE_SECRET_KEY is configured in server runtime, enforce direct siteverify
+    const turnstileSecret = process.env.TURNSTILE_SECRET_KEY?.trim();
+    if (turnstileSecret) {
+      const captchaToken = parsed.data.captchaToken || request.headers.get('x-captcha-token') || '';
+      const remoteIp = request.headers.get('x-forwarded-for')?.split(',')[0]?.trim();
+      const turnstileRes = await verifyTurnstileToken({
+        token: captchaToken,
+        secretKey: turnstileSecret,
+        remoteIp,
+      });
+
+      if (!turnstileRes.valid) {
+        if (turnstileRes.error === 'siteverify_provider_error' || turnstileRes.error === 'siteverify_timeout') {
+          return jsonResponse(503, {
+            error: turnstileRes.error,
+            message: turnstileRes.message,
+          });
+        }
+        return jsonResponse(400, {
+          error: turnstileRes.error || 'invalid_captcha_token',
+          message: turnstileRes.message || 'Verification challenge failed. Please retry.',
+        });
+      }
+    }
 
     // 1. Rate limiting - Actor Bucket (15 lookups per 5 minutes)
     const actorKeyHex = createHash('sha256').update(`actor:${actorId}`).digest('hex');
@@ -231,7 +258,14 @@ async function handleRequest(request: Request): Promise<Response> {
     // Enforce strict enumeration cap: at most 3 candidates returned
     const cappedCandidates = filtered.slice(0, 3);
 
-    const tokenSecret = process.env.PASS_TOKEN_SECRET || process.env.RETURNING_MATCH_TOKEN_SECRET || 'egatepass-fallback-secret-for-tokens-32chars!';
+    const tokenSecret = process.env.RETURNING_MATCH_TOKEN_SECRET?.trim();
+    if (!tokenSecret || tokenSecret.length < 32) {
+      console.error('RETURNING_MATCH_TOKEN_SECRET missing or insecure in lookup-returning');
+      return jsonResponse(503, {
+        error: 'signing_key_unavailable',
+        message: 'Returning visitor search is temporarily unavailable.',
+      });
+    }
 
     const candidates = cappedCandidates.map((m) => {
       const localityParts = [
@@ -239,8 +273,8 @@ async function handleRequest(request: Request): Promise<Response> {
         m.psgc_city_municipality_name || m.psgc_province_name,
       ].filter(Boolean);
 
-      // Create v2 preview token bound strictly to kind='photo' and 300s TTL
-      const previewToken = createPreviewToken(m.id, tokenSecret, 300, 'photo');
+      // Create v3 preview token bound strictly to profileId, actorId, kind='photo', and 300s TTL
+      const previewToken = createPreviewToken(m.id, actorId, tokenSecret, 300, 'photo');
 
       return {
         profileId: m.id,

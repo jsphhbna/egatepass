@@ -8,7 +8,11 @@ describe('Returning Visitor 1:1 Profile Discovery & Masking Contract (lookup-ret
   const actorId = '11111111-1111-4111-8111-111111111111';
 
   beforeEach(() => {
-    process.env = { ...originalEnv };
+    process.env = {
+      ...originalEnv,
+      RETURNING_MATCH_TOKEN_SECRET: 'test-secret-at-least-32-characters-long!',
+      RATE_LIMIT_HMAC_SECRET: 'test-rate-limit-secret-32-characters!',
+    };
   });
 
   afterEach(() => {

@@ -21,6 +21,7 @@ describe('Returning Visitor & Ephemeral Verification Pass Issuance Invariants', 
       ...originalEnv,
       PASS_TOKEN_SECRET: 'test-pass-token-secret-must-be-at-least-32-chars!',
       RETURNING_MATCH_TOKEN_SECRET: 'test-match-token-secret-must-be-at-least-32-chars!',
+      RATE_LIMIT_HMAC_SECRET: 'test-rate-limit-secret-must-be-at-least-32-chars!',
     };
     vi.restoreAllMocks();
   });

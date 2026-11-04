@@ -119,6 +119,9 @@ describe('Secure Historical ID Preview Endpoint (/api/passes/returning-id-previe
         }
         return { select: vi.fn().mockReturnThis() };
       }),
+      schema: vi.fn().mockReturnValue({
+        rpc: vi.fn().mockResolvedValue({ data: true, error: null }),
+      }),
     };
 
     vi.spyOn(supabaseModule, 'getServerSupabaseClients').mockReturnValue({
@@ -144,6 +147,56 @@ describe('Secure Historical ID Preview Endpoint (/api/passes/returning-id-previe
     expect(body.error).toBe('returning_match_required');
   });
 
+  it('rejects ID preview when threshold_mode is provisional with 403 provisional_mode_cannot_authorize_id_access', async () => {
+    const mockAdmin = {
+      from: vi.fn().mockImplementation((table: string) => {
+        if (table === 'returning_identity_attempts') {
+          return {
+            select: vi.fn().mockReturnThis(),
+            eq: vi.fn().mockReturnThis(),
+            gt: vi.fn().mockReturnThis(),
+            order: vi.fn().mockReturnThis(),
+            limit: vi.fn().mockReturnThis(),
+            maybeSingle: vi.fn().mockResolvedValue({
+              data: {
+                id: 'attempt-prov',
+                owner_id: 'visitor-anon-123',
+                matched_profile_id: '550e8400-e29b-41d4-a716-446655440000',
+                outcome: 'matched',
+                threshold_mode: 'provisional',
+                expires_at: new Date(Date.now() + 600000).toISOString(),
+              },
+              error: null,
+            }),
+          };
+        }
+        return { select: vi.fn().mockReturnThis() };
+      }),
+    };
+
+    vi.spyOn(supabaseModule, 'getServerSupabaseClients').mockReturnValue({
+      admin: mockAdmin as any,
+      anon: {} as any,
+    });
+    vi.spyOn(actorsModule, 'getVerifiedSessionContext').mockResolvedValue({
+      user: { id: 'visitor-anon-123' } as any,
+      isAnonymous: true,
+      isRecoverySession: false,
+    });
+
+    const req = new Request('http://localhost/api/passes/returning-id-preview?profileId=550e8400-e29b-41d4-a716-446655440000&requestId=550e8400-e29b-41d4-a716-446655440001&matchToken=valid-test-match-token-1234', {
+      method: 'GET',
+      headers: {
+        Authorization: 'Bearer anon.jwt.token',
+      },
+    });
+
+    const res = await returningIdPreviewHandler.fetch(req);
+    expect(res.status).toBe(403);
+    const body = await res.json();
+    expect(body.error).toBe('provisional_mode_cannot_authorize_id_access');
+  });
+
   it('returns 404 when ID evidence is purged or missing', async () => {
     const mockAdmin = {
       from: vi.fn().mockImplementation((table: string) => {
@@ -157,8 +210,10 @@ describe('Secure Historical ID Preview Endpoint (/api/passes/returning-id-previe
             maybeSingle: vi.fn().mockResolvedValue({
               data: {
                 id: 'attempt-1',
+                owner_id: 'visitor-anon-123',
                 matched_profile_id: '550e8400-e29b-41d4-a716-446655440000',
                 outcome: 'matched',
+                threshold_mode: 'calibrated',
                 expires_at: new Date(Date.now() + 600000).toISOString(),
               },
               error: null,
@@ -207,6 +262,9 @@ describe('Secure Historical ID Preview Endpoint (/api/passes/returning-id-previe
         }
         return { select: vi.fn().mockReturnThis() };
       }),
+      schema: vi.fn().mockReturnValue({
+        rpc: vi.fn().mockResolvedValue({ data: true, error: null }),
+      }),
     };
 
     vi.spyOn(supabaseModule, 'getServerSupabaseClients').mockReturnValue({
@@ -246,8 +304,10 @@ describe('Secure Historical ID Preview Endpoint (/api/passes/returning-id-previe
             maybeSingle: vi.fn().mockResolvedValue({
               data: {
                 id: 'attempt-1',
+                owner_id: 'visitor-anon-123',
                 matched_profile_id: '550e8400-e29b-41d4-a716-446655440000',
                 outcome: 'matched',
+                threshold_mode: 'calibrated',
                 expires_at: new Date(Date.now() + 600000).toISOString(),
               },
               error: null,
@@ -302,6 +362,9 @@ describe('Secure Historical ID Preview Endpoint (/api/passes/returning-id-previe
           };
         }
         return { select: vi.fn().mockReturnThis() };
+      }),
+      schema: vi.fn().mockReturnValue({
+        rpc: vi.fn().mockResolvedValue({ data: true, error: null }),
       }),
       storage: {
         from: vi.fn().mockReturnValue({

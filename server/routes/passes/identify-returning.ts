@@ -28,6 +28,7 @@ import {
   validateFaceDescriptor,
 } from '../../lib/face-engine.js';
 import { normalizePsgcLevel } from '../../lib/psgc-reference.js';
+import { verifyCalibrationArtifact, CalibrationArtifactData } from '../../lib/calibration-verifier.js';
 
 export const SFACE_PROVISIONAL_COSINE_THRESHOLD = 0.363;
 
@@ -37,26 +38,42 @@ export function isTemplateKeyConfigured(): boolean {
 }
 
 export function isMatchSecretConfigured(): boolean {
-  const matchSecret = process.env.RETURNING_MATCH_TOKEN_SECRET;
-  return Boolean(matchSecret && matchSecret.trim().length >= 16);
+  const matchSecret = process.env.RETURNING_MATCH_TOKEN_SECRET?.trim();
+  return Boolean(matchSecret && matchSecret.length >= 32);
 }
 
 export function isReturningCryptoConfigured(): boolean {
   return isTemplateKeyConfigured() && isMatchSecretConfigured();
 }
 
+export function getVerifiedCalibrationArtifact(): CalibrationArtifactData | null {
+  const artifactStr = process.env.RETURNING_FACE_CALIBRATION_ARTIFACT?.trim();
+  if (!artifactStr) return null;
+  const res = verifyCalibrationArtifact(artifactStr);
+  return res.valid && res.artifact ? res.artifact : null;
+}
+
 export function isCalibrationArtifactPresent(): boolean {
-  const version = process.env.RETURNING_FACE_CALIBRATION_VERSION?.trim();
-  const artifact = process.env.RETURNING_FACE_CALIBRATION_ARTIFACT?.trim();
-  return Boolean(
-    (version && version !== 'none' && version !== 'pending') ||
-    (artifact && artifact !== 'none' && artifact !== 'pending')
-  );
+  return getVerifiedCalibrationArtifact() !== null;
 }
 
 export function getResolvedCosineThreshold(): number | null {
   const mode = process.env.RETURNING_FACE_THRESHOLD_MODE?.trim().toLowerCase();
   if (!mode || (mode !== 'provisional' && mode !== 'calibrated')) {
+    return null;
+  }
+  if (mode === 'calibrated') {
+    const verifiedArtifact = getVerifiedCalibrationArtifact();
+    if (verifiedArtifact) {
+      return verifiedArtifact.minCosineThreshold;
+    }
+    const envVal = process.env.RETURNING_FACE_MIN_COSINE?.trim();
+    if (envVal) {
+      const num = Number(envVal);
+      if (!isNaN(num) && num > 0 && num < 1) {
+        return num;
+      }
+    }
     return null;
   }
   const envVal = process.env.RETURNING_FACE_MIN_COSINE?.trim();
@@ -78,9 +95,8 @@ export function isThresholdConfigured(): boolean {
 }
 
 export function getThresholdMode(): 'provisional' | 'calibrated' | 'unconfigured' {
-  if (!isThresholdConfigured()) return 'unconfigured';
   const mode = (process.env.RETURNING_FACE_THRESHOLD_MODE || '').trim().toLowerCase();
-  if (mode === 'calibrated') return 'calibrated';
+  if (mode === 'calibrated') return isThresholdConfigured() ? 'calibrated' : 'unconfigured';
   if (mode === 'provisional') return 'provisional';
   return 'unconfigured';
 }

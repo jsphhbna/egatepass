@@ -3,13 +3,16 @@
  *
  * Secure Historical ID Preview Endpoint:
  * Allows a verified returning visitor to view their previously submitted ID
- * strictly AFTER passing 1:1 biometric identity verification.
+ * strictly AFTER passing 1:1 calibrated biometric identity verification.
  *
  * Security Boundaries:
  * - Requires anonymous visitor bearer session.
+ * - Requires RETURNING_MATCH_TOKEN_SECRET >= 32 chars without fallback.
  * - Enforces cryptographically verified single-use match token binding to requestId, actor, and profile.
+ * - Strictly rejects requests under provisional threshold mode (calibrated match required).
+ * - Enforces atomic single-use consumption in PostgreSQL (anti-replay).
  * - Checks unrevoked returning profile and unexpired / unpurged retention lifecycle.
- * - Streams image bytes directly without exposing storage paths, signed URLs, or service-role keys.
+ * - Streams image bytes directly with Cache-Control: private, no-store, max-age=0.
  */
 
 import { z } from 'zod';
@@ -63,8 +66,8 @@ async function handleRequest(request: Request): Promise<Response> {
 
     const actorId = session.user.id;
     const matchSecret = process.env.RETURNING_MATCH_TOKEN_SECRET?.trim();
-    if (!matchSecret || matchSecret.length < 16) {
-      console.error('RETURNING_MATCH_TOKEN_SECRET missing or insecure');
+    if (!matchSecret || matchSecret.length < 32) {
+      console.error('RETURNING_MATCH_TOKEN_SECRET missing or insecure in returning-id-preview');
       return jsonResponse(503, { error: 'service_unavailable' });
     }
 
@@ -73,7 +76,7 @@ async function handleRequest(request: Request): Promise<Response> {
     // 1. Verify successful, unexpired 1:1 biometric match for this session & request
     const { data: attempt, error: attemptErr } = await admin
       .from('returning_identity_attempts')
-      .select('id, matched_profile_id, outcome, expires_at')
+      .select('id, matched_profile_id, outcome, threshold_mode, expires_at, id_preview_consumed_at')
       .eq('request_id', requestId)
       .eq('owner_id', actorId)
       .eq('matched_profile_id', profileId)
@@ -92,7 +95,36 @@ async function handleRequest(request: Request): Promise<Response> {
       });
     }
 
-    // 2. Verify active returning profile
+    // 2. Provisional mode CANNOT authorize ID access
+    if (attempt.threshold_mode !== 'calibrated') {
+      return jsonResponse(403, {
+        error: 'provisional_mode_cannot_authorize_id_access',
+        message: 'Provisional biometric verification cannot authorize identification document access.',
+      });
+    }
+
+    // 3. Anti-replay: Atomic single-use consumption
+    if (attempt.id_preview_consumed_at) {
+      return jsonResponse(403, {
+        error: 'id_authorization_already_consumed',
+        message: 'Identification preview authorization has already been consumed.',
+      });
+    }
+
+    const { data: consumed, error: consumeErr } = await admin.schema('api').rpc('consume_id_preview_authorization_v1', {
+      requested_profile_id: profileId,
+      requested_match_token_digest: matchDigest,
+      requested_actor_id: actorId,
+    });
+
+    if (consumeErr || !consumed) {
+      return jsonResponse(403, {
+        error: 'id_authorization_already_consumed',
+        message: 'Identification preview authorization has already been consumed or is invalid.',
+      });
+    }
+
+    // 4. Verify active returning profile
     const { data: profile, error: profileErr } = await admin
       .from('returning_visitor_profiles')
       .select('id, expires_at, revoked_at')
@@ -106,7 +138,7 @@ async function handleRequest(request: Request): Promise<Response> {
       return jsonResponse(404, { error: 'profile_unavailable' });
     }
 
-    // 3. Find historical visitor records linked to this returning profile
+    // 5. Find historical visitor records linked to this returning profile
     const { data: visitors, error: visitorsErr } = await admin
       .from('visitors')
       .select('id')
@@ -119,7 +151,7 @@ async function handleRequest(request: Request): Promise<Response> {
 
     const visitorIds = visitors.map((v) => v.id);
 
-    // 4. Query unpurged, unexpired ID document evidence
+    // 6. Query unpurged, unexpired ID document evidence
     const { data: evidence, error: evidenceErr } = await admin
       .from('visitor_evidence')
       .select('id, bucket_id, object_path, content_type, expires_at, purged_at')
@@ -139,7 +171,7 @@ async function handleRequest(request: Request): Promise<Response> {
       });
     }
 
-    // 5. Download and stream the image
+    // 7. Download and stream the image
     const file = await admin.storage.from(evidence.bucket_id).download(evidence.object_path);
     if (file.error || !file.data) {
       return jsonResponse(404, {

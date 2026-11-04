@@ -38,6 +38,7 @@ import { StructuredAddressField } from '@/components/StructuredAddressField';
 import type { SelectedPsgcAddress } from '@/components/AddressCascadingSelector';
 import { formatStructuredAddress } from '@/lib/psgc';
 import { TurnstileWidget, type TurnstileWidgetRef } from '@/components/TurnstileWidget';
+import { AuthenticatedImage } from '@/components/AuthenticatedImage';
 import { generateBrandedQrDataUrl } from '@/lib/brandedQr';
 import QRCode from 'qrcode';
 import { recognizeIdImage, terminateLocalOcrWorker, getNextOcrJobId } from '@/lib/ocr';
@@ -4402,8 +4403,9 @@ export function GetPassPage() {
                     </div>
                     {originalPortraitUrl ? (
                       <div className="rounded-lg overflow-hidden border border-[var(--color-border)] aspect-[3/4] max-h-48 bg-slate-100 flex items-center justify-center">
-                        <img
-                          src={originalPortraitUrl}
+                        <AuthenticatedImage
+                          srcUrl={originalPortraitUrl}
+                          authToken={portalTransactionRef.current?.token}
                           alt="Original registration portrait"
                           className="h-full w-full object-cover"
                         />
@@ -4739,8 +4741,9 @@ export function GetPassPage() {
               <div className="flex items-center gap-4">
                 {candidateMatch.previewUrl ? (
                   <div className="h-16 w-16 rounded-xl overflow-hidden border border-amber-300 bg-slate-100 shrink-0">
-                    <img
-                      src={candidateMatch.previewUrl}
+                    <AuthenticatedImage
+                      srcUrl={candidateMatch.previewUrl}
+                      authToken={portalTransactionRef.current?.token}
                       alt="Previous visit photo preview"
                       className="h-full w-full object-cover"
                     />

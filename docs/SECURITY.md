@@ -757,12 +757,16 @@ The shared pure SVG template generator (`src/lib/digitalPassArtifact.ts`) uses s
   - Processing buffers for live selfies undergo best-effort clearing in server route `finally` blocks (`selfieBuffer.fill(0)`).
   - Note: V8 garbage collection and Node.js runtime memory management cannot guarantee immediate hardware-level RAM zeroing; documentation honestly reports this as best-effort in-memory clearing rather than guaranteed cryptographically secure memory erasure.
 
-### 27.4 V2 Preview Token Evidence-Kind Binding & Single-Use ID Consumption
-- **Evidence-Kind Binding in HMAC Payload**:
-  - Candidate preview tokens use format `v2.<profileId>.<kind>.<expiresAt>.<nonce>.<sig>` with an explicit 300-second (5-minute) TTL.
-  - Preview tokens issued for candidate selection are strictly bound to `kind=photo`. Calling the preview endpoint with `kind=id` using a photo token is rejected with 403 `forbidden_evidence_kind`.
+### 27.4 V3 Actor-Bound Preview Token & Authenticated Image Loading
+- **Actor-Bound V3 Token Format**:
+  - Preview tokens use the format `v3.<profileId>.<actorId>.<kind>.<expiresAt>.<nonce>.<sig>` with an explicit 300-second (5-minute) TTL signed with `RETURNING_MATCH_TOKEN_SECRET`.
+  - Preview tokens are cryptographically bound to the authenticated actor ID (`actorId`). Calling the preview endpoint from a different session or without Bearer authentication fails with 401/403 `actor_mismatch`.
+  - Candidate selection tokens are strictly bound to `kind=photo`. Calling the preview endpoint with `kind=id` using a photo token is rejected with 403 `forbidden_evidence_kind`.
+- **Authenticated Image Loading & Memory Revocation**:
+  - Image rendering in the browser uses `AuthenticatedImage.tsx`, which fetches image binary data via `Authorization: Bearer <sessionToken>`, creates an ephemeral `blob:` Object URL, and immediately revokes it upon component unmount (`URL.revokeObjectURL`).
+  - Emits `Cache-Control: private, no-store, max-age=0` and `X-Content-Type-Options: nosniff` on all preview endpoints.
 - **Atomic Single-Use Consumption for Historical ID Preview**:
-  - Access to a returning visitor's historical ID image requires a valid calibrated biometric match attempt.
+  - Access to a returning visitor's historical ID image requires a valid calibrated biometric match attempt (`threshold_mode === 'calibrated'`).
   - ID preview authorization is consumed atomically via database RPC `api.consume_id_preview_authorization_v1`. Replay attempts fail immediately with 403 `id_authorization_already_consumed`.
   - In provisional mode (`RETURNING_FACE_THRESHOLD_MODE=provisional`), ID preview is strictly prohibited (403 `provisional_mode_cannot_authorize_id_access`) and historical ID URLs are never returned.
 
@@ -774,14 +778,26 @@ The shared pure SVG template generator (`src/lib/digitalPassArtifact.ts`) uses s
   - When `saveUpdates=false`, stored contact number and residential address in `returning_visitor_profiles` remain unchanged.
   - When `saveUpdates=true`, only validated contact numbers and PSGC-verified residential addresses are updated.
 
-### 27.6 Calibration Prerequisites for Future Calibrated Mode
-- To advance from `provisional` mode to `calibrated` mode, the institution must fulfill the following prerequisites:
-  1. **Representative Consented Dataset**: Empirically measured against a consented sample of EARIST campus visitors.
-  2. **Controlled Quality Baseline**: Standardized lighting, distance, and resolution requirements.
-  3. **Measured FAR and FRR**: Documented False Acceptance Rate and False Rejection Rate curves.
-  4. **Threshold Selection Methodology**: Statistically justified operating point minimizing security risk and false rejections.
-  5. **Versioned Calibration Artifact**: Approved calibration artifact version configured via `RETURNING_FACE_CALIBRATION_VERSION`.
-- Without these prerequisites, the system fails closed and operates solely in provisional candidate-assistance mode with mandatory guard verification at the gate.
+### 27.6 Cryptographic Calibration Verification (Ed25519 Authority)
+- To advance from `provisional` mode to `calibrated` mode, the runtime strictly requires an authentic digital signature verified by `server/lib/calibration-verifier.ts`:
+  1. **Ed25519 Signature**: Verified against pinned public authority key `PINNED_CALIBRATION_PUBLIC_KEY`.
+  2. **Authority Identity**: Must be issued by `EARIST_BIOMETRICS_CALIBRATION_AUTHORITY`.
+  3. **Model & Engine Binding**: Target model must match `yunet_sface` and inference engine must match `onnxruntime-node`.
+  4. **Strict Schema (1.0.0)**: Contains dataset size, FAR/FRR distributions, issued and expiry timestamps.
+  5. **Revocation Tracking**: Active version is checked against `revokedVersions`.
+- In the absence of a verified artifact, explicit calibrated mode fails closed (503 `calibration_unavailable` or safe fallback). Production remains in provisional mode (`0.363`), requiring physical guard verification at the gate.
+
+## 28. Cloudflare Turnstile CAPTCHA & Abuse Defense Architecture
+
+- **Primary Defense (Supabase Auth Boundary)**:
+  - Anonymous visitor sign-in is gated behind Cloudflare Turnstile Bot Protection in Supabase Auth.
+  - The private Turnstile Secret Key is configured securely in the Supabase Dashboard under **Authentication > Bot Protection / CAPTCHA**.
+  - `client.auth.signInAnonymously({ options: { captchaToken } })` verifies the Turnstile challenge before issuing an anonymous JWT.
+- **Secondary Defense (Server Siteverify & Anti-Replay)**:
+  - If the server-side Turnstile verification secret is present in serverless environment variables, `server/lib/turnstile.ts` validates challenge tokens on returning visitor searches (`/api/passes/lookup-returning`).
+  - Employs an in-memory SHA-256 token replay cache (300-second TTL) to block duplicate or replayed tokens.
+  - Enforces permitted hostname validation (`egatepass.tech`, `localhost`, etc.) to prevent domain token stealing.
+  - Enforces bounded HTTP timeouts (5000ms via `AbortController`) and fails closed on provider outages.
 
 
 

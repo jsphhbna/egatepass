@@ -23,6 +23,7 @@ describe('Returning Visitor Privacy Hardening, Profile Linkage & Verification Bo
       ...originalEnv,
       PASS_TOKEN_SECRET: mockTokenSecret,
       RETURNING_MATCH_TOKEN_SECRET: mockTokenSecret,
+      RATE_LIMIT_HMAC_SECRET: mockTokenSecret,
       RETURNING_FACE_THRESHOLD_MODE: 'provisional',
       RETURNING_FACE_MIN_COSINE: '0.363',
     };
@@ -34,59 +35,69 @@ describe('Returning Visitor Privacy Hardening, Profile Linkage & Verification Bo
     vi.restoreAllMocks();
   });
 
-  describe('1. Preview Token Signing & Kind Binding (Issue C & F)', () => {
-    it('creates a v2 token strictly bound to kind=photo with ~300s TTL', () => {
+  describe('1. Preview Token Signing & Kind/Actor Binding (Finding 4)', () => {
+    it('creates a v3 token strictly bound to actor and kind=photo with ~300s TTL', () => {
       const now = Date.now();
-      const token = createPreviewToken(mockProfileId, mockTokenSecret, 300, 'photo');
-      expect(token).toMatch(/^v2\./);
+      const token = createPreviewToken(mockProfileId, mockActorId, mockTokenSecret, 300, 'photo');
+      expect(token).toMatch(/^v3\./);
 
-      const parsed = verifyPreviewToken(token, mockTokenSecret);
+      const parsed = verifyPreviewToken(token, mockActorId, mockTokenSecret);
       expect(parsed.valid).toBe(true);
       expect(parsed.profileId).toBe(mockProfileId);
+      expect(parsed.actorId).toBe(mockActorId);
       expect(parsed.kind).toBe('photo');
 
       const parts = token.split('.');
-      const exp = parseInt(parts[3], 10);
+      const exp = parseInt(parts[4], 10);
       expect(exp).toBeGreaterThanOrEqual(Math.floor(now / 1000) + 295);
       expect(exp).toBeLessThanOrEqual(Math.floor(now / 1000) + 305);
     });
 
-    it('creates a v2 token strictly bound to kind=id with ~300s TTL', () => {
-      const token = createPreviewToken(mockProfileId, mockTokenSecret, 300, 'id');
-      const parsed = verifyPreviewToken(token, mockTokenSecret);
+    it('creates a v3 token strictly bound to kind=id with ~300s TTL', () => {
+      const token = createPreviewToken(mockProfileId, mockActorId, mockTokenSecret, 300, 'id');
+      const parsed = verifyPreviewToken(token, mockActorId, mockTokenSecret);
       expect(parsed.valid).toBe(true);
       expect(parsed.profileId).toBe(mockProfileId);
+      expect(parsed.actorId).toBe(mockActorId);
       expect(parsed.kind).toBe('id');
     });
 
     it('rejects kind swapping: photo preview token cannot authorize id access', () => {
-      const photoToken = createPreviewToken(mockProfileId, mockTokenSecret, 300, 'photo');
-      const parsed = verifyPreviewToken(photoToken, mockTokenSecret);
+      const photoToken = createPreviewToken(mockProfileId, mockActorId, mockTokenSecret, 300, 'photo');
+      const parsed = verifyPreviewToken(photoToken, mockActorId, mockTokenSecret);
       expect(parsed.valid).toBe(true);
       expect(parsed.kind).toBe('photo');
       expect(parsed.kind === 'id').toBe(false);
     });
 
+    it('rejects cross-actor preview token access (actor_mismatch)', () => {
+      const otherActorId = '99999999-9999-4999-8999-999999999999';
+      const token = createPreviewToken(mockProfileId, mockActorId, mockTokenSecret, 300, 'photo');
+      const parsed = verifyPreviewToken(token, otherActorId, mockTokenSecret);
+      expect(parsed.valid).toBe(false);
+      expect(parsed.error).toBe('actor_mismatch');
+    });
+
     it('rejects cross-profile token substitution: profile A token cannot access profile B', () => {
       const profileB = '44444444-4444-4444-8444-444444444444';
-      const token = createPreviewToken(mockProfileId, mockTokenSecret, 300, 'photo');
-      const parsed = verifyPreviewToken(token, mockTokenSecret);
+      const token = createPreviewToken(mockProfileId, mockActorId, mockTokenSecret, 300, 'photo');
+      const parsed = verifyPreviewToken(token, mockActorId, mockTokenSecret);
       expect(parsed.valid).toBe(true);
       expect(parsed.profileId).toBe(mockProfileId);
       expect(parsed.profileId === profileB).toBe(false);
     });
 
     it('rejects expired preview tokens (>300s)', () => {
-      const expiredToken = createPreviewToken(mockProfileId, mockTokenSecret, -10, 'photo');
-      const parsed = verifyPreviewToken(expiredToken, mockTokenSecret);
+      const expiredToken = createPreviewToken(mockProfileId, mockActorId, mockTokenSecret, -10, 'photo');
+      const parsed = verifyPreviewToken(expiredToken, mockActorId, mockTokenSecret);
       expect(parsed.valid).toBe(false);
       expect(parsed.expired).toBe(true);
     });
 
     it('rejects tampered token signature or payload', () => {
-      const token = createPreviewToken(mockProfileId, mockTokenSecret, 300, 'photo');
+      const token = createPreviewToken(mockProfileId, mockActorId, mockTokenSecret, 300, 'photo');
       const tampered = token.slice(0, -4) + 'abcd';
-      const parsed = verifyPreviewToken(tampered, mockTokenSecret);
+      const parsed = verifyPreviewToken(tampered, mockActorId, mockTokenSecret);
       expect(parsed.valid).toBe(false);
     });
   });
@@ -246,8 +257,8 @@ describe('Returning Visitor Privacy Hardening, Profile Linkage & Verification Bo
         const tokenMatch = cand.previewUrl.match(/token=([^&]+)/);
         expect(tokenMatch).not.toBeNull();
         const extractedToken = tokenMatch![1];
-        expect(extractedToken).toMatch(/^v2\./);
-        const tokenCheck = verifyPreviewToken(extractedToken, mockTokenSecret);
+        expect(extractedToken).toMatch(/^v3\./);
+        const tokenCheck = verifyPreviewToken(extractedToken, mockActorId, mockTokenSecret);
         expect(tokenCheck.valid).toBe(true);
         expect(tokenCheck.kind).toBe('photo');
       }
@@ -270,7 +281,7 @@ describe('Returning Visitor Privacy Hardening, Profile Linkage & Verification Bo
         client: {} as any,
       });
 
-      const photoToken = createPreviewToken(mockProfileId, mockTokenSecret, 300, 'photo');
+      const photoToken = createPreviewToken(mockProfileId, mockActorId, mockTokenSecret, 300, 'photo');
 
       const req = new Request(
         `http://localhost/api/passes/returning-photo-preview?profileId=${mockProfileId}&token=${photoToken}&kind=id`,
@@ -312,6 +323,7 @@ describe('Returning Visitor Privacy Hardening, Profile Linkage & Verification Bo
               maybeSingle: vi.fn().mockResolvedValue({
                 data: {
                   id: 'attempt-prov-1',
+                  owner_id: mockActorId,
                   matched_profile_id: mockProfileId,
                   outcome: 'provisional_matched',
                   threshold_mode: 'provisional',
@@ -498,6 +510,7 @@ describe('Returning Visitor Privacy Hardening, Profile Linkage & Verification Bo
       process.env.RETURNING_FACE_THRESHOLD_MODE = 'calibrated';
       delete process.env.RETURNING_FACE_CALIBRATION_VERSION;
       delete process.env.RETURNING_FACE_CALIBRATION_ARTIFACT;
+      delete process.env.RETURNING_FACE_MIN_COSINE;
 
       vi.spyOn(actorsModule, 'getVerifiedSessionContext').mockResolvedValue({
         actorId: mockActorId,
@@ -509,7 +522,11 @@ describe('Returning Visitor Privacy Hardening, Profile Linkage & Verification Bo
       } as any);
 
       vi.spyOn(supabaseModule, 'getServerSupabaseClients').mockReturnValue({
-        admin: {} as any,
+        admin: {
+          schema: vi.fn().mockReturnValue({
+            rpc: vi.fn().mockResolvedValue({ data: true, error: null }),
+          }),
+        } as any,
         anon: {} as any,
         client: {} as any,
       });
