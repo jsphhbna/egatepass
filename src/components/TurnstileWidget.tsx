@@ -54,7 +54,10 @@ export const TurnstileWidget = forwardRef<TurnstileWidgetRef, TurnstileWidgetPro
 ) {
   const containerRef = useRef<HTMLDivElement>(null);
   const widgetIdRef = useRef<string | null>(null);
-  const siteKey = (import.meta as any).env?.VITE_TURNSTILE_SITE_KEY?.trim();
+  const siteKey = (
+    (import.meta as any).env?.VITE_TURNSTILE_SITE_KEY ||
+    (typeof process !== 'undefined' ? process.env?.VITE_TURNSTILE_SITE_KEY : undefined)
+  )?.trim();
 
   const [status, setStatus] = useState<TurnstileStatus>('loading');
   const [retryCount, setRetryCount] = useState(0);

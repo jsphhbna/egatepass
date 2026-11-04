@@ -245,63 +245,70 @@ export async function resolvePostalCode(
   cityCode: string,
   barangayCode?: string
 ): Promise<PostalResolution> {
+  let supabase: any = null;
+  try {
+    supabase = requirePortalSupabase();
+  } catch {
+    supabase = null;
+  }
+
   let dbLookupFailed = false;
 
-  try {
-    const supabase = requirePortalSupabase();
+  if (supabase) {
+    try {
+      // 1. Check exact barangay match
+      if (barangayCode) {
+        const { data: bgyMatch, error: bgyError } = await supabase
+          .from('postal_code_reference')
+          .select('postal_code, mapping_type')
+          .eq('barangay_psgc_code', barangayCode)
+          .eq('is_active', true)
+          .limit(1)
+          .maybeSingle();
 
-    // 1. Check exact barangay match
-    if (barangayCode) {
-      const { data: bgyMatch, error: bgyError } = await supabase
+        if (bgyError) {
+          dbLookupFailed = true;
+        } else if (bgyMatch) {
+          return {
+            postalCode: bgyMatch.postal_code,
+            mappingType: 'exact_barangay',
+            isAutoFilled: true,
+            requiresConfirmation: false,
+          };
+        }
+      }
+
+      // 2. Check unique city match
+      const { data: cityMatches, error: cityError } = await supabase
         .from('postal_code_reference')
         .select('postal_code, mapping_type')
-        .eq('barangay_psgc_code', barangayCode)
-        .eq('is_active', true)
-        .limit(1)
-        .maybeSingle();
+        .eq('psgc_locality_code', cityCode)
+        .eq('is_active', true);
 
-      if (bgyError) {
+      if (cityError) {
         dbLookupFailed = true;
-      } else if (bgyMatch) {
-        return {
-          postalCode: bgyMatch.postal_code,
-          mappingType: 'exact_barangay',
-          isAutoFilled: true,
-          requiresConfirmation: false,
-        };
+      } else if (cityMatches && cityMatches.length > 0) {
+        const uniqueCodes = Array.from(new Set(cityMatches.map((m: any) => m.postal_code as string))) as string[];
+        if (uniqueCodes.length === 1 && cityMatches[0]?.mapping_type === 'unique_city') {
+          return {
+            postalCode: uniqueCodes[0] ?? null,
+            mappingType: 'unique_city',
+            isAutoFilled: true,
+            requiresConfirmation: false,
+          };
+        } else if (uniqueCodes.length > 1) {
+          return {
+            postalCode: null,
+            mappingType: 'multi_code_city',
+            isAutoFilled: false,
+            requiresConfirmation: true,
+            message: 'Postal code varies by delivery area. Please confirm your applicable postal code.',
+          };
+        }
       }
-    }
-
-    // 2. Check unique city match
-    const { data: cityMatches, error: cityError } = await supabase
-      .from('postal_code_reference')
-      .select('postal_code, mapping_type')
-      .eq('psgc_locality_code', cityCode)
-      .eq('is_active', true);
-
-    if (cityError) {
+    } catch {
       dbLookupFailed = true;
-    } else if (cityMatches && cityMatches.length > 0) {
-      const uniqueCodes = Array.from(new Set(cityMatches.map((m: any) => m.postal_code)));
-      if (uniqueCodes.length === 1 && cityMatches[0]?.mapping_type === 'unique_city') {
-        return {
-          postalCode: uniqueCodes[0],
-          mappingType: 'unique_city',
-          isAutoFilled: true,
-          requiresConfirmation: false,
-        };
-      } else if (uniqueCodes.length > 1) {
-        return {
-          postalCode: null,
-          mappingType: 'multi_code_city',
-          isAutoFilled: false,
-          requiresConfirmation: true,
-          message: 'Postal code varies by delivery area. Please confirm your applicable postal code.',
-        };
-      }
     }
-  } catch {
-    dbLookupFailed = true;
   }
 
   if (dbLookupFailed) {
@@ -340,7 +347,7 @@ export async function resolvePostalCode(
     const uniqueCodes = Array.from(new Set(cityMatches.map((m) => m.postalCode)));
     if (uniqueCodes.length === 1 && cityMatches[0]?.mappingType === 'unique_city') {
       return {
-        postalCode: uniqueCodes[0],
+        postalCode: (uniqueCodes[0] as string) ?? null,
         mappingType: 'unique_city',
         isAutoFilled: true,
         requiresConfirmation: false,

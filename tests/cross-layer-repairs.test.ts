@@ -1,4 +1,5 @@
 import fs from 'node:fs';
+import path from 'node:path';
 // @vitest-environment happy-dom
 import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest';
 import React, { act } from 'react';
@@ -258,8 +259,8 @@ describe('Cross-Layer Repairs & Regression Closure Suite', () => {
     });
 
     it('verifies obsolete doubleClick logout header is removed from scan pages', () => {
-      const entryScanCode = fs.readFileSync('C:/Users/Administrator/Downloads/egatepass/src/pages/EntryScanPage.tsx', 'utf8');
-      const exitScanCode = fs.readFileSync('C:/Users/Administrator/Downloads/egatepass/src/pages/ExitScanPage.tsx', 'utf8');
+      const entryScanCode = fs.readFileSync(path.join(process.cwd(), 'src/pages/EntryScanPage.tsx'), 'utf8');
+      const exitScanCode = fs.readFileSync(path.join(process.cwd(), 'src/pages/ExitScanPage.tsx'), 'utf8');
 
       expect(entryScanCode).not.toContain('onDoubleClick');
       expect(exitScanCode).not.toContain('onDoubleClick');
@@ -326,7 +327,7 @@ describe('Cross-Layer Repairs & Regression Closure Suite', () => {
   // -------------------------------------------------------------
   describe('Public 404 Route Invariant', () => {
     it('verifies NotFoundPage does not advertise or link to /login', () => {
-      const notFoundCode = fs.readFileSync('C:/Users/Administrator/Downloads/egatepass/src/pages/NotFoundPage.tsx', 'utf8');
+      const notFoundCode = fs.readFileSync(path.join(process.cwd(), 'src/pages/NotFoundPage.tsx'), 'utf8');
 
       expect(notFoundCode).not.toContain('/login');
       expect(notFoundCode).not.toContain('Sign In');
@@ -351,7 +352,7 @@ describe('Cross-Layer Repairs & Regression Closure Suite', () => {
     });
 
     it('implements dialog role, aria-expanded, aria-controls, and background aria-hidden', () => {
-      const adminPageCode = fs.readFileSync('C:/Users/Administrator/Downloads/egatepass/src/pages/AdminPage.tsx', 'utf8');
+      const adminPageCode = fs.readFileSync(path.join(process.cwd(), 'src/pages/AdminPage.tsx'), 'utf8');
 
       expect(adminPageCode).toContain('aria-expanded={sidebarOpen}');
       expect(adminPageCode).toContain('aria-controls="admin-navigation-drawer"');
