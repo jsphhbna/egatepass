@@ -333,6 +333,7 @@ export const SERVER_DIRECT_TABLE_OPERATIONS: DirectServerTableOperation[] = [
   { file: 'server/routes/passes/request-office-visit.ts', table: 'upload_intents', operations: ['SELECT'], purpose: 'Inspect upload intents for specific-person visit request' },
   { file: 'server/routes/passes/request-office-visit.ts', table: 'portal_identity_verification_attempts', operations: ['SELECT'], purpose: 'Verify matched identity verification attempt for specific-person visit request' },
   { file: 'server/routes/passes/request-office-visit.ts', table: 'returning_identity_attempts', operations: ['SELECT'], purpose: 'Verify returning visitor match attempt for specific-person visit request' },
+  { file: 'server/routes/passes/request-office-visit.ts', table: 'visit_vehicle_declarations', operations: ['SELECT'], purpose: 'Check active on-campus plate collisions for vehicle arrivals' },
   { file: 'server/routes/system/create-user.ts', table: 'office_staff_assignments', operations: ['INSERT'], purpose: 'Create initial office assignments for new staff' },
   { file: 'server/routes/office/retry-email.ts', table: 'office_visits', operations: ['SELECT', 'UPDATE'], purpose: 'Lookup visit and update email delivery status on retry' },
   { file: 'server/routes/office/retry-email.ts', table: 'offices', operations: ['SELECT'], purpose: 'Fetch office name for retry email' },

@@ -7,15 +7,19 @@ import { HttpError } from '../../actors.js';
 const postSchema = z.object({
   officeId: z.string().uuid(),
   name: z.string().trim().min(2).max(150),
-  title: z.string().trim().min(2).max(120),
+  title: z.string().trim().max(120).optional().nullable(),
 }).strict();
 
 const patchSchema = z.object({
-  personnelId: z.string().uuid(),
+  personnelId: z.string().uuid().optional(),
+  id: z.string().uuid().optional(),
   name: z.string().trim().min(2).max(150).optional(),
-  title: z.string().trim().min(2).max(120).optional(),
+  title: z.string().trim().max(120).optional().nullable(),
   active: z.boolean().optional(),
-}).strict();
+}).strict().refine((data) => Boolean(data.personnelId || data.id), {
+  message: 'personnelId or id is required',
+  path: ['personnelId'],
+});
 
 export async function handleRequest(request: Request): Promise<Response> {
   const method = request.method;
@@ -39,12 +43,29 @@ export async function handleRequest(request: Request): Promise<Response> {
       return jsonResponse(200, { offices: offices || [] });
     }
 
-    const { data: personnel, error } = await admin
+    // Check if caller is authorized office staff/admin
+    const token = readBearerToken(request);
+    let isStaff = false;
+    if (token) {
+      try {
+        await requireOfficeStaffActor(admin, token, officeId);
+        isStaff = true;
+      } catch {
+        isStaff = false;
+      }
+    }
+
+    let personnelQuery = admin
       .from('office_personnel')
       .select('id, office_id, name, title, active, created_at, updated_at')
-      .eq('office_id', officeId)
-      .eq('active', true)
-      .order('name');
+      .eq('office_id', officeId);
+
+    // Unauthenticated public visitors only receive active staff; office staff see all
+    if (!isStaff) {
+      personnelQuery = personnelQuery.eq('active', true);
+    }
+
+    const { data: personnel, error } = await personnelQuery.order('name');
 
     if (error) {
       console.error('Failed to get office personnel:', error);
@@ -71,7 +92,7 @@ export async function handleRequest(request: Request): Promise<Response> {
         .insert({
           office_id: parsed.data.officeId,
           name: parsed.data.name,
-          title: parsed.data.title,
+          title: parsed.data.title || null,
           active: true,
           created_by: actor.id,
         })
@@ -88,10 +109,11 @@ export async function handleRequest(request: Request): Promise<Response> {
         return jsonResponse(400, { error: 'invalid_request', details: parsed.error.issues });
       }
 
+      const effectivePersonnelId = (parsed.data.personnelId || parsed.data.id)!;
       const { data: existing, error: fetchErr } = await admin
         .from('office_personnel')
         .select('office_id')
-        .eq('id', parsed.data.personnelId)
+        .eq('id', effectivePersonnelId)
         .maybeSingle();
 
       if (fetchErr || !existing) return jsonResponse(404, { error: 'personnel_not_found' });
@@ -103,13 +125,13 @@ export async function handleRequest(request: Request): Promise<Response> {
         updated_by: actor.id,
       };
       if (parsed.data.name !== undefined) updateData.name = parsed.data.name;
-      if (parsed.data.title !== undefined) updateData.title = parsed.data.title;
+      if (parsed.data.title !== undefined) updateData.title = parsed.data.title || null;
       if (parsed.data.active !== undefined) updateData.active = parsed.data.active;
 
       const { data: updated, error: updateErr } = await admin
         .from('office_personnel')
         .update(updateData)
-        .eq('id', parsed.data.personnelId)
+        .eq('id', effectivePersonnelId)
         .select()
         .single();
 

@@ -74,6 +74,7 @@ export function OfficeDashboardPage() {
   const [newPersonnelName, setNewPersonnelName] = useState('');
   const [newPersonnelTitle, setNewPersonnelTitle] = useState('');
   const [isSavingPersonnel, setIsSavingPersonnel] = useState(false);
+  const [togglingPersonnelId, setTogglingPersonnelId] = useState<string | null>(null);
 
   const [isSigningOut, setIsSigningOut] = useState(false);
   const [retryingEmailVisitId, setRetryingEmailVisitId] = useState<string | null>(null);
@@ -375,12 +376,15 @@ export function OfficeDashboardPage() {
 
   // Handle Toggle Personnel Active Status
   async function handleTogglePersonnel(person: OfficePersonnel) {
+    if (togglingPersonnelId) return;
+    setTogglingPersonnelId(person.id);
     try {
       const token = await getAccessToken();
       const res = await fetch('/api/office/personnel', {
         method: 'PATCH',
         headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
         body: JSON.stringify({
+          personnelId: person.id,
           id: person.id,
           active: !person.active,
         }),
@@ -388,9 +392,11 @@ export function OfficeDashboardPage() {
 
       if (!res.ok) throw new Error('Failed to update personnel');
       toast.success(`Personnel ${person.name} is now ${!person.active ? 'active' : 'inactive'}.`);
-      loadPersonnelForOffice(selectedOfficeId);
+      await loadPersonnelForOffice(selectedOfficeId);
     } catch {
       toast.error('Failed to update personnel status.');
+    } finally {
+      setTogglingPersonnelId(null);
     }
   }
 
@@ -1102,14 +1108,21 @@ export function OfficeDashboardPage() {
 
                     <button
                       type="button"
+                      disabled={togglingPersonnelId === person.id}
                       onClick={() => handleTogglePersonnel(person)}
                       className={`rounded-full px-2.5 py-1 text-[10px] font-bold transition-colors ${
+                        togglingPersonnelId === person.id
+                          ? 'opacity-50 cursor-not-allowed '
+                          : ''
+                      }${
                         person.active
                           ? 'bg-emerald-100 text-emerald-800 hover:bg-emerald-200'
                           : 'bg-zinc-100 text-zinc-600 hover:bg-zinc-200'
                       }`}
                     >
-                      {person.active ? 'Active' : 'Inactive'}
+                      {togglingPersonnelId === person.id
+                        ? 'Updating...'
+                        : person.active ? 'Active' : 'Inactive'}
                     </button>
                   </div>
                 ))}

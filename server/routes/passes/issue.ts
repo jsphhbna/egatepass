@@ -480,12 +480,13 @@ async function handleRequest(request: Request): Promise<Response> {
 
       if (parsed.data.officeId && existingPass.id) {
         try {
-          await admin.schema('api').rpc('record_general_office_visit', {
+          const { error: ovErr } = await admin.schema('api').rpc('record_general_office_visit', {
             requested_actor_id: actorId,
             requested_pass_id: existingPass.id,
             requested_office_id: parsed.data.officeId,
             requested_request_id: parsed.data.requestId,
           });
+          if (ovErr) throw ovErr;
         } catch (ovErr) {
           console.warn('Failed to link general office visit on idempotent replay:', ovErr);
           await recordReconciliation(
@@ -641,14 +642,13 @@ async function handleRequest(request: Request): Promise<Response> {
           .eq('owner_id', actorId)
           .eq('matched_profile_id', ret.profileId)
           .eq('match_token_digest', returningMatchDigest)
-          .eq('outcome', 'matched')
           .gt('expires_at', new Date().toISOString())
           .order('created_at', { ascending: false })
           .limit(1)
           .maybeSingle();
 
         if (retAttemptErr) throw retAttemptErr;
-        if (!retAttempt) {
+        if (!retAttempt || !['matched', 'provisional_matched'].includes(retAttempt.outcome)) {
           return jsonResponse(422, {
             error: 'returning_match_required',
             message: 'Valid returning visitor identification required. Please identify yourself first.',
@@ -884,7 +884,7 @@ async function handleRequest(request: Request): Promise<Response> {
         normalizedPlateKey
       ) {
         try {
-          await admin.from('returning_visitor_vehicles').insert({
+          const { error: insVehErr } = await admin.from('returning_visitor_vehicles').insert({
             profile_id: ret.profileId,
             vehicle_type: parsed.data.vehicle.vehicleType,
             plate_number: normalizedPlateDisplay,
@@ -892,6 +892,7 @@ async function handleRequest(request: Request): Promise<Response> {
             color: normalizedVehicleColor || parsed.data.vehicle.color,
             make_model: parsed.data.vehicle.makeModel || '',
           });
+          if (insVehErr) throw insVehErr;
         } catch (vehErr) {
           console.warn('Failed to save returning visitor vehicle:', vehErr);
         }
@@ -899,12 +900,13 @@ async function handleRequest(request: Request): Promise<Response> {
 
       if (parsed.data.officeId && data?.pass_id) {
         try {
-          await admin.schema('api').rpc('record_general_office_visit', {
+          const { error: ovErr } = await admin.schema('api').rpc('record_general_office_visit', {
             requested_actor_id: actorId,
             requested_pass_id: data.pass_id,
             requested_office_id: parsed.data.officeId,
             requested_request_id: parsed.data.requestId,
           });
+          if (ovErr) throw ovErr;
         } catch (ovErr) {
           console.error('Failed to link general office visit:', ovErr);
           await recordReconciliation(

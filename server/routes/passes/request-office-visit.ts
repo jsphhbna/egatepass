@@ -3,6 +3,7 @@ import { getVerifiedSessionContext, HttpError } from '../../actors.js';
 import { jsonResponse, readBearerToken } from '../../http.js';
 import { getServerSupabaseClients } from '../../supabase.js';
 import { normalizePhMobile } from '../../../src/lib/phPhone.js';
+import { normalizeVehiclePlate } from '../../../src/lib/vehiclePlate.js';
 import { verifyEmailVerificationProofToken } from '../../lib/office.js';
 import { inspectUploadIntent } from '../../upload-inspection.js';
 import { computeMatchTokenDigest } from './identify-returning.js';
@@ -131,12 +132,70 @@ export async function handleRequest(request: Request): Promise<Response> {
     });
   }
 
-  const vehicleDetails = parsed.data.vehicle ? {
-    vehicleType: parsed.data.vehicle.vehicleType,
-    plateNumber: parsed.data.vehicle.plateNumber,
-    color: parsed.data.vehicle.color,
-    makeModel: parsed.data.vehicle.makeModel,
-  } : null;
+  let normalizedPlateDisplay: string | null = null;
+  let normalizedPlateKey: string | null = null;
+  let vehicleDetails: Record<string, unknown> | null = null;
+
+  if (parsed.data.arrivalMode === 'vehicle') {
+    const v = parsed.data.vehicle;
+    if (!v?.vehicleType || !v?.plateNumber || !v?.color) {
+      return jsonResponse(422, {
+        error: 'invalid_vehicle_declaration',
+        message: 'Vehicle type, plate number, and color are required when bringing a vehicle.',
+      });
+    }
+
+    const plateResult = normalizeVehiclePlate(v.plateNumber);
+    if (!plateResult.valid || !plateResult.plateKey) {
+      return jsonResponse(422, {
+        error: 'invalid_vehicle_plate',
+        message: plateResult.error || 'Please enter a valid vehicle plate number.',
+      });
+    }
+    normalizedPlateDisplay = plateResult.displayPlate;
+    normalizedPlateKey = plateResult.plateKey;
+
+    if (!parsed.data.vehiclePhotoIntentId) {
+      return jsonResponse(422, {
+        error: 'vehicle_photo_required',
+        message: 'Vehicle photo is required when bringing a vehicle.',
+      });
+    }
+
+    // Active plate collision check on campus
+    const { data: activePlateDecl, error: plateCheckErr } = await admin
+      .from('visit_vehicle_declarations')
+      .select('id, pass_id, entry_recorded_at, exit_recorded_at, passes!inner(status)')
+      .eq('plate_key', normalizedPlateKey)
+      .is('exit_recorded_at', null)
+      .not('entry_recorded_at', 'is', null)
+      .in('passes.status', ['issued', 'pending', 'inside'])
+      .limit(1)
+      .maybeSingle();
+
+    if (plateCheckErr) throw plateCheckErr;
+    if (activePlateDecl) {
+      return jsonResponse(409, {
+        error: 'plate_already_active_on_campus',
+        message: 'This vehicle is currently registered as on campus under an active pass.',
+      });
+    }
+
+    vehicleDetails = {
+      vehicleType: v.vehicleType,
+      plateNumber: normalizedPlateDisplay,
+      color: v.color,
+      makeModel: v.makeModel || '',
+    };
+  } else {
+    // arrivalMode === 'no_vehicle'
+    if (parsed.data.vehicle || parsed.data.vehiclePhotoIntentId) {
+      return jsonResponse(422, {
+        error: 'unexpected_vehicle_details',
+        message: 'Vehicle details and vehicle photo must not be provided when arrival mode is no_vehicle.',
+      });
+    }
+  }
 
   const addressDetails = parsed.data.psgc ? {
     regionCode: parsed.data.psgc.regionCode,
@@ -240,13 +299,12 @@ export async function handleRequest(request: Request): Promise<Response> {
       .eq('request_id', parsed.data.requestId)
       .eq('matched_profile_id', parsed.data.returning.profileId)
       .eq('match_token_digest', returningMatchDigest)
-      .eq('outcome', 'matched')
       .gt('expires_at', new Date().toISOString())
       .order('created_at', { ascending: false })
       .limit(1)
       .maybeSingle();
 
-    if (retErr || !retAttempt) {
+    if (retErr || !retAttempt || !['matched', 'provisional_matched'].includes(retAttempt.outcome)) {
       return jsonResponse(422, {
         error: 'returning_match_required',
         message: 'Valid returning visitor identification required. Please complete biometric verification.',

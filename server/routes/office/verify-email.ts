@@ -23,6 +23,14 @@ const verifyCodeSchema = z.object({
 
 const requestSchema = z.discriminatedUnion('action', [requestCodeSchema, verifyCodeSchema]);
 
+function extractClientIp(request: Request): string {
+  const cfIp = request.headers.get('cf-connecting-ip');
+  const forwarded = request.headers.get('x-forwarded-for');
+  const realIp = request.headers.get('x-real-ip');
+  const firstHop = forwarded ? forwarded.split(',')[0]?.trim() : null;
+  return cfIp?.trim() || firstHop || realIp || '127.0.0.1';
+}
+
 export async function handleRequest(request: Request): Promise<Response> {
   if (request.method !== 'POST') {
     return jsonResponse(405, { error: 'method_not_allowed' }, { Allow: 'POST' });
@@ -49,47 +57,30 @@ export async function handleRequest(request: Request): Promise<Response> {
   const normalizedEmail = parsed.data.email.toLowerCase().trim();
 
   if (parsed.data.action === 'request_code') {
-    const fifteenMinutesAgo = new Date(Date.now() - 15 * 60 * 1000).toISOString();
-
-    // Rate-limiting check: max 5 requests per 15 minutes per email and per actor
-    const { count: emailCount, error: countErr } = await admin
-      .from('office_visit_email_verifications')
-      .select('id', { count: 'exact', head: true })
-      .eq('email', normalizedEmail)
-      .gt('created_at', fifteenMinutesAgo);
-
-    if (countErr) throw countErr;
-
-    const { count: actorCount, error: actorCountErr } = await admin
-      .from('office_visit_email_verifications')
-      .select('id', { count: 'exact', head: true })
-      .eq('actor_id', session.user.id)
-      .gt('created_at', fifteenMinutesAgo);
-
-    if (actorCountErr) throw actorCountErr;
-
-    if ((emailCount || 0) >= 5 || (actorCount || 0) >= 5) {
-      return jsonResponse(429, {
-        error: 'too_many_requests',
-        message: 'Too many verification code requests. Please wait a few minutes.',
-      });
-    }
-
     // Generate 6-digit code
     const rawCode = randomInt(100000, 1000000).toString();
     const codeHash = createHash('sha256').update(`${rawCode}:${secret}`).digest('hex');
     const expiresAt = new Date(Date.now() + 15 * 60 * 1000).toISOString();
+    const clientIp = extractClientIp(request);
 
-    const { error: insertErr } = await admin.from('office_visit_email_verifications').insert({
-      email: normalizedEmail,
-      code_hash: codeHash,
-      actor_id: session.user.id,
-      expires_at: expiresAt,
-      verified: false,
-      attempts: 0,
+    // Atomic rate-limiting check and challenge allocation via database RPC
+    const { data: slotRows, error: slotErr } = await admin.schema('api').rpc('request_office_email_verification_slot', {
+      requested_actor_id: session.user.id,
+      requested_email: normalizedEmail,
+      requested_client_ip: clientIp,
+      requested_code_hash: codeHash,
+      requested_expires_at: expiresAt,
     });
 
-    if (insertErr) throw insertErr;
+    if (slotErr) throw slotErr;
+    const slot = Array.isArray(slotRows) ? slotRows[0] : slotRows;
+
+    if (!slot?.allowed) {
+      return jsonResponse(429, {
+        error: slot?.error_code || 'too_many_requests',
+        message: 'Too many verification code requests. Please wait a few minutes.',
+      });
+    }
 
     const emailHtml = await renderVerificationCodeEmail({
       fullName: parsed.data.fullName || 'EARIST Visitor',
@@ -150,6 +141,7 @@ export async function handleRequest(request: Request): Promise<Response> {
       ok: true,
       email: normalizedEmail,
       proofToken,
+      emailVerificationToken: proofToken,
       message: 'Email verified successfully.',
     });
   }

@@ -1039,10 +1039,10 @@ export function GetPassPage() {
     }
     setIsVerifyingCode(true);
     try {
-      const token = portalTransactionRef.current?.token;
+      const authToken = portalTransactionRef.current?.token;
       const res = await fetch('/api/office/verify-email', {
         method: 'POST',
-        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+        headers: { Authorization: `Bearer ${authToken}`, 'Content-Type': 'application/json' },
         body: JSON.stringify({
           action: 'verify_code',
           email: visitorEmail.toLowerCase().trim(),
@@ -1053,7 +1053,11 @@ export function GetPassPage() {
       if (!res.ok) {
         throw new Error(data.message || data.error || 'Invalid verification code.');
       }
-      setEmailVerificationToken(data.emailVerificationToken);
+      const verificationToken = data.emailVerificationToken || data.proofToken;
+      if (!verificationToken) {
+        throw new Error('Verification token was not received from the server.');
+      }
+      setEmailVerificationToken(verificationToken);
       toast.success('Email verified successfully!');
     } catch (err: unknown) {
       toast.error(err instanceof Error ? err.message : 'Verification failed.');

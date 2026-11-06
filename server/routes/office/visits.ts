@@ -50,7 +50,15 @@ export async function handleRequest(request: Request): Promise<Response> {
       .eq('id', effectiveOfficeId)
       .maybeSingle();
 
-    const statusFilter = url.searchParams.get('status') || 'pending';
+    const rawQueue = url.searchParams.get('queue') || url.searchParams.get('status') || 'pending';
+    const ALLOWED_QUEUES = ['pending', 'approved', 'awaiting_confirmation', 'confirmed', 'history'] as const;
+    if (!ALLOWED_QUEUES.includes(rawQueue as any)) {
+      return jsonResponse(400, {
+        error: 'invalid_queue_filter',
+        message: `Invalid queue filter '${rawQueue}'. Allowed values: ${ALLOWED_QUEUES.join(', ')}`,
+      });
+    }
+    const statusFilter = rawQueue;
     const searchQuery = (url.searchParams.get('search') || '').trim();
     const dateFilter = url.searchParams.get('date') || '';
     const limit = Math.min(Math.max(parseInt(url.searchParams.get('limit') || '50', 10), 1), 100);

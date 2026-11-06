@@ -1,7 +1,7 @@
 import { randomBytes, createHash } from 'node:crypto';
 import { z } from 'zod';
 import { requireOfficeStaffActor } from '../../lib/office.js';
-import { encryptQrPayload } from '../../lib/encryption.js';
+import { encryptQrPayload, decryptQrPayload } from '../../lib/encryption.js';
 import { jsonResponse, readBearerToken } from '../../http.js';
 import { getServerSupabaseClients } from '../../supabase.js';
 import { HttpError } from '../../actors.js';
@@ -206,7 +206,19 @@ export async function handleRequest(request: Request): Promise<Response> {
         const claim = Array.isArray(claimRows) ? claimRows[0] : claimRows;
 
         if (claim?.outbox_id) {
-          const qrBuffer = await generateQrPngBuffer(qrPassToken);
+          if (!claim.encrypted_token_payload) {
+            throw new Error('missing_encrypted_token_payload');
+          }
+
+          // Decrypt authoritative QR token directly from canonical outbox claim
+          const canonicalQrToken = decryptQrPayload(claim.encrypted_token_payload);
+          const canonicalDigest = createHash('sha256').update(canonicalQrToken).digest('hex');
+
+          if (canonicalDigest !== tokenDigest) {
+            console.warn('Authoritative outbox token differs from local proposal; generating QR from canonical outbox token');
+          }
+
+          const qrBuffer = await generateQrPngBuffer(canonicalQrToken);
           const attachmentFilename = `egatepass-${publicRef.slice(0, 8)}.png`;
 
           const html = await renderOfficeVisitApprovedEmail({
