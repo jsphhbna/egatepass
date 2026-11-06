@@ -5,7 +5,7 @@ export interface IntentRow {
   id: string;
   owner_id: string;
   source: 'portal' | 'kiosk' | 'guard_offline';
-  kind: 'photo' | 'id';
+  kind: 'photo' | 'id' | 'vehicle_photo';
   bucket_id: string;
   object_path: string;
   content_type: string;
@@ -34,7 +34,7 @@ export async function inspectUploadIntent(
   id: string,
   actorId: string,
   source: 'portal' | 'kiosk' | 'guard_offline',
-  kind: 'photo' | 'id'
+  kind: 'photo' | 'id' | 'vehicle_photo'
 ): Promise<InspectedUpload> {
   const { data, error } = await admin.from('upload_intents').select('*').eq('id', id).maybeSingle<IntentRow>();
   if (error) throw error;

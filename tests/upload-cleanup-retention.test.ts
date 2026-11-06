@@ -82,6 +82,9 @@ describe('Upload Cleanup Retention Maintenance & Durable Completion Tracking', (
             filters.push((row) => vals.includes(row[col]));
             return chain;
           },
+          or: (clause: string) => {
+            return chain;
+          },
           not: () => chain,
           order: () => chain,
           limit: (n: number) => {

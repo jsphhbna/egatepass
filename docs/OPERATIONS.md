@@ -53,6 +53,11 @@ flowchart TD
 - Office staff complete standard password replacement onboarding upon first sign-in and are automatically redirected to the dedicated Office Portal (`/office`).
 - Office staff accounts are scoped strictly to their assigned offices. To update office assignments, administrators use the Staff Management interface or the `/api/admin/offices` endpoint.
 
+#### Office Visit Email Delivery Recovery & Diagnostics
+- If transient network or Resend provider delivery errors occur upon visit approval, the pass payload remains securely encrypted in `public.office_visit_email_outbox` with `delivery_status = 'failed'` or `'unknown'`.
+- Office staff can click **Retry Email** on the visit record card in `/office`, or invoke `POST /api/office/retry-email`.
+- The endpoint verifies staff office authorization, retrieves the encrypted payload using `OFFICE_VISIT_DELIVERY_ENCRYPTION_KEY`, and dispatches the exact same issued pass without regenerating tokens or altering pass status.
+
 ---
 
 ### 1.2 Device Account Management

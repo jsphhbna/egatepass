@@ -17,6 +17,7 @@ import officeConfirmArrival from '../../server/routes/office/confirm-arrival.js'
 import officePersonnel from '../../server/routes/office/personnel.js';
 import officePortraitPreview from '../../server/routes/office/portrait-preview.js';
 import officeVerifyEmail from '../../server/routes/office/verify-email.js';
+import officeRetryEmail from '../../server/routes/office/retry-email.js';
 import requestOfficeVisit from '../../server/routes/passes/request-office-visit.js';
 
 const router = createGroupedRouter('passes', {
@@ -45,6 +46,8 @@ const router = createGroupedRouter('passes', {
   'office/personnel': officePersonnel,
   'office/portrait-preview': officePortraitPreview,
   'office/verify-email': officeVerifyEmail,
+  'office/retry-email': officeRetryEmail,
+  'office/retry/email': officeRetryEmail,
   'request-office-visit': requestOfficeVisit,
 });
 

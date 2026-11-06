@@ -769,9 +769,13 @@ Outage Architecture & Authority Delegation
   - `public.office_visits`: Authoritative visit records tracking visit type (`general` vs `specific_person`), approval status (`not_required`, `pending`, `approved`, `rejected`), attendance status (`awaiting_entry`, `awaiting_office_confirmation`, `confirmed`, `exited_unconfirmed`, `completed`), and foreign-key links to `visitors` and `passes`.
   - `public.office_visit_events`: Append-only audit history of visit state transitions (`submitted`, `approved`, `rejected`, `gate_entry`, `office_arrival_confirmed`, `gate_exit`, `unconfirmed_exit`).
   - `public.office_visit_email_verifications`: Tracks 6-digit challenge code delivery and single-use redemption for specific-person visit requests.
+  - `public.office_visit_email_outbox`: Idempotent delivery outbox table tracking transactional email status (`pending`, `sent`, `failed`, `unknown`), storing encrypted QR bearer tokens via AES-256-GCM and enabling safe retries without token regeneration.
 - **Workflow Segregation & Approval Boundaries**:
   - **General Office Visit**: Immediately creates pass via `api.issue_online_pass_v6`, and invokes `api.record_general_office_visit` linking the pass to the selected office. Attendance status initializes as `awaiting_entry`.
   - **Specific-Person Visit**: Submits visit record via `api.create_specific_person_visit_request`. **Crucial Security Boundary**: Pass generation is deferred completely; **zero pass record or QR token is generated or disclosed before approval**.
+- **Visitor Ownership & Evidence Integrity Invariants**:
+  - The approving office staff member **never** becomes the owner of the visitor record (`public.visitors.owner_id`). The anonymous visitor actor UUID is captured at request time as `visitor_actor_id` and assigned to `visitors.owner_id` upon approval; staff identity is recorded in `decided_by` and audit logs.
+  - Evidence uploads are tracked in `public.upload_intents` with a bounded hold (`held_until`), preventing abandoned-upload cleanup from purging pending evidence before office decisions are made. Rejection releases the hold (`held_until = null`); approval transitions the intent to `claimed` and records canonical evidence in `public.visitor_evidence`.
 - **Cryptographic Email Proof Tokens**:
   - Pre-submission ownership of visitor email is verified through a 6-digit challenge code sent via Resend. Successful verification issues a cryptographic HMAC-SHA256 proof token: `v_email.<b64urlEmail>.<actorId>.<expiresAt>.<sig>`.
   - Submitting `/api/request-office-visit` cryptographically validates this token against the session actor, preventing unauthorized request forgery.

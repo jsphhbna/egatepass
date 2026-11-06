@@ -27,6 +27,8 @@ This document is the authoritative specification for all configuration and secre
 | `SEND_EMAIL_HOOK_SECRET` | Production Only | **Yes** | Supabase Auth Send Email Hook (`server/routes/auth/send-email-hook.ts`) | **Yes** | Shared secret configured in Supabase Auth Webhook settings |
 | `RESEND_WEBHOOK_SECRET` | Production Only | **Yes** | Resend Delivery Webhook (`server/routes/auth/resend-webhook.ts`) | **Yes** | `whsec_...` signing secret for Resend delivery event verification |
 | `CRON_SECRET` | Production Only | **Yes** | Retention maintenance authorization (`server/routes/admin/retention-maintenance.ts`) | **Yes** | Shared bearer token (**minimum 32 characters**) for Vercel Cron invocations |
+| `OFFICE_VISIT_HMAC_SECRET` | Production Only | **Yes** | Office portrait preview tokens & actor-bound email challenge verification tokens (`server/lib/office.ts`) | **Yes** | Dedicated high-entropy cryptographic secret (**minimum 32 characters**) strictly isolated from pass & returning tokens |
+| `OFFICE_VISIT_DELIVERY_ENCRYPTION_KEY` | Production Only | **Yes** | Office visit QR bearer token encryption & recovery outbox (`server/lib/encryption.ts`) | **Yes** | 32-byte (64-hex-character) dedicated AES-256-GCM key for pass token encryption in `public.office_visit_email_outbox` |
 
 > **Turnstile Architecture Note**: The Cloudflare Turnstile Secret Key is configured directly inside the Supabase Dashboard under **Authentication > Bot Protection / CAPTCHA**, where Supabase Auth verifies tokens for `signInAnonymously`. It is NEVER exposed to frontend bundles. If optionally configured in Vercel environment variables, the server runtime module (`server/lib/turnstile.ts`) provides secondary per-lookup challenge verification with in-memory anti-replay protection and domain boundary validation.
 
@@ -92,6 +94,8 @@ Each cryptographic purpose strictly requires its own dedicated environment varia
 - **`RETURNING_MATCH_TOKEN_SECRET`**: Used exclusively for signing V3 actor-bound preview tokens and computing biometric match token digests. It NEVER falls back to `PASS_TOKEN_SECRET`. In Production, if missing or fewer than 32 characters, endpoints fail closed with HTTP 503.
 - **`RATE_LIMIT_HMAC_SECRET`**: Used exclusively for hashing client network identifiers in rate limiting. It NEVER falls back to `PASS_TOKEN_SECRET` or test strings. In Production, if missing or fewer than 32 characters, pass issuance and lookup fail closed with HTTP 503 `abuse_control_unavailable`.
 - **`RETURNING_VISITOR_TEMPLATE_KEY`**: Used exclusively for AES-256-GCM encryption and decryption of face embedding vectors at rest in `returning_visitor_profiles`. Must be a valid 32-byte 64-hex string.
+- **`OFFICE_VISIT_HMAC_SECRET`**: Used exclusively for signing portrait preview tokens and email challenge verification proof tokens in the office visit workflow (`server/lib/office.ts`). It NEVER falls back to other secrets. In Production, if missing or fewer than 32 characters, endpoints fail closed with HTTP 503.
+- **`OFFICE_VISIT_DELIVERY_ENCRYPTION_KEY`**: Used exclusively for authenticated AES-256-GCM encryption of raw QR bearer token payloads in `public.office_visit_email_outbox` (`server/lib/encryption.ts`). Guarantees zero plaintext pass tokens are stored in the database while enabling idempotent email retry. Must be a valid 32-byte (64-hex) key.
 
 ---
 

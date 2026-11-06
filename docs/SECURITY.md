@@ -812,10 +812,10 @@ The shared pure SVG template generator (`src/lib/digitalPassArtifact.ts`) uses s
 
 ### 29.2 Cryptographic Email Ownership Verification (HMAC-SHA256)
 - Specific-person visits require pre-submission proof of email ownership to guarantee that approved passes reach the verified recipient.
-- An ephemeral 6-digit challenge code is emailed to the visitor and verified against `public.office_visit_email_verifications`.
+- An ephemeral 6-digit challenge code is emailed to the visitor and verified against `public.office_visit_email_verifications`. Challenges are strictly actor-bound: queries require `actor_id = session.user.id` and normalized email, bounded to 5 attempts, preventing cross-session challenge hijacking.
 - Successful verification generates a time-bounded cryptographic token:
   `v_email.<b64urlEmail>.<actorId>.<expiresAt>.<sig>`
-  signed with the platform's authentication secret using HMAC-SHA256.
+  signed exclusively with the dedicated `OFFICE_VISIT_HMAC_SECRET` (minimum 32 characters, failing closed on boot without fallback).
 - The request handler (`POST /api/request-office-visit`) recomputes the HMAC digest, checks expiration (1-hour TTL), and verifies exact equality against the current authenticated visitor session (`actorId`).
 
 ### 29.3 Office Staff Role & Scope Isolation (`office_staff`)
@@ -828,13 +828,31 @@ The shared pure SVG template generator (`src/lib/digitalPassArtifact.ts`) uses s
 - Office staff reviewing incoming requests inspect visitor portraits without exposing permanent storage bucket URLs or disclosing direct Supabase Storage service keys.
 - The server generates short-lived, actor-bound portrait preview tokens:
   `office_p.<visitId>.<actorId>.<expiresAt>.<sig>`
-  with an explicit 600-second (10-minute) TTL.
-- The preview proxy endpoint (`GET /api/office/portrait-preview`) verifies caller identity, checks signature validity with `timingSafeEqual`, fetches the private photo from storage, and streams the binary image with `Cache-Control: private, no-store`.
+  with an explicit 600-second (10-minute) TTL, signed strictly with `OFFICE_VISIT_HMAC_SECRET`.
+- The preview proxy endpoint (`GET /api/office/portrait-preview`) verifies caller identity, enforces staff assignment via `requireOfficeStaffActor`, checks signature validity with `timingSafeEqual`, fetches the private photo from storage, and streams the binary image with `Cache-Control: private, no-store`.
 
 ### 29.5 Campus Egress Safety & Attendance Integrity
 - When a visitor departs campus through the exit gate without completing office arrival confirmation, physical exit is **never blocked or delayed**.
 - The scanner RPC `api.scan_pass` updates pass status to `exited`, marks `attendance_status = 'exited_unconfirmed'`, returns `code: 'office_unconfirmed'`, and logs an `unconfirmed_exit` event in `public.office_visit_events`.
-- Gate security guards receive an immediate amber visual banner and distinct warning audio feedback, preserving physical safety while maintaining an uncompromised attendance audit trail.
+- Gate security guards receive an immediate amber visual banner and distinct warning audio feedback (two triangle pulses at 587Hz / 440Hz), preserving physical safety while maintaining an uncompromised attendance audit trail.
+
+### 29.6 Visitor Identity & Record Ownership Invariant
+- **Strict Invariant**: The approving office staff member NEVER becomes the owner of the visitor record (`public.visitors.owner_id`).
+- When a visitor submits a specific-person visit request, their anonymous visitor UUID is captured and immutably stored in `public.office_visits.visitor_actor_id`.
+- Upon staff approval in `api.decide_office_visit`, the canonical visitor entity is created with `owner_id = target_visit.visitor_actor_id`. The approving staff member is recorded strictly in `decided_by` and audit event metadata.
+- Canonical evidence records are registered in `public.visitor_evidence` with SHA-256 integrity digests, matching the core system architecture.
+
+### 29.7 Recoverable Pass Token Outbox & AES-256-GCM Cryptography
+- Pass bearer tokens generated upon approval must reach the visitor via email even if external provider outages or transient network errors occur during approval.
+- Plaintext bearer tokens are **never stored** in the database. Instead, the pass payload is encrypted using authenticated AES-256-GCM with a dedicated 256-bit key (`OFFICE_VISIT_DELIVERY_ENCRYPTION_KEY`), a 96-bit cryptographically random IV, and a 128-bit authentication tag.
+- The encrypted ciphertext is stored in `public.office_visit_email_outbox` alongside delivery status tracking (`pending`, `sent`, `failed`, `unknown`).
+- Office staff and administrators can safely trigger email re-delivery via `POST /api/office/retry-email`. The retry handler decrypts the stored payload and re-dispatches the exact same pass token; zero new tokens or pass rows are generated, guaranteeing strict idempotency and pass integrity.
+
+### 29.8 Upload Intent Hold Lifecycle & Abandonment Protection
+- Visitor evidence uploads (selfie photo, government ID, optional vehicle photo) submitted with pending visit requests must be preserved until office review is complete.
+- `public.upload_intents` features a `held_until` timestamp column. Request creation places an active hold extending through visit date + 2 days (minimum 7 days).
+- Background retention maintenance (`/api/admin/retention-maintenance`) explicitly ignores upload intents with active `held_until` holds (`held_until is null or held_until < now()`).
+- Rejection or cancellation immediately releases the hold (`held_until = null`), allowing standard lifecycle pruning. Approval claims the intents (`status = 'claimed'`), binding them permanently to the canonical visitor.
 
 
 

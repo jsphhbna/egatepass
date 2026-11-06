@@ -2890,7 +2890,7 @@ describe('Permanent PostgreSQL Migration Chain & Schema Contracts (PGlite)', () 
   it('56. Migration 20261104000800_ephemeral_returning_verification_and_profile_linkage relaxes returning photo intent and enables automatic profile linkage', async () => {
     const db = new PGlite();
     const files = await applyAllMigrations(db);
-    expect(files.length).toBe(61);
+    expect(files.length).toBe(62);
 
     // 1. Verify execute permissions on api.issue_online_pass_v6
     const permCheck = await db.query<{ grantee: string }>(`
@@ -2917,7 +2917,7 @@ describe('Permanent PostgreSQL Migration Chain & Schema Contracts (PGlite)', () 
   it('57. Migration 20261104170754_returning_visitor_privacy_hardening_and_linkage_repair adds ID preview consumption RPC and saveUpdates support', async () => {
     const db = new PGlite();
     const files = await applyAllMigrations(db);
-    expect(files.length).toBe(61);
+    expect(files.length).toBe(62);
 
     // 1. Verify consume_id_preview_authorization_v1 RPC
     const permCheck = await db.query<{ grantee: string }>(`
@@ -3013,7 +3013,7 @@ describe('Permanent PostgreSQL Migration Chain & Schema Contracts (PGlite)', () 
   it('58. Migration 20261106000100_office_visit_management_system verifies office schema, personnel, assignments, visits, and scanner integration', async () => {
     const db = new PGlite();
     const files = await applyAllMigrations(db);
-    expect(files.length).toBe(61);
+    expect(files.length).toBe(62);
 
     // 1. Verify tables exist
     const tablesCheck = await db.query<{ tablename: string }>(`
@@ -3057,5 +3057,45 @@ describe('Permanent PostgreSQL Migration Chain & Schema Contracts (PGlite)', () 
     expect(rpcGrantees).toContain('decide_office_visit:service_role');
     expect(rpcGrantees).toContain('confirm_office_arrival:service_role');
     expect(rpcGrantees).toContain('record_general_office_visit:service_role');
+  }, 60000);
+
+  it('59. Migration 20261107000100_office_visit_production_closure_and_reconciliation verifies schema reconciliation, upload holds, email outbox, and visitor ownership', async () => {
+    const db = new PGlite();
+    const files = await applyAllMigrations(db);
+    expect(files.length).toBe(62);
+
+    // 1. Verify upload_intents has held_until
+    const uploadColCheck = await db.query<{ column_name: string }>(`
+      select column_name from information_schema.columns
+      where table_schema = 'public' and table_name = 'upload_intents' and column_name = 'held_until';
+    `);
+    expect(uploadColCheck.rows.length).toBe(1);
+
+    // 2. Verify office_visits has visitor_actor_id and visitor_display_name
+    const visitColCheck = await db.query<{ column_name: string }>(`
+      select column_name from information_schema.columns
+      where table_schema = 'public' and table_name = 'office_visits' and column_name in ('visitor_actor_id', 'visitor_display_name');
+    `);
+    expect(visitColCheck.rows.length).toBe(2);
+
+    // 3. Verify office_visit_email_outbox table exists
+    const outboxCheck = await db.query<{ tablename: string }>(`
+      select tablename from pg_tables
+      where schemaname = 'public' and tablename = 'office_visit_email_outbox';
+    `);
+    expect(outboxCheck.rows.length).toBe(1);
+
+    // 4. Verify RPC grants for claim and record outbox
+    const rpcCheck = await db.query<{ routine_name: string; grantee: string }>(`
+      select distinct routine_name, grantee
+      from information_schema.routine_privileges
+      where routine_schema = 'api' and routine_name in (
+        'claim_office_visit_email_for_delivery',
+        'record_office_visit_email_result'
+      );
+    `);
+    const rpcGrantees = rpcCheck.rows.map((r) => `${r.routine_name}:${r.grantee}`);
+    expect(rpcGrantees).toContain('claim_office_visit_email_for_delivery:service_role');
+    expect(rpcGrantees).toContain('record_office_visit_email_result:service_role');
   }, 60000);
 });

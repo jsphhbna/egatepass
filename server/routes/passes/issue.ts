@@ -1,6 +1,6 @@
 import { createHash, createHmac } from 'node:crypto';
 import { z } from 'zod';
-import { getVerifiedSessionContext, HttpError } from '../../actors.js';
+import { getVerifiedSessionContext, HttpError, recordReconciliation } from '../../actors.js';
 import { jsonResponse, readBearerToken } from '../../http.js';
 import { getServerSupabaseClients } from '../../supabase.js';
 import { normalizePhMobile } from '../../../src/lib/phPhone.js';
@@ -488,6 +488,14 @@ async function handleRequest(request: Request): Promise<Response> {
           });
         } catch (ovErr) {
           console.warn('Failed to link general office visit on idempotent replay:', ovErr);
+          await recordReconciliation(
+            admin,
+            'general_office_visit.replay_failed',
+            'passes',
+            existingPass.id,
+            ovErr instanceof Error ? ovErr.message : 'general_office_visit_link_failed',
+            { officeId: parsed.data.officeId, requestId: parsed.data.requestId }
+          ).catch(() => undefined);
         }
       }
 
@@ -898,7 +906,15 @@ async function handleRequest(request: Request): Promise<Response> {
             requested_request_id: parsed.data.requestId,
           });
         } catch (ovErr) {
-          console.warn('Failed to link general office visit:', ovErr);
+          console.error('Failed to link general office visit:', ovErr);
+          await recordReconciliation(
+            admin,
+            'general_office_visit.failed',
+            'passes',
+            data.pass_id,
+            ovErr instanceof Error ? ovErr.message : 'general_office_visit_link_failed',
+            { officeId: parsed.data.officeId, requestId: parsed.data.requestId }
+          ).catch(() => undefined);
         }
       }
 

@@ -1,6 +1,7 @@
 import { randomBytes, createHash } from 'node:crypto';
 import { z } from 'zod';
 import { requireOfficeStaffActor } from '../../lib/office.js';
+import { encryptQrPayload } from '../../lib/encryption.js';
 import { jsonResponse, readBearerToken } from '../../http.js';
 import { getServerSupabaseClients } from '../../supabase.js';
 import { HttpError } from '../../actors.js';
@@ -102,11 +103,22 @@ export async function handleRequest(request: Request): Promise<Response> {
             rejectionReason: reason,
           });
 
-          await sendResendEmail({
+          const sendResult = await sendResendEmail({
             to: visit.visitor_email,
             subject: `Update on your visit request to ${officeName}`,
             html,
           });
+
+          await admin
+            .from('office_visit_email_outbox')
+            .update({
+              delivery_status: 'sent',
+              provider_message_id: sendResult?.id || null,
+              last_attempt_at: new Date().toISOString(),
+              updated_at: new Date().toISOString(),
+            })
+            .eq('office_visit_id', visit.id)
+            .eq('email_type', 'rejection');
 
           await admin
             .from('office_visits')
@@ -114,11 +126,24 @@ export async function handleRequest(request: Request): Promise<Response> {
             .eq('id', visit.id);
         } catch (emailErr) {
           console.error('Failed to send rejection email:', emailErr);
+          const errMsg = emailErr instanceof Error ? emailErr.message : 'email_dispatch_failed';
+
+          await admin
+            .from('office_visit_email_outbox')
+            .update({
+              delivery_status: 'failed',
+              last_error: errMsg,
+              last_attempt_at: new Date().toISOString(),
+              updated_at: new Date().toISOString(),
+            })
+            .eq('office_visit_id', visit.id)
+            .eq('email_type', 'rejection');
+
           await admin
             .from('office_visits')
             .update({
               email_delivery_status: 'failed',
-              email_error: emailErr instanceof Error ? emailErr.message : 'email_dispatch_failed',
+              email_error: errMsg,
             })
             .eq('id', visit.id);
         }
@@ -128,10 +153,11 @@ export async function handleRequest(request: Request): Promise<Response> {
     }
 
     // APPROVAL
-    // Generate secure QR pass token: v1.<publicRef>.<random32bytes>
+    // Generate secure QR pass token: p_<random32bytes>
     const randomSecretBytes = randomBytes(32).toString('hex');
     const qrPassToken = `p_${randomSecretBytes}`;
     const tokenDigest = createHash('sha256').update(qrPassToken).digest('hex');
+    const encryptedPayload = encryptQrPayload(qrPassToken);
 
     const { data: rpcRows, error: rpcErr } = await admin.schema('api').rpc('decide_office_visit', {
       requested_actor_id: actor.id,
@@ -139,6 +165,7 @@ export async function handleRequest(request: Request): Promise<Response> {
       requested_decision: 'approved',
       requested_rejection_reason: null,
       requested_token_digest: tokenDigest,
+      requested_encrypted_payload: encryptedPayload,
     });
 
     if (rpcErr) {
@@ -168,7 +195,7 @@ export async function handleRequest(request: Request): Promise<Response> {
           attachmentFilename,
         });
 
-        await sendResendEmail({
+        const sendResult = await sendResendEmail({
           to: visit.visitor_email,
           subject: `Approved: EARIST E-GatePass for ${officeName}`,
           html,
@@ -182,16 +209,40 @@ export async function handleRequest(request: Request): Promise<Response> {
         });
 
         await admin
+          .from('office_visit_email_outbox')
+          .update({
+            delivery_status: 'sent',
+            provider_message_id: sendResult?.id || null,
+            last_attempt_at: new Date().toISOString(),
+            updated_at: new Date().toISOString(),
+          })
+          .eq('office_visit_id', visit.id)
+          .eq('email_type', 'approval');
+
+        await admin
           .from('office_visits')
           .update({ email_delivery_status: 'sent', email_dispatched_at: new Date().toISOString() })
           .eq('id', visit.id);
       } catch (emailErr) {
         console.error('Failed to send approval email:', emailErr);
+        const errMsg = emailErr instanceof Error ? emailErr.message : 'email_dispatch_failed';
+
+        await admin
+          .from('office_visit_email_outbox')
+          .update({
+            delivery_status: 'failed',
+            last_error: errMsg,
+            last_attempt_at: new Date().toISOString(),
+            updated_at: new Date().toISOString(),
+          })
+          .eq('office_visit_id', visit.id)
+          .eq('email_type', 'approval');
+
         await admin
           .from('office_visits')
           .update({
             email_delivery_status: 'failed',
-            email_error: emailErr instanceof Error ? emailErr.message : 'email_dispatch_failed',
+            email_error: errMsg,
           })
           .eq('id', visit.id);
       }

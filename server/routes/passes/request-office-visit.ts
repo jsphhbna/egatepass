@@ -4,6 +4,7 @@ import { jsonResponse, readBearerToken } from '../../http.js';
 import { getServerSupabaseClients } from '../../supabase.js';
 import { normalizePhMobile } from '../../../src/lib/phPhone.js';
 import { verifyEmailVerificationProofToken } from '../../lib/office.js';
+import { inspectUploadIntent } from '../../upload-inspection.js';
 
 const namePart = z.string().trim().min(1).max(50);
 
@@ -145,6 +146,33 @@ export async function handleRequest(request: Request): Promise<Response> {
     street: parsed.data.psgc.street,
   } : null;
 
+  let photoInspected: { bytes: number; sha256: string } | null = null;
+  if (parsed.data.photoIntentId) {
+    try {
+      photoInspected = await inspectUploadIntent(admin, parsed.data.photoIntentId, session.user.id, parsed.data.source, 'photo');
+    } catch {
+      return jsonResponse(400, { error: 'invalid_photo_upload', message: 'Uploaded visitor portrait is invalid, unverified, or expired.' });
+    }
+  }
+
+  let idInspected: { bytes: number; sha256: string } | null = null;
+  if (parsed.data.idIntentId) {
+    try {
+      idInspected = await inspectUploadIntent(admin, parsed.data.idIntentId, session.user.id, parsed.data.source, 'id');
+    } catch {
+      return jsonResponse(400, { error: 'invalid_id_upload', message: 'Uploaded identification document is invalid, unverified, or expired.' });
+    }
+  }
+
+  let vehiclePhotoInspected: { bytes: number; sha256: string } | null = null;
+  if (parsed.data.arrivalMode === 'vehicle' && parsed.data.vehiclePhotoIntentId) {
+    try {
+      vehiclePhotoInspected = await inspectUploadIntent(admin, parsed.data.vehiclePhotoIntentId, session.user.id, parsed.data.source, 'vehicle_photo');
+    } catch {
+      return jsonResponse(400, { error: 'invalid_vehicle_photo_upload', message: 'Uploaded vehicle photo is invalid, unverified, or expired.' });
+    }
+  }
+
   // Call api.create_specific_person_visit_request RPC
   const { data: rpcResult, error: rpcError } = await admin.rpc('create_specific_person_visit_request', {
     requested_actor_id: session.user.id,
@@ -162,8 +190,14 @@ export async function handleRequest(request: Request): Promise<Response> {
     requested_vehicle_details: vehicleDetails,
     requested_address_details: addressDetails,
     requested_photo_intent_id: parsed.data.photoIntentId || null,
+    requested_photo_bytes: photoInspected?.bytes || null,
+    requested_photo_sha256: photoInspected?.sha256 || null,
     requested_id_intent_id: parsed.data.idIntentId || null,
+    requested_id_bytes: idInspected?.bytes || null,
+    requested_id_sha256: idInspected?.sha256 || null,
     requested_vehicle_photo_intent_id: parsed.data.vehiclePhotoIntentId || null,
+    requested_vehicle_photo_bytes: vehiclePhotoInspected?.bytes || null,
+    requested_vehicle_photo_sha256: vehiclePhotoInspected?.sha256 || null,
   });
 
   if (rpcError) {

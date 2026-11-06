@@ -51,7 +51,7 @@ export async function handleRequest(request: Request): Promise<Response> {
   if (parsed.data.action === 'request_code') {
     const fifteenMinutesAgo = new Date(Date.now() - 15 * 60 * 1000).toISOString();
 
-    // Rate-limiting check: max 5 requests per 15 minutes per email or actor
+    // Rate-limiting check: max 5 requests per 15 minutes per email and per actor
     const { count: emailCount, error: countErr } = await admin
       .from('office_visit_email_verifications')
       .select('id', { count: 'exact', head: true })
@@ -59,10 +59,19 @@ export async function handleRequest(request: Request): Promise<Response> {
       .gt('created_at', fifteenMinutesAgo);
 
     if (countErr) throw countErr;
-    if ((emailCount || 0) >= 5) {
+
+    const { count: actorCount, error: actorCountErr } = await admin
+      .from('office_visit_email_verifications')
+      .select('id', { count: 'exact', head: true })
+      .eq('actor_id', session.user.id)
+      .gt('created_at', fifteenMinutesAgo);
+
+    if (actorCountErr) throw actorCountErr;
+
+    if ((emailCount || 0) >= 5 || (actorCount || 0) >= 5) {
       return jsonResponse(429, {
         error: 'too_many_requests',
-        message: 'Too many verification code requests for this email. Please wait a few minutes.',
+        message: 'Too many verification code requests. Please wait a few minutes.',
       });
     }
 
@@ -103,10 +112,12 @@ export async function handleRequest(request: Request): Promise<Response> {
   if (parsed.data.action === 'verify_code') {
     const nowIso = new Date().toISOString();
 
+    // Strictly filter verification challenge by email AND the authenticated actor
     const { data: records, error: fetchErr } = await admin
       .from('office_visit_email_verifications')
       .select('id, code_hash, attempts, expires_at')
       .eq('email', normalizedEmail)
+      .eq('actor_id', session.user.id)
       .eq('verified', false)
       .gt('expires_at', nowIso)
       .order('created_at', { ascending: false })
@@ -129,33 +140,33 @@ export async function handleRequest(request: Request): Promise<Response> {
       });
     }
 
-    // Increment attempts
-    await admin
-      .from('office_visit_email_verifications')
-      .update({ attempts: record.attempts + 1 })
-      .eq('id', record.id);
-
     const candidateHash = createHash('sha256').update(`${parsed.data.code}:${secret}`).digest('hex');
     const isMatch = timingSafeEqual(Buffer.from(candidateHash), Buffer.from(record.code_hash));
+
+    // Atomically increment attempts and mark verified if match
+    await admin
+      .from('office_visit_email_verifications')
+      .update({
+        attempts: record.attempts + 1,
+        verified: isMatch,
+      })
+      .eq('id', record.id)
+      .eq('verified', false);
 
     if (!isMatch) {
       return jsonResponse(400, {
         error: 'invalid_code',
-        message: 'The verification code you entered is incorrect.',
+        message: 'The verification code entered is incorrect.',
       });
     }
 
-    // Mark verified
-    await admin
-      .from('office_visit_email_verifications')
-      .update({ verified: true })
-      .eq('id', record.id);
-
-    const emailVerificationToken = createEmailVerificationProofToken(normalizedEmail, session.user.id);
+    // Mint actor-bound proof token signed strictly with OFFICE_VISIT_HMAC_SECRET
+    const proofToken = createEmailVerificationProofToken(normalizedEmail, session.user.id);
 
     return jsonResponse(200, {
       ok: true,
-      emailVerificationToken,
+      email: normalizedEmail,
+      proofToken,
       message: 'Email verified successfully.',
     });
   }

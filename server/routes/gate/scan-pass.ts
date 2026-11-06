@@ -33,7 +33,7 @@ async function handleRequest(request: Request): Promise<Response> {
     }).single<{ ok: boolean; result_status: string | null; code: string | null; message: string }>();
     if (error || !data) throw error ?? new Error('scan_failed');
     if (!data.ok) return jsonResponse(data.code === 'not_found' ? 404 : 409, { error: data.message, code: data.code });
-    return jsonResponse(200, { status: data.result_status, message: data.message });
+    return jsonResponse(200, { status: data.result_status, code: data.code, message: data.message });
   } catch (error) {
     const code = typeof error === 'object' && error !== null && 'code' in error ? String(error.code) : null;
     if (code === '42501') return jsonResponse(403, { error: `An active ${parsed.data.mode} scanner is required`, code: 'device_not_authorized' });

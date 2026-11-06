@@ -26,6 +26,8 @@ describe('Office Visit Workflow & Approval Subsystem', () => {
       SUPABASE_SECRET_KEY: 'test-secret-key-supabase-admin-service-role',
       PASS_TOKEN_SECRET: mockSecret,
       RETURNING_MATCH_TOKEN_SECRET: mockSecret,
+      OFFICE_VISIT_HMAC_SECRET: mockSecret,
+      OFFICE_VISIT_DELIVERY_ENCRYPTION_KEY: '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef',
     };
   });
 

@@ -117,4 +117,21 @@ describe('Cryptographic Secret Isolation & Zero-Fallback Static Verification', (
     expect(content).toContain('abuse_control_unavailable');
     expect(content).toMatch(/dedicatedSecret\.length\s*<\s*32/);
   });
+
+  it('verifies that OFFICE_VISIT_HMAC_SECRET enforces minimum length >= 32 and fails closed in server/lib/office.ts', () => {
+    const officeLibPath = path.join(serverDir, 'lib', 'office.ts');
+    const content = fs.readFileSync(officeLibPath, 'utf8');
+    expect(content).toContain('OFFICE_VISIT_HMAC_SECRET');
+    expect(content).not.toContain('RETURNING_MATCH_TOKEN_SECRET');
+    expect(content).not.toContain('PASS_TOKEN_SECRET');
+    expect(content).toMatch(/secret\.length\s*<\s*32/);
+  });
+
+  it('verifies that OFFICE_VISIT_DELIVERY_ENCRYPTION_KEY enforces minimum length >= 32 in server/lib/encryption.ts', () => {
+    const encPath = path.join(serverDir, 'lib', 'encryption.ts');
+    const content = fs.readFileSync(encPath, 'utf8');
+    expect(content).toContain('OFFICE_VISIT_DELIVERY_ENCRYPTION_KEY');
+    expect(content).toMatch(/32/);
+    expect(content).toContain('delivery_encryption_key_missing');
+  });
 });

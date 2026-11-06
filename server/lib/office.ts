@@ -7,7 +7,7 @@ export interface OfficeStaffActor extends StaffActor {
 }
 
 export function getOfficeTokenSecret(): string {
-  const secret = process.env.RETURNING_MATCH_TOKEN_SECRET?.trim() || process.env.PASS_TOKEN_SECRET?.trim();
+  const secret = process.env.OFFICE_VISIT_HMAC_SECRET?.trim();
   if (!secret || secret.length < 32) {
     throw new HttpError(503, 'auth_secret_missing_or_insufficient');
   }

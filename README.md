@@ -442,6 +442,7 @@ Visitor Portal (/get-pass)
 - **Office Arrival Confirmation**: Destination office staff confirm visitor physical arrival at the office (`confirmed`), valid only while the visitor is on campus (`inside`).
 - **Exit Gate Attendance Handling**: Departing campus without office arrival confirmation logs an attendance exception (`office_unconfirmed`), displays an amber warning banner to the guard, and triggers a distinct warning beep, but **never blocks physical egress from campus** (`ok: true`, status transitions to `exited`).
 - **In-Browser Audio Feedback**: Built with pure Web Audio API synthesis (no external audio files, 100% offline). Emits a rising two-tone chime for success, an alternating dual-tone pulse for unconfirmed office departure, and a low buzzer for invalid scans, complete with persistent mute control.
+- **Encrypted Delivery Outbox & Safe Email Retries**: Pass tokens are encrypted at rest with dedicated AES-256-GCM keys in `public.office_visit_email_outbox`. If transient delivery errors occur, office staff can safely trigger instant re-dispatch from `/office` without generating duplicate passes or invalidating existing QR codes.
 
 ---
 

@@ -1,7 +1,7 @@
-import { verifyOfficePortraitToken } from '../../lib/office.js';
+import { verifyOfficePortraitToken, requireOfficeStaffActor } from '../../lib/office.js';
 import { jsonResponse, readBearerToken } from '../../http.js';
 import { getServerSupabaseClients } from '../../supabase.js';
-import { getVerifiedSessionContext, HttpError } from '../../actors.js';
+import { HttpError } from '../../actors.js';
 
 export async function handleRequest(request: Request): Promise<Response> {
   if (request.method !== 'GET') {
@@ -19,51 +19,37 @@ export async function handleRequest(request: Request): Promise<Response> {
 
   try {
     const { admin } = getServerSupabaseClients();
-    const session = await getVerifiedSessionContext(admin, token);
 
-    if (session.isRecoverySession || session.isAnonymous) {
-      return jsonResponse(403, { error: 'access_denied' });
+    // Verify visit existence first to obtain office_id for authorization
+    // Decode preview token to get visitId
+    // Preview token format: office_p.<visitId>.<actorId>.<expiresAt>.<sig>
+    const parts = previewToken.split('.');
+    const visitId = parts[1];
+    if (!visitId) {
+      return jsonResponse(400, { error: 'invalid_preview_token' });
     }
 
-    const verified = verifyOfficePortraitToken(previewToken, session.user.id);
-    if (!verified) {
-      return jsonResponse(403, { error: 'invalid_or_expired_preview_token' });
-    }
-
-    // Retrieve visit record
     const { data: visit, error: fetchErr } = await admin
       .from('office_visits')
       .select('office_id, visitor_photo_path')
-      .eq('id', verified.visitId)
+      .eq('id', visitId)
       .maybeSingle();
 
     if (fetchErr || !visit || !visit.visitor_photo_path) {
       return jsonResponse(404, { error: 'photo_not_found' });
     }
 
-    // Verify staff assignment
-    const { data: profile } = await admin
-      .from('staff_profiles')
-      .select('role, active')
-      .eq('user_id', session.user.id)
-      .maybeSingle();
+    // Comprehensive office actor authorization: validates active staff, email confirmed,
+    // privacy accepted, no forced password change, and assigned office binding
+    const actor = await requireOfficeStaffActor(admin, token, visit.office_id);
 
-    if (!profile?.active) return jsonResponse(403, { error: 'access_denied' });
-
-    if (profile.role === 'office_staff') {
-      const { data: assignment } = await admin
-        .from('office_staff_assignments')
-        .select('id')
-        .eq('user_id', session.user.id)
-        .eq('office_id', visit.office_id)
-        .maybeSingle();
-
-      if (!assignment) {
-        return jsonResponse(403, { error: 'cross_office_photo_access_denied' });
-      }
+    // Verify portrait token signature and binding to this actor
+    const verified = verifyOfficePortraitToken(previewToken, actor.id);
+    if (!verified || verified.visitId !== visitId) {
+      return jsonResponse(403, { error: 'invalid_or_expired_preview_token' });
     }
 
-    // Download image from storage
+    // Download image from private storage
     const { data: fileData, error: downloadErr } = await admin.storage
       .from('visitor-photos')
       .download(visit.visitor_photo_path);

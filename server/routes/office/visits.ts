@@ -72,6 +72,7 @@ export async function handleRequest(request: Request): Promise<Response> {
         confirmed_by,
         visitor_id,
         pass_id,
+        visitor_display_name,
         visitor_first_name,
         visitor_middle_name,
         visitor_last_name,
@@ -146,7 +147,7 @@ export async function handleRequest(request: Request): Promise<Response> {
     const visits = (rows || []).map((row: any) => {
       const pass = row.passes;
       const personnel = row.office_personnel;
-      const fullName = [row.visitor_first_name, row.visitor_middle_name, row.visitor_last_name]
+      const fullName = row.visitor_display_name || [row.visitor_first_name, row.visitor_middle_name, row.visitor_last_name]
         .filter(Boolean)
         .join(' ');
 

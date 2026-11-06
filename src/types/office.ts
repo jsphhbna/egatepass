@@ -63,6 +63,7 @@ export interface OfficeVisitRecord {
   visitorMiddleName?: string | null;
   visitorLastName: string;
   visitorFullName: string;
+  visitorDisplayName?: string | null;
   visitorName?: string;
   portraitPreviewToken?: string | null;
   visitorContactNumber: string;
@@ -97,7 +98,7 @@ export interface OfficeVisitRecord {
   timeOut?: string | null;
   passStatus?: string | null;
 
-  emailDeliveryStatus: 'none' | 'pending' | 'sent' | 'failed';
+  emailDeliveryStatus: 'none' | 'pending' | 'sent' | 'failed' | 'unknown';
   emailDispatchedAt?: string | null;
   emailError?: string | null;
 

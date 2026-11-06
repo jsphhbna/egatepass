@@ -76,6 +76,7 @@ export function OfficeDashboardPage() {
   const [isSavingPersonnel, setIsSavingPersonnel] = useState(false);
 
   const [isSigningOut, setIsSigningOut] = useState(false);
+  const [retryingEmailVisitId, setRetryingEmailVisitId] = useState<string | null>(null);
 
   async function handleSignOut() {
     setIsSigningOut(true);
@@ -299,7 +300,7 @@ export function OfficeDashboardPage() {
         throw new Error(data.message || data.error || 'Failed to confirm arrival');
       }
 
-      toast.success(`Arrival confirmed for ${confirmArrivalVisit.visitorFullName}! Attendance recorded.`);
+      toast.success(`Arrival confirmed for ${confirmArrivalVisit.visitorDisplayName || confirmArrivalVisit.visitorFullName}! Attendance recorded.`);
       setConfirmArrivalVisit(null);
       loadVisits(true);
     } catch (err: unknown) {
@@ -307,6 +308,30 @@ export function OfficeDashboardPage() {
       toast.error(msg);
     } finally {
       setIsConfirmingArrival(false);
+    }
+  }
+
+  // Handle Retry Email Delivery for an approved visit
+  async function handleRetryEmail(visitId: string) {
+    setRetryingEmailVisitId(visitId);
+    try {
+      const token = await getAccessToken();
+      const res = await fetch('/api/office/retry-email', {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ visitId }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data.message || data.error || 'Failed to retry email delivery');
+      }
+      toast.success('Gate pass email successfully re-sent to visitor!');
+      loadVisits(true);
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : 'Failed to re-send email.';
+      toast.error(msg);
+    } finally {
+      setRetryingEmailVisitId(null);
     }
   }
 
@@ -636,7 +661,7 @@ export function OfficeDashboardPage() {
                         {visit.portraitPreviewToken ? (
                           <AuthenticatedImage
                             srcUrl={`/api/office/portrait-preview?token=${visit.portraitPreviewToken}`}
-                            alt={visit.visitorFullName}
+                            alt={visit.visitorDisplayName || visit.visitorFullName}
                             className="h-full w-full object-cover"
                             fallbackText="Selfie"
                           />
@@ -649,7 +674,9 @@ export function OfficeDashboardPage() {
 
                       <div className="space-y-1">
                         <div className="flex flex-wrap items-center gap-2">
-                          <h3 className="text-base font-bold text-[var(--color-text-primary)]">{visit.visitorFullName}</h3>
+                          <h3 className="text-base font-bold text-[var(--color-text-primary)]">
+                            {visit.visitorDisplayName || visit.visitorFullName}
+                          </h3>
                           <span
                             className={`rounded-md px-2 py-0.5 text-[10px] font-extrabold uppercase tracking-wide ${
                               isSpecificPerson
@@ -700,6 +727,16 @@ export function OfficeDashboardPage() {
                             <span className="flex items-center gap-1">
                               <Mail className="h-3 w-3" />
                               {visit.visitorEmail}
+                              {visit.emailDeliveryStatus === 'sent' && (
+                                <span className="ml-1 rounded px-1.5 py-0.2 bg-emerald-100 text-emerald-800 text-[10px] font-bold">
+                                  Email Sent
+                                </span>
+                              )}
+                              {(visit.emailDeliveryStatus === 'failed' || visit.emailDeliveryStatus === 'unknown') && (
+                                <span className="ml-1 rounded px-1.5 py-0.2 bg-red-100 text-red-800 text-[10px] font-bold">
+                                  Email {visit.emailDeliveryStatus === 'failed' ? 'Failed' : 'Pending/Unknown'}
+                                </span>
+                              )}
                             </span>
                           )}
                           <span className="flex items-center gap-1">
@@ -712,6 +749,19 @@ export function OfficeDashboardPage() {
 
                     {/* Action Buttons based on status */}
                     <div className="flex flex-wrap items-center gap-2 pt-2 sm:pt-0">
+                      {visit.approvalStatus === 'approved' &&
+                        (visit.emailDeliveryStatus === 'failed' || visit.emailDeliveryStatus === 'unknown') && (
+                          <Button
+                            variant="secondary"
+                            size="sm"
+                            onClick={() => handleRetryEmail(visit.id)}
+                            loading={retryingEmailVisitId === visit.id}
+                            icon={<Mail className="h-3.5 w-3.5 text-red-600" />}
+                            className="border-red-200 bg-red-50 text-red-800 hover:bg-red-100 text-xs font-semibold"
+                          >
+                            Retry Email
+                          </Button>
+                        )}
                       {activeQueue === 'pending' && isSpecificPerson && (
                         <>
                           <Button
@@ -785,7 +835,7 @@ export function OfficeDashboardPage() {
       >
         <div className="space-y-4">
           <p className="text-sm text-[var(--color-text-secondary)]">
-            Are you sure you want to approve this visit request for <strong>{approveModalVisit?.visitorFullName}</strong>?
+            Are you sure you want to approve this visit request for <strong>{approveModalVisit?.visitorDisplayName || approveModalVisit?.visitorFullName}</strong>?
           </p>
           <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] p-3 text-xs space-y-1">
             <p><strong>Office:</strong> {approveModalVisit?.officeName}</p>
@@ -829,7 +879,7 @@ export function OfficeDashboardPage() {
       >
         <div className="space-y-4">
           <p className="text-sm text-[var(--color-text-secondary)]">
-            Please provide a mandatory reason for rejecting the visit request from <strong>{rejectModalVisit?.visitorFullName}</strong>. This explanation will be included in the polite rejection notice emailed to the visitor.
+            Please provide a mandatory reason for rejecting the visit request from <strong>{rejectModalVisit?.visitorDisplayName || rejectModalVisit?.visitorFullName}</strong>. This explanation will be included in the polite rejection notice emailed to the visitor.
           </p>
 
           <div>
@@ -879,7 +929,7 @@ export function OfficeDashboardPage() {
       >
         <div className="space-y-4">
           <p className="text-sm text-[var(--color-text-secondary)]">
-            Confirm that visitor <strong>{confirmArrivalVisit?.visitorFullName}</strong> has physically arrived at <strong>{confirmArrivalVisit?.officeName}</strong>.
+            Confirm that visitor <strong>{confirmArrivalVisit?.visitorDisplayName || confirmArrivalVisit?.visitorFullName}</strong> has physically arrived at <strong>{confirmArrivalVisit?.officeName}</strong>.
           </p>
 
           <div className="rounded-xl border border-emerald-200 bg-emerald-50/50 p-3 text-xs text-emerald-900 space-y-1">

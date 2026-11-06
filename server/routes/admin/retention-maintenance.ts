@@ -356,12 +356,14 @@ async function handleRequest(request: Request): Promise<Response> {
     // 2. ABANDONED UPLOAD INTENTS (Durable storage cleanup tracking & DB-first safety)
     // =========================================================================
     const oneHourAgo = new Date(Date.now() - 3600000).toISOString();
+    const nowIso = new Date().toISOString();
     const { data: abandonedIntents, error: intentError } = await admin
       .from('upload_intents')
-      .select('id, bucket_id, object_path, status, visitor_id')
+      .select('id, bucket_id, object_path, status, visitor_id, held_until')
       .in('status', ['pending', 'expired'])
       .is('visitor_id', null)
       .is('storage_cleaned_at', null)
+      .or(`held_until.is.null,held_until.lt.${nowIso}`)
       .lt('expires_at', oneHourAgo)
       .limit(batchSize);
 
@@ -398,7 +400,7 @@ async function handleRequest(request: Request): Promise<Response> {
           // 2. Double-check fresh row state to verify it is expired and strictly unclaimed
           const { data: freshIntent, error: freshErr } = await admin
             .from('upload_intents')
-            .select('id, status, visitor_id, bucket_id, object_path, storage_cleaned_at')
+            .select('id, status, visitor_id, bucket_id, object_path, storage_cleaned_at, held_until')
             .eq('id', intent.id)
             .maybeSingle();
 
@@ -407,9 +409,13 @@ async function handleRequest(request: Request): Promise<Response> {
             continue;
           }
 
-          // Never delete storage if claimed or associated with a visitor profile
-          if (freshIntent.status === 'claimed' || freshIntent.visitor_id !== null) {
-            metrics.errors.push(`intent_claimed_guard_${intent.id}: Intent was claimed, skipping storage deletion`);
+          // Never delete storage if claimed, held by pending office visit, or associated with a visitor profile
+          if (
+            freshIntent.status === 'claimed' ||
+            freshIntent.visitor_id !== null ||
+            (freshIntent.held_until && new Date(freshIntent.held_until).getTime() > Date.now())
+          ) {
+            metrics.errors.push(`intent_claimed_guard_${intent.id}: Intent was claimed or held, skipping storage deletion`);
             continue;
           }
 
