@@ -54,9 +54,14 @@ flowchart TD
 - Office staff accounts are scoped strictly to their assigned offices. To update office assignments, administrators use the Staff Management interface or the `/api/admin/offices` endpoint.
 
 #### Office Visit Email Delivery Recovery & Diagnostics
-- If transient network or Resend provider delivery errors occur upon visit approval, the pass payload remains securely encrypted in `public.office_visit_email_outbox` with `delivery_status = 'failed'` or `'unknown'`.
-- Office staff can click **Retry Email** on the visit record card in `/office`, or invoke `POST /api/office/retry-email`.
-- The endpoint verifies staff office authorization, retrieves the encrypted payload using `OFFICE_VISIT_DELIVERY_ENCRYPTION_KEY`, and dispatches the exact same issued pass without regenerating tokens or altering pass status.
+- If transient network or Resend provider delivery errors occur upon visit approval, the pass payload remains securely encrypted in `public.office_visit_email_outbox` with `delivery_status` reflecting the lifecycle state:
+  - `pending`: Approved but dispatch has not yet executed. Staff or administrators can trigger **Dispatch Email**.
+  - `processing`: An active dispatch lease is held (5-minute lease). If the lease expires without result, staff can trigger **Re-dispatch Email**.
+  - `failed`: Provider rejected the send. Staff can trigger **Retry Email** to attempt delivery again using the exact same encrypted token.
+  - `unknown` or `reconciliation_required`: Transport error occurred where provider receipt is uncertain. To protect against duplicate passes, automatic retries are blocked. Staff or administrators can perform manual reconciliation:
+    - **Mark Delivered**: Resolves outbox status to `delivered` when delivery is verified externally (e.g. visitor confirmed receipt or Resend delivery log confirmed).
+    - **Permit Retry**: Resets outbox status to `failed`, allowing safe re-dispatch with an explicit audit note.
+- The recovery endpoint `POST /api/office/retry-email` supports actions `retry`, `mark_delivered`, and `permit_retry`. It verifies staff office authorization, logs all manual reconciliations to `public.office_visit_events`, and decrypts the original payload using `OFFICE_VISIT_DELIVERY_ENCRYPTION_KEY` without regenerating tokens or altering pass status.
 
 ---
 

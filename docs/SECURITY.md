@@ -611,8 +611,9 @@ The shared pure SVG template generator (`src/lib/digitalPassArtifact.ts`) uses s
 
 ### 22.2 Identity Verification Boundary & Rate Limiting
 - **Anti-Tampering Correlation**: `/api/passes/verify-identity` validates that `photoIntentId` and `idIntentId` belong to the caller's active anonymous Supabase session and match the transaction's `requestId`.
+- **Server-Side Facial Comparison**: Verification executes a server-validated face comparison between the captured visitor image and the face detected in the submitted ID document, recording the result in `public.portal_identity_verification_attempts`. It does NOT claim government-ID authenticity, certified liveness, or verified name, date-of-birth, or contact matching (the request schema does not persist verified identity document attributes).
 - **Sliding-Window Rate Limits**: Biometric comparison requests are rate-limited per session actor and client network identifier.
-- **Strict Server Authority**: Pass issuance via `POST /api/passes/issue` enforces that an unexpired `matched` record exists in `portal_identity_verification_attempts` before executing `api.issue_pass`. Expiry cannot outlive either evidence intent (`min(photoIntent.expires_at, idIntent.expires_at, now + 30m)`).
+- **Strict Server Authority & Bounded Validity**: Pass issuance via `POST /api/passes/issue` enforces that an unexpired `matched` record exists in `portal_identity_verification_attempts` before executing `api.issue_pass`. Expiry cannot outlive either evidence intent (`min(photoIntent.expires_at, idIntent.expires_at, now + 30m)`). Upload retention holds (`held_until`) are a separate mechanism and do not extend verification validity.
 
 ### 22.3 Same-Gate Confinement for Guard Station Devices
 - Dedicated hardware devices (`device_type = 'guard_station'`) monitor campus entrance gates.
@@ -845,14 +846,22 @@ The shared pure SVG template generator (`src/lib/digitalPassArtifact.ts`) uses s
 ### 29.7 Recoverable Pass Token Outbox & AES-256-GCM Cryptography
 - Pass bearer tokens generated upon approval must reach the visitor via email even if external provider outages or transient network errors occur during approval.
 - Plaintext bearer tokens are **never stored** in the database. Instead, the pass payload is encrypted using authenticated AES-256-GCM with a dedicated 256-bit key (`OFFICE_VISIT_DELIVERY_ENCRYPTION_KEY`), a 96-bit cryptographically random IV, and a 128-bit authentication tag.
-- The encrypted ciphertext is stored in `public.office_visit_email_outbox` alongside delivery status tracking (`pending`, `sent`, `failed`, `unknown`).
-- Office staff and administrators can safely trigger email re-delivery via `POST /api/office/retry-email`. The retry handler decrypts the stored payload and re-dispatches the exact same pass token; zero new tokens or pass rows are generated, guaranteeing strict idempotency and pass integrity.
+- The encrypted ciphertext is stored in `public.office_visit_email_outbox` alongside delivery status tracking (`pending`, `processing`, `sent`, `delivered`, `failed`, `unknown`, `reconciliation_required`).
+- Office staff and administrators can safely trigger email dispatch or re-delivery via `POST /api/office/retry-email` with actions `retry`, `mark_delivered`, or `permit_retry`. The retry handler decrypts the stored payload and re-dispatches the exact same pass token; zero new tokens or pass rows are generated, guaranteeing strict idempotency and pass integrity.
+- **Provider Request Metadata Correlation**: To reconcile unknown outcomes where Resend accepts a message but transport fails before receiving `provider_message_id`, every outgoing dispatch attaches a stable non-PII correlation identifier (`outbox_id`) via Resend tags (`[{ name: 'outbox_id', value }]`) and headers (`X-Entity-Ref-ID`). Webhook delivery events correlate via `requested_outbox_id` in `api.record_resend_delivery_event`, matching without requiring `provider_message_id`.
+- **Claim Lease & Terminal State Protection**: Outbox dispatches acquire leases via `api.claim_office_visit_email_for_delivery` with a unique `claim_id` and 5-minute timeout. `api.record_office_visit_email_result` enforces active claim matching, rejecting stale workers (`stale_or_invalid_claim_cannot_overwrite` or `expired_claim_cannot_overwrite`). Terminal `delivered` status is strictly protected against regression from out-of-order errors.
 
-### 29.8 Upload Intent Hold Lifecycle & Abandonment Protection
+### 29.8 Upload Intent Hold Lifecycle & Fail-Closed Approval Validation
 - Visitor evidence uploads (selfie photo, government ID, optional vehicle photo) submitted with pending visit requests must be preserved until office review is complete.
 - `public.upload_intents` features a `held_until` timestamp column. Request creation places an active hold extending through visit date + 2 days (minimum 7 days).
 - Background retention maintenance (`/api/admin/retention-maintenance`) explicitly ignores upload intents with active `held_until` holds (`held_until is null or held_until < now()`).
 - Rejection or cancellation immediately releases the hold (`held_until = null`), allowing standard lifecycle pruning. Approval claims the intents (`status = 'claimed'`), binding them permanently to the canonical visitor.
+- **Fail-Closed Evidence Validation in `api.decide_office_visit`**: Approval enforces that photo and ID upload intents are in status `uploaded`, non-expired, unreleased (`storage_cleaned_at is null`), actually present in `storage.objects` with positive byte counts, and possess a genuine non-zero SHA-256 digest (zero fake `1024` or all-zero SHA defaults). Missing or defective evidence immediately rejects the visit and releases holds.
+- **Transaction-Safe Non-Rollback Rejections**: Rather than raising uncaught exceptions that roll back status updates in PostgreSQL, `api.decide_office_visit` returns structured result tuples `(ok, decision, pass_id, public_reference, valid_from, valid_until, message)`, guaranteeing that rejection status and hold releases persist cleanly to disk while reporting descriptive failure codes to the caller.
+
+### 29.9 Manila-Authoritative Dynamic Scheduling & Office Hours
+- Visit date validation dynamically checks the configured `scheduling_days_ahead` (default: 30 days) and campus operating hours (`working_hours_start = '08:00'`, `working_hours_end = '22:00'`) in `public.app_settings` under the `Asia/Manila` time zone.
+- Pass validity windows on approval are bounded strictly to `working_hours_start` and `working_hours_end` of the requested visit date in Manila local time.
 
 
 
