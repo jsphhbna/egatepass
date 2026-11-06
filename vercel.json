@@ -236,7 +236,7 @@
     },
     {
       "source": "/api/office/:path*",
-      "destination": "/api/passes/office/:path*"
+      "destination": "/api/passes/office-:path*"
     },
     {
       "source": "/api/request-office-visit",
