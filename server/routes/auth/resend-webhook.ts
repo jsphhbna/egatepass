@@ -101,6 +101,23 @@ export async function handleRequest(request: Request): Promise<Response> {
   const recipientMasked = recipient ? maskEmail(recipient) : null;
   const subjectSanitized = data.subject ? String(data.subject).slice(0, 100) : null;
 
+  // Extract stable, non-PII correlation identifier from Resend tags or headers
+  let correlationOutboxId: string | null = null;
+  if (Array.isArray(data.tags)) {
+    const tag = data.tags.find((t: any) => t && (t.name === 'outbox_id' || t.name === 'outboxId'));
+    if (tag?.value) correlationOutboxId = String(tag.value);
+  } else if (data.tags && typeof data.tags === 'object') {
+    if (data.tags.outbox_id) correlationOutboxId = String(data.tags.outbox_id);
+    else if (data.tags.outboxId) correlationOutboxId = String(data.tags.outboxId);
+  }
+  if (!correlationOutboxId && data.headers && typeof data.headers === 'object') {
+    const ref = data.headers['X-Entity-Ref-ID'] || data.headers['x-entity-ref-id'];
+    if (ref) correlationOutboxId = String(ref);
+  }
+  if (correlationOutboxId && !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(correlationOutboxId)) {
+    correlationOutboxId = null;
+  }
+
   const { admin } = getServerSupabaseClients();
 
   // Atomically claim provider event ID and insert audit event within a single database transaction
@@ -114,6 +131,7 @@ export async function handleRequest(request: Request): Promise<Response> {
       requested_recipient_masked: recipientMasked,
       requested_subject_sanitized: subjectSanitized,
       requested_occurred_at: new Date().toISOString(),
+      requested_outbox_id: correlationOutboxId,
     });
 
   if (rpcError) {

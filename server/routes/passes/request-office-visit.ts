@@ -258,7 +258,7 @@ export async function handleRequest(request: Request): Promise<Response> {
   }
 
   // Call api.create_specific_person_visit_request RPC
-  const { data: rpcResult, error: rpcError } = await admin.rpc('create_specific_person_visit_request', {
+  const { data: rpcResult, error: rpcError } = await admin.schema('api').rpc('create_specific_person_visit_request', {
     requested_actor_id: session.user.id,
     requested_request_id: parsed.data.requestId,
     requested_office_id: parsed.data.officeId,

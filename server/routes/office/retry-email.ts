@@ -9,6 +9,8 @@ import { renderOfficeVisitApprovedEmail, renderOfficeVisitRejectedEmail } from '
 
 const schema = z.object({
   visitId: z.string().uuid(),
+  action: z.enum(['retry', 'mark_delivered', 'permit_retry']).optional().default('retry'),
+  note: z.string().trim().max(500).optional(),
 }).strict();
 
 export async function handleRequest(request: Request): Promise<Response> {
@@ -55,12 +57,41 @@ export async function handleRequest(request: Request): Promise<Response> {
     }
 
     // 2. Authorize office staff for this specific office
-    await requireOfficeStaffActor(admin, token, visit.office_id);
+    const actor = await requireOfficeStaffActor(admin, token, visit.office_id);
 
     if (visit.approval_status === 'pending' || visit.approval_status === 'not_required') {
       return jsonResponse(400, {
         error: 'visit_not_decided',
         message: 'Email retry is only available for approved or rejected visits.',
+      });
+    }
+
+    if (parsed.data.action === 'mark_delivered' || parsed.data.action === 'permit_retry') {
+      const { data: recRows, error: recErr } = await admin.schema('api').rpc('reconcile_office_visit_email', {
+        requested_actor_id: actor.id,
+        requested_visit_id: visit.id,
+        requested_action: parsed.data.action,
+        requested_note: parsed.data.note || null,
+      });
+
+      if (recErr) {
+        if (recErr.code === '40900' || recErr.message?.includes('already_delivered')) {
+          return jsonResponse(409, { error: 'email_already_delivered', message: 'Email is already delivered.' });
+        }
+        if (recErr.message?.includes('only_for_unknown_or_failed')) {
+          return jsonResponse(400, { error: 'invalid_reconciliation_state', message: recErr.message });
+        }
+        throw recErr;
+      }
+
+      const recResult = Array.isArray(recRows) ? recRows[0] : recRows;
+      return jsonResponse(200, {
+        ok: true,
+        action: parsed.data.action,
+        status: recResult?.new_status || 'reconciled',
+        message: parsed.data.action === 'mark_delivered'
+          ? 'Email delivery manually confirmed as delivered.'
+          : 'Email delivery reset to failed and retry permitted.',
       });
     }
 
@@ -129,6 +160,7 @@ export async function handleRequest(request: Request): Promise<Response> {
           subject: `Approved: EARIST E-GatePass for ${officeName}`,
           html,
           idempotencyKey: outboxRecord.idempotency_key || `office-approval-${visit.id}`,
+          correlationId: outboxRecord.outbox_id,
           attachments: [
             {
               filename: attachmentFilename,
@@ -186,6 +218,7 @@ export async function handleRequest(request: Request): Promise<Response> {
           subject: `Update on your visit request to ${officeName}`,
           html,
           idempotencyKey: outboxRecord.idempotency_key || `office-rejection-${visit.id}`,
+          correlationId: outboxRecord.outbox_id,
         });
 
         await admin.schema('api').rpc('record_office_visit_email_result', {

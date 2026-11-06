@@ -5,6 +5,9 @@ export interface SendEmailPayload {
   subject: string;
   html: string;
   idempotencyKey?: string;
+  correlationId?: string;
+  tags?: Array<{ name: string; value: string }>;
+  headers?: Record<string, string>;
   attachments?: Array<{
     filename: string;
     content: string; // Base64 encoded
@@ -169,16 +172,34 @@ export async function sendResendEmail(payload: SendEmailPayload): Promise<SendEm
       headers['Idempotency-Key'] = payload.idempotencyKey;
     }
 
+    const outgoingTags: Array<{ name: string; value: string }> = payload.tags ? [...payload.tags] : [];
+    if (payload.correlationId) {
+      outgoingTags.push({ name: 'outbox_id', value: payload.correlationId });
+    }
+
+    const outgoingCustomHeaders: Record<string, string> = { ...(payload.headers || {}) };
+    if (payload.correlationId) {
+      outgoingCustomHeaders['X-Entity-Ref-ID'] = payload.correlationId;
+    }
+
+    const requestBody: Record<string, any> = {
+      from: fromEmail,
+      to: [payload.to],
+      subject: payload.subject,
+      html: payload.html,
+      attachments: payload.attachments,
+    };
+    if (outgoingTags.length > 0) {
+      requestBody.tags = outgoingTags;
+    }
+    if (Object.keys(outgoingCustomHeaders).length > 0) {
+      requestBody.headers = outgoingCustomHeaders;
+    }
+
     response = await fetch('https://api.resend.com/emails', {
       method: 'POST',
       headers,
-      body: JSON.stringify({
-        from: fromEmail,
-        to: [payload.to],
-        subject: payload.subject,
-        html: payload.html,
-        attachments: payload.attachments,
-      }),
+      body: JSON.stringify(requestBody),
     });
   } catch {
     // A transport exception can happen after the provider accepted the request.

@@ -268,6 +268,26 @@ describe('Office Visit Workflow & Approval Subsystem', () => {
           }
           return Promise.resolve({ data: null, error: null });
         }),
+        schema: vi.fn(() => ({
+          rpc: vi.fn((fnName: string) => {
+            if (fnName === 'create_specific_person_visit_request') {
+              return Promise.resolve({
+                data: {
+                  ok: true,
+                  visit_id: 'visit-uuid-12345',
+                  reference_code: 'OVR-20261107-1234',
+                  approval_status: 'pending',
+                  attendance_status: 'awaiting_entry',
+                  // Crucial invariant: no pass_id or qr_token!
+                  pass_id: null,
+                  qr_token: null,
+                },
+                error: null,
+              });
+            }
+            return Promise.resolve({ data: null, error: null });
+          }),
+        })),
       };
 
       vi.spyOn(supabaseModule, 'getServerSupabaseClients').mockReturnValue({

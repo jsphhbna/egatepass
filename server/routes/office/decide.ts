@@ -119,6 +119,7 @@ export async function handleRequest(request: Request): Promise<Response> {
               subject: `Update on your visit request to ${officeName}`,
               html,
               idempotencyKey: claim.idempotency_key || rejectionIdempotencyKey,
+              correlationId: claim.outbox_id,
             });
 
             await admin.schema('api').rpc('record_office_visit_email_result', {
@@ -185,6 +186,13 @@ export async function handleRequest(request: Request): Promise<Response> {
     }
 
     const decisionResult = Array.isArray(rpcRows) ? rpcRows[0] : rpcRows;
+    if (decisionResult && decisionResult.ok === false) {
+      return jsonResponse(422, {
+        error: decisionResult.message || 'decision_rejected',
+        decision: decisionResult.decision,
+      });
+    }
+
     const publicRef = decisionResult?.public_reference;
     const passId = decisionResult?.pass_id;
 
@@ -216,6 +224,7 @@ export async function handleRequest(request: Request): Promise<Response> {
             subject: `Approved: EARIST E-GatePass for ${officeName}`,
             html,
             idempotencyKey: claim.idempotency_key || approvalIdempotencyKey,
+            correlationId: claim.outbox_id,
             attachments: [
               {
                 filename: attachmentFilename,

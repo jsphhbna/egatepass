@@ -166,7 +166,7 @@ describe('Office Visit Upload Hold Revalidation and Scheduling Invariants (PGlit
           requested_contact_number => '09171234567',
           requested_email => 'visitor@test.local',
           requested_purpose => 'Consultation',
-          requested_visit_date => current_date - 1,
+          requested_visit_date => (now() at time zone 'Asia/Manila')::date - 1,
           requested_arrival_mode => 'no_vehicle',
           requested_vehicle_details => null::jsonb,
           requested_address_details => null::jsonb,
@@ -190,7 +190,7 @@ describe('Office Visit Upload Hold Revalidation and Scheduling Invariants (PGlit
           requested_contact_number => '09171234567',
           requested_email => 'visitor@test.local',
           requested_purpose => 'Consultation',
-          requested_visit_date => current_date + 60,
+          requested_visit_date => (now() at time zone 'Asia/Manila')::date + 60,
           requested_arrival_mode => 'no_vehicle',
           requested_vehicle_details => null::jsonb,
           requested_address_details => null::jsonb,
@@ -231,7 +231,7 @@ describe('Office Visit Upload Hold Revalidation and Scheduling Invariants (PGlit
         requested_contact_number => '09171234567',
         requested_email => 'visitor@test.local',
         requested_purpose => 'Consultation',
-        requested_visit_date => current_date,
+        requested_visit_date => (now() at time zone 'Asia/Manila')::date,
         requested_arrival_mode => 'no_vehicle',
         requested_vehicle_details => null::jsonb,
         requested_address_details => null::jsonb,
@@ -259,7 +259,7 @@ describe('Office Visit Upload Hold Revalidation and Scheduling Invariants (PGlit
           requested_contact_number => '09179999999',
           requested_email => 'imposter@test.local',
           requested_purpose => 'Consultation',
-          requested_visit_date => current_date,
+          requested_visit_date => (now() at time zone 'Asia/Manila')::date,
           requested_arrival_mode => 'no_vehicle',
           requested_vehicle_details => null::jsonb,
           requested_address_details => null::jsonb,
@@ -275,6 +275,10 @@ describe('Office Visit Upload Hold Revalidation and Scheduling Invariants (PGlit
     const reqId = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
 
     await db.exec(`
+      insert into storage.objects (bucket_id, name, owner) values
+      ('visitor-photos', 'photo-4.jpg', '${visitorUserId}'),
+      ('visitor-ids', 'id-4.jpg', '${visitorUserId}');
+
       insert into public.upload_intents (id, owner_id, source, kind, bucket_id, object_path, content_type, max_bytes, status, expires_at) values
       ('${photoId}', '${visitorUserId}', 'portal', 'photo', 'visitor-photos', 'photo-4.jpg', 'image/jpeg', 5000000, 'uploaded', now() + interval '1 hour'),
       ('${idId}', '${visitorUserId}', 'portal', 'id', 'visitor-ids', 'id-4.jpg', 'image/jpeg', 5000000, 'uploaded', now() + interval '1 hour');
@@ -298,7 +302,7 @@ describe('Office Visit Upload Hold Revalidation and Scheduling Invariants (PGlit
         requested_contact_number => '09171234567',
         requested_email => 'visitor@test.local',
         requested_purpose => 'Consultation',
-        requested_visit_date => current_date,
+        requested_visit_date => (now() at time zone 'Asia/Manila')::date,
         requested_arrival_mode => 'no_vehicle',
         requested_vehicle_details => null::jsonb,
         requested_address_details => null::jsonb,
@@ -318,18 +322,32 @@ describe('Office Visit Upload Hold Revalidation and Scheduling Invariants (PGlit
       update public.upload_intents set storage_cleaned_at = now() where id = '${photoId}';
     `);
 
-    await expect(
-      db.query(`
-        select * from api.decide_office_visit(
-          requested_actor_id => '${staffUserId}'::uuid,
-          requested_visit_id => '${visitId}'::uuid,
-          requested_decision => 'approved',
-          requested_rejection_reason => null,
-          requested_token_digest => '${'c'.repeat(64)}',
-          requested_encrypted_payload => 'c2VjdXJlX2VuY3J5cHRlZF9xcl9wYXlsb2Fk'
-        );
-      `)
-    ).rejects.toThrow(/invalid_or_expired_photo_evidence/);
+    const decideRes = await db.query<{ ok: boolean; decision: string; message: string }>(`
+      select * from api.decide_office_visit(
+        requested_actor_id => '${staffUserId}'::uuid,
+        requested_visit_id => '${visitId}'::uuid,
+        requested_decision => 'approved',
+        requested_rejection_reason => null,
+        requested_token_digest => '${'c'.repeat(64)}',
+        requested_encrypted_payload => 'c2VjdXJlX2VuY3J5cHRlZF9xcl9wYXlsb2Fk'
+      );
+    `);
+
+    expect(decideRes.rows.length).toBe(1);
+    expect(decideRes.rows[0].ok).toBe(false);
+    expect(decideRes.rows[0].decision).toBe('rejected');
+    expect(decideRes.rows[0].message).toBe('invalid_or_expired_photo_evidence');
+
+    // Confirm that rejection persisted without rollback and holds were released
+    const visitCheck = await db.query<{ approval_status: string }>(`
+      select approval_status from public.office_visits where id = '${visitId}';
+    `);
+    expect(visitCheck.rows[0].approval_status).toBe('rejected');
+
+    const intentCheck = await db.query<{ held_until: string | null }>(`
+      select held_until from public.upload_intents where id in ('${photoId}', '${idId}');
+    `);
+    expect(intentCheck.rows.every((r) => r.held_until === null)).toBe(true);
   });
 
   it('5. Successfully approves genuine returning visitor visit without requiring new photo upload intents', async () => {
@@ -358,7 +376,7 @@ describe('Office Visit Upload Hold Revalidation and Scheduling Invariants (PGlit
         requested_contact_number => '09171234567',
         requested_email => 'returning@test.local',
         requested_purpose => 'Dean Consultation',
-        requested_visit_date => current_date,
+        requested_visit_date => (now() at time zone 'Asia/Manila')::date,
         requested_arrival_mode => 'no_vehicle',
         requested_vehicle_details => null::jsonb,
         requested_address_details => null::jsonb,
@@ -392,5 +410,203 @@ describe('Office Visit Upload Hold Revalidation and Scheduling Invariants (PGlit
     expect(outboxRes.rows.length).toBe(1);
     expect(outboxRes.rows[0].delivery_status).toBe('pending');
     expect(outboxRes.rows[0].idempotency_key).toContain(visitId);
+  });
+
+  it('6. Rejects approval when storage.objects record is missing (fail-closed)', async () => {
+    const photoId = '11112222-3333-4444-5555-666677778888';
+    const idId = '22223333-4444-5555-6666-777788889999';
+    const reqId = '33334444-5555-6666-7777-888899990000';
+
+    await db.exec(`
+      -- Only insert id in storage.objects, omitting photo!
+      insert into storage.objects (bucket_id, name, owner) values
+      ('visitor-ids', 'id-6.jpg', '${visitorUserId}');
+
+      insert into public.upload_intents (id, owner_id, source, kind, bucket_id, object_path, content_type, max_bytes, status, expires_at) values
+      ('${photoId}', '${visitorUserId}', 'portal', 'photo', 'visitor-photos', 'photo-6.jpg', 'image/jpeg', 5000000, 'uploaded', now() + interval '1 hour'),
+      ('${idId}', '${visitorUserId}', 'portal', 'id', 'visitor-ids', 'id-6.jpg', 'image/jpeg', 5000000, 'uploaded', now() + interval '1 hour');
+
+      insert into public.portal_identity_verification_attempts (
+        owner_id, request_id, photo_intent_id, id_intent_id, outcome, expires_at, model_name, model_version
+      ) values (
+        '${visitorUserId}', '${reqId}', '${photoId}', '${idId}', 'matched', now() + interval '10 minutes', 'face-api', '1.0'
+      );
+    `);
+
+    const createRes = await db.query<{ visit_id: string }>(`
+      select * from api.create_specific_person_visit_request(
+        requested_actor_id => '${visitorUserId}'::uuid,
+        requested_request_id => '${reqId}'::uuid,
+        requested_office_id => '${officeId}'::uuid,
+        requested_personnel_id => '${personnelId}'::uuid,
+        requested_first_name => 'Missing',
+        requested_middle_name => null,
+        requested_last_name => 'Storage',
+        requested_contact_number => '09171234567',
+        requested_email => 'missing_storage@test.local',
+        requested_purpose => 'Consultation',
+        requested_visit_date => (now() at time zone 'Asia/Manila')::date,
+        requested_arrival_mode => 'no_vehicle',
+        requested_vehicle_details => null::jsonb,
+        requested_address_details => null::jsonb,
+        requested_photo_intent_id => '${photoId}'::uuid,
+        requested_photo_bytes => 1024,
+        requested_photo_sha256 => '${'a'.repeat(64)}',
+        requested_id_intent_id => '${idId}'::uuid,
+        requested_id_bytes => 2048,
+        requested_id_sha256 => '${'b'.repeat(64)}',
+        requested_registration_mode => 'new'
+      );
+    `);
+    const visitId = createRes.rows[0].visit_id;
+
+    const decideRes = await db.query<{ ok: boolean; decision: string; message: string }>(`
+      select * from api.decide_office_visit(
+        requested_actor_id => '${staffUserId}'::uuid,
+        requested_visit_id => '${visitId}'::uuid,
+        requested_decision => 'approved',
+        requested_rejection_reason => null,
+        requested_token_digest => '${'c'.repeat(64)}',
+        requested_encrypted_payload => 'c2VjdXJlX2VuY3J5cHRlZF9xcl9wYXlsb2Fk'
+      );
+    `);
+
+    expect(decideRes.rows[0].ok).toBe(false);
+    expect(decideRes.rows[0].decision).toBe('rejected');
+    expect(decideRes.rows[0].message).toBe('invalid_or_expired_photo_evidence');
+  });
+
+  it('7. Rejects approval when byte count is zero (fail-closed)', async () => {
+    const photoId = 'aaaa1111-2222-3333-4444-555566667777';
+    const idId = 'bbbb2222-3333-4444-5555-666677778888';
+    const reqId = 'cccc3333-4444-5555-6666-777788889999';
+
+    await db.exec(`
+      insert into storage.objects (bucket_id, name, owner) values
+      ('visitor-photos', 'photo-7.jpg', '${visitorUserId}'),
+      ('visitor-ids', 'id-7.jpg', '${visitorUserId}');
+
+      insert into public.upload_intents (id, owner_id, source, kind, bucket_id, object_path, content_type, max_bytes, status, expires_at) values
+      ('${photoId}', '${visitorUserId}', 'portal', 'photo', 'visitor-photos', 'photo-7.jpg', 'image/jpeg', 5000000, 'uploaded', now() + interval '1 hour'),
+      ('${idId}', '${visitorUserId}', 'portal', 'id', 'visitor-ids', 'id-7.jpg', 'image/jpeg', 5000000, 'uploaded', now() + interval '1 hour');
+
+      insert into public.portal_identity_verification_attempts (
+        owner_id, request_id, photo_intent_id, id_intent_id, outcome, expires_at, model_name, model_version
+      ) values (
+        '${visitorUserId}', '${reqId}', '${photoId}', '${idId}', 'matched', now() + interval '10 minutes', 'face-api', '1.0'
+      );
+    `);
+
+    const createRes = await db.query<{ visit_id: string }>(`
+      select * from api.create_specific_person_visit_request(
+        requested_actor_id => '${visitorUserId}'::uuid,
+        requested_request_id => '${reqId}'::uuid,
+        requested_office_id => '${officeId}'::uuid,
+        requested_personnel_id => '${personnelId}'::uuid,
+        requested_first_name => 'ZeroBytes',
+        requested_middle_name => null,
+        requested_last_name => 'Visitor',
+        requested_contact_number => '09171234567',
+        requested_email => 'zerobytes@test.local',
+        requested_purpose => 'Consultation',
+        requested_visit_date => (now() at time zone 'Asia/Manila')::date,
+        requested_arrival_mode => 'no_vehicle',
+        requested_vehicle_details => null::jsonb,
+        requested_address_details => null::jsonb,
+        requested_photo_intent_id => '${photoId}'::uuid,
+        requested_photo_bytes => 1024,
+        requested_photo_sha256 => '${'a'.repeat(64)}',
+        requested_id_intent_id => '${idId}'::uuid,
+        requested_id_bytes => 2048,
+        requested_id_sha256 => '${'b'.repeat(64)}',
+        requested_registration_mode => 'new'
+      );
+    `);
+    const visitId = createRes.rows[0].visit_id;
+
+    // Mutate photo_bytes to 0 on office_visits
+    await db.exec(`update public.office_visits set photo_bytes = 0 where id = '${visitId}';`);
+
+    const decideRes = await db.query<{ ok: boolean; decision: string; message: string }>(`
+      select * from api.decide_office_visit(
+        requested_actor_id => '${staffUserId}'::uuid,
+        requested_visit_id => '${visitId}'::uuid,
+        requested_decision => 'approved',
+        requested_rejection_reason => null,
+        requested_token_digest => '${'c'.repeat(64)}',
+        requested_encrypted_payload => 'c2VjdXJlX2VuY3J5cHRlZF9xcl9wYXlsb2Fk'
+      );
+    `);
+
+    expect(decideRes.rows[0].ok).toBe(false);
+    expect(decideRes.rows[0].decision).toBe('rejected');
+    expect(decideRes.rows[0].message).toBe('invalid_or_expired_photo_evidence');
+  });
+
+  it('8. Rejects approval when SHA-256 digest is all zeroes (fail-closed)', async () => {
+    const photoId = 'dddd1111-2222-3333-4444-555566667777';
+    const idId = 'eeee2222-3333-4444-5555-666677778888';
+    const reqId = 'ffff3333-4444-5555-6666-777788889999';
+
+    await db.exec(`
+      insert into storage.objects (bucket_id, name, owner) values
+      ('visitor-photos', 'photo-8.jpg', '${visitorUserId}'),
+      ('visitor-ids', 'id-8.jpg', '${visitorUserId}');
+
+      insert into public.upload_intents (id, owner_id, source, kind, bucket_id, object_path, content_type, max_bytes, status, expires_at) values
+      ('${photoId}', '${visitorUserId}', 'portal', 'photo', 'visitor-photos', 'photo-8.jpg', 'image/jpeg', 5000000, 'uploaded', now() + interval '1 hour'),
+      ('${idId}', '${visitorUserId}', 'portal', 'id', 'visitor-ids', 'id-8.jpg', 'image/jpeg', 5000000, 'uploaded', now() + interval '1 hour');
+
+      insert into public.portal_identity_verification_attempts (
+        owner_id, request_id, photo_intent_id, id_intent_id, outcome, expires_at, model_name, model_version
+      ) values (
+        '${visitorUserId}', '${reqId}', '${photoId}', '${idId}', 'matched', now() + interval '10 minutes', 'face-api', '1.0'
+      );
+    `);
+
+    const createRes = await db.query<{ visit_id: string }>(`
+      select * from api.create_specific_person_visit_request(
+        requested_actor_id => '${visitorUserId}'::uuid,
+        requested_request_id => '${reqId}'::uuid,
+        requested_office_id => '${officeId}'::uuid,
+        requested_personnel_id => '${personnelId}'::uuid,
+        requested_first_name => 'ZeroHash',
+        requested_middle_name => null,
+        requested_last_name => 'Visitor',
+        requested_contact_number => '09171234567',
+        requested_email => 'zerohash@test.local',
+        requested_purpose => 'Consultation',
+        requested_visit_date => (now() at time zone 'Asia/Manila')::date,
+        requested_arrival_mode => 'no_vehicle',
+        requested_vehicle_details => null::jsonb,
+        requested_address_details => null::jsonb,
+        requested_photo_intent_id => '${photoId}'::uuid,
+        requested_photo_bytes => 1024,
+        requested_photo_sha256 => '${'a'.repeat(64)}',
+        requested_id_intent_id => '${idId}'::uuid,
+        requested_id_bytes => 2048,
+        requested_id_sha256 => '${'b'.repeat(64)}',
+        requested_registration_mode => 'new'
+      );
+    `);
+    const visitId = createRes.rows[0].visit_id;
+
+    // Mutate photo_sha256 to 64 zeroes
+    await db.exec(`update public.office_visits set photo_sha256 = '${'0'.repeat(64)}' where id = '${visitId}';`);
+
+    const decideRes = await db.query<{ ok: boolean; decision: string; message: string }>(`
+      select * from api.decide_office_visit(
+        requested_actor_id => '${staffUserId}'::uuid,
+        requested_visit_id => '${visitId}'::uuid,
+        requested_decision => 'approved',
+        requested_rejection_reason => null,
+        requested_token_digest => '${'c'.repeat(64)}',
+        requested_encrypted_payload => 'c2VjdXJlX2VuY3J5cHRlZF9xcl9wYXlsb2Fk'
+      );
+    `);
+
+    expect(decideRes.rows[0].ok).toBe(false);
+    expect(decideRes.rows[0].decision).toBe('rejected');
+    expect(decideRes.rows[0].message).toBe('invalid_or_expired_photo_evidence');
   });
 });

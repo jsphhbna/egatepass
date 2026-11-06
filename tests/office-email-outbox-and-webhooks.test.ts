@@ -151,7 +151,7 @@ describe('Office Visit Email Outbox Leases, Idempotency and Webhook Reconciliati
       ) values (
         gen_random_uuid(), 'specific_person', '${officeId}', '${personnelId}', 'approved', 'awaiting_entry',
         '${visitorUserId}', 'Juan', 'Dela Cruz',
-        '09171234567', 'visitor@test.local', 'Consultation', current_date, 'no_vehicle',
+        '09171234567', 'visitor@test.local', 'Consultation', (now() at time zone 'Asia/Manila')::date, 'no_vehicle',
         'pending'
       ) returning id;
     `);
@@ -349,5 +349,192 @@ describe('Office Visit Email Outbox Leases, Idempotency and Webhook Reconciliati
       select email_delivery_status from public.office_visits where id = '${visitId}';
     `);
     expect(checkVisit.rows[0].email_delivery_status).toBe('delivered');
+  });
+
+  it('8. Rejects stale or expired claims in record_office_visit_email_result', async () => {
+    // Create a new outbox entry for rejection testing
+    const insertVisit2 = await db.query<{ id: string }>(`
+      insert into public.office_visits (
+        request_id, visit_type, office_id, personnel_id, approval_status, attendance_status,
+        visitor_actor_id, visitor_first_name, visitor_last_name,
+        visitor_contact_number, visitor_email, purpose, visit_date, arrival_mode,
+        email_delivery_status
+      ) values (
+        gen_random_uuid(), 'specific_person', '${officeId}', '${personnelId}', 'rejected', 'cancelled',
+        '${visitorUserId}', 'Pedro', 'Penduko',
+        '09171234567', 'pedro@test.local', 'Consultation', (now() at time zone 'Asia/Manila')::date, 'no_vehicle',
+        'pending'
+      ) returning id;
+    `);
+    const visitId2 = insertVisit2.rows[0].id;
+
+    const insertOutbox2 = await db.query<{ id: string }>(`
+      insert into public.office_visit_email_outbox (
+        office_visit_id, email_type, recipient_email, delivery_status, idempotency_key
+      ) values (
+        '${visitId2}', 'rejection', 'pedro@test.local', 'pending', 'idempotency-test-key-2'
+      ) returning id;
+    `);
+    const outboxId2 = insertOutbox2.rows[0].id;
+
+    // Claim the lease
+    const claimRes = await db.query<{ claim_id: string }>(`
+      select * from api.claim_office_visit_email_for_delivery(
+        requested_visit_id => '${visitId2}'::uuid,
+        requested_email_type => 'rejection'
+      );
+    `);
+    const validClaimId = claimRes.rows[0].claim_id;
+
+    // 1. Attempt to record with mismatched claim_id -> rejected
+    await expect(
+      db.query(`
+        select api.record_office_visit_email_result(
+          requested_outbox_id => '${outboxId2}'::uuid,
+          requested_claim_id => gen_random_uuid(),
+          requested_status => 'sent',
+          requested_provider_message_id => 'msg_pedro_123',
+          requested_error => null
+        );
+      `)
+    ).rejects.toThrow(/stale_or_invalid_claim_cannot_overwrite/);
+
+    // 2. Simulate expired lease
+    await db.exec(`
+      update public.office_visit_email_outbox
+      set lease_expires_at = now() - interval '1 second'
+      where id = '${outboxId2}';
+    `);
+
+    await expect(
+      db.query(`
+        select api.record_office_visit_email_result(
+          requested_outbox_id => '${outboxId2}'::uuid,
+          requested_claim_id => '${validClaimId}'::uuid,
+          requested_status => 'sent',
+          requested_provider_message_id => 'msg_pedro_123',
+          requested_error => null
+        );
+      `)
+    ).rejects.toThrow(/expired_claim_cannot_overwrite/);
+  });
+
+  it('9. Correlates delivery event by requested_outbox_id when provider message id was not recorded', async () => {
+    // Create visit & outbox in 'unknown' status with missing provider_message_id
+    const insertVisit3 = await db.query<{ id: string }>(`
+      insert into public.office_visits (
+        request_id, visit_type, office_id, personnel_id, approval_status, attendance_status,
+        visitor_actor_id, visitor_first_name, visitor_last_name,
+        visitor_contact_number, visitor_email, purpose, visit_date, arrival_mode,
+        email_delivery_status
+      ) values (
+        gen_random_uuid(), 'specific_person', '${officeId}', '${personnelId}', 'approved', 'awaiting_entry',
+        '${visitorUserId}', 'Maria', 'Clara',
+        '09171234567', 'maria@test.local', 'Consultation', (now() at time zone 'Asia/Manila')::date, 'no_vehicle',
+        'unknown'
+      ) returning id;
+    `);
+    const visitId3 = insertVisit3.rows[0].id;
+
+    const insertOutbox3 = await db.query<{ id: string }>(`
+      insert into public.office_visit_email_outbox (
+        office_visit_id, email_type, recipient_email, delivery_status, idempotency_key, provider_message_id
+      ) values (
+        '${visitId3}', 'approval', 'maria@test.local', 'unknown', 'idempotency-test-key-3', null
+      ) returning id;
+    `);
+    const outboxId3 = insertOutbox3.rows[0].id;
+
+    // Webhook delivers event containing requested_outbox_id (from Resend tags/headers)
+    const webhookRes = await db.query<{ result: { ok: boolean; status: string } }>(`
+      select api.record_resend_delivery_event(
+        requested_provider_event_id => 'evt_tag_correlation_1',
+        requested_event_type => 'email.delivered',
+        requested_email_id => 'msg_late_resend_id_777',
+        requested_outcome => 'delivered',
+        requested_recipient_masked => 'm***@test.local',
+        requested_subject_sanitized => 'Office Pass Approval',
+        requested_occurred_at => now(),
+        requested_outbox_id => '${outboxId3}'::uuid
+      ) as result;
+    `);
+
+    expect(webhookRes.rows[0].result.ok).toBe(true);
+
+    // Verify outbox was correlated, provider_message_id filled, and status promoted to delivered
+    const checkOutbox3 = await db.query<{ delivery_status: string; provider_message_id: string }>(`
+      select delivery_status, provider_message_id
+      from public.office_visit_email_outbox
+      where id = '${outboxId3}';
+    `);
+    expect(checkOutbox3.rows[0].delivery_status).toBe('delivered');
+    expect(checkOutbox3.rows[0].provider_message_id).toBe('msg_late_resend_id_777');
+
+    const checkVisit3 = await db.query<{ email_delivery_status: string }>(`
+      select email_delivery_status from public.office_visits where id = '${visitId3}';
+    `);
+    expect(checkVisit3.rows[0].email_delivery_status).toBe('delivered');
+  });
+
+  it('10. Supports manual reconciliation via api.reconcile_office_visit_email (mark_delivered and permit_retry)', async () => {
+    // Create visit & outbox in 'unknown' status
+    const insertVisit4 = await db.query<{ id: string }>(`
+      insert into public.office_visits (
+        request_id, visit_type, office_id, personnel_id, approval_status, attendance_status,
+        visitor_actor_id, visitor_first_name, visitor_last_name,
+        visitor_contact_number, visitor_email, purpose, visit_date, arrival_mode,
+        email_delivery_status
+      ) values (
+        gen_random_uuid(), 'specific_person', '${officeId}', '${personnelId}', 'approved', 'awaiting_entry',
+        '${visitorUserId}', 'Simoun', 'Ibarra',
+        '09171234567', 'simoun@test.local', 'Consultation', (now() at time zone 'Asia/Manila')::date, 'no_vehicle',
+        'unknown'
+      ) returning id;
+    `);
+    const visitId4 = insertVisit4.rows[0].id;
+
+    await db.query<{ id: string }>(`
+      insert into public.office_visit_email_outbox (
+        office_visit_id, email_type, recipient_email, delivery_status, idempotency_key
+      ) values (
+        '${visitId4}', 'approval', 'simoun@test.local', 'unknown', 'idempotency-test-key-4'
+      );
+    `);
+
+    // 1. permit_retry
+    const recRetry = await db.query<{ ok: boolean; action: string; new_status: string }>(`
+      select * from api.reconcile_office_visit_email(
+        requested_actor_id => '${staffUserId}'::uuid,
+        requested_visit_id => '${visitId4}'::uuid,
+        requested_action => 'permit_retry',
+        requested_note => 'Resetting for retry after check'
+      );
+    `);
+    expect(recRetry.rows[0].ok).toBe(true);
+    expect(recRetry.rows[0].new_status).toBe('failed');
+
+    // 2. mark_delivered
+    const recDelivered = await db.query<{ ok: boolean; action: string; new_status: string }>(`
+      select * from api.reconcile_office_visit_email(
+        requested_actor_id => '${staffUserId}'::uuid,
+        requested_visit_id => '${visitId4}'::uuid,
+        requested_action => 'mark_delivered',
+        requested_note => 'Confirmed by phone with visitor'
+      );
+    `);
+    expect(recDelivered.rows[0].ok).toBe(true);
+    expect(recDelivered.rows[0].new_status).toBe('delivered');
+
+    // Verify terminal delivered state cannot be overwritten by permit_retry
+    await expect(
+      db.query(`
+        select * from api.reconcile_office_visit_email(
+          requested_actor_id => '${staffUserId}'::uuid,
+          requested_visit_id => '${visitId4}'::uuid,
+          requested_action => 'permit_retry',
+          requested_note => 'Should fail'
+        );
+      `)
+    ).rejects.toThrow(/already_delivered/);
   });
 });

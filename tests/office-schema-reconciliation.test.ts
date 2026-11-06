@@ -196,6 +196,10 @@ describe('Office Schema Reconciliation & Visitor Ownership Contracts (PGlite)', 
         'visitor-ids', 'ids/test.jpg', 'image/jpeg', 5000000, 'uploaded', now() + interval '1 hour'
       );
 
+      insert into storage.objects (bucket_id, name, owner) values
+      ('visitor-photos', 'photos/test.jpg', '${visitorUserId}'),
+      ('visitor-ids', 'ids/test.jpg', '${visitorUserId}');
+
       insert into public.portal_identity_verification_attempts (
         owner_id, request_id, photo_intent_id, id_intent_id, outcome, expires_at, model_name, model_version
       ) values (
@@ -216,7 +220,7 @@ describe('Office Schema Reconciliation & Visitor Ownership Contracts (PGlite)', 
         requested_contact_number => '09171234567',
         requested_email => 'visitor@test.local',
         requested_purpose => 'Consultation',
-        requested_visit_date => current_date,
+        requested_visit_date => (now() at time zone 'Asia/Manila')::date,
         requested_arrival_mode => 'no_vehicle',
         requested_vehicle_details => null::jsonb,
         requested_address_details => '{"cityName": "Manila"}'::jsonb,

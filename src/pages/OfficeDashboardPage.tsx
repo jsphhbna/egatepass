@@ -311,24 +311,28 @@ export function OfficeDashboardPage() {
     }
   }
 
-  // Handle Retry Email Delivery for an approved visit
-  async function handleRetryEmail(visitId: string) {
+  // Handle Retry / Reconcile Email Delivery for a decided visit
+  async function handleRetryEmail(
+    visitId: string,
+    action: 'retry' | 'mark_delivered' | 'permit_retry' = 'retry',
+    note?: string,
+  ) {
     setRetryingEmailVisitId(visitId);
     try {
       const token = await getAccessToken();
       const res = await fetch('/api/office/retry-email', {
         method: 'POST',
         headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ visitId }),
+        body: JSON.stringify({ visitId, action, note }),
       });
       const data = await res.json();
       if (!res.ok) {
-        throw new Error(data.message || data.error || 'Failed to retry email delivery');
+        throw new Error(data.message || data.error || 'Failed to process email action');
       }
-      toast.success('Gate pass email successfully re-sent to visitor!');
+      toast.success(data.message || (action === 'retry' ? 'Gate pass email re-sent to visitor!' : 'Email state updated.'));
       loadVisits(true);
     } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : 'Failed to re-send email.';
+      const msg = err instanceof Error ? err.message : 'Failed to process email.';
       toast.error(msg);
     } finally {
       setRetryingEmailVisitId(null);
@@ -774,22 +778,70 @@ export function OfficeDashboardPage() {
 
                     {/* Action Buttons based on status */}
                     <div className="flex flex-wrap items-center gap-2 pt-2 sm:pt-0">
-                      {visit.approvalStatus === 'approved' && visit.emailDeliveryStatus === 'failed' && (
-                        <Button
-                          variant="secondary"
-                          size="sm"
-                          onClick={() => handleRetryEmail(visit.id)}
-                          loading={retryingEmailVisitId === visit.id}
-                          icon={<Mail className="h-3.5 w-3.5 text-red-600" />}
-                          className="border-red-200 bg-red-50 text-red-800 hover:bg-red-100 text-xs font-semibold"
-                        >
-                          Retry Email
-                        </Button>
-                      )}
-                      {visit.approvalStatus === 'approved' && (visit.emailDeliveryStatus === 'unknown' || visit.emailDeliveryStatus === 'reconciliation_required') && (
-                        <span className="text-[11px] text-amber-700 bg-amber-50 px-2 py-1 rounded border border-amber-200 font-medium">
-                          Awaiting provider reconciliation
-                        </span>
+                      {(visit.approvalStatus === 'approved' || visit.approvalStatus === 'rejected') && (
+                        <>
+                          {visit.emailDeliveryStatus === 'failed' && (
+                            <Button
+                              variant="secondary"
+                              size="sm"
+                              onClick={() => handleRetryEmail(visit.id, 'retry')}
+                              loading={retryingEmailVisitId === visit.id}
+                              icon={<Mail className="h-3.5 w-3.5 text-red-600" />}
+                              className="border-red-200 bg-red-50 text-red-800 hover:bg-red-100 text-xs font-semibold"
+                            >
+                              Retry Email
+                            </Button>
+                          )}
+                          {visit.emailDeliveryStatus === 'pending' && (
+                            <Button
+                              variant="secondary"
+                              size="sm"
+                              onClick={() => handleRetryEmail(visit.id, 'retry')}
+                              loading={retryingEmailVisitId === visit.id}
+                              icon={<Mail className="h-3.5 w-3.5 text-slate-600" />}
+                              className="border-slate-300 bg-slate-50 text-slate-800 hover:bg-slate-100 text-xs font-semibold"
+                            >
+                              Dispatch Email
+                            </Button>
+                          )}
+                          {visit.emailDeliveryStatus === 'processing' && (
+                            <Button
+                              variant="secondary"
+                              size="sm"
+                              onClick={() => handleRetryEmail(visit.id, 'retry')}
+                              loading={retryingEmailVisitId === visit.id}
+                              icon={<Mail className="h-3.5 w-3.5 text-indigo-600" />}
+                              className="border-indigo-200 bg-indigo-50 text-indigo-800 hover:bg-indigo-100 text-xs font-semibold"
+                            >
+                              Re-dispatch Email
+                            </Button>
+                          )}
+                          {(visit.emailDeliveryStatus === 'unknown' || visit.emailDeliveryStatus === 'reconciliation_required') && (
+                            <div className="flex items-center gap-1.5 flex-wrap">
+                              <span className="text-[11px] text-amber-700 bg-amber-50 px-2 py-1 rounded border border-amber-200 font-medium">
+                                Awaiting provider reconciliation
+                              </span>
+                              <Button
+                                variant="secondary"
+                                size="sm"
+                                onClick={() => handleRetryEmail(visit.id, 'mark_delivered')}
+                                loading={retryingEmailVisitId === visit.id}
+                                className="border-emerald-200 bg-emerald-50 text-emerald-800 hover:bg-emerald-100 text-xs font-semibold"
+                              >
+                                Mark Delivered
+                              </Button>
+                              <Button
+                                variant="secondary"
+                                size="sm"
+                                onClick={() => handleRetryEmail(visit.id, 'permit_retry')}
+                                loading={retryingEmailVisitId === visit.id}
+                                className="border-amber-200 bg-amber-50 text-amber-800 hover:bg-amber-100 text-xs font-semibold"
+                              >
+                                Permit Retry
+                              </Button>
+                            </div>
+                          )}
+                        </>
                       )}
                       {activeQueue === 'pending' && isSpecificPerson && (
                         <>

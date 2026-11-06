@@ -90,8 +90,23 @@ describe('Office Visit Identity Trust Boundary', () => {
         };
         return chain;
       },
+      schema: (schemaName: string) => ({
+        rpc: vi.fn(async (fnName: string, args: any) => {
+          rpcCalls.push({ schemaName, fnName, args });
+          return {
+            data: {
+              ok: true,
+              visit_id: '00000000-0000-4000-8000-000000000088',
+              reference_code: 'OVR-20261107-0001',
+              approval_status: 'pending',
+              attendance_status: 'awaiting_entry',
+            },
+            error: null,
+          };
+        }),
+      }),
       rpc: vi.fn(async (fnName: string, args: any) => {
-        rpcCalls.push({ fnName, args });
+        rpcCalls.push({ schemaName: 'public', fnName, args });
         return {
           data: {
             ok: true,
@@ -272,6 +287,7 @@ describe('Office Visit Identity Trust Boundary', () => {
     expect(body.visitId).toBe('00000000-0000-4000-8000-000000000088');
 
     expect(rpcCalls).toHaveLength(1);
+    expect(rpcCalls[0].schemaName).toBe('api');
     expect(rpcCalls[0].fnName).toBe('create_specific_person_visit_request');
     expect(rpcCalls[0].args.requested_registration_mode).toBe('new');
     expect(rpcCalls[0].args.requested_identity_verification_id).toBe(identityAttemptId);
@@ -307,6 +323,7 @@ describe('Office Visit Identity Trust Boundary', () => {
     expect(body.ok).toBe(true);
 
     expect(rpcCalls).toHaveLength(1);
+    expect(rpcCalls[0].schemaName).toBe('api');
     expect(rpcCalls[0].fnName).toBe('create_specific_person_visit_request');
     expect(rpcCalls[0].args.requested_registration_mode).toBe('returning');
     expect(rpcCalls[0].args.requested_returning_attempt_id).toBe(returningAttemptId);
