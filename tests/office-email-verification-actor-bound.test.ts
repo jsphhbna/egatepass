@@ -14,27 +14,20 @@ describe('Office Email Verification Actor-Binding Contract', () => {
     let capturedActorFilter: string | null = null;
     let capturedEmailFilter: string | null = null;
 
-    const mockQueryBuilder = {
-      select: vi.fn().mockReturnThis(),
-      eq: vi.fn().mockImplementation((col: string, val: string) => {
-        if (col === 'actor_id') capturedActorFilter = val;
-        if (col === 'email') capturedEmailFilter = val;
-        return mockQueryBuilder;
-      }),
-      gt: vi.fn().mockReturnThis(),
-      order: vi.fn().mockReturnThis(),
-      limit: vi.fn().mockResolvedValue({
-        data: [], // simulate no matching record for this actor
-        error: null,
-      }),
-    };
-
     const mockAdmin = {
-      from: vi.fn().mockImplementation((table: string) => {
-        if (table === 'office_visit_email_verifications') {
-          return mockQueryBuilder;
-        }
-        throw new Error(`Unexpected table ${table}`);
+      from: vi.fn(),
+      schema: vi.fn().mockReturnValue({
+        rpc: vi.fn().mockImplementation((fnName: string, args: any) => {
+          if (fnName === 'verify_office_email_challenge') {
+            capturedActorFilter = args.requested_actor_id;
+            capturedEmailFilter = args.requested_email;
+            return Promise.resolve({
+              data: [{ status: 'expired_or_not_found', attempts_remaining: 0, challenge_id: null }],
+              error: null,
+            });
+          }
+          return Promise.resolve({ data: null, error: null });
+        }),
       }),
     };
 

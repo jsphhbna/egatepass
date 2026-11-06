@@ -845,13 +845,20 @@ async function handleRequest(request: Request): Promise<Response> {
             .select('user_id')
             .in('user_id', candidateIds);
 
+          // Find IDs referenced by office_visits
+          const { data: officeVisitRows, error: officeVisitRefErr } = await admin
+            .from('office_visits')
+            .select('visitor_actor_id, approval_status, attendance_status, updated_at, created_at')
+            .in('visitor_actor_id', candidateIds);
+
           // REPAIR R1: FAIL CLOSED ON ANY PROTECTION QUERY FAILURE FOR ENTIRE RUN
-          if (visitorRefErr || intentRefErr || staffRefErr || deviceRefErr) {
+          if (visitorRefErr || intentRefErr || staffRefErr || deviceRefErr || officeVisitRefErr) {
             anonymousCleanupUnsafe = true;
             if (visitorRefErr) metrics.errors.push(`anonymous_auth_protection_visitor_failed: ${visitorRefErr.message}`);
             if (intentRefErr) metrics.errors.push(`anonymous_auth_protection_intent_failed: ${intentRefErr.message}`);
             if (staffRefErr) metrics.errors.push(`anonymous_auth_protection_staff_failed: ${staffRefErr.message}`);
             if (deviceRefErr) metrics.errors.push(`anonymous_auth_protection_device_failed: ${deviceRefErr.message}`);
+            if (officeVisitRefErr) metrics.errors.push(`anonymous_auth_protection_office_visit_failed: ${officeVisitRefErr.message}`);
             // Incomplete/unreliable protection data -> halt entire cleanup run
             break;
           } else {
@@ -860,13 +867,37 @@ async function handleRequest(request: Request): Promise<Response> {
             const staffUserIds = new Set((staffRows ?? []).map((s: any) => s.user_id));
             const deviceUserIds = new Set((deviceRows ?? []).map((d: any) => d.user_id));
 
+            const TERMINAL_ATTENDANCE = new Set(['completed', 'exited_unconfirmed', 'cancelled', 'expired']);
+            const visitorRetentionCutoffMs = Date.now() - (settings?.visitor_retention_days ?? 30) * 86_400_000;
+
+            const protectedOfficeActorIds = new Set<string>();
+            for (const ov of officeVisitRows ?? []) {
+              if (!ov.visitor_actor_id) continue;
+
+              const isTerminalApproval = ov.approval_status === 'rejected';
+              const isTerminalAttendance = TERMINAL_ATTENDANCE.has(ov.attendance_status);
+              const isTerminal = isTerminalApproval || isTerminalAttendance;
+
+              if (!isTerminal) {
+                // Active: pending, approved awaiting entry, inside campus, or confirmed present -> MUST protect
+                protectedOfficeActorIds.add(ov.visitor_actor_id);
+              } else {
+                // Terminal: protect if still within the visitor retention window
+                const rowDateMs = new Date(ov.updated_at || ov.created_at).getTime();
+                if (Number.isFinite(rowDateMs) && rowDateMs > visitorRetentionCutoffMs) {
+                  protectedOfficeActorIds.add(ov.visitor_actor_id);
+                }
+              }
+            }
+
             // Retain only strictly unreferenced, old orphan anonymous accounts
             const eligibleUsers = candidateUsers.filter(
               (u: any) =>
                 !visitorOwnerIds.has(u.id) &&
                 !intentOwnerIds.has(u.id) &&
                 !staffUserIds.has(u.id) &&
-                !deviceUserIds.has(u.id)
+                !deviceUserIds.has(u.id) &&
+                !protectedOfficeActorIds.has(u.id)
             );
 
             allEligibleUsers.push(...eligibleUsers);

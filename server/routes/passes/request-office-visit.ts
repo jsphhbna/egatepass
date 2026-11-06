@@ -5,6 +5,7 @@ import { getServerSupabaseClients } from '../../supabase.js';
 import { normalizePhMobile } from '../../../src/lib/phPhone.js';
 import { verifyEmailVerificationProofToken } from '../../lib/office.js';
 import { inspectUploadIntent } from '../../upload-inspection.js';
+import { computeMatchTokenDigest } from './identify-returning.js';
 
 const namePart = z.string().trim().min(1).max(50);
 
@@ -173,6 +174,89 @@ export async function handleRequest(request: Request): Promise<Response> {
     }
   }
 
+  let boundIdentityVerificationId: string | null = null;
+  let boundReturningAttemptId: string | null = null;
+  let boundReturningProfileId: string | null = null;
+  let returningMatchDigest: string | null = null;
+
+  if (parsed.data.registrationMode === 'new') {
+    if (!parsed.data.photoIntentId || !parsed.data.idIntentId) {
+      return jsonResponse(422, {
+        error: 'identity_proof_required',
+        message: 'Both portrait photo and valid ID are required for new visitor registration.',
+      });
+    }
+
+    if (parsed.data.returning?.profileId || parsed.data.returning?.matchToken) {
+      return jsonResponse(422, {
+        error: 'returning_metadata_forbidden',
+        message: 'Returning visitor metadata cannot be provided for new visitor registration.',
+      });
+    }
+
+    const { data: verAttempt, error: verErr } = await admin
+      .from('portal_identity_verification_attempts')
+      .select('id, outcome, expires_at')
+      .eq('owner_id', session.user.id)
+      .eq('request_id', parsed.data.requestId)
+      .eq('photo_intent_id', parsed.data.photoIntentId)
+      .eq('id_intent_id', parsed.data.idIntentId)
+      .eq('outcome', 'matched')
+      .gt('expires_at', new Date().toISOString())
+      .order('verified_at', { ascending: false })
+      .limit(1)
+      .maybeSingle();
+
+    if (verErr || !verAttempt) {
+      return jsonResponse(422, {
+        error: 'identity_verification_required',
+        message: 'Valid matched identity verification required. Please complete face and ID verification.',
+      });
+    }
+
+    boundIdentityVerificationId = verAttempt.id;
+  } else if (parsed.data.registrationMode === 'returning') {
+    if (!parsed.data.returning?.profileId || !parsed.data.returning?.matchToken) {
+      return jsonResponse(422, {
+        error: 'returning_credentials_required',
+        message: 'Returning visitor profile and verification token are required.',
+      });
+    }
+
+    const matchSecret = process.env.RETURNING_MATCH_TOKEN_SECRET?.trim();
+    if (!matchSecret || matchSecret.length < 32) {
+      return jsonResponse(503, {
+        error: 'abuse_control_unavailable',
+        message: 'Returning visitor verification service is temporarily unavailable.',
+      });
+    }
+
+    returningMatchDigest = computeMatchTokenDigest(parsed.data.returning.matchToken, matchSecret);
+
+    const { data: retAttempt, error: retErr } = await admin
+      .from('returning_identity_attempts')
+      .select('id, outcome, expires_at')
+      .eq('owner_id', session.user.id)
+      .eq('request_id', parsed.data.requestId)
+      .eq('matched_profile_id', parsed.data.returning.profileId)
+      .eq('match_token_digest', returningMatchDigest)
+      .eq('outcome', 'matched')
+      .gt('expires_at', new Date().toISOString())
+      .order('created_at', { ascending: false })
+      .limit(1)
+      .maybeSingle();
+
+    if (retErr || !retAttempt) {
+      return jsonResponse(422, {
+        error: 'returning_match_required',
+        message: 'Valid returning visitor identification required. Please complete biometric verification.',
+      });
+    }
+
+    boundReturningAttemptId = retAttempt.id;
+    boundReturningProfileId = parsed.data.returning.profileId;
+  }
+
   // Call api.create_specific_person_visit_request RPC
   const { data: rpcResult, error: rpcError } = await admin.rpc('create_specific_person_visit_request', {
     requested_actor_id: session.user.id,
@@ -189,18 +273,38 @@ export async function handleRequest(request: Request): Promise<Response> {
     requested_arrival_mode: parsed.data.arrivalMode,
     requested_vehicle_details: vehicleDetails,
     requested_address_details: addressDetails,
-    requested_photo_intent_id: parsed.data.photoIntentId || null,
-    requested_photo_bytes: photoInspected?.bytes || null,
-    requested_photo_sha256: photoInspected?.sha256 || null,
-    requested_id_intent_id: parsed.data.idIntentId || null,
-    requested_id_bytes: idInspected?.bytes || null,
-    requested_id_sha256: idInspected?.sha256 || null,
+    requested_photo_intent_id: parsed.data.registrationMode === 'returning' ? null : (parsed.data.photoIntentId || null),
+    requested_photo_bytes: parsed.data.registrationMode === 'returning' ? null : (photoInspected?.bytes || null),
+    requested_photo_sha256: parsed.data.registrationMode === 'returning' ? null : (photoInspected?.sha256 || null),
+    requested_id_intent_id: parsed.data.registrationMode === 'returning' ? null : (parsed.data.idIntentId || null),
+    requested_id_bytes: parsed.data.registrationMode === 'returning' ? null : (idInspected?.bytes || null),
+    requested_id_sha256: parsed.data.registrationMode === 'returning' ? null : (idInspected?.sha256 || null),
     requested_vehicle_photo_intent_id: parsed.data.vehiclePhotoIntentId || null,
     requested_vehicle_photo_bytes: vehiclePhotoInspected?.bytes || null,
     requested_vehicle_photo_sha256: vehiclePhotoInspected?.sha256 || null,
+    requested_registration_mode: parsed.data.registrationMode,
+    requested_returning_profile_id: boundReturningProfileId,
+    requested_returning_match_token_digest: returningMatchDigest,
+    requested_identity_verification_id: boundIdentityVerificationId,
+    requested_returning_attempt_id: boundReturningAttemptId,
   });
 
   if (rpcError) {
+    if (rpcError.code === '42501' && rpcError.message?.includes('request_id_actor_mismatch')) {
+      return jsonResponse(403, { error: 'request_id_actor_mismatch', message: 'This request ID was submitted by another account.' });
+    }
+    if (rpcError.message?.includes('visit_date_in_past')) {
+      return jsonResponse(422, { error: 'visit_date_in_past', message: 'Requested visit date cannot be in the past.' });
+    }
+    if (rpcError.message?.includes('visit_date_beyond_horizon')) {
+      return jsonResponse(422, { error: 'visit_date_beyond_horizon', message: 'Requested visit date exceeds maximum advance scheduling limit.' });
+    }
+    if (rpcError.message?.includes('valid_matched_identity_verification_required')) {
+      return jsonResponse(422, { error: 'identity_verification_required', message: 'Valid matched identity verification required.' });
+    }
+    if (rpcError.message?.includes('identity_verification_already_consumed')) {
+      return jsonResponse(409, { error: 'identity_verification_already_consumed', message: 'This identity verification has already been used.' });
+    }
     console.error('Failed to create specific-person visit request:', rpcError);
     return jsonResponse(500, {
       error: 'request_creation_failed',

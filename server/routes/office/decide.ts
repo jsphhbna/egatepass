@@ -5,7 +5,7 @@ import { encryptQrPayload } from '../../lib/encryption.js';
 import { jsonResponse, readBearerToken } from '../../http.js';
 import { getServerSupabaseClients } from '../../supabase.js';
 import { HttpError } from '../../actors.js';
-import { sendResendEmail, generateQrPngBuffer } from '../../email.js';
+import { sendResendEmail, generateQrPngBuffer, EmailDeliveryError } from '../../email.js';
 import { renderOfficeVisitApprovedEmail, renderOfficeVisitRejectedEmail } from '../../templates/index.js';
 
 const schema = z.object({
@@ -77,12 +77,16 @@ export async function handleRequest(request: Request): Promise<Response> {
 
     if (parsed.data.decision === 'rejected') {
       const reason = parsed.data.rejectionReason || 'Schedule conflict or personnel unavailable.';
+      const rejectionIdempotencyKey = `office-rejection-${visit.id}`;
 
       const { error: rpcErr } = await admin.schema('api').rpc('decide_office_visit', {
         requested_actor_id: actor.id,
         requested_visit_id: visit.id,
         requested_decision: 'rejected',
         requested_rejection_reason: reason,
+        requested_token_digest: null,
+        requested_encrypted_payload: null,
+        requested_idempotency_key: rejectionIdempotencyKey,
       });
 
       if (rpcErr) {
@@ -92,60 +96,63 @@ export async function handleRequest(request: Request): Promise<Response> {
         throw rpcErr;
       }
 
-      // Dispatch rejection email
+      // Claim outbox record and dispatch rejection email
       if (visit.visitor_email) {
         try {
-          const html = await renderOfficeVisitRejectedEmail({
-            fullName: visitorName,
-            officeName,
-            personnelName,
-            visitDate: visit.visit_date,
-            rejectionReason: reason,
+          const { data: claimRows } = await admin.schema('api').rpc('claim_office_visit_email_for_delivery', {
+            requested_visit_id: visit.id,
+            requested_email_type: 'rejection',
           });
+          const claim = Array.isArray(claimRows) ? claimRows[0] : claimRows;
 
-          const sendResult = await sendResendEmail({
-            to: visit.visitor_email,
-            subject: `Update on your visit request to ${officeName}`,
-            html,
-          });
+          if (claim?.outbox_id) {
+            const html = await renderOfficeVisitRejectedEmail({
+              fullName: visitorName,
+              officeName,
+              personnelName,
+              visitDate: visit.visit_date,
+              rejectionReason: reason,
+            });
 
-          await admin
-            .from('office_visit_email_outbox')
-            .update({
-              delivery_status: 'sent',
-              provider_message_id: sendResult?.id || null,
-              last_attempt_at: new Date().toISOString(),
-              updated_at: new Date().toISOString(),
-            })
-            .eq('office_visit_id', visit.id)
-            .eq('email_type', 'rejection');
+            const sendResult = await sendResendEmail({
+              to: visit.visitor_email,
+              subject: `Update on your visit request to ${officeName}`,
+              html,
+              idempotencyKey: claim.idempotency_key || rejectionIdempotencyKey,
+            });
 
-          await admin
-            .from('office_visits')
-            .update({ email_delivery_status: 'sent', email_dispatched_at: new Date().toISOString() })
-            .eq('id', visit.id);
+            await admin.schema('api').rpc('record_office_visit_email_result', {
+              requested_outbox_id: claim.outbox_id,
+              requested_claim_id: claim.claim_id,
+              requested_status: 'sent',
+              requested_provider_message_id: sendResult?.id || null,
+              requested_error: null,
+            });
+          }
         } catch (emailErr) {
           console.error('Failed to send rejection email:', emailErr);
+          const outcome = (emailErr instanceof EmailDeliveryError && emailErr.outcome === 'unknown')
+            ? 'unknown'
+            : 'failed';
           const errMsg = emailErr instanceof Error ? emailErr.message : 'email_dispatch_failed';
 
-          await admin
+          // Look up outbox to record failure with proper error classification
+          const { data: outboxRows } = await admin
             .from('office_visit_email_outbox')
-            .update({
-              delivery_status: 'failed',
-              last_error: errMsg,
-              last_attempt_at: new Date().toISOString(),
-              updated_at: new Date().toISOString(),
-            })
+            .select('id, claim_id')
             .eq('office_visit_id', visit.id)
-            .eq('email_type', 'rejection');
+            .eq('email_type', 'rejection')
+            .maybeSingle();
 
-          await admin
-            .from('office_visits')
-            .update({
-              email_delivery_status: 'failed',
-              email_error: errMsg,
-            })
-            .eq('id', visit.id);
+          if (outboxRows?.id) {
+            await admin.schema('api').rpc('record_office_visit_email_result', {
+              requested_outbox_id: outboxRows.id,
+              requested_claim_id: outboxRows.claim_id || null,
+              requested_status: outcome,
+              requested_provider_message_id: null,
+              requested_error: errMsg,
+            });
+          }
         }
       }
 
@@ -158,6 +165,7 @@ export async function handleRequest(request: Request): Promise<Response> {
     const qrPassToken = `p_${randomSecretBytes}`;
     const tokenDigest = createHash('sha256').update(qrPassToken).digest('hex');
     const encryptedPayload = encryptQrPayload(qrPassToken);
+    const approvalIdempotencyKey = `office-approval-${visit.id}`;
 
     const { data: rpcRows, error: rpcErr } = await admin.schema('api').rpc('decide_office_visit', {
       requested_actor_id: actor.id,
@@ -166,6 +174,7 @@ export async function handleRequest(request: Request): Promise<Response> {
       requested_rejection_reason: null,
       requested_token_digest: tokenDigest,
       requested_encrypted_payload: encryptedPayload,
+      requested_idempotency_key: approvalIdempotencyKey,
     });
 
     if (rpcErr) {
@@ -179,72 +188,74 @@ export async function handleRequest(request: Request): Promise<Response> {
     const publicRef = decisionResult?.public_reference;
     const passId = decisionResult?.pass_id;
 
-    // Dispatch approval email with attached QR pass
+    // Claim outbox record and dispatch approval email with attached QR pass
     if (visit.visitor_email && publicRef) {
       try {
-        const qrBuffer = await generateQrPngBuffer(qrPassToken);
-        const attachmentFilename = `egatepass-${publicRef.slice(0, 8)}.png`;
-
-        const html = await renderOfficeVisitApprovedEmail({
-          fullName: visitorName,
-          officeName,
-          personnelName,
-          visitDate: visit.visit_date,
-          purpose: visit.purpose,
-          publicReference: publicRef,
-          attachmentFilename,
+        const { data: claimRows } = await admin.schema('api').rpc('claim_office_visit_email_for_delivery', {
+          requested_visit_id: visit.id,
+          requested_email_type: 'approval',
         });
+        const claim = Array.isArray(claimRows) ? claimRows[0] : claimRows;
 
-        const sendResult = await sendResendEmail({
-          to: visit.visitor_email,
-          subject: `Approved: EARIST E-GatePass for ${officeName}`,
-          html,
-          attachments: [
-            {
-              filename: attachmentFilename,
-              content: qrBuffer.toString('base64'),
-              content_type: 'image/png',
-            },
-          ],
-        });
+        if (claim?.outbox_id) {
+          const qrBuffer = await generateQrPngBuffer(qrPassToken);
+          const attachmentFilename = `egatepass-${publicRef.slice(0, 8)}.png`;
 
-        await admin
-          .from('office_visit_email_outbox')
-          .update({
-            delivery_status: 'sent',
-            provider_message_id: sendResult?.id || null,
-            last_attempt_at: new Date().toISOString(),
-            updated_at: new Date().toISOString(),
-          })
-          .eq('office_visit_id', visit.id)
-          .eq('email_type', 'approval');
+          const html = await renderOfficeVisitApprovedEmail({
+            fullName: visitorName,
+            officeName,
+            personnelName,
+            visitDate: visit.visit_date,
+            purpose: visit.purpose,
+            publicReference: publicRef,
+            attachmentFilename,
+          });
 
-        await admin
-          .from('office_visits')
-          .update({ email_delivery_status: 'sent', email_dispatched_at: new Date().toISOString() })
-          .eq('id', visit.id);
+          const sendResult = await sendResendEmail({
+            to: visit.visitor_email,
+            subject: `Approved: EARIST E-GatePass for ${officeName}`,
+            html,
+            idempotencyKey: claim.idempotency_key || approvalIdempotencyKey,
+            attachments: [
+              {
+                filename: attachmentFilename,
+                content: qrBuffer.toString('base64'),
+                content_type: 'image/png',
+              },
+            ],
+          });
+
+          await admin.schema('api').rpc('record_office_visit_email_result', {
+            requested_outbox_id: claim.outbox_id,
+            requested_claim_id: claim.claim_id,
+            requested_status: 'sent',
+            requested_provider_message_id: sendResult?.id || null,
+            requested_error: null,
+          });
+        }
       } catch (emailErr) {
         console.error('Failed to send approval email:', emailErr);
+        const outcome = (emailErr instanceof EmailDeliveryError && emailErr.outcome === 'unknown')
+          ? 'unknown'
+          : 'failed';
         const errMsg = emailErr instanceof Error ? emailErr.message : 'email_dispatch_failed';
 
-        await admin
+        const { data: outboxRows } = await admin
           .from('office_visit_email_outbox')
-          .update({
-            delivery_status: 'failed',
-            last_error: errMsg,
-            last_attempt_at: new Date().toISOString(),
-            updated_at: new Date().toISOString(),
-          })
+          .select('id, claim_id')
           .eq('office_visit_id', visit.id)
-          .eq('email_type', 'approval');
+          .eq('email_type', 'approval')
+          .maybeSingle();
 
-        await admin
-          .from('office_visits')
-          .update({
-            email_delivery_status: 'failed',
-            email_error: errMsg,
-          })
-          .eq('id', visit.id);
+        if (outboxRows?.id) {
+          await admin.schema('api').rpc('record_office_visit_email_result', {
+            requested_outbox_id: outboxRows.id,
+            requested_claim_id: outboxRows.claim_id || null,
+            requested_status: outcome,
+            requested_provider_message_id: null,
+            requested_error: errMsg,
+          });
+        }
       }
     }
 

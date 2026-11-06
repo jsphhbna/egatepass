@@ -727,14 +727,39 @@ export function OfficeDashboardPage() {
                             <span className="flex items-center gap-1">
                               <Mail className="h-3 w-3" />
                               {visit.visitorEmail}
-                              {visit.emailDeliveryStatus === 'sent' && (
-                                <span className="ml-1 rounded px-1.5 py-0.2 bg-emerald-100 text-emerald-800 text-[10px] font-bold">
-                                  Email Sent
+                              {visit.emailDeliveryStatus === 'delivered' && (
+                                <span className="ml-1 rounded px-1.5 py-0.5 bg-emerald-100 text-emerald-800 text-[10px] font-bold">
+                                  Delivered
                                 </span>
                               )}
-                              {(visit.emailDeliveryStatus === 'failed' || visit.emailDeliveryStatus === 'unknown') && (
-                                <span className="ml-1 rounded px-1.5 py-0.2 bg-red-100 text-red-800 text-[10px] font-bold">
-                                  Email {visit.emailDeliveryStatus === 'failed' ? 'Failed' : 'Pending/Unknown'}
+                              {visit.emailDeliveryStatus === 'sent' && (
+                                <span className="ml-1 rounded px-1.5 py-0.5 bg-blue-100 text-blue-800 text-[10px] font-bold">
+                                  Sent to Provider
+                                </span>
+                              )}
+                              {visit.emailDeliveryStatus === 'processing' && (
+                                <span className="ml-1 rounded px-1.5 py-0.5 bg-indigo-100 text-indigo-800 text-[10px] font-bold">
+                                  Processing
+                                </span>
+                              )}
+                              {visit.emailDeliveryStatus === 'pending' && (
+                                <span className="ml-1 rounded px-1.5 py-0.5 bg-slate-100 text-slate-800 text-[10px] font-bold">
+                                  Pending Dispatch
+                                </span>
+                              )}
+                              {visit.emailDeliveryStatus === 'unknown' && (
+                                <span className="ml-1 rounded px-1.5 py-0.5 bg-amber-100 text-amber-800 text-[10px] font-bold" title="Provider outcome is uncertain. Blind retry is frozen until webhook reconciliation.">
+                                  Outcome Uncertain
+                                </span>
+                              )}
+                              {visit.emailDeliveryStatus === 'reconciliation_required' && (
+                                <span className="ml-1 rounded px-1.5 py-0.5 bg-orange-100 text-orange-800 text-[10px] font-bold">
+                                  Reconciliation Required
+                                </span>
+                              )}
+                              {visit.emailDeliveryStatus === 'failed' && (
+                                <span className="ml-1 rounded px-1.5 py-0.5 bg-red-100 text-red-800 text-[10px] font-bold">
+                                  Failed
                                 </span>
                               )}
                             </span>
@@ -749,19 +774,23 @@ export function OfficeDashboardPage() {
 
                     {/* Action Buttons based on status */}
                     <div className="flex flex-wrap items-center gap-2 pt-2 sm:pt-0">
-                      {visit.approvalStatus === 'approved' &&
-                        (visit.emailDeliveryStatus === 'failed' || visit.emailDeliveryStatus === 'unknown') && (
-                          <Button
-                            variant="secondary"
-                            size="sm"
-                            onClick={() => handleRetryEmail(visit.id)}
-                            loading={retryingEmailVisitId === visit.id}
-                            icon={<Mail className="h-3.5 w-3.5 text-red-600" />}
-                            className="border-red-200 bg-red-50 text-red-800 hover:bg-red-100 text-xs font-semibold"
-                          >
-                            Retry Email
-                          </Button>
-                        )}
+                      {visit.approvalStatus === 'approved' && visit.emailDeliveryStatus === 'failed' && (
+                        <Button
+                          variant="secondary"
+                          size="sm"
+                          onClick={() => handleRetryEmail(visit.id)}
+                          loading={retryingEmailVisitId === visit.id}
+                          icon={<Mail className="h-3.5 w-3.5 text-red-600" />}
+                          className="border-red-200 bg-red-50 text-red-800 hover:bg-red-100 text-xs font-semibold"
+                        >
+                          Retry Email
+                        </Button>
+                      )}
+                      {visit.approvalStatus === 'approved' && (visit.emailDeliveryStatus === 'unknown' || visit.emailDeliveryStatus === 'reconciliation_required') && (
+                        <span className="text-[11px] text-amber-700 bg-amber-50 px-2 py-1 rounded border border-amber-200 font-medium">
+                          Awaiting provider reconciliation
+                        </span>
+                      )}
                       {activeQueue === 'pending' && isSpecificPerson && (
                         <>
                           <Button

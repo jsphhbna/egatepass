@@ -151,7 +151,11 @@ describe('Office Authorization & Access Control Matrix', () => {
               }),
             };
           }
-          return { select: vi.fn().mockReturnThis(), eq: vi.fn().mockResolvedValue({ data: null, error: null }) };
+          return {
+            select: vi.fn().mockReturnThis(),
+            eq: vi.fn().mockResolvedValue({ data: null, error: null }),
+            in: vi.fn().mockResolvedValue({ data: [], error: null }),
+          };
         }),
       } as any;
 
@@ -200,7 +204,11 @@ describe('Office Authorization & Access Control Matrix', () => {
               }),
             };
           }
-          return { select: vi.fn().mockReturnThis(), eq: vi.fn().mockResolvedValue({ data: null, error: null }) };
+          return {
+            select: vi.fn().mockReturnThis(),
+            eq: vi.fn().mockResolvedValue({ data: null, error: null }),
+            in: vi.fn().mockResolvedValue({ data: [], error: null }),
+          };
         }),
       } as any;
 
@@ -281,7 +289,11 @@ describe('Office Authorization & Access Control Matrix', () => {
               }),
             };
           }
-          return { select: vi.fn().mockReturnThis(), eq: vi.fn().mockResolvedValue({ data: null, error: null }) };
+          return {
+            select: vi.fn().mockReturnThis(),
+            eq: vi.fn().mockResolvedValue({ data: null, error: null }),
+            in: vi.fn().mockResolvedValue({ data: [], error: null }),
+          };
         }),
       };
 
@@ -336,7 +348,11 @@ describe('Office Authorization & Access Control Matrix', () => {
               }),
             };
           }
-          return { select: vi.fn().mockReturnThis(), eq: vi.fn().mockResolvedValue({ data: null, error: null }) };
+          return {
+            select: vi.fn().mockReturnThis(),
+            eq: vi.fn().mockResolvedValue({ data: null, error: null }),
+            in: vi.fn().mockResolvedValue({ data: [], error: null }),
+          };
         }),
       };
 
@@ -379,7 +395,11 @@ describe('Office Authorization & Access Control Matrix', () => {
               }),
             };
           }
-          return { select: vi.fn().mockReturnThis(), eq: vi.fn().mockResolvedValue({ data: null, error: null }) };
+          return {
+            select: vi.fn().mockReturnThis(),
+            eq: vi.fn().mockResolvedValue({ data: null, error: null }),
+            in: vi.fn().mockResolvedValue({ data: [], error: null }),
+          };
         }),
       };
 

@@ -1,4 +1,4 @@
-import { randomInt, createHash, timingSafeEqual } from 'node:crypto';
+import { randomInt, createHash } from 'node:crypto';
 import { z } from 'zod';
 import { getServerSupabaseClients } from '../../supabase.js';
 import { getVerifiedSessionContext, HttpError } from '../../actors.js';
@@ -110,53 +110,36 @@ export async function handleRequest(request: Request): Promise<Response> {
   }
 
   if (parsed.data.action === 'verify_code') {
-    const nowIso = new Date().toISOString();
+    const candidateHash = createHash('sha256').update(`${parsed.data.code}:${secret}`).digest('hex');
 
-    // Strictly filter verification challenge by email AND the authenticated actor
-    const { data: records, error: fetchErr } = await admin
-      .from('office_visit_email_verifications')
-      .select('id, code_hash, attempts, expires_at')
-      .eq('email', normalizedEmail)
-      .eq('actor_id', session.user.id)
-      .eq('verified', false)
-      .gt('expires_at', nowIso)
-      .order('created_at', { ascending: false })
-      .limit(1);
+    const { data: resultRows, error: rpcErr } = await admin.schema('api').rpc('verify_office_email_challenge', {
+      requested_actor_id: session.user.id,
+      requested_email: normalizedEmail,
+      requested_code_hash: candidateHash,
+    });
 
-    if (fetchErr) throw fetchErr;
+    if (rpcErr) throw rpcErr;
 
-    const record = records?.[0];
-    if (!record) {
+    const result = Array.isArray(resultRows) ? resultRows[0] : resultRows;
+    if (!result || result.status === 'expired_or_not_found') {
       return jsonResponse(400, {
         error: 'invalid_or_expired_code',
         message: 'The verification code has expired or is invalid. Please request a new one.',
       });
     }
 
-    if (record.attempts >= 5) {
+    if (result.status === 'too_many_attempts') {
       return jsonResponse(400, {
         error: 'too_many_failed_attempts',
         message: 'Too many incorrect attempts. Please request a new verification code.',
       });
     }
 
-    const candidateHash = createHash('sha256').update(`${parsed.data.code}:${secret}`).digest('hex');
-    const isMatch = timingSafeEqual(Buffer.from(candidateHash), Buffer.from(record.code_hash));
-
-    // Atomically increment attempts and mark verified if match
-    await admin
-      .from('office_visit_email_verifications')
-      .update({
-        attempts: record.attempts + 1,
-        verified: isMatch,
-      })
-      .eq('id', record.id)
-      .eq('verified', false);
-
-    if (!isMatch) {
+    if (result.status === 'invalid_code') {
       return jsonResponse(400, {
         error: 'invalid_code',
-        message: 'The verification code entered is incorrect.',
+        message: `The verification code entered is incorrect. ${result.attempts_remaining} attempt(s) remaining.`,
+        attemptsRemaining: result.attempts_remaining,
       });
     }
 

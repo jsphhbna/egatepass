@@ -4,7 +4,7 @@ import { decryptQrPayload } from '../../lib/encryption.js';
 import { jsonResponse, readBearerToken } from '../../http.js';
 import { getServerSupabaseClients } from '../../supabase.js';
 import { HttpError } from '../../actors.js';
-import { sendResendEmail, generateQrPngBuffer } from '../../email.js';
+import { sendResendEmail, generateQrPngBuffer, EmailDeliveryError } from '../../email.js';
 import { renderOfficeVisitApprovedEmail, renderOfficeVisitRejectedEmail } from '../../templates/index.js';
 
 const schema = z.object({
@@ -79,6 +79,12 @@ export async function handleRequest(request: Request): Promise<Response> {
           message: 'An email is currently being processed or has already been delivered.',
         });
       }
+      if (claimErr.message?.includes('outcome_unknown')) {
+        return jsonResponse(409, {
+          error: 'email_delivery_outcome_unknown',
+          message: 'The outcome of the previous delivery attempt is uncertain. Automatic retry is suspended until verified via webhook or manual reconciliation.',
+        });
+      }
       throw claimErr;
     }
 
@@ -122,6 +128,7 @@ export async function handleRequest(request: Request): Promise<Response> {
           to: outboxRecord.recipient_email,
           subject: `Approved: EARIST E-GatePass for ${officeName}`,
           html,
+          idempotencyKey: outboxRecord.idempotency_key || `office-approval-${visit.id}`,
           attachments: [
             {
               filename: attachmentFilename,
@@ -133,6 +140,7 @@ export async function handleRequest(request: Request): Promise<Response> {
 
         await admin.schema('api').rpc('record_office_visit_email_result', {
           requested_outbox_id: outboxRecord.outbox_id,
+          requested_claim_id: outboxRecord.claim_id,
           requested_status: 'sent',
           requested_provider_message_id: sendResult?.id || null,
           requested_error: null,
@@ -144,10 +152,15 @@ export async function handleRequest(request: Request): Promise<Response> {
           message: 'Approval email with QR pass resent successfully.',
         });
       } catch (sendErr) {
+        const outcome = (sendErr instanceof EmailDeliveryError && sendErr.outcome === 'unknown')
+          ? 'unknown'
+          : 'failed';
         const errMsg = sendErr instanceof Error ? sendErr.message : 'email_dispatch_failed';
+
         await admin.schema('api').rpc('record_office_visit_email_result', {
           requested_outbox_id: outboxRecord.outbox_id,
-          requested_status: 'failed',
+          requested_claim_id: outboxRecord.claim_id,
+          requested_status: outcome,
           requested_provider_message_id: null,
           requested_error: errMsg,
         });
@@ -172,10 +185,12 @@ export async function handleRequest(request: Request): Promise<Response> {
           to: outboxRecord.recipient_email,
           subject: `Update on your visit request to ${officeName}`,
           html,
+          idempotencyKey: outboxRecord.idempotency_key || `office-rejection-${visit.id}`,
         });
 
         await admin.schema('api').rpc('record_office_visit_email_result', {
           requested_outbox_id: outboxRecord.outbox_id,
+          requested_claim_id: outboxRecord.claim_id,
           requested_status: 'sent',
           requested_provider_message_id: sendResult?.id || null,
           requested_error: null,
@@ -187,10 +202,15 @@ export async function handleRequest(request: Request): Promise<Response> {
           message: 'Rejection notice email resent successfully.',
         });
       } catch (sendErr) {
+        const outcome = (sendErr instanceof EmailDeliveryError && sendErr.outcome === 'unknown')
+          ? 'unknown'
+          : 'failed';
         const errMsg = sendErr instanceof Error ? sendErr.message : 'email_dispatch_failed';
+
         await admin.schema('api').rpc('record_office_visit_email_result', {
           requested_outbox_id: outboxRecord.outbox_id,
-          requested_status: 'failed',
+          requested_claim_id: outboxRecord.claim_id,
+          requested_status: outcome,
           requested_provider_message_id: null,
           requested_error: errMsg,
         });

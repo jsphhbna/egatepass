@@ -11,6 +11,10 @@ import decideHandler from '../server/routes/office/decide.js';
 import * as supabaseModule from '../server/supabase.js';
 import * as actorsModule from '../server/actors.js';
 
+vi.mock('../server/upload-inspection.js', () => ({
+  inspectUploadIntent: vi.fn().mockResolvedValue({ bytes: 2048, sha256: 'a'.repeat(64) }),
+}));
+
 describe('Office Visit Workflow & Approval Subsystem', () => {
   const originalEnv = process.env;
   const mockSecret = 'test-pass-token-secret-must-be-at-least-32-chars-long!';
@@ -223,6 +227,23 @@ describe('Office Visit Workflow & Approval Subsystem', () => {
               }),
             };
           }
+          if (table === 'portal_identity_verification_attempts') {
+            return {
+              select: vi.fn().mockReturnThis(),
+              eq: vi.fn().mockReturnThis(),
+              gt: vi.fn().mockReturnThis(),
+              order: vi.fn().mockReturnThis(),
+              limit: vi.fn().mockReturnThis(),
+              maybeSingle: vi.fn().mockResolvedValue({
+                data: {
+                  id: '77777777-7777-4777-8777-777777777777',
+                  outcome: 'matched',
+                  expires_at: new Date(Date.now() + 600000).toISOString(),
+                },
+                error: null,
+              }),
+            };
+          }
           return {
             select: vi.fn().mockReturnThis(),
             eq: vi.fn().mockReturnThis(),
@@ -270,6 +291,8 @@ describe('Office Visit Workflow & Approval Subsystem', () => {
         personnelId: testPersonnelId,
         specificPurpose: 'Consultation regarding curriculum',
         emailVerificationToken: validProofToken,
+        photoIntentId: '33333333-3333-4333-8333-333333333333',
+        idIntentId: '44444444-4444-4444-8444-444444444444',
       };
 
       const req = new Request('http://localhost/api/request-office-visit', {

@@ -98,9 +98,14 @@ export interface OfficeVisitRecord {
   timeOut?: string | null;
   passStatus?: string | null;
 
-  emailDeliveryStatus: 'none' | 'pending' | 'sent' | 'failed' | 'unknown';
+  emailDeliveryStatus?: 'none' | 'pending' | 'processing' | 'sent' | 'delivered' | 'failed' | 'unknown' | 'reconciliation_required' | null;
   emailDispatchedAt?: string | null;
   emailError?: string | null;
+  outboxStatus?: 'pending' | 'processing' | 'sent' | 'delivered' | 'failed' | 'unknown' | 'reconciliation_required' | null;
+  providerMessageId?: string | null;
+  leaseExpiresAt?: string | null;
+  retryCount?: number;
+  registrationMode?: 'new' | 'returning';
 
   requestId: string;
   createdAt: string;

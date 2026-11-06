@@ -143,6 +143,19 @@ export async function handleRequest(request: Request): Promise<Response> {
     const { data: rows, count, error } = await query;
     if (error) throw error;
 
+    // Load authoritative email outbox states for the fetched visits
+    const visitIds = (rows || []).map((r: any) => r.id);
+    const outboxMap = new Map<string, any>();
+    if (visitIds.length > 0) {
+      const { data: outboxRows } = await admin
+        .from('office_visit_email_outbox')
+        .select('office_visit_id, email_type, delivery_status, provider_message_id, lease_expires_at, retry_count, last_error')
+        .in('office_visit_id', visitIds);
+      for (const ob of outboxRows || []) {
+        outboxMap.set(ob.office_visit_id, ob);
+      }
+    }
+
     // Map rows and attach secure portrait preview tokens
     const visits = (rows || []).map((row: any) => {
       const pass = row.passes;
@@ -155,9 +168,13 @@ export async function handleRequest(request: Request): Promise<Response> {
         ? createOfficePortraitToken(row.id, actor.id)
         : null;
 
+      const outbox = outboxMap.get(row.id);
+      const effectiveEmailStatus = outbox?.delivery_status || row.email_delivery_status || null;
+
       return {
         id: row.id,
         visitType: row.visit_type,
+        registrationMode: row.registration_mode || 'new',
         officeId: row.office_id,
         officeName: officeInfo?.name || '',
         personnelId: row.personnel_id,
@@ -191,9 +208,13 @@ export async function handleRequest(request: Request): Promise<Response> {
         timeOut: pass?.time_out || null,
         passStatus: pass?.status || null,
         publicReference: pass?.public_reference || null,
-        emailDeliveryStatus: row.email_delivery_status,
+        emailDeliveryStatus: effectiveEmailStatus,
         emailDispatchedAt: row.email_dispatched_at,
-        emailError: row.email_error,
+        emailError: outbox?.last_error || row.email_error,
+        outboxStatus: outbox?.delivery_status || null,
+        providerMessageId: outbox?.provider_message_id || null,
+        leaseExpiresAt: outbox?.lease_expires_at || null,
+        retryCount: outbox?.retry_count || 0,
         requestId: row.request_id,
         createdAt: row.created_at,
         updatedAt: row.updated_at,

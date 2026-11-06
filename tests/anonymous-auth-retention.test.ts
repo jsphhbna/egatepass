@@ -12,6 +12,7 @@ describe('Repair Group 10 & R1/R2: Orphan Anonymous Auth User Retention', () => 
   let uploadIntents: any[] = [];
   let staffProfiles: any[] = [];
   let devices: any[] = [];
+  let officeVisits: any[] = [];
   let reconciliationTasks: any[] = [];
   let failDeleteUserIds = new Set<string>();
   let mockTableErrors: Record<string, any> = {};
@@ -26,6 +27,7 @@ describe('Repair Group 10 & R1/R2: Orphan Anonymous Auth User Retention', () => 
     uploadIntents = [];
     staffProfiles = [];
     devices = [];
+    officeVisits = [];
     reconciliationTasks = [];
     failDeleteUserIds.clear();
     mockTableErrors = {};
@@ -172,6 +174,8 @@ describe('Repair Group 10 & R1/R2: Orphan Anonymous Auth User Retention', () => 
               data = [];
             } else if (table === 'pass_email_verifications') {
               data = [];
+            } else if (table === 'office_visits') {
+              data = officeVisits.filter((r) => filters.every((f) => f(r)));
             }
 
             if (limitVal !== null) {

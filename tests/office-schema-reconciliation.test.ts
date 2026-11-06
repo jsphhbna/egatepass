@@ -181,14 +181,25 @@ describe('Office Schema Reconciliation & Visitor Ownership Contracts (PGlite)', 
     `);
     const personnelId = personnelRes.rows[0].id;
 
-    // Create an upload intent for visitor photo
+    // Create upload intents for visitor photo and ID
     const intentId = '33333333-3333-4333-8333-333333333333';
+    const idIntentId = '44444444-4444-4444-8444-444444444444';
+    const requestId = '55555555-5555-4555-8555-555555555555';
     await db.exec(`
       insert into public.upload_intents (
         id, owner_id, source, kind, bucket_id, object_path, content_type, max_bytes, status, expires_at
       ) values (
         '${intentId}', '${visitorUserId}', 'portal', 'photo',
         'visitor-photos', 'photos/test.jpg', 'image/jpeg', 5000000, 'uploaded', now() + interval '1 hour'
+      ), (
+        '${idIntentId}', '${visitorUserId}', 'portal', 'id',
+        'visitor-ids', 'ids/test.jpg', 'image/jpeg', 5000000, 'uploaded', now() + interval '1 hour'
+      );
+
+      insert into public.portal_identity_verification_attempts (
+        owner_id, request_id, photo_intent_id, id_intent_id, outcome, expires_at, model_name, model_version
+      ) values (
+        '${visitorUserId}', '${requestId}', '${intentId}', '${idIntentId}', 'matched', now() + interval '10 minutes', 'face-api', '1.0'
       );
     `);
 
@@ -196,7 +207,7 @@ describe('Office Schema Reconciliation & Visitor Ownership Contracts (PGlite)', 
     const createRes = await db.query<{ visit_id: string; request_id: string; approval_status: string }>(`
       select * from api.create_specific_person_visit_request(
         requested_actor_id => '${visitorUserId}'::uuid,
-        requested_request_id => gen_random_uuid(),
+        requested_request_id => '${requestId}'::uuid,
         requested_office_id => '${officeId}'::uuid,
         requested_personnel_id => '${personnelId}'::uuid,
         requested_first_name => 'Juan',
@@ -211,7 +222,10 @@ describe('Office Schema Reconciliation & Visitor Ownership Contracts (PGlite)', 
         requested_address_details => '{"cityName": "Manila"}'::jsonb,
         requested_photo_intent_id => '${intentId}'::uuid,
         requested_photo_bytes => 54321,
-        requested_photo_sha256 => '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef'
+        requested_photo_sha256 => '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef',
+        requested_id_intent_id => '${idIntentId}'::uuid,
+        requested_id_bytes => 54321,
+        requested_id_sha256 => '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef'
       );
     `);
 

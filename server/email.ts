@@ -4,6 +4,7 @@ export interface SendEmailPayload {
   to: string;
   subject: string;
   html: string;
+  idempotencyKey?: string;
   attachments?: Array<{
     filename: string;
     content: string; // Base64 encoded
@@ -160,12 +161,17 @@ export async function sendResendEmail(payload: SendEmailPayload): Promise<SendEm
 
   let response: Response;
   try {
+    const headers: Record<string, string> = {
+      Authorization: `Bearer ${apiKey}`,
+      'Content-Type': 'application/json',
+    };
+    if (payload.idempotencyKey) {
+      headers['Idempotency-Key'] = payload.idempotencyKey;
+    }
+
     response = await fetch('https://api.resend.com/emails', {
       method: 'POST',
-      headers: {
-        Authorization: `Bearer ${apiKey}`,
-        'Content-Type': 'application/json',
-      },
+      headers,
       body: JSON.stringify({
         from: fromEmail,
         to: [payload.to],
