@@ -1,6 +1,6 @@
 import type { SupabaseClient, User } from '@supabase/supabase-js';
 
-export type StaffRole = 'guard' | 'admin' | 'superadmin';
+export type StaffRole = 'guard' | 'admin' | 'superadmin' | 'office_staff';
 
 export interface StaffActor {
   id: string;

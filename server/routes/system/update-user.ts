@@ -4,7 +4,7 @@ import { HttpError, recordReconciliation, requireStaffActor } from '../../actors
 import { jsonResponse, readBearerToken } from '../../http.js';
 import { getServerSupabaseClients } from '../../supabase.js';
 
-const schema = z.object({ targetUid: z.string().uuid(), role: z.enum(['guard', 'admin', 'superadmin']).optional(), active: z.boolean().optional() })
+const schema = z.object({ targetUid: z.string().uuid(), role: z.enum(['guard', 'admin', 'superadmin', 'office_staff']).optional(), active: z.boolean().optional() })
   .strict().refine((value) => value.role !== undefined || value.active !== undefined);
 
 async function handleRequest(request: Request): Promise<Response> {

@@ -3,11 +3,19 @@ import { useAuth } from '@/hooks/useAuth';
 import { getAccessToken, signOutCurrentActor } from '@/services/auth';
 import { Html5Qrcode } from 'html5-qrcode';
 import { toast } from 'sonner';
-import { LogOut as LogOutIcon, CheckCircle2, XCircle, AlertTriangle } from 'lucide-react';
+import { LogOut as LogOutIcon, CheckCircle2, XCircle, AlertTriangle, Volume2, VolumeX } from 'lucide-react';
 import { createOptimizedQrScanner, enableContinuousFocus, QR_SCAN_CONFIG } from '@/lib/qrScanner';
 import { RefreshCw, AlertCircle } from 'lucide-react';
 import { Modal, Button } from '@/components/ui';
 import { fetchWithTimeout, RequestTimeoutError } from '@/lib/fetchWithTimeout';
+import {
+  initScannerAudio,
+  playSuccessBeep,
+  playWarningBeep,
+  playErrorBeep,
+  isScannerAudioMuted,
+  setScannerAudioMuted,
+} from '@/lib/scannerAudio';
 
 type ScanStatus = 'ready' | 'processing' | 'success' | 'warning' | 'error';
 
@@ -19,6 +27,20 @@ export function ExitScanPage() {
   const [cameraError, setCameraError] = useState<string | null>(null);
   const [showSignOutConfirm, setShowSignOutConfirm] = useState(false);
   const [isSigningOut, setIsSigningOut] = useState(false);
+  const [isMuted, setIsMuted] = useState(isScannerAudioMuted());
+
+  function toggleAudioMute() {
+    initScannerAudio();
+    const next = !isMuted;
+    setScannerAudioMuted(next);
+    setIsMuted(next);
+    if (!next) {
+      playSuccessBeep();
+      toast.success('Scanner audio enabled');
+    } else {
+      toast.info('Scanner audio muted');
+    }
+  }
 
   async function handleSignOut() {
     if (isSigningOut) return;
@@ -84,10 +106,20 @@ export function ExitScanPage() {
       if (!response.ok) {
         throw { code: result?.code || 'scan_failed', message: result?.error || 'Scan failed' };
       }
-      setStatus('success');
-      setStatusMessage(result?.message || 'Exit recorded. Goodbye!');
-      toast.success('Exit recorded successfully');
+
+      if (result?.code === 'office_unconfirmed') {
+        setStatus('warning');
+        setStatusMessage(result?.message || 'Exit recorded with warning: Office attendance unconfirmed.');
+        playWarningBeep();
+        toast.warning('Exit recorded. Notice: Office attendance was unconfirmed.');
+      } else {
+        setStatus('success');
+        setStatusMessage(result?.message || 'Exit recorded. Goodbye!');
+        playSuccessBeep();
+        toast.success('Exit recorded successfully');
+      }
     } catch (error: unknown) {
+      playErrorBeep();
       if (isTimeout) {
         setStatus('error');
         setStatusMessage('Exit scan timed out. Result could not be confirmed. Please try scanning again.');
@@ -179,12 +211,21 @@ export function ExitScanPage() {
 
   return (
     <main className="flex min-h-dvh flex-col items-center justify-center bg-[var(--color-scanner-canvas)] px-3 py-5 sm:px-6 sm:py-8">
-      <div
-        className="mb-5 cursor-default text-center"
-
-      >
-        <div className="mb-2 inline-flex rounded-full border border-[var(--color-accent)]/40 bg-[var(--color-accent)]/10 px-3 py-1">
-          <p className="text-xs font-extrabold uppercase tracking-[0.2em] text-[var(--color-accent)]">Exit scanner</p>
+      <div className="mb-5 cursor-default text-center">
+        <div className="mb-2 flex items-center justify-center gap-2">
+          <div className="inline-flex rounded-full border border-[var(--color-accent)]/40 bg-[var(--color-accent)]/10 px-3 py-1">
+            <p className="text-xs font-extrabold uppercase tracking-[0.2em] text-[var(--color-accent)]">Exit scanner</p>
+          </div>
+          <button
+            type="button"
+            onClick={toggleAudioMute}
+            aria-label={isMuted ? 'Unmute scanner audio' : 'Mute scanner audio'}
+            className="ml-1 inline-flex items-center gap-1 rounded-full bg-white/10 px-2 py-1 text-xs font-medium text-white/80 hover:bg-white/20 transition-colors"
+            title={isMuted ? 'Scanner audio muted. Click to enable sound.' : 'Scanner audio active. Click to mute.'}
+          >
+            {isMuted ? <VolumeX className="h-3.5 w-3.5 text-amber-300" /> : <Volume2 className="h-3.5 w-3.5 text-emerald-300" />}
+            <span className="text-[10px]">{isMuted ? 'Muted' : 'Sound On'}</span>
+          </button>
         </div>
         <h1 className="text-xl font-extrabold text-white sm:text-2xl">{gate}</h1>
         <p className="mt-1 text-sm text-white/60">Scan the visitor pass to record departure</p>

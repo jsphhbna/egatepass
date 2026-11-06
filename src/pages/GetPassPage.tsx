@@ -68,6 +68,11 @@ import {
   Search,
   UserPlus,
   ShieldCheck,
+  Building2,
+  Clock,
+  Clock3,
+  AlertTriangle,
+  Send,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { Button, Card, Input, FormField, Stepper, PageShell } from '@/components/ui';
@@ -209,6 +214,7 @@ type Step =
   | 'generating'
   | 'delivery'
   | 'done'
+  | 'request_submitted'
   | 'returning_lookup'
   | 'returning_results'
   | 'returning_capture'
@@ -308,6 +314,58 @@ export function GetPassPage() {
   const [selectedReturningCandidate, setSelectedReturningCandidate] = useState<ReturningLookupCandidate | null>(null);
   const [isSearchingReturning, setIsSearchingReturning] = useState(false);
   const [returningSearchError, setReturningSearchError] = useState<string | null>(null);
+
+  // Office & Visit Type State
+  const [offices, setOffices] = useState<Array<{ id: string; name: string; description: string | null }>>([]);
+  const [selectedOfficeId, setSelectedOfficeId] = useState<string>('');
+  const [visitType, setVisitType] = useState<'general' | 'specific_person' | null>(null);
+  const [personnelList, setPersonnelList] = useState<Array<{ id: string; name: string; title: string | null }>>([]);
+  const [selectedPersonnelId, setSelectedPersonnelId] = useState<string>('');
+  const [specificPurpose, setSpecificPurpose] = useState<string>('');
+
+  // Email verification state for specific-person visit
+  const [visitorEmail, setVisitorEmail] = useState<string>('');
+  const [emailVerificationCode, setEmailVerificationCode] = useState<string>('');
+  const [emailVerificationToken, setEmailVerificationToken] = useState<string | null>(null);
+  const [isSendingVerificationCode, setIsSendingVerificationCode] = useState<boolean>(false);
+  const [isVerifyingCode, setIsVerifyingCode] = useState<boolean>(false);
+  const [codeSent, setCodeSent] = useState<boolean>(false);
+  const [codeCooldown, setCodeCooldown] = useState<number>(0);
+  const [submittedRequestData, setSubmittedRequestData] = useState<{
+    officeName: string;
+    personnelName: string;
+    visitDate: string;
+    visitorEmail: string;
+  } | null>(null);
+
+  useEffect(() => {
+    if (codeCooldown <= 0) return;
+    const t = setInterval(() => setCodeCooldown((prev) => prev - 1), 1000);
+    return () => clearInterval(t);
+  }, [codeCooldown]);
+
+  useEffect(() => {
+    fetch('/api/office/personnel')
+      .then((r) => r.json())
+      .then((data) => {
+        if (data?.offices) setOffices(data.offices);
+      })
+      .catch((err) => console.error('Failed to load offices:', err));
+  }, []);
+
+  useEffect(() => {
+    if (!selectedOfficeId) {
+      setPersonnelList([]);
+      setSelectedPersonnelId('');
+      return;
+    }
+    fetch(`/api/office/personnel?officeId=${selectedOfficeId}`)
+      .then((r) => r.json())
+      .then((data) => {
+        if (data?.personnel) setPersonnelList(data.personnel);
+      })
+      .catch((err) => console.error('Failed to load personnel:', err));
+  }, [selectedOfficeId]);
 
   // Live Face State (Single custom camera)
   const [photoBlob, setPhotoBlob] = useState<Blob | null>(null);
@@ -934,15 +992,112 @@ export function GetPassPage() {
     setStep('visit');
   }
 
+  async function handleSendVerificationCode() {
+    if (!visitorEmail || !visitorEmail.includes('@') || !visitorEmail.includes('.')) {
+      toast.error('Please enter a valid email address.');
+      return;
+    }
+    if (codeCooldown > 0) return;
+    setIsSendingVerificationCode(true);
+    try {
+      if (!portalTransactionRef.current) {
+        // Initialize portal transaction if needed
+        const token = await createPortalIssueTransaction().then((t) => t.token).catch(() => null);
+        if (!token) {
+          toast.error('Please ensure personal details are completed.');
+          return;
+        }
+      }
+      const token = portalTransactionRef.current?.token;
+      const res = await fetch('/api/office/verify-email', {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'request_code',
+          email: visitorEmail.toLowerCase().trim(),
+          fullName: `${getValues('firstName')} ${getValues('lastName')}`.trim(),
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data.message || data.error || 'Failed to send verification code.');
+      }
+      setCodeSent(true);
+      setCodeCooldown(60);
+      toast.success('6-digit verification code sent to your email.');
+    } catch (err: unknown) {
+      toast.error(err instanceof Error ? err.message : 'Failed to send verification code.');
+    } finally {
+      setIsSendingVerificationCode(false);
+    }
+  }
+
+  async function handleVerifyEmailCode() {
+    if (!emailVerificationCode || emailVerificationCode.trim().length !== 6) {
+      toast.error('Please enter the 6-digit verification code.');
+      return;
+    }
+    setIsVerifyingCode(true);
+    try {
+      const token = portalTransactionRef.current?.token;
+      const res = await fetch('/api/office/verify-email', {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'verify_code',
+          email: visitorEmail.toLowerCase().trim(),
+          code: emailVerificationCode.trim(),
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data.message || data.error || 'Invalid verification code.');
+      }
+      setEmailVerificationToken(data.emailVerificationToken);
+      toast.success('Email verified successfully!');
+    } catch (err: unknown) {
+      toast.error(err instanceof Error ? err.message : 'Verification failed.');
+    } finally {
+      setIsVerifyingCode(false);
+    }
+  }
+
   // ============================================================
   // STEP 2: VISIT & VEHICLE DETAILS (onVisitNext advances to Photo)
   // ============================================================
   async function onVisitNext() {
     const vals = getValues();
-    if (!vals.purpose || vals.purpose.trim().length < 3) {
-      toast.error('Please describe the purpose of your visit (minimum 3 characters).');
+
+    if (!selectedOfficeId) {
+      toast.error('Please select the university office you are visiting.');
       return;
     }
+
+    if (!visitType) {
+      toast.error('Please choose whether you are visiting a specific person or making a general office visit.');
+      return;
+    }
+
+    if (visitType === 'specific_person') {
+      if (!selectedPersonnelId) {
+        toast.error('Please select the specific faculty member or personnel you wish to visit.');
+        return;
+      }
+      if (!specificPurpose || specificPurpose.trim().length < 3) {
+        toast.error('Please specify the purpose of your appointment (minimum 3 characters).');
+        return;
+      }
+      if (!emailVerificationToken) {
+        toast.error('Email verification is required for specific-person appointments. Please verify your email.');
+        return;
+      }
+    } else {
+      if (!vals.purpose || vals.purpose.trim().length < 3) {
+        toast.error('Please describe the purpose of your visit (minimum 3 characters).');
+        return;
+      }
+    }
+
     if (!vals.visitDate) {
       toast.error('Please select a visit date.');
       return;
@@ -1934,7 +2089,64 @@ export function GetPassPage() {
             }
           : undefined,
         rememberVisitor: false,
+        officeId: selectedOfficeId || undefined,
       };
+
+      if (visitType === 'specific_person') {
+        const token = portalTransactionRef.current.token;
+        const targetOffice = offices.find((o) => o.id === selectedOfficeId);
+        const targetPersonnel = personnelList.find((p) => p.id === selectedPersonnelId);
+
+        const requestPayload = {
+          requestId: portalTransactionRef.current.requestId ?? issueRequestId.current,
+          source: 'portal',
+          registrationMode,
+          visitor: {
+            firstName: rawFormData.firstName,
+            middleName: rawFormData.middleName || undefined,
+            lastName: rawFormData.lastName,
+            contactNumber: phNormalized,
+            email: visitorEmail.toLowerCase().trim(),
+            purpose: specificPurpose || rawFormData.purpose,
+            visitDate: rawFormData.visitDate || getManilaDateString(new Date()),
+          },
+          officeId: selectedOfficeId,
+          personnelId: selectedPersonnelId,
+          specificPurpose: specificPurpose || rawFormData.purpose,
+          emailVerificationToken,
+          arrivalMode: rawFormData.arrivalMode,
+          photoIntentId: portalTransactionRef.current.photoIntentId,
+          idIntentId: portalTransactionRef.current.idIntentId,
+          vehiclePhotoIntentId: portalTransactionRef.current.vehiclePhotoIntentId,
+          vehicle: formData.vehicle,
+          psgc: formData.psgc,
+          homeLocation: formData.homeLocation,
+          returning: formData.returning,
+        };
+
+        const res = await fetch('/api/request-office-visit', {
+          method: 'POST',
+          headers: {
+            Authorization: `Bearer ${token}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify(requestPayload),
+        });
+
+        const data = await res.json();
+        if (!res.ok) {
+          throw new Error(data.message || data.error || 'Failed to submit visit request.');
+        }
+
+        setSubmittedRequestData({
+          officeName: targetOffice?.name || 'Designated Office',
+          personnelName: targetPersonnel?.name || 'Designated Personnel',
+          visitDate: rawFormData.visitDate || getManilaDateString(new Date()),
+          visitorEmail: visitorEmail.toLowerCase().trim(),
+        });
+        setStep('request_submitted');
+        return;
+      }
 
       const result = await issueVisitorPass('portal', formData, photoBlob, idBlob, issueRequestId.current, undefined, portalTransactionRef.current, vehiclePhotoBlob);
 
@@ -2048,7 +2260,7 @@ export function GetPassPage() {
   ];
 
   const currentStepIndex =
-    step === 'done' || step === 'delivery' || step === 'generating'
+    step === 'done' || step === 'delivery' || step === 'generating' || step === 'request_submitted'
       ? steps.length
       : steps.findIndex((s) => s.id === step);
 
@@ -2560,13 +2772,208 @@ export function GetPassPage() {
                 </button>
               </div>
 
-              {/* Purpose of Visit */}
-              <VisitPurposeField
-                value={purpose || ''}
-                onChange={(val) => setValue('purpose', val, { shouldValidate: true })}
-                purposes={visitPurposes}
-                error={errors.purpose?.message}
-              />
+              {/* Destination Office & Visit Type Section */}
+              <div className="rounded-2xl border border-[var(--color-border)] bg-white p-4 sm:p-5 space-y-5">
+                <div>
+                  <label htmlFor="destination-office-select" className="block text-xs font-bold uppercase tracking-wider text-[var(--color-text-primary)] mb-1">
+                    Destination University Office <span className="text-[var(--color-danger)]">*</span>
+                  </label>
+                  <div className="relative">
+                    <Building2 className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[var(--color-text-muted)]" />
+                    <select
+                      id="destination-office-select"
+                      value={selectedOfficeId}
+                      onChange={(e) => setSelectedOfficeId(e.target.value)}
+                      className="w-full rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] py-2.5 pl-9 pr-8 text-sm font-semibold text-[var(--color-text-primary)] focus:border-[#7A0A0A] focus:outline-none focus:ring-1 focus:ring-[#7A0A0A]"
+                    >
+                      <option value="">Select destination office</option>
+                      {offices.map((o) => (
+                        <option key={o.id} value={o.id}>
+                          {o.name}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  {selectedOfficeId && (
+                    <p className="mt-1 text-xs text-[var(--color-text-secondary)]">
+                      {offices.find((o) => o.id === selectedOfficeId)?.description}
+                    </p>
+                  )}
+                </div>
+
+                {/* Visit Type Cards — Mandatory Selection */}
+                <div>
+                  <span className="block text-xs font-bold uppercase tracking-wider text-[var(--color-text-primary)] mb-2">
+                    Who or what are you visiting? <span className="text-[var(--color-danger)]">*</span>
+                  </span>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    {/* Specific Person Option */}
+                    <button
+                      type="button"
+                      onClick={() => setVisitType('specific_person')}
+                      className={`flex flex-col text-left p-4 rounded-xl border-2 transition-all ${
+                        visitType === 'specific_person'
+                          ? 'border-[#7A0A0A] bg-[#F8EEEE]/50 shadow-xs'
+                          : 'border-[var(--color-border)] bg-white hover:border-[#7A0A0A]/40'
+                      }`}
+                    >
+                      <div className="flex items-center justify-between mb-2">
+                        <div className={`p-2 rounded-lg ${visitType === 'specific_person' ? 'bg-[#7A0A0A] text-white' : 'bg-gray-100 text-gray-700'}`}>
+                          <UserCheck className="h-5 w-5" />
+                        </div>
+                        <span className="text-[10px] font-bold uppercase tracking-wider rounded-md bg-purple-100 text-purple-800 px-2 py-0.5">
+                          Requires Approval
+                        </span>
+                      </div>
+                      <span className="text-sm font-bold text-[var(--color-text-primary)]">A Specific Person</span>
+                      <p className="text-xs text-[var(--color-text-secondary)] mt-1 leading-relaxed">
+                        Appointment with a specific faculty member, professor, dean, or university employee.
+                      </p>
+                    </button>
+
+                    {/* General Office Option */}
+                    <button
+                      type="button"
+                      onClick={() => setVisitType('general')}
+                      className={`flex flex-col text-left p-4 rounded-xl border-2 transition-all ${
+                        visitType === 'general'
+                          ? 'border-[#7A0A0A] bg-[#F8EEEE]/50 shadow-xs'
+                          : 'border-[var(--color-border)] bg-white hover:border-[#7A0A0A]/40'
+                      }`}
+                    >
+                      <div className="flex items-center justify-between mb-2">
+                        <div className={`p-2 rounded-lg ${visitType === 'general' ? 'bg-[#7A0A0A] text-white' : 'bg-gray-100 text-gray-700'}`}>
+                          <Building2 className="h-5 w-5" />
+                        </div>
+                        <span className="text-[10px] font-bold uppercase tracking-wider rounded-md bg-blue-100 text-blue-800 px-2 py-0.5">
+                          Immediate QR
+                        </span>
+                      </div>
+                      <span className="text-sm font-bold text-[var(--color-text-primary)]">The Office Itself</span>
+                      <p className="text-xs text-[var(--color-text-secondary)] mt-1 leading-relaxed">
+                        Inquiries, student document requests, certifications, cashier payments, or general processing.
+                      </p>
+                    </button>
+                  </div>
+                </div>
+
+                {/* Specific Person Appointment Details */}
+                {visitType === 'specific_person' && (
+                  <div className="space-y-4 rounded-xl border border-purple-200 bg-purple-50/40 p-4">
+                    <div>
+                      <label htmlFor="target-personnel-select" className="block text-xs font-bold uppercase tracking-wider text-purple-950 mb-1">
+                        Select Faculty / Employee <span className="text-[var(--color-danger)]">*</span>
+                      </label>
+                      <select
+                        id="target-personnel-select"
+                        value={selectedPersonnelId}
+                        onChange={(e) => setSelectedPersonnelId(e.target.value)}
+                        className="w-full rounded-xl border border-purple-300 bg-white py-2 px-3 text-sm font-semibold text-[var(--color-text-primary)] focus:border-[#7A0A0A] focus:outline-none focus:ring-1 focus:ring-[#7A0A0A]"
+                      >
+                        <option value="">Select faculty or staff member</option>
+                        {personnelList.map((p) => (
+                          <option key={p.id} value={p.id}>
+                            {p.name} {p.title ? `(${p.title})` : ''}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+
+                    <div>
+                      <label htmlFor="specific-purpose" className="block text-xs font-bold uppercase tracking-wider text-purple-950 mb-1">
+                        Appointment Purpose / Reason <span className="text-[var(--color-danger)]">*</span>
+                      </label>
+                      <Input
+                        id="specific-purpose"
+                        placeholder="e.g. Thesis consultation, employment interview, departmental inquiry"
+                        value={specificPurpose}
+                        onChange={(e) => {
+                          setSpecificPurpose(e.target.value);
+                          setValue('purpose', e.target.value, { shouldValidate: true });
+                        }}
+                      />
+                    </div>
+
+                    {/* Email Verification Component */}
+                    <div className="rounded-xl border border-purple-200 bg-white p-4 space-y-3">
+                      <div className="flex items-start justify-between">
+                        <div>
+                          <span className="text-xs font-bold text-purple-950 block">Email Verification Required</span>
+                          <p className="text-[11px] text-[var(--color-text-secondary)] mt-0.5">
+                            Because your QR pass is issued upon office approval, your verified email is required to deliver your pass.
+                          </p>
+                        </div>
+                        {emailVerificationToken && (
+                          <span className="rounded-full bg-emerald-100 text-emerald-800 text-[10px] font-bold px-2 py-0.5 inline-flex items-center gap-1 shrink-0">
+                            <CheckCircle2 className="h-3 w-3" /> Verified
+                          </span>
+                        )}
+                      </div>
+
+                      <div className="flex flex-col sm:flex-row gap-2">
+                        <Input
+                          type="email"
+                          placeholder="your.email@example.com"
+                          value={visitorEmail}
+                          onChange={(e) => {
+                            setVisitorEmail(e.target.value);
+                            setEmailVerificationToken(null);
+                            setCodeSent(false);
+                          }}
+                          disabled={Boolean(emailVerificationToken)}
+                          className="flex-1 text-xs"
+                        />
+                        {!emailVerificationToken && (
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant="secondary"
+                            onClick={handleSendVerificationCode}
+                            loading={isSendingVerificationCode}
+                            disabled={!visitorEmail || codeCooldown > 0}
+                            icon={<Send className="h-3.5 w-3.5" />}
+                          >
+                            {codeCooldown > 0 ? `Resend (${codeCooldown}s)` : codeSent ? 'Resend Code' : 'Send Code'}
+                          </Button>
+                        )}
+                      </div>
+
+                      {codeSent && !emailVerificationToken && (
+                        <div className="flex flex-col sm:flex-row gap-2 pt-1">
+                          <Input
+                            placeholder="Enter 6-digit code"
+                            maxLength={6}
+                            value={emailVerificationCode}
+                            onChange={(e) => setEmailVerificationCode(e.target.value)}
+                            className="flex-1 text-xs tracking-widest text-center font-mono font-bold"
+                          />
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant="primary"
+                            onClick={handleVerifyEmailCode}
+                            loading={isVerifyingCode}
+                            disabled={emailVerificationCode.trim().length !== 6}
+                            className="bg-emerald-600 hover:bg-emerald-700 text-white"
+                          >
+                            Verify Code
+                          </Button>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              {/* Purpose of Visit for General Office Visit */}
+              {visitType === 'general' && (
+                <VisitPurposeField
+                  value={purpose || ''}
+                  onChange={(val) => setValue('purpose', val, { shouldValidate: true })}
+                  purposes={visitPurposes}
+                  error={errors.purpose?.message}
+                />
+              )}
 
               {/* Visit Date */}
               <FormField
@@ -3344,9 +3751,64 @@ export function GetPassPage() {
                 </div>
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
                   <div>
-                    <span className="text-[var(--color-text-secondary)] block">Purpose of Visit:</span>
-                    <p className="font-semibold text-sm text-[var(--color-text-primary)] mt-0.5">{getValues('purpose')}</p>
+                    <span className="text-[var(--color-text-secondary)] block">Destination Office:</span>
+                    <p className="font-semibold text-sm text-[var(--color-text-primary)] mt-0.5">
+                      {offices.find((o) => o.id === selectedOfficeId)?.name || 'Designated Office'}
+                    </p>
                   </div>
+                  <div>
+                    <span className="text-[var(--color-text-secondary)] block">Visit Type:</span>
+                    <p className="font-semibold text-sm text-[var(--color-text-primary)] mt-0.5">
+                      {visitType === 'specific_person' ? 'Specific Person Appointment' : 'General Office Visit'}
+                    </p>
+                  </div>
+
+                  {visitType === 'specific_person' ? (
+                    <>
+                      <div>
+                        <span className="text-[var(--color-text-secondary)] block">Faculty / Staff Member:</span>
+                        <p className="font-semibold text-sm text-[#7A0A0A] mt-0.5">
+                          {personnelList.find((p) => p.id === selectedPersonnelId)?.name || 'Designated Personnel'}
+                        </p>
+                      </div>
+                      <div>
+                        <span className="text-[var(--color-text-secondary)] block">Verified Visitor Email:</span>
+                        <p className="font-semibold text-sm text-emerald-700 mt-0.5 flex items-center gap-1">
+                          <CheckCircle2 className="h-3.5 w-3.5" />
+                          {visitorEmail}
+                        </p>
+                      </div>
+                      <div className="sm:col-span-2">
+                        <span className="text-[var(--color-text-secondary)] block">Appointment Purpose:</span>
+                        <p className="font-semibold text-sm text-[var(--color-text-primary)] mt-0.5">{specificPurpose || getValues('purpose')}</p>
+                      </div>
+                    </>
+                  ) : (
+                    <>
+                      <div className="sm:col-span-2">
+                        <span className="text-[var(--color-text-secondary)] block">General Visit Purpose:</span>
+                        <p className="font-semibold text-sm text-[var(--color-text-primary)] mt-0.5">{getValues('purpose')}</p>
+                      </div>
+                      {/* Accidental Selection Prevention Disclaimer */}
+                      <div className="sm:col-span-2 rounded-xl border border-amber-300 bg-amber-50 p-3.5 text-xs text-amber-950 space-y-2 mt-1">
+                        <div className="flex items-center gap-2 font-bold text-amber-900">
+                          <AlertTriangle className="h-4 w-4 text-amber-600 shrink-0" />
+                          <span>General Office Visit Confirmation</span>
+                        </div>
+                        <p className="leading-relaxed">
+                          You selected a <strong>General Office Visit</strong>. You are <strong>not</strong> requesting an appointment with a specific faculty member or employee. Once you enter campus, you must report to the office where staff will confirm your arrival.
+                        </p>
+                        <button
+                          type="button"
+                          onClick={() => setStep('visit')}
+                          className="font-bold text-[#7A0A0A] underline hover:opacity-80 block"
+                        >
+                          Click here if you meant to meet with a specific faculty member or employee.
+                        </button>
+                      </div>
+                    </>
+                  )}
+
                   <div>
                     <span className="text-[var(--color-text-secondary)] block">Visit Date:</span>
                     <p className="font-semibold text-sm text-[var(--color-text-primary)] mt-0.5">{getValues('visitDate')}</p>
@@ -3508,7 +3970,7 @@ export function GetPassPage() {
                       className="flex-1"
                       icon={<CheckCircle2 className="h-4 w-4" />}
                     >
-                      Generate E-GatePass
+                      {visitType === 'specific_person' ? 'Submit Request for Office Approval' : 'Generate E-GatePass'}
                     </Button>
                   </>
                 )}
@@ -4496,6 +4958,94 @@ export function GetPassPage() {
               <Loader2 className="mx-auto h-12 w-12 animate-spin text-[var(--color-brand)]" />
               <h3 className="text-lg font-bold text-[var(--color-text-primary)]">Issuing Official E-GatePass…</h3>
               <p className="text-sm text-[var(--color-text-secondary)]">Securing your pass record and generating QR token.</p>
+            </div>
+          )}
+
+          {/* ============================== SPECIFIC-PERSON REQUEST SUBMITTED SCREEN ============================== */}
+          {step === 'request_submitted' && (
+            <div className="space-y-6">
+              <div className="text-center">
+                <div className="mx-auto flex h-16 w-16 items-center justify-center rounded-2xl bg-amber-100 text-amber-700 shadow-xs">
+                  <Clock3 className="h-8 w-8" />
+                </div>
+                <h2 className="text-xl font-black text-[var(--color-text-primary)] mt-3">Visit Request Submitted!</h2>
+                <div className="mt-2 inline-flex items-center gap-1.5 rounded-full bg-amber-100 px-3 py-1 text-xs font-extrabold uppercase tracking-wide text-amber-800">
+                  <Clock className="h-3.5 w-3.5" />
+                  <span>Pending Office Approval</span>
+                </div>
+                <p className="text-sm text-[var(--color-text-secondary)] mt-2 max-w-md mx-auto">
+                  Your appointment request has been securely submitted for review.
+                </p>
+              </div>
+
+              <div className="rounded-2xl border border-[var(--color-border)] bg-white p-5 shadow-xs space-y-4">
+                <div className="border-b border-[var(--color-border)] pb-3">
+                  <span className="text-xs font-bold uppercase tracking-wider text-[var(--color-text-secondary)] block">
+                    Request Summary
+                  </span>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 text-xs">
+                  <div>
+                    <span className="text-[var(--color-text-secondary)] block">Target Office:</span>
+                    <p className="font-bold text-sm text-[var(--color-text-primary)] mt-0.5">
+                      {submittedRequestData?.officeName}
+                    </p>
+                  </div>
+                  <div>
+                    <span className="text-[var(--color-text-secondary)] block">Personnel / Faculty:</span>
+                    <p className="font-bold text-sm text-[#7A0A0A] mt-0.5">
+                      {submittedRequestData?.personnelName}
+                    </p>
+                  </div>
+                  <div>
+                    <span className="text-[var(--color-text-secondary)] block">Scheduled Date:</span>
+                    <p className="font-bold text-sm text-[var(--color-text-primary)] mt-0.5">
+                      {submittedRequestData?.visitDate}
+                    </p>
+                  </div>
+                  <div>
+                    <span className="text-[var(--color-text-secondary)] block">Verified Visitor Email:</span>
+                    <p className="font-bold text-sm text-emerald-700 mt-0.5 flex items-center gap-1">
+                      <CheckCircle2 className="h-3.5 w-3.5" />
+                      {submittedRequestData?.visitorEmail}
+                    </p>
+                  </div>
+                </div>
+
+                <div className="rounded-xl border border-amber-200 bg-amber-50/70 p-4 text-xs text-amber-950 space-y-2">
+                  <p className="font-bold text-amber-900">What happens next?</p>
+                  <p className="leading-relaxed">
+                    1. <strong>No QR pass is issued yet.</strong> Specific-person appointments require authorization from the designated office personnel.
+                  </p>
+                  <p className="leading-relaxed">
+                    2. Once the office reviews and <strong>approves</strong> your request, an official digital gate pass with a scannable QR code will be emailed directly to <strong>{submittedRequestData?.visitorEmail}</strong>.
+                  </p>
+                  <p className="leading-relaxed">
+                    3. If the appointment is rejected, you will receive an email explaining the office&apos;s reason.
+                  </p>
+                </div>
+              </div>
+
+              <div className="flex flex-col sm:flex-row gap-3 pt-2">
+                <Button
+                  onClick={() => {
+                    window.location.href = '/';
+                  }}
+                  className="flex-1"
+                  icon={<CheckCircle2 className="h-4 w-4" />}
+                >
+                  Done / Return to Home
+                </Button>
+                <Button
+                  variant="secondary"
+                  onClick={handleStartOver}
+                  className="flex-1"
+                  icon={<RotateCcw className="h-4 w-4" />}
+                >
+                  Register Another Visit
+                </Button>
+              </div>
             </div>
           )}
 

@@ -412,11 +412,45 @@ Cloud Connectivity Outage
 
 ---
 
+### 3.10 Office Visit Management & Approval Subsystem
+
+E-GatePass provides specialized visit management and pre-approval workflows for designated EARIST academic and administrative offices:
+
+```text
+Visitor Portal (/get-pass)
+   │
+   ├── General Office Visit (No Pre-Approval)
+   │      │
+   │      ▼
+   │   Immediate QR Pass Issuance ──> Gate Entry (inside) ──> Office Arrival Confirmation ──> Gate Exit
+   │
+   └── Specific Personnel Visit (Office Pre-Approval Required)
+          │
+          ▼
+       Email Ownership Challenge (6-Digit Code)
+          │
+          ▼
+       Submitted to Office Review (pending, ZERO QR Pass Issued)
+          │
+          ├── Rejected ──> Polite Rejection Email with Mandatory Reason (NO Pass Issued)
+          └── Approved ──> Pass Issued & Branded Email with QR Pass ──> Gate Entry
+```
+
+- **Workflow Segregation**: Visitors explicitly choose between **General Office Visit** (immediate QR issuance, office notified) and **Specific Personnel Visit** (requires office pre-approval; **zero QR code or pass is issued prior to approval**).
+- **Accidental Selection Defense**: Choice cards require explicit selection without preselected defaults. The final Review step displays an amber confirmation banner for general visits with an instant option to switch to specific personnel.
+- **Dedicated Office Dashboard (`/office`)**: Authenticated office staff manage 5 filtered queues (`Pending Approval`, `Approved / QR Issued`, `Awaiting Office Confirmation`, `Currently at Office`, and `Completed / Exceptions / Rejected`).
+- **Office Arrival Confirmation**: Destination office staff confirm visitor physical arrival at the office (`confirmed`), valid only while the visitor is on campus (`inside`).
+- **Exit Gate Attendance Handling**: Departing campus without office arrival confirmation logs an attendance exception (`office_unconfirmed`), displays an amber warning banner to the guard, and triggers a distinct warning beep, but **never blocks physical egress from campus** (`ok: true`, status transitions to `exited`).
+- **In-Browser Audio Feedback**: Built with pure Web Audio API synthesis (no external audio files, 100% offline). Emits a rising two-tone chime for success, an alternating dual-tone pulse for unconfirmed office departure, and a low buzzer for invalid scans, complete with persistent mute control.
+
+---
+
 ## 4. Institutional Roles & Security
 
 | Actor | Primary Responsibility | Authentication Mechanism |
 |---|---|---|
 | **Visitor** | Registers online, receives digital QR pass | Anonymous Supabase session (`storageKey: egatepass-portal-auth`) with Turnstile verification |
+| **Office Staff** | Reviews visit requests, manages office directory, confirms visitor arrival | Authenticated staff account (`role = 'office_staff'`) bound to assigned office(s) |
 | **Guard Station Device** | High-visibility gate entry monitor and live entry tracking | Managed device credentials (`devices` table, `device_type = 'guard_station'`) |
 | **Kiosk Device** | Self-service registration & local OCR on campus | Managed device credentials (`devices` table, `device_type = 'kiosk'`) |
 | **Entry Scanner** | Scans QR code at campus gates | Authenticated scanner device bound to gate identifier |
@@ -427,17 +461,22 @@ Cloud Connectivity Outage
 
 ### Capability Authority Matrix
 
-| Capability | Guard Station | Admin | Super Admin | Kiosk Device | Legacy Guard |
-|---|:---:|:---:|:---:|:---:|:---:|
-| Live gate entry monitoring | ✅ | ✅ | ✅ | ❌ | ❌ |
-| Visitor Recovery (Manual Entry/Exit) | ❌ | ✅ | ✅ | ❌ | ❌ |
-| Walk-in / offline registration (`guard_offline`) | ❌ | ✅ | ✅ (Emergency) | ❌ | ❌ |
-| Offline approve/reject | ❌ | ✅ | ✅ | ❌ | ❌ |
-| Offline time-in/time-out | ❌ | ✅ | ✅ | ❌ | ❌ |
-| MXW01 Bluetooth connection | ❌ | ❌ | ❌ | ✅ | ❌ |
-| Printer test | ❌ | ❌ | Preview only | ✅ | ❌ |
-| Edit thermal template | ❌ | ❌ | ✅ | ❌ | ❌ |
-| Publish thermal template | ❌ | ❌ | ✅ | ❌ | ❌ |
+| Capability | Office Staff | Guard Station | Admin | Super Admin | Kiosk Device | Legacy Guard |
+|---|:---:|:---:|:---:|:---:|:---:|:---:|
+| Dedicated Office Portal (`/office`) | ✅ | ❌ | ✅ | ✅ | ❌ | ❌ |
+| Decide Specific Visit (Approve/Reject) | ✅ | ❌ | ✅ | ✅ | ❌ | ❌ |
+| Confirm Office Arrival | ✅ | ❌ | ✅ | ✅ | ❌ | ❌ |
+| Live gate entry monitoring | ❌ | ✅ | ✅ | ✅ | ❌ | ❌ |
+| Visitor Recovery (Manual Entry/Exit) | ❌ | ❌ | ✅ | ✅ | ❌ | ❌ |
+| Walk-in / offline registration (`guard_offline`) | ❌ | ❌ | ✅ | ✅ (Emergency) | ❌ | ❌ |
+| Offline approve/reject | ❌ | ❌ | ✅ | ✅ | ❌ | ❌ |
+| Offline time-in/time-out | ❌ | ❌ | ✅ | ✅ | ❌ | ❌ |
+| MXW01 Bluetooth connection | ❌ | ❌ | ❌ | ❌ | ✅ | ❌ |
+| Printer test | ❌ | ❌ | ❌ | Preview only | ✅ | ❌ |
+| Edit thermal template | ❌ | ❌ | ❌ | ✅ | ❌ | ❌ |
+| Publish thermal template | ❌ | ❌ | ❌ | ✅ | ❌ | ❌ |
+
+> **Physical Hardware Verification Notice**: Physical device testing (MXW01 Bluetooth thermal printer, physical barcode scanners, physical iPhone 12 Safari camera) is marked `NOT TESTED (PHYSICAL HARDWARE)` as physical peripherals require physical campus deployment verification.
 
 ### Portal Actor Continuity & Layout-Aware OCR Architecture
 

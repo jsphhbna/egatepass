@@ -760,3 +760,39 @@ Outage Architecture & Authority Delegation
   - If the server-side Turnstile verification secret is present in serverless environment variables, `server/lib/turnstile.ts` validates challenge tokens on returning visitor searches (`/api/passes/lookup-returning`).
   - Employs an in-memory SHA-256 token replay cache (300-second TTL) to block duplicate or replayed tokens.
   - Enforces permitted hostname validation (`egatepass.tech`, `localhost`, etc.) and 5000ms bounded HTTP timeouts via `AbortController`.
+
+### 12.21 Office Visit Management Subsystem, Approval Gating & Scanner Audio Integration
+- **Relational Schema Architecture**:
+  - `public.offices`: Registered academic colleges, administrative departments, and campus directorates with active flags.
+  - `public.office_personnel`: Specific faculty, deans, directors, and officers belonging to registered offices.
+  - `public.office_staff_assignments`: Bridges authenticated staff accounts (`office_staff`) to authorized offices with foreign keys to `auth.users` and `public.offices`.
+  - `public.office_visits`: Authoritative visit records tracking visit type (`general` vs `specific_person`), approval status (`not_required`, `pending`, `approved`, `rejected`), attendance status (`awaiting_entry`, `awaiting_office_confirmation`, `confirmed`, `exited_unconfirmed`, `completed`), and foreign-key links to `visitors` and `passes`.
+  - `public.office_visit_events`: Append-only audit history of visit state transitions (`submitted`, `approved`, `rejected`, `gate_entry`, `office_arrival_confirmed`, `gate_exit`, `unconfirmed_exit`).
+  - `public.office_visit_email_verifications`: Tracks 6-digit challenge code delivery and single-use redemption for specific-person visit requests.
+- **Workflow Segregation & Approval Boundaries**:
+  - **General Office Visit**: Immediately creates pass via `api.issue_online_pass_v6`, and invokes `api.record_general_office_visit` linking the pass to the selected office. Attendance status initializes as `awaiting_entry`.
+  - **Specific-Person Visit**: Submits visit record via `api.create_specific_person_visit_request`. **Crucial Security Boundary**: Pass generation is deferred completely; **zero pass record or QR token is generated or disclosed before approval**.
+- **Cryptographic Email Proof Tokens**:
+  - Pre-submission ownership of visitor email is verified through a 6-digit challenge code sent via Resend. Successful verification issues a cryptographic HMAC-SHA256 proof token: `v_email.<b64urlEmail>.<actorId>.<expiresAt>.<sig>`.
+  - Submitting `/api/request-office-visit` cryptographically validates this token against the session actor, preventing unauthorized request forgery.
+- **Office Staff Authorization & Dedicated Portal (`/office`)**:
+  - `requireOfficeStaffActor` validates staff status, password onboarding, privacy acceptance, and scopes queries strictly to `assignedOfficeIds`.
+  - Dedicated office portal at `/office` partitions queues into:
+    1. `Pending Approval`: Incoming specific-person requests requiring review.
+    2. `Approved / QR Issued`: Passes approved and dispatched to visitors.
+    3. `Awaiting Office Confirmation`: Visitors who have scanned through the campus gate (`inside`) but have not yet arrived at the office.
+    4. `Currently at Office`: Visitors whose arrival has been confirmed by office staff.
+    5. `Completed / Exceptions / Rejected`: Full historical record with attendance exception tracking.
+  - Approvals call `api.decide_office_visit` (`requested_decision = 'approved'`), generating an active pass and dispatching an EARIST-branded approval email with an embedded QR pass.
+  - Rejections require a mandatory non-empty reason and dispatch a polite rejection email.
+  - Visitor portrait previews are served via actor-bound, HMAC-signed preview tokens (`office_p.<visitId>.<actorId>.<expiresAt>.<sig>`) through `/api/office/portrait-preview`, preventing direct storage exposure.
+- **Campus Egress Safety & Attendance Exceptions**:
+  - Arrival confirmation (`api.confirm_office_arrival`) can only be performed by assigned office staff after the visitor is inside campus (`visitor_passes.status = 'inside'`).
+  - When a visitor exits campus without office arrival confirmation, `api.scan_pass` updates pass status to `exited`, sets `attendance_status = 'exited_unconfirmed'`, and returns `code: 'office_unconfirmed'`.
+  - **Non-Blocking Egress Invariant**: Campus gate barriers **never physically trap or block exiting visitors**. The scanner returns `ok: true`, `result_status: 'exited'`, displays a prominent amber warning alert to the security guard, and logs an `unconfirmed_exit` event in `office_visit_events`.
+- **In-Browser Web Audio Synthesizer (`src/lib/scannerAudio.ts`)**:
+  - Implements pure client-side Web Audio API synthesis without external audio file dependencies, fully operational offline.
+  - **Success Chime**: Rising two-tone pleasant chime (880 Hz A5 $\to$ 1175 Hz D6) on valid gate entry and confirmed exit.
+  - **Warning Alert**: Alternating dual-tone pulse (587 Hz D5 $\to$ 440 Hz A4) alerting guards to unconfirmed office departures.
+  - **Error Tone**: Low dissonant buzzer (220 Hz A3 sawtooth) on invalid or rejected scans.
+  - Includes user-toggled audio mute controls with `localStorage` persistence (`egatepass_scanner_audio_muted`) on both Entry and Exit scanner interfaces.

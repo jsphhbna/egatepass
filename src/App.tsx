@@ -28,6 +28,7 @@ const AdminPrintTemplatesPage = lazy(() => import('@/pages/AdminPrintTemplatesPa
 const DevicesPage = lazy(() => import('@/pages/DevicesPage').then((module) => ({ default: module.DevicesPage })));
 const EntryScanPage = lazy(() => import('@/pages/EntryScanPage').then((module) => ({ default: module.EntryScanPage })));
 const ExitScanPage = lazy(() => import('@/pages/ExitScanPage').then((module) => ({ default: module.ExitScanPage })));
+const OfficeDashboardPage = lazy(() => import('@/pages/OfficeDashboardPage').then((module) => ({ default: module.OfficeDashboardPage })));
 const NotFoundPage = lazy(() => import('@/pages/NotFoundPage').then((module) => ({ default: module.NotFoundPage })));
 
 function GetPassLoadingFallback() {
@@ -55,7 +56,7 @@ function RouteLoadingFallback() {
 
 function AuthenticatedPrivacyGate() {
   const { status, role } = useAuth();
-  if (status !== 'authenticated' || !['guard', 'admin', 'superadmin'].includes(role ?? '')) return null;
+  if (status !== 'authenticated' || !['guard', 'admin', 'superadmin', 'office_staff'].includes(role ?? '')) return null;
   return <PrivacyModal />;
 }
 
@@ -102,6 +103,11 @@ export function App() {
             {/* Guard Station — requires guard_station device or admin role */}
             <Route element={<ProtectedRoute allowedRoles={['guard_station', 'admin', 'superadmin']} />}>
               <Route path="/guard" element={<GuardPage />} />
+            </Route>
+
+            {/* Office Portal — requires office_staff, admin, or superadmin role */}
+            <Route element={<ProtectedRoute allowedRoles={['office_staff', 'admin', 'superadmin']} />}>
+              <Route path="/office" element={<OfficeDashboardPage />} />
             </Route>
 
             {/* Admin — requires admin role, uses nested layout */}

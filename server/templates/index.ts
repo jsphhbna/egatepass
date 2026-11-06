@@ -9,11 +9,15 @@ import { EmailChangeEmail, type EmailChangeEmailProps } from './EmailChangeEmail
 import { MagicLinkEmail, type MagicLinkEmailProps } from './MagicLinkEmail.js';
 import { ReauthenticationEmail, type ReauthenticationEmailProps } from './ReauthenticationEmail.js';
 import { SecurityNotificationEmail, type SecurityNotificationEmailProps } from './SecurityNotificationEmail.js';
+import { OfficeVisitApprovedEmail, type OfficeVisitApprovedEmailProps } from './OfficeVisitApprovedEmail.js';
+import { OfficeVisitRejectedEmail, type OfficeVisitRejectedEmailProps } from './OfficeVisitRejectedEmail.js';
 
 export { EARIST_LOGO_URL, EARIST_BUILDING_EMAIL_URL, EARIST_EMAIL_HEADER_ART_URL } from './branding.js';
 export { EmailHeader, type EmailHeaderProps } from './components/EmailHeader.js';
 export { VerificationCodeEmail, type VerificationCodeEmailProps } from './VerificationCodeEmail.js';
 export { PassIssuedEmail, type PassIssuedEmailProps } from './PassIssuedEmail.js';
+export { OfficeVisitApprovedEmail, type OfficeVisitApprovedEmailProps } from './OfficeVisitApprovedEmail.js';
+export { OfficeVisitRejectedEmail, type OfficeVisitRejectedEmailProps } from './OfficeVisitRejectedEmail.js';
 export { SignupConfirmationEmail, type SignupConfirmationEmailProps } from './SignupConfirmationEmail.js';
 export { PasswordResetEmail, type PasswordResetEmailProps } from './PasswordResetEmail.js';
 export { StaffInviteEmail, type StaffInviteEmailProps } from './StaffInviteEmail.js';
@@ -28,6 +32,14 @@ export async function renderVerificationCodeEmail(props: VerificationCodeEmailPr
 
 export async function renderPassIssuedEmail(props: PassIssuedEmailProps): Promise<string> {
   return render(React.createElement(PassIssuedEmail, props));
+}
+
+export async function renderOfficeVisitApprovedEmail(props: OfficeVisitApprovedEmailProps): Promise<string> {
+  return render(React.createElement(OfficeVisitApprovedEmail, props));
+}
+
+export async function renderOfficeVisitRejectedEmail(props: OfficeVisitRejectedEmailProps): Promise<string> {
+  return render(React.createElement(OfficeVisitRejectedEmail, props));
 }
 
 export async function renderSignupConfirmationEmail(props: SignupConfirmationEmailProps): Promise<string> {

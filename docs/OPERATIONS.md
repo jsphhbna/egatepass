@@ -47,6 +47,12 @@ flowchart TD
 - Only an active Super Admin can promote an existing Admin to Super Admin.
 - The system enforces a strict invariant across database and API layers: **The last active Super Admin can NEVER be deactivated or demoted**. This is guarded by the database trigger `private.protect_last_superadmin` on `public.staff_profiles`, enforced by `api.update_staff_profile`, and surfaced by `POST /api/update-user` as HTTP 409 `cannot_remove_last_superadmin` (translated in the Staff Management UI as *"Cannot demote or deactivate the last remaining Super Admin."*).
 
+#### Office Staff Account Provisioning & Office Assignments
+- In **Admin Dashboard > Staff Management** (`/admin/users`), administrators select role **Office Staff** (`office_staff`).
+- Assign one or more registered offices to the staff user (e.g. *Office of the Registrar*, *College of Engineering*).
+- Office staff complete standard password replacement onboarding upon first sign-in and are automatically redirected to the dedicated Office Portal (`/office`).
+- Office staff accounts are scoped strictly to their assigned offices. To update office assignments, administrators use the Staff Management interface or the `/api/admin/offices` endpoint.
+
 ---
 
 ### 1.2 Device Account Management

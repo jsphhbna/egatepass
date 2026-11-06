@@ -15,9 +15,10 @@ const userSchema = z.object({
   name: z.string().min(2, 'Name is required').max(50),
   email: z.string().email('Valid email required'),
   password: passwordSchema,
-  role: z.literal('admin', {
-    message: 'New staff accounts are limited to Admin role',
+  role: z.enum(['admin', 'office_staff'], {
+    message: 'Staff accounts can be Admin or Office Staff',
   }),
+  officeIds: z.array(z.string()).optional(),
 });
 type UserFormData = z.infer<typeof userSchema>;
 
@@ -469,6 +470,7 @@ export function AdminUsers() {
               aria-required="true"
             >
               <option value="admin">Admin</option>
+              <option value="office_staff">Office Staff</option>
             </Select>
           </FormField>
 

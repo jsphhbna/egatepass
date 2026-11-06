@@ -5,7 +5,7 @@ export type Timestamp = AppTimestamp;
 /* ============================================================
    USER ROLES
    ============================================================ */
-export type UserRole = 'guard' | 'admin' | 'superadmin';
+export type UserRole = 'guard' | 'admin' | 'superadmin' | 'office_staff';
 
 export type DeviceType = 'entry' | 'exit' | 'kiosk' | 'guard_station';
 
@@ -173,3 +173,6 @@ export interface DeviceAuthActor {
 }
 
 export type AuthActor = StaffAuthActor | DeviceAuthActor;
+
+export * from './office';
+

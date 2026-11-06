@@ -2890,7 +2890,7 @@ describe('Permanent PostgreSQL Migration Chain & Schema Contracts (PGlite)', () 
   it('56. Migration 20261104000800_ephemeral_returning_verification_and_profile_linkage relaxes returning photo intent and enables automatic profile linkage', async () => {
     const db = new PGlite();
     const files = await applyAllMigrations(db);
-    expect(files.length).toBe(60);
+    expect(files.length).toBe(61);
 
     // 1. Verify execute permissions on api.issue_online_pass_v6
     const permCheck = await db.query<{ grantee: string }>(`
@@ -2917,7 +2917,7 @@ describe('Permanent PostgreSQL Migration Chain & Schema Contracts (PGlite)', () 
   it('57. Migration 20261104170754_returning_visitor_privacy_hardening_and_linkage_repair adds ID preview consumption RPC and saveUpdates support', async () => {
     const db = new PGlite();
     const files = await applyAllMigrations(db);
-    expect(files.length).toBe(60);
+    expect(files.length).toBe(61);
 
     // 1. Verify consume_id_preview_authorization_v1 RPC
     const permCheck = await db.query<{ grantee: string }>(`
@@ -3008,5 +3008,54 @@ describe('Permanent PostgreSQL Migration Chain & Schema Contracts (PGlite)', () 
       select api.consume_id_preview_authorization_v1('${profId}'::uuid, '${provDigest}'::text, '${actorId}'::uuid);
     `);
     expect(provConsume.rows[0].consume_id_preview_authorization_v1).toBe(false);
+  }, 60000);
+
+  it('58. Migration 20261106000100_office_visit_management_system verifies office schema, personnel, assignments, visits, and scanner integration', async () => {
+    const db = new PGlite();
+    const files = await applyAllMigrations(db);
+    expect(files.length).toBe(61);
+
+    // 1. Verify tables exist
+    const tablesCheck = await db.query<{ tablename: string }>(`
+      select tablename from pg_tables
+      where schemaname = 'public' and tablename in (
+        'offices', 'office_personnel', 'office_staff_assignments',
+        'office_visits', 'office_visit_events', 'office_visit_email_verifications'
+      );
+    `);
+    expect(tablesCheck.rows.length).toBe(6);
+
+    // 2. Verify staff_role enum contains office_staff
+    const enumCheck = await db.query<{ enumlabel: string }>(`
+      select e.enumlabel
+      from pg_type t
+      join pg_enum e on e.enumtypid = t.oid
+      where t.typname = 'staff_role';
+    `);
+    const labels = enumCheck.rows.map((r) => r.enumlabel);
+    expect(labels).toContain('office_staff');
+
+    // 3. Verify seeded offices
+    const officesCheck = await db.query<{ name: string }>(`
+      select name from public.offices order by name;
+    `);
+    expect(officesCheck.rows.length).toBeGreaterThanOrEqual(9);
+
+    // 4. Verify RPC grants
+    const rpcCheck = await db.query<{ routine_name: string; grantee: string }>(`
+      select distinct routine_name, grantee
+      from information_schema.routine_privileges
+      where routine_schema = 'api' and routine_name in (
+        'create_specific_person_visit_request',
+        'decide_office_visit',
+        'confirm_office_arrival',
+        'record_general_office_visit'
+      );
+    `);
+    const rpcGrantees = rpcCheck.rows.map((r) => `${r.routine_name}:${r.grantee}`);
+    expect(rpcGrantees).toContain('create_specific_person_visit_request:service_role');
+    expect(rpcGrantees).toContain('decide_office_visit:service_role');
+    expect(rpcGrantees).toContain('confirm_office_arrival:service_role');
+    expect(rpcGrantees).toContain('record_general_office_visit:service_role');
   }, 60000);
 });

@@ -49,6 +49,12 @@ export function extractRouteKey(pathname: string, group: RouteGroup): string | n
     if (parts[1] === 'location' && parts[2] === 'search') {
       return 'location-search';
     }
+    if (parts[1] === 'office' && parts.length >= 3) {
+      return parts.slice(1).join('/');
+    }
+    if (parts[1] === 'request-office-visit') {
+      return 'request-office-visit';
+    }
   }
 
   return null;

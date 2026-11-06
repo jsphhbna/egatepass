@@ -235,6 +235,14 @@
       "destination": "/api/passes/location-search"
     },
     {
+      "source": "/api/office/:path*",
+      "destination": "/api/passes/office/:path*"
+    },
+    {
+      "source": "/api/request-office-visit",
+      "destination": "/api/passes/request-office-visit"
+    },
+    {
       "source": "/((?!api/).*)",
       "destination": "/index.html"
     }

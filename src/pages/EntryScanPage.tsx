@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { useAuth } from '@/hooks/useAuth';
 import { getAccessToken, signOutCurrentActor } from '@/services/auth';
 import { Html5Qrcode } from 'html5-qrcode';
-import { LogOut as LogOutIcon } from 'lucide-react';
+import { LogOut as LogOutIcon, Volume2, VolumeX } from 'lucide-react';
 import { toast } from 'sonner';
 import { Clock3, QrCode, XCircle, AlertTriangle, CheckCircle2 } from 'lucide-react';
 import { BrandMark } from '@/components/BrandMark';
@@ -10,6 +10,14 @@ import { createOptimizedQrScanner, enableContinuousFocus, QR_SCAN_CONFIG } from 
 import { RefreshCw, AlertCircle } from 'lucide-react';
 import { Modal, Button } from '@/components/ui';
 import { fetchWithTimeout, RequestTimeoutError } from '@/lib/fetchWithTimeout';
+import {
+  initScannerAudio,
+  playSuccessBeep,
+  playWarningBeep,
+  playErrorBeep,
+  isScannerAudioMuted,
+  setScannerAudioMuted,
+} from '@/lib/scannerAudio';
 import {
   type ScanStatus,
   resolveEntryScanSuccess,
@@ -39,6 +47,21 @@ export function EntryScanPage() {
   const scannerRef = useRef<Html5Qrcode | null>(null);
   const debounceRef = useRef(false);
   const resetTimerRef = useRef<NodeJS.Timeout | null>(null);
+
+  const [isMuted, setIsMuted] = useState(isScannerAudioMuted());
+
+  function toggleAudioMute() {
+    initScannerAudio();
+    const next = !isMuted;
+    setScannerAudioMuted(next);
+    setIsMuted(next);
+    if (!next) {
+      playSuccessBeep();
+      toast.success('Scanner audio enabled');
+    } else {
+      toast.info('Scanner audio muted');
+    }
+  }
 
   const [scannerKey, setScannerKey] = useState(0);
   function retryCamera() {
@@ -93,12 +116,20 @@ export function EntryScanPage() {
       const feedback = resolveEntryScanSuccess(result);
       setStatus(feedback.status);
       setStatusMessage(feedback.statusMessage);
+      if (feedback.status === 'granted') {
+        playSuccessBeep();
+      } else if (feedback.status === 'warning' || feedback.status === 'pending') {
+        playWarningBeep();
+      } else {
+        playErrorBeep();
+      }
       if (feedback.toast.type === 'success') {
         toast.success(feedback.toast.message);
       } else {
         toast.error(feedback.toast.message);
       }
     } catch (error: unknown) {
+      playErrorBeep();
       const failureMode = isTimeout ? 'timeout' : (isNetworkError ? 'network' : null);
       const feedback = resolveEntryScanFailure(error, failureMode);
       setStatus(feedback.status);
@@ -187,6 +218,16 @@ export function EntryScanPage() {
         <div className="mb-2 flex items-center justify-center gap-2">
           <BrandMark size="sm" />
           <p className="text-xs font-bold uppercase tracking-[0.2em] text-[var(--color-accent)]">Entry scanner</p>
+          <button
+            type="button"
+            onClick={toggleAudioMute}
+            aria-label={isMuted ? 'Unmute scanner audio' : 'Mute scanner audio'}
+            className="ml-2 inline-flex items-center gap-1 rounded-full bg-white/10 px-2 py-1 text-xs font-medium text-white/80 hover:bg-white/20 transition-colors"
+            title={isMuted ? 'Scanner audio muted. Click to enable sound.' : 'Scanner audio active. Click to mute.'}
+          >
+            {isMuted ? <VolumeX className="h-3.5 w-3.5 text-amber-300" /> : <Volume2 className="h-3.5 w-3.5 text-emerald-300" />}
+            <span className="text-[10px]">{isMuted ? 'Muted' : 'Sound On'}</span>
+          </button>
         </div>
         <h1 className="text-xl font-extrabold text-white sm:text-2xl">{gate}</h1>
         <p className="mt-1 text-sm text-white/60">Present the visitor QR code to the camera</p>

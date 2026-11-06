@@ -697,3 +697,78 @@ stateDiagram-v2
      - *Stage 5 (Match Accepted)*: Confirm matching returns profile, pre-fills form, advances to `returning_confirm`, and displays "Welcome back, [First Name]!" toast. Verify the verified photo blob is reused for subsequent pass issuance.
      - *Stage 6 (Match Rejected / Low Quality)*: If an unmatching face is presented, confirm UI displays "We could not verify this photo" error alert near frozen image with a prominent "Retake Selfie" button without navigating away or losing candidate profile.
 
+
+
+---
+
+## 11. Office Visit Management, Pre-Approval & Gate Scanner Audio Feedback Verification
+
+### 11.1 General vs Specific-Person Choice & Accidental Selection Safeguard
+1. Navigate to `/get-pass` on desktop or mobile.
+2. In the Visit Details step, select a Destination Office (e.g. *Office of the Registrar*).
+3. Confirm that Visit Type displays two selectable cards (**Specific Person / Faculty** vs **General Office Visit**) with **no preselected default**.
+4. Select **General Office Visit**:
+   - Advance through Photo, ID, and Address steps to Review.
+   - Verify Review step displays a prominent amber warning card: *"You selected a General Office Visit without meeting specific personnel. If your visit requires pre-arranged consultation with a specific faculty or officer, please switch visit type."*
+   - Tap **Change to Specific Person**: Confirm workflow smoothly scrolls back to the visit step with previous details intact.
+
+### 11.2 Specific-Person Visit Email Ownership Challenge & Receipt Screen
+1. On `/get-pass`, select **Specific Person / Faculty**.
+2. Select destination office and choose a faculty member from the dropdown (e.g. *Dr. Jane Smith*).
+3. Enter specific purpose of visit.
+4. **Email Verification Gate**:
+   - Tap **Verify Email Address**.
+   - Confirm a 6-digit challenge code is sent to the visitor's email address via Resend.
+   - Enter code and confirm verification badge turns green (*"Email ownership verified"*).
+5. Advance through face photo, ID, and review steps, then submit request.
+6. **Pre-Approval Receipt Verification**:
+   - Confirm screen transitions to **Visit Request Submitted** (`request_submitted`).
+   - Confirm message clearly explains: *"Your visit request has been submitted to the [Office Name] for review. You will receive an email once approved or rejected."*
+   - **Crucial Security Invariant**: Confirm **NO QR code, NO pass token, and NO gate pass** is rendered or stored in local state prior to office approval.
+
+### 11.3 Office Dashboard (`/office`) & Staff Decision Workflow
+1. Navigate to `/login` and log in with an `office_staff` account assigned to *Office of the Registrar*.
+2. Confirm automatic redirect to `/office` (Office Dashboard).
+3. Verify 5 distinct operational queues:
+   - `Pending Approval` (requests awaiting decision)
+   - `Approved / QR Issued` (approved passes with email dispatched)
+   - `Awaiting Office Confirmation` (visitors currently inside campus gate)
+   - `Currently at Office` (visitors whose arrival has been confirmed)
+   - `Completed / Exceptions / Rejected` (historical attendance and audit log)
+4. In `Pending Approval` queue:
+   - Tap **View Photo**: Confirm visitor portrait loads securely via short-lived HMAC preview token.
+   - Tap **Reject**: Confirm dialog requires a mandatory rejection reason (rejection cannot submit with empty reason). Submit rejection; confirm visitor receives polite rejection email detailing reason.
+   - On another request, tap **Approve**: Confirm request is approved, QR pass is generated atomically, and visitor receives an EARIST-branded approval email with an embedded high-contrast QR pass attachment.
+
+### 11.4 Gate Entry & In-Person Office Arrival Confirmation
+1. Simulate gate entry scan with the approved pass QR token at `/scanner` (Entry Scanner).
+2. Confirm pass status transitions to `inside` and Web Audio plays a pleasant rising two-tone success chime (880 Hz to 1175 Hz).
+3. Return to `/office`: Confirm the visit appears in `Awaiting Office Confirmation` with an active pulsing amber badge.
+4. When visitor arrives at the physical office desk, staff taps **Confirm Arrival**:
+   - Confirm arrival time is recorded and attendance status transitions to `confirmed`.
+   - Confirm the record immediately moves to the `Currently at Office` queue.
+   - Confirm attempting to confirm arrival before campus gate entry is strictly rejected with a clear message: *"Arrival can only be confirmed after the visitor has successfully entered campus through the gate."*
+
+### 11.5 Exit Scanner Audio Feedback & Departure Safety
+1. **Normal Exit (Arrival Confirmed)**:
+   - Visitor scans QR pass at `/exit-scan`.
+   - Confirm pass status transitions to `exited` and attendance transitions to `completed`.
+   - Confirm scanner plays rising two-tone success chime.
+2. **Unconfirmed Departure Safety**:
+   - A visitor who entered campus but never had their arrival confirmed at the destination office scans at `/exit-scan`.
+   - **Safety Invariant**: Physical gate exit is **NEVER blocked or delayed** (`ok: true`, pass status updates to `exited`).
+   - **Warning Feedback**:
+     - Scanner plays an alternating dual-tone warning pulse (587 Hz to 440 Hz).
+     - Guard console surfaces an amber warning banner: *"Office Arrival Not Confirmed — Departure recorded as attendance exception."*
+     - Visit record transitions to `exited_unconfirmed` and logs an `unconfirmed_exit` event in `office_visit_events`.
+3. **Scanner Audio Mute Controls**:
+   - Tap the speaker icon in the header of `/scanner` or `/exit-scan`.
+   - Confirm icon updates to muted speaker (`Audio: Muted`) and subsequent scans execute silently.
+   - Refresh the browser; confirm mute preference persists via `localStorage`.
+
+---
+
+## 12. Physical Hardware Verification Disclaimer
+
+> **MANDATORY PHYSICAL HARDWARE NOTICE**:
+> Physical hardware peripherals in the EARIST campus environment (specifically: the physical MXW01 Bluetooth thermal printer, dedicated physical hardware 2D barcode scanners, and physical iPhone 12 Safari camera hardware) are marked `NOT TESTED (PHYSICAL HARDWARE)` in verification reports because software execution environments cannot physically connect to local Bluetooth radios or physical optics. All corresponding software contracts, Web Bluetooth communication protocols, Web Audio synthesis pipelines, and responsive mobile viewports are fully tested and proven in automated verification suites.

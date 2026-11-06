@@ -9,7 +9,8 @@ const schema = z.object({
   name: z.string().trim().min(2).max(50),
   email: z.string().email().max(320),
   password: passwordSchema,
-  role: z.literal('admin'),
+  role: z.enum(['admin', 'office_staff']),
+  officeIds: z.array(z.string().uuid()).optional(),
 }).strict();
 
 async function handleRequest(request: Request): Promise<Response> {
@@ -84,6 +85,18 @@ async function handleRequest(request: Request): Promise<Response> {
         await recordReconciliation(admin, 'staff.create.rollback_auth', 'staff_profile', targetId, cleanup.error.code ?? 'cleanup_failed');
       }
       throw profile.error;
+    }
+
+    if (parsed.data.role === 'office_staff' && parsed.data.officeIds && parsed.data.officeIds.length > 0) {
+      const assignments = parsed.data.officeIds.map((officeId) => ({
+        user_id: targetId,
+        office_id: officeId,
+        assigned_by: actor.id,
+      }));
+      const { error: assignErr } = await admin.from('office_staff_assignments').insert(assignments);
+      if (assignErr) {
+        console.warn('Failed to assign initial offices to new office staff:', assignErr);
+      }
     }
 
     const resend = await admin.auth.resend({ type: 'signup', email: normalizedEmail });

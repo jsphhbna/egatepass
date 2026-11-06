@@ -11,6 +11,13 @@ import capabilities from '../../server/routes/passes/capabilities.js';
 import vehiclesMakes from '../../server/routes/vehicles/makes.js';
 import vehiclesModels from '../../server/routes/vehicles/models.js';
 import locationSearch from '../../server/routes/location/search.js';
+import officeVisits from '../../server/routes/office/visits.js';
+import officeDecide from '../../server/routes/office/decide.js';
+import officeConfirmArrival from '../../server/routes/office/confirm-arrival.js';
+import officePersonnel from '../../server/routes/office/personnel.js';
+import officePortraitPreview from '../../server/routes/office/portrait-preview.js';
+import officeVerifyEmail from '../../server/routes/office/verify-email.js';
+import requestOfficeVisit from '../../server/routes/passes/request-office-visit.js';
 
 const router = createGroupedRouter('passes', {
   email,
@@ -32,6 +39,13 @@ const router = createGroupedRouter('passes', {
   'vehicles/models': vehiclesModels,
   'location-search': locationSearch,
   'location/search': locationSearch,
+  'office/visits': officeVisits,
+  'office/decide': officeDecide,
+  'office/confirm-arrival': officeConfirmArrival,
+  'office/personnel': officePersonnel,
+  'office/portrait-preview': officePortraitPreview,
+  'office/verify-email': officeVerifyEmail,
+  'request-office-visit': requestOfficeVisit,
 });
 
 export const { fetch, handleRequest, GET, POST, PUT, PATCH, DELETE, HEAD, OPTIONS } = router;

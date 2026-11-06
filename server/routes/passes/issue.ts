@@ -62,6 +62,7 @@ const requestSchema = z.object({
   saveVehicle: z.boolean().optional(),
   photoIntentId: z.string().uuid().nullable().optional(),
   idIntentId: z.string().uuid().nullable().optional(),
+  officeId: z.string().uuid().optional(),
 });
 
 function validMagic(bytes: Uint8Array, contentType: string): boolean {
@@ -477,6 +478,19 @@ async function handleRequest(request: Request): Promise<Response> {
         return jsonResponse(409, { error: 'pass_token_secret_rotated' });
       }
 
+      if (parsed.data.officeId && existingPass.id) {
+        try {
+          await admin.schema('api').rpc('record_general_office_visit', {
+            requested_actor_id: actorId,
+            requested_pass_id: existingPass.id,
+            requested_office_id: parsed.data.officeId,
+            requested_request_id: parsed.data.requestId,
+          });
+        } catch (ovErr) {
+          console.warn('Failed to link general office visit on idempotent replay:', ovErr);
+        }
+      }
+
       // Return existing pass with 200 OK (idempotent replay without external Geoapify call)
       return jsonResponse(200, {
         passId: existingPass.public_reference,
@@ -872,6 +886,19 @@ async function handleRequest(request: Request): Promise<Response> {
           });
         } catch (vehErr) {
           console.warn('Failed to save returning visitor vehicle:', vehErr);
+        }
+      }
+
+      if (parsed.data.officeId && data?.pass_id) {
+        try {
+          await admin.schema('api').rpc('record_general_office_visit', {
+            requested_actor_id: actorId,
+            requested_pass_id: data.pass_id,
+            requested_office_id: parsed.data.officeId,
+            requested_request_id: parsed.data.requestId,
+          });
+        } catch (ovErr) {
+          console.warn('Failed to link general office visit:', ovErr);
         }
       }
 

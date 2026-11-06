@@ -73,7 +73,7 @@ flowchart TD
     IsRecovery -->|No| ActorLookup
 
     ActorLookup --> StaffCheck{"Record in staff_profiles<br>AND active == true?"}
-    StaffCheck -->|Yes| StaffRole["Resolved Role: guard / admin / superadmin"]
+    StaffCheck -->|Yes| StaffRole["Resolved Role: office_staff / guard / admin / superadmin"]
     StaffCheck -->|No| DeviceCheck{"Record in devices<br>AND status == active<br>AND deleted_at IS NULL?"}
 
     DeviceCheck -->|Yes| DeviceRole["Resolved Device: entry / exit / kiosk<br>Bound to Assigned Gate"]
@@ -82,7 +82,7 @@ flowchart TD
 
 ### Identity Resolution Rules:
 1. **Anonymous Visitors**: Have valid Supabase Auth anonymous UIDs. Confined to requesting upload intents and submitting pass issuance.
-2. **Staff Members**: Identified by a matching row in `public.staff_profiles` where `active = true`. Full operational eligibility also requires a confirmed Auth email (`email_confirmed_at IS NOT NULL`), completed password onboarding (`must_change_password = false`), privacy acceptance (`privacy_accepted_at IS NOT NULL`), an unconfined session (not recovery-confined), and an authorized staff role (`guard`, `admin`, `superadmin`).
+2. **Staff Members**: Identified by a matching row in `public.staff_profiles` where `active = true`. Full operational eligibility also requires a confirmed Auth email (`email_confirmed_at IS NOT NULL`), completed password onboarding (`must_change_password = false`), privacy acceptance (`privacy_accepted_at IS NOT NULL`), an unconfined session (not recovery-confined), and an authorized staff role (`guard`, `admin`, `superadmin`, `office_staff`).
 3. **Managed Devices**: Identified by a matching row in `public.devices` where `status = 'active'` and `deleted_at IS NULL`. Types: `entry`, `exit`, `kiosk`.
 4. **Recovery Sessions**: Explicitly flagged when authenticated via recovery magic links. Confined strictly to password reset and blocked from scanner, guard, and admin operations (`recovery_session_forbidden`).
 
@@ -117,23 +117,27 @@ sequenceDiagram
 
 ## 4. Institutional Role & Permission Matrix
 
-| Operation / Capability | Anonymous Visitor | Kiosk Device | Entry Scanner | Exit Scanner | Guard | Admin | Super Admin |
-|---|---|---|---|---|---|---|---|
-| **Register Visitor Pass** (`/api/passes/issue`) | Allowed | Allowed | Denied | Denied | Denied | Denied | Denied |
-| **Request Upload Intent** (`api.create_upload_intent`) | Allowed | Allowed | Denied | Denied | Denied | Denied | Denied |
-| **Request QR Code by Email** (`/api/passes/email`) | Allowed | Allowed | Denied | Denied | Denied | Denied | Denied |
-| **Scan Entry Pass** (`/api/scan-pass`, mode: `entry`) | Denied | Denied | **Allowed** | Denied | Denied | Denied | Denied |
-| **Scan Exit Pass** (`/api/scan-pass`, mode: `exit`) | Denied | Denied | Denied | **Allowed** | Denied | Denied | Denied |
-| **Guard Queue RPC** (`api.guard_dashboard_page`) | Denied | Denied | Denied | Denied | **Allowed** | **Allowed** | **Allowed** |
-| **Approve / Reject Pass** (`/api/decide-visit`) | Denied | Denied | Denied | Denied | **Allowed** | **Allowed** | **Allowed** |
-| **Stream Evidence Image** (`/api/evidence`) | Denied | Denied | Denied | Denied | **Allowed** (Pending) | **Allowed** | **Allowed** |
-| **Manage Staff Accounts** (`/api/admin/users`, `/api/create-user`) | Denied | Denied | Denied | Denied | Denied | **Allowed** | **Allowed** |
-| **Manage Hardware Devices** (`/api/admin/devices`, `/api/create-device`) | Denied | Denied | Denied | Denied | Denied | **Allowed** | **Allowed** |
-| **Manage Incident Holds** (`/api/admin/holds`) | Denied | Denied | Denied | Denied | Denied | View Only | **Allowed** (Create & Release) |
-| **Update System Settings** (`/api/update-settings`) | Denied | Denied | Denied | Denied | Denied | Denied | **Allowed** |
-| **Execute Retention Maintenance** (`/api/admin/retention-maintenance`) | Denied | Denied | Denied | Denied | Denied | Denied | **Allowed** / Cron |
-| **Review Reconciliation Tasks** (`/api/reconciliation-items`) | Denied | Denied | Denied | Denied | Denied | Denied | **Allowed** |
-| **Promote Admin to Super Admin** (`POST /api/update-user` -> `api.update_staff_profile`) | Denied | Denied | Denied | Denied | Denied | Denied | **Allowed** |
+| Operation / Capability | Anonymous Visitor | Kiosk Device | Entry Scanner | Exit Scanner | Office Staff | Guard | Admin | Super Admin |
+|---|---|---|---|---|---|---|---|---|
+| **Register Visitor Pass** (`/api/passes/issue`) | Allowed | Allowed | Denied | Denied | Denied | Denied | Denied | Denied |
+| **Request Upload Intent** (`api.create_upload_intent`) | Allowed | Allowed | Denied | Denied | Denied | Denied | Denied | Denied |
+| **Request QR Code by Email** (`/api/passes/email`) | Allowed | Allowed | Denied | Denied | Denied | Denied | Denied | Denied |
+| **Request Specific Visit** (`/api/request-office-visit`) | Allowed | Allowed | Denied | Denied | Denied | Denied | Denied | Denied |
+| **Office Visits Query** (`/api/office/visits`) | Denied | Denied | Denied | Denied | **Allowed** (Assigned) | Denied | **Allowed** | **Allowed** |
+| **Decide Specific Visit** (`/api/office/decide`) | Denied | Denied | Denied | Denied | **Allowed** (Assigned) | Denied | **Allowed** | **Allowed** |
+| **Confirm Office Arrival** (`/api/office/confirm-arrival`) | Denied | Denied | Denied | Denied | **Allowed** (Assigned) | Denied | **Allowed** | **Allowed** |
+| **Scan Entry Pass** (`/api/scan-pass`, mode: `entry`) | Denied | Denied | **Allowed** | Denied | Denied | Denied | Denied | Denied |
+| **Scan Exit Pass** (`/api/scan-pass`, mode: `exit`) | Denied | Denied | Denied | **Allowed** | Denied | Denied | Denied | Denied |
+| **Guard Queue RPC** (`api.guard_dashboard_page`) | Denied | Denied | Denied | Denied | Denied | **Allowed** | **Allowed** | **Allowed** |
+| **Approve / Reject Pass** (`/api/decide-visit`) | Denied | Denied | Denied | Denied | Denied | **Allowed** | **Allowed** | **Allowed** |
+| **Stream Evidence Image** (`/api/evidence`) | Denied | Denied | Denied | Denied | Denied | **Allowed** (Pending) | **Allowed** | **Allowed** |
+| **Manage Staff Accounts** (`/api/admin/users`, `/api/create-user`) | Denied | Denied | Denied | Denied | Denied | Denied | **Allowed** | **Allowed** |
+| **Manage Hardware Devices** (`/api/admin/devices`, `/api/create-device`) | Denied | Denied | Denied | Denied | Denied | Denied | **Allowed** | **Allowed** |
+| **Manage Incident Holds** (`/api/admin/holds`) | Denied | Denied | Denied | Denied | Denied | Denied | View Only | **Allowed** (Create & Release) |
+| **Update System Settings** (`/api/update-settings`) | Denied | Denied | Denied | Denied | Denied | Denied | Denied | **Allowed** |
+| **Execute Retention Maintenance** (`/api/admin/retention-maintenance`) | Denied | Denied | Denied | Denied | Denied | Denied | Denied | **Allowed** / Cron |
+| **Review Reconciliation Tasks** (`/api/reconciliation-items`) | Denied | Denied | Denied | Denied | Denied | Denied | Denied | **Allowed** |
+| **Promote Admin to Super Admin** (`POST /api/update-user` -> `api.update_staff_profile`) | Denied | Denied | Denied | Denied | Denied | Denied | Denied | **Allowed** |
 
 ---
 
@@ -798,6 +802,40 @@ The shared pure SVG template generator (`src/lib/digitalPassArtifact.ts`) uses s
   - Employs an in-memory SHA-256 token replay cache (300-second TTL) to block duplicate or replayed tokens.
   - Enforces permitted hostname validation (`egatepass.tech`, `localhost`, etc.) to prevent domain token stealing.
   - Enforces bounded HTTP timeouts (5000ms via `AbortController`) and fails closed on provider outages.
+
+## 29. Office Visit Management Security, Token Cryptography & Safety Guarantees
+
+### 29.1 Pre-Approval Boundary & Zero Pre-Issuance Guarantee
+- **Strict Invariant**: Specific-person visit requests submit to `public.office_visits` in `pending` approval status.
+- **Zero Pass Generation Prior to Approval**: The database RPC `api.create_specific_person_visit_request` explicitly leaves `pass_id` and `qr_token` as null. No row is inserted into `public.passes`, no cryptographic pass token is synthesized, and no entry QR code is displayed to the visitor.
+- **Approval-Bound Pass Creation**: Only an authorized staff member executing `api.decide_office_visit` with `requested_decision = 'approved'` invokes pass issuance. The pass reference, bearer token, and expiration timestamp are generated atomically and dispatched via encrypted TLS email.
+
+### 29.2 Cryptographic Email Ownership Verification (HMAC-SHA256)
+- Specific-person visits require pre-submission proof of email ownership to guarantee that approved passes reach the verified recipient.
+- An ephemeral 6-digit challenge code is emailed to the visitor and verified against `public.office_visit_email_verifications`.
+- Successful verification generates a time-bounded cryptographic token:
+  `v_email.<b64urlEmail>.<actorId>.<expiresAt>.<sig>`
+  signed with the platform's authentication secret using HMAC-SHA256.
+- The request handler (`POST /api/request-office-visit`) recomputes the HMAC digest, checks expiration (1-hour TTL), and verifies exact equality against the current authenticated visitor session (`actorId`).
+
+### 29.3 Office Staff Role & Scope Isolation (`office_staff`)
+- Staff accounts with `role = 'office_staff'` are linked to one or more registered offices via `public.office_staff_assignments`.
+- `requireOfficeStaffActor` strictly enforces that office staff can only query visits (`/api/office/visits`) and decide requests (`/api/office/decide`) belonging to their assigned offices (`assignedOfficeIds`).
+- Any attempt to access or modify records of an unassigned office is immediately terminated with HTTP 403 `unauthorized_for_this_office`.
+- System administrators (`admin`, `superadmin`) retain institutional oversight across all campus offices.
+
+### 29.4 Ephemeral Visitor Portrait Preview Tokens
+- Office staff reviewing incoming requests inspect visitor portraits without exposing permanent storage bucket URLs or disclosing direct Supabase Storage service keys.
+- The server generates short-lived, actor-bound portrait preview tokens:
+  `office_p.<visitId>.<actorId>.<expiresAt>.<sig>`
+  with an explicit 600-second (10-minute) TTL.
+- The preview proxy endpoint (`GET /api/office/portrait-preview`) verifies caller identity, checks signature validity with `timingSafeEqual`, fetches the private photo from storage, and streams the binary image with `Cache-Control: private, no-store`.
+
+### 29.5 Campus Egress Safety & Attendance Integrity
+- When a visitor departs campus through the exit gate without completing office arrival confirmation, physical exit is **never blocked or delayed**.
+- The scanner RPC `api.scan_pass` updates pass status to `exited`, marks `attendance_status = 'exited_unconfirmed'`, returns `code: 'office_unconfirmed'`, and logs an `unconfirmed_exit` event in `public.office_visit_events`.
+- Gate security guards receive an immediate amber visual banner and distinct warning audio feedback, preserving physical safety while maintaining an uncompromised attendance audit trail.
+
 
 
 

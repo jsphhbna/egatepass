@@ -13,6 +13,7 @@ import {
   Menu,
   X,
   Printer,
+  Building2,
 } from 'lucide-react';
 import { BrandMark } from '@/components/BrandMark';
 import { ConfirmModal } from '@/components/ui';
@@ -27,6 +28,7 @@ const navItems = [
   { to: '/admin/users', icon: Users, label: 'Users', end: false },
   { to: '/admin/emergency', icon: AlertTriangle, label: 'Emergency', end: false },
   { to: '/admin/audit', icon: ClipboardList, label: 'Audit Logs', end: false },
+  { to: '/office', icon: Building2, label: 'Office Portal', end: false },
   { to: '/admin/settings', icon: Settings, label: 'Settings', end: false },
 ];
 

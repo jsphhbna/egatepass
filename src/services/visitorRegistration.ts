@@ -105,6 +105,7 @@ export interface VisitorRegistration {
   rememberVisitor?: boolean;
   enrollReturning?: boolean;
   enrollBiometric?: boolean;
+  officeId?: string;
 }
 
 export interface IssuedPass {
@@ -1595,6 +1596,7 @@ export async function issueVisitorPass(
         saveVehicle: Boolean(effectiveVisitor.saveVehicle || effectiveVisitor.vehicle?.saveVehicle),
         photoIntentId: effectiveVisitor.registrationMode === 'returning' ? undefined : (photoIntentId || undefined),
         idIntentId: effectiveVisitor.registrationMode === 'returning' ? undefined : (idIntentId || undefined),
+        officeId: effectiveVisitor.officeId || undefined,
       }),
     }, 15000);
   } catch (networkErr) {
