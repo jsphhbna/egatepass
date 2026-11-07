@@ -430,8 +430,8 @@ runSuite('True PostgreSQL Concurrency, Canonical Approval Integrity & Email Reco
           values ('${personnelId}', '${officeId}', 'Director Santos', 'Registrar', true)
           on conflict (id) do nothing;
 
-          insert into public.staff_profiles (id, user_id, role, full_name, created_at, updated_at)
-          values (gen_random_uuid(), '${staffActorId}', 'office_staff', 'Office Staff Member', now(), now())
+          insert into public.staff_profiles (user_id, role, display_name, created_at, updated_at)
+          values ('${staffActorId}', 'office_staff', 'Office Staff Member', now(), now())
           on conflict (user_id) do nothing;
 
           insert into public.office_staff_assignments (staff_user_id, office_id)
