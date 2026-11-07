@@ -344,6 +344,9 @@ export async function handleRequest(request: Request): Promise<Response> {
     }
 
     const visitorName = `${visit.visitor_first_name} ${visit.visitor_last_name}`.trim();
+    const formattedVisitDate = visit.visit_date instanceof Date
+      ? visit.visit_date.toISOString().slice(0, 10)
+      : String(visit.visit_date || '');
     const officeName = (visit.offices as any)?.name || 'EARIST Office';
     const personnelName = (visit.office_personnel as any)?.name || 'Faculty / Staff';
 
@@ -378,7 +381,7 @@ export async function handleRequest(request: Request): Promise<Response> {
             fullName: visitorName,
             officeName,
             personnelName,
-            visitDate: visit.visit_date,
+            visitDate: formattedVisitDate,
             rejectionReason: reason,
           });
           return {
@@ -459,7 +462,7 @@ export async function handleRequest(request: Request): Promise<Response> {
             fullName: visitorName,
             officeName,
             personnelName,
-            visitDate: visit.visit_date,
+            visitDate: formattedVisitDate,
             purpose: visit.purpose,
             publicReference: publicRef,
             attachmentFilename,

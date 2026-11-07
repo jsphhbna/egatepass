@@ -85,7 +85,7 @@ function createPostgresAdminClient(pool: pg.Pool, options?: { failRecordResult?:
             return { data: res.rows, error: null };
           }
           if (fnName === 'record_office_visit_email_result') {
-            if (options?.failRecordResult) {
+            if (options?.failRecordResult && args.requested_status === 'sent') {
               return { data: null, error: { message: 'Injected primary record_office_visit_email_result failure', code: '500' } };
             }
             const res = await client.query(
