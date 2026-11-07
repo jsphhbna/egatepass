@@ -434,7 +434,7 @@ runSuite('True PostgreSQL Concurrency, Canonical Approval Integrity & Email Reco
           values ('${staffActorId}', 'office_staff', 'Office Staff Member', now(), now())
           on conflict (user_id) do nothing;
 
-          insert into public.office_staff_assignments (staff_user_id, office_id)
+          insert into public.office_staff_assignments (user_id, office_id)
           values ('${staffActorId}', '${officeId}')
           on conflict do nothing;
 
