@@ -1552,7 +1552,7 @@ runSuite('True PostgreSQL Concurrency, Canonical Approval Integrity & Email Reco
         await client.query(`set request.jwt.claim.role = 'service_role';`);
         await client.query(`
           insert into public.offices (id, name, description, active)
-          values ('${officeId}', 'Registrar Office', 'REG70', true)
+          values ('${officeId}', 'Finding D State Office', 'REG70', true)
           on conflict (id) do nothing;
 
           insert into auth.users (id, email, email_confirmed_at)
@@ -1800,7 +1800,7 @@ runSuite('True PostgreSQL Concurrency, Canonical Approval Integrity & Email Reco
         await client.query(`set request.jwt.claim.role = 'service_role';`);
         await client.query(`
           insert into public.offices (id, name, description, active)
-          values ('${officeId}', 'Admissions Office', 'ADM70', true)
+          values ('${officeId}', 'Finding E Race Admissions Office', 'ADM70', true)
           on conflict (id) do nothing;
 
           insert into auth.users (id, email, email_confirmed_at)
@@ -1987,8 +1987,8 @@ runSuite('True PostgreSQL Concurrency, Canonical Approval Integrity & Email Reco
         await client.query(`
           insert into public.offices (id, name, description, active)
           values
-            ('${office1Id}', 'Office One RLS', 'O1RLS', true),
-            ('${office2Id}', 'Office Two RLS', 'O2RLS', true)
+            ('${office1Id}', 'Finding F Office One RLS', 'O1RLS', true),
+            ('${office2Id}', 'Finding F Office Two RLS', 'O2RLS', true)
           on conflict (id) do nothing;
 
           insert into auth.users (id, email, is_anonymous)
