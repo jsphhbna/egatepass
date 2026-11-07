@@ -9,6 +9,8 @@ import { encryptQrPayload, decryptQrPayload } from '../server/lib/encryption.js'
 import { setEmailSenderForTest, EmailDeliveryError } from '../server/email.js';
 import decideHandler from '../server/routes/office/decide.js';
 import visitsHandler from '../server/routes/office/visits.js';
+import retryEmailHandler from '../server/routes/office/retry-email.js';
+import { isPositiveRpcSuccess } from '../server/lib/officeDelivery.js';
 import * as officeLib from '../server/lib/office.js';
 import * as supabaseModule from '../server/supabase.js';
 
@@ -47,7 +49,14 @@ async function runConcurrent<T>(
   );
 }
 
-function createPostgresAdminClient(pool: pg.Pool, options?: { failRecordResult?: boolean }) {
+function createPostgresAdminClient(pool: pg.Pool, options?: {
+  failRecordResult?: boolean;
+  failFallbackResult?: boolean;
+  failBothRecords?: boolean;
+  returnMalformedRecord?: boolean;
+  returnNullRecord?: boolean;
+  failReconcileResult?: boolean;
+}) {
   const getAdminClient = async () => {
     const client = await pool.connect();
     await client.query(`set request.jwt.claim.role = 'service_role';`);
@@ -84,9 +93,38 @@ function createPostgresAdminClient(pool: pg.Pool, options?: { failRecordResult?:
             );
             return { data: res.rows, error: null };
           }
+          if (fnName === 'reconcile_office_visit_email') {
+            if (options?.failReconcileResult) {
+              return { data: null, error: { message: 'Injected reconcile failure', code: '500' } };
+            }
+            const res = await client.query(
+              `select * from api.reconcile_office_visit_email(
+                $1::uuid, $2::uuid, $3::text, $4::text
+              );`,
+              [
+                args.requested_actor_id,
+                args.requested_visit_id,
+                args.requested_action,
+                args.requested_note || null,
+              ]
+            );
+            return { data: res.rows, error: null };
+          }
           if (fnName === 'record_office_visit_email_result') {
+            if (options?.returnMalformedRecord) {
+              return { data: { ok: false, error: 'malformed_persistence' }, error: null };
+            }
+            if (options?.returnNullRecord) {
+              return { data: null, error: null };
+            }
+            if (options?.failBothRecords) {
+              return { data: null, error: { message: 'Injected total record failure', code: '500' } };
+            }
             if (options?.failRecordResult && args.requested_status === 'sent') {
               return { data: null, error: { message: 'Injected primary record_office_visit_email_result failure', code: '500' } };
+            }
+            if (options?.failFallbackResult && args.requested_status === 'reconciliation_required') {
+              return { data: null, error: { message: 'Injected fallback record_office_visit_email_result failure', code: '500' } };
             }
             const res = await client.query(
               `select * from api.record_office_visit_email_result(
@@ -118,10 +156,12 @@ function createPostgresAdminClient(pool: pg.Pool, options?: { failRecordResult?:
             try {
               if (table === 'office_visits') {
                 const res = await client.query(
-                  `select ov.*, o.name as office_name, op.name as personnel_name
+                  `select ov.*, o.name as office_name, op.name as personnel_name,
+                          p.id as pass_id, p.public_reference as pass_public_reference
                    from public.office_visits ov
                    join public.offices o on o.id = ov.office_id
                    left join public.office_personnel op on op.id = ov.personnel_id
+                   left join public.passes p on p.id = ov.pass_id
                    where ov.${col} = $1;`,
                   [val]
                 );
@@ -130,6 +170,7 @@ function createPostgresAdminClient(pool: pg.Pool, options?: { failRecordResult?:
                 return {
                   data: {
                     ...r,
+                    passes: r.pass_id ? { id: r.pass_id, public_reference: r.pass_public_reference } : null,
                     offices: { name: r.office_name },
                     office_personnel: r.personnel_name ? { name: r.personnel_name } : null,
                   },
@@ -784,39 +825,53 @@ runSuite('True PostgreSQL Concurrency, Canonical Approval Integrity & Email Reco
       // At least one returned 200 with approved; other may be 200 (idempotent repeat) or 409
       expect(body1.status === 'approved' || body2.status === 'approved').toBe(true);
 
-      // Provider mock was dispatched at most once!
-      expect(dispatchedEmails.length).toBeLessThanOrEqual(1);
+      // Provider mock was dispatched EXACTLY once (a zero-dispatch result must fail the test)
+      expect(dispatchedEmails.length).toBe(1);
 
-      if (dispatchedEmails.length === 1) {
-        const email = dispatchedEmails[0];
-        expect(email.to).toBe(visitorEmail);
-        expect(email.attachments).toBeDefined();
-        expect(email.attachments.length).toBe(1);
+      const email = dispatchedEmails[0];
+      expect(email.to).toBe(visitorEmail);
+      expect(email.attachments).toBeDefined();
+      expect(email.attachments.length).toBe(1);
 
-        const attachment = email.attachments[0];
-        expect(attachment.content_type).toBe('image/png');
+      const attachment = email.attachments[0];
+      expect(attachment.content_type).toBe('image/png');
 
-        // Decode the generated QR PNG buffer with pngjs + jsQR
-        const pngBuffer = Buffer.from(attachment.content, 'base64');
-        const png = PNG.sync.read(pngBuffer);
-        const decoded = jsQR(new Uint8ClampedArray(png.data), png.width, png.height);
+      // Decode the generated QR PNG buffer with pngjs + jsQR
+      const pngBuffer = Buffer.from(attachment.content, 'base64');
+      const png = PNG.sync.read(pngBuffer);
+      const decoded = jsQR(new Uint8ClampedArray(png.data), png.width, png.height);
 
-        expect(decoded).not.toBeNull();
-        expect(decoded!.data.startsWith('p_')).toBe(true);
+      expect(decoded).not.toBeNull();
+      expect(decoded!.data.startsWith('p_')).toBe(true);
+
+      const checkClient = await pool.connect();
+      try {
+        // Verify decoded QR matches canonical outbox decrypted token
+        const outboxRes = await checkClient.query(
+          `select encrypted_token_payload, delivery_status from public.office_visit_email_outbox where office_visit_id = $1;`,
+          [visitId]
+        );
+        expect(outboxRes.rows.length).toBe(1);
+        const canonicalQrToken = decryptQrPayload(outboxRes.rows[0].encrypted_token_payload);
+        expect(decoded!.data).toBe(canonicalQrToken);
 
         // Verify decoded QR equals token digest of the created pass in DB
-        const checkClient = await pool.connect();
-        try {
-          const passRes = await checkClient.query(
-            `select encode(token_digest, 'hex') as token_digest from public.passes where id = (select pass_id from public.office_visits where id = $1);`,
-            [visitId]
-          );
-          expect(passRes.rows.length).toBe(1);
-          const decodedDigest = createHash('sha256').update(decoded!.data).digest('hex');
-          expect(decodedDigest).toBe(passRes.rows[0].token_digest);
-        } finally {
-          checkClient.release();
-        }
+        const passRes = await checkClient.query(
+          `select encode(token_digest, 'hex') as token_digest from public.passes where id = (select pass_id from public.office_visits where id = $1);`,
+          [visitId]
+        );
+        expect(passRes.rows.length).toBe(1);
+        const decodedDigest = createHash('sha256').update(decoded!.data).digest('hex');
+        expect(decodedDigest).toBe(passRes.rows[0].token_digest);
+
+        // Verify that the second concurrent request did not generate a second pass
+        const countRes = await checkClient.query(
+          `select count(*) as pass_count from public.passes where id = (select pass_id from public.office_visits where id = $1);`,
+          [visitId]
+        );
+        expect(Number(countRes.rows[0].pass_count)).toBe(1);
+      } finally {
+        checkClient.release();
       }
     }, 30_000);
   });
@@ -1119,6 +1174,365 @@ runSuite('True PostgreSQL Concurrency, Canonical Approval Integrity & Email Reco
       } finally {
         rootClient.release();
       }
+    });
+
+    it('Finding A: Expired processing lease transitions to reconciliation_required, blocks automatic retry, permits staff retry, and webhook correlation via outbox_id backfills missing provider message ID', async () => {
+      const rootClient = await pool.connect();
+      try {
+        const visitId = '11112222-3333-4444-8888-999900001111';
+        const officeId = '00000000-0000-4000-8000-000000000001';
+        const visitorId = '22223333-4444-5555-8888-999900002222';
+        const staffActorId = '55555555-5555-4555-8555-555555555555';
+        const outboxId = '33334444-5555-6666-8888-999900003333';
+        const visitorEmail = 'expiredlease@earist.edu.ph';
+
+        await rootClient.query(`
+          insert into auth.users (id, email, is_anonymous) values ('${visitorId}', '${visitorEmail}', true) on conflict (id) do nothing;
+          insert into public.visitors (id, owner_id, full_name, contact_number, email, purpose, visit_date, source, consent_accepted_at)
+          values ('${visitorId}', '${visitorId}', 'Elena Rostova', '09171234567', '${visitorEmail}', 'Faculty Meeting', current_date, 'portal', now()) on conflict (id) do nothing;
+
+          insert into public.office_visits (
+            id, visit_type, office_id, visitor_id, visitor_actor_id, visitor_first_name, visitor_last_name,
+            visitor_contact_number, visitor_email, purpose, visit_date, approval_status, attendance_status, request_id, email_delivery_status
+          ) values (
+            '${visitId}', 'general', '${officeId}', '${visitorId}', '${visitorId}', 'Elena', 'Rostova',
+            '09171234567', '${visitorEmail}', 'Faculty Meeting', current_date, 'approved', 'awaiting_entry', gen_random_uuid(), 'processing'
+          ) on conflict (id) do nothing;
+
+          insert into public.office_visit_email_outbox (
+            id, office_visit_id, email_type, recipient_email, delivery_status, claim_id, lease_expires_at, retry_count, created_at, updated_at
+          ) values (
+            '${outboxId}', '${visitId}', 'approval', '${visitorEmail}', 'processing', gen_random_uuid(), now() - interval '1 second', 1, now(), now()
+          ) on conflict (id) do nothing;
+        `);
+
+        // 1. Attempt claim on expired processing lease
+        const claimRes = await rootClient.query(
+          `select * from api.claim_office_visit_email_for_delivery($1::uuid, 'approval'::text);`,
+          [visitId]
+        );
+        expect(claimRes.rows.length).toBe(1);
+        expect(claimRes.rows[0].claim_id).toBeNull(); // No claim granted!
+
+        // 2. Verify outbox and visit were transactionally updated to reconciliation_required
+        const outboxCheck = await rootClient.query(
+          `select delivery_status, claim_id, lease_expires_at from public.office_visit_email_outbox where id = $1;`,
+          [outboxId]
+        );
+        expect(outboxCheck.rows[0].delivery_status).toBe('reconciliation_required');
+        expect(outboxCheck.rows[0].claim_id).toBeNull();
+        expect(outboxCheck.rows[0].lease_expires_at).toBeNull();
+
+        // 3. Subsequent claim attempt is blocked
+        await expect(
+          rootClient.query(
+            `select * from api.claim_office_visit_email_for_delivery($1::uuid, 'approval'::text);`,
+            [visitId]
+          )
+        ).rejects.toThrow(/email_delivery_outcome_unknown_reconciliation_required/);
+
+        // 4. Staff reconciliation via permit_retry unlocks it
+        const recRes = await rootClient.query(
+          `select * from api.reconcile_office_visit_email($1::uuid, $2::uuid, 'permit_retry'::text, 'Permit retry after lease expiration'::text);`,
+          [staffActorId, visitId]
+        );
+        expect(recRes.rows[0].ok).toBe(true);
+        expect(recRes.rows[0].new_status).toBe('failed');
+
+        // 5. Subsequent claim now succeeds
+        const reclaimRes = await rootClient.query(
+          `select * from api.claim_office_visit_email_for_delivery($1::uuid, 'approval'::text);`,
+          [visitId]
+        );
+        expect(reclaimRes.rows.length).toBe(1);
+        expect(reclaimRes.rows[0].claim_id).not.toBeNull();
+
+        // 6. Webhook correlation via outbox_id when provider_message_id was not previously persisted
+        await rootClient.query(`
+          update public.office_visit_email_outbox
+          set delivery_status = 'reconciliation_required', provider_message_id = null, claim_id = null, lease_expires_at = null
+          where id = '${outboxId}';
+        `);
+
+        const webhookEmailId = 'msg_backfill_via_outbox_id_999';
+        const webhookEventId = `evt_${randomBytes(8).toString('hex')}`;
+
+        const hookRes = await rootClient.query(
+          `select api.record_resend_delivery_event(
+            $1::text, 'email.delivered'::text, $2::text, 'success'::text, 'e***@earist.edu.ph'::text, 'Approved'::text, now(), $3::uuid
+          );`,
+          [webhookEventId, webhookEmailId, outboxId]
+        );
+        expect(hookRes.rows[0].record_resend_delivery_event.ok).toBe(true);
+
+        // Verify that provider_message_id was backfilled and status updated to delivered
+        const backfilledOutbox = await rootClient.query(
+          `select delivery_status, provider_message_id, confirmation_source from public.office_visit_email_outbox where id = $1;`,
+          [outboxId]
+        );
+        expect(backfilledOutbox.rows[0].delivery_status).toBe('delivered');
+        expect(backfilledOutbox.rows[0].provider_message_id).toBe(webhookEmailId);
+        expect(backfilledOutbox.rows[0].confirmation_source).toBe('provider_webhook');
+      } finally {
+        rootClient.release();
+      }
+    });
+
+    it('Finding B: Approval manual retry route with primary DB failure persists reconciliation_required fallback', async () => {
+      const officeId = '00000000-0000-4000-8000-000000000001';
+      const staffActorId = '55555555-5555-4555-8555-555555555555';
+      const visitorId = '44445555-6666-7777-8888-999900004444';
+      const visitId = '55556666-7777-8888-9999-000011115555';
+      const outboxId = '66667777-8888-9999-0000-111122226666';
+      const passId = '77778888-9999-0000-1111-222233337777';
+      const visitorEmail = 'retry.approval@earist.edu.ph';
+
+      const rootClient = await pool.connect();
+      try {
+        const rawToken = `p_${randomBytes(32).toString('hex')}`;
+        const tokenDigest = createHash('sha256').update(rawToken).digest('hex');
+        const encryptedPayload = encryptQrPayload(rawToken);
+
+        await rootClient.query(`
+          insert into auth.users (id, email, is_anonymous) values ('${visitorId}', '${visitorEmail}', true) on conflict (id) do nothing;
+          insert into public.visitors (id, owner_id, full_name, contact_number, email, purpose, visit_date, source, consent_accepted_at)
+          values ('${visitorId}', '${visitorId}', 'Retry Visitor', '09171234567', '${visitorEmail}', 'Consultation', current_date, 'portal', now()) on conflict (id) do nothing;
+
+          insert into public.passes (id, visitor_id, pass_type, status, token_digest, public_reference, valid_from, valid_until)
+          values ('${passId}', '${visitorId}', 'office_visit', 'active', decode('${tokenDigest}', 'hex'), 'EARIST-TEST-REF', now(), now() + interval '8 hours') on conflict (id) do nothing;
+
+          insert into public.office_visits (
+            id, visit_type, office_id, visitor_id, visitor_actor_id, visitor_first_name, visitor_last_name,
+            visitor_contact_number, visitor_email, purpose, visit_date, approval_status, attendance_status, request_id, pass_id, email_delivery_status
+          ) values (
+            '${visitId}', 'general', '${officeId}', '${visitorId}', '${visitorId}', 'Retry', 'Visitor',
+            '09171234567', '${visitorEmail}', 'Consultation', current_date, 'approved', 'awaiting_entry', gen_random_uuid(), '${passId}', 'failed'
+          ) on conflict (id) do nothing;
+
+          insert into public.office_visit_email_outbox (
+            id, office_visit_id, email_type, recipient_email, encrypted_token_payload, delivery_status, retry_count, created_at, updated_at
+          ) values (
+            '${outboxId}', '${visitId}', 'approval', '${visitorEmail}', '${encryptedPayload}', 'failed', 1, now(), now()
+          ) on conflict (id) do nothing;
+        `);
+      } finally {
+        rootClient.release();
+      }
+
+      const mockProviderMsgId = 'msg_retry_approval_fallback_123';
+      setEmailSenderForTest(async () => ({
+        id: mockProviderMsgId,
+        provider: 'mock',
+      }));
+
+      vi.spyOn(officeLib, 'requireOfficeStaffActor').mockResolvedValue({
+        id: staffActorId,
+        email: 'staff@earist.edu.ph',
+        role: 'office_staff',
+        assignedOfficeIds: [officeId],
+      });
+      vi.spyOn(supabaseModule, 'getServerSupabaseClients').mockReturnValue({
+        admin: createPostgresAdminClient(pool, { failRecordResult: true }) as any,
+        anon: {} as any,
+      });
+
+      const req = new Request('http://localhost/api/passes/office/retry-email', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: 'Bearer mock-staff-bearer-token',
+        },
+        body: JSON.stringify({ visitId, action: 'retry' }),
+      });
+
+      const res = await retryEmailHandler.fetch(req);
+      expect(res.status).toBe(200);
+      const body = await res.json();
+      expect(body.ok).toBe(true);
+      expect(body.status).toBe('sent');
+      expect(body.providerMessageId).toBe(mockProviderMsgId);
+      expect(body.reconciliationRequired).toBe(true);
+
+      // Verify that database outbox was fallen back to reconciliation_required
+      const checkClient = await pool.connect();
+      try {
+        const outboxRes = await checkClient.query(
+          `select delivery_status, provider_message_id from public.office_visit_email_outbox where id = $1;`,
+          [outboxId]
+        );
+        expect(outboxRes.rows[0].delivery_status).toBe('reconciliation_required');
+        expect(outboxRes.rows[0].provider_message_id).toBe(mockProviderMsgId);
+      } finally {
+        checkClient.release();
+      }
+    });
+
+    it('Finding B: Rejection manual retry route with primary DB failure persists reconciliation_required fallback', async () => {
+      const officeId = '00000000-0000-4000-8000-000000000001';
+      const staffActorId = '55555555-5555-4555-8555-555555555555';
+      const visitorId = '88889999-0000-1111-2222-333344445555';
+      const visitId = '99990000-1111-2222-3333-444455556666';
+      const outboxId = '00001111-2222-3333-4444-555566667777';
+      const visitorEmail = 'retry.rejection@earist.edu.ph';
+
+      const rootClient = await pool.connect();
+      try {
+        await rootClient.query(`
+          insert into auth.users (id, email, is_anonymous) values ('${visitorId}', '${visitorEmail}', true) on conflict (id) do nothing;
+          insert into public.visitors (id, owner_id, full_name, contact_number, email, purpose, visit_date, source, consent_accepted_at)
+          values ('${visitorId}', '${visitorId}', 'Rejected Visitor', '09171234567', '${visitorEmail}', 'Interview', current_date, 'portal', now()) on conflict (id) do nothing;
+
+          insert into public.office_visits (
+            id, visit_type, office_id, visitor_id, visitor_actor_id, visitor_first_name, visitor_last_name,
+            visitor_contact_number, visitor_email, purpose, visit_date, approval_status, attendance_status, request_id, rejection_reason, email_delivery_status
+          ) values (
+            '${visitId}', 'general', '${officeId}', '${visitorId}', '${visitorId}', 'Rejected', 'Visitor',
+            '09171234567', '${visitorEmail}', 'Interview', current_date, 'rejected', 'awaiting_entry', gen_random_uuid(), 'Room occupied', 'failed'
+          ) on conflict (id) do nothing;
+
+          insert into public.office_visit_email_outbox (
+            id, office_visit_id, email_type, recipient_email, rejection_reason, delivery_status, retry_count, created_at, updated_at
+          ) values (
+            '${outboxId}', '${visitId}', 'rejection', '${visitorEmail}', 'Room occupied', 'failed', 1, now(), now()
+          ) on conflict (id) do nothing;
+        `);
+      } finally {
+        rootClient.release();
+      }
+
+      const mockProviderMsgId = 'msg_retry_rejection_fallback_456';
+      setEmailSenderForTest(async () => ({
+        id: mockProviderMsgId,
+        provider: 'mock',
+      }));
+
+      vi.spyOn(officeLib, 'requireOfficeStaffActor').mockResolvedValue({
+        id: staffActorId,
+        email: 'staff@earist.edu.ph',
+        role: 'office_staff',
+        assignedOfficeIds: [officeId],
+      });
+      vi.spyOn(supabaseModule, 'getServerSupabaseClients').mockReturnValue({
+        admin: createPostgresAdminClient(pool, { failRecordResult: true }) as any,
+        anon: {} as any,
+      });
+
+      const req = new Request('http://localhost/api/passes/office/retry-email', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: 'Bearer mock-staff-bearer-token',
+        },
+        body: JSON.stringify({ visitId, action: 'retry' }),
+      });
+
+      const res = await retryEmailHandler.fetch(req);
+      expect(res.status).toBe(200);
+      const body = await res.json();
+      expect(body.ok).toBe(true);
+      expect(body.status).toBe('sent');
+      expect(body.reconciliationRequired).toBe(true);
+
+      const checkClient = await pool.connect();
+      try {
+        const outboxRes = await checkClient.query(
+          `select delivery_status, provider_message_id from public.office_visit_email_outbox where id = $1;`,
+          [outboxId]
+        );
+        expect(outboxRes.rows[0].delivery_status).toBe('reconciliation_required');
+        expect(outboxRes.rows[0].provider_message_id).toBe(mockProviderMsgId);
+      } finally {
+        checkClient.release();
+      }
+    });
+
+    it('Finding B: Both primary and fallback writes fail preserves provider acceptance, dispatches only once, and blocks subsequent claim', async () => {
+      const officeId = '00000000-0000-4000-8000-000000000001';
+      const staffActorId = '55555555-5555-4555-8555-555555555555';
+      const visitorId = 'aaaa1111-2222-3333-4444-555566667777';
+      const visitId = 'bbbb2222-3333-4444-5555-666677778888';
+      const outboxId = 'cccc3333-4444-5555-6666-777788889999';
+      const visitorEmail = 'bothfail@earist.edu.ph';
+
+      const rootClient = await pool.connect();
+      try {
+        await rootClient.query(`
+          insert into auth.users (id, email, is_anonymous) values ('${visitorId}', '${visitorEmail}', true) on conflict (id) do nothing;
+          insert into public.visitors (id, owner_id, full_name, contact_number, email, purpose, visit_date, source, consent_accepted_at)
+          values ('${visitorId}', '${visitorId}', 'Both Fail', '09171234567', '${visitorEmail}', 'Inquiry', current_date, 'portal', now()) on conflict (id) do nothing;
+
+          insert into public.office_visits (
+            id, visit_type, office_id, visitor_id, visitor_actor_id, visitor_first_name, visitor_last_name,
+            visitor_contact_number, visitor_email, purpose, visit_date, approval_status, attendance_status, request_id, rejection_reason, email_delivery_status
+          ) values (
+            '${visitId}', 'general', '${officeId}', '${visitorId}', '${visitorId}', 'Both', 'Fail',
+            '09171234567', '${visitorEmail}', 'Inquiry', current_date, 'rejected', 'awaiting_entry', gen_random_uuid(), 'Closed', 'failed'
+          ) on conflict (id) do nothing;
+
+          insert into public.office_visit_email_outbox (
+            id, office_visit_id, email_type, recipient_email, rejection_reason, delivery_status, retry_count, created_at, updated_at
+          ) values (
+            '${outboxId}', '${visitId}', 'rejection', '${visitorEmail}', 'Closed', 'failed', 1, now(), now()
+          ) on conflict (id) do nothing;
+        `);
+      } finally {
+        rootClient.release();
+      }
+
+      let dispatchCount = 0;
+      const mockProviderMsgId = 'msg_both_write_failure_789';
+      setEmailSenderForTest(async () => {
+        dispatchCount++;
+        return {
+          id: mockProviderMsgId,
+          provider: 'mock',
+        };
+      });
+
+      vi.spyOn(officeLib, 'requireOfficeStaffActor').mockResolvedValue({
+        id: staffActorId,
+        email: 'staff@earist.edu.ph',
+        role: 'office_staff',
+        assignedOfficeIds: [officeId],
+      });
+      vi.spyOn(supabaseModule, 'getServerSupabaseClients').mockReturnValue({
+        admin: createPostgresAdminClient(pool, { failBothRecords: true }) as any,
+        anon: {} as any,
+      });
+
+      const req = new Request('http://localhost/api/passes/office/retry-email', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: 'Bearer mock-staff-bearer-token',
+        },
+        body: JSON.stringify({ visitId, action: 'retry' }),
+      });
+
+      const res = await retryEmailHandler.fetch(req);
+      expect(res.status).toBe(200);
+      const body = await res.json();
+
+      // Provider accepted message: outcome preserved in response
+      expect(body.ok).toBe(true);
+      expect(body.status).toBe('sent');
+      expect(body.providerMessageId).toBe(mockProviderMsgId);
+      expect(body.reconciliationRequired).toBe(true);
+
+      // Exactly 1 provider dispatch occurred
+      expect(dispatchCount).toBe(1);
+    });
+
+    it('Finding C: Strict positive confirmation of RPC persistence rejects absent, malformed, and failed results', () => {
+      // Direct unit contract validation of positive confirmation
+      expect(isPositiveRpcSuccess({ ok: true }, null)).toBe(true);
+      expect(isPositiveRpcSuccess({ ok: false }, null)).toBe(false);
+      expect(isPositiveRpcSuccess(null, null)).toBe(false);
+      expect(isPositiveRpcSuccess(undefined, null)).toBe(false);
+      expect(isPositiveRpcSuccess({}, null)).toBe(false);
+      expect(isPositiveRpcSuccess({ ok: true }, { message: 'Database connection failed', code: '500' })).toBe(false);
+      expect(isPositiveRpcSuccess({ ok: 'true' }, null)).toBe(false); // Non-boolean ok is rejected
+      expect(isPositiveRpcSuccess('ok', null)).toBe(false);
     });
   });
 });

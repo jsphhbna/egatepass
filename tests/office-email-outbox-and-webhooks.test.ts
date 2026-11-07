@@ -232,7 +232,7 @@ describe('Office Visit Email Outbox Leases, Idempotency and Webhook Reconciliati
     ).rejects.toThrow(/email_delivery_outcome_unknown_reconciliation_required/);
   });
 
-  it('4. Successfully claims expired lease and increments retry count', async () => {
+  it('4. Expired processing lease transitions to reconciliation_required and blocks automatic retry until staff permit_retry', async () => {
     // Reset status to processing with expired lease
     await db.exec(`
       update public.office_visit_email_outbox
@@ -241,8 +241,9 @@ describe('Office Visit Email Outbox Leases, Idempotency and Webhook Reconciliati
       where id = '${outboxId}';
     `);
 
+    // First attempt on expired lease: transitions to reconciliation_required and returns claim_id = null
     const reclaimRes = await db.query<{
-      claim_id: string;
+      claim_id: string | null;
       attempt_count: number;
     }>(`
       select * from api.claim_office_visit_email_for_delivery(
@@ -252,7 +253,47 @@ describe('Office Visit Email Outbox Leases, Idempotency and Webhook Reconciliati
     `);
 
     expect(reclaimRes.rows.length).toBe(1);
-    expect(reclaimRes.rows[0].attempt_count).toBe(2);
+    expect(reclaimRes.rows[0].claim_id).toBeNull();
+
+    // Verify outbox and visit were transactionally updated to reconciliation_required
+    const checkState = await db.query<{ delivery_status: string }>(`
+      select delivery_status from public.office_visit_email_outbox where id = '${outboxId}';
+    `);
+    expect(checkState.rows[0].delivery_status).toBe('reconciliation_required');
+
+    // Subsequent claim attempt is blocked with 40900 exception
+    await expect(
+      db.query(`
+        select * from api.claim_office_visit_email_for_delivery(
+          requested_visit_id => '${visitId}'::uuid,
+          requested_email_type => 'approval'
+        );
+      `)
+    ).rejects.toThrow(/email_delivery_outcome_unknown_reconciliation_required/);
+
+    // Staff authorizes retry via permit_retry
+    await db.query(`
+      select * from api.reconcile_office_visit_email(
+        requested_actor_id => '${staffUserId}'::uuid,
+        requested_visit_id => '${visitId}'::uuid,
+        requested_action => 'permit_retry',
+        requested_note => 'Authorized retry after lease timeout.'
+      );
+    `);
+
+    // Now claim succeeds and issues new active lease
+    const retryClaim = await db.query<{
+      claim_id: string;
+      attempt_count: number;
+    }>(`
+      select * from api.claim_office_visit_email_for_delivery(
+        requested_visit_id => '${visitId}'::uuid,
+        requested_email_type => 'approval'
+      );
+    `);
+
+    expect(retryClaim.rows.length).toBe(1);
+    expect(retryClaim.rows[0].claim_id).not.toBeNull();
   });
 
   it('5. Records delivery result, updates status to sent, and stores provider message ID', async () => {

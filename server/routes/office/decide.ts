@@ -5,8 +5,9 @@ import { encryptQrPayload, decryptQrPayload } from '../../lib/encryption.js';
 import { jsonResponse, readBearerToken } from '../../http.js';
 import { getServerSupabaseClients } from '../../supabase.js';
 import { HttpError } from '../../actors.js';
-import { sendResendEmail, generateQrPngBuffer, EmailDeliveryError } from '../../email.js';
+import { generateQrPngBuffer } from '../../email.js';
 import { renderOfficeVisitApprovedEmail, renderOfficeVisitRejectedEmail } from '../../templates/index.js';
+import { deliverOfficeEmail, type OutboxDeliveryResult } from '../../lib/officeDelivery.js';
 
 const schema = z.object({
   visitId: z.string().uuid(),
@@ -23,278 +24,6 @@ const schema = z.object({
     }
   }
 });
-
-interface OutboxDeliveryResult {
-  status: 'sent' | 'failed' | 'unknown' | 'none' | 'pending' | 'reconciliation_required';
-  providerMessageId: string | null;
-  error: string | null;
-  reconciliationRequired?: boolean;
-}
-
-async function deliverOfficeEmail(
-  admin: any,
-  params: {
-    visitId: string;
-    visitorEmail: string | null;
-    emailType: 'approval' | 'rejection';
-    defaultIdempotencyKey: string;
-    prepareContent: (claim: {
-      outbox_id: string;
-      claim_id: string;
-      encrypted_token_payload?: string | null;
-      idempotency_key?: string | null;
-    }) => Promise<{
-      subject: string;
-      html: string;
-      attachments?: Array<{ filename: string; content: string; content_type: string }>;
-    }>;
-  }
-): Promise<OutboxDeliveryResult> {
-  if (!params.visitorEmail) {
-    return { status: 'none', providerMessageId: null, error: null };
-  }
-
-  // 1. Claim outbox row for delivery
-  let claim: any = null;
-  try {
-    const { data: claimRows, error: claimErr } = await admin
-      .schema('api')
-      .rpc('claim_office_visit_email_for_delivery', {
-        requested_visit_id: params.visitId,
-        requested_email_type: params.emailType,
-      });
-
-    if (claimErr) {
-      console.error(JSON.stringify({
-        event: 'office_email_claim_error',
-        visitId: params.visitId,
-        emailType: params.emailType,
-        error: claimErr.message,
-        code: claimErr.code,
-      }));
-      return {
-        status: 'failed',
-        providerMessageId: null,
-        error: claimErr.message,
-      };
-    }
-
-    claim = Array.isArray(claimRows) ? claimRows[0] : claimRows;
-  } catch (err: any) {
-    console.error(JSON.stringify({
-      event: 'office_email_claim_exception',
-      visitId: params.visitId,
-      emailType: params.emailType,
-      error: err?.message || 'claim_exception',
-    }));
-    return {
-      status: 'failed',
-      providerMessageId: null,
-      error: err?.message || 'claim_exception',
-    };
-  }
-
-  if (!claim?.outbox_id) {
-    return { status: 'pending', providerMessageId: null, error: null };
-  }
-
-  // 2. Prepare content
-  let content: {
-    subject: string;
-    html: string;
-    attachments?: Array<{ filename: string; content: string; content_type: string }>;
-  };
-  try {
-    content = await params.prepareContent(claim);
-  } catch (prepErr: any) {
-    const errMsg = prepErr?.message || 'failed_to_prepare_email_content';
-    console.error(JSON.stringify({
-      event: 'office_email_prepare_content_failed',
-      visitId: params.visitId,
-      emailType: params.emailType,
-      error: errMsg,
-    }));
-    await admin.schema('api').rpc('record_office_visit_email_result', {
-      requested_outbox_id: claim.outbox_id,
-      requested_claim_id: claim.claim_id,
-      requested_status: 'failed',
-      requested_provider_message_id: null,
-      requested_error: errMsg,
-    });
-    return {
-      status: 'failed',
-      providerMessageId: null,
-      error: errMsg,
-    };
-  }
-
-  // 3. Dispatch via Resend
-  let sendResult: { id?: string } | null = null;
-  let providerAccepted = false;
-  let dispatchErr: any = null;
-
-  try {
-    sendResult = await sendResendEmail({
-      to: params.visitorEmail,
-      subject: content.subject,
-      html: content.html,
-      idempotencyKey: claim.idempotency_key || params.defaultIdempotencyKey,
-      correlationId: claim.outbox_id,
-      attachments: content.attachments,
-    });
-    if (sendResult?.id) {
-      providerAccepted = true;
-    }
-  } catch (err: any) {
-    dispatchErr = err;
-  }
-
-  // 4. Provider accepted: persist outcome with primary write and bounded fallback
-  if (providerAccepted) {
-    const providerMessageId = sendResult?.id || null;
-    let primarySuccess = false;
-
-    try {
-      const { data: recData, error: recErr } = await admin
-        .schema('api')
-        .rpc('record_office_visit_email_result', {
-          requested_outbox_id: claim.outbox_id,
-          requested_claim_id: claim.claim_id,
-          requested_status: 'sent',
-          requested_provider_message_id: providerMessageId,
-          requested_error: null,
-        });
-
-      if (!recErr && recData?.ok !== false) {
-        primarySuccess = true;
-      } else {
-        console.warn(JSON.stringify({
-          event: 'office_email_primary_record_rpc_failed',
-          visitId: params.visitId,
-          outboxId: claim.outbox_id,
-          error: recErr?.message || recData?.error,
-        }));
-      }
-    } catch (rpcEx: any) {
-      console.warn(JSON.stringify({
-        event: 'office_email_primary_record_rpc_exception',
-        visitId: params.visitId,
-        outboxId: claim.outbox_id,
-        error: rpcEx?.message || 'rpc_exception',
-      }));
-    }
-
-    if (primarySuccess) {
-      return {
-        status: 'sent',
-        providerMessageId,
-        error: null,
-      };
-    }
-
-    // Primary record failed after Resend accepted: perform bounded fallback write
-    let fallbackSuccess = false;
-    try {
-      const { data: fbData, error: fbErr } = await admin
-        .schema('api')
-        .rpc('record_office_visit_email_result', {
-          requested_outbox_id: claim.outbox_id,
-          requested_claim_id: claim.claim_id,
-          requested_status: 'reconciliation_required',
-          requested_provider_message_id: providerMessageId,
-          requested_error: 'reconciliation_required: primary_record_failed',
-        });
-
-      if (!fbErr && fbData?.ok !== false) {
-        fallbackSuccess = true;
-      } else {
-        console.error(JSON.stringify({
-          event: 'office_email_fallback_record_rpc_failed',
-          visitId: params.visitId,
-          outboxId: claim.outbox_id,
-          error: fbErr?.message || fbData?.error,
-        }));
-      }
-    } catch (fbEx: any) {
-      console.error(JSON.stringify({
-        event: 'office_email_fallback_record_rpc_exception',
-        visitId: params.visitId,
-        outboxId: claim.outbox_id,
-        error: fbEx?.message || 'fallback_exception',
-      }));
-    }
-
-    // Structured non-PII diagnostic log
-    console.error(JSON.stringify({
-      event: 'resend_email_accepted_db_persistence_failed',
-      visitId: params.visitId,
-      outboxId: claim.outbox_id,
-      emailType: params.emailType,
-      providerMessageId,
-      fallbackPersisted: fallbackSuccess,
-    }));
-
-    // Preserve provider-accepted outcome in response
-    return {
-      status: 'sent',
-      providerMessageId,
-      error: fallbackSuccess
-        ? 'persistence_degraded_reconciliation_required'
-        : 'persistence_failed_awaiting_webhook_reconciliation',
-      reconciliationRequired: true,
-    };
-  }
-
-  // 5. Send threw error: record failure/unknown without overwriting any successful send
-  const outcome = (dispatchErr instanceof EmailDeliveryError && dispatchErr.outcome === 'unknown')
-    ? 'unknown'
-    : 'failed';
-  const errMsg = dispatchErr instanceof Error ? dispatchErr.message : 'email_dispatch_failed';
-
-  console.error(JSON.stringify({
-    event: 'office_email_dispatch_failed',
-    visitId: params.visitId,
-    emailType: params.emailType,
-    outcome,
-    error: errMsg,
-  }));
-
-  const { data: outboxRows, error: outboxReadErr } = await admin
-    .from('office_visit_email_outbox')
-    .select('id, claim_id')
-    .eq('office_visit_id', params.visitId)
-    .eq('email_type', params.emailType)
-    .maybeSingle();
-
-  if (outboxReadErr) {
-    console.error(JSON.stringify({
-      event: 'office_email_outbox_lookup_failed_on_error',
-      visitId: params.visitId,
-      error: outboxReadErr.message,
-    }));
-  } else if (outboxRows?.id) {
-    const { error: recordErr } = await admin.schema('api').rpc('record_office_visit_email_result', {
-      requested_outbox_id: outboxRows.id,
-      requested_claim_id: outboxRows.claim_id || claim.claim_id || null,
-      requested_status: outcome,
-      requested_provider_message_id: null,
-      requested_error: errMsg,
-    });
-    if (recordErr) {
-      console.error(JSON.stringify({
-        event: 'office_email_record_failure_rpc_failed',
-        visitId: params.visitId,
-        error: recordErr.message,
-      }));
-    }
-  }
-
-  return {
-    status: outcome,
-    providerMessageId: null,
-    error: errMsg,
-  };
-}
 
 export async function handleRequest(request: Request): Promise<Response> {
   if (request.method !== 'POST') {
@@ -354,7 +83,7 @@ export async function handleRequest(request: Request): Promise<Response> {
       const reason = parsed.data.rejectionReason || 'Schedule conflict or personnel unavailable.';
       const rejectionIdempotencyKey = `office-rejection-${visit.id}`;
 
-      const { error: rpcErr } = await admin.schema('api').rpc('decide_office_visit', {
+      const { data: rejRpcRows, error: rpcErr } = await admin.schema('api').rpc('decide_office_visit', {
         requested_actor_id: actor.id,
         requested_visit_id: visit.id,
         requested_decision: 'rejected',
@@ -369,6 +98,14 @@ export async function handleRequest(request: Request): Promise<Response> {
           return jsonResponse(409, { error: 'visit_already_decided' });
         }
         throw rpcErr;
+      }
+
+      const rejDecisionResult = Array.isArray(rejRpcRows) ? rejRpcRows[0] : rejRpcRows;
+      if (!rejDecisionResult || typeof rejDecisionResult !== 'object' || rejDecisionResult.ok !== true) {
+        return jsonResponse(422, {
+          error: rejDecisionResult?.message || 'decision_rejected',
+          decision: rejDecisionResult?.decision || 'rejected',
+        });
       }
 
       const emailDelivery = await deliverOfficeEmail(admin, {
@@ -425,10 +162,10 @@ export async function handleRequest(request: Request): Promise<Response> {
     }
 
     const decisionResult = Array.isArray(rpcRows) ? rpcRows[0] : rpcRows;
-    if (decisionResult && decisionResult.ok === false) {
+    if (!decisionResult || typeof decisionResult !== 'object' || decisionResult.ok !== true) {
       return jsonResponse(422, {
-        error: decisionResult.message || 'decision_rejected',
-        decision: decisionResult.decision,
+        error: decisionResult?.message || 'decision_rejected',
+        decision: decisionResult?.decision || 'rejected',
       });
     }
 

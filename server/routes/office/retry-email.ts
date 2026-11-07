@@ -4,8 +4,9 @@ import { decryptQrPayload } from '../../lib/encryption.js';
 import { jsonResponse, readBearerToken } from '../../http.js';
 import { getServerSupabaseClients } from '../../supabase.js';
 import { HttpError } from '../../actors.js';
-import { sendResendEmail, generateQrPngBuffer, EmailDeliveryError } from '../../email.js';
+import { generateQrPngBuffer } from '../../email.js';
 import { renderOfficeVisitApprovedEmail, renderOfficeVisitRejectedEmail } from '../../templates/index.js';
+import { deliverOfficeEmail, isPositiveRpcSuccess } from '../../lib/officeDelivery.js';
 
 const schema = z.object({
   visitId: z.string().uuid(),
@@ -85,6 +86,13 @@ export async function handleRequest(request: Request): Promise<Response> {
       }
 
       const recResult = Array.isArray(recRows) ? recRows[0] : recRows;
+      if (!isPositiveRpcSuccess(recResult, recErr)) {
+        return jsonResponse(500, {
+          error: 'reconciliation_persistence_unconfirmed',
+          message: 'The database did not positively confirm reconciliation persistence.',
+        });
+      }
+
       return jsonResponse(200, {
         ok: true,
         action: parsed.data.action,
@@ -95,165 +103,134 @@ export async function handleRequest(request: Request): Promise<Response> {
       });
     }
 
-    const emailType = visit.approval_status === 'approved' ? 'approval' : 'rejection';
-
-    // 3. Atomically claim outbox record for delivery
-    const { data: claimRows, error: claimErr } = await admin.schema('api').rpc('claim_office_visit_email_for_delivery', {
-      requested_visit_id: visit.id,
-      requested_email_type: emailType,
-    });
-
-    if (claimErr) {
-      if (claimErr.code === '40900' || claimErr.message?.includes('in_progress_or_sent')) {
-        return jsonResponse(409, {
-          error: 'email_already_sent_or_in_progress',
-          message: 'An email is currently being processed or has already been delivered.',
-        });
-      }
-      if (claimErr.message?.includes('outcome_unknown')) {
-        return jsonResponse(409, {
-          error: 'email_delivery_outcome_unknown',
-          message: 'The outcome of the previous delivery attempt is uncertain. Automatic retry is suspended until verified via webhook or manual reconciliation.',
-        });
-      }
-      throw claimErr;
+    if (!visit.visitor_email) {
+      return jsonResponse(400, {
+        error: 'missing_visitor_email',
+        message: 'No email address on file for this visitor.',
+      });
     }
 
-    const outboxRecord = Array.isArray(claimRows) ? claimRows[0] : claimRows;
-    if (!outboxRecord?.outbox_id) {
+    const emailType = visit.approval_status === 'approved' ? 'approval' : 'rejection';
+    const visitorName = visit.visitor_display_name || `${visit.visitor_first_name || ''} ${visit.visitor_last_name || ''}`.trim();
+    const officeName = (visit.offices as any)?.name || 'EARIST Office';
+    const personnelName = (visit.office_personnel as any)?.name || 'Faculty / Staff';
+    const formattedVisitDate = visit.visit_date instanceof Date
+      ? visit.visit_date.toISOString().slice(0, 10)
+      : String(visit.visit_date || '');
+
+    const defaultIdempotencyKey = `office-${emailType}-${visit.id}`;
+
+    // 3. Atomically deliver via shared deliverOfficeEmail helper
+    const deliveryResult = await deliverOfficeEmail(admin, {
+      visitId: visit.id,
+      visitorEmail: visit.visitor_email,
+      emailType,
+      defaultIdempotencyKey,
+      prepareContent: async (claim) => {
+        if (emailType === 'approval') {
+          if (!claim.encrypted_token_payload) {
+            throw new Error('missing_encrypted_token_payload');
+          }
+
+          // Decrypt the exact canonical QR token stored in outbox
+          const rawQrToken = decryptQrPayload(claim.encrypted_token_payload);
+          const publicRef = (visit.passes as any)?.public_reference || '';
+
+          const qrBuffer = await generateQrPngBuffer(rawQrToken);
+          const attachmentFilename = `egatepass-${publicRef ? publicRef.slice(0, 8) : 'visit'}.png`;
+
+          const html = await renderOfficeVisitApprovedEmail({
+            fullName: visitorName,
+            officeName,
+            personnelName,
+            visitDate: formattedVisitDate,
+            purpose: visit.purpose,
+            publicReference: publicRef,
+            attachmentFilename,
+          });
+
+          return {
+            subject: `Approved: EARIST E-GatePass for ${officeName}`,
+            html,
+            attachments: [
+              {
+                filename: attachmentFilename,
+                content: qrBuffer.toString('base64'),
+                content_type: 'image/png',
+              },
+            ],
+          };
+        } else {
+          // Rejection notice email
+          const html = await renderOfficeVisitRejectedEmail({
+            fullName: visitorName,
+            officeName,
+            personnelName,
+            visitDate: formattedVisitDate,
+            rejectionReason: claim.rejection_reason || 'Schedule conflict or personnel unavailable.',
+          });
+
+          return {
+            subject: `Update on your visit request to ${officeName}`,
+            html,
+          };
+        }
+      },
+    });
+
+    if (deliveryResult.status === 'none' || deliveryResult.status === 'pending') {
       return jsonResponse(404, {
         error: 'outbox_record_not_found',
         message: 'No email delivery record exists for this visit.',
       });
     }
 
-    const visitorName = visit.visitor_display_name || `${visit.visitor_first_name || ''} ${visit.visitor_last_name || ''}`.trim();
-    const officeName = (visit.offices as any)?.name || 'EARIST Office';
-    const personnelName = (visit.office_personnel as any)?.name || 'Faculty / Staff';
-
-    // 4. Execute safe delivery based on decision type
-    if (emailType === 'approval') {
-      if (!outboxRecord.encrypted_token_payload) {
-        throw new Error('missing_encrypted_token_payload');
-      }
-
-      // Decrypt the exact canonical QR token stored in outbox
-      const rawQrToken = decryptQrPayload(outboxRecord.encrypted_token_payload);
-      const publicRef = (visit.passes as any)?.public_reference || '';
-
-      const qrBuffer = await generateQrPngBuffer(rawQrToken);
-      const attachmentFilename = `egatepass-${publicRef ? publicRef.slice(0, 8) : 'visit'}.png`;
-
-      const html = await renderOfficeVisitApprovedEmail({
-        fullName: visitorName,
-        officeName,
-        personnelName,
-        visitDate: visit.visit_date,
-        purpose: visit.purpose,
-        publicReference: publicRef,
-        attachmentFilename,
+    if (
+      deliveryResult.error?.includes('email_lease_active_in_progress') ||
+      deliveryResult.error?.includes('email_already_sent_or_delivered') ||
+      deliveryResult.error?.includes('in_progress_or_sent')
+    ) {
+      return jsonResponse(409, {
+        error: 'email_already_sent_or_in_progress',
+        message: 'An email is currently being processed or has already been delivered.',
       });
-
-      try {
-        const sendResult = await sendResendEmail({
-          to: outboxRecord.recipient_email,
-          subject: `Approved: EARIST E-GatePass for ${officeName}`,
-          html,
-          idempotencyKey: outboxRecord.idempotency_key || `office-approval-${visit.id}`,
-          correlationId: outboxRecord.outbox_id,
-          attachments: [
-            {
-              filename: attachmentFilename,
-              content: qrBuffer.toString('base64'),
-              content_type: 'image/png',
-            },
-          ],
-        });
-
-        await admin.schema('api').rpc('record_office_visit_email_result', {
-          requested_outbox_id: outboxRecord.outbox_id,
-          requested_claim_id: outboxRecord.claim_id,
-          requested_status: 'sent',
-          requested_provider_message_id: sendResult?.id || null,
-          requested_error: null,
-        });
-
-        return jsonResponse(200, {
-          ok: true,
-          status: 'sent',
-          message: 'Approval email with QR pass resent successfully.',
-        });
-      } catch (sendErr) {
-        const outcome = (sendErr instanceof EmailDeliveryError && sendErr.outcome === 'unknown')
-          ? 'unknown'
-          : 'failed';
-        const errMsg = sendErr instanceof Error ? sendErr.message : 'email_dispatch_failed';
-
-        await admin.schema('api').rpc('record_office_visit_email_result', {
-          requested_outbox_id: outboxRecord.outbox_id,
-          requested_claim_id: outboxRecord.claim_id,
-          requested_status: outcome,
-          requested_provider_message_id: null,
-          requested_error: errMsg,
-        });
-
-        return jsonResponse(502, {
-          error: 'email_dispatch_failed',
-          message: `Resend failed to deliver email: ${errMsg}`,
-        });
-      }
-    } else {
-      // Rejection email
-      const html = await renderOfficeVisitRejectedEmail({
-        fullName: visitorName,
-        officeName,
-        personnelName,
-        visitDate: visit.visit_date,
-        rejectionReason: outboxRecord.rejection_reason || 'Schedule conflict or personnel unavailable.',
-      });
-
-      try {
-        const sendResult = await sendResendEmail({
-          to: outboxRecord.recipient_email,
-          subject: `Update on your visit request to ${officeName}`,
-          html,
-          idempotencyKey: outboxRecord.idempotency_key || `office-rejection-${visit.id}`,
-          correlationId: outboxRecord.outbox_id,
-        });
-
-        await admin.schema('api').rpc('record_office_visit_email_result', {
-          requested_outbox_id: outboxRecord.outbox_id,
-          requested_claim_id: outboxRecord.claim_id,
-          requested_status: 'sent',
-          requested_provider_message_id: sendResult?.id || null,
-          requested_error: null,
-        });
-
-        return jsonResponse(200, {
-          ok: true,
-          status: 'sent',
-          message: 'Rejection notice email resent successfully.',
-        });
-      } catch (sendErr) {
-        const outcome = (sendErr instanceof EmailDeliveryError && sendErr.outcome === 'unknown')
-          ? 'unknown'
-          : 'failed';
-        const errMsg = sendErr instanceof Error ? sendErr.message : 'email_dispatch_failed';
-
-        await admin.schema('api').rpc('record_office_visit_email_result', {
-          requested_outbox_id: outboxRecord.outbox_id,
-          requested_claim_id: outboxRecord.claim_id,
-          requested_status: outcome,
-          requested_provider_message_id: null,
-          requested_error: errMsg,
-        });
-
-        return jsonResponse(502, {
-          error: 'email_dispatch_failed',
-          message: `Resend failed to deliver email: ${errMsg}`,
-        });
-      }
     }
+
+    if (deliveryResult.reconciliationRequired) {
+      if (deliveryResult.status === 'sent') {
+        // Provider accepted the email, but database persistence degraded/fell back
+        return jsonResponse(200, {
+          ok: true,
+          status: 'sent',
+          providerMessageId: deliveryResult.providerMessageId,
+          message: emailType === 'approval'
+            ? 'Approval email with QR pass resent successfully (persistence degraded; awaiting webhook reconciliation).'
+            : 'Rejection notice email resent successfully (persistence degraded; awaiting webhook reconciliation).',
+          reconciliationRequired: true,
+        });
+      }
+      return jsonResponse(409, {
+        error: 'email_delivery_outcome_unknown',
+        message: 'The outcome of the previous delivery attempt is uncertain. Automatic retry is suspended until verified via webhook or manual reconciliation.',
+        reconciliationRequired: true,
+      });
+    }
+
+    if (deliveryResult.status === 'sent') {
+      return jsonResponse(200, {
+        ok: true,
+        status: 'sent',
+        providerMessageId: deliveryResult.providerMessageId,
+        message: emailType === 'approval'
+          ? 'Approval email with QR pass resent successfully.'
+          : 'Rejection notice email resent successfully.',
+      });
+    }
+
+    return jsonResponse(502, {
+      error: 'email_dispatch_failed',
+      message: `Resend failed to deliver email: ${deliveryResult.error || 'email_dispatch_failed'}`,
+    });
   } catch (error) {
     if (error instanceof HttpError) {
       return jsonResponse(error.status, { error: error.code });

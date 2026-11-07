@@ -2890,7 +2890,7 @@ describe('Permanent PostgreSQL Migration Chain & Schema Contracts (PGlite)', () 
   it('56. Migration 20261104000800_ephemeral_returning_verification_and_profile_linkage relaxes returning photo intent and enables automatic profile linkage', async () => {
     const db = new PGlite();
     const files = await applyAllMigrations(db);
-    expect(files.length).toBe(68);
+    expect(files.length).toBe(69);
 
     // 1. Verify execute permissions on api.issue_online_pass_v6
     const permCheck = await db.query<{ grantee: string }>(`
@@ -2917,7 +2917,7 @@ describe('Permanent PostgreSQL Migration Chain & Schema Contracts (PGlite)', () 
   it('57. Migration 20261104170754_returning_visitor_privacy_hardening_and_linkage_repair adds ID preview consumption RPC and saveUpdates support', async () => {
     const db = new PGlite();
     const files = await applyAllMigrations(db);
-    expect(files.length).toBe(68);
+    expect(files.length).toBe(69);
 
     // 1. Verify consume_id_preview_authorization_v1 RPC
     const permCheck = await db.query<{ grantee: string }>(`
@@ -3013,7 +3013,7 @@ describe('Permanent PostgreSQL Migration Chain & Schema Contracts (PGlite)', () 
   it('58. Migration 20261106000100_office_visit_management_system verifies office schema, personnel, assignments, visits, and scanner integration', async () => {
     const db = new PGlite();
     const files = await applyAllMigrations(db);
-    expect(files.length).toBe(68);
+    expect(files.length).toBe(69);
 
     // 1. Verify tables exist
     const tablesCheck = await db.query<{ tablename: string }>(`
@@ -3062,7 +3062,7 @@ describe('Permanent PostgreSQL Migration Chain & Schema Contracts (PGlite)', () 
   it('59. Migration 20261107000100_office_visit_production_closure_and_reconciliation verifies schema reconciliation, upload holds, email outbox, and visitor ownership', async () => {
     const db = new PGlite();
     const files = await applyAllMigrations(db);
-    expect(files.length).toBe(68);
+    expect(files.length).toBe(69);
 
     // 1. Verify upload_intents has held_until
     const uploadColCheck = await db.query<{ column_name: string }>(`
@@ -3102,7 +3102,7 @@ describe('Permanent PostgreSQL Migration Chain & Schema Contracts (PGlite)', () 
   it('60. Migration 20261107000200_office_workflow_trust_boundary_and_outbox_closure verifies trust boundaries, returning profile linkage, durable outbox leases, and atomic verification ceiling', async () => {
     const db = new PGlite();
     const files = await applyAllMigrations(db);
-    expect(files.length).toBe(68);
+    expect(files.length).toBe(69);
 
     // 1. Verify office_visits has registration_mode, returning_profile_id, identity_verification_id, returning_attempt_id
     const visitCols = await db.query<{ column_name: string }>(`
@@ -3141,7 +3141,7 @@ describe('Permanent PostgreSQL Migration Chain & Schema Contracts (PGlite)', () 
   it('61. Migration 20261107000300_office_workflow_final_closure_and_release_repair verifies fail-closed evidence validation, non-rollback returns, outbox claim guards, and reconciliation RPC', async () => {
     const db = new PGlite();
     const files = await applyAllMigrations(db);
-    expect(files.length).toBe(68);
+    expect(files.length).toBe(69);
 
     // 1. Verify decide_office_visit, record_office_visit_email_result, record_resend_delivery_event, reconcile_office_visit_email exist in schema api with service_role execute
     const rpcCheck = await db.query<{ routine_name: string; grantee: string }>(`
@@ -3173,7 +3173,7 @@ describe('Permanent PostgreSQL Migration Chain & Schema Contracts (PGlite)', () 
   it('62. Migration 20261107000400_deep_dive_root_cause_remediation verifies optional title, verification slot RPC, outbox attribution, and RLS policy', async () => {
     const db = new PGlite();
     const files = await applyAllMigrations(db);
-    expect(files.length).toBe(68);
+    expect(files.length).toBe(69);
 
     // 1. Verify office_personnel title is nullable
     const titleCol = await db.query<{ is_nullable: string }>(`
@@ -3214,7 +3214,7 @@ describe('Permanent PostgreSQL Migration Chain & Schema Contracts (PGlite)', () 
   it('W. Migration 66 contract: IP privacy, multi-dimensional rate limiting, and delivery provenance', async () => {
     const db = new PGlite();
     const files = await applyAllMigrations(db);
-    expect(files.length).toBe(68);
+    expect(files.length).toBe(69);
 
     // 1. Verify office_visit_email_verifications has ip_hmac and client_ip is null/deprecated
     const ipCols = await db.query<{ column_name: string }>(`
@@ -3259,7 +3259,7 @@ describe('Permanent PostgreSQL Migration Chain & Schema Contracts (PGlite)', () 
   it('X. Migration 67 contract: Durable email recovery, claim invariants, and webhook reconciliation', async () => {
     const db = new PGlite();
     const files = await applyAllMigrations(db);
-    expect(files.length).toBe(68);
+    expect(files.length).toBe(69);
 
     // 1. Verify api.record_office_visit_email_result exists and has service_role grant
     const rpcGrants = await db.query<{ grantee: string }>(`
@@ -3295,7 +3295,7 @@ describe('Permanent PostgreSQL Migration Chain & Schema Contracts (PGlite)', () 
   it('Y. Migration 68 contract: Reconcile api.decide_office_visit vehicle photo column resolution', async () => {
     const db = new PGlite();
     const files = await applyAllMigrations(db);
-    expect(files.length).toBe(68);
+    expect(files.length).toBe(69);
 
     // Verify api.decide_office_visit exists with service_role grant
     const rpcGrants = await db.query<{ grantee: string }>(`
@@ -3306,5 +3306,60 @@ describe('Permanent PostgreSQL Migration Chain & Schema Contracts (PGlite)', () 
     expect(rpcRoles).toContain('service_role');
     expect(rpcRoles).not.toContain('anon');
     expect(rpcRoles).not.toContain('authenticated');
+  }, 60000);
+
+  it('Z. Migration 69 contract: Expired lease transition to reconciliation required and truthful claim invariants', async () => {
+    const db = new PGlite();
+    const files = await applyAllMigrations(db);
+    expect(files.length).toBe(69);
+
+    // 1. Verify api.claim_office_visit_email_for_delivery exists with service_role grant
+    const rpcGrants = await db.query<{ grantee: string }>(`
+      select distinct grantee from information_schema.routine_privileges
+      where routine_schema = 'api' and routine_name = 'claim_office_visit_email_for_delivery';
+    `);
+    const rpcRoles = rpcGrants.rows.map((r) => r.grantee);
+    expect(rpcRoles).toContain('service_role');
+    expect(rpcRoles).not.toContain('anon');
+    expect(rpcRoles).not.toContain('authenticated');
+
+    // 2. Functional test: Expired processing lease transitions to reconciliation_required and returns claim_id = null
+    const officeId = '11111111-0000-0000-0000-000000000001';
+    const visitorId = '11111111-2222-3333-4444-555566667777';
+    const visitId = '22222222-3333-4444-5555-666677778888';
+    const outboxId = '33333333-4444-5555-6666-777788889999';
+
+    await db.exec(`
+      insert into auth.users (id, email, is_anonymous) values ('${visitorId}', 'test.mig69@earist.edu.ph', true) on conflict (id) do nothing;
+      insert into public.visitors (id, owner_id, full_name, contact_number, email, purpose, visit_date, source, consent_accepted_at)
+      values ('${visitorId}', '${visitorId}', 'Mig69 Visitor', '09171234567', 'test.mig69@earist.edu.ph', 'General', current_date, 'portal', now()) on conflict (id) do nothing;
+
+      insert into public.office_visits (
+        id, visit_type, office_id, visitor_id, visitor_actor_id, visitor_first_name, visitor_last_name,
+        visitor_contact_number, visitor_email, purpose, visit_date, approval_status, attendance_status, request_id, email_delivery_status
+      ) values (
+        '${visitId}', 'general', '${officeId}', '${visitorId}', '${visitorId}', 'Mig69', 'Visitor',
+        '09171234567', 'test.mig69@earist.edu.ph', 'General', current_date, 'approved', 'awaiting_entry', gen_random_uuid(), 'processing'
+      ) on conflict (id) do nothing;
+
+      insert into public.office_visit_email_outbox (
+        id, office_visit_id, email_type, recipient_email, delivery_status, claim_id, lease_expires_at, retry_count, created_at, updated_at
+      ) values (
+        '${outboxId}', '${visitId}', 'approval', 'test.mig69@earist.edu.ph', 'processing', gen_random_uuid(), now() - interval '1 second', 1, now(), now()
+      ) on conflict (id) do nothing;
+    `);
+
+    // Call claim on expired processing lease
+    const claimRes = await db.query<{ claim_id: string | null }>(`
+      select * from api.claim_office_visit_email_for_delivery('${visitId}'::uuid, 'approval'::text);
+    `);
+    expect(claimRes.rows.length).toBe(1);
+    expect(claimRes.rows[0].claim_id).toBeNull(); // Claim blocked
+
+    // Verify row transitioned to reconciliation_required
+    const outboxCheck = await db.query<{ delivery_status: string }>(`
+      select delivery_status from public.office_visit_email_outbox where id = '${outboxId}';
+    `);
+    expect(outboxCheck.rows[0].delivery_status).toBe('reconciliation_required');
   }, 60000);
 });
