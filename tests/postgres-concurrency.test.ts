@@ -302,18 +302,27 @@ runSuite('True PostgreSQL Concurrency, Canonical Approval Integrity & Email Reco
         $$;
       `);
 
-      // 2. Apply all migrations in order
-      const migrationFiles = readdirSync(MIGRATIONS_DIR)
-        .filter((f) => f.endsWith('.sql'))
-        .sort();
+      // 2. Apply all migrations in order if not already applied
+      const alreadyMigrated = await rootClient.query(`
+        select exists (
+          select 1 from information_schema.tables 
+          where table_schema = 'public' and table_name = 'office_visit_email_outbox'
+        ) as exists;
+      `);
 
-      for (const file of migrationFiles) {
-        let sql = readFileSync(join(MIGRATIONS_DIR, file), 'utf8');
-        try {
-          await rootClient.query(sql);
-        } catch (err) {
-          console.error(`Failed to apply migration ${file}:`, err);
-          throw err;
+      if (!alreadyMigrated.rows[0]?.exists) {
+        const migrationFiles = readdirSync(MIGRATIONS_DIR)
+          .filter((f) => f.endsWith('.sql'))
+          .sort();
+
+        for (const file of migrationFiles) {
+          let sql = readFileSync(join(MIGRATIONS_DIR, file), 'utf8');
+          try {
+            await rootClient.query(sql);
+          } catch (err) {
+            console.error(`Failed to apply migration ${file}:`, err);
+            throw err;
+          }
         }
       }
 
