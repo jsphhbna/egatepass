@@ -798,7 +798,7 @@ runSuite('True PostgreSQL Concurrency, Canonical Approval Integrity & Email Reco
         const checkClient = await pool.connect();
         try {
           const passRes = await checkClient.query(
-            `select token_digest from public.passes where office_visit_id = $1;`,
+            `select encode(token_digest, 'hex') as token_digest from public.passes where id = (select pass_id from public.office_visits where id = $1);`,
             [visitId]
           );
           expect(passRes.rows.length).toBe(1);
