@@ -1281,10 +1281,10 @@ runSuite('True PostgreSQL Concurrency, Canonical Approval Integrity & Email Reco
     it('Finding B: Approval manual retry route with primary DB failure persists reconciliation_required fallback', async () => {
       const officeId = '00000000-0000-4000-8000-000000000001';
       const staffActorId = '55555555-5555-4555-8555-555555555555';
-      const visitorId = '44445555-6666-7777-8888-999900004444';
-      const visitId = '55556666-7777-8888-9999-000011115555';
-      const outboxId = '66667777-8888-9999-0000-111122226666';
-      const passId = '77778888-9999-0000-1111-222233337777';
+      const visitorId = '44445555-6666-4777-8888-999900004444';
+      const visitId = '55556666-7777-4888-9999-000011115555';
+      const outboxId = '66667777-8888-4999-a000-111122226666';
+      const passId = '77778888-9999-4000-b111-222233337777';
       const visitorEmail = 'retry.approval@earist.edu.ph';
 
       const rootClient = await pool.connect();
@@ -1298,8 +1298,8 @@ runSuite('True PostgreSQL Concurrency, Canonical Approval Integrity & Email Reco
           insert into public.visitors (id, owner_id, full_name, contact_number, email, purpose, visit_date, source, consent_accepted_at)
           values ('${visitorId}', '${visitorId}', 'Retry Visitor', '09171234567', '${visitorEmail}', 'Consultation', current_date, 'portal', now()) on conflict (id) do nothing;
 
-          insert into public.passes (id, visitor_id, pass_type, status, token_digest, public_reference, valid_from, valid_until)
-          values ('${passId}', '${visitorId}', 'office_visit', 'active', decode('${tokenDigest}', 'hex'), 'EARIST-TEST-REF', now(), now() + interval '8 hours') on conflict (id) do nothing;
+          insert into public.passes (id, visitor_id, source, status, token_digest, public_reference, valid_from, valid_until)
+          values ('${passId}', '${visitorId}', 'portal', 'issued', decode('${tokenDigest}', 'hex'), gen_random_uuid(), now(), now() + interval '8 hours') on conflict (id) do nothing;
 
           insert into public.office_visits (
             id, visit_type, office_id, visitor_id, visitor_actor_id, visitor_first_name, visitor_last_name,
@@ -1370,9 +1370,9 @@ runSuite('True PostgreSQL Concurrency, Canonical Approval Integrity & Email Reco
     it('Finding B: Rejection manual retry route with primary DB failure persists reconciliation_required fallback', async () => {
       const officeId = '00000000-0000-4000-8000-000000000001';
       const staffActorId = '55555555-5555-4555-8555-555555555555';
-      const visitorId = '88889999-0000-1111-2222-333344445555';
-      const visitId = '99990000-1111-2222-3333-444455556666';
-      const outboxId = '00001111-2222-3333-4444-555566667777';
+      const visitorId = '88889999-0000-4111-8222-333344445555';
+      const visitId = '99990000-1111-4222-9333-444455556666';
+      const outboxId = '00001111-2222-4333-a444-555566667777';
       const visitorEmail = 'retry.rejection@earist.edu.ph';
 
       const rootClient = await pool.connect();
@@ -1449,9 +1449,9 @@ runSuite('True PostgreSQL Concurrency, Canonical Approval Integrity & Email Reco
     it('Finding B: Both primary and fallback writes fail preserves provider acceptance, dispatches only once, and blocks subsequent claim', async () => {
       const officeId = '00000000-0000-4000-8000-000000000001';
       const staffActorId = '55555555-5555-4555-8555-555555555555';
-      const visitorId = 'aaaa1111-2222-3333-4444-555566667777';
-      const visitId = 'bbbb2222-3333-4444-5555-666677778888';
-      const outboxId = 'cccc3333-4444-5555-6666-777788889999';
+      const visitorId = 'aaaa1111-2222-4333-8444-555566667777';
+      const visitId = 'bbbb2222-3333-4444-9555-666677778888';
+      const outboxId = 'cccc3333-4444-4555-a666-777788889999';
       const visitorEmail = 'bothfail@earist.edu.ph';
 
       const rootClient = await pool.connect();
