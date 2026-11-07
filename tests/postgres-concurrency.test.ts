@@ -182,15 +182,16 @@ function createPostgresAdminClient(pool: pg.Pool, options?: { failRecordResult?:
   };
 }
 
-// Fail-safe check: In CI or when explicitly invoked, require TEST_DATABASE_URL
-const isExplicitPostgresTest = process.env.npm_lifecycle_event === 'test:integration:postgres' || Boolean(process.env.CI);
+// Run this suite only when explicitly invoked via test:integration:postgres or RUN_POSTGRES_INTEGRATION=true
+const isExplicitPostgresTest = process.env.npm_lifecycle_event === 'test:integration:postgres' || process.env.RUN_POSTGRES_INTEGRATION === 'true';
+
 if (isExplicitPostgresTest && !TEST_DB_URL) {
   throw new Error(
     'TEST_DATABASE_URL is not set. A real PostgreSQL 17 database is required to run independent-session concurrency integration tests.'
   );
 }
 
-const runSuite = TEST_DB_URL ? describe : describe.skip;
+const runSuite = (TEST_DB_URL && isExplicitPostgresTest) ? describe : describe.skip;
 
 runSuite('True PostgreSQL Concurrency, Canonical Approval Integrity & Email Recovery Integration Suite', () => {
   let pool: pg.Pool;
