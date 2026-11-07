@@ -15,8 +15,23 @@ jobs:
     name: Verify & Test
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgrespassword
+          POSTGRES_DB: egatepass_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
     env:
       VITE_TURNSTILE_SITE_KEY: '0x4AAAAAAFeETebgPENH6hgH'
+      TEST_DATABASE_URL: 'postgres://postgres:postgrespassword@localhost:5432/egatepass_test'
 
     steps:
       - name: Checkout repository
@@ -36,6 +51,9 @@ jobs:
 
       - name: Test PostgreSQL Migrations (PGlite Chain)
         run: npm run test:migrations
+
+      - name: Run PostgreSQL Concurrency & Recovery Integration Tests
+        run: npm run test:integration:postgres
 
       - name: Run Full Unit & Integration Test Suite
         run: npm run test:unit
