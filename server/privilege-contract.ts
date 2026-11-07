@@ -317,6 +317,7 @@ export const SERVER_DIRECT_TABLE_OPERATIONS: DirectServerTableOperation[] = [
   { file: 'server/routes/admin/offices.ts', table: 'office_staff_assignments', operations: ['SELECT', 'INSERT', 'DELETE'], purpose: 'Admin office staff assignment management' },
   { file: 'server/routes/admin/offices.ts', table: 'office_personnel', operations: ['SELECT', 'INSERT', 'UPDATE'], purpose: 'Admin office personnel directory management' },
   { file: 'server/routes/office/confirm-arrival.ts', table: 'office_visits', operations: ['SELECT'], purpose: 'Verify visit exists and validate office authorization' },
+  { file: 'server/lib/officeDelivery.ts', table: 'office_visit_email_outbox', operations: ['SELECT'], purpose: 'Lookup outbox row claim during failure recording' },
   { file: 'server/routes/office/decide.ts', table: 'office_visits', operations: ['SELECT', 'UPDATE'], purpose: 'Verify visit state and update email dispatch status' },
   { file: 'server/routes/office/decide.ts', table: 'offices', operations: ['SELECT'], purpose: 'Fetch office name for decision email' },
   { file: 'server/routes/office/decide.ts', table: 'office_personnel', operations: ['SELECT'], purpose: 'Fetch personnel name for decision email' },

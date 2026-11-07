@@ -58,22 +58,26 @@
    - Reconciles `api.decide_office_visit` vehicle photo evidence column resolution, replacing invalid references to `upload_intents.byte_size` and `upload_intents.sha256_hex` with `target_visit.vehicle_photo_bytes` and `target_visit.vehicle_photo_sha256`.
    - Resolves remote Supabase linter error and ensures fail-closed evidence validation.
 
-8. **`tests/postgres-concurrency.test.ts`**:
-   - Concurrency synchronization barrier (`createBarrier`) executing across independent `pg.Client` sessions.
-   - Route-level approval test unconditionally asserts mock provider dispatch count of exactly 1 (`expect(dispatchedEmails.length).toBe(1)`).
-   - Unconditionally decodes QR PNG via `pngjs` + `jsQR`, verifies decrypted token matches canonical outbox decrypted token, and SHA-256 digest matches stored pass `token_digest`.
-   - Asserts second concurrent request cannot create a second pass (`pass_count === 1`).
-   - Regression suites:
-     - Expired-lease protection & webhook correlation backfill.
-     - Approval retry fault injection (primary write fails, fallback to `reconciliation_required`).
-     - Rejection retry fault injection (primary write fails, fallback to `reconciliation_required`).
-     - Both-write failure preserves provider acceptance, dispatches only once, and blocks subsequent claim.
-     - Strict positive confirmation unit tests (`isPositiveRpcSuccess`).
+9. **`server/privilege-contract.ts`**:
+   - Registered `server/lib/officeDelivery.ts` direct table access to `office_visit_email_outbox` for failure outbox claim lookup under the authoritative service-role table privilege contract.
 
-9. **`tests/office-email-outbox-and-webhooks.test.ts`**:
-   - Updated Test 4 to assert that expired leases transition to `reconciliation_required` and require `permit_retry` before re-claiming.
+10. **`tests/postgres-concurrency.test.ts`**:
+    - Concurrency synchronization barrier (`createBarrier`) executing across independent `pg.Client` sessions.
+    - Route-level approval test unconditionally asserts mock provider dispatch count of exactly 1 (`expect(dispatchedEmails.length).toBe(1)`).
+    - Unconditionally decodes QR PNG via `pngjs` + `jsQR`, verifies decrypted token matches canonical outbox decrypted token, and SHA-256 digest matches stored pass `token_digest`.
+    - Asserts second concurrent request cannot create a second pass (`pass_count === 1`).
+    - Normalized all test UUIDs to strict RFC 4122 v4 format compatible with Zod request validation and aligned `public.passes` test insertion schema (`source = 'portal'`, `status = 'issued'`, `public_reference = gen_random_uuid()`).
+    - Regression suites:
+      - Expired-lease protection & webhook correlation backfill.
+      - Approval retry fault injection (primary write fails, fallback to `reconciliation_required`).
+      - Rejection retry fault injection (primary write fails, fallback to `reconciliation_required`).
+      - Both-write failure preserves provider acceptance, dispatches only once, and blocks subsequent claim.
+      - Strict positive confirmation unit tests (`isPositiveRpcSuccess`).
 
-10. **`tests/migration-chain-pglite.test.ts`**:
+11. **`tests/office-email-outbox-and-webhooks.test.ts`**:
+    - Updated Test 4 to assert that expired leases transition to `reconciliation_required` and require `permit_retry` before re-claiming.
+
+12. **`tests/migration-chain-pglite.test.ts`**:
     - Updated migration count to 69 across 10 test assertions.
     - Added Test `Z. Migration 69 contract: Expired lease transition to reconciliation required and truthful claim invariants`.
 
