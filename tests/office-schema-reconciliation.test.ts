@@ -162,6 +162,8 @@ describe('Office Schema Reconciliation & Visitor Ownership Contracts (PGlite)', 
     const staffUserId = '22222222-2222-4222-8222-222222222222';
 
     await db.exec(`
+      update public.app_settings set working_hours_end = '23:59:59' where singleton = true;
+
       insert into auth.users (id, email, is_anonymous) values
       ('${visitorUserId}', 'visitor@test.local', true),
       ('${staffUserId}', 'staff@earist.edu.ph', false);

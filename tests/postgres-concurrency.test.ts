@@ -47,6 +47,135 @@ async function runConcurrent<T>(
   );
 }
 
+function createPostgresAdminClient(pool: pg.Pool, options?: { failRecordResult?: boolean }) {
+  return {
+    schema: (_schemaName: string) => ({
+      rpc: async (fnName: string, args: Record<string, any>) => {
+        const client = await pool.connect();
+        try {
+          if (fnName === 'decide_office_visit') {
+            const res = await client.query(
+              `select * from api.decide_office_visit(
+                $1::uuid, $2::uuid, $3::text, $4::text, $5::text, $6::text, $7::text, $8::uuid
+              );`,
+              [
+                args.requested_actor_id || args.staff_user_id,
+                args.requested_visit_id,
+                args.requested_decision,
+                args.requested_reason || null,
+                args.requested_token_digest,
+                args.requested_encrypted_payload,
+                args.requested_idempotency_key,
+                args.requested_request_id || null,
+              ]
+            );
+            return { data: res.rows, error: null };
+          }
+          if (fnName === 'claim_office_visit_email_for_delivery') {
+            const res = await client.query(
+              `select * from api.claim_office_visit_email_for_delivery($1::uuid, $2::text);`,
+              [args.requested_visit_id, args.requested_email_type]
+            );
+            return { data: res.rows, error: null };
+          }
+          if (fnName === 'record_office_visit_email_result') {
+            if (options?.failRecordResult) {
+              return { data: null, error: { message: 'Injected primary record_office_visit_email_result failure', code: '500' } };
+            }
+            const res = await client.query(
+              `select * from api.record_office_visit_email_result(
+                $1::uuid, $2::uuid, $3::text, $4::text, $5::text
+              );`,
+              [
+                args.requested_outbox_id,
+                args.requested_claim_id,
+                args.requested_status,
+                args.requested_provider_message_id,
+                args.requested_error,
+              ]
+            );
+            return { data: res.rows[0], error: null };
+          }
+          throw new Error(`Unhandled RPC in test admin client: ${fnName}`);
+        } catch (err: any) {
+          return { data: null, error: { message: err.message, code: err.code } };
+        } finally {
+          client.release();
+        }
+      },
+    }),
+    from: (table: string) => ({
+      select: (_cols?: string) => ({
+        eq: (col: string, val: any) => ({
+          maybeSingle: async () => {
+            const client = await pool.connect();
+            try {
+              if (table === 'office_visits') {
+                const res = await client.query(
+                  `select ov.*, o.name as office_name, op.name as personnel_name
+                   from public.office_visits ov
+                   join public.offices o on o.id = ov.office_id
+                   left join public.office_personnel op on op.id = ov.personnel_id
+                   where ov.${col} = $1;`,
+                  [val]
+                );
+                if (res.rows.length === 0) return { data: null, error: null };
+                const r = res.rows[0];
+                return {
+                  data: {
+                    ...r,
+                    offices: { name: r.office_name },
+                    office_personnel: r.personnel_name ? { name: r.personnel_name } : null,
+                  },
+                  error: null,
+                };
+              }
+              if (table === 'office_visit_email_outbox') {
+                const res = await client.query(
+                  `select id, claim_id, delivery_status, provider_message_id from public.office_visit_email_outbox where ${col} = $1 limit 1;`,
+                  [val]
+                );
+                return { data: res.rows[0] || null, error: null };
+              }
+              return { data: null, error: null };
+            } finally {
+              client.release();
+            }
+          },
+        }),
+      }),
+      update: (updates: Record<string, any>) => ({
+        eq: (col: string, val: any) => {
+          const runUpdate = async () => {
+            const client = await pool.connect();
+            try {
+              if (table === 'office_visit_email_outbox') {
+                const keys = Object.keys(updates);
+                const setClauses = keys.map((k, idx) => `${k} = $${idx + 1}`);
+                const values = keys.map((k) => updates[k]);
+                values.push(val);
+                const res = await client.query(
+                  `update public.office_visit_email_outbox set ${setClauses.join(', ')} where ${col} = $${values.length} returning *;`,
+                  values
+                );
+                return { data: res.rows, error: null };
+              }
+              return { data: null, error: null };
+            } catch (err: any) {
+              return { data: null, error: { message: err?.message || 'update failed' } };
+            } finally {
+              client.release();
+            }
+          };
+          return {
+            then: (resolve: any, reject: any) => runUpdate().then(resolve, reject),
+          };
+        },
+      }),
+    }),
+  };
+}
+
 // Fail-safe check: In CI or when explicitly invoked, require TEST_DATABASE_URL
 const isExplicitPostgresTest = process.env.npm_lifecycle_event === 'test:integration:postgres' || Boolean(process.env.CI);
 if (isExplicitPostgresTest && !TEST_DB_URL) {
@@ -62,6 +191,10 @@ runSuite('True PostgreSQL Concurrency, Canonical Approval Integrity & Email Reco
 
   beforeAll(async () => {
     if (!TEST_DB_URL) return;
+
+    process.env.SUPABASE_URL = process.env.SUPABASE_URL || 'http://localhost:54321';
+    process.env.SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || 'test-service-role-key-at-least-32-chars!';
+    process.env.SUPABASE_ANON_KEY = process.env.SUPABASE_ANON_KEY || 'test-anon-key-at-least-32-chars!';
 
     pool = new pg.Pool({
       connectionString: TEST_DB_URL,
@@ -177,6 +310,11 @@ runSuite('True PostgreSQL Concurrency, Canonical Approval Integrity & Email Reco
           throw err;
         }
       }
+
+      // Set working_hours_end to 23:59:59 so current_date tests pass regardless of time of day
+      await rootClient.query(`
+        update public.app_settings set working_hours_end = '23:59:59' where singleton = true;
+      `);
     } finally {
       rootClient.release();
     }
@@ -443,10 +581,10 @@ runSuite('True PostgreSQL Concurrency, Canonical Approval Integrity & Email Reco
           on conflict (id) do nothing;
 
           insert into public.office_visits (
-            id, visit_type, office_id, personnel_id, visitor_id, visitor_first_name, visitor_last_name,
+            id, visit_type, office_id, personnel_id, visitor_id, visitor_actor_id, visitor_first_name, visitor_last_name,
             visitor_contact_number, visitor_email, purpose, visit_date, approval_status, attendance_status, request_id
           ) values (
-            '${visitId}', 'specific_person', '${officeId}', '${personnelId}', '${visitorId}', 'Maria', 'Dela Cruz',
+            '${visitId}', 'specific_person', '${officeId}', '${personnelId}', '${visitorId}', '${visitorId}', 'Maria', 'Dela Cruz',
             '09171234567', '${visitorEmail}', 'Transcript Request', current_date, 'pending', 'awaiting_entry', gen_random_uuid()
           ) on conflict (id) do update set approval_status = 'pending';
         `);
@@ -556,10 +694,10 @@ runSuite('True PostgreSQL Concurrency, Canonical Approval Integrity & Email Reco
           on conflict (id) do nothing;
 
           insert into public.office_visits (
-            id, visit_type, office_id, personnel_id, visitor_id, visitor_first_name, visitor_last_name,
+            id, visit_type, office_id, personnel_id, visitor_id, visitor_actor_id, visitor_first_name, visitor_last_name,
             visitor_contact_number, visitor_email, purpose, visit_date, approval_status, attendance_status, request_id
           ) values (
-            '${visitId}', 'specific_person', '${officeId}', '${personnelId}', '${visitorId}', 'Roberto', 'Cruz',
+            '${visitId}', 'specific_person', '${officeId}', '${personnelId}', '${visitorId}', '${visitorId}', 'Roberto', 'Cruz',
             '09171234567', '${visitorEmail}', 'Diploma Claim', current_date, 'pending', 'awaiting_entry', gen_random_uuid()
           ) on conflict (id) do update set approval_status = 'pending';
         `);
@@ -574,12 +712,16 @@ runSuite('True PostgreSQL Concurrency, Canonical Approval Integrity & Email Reco
         return { id: `msg_${randomBytes(8).toString('hex')}`, provider: 'mock' };
       });
 
-      // Mock requireOfficeStaffActor
+      // Mock requireOfficeStaffActor and getServerSupabaseClients
       vi.spyOn(officeLib, 'requireOfficeStaffActor').mockResolvedValue({
         id: staffActorId,
         email: 'staff@earist.edu.ph',
         role: 'office_staff',
         assignedOfficeIds: [officeId],
+      });
+      vi.spyOn(supabaseModule, 'getServerSupabaseClients').mockReturnValue({
+        admin: createPostgresAdminClient(pool) as any,
+        anon: {} as any,
       });
 
       // Concurrently dispatch two HTTP requests to decideHandler
@@ -665,10 +807,10 @@ runSuite('True PostgreSQL Concurrency, Canonical Approval Integrity & Email Reco
           on conflict (id) do nothing;
 
           insert into public.office_visits (
-            id, visit_type, office_id, personnel_id, visitor_id, visitor_first_name, visitor_last_name,
+            id, visit_type, office_id, personnel_id, visitor_id, visitor_actor_id, visitor_first_name, visitor_last_name,
             visitor_contact_number, visitor_email, purpose, visit_date, approval_status, attendance_status, request_id
           ) values (
-            '${visitId}', 'specific_person', '${officeId}', '${personnelId}', '${visitorId}', 'Carlos', 'Ray',
+            '${visitId}', 'specific_person', '${officeId}', '${personnelId}', '${visitorId}', '${visitorId}', 'Carlos', 'Ray',
             '09171234567', '${visitorEmail}', 'Grades Inquiry', current_date, 'pending', 'awaiting_entry', gen_random_uuid()
           ) on conflict (id) do update set approval_status = 'pending';
         `);
@@ -688,6 +830,10 @@ runSuite('True PostgreSQL Concurrency, Canonical Approval Integrity & Email Reco
         role: 'office_staff',
         assignedOfficeIds: [officeId],
       });
+      vi.spyOn(supabaseModule, 'getServerSupabaseClients').mockReturnValue({
+        admin: createPostgresAdminClient(pool, { failRecordResult: true }) as any,
+        anon: {} as any,
+      });
 
       // First decision approval
       const req = new Request('http://localhost/api/office/decide', {
@@ -706,6 +852,21 @@ runSuite('True PostgreSQL Concurrency, Canonical Approval Integrity & Email Reco
       expect(body.status).toBe('approved');
       expect(body.emailDelivery.status).toBe('sent');
       expect(body.emailDelivery.providerMessageId).toBe(mockProviderMsgId);
+      expect(body.emailDelivery.reconciliationRequired).toBe(true);
+
+      // Verify that database outbox was fallen back to reconciliation_required
+      const checkClient = await pool.connect();
+      try {
+        const outboxRes = await checkClient.query(
+          `select delivery_status, provider_message_id from public.office_visit_email_outbox where office_visit_id = $1;`,
+          [visitId]
+        );
+        expect(outboxRes.rows.length).toBe(1);
+        expect(outboxRes.rows[0].delivery_status).toBe('reconciliation_required');
+        expect(outboxRes.rows[0].provider_message_id).toBe(mockProviderMsgId);
+      } finally {
+        checkClient.release();
+      }
     });
 
     it('Case 2 & 3: Subsequent email.sent and email.delivered webhooks reconcile outbox from reconciliation_required', async () => {
@@ -724,10 +885,10 @@ runSuite('True PostgreSQL Concurrency, Canonical Approval Integrity & Email Reco
           values ('${visitorId}', '${visitorId}', 'Ana Cruz', '09171234567', 'reconcile@earist.edu.ph', 'Admissions', current_date, 'portal', now()) on conflict (id) do nothing;
 
           insert into public.office_visits (
-            id, visit_type, office_id, visitor_id, visitor_first_name, visitor_last_name,
+            id, visit_type, office_id, visitor_id, visitor_actor_id, visitor_first_name, visitor_last_name,
             visitor_contact_number, visitor_email, purpose, visit_date, approval_status, attendance_status, request_id, email_delivery_status
           ) values (
-            '${visitId}', 'specific_person', '${officeId}', '${visitorId}', 'Ana', 'Cruz',
+            '${visitId}', 'specific_person', '${officeId}', '${visitorId}', '${visitorId}', 'Ana', 'Cruz',
             '09171234567', 'reconcile@earist.edu.ph', 'Admissions', current_date, 'approved', 'awaiting_entry', gen_random_uuid(), 'reconciliation_required'
           ) on conflict (id) do nothing;
 
@@ -882,10 +1043,10 @@ runSuite('True PostgreSQL Concurrency, Canonical Approval Integrity & Email Reco
           values ('${visitorId}', '${visitorId}', 'Lisa Manoban', '09171234567', 'terminal@earist.edu.ph', 'Clearance', current_date, 'portal', now()) on conflict (id) do nothing;
 
           insert into public.office_visits (
-            id, visit_type, office_id, visitor_id, visitor_first_name, visitor_last_name,
+            id, visit_type, office_id, visitor_id, visitor_actor_id, visitor_first_name, visitor_last_name,
             visitor_contact_number, visitor_email, purpose, visit_date, approval_status, attendance_status, request_id, email_delivery_status, confirmation_source
           ) values (
-            '${visitId}', 'specific_person', '${officeId}', '${visitorId}', 'Lisa', 'Manoban',
+            '${visitId}', 'specific_person', '${officeId}', '${visitorId}', '${visitorId}', 'Lisa', 'Manoban',
             '09171234567', 'terminal@earist.edu.ph', 'Clearance', current_date, 'approved', 'awaiting_entry', gen_random_uuid(), 'delivered', 'provider_webhook'
           ) on conflict (id) do nothing;
 

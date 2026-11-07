@@ -123,6 +123,8 @@ describe('Office Visit Upload Hold Revalidation and Scheduling Invariants (PGlit
     await applyAllMigrations(db);
 
     await db.exec(`
+      update public.app_settings set working_hours_end = '23:59:59' where singleton = true;
+
       insert into auth.users (id, email, is_anonymous) values
       ('${visitorUserId}', 'visitor@test.local', true),
       ('${otherVisitorId}', 'imposter@test.local', true),
