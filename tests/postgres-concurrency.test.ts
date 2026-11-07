@@ -48,10 +48,16 @@ async function runConcurrent<T>(
 }
 
 function createPostgresAdminClient(pool: pg.Pool, options?: { failRecordResult?: boolean }) {
+  const getAdminClient = async () => {
+    const client = await pool.connect();
+    await client.query(`set request.jwt.claim.role = 'service_role';`);
+    return client;
+  };
+
   return {
     schema: (_schemaName: string) => ({
       rpc: async (fnName: string, args: Record<string, any>) => {
-        const client = await pool.connect();
+        const client = await getAdminClient();
         try {
           if (fnName === 'decide_office_visit') {
             const res = await client.query(
@@ -108,7 +114,7 @@ function createPostgresAdminClient(pool: pg.Pool, options?: { failRecordResult?:
       select: (_cols?: string) => ({
         eq: (col: string, val: any) => ({
           maybeSingle: async () => {
-            const client = await pool.connect();
+            const client = await getAdminClient();
             try {
               if (table === 'office_visits') {
                 const res = await client.query(
@@ -147,7 +153,7 @@ function createPostgresAdminClient(pool: pg.Pool, options?: { failRecordResult?:
       update: (updates: Record<string, any>) => ({
         eq: (col: string, val: any) => {
           const runUpdate = async () => {
-            const client = await pool.connect();
+            const client = await getAdminClient();
             try {
               if (table === 'office_visit_email_outbox') {
                 const keys = Object.keys(updates);
@@ -638,7 +644,7 @@ runSuite('True PostgreSQL Concurrency, Canonical Approval Integrity & Email Reco
         const checkClient = await pool.connect();
         try {
           const passRows = await checkClient.query(
-            `select id, token_digest from public.passes where office_visit_id = $1;`,
+            `select id, encode(token_digest, 'hex') as token_digest from public.passes where id = (select pass_id from public.office_visits where id = $1);`,
             [visitId]
           );
           expect(passRows.rows.length).toBe(1);
