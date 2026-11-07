@@ -38,7 +38,8 @@ describe('Office Email Verification Actor-Binding Contract', () => {
 
     const callingActorId = 'target-actor-uuid-1111';
     vi.spyOn(actors, 'getVerifiedSessionContext').mockResolvedValue({
-      user: { id: callingActorId },
+      user: { id: callingActorId, is_anonymous: true },
+      isAnonymous: true,
       isRecoverySession: false,
     } as any);
 
@@ -95,5 +96,37 @@ describe('Office Email Verification Actor-Binding Contract', () => {
     });
 
     await expect(verifyEmailRoute.fetch(request)).rejects.toThrow();
+  });
+
+  it('rejects verification if caller has non-anonymous staff session', async () => {
+    const mockAdmin = {
+      from: vi.fn(),
+    };
+
+    vi.spyOn(supabaseMod, 'getServerSupabaseClients').mockReturnValue({
+      admin: mockAdmin as any,
+      userClient: {} as any,
+    });
+
+    vi.spyOn(actors, 'getVerifiedSessionContext').mockResolvedValue({
+      user: { id: 'staff-actor', is_anonymous: false },
+      isAnonymous: false,
+      isRecoverySession: false,
+    } as any);
+
+    const request = new Request('http://localhost:3000/api/office/verify-email', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: 'Bearer staff-token',
+      },
+      body: JSON.stringify({
+        action: 'verify_code',
+        email: 'visitor@example.com',
+        code: '123456',
+      }),
+    });
+
+    await expect(verifyEmailRoute.fetch(request)).rejects.toThrow(/anonymous_visitor_session_required/);
   });
 });
