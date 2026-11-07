@@ -77,9 +77,6 @@ runSuite('True PostgreSQL Concurrency, Canonical Approval Integrity & Email Reco
         create schema if not exists storage;
         create schema if not exists private;
         create schema if not exists api;
-        grant usage on schema extensions to public, anon, authenticated, service_role;
-        alter role current_user set search_path = public, extensions, api, auth, storage;
-        set search_path = public, extensions, api, auth, storage;
 
         do $$
         begin
@@ -94,6 +91,10 @@ runSuite('True PostgreSQL Concurrency, Canonical Approval Integrity & Email Reco
           end if;
         end
         $$;
+
+        grant usage on schema extensions to public, anon, authenticated, service_role;
+        alter role current_user set search_path = public, extensions, api, auth, storage;
+        set search_path = public, extensions, api, auth, storage;
 
         create table if not exists auth.users (
           id uuid primary key,
