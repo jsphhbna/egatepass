@@ -72,10 +72,14 @@ runSuite('True PostgreSQL Concurrency, Canonical Approval Integrity & Email Reco
     try {
       // 1. Setup Supabase emulation
       await rootClient.query(`
+        create schema if not exists extensions;
         create schema if not exists auth;
         create schema if not exists storage;
         create schema if not exists private;
         create schema if not exists api;
+        grant usage on schema extensions to public, anon, authenticated, service_role;
+        alter role current_user set search_path = public, extensions, api, auth, storage;
+        set search_path = public, extensions, api, auth, storage;
 
         do $$
         begin
