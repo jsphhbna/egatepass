@@ -1200,7 +1200,7 @@ runSuite('True PostgreSQL Concurrency, Canonical Approval Integrity & Email Reco
           ) on conflict (id) do nothing;
 
           insert into public.office_visit_email_outbox (
-            id, office_visit_id, email_type, recipient_email, delivery_status, claim_id, lease_expires_at, retry_count, created_at, updated_at
+            id, office_visit_id, email_type, recipient_email, delivery_status, claim_id, lease_expires_at, attempt_count, created_at, updated_at
           ) values (
             '${outboxId}', '${visitId}', 'approval', '${visitorEmail}', 'processing', gen_random_uuid(), now() - interval '1 second', 1, now(), now()
           ) on conflict (id) do nothing;
@@ -1310,7 +1310,7 @@ runSuite('True PostgreSQL Concurrency, Canonical Approval Integrity & Email Reco
           ) on conflict (id) do nothing;
 
           insert into public.office_visit_email_outbox (
-            id, office_visit_id, email_type, recipient_email, encrypted_token_payload, delivery_status, retry_count, created_at, updated_at
+            id, office_visit_id, email_type, recipient_email, encrypted_token_payload, delivery_status, attempt_count, created_at, updated_at
           ) values (
             '${outboxId}', '${visitId}', 'approval', '${visitorEmail}', '${encryptedPayload}', 'failed', 1, now(), now()
           ) on conflict (id) do nothing;
@@ -1391,7 +1391,7 @@ runSuite('True PostgreSQL Concurrency, Canonical Approval Integrity & Email Reco
           ) on conflict (id) do nothing;
 
           insert into public.office_visit_email_outbox (
-            id, office_visit_id, email_type, recipient_email, rejection_reason, delivery_status, retry_count, created_at, updated_at
+            id, office_visit_id, email_type, recipient_email, rejection_reason, delivery_status, attempt_count, created_at, updated_at
           ) values (
             '${outboxId}', '${visitId}', 'rejection', '${visitorEmail}', 'Room occupied', 'failed', 1, now(), now()
           ) on conflict (id) do nothing;
@@ -1470,7 +1470,7 @@ runSuite('True PostgreSQL Concurrency, Canonical Approval Integrity & Email Reco
           ) on conflict (id) do nothing;
 
           insert into public.office_visit_email_outbox (
-            id, office_visit_id, email_type, recipient_email, rejection_reason, delivery_status, retry_count, created_at, updated_at
+            id, office_visit_id, email_type, recipient_email, rejection_reason, delivery_status, attempt_count, created_at, updated_at
           ) values (
             '${outboxId}', '${visitId}', 'rejection', '${visitorEmail}', 'Closed', 'failed', 1, now(), now()
           ) on conflict (id) do nothing;
@@ -1551,7 +1551,7 @@ runSuite('True PostgreSQL Concurrency, Canonical Approval Integrity & Email Reco
       try {
         await client.query(`set request.jwt.claim.role = 'service_role';`);
         await client.query(`
-          insert into public.offices (id, name, code, active)
+          insert into public.offices (id, name, description, active)
           values ('${officeId}', 'Registrar Office', 'REG70', true)
           on conflict (id) do nothing;
 
@@ -1584,7 +1584,7 @@ runSuite('True PostgreSQL Concurrency, Canonical Approval Integrity & Email Reco
           ) on conflict (id) do nothing;
 
           insert into public.office_visit_email_outbox (
-            id, office_visit_id, email_type, recipient_email, delivery_status, retry_count, created_at, updated_at
+            id, office_visit_id, email_type, recipient_email, delivery_status, attempt_count, created_at, updated_at
           ) values (
             '${outboxId}', '${visitId}', 'approval', 'visitor.state@earist.edu.ph', 'pending', 0, now(), now()
           ) on conflict (id) do nothing;
@@ -1799,7 +1799,7 @@ runSuite('True PostgreSQL Concurrency, Canonical Approval Integrity & Email Reco
       try {
         await client.query(`set request.jwt.claim.role = 'service_role';`);
         await client.query(`
-          insert into public.offices (id, name, code, active)
+          insert into public.offices (id, name, description, active)
           values ('${officeId}', 'Admissions Office', 'ADM70', true)
           on conflict (id) do nothing;
 
@@ -1832,7 +1832,7 @@ runSuite('True PostgreSQL Concurrency, Canonical Approval Integrity & Email Reco
           ) on conflict (id) do nothing;
 
           insert into public.office_visit_email_outbox (
-            id, office_visit_id, email_type, recipient_email, delivery_status, retry_count, idempotency_key, created_at, updated_at
+            id, office_visit_id, email_type, recipient_email, delivery_status, attempt_count, idempotency_key, created_at, updated_at
           ) values (
             '${outboxId}', '${visitId}', 'approval', 'visitor.race@earist.edu.ph', 'failed', 0, 'office-email-race-test', now(), now()
           ) on conflict (id) do nothing;
@@ -1985,7 +1985,7 @@ runSuite('True PostgreSQL Concurrency, Canonical Approval Integrity & Email Reco
 
         // 1. Offices
         await client.query(`
-          insert into public.offices (id, name, code, active)
+          insert into public.offices (id, name, description, active)
           values
             ('${office1Id}', 'Office One RLS', 'O1RLS', true),
             ('${office2Id}', 'Office Two RLS', 'O2RLS', true)
@@ -2005,7 +2005,7 @@ runSuite('True PostgreSQL Concurrency, Canonical Approval Integrity & Email Reco
             ('${visit2Id}', 'general', '${office2Id}', '${visitorOwnerId}', '${visitorOwnerId}', 'V2', 'RLS', '09171234567', 'v2@earist.edu.ph', 'General', current_date, 'approved', 'awaiting_entry', gen_random_uuid(), 'delivered')
           on conflict (id) do nothing;
 
-          insert into public.office_visit_email_outbox (id, office_visit_id, email_type, recipient_email, delivery_status, retry_count, created_at, updated_at)
+          insert into public.office_visit_email_outbox (id, office_visit_id, email_type, recipient_email, delivery_status, attempt_count, created_at, updated_at)
           values
             ('${outbox1Id}', '${visit1Id}', 'approval', 'v1@earist.edu.ph', 'delivered', 0, now(), now()),
             ('${outbox2Id}', '${visit2Id}', 'approval', 'v2@earist.edu.ph', 'delivered', 0, now(), now())
