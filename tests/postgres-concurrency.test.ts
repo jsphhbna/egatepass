@@ -1535,4 +1535,640 @@ runSuite('True PostgreSQL Concurrency, Canonical Approval Integrity & Email Reco
       expect(isPositiveRpcSuccess('ok', null)).toBe(false);
     });
   });
+
+  // =========================================================================
+  // Finding D: State-Transition and Note-Validation Closure (api.reconcile_office_visit_email)
+  // =========================================================================
+  describe('Finding D: State-Transition & Audit-Note Closure (api.reconcile_office_visit_email)', () => {
+    const officeId = '01111111-1111-4111-8111-111111111111';
+    const staffId = '02222222-2222-4222-8222-222222222222';
+    const visitorId = '03333333-3333-4333-8333-333333333333';
+    const visitId = '04444444-4444-4444-8444-444444444444';
+    const outboxId = '05555555-5555-4555-8555-555555555555';
+
+    beforeAll(async () => {
+      const client = await pool.connect();
+      try {
+        await client.query(`set request.jwt.claim.role = 'service_role';`);
+        await client.query(`
+          insert into public.offices (id, name, code, active)
+          values ('${officeId}', 'Registrar Office', 'REG70', true)
+          on conflict (id) do nothing;
+
+          insert into auth.users (id, email, email_confirmed_at)
+          values ('${staffId}', 'staff.state@earist.edu.ph', now())
+          on conflict (id) do nothing;
+
+          insert into public.staff_profiles (user_id, display_name, role, active, must_change_password, privacy_accepted_at)
+          values ('${staffId}', 'State Staff', 'office_staff', true, false, now())
+          on conflict (user_id) do nothing;
+
+          insert into public.office_staff_assignments (user_id, office_id)
+          values ('${staffId}', '${officeId}')
+          on conflict do nothing;
+
+          insert into auth.users (id, email, is_anonymous)
+          values ('${visitorId}', 'visitor.state@earist.edu.ph', true)
+          on conflict (id) do nothing;
+
+          insert into public.visitors (id, owner_id, full_name, contact_number, email, purpose, visit_date, source, consent_accepted_at)
+          values ('${visitorId}', '${visitorId}', 'State Visitor', '09171234567', 'visitor.state@earist.edu.ph', 'Inquiry', current_date, 'portal', now())
+          on conflict (id) do nothing;
+
+          insert into public.office_visits (
+            id, visit_type, office_id, visitor_id, visitor_actor_id, visitor_first_name, visitor_last_name,
+            visitor_contact_number, visitor_email, purpose, visit_date, approval_status, attendance_status, request_id, email_delivery_status
+          ) values (
+            '${visitId}', 'general', '${officeId}', '${visitorId}', '${visitorId}', 'State', 'Visitor',
+            '09171234567', 'visitor.state@earist.edu.ph', 'Inquiry', current_date, 'approved', 'awaiting_entry', gen_random_uuid(), 'pending'
+          ) on conflict (id) do nothing;
+
+          insert into public.office_visit_email_outbox (
+            id, office_visit_id, email_type, recipient_email, delivery_status, retry_count, created_at, updated_at
+          ) values (
+            '${outboxId}', '${visitId}', 'approval', 'visitor.state@earist.edu.ph', 'pending', 0, now(), now()
+          ) on conflict (id) do nothing;
+        `);
+      } finally {
+        client.release();
+      }
+    });
+
+    it('rejects permit_retry for pending status and preserves outbox state', async () => {
+      const client = await pool.connect();
+      try {
+        await client.query(`set request.jwt.claim.role = 'service_role';`);
+        await client.query(`update public.office_visit_email_outbox set delivery_status = 'pending', claim_id = null, lease_expires_at = null where id = '${outboxId}';`);
+
+        await expect(
+          client.query(`
+            select * from api.reconcile_office_visit_email(
+              '${staffId}'::uuid, '${visitId}'::uuid, 'permit_retry'::text, 'Valid audit note for pending check'::text
+            );
+          `)
+        ).rejects.toThrow(/only_for_unknown_or_failed/);
+
+        const check = await client.query(`select delivery_status from public.office_visit_email_outbox where id = '${outboxId}';`);
+        expect(check.rows[0].delivery_status).toBe('pending');
+      } finally {
+        client.release();
+      }
+    });
+
+    it('rejects permit_retry for processing status with active lease and preserves lease', async () => {
+      const client = await pool.connect();
+      try {
+        await client.query(`set request.jwt.claim.role = 'service_role';`);
+        const claimId = '06666666-6666-4666-8666-666666666666';
+        await client.query(`
+          update public.office_visit_email_outbox
+          set delivery_status = 'processing', claim_id = '${claimId}', lease_expires_at = now() + interval '5 minutes'
+          where id = '${outboxId}';
+        `);
+
+        await expect(
+          client.query(`
+            select * from api.reconcile_office_visit_email(
+              '${staffId}'::uuid, '${visitId}'::uuid, 'permit_retry'::text, 'Valid audit note for processing check'::text
+            );
+          `)
+        ).rejects.toThrow(/only_for_unknown_or_failed/);
+
+        const check = await client.query(`select delivery_status, claim_id::text from public.office_visit_email_outbox where id = '${outboxId}';`);
+        expect(check.rows[0].delivery_status).toBe('processing');
+        expect(check.rows[0].claim_id).toBe(claimId);
+      } finally {
+        client.release();
+      }
+    });
+
+    it('rejects permit_retry for sent status and preserves outbox state', async () => {
+      const client = await pool.connect();
+      try {
+        await client.query(`set request.jwt.claim.role = 'service_role';`);
+        await client.query(`update public.office_visit_email_outbox set delivery_status = 'sent', claim_id = null, lease_expires_at = null where id = '${outboxId}';`);
+
+        await expect(
+          client.query(`
+            select * from api.reconcile_office_visit_email(
+              '${staffId}'::uuid, '${visitId}'::uuid, 'permit_retry'::text, 'Valid audit note for sent check'::text
+            );
+          `)
+        ).rejects.toThrow(/only_for_unknown_or_failed/);
+
+        const check = await client.query(`select delivery_status from public.office_visit_email_outbox where id = '${outboxId}';`);
+        expect(check.rows[0].delivery_status).toBe('sent');
+      } finally {
+        client.release();
+      }
+    });
+
+    it('rejects permit_retry for delivered status with email_already_delivered', async () => {
+      const client = await pool.connect();
+      try {
+        await client.query(`set request.jwt.claim.role = 'service_role';`);
+        await client.query(`update public.office_visit_email_outbox set delivery_status = 'delivered', claim_id = null, lease_expires_at = null where id = '${outboxId}';`);
+
+        await expect(
+          client.query(`
+            select * from api.reconcile_office_visit_email(
+              '${staffId}'::uuid, '${visitId}'::uuid, 'permit_retry'::text, 'Valid audit note for delivered check'::text
+            );
+          `)
+        ).rejects.toThrow(/email_already_delivered/);
+
+        const check = await client.query(`select delivery_status from public.office_visit_email_outbox where id = '${outboxId}';`);
+        expect(check.rows[0].delivery_status).toBe('delivered');
+      } finally {
+        client.release();
+      }
+    });
+
+    it('rejects permit_retry when note is missing, empty, whitespace-only, or < 3 chars', async () => {
+      const client = await pool.connect();
+      try {
+        await client.query(`set request.jwt.claim.role = 'service_role';`);
+        await client.query(`update public.office_visit_email_outbox set delivery_status = 'failed' where id = '${outboxId}';`);
+
+        // Null note
+        await expect(
+          client.query(`
+            select * from api.reconcile_office_visit_email(
+              '${staffId}'::uuid, '${visitId}'::uuid, 'permit_retry'::text, null
+            );
+          `)
+        ).rejects.toThrow(/reconciliation_note_required_for_retry/);
+
+        // Empty note
+        await expect(
+          client.query(`
+            select * from api.reconcile_office_visit_email(
+              '${staffId}'::uuid, '${visitId}'::uuid, 'permit_retry'::text, ''
+            );
+          `)
+        ).rejects.toThrow(/reconciliation_note_required_for_retry/);
+
+        // Whitespace-only note
+        await expect(
+          client.query(`
+            select * from api.reconcile_office_visit_email(
+              '${staffId}'::uuid, '${visitId}'::uuid, 'permit_retry'::text, '   '
+            );
+          `)
+        ).rejects.toThrow(/reconciliation_note_required_for_retry/);
+
+        // 2-character note
+        await expect(
+          client.query(`
+            select * from api.reconcile_office_visit_email(
+              '${staffId}'::uuid, '${visitId}'::uuid, 'permit_retry'::text, 'no'
+            );
+          `)
+        ).rejects.toThrow(/reconciliation_note_required_for_retry/);
+      } finally {
+        client.release();
+      }
+    });
+
+    it('allows permit_retry for failed, unknown, and reconciliation_required with valid note and persists audit records', async () => {
+      const client = await pool.connect();
+      try {
+        await client.query(`set request.jwt.claim.role = 'service_role';`);
+
+        for (const initialStatus of ['failed', 'unknown', 'reconciliation_required']) {
+          await client.query(`
+            update public.office_visit_email_outbox
+            set delivery_status = '${initialStatus}', claim_id = gen_random_uuid(), lease_expires_at = now() - interval '10 seconds'
+            where id = '${outboxId}';
+          `);
+
+          const note = `Verified provider failure and authorized retry from ${initialStatus}`;
+          const res = await client.query(`
+            select * from api.reconcile_office_visit_email(
+              '${staffId}'::uuid, '${visitId}'::uuid, 'permit_retry'::text, '${note}'::text
+            );
+          `);
+          expect(res.rows.length).toBe(1);
+          expect(res.rows[0].ok).toBe(true);
+          expect(res.rows[0].new_status).toBe('failed');
+
+          // Verify outbox state
+          const outboxCheck = await client.query(`
+            select delivery_status, claim_id, lease_expires_at, reconciled_by::text, reconciliation_source, reconciliation_note
+            from public.office_visit_email_outbox where id = '${outboxId}';
+          `);
+          expect(outboxCheck.rows[0].delivery_status).toBe('failed');
+          expect(outboxCheck.rows[0].claim_id).toBeNull();
+          expect(outboxCheck.rows[0].lease_expires_at).toBeNull();
+          expect(outboxCheck.rows[0].reconciled_by).toBe(staffId);
+          expect(outboxCheck.rows[0].reconciliation_source).toBe('manual_staff');
+          expect(outboxCheck.rows[0].reconciliation_note).toBe(note);
+
+          // Verify event recorded in office_visit_events
+          const eventCheck = await client.query(`
+            select event_type, actor_id::text, metadata
+            from public.office_visit_events
+            where office_visit_id = '${visitId}' and event_type = 'email_reconciled'
+            order by created_at desc limit 1;
+          `);
+          expect(eventCheck.rows.length).toBe(1);
+          expect(eventCheck.rows[0].actor_id).toBe(staffId);
+          expect(eventCheck.rows[0].metadata.action).toBe('permit_retry');
+          expect(eventCheck.rows[0].metadata.previous_status).toBe(initialStatus);
+          expect(eventCheck.rows[0].metadata.new_status).toBe('failed');
+          expect(eventCheck.rows[0].metadata.note).toBe(note);
+        }
+      } finally {
+        client.release();
+      }
+    });
+  });
+
+  // =========================================================================
+  // Finding E: Independent-Session Concurrency Races & Deadlock Elimination
+  // =========================================================================
+  describe('Finding E: Canonical Lock Ordering & Independent-Session Concurrency Races', () => {
+    const officeId = '0a111111-1111-4111-8111-111111111111';
+    const staffId = '0a222222-2222-4222-8222-222222222222';
+    const visitorId = '0a333333-3333-4333-8333-333333333333';
+    const visitId = '0a444444-4444-4444-8444-444444444444';
+    const outboxId = '0a555555-5555-4555-8555-555555555555';
+
+    beforeAll(async () => {
+      const client = await pool.connect();
+      try {
+        await client.query(`set request.jwt.claim.role = 'service_role';`);
+        await client.query(`
+          insert into public.offices (id, name, code, active)
+          values ('${officeId}', 'Admissions Office', 'ADM70', true)
+          on conflict (id) do nothing;
+
+          insert into auth.users (id, email, email_confirmed_at)
+          values ('${staffId}', 'staff.race@earist.edu.ph', now())
+          on conflict (id) do nothing;
+
+          insert into public.staff_profiles (user_id, display_name, role, active, must_change_password, privacy_accepted_at)
+          values ('${staffId}', 'Race Staff', 'office_staff', true, false, now())
+          on conflict (user_id) do nothing;
+
+          insert into public.office_staff_assignments (user_id, office_id)
+          values ('${staffId}', '${officeId}')
+          on conflict do nothing;
+
+          insert into auth.users (id, email, is_anonymous)
+          values ('${visitorId}', 'visitor.race@earist.edu.ph', true)
+          on conflict (id) do nothing;
+
+          insert into public.visitors (id, owner_id, full_name, contact_number, email, purpose, visit_date, source, consent_accepted_at)
+          values ('${visitorId}', '${visitorId}', 'Race Visitor', '09171234567', 'visitor.race@earist.edu.ph', 'Admission', current_date, 'portal', now())
+          on conflict (id) do nothing;
+
+          insert into public.office_visits (
+            id, visit_type, office_id, visitor_id, visitor_actor_id, visitor_first_name, visitor_last_name,
+            visitor_contact_number, visitor_email, purpose, visit_date, approval_status, attendance_status, request_id, email_delivery_status
+          ) values (
+            '${visitId}', 'general', '${officeId}', '${visitorId}', '${visitorId}', 'Race', 'Visitor',
+            '09171234567', 'visitor.race@earist.edu.ph', 'Admission', current_date, 'approved', 'awaiting_entry', gen_random_uuid(), 'failed'
+          ) on conflict (id) do nothing;
+
+          insert into public.office_visit_email_outbox (
+            id, office_visit_id, email_type, recipient_email, delivery_status, retry_count, idempotency_key, created_at, updated_at
+          ) values (
+            '${outboxId}', '${visitId}', 'approval', 'visitor.race@earist.edu.ph', 'failed', 0, 'office-email-race-test', now(), now()
+          ) on conflict (id) do nothing;
+        `);
+      } finally {
+        client.release();
+      }
+    });
+
+    it('concurrent claim vs staff permit_retry: zero deadlocks, mutual exclusion, no active lease invalidation', async () => {
+      const clients = await createIndependentClients(2);
+      try {
+        const rootClient = await pool.connect();
+        await rootClient.query(`set request.jwt.claim.role = 'service_role';`);
+        await rootClient.query(`
+          update public.office_visit_email_outbox
+          set delivery_status = 'failed', claim_id = null, lease_expires_at = null
+          where id = '${outboxId}';
+        `);
+        rootClient.release();
+
+        // Client 0 claims delivery; Client 1 calls permit_retry
+        const results = await runConcurrent(clients, async (client, idx) => {
+          if (idx === 0) {
+            return client.query(`
+              select * from api.claim_office_visit_email_for_delivery('${visitId}'::uuid, 'approval'::text);
+            `);
+          } else {
+            return client.query(`
+              select * from api.reconcile_office_visit_email(
+                '${staffId}'::uuid, '${visitId}'::uuid, 'permit_retry'::text, 'Concurrent permit retry test'::text
+              );
+            `).catch((err) => ({ error: err }));
+          }
+        });
+
+        // Zero deadlocks: neither query should encounter 40P01 (deadlock_detected)
+        const claimRes: any = results[0];
+        const retryRes: any = results[1];
+
+        if (claimRes?.error) {
+          expect(claimRes.error.code).not.toBe('40P01');
+        }
+        if (retryRes?.error) {
+          expect(retryRes.error.code).not.toBe('40P01');
+        }
+
+        // Verify either claim won and lease was protected, OR retry won and reset to failed
+        const checkClient = await pool.connect();
+        await checkClient.query(`set request.jwt.claim.role = 'service_role';`);
+        const finalState = await checkClient.query(`
+          select delivery_status, claim_id, lease_expires_at, idempotency_key
+          from public.office_visit_email_outbox where id = '${outboxId}';
+        `);
+        checkClient.release();
+
+        const finalRow = finalState.rows[0];
+        expect(['processing', 'failed']).toContain(finalRow.delivery_status);
+        expect(finalRow.idempotency_key).toBe('office-email-race-test');
+      } finally {
+        await closeIndependentClients(clients);
+      }
+    });
+
+    it('concurrent delivery claim vs provider webhook reconciliation: zero deadlocks, consistent terminal state', async () => {
+      const clients = await createIndependentClients(2);
+      try {
+        const rootClient = await pool.connect();
+        await rootClient.query(`set request.jwt.claim.role = 'service_role';`);
+        await rootClient.query(`
+          update public.office_visit_email_outbox
+          set delivery_status = 'failed', claim_id = null, lease_expires_at = null, provider_message_id = 'msg_race_123'
+          where id = '${outboxId}';
+        `);
+        rootClient.release();
+
+        const providerEventId = `evt_race_${Date.now()}`;
+        const results = await runConcurrent(clients, async (client, idx) => {
+          if (idx === 0) {
+            return client.query(`
+              select * from api.claim_office_visit_email_for_delivery('${visitId}'::uuid, 'approval'::text);
+            `).catch((err) => ({ error: err }));
+          } else {
+            return client.query(`
+              select * from api.record_resend_delivery_event(
+                '${providerEventId}'::text,
+                'email.delivered'::text,
+                'msg_race_123'::text,
+                'success'::text,
+                'v***@earist.edu.ph'::text,
+                'Approval Notification'::text,
+                now(),
+                '${outboxId}'::uuid
+              );
+            `).catch((err) => ({ error: err }));
+          }
+        });
+
+        // Zero deadlocks
+        if ((results[0] as any)?.error) {
+          expect((results[0] as any).error.code).not.toBe('40P01');
+        }
+        if ((results[1] as any)?.error) {
+          expect((results[1] as any).error.code).not.toBe('40P01');
+        }
+
+        // State check
+        const checkClient = await pool.connect();
+        await checkClient.query(`set request.jwt.claim.role = 'service_role';`);
+        const finalState = await checkClient.query(`
+          select delivery_status, confirmation_source
+          from public.office_visit_email_outbox where id = '${outboxId}';
+        `);
+        checkClient.release();
+
+        // Terminal state must be delivered or processing
+        expect(['delivered', 'processing']).toContain(finalState.rows[0].delivery_status);
+      } finally {
+        await closeIndependentClients(clients);
+      }
+    });
+  });
+
+  // =========================================================================
+  // Finding F: Outbox RLS Full Staff Lifecycle Enforcement Matrix (9 Identities)
+  // =========================================================================
+  describe('Finding F: Outbox RLS Full Staff Lifecycle Enforcement Matrix (9 Identities)', () => {
+    const office1Id = '0b111111-1111-4111-8111-111111111111';
+    const office2Id = '0b222222-2222-4222-8222-222222222222';
+    const visit1Id = '0b333333-3333-4333-8333-333333333333';
+    const visit2Id = '0b444444-4444-4444-8444-444444444444';
+    const outbox1Id = '0b555555-5555-4555-8555-555555555555';
+    const outbox2Id = '0b666666-6666-4666-8666-666666666666';
+
+    // 9 Actor IDs
+    const assignedStaffId = '0c111111-1111-4111-8111-111111111111';
+    const unassignedStaffId = '0c222222-2222-4222-8222-222222222222';
+    const unconfirmedStaffId = '0c333333-3333-4333-8333-333333333333';
+    const mustChangePwStaffId = '0c444444-4444-4444-8444-444444444444';
+    const noPrivacyStaffId = '0c555555-5555-4555-8555-555555555555';
+    const recoveryStaffId = '0c666666-6666-4666-8666-666666666666';
+    const anonVisitorId = '0c777777-7777-4777-8777-777777777777';
+    const adminId = '0c888888-8888-4888-8888-888888888888';
+    const visitorOwnerId = '0c999999-9999-4999-8999-999999999999';
+
+    beforeAll(async () => {
+      const client = await pool.connect();
+      try {
+        await client.query(`set request.jwt.claim.role = 'service_role';`);
+
+        // 1. Offices
+        await client.query(`
+          insert into public.offices (id, name, code, active)
+          values
+            ('${office1Id}', 'Office One RLS', 'O1RLS', true),
+            ('${office2Id}', 'Office Two RLS', 'O2RLS', true)
+          on conflict (id) do nothing;
+
+          insert into auth.users (id, email, is_anonymous)
+          values ('${visitorOwnerId}', 'owner.rls@earist.edu.ph', true)
+          on conflict (id) do nothing;
+
+          insert into public.visitors (id, owner_id, full_name, contact_number, email, purpose, visit_date, source, consent_accepted_at)
+          values ('${visitorOwnerId}', '${visitorOwnerId}', 'RLS Visitor', '09171234567', 'owner.rls@earist.edu.ph', 'General', current_date, 'portal', now())
+          on conflict (id) do nothing;
+
+          insert into public.office_visits (id, visit_type, office_id, visitor_id, visitor_actor_id, visitor_first_name, visitor_last_name, visitor_contact_number, visitor_email, purpose, visit_date, approval_status, attendance_status, request_id, email_delivery_status)
+          values
+            ('${visit1Id}', 'general', '${office1Id}', '${visitorOwnerId}', '${visitorOwnerId}', 'V1', 'RLS', '09171234567', 'v1@earist.edu.ph', 'General', current_date, 'approved', 'awaiting_entry', gen_random_uuid(), 'delivered'),
+            ('${visit2Id}', 'general', '${office2Id}', '${visitorOwnerId}', '${visitorOwnerId}', 'V2', 'RLS', '09171234567', 'v2@earist.edu.ph', 'General', current_date, 'approved', 'awaiting_entry', gen_random_uuid(), 'delivered')
+          on conflict (id) do nothing;
+
+          insert into public.office_visit_email_outbox (id, office_visit_id, email_type, recipient_email, delivery_status, retry_count, created_at, updated_at)
+          values
+            ('${outbox1Id}', '${visit1Id}', 'approval', 'v1@earist.edu.ph', 'delivered', 0, now(), now()),
+            ('${outbox2Id}', '${visit2Id}', 'approval', 'v2@earist.edu.ph', 'delivered', 0, now(), now())
+          on conflict (id) do nothing;
+        `);
+
+        // 2. Identity 1: Assigned, fully onboarded office staff (assigned to Office 1)
+        await client.query(`
+          insert into auth.users (id, email, email_confirmed_at) values ('${assignedStaffId}', 'assigned.staff@earist.edu.ph', now()) on conflict (id) do nothing;
+          insert into public.staff_profiles (user_id, display_name, role, active, must_change_password, privacy_accepted_at)
+          values ('${assignedStaffId}', 'Assigned Staff', 'office_staff', true, false, now()) on conflict (user_id) do nothing;
+          insert into public.office_staff_assignments (user_id, office_id) values ('${assignedStaffId}', '${office1Id}') on conflict do nothing;
+        `);
+
+        // 3. Identity 2: Unassigned office staff (assigned only to Office 2)
+        await client.query(`
+          insert into auth.users (id, email, email_confirmed_at) values ('${unassignedStaffId}', 'unassigned.staff@earist.edu.ph', now()) on conflict (id) do nothing;
+          insert into public.staff_profiles (user_id, display_name, role, active, must_change_password, privacy_accepted_at)
+          values ('${unassignedStaffId}', 'Unassigned Staff', 'office_staff', true, false, now()) on conflict (user_id) do nothing;
+          insert into public.office_staff_assignments (user_id, office_id) values ('${unassignedStaffId}', '${office2Id}') on conflict do nothing;
+        `);
+
+        // 4. Identity 3: Active staff with unconfirmed email
+        await client.query(`
+          insert into auth.users (id, email, email_confirmed_at) values ('${unconfirmedStaffId}', 'unconfirmed.staff@earist.edu.ph', null) on conflict (id) do nothing;
+          insert into public.staff_profiles (user_id, display_name, role, active, must_change_password, privacy_accepted_at)
+          values ('${unconfirmedStaffId}', 'Unconfirmed Staff', 'office_staff', true, false, now()) on conflict (user_id) do nothing;
+          insert into public.office_staff_assignments (user_id, office_id) values ('${unconfirmedStaffId}', '${office1Id}') on conflict do nothing;
+        `);
+
+        // 5. Identity 4: Active staff with must_change_password = true
+        await client.query(`
+          insert into auth.users (id, email, email_confirmed_at) values ('${mustChangePwStaffId}', 'mustchange.staff@earist.edu.ph', now()) on conflict (id) do nothing;
+          insert into public.staff_profiles (user_id, display_name, role, active, must_change_password, privacy_accepted_at)
+          values ('${mustChangePwStaffId}', 'MustChange Staff', 'office_staff', true, true, now()) on conflict (user_id) do nothing;
+          insert into public.office_staff_assignments (user_id, office_id) values ('${mustChangePwStaffId}', '${office1Id}') on conflict do nothing;
+        `);
+
+        // 6. Identity 5: Active staff without privacy acceptance (privacy_accepted_at = null)
+        await client.query(`
+          insert into auth.users (id, email, email_confirmed_at) values ('${noPrivacyStaffId}', 'noprivacy.staff@earist.edu.ph', now()) on conflict (id) do nothing;
+          insert into public.staff_profiles (user_id, display_name, role, active, must_change_password, privacy_accepted_at)
+          values ('${noPrivacyStaffId}', 'NoPrivacy Staff', 'office_staff', true, false, null) on conflict (user_id) do nothing;
+          insert into public.office_staff_assignments (user_id, office_id) values ('${noPrivacyStaffId}', '${office1Id}') on conflict do nothing;
+        `);
+
+        // 7. Identity 6: Password-recovery session (staff profile is active, but session has amr recovery)
+        await client.query(`
+          insert into auth.users (id, email, email_confirmed_at) values ('${recoveryStaffId}', 'recovery.staff@earist.edu.ph', now()) on conflict (id) do nothing;
+          insert into public.staff_profiles (user_id, display_name, role, active, must_change_password, privacy_accepted_at)
+          values ('${recoveryStaffId}', 'Recovery Staff', 'office_staff', true, false, now()) on conflict (user_id) do nothing;
+          insert into public.office_staff_assignments (user_id, office_id) values ('${recoveryStaffId}', '${office1Id}') on conflict do nothing;
+        `);
+
+        // 8. Identity 7: Anonymous visitor session without staff authority
+        await client.query(`
+          insert into auth.users (id, email, is_anonymous) values ('${anonVisitorId}', null, true) on conflict (id) do nothing;
+        `);
+
+        // 9. Identity 8: Fully onboarded Admin
+        await client.query(`
+          insert into auth.users (id, email, email_confirmed_at) values ('${adminId}', 'admin.rls@earist.edu.ph', now()) on conflict (id) do nothing;
+          insert into public.staff_profiles (user_id, display_name, role, active, must_change_password, privacy_accepted_at)
+          values ('${adminId}', 'Admin RLS', 'admin', true, false, now()) on conflict (user_id) do nothing;
+        `);
+      } finally {
+        client.release();
+      }
+    });
+
+    async function queryOutboxAs(actorClaims: { sub?: string; role?: string; amr?: any[] }): Promise<string[]> {
+      const client = await pool.connect();
+      try {
+        const role = actorClaims.role || 'authenticated';
+        await client.query(`set role ${role === 'anon' ? 'anon' : 'authenticated'};`);
+        await client.query(`select set_config('request.jwt.claims', $1, false);`, [JSON.stringify(actorClaims)]);
+        await client.query(`select set_config('request.jwt.claim.sub', $1, false);`, [actorClaims.sub || '']);
+        await client.query(`select set_config('request.jwt.claim.role', $1, false);`, [role]);
+
+        const res = await client.query(`select id::text from public.office_visit_email_outbox order by id;`);
+        return res.rows.map((r) => r.id);
+      } finally {
+        await client.query(`reset role;`);
+        client.release();
+      }
+    }
+
+    it('1. Assigned, fully onboarded office staff can read only their assigned office outbox rows', async () => {
+      const rows = await queryOutboxAs({ sub: assignedStaffId, role: 'authenticated' });
+      expect(rows).toContain(outbox1Id);
+      expect(rows).not.toContain(outbox2Id);
+    });
+
+    it('2. Unassigned office staff cannot read another office outbox rows', async () => {
+      const rows = await queryOutboxAs({ sub: unassignedStaffId, role: 'authenticated' });
+      expect(rows).not.toContain(outbox1Id);
+      expect(rows).toContain(outbox2Id);
+    });
+
+    it('3. Active staff with unconfirmed email cannot read outbox rows', async () => {
+      const rows = await queryOutboxAs({ sub: unconfirmedStaffId, role: 'authenticated' });
+      expect(rows).toHaveLength(0);
+    });
+
+    it('4. Active staff with must_change_password = true cannot read outbox rows', async () => {
+      const rows = await queryOutboxAs({ sub: mustChangePwStaffId, role: 'authenticated' });
+      expect(rows).toHaveLength(0);
+    });
+
+    it('5. Active staff without privacy acceptance cannot read outbox rows', async () => {
+      const rows = await queryOutboxAs({ sub: noPrivacyStaffId, role: 'authenticated' });
+      expect(rows).toHaveLength(0);
+    });
+
+    it('6. Password-recovery sessions cannot read outbox rows', async () => {
+      const rows = await queryOutboxAs({
+        sub: recoveryStaffId,
+        role: 'authenticated',
+        amr: [{ method: 'recovery', timestamp: Math.floor(Date.now() / 1000) }],
+      });
+      expect(rows).toHaveLength(0);
+    });
+
+    it('7. Anonymous visitor sessions without staff authority cannot read outbox rows', async () => {
+      const client = await pool.connect();
+      try {
+        await client.query(`set role anon;`);
+        await client.query(`select set_config('request.jwt.claims', $1, false);`, [JSON.stringify({ sub: anonVisitorId, role: 'anon' })]);
+        await client.query(`select set_config('request.jwt.claim.sub', $1, false);`, [anonVisitorId]);
+        await client.query(`select set_config('request.jwt.claim.role', 'anon', false);`);
+
+        // Anon table grant is revoked or returns 0 rows
+        const rows = await client.query(`select id::text from public.office_visit_email_outbox;`).then(
+          (r) => r.rows.map((x) => x.id),
+          (err) => {
+            expect(err.message).toMatch(/permission denied/);
+            return [];
+          }
+        );
+        expect(rows).toHaveLength(0);
+      } finally {
+        await client.query(`reset role;`);
+        client.release();
+      }
+    });
+
+    it('8. Fully onboarded admins and superadmins retain authorized global read across all outbox rows', async () => {
+      const rows = await queryOutboxAs({ sub: adminId, role: 'authenticated' });
+      expect(rows).toContain(outbox1Id);
+      expect(rows).toContain(outbox2Id);
+    });
+
+    it('9. Service-role backend access continues working and reads all outbox rows', async () => {
+      const client = await pool.connect();
+      try {
+        await client.query(`set request.jwt.claim.role = 'service_role';`);
+        const res = await client.query(`select id::text from public.office_visit_email_outbox where id in ('${outbox1Id}', '${outbox2Id}');`);
+        const rows = res.rows.map((r) => r.id);
+        expect(rows).toContain(outbox1Id);
+        expect(rows).toContain(outbox2Id);
+      } finally {
+        client.release();
+      }
+    });
+  });
 });

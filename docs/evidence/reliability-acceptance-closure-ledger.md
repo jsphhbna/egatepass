@@ -78,16 +78,31 @@
     - Updated Test 4 to assert that expired leases transition to `reconciliation_required` and require `permit_retry` before re-claiming.
 
 12. **`tests/migration-chain-pglite.test.ts`**:
-    - Updated migration count to 69 across 10 test assertions.
+    - Updated migration count to 70 across 10 test assertions.
     - Added Test `Z. Migration 69 contract: Expired lease transition to reconciliation required and truthful claim invariants`.
+    - Added Test `AA. Migration 70 contract: Office email auth, canonical lock ordering, and retry state-machine closure`.
+
+13. **`supabase/migrations/20261107223000_office_email_auth_and_retry_state_machine.sql` (Migration 70)**:
+    - **Canonical Lock Ordering**: Enforces strict lock hierarchy across `office_visits` (FOR UPDATE first) and `office_visit_email_outbox` (FOR UPDATE second) in all mutation RPCs (`api.claim_office_visit_email_for_delivery`, `api.reconcile_office_visit_email`, `api.record_office_visit_email_result`, `api.record_resend_delivery_event`), mathematically eliminating deadlock inversions (`40P01`).
+    - **Strict State Transitions & Mandatory Audit Note**: Recreates `api.reconcile_office_visit_email` such that `permit_retry` strictly accepts only rows in `('failed', 'unknown', 'reconciliation_required')`, explicitly rejecting `pending`, active `processing`, `sent`, and unrecognized states (`only_for_unknown_or_failed` / 40900), and `delivered` (`email_already_delivered` / 40900). Enforces mandatory non-empty trimmed note of >= 3 characters (`char_length(btrim(requested_note)) >= 3`). Records full audit trail in `office_visit_events` with actor, prior state, new state, and note.
+    - **Outbox RLS Lifecycle Enforcement**: Replaces `outbox_staff_read` policy to evaluate `private.current_staff_role()`, ensuring only active staff accounts with confirmed email, completed password change, accepted privacy consent, non-recovery session, and matching office assignment can read outbox records. Global read granted to admin/superadmin roles; service role access preserved.
+
+14. **`server/routes/office/retry-email.ts`**:
+    - Enforces Zod `.superRefine` requiring a trimmed note of at least 3 characters for `permit_retry` and `mark_delivered` before dispatching RPC.
+    - Aligns route error responses with database error messages: `only_for_unknown_or_failed` (400), `already_delivered` (409), `reconciliation_note_required` (400), and database error code `40900` (409).
+
+15. **`tests/postgres-concurrency.test.ts` (Findings D, E, F)**:
+    - Added **Finding D**: State-Transition & Audit-Note Closure (`api.reconcile_office_visit_email`): tests asserting rejection of `pending`, active `processing`, `sent`, and `delivered` rows, rejection of short/empty notes, and allowed transitions for `failed`, `unknown`, and `reconciliation_required` with valid notes.
+    - Added **Finding E**: Canonical Lock Ordering & Independent-Session Concurrency Races: barrier-synchronized races between concurrent delivery claim and staff permit_retry, and concurrent delivery claim and provider webhook reconciliation.
+    - Added **Finding F**: Outbox RLS Full Staff Lifecycle Enforcement Matrix: verifies all 9 required identity lifecycle states against live RLS.
 
 ---
 
 ### 3. Remote Database Migration Synchronization
 - Remote Supabase project: `egatepass-dev` (`nhoawvkfqblsgutdffie`).
-- Total migrations in chain: 69.
-- Migration 69 (`20261107203500_expired_lease_and_retry_reconciliation.sql`) applied to remote Supabase via `npx supabase db push --linked --yes`.
-- Remote migration status: `Remote database is up to date` (all 69 migrations synchronized).
+- Total migrations in chain: 70.
+- Migration 70 (`20261107223000_office_email_auth_and_retry_state_machine.sql`) applied to remote Supabase via `npx supabase db push --linked --yes`.
+- Remote migration status: `Remote database is up to date` (all 70 migrations synchronized).
 - Remote Supabase linter (`npx supabase db lint --linked`): 0 errors across all schemas (`api`, `extensions`, `private`, `public`).
 
 ---
@@ -98,9 +113,9 @@
 | TypeScript Server & API | `npm run typecheck:api` | **PASS** (0 errors) |
 | Architecture & Migration Contracts | `npm run test:contracts` | **PASS** (25/25 passed) |
 | Documentation & Mermaid Truthfulness | `npm run test:docs` | **PASS** (37/37 passed) |
-| PGlite Migration Chain (1–69) | `npm run test:migrations` | **PASS** (39/39 passed) |
-| Office Outbox & Webhooks Suite | `npx vitest run tests/office-email-outbox-and-webhooks.test.ts` | **PASS** (10/10 passed) |
-| Production Frontend Build | `npm run build` | **PASS** (Vite build in 9.12s) |
-| Remote Supabase Synchronization | `npx supabase migration list --linked` | **PASS** (69/69 applied) |
+| PGlite Migration Chain (1–70) | `npx vitest run tests/migration-chain-pglite.test.ts` | **PASS** (40/40 passed) |
+| Complete Unit Test Suite | `npm run test:unit` | **PASS** (167 files passed, 1995 passed) |
+| Production Frontend Build | `npm run build` | **PASS** (Vite build in 9.68s) |
+| Remote Supabase Synchronization | `npx supabase migration list --linked` | **PASS** (70/70 applied) |
 | Remote Database Linter | `npx supabase db lint --linked` | **PASS** (0 errors) |
 | Physical Function Ceiling | Directory inspection (`api/`) | **PASS** (Exactly 6 entrypoints) |

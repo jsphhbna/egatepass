@@ -12,7 +12,17 @@ const schema = z.object({
   visitId: z.string().uuid(),
   action: z.enum(['retry', 'mark_delivered', 'permit_retry']).optional().default('retry'),
   note: z.string().trim().max(500).optional(),
-}).strict();
+}).strict().superRefine((data, ctx) => {
+  if (data.action === 'mark_delivered' || data.action === 'permit_retry') {
+    if (!data.note || data.note.trim().length < 3) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['note'],
+        message: `${data.action} requires an audit note of at least 3 characters.`,
+      });
+    }
+  }
+});
 
 export async function handleRequest(request: Request): Promise<Response> {
   if (request.method !== 'POST') {
@@ -76,11 +86,17 @@ export async function handleRequest(request: Request): Promise<Response> {
       });
 
       if (recErr) {
-        if (recErr.code === '40900' || recErr.message?.includes('already_delivered')) {
+        if (recErr.message?.includes('already_delivered')) {
           return jsonResponse(409, { error: 'email_already_delivered', message: 'Email is already delivered.' });
         }
         if (recErr.message?.includes('only_for_unknown_or_failed')) {
           return jsonResponse(400, { error: 'invalid_reconciliation_state', message: recErr.message });
+        }
+        if (recErr.message?.includes('reconciliation_note_required')) {
+          return jsonResponse(400, { error: 'invalid_reconciliation_note', message: recErr.message });
+        }
+        if (recErr.code === '40900') {
+          return jsonResponse(409, { error: 'conflict', message: recErr.message });
         }
         throw recErr;
       }
