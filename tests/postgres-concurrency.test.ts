@@ -422,7 +422,7 @@ runSuite('True PostgreSQL Concurrency, Canonical Approval Integrity & Email Reco
           insert into auth.users (id, email) values ('${staffActorId}', 'staff@earist.edu.ph') on conflict (id) do nothing;
           insert into auth.users (id, email, is_anonymous) values ('${visitorId}', '${visitorEmail}', true) on conflict (id) do nothing;
 
-          insert into public.offices (id, name, department, active)
+          insert into public.offices (id, name, description, active)
           values ('${officeId}', 'Registrar Office', 'Academic', true)
           on conflict (id) do nothing;
 
@@ -438,16 +438,16 @@ runSuite('True PostgreSQL Concurrency, Canonical Approval Integrity & Email Reco
           values ('${staffActorId}', '${officeId}')
           on conflict do nothing;
 
-          insert into public.visitors (id, full_name, first_name, last_name, email, source, consent_accepted_at)
-          values ('${visitorId}', 'Maria Dela Cruz', 'Maria', 'Dela Cruz', '${visitorEmail}', 'portal', now())
+          insert into public.visitors (id, owner_id, full_name, contact_number, email, purpose, visit_date, source, consent_accepted_at)
+          values ('${visitorId}', '${visitorId}', 'Maria Dela Cruz', '09171234567', '${visitorEmail}', 'Transcript Request', current_date, 'portal', now())
           on conflict (id) do nothing;
 
           insert into public.office_visits (
             id, visit_type, office_id, personnel_id, visitor_id, visitor_first_name, visitor_last_name,
-            visitor_email, purpose, visit_date, approval_status, attendance_status, request_id
+            visitor_contact_number, visitor_email, purpose, visit_date, approval_status, attendance_status, request_id
           ) values (
             '${visitId}', 'specific_person', '${officeId}', '${personnelId}', '${visitorId}', 'Maria', 'Dela Cruz',
-            '${visitorEmail}', 'Transcript Request', current_date, 'pending', 'awaiting_entry', gen_random_uuid()
+            '09171234567', '${visitorEmail}', 'Transcript Request', current_date, 'pending', 'awaiting_entry', gen_random_uuid()
           ) on conflict (id) do update set approval_status = 'pending';
         `);
       } finally {
@@ -551,16 +551,16 @@ runSuite('True PostgreSQL Concurrency, Canonical Approval Integrity & Email Reco
       try {
         await rootClient.query(`
           insert into auth.users (id, email, is_anonymous) values ('${visitorId}', '${visitorEmail}', true) on conflict (id) do nothing;
-          insert into public.visitors (id, full_name, first_name, last_name, email, source, consent_accepted_at)
-          values ('${visitorId}', 'Roberto Cruz', 'Roberto', 'Cruz', '${visitorEmail}', 'portal', now())
+          insert into public.visitors (id, owner_id, full_name, contact_number, email, purpose, visit_date, source, consent_accepted_at)
+          values ('${visitorId}', '${visitorId}', 'Roberto Cruz', '09171234567', '${visitorEmail}', 'Diploma Claim', current_date, 'portal', now())
           on conflict (id) do nothing;
 
           insert into public.office_visits (
             id, visit_type, office_id, personnel_id, visitor_id, visitor_first_name, visitor_last_name,
-            visitor_email, purpose, visit_date, approval_status, attendance_status, request_id
+            visitor_contact_number, visitor_email, purpose, visit_date, approval_status, attendance_status, request_id
           ) values (
             '${visitId}', 'specific_person', '${officeId}', '${personnelId}', '${visitorId}', 'Roberto', 'Cruz',
-            '${visitorEmail}', 'Diploma Claim', current_date, 'pending', 'awaiting_entry', gen_random_uuid()
+            '09171234567', '${visitorEmail}', 'Diploma Claim', current_date, 'pending', 'awaiting_entry', gen_random_uuid()
           ) on conflict (id) do update set approval_status = 'pending';
         `);
       } finally {
@@ -660,16 +660,16 @@ runSuite('True PostgreSQL Concurrency, Canonical Approval Integrity & Email Reco
       try {
         await rootClient.query(`
           insert into auth.users (id, email, is_anonymous) values ('${visitorId}', '${visitorEmail}', true) on conflict (id) do nothing;
-          insert into public.visitors (id, full_name, first_name, last_name, email, source, consent_accepted_at)
-          values ('${visitorId}', 'Carlos Ray', 'Carlos', 'Ray', '${visitorEmail}', 'portal', now())
+          insert into public.visitors (id, owner_id, full_name, contact_number, email, purpose, visit_date, source, consent_accepted_at)
+          values ('${visitorId}', '${visitorId}', 'Carlos Ray', '09171234567', '${visitorEmail}', 'Grades Inquiry', current_date, 'portal', now())
           on conflict (id) do nothing;
 
           insert into public.office_visits (
             id, visit_type, office_id, personnel_id, visitor_id, visitor_first_name, visitor_last_name,
-            visitor_email, purpose, visit_date, approval_status, attendance_status, request_id
+            visitor_contact_number, visitor_email, purpose, visit_date, approval_status, attendance_status, request_id
           ) values (
             '${visitId}', 'specific_person', '${officeId}', '${personnelId}', '${visitorId}', 'Carlos', 'Ray',
-            '${visitorEmail}', 'Grades Inquiry', current_date, 'pending', 'awaiting_entry', gen_random_uuid()
+            '09171234567', '${visitorEmail}', 'Grades Inquiry', current_date, 'pending', 'awaiting_entry', gen_random_uuid()
           ) on conflict (id) do update set approval_status = 'pending';
         `);
       } finally {
@@ -720,15 +720,15 @@ runSuite('True PostgreSQL Concurrency, Canonical Approval Integrity & Email Reco
 
         await rootClient.query(`
           insert into auth.users (id, email, is_anonymous) values ('${visitorId}', 'reconcile@earist.edu.ph', true) on conflict (id) do nothing;
-          insert into public.visitors (id, full_name, first_name, last_name, email, source, consent_accepted_at)
-          values ('${visitorId}', 'Ana Cruz', 'Ana', 'Cruz', 'reconcile@earist.edu.ph', 'portal', now()) on conflict (id) do nothing;
+          insert into public.visitors (id, owner_id, full_name, contact_number, email, purpose, visit_date, source, consent_accepted_at)
+          values ('${visitorId}', '${visitorId}', 'Ana Cruz', '09171234567', 'reconcile@earist.edu.ph', 'Admissions', current_date, 'portal', now()) on conflict (id) do nothing;
 
           insert into public.office_visits (
             id, visit_type, office_id, visitor_id, visitor_first_name, visitor_last_name,
-            visitor_email, purpose, visit_date, approval_status, attendance_status, request_id, email_delivery_status
+            visitor_contact_number, visitor_email, purpose, visit_date, approval_status, attendance_status, request_id, email_delivery_status
           ) values (
             '${visitId}', 'specific_person', '${officeId}', '${visitorId}', 'Ana', 'Cruz',
-            'reconcile@earist.edu.ph', 'Admissions', current_date, 'approved', 'awaiting_entry', gen_random_uuid(), 'reconciliation_required'
+            '09171234567', 'reconcile@earist.edu.ph', 'Admissions', current_date, 'approved', 'awaiting_entry', gen_random_uuid(), 'reconciliation_required'
           ) on conflict (id) do nothing;
 
           insert into public.office_visit_email_outbox (
@@ -878,15 +878,15 @@ runSuite('True PostgreSQL Concurrency, Canonical Approval Integrity & Email Reco
 
         await rootClient.query(`
           insert into auth.users (id, email, is_anonymous) values ('${visitorId}', 'terminal@earist.edu.ph', true) on conflict (id) do nothing;
-          insert into public.visitors (id, full_name, first_name, last_name, email, source, consent_accepted_at)
-          values ('${visitorId}', 'Lisa Manoban', 'Lisa', 'Manoban', 'terminal@earist.edu.ph', 'portal', now()) on conflict (id) do nothing;
+          insert into public.visitors (id, owner_id, full_name, contact_number, email, purpose, visit_date, source, consent_accepted_at)
+          values ('${visitorId}', '${visitorId}', 'Lisa Manoban', '09171234567', 'terminal@earist.edu.ph', 'Clearance', current_date, 'portal', now()) on conflict (id) do nothing;
 
           insert into public.office_visits (
             id, visit_type, office_id, visitor_id, visitor_first_name, visitor_last_name,
-            visitor_email, purpose, visit_date, approval_status, attendance_status, request_id, email_delivery_status, confirmation_source
+            visitor_contact_number, visitor_email, purpose, visit_date, approval_status, attendance_status, request_id, email_delivery_status, confirmation_source
           ) values (
             '${visitId}', 'specific_person', '${officeId}', '${visitorId}', 'Lisa', 'Manoban',
-            'terminal@earist.edu.ph', 'Clearance', current_date, 'approved', 'awaiting_entry', gen_random_uuid(), 'delivered', 'provider_webhook'
+            '09171234567', 'terminal@earist.edu.ph', 'Clearance', current_date, 'approved', 'awaiting_entry', gen_random_uuid(), 'delivered', 'provider_webhook'
           ) on conflict (id) do nothing;
 
           insert into public.office_visit_email_outbox (
