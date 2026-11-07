@@ -553,6 +553,7 @@ runSuite('True PostgreSQL Concurrency, Canonical Approval Integrity & Email Reco
       const visitorId = '66666666-6666-4666-8666-666666666666';
       const visitId = '77777777-7777-4777-8777-777777777777';
       const visitorEmail = 'approved.visitor@earist.edu.ph';
+      const returningProfileId = '11111111-2222-3333-4444-555555555555';
 
       const rootClient = await pool.connect();
       try {
@@ -576,17 +577,25 @@ runSuite('True PostgreSQL Concurrency, Canonical Approval Integrity & Email Reco
           values ('${staffActorId}', '${officeId}')
           on conflict do nothing;
 
+          insert into public.returning_visitor_profiles (
+            id, first_name, last_name, contact_number_e164, home_address, expires_at
+          ) values (
+            '${returningProfileId}', 'Maria', 'Dela Cruz', '+639171234567', 'Manila, Philippines', now() + interval '30 days'
+          ) on conflict (id) do nothing;
+
           insert into public.visitors (id, owner_id, full_name, contact_number, email, purpose, visit_date, source, consent_accepted_at)
           values ('${visitorId}', '${visitorId}', 'Maria Dela Cruz', '09171234567', '${visitorEmail}', 'Transcript Request', current_date, 'portal', now())
           on conflict (id) do nothing;
 
           insert into public.office_visits (
             id, visit_type, office_id, personnel_id, visitor_id, visitor_actor_id, visitor_first_name, visitor_last_name,
-            visitor_contact_number, visitor_email, purpose, visit_date, approval_status, attendance_status, request_id
+            visitor_contact_number, visitor_email, purpose, visit_date, approval_status, attendance_status, request_id,
+            registration_mode, returning_profile_id
           ) values (
             '${visitId}', 'specific_person', '${officeId}', '${personnelId}', '${visitorId}', '${visitorId}', 'Maria', 'Dela Cruz',
-            '09171234567', '${visitorEmail}', 'Transcript Request', current_date, 'pending', 'awaiting_entry', gen_random_uuid()
-          ) on conflict (id) do update set approval_status = 'pending';
+            '09171234567', '${visitorEmail}', 'Transcript Request', current_date, 'pending', 'awaiting_entry', gen_random_uuid(),
+            'returning', '${returningProfileId}'
+          ) on conflict (id) do update set approval_status = 'pending', registration_mode = 'returning', returning_profile_id = '${returningProfileId}';
         `);
       } finally {
         rootClient.release();
@@ -684,22 +693,32 @@ runSuite('True PostgreSQL Concurrency, Canonical Approval Integrity & Email Reco
       const visitorId = '88888888-8888-4888-8888-888888888888';
       const visitId = '99999999-9999-4999-8999-999999999999';
       const visitorEmail = 'route.visitor@earist.edu.ph';
+      const returningProfileId = '22222222-3333-4444-5555-666666666666';
 
       const rootClient = await pool.connect();
       try {
         await rootClient.query(`
           insert into auth.users (id, email, is_anonymous) values ('${visitorId}', '${visitorEmail}', true) on conflict (id) do nothing;
+
+          insert into public.returning_visitor_profiles (
+            id, first_name, last_name, contact_number_e164, home_address, expires_at
+          ) values (
+            '${returningProfileId}', 'Roberto', 'Cruz', '+639171234567', 'Manila, Philippines', now() + interval '30 days'
+          ) on conflict (id) do nothing;
+
           insert into public.visitors (id, owner_id, full_name, contact_number, email, purpose, visit_date, source, consent_accepted_at)
           values ('${visitorId}', '${visitorId}', 'Roberto Cruz', '09171234567', '${visitorEmail}', 'Diploma Claim', current_date, 'portal', now())
           on conflict (id) do nothing;
 
           insert into public.office_visits (
             id, visit_type, office_id, personnel_id, visitor_id, visitor_actor_id, visitor_first_name, visitor_last_name,
-            visitor_contact_number, visitor_email, purpose, visit_date, approval_status, attendance_status, request_id
+            visitor_contact_number, visitor_email, purpose, visit_date, approval_status, attendance_status, request_id,
+            registration_mode, returning_profile_id
           ) values (
             '${visitId}', 'specific_person', '${officeId}', '${personnelId}', '${visitorId}', '${visitorId}', 'Roberto', 'Cruz',
-            '09171234567', '${visitorEmail}', 'Diploma Claim', current_date, 'pending', 'awaiting_entry', gen_random_uuid()
-          ) on conflict (id) do update set approval_status = 'pending';
+            '09171234567', '${visitorEmail}', 'Diploma Claim', current_date, 'pending', 'awaiting_entry', gen_random_uuid(),
+            'returning', '${returningProfileId}'
+          ) on conflict (id) do update set approval_status = 'pending', registration_mode = 'returning', returning_profile_id = '${returningProfileId}';
         `);
       } finally {
         rootClient.release();
@@ -797,22 +816,32 @@ runSuite('True PostgreSQL Concurrency, Canonical Approval Integrity & Email Reco
       const visitorId = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
       const visitId = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
       const visitorEmail = 'fallback.visitor@earist.edu.ph';
+      const returningProfileId = '33333333-4444-5555-6666-777777777777';
 
       const rootClient = await pool.connect();
       try {
         await rootClient.query(`
           insert into auth.users (id, email, is_anonymous) values ('${visitorId}', '${visitorEmail}', true) on conflict (id) do nothing;
+
+          insert into public.returning_visitor_profiles (
+            id, first_name, last_name, contact_number_e164, home_address, expires_at
+          ) values (
+            '${returningProfileId}', 'Carlos', 'Ray', '+639171234567', 'Manila, Philippines', now() + interval '30 days'
+          ) on conflict (id) do nothing;
+
           insert into public.visitors (id, owner_id, full_name, contact_number, email, purpose, visit_date, source, consent_accepted_at)
           values ('${visitorId}', '${visitorId}', 'Carlos Ray', '09171234567', '${visitorEmail}', 'Grades Inquiry', current_date, 'portal', now())
           on conflict (id) do nothing;
 
           insert into public.office_visits (
             id, visit_type, office_id, personnel_id, visitor_id, visitor_actor_id, visitor_first_name, visitor_last_name,
-            visitor_contact_number, visitor_email, purpose, visit_date, approval_status, attendance_status, request_id
+            visitor_contact_number, visitor_email, purpose, visit_date, approval_status, attendance_status, request_id,
+            registration_mode, returning_profile_id
           ) values (
             '${visitId}', 'specific_person', '${officeId}', '${personnelId}', '${visitorId}', '${visitorId}', 'Carlos', 'Ray',
-            '09171234567', '${visitorEmail}', 'Grades Inquiry', current_date, 'pending', 'awaiting_entry', gen_random_uuid()
-          ) on conflict (id) do update set approval_status = 'pending';
+            '09171234567', '${visitorEmail}', 'Grades Inquiry', current_date, 'pending', 'awaiting_entry', gen_random_uuid(),
+            'returning', '${returningProfileId}'
+          ) on conflict (id) do update set approval_status = 'pending', registration_mode = 'returning', returning_profile_id = '${returningProfileId}';
         `);
       } finally {
         rootClient.release();
