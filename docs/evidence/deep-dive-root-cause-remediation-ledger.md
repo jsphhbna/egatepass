@@ -135,8 +135,9 @@ An exhaustive audit of all PostgreSQL functions in schema `api` possessing `SECU
 
 ## 6. Production Deployment & Release Gates
 
-- **Remote Migration Status**: Migration 66 applied to Supabase `egatepass-dev` (`nhoawvkfqblsgutdffie`).
-- **Git Commit**: Tracked under conventional commit `fix(reliability): atomic rate limiting, truthful email status, provenance tracking, and partial commit resilience`.
-- **GitHub Actions CI**: Verified passing on `origin/main`.
-- **Vercel Production Deployment**: Verified live at `https://egatepass.tech`.
+- **Remote Migration Status**: Migration 66 (`20261107000500_post_release_reliability_remediation.sql`) successfully pushed and applied to Supabase `egatepass-dev` (`nhoawvkfqblsgutdffie`).
+- **Git Commit**: Tracked on `main` at `2f14a4fa459e3d68b3379b1e3988dcea6a8cadfb`.
+- **GitHub Actions CI**: Workflow `42317424128` PASSED completely in 3m29s (100% green across all checks).
+- **Vercel Production Deployment**: Live at `https://egatepass.tech` (`https://egatepass-8f7c6ec4d-jsphhbnas-projects.vercel.app`), serving `build-meta.json` with commit `2f14a4fa459e3d68b3379b1e3988dcea6a8cadfb` built at `2026-11-07T00:18:43.444Z`.
+- **Resend Principle of Least Privilege**: Verified `RESEND_API_KEY` is restricted strictly to email transmission (`restricted_api_key`), blocking administrative webhook/domain mutation attempts.
 - **Hardware Status**: Thermal printer (MXW01), hardware barcode scanners, and iPhone camera optical calibration marked `NOT TESTED (PHYSICAL HARDWARE)` in accordance with governance instructions.
