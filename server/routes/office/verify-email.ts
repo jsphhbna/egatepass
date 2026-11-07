@@ -1,4 +1,5 @@
-import { randomInt, createHash } from 'node:crypto';
+import { randomInt, createHash, createHmac } from 'node:crypto';
+import { isIP } from 'node:net';
 import { z } from 'zod';
 import { getServerSupabaseClients } from '../../supabase.js';
 import { getVerifiedSessionContext, HttpError } from '../../actors.js';
@@ -23,12 +24,26 @@ const verifyCodeSchema = z.object({
 
 const requestSchema = z.discriminatedUnion('action', [requestCodeSchema, verifyCodeSchema]);
 
-function extractClientIp(request: Request): string {
-  const cfIp = request.headers.get('cf-connecting-ip');
-  const forwarded = request.headers.get('x-forwarded-for');
-  const realIp = request.headers.get('x-real-ip');
-  const firstHop = forwarded ? forwarded.split(',')[0]?.trim() : null;
-  return cfIp?.trim() || firstHop || realIp || '127.0.0.1';
+function extractTrustedClientIp(request: Request): string | null {
+  const cfIp = request.headers.get('cf-connecting-ip')?.trim();
+  if (cfIp && isIP(cfIp)) return cfIp;
+
+  const vercelIp = request.headers.get('x-vercel-forwarded-for')?.split(',')[0]?.trim();
+  if (vercelIp && isIP(vercelIp)) return vercelIp;
+
+  const realIp = request.headers.get('x-real-ip')?.trim();
+  if (realIp && isIP(realIp)) return realIp;
+
+  return null;
+}
+
+function deriveIpRateLimitHmac(trustedIp: string | null): string | null {
+  if (!trustedIp) return null;
+  const secret = process.env.RATE_LIMIT_HMAC_SECRET?.trim();
+  if (!secret || secret.length < 32) {
+    throw new HttpError(503, 'abuse_control_unavailable');
+  }
+  return createHmac('sha256', secret).update(`office_ip:${trustedIp}`).digest('hex');
 }
 
 export async function handleRequest(request: Request): Promise<Response> {
@@ -52,6 +67,9 @@ export async function handleRequest(request: Request): Promise<Response> {
   if (session.isRecoverySession) {
     throw new HttpError(403, 'recovery_session_forbidden');
   }
+  if (!session.isAnonymous) {
+    throw new HttpError(403, 'anonymous_visitor_session_required');
+  }
 
   const secret = getOfficeTokenSecret();
   const normalizedEmail = parsed.data.email.toLowerCase().trim();
@@ -61,13 +79,14 @@ export async function handleRequest(request: Request): Promise<Response> {
     const rawCode = randomInt(100000, 1000000).toString();
     const codeHash = createHash('sha256').update(`${rawCode}:${secret}`).digest('hex');
     const expiresAt = new Date(Date.now() + 15 * 60 * 1000).toISOString();
-    const clientIp = extractClientIp(request);
+    const trustedIp = extractTrustedClientIp(request);
+    const ipHmac = deriveIpRateLimitHmac(trustedIp);
 
     // Atomic rate-limiting check and challenge allocation via database RPC
     const { data: slotRows, error: slotErr } = await admin.schema('api').rpc('request_office_email_verification_slot', {
       requested_actor_id: session.user.id,
       requested_email: normalizedEmail,
-      requested_client_ip: clientIp,
+      requested_ip_hmac: ipHmac,
       requested_code_hash: codeHash,
       requested_expires_at: expiresAt,
     });

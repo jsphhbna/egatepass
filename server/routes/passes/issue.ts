@@ -478,16 +478,32 @@ async function handleRequest(request: Request): Promise<Response> {
         return jsonResponse(409, { error: 'pass_token_secret_rotated' });
       }
 
+      let replayOfficeVisitLinkStatus: 'linked' | 'reconciliation_required' | 'not_applicable' = 'not_applicable';
       if (parsed.data.officeId && existingPass.id) {
         try {
-          const { error: ovErr } = await admin.schema('api').rpc('record_general_office_visit', {
+          const { data: ovRows, error: ovErr } = await admin.schema('api').rpc('record_general_office_visit', {
             requested_actor_id: actorId,
             requested_pass_id: existingPass.id,
             requested_office_id: parsed.data.officeId,
             requested_request_id: parsed.data.requestId,
           });
-          if (ovErr) throw ovErr;
+          const ovRow = Array.isArray(ovRows) ? ovRows[0] : ovRows;
+          if (ovErr || !ovRow?.visit_id) {
+            replayOfficeVisitLinkStatus = 'reconciliation_required';
+            console.warn('Failed to link general office visit on idempotent replay:', ovErr || 'missing_visit_id');
+            await recordReconciliation(
+              admin,
+              'general_office_visit.replay_failed',
+              'passes',
+              existingPass.id,
+              ovErr instanceof Error ? ovErr.message : (ovErr ? String(ovErr) : 'missing_visit_id'),
+              { officeId: parsed.data.officeId, requestId: parsed.data.requestId }
+            ).catch(() => undefined);
+          } else {
+            replayOfficeVisitLinkStatus = 'linked';
+          }
         } catch (ovErr) {
+          replayOfficeVisitLinkStatus = 'reconciliation_required';
           console.warn('Failed to link general office visit on idempotent replay:', ovErr);
           await recordReconciliation(
             admin,
@@ -500,6 +516,42 @@ async function handleRequest(request: Request): Promise<Response> {
         }
       }
 
+      let replaySavedVehicleStatus: 'saved' | 'failed' | 'not_requested' = 'not_requested';
+      if (
+        parsed.data.arrivalMode === 'vehicle' &&
+        parsed.data.vehicle?.saveVehicle === true &&
+        parsed.data.returning?.profileId &&
+        normalizedPlateKey
+      ) {
+        try {
+          const { data: existingVeh, error: chkVehErr } = await admin
+            .from('returning_visitor_vehicles')
+            .select('id')
+            .eq('profile_id', parsed.data.returning.profileId)
+            .eq('plate_key', normalizedPlateKey)
+            .is('archived_at', null)
+            .maybeSingle();
+
+          if (chkVehErr) throw chkVehErr;
+
+          if (existingVeh?.id) {
+            replaySavedVehicleStatus = 'saved';
+          } else {
+            const { error: insVehErr } = await admin.from('returning_visitor_vehicles').insert({
+              profile_id: parsed.data.returning.profileId,
+              vehicle_type: parsed.data.vehicle.vehicleType,
+              plate_number: normalizedPlateDisplay || parsed.data.vehicle.plateNumber,
+              plate_key: normalizedPlateKey,
+              color: normalizedVehicleColor || parsed.data.vehicle.color,
+              make_model: parsed.data.vehicle.makeModel || '',
+            });
+            replaySavedVehicleStatus = insVehErr ? 'failed' : 'saved';
+          }
+        } catch {
+          replaySavedVehicleStatus = 'failed';
+        }
+      }
+
       // Return existing pass with 200 OK (idempotent replay without external Geoapify call)
       return jsonResponse(200, {
         passId: existingPass.public_reference,
@@ -507,6 +559,8 @@ async function handleRequest(request: Request): Promise<Response> {
         qrToken,
         validFrom: existingPass.valid_from,
         validUntil: existingPass.valid_until,
+        officeVisitLinkStatus: replayOfficeVisitLinkStatus,
+        savedVehicleStatus: replaySavedVehicleStatus,
       });
     }
 
@@ -874,6 +928,7 @@ async function handleRequest(request: Request): Promise<Response> {
         }
       }
 
+      let savedVehicleStatus: 'saved' | 'failed' | 'not_requested' = 'not_requested';
       // If declared new vehicle and opted to save
       if (
         parsed.data.arrivalMode === 'vehicle' &&
@@ -884,31 +939,73 @@ async function handleRequest(request: Request): Promise<Response> {
         normalizedPlateKey
       ) {
         try {
-          const { error: insVehErr } = await admin.from('returning_visitor_vehicles').insert({
-            profile_id: ret.profileId,
-            vehicle_type: parsed.data.vehicle.vehicleType,
-            plate_number: normalizedPlateDisplay,
-            plate_key: normalizedPlateKey,
-            color: normalizedVehicleColor || parsed.data.vehicle.color,
-            make_model: parsed.data.vehicle.makeModel || '',
-          });
-          if (insVehErr) throw insVehErr;
+          const { data: existingVeh, error: chkVehErr } = await admin
+            .from('returning_visitor_vehicles')
+            .select('id')
+            .eq('profile_id', ret.profileId)
+            .eq('plate_key', normalizedPlateKey)
+            .is('archived_at', null)
+            .maybeSingle();
+
+          if (chkVehErr) throw chkVehErr;
+
+          if (existingVeh?.id) {
+            const { error: updVehErr } = await admin
+              .from('returning_visitor_vehicles')
+              .update({
+                last_used_at: new Date().toISOString(),
+                color: normalizedVehicleColor || parsed.data.vehicle.color,
+                make_model: parsed.data.vehicle.makeModel || '',
+                updated_at: new Date().toISOString(),
+              })
+              .eq('id', existingVeh.id);
+            if (updVehErr) throw updVehErr;
+            savedVehicleStatus = 'saved';
+          } else {
+            const { error: insVehErr } = await admin.from('returning_visitor_vehicles').insert({
+              profile_id: ret.profileId,
+              vehicle_type: parsed.data.vehicle.vehicleType,
+              plate_number: normalizedPlateDisplay,
+              plate_key: normalizedPlateKey,
+              color: normalizedVehicleColor || parsed.data.vehicle.color,
+              make_model: parsed.data.vehicle.makeModel || '',
+            });
+            if (insVehErr) throw insVehErr;
+            savedVehicleStatus = 'saved';
+          }
         } catch (vehErr) {
           console.warn('Failed to save returning visitor vehicle:', vehErr);
+          savedVehicleStatus = 'failed';
         }
       }
 
+      let officeVisitLinkStatus: 'linked' | 'reconciliation_required' | 'not_applicable' = 'not_applicable';
       if (parsed.data.officeId && data?.pass_id) {
         try {
-          const { error: ovErr } = await admin.schema('api').rpc('record_general_office_visit', {
+          const { data: ovRows, error: ovErr } = await admin.schema('api').rpc('record_general_office_visit', {
             requested_actor_id: actorId,
             requested_pass_id: data.pass_id,
             requested_office_id: parsed.data.officeId,
             requested_request_id: parsed.data.requestId,
           });
-          if (ovErr) throw ovErr;
+          const ovRow = Array.isArray(ovRows) ? ovRows[0] : ovRows;
+          if (ovErr || !ovRow?.visit_id) {
+            officeVisitLinkStatus = 'reconciliation_required';
+            console.error('Failed to link general office visit:', ovErr || 'missing_visit_id');
+            await recordReconciliation(
+              admin,
+              'general_office_visit.failed',
+              'passes',
+              data.pass_id,
+              ovErr instanceof Error ? ovErr.message : (ovErr ? String(ovErr) : 'missing_visit_id'),
+              { officeId: parsed.data.officeId, requestId: parsed.data.requestId }
+            ).catch(() => undefined);
+          } else {
+            officeVisitLinkStatus = 'linked';
+          }
         } catch (ovErr) {
           console.error('Failed to link general office visit:', ovErr);
+          officeVisitLinkStatus = 'reconciliation_required';
           await recordReconciliation(
             admin,
             'general_office_visit.failed',
@@ -928,6 +1025,8 @@ async function handleRequest(request: Request): Promise<Response> {
       validUntil: data.valid_until,
       returningEnrollment: returningEnrollmentStatus,
       returningProfileUpdate: returningProfileUpdateStatus,
+      savedVehicleStatus,
+      officeVisitLinkStatus,
     });
   } catch (error) {
     if (error instanceof HttpError) return jsonResponse(error.status, { error: error.code });

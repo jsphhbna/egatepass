@@ -116,6 +116,8 @@ export interface IssuedPass {
   validUntil: string;
   returningEnrollment?: 'enrolled' | 'failed' | 'not_requested';
   returningProfileUpdate?: 'updated' | 'failed' | 'not_requested';
+  savedVehicleStatus?: 'saved' | 'failed' | 'not_requested';
+  officeVisitLinkStatus?: 'linked' | 'reconciliation_required' | 'not_applicable';
 }
 
 interface UploadIntent {

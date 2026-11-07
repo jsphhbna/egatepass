@@ -433,7 +433,7 @@ describe('Mermaid Rendering & Documentation Truthfulness Contract', () => {
   }, 30000);
 
   it('verifies exact inventory of active markdown files, files containing mermaid, and active mermaid blocks', () => {
-    expect(activeFiles.length, 'Expected exactly 21 active Markdown files').toBe(21);
+    expect(activeFiles.length, 'Expected exactly 22 active Markdown files').toBe(22);
     expect(archiveFiles.length, 'Expected exactly 12 archive Markdown files').toBe(12);
     expect(filesWithMermaid.length, 'Expected exactly 15 active Markdown files with Mermaid').toBe(15);
     expect(allActiveBlocks.length, 'Expected exactly 50 active Mermaid blocks').toBe(50);

@@ -234,7 +234,20 @@ export function OfficeDashboardPage() {
         throw new Error(data.message || data.error || 'Failed to approve visit');
       }
 
-      toast.success(`Visit approved! Digital gate pass emailed to ${approveModalVisit.visitorEmail || 'visitor'}.`);
+      const emailStatus = data.emailDelivery?.status;
+      if (emailStatus === 'sent') {
+        toast.success('Visit approved. QR email submitted to the email provider.');
+      } else if (emailStatus === 'delivered') {
+        toast.success('Visit approved. Email provider confirms delivery.');
+      } else if (emailStatus === 'failed') {
+        toast.warning('Visit approved, but the email could not be sent. Staff attention is required.');
+      } else if (emailStatus === 'unknown') {
+        toast.warning('Visit approved. Email outcome is uncertain; reconciliation is required.');
+      } else if (approveModalVisit.visitorEmail) {
+        toast.info('Visit approved. Email delivery is pending dispatch.');
+      } else {
+        toast.success('Visit approved.');
+      }
       setApproveModalVisit(null);
       loadVisits(true);
     } catch (err: unknown) {
@@ -270,7 +283,20 @@ export function OfficeDashboardPage() {
         throw new Error(data.message || data.error || 'Failed to reject visit');
       }
 
-      toast.info('Visit request rejected. Explanation sent to visitor.');
+      const emailStatus = data.emailDelivery?.status;
+      if (emailStatus === 'sent') {
+        toast.info('Visit request rejected. Explanation email submitted to the email provider.');
+      } else if (emailStatus === 'delivered') {
+        toast.info('Visit request rejected. Explanation delivered by provider.');
+      } else if (emailStatus === 'failed') {
+        toast.warning('Visit request rejected, but the explanation email could not be sent.');
+      } else if (emailStatus === 'unknown') {
+        toast.warning('Visit request rejected. Explanation email outcome is uncertain.');
+      } else if (rejectModalVisit.visitorEmail) {
+        toast.info('Visit request rejected. Explanation email is pending dispatch.');
+      } else {
+        toast.info('Visit request rejected.');
+      }
       setRejectModalVisit(null);
       setRejectionReason('');
       loadVisits(true);
@@ -739,7 +765,7 @@ export function OfficeDashboardPage() {
                               {visit.visitorEmail}
                               {visit.emailDeliveryStatus === 'delivered' && (
                                 <span className="ml-1 rounded px-1.5 py-0.5 bg-emerald-100 text-emerald-800 text-[10px] font-bold">
-                                  Delivered
+                                  {visit.confirmationSource === 'manual_staff' ? 'Manually confirmed' : 'Delivered by Provider'}
                                 </span>
                               )}
                               {visit.emailDeliveryStatus === 'sent' && (

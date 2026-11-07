@@ -2166,6 +2166,16 @@ export function GetPassPage() {
         toast.warning('Pass created successfully, but your saved profile could not be updated. Your pass is valid for today\'s visit.');
       }
 
+      if (result.savedVehicleStatus === 'saved') {
+        toast.success('Vehicle details saved for future visits.');
+      } else if (result.savedVehicleStatus === 'failed') {
+        toast.warning('Pass created successfully, but your vehicle details could not be saved for future visits. Your pass is valid for today\'s visit.');
+      }
+
+      if (result.officeVisitLinkStatus === 'reconciliation_required') {
+        toast.info('Pass created successfully. Office visit linkage is pending reconciliation with the office.');
+      }
+
       setPassId(result.passId);
       setRawQrToken(result.qrToken);
       const validity = result.validFrom && result.validUntil

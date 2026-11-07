@@ -94,6 +94,7 @@ export async function handleRequest(request: Request): Promise<Response> {
         vehicle_details,
         address_details,
         email_delivery_status,
+        confirmation_source,
         email_dispatched_at,
         email_error,
         request_id,
@@ -157,10 +158,10 @@ export async function handleRequest(request: Request): Promise<Response> {
     if (visitIds.length > 0) {
       const { data: outboxRows } = await admin
         .from('office_visit_email_outbox')
-        .select('office_visit_id, email_type, delivery_status, provider_message_id, lease_expires_at, retry_count, last_error')
+        .select('office_visit_id, email_type, delivery_status, provider_message_id, lease_expires_at, retry_count, last_error, confirmation_source, reconciliation_source')
         .in('office_visit_id', visitIds);
       for (const ob of outboxRows || []) {
-        outboxMap.set(ob.office_visit_id, ob);
+        outboxMap.set(`${ob.office_visit_id}:${ob.email_type}`, ob);
       }
     }
 
@@ -176,8 +177,10 @@ export async function handleRequest(request: Request): Promise<Response> {
         ? createOfficePortraitToken(row.id, actor.id)
         : null;
 
-      const outbox = outboxMap.get(row.id);
+      const targetEmailType = row.approval_status === 'rejected' ? 'rejection' : 'approval';
+      const outbox = outboxMap.get(`${row.id}:${targetEmailType}`) || outboxMap.get(`${row.id}:approval`) || outboxMap.get(`${row.id}:rejection`);
       const effectiveEmailStatus = outbox?.delivery_status || row.email_delivery_status || null;
+      const effectiveConfirmationSource = outbox?.confirmation_source || row.confirmation_source || null;
 
       return {
         id: row.id,
@@ -217,6 +220,7 @@ export async function handleRequest(request: Request): Promise<Response> {
         passStatus: pass?.status || null,
         publicReference: pass?.public_reference || null,
         emailDeliveryStatus: effectiveEmailStatus,
+        confirmationSource: effectiveConfirmationSource,
         emailDispatchedAt: row.email_dispatched_at,
         emailError: outbox?.last_error || row.email_error,
         outboxStatus: outbox?.delivery_status || null,

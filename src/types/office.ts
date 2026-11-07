@@ -99,6 +99,7 @@ export interface OfficeVisitRecord {
   passStatus?: string | null;
 
   emailDeliveryStatus?: 'none' | 'pending' | 'processing' | 'sent' | 'delivered' | 'failed' | 'unknown' | 'reconciliation_required' | null;
+  confirmationSource?: 'manual_staff' | 'provider_webhook' | null;
   emailDispatchedAt?: string | null;
   emailError?: string | null;
   outboxStatus?: 'pending' | 'processing' | 'sent' | 'delivered' | 'failed' | 'unknown' | 'reconciliation_required' | null;
