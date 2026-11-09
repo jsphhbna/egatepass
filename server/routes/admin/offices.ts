@@ -86,17 +86,33 @@ export async function handleRequest(request: Request): Promise<Response> {
     return jsonResponse(200, { offices: result });
   }
 
+  // Mutation operations (POST, PATCH) strictly require superadmin
+  if (actor.role !== 'superadmin') {
+    return jsonResponse(403, {
+      error: 'superadmin_required',
+      message: 'Only superadmin can modify offices or staff assignments',
+    });
+  }
+
   if (request.method === 'POST') {
     const body = await request.json().catch(() => null);
 
     if (body?.action === 'verify_office' || body?.action === 'unverify_office') {
-      if (actor.role !== 'superadmin') {
-        return jsonResponse(403, { error: 'superadmin_required', message: 'Only superadmin can verify or unverify offices' });
-      }
       const officeId = body.officeId;
       if (!officeId || typeof officeId !== 'string') {
         return jsonResponse(400, { error: 'invalid_office_id' });
       }
+
+      const { data: existingOffice, error: chkErr } = await admin
+        .from('offices')
+        .select('id')
+        .eq('id', officeId)
+        .maybeSingle();
+      if (chkErr) throw chkErr;
+      if (!existingOffice) {
+        return jsonResponse(404, { error: 'office_not_found', message: 'The specified office does not exist' });
+      }
+
       const isVerify = body.action === 'verify_office';
       const { data: updatedOffice, error: vErr } = await admin
         .from('offices')
@@ -116,6 +132,26 @@ export async function handleRequest(request: Request): Promise<Response> {
     if (body?.action === 'assign_staff') {
       const parsed = assignStaffSchema.safeParse(body);
       if (!parsed.success) return jsonResponse(400, { error: 'invalid_request', details: parsed.error.issues });
+
+      const { data: office, error: offErr } = await admin
+        .from('offices')
+        .select('id')
+        .eq('id', parsed.data.officeId)
+        .maybeSingle();
+      if (offErr) throw offErr;
+      if (!office) {
+        return jsonResponse(404, { error: 'office_not_found', message: 'The specified office does not exist' });
+      }
+
+      const { data: staff, error: stErr } = await admin
+        .from('staff_profiles')
+        .select('user_id, role, active')
+        .eq('user_id', parsed.data.userId)
+        .maybeSingle();
+      if (stErr) throw stErr;
+      if (!staff) {
+        return jsonResponse(404, { error: 'staff_not_found', message: 'The specified staff account does not exist' });
+      }
 
       const { error: insErr } = await admin.from('office_staff_assignments').upsert({
         user_id: parsed.data.userId,
@@ -163,10 +199,25 @@ export async function handleRequest(request: Request): Promise<Response> {
     const parsed = patchOfficeSchema.safeParse(body);
     if (!parsed.success) return jsonResponse(400, { error: 'invalid_request', details: parsed.error.issues });
 
+    const { data: existingOffice, error: chkErr } = await admin
+      .from('offices')
+      .select('id')
+      .eq('id', parsed.data.id)
+      .maybeSingle();
+    if (chkErr) throw chkErr;
+    if (!existingOffice) {
+      return jsonResponse(404, { error: 'office_not_found', message: 'The specified office does not exist' });
+    }
+
     const updates: Record<string, unknown> = { updated_at: new Date().toISOString() };
     if (parsed.data.name !== undefined) updates.name = parsed.data.name;
     if (parsed.data.description !== undefined) updates.description = parsed.data.description;
     if (parsed.data.active !== undefined) updates.active = parsed.data.active;
+    if (parsed.data.verified !== undefined) {
+      updates.verified = parsed.data.verified;
+      updates.verified_at = parsed.data.verified ? new Date().toISOString() : null;
+      updates.verified_by = parsed.data.verified ? actor.id : null;
+    }
 
     const { data: updatedOffice, error: updateErr } = await admin
       .from('offices')

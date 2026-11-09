@@ -175,4 +175,5 @@ export interface DeviceAuthActor {
 export type AuthActor = StaffAuthActor | DeviceAuthActor;
 
 export * from './office';
+export * from './calendar';
 

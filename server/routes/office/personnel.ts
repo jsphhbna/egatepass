@@ -79,8 +79,11 @@ export async function handleRequest(request: Request): Promise<Response> {
       try {
         await requireOfficeStaffActor(admin, token, officeId);
         isStaff = true;
-      } catch {
-        isStaff = false;
+      } catch (err) {
+        if (err instanceof HttpError) {
+          return jsonResponse(err.status, { error: err.code });
+        }
+        throw err;
       }
     }
 

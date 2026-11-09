@@ -113,6 +113,29 @@ export function AdminUsers() {
     }
   }
 
+  async function handleToggleOfficeActive(officeId: string, active: boolean) {
+    try {
+      const token = await getAccessToken();
+      const res = await fetch('/api/admin/offices', {
+        method: 'PATCH',
+        headers: {
+          Authorization: `Bearer ${token}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          id: officeId,
+          active,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.message || data.error || 'Failed to update office status');
+      toast.success(active ? 'Office activated successfully.' : 'Office deactivated.');
+      await loadAdminOffices();
+    } catch (err: any) {
+      toast.error(err.message || 'Failed to update office status');
+    }
+  }
+
   async function handleCreateOffice() {
     if (!newOfficeName.trim()) {
       toast.error('Office name is required.');
@@ -835,6 +858,7 @@ export function AdminUsers() {
                   <DataTableCell isHeader>Office Name</DataTableCell>
                   <DataTableCell isHeader>Code</DataTableCell>
                   <DataTableCell isHeader>Description</DataTableCell>
+                  <DataTableCell isHeader>Status</DataTableCell>
                   <DataTableCell isHeader>Verification</DataTableCell>
                   <DataTableCell isHeader className="text-right">Actions</DataTableCell>
                 </DataTableRow>
@@ -850,6 +874,12 @@ export function AdminUsers() {
                       {office.description || '—'}
                     </DataTableCell>
                     <DataTableCell>
+                      <StatusBadge
+                        status={office.active ? 'active' : 'inactive'}
+                        label={office.active ? 'Active' : 'Inactive'}
+                      />
+                    </DataTableCell>
+                    <DataTableCell>
                       {office.verified ? (
                         <span className="inline-flex items-center gap-1 rounded-full bg-emerald-50 px-2 py-0.5 text-xs font-medium text-emerald-700 border border-emerald-200">
                           <CheckCircle2 className="h-3 w-3" /> Verified
@@ -862,29 +892,38 @@ export function AdminUsers() {
                     </DataTableCell>
                     <DataTableCell className="text-right">
                       {canManageAdministrativeRoles && (
-                        office.verified ? (
+                        <div className="inline-flex items-center gap-2 justify-end">
                           <Button
                             variant="secondary"
                             size="sm"
-                            onClick={() => handleVerifyOffice(office.id, false)}
+                            onClick={() => handleToggleOfficeActive(office.id, !office.active)}
                           >
-                            Unverify
+                            {office.active ? 'Deactivate' : 'Activate'}
                           </Button>
-                        ) : (
-                          <Button
-                            size="sm"
-                            onClick={() => handleVerifyOffice(office.id, true)}
-                          >
-                            Verify Office
-                          </Button>
-                        )
+                          {office.verified ? (
+                            <Button
+                              variant="secondary"
+                              size="sm"
+                              onClick={() => handleVerifyOffice(office.id, false)}
+                            >
+                              Unverify
+                            </Button>
+                          ) : (
+                            <Button
+                              size="sm"
+                              onClick={() => handleVerifyOffice(office.id, true)}
+                            >
+                              Verify Office
+                            </Button>
+                          )}
+                        </div>
                       )}
                     </DataTableCell>
                   </DataTableRow>
                 ))}
                 {adminOffices.length === 0 && (
                   <tr>
-                    <td colSpan={5} className="py-8 text-center text-[var(--color-text-muted)]">
+                    <td colSpan={6} className="py-8 text-center text-[var(--color-text-muted)]">
                       No offices recorded.
                     </td>
                   </tr>

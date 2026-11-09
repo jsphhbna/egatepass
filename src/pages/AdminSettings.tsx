@@ -5,7 +5,7 @@ import { toast } from 'sonner';
 import { Button, Card, Input, Select, ConfirmModal, LoadingState } from '@/components/ui';
 import { PasswordResetCard } from '@/components/ChangePasswordCard';
 import { DEFAULT_REJECTION_REASONS, normalizeVisitPurposes } from '@/lib/settingsDefaults';
-import type { VisitPurposeOption } from '@/types';
+import type { VisitPurposeOption, CampusCalendarClosure, CalendarClosureType } from '@/types';
 import { useAuth } from '@/hooks/useAuth';
 import { isSuperAdmin } from '@/lib/permissions';
 import { getAccessToken } from '@/services/auth';
@@ -41,24 +41,17 @@ export function AdminSettings() {
   const currentTab = searchParams.get('tab') || 'general';
 
   // Campus Calendar State
-  const [closures, setClosures] = useState<Array<{
-    id: string;
-    closureDate: string;
-    title: string;
-    reason: string | null;
-    closureType: string;
-    isActive: boolean;
-    isPublished: boolean;
-    createdAt: string;
-    createdBy: string | null;
-  }>>([]);
+  const [closures, setClosures] = useState<CampusCalendarClosure[]>([]);
   const [loadingClosures, setLoadingClosures] = useState(false);
   const [showAddClosureModal, setShowAddClosureModal] = useState(false);
-  const [newClosureDate, setNewClosureDate] = useState('');
+  const [newClosureStartDate, setNewClosureStartDate] = useState('');
+  const [newClosureEndDate, setNewClosureEndDate] = useState('');
   const [newClosureTitle, setNewClosureTitle] = useState('');
-  const [newClosureReason, setNewClosureReason] = useState('');
-  const [newClosureType, setNewClosureType] = useState('holiday');
+  const [newClosureDescription, setNewClosureDescription] = useState('');
+  const [newClosureType, setNewClosureType] = useState<CalendarClosureType>('holiday');
   const [isSavingClosure, setIsSavingClosure] = useState(false);
+  const [deletingClosure, setDeletingClosure] = useState<CampusCalendarClosure | null>(null);
+  const [isDeletingClosure, setIsDeletingClosure] = useState(false);
 
   const loadAdminClosures = useCallback(async () => {
     setLoadingClosures(true);
@@ -85,8 +78,13 @@ export function AdminSettings() {
   }, [currentTab, loadAdminClosures]);
 
   async function handleAddClosure() {
-    if (!newClosureDate) {
-      toast.error('Please select a closure date.');
+    if (!newClosureStartDate) {
+      toast.error('Please select a start date.');
+      return;
+    }
+    const effectiveEnd = newClosureEndDate || newClosureStartDate;
+    if (effectiveEnd < newClosureStartDate) {
+      toast.error('End date cannot be earlier than start date.');
       return;
     }
     if (!newClosureTitle.trim()) {
@@ -103,21 +101,26 @@ export function AdminSettings() {
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({
-          closureDate: newClosureDate,
           title: newClosureTitle.trim(),
-          reason: newClosureReason.trim() || undefined,
           closureType: newClosureType,
-          isActive: true,
-          isPublished: true,
+          startDate: newClosureStartDate,
+          endDate: effectiveEnd,
+          description: newClosureDescription.trim() || undefined,
+          active: true,
+          published: true,
         }),
       });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.message || data.error || 'Failed to create closure');
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        throw new Error(data.message || data.error || (data.details && data.details[0]?.message) || 'Failed to create closure');
+      }
       toast.success('Campus closure added successfully.');
       setShowAddClosureModal(false);
-      setNewClosureDate('');
+      setNewClosureStartDate('');
+      setNewClosureEndDate('');
       setNewClosureTitle('');
-      setNewClosureReason('');
+      setNewClosureDescription('');
+      setNewClosureType('holiday');
       await loadAdminClosures();
     } catch (err: any) {
       toast.error(err.message || 'Failed to add closure.');
@@ -126,7 +129,7 @@ export function AdminSettings() {
     }
   }
 
-  async function handleToggleClosure(closureDate: string, field: 'isActive' | 'isPublished', val: boolean) {
+  async function handleToggleClosure(id: string, field: 'active' | 'published', val: boolean) {
     try {
       const token = await getAccessToken();
       const res = await fetch('/api/admin/calendar', {
@@ -136,30 +139,40 @@ export function AdminSettings() {
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({
-          closureDate,
+          id,
           [field]: val,
         }),
       });
-      if (!res.ok) throw new Error('Failed to update closure');
-      toast.success('Closure updated.');
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.message || data.error || 'Failed to update closure');
+      toast.success(`Closure ${field === 'active' ? (val ? 'activated' : 'deactivated') : (val ? 'published' : 'hidden')}.`);
       await loadAdminClosures();
     } catch (err: any) {
       toast.error(err.message || 'Failed to update closure.');
     }
   }
 
-  async function handleDeleteClosure(closureDate: string) {
+  async function handleDeleteClosure(closure: CampusCalendarClosure) {
+    setIsDeletingClosure(true);
     try {
       const token = await getAccessToken();
-      const res = await fetch(`/api/admin/calendar?closureDate=${closureDate}`, {
+      const res = await fetch('/api/admin/calendar', {
         method: 'DELETE',
-        headers: token ? { Authorization: `Bearer ${token}` } : {},
+        headers: {
+          Authorization: `Bearer ${token}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ id: closure.id }),
       });
-      if (!res.ok) throw new Error('Failed to delete closure');
-      toast.success('Closure deleted.');
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.message || data.error || 'Failed to delete closure');
+      toast.success('Closure deleted successfully.');
+      setDeletingClosure(null);
       await loadAdminClosures();
     } catch (err: any) {
       toast.error(err.message || 'Failed to delete closure.');
+    } finally {
+      setIsDeletingClosure(false);
     }
   }
 
@@ -993,9 +1006,9 @@ export function AdminSettings() {
                 <table className="w-full text-left text-xs">
                   <thead>
                     <tr className="border-b border-[var(--color-border)] text-[var(--color-text-secondary)] uppercase tracking-wider font-semibold">
-                      <th className="py-3 px-3">Date</th>
+                      <th className="py-3 px-3">Date / Range</th>
                       <th className="py-3 px-3">Title</th>
-                      <th className="py-3 px-3">Reason</th>
+                      <th className="py-3 px-3">Description</th>
                       <th className="py-3 px-3">Type</th>
                       <th className="py-3 px-3">Status</th>
                       {canManageSecuritySettings && <th className="py-3 px-3 text-right">Actions</th>}
@@ -1003,28 +1016,32 @@ export function AdminSettings() {
                   </thead>
                   <tbody className="divide-y divide-[var(--color-border)]">
                     {closures.map((c) => (
-                      <tr key={c.closureDate} className="hover:bg-[var(--color-canvas)]">
+                      <tr key={c.id} className="hover:bg-[var(--color-canvas)]">
                         <td className="py-3 px-3 font-bold text-[var(--color-text-primary)] whitespace-nowrap">
-                          {c.closureDate}
+                          {c.startDate === c.endDate ? c.startDate : `${c.startDate} to ${c.endDate}`}
                         </td>
                         <td className="py-3 px-3 font-semibold text-[var(--color-text-primary)]">
                           {c.title}
                         </td>
                         <td className="py-3 px-3 text-[var(--color-text-secondary)]">
-                          {c.reason || '—'}
+                          {c.description || '—'}
                         </td>
                         <td className="py-3 px-3">
                           <span className="rounded-md bg-slate-100 text-slate-800 px-2 py-0.5 font-bold uppercase text-[10px]">
-                            {c.closureType}
+                            {c.closureType === 'campus_closure' ? 'Campus Closure' : 'Holiday'}
                           </span>
                         </td>
                         <td className="py-3 px-3">
                           <div className="flex items-center gap-1.5">
-                            <span className={`h-2 w-2 rounded-full ${c.isActive ? 'bg-emerald-500' : 'bg-gray-400'}`} />
-                            <span className="font-medium text-[11px]">{c.isActive ? 'Active' : 'Inactive'}</span>
-                            {c.isPublished && (
+                            <span className={`h-2 w-2 rounded-full ${c.active ? 'bg-emerald-500' : 'bg-gray-400'}`} />
+                            <span className="font-medium text-[11px]">{c.active ? 'Active' : 'Inactive'}</span>
+                            {c.published ? (
                               <span className="rounded bg-blue-50 text-blue-700 px-1 py-0.2 text-[9px] font-bold">
                                 Public
+                              </span>
+                            ) : (
+                              <span className="rounded bg-gray-100 text-gray-600 px-1 py-0.2 text-[9px] font-bold">
+                                Hidden
                               </span>
                             )}
                           </div>
@@ -1034,14 +1051,21 @@ export function AdminSettings() {
                             <div className="inline-flex items-center gap-2">
                               <button
                                 type="button"
-                                onClick={() => handleToggleClosure(c.closureDate, 'isActive', !c.isActive)}
+                                onClick={() => handleToggleClosure(c.id, 'active', !c.active)}
                                 className="text-[11px] font-bold text-[#7A0A0A] hover:underline"
                               >
-                                {c.isActive ? 'Deactivate' : 'Activate'}
+                                {c.active ? 'Deactivate' : 'Activate'}
                               </button>
                               <button
                                 type="button"
-                                onClick={() => handleDeleteClosure(c.closureDate)}
+                                onClick={() => handleToggleClosure(c.id, 'published', !c.published)}
+                                className="text-[11px] font-medium text-slate-600 hover:underline"
+                              >
+                                {c.published ? 'Hide' : 'Publish'}
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => setDeletingClosure(c)}
                                 className="p-1 text-rose-600 hover:text-rose-800"
                                 title="Delete closure"
                               >
@@ -1074,18 +1098,34 @@ export function AdminSettings() {
               </button>
             </div>
             <div className="space-y-3 text-xs">
-              <div>
-                <label className="block font-semibold mb-1">Closure Date *</label>
-                <Input
-                  type="date"
-                  value={newClosureDate}
-                  onChange={(e) => setNewClosureDate(e.target.value)}
-                />
+              <div className="grid grid-cols-2 gap-2">
+                <div>
+                  <label className="block font-semibold mb-1">Start Date *</label>
+                  <Input
+                    type="date"
+                    value={newClosureStartDate}
+                    onChange={(e) => {
+                      setNewClosureStartDate(e.target.value);
+                      if (!newClosureEndDate || newClosureEndDate < e.target.value) {
+                        setNewClosureEndDate(e.target.value);
+                      }
+                    }}
+                  />
+                </div>
+                <div>
+                  <label className="block font-semibold mb-1">End Date *</label>
+                  <Input
+                    type="date"
+                    value={newClosureEndDate}
+                    min={newClosureStartDate}
+                    onChange={(e) => setNewClosureEndDate(e.target.value)}
+                  />
+                </div>
               </div>
               <div>
                 <label className="block font-semibold mb-1">Title *</label>
                 <Input
-                  placeholder="e.g. Rizal Day / University Holiday"
+                  placeholder="e.g. Rizal Day / University Foundation Week"
                   value={newClosureTitle}
                   onChange={(e) => setNewClosureTitle(e.target.value)}
                 />
@@ -1094,22 +1134,19 @@ export function AdminSettings() {
                 <label className="block font-semibold mb-1">Reason / Description</label>
                 <Input
                   placeholder="e.g. Regular Holiday / Severe Weather Suspension"
-                  value={newClosureReason}
-                  onChange={(e) => setNewClosureReason(e.target.value)}
+                  value={newClosureDescription}
+                  onChange={(e) => setNewClosureDescription(e.target.value)}
                 />
               </div>
               <div>
                 <label className="block font-semibold mb-1">Closure Type</label>
                 <select
                   value={newClosureType}
-                  onChange={(e) => setNewClosureType(e.target.value)}
+                  onChange={(e) => setNewClosureType(e.target.value as CalendarClosureType)}
                   className="w-full rounded-xl border border-[var(--color-border)] bg-white p-2 text-xs font-semibold"
                 >
-                  <option value="holiday">Holiday</option>
-                  <option value="suspension">Suspension</option>
-                  <option value="maintenance">Maintenance</option>
-                  <option value="emergency">Emergency</option>
-                  <option value="administrative">Administrative</option>
+                  <option value="holiday">Official Holiday</option>
+                  <option value="campus_closure">Campus Closure / Suspension / Maintenance</option>
                 </select>
               </div>
             </div>
@@ -1133,6 +1170,25 @@ export function AdminSettings() {
           </div>
         </div>
       )}
+
+      <ConfirmModal
+        isOpen={!!deletingClosure}
+        onClose={() => setDeletingClosure(null)}
+        title="Delete Campus Closure?"
+        description={
+          deletingClosure ? (
+            <>
+              Are you sure you want to delete <strong className="text-[var(--color-text-primary)]">{deletingClosure.title}</strong> ({deletingClosure.startDate === deletingClosure.endDate ? deletingClosure.startDate : `${deletingClosure.startDate} to ${deletingClosure.endDate}`})?
+            </>
+          ) : ''
+        }
+        onConfirm={() => {
+          if (deletingClosure) void handleDeleteClosure(deletingClosure);
+        }}
+        confirmText="Delete Closure"
+        isDestructive
+        loading={isDeletingClosure}
+      />
 
       <ConfirmModal
         isOpen={canManageSecuritySettings && showPurgeConfirm && !saving}

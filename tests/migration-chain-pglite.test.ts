@@ -3659,4 +3659,32 @@ describe('Permanent PostgreSQL Migration Chain & Schema Contracts (PGlite)', () 
     expect(psgcIndexes.rows.length).toBe(2);
   }, 60000);
 
+  it('CC. Migration 77 contract: Advisor Foreign Key Indexes and API Function Security Boundaries', async () => {
+    const db = new PGlite();
+    await applyAllMigrations(db);
+
+    // 1. Verify covering indexes created in Migration 77
+    const advisorIndexes = await db.query<{ indexname: string }>(`
+      select indexname from pg_indexes
+      where schemaname = 'public'
+        and indexname in (
+          'idx_campus_calendar_closures_created_by',
+          'idx_campus_calendar_closures_updated_by',
+          'idx_offices_verified_by',
+          'idx_office_staff_assignments_created_by'
+        );
+    `);
+    expect(advisorIndexes.rows.length).toBe(4);
+
+    // 2. Verify execute permissions on api.confirm_office_arrival
+    const funcPrivs = await db.query<{ grantee: string; privilege_type: string }>(`
+      select grantee, privilege_type
+      from information_schema.routine_privileges
+      where specific_schema = 'api' and routine_name = 'confirm_office_arrival';
+    `);
+    const grantees = funcPrivs.rows.map((r) => r.grantee);
+    expect(grantees).toContain('service_role');
+    expect(grantees).not.toContain('anon');
+  }, 60000);
+
 });

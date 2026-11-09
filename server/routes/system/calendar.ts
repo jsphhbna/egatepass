@@ -30,7 +30,18 @@ export async function handleRequest(request: Request): Promise<Response> {
     return jsonResponse(500, { error: 'database_error', message: error.message });
   }
 
-  return jsonResponse(200, { closures: data || [] });
+  const closures = (data || []).map((row) => ({
+    id: row.id,
+    title: row.title,
+    closureType: row.closure_type,
+    startDate: row.start_date,
+    endDate: row.end_date,
+    description: row.description,
+    active: row.active,
+    published: row.published,
+  }));
+
+  return jsonResponse(200, { closures });
 }
 
 export const fetch = handleRequest;

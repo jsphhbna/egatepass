@@ -25,6 +25,27 @@ async function handleRequest(request: Request): Promise<Response> {
     const { admin } = getServerSupabaseClients();
     const actor = await requireStaffActor(admin, token, ['admin', 'superadmin']);
     if (parsed.data.officeIds !== undefined) {
+      if (actor.role !== 'superadmin') {
+        return jsonResponse(403, {
+          error: 'superadmin_required',
+          message: 'Only superadmin can modify office assignments',
+        });
+      }
+
+      if (parsed.data.officeIds.length > 0) {
+        const { data: existingOffices, error: chkErr } = await admin
+          .from('offices')
+          .select('id')
+          .in('id', parsed.data.officeIds);
+        if (chkErr) throw chkErr;
+        if (!existingOffices || existingOffices.length !== parsed.data.officeIds.length) {
+          return jsonResponse(400, {
+            error: 'invalid_office_id',
+            message: 'One or more specified offices do not exist.',
+          });
+        }
+      }
+
       const { error: delErr } = await admin
         .from('office_staff_assignments')
         .delete()
@@ -84,4 +105,6 @@ async function handleRequest(request: Request): Promise<Response> {
   }
 }
 
+export const fetch = handleRequest;
+export { handleRequest };
 export default { fetch: handleRequest };

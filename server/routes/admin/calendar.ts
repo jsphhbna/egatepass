@@ -126,6 +126,26 @@ export async function handleRequest(request: Request): Promise<Response> {
       return jsonResponse(400, { error: 'invalid_request', details: parsed.error.issues });
     }
 
+    const { data: existing, error: findErr } = await admin
+      .from('campus_calendar_closures')
+      .select('id, start_date, end_date')
+      .eq('id', parsed.data.id)
+      .maybeSingle();
+
+    if (findErr) throw findErr;
+    if (!existing) {
+      return jsonResponse(404, { error: 'closure_not_found', message: 'Campus calendar closure not found' });
+    }
+
+    const effectiveStart = parsed.data.startDate ?? existing.start_date;
+    const effectiveEnd = parsed.data.endDate ?? existing.end_date;
+    if (effectiveEnd < effectiveStart) {
+      return jsonResponse(400, {
+        error: 'invalid_request',
+        message: 'endDate must be greater than or equal to startDate',
+      });
+    }
+
     const updates: Record<string, unknown> = {
       updated_by: actor.id,
       updated_at: new Date().toISOString(),
@@ -167,6 +187,17 @@ export async function handleRequest(request: Request): Promise<Response> {
     const parsed = deleteClosureSchema.safeParse(body);
     if (!parsed.success) {
       return jsonResponse(400, { error: 'invalid_request', details: parsed.error.issues });
+    }
+
+    const { data: existing, error: findErr } = await admin
+      .from('campus_calendar_closures')
+      .select('id')
+      .eq('id', parsed.data.id)
+      .maybeSingle();
+
+    if (findErr) throw findErr;
+    if (!existing) {
+      return jsonResponse(404, { error: 'closure_not_found', message: 'Campus calendar closure not found' });
     }
 
     const { error: delErr } = await admin

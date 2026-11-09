@@ -326,12 +326,7 @@ export function GetPassPage() {
   const [specificPurpose, setSpecificPurpose] = useState<string>('');
 
   // Institutional Calendar Closures & OCR Address States
-  const [calendarClosures, setCalendarClosures] = useState<Array<{
-    closureDate: string;
-    title: string;
-    reason: string | null;
-    closureType: string;
-  }>>([]);
+  const [calendarClosures, setCalendarClosures] = useState<import('@/types').CampusCalendarClosure[]>([]);
   const [detectedOcrAddress, setDetectedOcrAddress] = useState<DetectedAddressDetails | null>(null);
   const [showOcrAddressCard, setShowOcrAddressCard] = useState<boolean>(false);
   const [showBiometricFailureModal, setShowBiometricFailureModal] = useState<boolean>(false);
@@ -1132,9 +1127,10 @@ export function GetPassPage() {
       return;
     }
 
-    const matchedClosure = calendarClosures.find((c) => c.closureDate === vals.visitDate);
+    const visitDate = vals.visitDate;
+    const matchedClosure = calendarClosures.find((c) => c.active !== false && visitDate >= c.startDate && visitDate <= c.endDate);
     if (matchedClosure) {
-      toast.error(`Campus is closed on ${vals.visitDate}: ${matchedClosure.title}${matchedClosure.reason ? ` (${matchedClosure.reason})` : ''}. Please select an open date.`);
+      toast.error(`Campus is closed on ${visitDate}: ${matchedClosure.title}${matchedClosure.description ? ` (${matchedClosure.description})` : ''}. Please select an open date.`);
       return;
     }
 
@@ -3110,8 +3106,8 @@ export function GetPassPage() {
                   </p>
                   <ul className="list-disc list-inside space-y-0.5 text-[11px] text-amber-900 font-medium">
                     {calendarClosures.slice(0, 4).map((c) => (
-                      <li key={c.closureDate}>
-                        <strong>{c.closureDate}:</strong> {c.title}{c.reason ? ` — ${c.reason}` : ''}
+                      <li key={c.id}>
+                        <strong>{c.startDate === c.endDate ? c.startDate : `${c.startDate} to ${c.endDate}`}:</strong> {c.title}{c.description ? ` — ${c.description}` : ''}
                       </li>
                     ))}
                   </ul>
@@ -3134,12 +3130,12 @@ export function GetPassPage() {
                 />
                 {(() => {
                   const currDate = getValues('visitDate');
-                  const match = calendarClosures.find((c) => c.closureDate === currDate);
+                  const match = currDate ? calendarClosures.find((c) => c.active !== false && currDate >= c.startDate && currDate <= c.endDate) : undefined;
                   if (match) {
                     return (
                       <p className="mt-1.5 text-xs font-semibold text-rose-700 flex items-center gap-1">
                         <AlertTriangle className="h-3.5 w-3.5" />
-                        Campus is closed on this date: {match.title}{match.reason ? ` (${match.reason})` : ''}
+                        Campus is closed on this date: {match.title}{match.description ? ` (${match.description})` : ''}
                       </p>
                     );
                   }
