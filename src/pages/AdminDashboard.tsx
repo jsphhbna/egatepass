@@ -1,5 +1,6 @@
 import { getManilaDateString, formatManilaTime, formatManilaMonthYear, getManilaDateParts, type DateInput } from '@/lib/manilaTime';
 import { useMemo, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import {
   eachDayOfInterval,
   endOfWeek,
@@ -18,6 +19,9 @@ import {
   RefreshCw,
   Sparkles,
   Users,
+  LayoutDashboard,
+  BarChart3,
+  FileSpreadsheet,
 } from 'lucide-react';
 import { Button, Card, Skeleton, StatCard } from '@/components/ui';
 import { DashboardExportActions } from '@/components/DashboardExportActions';
@@ -58,6 +62,8 @@ function averageApprovalTime(passes: GatePass[]): string {
 export function AdminDashboard() {
   const dashboard = useAdminDashboardData();
   const [retrying, setRetrying] = useState(false);
+  const [searchParams, setSearchParams] = useSearchParams();
+  const currentTab = (searchParams.get('tab') as 'overview' | 'analytics' | 'reports') || 'overview';
 
   async function handleRetry() {
     if (retrying) return;
@@ -169,42 +175,119 @@ export function AdminDashboard() {
         </div>
       </header>
 
-      <section aria-labelledby="visitor-stats-heading">
-        <h2 id="visitor-stats-heading" className="sr-only">Visitor statistics</h2>
-        <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
-          <StatCard title="Visitors Today" value={metrics.todayTotal} icon={<Users className="h-5 w-5 text-[var(--color-brand)]" />} description="Passes created since midnight." />
-          <StatCard title="Currently Inside" value={metrics.currentlyInside} icon={<ArrowRightCircle className="h-5 w-5 text-[var(--color-success)]" />} description="All approved visitors who have not exited." />
-          <StatCard title="Exited Today" value={metrics.exitedToday} icon={<ArrowLeftCircle className="h-5 w-5 text-[var(--color-text-secondary)]" />} description="Visits with an exit time recorded today." />
-          <StatCard title="Pending Approval" value={metrics.pendingToday} icon={<Clock className="h-5 w-5 text-[var(--color-warning)]" />} description="Visitors scanned today and waiting for a guard." />
-          <StatCard title="Rejected Today" value={metrics.rejectedToday} icon={<Ban className="h-5 w-5 text-[var(--color-danger)]" />} description="Visitors scanned today whose entry was rejected." />
-          <StatCard title="Avg Approval Time" value={metrics.avgApprovalTime} icon={<Sparkles className="h-5 w-5 text-[var(--color-brand)]" />} description="Average wait from scan to approval for visitors scanned today." />
-        </div>
-      </section>
-
-      <section aria-labelledby="insights-heading">
-        <div className="mb-3">
-          <h2 id="insights-heading" className="text-lg font-bold text-[var(--color-text-primary)]">Today's Insights</h2>
-          <p className="text-sm text-[var(--color-text-secondary)]">The most common activity recorded today.</p>
-        </div>
-        <div className="grid gap-4 md:grid-cols-3">
-          <InsightCard icon={<MessageSquareText className="h-5 w-5" />} title="Top Visit Purpose" insight={metrics.topPurpose} description="Most common visit purpose among passes created today." />
-          <InsightCard icon={<Ban className="h-5 w-5" />} title="Top Rejection Reason" insight={metrics.topRejection} description="Most common reason among visitors scanned today who were rejected." />
-          <InsightCard icon={<MapPin className="h-5 w-5" />} title="Busiest Entry Gate" insight={metrics.busiestGate} description="Gate with the most visitor scans recorded today." />
-        </div>
-      </section>
-
-      <div className="grid gap-6 lg:grid-cols-2">
-        <IssuedPassesCalendar passes={metrics.calendarPasses} calendarCounts={metrics.calendarCounts} />
-        <Card className="p-6">
-          <h2 className="mb-5 text-xl font-bold text-[var(--color-text-primary)]">Operational Summary</h2>
-          <div className="space-y-4">
-            <SummaryRow label="Approved and currently inside" value={metrics.currentlyInside} color="text-[var(--color-success)]" />
-            <SummaryRow label="Completed visits today" value={metrics.exitedToday} />
-            <SummaryRow label="Waiting for approval" value={metrics.pendingToday} color="text-[var(--color-warning)]" />
-            <SummaryRow label="Rejected after scanning today" value={metrics.rejectedToday} color="text-[var(--color-danger)]" last />
-          </div>
-        </Card>
+      {/* Sub-Tabs Navigation */}
+      <div className="flex border-b border-[var(--color-border)] gap-2 overflow-x-auto pb-px">
+        {[
+          { id: 'overview', label: 'Overview', icon: LayoutDashboard },
+          { id: 'analytics', label: 'Analytics', icon: BarChart3 },
+          { id: 'reports', label: 'Reports & Export', icon: FileSpreadsheet },
+        ].map((tab) => {
+          const Icon = tab.icon;
+          const isActive = currentTab === tab.id;
+          return (
+            <button
+              key={tab.id}
+              type="button"
+              onClick={() => {
+                const next = new URLSearchParams(searchParams);
+                next.set('tab', tab.id);
+                setSearchParams(next);
+              }}
+              className={`flex items-center gap-2 px-4 py-2.5 text-xs font-bold whitespace-nowrap border-b-2 transition-colors ${
+                isActive
+                  ? 'border-[#7A0A0A] text-[#7A0A0A]'
+                  : 'border-transparent text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)]'
+              }`}
+            >
+              <Icon className="h-4 w-4" />
+              <span>{tab.label}</span>
+            </button>
+          );
+        })}
       </div>
+
+      {currentTab === 'overview' && (
+        <div className="space-y-6">
+          <section aria-labelledby="visitor-stats-heading">
+            <h2 id="visitor-stats-heading" className="sr-only">Visitor statistics</h2>
+            <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
+              <StatCard title="Visitors Today" value={metrics.todayTotal} icon={<Users className="h-5 w-5 text-[var(--color-brand)]" />} description="Passes created since midnight." />
+              <StatCard title="Currently Inside" value={metrics.currentlyInside} icon={<ArrowRightCircle className="h-5 w-5 text-[var(--color-success)]" />} description="All approved visitors who have not exited." />
+              <StatCard title="Exited Today" value={metrics.exitedToday} icon={<ArrowLeftCircle className="h-5 w-5 text-[var(--color-text-secondary)]" />} description="Visits with an exit time recorded today." />
+              <StatCard title="Pending Approval" value={metrics.pendingToday} icon={<Clock className="h-5 w-5 text-[var(--color-warning)]" />} description="Visitors scanned today and waiting for a guard." />
+              <StatCard title="Rejected Today" value={metrics.rejectedToday} icon={<Ban className="h-5 w-5 text-[var(--color-danger)]" />} description="Visitors scanned today whose entry was rejected." />
+              <StatCard title="Avg Approval Time" value={metrics.avgApprovalTime} icon={<Sparkles className="h-5 w-5 text-[var(--color-brand)]" />} description="Average wait from scan to approval for visitors scanned today." />
+            </div>
+          </section>
+
+          <Card className="p-6">
+            <h2 className="mb-5 text-xl font-bold text-[var(--color-text-primary)]">Operational Summary</h2>
+            <div className="space-y-4">
+              <SummaryRow label="Approved and currently inside" value={metrics.currentlyInside} color="text-[var(--color-success)]" />
+              <SummaryRow label="Completed visits today" value={metrics.exitedToday} />
+              <SummaryRow label="Waiting for approval" value={metrics.pendingToday} color="text-[var(--color-warning)]" />
+              <SummaryRow label="Rejected after scanning today" value={metrics.rejectedToday} color="text-[var(--color-danger)]" last />
+            </div>
+          </Card>
+        </div>
+      )}
+
+      {currentTab === 'analytics' && (
+        <div className="space-y-6">
+          <section aria-labelledby="insights-heading">
+            <div className="mb-3">
+              <h2 id="insights-heading" className="text-lg font-bold text-[var(--color-text-primary)]">Today's Insights</h2>
+              <p className="text-sm text-[var(--color-text-secondary)]">The most common activity recorded today.</p>
+            </div>
+            <div className="grid gap-4 md:grid-cols-3">
+              <InsightCard icon={<MessageSquareText className="h-5 w-5" />} title="Top Visit Purpose" insight={metrics.topPurpose} description="Most common visit purpose among passes created today." />
+              <InsightCard icon={<Ban className="h-5 w-5" />} title="Top Rejection Reason" insight={metrics.topRejection} description="Most common reason among visitors scanned today who were rejected." />
+              <InsightCard icon={<MapPin className="h-5 w-5" />} title="Busiest Entry Gate" insight={metrics.busiestGate} description="Gate with the most visitor scans recorded today." />
+            </div>
+          </section>
+
+          <IssuedPassesCalendar passes={metrics.calendarPasses} calendarCounts={metrics.calendarCounts} />
+        </div>
+      )}
+
+      {currentTab === 'reports' && (
+        <div className="space-y-6">
+          <Card className="p-6">
+            <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+              <div>
+                <h2 className="text-xl font-bold text-[var(--color-text-primary)]">Institutional Pass Reports & Export</h2>
+                <p className="mt-1 text-sm text-[var(--color-text-secondary)]">
+                  Export complete visitor pass logs and aggregated daily summaries in CSV, Excel, or PDF formats.
+                </p>
+              </div>
+              <DashboardExportActions passes={metrics.calendarPasses} summary={exportSummary} />
+            </div>
+
+            <div className="mt-6 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+              <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface-subtle)] p-4">
+                <p className="text-xs font-semibold text-[var(--color-text-muted)] uppercase tracking-wider">Passes Today</p>
+                <p className="mt-1 text-2xl font-bold text-[var(--color-text-primary)]">{metrics.todayTotal}</p>
+                <p className="mt-1 text-xs text-[var(--color-text-secondary)]">Registered since midnight</p>
+              </div>
+              <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface-subtle)] p-4">
+                <p className="text-xs font-semibold text-[var(--color-text-muted)] uppercase tracking-wider">Month to Date</p>
+                <p className="mt-2 text-2xl font-bold text-[var(--color-brand)]">{metrics.monthTotal}</p>
+                <p className="mt-1 text-xs text-[var(--color-text-secondary)]">Total passes this calendar month</p>
+              </div>
+              <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface-subtle)] p-4">
+                <p className="text-xs font-semibold text-[var(--color-text-muted)] uppercase tracking-wider">Completed Visits</p>
+                <p className="mt-2 text-2xl font-bold text-[var(--color-success)]">{metrics.exitedToday}</p>
+                <p className="mt-1 text-xs text-[var(--color-text-secondary)]">Visitors signed out today</p>
+              </div>
+              <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface-subtle)] p-4">
+                <p className="text-xs font-semibold text-[var(--color-text-muted)] uppercase tracking-wider">Rejected Entries</p>
+                <p className="mt-2 text-2xl font-bold text-[var(--color-danger)]">{metrics.rejectedToday}</p>
+                <p className="mt-1 text-xs text-[var(--color-text-secondary)]">Denied by gate security today</p>
+              </div>
+            </div>
+          </Card>
+        </div>
+      )}
     </div>
   );
 }

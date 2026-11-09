@@ -4,8 +4,12 @@ import { HttpError, recordReconciliation, requireStaffActor } from '../../actors
 import { jsonResponse, readBearerToken } from '../../http.js';
 import { getServerSupabaseClients } from '../../supabase.js';
 
-const schema = z.object({ targetUid: z.string().uuid(), role: z.enum(['guard', 'admin', 'superadmin', 'office_staff']).optional(), active: z.boolean().optional() })
-  .strict().refine((value) => value.role !== undefined || value.active !== undefined);
+const schema = z.object({
+  targetUid: z.string().uuid(),
+  role: z.enum(['guard', 'admin', 'superadmin', 'office_staff']).optional(),
+  active: z.boolean().optional(),
+  officeIds: z.array(z.string().uuid()).optional(),
+}).strict().refine((value) => value.role !== undefined || value.active !== undefined || value.officeIds !== undefined);
 
 async function handleRequest(request: Request): Promise<Response> {
   if (request.method !== 'POST') return jsonResponse(405, { error: 'method_not_allowed' }, { Allow: 'POST' });
@@ -20,6 +24,24 @@ async function handleRequest(request: Request): Promise<Response> {
   try {
     const { admin } = getServerSupabaseClients();
     const actor = await requireStaffActor(admin, token, ['admin', 'superadmin']);
+    if (parsed.data.officeIds !== undefined) {
+      const { error: delErr } = await admin
+        .from('office_staff_assignments')
+        .delete()
+        .eq('user_id', parsed.data.targetUid);
+      if (delErr) throw delErr;
+
+      if (parsed.data.officeIds.length > 0) {
+        const assignments = parsed.data.officeIds.map((officeId) => ({
+          user_id: parsed.data.targetUid,
+          office_id: officeId,
+          assigned_by: actor.id,
+        }));
+        const { error: insErr } = await admin.from('office_staff_assignments').insert(assignments);
+        if (insErr) throw insErr;
+      }
+    }
+
     const updated = await admin.schema('api').rpc('update_staff_profile', {
       requested_actor_id: actor.id,
       requested_user_id: parsed.data.targetUid,

@@ -27,6 +27,7 @@ const patchOfficeSchema = z.object({
   name: z.string().trim().min(2).max(100).optional(),
   description: z.string().trim().max(300).optional(),
   active: z.boolean().optional(),
+  verified: z.boolean().optional(),
 });
 
 export async function handleRequest(request: Request): Promise<Response> {
@@ -42,7 +43,7 @@ export async function handleRequest(request: Request): Promise<Response> {
 
     const { data: offices, error: officeErr } = await admin
       .from('offices')
-      .select('id, name, description, active, created_at, updated_at')
+      .select('id, name, description, active, verified, verified_at, verified_by, created_at, updated_at')
       .order('name', { ascending: true });
 
     if (officeErr) throw officeErr;
@@ -87,6 +88,30 @@ export async function handleRequest(request: Request): Promise<Response> {
 
   if (request.method === 'POST') {
     const body = await request.json().catch(() => null);
+
+    if (body?.action === 'verify_office' || body?.action === 'unverify_office') {
+      if (actor.role !== 'superadmin') {
+        return jsonResponse(403, { error: 'superadmin_required', message: 'Only superadmin can verify or unverify offices' });
+      }
+      const officeId = body.officeId;
+      if (!officeId || typeof officeId !== 'string') {
+        return jsonResponse(400, { error: 'invalid_office_id' });
+      }
+      const isVerify = body.action === 'verify_office';
+      const { data: updatedOffice, error: vErr } = await admin
+        .from('offices')
+        .update({
+          verified: isVerify,
+          verified_at: isVerify ? new Date().toISOString() : null,
+          verified_by: isVerify ? actor.id : null,
+          updated_at: new Date().toISOString(),
+        })
+        .eq('id', officeId)
+        .select()
+        .single();
+      if (vErr) throw vErr;
+      return jsonResponse(200, { ok: true, office: updatedOffice });
+    }
 
     if (body?.action === 'assign_staff') {
       const parsed = assignStaffSchema.safeParse(body);

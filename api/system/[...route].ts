@@ -5,6 +5,7 @@ import decommissionUser from '../../server/routes/system/decommission-user.js';
 import updateSettings from '../../server/routes/system/update-settings.js';
 import purgeImages from '../../server/routes/system/purge-images.js';
 import reconciliationItems from '../../server/routes/system/reconciliation-items.js';
+import calendar from '../../server/routes/system/calendar.js';
 
 const router = createGroupedRouter('system', {
   'create-user': createUser,
@@ -13,6 +14,7 @@ const router = createGroupedRouter('system', {
   'update-settings': updateSettings,
   'purge-images': purgeImages,
   'reconciliation-items': reconciliationItems,
+  calendar,
 });
 
 export const { fetch, handleRequest, GET, POST, PUT, PATCH, DELETE, HEAD, OPTIONS } = router;

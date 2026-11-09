@@ -122,6 +122,12 @@ export function KioskPage() {
   const [workingHours, setWorkingHours] = useState(DEFAULT_WORKING_HOURS);
   const [schedulingDaysAhead, setSchedulingDaysAhead] = useState(MAX_VISIT_ADVANCE_DAYS);
   const [issuedValidity, setIssuedValidity] = useState<string | null>(null);
+  const [calendarClosures, setCalendarClosures] = useState<Array<{
+    closureDate: string;
+    title: string;
+    reason: string | null;
+    closureType: string;
+  }>>([]);
   const [ocrSuccessNotice, setOcrSuccessNotice] = useState(false);
   const [showSignOutConfirm, setShowSignOutConfirm] = useState(false);
   const [currentPassPresentation, setCurrentPassPresentation] = useState<PassPresentation | null>(null);
@@ -196,6 +202,16 @@ export function KioskPage() {
       if (typeof data.visitor_retention_days === 'number') {
         setVisitorRetentionDays(data.visitor_retention_days);
       }
+      void fetch('/api/system/calendar')
+        .then((res) => (res.ok ? res.json() : null))
+        .then((calData) => {
+          if (calData?.closures) {
+            setCalendarClosures(calData.closures);
+          }
+        })
+        .catch(() => {
+          // non-fatal
+        });
       setConfigState('ready');
     } catch {
       setConfigState('error');
@@ -313,7 +329,11 @@ export function KioskPage() {
   }
 
   function onFormNext(data: KioskPassFormData) {
-    void data;
+    const matchedClosure = calendarClosures.find((c) => c.closureDate === data.visitDate);
+    if (matchedClosure) {
+      toast.error(`Campus is closed on ${data.visitDate}: ${matchedClosure.title}${matchedClosure.reason ? ` (${matchedClosure.reason})` : ''}. Please select an open date.`);
+      return;
+    }
     setStep('photo');
     faceWebcam.start();
   }
@@ -927,6 +947,19 @@ export function KioskPage() {
 
               <FormField label="Visit Date" requirement="required" id="kiosk-date" error={errors.visitDate?.message}>
                 <Input id="kiosk-date" type="date" {...register('visitDate')} min={today} max={latestVisitDate} error={!!errors.visitDate} required aria-required="true" />
+                {(() => {
+                  const currDate = getValues('visitDate');
+                  const match = calendarClosures.find((c) => c.closureDate === currDate);
+                  if (match) {
+                    return (
+                      <p className="mt-1 text-xs font-semibold text-rose-700 flex items-center gap-1">
+                        <AlertCircle className="h-3.5 w-3.5" />
+                        Campus is closed on this date: {match.title}{match.reason ? ` (${match.reason})` : ''}
+                      </p>
+                    );
+                  }
+                  return null;
+                })()}
               </FormField>
 
               {/* Data Privacy Agreement */}

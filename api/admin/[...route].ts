@@ -9,6 +9,7 @@ import retentionMaintenance from '../../server/routes/admin/retention-maintenanc
 import settings from '../../server/routes/admin/settings.js';
 import users from '../../server/routes/admin/users.js';
 import offices from '../../server/routes/admin/offices.js';
+import calendar from '../../server/routes/admin/calendar.js';
 
 const router = createGroupedRouter('admin', {
   activity,
@@ -21,6 +22,7 @@ const router = createGroupedRouter('admin', {
   settings,
   users,
   offices,
+  calendar,
 });
 
 export const { fetch, handleRequest, GET, POST, PUT, PATCH, DELETE, HEAD, OPTIONS } = router;

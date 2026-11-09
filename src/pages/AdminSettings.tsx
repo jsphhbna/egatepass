@@ -1,5 +1,6 @@
-import { useState, useEffect, useRef } from 'react';
-import { Save, Trash2, AlertTriangle, Plus } from 'lucide-react';
+import { useState, useEffect, useRef, useCallback } from 'react';
+import { useSearchParams } from 'react-router-dom';
+import { Save, Trash2, AlertTriangle, Plus, Calendar, Shield, Clock, Users, User, Database, X } from 'lucide-react';
 import { toast } from 'sonner';
 import { Button, Card, Input, Select, ConfirmModal, LoadingState } from '@/components/ui';
 import { PasswordResetCard } from '@/components/ChangePasswordCard';
@@ -36,6 +37,132 @@ export const DEFAULT_VISITOR_INSTRUCTIONS: string[] = [
 
 export function AdminSettings() {
   const { role } = useAuth();
+  const [searchParams, setSearchParams] = useSearchParams();
+  const currentTab = searchParams.get('tab') || 'general';
+
+  // Campus Calendar State
+  const [closures, setClosures] = useState<Array<{
+    id: string;
+    closureDate: string;
+    title: string;
+    reason: string | null;
+    closureType: string;
+    isActive: boolean;
+    isPublished: boolean;
+    createdAt: string;
+    createdBy: string | null;
+  }>>([]);
+  const [loadingClosures, setLoadingClosures] = useState(false);
+  const [showAddClosureModal, setShowAddClosureModal] = useState(false);
+  const [newClosureDate, setNewClosureDate] = useState('');
+  const [newClosureTitle, setNewClosureTitle] = useState('');
+  const [newClosureReason, setNewClosureReason] = useState('');
+  const [newClosureType, setNewClosureType] = useState('holiday');
+  const [isSavingClosure, setIsSavingClosure] = useState(false);
+
+  const loadAdminClosures = useCallback(async () => {
+    setLoadingClosures(true);
+    try {
+      const token = await getAccessToken();
+      const res = await fetch('/api/admin/calendar', {
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setClosures(data.closures || []);
+      }
+    } catch (err) {
+      console.error('Failed to load closures:', err);
+    } finally {
+      setLoadingClosures(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (currentTab === 'calendar') {
+      void loadAdminClosures();
+    }
+  }, [currentTab, loadAdminClosures]);
+
+  async function handleAddClosure() {
+    if (!newClosureDate) {
+      toast.error('Please select a closure date.');
+      return;
+    }
+    if (!newClosureTitle.trim()) {
+      toast.error('Please enter a closure title.');
+      return;
+    }
+    setIsSavingClosure(true);
+    try {
+      const token = await getAccessToken();
+      const res = await fetch('/api/admin/calendar', {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${token}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          closureDate: newClosureDate,
+          title: newClosureTitle.trim(),
+          reason: newClosureReason.trim() || undefined,
+          closureType: newClosureType,
+          isActive: true,
+          isPublished: true,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.message || data.error || 'Failed to create closure');
+      toast.success('Campus closure added successfully.');
+      setShowAddClosureModal(false);
+      setNewClosureDate('');
+      setNewClosureTitle('');
+      setNewClosureReason('');
+      await loadAdminClosures();
+    } catch (err: any) {
+      toast.error(err.message || 'Failed to add closure.');
+    } finally {
+      setIsSavingClosure(false);
+    }
+  }
+
+  async function handleToggleClosure(closureDate: string, field: 'isActive' | 'isPublished', val: boolean) {
+    try {
+      const token = await getAccessToken();
+      const res = await fetch('/api/admin/calendar', {
+        method: 'PATCH',
+        headers: {
+          Authorization: `Bearer ${token}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          closureDate,
+          [field]: val,
+        }),
+      });
+      if (!res.ok) throw new Error('Failed to update closure');
+      toast.success('Closure updated.');
+      await loadAdminClosures();
+    } catch (err: any) {
+      toast.error(err.message || 'Failed to update closure.');
+    }
+  }
+
+  async function handleDeleteClosure(closureDate: string) {
+    try {
+      const token = await getAccessToken();
+      const res = await fetch(`/api/admin/calendar?closureDate=${closureDate}`, {
+        method: 'DELETE',
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+      });
+      if (!res.ok) throw new Error('Failed to delete closure');
+      toast.success('Closure deleted.');
+      await loadAdminClosures();
+    } catch (err: any) {
+      toast.error(err.message || 'Failed to delete closure.');
+    }
+  }
+
   const canManageSecuritySettings = isSuperAdmin(role);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -415,6 +542,40 @@ export function AdminSettings() {
         >
           {saving ? 'Saving...' : 'Save Settings'}
         </Button>
+      </div>
+
+      {/* Sub-Tabs Navigation */}
+      <div className="flex border-b border-[var(--color-border)] gap-2 overflow-x-auto pb-px">
+        {[
+          { id: 'general', label: 'General System', icon: Clock },
+          { id: 'calendar', label: 'Campus Calendar', icon: Calendar },
+          { id: 'visitor_ux', label: 'Visitor Experience', icon: Users },
+          { id: 'security', label: 'Security & Privacy', icon: Shield },
+          { id: 'retention', label: 'Data Retention', icon: Database },
+          { id: 'personal', label: 'Personal & Password', icon: User },
+        ].map((tab) => {
+          const Icon = tab.icon;
+          const isActive = currentTab === tab.id;
+          return (
+            <button
+              key={tab.id}
+              type="button"
+              onClick={() => {
+                const next = new URLSearchParams(searchParams);
+                next.set('tab', tab.id);
+                setSearchParams(next);
+              }}
+              className={`flex items-center gap-2 px-4 py-2.5 text-xs font-bold whitespace-nowrap border-b-2 transition-colors ${
+                isActive
+                  ? 'border-[#7A0A0A] text-[#7A0A0A]'
+                  : 'border-transparent text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)]'
+              }`}
+            >
+              <Icon className="h-4 w-4" />
+              <span>{tab.label}</span>
+            </button>
+          );
+        })}
       </div>
 
       <div className={`grid items-start gap-6 ${canManageSecuritySettings ? 'lg:grid-cols-2' : ''}`}>
@@ -797,6 +958,182 @@ export function AdminSettings() {
         </div>}
       </div>
       
+      
+      {/* ===================== TAB: CAMPUS CALENDAR ===================== */}
+      {currentTab === 'calendar' && (
+        <div className="space-y-6">
+          <Card className="p-6">
+            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 border-b border-[var(--color-border)] pb-4 mb-6">
+              <div>
+                <h2 className="text-xl font-bold text-[var(--color-text-primary)]">Institutional Campus Calendar</h2>
+                <p className="text-xs text-[var(--color-text-secondary)] mt-1">
+                  Manage campus closures, holidays, emergency suspensions, and administrative non-working days. Visitors cannot request gate passes for closed dates.
+                </p>
+              </div>
+              {canManageSecuritySettings && (
+                <Button
+                  onClick={() => setShowAddClosureModal(true)}
+                  icon={<Plus className="h-4 w-4" />}
+                  size="sm"
+                >
+                  Add Campus Closure
+                </Button>
+              )}
+            </div>
+
+            {loadingClosures ? (
+              <LoadingState label="Loading calendar closures..." className="py-12" />
+            ) : closures.length === 0 ? (
+              <div className="text-center py-12 text-[var(--color-text-muted)] text-sm">
+                <Calendar className="h-10 w-10 mx-auto mb-2 opacity-40" />
+                <p>No campus calendar closures recorded.</p>
+              </div>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="w-full text-left text-xs">
+                  <thead>
+                    <tr className="border-b border-[var(--color-border)] text-[var(--color-text-secondary)] uppercase tracking-wider font-semibold">
+                      <th className="py-3 px-3">Date</th>
+                      <th className="py-3 px-3">Title</th>
+                      <th className="py-3 px-3">Reason</th>
+                      <th className="py-3 px-3">Type</th>
+                      <th className="py-3 px-3">Status</th>
+                      {canManageSecuritySettings && <th className="py-3 px-3 text-right">Actions</th>}
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-[var(--color-border)]">
+                    {closures.map((c) => (
+                      <tr key={c.closureDate} className="hover:bg-[var(--color-canvas)]">
+                        <td className="py-3 px-3 font-bold text-[var(--color-text-primary)] whitespace-nowrap">
+                          {c.closureDate}
+                        </td>
+                        <td className="py-3 px-3 font-semibold text-[var(--color-text-primary)]">
+                          {c.title}
+                        </td>
+                        <td className="py-3 px-3 text-[var(--color-text-secondary)]">
+                          {c.reason || '—'}
+                        </td>
+                        <td className="py-3 px-3">
+                          <span className="rounded-md bg-slate-100 text-slate-800 px-2 py-0.5 font-bold uppercase text-[10px]">
+                            {c.closureType}
+                          </span>
+                        </td>
+                        <td className="py-3 px-3">
+                          <div className="flex items-center gap-1.5">
+                            <span className={`h-2 w-2 rounded-full ${c.isActive ? 'bg-emerald-500' : 'bg-gray-400'}`} />
+                            <span className="font-medium text-[11px]">{c.isActive ? 'Active' : 'Inactive'}</span>
+                            {c.isPublished && (
+                              <span className="rounded bg-blue-50 text-blue-700 px-1 py-0.2 text-[9px] font-bold">
+                                Public
+                              </span>
+                            )}
+                          </div>
+                        </td>
+                        {canManageSecuritySettings && (
+                          <td className="py-3 px-3 text-right whitespace-nowrap">
+                            <div className="inline-flex items-center gap-2">
+                              <button
+                                type="button"
+                                onClick={() => handleToggleClosure(c.closureDate, 'isActive', !c.isActive)}
+                                className="text-[11px] font-bold text-[#7A0A0A] hover:underline"
+                              >
+                                {c.isActive ? 'Deactivate' : 'Activate'}
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => handleDeleteClosure(c.closureDate)}
+                                className="p-1 text-rose-600 hover:text-rose-800"
+                                title="Delete closure"
+                              >
+                                <Trash2 className="h-3.5 w-3.5" />
+                              </button>
+                            </div>
+                          </td>
+                        )}
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </Card>
+        </div>
+      )}
+
+      {showAddClosureModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-xs">
+          <div className="w-full max-w-md rounded-2xl bg-white p-6 shadow-xl space-y-4">
+            <div className="flex items-center justify-between border-b border-[var(--color-border)] pb-3">
+              <h3 className="font-bold text-base text-[var(--color-text-primary)]">Add Campus Closure</h3>
+              <button
+                type="button"
+                onClick={() => setShowAddClosureModal(false)}
+                className="text-[var(--color-text-muted)] hover:text-[var(--color-text-primary)]"
+              >
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+            <div className="space-y-3 text-xs">
+              <div>
+                <label className="block font-semibold mb-1">Closure Date *</label>
+                <Input
+                  type="date"
+                  value={newClosureDate}
+                  onChange={(e) => setNewClosureDate(e.target.value)}
+                />
+              </div>
+              <div>
+                <label className="block font-semibold mb-1">Title *</label>
+                <Input
+                  placeholder="e.g. Rizal Day / University Holiday"
+                  value={newClosureTitle}
+                  onChange={(e) => setNewClosureTitle(e.target.value)}
+                />
+              </div>
+              <div>
+                <label className="block font-semibold mb-1">Reason / Description</label>
+                <Input
+                  placeholder="e.g. Regular Holiday / Severe Weather Suspension"
+                  value={newClosureReason}
+                  onChange={(e) => setNewClosureReason(e.target.value)}
+                />
+              </div>
+              <div>
+                <label className="block font-semibold mb-1">Closure Type</label>
+                <select
+                  value={newClosureType}
+                  onChange={(e) => setNewClosureType(e.target.value)}
+                  className="w-full rounded-xl border border-[var(--color-border)] bg-white p-2 text-xs font-semibold"
+                >
+                  <option value="holiday">Holiday</option>
+                  <option value="suspension">Suspension</option>
+                  <option value="maintenance">Maintenance</option>
+                  <option value="emergency">Emergency</option>
+                  <option value="administrative">Administrative</option>
+                </select>
+              </div>
+            </div>
+            <div className="flex justify-end gap-2 pt-2">
+              <Button
+                variant="secondary"
+                size="sm"
+                onClick={() => setShowAddClosureModal(false)}
+              >
+                Cancel
+              </Button>
+              <Button
+                variant="primary"
+                size="sm"
+                onClick={handleAddClosure}
+                loading={isSavingClosure}
+              >
+                Add Closure
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
+
       <ConfirmModal
         isOpen={canManageSecuritySettings && showPurgeConfirm && !saving}
         onClose={() => setShowPurgeConfirm(false)}

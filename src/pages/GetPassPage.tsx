@@ -85,6 +85,7 @@ import { DEFAULT_WORKING_HOURS, formatValidityWindow, formatWorkingHours, MAX_VI
 import { getManilaDateString, getLatestVisitDateString, validateVisitDate } from '@/lib/scheduling';
 import { createPassPresentation, type PassPresentation, renderPassCardToDataUrl } from '@/lib/passPresentation';
 import { InstitutionalPassCard } from '@/components/InstitutionalPassCard';
+import { parseAddressFromOcr, type DetectedAddressDetails } from '@/lib/addressOcr';
 
 const MAX_RAW_ID_FILE_BYTES = 10 * 1024 * 1024;
 
@@ -321,7 +322,19 @@ export function GetPassPage() {
   const [visitType, setVisitType] = useState<'general' | 'specific_person' | null>(null);
   const [personnelList, setPersonnelList] = useState<Array<{ id: string; name: string; title: string | null }>>([]);
   const [selectedPersonnelId, setSelectedPersonnelId] = useState<string>('');
+  const [requestedPersonName, setRequestedPersonName] = useState<string>('');
   const [specificPurpose, setSpecificPurpose] = useState<string>('');
+
+  // Institutional Calendar Closures & OCR Address States
+  const [calendarClosures, setCalendarClosures] = useState<Array<{
+    closureDate: string;
+    title: string;
+    reason: string | null;
+    closureType: string;
+  }>>([]);
+  const [detectedOcrAddress, setDetectedOcrAddress] = useState<DetectedAddressDetails | null>(null);
+  const [showOcrAddressCard, setShowOcrAddressCard] = useState<boolean>(false);
+  const [showBiometricFailureModal, setShowBiometricFailureModal] = useState<boolean>(false);
 
   // Email verification state for specific-person visit
   const [visitorEmail, setVisitorEmail] = useState<string>('');
@@ -351,6 +364,13 @@ export function GetPassPage() {
         if (data?.offices) setOffices(data.offices);
       })
       .catch((err) => console.error('Failed to load offices:', err));
+
+    fetch('/api/system/calendar')
+      .then((r) => r.json())
+      .then((data) => {
+        if (data?.closures) setCalendarClosures(data.closures);
+      })
+      .catch((err) => console.error('Failed to load campus calendar closures:', err));
   }, []);
 
   useEffect(() => {
@@ -1083,8 +1103,13 @@ export function GetPassPage() {
     }
 
     if (visitType === 'specific_person') {
-      if (!selectedPersonnelId) {
-        toast.error('Please select the specific faculty member or personnel you wish to visit.');
+      const personName = requestedPersonName.trim() || (selectedPersonnelId ? personnelList.find((p) => p.id === selectedPersonnelId)?.name : '');
+      if (!personName || personName.length < 2) {
+        toast.error('Please specify the person or faculty you would like to visit (minimum 2 characters).');
+        return;
+      }
+      if (personName.length > 150) {
+        toast.error('Person name cannot exceed 150 characters.');
         return;
       }
       if (!specificPurpose || specificPurpose.trim().length < 3) {
@@ -1104,6 +1129,12 @@ export function GetPassPage() {
 
     if (!vals.visitDate) {
       toast.error('Please select a visit date.');
+      return;
+    }
+
+    const matchedClosure = calendarClosures.find((c) => c.closureDate === vals.visitDate);
+    if (matchedClosure) {
+      toast.error(`Campus is closed on ${vals.visitDate}: ${matchedClosure.title}${matchedClosure.reason ? ` (${matchedClosure.reason})` : ''}. Please select an open date.`);
       return;
     }
 
@@ -1365,6 +1396,7 @@ export function GetPassPage() {
         }
 
         setReturningIdentifyError(userFriendlyMsg);
+        setShowBiometricFailureModal(true);
         return;
       }
 
@@ -1613,6 +1645,14 @@ export function GetPassPage() {
           filledCount++;
         } else {
           weakCount++;
+        }
+      }
+
+      if (parsed.address) {
+        const detected = parseAddressFromOcr(parsed.address);
+        if (detected) {
+          setDetectedOcrAddress(detected);
+          setShowOcrAddressCard(true);
         }
       }
 
@@ -2100,6 +2140,7 @@ export function GetPassPage() {
         const token = portalTransactionRef.current.token;
         const targetOffice = offices.find((o) => o.id === selectedOfficeId);
         const targetPersonnel = personnelList.find((p) => p.id === selectedPersonnelId);
+        const effectivePersonnelName = requestedPersonName.trim() || targetPersonnel?.name || 'Designated Personnel';
 
         const requestPayload = {
           requestId: portalTransactionRef.current.requestId ?? issueRequestId.current,
@@ -2115,7 +2156,8 @@ export function GetPassPage() {
             visitDate: rawFormData.visitDate || getManilaDateString(new Date()),
           },
           officeId: selectedOfficeId,
-          personnelId: selectedPersonnelId,
+          personnelId: selectedPersonnelId || undefined,
+          requestedPersonName: effectivePersonnelName,
           specificPurpose: specificPurpose || rawFormData.purpose,
           emailVerificationToken,
           arrivalMode: rawFormData.arrivalMode,
@@ -2144,7 +2186,7 @@ export function GetPassPage() {
 
         setSubmittedRequestData({
           officeName: targetOffice?.name || 'Designated Office',
-          personnelName: targetPersonnel?.name || 'Designated Personnel',
+          personnelName: effectivePersonnelName,
           visitDate: rawFormData.visitDate || getManilaDateString(new Date()),
           visitorEmail: visitorEmail.toLowerCase().trim(),
         });
@@ -2698,6 +2740,53 @@ export function GetPassPage() {
                 </FormField>
               </div>
 
+              {/* Optional Address Detected from ID Suggestion Card */}
+              {showOcrAddressCard && detectedOcrAddress && (
+                <div className="rounded-xl border border-emerald-300 bg-emerald-50/80 p-4 space-y-3">
+                  <div className="flex items-start justify-between">
+                    <div className="flex items-center gap-2">
+                      <Sparkles className="h-4 w-4 text-emerald-700 shrink-0" />
+                      <h4 className="text-xs font-bold uppercase tracking-wider text-emerald-950">
+                        Address Detected from ID
+                      </h4>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setShowOcrAddressCard(false)}
+                      className="text-xs font-semibold text-emerald-700 hover:text-emerald-900"
+                    >
+                      Dismiss
+                    </button>
+                  </div>
+                  <p className="text-xs text-emerald-900 font-medium">
+                    "{detectedOcrAddress.raw}"
+                  </p>
+                  <div className="flex items-center gap-2 pt-1">
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="primary"
+                      onClick={() => {
+                        if (detectedOcrAddress.street) setHomeStreet(detectedOcrAddress.street);
+                        if (detectedOcrAddress.houseBuilding) setHomeBuilding(detectedOcrAddress.houseBuilding);
+                        toast.success('Detected address applied to form!');
+                        setShowOcrAddressCard(false);
+                      }}
+                    >
+                      Use Detected Address
+                    </Button>
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="secondary"
+                      onClick={() => setShowOcrAddressCard(false)}
+                    >
+                      Keep Current Address
+                    </Button>
+                  </div>
+                </div>
+              )}
+
               {/* Structured Residential Address */}
               <StructuredAddressField
                 value={selectedPsgc}
@@ -2835,8 +2924,8 @@ export function GetPassPage() {
                         <div className={`p-2 rounded-lg ${visitType === 'specific_person' ? 'bg-[#7A0A0A] text-white' : 'bg-gray-100 text-gray-700'}`}>
                           <UserCheck className="h-5 w-5" />
                         </div>
-                        <span className="text-[10px] font-bold uppercase tracking-wider rounded-md bg-purple-100 text-purple-800 px-2 py-0.5">
-                          Requires Approval
+                        <span className="text-[10px] font-bold uppercase tracking-wider rounded-md bg-[#F8EEEE] text-[#7A0A0A] border border-[#7A0A0A]/30 px-2 py-0.5">
+                          Office review required
                         </span>
                       </div>
                       <span className="text-sm font-bold text-[var(--color-text-primary)]">A Specific Person</span>
@@ -2859,8 +2948,8 @@ export function GetPassPage() {
                         <div className={`p-2 rounded-lg ${visitType === 'general' ? 'bg-[#7A0A0A] text-white' : 'bg-gray-100 text-gray-700'}`}>
                           <Building2 className="h-5 w-5" />
                         </div>
-                        <span className="text-[10px] font-bold uppercase tracking-wider rounded-md bg-blue-100 text-blue-800 px-2 py-0.5">
-                          Immediate QR
+                        <span className="text-[10px] font-bold uppercase tracking-wider rounded-md bg-amber-50 text-amber-900 border border-amber-300 px-2 py-0.5">
+                          QR issued after registration
                         </span>
                       </div>
                       <span className="text-sm font-bold text-[var(--color-text-primary)]">The Office Itself</span>
@@ -2873,28 +2962,48 @@ export function GetPassPage() {
 
                 {/* Specific Person Appointment Details */}
                 {visitType === 'specific_person' && (
-                  <div className="space-y-4 rounded-xl border border-purple-200 bg-purple-50/40 p-4">
+                  <div className="space-y-4 rounded-xl border border-[#7A0A0A]/20 bg-[#F8EEEE]/30 p-4">
                     <div>
-                      <label htmlFor="target-personnel-select" className="block text-xs font-bold uppercase tracking-wider text-purple-950 mb-1">
-                        Select Faculty / Employee <span className="text-[var(--color-danger)]">*</span>
+                      <label htmlFor="target-personnel-name" className="block text-xs font-bold uppercase tracking-wider text-[#7A0A0A] mb-1">
+                        Who would you like to visit? <span className="text-[var(--color-danger)]">*</span>
                       </label>
-                      <select
-                        id="target-personnel-select"
-                        value={selectedPersonnelId}
-                        onChange={(e) => setSelectedPersonnelId(e.target.value)}
-                        className="w-full rounded-xl border border-purple-300 bg-white py-2 px-3 text-sm font-semibold text-[var(--color-text-primary)] focus:border-[#7A0A0A] focus:outline-none focus:ring-1 focus:ring-[#7A0A0A]"
-                      >
-                        <option value="">Select faculty or staff member</option>
-                        {personnelList.map((p) => (
-                          <option key={p.id} value={p.id}>
-                            {p.name} {p.title ? `(${p.title})` : ''}
-                          </option>
-                        ))}
-                      </select>
+                      <Input
+                        id="target-personnel-name"
+                        placeholder="e.g. Dr. Juan Dela Cruz, Dean's Office Staff, Prof. Santos"
+                        value={requestedPersonName}
+                        onChange={(e) => {
+                          setRequestedPersonName(e.target.value);
+                        }}
+                      />
+                      {personnelList.length > 0 && (
+                        <div className="mt-2">
+                          <label htmlFor="target-personnel-select" className="block text-[11px] font-medium text-[var(--color-text-secondary)] mb-1">
+                            Or select from verified office personnel (optional):
+                          </label>
+                          <select
+                            id="target-personnel-select"
+                            value={selectedPersonnelId}
+                            onChange={(e) => {
+                              const val = e.target.value;
+                              setSelectedPersonnelId(val);
+                              const p = personnelList.find((item) => item.id === val);
+                              if (p) setRequestedPersonName(p.name);
+                            }}
+                            className="w-full rounded-xl border border-[var(--color-border)] bg-white py-1.5 px-3 text-xs font-semibold text-[var(--color-text-primary)] focus:border-[#7A0A0A] focus:outline-none focus:ring-1 focus:ring-[#7A0A0A]"
+                          >
+                            <option value="">-- Quick select directory personnel (optional) --</option>
+                            {personnelList.map((p) => (
+                              <option key={p.id} value={p.id}>
+                                {p.name} {p.title ? `(${p.title})` : ''}
+                              </option>
+                            ))}
+                          </select>
+                        </div>
+                      )}
                     </div>
 
                     <div>
-                      <label htmlFor="specific-purpose" className="block text-xs font-bold uppercase tracking-wider text-purple-950 mb-1">
+                      <label htmlFor="specific-purpose" className="block text-xs font-bold uppercase tracking-wider text-[#7A0A0A] mb-1">
                         Appointment Purpose / Reason <span className="text-[var(--color-danger)]">*</span>
                       </label>
                       <Input
@@ -2989,6 +3098,26 @@ export function GetPassPage() {
                 />
               )}
 
+              {/* Institutional Campus Closures Banner */}
+              {calendarClosures.length > 0 && (
+                <div className="rounded-xl border border-amber-300 bg-amber-50 p-3.5 text-xs text-amber-950 space-y-1.5">
+                  <div className="flex items-center gap-1.5 font-bold text-amber-900">
+                    <AlertTriangle className="h-4 w-4 text-amber-700 shrink-0" />
+                    <span>Campus Calendar Closures Notice</span>
+                  </div>
+                  <p className="text-[11px] text-amber-800 leading-relaxed">
+                    The university campus is closed on the following upcoming dates. Gate pass requests cannot be scheduled for these dates:
+                  </p>
+                  <ul className="list-disc list-inside space-y-0.5 text-[11px] text-amber-900 font-medium">
+                    {calendarClosures.slice(0, 4).map((c) => (
+                      <li key={c.closureDate}>
+                        <strong>{c.closureDate}:</strong> {c.title}{c.reason ? ` — ${c.reason}` : ''}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+
               {/* Visit Date */}
               <FormField
                 label="Visit Date"
@@ -3003,6 +3132,19 @@ export function GetPassPage() {
                   max={latestVisitDate}
                   {...register('visitDate')}
                 />
+                {(() => {
+                  const currDate = getValues('visitDate');
+                  const match = calendarClosures.find((c) => c.closureDate === currDate);
+                  if (match) {
+                    return (
+                      <p className="mt-1.5 text-xs font-semibold text-rose-700 flex items-center gap-1">
+                        <AlertTriangle className="h-3.5 w-3.5" />
+                        Campus is closed on this date: {match.title}{match.reason ? ` (${match.reason})` : ''}
+                      </p>
+                    );
+                  }
+                  return null;
+                })()}
               </FormField>
 
               {/* Vehicle Declaration Section */}
@@ -3782,7 +3924,7 @@ export function GetPassPage() {
                       <div>
                         <span className="text-[var(--color-text-secondary)] block">Faculty / Staff Member:</span>
                         <p className="font-semibold text-sm text-[#7A0A0A] mt-0.5">
-                          {personnelList.find((p) => p.id === selectedPersonnelId)?.name || 'Designated Personnel'}
+                          {requestedPersonName.trim() || personnelList.find((p) => p.id === selectedPersonnelId)?.name || 'Designated Personnel'}
                         </p>
                       </div>
                       <div>
@@ -5353,6 +5495,50 @@ export function GetPassPage() {
                 variant="secondary"
                 onClick={onDeclineReturningCandidate}
                 className="flex-1 justify-center"
+                icon={<UserPlus className="h-4 w-4" />}
+              >
+                Continue as New Visitor
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Returning Visitor Biometric Verification Failure Warning Modal */}
+      {showBiometricFailureModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-xs animate-in fade-in duration-200">
+          <div className="w-full max-w-md rounded-2xl bg-white p-6 shadow-2xl border border-rose-200 space-y-4">
+            <div className="flex items-center gap-3 text-rose-900">
+              <div className="h-10 w-10 rounded-xl bg-rose-100 flex items-center justify-center text-rose-700 shrink-0">
+                <AlertTriangle className="h-5 w-5" />
+              </div>
+              <div>
+                <h3 className="font-bold text-base text-[var(--color-text-primary)]">Biometric Verification Unsuccessful</h3>
+                <p className="text-xs text-[var(--color-text-secondary)]">Photo did not match enrolled template</p>
+              </div>
+            </div>
+
+            <p className="text-xs text-[var(--color-text-secondary)] leading-relaxed">
+              {returningIdentifyError || 'We could not verify your live photo against your previously enrolled facial profile. You can retry capturing your selfie with better lighting, or continue as a new visitor.'}
+            </p>
+
+            <div className="pt-2 flex flex-col sm:flex-row gap-3 justify-end">
+              <Button
+                variant="secondary"
+                onClick={() => {
+                  setShowBiometricFailureModal(false);
+                  onRetakeReturningSelfie();
+                }}
+                icon={<RotateCcw className="h-4 w-4" />}
+              >
+                Retry Biometric Match
+              </Button>
+              <Button
+                variant="primary"
+                onClick={() => {
+                  setShowBiometricFailureModal(false);
+                  beginNewVisitorSetup();
+                }}
                 icon={<UserPlus className="h-4 w-4" />}
               >
                 Continue as New Visitor

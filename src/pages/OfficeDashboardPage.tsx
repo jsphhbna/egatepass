@@ -78,6 +78,7 @@ export function OfficeDashboardPage() {
 
   const [isSigningOut, setIsSigningOut] = useState(false);
   const [retryingEmailVisitId, setRetryingEmailVisitId] = useState<string | null>(null);
+  const [noOfficeAssigned, setNoOfficeAssigned] = useState<boolean>(false);
 
   async function handleSignOut() {
     setIsSigningOut(true);
@@ -116,6 +117,12 @@ export function OfficeDashboardPage() {
       });
       if (!res.ok) throw new Error('Failed to load office data');
       const data = await res.json();
+      if (data?.code === 'no_office_assigned_to_staff' || (Array.isArray(data?.offices) && data.offices.length === 0)) {
+        setNoOfficeAssigned(true);
+        setOffices([]);
+        return;
+      }
+      setNoOfficeAssigned(false);
       const loadedOffices = data.offices || [];
       setOffices(loadedOffices);
 
@@ -512,6 +519,19 @@ export function OfficeDashboardPage() {
             </Button>
           </div>
         </div>
+
+        {/* No Office Assigned Banner */}
+        {noOfficeAssigned && (
+          <div className="mb-6 rounded-2xl border border-amber-300 bg-amber-50 p-6 text-center space-y-3 shadow-xs">
+            <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-xl bg-amber-100 text-amber-800">
+              <Building2 className="h-6 w-6" />
+            </div>
+            <h2 className="text-lg font-bold text-amber-950">No Office Assigned</h2>
+            <p className="text-xs text-amber-800 max-w-md mx-auto leading-relaxed">
+              Your staff account is currently not assigned to any university office. Please contact the University Administrator to assign you to an office before accessing visit queues.
+            </p>
+          </div>
+        )}
 
         {/* Office Banner */}
         {selectedOffice && (

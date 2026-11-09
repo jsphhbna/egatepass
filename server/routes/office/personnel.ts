@@ -28,11 +28,41 @@ export async function handleRequest(request: Request): Promise<Response> {
   if (method === 'GET') {
     const url = new URL(request.url);
     const officeId = url.searchParams.get('officeId');
+    const token = readBearerToken(request);
+
     if (!officeId) {
+      if (token) {
+        try {
+          const actor = await requireOfficeStaffActor(admin, token);
+          if (actor.role === 'office_staff') {
+            if (actor.assignedOfficeIds.length === 0) {
+              return jsonResponse(200, {
+                offices: [],
+                code: 'no_office_assigned_to_staff',
+                message: 'No office assigned to staff account.',
+              });
+            }
+            const { data: assignedOffices, error: aErr } = await admin
+              .from('offices')
+              .select('id, name, description, active, verified')
+              .in('id', actor.assignedOfficeIds)
+              .eq('active', true)
+              .order('name');
+
+            if (aErr) throw aErr;
+            return jsonResponse(200, { offices: assignedOffices || [] });
+          }
+        } catch {
+          // Fall through to public / unauthenticated path
+        }
+      }
+
+      // Public visitor view: only active AND verified offices
       const { data: offices, error: offErr } = await admin
         .from('offices')
-        .select('id, name, description, active')
+        .select('id, name, description, active, verified')
         .eq('active', true)
+        .eq('verified', true)
         .order('name');
 
       if (offErr) {
@@ -44,7 +74,6 @@ export async function handleRequest(request: Request): Promise<Response> {
     }
 
     // Check if caller is authorized office staff/admin
-    const token = readBearerToken(request);
     let isStaff = false;
     if (token) {
       try {

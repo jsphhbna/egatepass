@@ -1084,6 +1084,17 @@ export function mapDatabaseIssueError(
     return { status: 409, error: 'vehicle_already_inside', message: 'This vehicle is currently recorded inside campus.' };
   }
 
+  // Campus closures / closed date
+  if (msg.includes('visit_date_closed')) {
+    const match = msg.match(/visit_date_closed:\s*(.+)/);
+    const title = match && match[1] ? match[1].trim() : 'Campus is closed on this date.';
+    return {
+      status: 422,
+      error: 'visit_date_closed',
+      message: `The campus is closed on the selected visit date (${title}). Please select another date.`,
+    };
+  }
+
   // Vehicle details required
   if (msg.includes('vehicle details required') || msg.includes('vehicle_details_required')) {
     return { status: 422, error: 'vehicle_details_required', message: 'Vehicle details are required for vehicle arrival.' };

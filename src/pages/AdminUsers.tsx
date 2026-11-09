@@ -1,5 +1,6 @@
-import { useState, useEffect, useRef } from 'react';
-import { Plus } from 'lucide-react';
+import { useState, useEffect, useRef, useCallback } from 'react';
+import { useSearchParams } from 'react-router-dom';
+import { Plus, Building2, UserCheck, CheckCircle2, Users, AlertCircle } from 'lucide-react';
 import { Button, FormField, Input, Select, StatusBadge, DataTable, DataTableHead, DataTableRow, DataTableCell, Modal, ConfirmModal } from '@/components/ui';
 import { toast } from 'sonner';
 import { z } from 'zod';
@@ -34,10 +35,148 @@ interface AppUserWithId {
   decommissionedAt?: string | null;
   decommissionedBy?: string | null;
   decommissionReason?: string | null;
+  assignedOfficeIds?: string[];
 }
 
 export function AdminUsers() {
   const { uid, role } = useAuth();
+  const [searchParams, setSearchParams] = useSearchParams();
+  const currentTab = searchParams.get('tab') || 'staff';
+
+  // Office Directory & Assignments State
+  const [adminOffices, setAdminOffices] = useState<Array<{
+    id: string;
+    name: string;
+    code: string | null;
+    description: string | null;
+    active: boolean;
+    verified?: boolean;
+    verified_at?: string | null;
+    verified_by?: string | null;
+  }>>([]);
+  const [loadingAdminOffices, setLoadingAdminOffices] = useState(false);
+  const [showAddOfficeModal, setShowAddOfficeModal] = useState(false);
+  const [newOfficeName, setNewOfficeName] = useState('');
+  const [newOfficeCode, setNewOfficeCode] = useState('');
+  const [newOfficeDesc, setNewOfficeDesc] = useState('');
+  const [isCreatingOffice, setIsCreatingOffice] = useState(false);
+
+  // Manage Office Assignment Modal
+  const [assigningUser, setAssigningUser] = useState<AppUserWithId | null>(null);
+  const [selectedOfficeIdsForUser, setSelectedOfficeIdsForUser] = useState<string[]>([]);
+  const [isSavingAssignments, setIsSavingAssignments] = useState(false);
+
+  const loadAdminOffices = useCallback(async () => {
+    setLoadingAdminOffices(true);
+    try {
+      const token = await getAccessToken();
+      const res = await fetch('/api/admin/offices', {
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setAdminOffices(data.offices || []);
+      }
+    } catch (err) {
+      console.error('Failed to load admin offices:', err);
+    } finally {
+      setLoadingAdminOffices(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (currentTab === 'directory' || currentTab === 'assignments') {
+      void loadAdminOffices();
+    }
+  }, [currentTab, loadAdminOffices]);
+
+  async function handleVerifyOffice(officeId: string, verify: boolean) {
+    try {
+      const token = await getAccessToken();
+      const res = await fetch('/api/admin/offices', {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${token}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          action: verify ? 'verify_office' : 'unverify_office',
+          officeId,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.message || data.error || 'Failed to update office verification');
+      toast.success(verify ? 'Office verified successfully.' : 'Office unverified.');
+      await loadAdminOffices();
+    } catch (err: any) {
+      toast.error(err.message || 'Failed to update office verification');
+    }
+  }
+
+  async function handleCreateOffice() {
+    if (!newOfficeName.trim()) {
+      toast.error('Office name is required.');
+      return;
+    }
+    setIsCreatingOffice(true);
+    try {
+      const token = await getAccessToken();
+      const res = await fetch('/api/admin/offices', {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${token}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          action: 'create_office',
+          name: newOfficeName.trim(),
+          code: newOfficeCode.trim() || undefined,
+          description: newOfficeDesc.trim() || undefined,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.message || data.error || 'Failed to create office');
+      toast.success('Office created successfully.');
+      setShowAddOfficeModal(false);
+      setNewOfficeName('');
+      setNewOfficeCode('');
+      setNewOfficeDesc('');
+      await loadAdminOffices();
+    } catch (err: any) {
+      toast.error(err.message || 'Failed to create office');
+    } finally {
+      setIsCreatingOffice(false);
+    }
+  }
+
+  async function handleSaveOfficeAssignments() {
+    if (!assigningUser) return;
+    setIsSavingAssignments(true);
+    try {
+      const token = await getAccessToken();
+      const res = await fetch('/api/system/update-user', {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${token}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          targetUid: assigningUser.uid,
+          officeIds: selectedOfficeIdsForUser,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.message || data.error || 'Failed to update office assignments');
+      toast.success('Office assignments updated successfully.');
+      setAssigningUser(null);
+      await loadUsers();
+    } catch (err: any) {
+      toast.error(err.message || 'Failed to update office assignments');
+    } finally {
+      setIsSavingAssignments(false);
+    }
+  }
+
   const canManageAdministrativeRoles = isSuperAdmin(role);
   const [users, setUsers] = useState<AppUserWithId[]>([]);
   const [loading, setLoading] = useState(true);
@@ -391,43 +530,87 @@ export function AdminUsers() {
 
   return (
     <div className="space-y-6">
-      <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-        <div>
-          <h1 className="text-2xl font-bold text-[var(--color-text-primary)]">
-            User Management
-          </h1>
-          <p className="text-sm text-[var(--color-text-secondary)]">
-            Manage Guard accounts{canManageAdministrativeRoles ? ' and administrative roles' : ''}
-          </p>
-        </div>
-        <Button onClick={() => setIsCreating(true)} icon={<Plus className="h-4 w-4" />}>
-          Add User
-        </Button>
+      <div>
+        <h1 className="text-2xl font-bold text-[var(--color-text-primary)]">
+          Staff & Access Governance
+        </h1>
+        <p className="text-sm text-[var(--color-text-secondary)]">
+          Manage administrative staff accounts, campus office directory, and staff department assignments
+        </p>
       </div>
 
-      <div className="flex flex-wrap items-center gap-1.5 border-b border-[var(--color-border)] pb-3">
-        {(
-          [
-            { id: 'active', label: 'Active' },
-            { id: 'inactive', label: 'Inactive' },
-            { id: 'decommissioned', label: 'Decommissioned' },
-            { id: 'all', label: 'All' },
-          ] as const
-        ).map((tab) => (
-          <button
-            key={tab.id}
-            type="button"
-            onClick={() => setStatusFilter(tab.id)}
-            className={`rounded-lg px-3 py-1.5 text-xs font-semibold transition-colors ${
-              statusFilter === tab.id
-                ? 'bg-[var(--color-brand)] text-white shadow-xs'
-                : 'text-[var(--color-text-secondary)] hover:bg-[var(--color-surface-hover)] hover:text-[var(--color-text-primary)]'
-            }`}
-          >
-            {tab.label}
-          </button>
-        ))}
+      {/* Sub-Tabs Navigation */}
+      <div className="flex border-b border-[var(--color-border)] gap-2 overflow-x-auto pb-px">
+        {[
+          { id: 'staff', label: 'Staff Accounts', icon: Users },
+          { id: 'directory', label: 'Office Directory', icon: Building2 },
+          { id: 'assignments', label: 'Office Assignments', icon: UserCheck },
+        ].map((tab) => {
+          const Icon = tab.icon;
+          const isActive = currentTab === tab.id;
+          return (
+            <button
+              key={tab.id}
+              type="button"
+              onClick={() => {
+                const next = new URLSearchParams(searchParams);
+                next.set('tab', tab.id);
+                setSearchParams(next);
+              }}
+              className={`flex items-center gap-2 px-4 py-2.5 text-xs font-bold whitespace-nowrap border-b-2 transition-colors ${
+                isActive
+                  ? 'border-[#7A0A0A] text-[#7A0A0A]'
+                  : 'border-transparent text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)]'
+              }`}
+            >
+              <Icon className="h-4 w-4" />
+              <span>{tab.label}</span>
+            </button>
+          );
+        })}
       </div>
+
+      {currentTab === 'staff' && (
+        <div className="space-y-6">
+          <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+            <div>
+              <h2 className="text-lg font-bold text-[var(--color-text-primary)]">
+                Staff Accounts
+              </h2>
+              <p className="text-xs text-[var(--color-text-secondary)]">
+                Manage Guard accounts{canManageAdministrativeRoles ? ' and administrative roles' : ''}
+              </p>
+            </div>
+            {canManageAdministrativeRoles && (
+              <Button onClick={() => setIsCreating(true)} icon={<Plus className="h-4 w-4" />}>
+                Add User
+              </Button>
+            )}
+          </div>
+
+          <div className="flex flex-wrap items-center gap-1.5 border-b border-[var(--color-border)] pb-3">
+            {(
+              [
+                { id: 'active', label: 'Active' },
+                { id: 'inactive', label: 'Inactive' },
+                { id: 'decommissioned', label: 'Decommissioned' },
+                { id: 'all', label: 'All' },
+              ] as const
+            ).map((tab) => (
+              <button
+                key={tab.id}
+                type="button"
+                onClick={() => setStatusFilter(tab.id)}
+                className={`rounded-lg px-3 py-1.5 text-xs font-semibold transition-colors ${
+                  statusFilter === tab.id
+                    ? 'bg-[var(--color-brand)] text-white shadow-xs'
+                    : 'text-[var(--color-text-secondary)] hover:bg-[var(--color-surface-hover)] hover:text-[var(--color-text-primary)]'
+                }`}
+              >
+                {tab.label}
+              </button>
+            ))}
+          </div>
 
       <Modal 
         isOpen={isCreating} 
@@ -620,6 +803,180 @@ export function AdminUsers() {
           </Button>
         </div>
       )}
+        </div>
+      )}
+
+      {currentTab === 'directory' && (
+        <div className="space-y-6">
+          <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+            <div>
+              <h2 className="text-lg font-bold text-[var(--color-text-primary)]">
+                Campus Office Directory
+              </h2>
+              <p className="text-xs text-[var(--color-text-secondary)]">
+                Superadmin-governed institutional offices and departments. Only verified offices are selectable for visitor requests.
+              </p>
+            </div>
+            {canManageAdministrativeRoles && (
+              <Button onClick={() => setShowAddOfficeModal(true)} icon={<Plus className="h-4 w-4" />}>
+                Add Office
+              </Button>
+            )}
+          </div>
+
+          {loadingAdminOffices ? (
+            <div className="flex h-32 items-center justify-center">
+              <div className="h-8 w-8 animate-spin rounded-full border-4 border-[var(--color-border)] border-t-[var(--color-brand)]" role="status" aria-label="Loading offices" />
+            </div>
+          ) : (
+            <DataTable>
+              <DataTableHead>
+                <DataTableRow>
+                  <DataTableCell isHeader>Office Name</DataTableCell>
+                  <DataTableCell isHeader>Code</DataTableCell>
+                  <DataTableCell isHeader>Description</DataTableCell>
+                  <DataTableCell isHeader>Verification</DataTableCell>
+                  <DataTableCell isHeader className="text-right">Actions</DataTableCell>
+                </DataTableRow>
+              </DataTableHead>
+              <tbody>
+                {adminOffices.map((office) => (
+                  <DataTableRow key={office.id}>
+                    <DataTableCell className="font-semibold">{office.name}</DataTableCell>
+                    <DataTableCell className="text-xs font-mono text-[var(--color-text-secondary)]">
+                      {office.code || '—'}
+                    </DataTableCell>
+                    <DataTableCell className="text-xs text-[var(--color-text-secondary)] max-w-xs truncate">
+                      {office.description || '—'}
+                    </DataTableCell>
+                    <DataTableCell>
+                      {office.verified ? (
+                        <span className="inline-flex items-center gap-1 rounded-full bg-emerald-50 px-2 py-0.5 text-xs font-medium text-emerald-700 border border-emerald-200">
+                          <CheckCircle2 className="h-3 w-3" /> Verified
+                        </span>
+                      ) : (
+                        <span className="inline-flex items-center gap-1 rounded-full bg-amber-50 px-2 py-0.5 text-xs font-medium text-amber-700 border border-amber-200">
+                          Unverified
+                        </span>
+                      )}
+                    </DataTableCell>
+                    <DataTableCell className="text-right">
+                      {canManageAdministrativeRoles && (
+                        office.verified ? (
+                          <Button
+                            variant="secondary"
+                            size="sm"
+                            onClick={() => handleVerifyOffice(office.id, false)}
+                          >
+                            Unverify
+                          </Button>
+                        ) : (
+                          <Button
+                            size="sm"
+                            onClick={() => handleVerifyOffice(office.id, true)}
+                          >
+                            Verify Office
+                          </Button>
+                        )
+                      )}
+                    </DataTableCell>
+                  </DataTableRow>
+                ))}
+                {adminOffices.length === 0 && (
+                  <tr>
+                    <td colSpan={5} className="py-8 text-center text-[var(--color-text-muted)]">
+                      No offices recorded.
+                    </td>
+                  </tr>
+                )}
+              </tbody>
+            </DataTable>
+          )}
+        </div>
+      )}
+
+      {currentTab === 'assignments' && (
+        <div className="space-y-6">
+          <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+            <div>
+              <h2 className="text-lg font-bold text-[var(--color-text-primary)]">
+                Office Staff Department Assignments
+              </h2>
+              <p className="text-xs text-[var(--color-text-secondary)]">
+                Assign authorized offices to staff accounts so they can review and approve visitor pass requests for their department.
+              </p>
+            </div>
+          </div>
+
+          <DataTable>
+            <DataTableHead>
+              <DataTableRow>
+                <DataTableCell isHeader>Staff Name</DataTableCell>
+                <DataTableCell isHeader>Email</DataTableCell>
+                <DataTableCell isHeader>Status</DataTableCell>
+                <DataTableCell isHeader>Assigned Department(s)</DataTableCell>
+                <DataTableCell isHeader className="text-right">Actions</DataTableCell>
+              </DataTableRow>
+            </DataTableHead>
+            <tbody>
+              {users.filter((u) => u.role === 'office_staff').map((user) => {
+                const assignedNames = (user.assignedOfficeIds || [])
+                  .map((id) => adminOffices.find((o) => o.id === id)?.name)
+                  .filter(Boolean);
+
+                return (
+                  <DataTableRow key={user.uid}>
+                    <DataTableCell className="font-semibold">{user.name}</DataTableCell>
+                    <DataTableCell className="text-xs text-[var(--color-text-secondary)]">{user.email}</DataTableCell>
+                    <DataTableCell>
+                      <StatusBadge
+                        status={user.active ? 'active' : 'inactive'}
+                        label={user.active ? 'Active' : 'Inactive'}
+                      />
+                    </DataTableCell>
+                    <DataTableCell>
+                      {assignedNames.length > 0 ? (
+                        <div className="flex flex-wrap gap-1">
+                          {assignedNames.map((name, idx) => (
+                            <span key={idx} className="rounded bg-[var(--color-brand-light)] text-[var(--color-brand)] px-2 py-0.5 text-xs font-medium">
+                              {name}
+                            </span>
+                          ))}
+                        </div>
+                      ) : (
+                        <span className="inline-flex items-center gap-1 rounded-full bg-red-50 px-2 py-0.5 text-xs font-medium text-red-700 border border-red-200">
+                          <AlertCircle className="h-3 w-3" /> No Office Assigned
+                        </span>
+                      )}
+                    </DataTableCell>
+                    <DataTableCell className="text-right">
+                      {canManageAdministrativeRoles && (
+                        <Button
+                          variant="secondary"
+                          size="sm"
+                          onClick={() => {
+                            setAssigningUser(user);
+                            setSelectedOfficeIdsForUser(user.assignedOfficeIds || []);
+                          }}
+                        >
+                          Manage Assignments
+                        </Button>
+                      )}
+                    </DataTableCell>
+                  </DataTableRow>
+                );
+              })}
+              {users.filter((u) => u.role === 'office_staff').length === 0 && (
+                <tr>
+                  <td colSpan={5} className="py-8 text-center text-[var(--color-text-muted)]">
+                    No Office Staff accounts found. Create an Office Staff user first under Staff Accounts.
+                  </td>
+                </tr>
+              )}
+            </tbody>
+          </DataTable>
+        </div>
+      )}
 
       <ConfirmModal
         isOpen={!!deactivatingUser}
@@ -741,6 +1098,106 @@ export function AdminUsers() {
               disabled={isDecommissioning || !decommissionPassword || decommissionReason.trim().length < 5}
             >
               Permanently Decommission
+            </Button>
+          </div>
+        </div>
+      </Modal>
+
+      <Modal
+        isOpen={showAddOfficeModal}
+        onClose={() => setShowAddOfficeModal(false)}
+        title="Add Campus Office"
+        preventClose={isCreatingOffice}
+        size="sm"
+      >
+        <div className="space-y-4">
+          <FormField label="Office Name" id="new-office-name" requirement="required">
+            <Input
+              id="new-office-name"
+              type="text"
+              value={newOfficeName}
+              onChange={(e) => setNewOfficeName(e.target.value)}
+              placeholder="e.g. Office of the University Registrar"
+              required
+            />
+          </FormField>
+          <FormField label="Office Code" id="new-office-code">
+            <Input
+              id="new-office-code"
+              type="text"
+              value={newOfficeCode}
+              onChange={(e) => setNewOfficeCode(e.target.value)}
+              placeholder="e.g. OUR"
+            />
+          </FormField>
+          <FormField label="Description" id="new-office-desc">
+            <Input
+              id="new-office-desc"
+              type="text"
+              value={newOfficeDesc}
+              onChange={(e) => setNewOfficeDesc(e.target.value)}
+              placeholder="Optional department description"
+            />
+          </FormField>
+          <div className="flex justify-end gap-2 pt-2">
+            <Button variant="secondary" onClick={() => setShowAddOfficeModal(false)} disabled={isCreatingOffice}>
+              Cancel
+            </Button>
+            <Button onClick={handleCreateOffice} loading={isCreatingOffice} disabled={isCreatingOffice || !newOfficeName.trim()}>
+              Create Office
+            </Button>
+          </div>
+        </div>
+      </Modal>
+
+      <Modal
+        isOpen={!!assigningUser}
+        onClose={() => setAssigningUser(null)}
+        title={`Assign Offices — ${assigningUser?.name}`}
+        preventClose={isSavingAssignments}
+        size="md"
+      >
+        <div className="space-y-4">
+          <p className="text-xs text-[var(--color-text-secondary)]">
+            Select the campus office(s) that <strong>{assigningUser?.name}</strong> is authorized to manage and approve visit requests for:
+          </p>
+          <div className="max-h-60 overflow-y-auto space-y-2 border border-[var(--color-border)] rounded-md p-3">
+            {adminOffices.filter((o) => o.active).map((office) => {
+              const isChecked = selectedOfficeIdsForUser.includes(office.id);
+              return (
+                <label key={office.id} className="flex items-center gap-2.5 text-xs cursor-pointer hover:bg-[var(--color-surface-hover)] p-1.5 rounded">
+                  <input
+                    type="checkbox"
+                    checked={isChecked}
+                    onChange={(e) => {
+                      if (e.target.checked) {
+                        setSelectedOfficeIdsForUser((prev) => [...prev, office.id]);
+                      } else {
+                        setSelectedOfficeIdsForUser((prev) => prev.filter((id) => id !== office.id));
+                      }
+                    }}
+                    className="rounded border-[var(--color-border)] text-[var(--color-brand)] focus:ring-[var(--color-brand)]"
+                  />
+                  <span className="font-semibold text-[var(--color-text-primary)]">{office.name}</span>
+                  {office.code && <span className="text-[var(--color-text-muted)]">({office.code})</span>}
+                  {office.verified && (
+                    <span className="ml-auto inline-flex items-center gap-0.5 text-[10px] text-emerald-700 bg-emerald-50 px-1.5 py-0.5 rounded border border-emerald-200">
+                      Verified
+                    </span>
+                  )}
+                </label>
+              );
+            })}
+            {adminOffices.filter((o) => o.active).length === 0 && (
+              <p className="text-xs text-[var(--color-text-muted)] text-center py-4">No active offices available.</p>
+            )}
+          </div>
+          <div className="flex justify-end gap-2 pt-2">
+            <Button variant="secondary" onClick={() => setAssigningUser(null)} disabled={isSavingAssignments}>
+              Cancel
+            </Button>
+            <Button onClick={handleSaveOfficeAssignments} loading={isSavingAssignments} disabled={isSavingAssignments}>
+              Save Assignments
             </Button>
           </div>
         </div>

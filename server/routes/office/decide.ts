@@ -54,6 +54,7 @@ export async function handleRequest(request: Request): Promise<Response> {
         purpose,
         visit_date,
         approval_status,
+        requested_person_name,
         offices ( name ),
         office_personnel ( name )
       `)
@@ -77,7 +78,7 @@ export async function handleRequest(request: Request): Promise<Response> {
       ? visit.visit_date.toISOString().slice(0, 10)
       : String(visit.visit_date || '');
     const officeName = (visit.offices as any)?.name || 'EARIST Office';
-    const personnelName = (visit.office_personnel as any)?.name || 'Faculty / Staff';
+    const personnelName = (visit as any).requested_person_name || (visit.office_personnel as any)?.name || 'Faculty / Staff';
 
     if (parsed.data.decision === 'rejected') {
       const reason = parsed.data.rejectionReason || 'Schedule conflict or personnel unavailable.';

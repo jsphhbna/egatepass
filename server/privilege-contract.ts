@@ -205,6 +205,12 @@ export const SERVICE_ROLE_TABLE_CONTRACT: Record<string, ServerTablePrivilegeCon
     forbiddenPrivileges: ['DELETE'],
     justification: 'Server reads and updates durable delivery outbox for office visit approval/rejection emails and retry tracking. DELETE is forbidden.',
   },
+  campus_calendar_closures: {
+    table: 'campus_calendar_closures',
+    allowedPrivileges: ['SELECT', 'INSERT', 'UPDATE', 'DELETE'],
+    forbiddenPrivileges: [],
+    justification: 'Server reads active closures for public system and admin views, and superadmins manage closures.',
+  },
 };
 
 /**
@@ -241,6 +247,10 @@ export const SERVER_DIRECT_TABLE_OPERATIONS: DirectServerTableOperation[] = [
   { file: 'server/routes/admin/retention-maintenance.ts', table: 'office_visits', operations: ['SELECT'], purpose: 'Protect active office visit actors from anonymous auth retention cleanup' },
   { file: 'server/routes/admin/settings.ts', table: 'app_settings', operations: ['SELECT'], purpose: 'Read current settings' },
   { file: 'server/routes/admin/users.ts', table: 'staff_profiles', operations: ['SELECT'], purpose: 'List staff users' },
+  { file: 'server/routes/admin/users.ts', table: 'office_staff_assignments', operations: ['SELECT'], purpose: 'Query office assignments for staff listing' },
+  { file: 'server/routes/admin/calendar.ts', table: 'campus_calendar_closures', operations: ['SELECT', 'INSERT', 'UPDATE', 'DELETE'], purpose: 'Admin campus calendar management' },
+  { file: 'server/routes/system/calendar.ts', table: 'campus_calendar_closures', operations: ['SELECT'], purpose: 'List active published campus closures' },
+  { file: 'server/routes/system/update-user.ts', table: 'office_staff_assignments', operations: ['INSERT', 'DELETE'], purpose: 'Update staff office assignments' },
   { file: 'server/routes/auth/complete-password-change.ts', table: 'staff_profiles', operations: ['SELECT'], purpose: 'Verify staff role before completing password change' },
   { file: 'server/routes/auth/reset-password.ts', table: 'devices', operations: ['SELECT'], purpose: 'Lookup device for reset target' },
   { file: 'server/routes/auth/reset-password.ts', table: 'staff_profiles', operations: ['SELECT'], purpose: 'Lookup staff profile for reset target' },

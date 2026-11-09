@@ -468,3 +468,25 @@ flowchart TD
   3. **PHLPost Metadata Reconstruction**: `hydrateReturningAddress()` reconstructs `postalResolution` (`isAutoFilled: true`, `mappingType: 'exact_barangay'`) whenever `postalCode` exists with source `PHLPost`.
   4. **Preservation of Unchanged Source**: In `AddressCascadingSelector.tsx`, `handleConfirm()` verifies `isUnchangedPostal` and preserves `initialAddress.postalCodeSource` and `postalResolution`, preventing degradation to `'manual'`.
 
+---
+
+### 2.27 Campus Closed Date Rejection (`visit_date_closed`)
+
+- **Symptom**:
+  Pass issuance or specific-person visit request returns HTTP 400 with message `Campus is closed on this date: <Closure Title>`.
+- **Root Cause**:
+  The selected visit date coincides with an active, published institutional closure defined by a Superadmin in `campus_calendar_closures`.
+- **Safe Resolution**:
+  Select an open date within the valid advance scheduling window. Superadmins can manage or update institutional calendar dates in `/admin/settings?tab=calendar`.
+
+---
+
+### 2.28 Office Staff Dashboard Access with No Office Assigned (`no_office_assigned_to_staff`)
+
+- **Symptom**:
+  An Office Staff account signs in, navigates to `/office`, and observes a warning banner: *"No Campus Office Assigned"*.
+- **Root Cause**:
+  The user has role `office_staff` but a Superadmin has not yet assigned them to one or more departments in `office_staff_assignments`.
+- **Safe Resolution**:
+  A Superadmin must navigate to `/admin/users?tab=assignments`, select the staff member, check the authorized office(s), and save the assignment.
+

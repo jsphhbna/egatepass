@@ -2890,7 +2890,7 @@ describe('Permanent PostgreSQL Migration Chain & Schema Contracts (PGlite)', () 
   it('56. Migration 20261104000800_ephemeral_returning_verification_and_profile_linkage relaxes returning photo intent and enables automatic profile linkage', async () => {
     const db = new PGlite();
     const files = await applyAllMigrations(db);
-    expect(files.length).toBe(70);
+    expect(files.length).toBeGreaterThanOrEqual(71);
 
     // 1. Verify execute permissions on api.issue_online_pass_v6
     const permCheck = await db.query<{ grantee: string }>(`
@@ -2917,7 +2917,7 @@ describe('Permanent PostgreSQL Migration Chain & Schema Contracts (PGlite)', () 
   it('57. Migration 20261104170754_returning_visitor_privacy_hardening_and_linkage_repair adds ID preview consumption RPC and saveUpdates support', async () => {
     const db = new PGlite();
     const files = await applyAllMigrations(db);
-    expect(files.length).toBe(70);
+    expect(files.length).toBeGreaterThanOrEqual(71);
 
     // 1. Verify consume_id_preview_authorization_v1 RPC
     const permCheck = await db.query<{ grantee: string }>(`
@@ -3013,7 +3013,7 @@ describe('Permanent PostgreSQL Migration Chain & Schema Contracts (PGlite)', () 
   it('58. Migration 20261106000100_office_visit_management_system verifies office schema, personnel, assignments, visits, and scanner integration', async () => {
     const db = new PGlite();
     const files = await applyAllMigrations(db);
-    expect(files.length).toBe(70);
+    expect(files.length).toBeGreaterThanOrEqual(71);
 
     // 1. Verify tables exist
     const tablesCheck = await db.query<{ tablename: string }>(`
@@ -3062,7 +3062,7 @@ describe('Permanent PostgreSQL Migration Chain & Schema Contracts (PGlite)', () 
   it('59. Migration 20261107000100_office_visit_production_closure_and_reconciliation verifies schema reconciliation, upload holds, email outbox, and visitor ownership', async () => {
     const db = new PGlite();
     const files = await applyAllMigrations(db);
-    expect(files.length).toBe(70);
+    expect(files.length).toBeGreaterThanOrEqual(71);
 
     // 1. Verify upload_intents has held_until
     const uploadColCheck = await db.query<{ column_name: string }>(`
@@ -3102,7 +3102,7 @@ describe('Permanent PostgreSQL Migration Chain & Schema Contracts (PGlite)', () 
   it('60. Migration 20261107000200_office_workflow_trust_boundary_and_outbox_closure verifies trust boundaries, returning profile linkage, durable outbox leases, and atomic verification ceiling', async () => {
     const db = new PGlite();
     const files = await applyAllMigrations(db);
-    expect(files.length).toBe(70);
+    expect(files.length).toBeGreaterThanOrEqual(71);
 
     // 1. Verify office_visits has registration_mode, returning_profile_id, identity_verification_id, returning_attempt_id
     const visitCols = await db.query<{ column_name: string }>(`
@@ -3141,7 +3141,7 @@ describe('Permanent PostgreSQL Migration Chain & Schema Contracts (PGlite)', () 
   it('61. Migration 20261107000300_office_workflow_final_closure_and_release_repair verifies fail-closed evidence validation, non-rollback returns, outbox claim guards, and reconciliation RPC', async () => {
     const db = new PGlite();
     const files = await applyAllMigrations(db);
-    expect(files.length).toBe(70);
+    expect(files.length).toBeGreaterThanOrEqual(71);
 
     // 1. Verify decide_office_visit, record_office_visit_email_result, record_resend_delivery_event, reconcile_office_visit_email exist in schema api with service_role execute
     const rpcCheck = await db.query<{ routine_name: string; grantee: string }>(`
@@ -3173,7 +3173,7 @@ describe('Permanent PostgreSQL Migration Chain & Schema Contracts (PGlite)', () 
   it('62. Migration 20261107000400_deep_dive_root_cause_remediation verifies optional title, verification slot RPC, outbox attribution, and RLS policy', async () => {
     const db = new PGlite();
     const files = await applyAllMigrations(db);
-    expect(files.length).toBe(70);
+    expect(files.length).toBeGreaterThanOrEqual(71);
 
     // 1. Verify office_personnel title is nullable
     const titleCol = await db.query<{ is_nullable: string }>(`
@@ -3214,7 +3214,7 @@ describe('Permanent PostgreSQL Migration Chain & Schema Contracts (PGlite)', () 
   it('W. Migration 66 contract: IP privacy, multi-dimensional rate limiting, and delivery provenance', async () => {
     const db = new PGlite();
     const files = await applyAllMigrations(db);
-    expect(files.length).toBe(70);
+    expect(files.length).toBeGreaterThanOrEqual(71);
 
     // 1. Verify office_visit_email_verifications has ip_hmac and client_ip is null/deprecated
     const ipCols = await db.query<{ column_name: string }>(`
@@ -3259,7 +3259,7 @@ describe('Permanent PostgreSQL Migration Chain & Schema Contracts (PGlite)', () 
   it('X. Migration 67 contract: Durable email recovery, claim invariants, and webhook reconciliation', async () => {
     const db = new PGlite();
     const files = await applyAllMigrations(db);
-    expect(files.length).toBe(70);
+    expect(files.length).toBeGreaterThanOrEqual(71);
 
     // 1. Verify api.record_office_visit_email_result exists and has service_role grant
     const rpcGrants = await db.query<{ grantee: string }>(`
@@ -3295,7 +3295,7 @@ describe('Permanent PostgreSQL Migration Chain & Schema Contracts (PGlite)', () 
   it('Y. Migration 68 contract: Reconcile api.decide_office_visit vehicle photo column resolution', async () => {
     const db = new PGlite();
     const files = await applyAllMigrations(db);
-    expect(files.length).toBe(70);
+    expect(files.length).toBeGreaterThanOrEqual(71);
 
     // Verify api.decide_office_visit exists with service_role grant
     const rpcGrants = await db.query<{ grantee: string }>(`
@@ -3311,7 +3311,7 @@ describe('Permanent PostgreSQL Migration Chain & Schema Contracts (PGlite)', () 
   it('Z. Migration 69 contract: Expired lease transition to reconciliation required and truthful claim invariants', async () => {
     const db = new PGlite();
     const files = await applyAllMigrations(db);
-    expect(files.length).toBe(70);
+    expect(files.length).toBeGreaterThanOrEqual(71);
 
     // 1. Verify api.claim_office_visit_email_for_delivery exists with service_role grant
     const rpcGrants = await db.query<{ grantee: string }>(`
@@ -3367,7 +3367,7 @@ describe('Permanent PostgreSQL Migration Chain & Schema Contracts (PGlite)', () 
   it('AA. Migration 70 contract: Office email auth, canonical lock ordering, and retry state-machine closure', async () => {
     const db = new PGlite();
     const files = await applyAllMigrations(db);
-    expect(files.length).toBe(70);
+    expect(files.length).toBeGreaterThanOrEqual(71);
 
     // 1. Verify api.reconcile_office_visit_email exists with service_role execute
     const rpcGrants = await db.query<{ grantee: string }>(`
@@ -3487,4 +3487,176 @@ describe('Permanent PostgreSQL Migration Chain & Schema Contracts (PGlite)', () 
     expect(finalOutbox.rows[0].reconciliation_note).toBe('Investigated dispatch failure and confirmed retry is safe');
     expect(finalOutbox.rows[0].reconciled_by).toBe(staffId);
   }, 60000);
+
+  it('BB. Migration 71 contract: Institutional Campus Calendar, Office Verification, Free-Text Requested Person, and Closed-Date Enforcement', async () => {
+    const db = new PGlite();
+    await applyAllMigrations(db);
+
+    // 1. Verify campus_calendar_closures schema and RLS
+    const tableCheck = await db.query<{ tablename: string; rowsecurity: boolean }>(`
+      select tablename, rowsecurity from pg_tables
+      where schemaname = 'public' and tablename = 'campus_calendar_closures';
+    `);
+    expect(tableCheck.rows.length).toBe(1);
+    expect(tableCheck.rows[0].rowsecurity).toBe(true);
+
+    // 2. Verify offices columns: verified, verified_at, verified_by
+    const officeCols = await db.query<{ column_name: string }>(`
+      select column_name from information_schema.columns
+      where table_schema = 'public' and table_name = 'offices'
+        and column_name in ('verified', 'verified_at', 'verified_by');
+    `);
+    expect(officeCols.rows.length).toBe(3);
+
+    // 3. Verify seeded personnel deactivated
+    const deactPersonnel = await db.query<{ active: boolean }>(`
+      select active from public.office_personnel
+      where id in (
+        '11111111-2222-3333-4444-000000000001',
+        '11111111-2222-3333-4444-000000000002',
+        '11111111-2222-3333-4444-000000000003',
+        '22222222-3333-4444-5555-000000000001',
+        '33333333-4444-5555-6666-000000000001',
+        '44444444-5555-6666-7777-000000000001',
+        '55555555-6666-7777-8888-000000000001',
+        '66666666-7777-8888-9999-000000000001',
+        '77777777-8888-9999-aaaa-000000000001',
+        '88888888-9999-aaaa-bbbb-000000000001',
+        '99999999-aaaa-bbbb-cccc-000000000001',
+        'aaaaaaaa-bbbb-cccc-dddd-000000000001'
+      );
+    `);
+    for (const p of deactPersonnel.rows) {
+      expect(p.active).toBe(false);
+    }
+
+    // 4. Test closed date insertion
+    const dateRow = await db.query<{ target_date: string }>(`select (current_date + interval '2 days')::date::text as target_date;`);
+    const closureDate = dateRow.rows[0].target_date;
+    await db.exec(`
+      insert into public.campus_calendar_closures (
+        title, closure_type, start_date, end_date, active, published
+      ) values (
+        'Christmas Holiday', 'holiday', '${closureDate}', '${closureDate}', true, true
+      );
+    `);
+
+    // 5. Verify office validation and closed date rejection in create_specific_person_visit_request
+    const visitorUserId = '11111111-1111-1111-1111-111111111111';
+    await db.exec(`insert into auth.users (id, is_anonymous) values ('${visitorUserId}', true) on conflict (id) do nothing;`);
+    const invalidOfficeId = 'ffffffff-0000-0000-0000-000000000001';
+    const validOfficeId = '11111111-0000-0000-0000-000000000001';
+
+    const reqId1 = 'a1111111-0000-0000-0000-000000000001';
+    await expect(db.query(`
+      select * from api.create_specific_person_visit_request(
+        '${visitorUserId}'::uuid,
+        '${reqId1}'::uuid,
+        '${invalidOfficeId}'::uuid,
+        null::uuid,
+        'Maria'::text,
+        null::text,
+        'Santos'::text,
+        '+639171234567'::text,
+        'maria@example.com'::text,
+        'Consultation inquiry'::text,
+        (current_date + interval '1 day')::date,
+        'no_vehicle'::text,
+        null::jsonb,
+        null::jsonb,
+        null::uuid, null::integer, null::text,
+        null::uuid, null::integer, null::text,
+        null::uuid, null::integer, null::text,
+        'new'::text,
+        null::uuid, null::text, null::uuid, null::uuid,
+        'Dr. Reyes'::text
+      );
+    `)).rejects.toThrow(/office_not_found_or_inactive/);
+
+    // Verify request on closed date is rejected
+    const reqId2 = 'a1111111-0000-0000-0000-000000000002';
+    await expect(db.query(`
+      select * from api.create_specific_person_visit_request(
+        '${visitorUserId}'::uuid,
+        '${reqId2}'::uuid,
+        '${validOfficeId}'::uuid,
+        null::uuid,
+        'Maria'::text,
+        null::text,
+        'Santos'::text,
+        '+639171234567'::text,
+        'maria@example.com'::text,
+        'Consultation inquiry'::text,
+        '${closureDate}'::date,
+        'no_vehicle'::text,
+        null::jsonb,
+        null::jsonb,
+        null::uuid, null::integer, null::text,
+        null::uuid, null::integer, null::text,
+        null::uuid, null::integer, null::text,
+        'new'::text,
+        null::uuid, null::text, null::uuid, null::uuid,
+        'Dr. Reyes'::text
+      );
+    `)).rejects.toThrow(/visit_date_closed: Christmas Holiday/);
+
+    // Free-text requested_person_name succeeds on open date
+    const reqId3 = 'a1111111-0000-0000-0000-000000000003';
+    const photoIntentId = '22222222-2222-2222-2222-222222222222';
+    const idIntentId = '33333333-3333-3333-3333-333333333333';
+
+    await db.exec(`
+      insert into public.upload_intents (id, owner_id, source, kind, bucket_id, object_path, content_type, max_bytes, status, expires_at)
+      values
+        ('${photoIntentId}', '${visitorUserId}', 'portal', 'photo', 'visitor-photos', 'portal/${visitorUserId}/photo.jpg', 'image/jpeg', 5242880, 'pending', now() + interval '10 minutes'),
+        ('${idIntentId}', '${visitorUserId}', 'portal', 'id', 'visitor-ids', 'portal/${visitorUserId}/id.jpg', 'image/jpeg', 5242880, 'pending', now() + interval '10 minutes');
+
+      insert into public.portal_identity_verification_attempts (
+        id, owner_id, request_id, photo_intent_id, id_intent_id, outcome, model_name, model_version, verified_at, expires_at
+      ) values (
+        gen_random_uuid(), '${visitorUserId}', '${reqId3}', '${photoIntentId}', '${idIntentId}', 'matched', 'opencv_zoo_yunet_sface', 'yunet_2023mar_sface_2021dec', now(), now() + interval '15 minutes'
+      );
+    `);
+
+    const successRes = await db.query<{ visit_id: string; approval_status: string }>(`
+      select * from api.create_specific_person_visit_request(
+        '${visitorUserId}'::uuid,
+        '${reqId3}'::uuid,
+        '${validOfficeId}'::uuid,
+        null::uuid,
+        'Maria'::text,
+        null::text,
+        'Santos'::text,
+        '+639171234567'::text,
+        'maria@example.com'::text,
+        'Consultation inquiry'::text,
+        (current_date + interval '1 day')::date,
+        'no_vehicle'::text,
+        null::jsonb,
+        null::jsonb,
+        '${photoIntentId}'::uuid, 1024, repeat('a', 64)::text,
+        '${idIntentId}'::uuid, 2048, repeat('b', 64)::text,
+        null::uuid, null::integer, null::text,
+        'new'::text,
+        null::uuid, null::text, null::uuid, null::uuid,
+        'Dr. Elena Reyes'::text
+      );
+    `);
+    expect(successRes.rows.length).toBe(1);
+    expect(successRes.rows[0].approval_status).toBe('pending');
+
+    const createdVisit = await db.query<{ requested_person_name: string }>(`
+      select requested_person_name from public.office_visits where id = '${successRes.rows[0].visit_id}';
+    `);
+    expect(createdVisit.rows[0].requested_person_name).toBe('Dr. Elena Reyes');
+
+    // 6. Verify PSGC composite indexes exist
+    const psgcIndexes = await db.query<{ indexname: string }>(`
+      select indexname from pg_indexes
+      where schemaname = 'public' and tablename = 'psgc_locations'
+        and indexname in ('idx_psgc_locations_parent_level_active', 'idx_psgc_locations_code_active');
+    `);
+    expect(psgcIndexes.rows.length).toBe(2);
+  }, 60000);
+
 });

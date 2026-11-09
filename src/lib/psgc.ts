@@ -54,6 +54,19 @@ export async function fetchPsgcRegions(): Promise<PsgcLocation[]> {
     return memoryCache.get(cacheKey)!;
   }
 
+  // 1. Primary: Bundled reference data (0 ms in-memory response)
+  if (Array.isArray(regionsData) && regionsData.length > 0) {
+    const bundled: PsgcLocation[] = (regionsData as any[]).map((r) => ({
+      code: r.code,
+      parentCode: null,
+      name: r.name,
+      level: 'region',
+      hasProvinces: r.hasProvinces ?? (r.code !== '1300000000'),
+    }));
+    memoryCache.set(cacheKey, bundled);
+    return bundled;
+  }
+
   try {
     const supabase = requirePortalSupabase();
     const { data, error } = await supabase
@@ -75,18 +88,10 @@ export async function fetchPsgcRegions(): Promise<PsgcLocation[]> {
       return mapped;
     }
   } catch {
-    // Fall back to bundled reference data
+    // Fall back
   }
 
-  const fallback: PsgcLocation[] = (regionsData as any[]).map((r) => ({
-    code: r.code,
-    parentCode: null,
-    name: r.name,
-    level: 'region',
-    hasProvinces: r.hasProvinces ?? (r.code !== '1300000000'),
-  }));
-  memoryCache.set(cacheKey, fallback);
-  return fallback;
+  return [];
 }
 
 /**
@@ -101,6 +106,22 @@ export async function fetchPsgcProvinces(regionCode: string): Promise<PsgcLocati
   const cacheKey = `provinces_${regionCode}`;
   if (memoryCache.has(cacheKey)) {
     return memoryCache.get(cacheKey)!;
+  }
+
+  // 1. Primary: Bundled reference data (0 ms in-memory response)
+  if (Array.isArray(provincesData)) {
+    const bundled: PsgcLocation[] = (provincesData as any[])
+      .filter((p) => p.regionCode === regionCode)
+      .map((p) => ({
+        code: p.code,
+        parentCode: p.regionCode,
+        name: p.name,
+        level: 'province',
+      }));
+    if (bundled.length > 0) {
+      memoryCache.set(cacheKey, bundled);
+      return bundled;
+    }
   }
 
   try {
@@ -127,16 +148,7 @@ export async function fetchPsgcProvinces(regionCode: string): Promise<PsgcLocati
     // Fall back
   }
 
-  const fallback: PsgcLocation[] = (provincesData as any[])
-    .filter((p) => p.regionCode === regionCode)
-    .map((p) => ({
-      code: p.code,
-      parentCode: p.regionCode,
-      name: p.name,
-      level: 'province',
-    }));
-  memoryCache.set(cacheKey, fallback);
-  return fallback;
+  return [];
 }
 
 /**
@@ -146,6 +158,24 @@ export async function fetchPsgcCities(parentCode: string): Promise<PsgcLocation[
   const cacheKey = `cities_${parentCode}`;
   if (memoryCache.has(cacheKey)) {
     return memoryCache.get(cacheKey)!;
+  }
+
+  // 1. Primary: Bundled reference data (0 ms in-memory response)
+  if (Array.isArray(citiesData)) {
+    const bundled: PsgcLocation[] = (citiesData as any[])
+      .filter((c) => (c.provinceCode || c.regionCode) === parentCode)
+      .map((c) => ({
+        code: c.code,
+        parentCode: c.provinceCode || c.regionCode,
+        name: c.name,
+        level: c.isCity ? 'city' : 'municipality',
+        isCity: c.isCity,
+        isHuc: c.isHuc,
+      }));
+    if (bundled.length > 0) {
+      memoryCache.set(cacheKey, bundled);
+      return bundled;
+    }
   }
 
   try {
@@ -174,18 +204,7 @@ export async function fetchPsgcCities(parentCode: string): Promise<PsgcLocation[
     // Fall back
   }
 
-  const fallback: PsgcLocation[] = (citiesData as any[])
-    .filter((c) => (c.provinceCode || c.regionCode) === parentCode)
-    .map((c) => ({
-      code: c.code,
-      parentCode: c.provinceCode || c.regionCode,
-      name: c.name,
-      level: c.isCity ? 'city' : 'municipality',
-      isCity: c.isCity,
-      isHuc: c.isHuc,
-    }));
-  memoryCache.set(cacheKey, fallback);
-  return fallback;
+  return [];
 }
 
 /**
@@ -195,6 +214,22 @@ export async function fetchPsgcBarangays(cityCode: string): Promise<PsgcLocation
   const cacheKey = `barangays_${cityCode}`;
   if (memoryCache.has(cacheKey)) {
     return memoryCache.get(cacheKey)!;
+  }
+
+  // 1. Primary: Bundled reference data (0 ms in-memory response)
+  if (Array.isArray(barangaysData)) {
+    const bundled: PsgcLocation[] = (barangaysData as any[])
+      .filter((b) => b.cityCode === cityCode)
+      .map((b) => ({
+        code: b.code,
+        parentCode: b.cityCode,
+        name: b.name,
+        level: 'barangay',
+      }));
+    if (bundled.length > 0) {
+      memoryCache.set(cacheKey, bundled);
+      return bundled;
+    }
   }
 
   try {
@@ -221,16 +256,7 @@ export async function fetchPsgcBarangays(cityCode: string): Promise<PsgcLocation
     // Fall back
   }
 
-  const fallback: PsgcLocation[] = (barangaysData as any[])
-    .filter((b) => b.cityCode === cityCode)
-    .map((b) => ({
-      code: b.code,
-      parentCode: b.cityCode,
-      name: b.name,
-      level: 'barangay',
-    }));
-  memoryCache.set(cacheKey, fallback);
-  return fallback;
+  return [];
 }
 
 /**

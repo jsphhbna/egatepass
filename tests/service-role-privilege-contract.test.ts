@@ -29,6 +29,7 @@ describe('Service Role Least-Privilege Architecture Contract', () => {
     const expectedTables = [
       'app_settings',
       'audit_events',
+      'campus_calendar_closures',
       'devices',
       'incident_holds',
       'location_search_cache',

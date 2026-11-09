@@ -768,7 +768,50 @@ stateDiagram-v2
 
 ---
 
-## 12. Physical Hardware Verification Disclaimer
+## 12. Institutional Calendar, Office Governance & Address Extraction QA Runbook
+
+### 12.1 Campus Calendar Closures
+1. **Superadmin Closure Creation**:
+   - Sign in as Superadmin and navigate to `/admin/settings?tab=calendar`.
+   - Click **Add Institutional Closure**. Enter Title (e.g. "University Foundation Day"), select Date Range, and submit.
+   - Verify closure appears in the upcoming closures list with active status.
+2. **Visitor Portal Closed-Date Warning**:
+   - Open `/get-pass` in an anonymous browser tab.
+   - Verify the top banner displays the upcoming scheduled closure.
+   - Attempt to select the closed date: verify it is visibly indicated as closed.
+   - If a closed date is forced, verify backend rejection `visit_date_closed`.
+3. **Kiosk In-Line Alert**:
+   - On `/kiosk`, selecting the closed date immediately displays an inline red warning: *"Campus is closed on this date..."* and prevents advancing to the camera capture step.
+
+### 12.2 Office Directory Governance & Assignments
+1. **Office Verification**:
+   - Sign in as Superadmin and navigate to `/admin/users?tab=directory`.
+   - Review unverified offices. Click **Verify Office** to approve authentic university departments.
+   - Confirm unverified offices remain hidden from public visitors under `/get-pass` (Specific Person request).
+2. **Staff Office Assignments**:
+   - Navigate to `/admin/users?tab=assignments`.
+   - Identify an `office_staff` user and click **Manage Assignments**.
+   - Check the authorized offices and click **Save Assignments**.
+   - Sign in as that office staff user and navigate to `/office`: verify they only see visit requests belonging to their assigned departments.
+   - If an office staff account has zero assignments, verify the prominent warning banner: *"No Campus Office Assigned"*.
+
+### 12.3 Free-Text Specific Person Visit Request
+1. On `/get-pass`, select **Specific Person or Department**.
+2. Select a verified campus office (e.g. "Office of the University Registrar").
+3. In "Who would you like to visit?", enter a free-text name (e.g. "Dean Maria Santos") or click an active directory badge if available.
+4. Submit the registration. Open `/office` as the assigned staff: verify the visitor request displays the free-text name accurately.
+
+### 12.4 In-Memory PSGC & ID Address OCR
+1. **Instant Location Selection**:
+   - On `/get-pass`, select Region, Province, City, and Barangay. Confirm dropdowns populate instantly (0 ms) without network delay using local reference datasets.
+2. **ID Document Address Extraction**:
+   - Upload or capture a Philippine government ID containing address text.
+   - Confirm an "Address Detected from ID" suggestion card appears showing parsed Barangay, Municipality, Province, and Region.
+   - Click **Use Detected Address**; confirm fields prefill seamlessly without manual typing while preserving user editability.
+
+---
+
+## 13. Physical Hardware Verification Disclaimer
 
 > **MANDATORY PHYSICAL HARDWARE NOTICE**:
 > Physical hardware peripherals in the EARIST campus environment (specifically: the physical MXW01 Bluetooth thermal printer, dedicated physical hardware 2D barcode scanners, and physical iPhone 12 Safari camera hardware) are marked `NOT TESTED (PHYSICAL HARDWARE)` in verification reports because software execution environments cannot physically connect to local Bluetooth radios or physical optics. All corresponding software contracts, Web Bluetooth communication protocols, Web Audio synthesis pipelines, and responsive mobile viewports are fully tested and proven in automated verification suites.

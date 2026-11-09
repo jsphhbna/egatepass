@@ -24,7 +24,8 @@ const requestSchema = z.object({
     visitDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
   }),
   officeId: z.string().uuid(),
-  personnelId: z.string().uuid(),
+  personnelId: z.string().uuid().nullable().optional(),
+  requestedPersonName: z.string().trim().min(2).max(150).nullable().optional(),
   specificPurpose: z.string().trim().min(3).max(300),
   emailVerificationToken: z.string().min(1),
   arrivalMode: z.enum(['no_vehicle', 'vehicle']).optional().default('no_vehicle'),
@@ -54,6 +55,9 @@ const requestSchema = z.object({
     profileId: z.string().uuid().optional(),
     matchToken: z.string().optional(),
   }).optional(),
+}).refine((data) => Boolean(data.requestedPersonName?.trim() || data.personnelId), {
+  message: 'Either requestedPersonName or personnelId is required',
+  path: ['requestedPersonName'],
 });
 
 export async function handleRequest(request: Request): Promise<Response> {
@@ -320,7 +324,7 @@ export async function handleRequest(request: Request): Promise<Response> {
     requested_actor_id: session.user.id,
     requested_request_id: parsed.data.requestId,
     requested_office_id: parsed.data.officeId,
-    requested_personnel_id: parsed.data.personnelId,
+    requested_personnel_id: parsed.data.personnelId || null,
     requested_first_name: parsed.data.visitor.firstName,
     requested_middle_name: parsed.data.visitor.middleName || null,
     requested_last_name: parsed.data.visitor.lastName,
@@ -345,6 +349,7 @@ export async function handleRequest(request: Request): Promise<Response> {
     requested_returning_match_token_digest: returningMatchDigest,
     requested_identity_verification_id: boundIdentityVerificationId,
     requested_returning_attempt_id: boundReturningAttemptId,
+    requested_person_name: parsed.data.requestedPersonName?.trim() || null,
   });
 
   if (rpcError) {
@@ -356,6 +361,17 @@ export async function handleRequest(request: Request): Promise<Response> {
     }
     if (rpcError.message?.includes('visit_date_beyond_horizon')) {
       return jsonResponse(422, { error: 'visit_date_beyond_horizon', message: 'Requested visit date exceeds maximum advance scheduling limit.' });
+    }
+    if (rpcError.message?.includes('visit_date_closed')) {
+      const match = rpcError.message.match(/visit_date_closed:\s*(.+)/);
+      const title = match && match[1] ? match[1].trim() : 'Campus is closed on this date.';
+      return jsonResponse(422, {
+        error: 'visit_date_closed',
+        message: `The campus is closed on the selected visit date (${title}). Please select another date.`,
+      });
+    }
+    if (rpcError.message?.includes('office_not_found_or_inactive')) {
+      return jsonResponse(422, { error: 'office_not_found_or_inactive', message: 'The selected office is inactive, unverified, or does not exist.' });
     }
     if (rpcError.message?.includes('valid_matched_identity_verification_required')) {
       return jsonResponse(422, { error: 'identity_verification_required', message: 'Valid matched identity verification required.' });

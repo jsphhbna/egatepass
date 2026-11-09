@@ -1,8 +1,9 @@
 import { useAuth } from '@/hooks/useAuth';
 import { formatManilaDateTime, formatManilaTime, formatManilaIso, formatManilaFileTimestamp, getManilaDateString } from '@/lib/manilaTime';
 import { getActiveIncidentHoldsForRecord, createIncidentHold, releaseIncidentHold, type IncidentHold } from '@/services/incidentHold';
-import { AlertTriangle, Download, Eye, Printer, ShieldAlert, ShieldCheck } from 'lucide-react';
+import { AlertTriangle, Download, Eye, Printer, ShieldAlert, ShieldCheck, Users, History, Search } from 'lucide-react';
 import { useState, useEffect, useRef } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { Card, Input, Select, Button, DataTable, DataTableHead, DataTableRow, DataTableCell, Modal, StatusBadge } from '@/components/ui';
 import { AuthenticatedImage } from '@/components/AuthenticatedImage';
 import type { GatePass, PassSource, PassStatus } from '@/types';
@@ -80,6 +81,8 @@ export function deserializeRecordPass(p: SerializedRecordPass): GatePassWithId {
 
 export function AdminRecords() {
   const { role } = useAuth();
+  const [searchParams, setSearchParams] = useSearchParams();
+  const currentTab = (searchParams.get('tab') as 'current' | 'history' | 'search') || 'search';
   const [passes, setPasses] = useState<GatePassWithId[]>([]);
   const [loading, setLoading] = useState(true);
   const [dateFrom, setDateFrom] = useState('');
@@ -576,6 +579,45 @@ export function AdminRecords() {
             </Button>
           </div>
         </div>
+      </div>
+
+      {/* Sub-Tabs Navigation */}
+      <div className="flex border-b border-[var(--color-border)] gap-2 overflow-x-auto pb-px print:hidden">
+        {[
+          { id: 'search', label: 'Search & Records', icon: Search },
+          { id: 'current', label: 'Current Visitors', icon: Users },
+          { id: 'history', label: 'Visit History', icon: History },
+        ].map((tab) => {
+          const Icon = tab.icon;
+          const isActive = currentTab === tab.id;
+          return (
+            <button
+              key={tab.id}
+              type="button"
+              onClick={() => {
+                const next = new URLSearchParams(searchParams);
+                next.set('tab', tab.id);
+                setSearchParams(next);
+                if (tab.id === 'current') {
+                  setStatusFilter('approved');
+                  applyPreset('today');
+                } else if (tab.id === 'history') {
+                  setStatusFilter('used');
+                } else {
+                  setStatusFilter('');
+                }
+              }}
+              className={`flex items-center gap-2 px-4 py-2.5 text-xs font-bold whitespace-nowrap border-b-2 transition-colors ${
+                isActive
+                  ? 'border-[#7A0A0A] text-[#7A0A0A]'
+                  : 'border-transparent text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)]'
+              }`}
+            >
+              <Icon className="h-4 w-4" />
+              <span>{tab.label}</span>
+            </button>
+          );
+        })}
       </div>
 
       {/* Print Header */}
