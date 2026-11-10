@@ -309,9 +309,8 @@ async function handleRequest(request: Request): Promise<Response> {
 
       if (!dryRun) {
         for (const item of eligibleItems) {
-          // Advance cursor past this record regardless of whether it was held or purged
-          nextEvidenceCursor = { timestamp: item.expires_at, id: item.id };
-
+          // Cursor is fixed to the last candidate examined in the ordered page (lastExamined),
+          // never regressed or overwritten by earlier eligible items in the page.
           const claimId = randomUUID();
           const { data: claimData, error: claimErr } = await admin
             .schema('api')
