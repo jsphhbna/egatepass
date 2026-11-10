@@ -3751,4 +3751,20 @@ describe('Permanent PostgreSQL Migration Chain & Schema Contracts (PGlite)', () 
     expect(updateGrantees).not.toContain('authenticated');
   }, 60000);
 
+  it('FF. Migration 83 contracts: Compound Keyset Retention Purge Index', async () => {
+    const db = new PGlite();
+    await applyAllMigrations(db);
+
+    // Verify index visitor_evidence_expiry_id_idx exists on public.visitor_evidence
+    const idxRes = await db.query<{ indexname: string; indexdef: string }>(`
+      select indexname, indexdef
+      from pg_indexes
+      where schemaname = 'public' and tablename = 'visitor_evidence' and indexname = 'visitor_evidence_expiry_id_idx';
+    `);
+    expect(idxRes.rows.length).toBe(1);
+    expect(idxRes.rows[0].indexdef).toContain('expires_at');
+    expect(idxRes.rows[0].indexdef).toContain('id');
+    expect(idxRes.rows[0].indexdef).toContain('purged_at IS NULL');
+  }, 60000);
+
 });

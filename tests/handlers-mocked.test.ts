@@ -266,6 +266,23 @@ describe('Behavioral Mocked-Handler Tests [PASS (MOCKED HANDLER)]', () => {
               const dt = match ? match[1] : '';
               if (dt) filters.push((item) => item.created_at < dt);
             }
+            if (expr.includes('expires_at.gt.') && expr.includes('id.gt.')) {
+              const matchGt = expr.match(/expires_at\.gt\.([^,]+)/);
+              const matchEq = expr.match(/expires_at\.eq\.([^,]+)/);
+              const matchId = expr.match(/id\.gt\.([^)]+)/);
+              const tsGt = matchGt ? matchGt[1] : '';
+              const tsEq = matchEq ? matchEq[1] : '';
+              const idGt = matchId ? matchId[1] : '';
+              if (tsGt && idGt) {
+                filters.push((item) => {
+                  const itemExp = item.expires_at;
+                  if (!itemExp) return false;
+                  if (itemExp > tsGt) return true;
+                  if (itemExp === tsEq && item.id > idGt) return true;
+                  return false;
+                });
+              }
+            }
             return chain;
           },
           order: () => chain,

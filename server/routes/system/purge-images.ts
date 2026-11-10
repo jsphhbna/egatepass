@@ -1,4 +1,5 @@
 import { HttpError, recordReconciliation, requireStaffActor } from '../../actors.js';
+import { decodeCursorStrict, encodeCursor } from '../../cursor.js';
 import { jsonResponse, readBearerToken } from '../../http.js';
 import { getServerSupabaseClients } from '../../supabase.js';
 
@@ -8,6 +9,7 @@ type SupportedOverrideCategory = typeof SUPPORTED_OVERRIDE_CATEGORIES[number];
 interface PurgeRequestBody {
   dryRun?: boolean;
   cursor?: string;
+  snapshotAt?: string;
   override?: {
     reason: string;
     categories: SupportedOverrideCategory[];
@@ -36,6 +38,8 @@ interface FinalizeResult {
 }
 
 const BATCH_SIZE = 50;
+const PAGE_SIZE = 200;
+const MAX_SCAN = 1000;
 
 async function handleRequest(request: Request): Promise<Response> {
   if (request.method !== 'POST') {
@@ -54,6 +58,35 @@ async function handleRequest(request: Request): Promise<Response> {
   } catch {
     return jsonResponse(400, { error: 'invalid_json_body' });
   }
+
+  // Validate cursor if provided
+  let currentCursor: { timestamp: string; id: string } | null = null;
+  if (body.cursor !== undefined && body.cursor !== null) {
+    if (typeof body.cursor !== 'string' || body.cursor.trim().length === 0) {
+      return jsonResponse(400, { error: 'invalid_cursor', message: 'Cursor must be a non-empty string when provided' });
+    }
+    try {
+      const decoded = decodeCursorStrict(body.cursor, { idType: 'uuid' });
+      if (!decoded || !decoded.timestamp || !decoded.id) {
+        return jsonResponse(400, { error: 'invalid_cursor', message: 'Malformed compound cursor' });
+      }
+      currentCursor = { timestamp: decoded.timestamp, id: decoded.id };
+    } catch {
+      return jsonResponse(400, { error: 'invalid_cursor', message: 'Invalid or tampered cursor' });
+    }
+  }
+
+  // Validate snapshot boundary
+  let snapshotAt: string;
+  if (body.snapshotAt !== undefined && body.snapshotAt !== null) {
+    if (typeof body.snapshotAt !== 'string' || Number.isNaN(Date.parse(body.snapshotAt))) {
+      return jsonResponse(400, { error: 'invalid_snapshot_at', message: 'snapshotAt must be a valid ISO timestamp' });
+    }
+    snapshotAt = new Date(body.snapshotAt).toISOString();
+  } else {
+    snapshotAt = new Date().toISOString();
+  }
+  const nowMs = new Date(snapshotAt).getTime();
 
   try {
     const { admin } = getServerSupabaseClients();
@@ -76,7 +109,6 @@ async function handleRequest(request: Request): Promise<Response> {
     const photoRetentionDays = settingsData?.photo_retention_days ?? settingsData?.image_retention_days ?? 7;
     const idRetentionDays = settingsData?.id_retention_days ?? 30;
     const vehiclePhotoRetentionDays = (settingsData as any)?.vehicle_photo_retention_days ?? settingsData?.image_retention_days ?? 7;
-    const now = new Date().toISOString();
 
     let overrideCategories: Set<string> | null = null;
     if (body.override) {
@@ -126,7 +158,7 @@ async function handleRequest(request: Request): Promise<Response> {
     const { data: activePasses, error: passesError } = await admin
       .from('passes')
       .select('visitor_id, status, valid_until')
-      .or(`status.in.(inside,pending),and(status.eq.issued,valid_until.gt.${now})`);
+      .or(`status.in.(inside,pending),and(status.eq.issued,valid_until.gt.${snapshotAt})`);
 
     if (passesError) throw passesError;
     const activePassVisitorIds = new Set((activePasses || []).map((p) => p.visitor_id as string));
@@ -140,14 +172,15 @@ async function handleRequest(request: Request): Promise<Response> {
     if (insideError) throw insideError;
     const insideVisitorIds = new Set((insidePasses || []).map((p) => p.visitor_id as string));
 
-    // 4. Fetch expired unpurged evidence with starvation-free cursor progression
-    let lastSeenId: string | null = body.cursor || null;
-    let eligibleItems: { id: string; visitor_id: string; bucket_id: string; object_path: string }[] = [];
+    // 4. Fetch expired unpurged evidence with starvation-free compound keyset cursor progression
+    const targetCount = body.dryRun ? 200 : BATCH_SIZE;
+    let eligibleItems: { id: string; visitor_id: string; bucket_id: string; object_path: string; expires_at: string }[] = [];
     let scannedCount = 0;
-    const MAX_SCAN = 1000;
     let exhausted = false;
+    let loopStoppedOnBatchFull = false;
+    let lastExamined: { timestamp: string; id: string } | null = currentCursor;
 
-    while (eligibleItems.length < (body.dryRun ? 200 : BATCH_SIZE) && scannedCount < MAX_SCAN) {
+    while (eligibleItems.length < targetCount && scannedCount < MAX_SCAN) {
       let q = admin
         .from('visitor_evidence')
         .select('id, visitor_id, bucket_id, object_path, expires_at, kind, created_at, verified_at')
@@ -157,33 +190,40 @@ async function handleRequest(request: Request): Promise<Response> {
         q = q.in('kind', Array.from(overrideCategories));
       }
 
-      if (lastSeenId) {
-        q = q.gt('id', lastSeenId);
+      if (lastExamined) {
+        q = q.or(
+          `expires_at.gt.${lastExamined.timestamp},and(expires_at.eq.${lastExamined.timestamp},id.gt.${lastExamined.id})`
+        );
       }
 
       q = q
         .order('expires_at', { ascending: true })
         .order('id', { ascending: true })
-        .limit(200);
+        .limit(PAGE_SIZE);
 
       const { data: pageRows, error: pageErr } = await q;
       if (pageErr) throw pageErr;
+
       if (!pageRows || pageRows.length === 0) {
         exhausted = true;
         break;
       }
 
-      const lastItem = pageRows[pageRows.length - 1];
-      if (!lastItem) break;
-      lastSeenId = lastItem.id;
-      scannedCount += pageRows.length;
-
       const photoEnabled = (settingsData as any)?.photo_retention_enabled ?? true;
       const idEnabled = (settingsData as any)?.id_retention_enabled ?? true;
       const vehicleEnabled = (settingsData as any)?.vehicle_photo_retention_enabled ?? true;
-      const nowMs = Date.now();
 
-      for (const item of pageRows) {
+      for (let i = 0; i < pageRows.length; i++) {
+        const item = pageRows[i];
+        if (!item) continue;
+        lastExamined = { timestamp: item.expires_at, id: item.id };
+        scannedCount++;
+
+        // Ignore records created after the snapshot boundary
+        if (item.created_at && new Date(item.created_at).getTime() > nowMs) {
+          continue;
+        }
+
         const kind = (item as any).kind;
         const isOverridden = overrideCategories ? overrideCategories.has(kind) : false;
 
@@ -208,11 +248,27 @@ async function handleRequest(request: Request): Promise<Response> {
         // Safeguards: NEVER purge evidence if visitor is inside, on an active pass, or under incident hold
         if (!heldVisitorIds.has(item.visitor_id) && !activePassVisitorIds.has(item.visitor_id) && !insideVisitorIds.has(item.visitor_id)) {
           eligibleItems.push(item);
-          if (eligibleItems.length >= (body.dryRun ? 200 : BATCH_SIZE)) break;
+          if (eligibleItems.length >= targetCount) {
+            const isEndOfPage = (i === pageRows.length - 1);
+            if (pageRows.length < PAGE_SIZE && isEndOfPage) {
+              exhausted = true;
+            } else {
+              loopStoppedOnBatchFull = true;
+            }
+            break;
+          }
+        }
+
+        if (scannedCount >= MAX_SCAN) {
+          break;
         }
       }
 
-      if (pageRows.length < 200) {
+      if (loopStoppedOnBatchFull || scannedCount >= MAX_SCAN) {
+        break;
+      }
+
+      if (pageRows.length < PAGE_SIZE) {
         exhausted = true;
         break;
       }
@@ -220,6 +276,8 @@ async function handleRequest(request: Request): Promise<Response> {
 
     if (body.dryRun) {
       const distinctVisitors = new Set(eligibleItems.map((item) => item.visitor_id));
+      const hasMore = !exhausted;
+      const nextCursor = hasMore && lastExamined ? encodeCursor(lastExamined.timestamp, lastExamined.id) : null;
       return jsonResponse(200, {
         dryRun: true,
         evidenceDeleted: 0,
@@ -230,7 +288,10 @@ async function handleRequest(request: Request): Promise<Response> {
         idRetentionDays,
         vehiclePhotoRetentionDays,
         overrideApplied: Boolean(body.override),
-        hasMore: !exhausted,
+        hasMore,
+        nextCursor,
+        scannedCount,
+        snapshotAt,
       });
     }
 
@@ -354,7 +415,8 @@ async function handleRequest(request: Request): Promise<Response> {
       }
     }
 
-    const hasMore = eligibleItems.length > batch.length;
+    const hasMore = !exhausted;
+    const nextCursor = hasMore && lastExamined ? encodeCursor(lastExamined.timestamp, lastExamined.id) : null;
 
     let auditPending = false;
     let reconciliationRecorded = false;
@@ -371,6 +433,9 @@ async function handleRequest(request: Request): Promise<Response> {
         successCount,
         failedCount,
         hasMore,
+        nextCursor: Boolean(nextCursor),
+        scannedCount,
+        snapshotAt,
         retentionDays,
         override: body.override ? { reason: body.override.reason, categories: body.override.categories } : null,
       },
@@ -402,7 +467,10 @@ async function handleRequest(request: Request): Promise<Response> {
       failedCount,
       orphanDeletedCount: 0,
       orphanFailedCount: 0,
-      hasMore: !exhausted || eligibleItems.length > batch.length,
+      hasMore,
+      nextCursor,
+      scannedCount,
+      snapshotAt,
     });
   } catch (error) {
     if (error instanceof HttpError) {

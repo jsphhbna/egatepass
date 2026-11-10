@@ -298,6 +298,12 @@ async function handleRequest(request: Request): Promise<Response> {
     if (evidenceError) {
       metrics.errors.push(`evidence_query_failed: ${evidenceError.message}`);
     } else if (expiredEvidence) {
+      if (expiredEvidence.length > 0) {
+        const lastExamined = expiredEvidence[expiredEvidence.length - 1];
+        if (lastExamined) {
+          nextEvidenceCursor = { timestamp: lastExamined.expires_at, id: lastExamined.id };
+        }
+      }
       const eligibleItems = expiredEvidence.filter(isEvidenceItemEligible);
       metrics.evidenceEligible = eligibleItems.length;
 

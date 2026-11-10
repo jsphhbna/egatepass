@@ -448,28 +448,63 @@ export function AdminSettings() {
       const token = await getAccessToken();
       if (!token) throw new Error('Not authenticated');
 
-      const res = await fetch('/api/purge-images', {
-        method: 'POST',
-        headers: {
-          Authorization: `Bearer ${token}`,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ dryRun: true }),
-      });
+      let currentCursor: string | null = null;
+      let snapshotAt: string | null = null;
+      let hasMore = true;
+      let totalVisitorsAffected = 0;
+      let iterations = 0;
+      const MAX_DRY_RUN_BATCHES = 10;
+      let photoDays = settings.photoRetentionDays ?? 7;
+      let idDays = settings.idRetentionDays ?? 30;
 
-      if (!res.ok) {
-        throw new Error('Could not check which images are ready for deletion');
+      while (hasMore && iterations < MAX_DRY_RUN_BATCHES) {
+        iterations++;
+        const payload: { dryRun: boolean; cursor?: string; snapshotAt?: string } = { dryRun: true };
+        if (currentCursor) payload.cursor = currentCursor;
+        if (snapshotAt) payload.snapshotAt = snapshotAt;
+
+        const res = await fetch('/api/purge-images', {
+          method: 'POST',
+          headers: {
+            Authorization: `Bearer ${token}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify(payload),
+        });
+
+        if (!res.ok) {
+          throw new Error('Could not check which images are ready for deletion');
+        }
+
+        const data = await res.json() as {
+          visitorsAffected: number;
+          eligibleEvidenceCount?: number;
+          retentionDays?: number;
+          photoRetentionDays?: number;
+          idRetentionDays?: number;
+          hasMore: boolean;
+          nextCursor?: string | null;
+          snapshotAt?: string;
+        };
+
+        totalVisitorsAffected += data.visitorsAffected ?? 0;
+        photoDays = data.photoRetentionDays ?? photoDays;
+        idDays = data.idRetentionDays ?? idDays;
+        if (!snapshotAt && data.snapshotAt) {
+          snapshotAt = data.snapshotAt;
+        }
+
+        hasMore = Boolean(data.hasMore && data.nextCursor);
+        currentCursor = data.nextCursor || null;
+
+        if ((data.eligibleEvidenceCount ?? 0) === 0 && !data.nextCursor) {
+          break;
+        }
       }
 
-      const data = await res.json() as {
-        visitorsAffected: number;
-        retentionDays?: number;
-        photoRetentionDays?: number;
-        idRetentionDays?: number;
-      };
-      setPurgeEligibleCount(data.visitorsAffected);
-      setPurgePhotoRetentionDays(data.photoRetentionDays ?? settings.photoRetentionDays ?? 7);
-      setPurgeIdRetentionDays(data.idRetentionDays ?? settings.idRetentionDays ?? 30);
+      setPurgeEligibleCount(totalVisitorsAffected);
+      setPurgePhotoRetentionDays(photoDays);
+      setPurgeIdRetentionDays(idDays);
       setShowPurgeConfirm(true);
     } catch (err) {
       console.error('Dry run failed', err);
@@ -494,28 +529,70 @@ export function AdminSettings() {
       const token = await getAccessToken();
       if (!token) throw new Error('Not authenticated');
 
-      const res = await fetch('/api/purge-images', {
-        method: 'POST',
-        headers: {
-          Authorization: `Bearer ${token}`,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
+      let currentCursor: string | null = null;
+      let snapshotAt: string | null = null;
+      let hasMore = true;
+      let totalSuccess = 0;
+      let totalFailed = 0;
+      let batchIterations = 0;
+      const MAX_BATCHES = 50; // Guard against unbounded loops (2500 candidates max per user action)
+
+      while (hasMore && batchIterations < MAX_BATCHES) {
+        batchIterations++;
+        const payload: {
+          dryRun: boolean;
+          cursor?: string;
+          snapshotAt?: string;
+          override: { reason: string; categories: string[] };
+        } = {
           dryRun: false,
           override: {
             reason: overrideReason.trim(),
             categories: overrideCategories,
           },
-        }),
-      });
+        };
+        if (currentCursor) payload.cursor = currentCursor;
+        if (snapshotAt) payload.snapshotAt = snapshotAt;
 
-      if (!res.ok) {
-        const text = await res.text();
-        throw new Error(`Override purge failed: ${res.status} - ${text}`);
+        const res = await fetch('/api/purge-images', {
+          method: 'POST',
+          headers: {
+            Authorization: `Bearer ${token}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify(payload),
+        });
+
+        if (!res.ok) {
+          const text = await res.text();
+          throw new Error(`Override purge failed on batch ${batchIterations}: ${res.status} - ${text}`);
+        }
+
+        const data = await res.json() as {
+          successCount: number;
+          failedCount: number;
+          hasMore: boolean;
+          nextCursor?: string | null;
+          snapshotAt?: string;
+        };
+
+        totalSuccess += data.successCount;
+        totalFailed += data.failedCount;
+        if (!snapshotAt && data.snapshotAt) {
+          snapshotAt = data.snapshotAt;
+        }
+
+        hasMore = Boolean(data.hasMore && data.nextCursor);
+        currentCursor = data.nextCursor || null;
+
+        if (data.successCount === 0 && data.failedCount === 0 && !data.nextCursor) {
+          break;
+        }
       }
 
-      const data = await res.json() as { successCount: number; failedCount: number };
-      toast.success(`Superadmin override purge completed: ${data.successCount} evidence records permanently deleted with audit logging.`);
+      toast.success(hasMore
+        ? `Superadmin override purge processed ${totalSuccess} evidence records. More records remain; run another override batch when ready.`
+        : `Superadmin override purge completed: ${totalSuccess} evidence records permanently deleted with audit logging.`);
       setShowOverridePurgeModal(false);
       setOverrideReason('');
     } catch (err: any) {
@@ -534,30 +611,70 @@ export function AdminSettings() {
       const token = await getAccessToken();
       if (!token) throw new Error('Not authenticated');
 
-      const res = await fetch('/api/purge-images', {
-        method: 'POST',
-        headers: { Authorization: `Bearer ${token}` },
-      });
-      if (!res.ok) {
-        const text = await res.text();
-        throw new Error(`Purge failed: ${res.status} - ${text}`);
+      let currentCursor: string | null = null;
+      let snapshotAt: string | null = null;
+      let hasMore = true;
+      let totalSuccess = 0;
+      let totalFailed = 0;
+      let totalVisitorsAffected = 0;
+      let batchIterations = 0;
+      const MAX_BATCHES = 50; // Guard against unbounded loops (50 * 50 = 2500 candidates max per user action)
+
+      while (hasMore && batchIterations < MAX_BATCHES) {
+        batchIterations++;
+        const payload: { dryRun: boolean; cursor?: string; snapshotAt?: string } = { dryRun: false };
+        if (currentCursor) payload.cursor = currentCursor;
+        if (snapshotAt) payload.snapshotAt = snapshotAt;
+
+        const res = await fetch('/api/purge-images', {
+          method: 'POST',
+          headers: {
+            Authorization: `Bearer ${token}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify(payload),
+        });
+
+        if (!res.ok) {
+          const text = await res.text();
+          throw new Error(`Purge failed on batch ${batchIterations}: ${res.status} - ${text}`);
+        }
+
+        const data = await res.json() as {
+          successCount: number;
+          failedCount: number;
+          visitorsAffected?: number;
+          orphanDeletedCount?: number;
+          orphanFailedCount?: number;
+          hasMore: boolean;
+          nextCursor?: string | null;
+          snapshotAt?: string;
+        };
+
+        totalSuccess += data.successCount;
+        totalFailed += data.failedCount + (data.orphanFailedCount || 0);
+        totalVisitorsAffected += data.visitorsAffected || 0;
+        if (!snapshotAt && data.snapshotAt) {
+          snapshotAt = data.snapshotAt;
+        }
+
+        hasMore = Boolean(data.hasMore && data.nextCursor);
+        currentCursor = data.nextCursor || null;
+
+        if (data.successCount === 0 && data.failedCount === 0 && !data.nextCursor) {
+          break;
+        }
       }
-      const data = await res.json() as {
-        successCount: number;
-        failedCount: number;
-        orphanDeletedCount?: number;
-        orphanFailedCount?: number;
-        hasMore: boolean;
-      };
-      const totalFailed = data.failedCount + (data.orphanFailedCount || 0);
+
       if (totalFailed > 0) {
         throw new Error(
-          `Images were deleted for ${data.successCount} visitor${data.successCount === 1 ? '' : 's'}, but ${totalFailed} could not be completed. The failed records were not marked as deleted. Please try again.`
+          `Images were deleted for ${totalSuccess} records (${totalVisitorsAffected} visitor${totalVisitorsAffected === 1 ? '' : 's'}), but ${totalFailed} could not be completed. The failed records were not marked as deleted. Please try again.`
         );
       }
-      toast.success(data.hasMore
-        ? `Images deleted for ${data.successCount} visitors. More eligible records remain; run another confirmed batch when ready.`
-        : `Images deleted for ${data.successCount} visitor${data.successCount === 1 ? '' : 's'}.`);
+
+      toast.success(hasMore
+        ? `Images deleted for ${totalSuccess} records (${totalVisitorsAffected} visitors). More eligible records remain; run another confirmed batch when ready.`
+        : `Images deleted for ${totalSuccess} records (${totalVisitorsAffected} visitor${totalVisitorsAffected === 1 ? '' : 's'}). All eligible evidence purged.`);
       setShowPurgeConfirm(false);
     } catch (err: any) {
       console.error(err);
