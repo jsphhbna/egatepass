@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { useAuth } from '@/hooks/useAuth';
 import type { Device, DeviceType } from '@/types';
 import { Tablet, Plus, X, Lock, Unlock, Key, AtSign, Trash2, Eye, EyeOff } from 'lucide-react';
@@ -47,6 +48,8 @@ type DeviceFormData = z.infer<typeof deviceSchema>;
 export function DevicesPage() {
   const { role } = useAuth();
   const canManageCredentials = isSuperAdmin(role);
+  const [searchParams, setSearchParams] = useSearchParams();
+  const activeTab = searchParams.get('tab') || 'all';
   const [devices, setDevices] = useState<DeviceWithId[]>([]);
   const [loading, setLoading] = useState(true);
   const [showForm, setShowForm] = useState(false);
@@ -385,6 +388,19 @@ export function DevicesPage() {
     cleanEditAlias !== cleanCurrentAlias || editPassword.length > 0
   );
 
+  const scannerCount = devices.filter((d) => d.type === 'entry' || d.type === 'exit').length;
+  const stationCount = devices.filter((d) => d.type === 'kiosk' || d.type === 'guard_station').length;
+
+  const filteredDevices = devices.filter((d) => {
+    if (activeTab === 'scanners') {
+      return d.type === 'entry' || d.type === 'exit';
+    }
+    if (activeTab === 'stations') {
+      return d.type === 'kiosk' || d.type === 'guard_station';
+    }
+    return true;
+  });
+
   // ============================================================
   // RENDER
   // ============================================================
@@ -510,10 +526,62 @@ export function DevicesPage() {
         </form>
       </Modal>
 
+      {/* Device Category Tabs */}
+      <div className="flex flex-wrap gap-2 border-b border-[var(--color-border)] pb-2 mb-6" role="tablist" aria-label="Device categories">
+        <button
+          type="button"
+          role="tab"
+          aria-selected={activeTab === 'all'}
+          onClick={() => setSearchParams({ tab: 'all' })}
+          className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors ${
+            activeTab === 'all'
+              ? 'bg-[var(--color-brand)] text-white shadow-xs'
+              : 'bg-white text-[var(--color-text-secondary)] hover:bg-[var(--color-surface-hover)] border border-[var(--color-border)]'
+          }`}
+        >
+          <span>All Terminals</span>
+          <span className={`px-1.5 py-0.2 rounded-full text-[10px] ${activeTab === 'all' ? 'bg-white/20 text-white' : 'bg-gray-100 text-gray-700'}`}>
+            {devices.length}
+          </span>
+        </button>
+        <button
+          type="button"
+          role="tab"
+          aria-selected={activeTab === 'scanners'}
+          onClick={() => setSearchParams({ tab: 'scanners' })}
+          className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors ${
+            activeTab === 'scanners'
+              ? 'bg-[var(--color-brand)] text-white shadow-xs'
+              : 'bg-white text-[var(--color-text-secondary)] hover:bg-[var(--color-surface-hover)] border border-[var(--color-border)]'
+          }`}
+        >
+          <span>Gate Scanners</span>
+          <span className={`px-1.5 py-0.2 rounded-full text-[10px] ${activeTab === 'scanners' ? 'bg-white/20 text-white' : 'bg-gray-100 text-gray-700'}`}>
+            {scannerCount}
+          </span>
+        </button>
+        <button
+          type="button"
+          role="tab"
+          aria-selected={activeTab === 'stations'}
+          onClick={() => setSearchParams({ tab: 'stations' })}
+          className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors ${
+            activeTab === 'stations'
+              ? 'bg-[var(--color-brand)] text-white shadow-xs'
+              : 'bg-white text-[var(--color-text-secondary)] hover:bg-[var(--color-surface-hover)] border border-[var(--color-border)]'
+          }`}
+        >
+          <span>Kiosks & Stations</span>
+          <span className={`px-1.5 py-0.2 rounded-full text-[10px] ${activeTab === 'stations' ? 'bg-white/20 text-white' : 'bg-gray-100 text-gray-700'}`}>
+            {stationCount}
+          </span>
+        </button>
+      </div>
+
       {/* Device List */}
       {loading ? (
         <LoadingState label="Loading devices..." className="py-16" />
-      ) : devices.length === 0 ? (
+      ) : filteredDevices.length === 0 ? (
         <div className="flex flex-col items-center justify-center rounded-xl border-2 border-dashed border-[var(--color-border)] py-16">
           <Tablet className="mb-3 h-10 w-10 text-[var(--color-text-muted)]" />
           <p className="text-sm font-medium text-[var(--color-text-secondary)]">
@@ -525,7 +593,7 @@ export function DevicesPage() {
         </div>
       ) : (
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-          {devices.map((device) => (
+          {filteredDevices.map((device) => (
             <Card key={device.id} className="p-5 flex flex-col justify-between">
               <div>
                 <div className="mb-4 flex items-start justify-between">

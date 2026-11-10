@@ -330,7 +330,7 @@ describe('Office Governance & Authorization Test Suite', () => {
       expect(body.error).toBe('superadmin_required');
     });
 
-    it('rejects Admin from POST create_office with 403 superadmin_required', async () => {
+    it('permits Admin to POST create_office (Phase A1)', async () => {
       vi.spyOn(actorsModule, 'requireStaffActor').mockResolvedValue({
         id: adminId,
         email: 'admin@earist.edu.ph',
@@ -343,16 +343,16 @@ describe('Office Governance & Authorization Test Suite', () => {
           Authorization: 'Bearer valid-admin-token',
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify({ name: 'Unauthorized Office Creation' }),
+        body: JSON.stringify({ name: 'Admin Authorized Office' }),
       });
 
       const res = await adminOfficesHandler(req);
-      expect(res.status).toBe(403);
+      expect(res.status).toBe(201);
       const body = await res.json();
-      expect(body.error).toBe('superadmin_required');
+      expect(body.ok).toBe(true);
     });
 
-    it('rejects Admin from POST assign_staff with 403 superadmin_required', async () => {
+    it('permits Admin to POST assign_staff (Phase A1)', async () => {
       vi.spyOn(actorsModule, 'requireStaffActor').mockResolvedValue({
         id: adminId,
         email: 'admin@earist.edu.ph',
@@ -369,12 +369,12 @@ describe('Office Governance & Authorization Test Suite', () => {
       });
 
       const res = await adminOfficesHandler(req);
-      expect(res.status).toBe(403);
+      expect(res.status).toBe(200);
       const body = await res.json();
-      expect(body.error).toBe('superadmin_required');
+      expect(body.ok).toBe(true);
     });
 
-    it('rejects Admin from POST remove_staff with 403 superadmin_required', async () => {
+    it('permits Admin to POST remove_staff (Phase A1)', async () => {
       vi.spyOn(actorsModule, 'requireStaffActor').mockResolvedValue({
         id: adminId,
         email: 'admin@earist.edu.ph',
@@ -391,19 +391,20 @@ describe('Office Governance & Authorization Test Suite', () => {
       });
 
       const res = await adminOfficesHandler(req);
-      expect(res.status).toBe(403);
+      expect(res.status).toBe(200);
       const body = await res.json();
-      expect(body.error).toBe('superadmin_required');
+      expect(body.ok).toBe(true);
     });
 
-    it('rejects Admin from PATCH /api/admin/offices with 403 superadmin_required', async () => {
+    it('permits Admin to PATCH active status, but rejects PATCH verified with 403 superadmin_required (Phase A1)', async () => {
       vi.spyOn(actorsModule, 'requireStaffActor').mockResolvedValue({
         id: adminId,
         email: 'admin@earist.edu.ph',
         role: 'admin',
       });
 
-      const req = new Request('http://localhost/api/admin/offices', {
+      // 1. Admin can toggle active
+      const reqActive = new Request('http://localhost/api/admin/offices', {
         method: 'PATCH',
         headers: {
           Authorization: 'Bearer valid-admin-token',
@@ -411,11 +412,22 @@ describe('Office Governance & Authorization Test Suite', () => {
         },
         body: JSON.stringify({ id: office1Id, active: false }),
       });
+      const resActive = await adminOfficesHandler(reqActive);
+      expect(resActive.status).toBe(200);
 
-      const res = await adminOfficesHandler(req);
-      expect(res.status).toBe(403);
-      const body = await res.json();
-      expect(body.error).toBe('superadmin_required');
+      // 2. Admin cannot modify verified status
+      const reqVerify = new Request('http://localhost/api/admin/offices', {
+        method: 'PATCH',
+        headers: {
+          Authorization: 'Bearer valid-admin-token',
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ id: office1Id, verified: true }),
+      });
+      const resVerify = await adminOfficesHandler(reqVerify);
+      expect(resVerify.status).toBe(403);
+      const bodyVerify = await resVerify.json();
+      expect(bodyVerify.error).toBe('superadmin_required');
     });
 
     it('allows Superadmin to verify an office', async () => {

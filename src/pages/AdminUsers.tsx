@@ -126,6 +126,10 @@ export function AdminUsers() {
 
   async function handleProvisionDedicatedAccount() {
     if (!provisioningOffice || isProvisioning) return;
+    if (!provisionCustomEmail.trim()) {
+      toast.error('Reachable staff email address is required.');
+      return;
+    }
     setIsProvisioning(true);
     try {
       const token = await getAccessToken();
@@ -138,7 +142,7 @@ export function AdminUsers() {
         body: JSON.stringify({
           action: 'provision_account',
           officeId: provisioningOffice.id,
-          customEmail: provisionCustomEmail.trim() || undefined,
+          staffEmail: provisionCustomEmail.trim(),
           displayName: provisionDisplayName.trim() || undefined,
         }),
       });
@@ -341,6 +345,8 @@ export function AdminUsers() {
   }
 
   const canManageAdministrativeRoles = isSuperAdmin(role);
+  const canManageOffices = role === 'admin' || role === 'superadmin';
+  const canVerifyOffice = isSuperAdmin(role);
   const [users, setUsers] = useState<AppUserWithId[]>([]);
   const [loading, setLoading] = useState(true);
   const [statusFilter, setStatusFilter] = useState<'all' | 'active' | 'inactive' | 'decommissioned'>('active');
@@ -980,7 +986,7 @@ export function AdminUsers() {
                 Superadmin-governed institutional offices and departments. Only verified offices are selectable for visitor requests.
               </p>
             </div>
-            {canManageAdministrativeRoles && (
+            {canManageOffices && (
               <Button onClick={() => setShowAddOfficeModal(true)} icon={<Plus className="h-4 w-4" />}>
                 Add Office
               </Button>
@@ -1056,7 +1062,7 @@ export function AdminUsers() {
                       )}
                     </DataTableCell>
                     <DataTableCell className="text-right">
-                      {canManageAdministrativeRoles && (
+                      {canManageOffices && (
                         <div className="inline-flex flex-wrap items-center gap-1.5 justify-end">
                           {!office.dedicatedAccount ? (
                             <Button
@@ -1105,21 +1111,23 @@ export function AdminUsers() {
                           >
                             {office.active ? 'Disable Office' : 'Enable Office'}
                           </Button>
-                          {office.verified ? (
-                            <Button
-                              variant="secondary"
-                              size="sm"
-                              onClick={() => handleVerifyOffice(office.id, false)}
-                            >
-                              Unverify
-                            </Button>
-                          ) : (
-                            <Button
-                              size="sm"
-                              onClick={() => handleVerifyOffice(office.id, true)}
-                            >
-                              Verify
-                            </Button>
+                          {canVerifyOffice && (
+                            office.verified ? (
+                              <Button
+                                variant="secondary"
+                                size="sm"
+                                onClick={() => handleVerifyOffice(office.id, false)}
+                              >
+                                Unverify
+                              </Button>
+                            ) : (
+                              <Button
+                                size="sm"
+                                onClick={() => handleVerifyOffice(office.id, true)}
+                              >
+                                Verify
+                              </Button>
+                            )
                           )}
                         </div>
                       )}
@@ -1477,14 +1485,18 @@ export function AdminUsers() {
               />
             </FormField>
 
-            <FormField label="Login Email (Institutional)" id="provision-email">
+            <FormField label="Staff Reachable Email Address" id="provision-email" requirement="required">
               <Input
                 id="provision-email"
                 type="email"
+                required
                 value={provisionCustomEmail}
                 onChange={(e) => setProvisionCustomEmail(e.target.value)}
-                placeholder="Leave blank to auto-generate (e.g. office.registrar@earist.edu.ph)"
+                placeholder="e.g. registrar.custodian@earist.edu.ph"
               />
+              <p className="mt-1 text-[11px] text-[var(--color-text-secondary)]">
+                Enter the official, reachable email address of the designated office custodian. This email will be used as their staff login identifier and for password recovery.
+              </p>
             </FormField>
 
             <div className="flex justify-end gap-2 pt-2">
@@ -1498,6 +1510,7 @@ export function AdminUsers() {
               <Button
                 onClick={handleProvisionDedicatedAccount}
                 loading={isProvisioning}
+                disabled={isProvisioning || !provisionCustomEmail.trim()}
                 icon={<KeyRound className="h-4 w-4" />}
               >
                 Provision Account

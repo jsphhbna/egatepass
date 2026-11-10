@@ -1,6 +1,6 @@
 import { randomBytes, randomUUID } from 'node:crypto';
 import { z } from 'zod';
-import { requireStaffActor } from '../../actors.js';
+import { HttpError, recordReconciliation, requireStaffActor } from '../../actors.js';
 import { jsonResponse, readBearerToken } from '../../http.js';
 import { getServerSupabaseClients } from '../../supabase.js';
 
@@ -34,7 +34,7 @@ const patchOfficeSchema = z.object({
 const provisionAccountSchema = z.object({
   action: z.literal('provision_account'),
   officeId: z.string().uuid(),
-  customEmail: z.string().email().max(320).optional(),
+  staffEmail: z.string().trim().email().max(320),
   displayName: z.string().trim().min(2).max(100).optional(),
 });
 
@@ -84,20 +84,13 @@ export function generateTemporaryPassword(): string {
   return arr.join('');
 }
 
-function slugifyOfficeName(name: string): string {
-  return name
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, '.')
-    .replace(/^\.+|\.+$/g, '')
-    .slice(0, 30);
-}
-
 export async function handleRequest(request: Request): Promise<Response> {
-  const token = readBearerToken(request);
-  if (!token) return jsonResponse(401, { error: 'authentication_required' });
+  try {
+    const token = readBearerToken(request);
+    if (!token) return jsonResponse(401, { error: 'authentication_required' });
 
-  const { admin } = getServerSupabaseClients();
-  const actor = await requireStaffActor(admin, token, ['admin', 'superadmin']);
+    const { admin } = getServerSupabaseClients();
+    const actor = await requireStaffActor(admin, token, ['admin', 'superadmin']);
 
   if (request.method === 'GET') {
     const url = new URL(request.url);
@@ -191,13 +184,7 @@ export async function handleRequest(request: Request): Promise<Response> {
     return jsonResponse(200, { offices: result });
   }
 
-  // Mutation operations (POST, PATCH) strictly require superadmin
-  if (actor.role !== 'superadmin') {
-    return jsonResponse(403, {
-      error: 'superadmin_required',
-      message: 'Only superadmin can modify offices, staff assignments, or provision office accounts',
-    });
-  }
+  // General mutations (create office, provision, reset credentials, assign) permitted for admin and superadmin.
 
   if (request.method === 'POST') {
     const body = await request.json().catch(() => null);
@@ -209,7 +196,7 @@ export async function handleRequest(request: Request): Promise<Response> {
       const parsed = provisionAccountSchema.safeParse(body);
       if (!parsed.success) return jsonResponse(400, { error: 'invalid_request', details: parsed.error.issues });
 
-      const { officeId, customEmail, displayName } = parsed.data;
+      const { officeId, staffEmail, displayName } = parsed.data;
 
       const { data: office, error: offErr } = await admin
         .from('offices')
@@ -222,8 +209,11 @@ export async function handleRequest(request: Request): Promise<Response> {
         return jsonResponse(404, { error: 'office_not_found', message: 'The specified office does not exist' });
       }
 
-      const slug = slugifyOfficeName(office.name);
-      const email = (customEmail || `office.${slug || 'dept'}@earist.edu.ph`).toLowerCase().trim();
+      if (!office.active) {
+        return jsonResponse(400, { error: 'office_inactive', message: 'Cannot provision accounts for inactive offices' });
+      }
+
+      const email = staffEmail.toLowerCase().trim();
       const temporaryPassword = generateTemporaryPassword();
       const staffName = (displayName || `${office.name} Staff`).trim();
 
@@ -239,7 +229,7 @@ export async function handleRequest(request: Request): Promise<Response> {
         if (msg.includes('already exists') || msg.includes('already registered')) {
           return jsonResponse(409, {
             error: 'email_already_exists',
-            message: `An account with email "${email}" is already registered. Choose a custom email or reset existing credentials.`,
+            message: `An account with email "${email}" is already registered. Please use their assigned account or specify another valid email.`,
           });
         }
         throw created.error ?? new Error('auth_user_creation_failed');
@@ -247,33 +237,36 @@ export async function handleRequest(request: Request): Promise<Response> {
 
       const newUserId = created.data.user.id;
 
-      // Create staff profile with role = 'office_staff' (enforces must_change_password = true)
-      const profile = await admin.schema('api').rpc('create_staff_profile', {
+      // Atomic DB provisioning via RPC: staff_profiles (role=office_staff, must_change_password=true) + office_staff_assignments + audit_events
+      const rpcRes = await admin.schema('api').rpc('provision_office_staff_account', {
         requested_actor_id: actor.id,
         requested_user_id: newUserId,
+        requested_office_id: officeId,
         requested_name: staffName,
-        requested_role: 'office_staff',
         requested_request_id: randomUUID(),
       });
 
-      if (profile.error) {
+      if (rpcRes.error) {
         // Rollback created auth user
-        await admin.auth.admin.deleteUser(newUserId).catch(() => undefined);
-        throw profile.error;
+        console.error('Database provisioning failed, rolling back Auth user:', rpcRes.error);
+        const delRes = await admin.auth.admin.deleteUser(newUserId).catch((e) => ({ error: e }));
+        if (delRes?.error) {
+          console.error('CRITICAL: Auth rollback failed during office provisioning compensation:', delRes.error);
+          await recordReconciliation(
+            admin,
+            'office.provision_compensation_failed',
+            'auth.users',
+            newUserId,
+            `Rollback failed after DB error: ${rpcRes.error.message}`,
+            { officeId, email }
+          ).catch(() => undefined);
+        }
+        return jsonResponse(500, {
+          error: 'provisioning_failed',
+          message: 'Failed to provision office staff profile in database. Auth account rolled back.',
+          details: rpcRes.error.message,
+        });
       }
-
-      // Assign to this office
-      const { error: assignErr } = await admin.from('office_staff_assignments').insert({
-        user_id: newUserId,
-        office_id: officeId,
-        assigned_by: actor.id,
-      });
-
-      if (assignErr) {
-        console.warn('Failed to assign office to provisioned staff user:', assignErr);
-      }
-
-      // Staff creation and initial role assignment audited atomically in api.create_staff_profile
 
       return jsonResponse(200, {
         ok: true,
@@ -292,17 +285,35 @@ export async function handleRequest(request: Request): Promise<Response> {
       const parsed = resetCredentialsSchema.safeParse(body);
       if (!parsed.success) return jsonResponse(400, { error: 'invalid_request', details: parsed.error.issues });
 
-      const { userId } = parsed.data;
+      const { userId, officeId } = parsed.data;
 
       const { data: staff, error: stErr } = await admin
         .from('staff_profiles')
-        .select('user_id, display_name, role')
+        .select('user_id, display_name, role, active')
         .eq('user_id', userId)
         .maybeSingle();
 
       if (stErr) throw stErr;
       if (!staff) {
         return jsonResponse(404, { error: 'staff_not_found', message: 'Staff profile not found' });
+      }
+
+      // If officeId is specified, verify that the staff is assigned to that office
+      if (officeId) {
+        const { data: assignment, error: assignErr } = await admin
+          .from('office_staff_assignments')
+          .select('id')
+          .eq('user_id', userId)
+          .eq('office_id', officeId)
+          .maybeSingle();
+
+        if (assignErr) throw assignErr;
+        if (!assignment) {
+          return jsonResponse(403, {
+            error: 'staff_not_assigned_to_office',
+            message: 'This staff account is not assigned to the requested office',
+          });
+        }
       }
 
       const temporaryPassword = generateTemporaryPassword();
@@ -317,9 +328,24 @@ export async function handleRequest(request: Request): Promise<Response> {
         requested_actor_id: actor.id,
         requested_user_id: userId,
         requested_request_id: randomUUID(),
+        requested_office_id: officeId || null,
       });
+
       if (rpcRes.error) {
-        console.warn('reset_staff_temporary_password RPC notice:', rpcRes.error.message);
+        console.error('CRITICAL: reset_staff_temporary_password failed after Auth password update:', rpcRes.error);
+        await recordReconciliation(
+          admin,
+          'office.reset_enforcement_failed',
+          'staff_profiles',
+          userId,
+          `Password updated but forced-change flag failed: ${rpcRes.error.message}`,
+          { officeId }
+        ).catch(() => undefined);
+
+        return jsonResponse(500, {
+          error: 'reset_enforcement_failed',
+          message: 'Failed to enforce mandatory password change on staff profile. Temporary password revoked.',
+        });
       }
 
       return jsonResponse(200, {
@@ -354,6 +380,12 @@ export async function handleRequest(request: Request): Promise<Response> {
     }
 
     if (body?.action === 'verify_office' || body?.action === 'unverify_office') {
+      if (actor.role !== 'superadmin') {
+        return jsonResponse(403, {
+          error: 'superadmin_required',
+          message: 'Only superadmin can verify or unverify campus offices',
+        });
+      }
       const officeId = body.officeId;
       if (!officeId || typeof officeId !== 'string') {
         return jsonResponse(400, { error: 'invalid_office_id' });
@@ -412,7 +444,7 @@ export async function handleRequest(request: Request): Promise<Response> {
       const { error: insErr } = await admin.from('office_staff_assignments').upsert({
         user_id: parsed.data.userId,
         office_id: parsed.data.officeId,
-        assigned_by: actor.id,
+        created_by: actor.id,
       }, { onConflict: 'office_id,user_id' });
 
       if (insErr) throw insErr;
@@ -470,6 +502,12 @@ export async function handleRequest(request: Request): Promise<Response> {
     if (parsed.data.description !== undefined) updates.description = parsed.data.description;
     if (parsed.data.active !== undefined) updates.active = parsed.data.active;
     if (parsed.data.verified !== undefined) {
+      if (actor.role !== 'superadmin') {
+        return jsonResponse(403, {
+          error: 'superadmin_required',
+          message: 'Only superadmin can modify office verification status',
+        });
+      }
       updates.verified = parsed.data.verified;
       updates.verified_at = parsed.data.verified ? new Date().toISOString() : null;
       updates.verified_by = parsed.data.verified ? actor.id : null;
@@ -487,6 +525,13 @@ export async function handleRequest(request: Request): Promise<Response> {
   }
 
   return jsonResponse(405, { error: 'method_not_allowed' }, { Allow: 'GET, POST, PATCH' });
+  } catch (error) {
+    if (error instanceof HttpError) {
+      return jsonResponse(error.status, { error: error.code });
+    }
+    console.error('Unhandled offices error:', error);
+    return jsonResponse(500, { error: 'internal_error' });
+  }
 }
 
 export const fetch = handleRequest;

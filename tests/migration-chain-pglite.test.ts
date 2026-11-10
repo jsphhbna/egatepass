@@ -3687,4 +3687,41 @@ describe('Permanent PostgreSQL Migration Chain & Schema Contracts (PGlite)', () 
     expect(grantees).not.toContain('anon');
   }, 60000);
 
+  it('DD. Migration 79 & 80 contracts: Office Provisioning & Granular Retention Overrides', async () => {
+    const db = new PGlite();
+    await applyAllMigrations(db);
+
+    // 1. Verify execute permissions on api.provision_office_staff_account
+    const provPrivs = await db.query<{ grantee: string; privilege_type: string }>(`
+      select grantee, privilege_type
+      from information_schema.routine_privileges
+      where specific_schema = 'api' and routine_name = 'provision_office_staff_account';
+    `);
+    const provGrantees = provPrivs.rows.map((r) => r.grantee);
+    expect(provGrantees).toContain('service_role');
+    expect(provGrantees).not.toContain('anon');
+    expect(provGrantees).not.toContain('authenticated');
+
+    // 2. Verify execute permissions on api.claim_evidence_for_purge
+    const purgePrivs = await db.query<{ grantee: string; privilege_type: string }>(`
+      select grantee, privilege_type
+      from information_schema.routine_privileges
+      where specific_schema = 'api' and routine_name = 'claim_evidence_for_purge';
+    `);
+    const purgeGrantees = purgePrivs.rows.map((r) => r.grantee);
+    expect(purgeGrantees).toContain('service_role');
+    expect(purgeGrantees).not.toContain('anon');
+    expect(purgeGrantees).not.toContain('authenticated');
+
+    // 3. Verify execute permissions on api.reset_staff_temporary_password
+    const resetPrivs = await db.query<{ grantee: string; privilege_type: string }>(`
+      select grantee, privilege_type
+      from information_schema.routine_privileges
+      where specific_schema = 'api' and routine_name = 'reset_staff_temporary_password';
+    `);
+    const resetGrantees = resetPrivs.rows.map((r) => r.grantee);
+    expect(resetGrantees).toContain('service_role');
+    expect(resetGrantees).not.toContain('anon');
+  }, 60000);
+
 });

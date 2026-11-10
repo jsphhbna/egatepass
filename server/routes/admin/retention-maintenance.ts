@@ -133,6 +133,7 @@ async function handleRequest(request: Request): Promise<Response> {
       anonymousAuthDeleteFailures: 0,
       returningProfilesCleaned: 0,
       returningAttemptsCleaned: 0,
+      stalePassesExpired: 0,
       errors: [] as string[],
     };
 
@@ -219,9 +220,40 @@ async function handleRequest(request: Request): Promise<Response> {
     if (idEnabled) allowedKinds.push('id');
     if (vehicleEnabled) allowedKinds.push('vehicle_photo');
 
+    const photoDays = (settings as any).photo_retention_days ?? (settings as any).image_retention_days ?? 7;
+    const idDays = (settings as any).id_retention_days ?? 30;
+    const vehicleDays = (settings as any).vehicle_photo_retention_days ?? (settings as any).image_retention_days ?? 7;
+
+    function isEvidenceItemEligible(item: any): boolean {
+      const nowIso = new Date().toISOString();
+      if (item.expires_at > nowIso) return false;
+      if (item.kind === 'photo') {
+        if (!photoEnabled) return false;
+        if (item.created_at) {
+          return new Date(item.created_at).getTime() <= Date.now() - photoDays * 86_400_000;
+        }
+        return true;
+      }
+      if (item.kind === 'id') {
+        if (!idEnabled) return false;
+        if (item.created_at) {
+          return new Date(item.created_at).getTime() <= Date.now() - idDays * 86_400_000;
+        }
+        return true;
+      }
+      if (item.kind === 'vehicle_photo') {
+        if (!vehicleEnabled) return false;
+        if (item.created_at) {
+          return new Date(item.created_at).getTime() <= Date.now() - vehicleDays * 86_400_000;
+        }
+        return true;
+      }
+      return true;
+    }
+
     let evidenceQuery = admin
       .from('visitor_evidence')
-      .select('id, visitor_id, bucket_id, object_path, expires_at, kind')
+      .select('id, visitor_id, bucket_id, object_path, expires_at, kind, created_at, verified_at')
       .is('purged_at', null)
       .lte('expires_at', now)
       .order('expires_at', { ascending: true })
@@ -248,7 +280,7 @@ async function handleRequest(request: Request): Promise<Response> {
       evidenceCursor = null;
       let wrapQuery = admin
         .from('visitor_evidence')
-        .select('id, visitor_id, bucket_id, object_path, expires_at, kind')
+        .select('id, visitor_id, bucket_id, object_path, expires_at, kind, created_at, verified_at')
         .is('purged_at', null)
         .lte('expires_at', now)
         .order('expires_at', { ascending: true })
@@ -269,10 +301,11 @@ async function handleRequest(request: Request): Promise<Response> {
     if (evidenceError) {
       metrics.errors.push(`evidence_query_failed: ${evidenceError.message}`);
     } else if (expiredEvidence) {
-      metrics.evidenceEligible = expiredEvidence.length;
+      const eligibleItems = expiredEvidence.filter(isEvidenceItemEligible);
+      metrics.evidenceEligible = eligibleItems.length;
 
       if (!dryRun) {
-        for (const item of expiredEvidence) {
+        for (const item of eligibleItems) {
           // Advance cursor past this record regardless of whether it was held or purged
           nextEvidenceCursor = { timestamp: item.expires_at, id: item.id };
 
@@ -666,30 +699,75 @@ async function handleRequest(request: Request): Promise<Response> {
     // 3.5 RETURNING VISITOR & BIOMETRIC RETENTION (Section 52)
     // =========================================================================
     try {
-      const { data: expiredProfiles, error: profErr } = await admin
-        .from('returning_visitor_profiles')
-        .select('id')
-        .lte('expires_at', now)
-        .limit(batchSize);
+      const returningProfilesEnabled = (settings as any).returning_profile_retention_enabled ?? true;
+      const returningProfileDays = (settings as any).returning_profile_retention_days ?? 30;
+      const returningCutoff = new Date(Date.now() - returningProfileDays * 86_400_000).toISOString();
 
-      if (profErr) {
-        metrics.errors.push(`returning_profile_query_failed: ${profErr.message}`);
-      } else if (expiredProfiles && expiredProfiles.length > 0) {
-        const profileIds = expiredProfiles.map((p: any) => p.id);
-        if (!dryRun) {
-          // Deleting profile cascades to returning_face_templates and returning_visitor_vehicles
-          const { error: delErr } = await admin
-            .from('returning_visitor_profiles')
-            .delete()
-            .in('id', profileIds);
+      if (returningProfilesEnabled) {
+        const { data: expiredProfiles, error: profErr } = await admin
+          .from('returning_visitor_profiles')
+          .select('id, created_at, last_used_at, expires_at')
+          .lte('expires_at', now)
+          .lte('created_at', returningCutoff)
+          .limit(batchSize);
 
-          if (delErr) {
-            metrics.errors.push(`returning_profile_delete_failed: ${delErr.message}`);
-          } else {
-            metrics.returningProfilesCleaned = profileIds.length;
+        if (profErr) {
+          metrics.errors.push(`returning_profile_query_failed: ${profErr.message}`);
+        } else if (expiredProfiles && expiredProfiles.length > 0) {
+          const eligibleProfileIds: string[] = [];
+
+          for (const p of expiredProfiles) {
+            // Check last_used_at cutoff
+            if (p.last_used_at && new Date(p.last_used_at).getTime() > Date.now() - returningProfileDays * 86_400_000) {
+              continue;
+            }
+
+            // Safeguard 1: check if linked visitor is currently on campus
+            const { data: insidePasses } = await admin
+              .from('visitors')
+              .select('id, passes!inner(status)')
+              .eq('returning_profile_id', p.id)
+              .eq('passes.status', 'inside')
+              .limit(1);
+            if (insidePasses && insidePasses.length > 0) continue;
+
+            // Safeguard 2: check if linked visitor has active or future issued passes
+            const { data: activePasses } = await admin
+              .from('visitors')
+              .select('id, passes!inner(id, status, valid_until)')
+              .eq('returning_profile_id', p.id)
+              .or(`passes.status.in.(inside,pending),and(passes.status.eq.issued,passes.valid_until.gt.${now})`)
+              .limit(1);
+            if (activePasses && activePasses.length > 0) continue;
+
+            // Safeguard 3: check active incident holds
+            const { data: holds } = await admin
+              .from('incident_holds')
+              .select('id, visitors!inner(returning_profile_id)')
+              .eq('visitors.returning_profile_id', p.id)
+              .eq('active', true)
+              .limit(1);
+            if (holds && holds.length > 0) continue;
+
+            eligibleProfileIds.push(p.id);
           }
-        } else {
-          metrics.returningProfilesCleaned = profileIds.length;
+
+          if (eligibleProfileIds.length > 0) {
+            if (!dryRun) {
+              const { error: delErr } = await admin
+                .from('returning_visitor_profiles')
+                .delete()
+                .in('id', eligibleProfileIds);
+
+              if (delErr) {
+                metrics.errors.push(`returning_profile_delete_failed: ${delErr.message}`);
+              } else {
+                metrics.returningProfilesCleaned = eligibleProfileIds.length;
+              }
+            } else {
+              metrics.returningProfilesCleaned = eligibleProfileIds.length;
+            }
+          }
         }
       }
 
@@ -988,6 +1066,22 @@ async function handleRequest(request: Request): Promise<Response> {
     }
 
     // =========================================================================
+    // 8.5 AUTHORITATIVE PASS EXPIRATION
+    // =========================================================================
+    try {
+      const { data: expiredPassesCount, error: expirePassesErr } = await admin
+        .schema('api')
+        .rpc('expire_stale_passes');
+      if (expirePassesErr) {
+        metrics.errors.push(`expire_stale_passes_failed: ${expirePassesErr.message}`);
+      } else {
+        metrics.stalePassesExpired = expiredPassesCount ?? 0;
+      }
+    } catch (passExpireErr: any) {
+      metrics.errors.push(`expire_stale_passes_exception: ${passExpireErr.message}`);
+    }
+
+    // =========================================================================
     // 7. RECORD AUDIT EVENT AND RETURN TRUTHFUL SEMANTICS (REPAIR K)
     // =========================================================================
     const hasWorkDone =
@@ -1049,4 +1143,5 @@ async function handleRequest(request: Request): Promise<Response> {
   }
 }
 
+export { handleRequest };
 export default { fetch: handleRequest };

@@ -5,6 +5,10 @@ import { getServerSupabaseClients } from '../../supabase.js';
 interface PurgeRequestBody {
   dryRun?: boolean;
   cursor?: string;
+  override?: {
+    reason: string;
+    categories: Array<'photo' | 'id' | 'vehicle_photo' | 'visitor' | 'returning_profile'>;
+  };
 }
 
 interface ClaimResult {
@@ -54,16 +58,28 @@ async function handleRequest(request: Request): Promise<Response> {
 
     const { data: settingsData, error: settingsError } = await admin
       .from('app_settings')
-      .select('image_retention_days, photo_retention_days, id_retention_days, photo_retention_enabled, id_retention_enabled, vehicle_photo_retention_enabled')
+      .select('image_retention_days, photo_retention_days, id_retention_days, photo_retention_enabled, id_retention_enabled, vehicle_photo_retention_enabled, vehicle_photo_retention_days')
       .eq('singleton', true)
       .maybeSingle();
 
     if (settingsError) throw settingsError;
 
     const retentionDays = settingsData?.image_retention_days ?? 7;
-    const photoRetentionDays = settingsData?.photo_retention_days ?? 7;
+    const photoRetentionDays = settingsData?.photo_retention_days ?? settingsData?.image_retention_days ?? 7;
     const idRetentionDays = settingsData?.id_retention_days ?? 30;
+    const vehiclePhotoRetentionDays = (settingsData as any)?.vehicle_photo_retention_days ?? settingsData?.image_retention_days ?? 7;
     const now = new Date().toISOString();
+
+    let overrideCategories: Set<string> | null = null;
+    if (body.override) {
+      if (typeof body.override.reason !== 'string' || body.override.reason.trim().length < 10) {
+        return jsonResponse(400, { error: 'invalid_override_reason', message: 'A non-empty audit reason (min 10 chars) is required for Superadmin override' });
+      }
+      if (!Array.isArray(body.override.categories) || body.override.categories.length === 0) {
+        return jsonResponse(400, { error: 'invalid_override_categories', message: 'At least one target category is required for override' });
+      }
+      overrideCategories = new Set(body.override.categories);
+    }
 
     // 1. Fetch active incident holds by visitor_id
     const { data: activeVisitorHolds, error: visitorHoldsError } = await admin
@@ -99,6 +115,15 @@ async function handleRequest(request: Request): Promise<Response> {
     if (passesError) throw passesError;
     const activePassVisitorIds = new Set((activePasses || []).map((p) => p.visitor_id as string));
 
+    // 3b. Fetch visitors currently on campus (pass status = 'inside')
+    const { data: insidePasses, error: insideError } = await admin
+      .from('passes')
+      .select('visitor_id')
+      .eq('status', 'inside');
+
+    if (insideError) throw insideError;
+    const insideVisitorIds = new Set((insidePasses || []).map((p) => p.visitor_id as string));
+
     // 4. Fetch expired unpurged evidence with starvation-free cursor progression
     let lastSeenId: string | null = body.cursor || null;
     let eligibleItems: { id: string; visitor_id: string; bucket_id: string; object_path: string }[] = [];
@@ -109,7 +134,7 @@ async function handleRequest(request: Request): Promise<Response> {
     while (eligibleItems.length < (body.dryRun ? 200 : BATCH_SIZE) && scannedCount < MAX_SCAN) {
       let q = admin
         .from('visitor_evidence')
-        .select('id, visitor_id, bucket_id, object_path, expires_at, kind')
+        .select('id, visitor_id, bucket_id, object_path, expires_at, kind, created_at, verified_at')
         .is('purged_at', null)
         .lte('expires_at', now)
         .order('expires_at', { ascending: true })
@@ -135,14 +160,31 @@ async function handleRequest(request: Request): Promise<Response> {
       const photoEnabled = (settingsData as any)?.photo_retention_enabled ?? true;
       const idEnabled = (settingsData as any)?.id_retention_enabled ?? true;
       const vehicleEnabled = (settingsData as any)?.vehicle_photo_retention_enabled ?? true;
+      const nowMs = Date.now();
 
       for (const item of pageRows) {
         const kind = (item as any).kind;
-        if (kind === 'photo' && !photoEnabled) continue;
-        if (kind === 'id' && !idEnabled) continue;
-        if (kind === 'vehicle_photo' && !vehicleEnabled) continue;
+        const isOverridden = overrideCategories ? overrideCategories.has(kind) : false;
 
-        if (!heldVisitorIds.has(item.visitor_id) && !activePassVisitorIds.has(item.visitor_id)) {
+        if (!isOverridden) {
+          if (kind === 'photo' && !photoEnabled) continue;
+          if (kind === 'id' && !idEnabled) continue;
+          if (kind === 'vehicle_photo' && !vehicleEnabled) continue;
+
+          let days = 7;
+          if (kind === 'photo') days = photoRetentionDays;
+          else if (kind === 'id') days = idRetentionDays;
+          else if (kind === 'vehicle_photo') days = vehiclePhotoRetentionDays;
+          else days = retentionDays;
+
+          if (item.created_at) {
+            if (new Date(item.created_at).getTime() > nowMs - days * 86_400_000) continue;
+          }
+          if (new Date(item.expires_at).getTime() > nowMs) continue;
+        }
+
+        // Safeguards: NEVER purge evidence if visitor is inside, on an active pass, or under incident hold
+        if (!heldVisitorIds.has(item.visitor_id) && !activePassVisitorIds.has(item.visitor_id) && !insideVisitorIds.has(item.visitor_id)) {
           eligibleItems.push(item);
           if (eligibleItems.length >= (body.dryRun ? 200 : BATCH_SIZE)) break;
         }
@@ -157,11 +199,15 @@ async function handleRequest(request: Request): Promise<Response> {
     if (body.dryRun) {
       const distinctVisitors = new Set(eligibleItems.map((item) => item.visitor_id));
       return jsonResponse(200, {
+        dryRun: true,
         evidenceDeleted: 0,
+        eligibleEvidenceCount: eligibleItems.length,
         visitorsAffected: distinctVisitors.size,
         retentionDays,
         photoRetentionDays,
         idRetentionDays,
+        vehiclePhotoRetentionDays,
+        overrideApplied: Boolean(body.override),
         hasMore: !exhausted,
       });
     }
@@ -178,6 +224,7 @@ async function handleRequest(request: Request): Promise<Response> {
         .rpc('claim_evidence_for_purge', {
           requested_evidence_id: item.id,
           requested_claim_id: claimId,
+          requested_override: Boolean(body.override),
         })) as { data: ClaimResult | null; error: any };
 
       if (claimError) {
@@ -291,7 +338,7 @@ async function handleRequest(request: Request): Promise<Response> {
       actor_id: actor.id,
       actor_kind: 'staff',
       actor_role: actor.role,
-      action: 'image_purge',
+      action: body.override ? 'retention.superadmin_override_purge' : 'image_purge', // action: 'image_purge'
       target_type: 'visitor_evidence',
       target_id: 'batch',
       outcome: failedCount > 0 ? 'partial' : 'success',
@@ -300,6 +347,7 @@ async function handleRequest(request: Request): Promise<Response> {
         failedCount,
         hasMore,
         retentionDays,
+        override: body.override ? { reason: body.override.reason, categories: body.override.categories } : null,
       },
     });
 
@@ -340,5 +388,6 @@ async function handleRequest(request: Request): Promise<Response> {
   }
 }
 
+export { handleRequest };
 export default handleRequest;
 export { handleRequest as POST };

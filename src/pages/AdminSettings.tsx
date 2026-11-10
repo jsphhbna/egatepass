@@ -18,9 +18,10 @@ import {
   Camera,
   Car,
   KeyRound,
+  ShieldAlert,
 } from 'lucide-react';
 import { toast } from 'sonner';
-import { Button, Card, Input, Select, ConfirmModal, LoadingState } from '@/components/ui';
+import { Button, Card, Input, Select, ConfirmModal, LoadingState, Modal, FormField } from '@/components/ui';
 import { PasswordResetCard } from '@/components/ChangePasswordCard';
 import { normalizeVisitPurposes } from '@/lib/settingsDefaults';
 import type { VisitPurposeOption, CampusCalendarClosure, CalendarClosureType } from '@/types';
@@ -225,6 +226,10 @@ export function AdminSettings() {
   const [purgeEligibleCount, setPurgeEligibleCount] = useState<number | null>(null);
   const [purgePhotoRetentionDays, setPurgePhotoRetentionDays] = useState<number | null>(null);
   const [purgeIdRetentionDays, setPurgeIdRetentionDays] = useState<number | null>(null);
+  const [showOverridePurgeModal, setShowOverridePurgeModal] = useState(false);
+  const [overrideReason, setOverrideReason] = useState('');
+  const [overrideCategories, setOverrideCategories] = useState<string[]>(['photo', 'id', 'vehicle_photo']);
+  const [isExecutingOverride, setIsExecutingOverride] = useState(false);
 
   async function loadSettings() {
     setLoading(true);
@@ -472,6 +477,52 @@ export function AdminSettings() {
     } finally {
       setCalculatingPurge(false);
       settingsMutationInFlightRef.current = false;
+    }
+  }
+
+  async function executeOverridePurge() {
+    if (!overrideReason.trim() || overrideReason.trim().length < 10) {
+      toast.error('Audit reason of at least 10 characters is required for override.');
+      return;
+    }
+    if (overrideCategories.length === 0) {
+      toast.error('Select at least one category to override.');
+      return;
+    }
+    setIsExecutingOverride(true);
+    try {
+      const token = await getAccessToken();
+      if (!token) throw new Error('Not authenticated');
+
+      const res = await fetch('/api/purge-images', {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${token}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          dryRun: false,
+          override: {
+            reason: overrideReason.trim(),
+            categories: overrideCategories,
+          },
+        }),
+      });
+
+      if (!res.ok) {
+        const text = await res.text();
+        throw new Error(`Override purge failed: ${res.status} - ${text}`);
+      }
+
+      const data = await res.json() as { successCount: number; failedCount: number };
+      toast.success(`Superadmin override purge completed: ${data.successCount} evidence records permanently deleted with audit logging.`);
+      setShowOverridePurgeModal(false);
+      setOverrideReason('');
+    } catch (err: any) {
+      console.error(err);
+      toast.error(err.message || 'Override purge failed');
+    } finally {
+      setIsExecutingOverride(false);
     }
   }
 
@@ -1377,16 +1428,28 @@ export function AdminSettings() {
                     <p className="mt-2 text-sm text-[var(--color-danger-dark)]">
                       Permanently deletes eligible visitor photos and ID images that have reached their authoritative expiry date under configured retention policies. Active visits and incident holds remain protected. Visitor details and visit history are kept. This action cannot be undone.
                     </p>
-                    <Button
-                      variant="destructive"
-                      onClick={handlePurgeClick}
-                      disabled={settingsBusy}
-                      loading={calculatingPurge}
-                      className="mt-4"
-                      icon={<Trash2 className="h-4 w-4" />}
-                    >
-                      {calculatingPurge ? 'Calculating...' : purging ? 'Purging...' : 'Run Purge Now'}
-                    </Button>
+                    <div className="flex flex-wrap gap-3 mt-4">
+                      <Button
+                        variant="destructive"
+                        onClick={handlePurgeClick}
+                        disabled={settingsBusy}
+                        loading={calculatingPurge}
+                        icon={<Trash2 className="h-4 w-4" />}
+                      >
+                        {calculatingPurge ? 'Calculating...' : purging ? 'Purging...' : 'Run Standard Purge'}
+                      </Button>
+                      {canManageSecuritySettings && (
+                        <Button
+                          variant="secondary"
+                          onClick={() => setShowOverridePurgeModal(true)}
+                          disabled={settingsBusy}
+                          className="border-red-300 text-red-900 hover:bg-red-50"
+                          icon={<ShieldAlert className="h-4 w-4 text-red-700" />}
+                        >
+                          Superadmin Override Purge
+                        </Button>
+                      )}
+                    </div>
                   </div>
                 </div>
               </div>
@@ -1554,6 +1617,96 @@ export function AdminSettings() {
         isDestructive
         loading={purging}
       />
+
+      {/* Superadmin Override Purge Modal */}
+      <Modal
+        isOpen={showOverridePurgeModal}
+        onClose={() => setShowOverridePurgeModal(false)}
+        title="Superadmin Override Purge"
+        size="md"
+      >
+        <div className="space-y-4">
+          <div className="p-3.5 rounded-xl border border-red-300 bg-red-50 text-xs text-red-950 space-y-1.5">
+            <div className="font-bold flex items-center gap-1.5 text-red-900">
+              <ShieldAlert className="h-4 w-4 text-red-700" /> Intentional Retention Override
+            </div>
+            <p>
+              This action bypasses standard retention timeframes for selected categories. Every invocation is permanently recorded in the immutable audit log.
+            </p>
+            <p className="font-semibold text-red-900">
+              Mandatory Safeguards Enforced: Visitors currently on campus, active passes, and records under active incident holds will NOT be deleted.
+            </p>
+          </div>
+
+          <div className="space-y-2">
+            <label className="text-xs font-bold text-[var(--color-text-primary)]">Target Categories:</label>
+            <div className="space-y-1.5 border border-[var(--color-border)] rounded-lg p-3 text-xs">
+              <label className="flex items-center gap-2 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={overrideCategories.includes('photo')}
+                  onChange={(e) => {
+                    setOverrideCategories((prev) => e.target.checked ? [...prev, 'photo'] : prev.filter((c) => c !== 'photo'));
+                  }}
+                  className="rounded border-[var(--color-border)] text-[var(--color-brand)] focus:ring-[var(--color-brand)]"
+                />
+                <span className="font-semibold text-[var(--color-text-primary)]">Visitor Face Photos</span>
+              </label>
+              <label className="flex items-center gap-2 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={overrideCategories.includes('id')}
+                  onChange={(e) => {
+                    setOverrideCategories((prev) => e.target.checked ? [...prev, 'id'] : prev.filter((c) => c !== 'id'));
+                  }}
+                  className="rounded border-[var(--color-border)] text-[var(--color-brand)] focus:ring-[var(--color-brand)]"
+                />
+                <span className="font-semibold text-[var(--color-text-primary)]">Valid Government ID Images</span>
+              </label>
+              <label className="flex items-center gap-2 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={overrideCategories.includes('vehicle_photo')}
+                  onChange={(e) => {
+                    setOverrideCategories((prev) => e.target.checked ? [...prev, 'vehicle_photo'] : prev.filter((c) => c !== 'vehicle_photo'));
+                  }}
+                  className="rounded border-[var(--color-border)] text-[var(--color-brand)] focus:ring-[var(--color-brand)]"
+                />
+                <span className="font-semibold text-[var(--color-text-primary)]">Vehicle Photos</span>
+              </label>
+            </div>
+          </div>
+
+          <FormField label="Mandatory Audit Reason" id="override-reason" requirement="required">
+            <textarea
+              id="override-reason"
+              rows={3}
+              value={overrideReason}
+              onChange={(e) => setOverrideReason(e.target.value)}
+              placeholder="State the regulatory, legal, or administrative authorization for this override (min 10 characters)..."
+              className="w-full rounded-md border border-[var(--color-border)] p-2.5 text-xs text-[var(--color-text-primary)] focus:outline-none focus:ring-1 focus:ring-[var(--color-brand)]"
+            />
+          </FormField>
+
+          <div className="flex justify-end gap-2 pt-2">
+            <Button
+              variant="secondary"
+              onClick={() => setShowOverridePurgeModal(false)}
+              disabled={isExecutingOverride}
+            >
+              Cancel
+            </Button>
+            <Button
+              variant="destructive"
+              onClick={executeOverridePurge}
+              loading={isExecutingOverride}
+              disabled={isExecutingOverride || overrideReason.trim().length < 10 || overrideCategories.length === 0}
+            >
+              Confirm & Execute Override Purge
+            </Button>
+          </div>
+        </div>
+      </Modal>
 
       {/* Peak Mode Modal */}
       <ConfirmModal

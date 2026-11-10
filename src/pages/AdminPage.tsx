@@ -60,7 +60,17 @@ const navGroups: NavGroupItem[] = [
       { to: '/admin/visitors?tab=history', label: 'Visit History' },
     ],
   },
-  { id: 'devices', label: 'Devices', icon: Tablet, basePath: '/admin/devices' },
+  {
+    id: 'devices',
+    label: 'Devices',
+    icon: Tablet,
+    basePath: '/admin/devices',
+    children: [
+      { to: '/admin/devices?tab=all', label: 'All Terminals' },
+      { to: '/admin/devices?tab=scanners', label: 'Gate Scanners' },
+      { to: '/admin/devices?tab=stations', label: 'Kiosks & Stations' },
+    ],
+  },
   { id: 'users', label: 'Users', icon: Users, basePath: '/admin/users' },
   { id: 'emergency', label: 'Emergency', icon: AlertTriangle, basePath: '/admin/emergency' },
   { id: 'audit', label: 'Audit Logs', icon: ClipboardList, basePath: '/admin/audit' },
@@ -264,6 +274,8 @@ export function AdminPage() {
                                 ? location.pathname === '/admin/settings' && (!location.search || location.search === '?tab=general')
                                 : child.to.includes('tab=search')
                                 ? location.pathname === '/admin/visitors' && (!location.search || location.search === '?tab=search')
+                                : child.to.includes('admin/devices?tab=all')
+                                ? location.pathname === '/admin/devices' && (!location.search || location.search === '?tab=all')
                                 : currentFull === child.to;
 
                             return (

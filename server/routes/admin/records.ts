@@ -97,15 +97,6 @@ async function handleRequest(request: Request): Promise<Response> {
     const { admin } = getServerSupabaseClients();
     await requireStaffActor(admin, token, ['admin', 'superadmin']);
 
-    try {
-      const expireRes = await admin.schema('api').rpc('expire_stale_passes');
-      if (expireRes.error) {
-        console.warn('Pass expiry maintenance warning in records GET:', expireRes.error.message);
-      }
-    } catch (expireErr) {
-      console.warn('Pass expiry maintenance failed in records GET (non-blocking):', expireErr);
-    }
-
     let query = admin
       .from('passes')
       .select(`
@@ -194,4 +185,5 @@ async function handleRequest(request: Request): Promise<Response> {
   }
 }
 
+export { handleRequest };
 export default { fetch: handleRequest };
