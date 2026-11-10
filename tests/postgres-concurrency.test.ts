@@ -59,6 +59,7 @@ function createPostgresAdminClient(pool: pg.Pool, options?: {
 }) {
   const getAdminClient = async () => {
     const client = await pool.connect();
+    await client.query(`set timezone = 'Asia/Manila';`);
     await client.query(`set request.jwt.claim.role = 'service_role';`);
     return client;
   };
@@ -370,7 +371,7 @@ runSuite('True PostgreSQL Concurrency, Canonical Approval Integrity & Email Reco
 
       // Set working_hours_end to 23:59:59 so current_date tests pass regardless of time of day
       await rootClient.query(`
-        update public.app_settings set working_hours_end = '23:59:59' where singleton = true;
+        update public.app_settings set working_hours_start = '00:00:00', working_hours_end = '23:59:59' where singleton = true;
       `);
     } finally {
       rootClient.release();
@@ -396,6 +397,7 @@ runSuite('True PostgreSQL Concurrency, Canonical Approval Integrity & Email Reco
     for (let i = 0; i < count; i++) {
       const client = new pg.Client({ connectionString: TEST_DB_URL });
       await client.connect();
+      await client.query(`set timezone = 'Asia/Manila';`);
       await client.query(`set request.jwt.claim.role = 'service_role';`);
       clients.push(client);
     }
@@ -641,7 +643,7 @@ runSuite('True PostgreSQL Concurrency, Canonical Approval Integrity & Email Reco
           ) on conflict (id) do nothing;
 
           insert into public.visitors (id, owner_id, full_name, contact_number, email, purpose, visit_date, source, consent_accepted_at)
-          values ('${visitorId}', '${visitorId}', 'Maria Dela Cruz', '09171234567', '${visitorEmail}', 'Transcript Request', current_date, 'portal', now())
+          values ('${visitorId}', '${visitorId}', 'Maria Dela Cruz', '09171234567', '${visitorEmail}', 'Transcript Request', ((now() at time zone 'Asia/Manila')::date + 1), 'portal', now())
           on conflict (id) do nothing;
 
           insert into public.office_visits (
@@ -650,7 +652,7 @@ runSuite('True PostgreSQL Concurrency, Canonical Approval Integrity & Email Reco
             registration_mode, returning_profile_id
           ) values (
             '${visitId}', 'specific_person', '${officeId}', '${personnelId}', '${visitorId}', '${visitorId}', 'Maria', 'Dela Cruz',
-            '09171234567', '${visitorEmail}', 'Transcript Request', current_date, 'pending', 'awaiting_entry', gen_random_uuid(),
+            '09171234567', '${visitorEmail}', 'Transcript Request', ((now() at time zone 'Asia/Manila')::date + 1), 'pending', 'awaiting_entry', gen_random_uuid(),
             'returning', '${returningProfileId}'
           ) on conflict (id) do update set approval_status = 'pending', registration_mode = 'returning', returning_profile_id = '${returningProfileId}';
         `);
@@ -764,7 +766,7 @@ runSuite('True PostgreSQL Concurrency, Canonical Approval Integrity & Email Reco
           ) on conflict (id) do nothing;
 
           insert into public.visitors (id, owner_id, full_name, contact_number, email, purpose, visit_date, source, consent_accepted_at)
-          values ('${visitorId}', '${visitorId}', 'Roberto Cruz', '09171234567', '${visitorEmail}', 'Diploma Claim', current_date, 'portal', now())
+          values ('${visitorId}', '${visitorId}', 'Roberto Cruz', '09171234567', '${visitorEmail}', 'Diploma Claim', ((now() at time zone 'Asia/Manila')::date + 1), 'portal', now())
           on conflict (id) do nothing;
 
           insert into public.office_visits (
@@ -773,7 +775,7 @@ runSuite('True PostgreSQL Concurrency, Canonical Approval Integrity & Email Reco
             registration_mode, returning_profile_id
           ) values (
             '${visitId}', 'specific_person', '${officeId}', '${personnelId}', '${visitorId}', '${visitorId}', 'Roberto', 'Cruz',
-            '09171234567', '${visitorEmail}', 'Diploma Claim', current_date, 'pending', 'awaiting_entry', gen_random_uuid(),
+            '09171234567', '${visitorEmail}', 'Diploma Claim', ((now() at time zone 'Asia/Manila')::date + 1), 'pending', 'awaiting_entry', gen_random_uuid(),
             'returning', '${returningProfileId}'
           ) on conflict (id) do update set approval_status = 'pending', registration_mode = 'returning', returning_profile_id = '${returningProfileId}';
         `);
@@ -901,7 +903,7 @@ runSuite('True PostgreSQL Concurrency, Canonical Approval Integrity & Email Reco
           ) on conflict (id) do nothing;
 
           insert into public.visitors (id, owner_id, full_name, contact_number, email, purpose, visit_date, source, consent_accepted_at)
-          values ('${visitorId}', '${visitorId}', 'Carlos Ray', '09171234567', '${visitorEmail}', 'Grades Inquiry', current_date, 'portal', now())
+          values ('${visitorId}', '${visitorId}', 'Carlos Ray', '09171234567', '${visitorEmail}', 'Grades Inquiry', ((now() at time zone 'Asia/Manila')::date + 1), 'portal', now())
           on conflict (id) do nothing;
 
           insert into public.office_visits (
@@ -910,7 +912,7 @@ runSuite('True PostgreSQL Concurrency, Canonical Approval Integrity & Email Reco
             registration_mode, returning_profile_id
           ) values (
             '${visitId}', 'specific_person', '${officeId}', '${personnelId}', '${visitorId}', '${visitorId}', 'Carlos', 'Ray',
-            '09171234567', '${visitorEmail}', 'Grades Inquiry', current_date, 'pending', 'awaiting_entry', gen_random_uuid(),
+            '09171234567', '${visitorEmail}', 'Grades Inquiry', ((now() at time zone 'Asia/Manila')::date + 1), 'pending', 'awaiting_entry', gen_random_uuid(),
             'returning', '${returningProfileId}'
           ) on conflict (id) do update set approval_status = 'pending', registration_mode = 'returning', returning_profile_id = '${returningProfileId}';
         `);
