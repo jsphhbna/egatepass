@@ -314,7 +314,7 @@ begin
       end if;
     end loop;
 
-    if not (v_evidence.kind = any(requested_override_categories)) then
+    if not (v_evidence.kind::text = any(requested_override_categories)) then
       return jsonb_build_object('claimed', false, 'reason', 'category_not_in_override');
     end if;
 
