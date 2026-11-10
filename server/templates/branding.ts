@@ -1,4 +1,4 @@
-function getBaseUrl(): string {
+export function getBaseUrl(): string {
   try {
     const raw = (process.env.APP_BASE_URL || process.env.VITE_APP_URL || '').trim();
     const base = raw || 'https://egatepass.tech';

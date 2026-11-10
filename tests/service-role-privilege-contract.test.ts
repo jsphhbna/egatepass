@@ -37,6 +37,7 @@ describe('Service Role Least-Privilege Architecture Contract', () => {
       'nominatim_rate_limiter',
       'office_personnel',
       'office_staff_assignments',
+      'office_visit_acknowledgement_outbox',
       'office_visit_email_outbox',
       'office_visit_email_verifications',
       'office_visit_events',

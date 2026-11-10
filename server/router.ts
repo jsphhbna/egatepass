@@ -55,6 +55,9 @@ export function extractRouteKey(pathname: string, group: RouteGroup): string | n
     if (parts[1] === 'request-office-visit') {
       return 'request-office-visit';
     }
+    if (parts[1] === 'track' || parts[1] === 'track-visit') {
+      return 'track';
+    }
   }
 
   return null;

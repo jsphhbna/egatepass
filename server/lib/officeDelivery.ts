@@ -1,5 +1,6 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { sendResendEmail, EmailDeliveryError } from '../email.js';
+import { renderOfficeVisitAcknowledgedEmail } from '../templates/index.js';
 
 export interface OutboxDeliveryResult {
   status: 'sent' | 'failed' | 'unknown' | 'none' | 'pending' | 'reconciliation_required';
@@ -332,6 +333,203 @@ export async function deliverOfficeEmail(
         }));
       }
     }
+  }
+
+  return {
+    status: outcome,
+    providerMessageId: null,
+    error: errMsg,
+    reconciliationRequired: outcome === 'unknown',
+  };
+}
+
+export async function deliverOfficeAcknowledgementEmail(
+  admin: SupabaseClient,
+  params: {
+    visitId: string;
+    recipientEmail: string;
+    visitorName: string;
+    officeName: string;
+    personnelName: string;
+    visitDate: string;
+    purpose?: string;
+    trackingUrl: string;
+  }
+): Promise<OutboxDeliveryResult> {
+  if (!params.recipientEmail) {
+    return { status: 'none', providerMessageId: null, error: null };
+  }
+
+  // 1. Claim acknowledgement outbox row for delivery
+  let claim: any = null;
+  try {
+    const { data: claimRows, error: claimErr } = await admin
+      .schema('api')
+      .rpc('claim_office_visit_acknowledgement_for_delivery', {
+        requested_visit_id: params.visitId,
+      });
+
+    if (claimErr) {
+      console.error(JSON.stringify({
+        event: 'office_ack_claim_error',
+        visitId: params.visitId,
+        error: claimErr.message,
+      }));
+      return {
+        status: 'failed',
+        providerMessageId: null,
+        error: claimErr.message,
+      };
+    }
+
+    claim = Array.isArray(claimRows) ? claimRows[0] : claimRows;
+  } catch (err: any) {
+    console.error(JSON.stringify({
+      event: 'office_ack_claim_exception',
+      visitId: params.visitId,
+      error: err?.message || 'claim_exception',
+    }));
+    return {
+      status: 'failed',
+      providerMessageId: null,
+      error: err?.message || 'claim_exception',
+    };
+  }
+
+  if (!claim?.outbox_id || !claim?.claim_id) {
+    // Already sent or processing under active lease
+    return { status: 'pending', providerMessageId: null, error: null };
+  }
+
+  // 2. Prepare content
+  let html: string;
+  try {
+    html = await renderOfficeVisitAcknowledgedEmail({
+      fullName: params.visitorName,
+      officeName: params.officeName,
+      personnelName: params.personnelName,
+      visitDate: params.visitDate,
+      purpose: params.purpose,
+      trackingUrl: params.trackingUrl,
+    });
+  } catch (prepErr: any) {
+    const errMsg = prepErr?.message || 'failed_to_prepare_ack_email_content';
+    console.error(JSON.stringify({
+      event: 'office_ack_prepare_content_failed',
+      visitId: params.visitId,
+      error: errMsg,
+    }));
+    try {
+      await admin.schema('api').rpc('record_office_visit_acknowledgement_result', {
+        requested_outbox_id: claim.outbox_id,
+        requested_claim_id: claim.claim_id,
+        requested_status: 'failed',
+        requested_provider_message_id: null,
+        requested_error: errMsg,
+      });
+    } catch {
+      // ignore secondary failure
+    }
+    return {
+      status: 'failed',
+      providerMessageId: null,
+      error: errMsg,
+    };
+  }
+
+  // 3. Dispatch via Resend
+  let sendResult: { id?: string } | null = null;
+  let providerAccepted = false;
+  let dispatchErr: any = null;
+
+  try {
+    sendResult = await sendResendEmail({
+      to: params.recipientEmail,
+      subject: 'We Received Your EARIST Visit Request',
+      html,
+      idempotencyKey: claim.idempotency_key || `office-ack-${params.visitId}`,
+      correlationId: claim.outbox_id,
+    });
+    if (sendResult?.id) {
+      providerAccepted = true;
+    }
+  } catch (err: any) {
+    dispatchErr = err;
+  }
+
+  if (providerAccepted) {
+    const providerMessageId = sendResult?.id || null;
+    let primarySuccess = false;
+    try {
+      const { data: recData, error: recErr } = await admin
+        .schema('api')
+        .rpc('record_office_visit_acknowledgement_result', {
+          requested_outbox_id: claim.outbox_id,
+          requested_claim_id: claim.claim_id,
+          requested_status: 'sent',
+          requested_provider_message_id: providerMessageId,
+          requested_error: null,
+        });
+
+      if (isPositiveRpcSuccess(recData, recErr)) {
+        primarySuccess = true;
+      }
+    } catch (rpcEx: any) {
+      console.warn('office_ack_record_rpc_exception:', rpcEx);
+    }
+
+    if (primarySuccess) {
+      return {
+        status: 'sent',
+        providerMessageId,
+        error: null,
+      };
+    }
+
+    // Provider accepted but primary write failed: record reconciliation_required
+    try {
+      await admin.schema('api').rpc('record_office_visit_acknowledgement_result', {
+        requested_outbox_id: claim.outbox_id,
+        requested_claim_id: claim.claim_id,
+        requested_status: 'reconciliation_required',
+        requested_provider_message_id: providerMessageId,
+        requested_error: 'reconciliation_required: primary_record_failed',
+      });
+    } catch {
+      // ignore
+    }
+
+    return {
+      status: 'sent',
+      providerMessageId,
+      error: 'persistence_degraded_reconciliation_required',
+      reconciliationRequired: true,
+    };
+  }
+
+  // Dispatch failed or uncertain
+  const outcome = (dispatchErr instanceof EmailDeliveryError && dispatchErr.outcome === 'unknown')
+    ? 'unknown'
+    : 'failed';
+  const errMsg = dispatchErr instanceof Error ? dispatchErr.message : 'email_dispatch_failed';
+
+  console.error(JSON.stringify({
+    event: 'office_ack_dispatch_failed',
+    visitId: params.visitId,
+    outcome,
+    error: errMsg,
+  }));
+
+  try {
+    await admin.schema('api').rpc('record_office_visit_acknowledgement_result', {
+      requested_outbox_id: claim.outbox_id,
+      requested_claim_id: claim.claim_id,
+      requested_status: outcome,
+      requested_provider_message_id: null,
+      requested_error: errMsg,
+    });
+  } catch (writeEx: any) {
+    console.error('office_ack_record_failure_rpc_exception:', writeEx);
   }
 
   return {

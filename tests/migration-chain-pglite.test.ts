@@ -3767,4 +3767,56 @@ describe('Permanent PostgreSQL Migration Chain & Schema Contracts (PGlite)', () 
     expect(idxRes.rows[0].indexdef).toContain('purged_at IS NULL');
   }, 60000);
 
+it('GG. Migration 84 contracts: Specific-Person Request Acknowledgement & Secure Tracking', async () => {
+    const db = new PGlite();
+    await applyAllMigrations(db);
+
+    // 1. Verify tracking columns on office_visits
+    const colRes = await db.query<{ column_name: string }>(`
+      select column_name
+      from information_schema.columns
+      where table_schema = 'public' and table_name = 'office_visits'
+        and column_name in ('tracking_token_digest', 'tracking_token_expires_at', 'tracking_token_revoked_at');
+    `);
+    const cols = colRes.rows.map((r) => r.column_name);
+    expect(cols).toContain('tracking_token_digest');
+    expect(cols).toContain('tracking_token_expires_at');
+    expect(cols).toContain('tracking_token_revoked_at');
+
+    // 2. Verify partial index on tracking_token_digest
+    const idxRes = await db.query<{ indexname: string; indexdef: string }>(`
+      select indexname, indexdef
+      from pg_indexes
+      where schemaname = 'public' and tablename = 'office_visits' and indexname = 'idx_office_visits_tracking_digest';
+    `);
+    expect(idxRes.rows.length).toBe(1);
+    expect(idxRes.rows[0].indexdef).toContain('tracking_token_digest');
+    expect(idxRes.rows[0].indexdef).toContain('tracking_token_digest IS NOT NULL');
+
+    // 3. Verify office_visit_acknowledgement_outbox table & RLS
+    const tableRes = await db.query<{ tablename: string; rowsecurity: boolean }>(`
+      select tablename, rowsecurity
+      from pg_tables
+      where schemaname = 'public' and tablename = 'office_visit_acknowledgement_outbox';
+    `);
+    expect(tableRes.rows.length).toBe(1);
+    expect(tableRes.rows[0].rowsecurity).toBe(true);
+
+    // 4. Verify RPC functions exist
+    const funcRes = await db.query<{ proname: string }>(`
+      select p.proname
+      from pg_proc p
+      join pg_namespace n on n.oid = p.pronamespace
+      where n.nspname = 'api'
+        and p.proname in (
+          'claim_office_visit_acknowledgement_for_delivery',
+          'record_office_visit_acknowledgement_result',
+          'lookup_office_visit_tracking_status'
+        );
+    `);
+    const funcs = funcRes.rows.map((r) => r.proname);
+    expect(funcs).toContain('claim_office_visit_acknowledgement_for_delivery');
+    expect(funcs).toContain('record_office_visit_acknowledgement_result');
+    expect(funcs).toContain('lookup_office_visit_tracking_status');
+  }, 60000);
 });

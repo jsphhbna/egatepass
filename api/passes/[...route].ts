@@ -19,6 +19,7 @@ import officePortraitPreview from '../../server/routes/office/portrait-preview.j
 import officeVerifyEmail from '../../server/routes/office/verify-email.js';
 import officeRetryEmail from '../../server/routes/office/retry-email.js';
 import requestOfficeVisit from '../../server/routes/passes/request-office-visit.js';
+import track from '../../server/routes/passes/track.js';
 
 const router = createGroupedRouter('passes', {
   email,
@@ -56,6 +57,8 @@ const router = createGroupedRouter('passes', {
   'office/retry/email': officeRetryEmail,
   'office-retry-email': officeRetryEmail,
   'request-office-visit': requestOfficeVisit,
+  track,
+  'track-visit': track,
 });
 
 export const { fetch, handleRequest, GET, POST, PUT, PATCH, DELETE, HEAD, OPTIONS } = router;

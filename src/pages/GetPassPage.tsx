@@ -345,6 +345,8 @@ export function GetPassPage() {
     personnelName: string;
     visitDate: string;
     visitorEmail: string;
+    trackingUrl?: string;
+    trackingToken?: string;
   } | null>(null);
 
   useEffect(() => {
@@ -2186,6 +2188,8 @@ export function GetPassPage() {
           personnelName: effectivePersonnelName,
           visitDate: rawFormData.visitDate || getManilaDateString(new Date()),
           visitorEmail: visitorEmail.toLowerCase().trim(),
+          trackingUrl: data.trackingUrl || undefined,
+          trackingToken: data.trackingToken || undefined,
         });
         setStep('request_submitted');
         return;
@@ -5188,6 +5192,30 @@ export function GetPassPage() {
                     3. If the appointment is rejected, you will receive an email explaining the office&apos;s reason.
                   </p>
                 </div>
+
+                {submittedRequestData?.trackingUrl && (
+                  <div className="rounded-xl border border-slate-200 bg-slate-50 p-4 text-xs space-y-2">
+                    <div className="flex items-center justify-between">
+                      <span className="font-bold text-slate-900 flex items-center gap-1.5">
+                        <Clock className="h-4 w-4 text-amber-600" />
+                        Track Request Status Online
+                      </span>
+                      <span className="text-[10px] font-semibold text-slate-500 uppercase tracking-wide">Account-Free</span>
+                    </div>
+                    <p className="text-slate-600 leading-relaxed">
+                      We sent a submission acknowledgement email to <strong>{submittedRequestData.visitorEmail}</strong> with your private tracking link. You can also track your request directly:
+                    </p>
+                    <div className="pt-1 flex flex-col sm:flex-row gap-2">
+                      <a
+                        href={submittedRequestData.trackingUrl}
+                        className="inline-flex items-center justify-center gap-1.5 rounded-lg bg-[#700f14] px-4 py-2 text-xs font-bold text-white hover:bg-[#851218] transition-colors shadow-xs"
+                      >
+                        <Clock className="h-3.5 w-3.5" />
+                        <span>Track My Request Now</span>
+                      </a>
+                    </div>
+                  </div>
+                )}
               </div>
 
               <div className="flex flex-col sm:flex-row gap-3 pt-2">

@@ -205,6 +205,12 @@ export const SERVICE_ROLE_TABLE_CONTRACT: Record<string, ServerTablePrivilegeCon
     forbiddenPrivileges: ['DELETE'],
     justification: 'Server reads and updates durable delivery outbox for office visit approval/rejection emails and retry tracking. DELETE is forbidden.',
   },
+  office_visit_acknowledgement_outbox: {
+    table: 'office_visit_acknowledgement_outbox',
+    allowedPrivileges: ['SELECT', 'INSERT', 'UPDATE'],
+    forbiddenPrivileges: ['DELETE'],
+    justification: 'Server reads and updates durable delivery outbox for initial specific-person visit request acknowledgement emails and tracking link delivery. DELETE is forbidden.',
+  },
   campus_calendar_closures: {
     table: 'campus_calendar_closures',
     allowedPrivileges: ['SELECT', 'INSERT', 'UPDATE', 'DELETE'],

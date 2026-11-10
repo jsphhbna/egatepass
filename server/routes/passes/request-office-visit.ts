@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { randomBytes, createHash } from 'node:crypto';
 import { getVerifiedSessionContext, HttpError } from '../../actors.js';
 import { jsonResponse, readBearerToken } from '../../http.js';
 import { getServerSupabaseClients } from '../../supabase.js';
@@ -7,6 +8,9 @@ import { normalizeVehiclePlate } from '../../../src/lib/vehiclePlate.js';
 import { verifyEmailVerificationProofToken } from '../../lib/office.js';
 import { inspectUploadIntent } from '../../upload-inspection.js';
 import { computeMatchTokenDigest } from './identify-returning.js';
+import { encryptQrPayload, decryptQrPayload } from '../../lib/encryption.js';
+import { deliverOfficeAcknowledgementEmail, type OutboxDeliveryResult } from '../../lib/officeDelivery.js';
+import { getBaseUrl } from '../../templates/branding.js';
 
 const namePart = z.string().trim().min(1).max(50);
 
@@ -319,6 +323,17 @@ export async function handleRequest(request: Request): Promise<Response> {
     boundReturningProfileId = parsed.data.returning.profileId;
   }
 
+  // Generate tracking token and encrypted delivery payload
+  const rawTrackingToken = randomBytes(32).toString('base64url');
+  const trackingTokenDigest = createHash('sha256').update(rawTrackingToken).digest('hex');
+  const trackingTokenExpiresAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString();
+  let encryptedTrackingToken: string | null = null;
+  try {
+    encryptedTrackingToken = encryptQrPayload(rawTrackingToken);
+  } catch (encErr) {
+    console.error('Failed to encrypt tracking token for delivery outbox:', encErr);
+  }
+
   // Call api.create_specific_person_visit_request RPC
   const { data: rpcResult, error: rpcError } = await admin.schema('api').rpc('create_specific_person_visit_request', {
     requested_actor_id: session.user.id,
@@ -350,6 +365,9 @@ export async function handleRequest(request: Request): Promise<Response> {
     requested_identity_verification_id: boundIdentityVerificationId,
     requested_returning_attempt_id: boundReturningAttemptId,
     requested_person_name: parsed.data.requestedPersonName?.trim() || null,
+    requested_tracking_token_digest: trackingTokenDigest,
+    requested_tracking_token_expires_at: trackingTokenExpiresAt,
+    requested_encrypted_tracking_token: encryptedTrackingToken,
   });
 
   if (rpcError) {
@@ -394,6 +412,46 @@ export async function handleRequest(request: Request): Promise<Response> {
     });
   }
 
+  // Determine effective tracking token (reuse existing token on idempotent retry)
+  let effectiveTrackingToken = rawTrackingToken;
+  if (!resultRow.inserted && resultRow.encrypted_tracking_token) {
+    try {
+      effectiveTrackingToken = decryptQrPayload(resultRow.encrypted_tracking_token);
+    } catch (decErr) {
+      console.warn('Failed to decrypt existing tracking token on idempotent retry, reusing generated token:', decErr);
+    }
+  }
+
+  const trackingUrl = `${getBaseUrl()}/track#t=${effectiveTrackingToken}`;
+
+  // Attempt initial acknowledgement email dispatch via outbox
+  let emailDelivery: OutboxDeliveryResult | null = null;
+  try {
+    const visitorFullName = [
+      parsed.data.visitor.firstName,
+      parsed.data.visitor.middleName,
+      parsed.data.visitor.lastName,
+    ].filter(Boolean).join(' ');
+
+    emailDelivery = await deliverOfficeAcknowledgementEmail(admin, {
+      visitId: resultRow.visit_id,
+      recipientEmail: parsed.data.visitor.email.toLowerCase().trim(),
+      visitorName: visitorFullName,
+      officeName: office.name,
+      personnelName: personnel ? personnel.name : (parsed.data.requestedPersonName?.trim() || null),
+      visitDate: parsed.data.visitor.visitDate,
+      purpose: parsed.data.specificPurpose,
+      trackingUrl,
+    });
+  } catch (deliveryEx) {
+    console.error('Non-fatal error delivering acknowledgement email:', deliveryEx);
+    emailDelivery = {
+      status: 'failed',
+      providerMessageId: null,
+      error: deliveryEx instanceof Error ? deliveryEx.message : 'acknowledgement_delivery_failed',
+    };
+  }
+
   return jsonResponse(201, {
     ok: true,
     visitId: resultRow.visit_id,
@@ -402,6 +460,12 @@ export async function handleRequest(request: Request): Promise<Response> {
     attendanceStatus: resultRow.attendance_status,
     officeName: office.name,
     personnelName: personnel.name,
+    trackingToken: effectiveTrackingToken,
+    trackingUrl,
+    emailDelivery: emailDelivery ? {
+      status: emailDelivery.status,
+      providerMessageId: emailDelivery.providerMessageId,
+    } : undefined,
     message: 'Your visit request has been submitted for office review. You will receive an email once approved or rejected.',
   });
 }

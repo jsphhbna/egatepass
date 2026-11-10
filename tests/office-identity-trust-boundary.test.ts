@@ -50,6 +50,7 @@ describe('Office Visit Identity Trust Boundary', () => {
   beforeEach(() => {
     process.env.OFFICE_VISIT_HMAC_SECRET = 'a'.repeat(32);
     process.env.RETURNING_MATCH_TOKEN_SECRET = 'b'.repeat(32);
+    process.env.OFFICE_VISIT_DELIVERY_ENCRYPTION_KEY = 'c'.repeat(32);
 
     mockVerificationAttempts = [];
     mockReturningAttempts = [];
@@ -286,12 +287,12 @@ describe('Office Visit Identity Trust Boundary', () => {
     expect(body.ok).toBe(true);
     expect(body.visitId).toBe('00000000-0000-4000-8000-000000000088');
 
-    expect(rpcCalls).toHaveLength(1);
-    expect(rpcCalls[0].schemaName).toBe('api');
-    expect(rpcCalls[0].fnName).toBe('create_specific_person_visit_request');
-    expect(rpcCalls[0].args.requested_registration_mode).toBe('new');
-    expect(rpcCalls[0].args.requested_identity_verification_id).toBe(identityAttemptId);
-    expect(rpcCalls[0].args.requested_returning_profile_id).toBeNull();
+    const createCall = rpcCalls.find((c) => c.fnName === 'create_specific_person_visit_request');
+    expect(createCall).toBeDefined();
+    expect(createCall.schemaName).toBe('api');
+    expect(createCall.args.requested_registration_mode).toBe('new');
+    expect(createCall.args.requested_identity_verification_id).toBe(identityAttemptId);
+    expect(createCall.args.requested_returning_profile_id).toBeNull();
   });
 
   it('9. Accepts verified returning visitor and binds returning attempt and profile ID to RPC', async () => {
@@ -322,12 +323,12 @@ describe('Office Visit Identity Trust Boundary', () => {
     const body = await res.json();
     expect(body.ok).toBe(true);
 
-    expect(rpcCalls).toHaveLength(1);
-    expect(rpcCalls[0].schemaName).toBe('api');
-    expect(rpcCalls[0].fnName).toBe('create_specific_person_visit_request');
-    expect(rpcCalls[0].args.requested_registration_mode).toBe('returning');
-    expect(rpcCalls[0].args.requested_returning_attempt_id).toBe(returningAttemptId);
-    expect(rpcCalls[0].args.requested_returning_profile_id).toBe(profileId);
-    expect(rpcCalls[0].args.requested_identity_verification_id).toBeNull();
+    const createCall = rpcCalls.find((c) => c.fnName === 'create_specific_person_visit_request');
+    expect(createCall).toBeDefined();
+    expect(createCall.schemaName).toBe('api');
+    expect(createCall.args.requested_registration_mode).toBe('returning');
+    expect(createCall.args.requested_returning_attempt_id).toBe(returningAttemptId);
+    expect(createCall.args.requested_returning_profile_id).toBe(profileId);
+    expect(createCall.args.requested_identity_verification_id).toBeNull();
   });
 });

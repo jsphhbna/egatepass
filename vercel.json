@@ -67,6 +67,23 @@
       ]
     },
     {
+      "source": "/track",
+      "headers": [
+        {
+          "key": "Cache-Control",
+          "value": "no-cache, no-store, must-revalidate"
+        },
+        {
+          "key": "X-Robots-Tag",
+          "value": "noindex, nofollow"
+        },
+        {
+          "key": "Referrer-Policy",
+          "value": "no-referrer"
+        }
+      ]
+    },
+    {
       "source": "/login",
       "headers": [
         {
@@ -241,6 +258,14 @@
     {
       "source": "/api/request-office-visit",
       "destination": "/api/passes/request-office-visit"
+    },
+    {
+      "source": "/api/track",
+      "destination": "/api/passes/track"
+    },
+    {
+      "source": "/api/track-visit",
+      "destination": "/api/passes/track-visit"
     },
     {
       "source": "/((?!api/).*)",

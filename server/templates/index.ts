@@ -11,6 +11,7 @@ import { ReauthenticationEmail, type ReauthenticationEmailProps } from './Reauth
 import { SecurityNotificationEmail, type SecurityNotificationEmailProps } from './SecurityNotificationEmail.js';
 import { OfficeVisitApprovedEmail, type OfficeVisitApprovedEmailProps } from './OfficeVisitApprovedEmail.js';
 import { OfficeVisitRejectedEmail, type OfficeVisitRejectedEmailProps } from './OfficeVisitRejectedEmail.js';
+import { OfficeVisitAcknowledgedEmail, type OfficeVisitAcknowledgedEmailProps } from './OfficeVisitAcknowledgedEmail.js';
 
 export { EARIST_LOGO_URL, EARIST_BUILDING_EMAIL_URL, EARIST_EMAIL_HEADER_ART_URL } from './branding.js';
 export { EmailHeader, type EmailHeaderProps } from './components/EmailHeader.js';
@@ -18,6 +19,7 @@ export { VerificationCodeEmail, type VerificationCodeEmailProps } from './Verifi
 export { PassIssuedEmail, type PassIssuedEmailProps } from './PassIssuedEmail.js';
 export { OfficeVisitApprovedEmail, type OfficeVisitApprovedEmailProps } from './OfficeVisitApprovedEmail.js';
 export { OfficeVisitRejectedEmail, type OfficeVisitRejectedEmailProps } from './OfficeVisitRejectedEmail.js';
+export { OfficeVisitAcknowledgedEmail, type OfficeVisitAcknowledgedEmailProps } from './OfficeVisitAcknowledgedEmail.js';
 export { SignupConfirmationEmail, type SignupConfirmationEmailProps } from './SignupConfirmationEmail.js';
 export { PasswordResetEmail, type PasswordResetEmailProps } from './PasswordResetEmail.js';
 export { StaffInviteEmail, type StaffInviteEmailProps } from './StaffInviteEmail.js';
@@ -40,6 +42,10 @@ export async function renderOfficeVisitApprovedEmail(props: OfficeVisitApprovedE
 
 export async function renderOfficeVisitRejectedEmail(props: OfficeVisitRejectedEmailProps): Promise<string> {
   return render(React.createElement(OfficeVisitRejectedEmail, props));
+}
+
+export async function renderOfficeVisitAcknowledgedEmail(props: OfficeVisitAcknowledgedEmailProps): Promise<string> {
+  return render(React.createElement(OfficeVisitAcknowledgedEmail, props));
 }
 
 export async function renderSignupConfirmationEmail(props: SignupConfirmationEmailProps): Promise<string> {
