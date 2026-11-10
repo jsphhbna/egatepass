@@ -44,6 +44,12 @@ const resetCredentialsSchema = z.object({
   officeId: z.string().uuid().optional(),
 });
 
+const resendVerificationSchema = z.object({
+  action: z.literal('resend_verification_email'),
+  userId: z.string().uuid(),
+  officeId: z.string().uuid().optional(),
+});
+
 const toggleAccountActiveSchema = z.object({
   action: z.literal('toggle_account_active'),
   userId: z.string().uuid(),
@@ -110,7 +116,7 @@ export async function handleRequest(request: Request): Promise<Response> {
     if (assignErr) throw assignErr;
 
     const allAssignedUserIds = Array.from(new Set((assignments || []).map((a) => a.user_id)));
-    let staffMap = new Map<string, { userId: string; displayName: string; role: string; active: boolean; mustChangePassword: boolean; email?: string }>();
+    let staffMap = new Map<string, { userId: string; displayName: string; role: string; active: boolean; mustChangePassword: boolean; email?: string; emailConfirmed?: boolean }>();
 
     if (allAssignedUserIds.length > 0) {
       const { data: profiles } = await admin
@@ -134,6 +140,7 @@ export async function handleRequest(request: Request): Promise<Response> {
           const entry = staffMap.get(u.id);
           if (entry) {
             entry.email = u.email ?? '';
+            entry.emailConfirmed = Boolean(u.email_confirmed_at);
           }
         }
       } catch (err) {
@@ -220,7 +227,7 @@ export async function handleRequest(request: Request): Promise<Response> {
       const created = await admin.auth.admin.createUser({
         email,
         password: temporaryPassword,
-        email_confirm: true,
+        email_confirm: false,
       });
 
       if (created.error || !created.data.user) {
@@ -268,6 +275,24 @@ export async function handleRequest(request: Request): Promise<Response> {
         });
       }
 
+      // Dispatch real email verification via Supabase Auth / Resend
+      const resendResult = await admin.auth.resend({
+        type: 'signup',
+        email,
+      }).catch((err) => ({ error: err }));
+
+      if (resendResult?.error) {
+        console.warn('Office staff verification email delivery failed:', resendResult.error);
+        await recordReconciliation(
+          admin,
+          'office.verification_email_failed',
+          'staff_profiles',
+          newUserId,
+          (resendResult.error as any)?.message || 'resend_failed',
+          { email, officeId }
+        ).catch(() => undefined);
+      }
+
       return jsonResponse(200, {
         ok: true,
         officeId,
@@ -275,6 +300,8 @@ export async function handleRequest(request: Request): Promise<Response> {
         email,
         temporaryPassword,
         mustChangePassword: true,
+        emailConfirmed: false,
+        verificationEmailSent: !resendResult?.error,
       });
     }
 
@@ -333,6 +360,26 @@ export async function handleRequest(request: Request): Promise<Response> {
 
       if (rpcRes.error) {
         console.error('CRITICAL: reset_staff_temporary_password failed after Auth password update:', rpcRes.error);
+        
+        // Active fail-closed compensation: actively revoke the temporary password by setting it to an unguessable 256-bit random secret
+        const revokeSecret = randomBytes(32).toString('hex');
+        const revokeRes = await admin.auth.admin.updateUserById(userId, {
+          password: revokeSecret,
+        }).catch((e) => ({ error: e }));
+
+        if (revokeRes?.error) {
+          console.error('CRITICAL: Failed to overwrite Auth password during reset failure compensation. Locking account:', revokeRes.error);
+          await admin.auth.admin.updateUserById(userId, { ban_duration: '876000h' }).catch(() => undefined);
+          await recordReconciliation(
+            admin,
+            'office.reset_compensation_failed',
+            'auth.users',
+            userId,
+            `Revocation failed after DB error: ${rpcRes.error.message}`,
+            { officeId }
+          ).catch(() => undefined);
+        }
+
         await recordReconciliation(
           admin,
           'office.reset_enforcement_failed',
@@ -344,7 +391,7 @@ export async function handleRequest(request: Request): Promise<Response> {
 
         return jsonResponse(500, {
           error: 'reset_enforcement_failed',
-          message: 'Failed to enforce mandatory password change on staff profile. Temporary password revoked.',
+          message: 'Failed to enforce mandatory password change on staff profile. Temporary credentials have been invalidated and revoked.',
         });
       }
 
@@ -353,6 +400,75 @@ export async function handleRequest(request: Request): Promise<Response> {
         userId,
         temporaryPassword,
         mustChangePassword: true,
+      });
+    }
+
+    // ==========================================
+    // ACTION: RESEND OFFICE ACCOUNT VERIFICATION
+    // ==========================================
+    if (body?.action === 'resend_verification_email') {
+      const parsed = resendVerificationSchema.safeParse(body);
+      if (!parsed.success) return jsonResponse(400, { error: 'invalid_request', details: parsed.error.issues });
+
+      const { userId, officeId } = parsed.data;
+
+      const { data: staff, error: stErr } = await admin
+        .from('staff_profiles')
+        .select('user_id, display_name, role, active')
+        .eq('user_id', userId)
+        .maybeSingle();
+
+      if (stErr) throw stErr;
+      if (!staff) {
+        return jsonResponse(404, { error: 'staff_not_found', message: 'Staff profile not found' });
+      }
+
+      if (officeId) {
+        const { data: assignment, error: assignErr } = await admin
+          .from('office_staff_assignments')
+          .select('id')
+          .eq('user_id', userId)
+          .eq('office_id', officeId)
+          .maybeSingle();
+
+        if (assignErr) throw assignErr;
+        if (!assignment) {
+          return jsonResponse(403, {
+            error: 'staff_not_assigned_to_office',
+            message: 'This staff account is not assigned to the requested office',
+          });
+        }
+      }
+
+      const { data: authUser, error: authUserErr } = await admin.auth.admin.getUserById(userId);
+      if (authUserErr || !authUser?.user) {
+        return jsonResponse(404, { error: 'auth_user_not_found' });
+      }
+
+      if (authUser.user.email_confirmed_at) {
+        return jsonResponse(400, {
+          error: 'email_already_verified',
+          message: 'This staff account email address has already been verified.',
+        });
+      }
+
+      const resendRes = await admin.auth.resend({
+        type: 'signup',
+        email: authUser.user.email!,
+      }).catch((e) => ({ error: e }));
+
+      if (resendRes?.error) {
+        return jsonResponse(500, {
+          error: 'resend_failed',
+          message: (resendRes.error as any)?.message || 'Failed to dispatch verification email',
+        });
+      }
+
+      return jsonResponse(200, {
+        ok: true,
+        userId,
+        email: authUser.user.email,
+        verificationEmailSent: true,
       });
     }
 

@@ -129,7 +129,7 @@ export function AuthProvider({ children }: AuthProviderProps) {
           return;
         }
 
-        if ((role === 'admin' || role === 'superadmin' || role === 'guard') && !user.email_confirmed_at) {
+        if ((role === 'admin' || role === 'superadmin' || role === 'guard' || role === 'office_staff') && !user.email_confirmed_at) {
           await supabase!.auth.signOut();
           if (active && generation === authGenerationRef.current) {
             toast.error('Account not verified. Please verify your email first. Check your inbox, spam, or trash folder for the verification email.', { id: 'unverified-toast' });

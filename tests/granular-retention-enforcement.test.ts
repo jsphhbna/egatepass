@@ -281,6 +281,10 @@ describe('Phase B — Granular Retention Enforcement & Superadmin Override Regre
               lte: () => builder,
               order: () => builder,
               gt: () => builder,
+              in: (col: string, vals: any[]) => {
+                currentRows = currentRows.filter((r) => vals.includes(r[col]));
+                return builder;
+              },
               limit: (n: number) => Promise.resolve({ data: currentRows.slice(0, n), error: null }),
             };
             return builder;
@@ -430,6 +434,98 @@ describe('Phase B — Granular Retention Enforcement & Superadmin Override Regre
       const req = makePurgeRequest(ADMIN_ID, { dryRun: true });
       const res = await purgeHandler(req);
       expect(res.status).toBe(403);
+    });
+
+    it('shortening category duration immediately makes existing records eligible', async () => {
+      // Originally: id_retention_days = 30 -> ev-id-young (15 days old) is NOT eligible
+      // Shorten ID retention to 10 days
+      mockSettings.id_retention_days = 10;
+
+      const req = makePurgeRequest(SUPERADMIN_ID, { dryRun: true });
+      const res = await purgeHandler(req);
+      expect(res.status).toBe(200);
+      const json = await res.json();
+
+      // Now ev-id-young (15 days old > 10 days) becomes eligible!
+      // Total eligible: ev-photo-eligible (10d), ev-id-eligible (35d), ev-vehicle-eligible (20d), ev-id-young (15d) = 4
+      expect(json.eligibleEvidenceCount).toBe(4);
+    });
+
+    it('extending category duration immediately protects existing records', async () => {
+      // Originally: photo_retention_days = 7 -> ev-photo-eligible (10 days old) is eligible
+      // Extend photo retention to 30 days
+      mockSettings.photo_retention_days = 30;
+
+      const req = makePurgeRequest(SUPERADMIN_ID, { dryRun: true });
+      const res = await purgeHandler(req);
+      expect(res.status).toBe(200);
+      const json = await res.json();
+
+      // ev-photo-eligible (10 days old < 30 days) is now protected!
+      // Total eligible: ev-id-eligible (35d), ev-vehicle-eligible (20d) = 2
+      expect(json.eligibleEvidenceCount).toBe(2);
+    });
+
+    it('allows Superadmin override to purge records even with future expires_at', async () => {
+      // Add a fresh evidence item created 1 hour ago with future expires_at
+      mockEvidence.push({
+        id: 'ev-photo-future',
+        visitor_id: 'vis-photo-future',
+        bucket_id: 'visitor-evidence',
+        object_path: 'photo_future.jpg',
+        expires_at: new Date(Date.now() + 7 * 86_400_000).toISOString(),
+        kind: 'photo',
+        created_at: new Date(Date.now() - 3600_000).toISOString(),
+        verified_at: new Date(Date.now() - 3600_000).toISOString(),
+      });
+
+      const req = makePurgeRequest(SUPERADMIN_ID, {
+        dryRun: false,
+        override: {
+          reason: 'Emergency audit request to wipe photo evidence',
+          categories: ['photo'],
+        },
+      });
+
+      const res = await purgeHandler(req);
+      expect(res.status).toBe(200);
+      expect(claimedIds).toContain('ev-photo-future');
+    });
+
+    it('rejects unsupported or un-implemented override categories', async () => {
+      const req = makePurgeRequest(SUPERADMIN_ID, {
+        override: {
+          reason: 'Attempting to override non-storage categories',
+          categories: ['visitor', 'returning_profile'],
+        },
+      });
+      const res = await purgeHandler(req);
+      expect(res.status).toBe(400);
+      const json = await res.json();
+      expect(json.error).toBe('invalid_override_categories');
+    });
+
+    it('fails closed with 500 settings_unavailable if authoritative settings are missing', async () => {
+      mockSettings = null;
+
+      const req = makePurgeRequest(SUPERADMIN_ID, { dryRun: true });
+      const res = await purgeHandler(req);
+      expect(res.status).toBe(500);
+      const json = await res.json();
+      expect(json.error).toBe('settings_unavailable');
+    });
+
+    it('guarantees parity between dry-run candidate count and actual purge claimed count', async () => {
+      const dryReq = makePurgeRequest(SUPERADMIN_ID, { dryRun: true });
+      const dryRes = await purgeHandler(dryReq);
+      expect(dryRes.status).toBe(200);
+      const dryJson = await dryRes.json();
+
+      const purgeReq = makePurgeRequest(SUPERADMIN_ID, { dryRun: false });
+      const purgeRes = await purgeHandler(purgeReq);
+      expect(purgeRes.status).toBe(200);
+
+      expect(claimedIds.length).toBe(dryJson.eligibleEvidenceCount);
     });
   });
 });

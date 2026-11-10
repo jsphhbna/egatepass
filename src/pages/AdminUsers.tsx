@@ -60,6 +60,7 @@ export function AdminUsers() {
       role: string;
       active: boolean;
       mustChangePassword: boolean;
+      emailConfirmed?: boolean;
     } | null;
     assignedStaff?: Array<{
       userId: string;
@@ -68,6 +69,7 @@ export function AdminUsers() {
       role: string;
       active: boolean;
       mustChangePassword: boolean;
+      emailConfirmed?: boolean;
     }>;
   }>>([]);
 
@@ -200,6 +202,29 @@ export function AdminUsers() {
       toast.error(err.message || 'Failed to reset credentials');
     } finally {
       setIsResetting(false);
+    }
+  }
+
+  async function handleResendVerification(userId: string, officeId: string) {
+    try {
+      const token = await getAccessToken();
+      const res = await fetch('/api/admin/offices', {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${token}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          action: 'resend_verification_email',
+          userId,
+          officeId,
+        }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.message || data.error || 'Failed to resend verification email');
+      toast.success('Verification email resent successfully.');
+    } catch (err: any) {
+      toast.error(err.message || 'Failed to resend verification email');
     }
   }
 
@@ -1053,6 +1078,11 @@ export function AdminUsers() {
                                 1st login pending
                               </span>
                             )}
+                            {office.dedicatedAccount.emailConfirmed === false && (
+                              <span className="rounded bg-rose-50 text-rose-800 border border-rose-200 px-1 py-0.2 text-[9px] font-bold">
+                                Email unverified
+                              </span>
+                            )}
                           </div>
                         </div>
                       ) : (
@@ -1079,6 +1109,16 @@ export function AdminUsers() {
                             </Button>
                           ) : (
                             <>
+                              {office.dedicatedAccount.emailConfirmed === false && (
+                                <Button
+                                  size="sm"
+                                  variant="secondary"
+                                  onClick={() => handleResendVerification(office.dedicatedAccount!.userId, office.id)}
+                                  title="Resend verification email to staff"
+                                >
+                                  Resend Verification
+                                </Button>
+                              )}
                               <Button
                                 size="sm"
                                 variant="secondary"

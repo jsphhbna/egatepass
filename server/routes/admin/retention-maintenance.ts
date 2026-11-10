@@ -225,37 +225,35 @@ async function handleRequest(request: Request): Promise<Response> {
     const vehicleDays = (settings as any).vehicle_photo_retention_days ?? (settings as any).image_retention_days ?? 7;
 
     function isEvidenceItemEligible(item: any): boolean {
-      const nowIso = new Date().toISOString();
-      if (item.expires_at > nowIso) return false;
+      const nowMs = Date.now();
       if (item.kind === 'photo') {
         if (!photoEnabled) return false;
         if (item.created_at) {
-          return new Date(item.created_at).getTime() <= Date.now() - photoDays * 86_400_000;
+          return new Date(item.created_at).getTime() <= nowMs - photoDays * 86_400_000;
         }
-        return true;
+        return new Date(item.expires_at).getTime() <= nowMs;
       }
       if (item.kind === 'id') {
         if (!idEnabled) return false;
         if (item.created_at) {
-          return new Date(item.created_at).getTime() <= Date.now() - idDays * 86_400_000;
+          return new Date(item.created_at).getTime() <= nowMs - idDays * 86_400_000;
         }
-        return true;
+        return new Date(item.expires_at).getTime() <= nowMs;
       }
       if (item.kind === 'vehicle_photo') {
         if (!vehicleEnabled) return false;
         if (item.created_at) {
-          return new Date(item.created_at).getTime() <= Date.now() - vehicleDays * 86_400_000;
+          return new Date(item.created_at).getTime() <= nowMs - vehicleDays * 86_400_000;
         }
-        return true;
+        return new Date(item.expires_at).getTime() <= nowMs;
       }
-      return true;
+      return new Date(item.expires_at).getTime() <= nowMs;
     }
 
     let evidenceQuery = admin
       .from('visitor_evidence')
       .select('id, visitor_id, bucket_id, object_path, expires_at, kind, created_at, verified_at')
       .is('purged_at', null)
-      .lte('expires_at', now)
       .order('expires_at', { ascending: true })
       .order('id', { ascending: true })
       .limit(batchSize);
@@ -282,7 +280,6 @@ async function handleRequest(request: Request): Promise<Response> {
         .from('visitor_evidence')
         .select('id, visitor_id, bucket_id, object_path, expires_at, kind, created_at, verified_at')
         .is('purged_at', null)
-        .lte('expires_at', now)
         .order('expires_at', { ascending: true })
         .order('id', { ascending: true })
         .limit(batchSize);

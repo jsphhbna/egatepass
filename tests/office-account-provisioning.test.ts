@@ -101,6 +101,7 @@ describe('Admin Dedicated Office Account Provisioning & Governance (Phase A & F)
 
     const mockAdmin: any = {
       auth: {
+        resend: vi.fn(async () => ({ data: {}, error: null })),
         getUser: vi.fn(async (token) => {
           const actorId = token ? token.replace('test-token-', '') : null;
           const found = mockDbData.staff_profiles.find((p) => p.user_id === actorId);

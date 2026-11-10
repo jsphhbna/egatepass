@@ -2,12 +2,15 @@ import { HttpError, recordReconciliation, requireStaffActor } from '../../actors
 import { jsonResponse, readBearerToken } from '../../http.js';
 import { getServerSupabaseClients } from '../../supabase.js';
 
+const SUPPORTED_OVERRIDE_CATEGORIES = ['photo', 'id', 'vehicle_photo'] as const;
+type SupportedOverrideCategory = typeof SUPPORTED_OVERRIDE_CATEGORIES[number];
+
 interface PurgeRequestBody {
   dryRun?: boolean;
   cursor?: string;
   override?: {
     reason: string;
-    categories: Array<'photo' | 'id' | 'vehicle_photo' | 'visitor' | 'returning_profile'>;
+    categories: SupportedOverrideCategory[];
   };
 }
 
@@ -62,7 +65,12 @@ async function handleRequest(request: Request): Promise<Response> {
       .eq('singleton', true)
       .maybeSingle();
 
-    if (settingsError) throw settingsError;
+    if (settingsError || !settingsData) {
+      return jsonResponse(500, {
+        error: 'settings_unavailable',
+        message: 'Authoritative retention settings could not be retrieved. Failing closed.',
+      });
+    }
 
     const retentionDays = settingsData?.image_retention_days ?? 7;
     const photoRetentionDays = settingsData?.photo_retention_days ?? settingsData?.image_retention_days ?? 7;
@@ -77,6 +85,14 @@ async function handleRequest(request: Request): Promise<Response> {
       }
       if (!Array.isArray(body.override.categories) || body.override.categories.length === 0) {
         return jsonResponse(400, { error: 'invalid_override_categories', message: 'At least one target category is required for override' });
+      }
+      for (const cat of body.override.categories) {
+        if (!SUPPORTED_OVERRIDE_CATEGORIES.includes(cat as any)) {
+          return jsonResponse(400, {
+            error: 'invalid_override_categories',
+            message: 'Override purge only supports storage evidence categories: photo, id, vehicle_photo.',
+          });
+        }
       }
       overrideCategories = new Set(body.override.categories);
     }
@@ -135,15 +151,20 @@ async function handleRequest(request: Request): Promise<Response> {
       let q = admin
         .from('visitor_evidence')
         .select('id, visitor_id, bucket_id, object_path, expires_at, kind, created_at, verified_at')
-        .is('purged_at', null)
-        .lte('expires_at', now)
-        .order('expires_at', { ascending: true })
-        .order('id', { ascending: true })
-        .limit(200);
+        .is('purged_at', null);
+
+      if (overrideCategories) {
+        q = q.in('kind', Array.from(overrideCategories));
+      }
 
       if (lastSeenId) {
         q = q.gt('id', lastSeenId);
       }
+
+      q = q
+        .order('expires_at', { ascending: true })
+        .order('id', { ascending: true })
+        .limit(200);
 
       const { data: pageRows, error: pageErr } = await q;
       if (pageErr) throw pageErr;
@@ -179,8 +200,9 @@ async function handleRequest(request: Request): Promise<Response> {
 
           if (item.created_at) {
             if (new Date(item.created_at).getTime() > nowMs - days * 86_400_000) continue;
+          } else {
+            if (new Date(item.expires_at).getTime() > nowMs) continue;
           }
-          if (new Date(item.expires_at).getTime() > nowMs) continue;
         }
 
         // Safeguards: NEVER purge evidence if visitor is inside, on an active pass, or under incident hold
@@ -225,6 +247,9 @@ async function handleRequest(request: Request): Promise<Response> {
           requested_evidence_id: item.id,
           requested_claim_id: claimId,
           requested_override: Boolean(body.override),
+          requested_actor_id: body.override ? actor.id : null,
+          requested_override_reason: body.override ? body.override.reason : null,
+          requested_override_categories: body.override ? body.override.categories : null,
         })) as { data: ClaimResult | null; error: any };
 
       if (claimError) {

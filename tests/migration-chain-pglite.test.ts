@@ -3724,4 +3724,31 @@ describe('Permanent PostgreSQL Migration Chain & Schema Contracts (PGlite)', () 
     expect(resetGrantees).not.toContain('anon');
   }, 60000);
 
+  it('EE. Migration 81 contracts: Authoritative Retention Synchronization & Superadmin Override Validation', async () => {
+    const db = new PGlite();
+    await applyAllMigrations(db);
+
+    // 1. Verify routine privileges for api.claim_evidence_for_purge (Migration 81)
+    const purgePrivs = await db.query<{ grantee: string; privilege_type: string }>(`
+      select grantee, privilege_type
+      from information_schema.routine_privileges
+      where specific_schema = 'api' and routine_name = 'claim_evidence_for_purge';
+    `);
+    const purgeGrantees = purgePrivs.rows.map((r) => r.grantee);
+    expect(purgeGrantees).toContain('service_role');
+    expect(purgeGrantees).not.toContain('anon');
+    expect(purgeGrantees).not.toContain('authenticated');
+
+    // 2. Verify routine privileges for api.update_retention_policies
+    const updatePrivs = await db.query<{ grantee: string; privilege_type: string }>(`
+      select grantee, privilege_type
+      from information_schema.routine_privileges
+      where specific_schema = 'api' and routine_name = 'update_retention_policies';
+    `);
+    const updateGrantees = updatePrivs.rows.map((r) => r.grantee);
+    expect(updateGrantees).toContain('service_role');
+    expect(updateGrantees).not.toContain('anon');
+    expect(updateGrantees).not.toContain('authenticated');
+  }, 60000);
+
 });
