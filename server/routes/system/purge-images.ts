@@ -54,7 +54,7 @@ async function handleRequest(request: Request): Promise<Response> {
 
     const { data: settingsData, error: settingsError } = await admin
       .from('app_settings')
-      .select('image_retention_days, photo_retention_days, id_retention_days')
+      .select('image_retention_days, photo_retention_days, id_retention_days, photo_retention_enabled, id_retention_enabled, vehicle_photo_retention_enabled')
       .eq('singleton', true)
       .maybeSingle();
 
@@ -109,7 +109,7 @@ async function handleRequest(request: Request): Promise<Response> {
     while (eligibleItems.length < (body.dryRun ? 200 : BATCH_SIZE) && scannedCount < MAX_SCAN) {
       let q = admin
         .from('visitor_evidence')
-        .select('id, visitor_id, bucket_id, object_path, expires_at')
+        .select('id, visitor_id, bucket_id, object_path, expires_at, kind')
         .is('purged_at', null)
         .lte('expires_at', now)
         .order('expires_at', { ascending: true })
@@ -132,8 +132,16 @@ async function handleRequest(request: Request): Promise<Response> {
       lastSeenId = lastItem.id;
       scannedCount += pageRows.length;
 
+      const photoEnabled = (settingsData as any)?.photo_retention_enabled ?? true;
+      const idEnabled = (settingsData as any)?.id_retention_enabled ?? true;
+      const vehicleEnabled = (settingsData as any)?.vehicle_photo_retention_enabled ?? true;
+
       for (const item of pageRows) {
-        
+        const kind = (item as any).kind;
+        if (kind === 'photo' && !photoEnabled) continue;
+        if (kind === 'id' && !idEnabled) continue;
+        if (kind === 'vehicle_photo' && !vehicleEnabled) continue;
+
         if (!heldVisitorIds.has(item.visitor_id) && !activePassVisitorIds.has(item.visitor_id)) {
           eligibleItems.push(item);
           if (eligibleItems.length >= (body.dryRun ? 200 : BATCH_SIZE)) break;

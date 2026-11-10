@@ -303,6 +303,7 @@ export function GetPassPage() {
 
   // Historical evidence URLs & metadata for Returning Visitor Welcome Back screen
   const [originalPortraitUrl, setOriginalPortraitUrl] = useState<string | null>(null);
+  const [portalToken, setPortalToken] = useState<string | null>(null);
   const [originalPortraitDate, setOriginalPortraitDate] = useState<string | null>(null);
   const [historicalIdSubmittedDate, setHistoricalIdSubmittedDate] = useState<string | null>(null);
 
@@ -765,7 +766,7 @@ export function GetPassPage() {
 
     // 7. Rotate request ID and nullify transaction
     issueRequestId.current = crypto.randomUUID();
-    portalTransactionRef.current = null;
+    portalTransactionRef.current = null; setPortalToken(null);
     setTransactionPhase(null);
     turnstileRef.current?.resetChallenge();
     livePhotoIntentIdRef.current = null;
@@ -947,7 +948,7 @@ export function GetPassPage() {
           throw new Error('Security verification widget is initializing. Please wait a moment and try again.');
         }
         tx = await createPortalIssueTransaction(freshCaptchaToken);
-        portalTransactionRef.current = tx;
+        portalTransactionRef.current = tx; setPortalToken(tx?.token ?? null);
         issueRequestId.current = tx.requestId as ReturnType<typeof crypto.randomUUID>;
       }
       const lookupRes = await lookupReturningVisitor(tx, {
@@ -1177,7 +1178,7 @@ export function GetPassPage() {
         void faceWebcam.start();
         return;
       }
-      portalTransactionRef.current = null;
+      portalTransactionRef.current = null; setPortalToken(null);
       livePhotoIntentIdRef.current = null;
     }
 
@@ -1191,7 +1192,7 @@ export function GetPassPage() {
       }
 
       const tx = await createPortalIssueTransaction(freshCaptchaToken);
-      portalTransactionRef.current = tx;
+      portalTransactionRef.current = tx; setPortalToken(tx?.token ?? null);
       issueRequestId.current = tx.requestId as ReturnType<typeof crypto.randomUUID>;
 
       turnstileRef.current?.resetChallenge();
@@ -1237,7 +1238,7 @@ export function GetPassPage() {
           throw new Error('Security verification widget is initializing. Please wait a moment and try again.');
         }
         tx = await createPortalIssueTransaction(freshCaptchaToken);
-        portalTransactionRef.current = tx;
+        portalTransactionRef.current = tx; setPortalToken(tx?.token ?? null);
         issueRequestId.current = tx.requestId as ReturnType<typeof crypto.randomUUID>;
       }
 
@@ -1361,7 +1362,7 @@ export function GetPassPage() {
           throw new Error('Security verification widget is initializing. Please wait a moment and try again.');
         }
         tx = await createPortalIssueTransaction(freshCaptchaToken);
-        portalTransactionRef.current = tx;
+        portalTransactionRef.current = tx; setPortalToken(tx?.token ?? null);
         issueRequestId.current = tx.requestId as ReturnType<typeof crypto.randomUUID>;
       }
 
@@ -1779,7 +1780,7 @@ export function GetPassPage() {
           reasonCode: err?.code || 'portal_session_mismatch',
         });
         const tx = portalTransactionRef.current;
-        portalTransactionRef.current = null;
+        portalTransactionRef.current = null; setPortalToken(null);
         livePhotoIntentIdRef.current = null;
         if (tx) {
           invalidatePortalEvidenceCheckpoint(tx, 'photo');
@@ -2011,7 +2012,7 @@ export function GetPassPage() {
       const msg = err?.message?.toLowerCase() || '';
       if (err instanceof PortalSessionError || err?.code?.startsWith?.('portal_session') || msg.includes('session')) {
         const tx = portalTransactionRef.current;
-        portalTransactionRef.current = null;
+        portalTransactionRef.current = null; setPortalToken(null);
         livePhotoIntentIdRef.current = null;
         if (tx) {
           invalidatePortalEvidenceCheckpoint(tx, 'photo');
@@ -2797,28 +2798,38 @@ export function GetPassPage() {
                 error={addressError || undefined}
               />
 
-              {/* Data Privacy Notice Trigger Link */}
-              <div className="flex items-center justify-between rounded-xl border border-[var(--color-border)] bg-[var(--color-canvas)] p-3 text-xs text-[var(--color-text-secondary)]">
-                <span>By proceeding, you acknowledge our campus visitor privacy guidelines.</span>
-                <button
-                  type="button"
-                  onClick={() => setShowPrivacyModal(true)}
-                  className="font-bold text-[#7A0A0A] hover:underline inline-flex items-center gap-1.5 shrink-0 focus:outline-none"
-                >
-                  <ShieldCheck className="h-4 w-4 text-[#7A0A0A]" />
-                  Read our Data Privacy Notice
-                </button>
-              </div>
-
-              <div className="rounded-lg border border-[var(--color-border)] p-4 bg-[var(--color-surface)]">
-                <label className="flex items-start gap-3 cursor-pointer">
-                  <input id="consent" type="checkbox" {...register('consent')} className="mt-1 h-4 w-4 text-[var(--color-brand)] rounded" />
+              {/* Consolidated Data Privacy & Consent Card */}
+              <div className="rounded-xl border border-[var(--color-border)] p-4 bg-[var(--color-surface)] space-y-3 shadow-xs">
+                <label className="flex items-start gap-3 cursor-pointer select-none">
+                  <input
+                    id="consent"
+                    type="checkbox"
+                    {...register('consent')}
+                    className="mt-1 h-4 w-4 text-[var(--color-brand)] rounded shrink-0 cursor-pointer"
+                  />
                   <span className="text-xs text-[var(--color-text-secondary)] leading-relaxed">
                     I consent to the collection and processing of my personal information, face photo, and valid ID pursuant to the <strong>Data Privacy Act of 2012</strong> for the purpose of campus security and visitor management.
                   </span>
                 </label>
+
+                <div className="flex flex-wrap items-center justify-between gap-2 pt-2 border-t border-[var(--color-border)] text-xs text-[var(--color-text-secondary)]">
+                  <span>By proceeding, you acknowledge our campus visitor privacy guidelines.</span>
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.preventDefault();
+                      e.stopPropagation();
+                      setShowPrivacyModal(true);
+                    }}
+                    className="font-bold text-[#7A0A0A] hover:underline inline-flex items-center gap-1.5 shrink-0 focus:outline-none focus:ring-1 focus:ring-[#7A0A0A] rounded px-1 py-0.5"
+                  >
+                    <ShieldCheck className="h-4 w-4 text-[#7A0A0A]" />
+                    Read our Data Privacy Notice
+                  </button>
+                </div>
+
                 {errors.consent && (
-                  <p className="text-xs text-[var(--color-danger-dark)] mt-2 font-medium">{errors.consent.message}</p>
+                  <p className="text-xs text-[var(--color-danger-dark)] font-medium">{errors.consent.message}</p>
                 )}
               </div>
 
@@ -5019,7 +5030,7 @@ export function GetPassPage() {
                       <div className="rounded-lg overflow-hidden border border-[var(--color-border)] aspect-[3/4] max-h-48 bg-slate-100 flex items-center justify-center">
                         <AuthenticatedImage
                           srcUrl={originalPortraitUrl}
-                          authToken={portalTransactionRef.current?.token}
+                          authToken={portalToken || portalTransactionRef.current?.token}
                           alt="Original registration portrait"
                           className="h-full w-full object-cover"
                         />
@@ -5445,7 +5456,7 @@ export function GetPassPage() {
                   <div className="h-16 w-16 rounded-xl overflow-hidden border border-amber-300 bg-slate-100 shrink-0">
                     <AuthenticatedImage
                       srcUrl={candidateMatch.previewUrl}
-                      authToken={portalTransactionRef.current?.token}
+                      authToken={portalToken || portalTransactionRef.current?.token}
                       alt="Previous visit photo preview"
                       className="h-full w-full object-cover"
                     />

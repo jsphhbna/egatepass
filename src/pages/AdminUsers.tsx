@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { useSearchParams } from 'react-router-dom';
-import { Plus, Building2, UserCheck, CheckCircle2, Users, AlertCircle } from 'lucide-react';
+import { Plus, Building2, UserCheck, CheckCircle2, Users, AlertCircle, KeyRound, Copy, Check, Eye, EyeOff, ShieldAlert } from 'lucide-react';
 import { Button, FormField, Input, Select, StatusBadge, DataTable, DataTableHead, DataTableRow, DataTableCell, Modal, ConfirmModal } from '@/components/ui';
 import { toast } from 'sonner';
 import { z } from 'zod';
@@ -53,7 +53,41 @@ export function AdminUsers() {
     verified?: boolean;
     verified_at?: string | null;
     verified_by?: string | null;
+    dedicatedAccount?: {
+      userId: string;
+      email: string;
+      displayName: string;
+      role: string;
+      active: boolean;
+      mustChangePassword: boolean;
+    } | null;
+    assignedStaff?: Array<{
+      userId: string;
+      email: string;
+      displayName: string;
+      role: string;
+      active: boolean;
+      mustChangePassword: boolean;
+    }>;
   }>>([]);
+
+  // Office Provisioning & Dedicated Credentials State (Phase F)
+  const [provisioningOffice, setProvisioningOffice] = useState<{ id: string; name: string } | null>(null);
+  const [provisionCustomEmail, setProvisionCustomEmail] = useState('');
+  const [provisionDisplayName, setProvisionDisplayName] = useState('');
+  const [isProvisioning, setIsProvisioning] = useState(false);
+
+  const [resettingOffice, setResettingOffice] = useState<{ id: string; name: string; userId: string; email: string } | null>(null);
+  const [isResetting, setIsResetting] = useState(false);
+
+  const [credentialsModalData, setCredentialsModalData] = useState<{
+    officeName: string;
+    email: string;
+    temporaryPassword: string;
+    mustChangePassword: boolean;
+  } | null>(null);
+  const [revealPassword, setRevealPassword] = useState(false);
+  const [copiedPassword, setCopiedPassword] = useState(false);
   const [loadingAdminOffices, setLoadingAdminOffices] = useState(false);
   const [showAddOfficeModal, setShowAddOfficeModal] = useState(false);
   const [newOfficeName, setNewOfficeName] = useState('');
@@ -89,6 +123,112 @@ export function AdminUsers() {
       void loadAdminOffices();
     }
   }, [currentTab, loadAdminOffices]);
+
+  async function handleProvisionDedicatedAccount() {
+    if (!provisioningOffice || isProvisioning) return;
+    setIsProvisioning(true);
+    try {
+      const token = await getAccessToken();
+      const res = await fetch('/api/admin/offices', {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${token}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          action: 'provision_account',
+          officeId: provisioningOffice.id,
+          customEmail: provisionCustomEmail.trim() || undefined,
+          displayName: provisionDisplayName.trim() || undefined,
+        }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.message || data.error || 'Failed to provision office account');
+
+      setCredentialsModalData({
+        officeName: provisioningOffice.name,
+        email: data.email,
+        temporaryPassword: data.temporaryPassword,
+        mustChangePassword: true,
+      });
+      setProvisioningOffice(null);
+      setProvisionCustomEmail('');
+      setProvisionDisplayName('');
+      toast.success('Dedicated office account provisioned successfully.');
+      await loadAdminOffices();
+    } catch (err: any) {
+      toast.error(err.message || 'Failed to provision office account');
+    } finally {
+      setIsProvisioning(false);
+    }
+  }
+
+  async function handleConfirmResetCredentials() {
+    if (!resettingOffice || isResetting) return;
+    setIsResetting(true);
+    try {
+      const token = await getAccessToken();
+      const res = await fetch('/api/admin/offices', {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${token}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          action: 'reset_account_credentials',
+          userId: resettingOffice.userId,
+          officeId: resettingOffice.id,
+        }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.message || data.error || 'Failed to reset credentials');
+
+      setCredentialsModalData({
+        officeName: resettingOffice.name,
+        email: resettingOffice.email,
+        temporaryPassword: data.temporaryPassword,
+        mustChangePassword: true,
+      });
+      setResettingOffice(null);
+      toast.success('Office credentials reset. Displaying new temporary password.');
+      await loadAdminOffices();
+    } catch (err: any) {
+      toast.error(err.message || 'Failed to reset credentials');
+    } finally {
+      setIsResetting(false);
+    }
+  }
+
+  async function handleToggleOfficeAccountActive(userId: string, active: boolean) {
+    try {
+      const token = await getAccessToken();
+      const res = await fetch('/api/admin/offices', {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${token}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          action: 'toggle_account_active',
+          userId,
+          active,
+        }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.message || data.error || 'Failed to update account status');
+      toast.success(active ? 'Office account reactivated.' : 'Office account deactivated.');
+      await loadAdminOffices();
+    } catch (err: any) {
+      toast.error(err.message || 'Failed to update account status');
+    }
+  }
+
+  function handleCopyPassword(text: string) {
+    navigator.clipboard.writeText(text);
+    setCopiedPassword(true);
+    toast.success('Temporary password copied to clipboard.');
+    setTimeout(() => setCopiedPassword(false), 2500);
+  }
 
   async function handleVerifyOffice(officeId: string, verify: boolean) {
     try {
@@ -664,7 +804,7 @@ export function AdminUsers() {
           </FormField>
 
           <div className="rounded-md border border-[var(--color-info)] bg-[var(--color-info-light)] p-3 text-xs text-[var(--color-info-dark)]">
-            Guard staff accounts for daily operations are now managed as dedicated <strong>Guard Station</strong> devices under the <strong>Devices</strong> tab. New staff accounts are created as Admin.
+            Guard station terminals for gate monitoring are managed under the <strong>Devices</strong> tab. Guard personnel access the monitoring feed using Guard Station terminals.
           </div>
 
           <FormField label="Role" id="new-user-role" requirement="required" error={errors.role?.message}>
@@ -860,6 +1000,7 @@ export function AdminUsers() {
                   <DataTableCell isHeader>Description</DataTableCell>
                   <DataTableCell isHeader>Status</DataTableCell>
                   <DataTableCell isHeader>Verification</DataTableCell>
+                  <DataTableCell isHeader>Dedicated Account</DataTableCell>
                   <DataTableCell isHeader className="text-right">Actions</DataTableCell>
                 </DataTableRow>
               </DataTableHead>
@@ -890,15 +1031,79 @@ export function AdminUsers() {
                         </span>
                       )}
                     </DataTableCell>
+                    <DataTableCell>
+                      {office.dedicatedAccount ? (
+                        <div className="space-y-1">
+                          <div className="font-mono text-xs font-semibold text-[var(--color-text-primary)]">
+                            {office.dedicatedAccount.email || 'office.account@earist.edu.ph'}
+                          </div>
+                          <div className="flex items-center gap-1.5">
+                            <span className={`inline-block h-2 w-2 rounded-full ${office.dedicatedAccount.active ? 'bg-emerald-500' : 'bg-gray-400'}`} />
+                            <span className="text-[11px] font-medium text-[var(--color-text-secondary)]">
+                              {office.dedicatedAccount.active ? 'Active' : 'Deactivated'}
+                            </span>
+                            {office.dedicatedAccount.mustChangePassword && (
+                              <span className="rounded bg-amber-50 text-amber-800 border border-amber-200 px-1 py-0.2 text-[9px] font-bold">
+                                1st login pending
+                              </span>
+                            )}
+                          </div>
+                        </div>
+                      ) : (
+                        <span className="text-xs text-[var(--color-text-muted)] italic">
+                          No account provisioned
+                        </span>
+                      )}
+                    </DataTableCell>
                     <DataTableCell className="text-right">
                       {canManageAdministrativeRoles && (
-                        <div className="inline-flex items-center gap-2 justify-end">
+                        <div className="inline-flex flex-wrap items-center gap-1.5 justify-end">
+                          {!office.dedicatedAccount ? (
+                            <Button
+                              size="sm"
+                              variant="secondary"
+                              onClick={() => {
+                                setProvisioningOffice({ id: office.id, name: office.name });
+                                setProvisionDisplayName(`${office.name} Staff`);
+                                setProvisionCustomEmail('');
+                              }}
+                              icon={<KeyRound className="h-3.5 w-3.5 text-[#7A0A0A]" />}
+                            >
+                              Provision Account
+                            </Button>
+                          ) : (
+                            <>
+                              <Button
+                                size="sm"
+                                variant="secondary"
+                                onClick={() => setResettingOffice({
+                                  id: office.id,
+                                  name: office.name,
+                                  userId: office.dedicatedAccount!.userId,
+                                  email: office.dedicatedAccount!.email || `${office.name} Account`,
+                                })}
+                                title="Reset account credentials"
+                              >
+                                Reset Password
+                              </Button>
+                              <Button
+                                size="sm"
+                                variant="secondary"
+                                onClick={() => handleToggleOfficeAccountActive(
+                                  office.dedicatedAccount!.userId,
+                                  !office.dedicatedAccount!.active
+                                )}
+                              >
+                                {office.dedicatedAccount.active ? 'Deactivate' : 'Reactivate'}
+                              </Button>
+                            </>
+                          )}
                           <Button
                             variant="secondary"
                             size="sm"
                             onClick={() => handleToggleOfficeActive(office.id, !office.active)}
                           >
-                            {office.active ? 'Deactivate' : 'Activate'}
+                            {office.active ? 'Disable Office' : 'Enable Office'}
                           </Button>
                           {office.verified ? (
                             <Button
@@ -913,7 +1118,7 @@ export function AdminUsers() {
                               size="sm"
                               onClick={() => handleVerifyOffice(office.id, true)}
                             >
-                              Verify Office
+                              Verify
                             </Button>
                           )}
                         </div>
@@ -923,7 +1128,7 @@ export function AdminUsers() {
                 ))}
                 {adminOffices.length === 0 && (
                   <tr>
-                    <td colSpan={6} className="py-8 text-center text-[var(--color-text-muted)]">
+                    <td colSpan={7} className="py-8 text-center text-[var(--color-text-muted)]">
                       No offices recorded.
                     </td>
                   </tr>
@@ -1241,6 +1446,165 @@ export function AdminUsers() {
           </div>
         </div>
       </Modal>
+
+      {/* Provision Dedicated Office Account Modal */}
+      {provisioningOffice && (
+        <Modal
+          isOpen={true}
+          onClose={() => setProvisioningOffice(null)}
+          title={`Provision Dedicated Account — ${provisioningOffice.name}`}
+          size="md"
+        >
+          <div className="space-y-4">
+            <div className="rounded-xl border border-blue-200 bg-blue-50/60 p-3 text-xs text-blue-900 space-y-1">
+              <div className="font-bold flex items-center gap-1.5 text-blue-950">
+                <KeyRound className="h-4 w-4 text-blue-700" /> Dedicated Office Staff Account
+              </div>
+              <p>
+                This provisions a dedicated account with the <code className="font-mono bg-blue-100 px-1 rounded">office_staff</code> role, strictly bound to review and approve visit requests for <strong>{provisioningOffice.name}</strong>.
+              </p>
+              <p>
+                A strong temporary password will be automatically generated. The staff member will be required to change their password on first login.
+              </p>
+            </div>
+
+            <FormField label="Staff Account Display Name" id="provision-display-name">
+              <Input
+                id="provision-display-name"
+                value={provisionDisplayName}
+                onChange={(e) => setProvisionDisplayName(e.target.value)}
+                placeholder="e.g. Office of the Registrar Staff"
+              />
+            </FormField>
+
+            <FormField label="Login Email (Institutional)" id="provision-email">
+              <Input
+                id="provision-email"
+                type="email"
+                value={provisionCustomEmail}
+                onChange={(e) => setProvisionCustomEmail(e.target.value)}
+                placeholder="Leave blank to auto-generate (e.g. office.registrar@earist.edu.ph)"
+              />
+            </FormField>
+
+            <div className="flex justify-end gap-2 pt-2">
+              <Button
+                variant="secondary"
+                onClick={() => setProvisioningOffice(null)}
+                disabled={isProvisioning}
+              >
+                Cancel
+              </Button>
+              <Button
+                onClick={handleProvisionDedicatedAccount}
+                loading={isProvisioning}
+                icon={<KeyRound className="h-4 w-4" />}
+              >
+                Provision Account
+              </Button>
+            </div>
+          </div>
+        </Modal>
+      )}
+
+      {/* One-Time Secure Credentials Modal */}
+      {credentialsModalData && (
+        <Modal
+          isOpen={true}
+          onClose={() => {
+            setCredentialsModalData(null);
+            setRevealPassword(false);
+          }}
+          title="Dedicated Office Account Credentials"
+          size="md"
+        >
+          <div className="space-y-4">
+            <div className="rounded-xl border border-amber-300 bg-amber-50 p-3.5 text-xs text-amber-950 space-y-1.5">
+              <div className="font-bold flex items-center gap-1.5 text-amber-900">
+                <ShieldAlert className="h-4 w-4 text-amber-700" /> ONE-TIME CREDENTIALS DISPLAY
+              </div>
+              <p>
+                These credentials will <strong>only be displayed this one time</strong>. Copy them now and securely transmit them to the designated office personnel.
+              </p>
+              <p className="font-semibold text-amber-900">
+                The account holder will be strictly required to change this temporary password upon first login before accessing office features.
+              </p>
+            </div>
+
+            <div className="divide-y divide-[var(--color-border)] rounded-xl border border-[var(--color-border)] bg-[var(--color-canvas)] text-xs">
+              <div className="p-3 flex justify-between items-center">
+                <span className="text-[var(--color-text-secondary)] font-medium">Assigned Department:</span>
+                <span className="font-bold text-[var(--color-text-primary)]">{credentialsModalData.officeName}</span>
+              </div>
+              <div className="p-3 flex justify-between items-center">
+                <span className="text-[var(--color-text-secondary)] font-medium">Login Email:</span>
+                <span className="font-mono font-bold text-[var(--color-text-primary)] select-all">{credentialsModalData.email}</span>
+              </div>
+              <div className="p-3 space-y-1.5">
+                <div className="flex justify-between items-center">
+                  <span className="text-[var(--color-text-secondary)] font-medium">Temporary Password:</span>
+                  <button
+                    type="button"
+                    onClick={() => setRevealPassword(!revealPassword)}
+                    className="text-[11px] text-[#7A0A0A] font-semibold flex items-center gap-1 hover:underline"
+                  >
+                    {revealPassword ? <EyeOff className="h-3 w-3" /> : <Eye className="h-3 w-3" />}
+                    {revealPassword ? 'Hide' : 'Reveal'}
+                  </button>
+                </div>
+                <div className="flex items-center gap-2">
+                  <div className="flex-1 font-mono font-bold text-sm bg-white p-2.5 rounded-lg border border-[var(--color-border)] tracking-wider">
+                    {revealPassword ? credentialsModalData.temporaryPassword : '••••••••••••••••'}
+                  </div>
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="secondary"
+                    onClick={() => handleCopyPassword(credentialsModalData.temporaryPassword)}
+                    icon={copiedPassword ? <Check className="h-4 w-4 text-emerald-600" /> : <Copy className="h-4 w-4" />}
+                  >
+                    {copiedPassword ? 'Copied' : 'Copy'}
+                  </Button>
+                </div>
+              </div>
+              <div className="p-3 flex justify-between items-center">
+                <span className="text-[var(--color-text-secondary)] font-medium">Mandatory Password Change:</span>
+                <span className="inline-flex items-center gap-1 text-emerald-700 font-bold bg-emerald-50 px-2 py-0.5 rounded">
+                  <CheckCircle2 className="h-3.5 w-3.5" /> Enforced on 1st Login
+                </span>
+              </div>
+            </div>
+
+            <div className="flex justify-end pt-2">
+              <Button
+                onClick={() => {
+                  setCredentialsModalData(null);
+                  setRevealPassword(false);
+                }}
+              >
+                Done & Acknowledged
+              </Button>
+            </div>
+          </div>
+        </Modal>
+      )}
+
+      {/* Reset Credentials Confirmation Modal */}
+      <ConfirmModal
+        isOpen={!!resettingOffice}
+        onClose={() => setResettingOffice(null)}
+        title="Reset Office Account Credentials?"
+        description={
+          resettingOffice ? (
+            <>
+              This will generate a new temporary password for <strong>{resettingOffice.name}</strong> ({resettingOffice.email}) and enforce mandatory password change on next login. The new password will be displayed once.
+            </>
+          ) : ''
+        }
+        confirmText="Reset & Generate Password"
+        onConfirm={handleConfirmResetCredentials}
+        loading={isResetting}
+      />
     </div>
   );
 }

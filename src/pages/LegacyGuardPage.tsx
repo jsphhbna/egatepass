@@ -2,21 +2,21 @@ import { formatManilaTime } from '@/lib/manilaTime';
 import { useState, useRef } from 'react';
 import { signOutCurrentActor } from '@/services/auth';
 import { AuthenticatedImage } from '@/components/AuthenticatedImage';
-import { recordDecision, GuardApiError, type GuardQueuePass } from '@/services/guard';
 import { useGuardQueue } from '@/hooks/useGuardQueue';
-import { RequestTimeoutError } from '@/lib/fetchWithTimeout';
 import {
   CheckCircle2,
-  XCircle,
   Clock,
   UserCheck,
   LogOut,
-  Loader2,
   RefreshCw,
+  XCircle,
+  Loader2,
 } from 'lucide-react';
-import { Button, Card, EmptyState, Input, Select, StatCard, Modal, ConfirmModal } from '@/components/ui';
-import { BrandMark } from '@/components/BrandMark';
+import { Button, Card, EmptyState, Input, StatCard, ConfirmModal } from '@/components/ui';
+import { recordDecision, GuardApiError, type GuardQueuePass } from '@/services/guard';
+import { RequestTimeoutError } from '@/lib/fetchWithTimeout';
 import { toast } from 'sonner';
+import { BrandMark } from '@/components/BrandMark';
 
 export function LegacyGuardPage() {
   const audioRef = useRef<HTMLAudioElement | null>(null);
@@ -26,7 +26,6 @@ export function LegacyGuardPage() {
     pendingTotal,
     hasMore,
     dailyStats,
-    rejectionReasons,
     initialLoading,
     refreshing,
     lastUpdatedAt,
@@ -45,9 +44,10 @@ export function LegacyGuardPage() {
     ? passes.filter((p) => p.visitorName.toLowerCase().includes(searchTerm.toLowerCase()))
     : passes;
 
-  function handleLoadAll() {
-    // load all passes
-  }
+
+  const handleLoadAll = () => {
+    requestGuardQueueRefresh();
+  };
 
   const refreshQueue = async () => {
     requestGuardQueueRefresh();
@@ -57,9 +57,8 @@ export function LegacyGuardPage() {
   const [processingPassIds, setProcessingPassIds] = useState<Set<string>>(new Set());
   const [rejectReason, setRejectReason] = useState('');
   const [isRejecting, setIsRejecting] = useState(false);
-  const [showSignOutModal, setShowSignOutModal] = useState(false);
-  const [isSigningOut, setIsSigningOut] = useState(false);
 
+  // Legacy decision handlers preserved for station concurrency contract
   async function handleApprove(pass: GuardQueuePass) {
     if (processingPassIds.has(pass.id)) return;
     setProcessingPassIds((prev) => new Set(prev).add(pass.id));
@@ -136,6 +135,12 @@ export function LegacyGuardPage() {
       setIsRejecting(false);
     }
   }
+
+  void handleApprove;
+  void handleConfirmReject;
+
+  const [showSignOutModal, setShowSignOutModal] = useState(false);
+  const [isSigningOut, setIsSigningOut] = useState(false);
 
   return (
     <div className="min-h-screen bg-[var(--color-canvas)] pb-12">
@@ -227,30 +232,8 @@ export function LegacyGuardPage() {
                   </div>
                 </div>
 
-                <div className="mt-5 flex gap-2 pt-3 border-t border-[var(--color-border)]">
-                  <Button
-                    size="sm"
-                    variant="destructive"
-                    onClick={() => {
-                      setRejectingPass(pass);
-                      setRejectReason('');
-                    }}
-                    disabled={processingPassIds.has(pass.id)}
-                    className="flex-1"
-                    icon={<XCircle className="h-4 w-4" />}
-                  >
-                    Reject
-                  </Button>
-                  <Button
-                    size="sm"
-                    variant="primary"
-                    onClick={() => handleApprove(pass)}
-                    disabled={processingPassIds.has(pass.id)}
-                    className="flex-1"
-                    icon={<CheckCircle2 className="h-4 w-4" />}
-                  >
-                    Approve
-                  </Button>
+                <div className="mt-5 pt-3 border-t border-[var(--color-border)] text-xs text-[var(--color-text-muted)]">
+                  Gate monitoring only. Specific-person office visits are approved or rejected directly by designated office personnel.
                 </div>
               </Card>
             ))}
@@ -266,37 +249,7 @@ export function LegacyGuardPage() {
         )}
       </main>
 
-      {/* Reject Modal */}
-      <Modal
-        isOpen={Boolean(rejectingPass)}
-        onClose={() => setRejectingPass(null)}
-        title="Reject Pass Entry"
-        description={`Confirm rejection for ${rejectingPass?.visitorName}. State the specific reason.`}
-        size="sm"
-      >
-        <div className="space-y-4">
-          <div>
-            <label className="block text-xs font-semibold text-[var(--color-text-secondary)] mb-1">
-              Rejection Reason
-            </label>
-            <Select
-              value={rejectReason}
-              onChange={(e) => setRejectReason(e.target.value)}
-            >
-              <option value="">Select a reason…</option>
-              {rejectionReasons.map((r) => (
-                <option key={r} value={r}>{r}</option>
-              ))}
-              <option value="Other">Other</option>
-            </Select>
-          </div>
 
-          <div className="flex gap-2 justify-end">
-            <Button variant="secondary" onClick={() => setRejectingPass(null)}>Cancel</Button>
-            <Button variant="destructive" onClick={handleConfirmReject} loading={isRejecting}>Confirm Rejection</Button>
-          </div>
-        </div>
-      </Modal>
 
       {/* Sign Out Modal */}
       <ConfirmModal

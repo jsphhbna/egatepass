@@ -109,7 +109,7 @@ async function handleRequest(request: Request): Promise<Response> {
     // Load retention settings (fail-closed if authoritative settings cannot be retrieved)
     const { data: settings, error: settingsError } = await admin
       .from('app_settings')
-      .select('automatic_cleanup_enabled, image_retention_days, visitor_retention_days, reconciliation_retention_days, audit_retention_days')
+      .select('automatic_cleanup_enabled, image_retention_days, photo_retention_days, id_retention_days, photo_retention_enabled, id_retention_enabled, vehicle_photo_retention_enabled, vehicle_photo_retention_days, visitor_retention_enabled, visitor_retention_days, returning_profile_retention_enabled, returning_profile_retention_days, reconciliation_retention_days, audit_retention_days')
       .eq('singleton', true)
       .maybeSingle();
 
@@ -211,14 +211,29 @@ async function handleRequest(request: Request): Promise<Response> {
 
     let evidenceCursor = decodeCursor(mState?.cursor_value, { idType: 'uuid' });
 
+    const photoEnabled = (settings as any).photo_retention_enabled ?? true;
+    const idEnabled = (settings as any).id_retention_enabled ?? true;
+    const vehicleEnabled = (settings as any).vehicle_photo_retention_enabled ?? true;
+    const allowedKinds: string[] = [];
+    if (photoEnabled) allowedKinds.push('photo');
+    if (idEnabled) allowedKinds.push('id');
+    if (vehicleEnabled) allowedKinds.push('vehicle_photo');
+
     let evidenceQuery = admin
       .from('visitor_evidence')
-      .select('id, visitor_id, bucket_id, object_path, expires_at')
+      .select('id, visitor_id, bucket_id, object_path, expires_at, kind')
       .is('purged_at', null)
       .lte('expires_at', now)
       .order('expires_at', { ascending: true })
       .order('id', { ascending: true })
       .limit(batchSize);
+
+    if (allowedKinds.length > 0) {
+      evidenceQuery = evidenceQuery.in('kind', allowedKinds);
+    } else {
+      // All evidence retention categories disabled by Superadmin policy
+      evidenceQuery = evidenceQuery.eq('id', '00000000-0000-0000-0000-000000000000');
+    }
 
     if (evidenceCursor?.timestamp && evidenceCursor.id) {
       evidenceQuery = evidenceQuery.or(
@@ -231,14 +246,20 @@ async function handleRequest(request: Request): Promise<Response> {
     // Wrap around to start if cursor reached the end of the unpurged queue
     if ((!expiredEvidence || expiredEvidence.length === 0) && evidenceCursor) {
       evidenceCursor = null;
-      const wrapRes = await admin
+      let wrapQuery = admin
         .from('visitor_evidence')
-        .select('id, visitor_id, bucket_id, object_path, expires_at')
+        .select('id, visitor_id, bucket_id, object_path, expires_at, kind')
         .is('purged_at', null)
         .lte('expires_at', now)
         .order('expires_at', { ascending: true })
         .order('id', { ascending: true })
         .limit(batchSize);
+      if (allowedKinds.length > 0) {
+        wrapQuery = wrapQuery.in('kind', allowedKinds);
+      } else {
+        wrapQuery = wrapQuery.eq('id', '00000000-0000-0000-0000-000000000000');
+      }
+      const wrapRes = await wrapQuery;
       expiredEvidence = wrapRes.data;
       evidenceError = wrapRes.error;
     }
@@ -500,18 +521,26 @@ async function handleRequest(request: Request): Promise<Response> {
     }
 
     // =========================================================================
-    // 3. VISITOR PII ANONYMIZATION (REPAIR H2: visitor_retention_days)
+    // 3. VISITOR PII ANONYMIZATION (REPAIR H2: visitor_retention_days & category toggle)
     // =========================================================================
+    const visitorRetentionEnabled = (settings as any).visitor_retention_enabled ?? true;
     const visitorRetentionDays = settings?.visitor_retention_days ?? 30;
     const visitorCutoff = new Date(Date.now() - visitorRetentionDays * 86_400_000).toISOString();
 
-    const { data: candidateVisitors, error: visitorErr } = await admin
-      .from('visitors')
-      .select('id, created_at')
-      .is('anonymized_at', null)
-      .lte('created_at', visitorCutoff)
-      .order('created_at', { ascending: true })
-      .limit(batchSize);
+    let candidateVisitors: any[] | null = null;
+    let visitorErr: any = null;
+
+    if (visitorRetentionEnabled) {
+      const res = await admin
+        .from('visitors')
+        .select('id, created_at')
+        .is('anonymized_at', null)
+        .lte('created_at', visitorCutoff)
+        .order('created_at', { ascending: true })
+        .limit(batchSize);
+      candidateVisitors = res.data;
+      visitorErr = res.error;
+    }
 
     if (visitorErr) {
       metrics.errors.push(`visitor_query_failed: ${visitorErr.message}`);

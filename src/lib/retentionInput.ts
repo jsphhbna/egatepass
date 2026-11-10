@@ -6,6 +6,8 @@ export const RETENTION_INPUT_FIELDS = [
   { field: 'imageRetentionDays', label: 'Visitor images / valid IDs', min: 1, max: 90 },
   { field: 'photoRetentionDays', label: 'Visitor face photos', min: 1, max: 90 },
   { field: 'idRetentionDays', label: 'Valid ID images', min: 1, max: 90 },
+  { field: 'vehiclePhotoRetentionDays', label: 'Vehicle photos', min: 1, max: 90 },
+  { field: 'returningProfileRetentionDays', label: 'Returning visitor profiles', min: 7, max: 365 },
   { field: 'auditRetentionDays', label: 'Audit logs', min: 90, max: 1095 },
   { field: 'reconciliationRetentionDays', label: 'Reconciliation records', min: 30, max: 365 },
 ] as const;
@@ -27,8 +29,10 @@ const retentionInputSchemas = {
   imageRetentionDays: createRetentionInputSchema(RETENTION_INPUT_FIELDS[1]),
   photoRetentionDays: createRetentionInputSchema(RETENTION_INPUT_FIELDS[2]),
   idRetentionDays: createRetentionInputSchema(RETENTION_INPUT_FIELDS[3]),
-  auditRetentionDays: createRetentionInputSchema(RETENTION_INPUT_FIELDS[4]),
-  reconciliationRetentionDays: createRetentionInputSchema(RETENTION_INPUT_FIELDS[5]),
+  vehiclePhotoRetentionDays: createRetentionInputSchema(RETENTION_INPUT_FIELDS[4]),
+  returningProfileRetentionDays: createRetentionInputSchema(RETENTION_INPUT_FIELDS[5]),
+  auditRetentionDays: createRetentionInputSchema(RETENTION_INPUT_FIELDS[6]),
+  reconciliationRetentionDays: createRetentionInputSchema(RETENTION_INPUT_FIELDS[7]),
 };
 
 export const retentionPolicyInputSchema = z.object({
@@ -36,6 +40,8 @@ export const retentionPolicyInputSchema = z.object({
   imageRetentionDays: retentionInputSchemas.imageRetentionDays,
   photoRetentionDays: retentionInputSchemas.photoRetentionDays.optional(),
   idRetentionDays: retentionInputSchemas.idRetentionDays.optional(),
+  vehiclePhotoRetentionDays: retentionInputSchemas.vehiclePhotoRetentionDays.optional(),
+  returningProfileRetentionDays: retentionInputSchemas.returningProfileRetentionDays.optional(),
   auditRetentionDays: retentionInputSchemas.auditRetentionDays,
   reconciliationRetentionDays: retentionInputSchemas.reconciliationRetentionDays,
 });
@@ -45,6 +51,8 @@ export type RetentionInputValues = {
   imageRetentionDays: string;
   photoRetentionDays?: string;
   idRetentionDays?: string;
+  vehiclePhotoRetentionDays?: string;
+  returningProfileRetentionDays?: string;
   auditRetentionDays: string;
   reconciliationRetentionDays: string;
 };
@@ -58,6 +66,8 @@ export function createRetentionInputValues(policy: RetentionPolicy): RetentionIn
     imageRetentionDays: String(policy.imageRetentionDays),
     photoRetentionDays: String(policy.photoRetentionDays ?? policy.imageRetentionDays),
     idRetentionDays: String(policy.idRetentionDays ?? 30),
+    vehiclePhotoRetentionDays: String(policy.vehiclePhotoRetentionDays ?? 30),
+    returningProfileRetentionDays: String(policy.returningProfileRetentionDays ?? 30),
     auditRetentionDays: String(policy.auditRetentionDays),
     reconciliationRetentionDays: String(policy.reconciliationRetentionDays),
   };

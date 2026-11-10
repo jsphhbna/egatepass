@@ -1,5 +1,5 @@
 import { useAuth } from '@/hooks/useAuth';
-import { formatManilaDateTime, formatManilaTime, formatManilaIso, formatManilaFileTimestamp, getManilaDateString } from '@/lib/manilaTime';
+import { formatManilaDateTime, formatManilaTime, formatManilaIso, formatManilaFileTimestamp, getManilaDatePresetRange, type DatePresetKey } from '@/lib/manilaTime';
 import { getActiveIncidentHoldsForRecord, createIncidentHold, releaseIncidentHold, type IncidentHold } from '@/services/incidentHold';
 import { AlertTriangle, Download, Eye, Printer, ShieldAlert, ShieldCheck, Users, History, Search } from 'lucide-react';
 import { useState, useEffect, useRef } from 'react';
@@ -87,7 +87,7 @@ export function AdminRecords() {
   const [loading, setLoading] = useState(true);
   const [dateFrom, setDateFrom] = useState('');
   const [dateTo, setDateTo] = useState('');
-  const [datePreset, setDatePreset] = useState<'today' | 'last7' | 'thisMonth' | 'custom' | ''>('');
+  const [datePreset, setDatePreset] = useState<DatePresetKey | 'custom' | ''>('');
   const [statusFilter, setStatusFilter] = useState('');
   const [search, setSearch] = useState('');
   const [debouncedSearch, setDebouncedSearch] = useState('');
@@ -104,6 +104,25 @@ export function AdminRecords() {
   const [exporting, setExporting] = useState(false);
   const [exportFormat, setExportFormat] = useState<'csv' | 'xlsx' | 'pdf' | null>(null);
   const [recordsError, setRecordsError] = useState<string | null>(null);
+  const prevTabRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    if (prevTabRef.current === currentTab) return;
+    prevTabRef.current = currentTab;
+    if (currentTab === 'current') {
+      setStatusFilter('inside');
+      setDateFrom('');
+      setDateTo('');
+      setDatePreset('');
+    } else if (currentTab === 'history') {
+      setStatusFilter('exited,expired,rejected');
+      setDateFrom('');
+      setDateTo('');
+      setDatePreset('');
+    } else {
+      setStatusFilter('');
+    }
+  }, [currentTab]);
 
   const recordsQueryGenerationRef = useRef(0);
   const recordsAbortControllerRef = useRef<AbortController | null>(null);
@@ -127,26 +146,8 @@ export function AdminRecords() {
     };
   }, []);
 
-  function applyPreset(preset: 'today' | 'last7' | 'thisMonth') {
-    const today = getManilaDateString();
-    let from = today;
-    let to = today;
-
-    if (preset === 'today') {
-      from = today;
-      to = today;
-    } else if (preset === 'last7') {
-      const d = new Date();
-      const sevenDaysAgo = new Date(d.getTime() - 6 * 24 * 60 * 60 * 1000);
-      from = getManilaDateString(sevenDaysAgo);
-      to = today;
-    } else if (preset === 'thisMonth') {
-      const [year, month] = today.split('-');
-      from = `${year}-${month}-01`;
-      const lastDayOfMonth = new Date(Number(year), Number(month), 0).getDate();
-      to = `${year}-${month}-${String(lastDayOfMonth).padStart(2, '0')}`;
-    }
-
+  function applyPreset(preset: DatePresetKey) {
+    const { from, to } = getManilaDatePresetRange(preset);
     setDatePreset(preset);
     setDateFrom(from);
     setDateTo(to);
@@ -475,8 +476,12 @@ export function AdminRecords() {
       const filterMetadata: Record<string, string> = {};
       if (exportSearch) filterMetadata['Search'] = exportSearch;
       if (exportStatus) filterMetadata['Status'] = exportStatus;
-      if (exportDateFrom) filterMetadata['Date From'] = exportDateFrom;
-      if (exportDateTo) filterMetadata['Date To'] = exportDateTo;
+      if (exportDateFrom && exportDateTo && exportDateFrom === exportDateTo) {
+        filterMetadata['Report Date'] = `${exportDateFrom} (Single Day)`;
+      } else {
+        if (exportDateFrom) filterMetadata['Date From'] = exportDateFrom;
+        if (exportDateTo) filterMetadata['Date To'] = exportDateTo;
+      }
 
       const baseFilename = `visitor_records_${formatManilaFileTimestamp(new Date())}`;
       const generatedAt = formatManilaIso(Date.now());
@@ -599,10 +604,15 @@ export function AdminRecords() {
                 next.set('tab', tab.id);
                 setSearchParams(next);
                 if (tab.id === 'current') {
-                  setStatusFilter('approved');
-                  applyPreset('today');
+                  setStatusFilter('inside');
+                  setDateFrom('');
+                  setDateTo('');
+                  setDatePreset('');
                 } else if (tab.id === 'history') {
-                  setStatusFilter('used');
+                  setStatusFilter('exited,expired,rejected');
+                  setDateFrom('');
+                  setDateTo('');
+                  setDatePreset('');
                 } else {
                   setStatusFilter('');
                 }
@@ -641,6 +651,22 @@ export function AdminRecords() {
               onClick={() => applyPreset('today')}
             >
               Today
+            </Button>
+            <Button
+              type="button"
+              size="sm"
+              variant={datePreset === 'yesterday' ? 'primary' : 'secondary'}
+              onClick={() => applyPreset('yesterday')}
+            >
+              Yesterday
+            </Button>
+            <Button
+              type="button"
+              size="sm"
+              variant={datePreset === 'thisWeek' ? 'primary' : 'secondary'}
+              onClick={() => applyPreset('thisWeek')}
+            >
+              This Week
             </Button>
             <Button
               type="button"
@@ -729,12 +755,13 @@ export function AdminRecords() {
               aria-label="Filter by status"
             >
               <option value="">All Statuses</option>
-            <option value="issued">Issued</option>
-            <option value="pending">Pending</option>
-            <option value="inside">Inside</option>
-            <option value="exited">Exited</option>
-            <option value="rejected">Rejected</option>
-            <option value="expired">Expired</option>
+              <option value="inside">Currently Inside</option>
+              <option value="exited,expired,rejected">Closed / Historical</option>
+              <option value="issued">Issued (Not Entered)</option>
+              <option value="pending">Pending Approval</option>
+              <option value="exited">Exited</option>
+              <option value="rejected">Rejected</option>
+              <option value="expired">Expired</option>
           </Select>
         </div>
         </div>
@@ -795,7 +822,12 @@ export function AdminRecords() {
                     {pass.issuedAt ? formatManilaDateTime(pass.issuedAt.toMillis(), { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit', hour12: true }) : '—'}
                   </DataTableCell>
                   <DataTableCell className="whitespace-nowrap text-[var(--color-text-secondary)] print:px-2">
-                    {pass.timeIn ? formatManilaTime(pass.timeIn.toMillis()) : '—'}
+                    {pass.timeIn ? (
+                      <>
+                        <span>{formatManilaTime(pass.timeIn.toMillis())}</span>
+                        {pass.gate && <span className="block text-[11px] text-[var(--color-text-muted)] font-mono">Gate: {pass.gate}</span>}
+                      </>
+                    ) : '—'}
                   </DataTableCell>
                   <DataTableCell className="whitespace-nowrap text-[var(--color-text-secondary)] print:px-2">
                     {pass.timeOut ? formatManilaTime(pass.timeOut.toMillis()) : '—'}

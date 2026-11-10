@@ -1,10 +1,28 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { useSearchParams } from 'react-router-dom';
-import { Save, Trash2, AlertTriangle, Plus, Calendar, Shield, Clock, Users, User, Database, X } from 'lucide-react';
+import {
+  Save,
+  Trash2,
+  AlertTriangle,
+  Plus,
+  Calendar,
+  Shield,
+  Clock,
+  Users,
+  User,
+  Database,
+  X,
+  CheckCircle,
+  FileText,
+  Lock,
+  Camera,
+  Car,
+  KeyRound,
+} from 'lucide-react';
 import { toast } from 'sonner';
 import { Button, Card, Input, Select, ConfirmModal, LoadingState } from '@/components/ui';
 import { PasswordResetCard } from '@/components/ChangePasswordCard';
-import { DEFAULT_REJECTION_REASONS, normalizeVisitPurposes } from '@/lib/settingsDefaults';
+import { normalizeVisitPurposes } from '@/lib/settingsDefaults';
 import type { VisitPurposeOption, CampusCalendarClosure, CalendarClosureType } from '@/types';
 import { useAuth } from '@/hooks/useAuth';
 import { isSuperAdmin } from '@/lib/permissions';
@@ -12,11 +30,11 @@ import { getAccessToken } from '@/services/auth';
 import { DEFAULT_WORKING_HOURS, normalizeWorkingHours } from '@/lib/workingHours';
 import { DEFAULT_RETENTION_POLICY, normalizeRetentionPolicy } from '@/lib/retentionPolicy';
 import {
-  RETENTION_INPUT_FIELDS,
   createRetentionInputValues,
   getRetentionInputError,
   validateRetentionInputs,
   type RetentionInputErrors,
+  type RetentionInputField,
 } from '@/lib/retentionInput';
 
 export type PeakModeScope = 'off' | 'portal' | 'kiosk' | 'both';
@@ -36,7 +54,7 @@ export const DEFAULT_VISITOR_INSTRUCTIONS: string[] = [
 ];
 
 export function AdminSettings() {
-  const { role } = useAuth();
+  const { role, userData } = useAuth();
   const [searchParams, setSearchParams] = useSearchParams();
   const currentTab = searchParams.get('tab') || 'general';
 
@@ -190,16 +208,15 @@ export function AdminSettings() {
     ...DEFAULT_RETENTION_POLICY,
     workingHours: DEFAULT_WORKING_HOURS,
     peakMode: 'off' as PeakModeScope,
-    rejectionReasons: [] as string[],
     visitPurposes: [] as VisitPurposeOption[],
     visitorInstructions: DEFAULT_VISITOR_INSTRUCTIONS,
   });
   const [retentionInputs, setRetentionInputs] = useState(() => createRetentionInputValues(DEFAULT_RETENTION_POLICY));
   const [retentionErrors, setRetentionErrors] = useState<RetentionInputErrors>({});
 
-  const [newReason, setNewReason] = useState('');
   const [newPurpose, setNewPurpose] = useState('');
   const [newInstruction, setNewInstruction] = useState('');
+  const [retentionOverrideReason, setRetentionOverrideReason] = useState('');
   
   // Modals state
   const [showPeakModeConfirm, setShowPeakModeConfirm] = useState(false);
@@ -228,7 +245,6 @@ export function AdminSettings() {
           ...retentionPolicy,
           workingHours: normalizeWorkingHours(data.workingHours),
           peakMode: peakScope,
-          rejectionReasons: Array.isArray(data.rejectionReasons) ? data.rejectionReasons : DEFAULT_REJECTION_REASONS,
           visitPurposes: normalizeVisitPurposes(data.visitPurposes),
           visitorInstructions: Array.isArray(data.visitorInstructions) && data.visitorInstructions.length > 0
             ? data.visitorInstructions
@@ -281,7 +297,6 @@ export function AdminSettings() {
       setSaving(true);
       const operationalSettings = {
         peakMode: settings.peakMode,
-        rejectionReasons: settings.rejectionReasons,
         visitPurposes: settings.visitPurposes.map((purpose) => ({
           ...purpose,
           detailPrompt: purpose.requiresDetails ? purpose.detailPrompt.trim() : '',
@@ -289,9 +304,20 @@ export function AdminSettings() {
         visitorInstructions: settings.visitorInstructions.map((i) => i.trim()).filter(Boolean),
       };
       const settingsToSave = canManageSecuritySettings
-        ? { ...operationalSettings, workingHours: settings.workingHours,
-          ...retentionValidation?.data,
-          automaticCleanupEnabled: settings.automaticCleanupEnabled }
+        ? {
+            ...operationalSettings,
+            workingHours: settings.workingHours,
+            ...retentionValidation?.data,
+            automaticCleanupEnabled: settings.automaticCleanupEnabled,
+            photoRetentionEnabled: settings.photoRetentionEnabled,
+            idRetentionEnabled: settings.idRetentionEnabled,
+            vehiclePhotoRetentionEnabled: settings.vehiclePhotoRetentionEnabled,
+            visitorRetentionEnabled: settings.visitorRetentionEnabled,
+            returningProfileRetentionEnabled: settings.returningProfileRetentionEnabled,
+            vehiclePhotoRetentionDays: Number(retentionInputs.vehiclePhotoRetentionDays || 30),
+            returningProfileRetentionDays: Number(retentionInputs.returningProfileRetentionDays || 30),
+            overrideReason: retentionOverrideReason.trim() || undefined,
+          }
         : operationalSettings;
       const token = await getAccessToken();
       if (!token) throw new Error('Your session has expired. Please sign in again.');
@@ -303,6 +329,8 @@ export function AdminSettings() {
       const result = await response.json().catch(() => null) as { error?: string } | null;
       if (!response.ok) throw new Error(result?.error || 'Failed to save settings');
       toast.success('Settings saved successfully');
+      setRetentionOverrideReason('');
+      void loadSettings();
     } catch (err) {
       console.error(err);
       toast.error('Failed to save settings');
@@ -310,27 +338,6 @@ export function AdminSettings() {
       setSaving(false);
       settingsMutationInFlightRef.current = false;
     }
-  }
-
-  function addReason() {
-    if (settingsBusy || !newReason.trim()) return;
-    if (settings.rejectionReasons.includes(newReason.trim())) {
-      toast.error('Reason already exists');
-      return;
-    }
-    setSettings((prev) => ({
-      ...prev,
-      rejectionReasons: [...prev.rejectionReasons, newReason.trim()],
-    }));
-    setNewReason('');
-  }
-
-  function removeReason(reason: string) {
-    if (settingsBusy) return;
-    setSettings((prev) => ({
-      ...prev,
-      rejectionReasons: prev.rejectionReasons.filter((r) => r !== reason),
-    }));
   }
 
   function addPurpose() {
@@ -510,6 +517,15 @@ export function AdminSettings() {
     }
   }
 
+  function handleRetentionDaysChange(field: RetentionInputField, value: string) {
+    setRetentionInputs((current) => ({ ...current, [field]: value }));
+    if (retentionErrors[field]) {
+      setRetentionErrors((current) => ({
+        ...current,
+        [field]: getRetentionInputError(field, value),
+      }));
+    }
+  }
 
   if (loading) {
     return <LoadingState label="Loading system settings" className="h-32" />;
@@ -520,7 +536,7 @@ export function AdminSettings() {
       <div className="mx-auto max-w-6xl space-y-6">
         <div>
           <h1 className="text-2xl font-bold text-[var(--color-text-primary)]">System Settings</h1>
-          <p className="text-sm text-[var(--color-text-secondary)]">Configure policies, reasons, and data retention</p>
+          <p className="text-sm text-[var(--color-text-secondary)]">Configure policies, campus calendar, and data retention</p>
         </div>
         <Card className="p-8 text-center border-[var(--color-danger)]">
           <AlertTriangle className="mx-auto h-12 w-12 text-[var(--color-danger)] mb-4" />
@@ -536,6 +552,8 @@ export function AdminSettings() {
     );
   }
 
+  const showSaveButton = ['general', 'visitor_ux', 'retention'].includes(currentTab);
+
   return (
     <div className="mx-auto max-w-6xl space-y-6">
       <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
@@ -544,17 +562,19 @@ export function AdminSettings() {
             System Settings
           </h1>
           <p className="text-sm text-[var(--color-text-secondary)]">
-            Configure policies, reasons, and data retention
+            Configure campus policies, access hours, visitor experience, and privacy retention
           </p>
         </div>
-        <Button
-          onClick={handleSave}
-          disabled={settingsBusy}
-          loading={saving}
-          icon={<Save className="h-4 w-4" />}
-        >
-          {saving ? 'Saving...' : 'Save Settings'}
-        </Button>
+        {showSaveButton && (
+          <Button
+            onClick={handleSave}
+            disabled={settingsBusy}
+            loading={saving}
+            icon={<Save className="h-4 w-4" />}
+          >
+            {saving ? 'Saving...' : 'Save Settings'}
+          </Button>
+        )}
       </div>
 
       {/* Sub-Tabs Navigation */}
@@ -591,42 +611,43 @@ export function AdminSettings() {
         })}
       </div>
 
-      <div className={`grid items-start gap-6 ${canManageSecuritySettings ? 'lg:grid-cols-2' : ''}`}>
-        <div className="grid content-start gap-6">
+      {/* ===================== TAB: GENERAL SYSTEM ===================== */}
+      {currentTab === 'general' && (
+        <div className="space-y-6">
           <Card className="p-6">
-          <h2 className="text-xl font-bold text-[var(--color-text-primary)]">Campus Access Hours</h2>
-          <p className="mb-5 mt-2 text-sm leading-relaxed text-[var(--color-text-secondary)]">
-            Gate passes use these hours for the selected visit date in Asia/Manila. Only a Super Admin can change this global policy.
-          </p>
-          <div className="grid gap-4 sm:grid-cols-2">
-            <div>
-              <label htmlFor="working-hours-start" className="mb-2 block text-sm font-medium text-[var(--color-text-primary)]">Opens</label>
-              <Input
-                id="working-hours-start"
-                type="time"
-                value={settings.workingHours.start}
-                disabled={!canManageSecuritySettings || settingsBusy}
-                onChange={(event) => setSettings((current) => ({
-                  ...current,
-                  workingHours: { ...current.workingHours, start: event.target.value },
-                }))}
-              />
+            <h2 className="text-xl font-bold text-[var(--color-text-primary)]">Campus Access Hours</h2>
+            <p className="mb-5 mt-2 text-sm leading-relaxed text-[var(--color-text-secondary)]">
+              Gate passes use these operating hours for the selected visit date in Asia/Manila. Only a Super Admin can change this global policy.
+            </p>
+            <div className="grid gap-4 sm:grid-cols-2 max-w-xl">
+              <div>
+                <label htmlFor="working-hours-start" className="mb-2 block text-sm font-medium text-[var(--color-text-primary)]">Opens</label>
+                <Input
+                  id="working-hours-start"
+                  type="time"
+                  value={settings.workingHours.start}
+                  disabled={!canManageSecuritySettings || settingsBusy}
+                  onChange={(event) => setSettings((current) => ({
+                    ...current,
+                    workingHours: { ...current.workingHours, start: event.target.value },
+                  }))}
+                />
+              </div>
+              <div>
+                <label htmlFor="working-hours-end" className="mb-2 block text-sm font-medium text-[var(--color-text-primary)]">Closes</label>
+                <Input
+                  id="working-hours-end"
+                  type="time"
+                  value={settings.workingHours.end}
+                  disabled={!canManageSecuritySettings || settingsBusy}
+                  onChange={(event) => setSettings((current) => ({
+                    ...current,
+                    workingHours: { ...current.workingHours, end: event.target.value },
+                  }))}
+                />
+              </div>
             </div>
-            <div>
-              <label htmlFor="working-hours-end" className="mb-2 block text-sm font-medium text-[var(--color-text-primary)]">Closes</label>
-              <Input
-                id="working-hours-end"
-                type="time"
-                value={settings.workingHours.end}
-                disabled={!canManageSecuritySettings || settingsBusy}
-                onChange={(event) => setSettings((current) => ({
-                  ...current,
-                  workingHours: { ...current.workingHours, end: event.target.value },
-                }))}
-              />
-            </div>
-          </div>
-          <p className="mt-4 text-xs font-semibold text-[var(--color-text-muted)]">Timezone: Asia/Manila (UTC+08:00)</p>
+            <p className="mt-4 text-xs font-semibold text-[var(--color-text-muted)]">Timezone: Asia/Manila (UTC+08:00)</p>
           </Card>
 
           {/* Peak Mode */}
@@ -642,7 +663,7 @@ export function AdminSettings() {
                   )}
                 </div>
                 <p className="mt-2 text-sm leading-relaxed text-[var(--color-text-secondary)]">
-                  When enabled, visitors are not required to upload a government ID, helping speed up the queue. Face photo is always required.
+                  When enabled, visitors are not required to upload a government ID, helping expedite campus entry during rush hours. Face portrait capture is always required.
                 </p>
                 {settings.peakMode !== 'off' && (
                   <p className="mt-2 text-xs font-semibold text-[var(--color-brand)]">
@@ -686,292 +707,9 @@ export function AdminSettings() {
               </div>
             </div>
           </Card>
-
-          <PasswordResetCard />
-
-          {canManageSecuritySettings && <Card className="p-6">
-            <h2 className="text-xl font-bold text-[var(--color-text-primary)]">Premade Visit Purposes</h2>
-            <p className="mb-5 mt-2 text-sm text-[var(--color-text-secondary)]">
-              Visitors can choose these options when requesting a gate pass. They can still select Other and type their own purpose.
-            </p>
-
-            <ul className="divide-y overflow-hidden rounded-lg border border-[var(--color-border)]">
-              {settings.visitPurposes.map((purpose, index) => (
-                <li key={purpose.label} className="p-4 transition-colors hover:bg-[var(--color-canvas)]">
-                  <div className="flex flex-wrap items-center justify-between gap-3">
-                    <span className="text-sm font-medium text-[var(--color-text-primary)]">{purpose.label}</span>
-                    <div className="flex items-center gap-2">
-                      <button
-                        type="button"
-                        onClick={() => togglePurposeDetails(purpose.label)}
-                        disabled={settingsBusy}
-                        aria-pressed={purpose.requiresDetails}
-                        className={`rounded-full border px-3 py-1.5 text-xs font-semibold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-brand)] ${
-                          purpose.requiresDetails
-                            ? 'border-[var(--color-brand)] bg-[var(--color-brand-light)] text-[var(--color-brand)]'
-                            : 'border-[var(--color-border)] bg-white text-[var(--color-text-secondary)] hover:bg-[var(--color-canvas)]'
-                        } ${settingsBusy ? 'opacity-50 cursor-not-allowed' : ''}`}
-                      >
-                        {purpose.requiresDetails ? 'Details required' : 'Require details'}
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => removePurpose(purpose.label)}
-                        disabled={settingsBusy}
-                        className={`rounded-md p-1.5 text-[var(--color-danger)] transition-colors hover:bg-[var(--color-danger-light)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-brand)] ${settingsBusy ? 'opacity-50 cursor-not-allowed' : ''}`}
-                        aria-label={`Remove ${purpose.label}`}
-                      >
-                        <Trash2 className="h-4 w-4" aria-hidden="true" />
-                      </button>
-                    </div>
-                  </div>
-                  {purpose.requiresDetails && (
-                    <div className="mt-3">
-                      <label htmlFor={`purpose-prompt-${index}`} className="mb-1.5 block text-xs font-semibold text-[var(--color-text-secondary)]">
-                        What should the visitor specify?
-                      </label>
-                      <Input
-                        id={`purpose-prompt-${index}`}
-                        value={purpose.detailPrompt}
-                        disabled={settingsBusy}
-                        onChange={(event) => updatePurposePrompt(purpose.label, event.target.value)}
-                        maxLength={160}
-                        placeholder="e.g. Who is your appointment with?"
-                      />
-                    </div>
-                  )}
-                </li>
-              ))}
-              {settings.visitPurposes.length === 0 && (
-                <li className="p-6 text-center text-sm text-[var(--color-text-muted)]">No visit purposes configured</li>
-              )}
-
-              <li className="flex gap-3 border-t border-[var(--color-border)] bg-[var(--color-canvas)] p-4">
-                <div className="flex-1">
-                  <Input
-                    type="text"
-                    value={newPurpose}
-                    disabled={settingsBusy}
-                    onChange={(event) => setNewPurpose(event.target.value)}
-                    placeholder="Add visit purpose..."
-                    maxLength={100}
-                    aria-label="New visit purpose"
-                    onKeyDown={(event) => {
-                      if (event.key === 'Enter') {
-                        event.preventDefault();
-                        addPurpose();
-                      }
-                    }}
-                  />
-                </div>
-                <Button onClick={addPurpose} disabled={settingsBusy} variant="secondary" icon={<Plus className="h-4 w-4" />}>
-                  Add
-                </Button>
-              </li>
-            </ul>
-          </Card>}
-
-          {/* Visitor Instructions */}
-          <Card className="overflow-hidden">
-            <div className="border-b border-[var(--color-border)] p-6">
-              <h2 className="text-xl font-bold text-[var(--color-text-primary)]">Visitor Instructions</h2>
-              <p className="mt-1 text-sm text-[var(--color-text-secondary)]">
-                These reminders are shown to visitors after pass issuance and included in E-GatePass email delivery.
-              </p>
-            </div>
-
-            <ul className="divide-y divide-[var(--color-border)]">
-              {settings.visitorInstructions.map((instruction, index) => (
-                <li key={index} className="flex items-center gap-3 p-4">
-                  <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-[var(--color-brand-light)] text-xs font-bold text-[var(--color-brand)]">
-                    {index + 1}
-                  </span>
-                  <div className="flex-1">
-                    <Input
-                      type="text"
-                      value={instruction}
-                      disabled={settingsBusy}
-                      onChange={(e) => updateInstruction(index, e.target.value)}
-                      maxLength={180}
-                      aria-label={`Visitor instruction ${index + 1}`}
-                    />
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() => removeInstruction(index)}
-                    disabled={settingsBusy || settings.visitorInstructions.length <= 1}
-                    className="rounded p-2 text-[var(--color-text-muted)] hover:bg-[var(--color-danger-light)] hover:text-[var(--color-danger)] disabled:opacity-30 disabled:cursor-not-allowed"
-                    aria-label={`Remove instruction ${index + 1}`}
-                  >
-                    <Trash2 className="h-4 w-4" />
-                  </button>
-                </li>
-              ))}
-
-              {settings.visitorInstructions.length < 8 && (
-                <li className="flex gap-3 border-t border-[var(--color-border)] bg-[var(--color-canvas)] p-4">
-                  <div className="flex-1">
-                    <Input
-                      type="text"
-                      value={newInstruction}
-                      disabled={settingsBusy}
-                      onChange={(e) => setNewInstruction(e.target.value)}
-                      placeholder="Add new visitor instruction..."
-                      maxLength={180}
-                      aria-label="New visitor instruction"
-                      onKeyDown={(e) => {
-                        if (e.key === 'Enter') {
-                          e.preventDefault();
-                          addInstruction();
-                        }
-                      }}
-                    />
-                  </div>
-                  <Button
-                    onClick={addInstruction}
-                    disabled={settingsBusy || !newInstruction.trim()}
-                    variant="secondary"
-                    icon={<Plus className="h-4 w-4" />}
-                  >
-                    Add
-                  </Button>
-                </li>
-              )}
-            </ul>
-          </Card>
         </div>
+      )}
 
-        {canManageSecuritySettings && <div className="grid content-start gap-6">
-          {/* Retention Policy */}
-          <Card className="p-6">
-            <h2 className="mb-5 text-xl font-bold text-[var(--color-text-primary)]">Data Retention</h2>
-
-            <p className="mb-5 text-sm text-[var(--color-text-secondary)]">Automatic cleanup uses these policies for new eligible data. Export records needed for long-term archive before their retention deadline.</p>
-            <div className="mb-8 grid gap-4 sm:grid-cols-2">
-              {RETENTION_INPUT_FIELDS.map(({ field, label, min, max }) => <div key={field}>
-                <label htmlFor={field} className="mb-2 block text-sm font-medium text-[var(--color-text-primary)]">{label} (days)</label>
-                <Input
-                  id={field}
-                  type="number"
-                  inputMode="numeric"
-                  step={1}
-                  min={min}
-                  max={max}
-                  value={retentionInputs[field]}
-                  disabled={settingsBusy}
-                  error={Boolean(retentionErrors[field])}
-                  aria-describedby={retentionErrors[field] ? `${field}-error` : undefined}
-                  onChange={(event) => {
-                    const value = event.target.value;
-                    setRetentionInputs((current) => ({ ...current, [field]: value }));
-                    if (retentionErrors[field]) {
-                      setRetentionErrors((current) => ({
-                        ...current,
-                        [field]: getRetentionInputError(field, value),
-                      }));
-                    }
-                  }}
-                  onBlur={(event) => setRetentionErrors((current) => ({
-                    ...current,
-                    [field]: getRetentionInputError(field, event.target.value),
-                  }))}
-                />
-                {retentionErrors[field] && (
-                  <p id={`${field}-error`} className="mt-1.5 text-xs font-medium text-[var(--color-danger)]" role="alert">
-                    {retentionErrors[field]}
-                  </p>
-                )}
-              </div>)}
-            </div>
-            <label className="mb-8 flex items-center gap-3 text-sm font-medium text-[var(--color-text-primary)]">
-              <input
-                type="checkbox"
-                checked={settings.automaticCleanupEnabled}
-                disabled={settingsBusy}
-                onChange={(event) => setSettings((current) => ({ ...current, automaticCleanupEnabled: event.target.checked }))}
-              />
-              Enable automatic daily cleanup
-            </label>
-
-            <div className="rounded-lg border border-[var(--color-danger)] bg-[var(--color-danger-light)] p-5">
-              <div className="flex items-start gap-4">
-                <AlertTriangle className="mt-0.5 h-6 w-6 flex-shrink-0 text-[var(--color-danger)]" />
-                <div>
-                  <h3 className="text-lg font-semibold text-[var(--color-danger-dark)]">Purge Eligible Images</h3>
-                  <p className="mt-2 text-sm text-[var(--color-danger-dark)]">
-                    Permanently deletes eligible visitor photos and ID images that have reached their authoritative expiry date under configured retention policies. Active visits and incident holds remain protected. Visitor details and visit history are kept. This action cannot be undone.
-                  </p>
-                  <Button
-                    variant="destructive"
-                    onClick={handlePurgeClick}
-                    disabled={settingsBusy}
-                    loading={calculatingPurge}
-                    className="mt-4"
-                    icon={<Trash2 className="h-4 w-4" />}
-                  >
-                    {calculatingPurge ? 'Calculating...' : purging ? 'Purging...' : 'Run Purge Now'}
-                  </Button>
-                </div>
-              </div>
-            </div>
-          </Card>
-
-        {/* Rejection Reasons */}
-        <Card className="p-6">
-          <h2 className="mb-5 text-xl font-bold text-[var(--color-text-primary)]">Premade Rejection Reasons</h2>
-          
-          <ul className="divide-y rounded-lg border border-[var(--color-border)] overflow-hidden">
-            {settings.rejectionReasons.map((reason) => (
-              <li key={reason} className="flex items-center justify-between p-4 hover:bg-[var(--color-canvas)] transition-colors">
-                <span className="text-sm font-medium text-[var(--color-text-primary)]">{reason}</span>
-                <button
-                  type="button"
-                  onClick={() => removeReason(reason)}
-                  disabled={settingsBusy}
-                  className={`rounded-md p-1.5 text-[var(--color-danger)] hover:bg-[var(--color-danger-light)] transition-colors ${settingsBusy ? 'opacity-50 cursor-not-allowed' : ''}`}
-                  aria-label="Remove reason"
-                >
-                  <Trash2 className="h-4 w-4" />
-                </button>
-              </li>
-            ))}
-            {settings.rejectionReasons.length === 0 && (
-              <li className="p-6 text-center text-sm text-[var(--color-text-muted)]">No reasons configured</li>
-            )}
-            
-            <li className="flex gap-3 border-t border-[var(--color-border)] bg-[var(--color-canvas)] p-4">
-              <div className="flex-1">
-                <Input
-                  type="text"
-                  value={newReason}
-                  disabled={settingsBusy}
-                  onChange={(e) => setNewReason(e.target.value)}
-                  placeholder="Add new reason..."
-                  aria-label="New rejection reason"
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter') {
-                      e.preventDefault();
-                      addReason();
-                    }
-                  }}
-                />
-              </div>
-              <Button
-                onClick={addReason}
-                disabled={settingsBusy}
-                variant="secondary"
-                icon={<Plus className="h-4 w-4" />}
-              >
-                Add
-              </Button>
-            </li>
-          </ul>
-        </Card>
-
-        </div>}
-      </div>
-      
-      
       {/* ===================== TAB: CAMPUS CALENDAR ===================== */}
       {currentTab === 'calendar' && (
         <div className="space-y-6">
@@ -1084,6 +822,605 @@ export function AdminSettings() {
         </div>
       )}
 
+      {/* ===================== TAB: VISITOR EXPERIENCE ===================== */}
+      {currentTab === 'visitor_ux' && (
+        <div className="grid gap-6 lg:grid-cols-2">
+          {canManageSecuritySettings && (
+            <Card className="p-6">
+              <h2 className="text-xl font-bold text-[var(--color-text-primary)]">Premade Visit Purposes</h2>
+              <p className="mb-5 mt-2 text-sm text-[var(--color-text-secondary)]">
+                Visitors can select these common options during registration. They can also choose Other to specify an unlisted purpose.
+              </p>
+
+              <ul className="divide-y overflow-hidden rounded-lg border border-[var(--color-border)]">
+                {settings.visitPurposes.map((purpose, index) => (
+                  <li key={purpose.label} className="p-4 transition-colors hover:bg-[var(--color-canvas)]">
+                    <div className="flex flex-wrap items-center justify-between gap-3">
+                      <span className="text-sm font-medium text-[var(--color-text-primary)]">{purpose.label}</span>
+                      <div className="flex items-center gap-2">
+                        <button
+                          type="button"
+                          onClick={() => togglePurposeDetails(purpose.label)}
+                          disabled={settingsBusy}
+                          aria-pressed={purpose.requiresDetails}
+                          className={`rounded-full border px-3 py-1.5 text-xs font-semibold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-brand)] ${
+                            purpose.requiresDetails
+                              ? 'border-[var(--color-brand)] bg-[var(--color-brand-light)] text-[var(--color-brand)]'
+                              : 'border-[var(--color-border)] bg-white text-[var(--color-text-secondary)] hover:bg-[var(--color-canvas)]'
+                          } ${settingsBusy ? 'opacity-50 cursor-not-allowed' : ''}`}
+                        >
+                          {purpose.requiresDetails ? 'Details required' : 'Require details'}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => removePurpose(purpose.label)}
+                          disabled={settingsBusy}
+                          className={`rounded-md p-1.5 text-[var(--color-danger)] transition-colors hover:bg-[var(--color-danger-light)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-brand)] ${settingsBusy ? 'opacity-50 cursor-not-allowed' : ''}`}
+                          aria-label={`Remove ${purpose.label}`}
+                        >
+                          <Trash2 className="h-4 w-4" aria-hidden="true" />
+                        </button>
+                      </div>
+                    </div>
+                    {purpose.requiresDetails && (
+                      <div className="mt-3">
+                        <label htmlFor={`purpose-prompt-${index}`} className="mb-1.5 block text-xs font-semibold text-[var(--color-text-secondary)]">
+                          What should the visitor specify?
+                        </label>
+                        <Input
+                          id={`purpose-prompt-${index}`}
+                          value={purpose.detailPrompt}
+                          disabled={settingsBusy}
+                          onChange={(event) => updatePurposePrompt(purpose.label, event.target.value)}
+                          maxLength={160}
+                          placeholder="e.g. Who is your appointment with?"
+                        />
+                      </div>
+                    )}
+                  </li>
+                ))}
+                {settings.visitPurposes.length === 0 && (
+                  <li className="p-6 text-center text-sm text-[var(--color-text-muted)]">No visit purposes configured</li>
+                )}
+
+                <li className="flex gap-3 border-t border-[var(--color-border)] bg-[var(--color-canvas)] p-4">
+                  <div className="flex-1">
+                    <Input
+                      type="text"
+                      value={newPurpose}
+                      disabled={settingsBusy}
+                      onChange={(event) => setNewPurpose(event.target.value)}
+                      placeholder="Add visit purpose..."
+                      maxLength={100}
+                      aria-label="New visit purpose"
+                      onKeyDown={(event) => {
+                        if (event.key === 'Enter') {
+                          event.preventDefault();
+                          addPurpose();
+                        }
+                      }}
+                    />
+                  </div>
+                  <Button onClick={addPurpose} disabled={settingsBusy} variant="secondary" icon={<Plus className="h-4 w-4" />}>
+                    Add
+                  </Button>
+                </li>
+              </ul>
+            </Card>
+          )}
+
+          {/* Visitor Instructions */}
+          <Card className="overflow-hidden">
+            <div className="border-b border-[var(--color-border)] p-6">
+              <h2 className="text-xl font-bold text-[var(--color-text-primary)]">Visitor Instructions</h2>
+              <p className="mt-1 text-sm text-[var(--color-text-secondary)]">
+                These guidelines are shown to visitors after pass registration and included in digital E-GatePass delivery.
+              </p>
+            </div>
+
+            <ul className="divide-y divide-[var(--color-border)]">
+              {settings.visitorInstructions.map((instruction, index) => (
+                <li key={index} className="flex items-center gap-3 p-4">
+                  <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-[var(--color-brand-light)] text-xs font-bold text-[var(--color-brand)]">
+                    {index + 1}
+                  </span>
+                  <div className="flex-1">
+                    <Input
+                      type="text"
+                      value={instruction}
+                      disabled={settingsBusy}
+                      onChange={(e) => updateInstruction(index, e.target.value)}
+                      maxLength={180}
+                      aria-label={`Visitor instruction ${index + 1}`}
+                    />
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => removeInstruction(index)}
+                    disabled={settingsBusy || settings.visitorInstructions.length <= 1}
+                    className="rounded p-2 text-[var(--color-text-muted)] hover:bg-[var(--color-danger-light)] hover:text-[var(--color-danger)] disabled:opacity-30 disabled:cursor-not-allowed"
+                    aria-label={`Remove instruction ${index + 1}`}
+                  >
+                    <Trash2 className="h-4 w-4" />
+                  </button>
+                </li>
+              ))}
+
+              {settings.visitorInstructions.length < 8 && (
+                <li className="flex gap-3 border-t border-[var(--color-border)] bg-[var(--color-canvas)] p-4">
+                  <div className="flex-1">
+                    <Input
+                      type="text"
+                      value={newInstruction}
+                      disabled={settingsBusy}
+                      onChange={(e) => setNewInstruction(e.target.value)}
+                      placeholder="Add new visitor instruction..."
+                      maxLength={180}
+                      aria-label="New visitor instruction"
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') {
+                          e.preventDefault();
+                          addInstruction();
+                        }
+                      }}
+                    />
+                  </div>
+                  <Button
+                    onClick={addInstruction}
+                    disabled={settingsBusy || !newInstruction.trim()}
+                    variant="secondary"
+                    icon={<Plus className="h-4 w-4" />}
+                  >
+                    Add
+                  </Button>
+                </li>
+              )}
+            </ul>
+          </Card>
+        </div>
+      )}
+
+      {/* ===================== TAB: SECURITY & PRIVACY ===================== */}
+      {currentTab === 'security' && (
+        <div className="space-y-6">
+          <Card className="p-6">
+            <div className="flex items-center gap-3 border-b border-[var(--color-border)] pb-4 mb-6">
+              <Shield className="h-6 w-6 text-[#7A0A0A]" />
+              <div>
+                <h2 className="text-xl font-bold text-[var(--color-text-primary)]">System Security Policies & Safeguards</h2>
+                <p className="text-xs text-[var(--color-text-secondary)] mt-0.5">
+                  Authoritative security boundaries, active defenses, and verification controls enforced across EARIST E-GatePass.
+                </p>
+              </div>
+            </div>
+
+            <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+              <div className="p-4 rounded-xl border border-[var(--color-border)] bg-[var(--color-canvas)] space-y-2">
+                <div className="flex items-center gap-2 text-[#7A0A0A] font-bold text-sm">
+                  <Clock className="h-4 w-4" />
+                  <span>Session Inactivity Timeout</span>
+                </div>
+                <p className="text-xs text-[var(--color-text-secondary)] leading-relaxed">
+                  Strict 15-minute inactivity session expiration enforced across admin, staff, and guard terminals to protect unattended campus workstations.
+                </p>
+                <div className="inline-flex items-center gap-1.5 text-[11px] font-semibold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded">
+                  <CheckCircle className="h-3.5 w-3.5" /> Enforced (15m)
+                </div>
+              </div>
+
+              <div className="p-4 rounded-xl border border-[var(--color-border)] bg-[var(--color-canvas)] space-y-2">
+                <div className="flex items-center gap-2 text-[#7A0A0A] font-bold text-sm">
+                  <Shield className="h-4 w-4" />
+                  <span>Cloudflare Turnstile Bot Defense</span>
+                </div>
+                <p className="text-xs text-[var(--color-text-secondary)] leading-relaxed">
+                  Cryptographic challenge validation on public pass registrations and returning visitor lookups to prevent automated harvesting and denial-of-service.
+                </p>
+                <div className="inline-flex items-center gap-1.5 text-[11px] font-semibold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded">
+                  <CheckCircle className="h-3.5 w-3.5" /> Active & Verified
+                </div>
+              </div>
+
+              <div className="p-4 rounded-xl border border-[var(--color-border)] bg-[var(--color-canvas)] space-y-2">
+                <div className="flex items-center gap-2 text-[#7A0A0A] font-bold text-sm">
+                  <Camera className="h-4 w-4" />
+                  <span>Facial Verification Threshold</span>
+                </div>
+                <p className="text-xs text-[var(--color-text-secondary)] leading-relaxed">
+                  Configured in provisional mode (<code className="font-mono text-[10px] bg-slate-200 px-1 rounded">RETURNING_FACE_THRESHOLD_MODE=provisional</code>). Match scores provide advisory guidance; human checkpoint verification is required.
+                </p>
+                <div className="inline-flex items-center gap-1.5 text-[11px] font-semibold text-blue-700 bg-blue-50 px-2 py-0.5 rounded">
+                  <CheckCircle className="h-3.5 w-3.5" /> Provisional Mode
+                </div>
+              </div>
+
+              <div className="p-4 rounded-xl border border-[var(--color-border)] bg-[var(--color-canvas)] space-y-2">
+                <div className="flex items-center gap-2 text-[#7A0A0A] font-bold text-sm">
+                  <KeyRound className="h-4 w-4" />
+                  <span>Pass Cryptographic Signatures</span>
+                </div>
+                <p className="text-xs text-[var(--color-text-secondary)] leading-relaxed">
+                  Every issued E-GatePass QR payload is digitally signed with Ed25519 cryptography, preventing barcode forgery, replay attacks, or offline tampering.
+                </p>
+                <div className="inline-flex items-center gap-1.5 text-[11px] font-semibold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded">
+                  <CheckCircle className="h-3.5 w-3.5" /> Ed25519 Sealed
+                </div>
+              </div>
+
+              <div className="p-4 rounded-xl border border-[var(--color-border)] bg-[var(--color-canvas)] space-y-2">
+                <div className="flex items-center gap-2 text-[#7A0A0A] font-bold text-sm">
+                  <Lock className="h-4 w-4" />
+                  <span>Anti-Abuse & Rate Limiting</span>
+                </div>
+                <p className="text-xs text-[var(--color-text-secondary)] leading-relaxed">
+                  Multi-tier rate limiting on email delivery, SMS/OTP issuance, and visitor records queries prevents API abuse and credential stuffing.
+                </p>
+                <div className="inline-flex items-center gap-1.5 text-[11px] font-semibold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded">
+                  <CheckCircle className="h-3.5 w-3.5" /> Active Limits
+                </div>
+              </div>
+
+              <div className="p-4 rounded-xl border border-[var(--color-border)] bg-[var(--color-canvas)] space-y-2">
+                <div className="flex items-center gap-2 text-[#7A0A0A] font-bold text-sm">
+                  <FileText className="h-4 w-4" />
+                  <span>Immutable Audit Trail</span>
+                </div>
+                <p className="text-xs text-[var(--color-text-secondary)] leading-relaxed">
+                  All security updates, staff role changes, policy overrides, and pass state transitions are permanently written to tamper-evident audit logs.
+                </p>
+                <div className="inline-flex items-center gap-1.5 text-[11px] font-semibold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded">
+                  <CheckCircle className="h-3.5 w-3.5" /> Audit Logging On
+                </div>
+              </div>
+            </div>
+          </Card>
+        </div>
+      )}
+
+      {/* ===================== TAB: DATA RETENTION ===================== */}
+      {currentTab === 'retention' && (
+        <div className="space-y-6">
+          <Card className="p-6">
+            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 border-b border-[var(--color-border)] pb-4 mb-6">
+              <div>
+                <h2 className="text-xl font-bold text-[var(--color-text-primary)]">Granular Data Retention Policies</h2>
+                <p className="text-xs text-[var(--color-text-secondary)] mt-1">
+                  Super Admin controls for lifecycle deletion across distinct data categories. Scheduled cleanup purges expired evidence while strictly safeguarding active visits and incident holds.
+                </p>
+              </div>
+              <label className="flex items-center gap-3 text-xs font-bold text-[var(--color-text-primary)] bg-[var(--color-canvas)] p-3 rounded-xl border border-[var(--color-border)]">
+                <input
+                  type="checkbox"
+                  checked={settings.automaticCleanupEnabled}
+                  disabled={!canManageSecuritySettings || settingsBusy}
+                  onChange={(event) => setSettings((current) => ({ ...current, automaticCleanupEnabled: event.target.checked }))}
+                  className="rounded text-[#7A0A0A] focus:ring-[#7A0A0A] h-4 w-4"
+                />
+                Enable Daily Automated Cleanup
+              </label>
+            </div>
+
+            {/* Granular Categories Grid */}
+            <div className="space-y-4">
+              <h3 className="text-sm font-bold text-[var(--color-text-primary)] uppercase tracking-wider">
+                Category Retention Controls
+              </h3>
+
+              <div className="grid gap-4 sm:grid-cols-2">
+                {/* 1. Visitor Face Photos */}
+                <div className="p-4 rounded-xl border border-[var(--color-border)] bg-[var(--color-canvas)] space-y-3">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <Camera className="h-4 w-4 text-[#7A0A0A]" />
+                      <span className="text-sm font-bold text-[var(--color-text-primary)]">Visitor Face Photos</span>
+                    </div>
+                    <label className="flex items-center gap-2 cursor-pointer text-xs font-semibold">
+                      <input
+                        type="checkbox"
+                        checked={settings.photoRetentionEnabled}
+                        disabled={!canManageSecuritySettings || settingsBusy}
+                        onChange={(e) => setSettings((s) => ({ ...s, photoRetentionEnabled: e.target.checked }))}
+                        className="rounded text-[#7A0A0A] h-4 w-4"
+                      />
+                      <span>{settings.photoRetentionEnabled ? 'Purge Active' : 'Retain Indefinitely'}</span>
+                    </label>
+                  </div>
+                  <p className="text-xs text-[var(--color-text-secondary)]">
+                    Registration portraits and kiosk live selfie photos used for visual identity verification.
+                  </p>
+                  <div>
+                    <label className="block text-xs font-semibold text-[var(--color-text-secondary)] mb-1">
+                      Retention Period (1 to 90 days)
+                    </label>
+                    <Input
+                      type="number"
+                      min={1}
+                      max={90}
+                      value={retentionInputs.photoRetentionDays || ''}
+                      disabled={!canManageSecuritySettings || !settings.photoRetentionEnabled || settingsBusy}
+                      error={Boolean(retentionErrors.photoRetentionDays)}
+                      onChange={(e) => handleRetentionDaysChange('photoRetentionDays', e.target.value)}
+                    />
+                    {retentionErrors.photoRetentionDays && (
+                      <p className="mt-1 text-xs text-[var(--color-danger)]">{retentionErrors.photoRetentionDays}</p>
+                    )}
+                  </div>
+                </div>
+
+                {/* 2. Valid ID Images */}
+                <div className="p-4 rounded-xl border border-[var(--color-border)] bg-[var(--color-canvas)] space-y-3">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <FileText className="h-4 w-4 text-[#7A0A0A]" />
+                      <span className="text-sm font-bold text-[var(--color-text-primary)]">Valid ID Images</span>
+                    </div>
+                    <label className="flex items-center gap-2 cursor-pointer text-xs font-semibold">
+                      <input
+                        type="checkbox"
+                        checked={settings.idRetentionEnabled}
+                        disabled={!canManageSecuritySettings || settingsBusy}
+                        onChange={(e) => setSettings((s) => ({ ...s, idRetentionEnabled: e.target.checked }))}
+                        className="rounded text-[#7A0A0A] h-4 w-4"
+                      />
+                      <span>{settings.idRetentionEnabled ? 'Purge Active' : 'Retain Indefinitely'}</span>
+                    </label>
+                  </div>
+                  <p className="text-xs text-[var(--color-text-secondary)]">
+                    Government-issued and institutional identification cards uploaded during registration.
+                  </p>
+                  <div>
+                    <label className="block text-xs font-semibold text-[var(--color-text-secondary)] mb-1">
+                      Retention Period (1 to 90 days)
+                    </label>
+                    <Input
+                      type="number"
+                      min={1}
+                      max={90}
+                      value={retentionInputs.idRetentionDays || ''}
+                      disabled={!canManageSecuritySettings || !settings.idRetentionEnabled || settingsBusy}
+                      error={Boolean(retentionErrors.idRetentionDays)}
+                      onChange={(e) => handleRetentionDaysChange('idRetentionDays', e.target.value)}
+                    />
+                    {retentionErrors.idRetentionDays && (
+                      <p className="mt-1 text-xs text-[var(--color-danger)]">{retentionErrors.idRetentionDays}</p>
+                    )}
+                  </div>
+                </div>
+
+                {/* 3. Vehicle Photos */}
+                <div className="p-4 rounded-xl border border-[var(--color-border)] bg-[var(--color-canvas)] space-y-3">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <Car className="h-4 w-4 text-[#7A0A0A]" />
+                      <span className="text-sm font-bold text-[var(--color-text-primary)]">Vehicle Photos</span>
+                    </div>
+                    <label className="flex items-center gap-2 cursor-pointer text-xs font-semibold">
+                      <input
+                        type="checkbox"
+                        checked={settings.vehiclePhotoRetentionEnabled}
+                        disabled={!canManageSecuritySettings || settingsBusy}
+                        onChange={(e) => setSettings((s) => ({ ...s, vehiclePhotoRetentionEnabled: e.target.checked }))}
+                        className="rounded text-[#7A0A0A] h-4 w-4"
+                      />
+                      <span>{settings.vehiclePhotoRetentionEnabled ? 'Purge Active' : 'Retain Indefinitely'}</span>
+                    </label>
+                  </div>
+                  <p className="text-xs text-[var(--color-text-secondary)]">
+                    License plate snapshots and parking entrance documentation photos.
+                  </p>
+                  <div>
+                    <label className="block text-xs font-semibold text-[var(--color-text-secondary)] mb-1">
+                      Retention Period (1 to 90 days)
+                    </label>
+                    <Input
+                      type="number"
+                      min={1}
+                      max={90}
+                      value={retentionInputs.vehiclePhotoRetentionDays || ''}
+                      disabled={!canManageSecuritySettings || !settings.vehiclePhotoRetentionEnabled || settingsBusy}
+                      error={Boolean(retentionErrors.vehiclePhotoRetentionDays)}
+                      onChange={(e) => handleRetentionDaysChange('vehiclePhotoRetentionDays', e.target.value)}
+                    />
+                    {retentionErrors.vehiclePhotoRetentionDays && (
+                      <p className="mt-1 text-xs text-[var(--color-danger)]">{retentionErrors.vehiclePhotoRetentionDays}</p>
+                    )}
+                  </div>
+                </div>
+
+                {/* 4. Visitor Personal Records (PII) */}
+                <div className="p-4 rounded-xl border border-[var(--color-border)] bg-[var(--color-canvas)] space-y-3">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <Users className="h-4 w-4 text-[#7A0A0A]" />
+                      <span className="text-sm font-bold text-[var(--color-text-primary)]">Visitor Records & PII</span>
+                    </div>
+                    <label className="flex items-center gap-2 cursor-pointer text-xs font-semibold">
+                      <input
+                        type="checkbox"
+                        checked={settings.visitorRetentionEnabled}
+                        disabled={!canManageSecuritySettings || settingsBusy}
+                        onChange={(e) => setSettings((s) => ({ ...s, visitorRetentionEnabled: e.target.checked }))}
+                        className="rounded text-[#7A0A0A] h-4 w-4"
+                      />
+                      <span>{settings.visitorRetentionEnabled ? 'Purge Active' : 'Retain Indefinitely'}</span>
+                    </label>
+                  </div>
+                  <p className="text-xs text-[var(--color-text-secondary)]">
+                    Visitor names, contact numbers, and addresses. Anonymized to retain aggregate visit counts.
+                  </p>
+                  <div>
+                    <label className="block text-xs font-semibold text-[var(--color-text-secondary)] mb-1">
+                      Retention Period (7 to 365 days)
+                    </label>
+                    <Input
+                      type="number"
+                      min={7}
+                      max={365}
+                      value={retentionInputs.visitorRetentionDays || ''}
+                      disabled={!canManageSecuritySettings || !settings.visitorRetentionEnabled || settingsBusy}
+                      error={Boolean(retentionErrors.visitorRetentionDays)}
+                      onChange={(e) => handleRetentionDaysChange('visitorRetentionDays', e.target.value)}
+                    />
+                    {retentionErrors.visitorRetentionDays && (
+                      <p className="mt-1 text-xs text-[var(--color-danger)]">{retentionErrors.visitorRetentionDays}</p>
+                    )}
+                  </div>
+                </div>
+
+                {/* 5. Returning Visitor Profiles */}
+                <div className="p-4 rounded-xl border border-[var(--color-border)] bg-[var(--color-canvas)] space-y-3">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <Shield className="h-4 w-4 text-[#7A0A0A]" />
+                      <span className="text-sm font-bold text-[var(--color-text-primary)]">Returning Visitor Profiles</span>
+                    </div>
+                    <label className="flex items-center gap-2 cursor-pointer text-xs font-semibold">
+                      <input
+                        type="checkbox"
+                        checked={settings.returningProfileRetentionEnabled}
+                        disabled={!canManageSecuritySettings || settingsBusy}
+                        onChange={(e) => setSettings((s) => ({ ...s, returningProfileRetentionEnabled: e.target.checked }))}
+                        className="rounded text-[#7A0A0A] h-4 w-4"
+                      />
+                      <span>{settings.returningProfileRetentionEnabled ? 'Purge Active' : 'Retain Indefinitely'}</span>
+                    </label>
+                  </div>
+                  <p className="text-xs text-[var(--color-text-secondary)]">
+                    Fast-track phone lookup hashes and 128-d biometric facial embeddings for returning visitors.
+                  </p>
+                  <div>
+                    <label className="block text-xs font-semibold text-[var(--color-text-secondary)] mb-1">
+                      Retention Period (7 to 365 days)
+                    </label>
+                    <Input
+                      type="number"
+                      min={7}
+                      max={365}
+                      value={retentionInputs.returningProfileRetentionDays || ''}
+                      disabled={!canManageSecuritySettings || !settings.returningProfileRetentionEnabled || settingsBusy}
+                      error={Boolean(retentionErrors.returningProfileRetentionDays)}
+                      onChange={(e) => handleRetentionDaysChange('returningProfileRetentionDays', e.target.value)}
+                    />
+                    {retentionErrors.returningProfileRetentionDays && (
+                      <p className="mt-1 text-xs text-[var(--color-danger)]">{retentionErrors.returningProfileRetentionDays}</p>
+                    )}
+                  </div>
+                </div>
+
+                {/* 6. System Audit Logs */}
+                <div className="p-4 rounded-xl border border-[var(--color-border)] bg-[var(--color-canvas)] space-y-3">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <Database className="h-4 w-4 text-[#7A0A0A]" />
+                      <span className="text-sm font-bold text-[var(--color-text-primary)]">System Audit Trail</span>
+                    </div>
+                    <span className="inline-flex items-center gap-1 text-[11px] font-bold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded">
+                      <Lock className="h-3 w-3" /> Mandatory
+                    </span>
+                  </div>
+                  <p className="text-xs text-[var(--color-text-secondary)]">
+                    Immutable logs of administrative changes, security policy updates, and staff access events.
+                  </p>
+                  <div>
+                    <label className="block text-xs font-semibold text-[var(--color-text-secondary)] mb-1">
+                      Retention Period (90 to 1095 days)
+                    </label>
+                    <Input
+                      type="number"
+                      min={90}
+                      max={1095}
+                      value={retentionInputs.auditRetentionDays || ''}
+                      disabled={!canManageSecuritySettings || settingsBusy}
+                      error={Boolean(retentionErrors.auditRetentionDays)}
+                      onChange={(e) => handleRetentionDaysChange('auditRetentionDays', e.target.value)}
+                    />
+                    {retentionErrors.auditRetentionDays && (
+                      <p className="mt-1 text-xs text-[var(--color-danger)]">{retentionErrors.auditRetentionDays}</p>
+                    )}
+                  </div>
+                </div>
+              </div>
+
+              {/* Administrative Policy Override Note */}
+              <div className="p-4 rounded-xl border border-amber-200 bg-amber-50/60 space-y-2 mt-4">
+                <label className="block text-xs font-bold text-amber-900">
+                  Super Admin Policy Change Reason (Optional Audit Note)
+                </label>
+                <Input
+                  placeholder="e.g. Scheduled annual policy update or institutional compliance review"
+                  value={retentionOverrideReason}
+                  disabled={!canManageSecuritySettings || settingsBusy}
+                  onChange={(e) => setRetentionOverrideReason(e.target.value)}
+                />
+                <p className="text-[11px] text-amber-800">
+                  Any adjustment to retention categories or duration is recorded in the security audit log with timestamp and actor identity.
+                </p>
+              </div>
+            </div>
+
+            {/* Retention Safeguards & Purge Action */}
+            <div className="mt-8 border-t border-[var(--color-border)] pt-6 space-y-4">
+              <div className="p-4 rounded-xl border border-blue-200 bg-blue-50/50 space-y-1 text-xs text-blue-900">
+                <div className="font-bold flex items-center gap-1.5 text-blue-950">
+                  <Shield className="h-4 w-4" /> Built-in Retention Safeguards
+                </div>
+                <p>
+                  Automated cleanup strictly protects active visits, visitors currently checked-in on campus (<code className="font-mono bg-blue-100 px-1 rounded">inside</code>), and records flagged with active legal or security holds. Expired images are only purged after verified gate exit or pass expiration.
+                </p>
+              </div>
+
+              <div className="rounded-lg border border-[var(--color-danger)] bg-[var(--color-danger-light)] p-5">
+                <div className="flex items-start gap-4">
+                  <AlertTriangle className="mt-0.5 h-6 w-6 flex-shrink-0 text-[var(--color-danger)]" />
+                  <div>
+                    <h3 className="text-lg font-semibold text-[var(--color-danger-dark)]">Purge Eligible Evidence</h3>
+                    <p className="mt-2 text-sm text-[var(--color-danger-dark)]">
+                      Permanently deletes eligible visitor photos and ID images that have reached their authoritative expiry date under configured retention policies. Active visits and incident holds remain protected. Visitor details and visit history are kept. This action cannot be undone.
+                    </p>
+                    <Button
+                      variant="destructive"
+                      onClick={handlePurgeClick}
+                      disabled={settingsBusy}
+                      loading={calculatingPurge}
+                      className="mt-4"
+                      icon={<Trash2 className="h-4 w-4" />}
+                    >
+                      {calculatingPurge ? 'Calculating...' : purging ? 'Purging...' : 'Run Purge Now'}
+                    </Button>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </Card>
+        </div>
+      )}
+
+      {/* ===================== TAB: PERSONAL & PASSWORD ===================== */}
+      {currentTab === 'personal' && (
+        <div className="space-y-6 max-w-2xl">
+          <Card className="p-6 space-y-4">
+            <h2 className="text-xl font-bold text-[var(--color-text-primary)]">User Account & Session</h2>
+            <div className="divide-y divide-[var(--color-border)] text-xs">
+              <div className="py-2.5 flex justify-between">
+                <span className="text-[var(--color-text-secondary)]">Authenticated User:</span>
+                <span className="font-bold text-[var(--color-text-primary)]">{(userData && 'email' in userData && typeof userData.email === 'string') ? userData.email : 'N/A'}</span>
+              </div>
+              <div className="py-2.5 flex justify-between">
+                <span className="text-[var(--color-text-secondary)]">Assigned Role:</span>
+                <span className="font-bold text-[#7A0A0A] uppercase">{role || 'User'}</span>
+              </div>
+              <div className="py-2.5 flex justify-between">
+                <span className="text-[var(--color-text-secondary)]">Session Protection:</span>
+                <span className="font-semibold text-emerald-700">15-minute auto-expiry active</span>
+              </div>
+            </div>
+          </Card>
+
+          <PasswordResetCard />
+        </div>
+      )}
+
+      {/* Campus Closure Add Modal */}
       {showAddClosureModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-xs">
           <div className="w-full max-w-md rounded-2xl bg-white p-6 shadow-xl space-y-4">
@@ -1171,6 +1508,7 @@ export function AdminSettings() {
         </div>
       )}
 
+      {/* Delete Closure Modal */}
       <ConfirmModal
         isOpen={!!deletingClosure}
         onClose={() => setDeletingClosure(null)}
@@ -1190,6 +1528,7 @@ export function AdminSettings() {
         loading={isDeletingClosure}
       />
 
+      {/* Purge Confirm Modal */}
       <ConfirmModal
         isOpen={canManageSecuritySettings && showPurgeConfirm && !saving}
         onClose={() => setShowPurgeConfirm(false)}
@@ -1216,6 +1555,7 @@ export function AdminSettings() {
         loading={purging}
       />
 
+      {/* Peak Mode Modal */}
       <ConfirmModal
         isOpen={showPeakModeConfirm && !settingsBusy}
         onClose={() => {

@@ -97,9 +97,13 @@ async function handleRequest(request: Request): Promise<Response> {
     const { admin } = getServerSupabaseClients();
     await requireStaffActor(admin, token, ['admin', 'superadmin']);
 
-    const expireRes = await admin.schema('api').rpc('expire_stale_passes');
-    if (expireRes.error) {
-      throw new HttpError(503, 'service_unavailable');
+    try {
+      const expireRes = await admin.schema('api').rpc('expire_stale_passes');
+      if (expireRes.error) {
+        console.warn('Pass expiry maintenance warning in records GET:', expireRes.error.message);
+      }
+    } catch (expireErr) {
+      console.warn('Pass expiry maintenance failed in records GET (non-blocking):', expireErr);
     }
 
     let query = admin
@@ -135,7 +139,12 @@ async function handleRequest(request: Request): Promise<Response> {
       .order('id', { ascending: false });
 
     if (statusParam) {
-      query = query.eq('status', statusParam);
+      const statuses = statusParam.split(',').map((s) => s.trim()).filter(Boolean);
+      if (statuses.length === 1) {
+        query = query.eq('status', statuses[0]);
+      } else if (statuses.length > 1) {
+        query = query.in('status', statuses);
+      }
     }
 
     if (dateFrom) {

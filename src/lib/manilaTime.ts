@@ -182,3 +182,51 @@ export function getManilaDateParts(input: DateInput = new Date()): {
   return { year, month, day, dateString, monthKey };
 }
 
+
+export type DatePresetKey = 'today' | 'yesterday' | 'thisWeek' | 'last7' | 'thisMonth';
+
+/**
+ * Returns canonical Asia/Manila date bounds for reporting presets:
+ * - 'today': current calendar day in Manila
+ * - 'yesterday': prior calendar day in Manila
+ * - 'thisWeek': current week start (Monday) through current day
+ * - 'last7': past 7 days ending today
+ * - 'thisMonth': 1st of current month through current day
+ */
+export function getManilaDatePresetRange(
+  preset: DatePresetKey,
+  referenceDate: DateInput = new Date()
+): { from: string; to: string } {
+  const parts = getManilaDateParts(referenceDate);
+  const today = parts.dateString;
+  const refNoon = new Date(`${today}T12:00:00+08:00`);
+
+  if (preset === 'today') {
+    return { from: today, to: today };
+  }
+
+  if (preset === 'yesterday') {
+    const yesterdayDate = new Date(refNoon.getTime() - 24 * 60 * 60 * 1000);
+    const yesterdayStr = getManilaDateString(yesterdayDate);
+    return { from: yesterdayStr, to: yesterdayStr };
+  }
+
+  if (preset === 'thisWeek') {
+    const dayOfWeek = refNoon.getDay(); // 0=Sun, 1=Mon, ..., 6=Sat
+    const daysSinceMonday = (dayOfWeek + 6) % 7;
+    const mondayDate = new Date(refNoon.getTime() - daysSinceMonday * 24 * 60 * 60 * 1000);
+    return { from: getManilaDateString(mondayDate), to: today };
+  }
+
+  if (preset === 'last7') {
+    const sevenDaysAgo = new Date(refNoon.getTime() - 6 * 24 * 60 * 60 * 1000);
+    return { from: getManilaDateString(sevenDaysAgo), to: today };
+  }
+
+  if (preset === 'thisMonth') {
+    const firstOfMonth = `${parts.year}-${String(parts.month).padStart(2, '0')}-01`;
+    return { from: firstOfMonth, to: today };
+  }
+
+  return { from: today, to: today };
+}

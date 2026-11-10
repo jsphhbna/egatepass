@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { getAccessToken } from '@/services/auth';
-import { ImageOff } from 'lucide-react';
+import { ImageOff, RefreshCw } from 'lucide-react';
 
 interface AuthenticatedImageProps extends React.ImgHTMLAttributes<HTMLImageElement> {
   publicId?: string | null;
@@ -22,6 +22,7 @@ export function AuthenticatedImage({
   const [objectUrl, setObjectUrl] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [state, setState] = useState<'loading' | 'ready' | 'expired' | 'missing' | 'temporary'>('loading');
+  const [retryCount, setRetryCount] = useState(0);
 
   useEffect(() => {
     let active = true;
@@ -134,7 +135,7 @@ export function AuthenticatedImage({
         URL.revokeObjectURL(url);
       }
     };
-  }, [publicId, srcUrl, authToken, blob]);
+  }, [publicId, srcUrl, authToken, blob, retryCount]);
 
   if (loading) {
     return (
@@ -147,7 +148,15 @@ export function AuthenticatedImage({
   }
 
   if (state !== 'ready' || !objectUrl) {
-    const message = state === 'expired' ? 'Image expired' : fallbackText;
+    const isTemporary = state === 'temporary';
+    const message = state === 'expired'
+      ? 'Image expired'
+      : state === 'missing'
+      ? (fallbackText || 'Image unavailable')
+      : isTemporary
+      ? 'Unable to load photo'
+      : fallbackText;
+
     return (
       <div
         className={`flex flex-col items-center justify-center rounded-md border border-dashed border-[var(--color-border-strong)] bg-[var(--color-overlay)] p-4 text-center text-[var(--color-text-muted)] ${className}`}
@@ -158,6 +167,16 @@ export function AuthenticatedImage({
         <span className="text-xs font-semibold">{message}</span>
         {state === 'expired' && (
           <span className="mt-1 text-xs">Removed under the configured image retention policy.</span>
+        )}
+        {isTemporary && (
+          <button
+            type="button"
+            onClick={() => setRetryCount((c) => c + 1)}
+            className="mt-2 inline-flex items-center gap-1 rounded bg-white px-2.5 py-1 text-[11px] font-semibold text-[#7A0A0A] border border-[var(--color-border)] shadow-xs hover:bg-slate-50 transition-colors cursor-pointer"
+          >
+            <RefreshCw className="h-3 w-3" />
+            Retry
+          </button>
         )}
       </div>
     );

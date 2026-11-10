@@ -35,6 +35,14 @@ const settingsSchema = z.object({
   automaticCleanupEnabled: z.boolean().optional(),
   workingHours: workingHoursSchema.optional(),
   schedulingDaysAhead: z.number().int().min(0).max(90).optional(),
+  photoRetentionEnabled: z.boolean().optional(),
+  idRetentionEnabled: z.boolean().optional(),
+  vehiclePhotoRetentionEnabled: z.boolean().optional(),
+  vehiclePhotoRetentionDays: z.number().int().min(1).max(365).optional(),
+  visitorRetentionEnabled: z.boolean().optional(),
+  returningProfileRetentionEnabled: z.boolean().optional(),
+  returningProfileRetentionDays: z.number().int().min(1).max(365).optional(),
+  overrideReason: z.string().trim().max(500).optional(),
 }).strict();
 
 async function handleRequest(request: Request): Promise<Response> {
@@ -88,7 +96,14 @@ async function handleRequest(request: Request): Promise<Response> {
       parsed.data.reconciliationRetentionDays !== undefined ||
       parsed.data.workingHours !== undefined ||
       parsed.data.schedulingDaysAhead !== undefined ||
-      parsed.data.automaticCleanupEnabled !== undefined;
+      parsed.data.automaticCleanupEnabled !== undefined ||
+      parsed.data.photoRetentionEnabled !== undefined ||
+      parsed.data.idRetentionEnabled !== undefined ||
+      parsed.data.vehiclePhotoRetentionEnabled !== undefined ||
+      parsed.data.vehiclePhotoRetentionDays !== undefined ||
+      parsed.data.visitorRetentionEnabled !== undefined ||
+      parsed.data.returningProfileRetentionEnabled !== undefined ||
+      parsed.data.returningProfileRetentionDays !== undefined;
 
     if (actor.role !== 'superadmin' && changesSecuritySettings) {
       throw new HttpError(403, 'Only Super Admins may change security-sensitive settings');
@@ -153,6 +168,64 @@ async function handleRequest(request: Request): Promise<Response> {
       if (instrResult.error) {
         console.error('update_visitor_instructions RPC failed:', instrResult.error);
         throw new HttpError(400, instrResult.error.message || 'invalid_visitor_instructions');
+      }
+    }
+
+    const hasGranularRetentionUpdates =
+      parsed.data.photoRetentionEnabled !== undefined ||
+      parsed.data.idRetentionEnabled !== undefined ||
+      parsed.data.vehiclePhotoRetentionEnabled !== undefined ||
+      parsed.data.vehiclePhotoRetentionDays !== undefined ||
+      parsed.data.visitorRetentionEnabled !== undefined ||
+      parsed.data.returningProfileRetentionEnabled !== undefined ||
+      parsed.data.returningProfileRetentionDays !== undefined;
+
+    if (hasGranularRetentionUpdates && actor.role === 'superadmin') {
+      const { data: cur } = await admin
+        .from('app_settings')
+        .select(`
+          photo_retention_enabled,
+          photo_retention_days,
+          id_retention_enabled,
+          id_retention_days,
+          vehicle_photo_retention_enabled,
+          vehicle_photo_retention_days,
+          visitor_retention_enabled,
+          visitor_retention_days,
+          returning_profile_retention_enabled,
+          returning_profile_retention_days
+        `)
+        .eq('singleton', true)
+        .maybeSingle();
+
+      const photoEn = parsed.data.photoRetentionEnabled ?? (cur as any)?.photo_retention_enabled ?? true;
+      const photoD = photoRet ?? (cur as any)?.photo_retention_days ?? 7;
+      const idEn = parsed.data.idRetentionEnabled ?? (cur as any)?.id_retention_enabled ?? true;
+      const idD = idRet ?? (cur as any)?.id_retention_days ?? 30;
+      const vehEn = parsed.data.vehiclePhotoRetentionEnabled ?? (cur as any)?.vehicle_photo_retention_enabled ?? true;
+      const vehD = parsed.data.vehiclePhotoRetentionDays ?? (cur as any)?.vehicle_photo_retention_days ?? 30;
+      const visEn = parsed.data.visitorRetentionEnabled ?? (cur as any)?.visitor_retention_enabled ?? true;
+      const visD = visRet ?? (cur as any)?.visitor_retention_days ?? 180;
+      const retEn = parsed.data.returningProfileRetentionEnabled ?? (cur as any)?.returning_profile_retention_enabled ?? true;
+      const retD = parsed.data.returningProfileRetentionDays ?? (cur as any)?.returning_profile_retention_days ?? 30;
+
+      const retRes = await admin.schema('api').rpc('update_retention_policies', {
+        requested_actor_id: actor.id,
+        requested_photo_enabled: photoEn,
+        requested_photo_days: photoD,
+        requested_id_enabled: idEn,
+        requested_id_days: idD,
+        requested_vehicle_enabled: vehEn,
+        requested_vehicle_days: vehD,
+        requested_visitor_enabled: visEn,
+        requested_visitor_days: visD,
+        requested_returning_enabled: retEn,
+        requested_returning_days: retD,
+        requested_override_reason: parsed.data.overrideReason ?? 'Superadmin policy update',
+      });
+      if (retRes.error) {
+        console.error('update_retention_policies RPC failed:', retRes.error);
+        throw new HttpError(400, retRes.error.message || 'invalid_retention_policy');
       }
     }
 

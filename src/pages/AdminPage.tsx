@@ -1,7 +1,9 @@
-import { NavLink, Outlet, useNavigate } from 'react-router-dom';
+import { NavLink, Outlet, useNavigate, useLocation, Link } from 'react-router-dom';
 import { signOutCurrentActor } from '@/services/auth';
 import { useAuth } from '@/hooks/useAuth';
 import {
+  ChevronDown,
+  ChevronRight,
   LayoutDashboard,
   Users,
   Tablet,
@@ -21,21 +23,71 @@ import { useState, useRef, useEffect } from 'react';
 import { formatUserRole, isSuperAdmin } from '@/lib/permissions';
 import { RouteErrorBoundary } from '@/components/RouteErrorBoundary';
 
-const navItems = [
-  { to: '/admin', icon: LayoutDashboard, label: 'Dashboard', end: true },
-  { to: '/admin/visitors', icon: FileText, label: 'Visitors', end: false },
-  { to: '/admin/devices', icon: Tablet, label: 'Devices', end: false },
-  { to: '/admin/users', icon: Users, label: 'Users', end: false },
-  { to: '/admin/emergency', icon: AlertTriangle, label: 'Emergency', end: false },
-  { to: '/admin/audit', icon: ClipboardList, label: 'Audit Logs', end: false },
-  { to: '/office', icon: Building2, label: 'Office Portal', end: false },
-  { to: '/admin/settings', icon: Settings, label: 'Settings', end: false },
+interface NavChildItem {
+  to: string;
+  label: string;
+}
+
+interface NavGroupItem {
+  id: string;
+  label: string;
+  icon: any;
+  basePath: string;
+  children?: NavChildItem[];
+  superAdminOnly?: boolean;
+}
+
+const navGroups: NavGroupItem[] = [
+  {
+    id: 'dashboard',
+    label: 'Dashboard',
+    icon: LayoutDashboard,
+    basePath: '/admin',
+    children: [
+      { to: '/admin?tab=overview', label: 'Overview' },
+      { to: '/admin?tab=analytics', label: 'Analytics' },
+      { to: '/admin?tab=reports', label: 'Reports' },
+    ],
+  },
+  {
+    id: 'visitors',
+    label: 'Visitors',
+    icon: FileText,
+    basePath: '/admin/visitors',
+    children: [
+      { to: '/admin/visitors?tab=search', label: 'Search & Records' },
+      { to: '/admin/visitors?tab=current', label: 'Current Visitors' },
+      { to: '/admin/visitors?tab=history', label: 'Visit History' },
+    ],
+  },
+  { id: 'devices', label: 'Devices', icon: Tablet, basePath: '/admin/devices' },
+  { id: 'users', label: 'Users', icon: Users, basePath: '/admin/users' },
+  { id: 'emergency', label: 'Emergency', icon: AlertTriangle, basePath: '/admin/emergency' },
+  { id: 'audit', label: 'Audit Logs', icon: ClipboardList, basePath: '/admin/audit' },
+  { id: 'templates', label: 'Print Templates', icon: Printer, basePath: '/admin/templates', superAdminOnly: true },
+  { id: 'office', label: 'Office Portal', icon: Building2, basePath: '/office' },
+  {
+    id: 'settings',
+    label: 'Settings',
+    icon: Settings,
+    basePath: '/admin/settings',
+    children: [
+      { to: '/admin/settings?tab=general', label: 'General' },
+      { to: '/admin/settings?tab=calendar', label: 'Campus Calendar' },
+      { to: '/admin/settings?tab=visitor_ux', label: 'Visitor Experience' },
+      { to: '/admin/settings?tab=security', label: 'Security & Privacy' },
+      { to: '/admin/settings?tab=retention', label: 'Data Retention' },
+      { to: '/admin/settings?tab=personal', label: 'Personal Profile' },
+    ],
+  },
 ];
 
 export function AdminPage() {
   const { userData, role } = useAuth();
   const navigate = useNavigate();
+  const location = useLocation();
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [expandedGroups, setExpandedGroups] = useState<Record<string, boolean>>({});
   const triggerButtonRef = useRef<HTMLButtonElement>(null);
   const drawerRef = useRef<HTMLElement>(null);
 
@@ -159,25 +211,98 @@ export function AdminPage() {
         </div>
 
         {/* Nav */}
-        <nav className="flex-1 overflow-y-auto px-3 py-4" aria-label="Admin navigation">
-          {[
-            ...navItems.slice(0, 6),
-            ...(isSuperAdmin(role)
-              ? [{ to: '/admin/templates', icon: Printer, label: 'Print Templates', end: false }]
-              : []),
-            ...navItems.slice(6),
-          ].map((item) => (
-            <NavLink
-              key={item.to}
-              to={item.to}
-              end={item.end}
-              onClick={() => setSidebarOpen(false)}
-              className={({ isActive }) => `mb-1 flex min-h-11 items-center gap-3 rounded-md px-3 text-sm font-semibold no-underline ${isActive ? 'bg-white text-[var(--color-brand-dark)] shadow-sm' : 'text-white/75 hover:bg-white/10 hover:text-white'}`}
-            >
-              <item.icon className="h-4 w-4" />
-              {item.label}
-            </NavLink>
-          ))}
+        <nav className="flex-1 overflow-y-auto px-3 py-4 space-y-1" aria-label="Admin navigation">
+          {navGroups
+            .filter((item) => !item.superAdminOnly || isSuperAdmin(role))
+            .map((item) => {
+              const Icon = item.icon;
+              const hasChildren = Boolean(item.children && item.children.length > 0);
+              const isParentActive =
+                item.basePath === '/admin'
+                  ? location.pathname === '/admin'
+                  : location.pathname.startsWith(item.basePath);
+              const isExpanded = expandedGroups[item.id] ?? isParentActive;
+
+              return (
+                <div key={item.id} className="space-y-1">
+                  {hasChildren ? (
+                    <div>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setExpandedGroups((prev) => ({
+                            ...prev,
+                            [item.id]: !isExpanded,
+                          }));
+                        }}
+                        className={`flex min-h-11 w-full items-center justify-between rounded-md px-3 text-sm font-semibold transition-colors ${
+                          isParentActive
+                            ? 'bg-white/15 text-white'
+                            : 'text-white/75 hover:bg-white/10 hover:text-white'
+                        }`}
+                        aria-expanded={isExpanded}
+                      >
+                        <div className="flex items-center gap-3">
+                          <Icon className="h-4 w-4" />
+                          <span>{item.label}</span>
+                        </div>
+                        {isExpanded ? (
+                          <ChevronDown className="h-4 w-4 opacity-70" />
+                        ) : (
+                          <ChevronRight className="h-4 w-4 opacity-70" />
+                        )}
+                      </button>
+
+                      {isExpanded && item.children && (
+                        <div className="ml-5 pl-2 mt-1 border-l border-white/15 space-y-1">
+                          {item.children.map((child) => {
+                            const currentFull = location.pathname + location.search;
+                            const isChildActive =
+                              child.to.includes('tab=overview')
+                                ? location.pathname === '/admin' && (!location.search || location.search === '?tab=overview')
+                                : child.to.includes('tab=general')
+                                ? location.pathname === '/admin/settings' && (!location.search || location.search === '?tab=general')
+                                : child.to.includes('tab=search')
+                                ? location.pathname === '/admin/visitors' && (!location.search || location.search === '?tab=search')
+                                : currentFull === child.to;
+
+                            return (
+                              <Link
+                                key={child.to}
+                                to={child.to}
+                                onClick={() => setSidebarOpen(false)}
+                                className={`flex min-h-9 items-center rounded-md px-2.5 text-xs font-medium no-underline transition-colors ${
+                                  isChildActive
+                                    ? 'bg-white text-[var(--color-brand-dark)] font-bold shadow-xs'
+                                    : 'text-white/70 hover:bg-white/10 hover:text-white'
+                                }`}
+                              >
+                                <span>{child.label}</span>
+                              </Link>
+                            );
+                          })}
+                        </div>
+                      )}
+                    </div>
+                  ) : (
+                    <NavLink
+                      to={item.basePath}
+                      onClick={() => setSidebarOpen(false)}
+                      className={({ isActive }) =>
+                        `flex min-h-11 items-center gap-3 rounded-md px-3 text-sm font-semibold no-underline transition-colors ${
+                          isActive
+                            ? 'bg-white text-[var(--color-brand-dark)] shadow-sm'
+                            : 'text-white/75 hover:bg-white/10 hover:text-white'
+                        }`
+                      }
+                    >
+                      <Icon className="h-4 w-4" />
+                      <span>{item.label}</span>
+                    </NavLink>
+                  )}
+                </div>
+              );
+            })}
         </nav>
 
         {/* Footer */}
