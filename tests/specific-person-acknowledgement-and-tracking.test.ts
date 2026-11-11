@@ -497,7 +497,10 @@ describe('Specific-Person Request Acknowledgement & Secure Status Tracking', () 
         schema: () => ({
           rpc: (fn: string, params: any) => {
             if (fn === 'consume_rate_limit') {
-              expect(params.p_action).toBe('portal.track_visit');
+              expect(params.requested_action).toBe('portal.track_visit');
+              expect(params.requested_key_hex).toMatch(/^[0-9a-f]{64}$/);
+              expect(params.requested_max_requests).toBe(60);
+              expect(params.requested_window_seconds).toBe(60);
               return Promise.resolve({ data: true, error: null });
             }
             if (fn === 'lookup_office_visit_tracking_status') {
@@ -612,6 +615,35 @@ describe('Specific-Person Request Acknowledgement & Secure Status Tracking', () 
       expect(body.tracking.approvalStatus).toBe('rejected');
       expect(body.tracking.rejectionReason).toBe('Office closed for faculty summit on this date.');
       expect(body.tracking.maskedVisitorName).toBe('P***o P*****o');
+    });
+
+    it('fails closed with 503 when consume_rate_limit RPC errors and returns 429 only when rate limit is exceeded', async () => {
+      const makeReq = () =>
+        new Request('https://egatepass.tech/api/passes/track', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'x-forwarded-for': '203.0.113.10' },
+          body: JSON.stringify({ token: 'valid_tracking_token_abcdef1234567890' }),
+        });
+
+      const rpcErrAdmin: any = {
+        schema: () => ({
+          rpc: () => Promise.resolve({ data: null, error: { code: 'PGRST202', message: 'Could not find function' } }),
+        }),
+      };
+      vi.spyOn(supabaseModule, 'getServerSupabaseClients').mockReturnValueOnce({ admin: rpcErrAdmin } as any);
+      const errRes = await trackHandler(makeReq());
+      expect(errRes.status).toBe(503);
+      expect((await errRes.json()).error).toBe('abuse_control_unavailable');
+
+      const throttledAdmin: any = {
+        schema: () => ({
+          rpc: () => Promise.resolve({ data: false, error: null }),
+        }),
+      };
+      vi.spyOn(supabaseModule, 'getServerSupabaseClients').mockReturnValueOnce({ admin: throttledAdmin } as any);
+      const limitRes = await trackHandler(makeReq());
+      expect(limitRes.status).toBe(429);
+      expect((await limitRes.json()).error).toBe('rate_limited');
     });
   });
 });

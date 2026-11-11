@@ -30,18 +30,35 @@ export async function handleRequest(request: Request): Promise<Response> {
   try {
     networkKeyHex = getClientNetworkIdentifier(request);
   } catch (err: any) {
-    if (err instanceof HttpError) throw err;
-    networkKeyHex = 'default';
+    console.error('Failed to derive tracking rate-limit key:', err);
+    return jsonResponse(err instanceof HttpError ? err.status : 503, {
+      error: err instanceof HttpError ? err.code : 'abuse_control_unavailable',
+      message: 'Tracking rate limit protection is temporarily unavailable. Please try again shortly.',
+    }, {
+      'Cache-Control': 'no-store, no-cache, must-revalidate',
+      'X-Robots-Tag': 'noindex, nofollow',
+    });
   }
 
   const { data: netAllowed, error: netRlError } = await admin.schema('api').rpc('consume_rate_limit', {
-    p_key: `ip:${networkKeyHex}`,
-    p_action: 'portal.track_visit',
-    p_max_hits: 60,
-    p_window_seconds: 60,
+    requested_key_hex: networkKeyHex,
+    requested_action: 'portal.track_visit',
+    requested_max_requests: 60,
+    requested_window_seconds: 60,
   });
 
-  if (netRlError || netAllowed === false) {
+  if (netRlError) {
+    console.error('Rate limit network RPC error in track:', netRlError);
+    return jsonResponse(503, {
+      error: 'abuse_control_unavailable',
+      message: 'Tracking rate limit protection is temporarily unavailable. Please try again shortly.',
+    }, {
+      'Cache-Control': 'no-store, no-cache, must-revalidate',
+      'X-Robots-Tag': 'noindex, nofollow',
+    });
+  }
+
+  if (netAllowed === false) {
     return jsonResponse(429, {
       error: 'rate_limited',
       message: 'Too many tracking status requests. Please wait a moment before trying again.',
