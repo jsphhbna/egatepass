@@ -1,5 +1,5 @@
 import { useEffect, useState, useCallback, useRef } from 'react';
-import { signOutCurrentActor } from '@/services/auth';
+import { getAccessToken, signOutCurrentActor } from '@/services/auth';
 import { AuthenticatedImage } from '@/components/AuthenticatedImage';
 import { formatManilaTime } from '@/lib/manilaTime';
 import { BrandMark } from '@/components/BrandMark';
@@ -151,7 +151,12 @@ export function GuardPage() {
     activeControllerRef.current = controller;
 
     try {
-      const token = localStorage.getItem('egatepass_token') || sessionStorage.getItem('egatepass_token');
+      let token: string | null = null;
+      try {
+        token = await getAccessToken();
+      } catch {
+        token = null;
+      }
       const res = await fetch('/api/guard-station-feed', {
         headers: {
           ...(token ? { Authorization: `Bearer ${token}` } : {}),
@@ -250,7 +255,12 @@ export function GuardPage() {
     loadMoreControllerRef.current = controller;
 
     try {
-      const token = localStorage.getItem('egatepass_token') || sessionStorage.getItem('egatepass_token');
+      let token: string | null = null;
+      try {
+        token = await getAccessToken();
+      } catch {
+        token = null;
+      }
       const res = await fetch(`/api/guard-station-feed?cursor=${encodeURIComponent(nextCursor)}`, {
         headers: {
           ...(token ? { Authorization: `Bearer ${token}` } : {}),

@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { useSearchParams } from 'react-router-dom';
-import { Plus, Building2, UserCheck, CheckCircle2, Users, AlertCircle, KeyRound, Copy, Check, Eye, EyeOff, ShieldAlert } from 'lucide-react';
+import { Plus, Building2, UserCheck, CheckCircle2, Users, AlertCircle, KeyRound, Copy, Check, Eye, EyeOff, ShieldAlert, RefreshCw } from 'lucide-react';
 import { Button, FormField, Input, Select, StatusBadge, DataTable, DataTableHead, DataTableRow, DataTableCell, Modal, ConfirmModal } from '@/components/ui';
 import { toast } from 'sonner';
 import { z } from 'zod';
@@ -11,6 +11,7 @@ import { PASSWORD_MIN_LENGTH, PASSWORD_POLICY_HELPER_TEXT, passwordSchema } from
 import { useAuth } from '@/hooks/useAuth';
 import { formatUserRole, isSuperAdmin } from '@/lib/permissions';
 import { getAccessToken } from '@/services/auth';
+import { getOfficeDirectoryStatusMeta, upsertOfficeInDirectory, type AdminOfficeRecord } from '@/lib/officeDirectory';
 
 const userSchema = z.object({
   name: z.string().min(2, 'Name is required').max(50),
@@ -44,34 +45,7 @@ export function AdminUsers() {
   const currentTab = searchParams.get('tab') || 'staff';
 
   // Office Directory & Assignments State
-  const [adminOffices, setAdminOffices] = useState<Array<{
-    id: string;
-    name: string;
-    code: string | null;
-    description: string | null;
-    active: boolean;
-    verified?: boolean;
-    verified_at?: string | null;
-    verified_by?: string | null;
-    dedicatedAccount?: {
-      userId: string;
-      email: string;
-      displayName: string;
-      role: string;
-      active: boolean;
-      mustChangePassword: boolean;
-      emailConfirmed?: boolean;
-    } | null;
-    assignedStaff?: Array<{
-      userId: string;
-      email: string;
-      displayName: string;
-      role: string;
-      active: boolean;
-      mustChangePassword: boolean;
-      emailConfirmed?: boolean;
-    }>;
-  }>>([]);
+  const [adminOffices, setAdminOffices] = useState<AdminOfficeRecord[]>([]);
 
   // Office Provisioning & Dedicated Credentials State (Phase F)
   const [provisioningOffice, setProvisioningOffice] = useState<{ id: string; name: string } | null>(null);
@@ -91,32 +65,61 @@ export function AdminUsers() {
   const [revealPassword, setRevealPassword] = useState(false);
   const [copiedPassword, setCopiedPassword] = useState(false);
   const [loadingAdminOffices, setLoadingAdminOffices] = useState(false);
+  const [officeDirectoryError, setOfficeDirectoryError] = useState<string | null>(null);
+  const [officeDirectoryWarning, setOfficeDirectoryWarning] = useState<string | null>(null);
   const [showAddOfficeModal, setShowAddOfficeModal] = useState(false);
   const [newOfficeName, setNewOfficeName] = useState('');
-  const [newOfficeCode, setNewOfficeCode] = useState('');
   const [newOfficeDesc, setNewOfficeDesc] = useState('');
+  const [createOfficeError, setCreateOfficeError] = useState<string | null>(null);
   const [isCreatingOffice, setIsCreatingOffice] = useState(false);
+  const isCreatingOfficeRef = useRef(false);
+  const officeDirectoryReadGenRef = useRef(0);
 
   // Manage Office Assignment Modal
   const [assigningUser, setAssigningUser] = useState<AppUserWithId | null>(null);
   const [selectedOfficeIdsForUser, setSelectedOfficeIdsForUser] = useState<string[]>([]);
   const [isSavingAssignments, setIsSavingAssignments] = useState(false);
 
-  const loadAdminOffices = useCallback(async () => {
+  const loadAdminOffices = useCallback(async (options?: { suppressErrorToast?: boolean }): Promise<{ ok: boolean; error?: string }> => {
+    const currentGen = ++officeDirectoryReadGenRef.current;
     setLoadingAdminOffices(true);
+    setOfficeDirectoryError(null);
     try {
       const token = await getAccessToken();
       const res = await fetch('/api/admin/offices', {
         headers: token ? { Authorization: `Bearer ${token}` } : {},
       });
-      if (res.ok) {
-        const data = await res.json();
-        setAdminOffices(data.offices || []);
+      const data = await res.json().catch(() => null) as { offices?: AdminOfficeRecord[]; message?: string; error?: string } | null;
+      if (currentGen !== officeDirectoryReadGenRef.current) {
+        return { ok: true };
       }
-    } catch (err) {
+      if (!res.ok) {
+        const message = data?.message || data?.error || `Failed to load campus office directory (HTTP ${res.status}).`;
+        setOfficeDirectoryError(message);
+        if (!options?.suppressErrorToast) {
+          toast.error(message);
+        }
+        return { ok: false, error: message };
+      }
+      setAdminOffices(Array.isArray(data?.offices) ? data.offices : []);
+      setOfficeDirectoryError(null);
+      setOfficeDirectoryWarning(null);
+      return { ok: true };
+    } catch (err: any) {
+      if (currentGen !== officeDirectoryReadGenRef.current) {
+        return { ok: true };
+      }
       console.error('Failed to load admin offices:', err);
+      const message = err?.message || 'Unable to load campus office directory.';
+      setOfficeDirectoryError(message);
+      if (!options?.suppressErrorToast) {
+        toast.error(message);
+      }
+      return { ok: false, error: message };
     } finally {
-      setLoadingAdminOffices(false);
+      if (currentGen === officeDirectoryReadGenRef.current) {
+        setLoadingAdminOffices(false);
+      }
     }
   }, []);
 
@@ -273,10 +276,20 @@ export function AdminUsers() {
           officeId,
         }),
       });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.message || data.error || 'Failed to update office verification');
+      const data = await res.json().catch(() => null);
+      if (!res.ok) throw new Error(data?.message || data?.error || 'Failed to update office verification');
+      if (data?.office) {
+        setAdminOffices((prev) => upsertOfficeInDirectory(prev, data.office));
+      }
+      const refreshResult = await loadAdminOffices({ suppressErrorToast: true });
+      if (!refreshResult.ok && data?.office) {
+        setAdminOffices((prev) => upsertOfficeInDirectory(prev, data.office));
+        const warningMsg = `Office "${data.office.name}" verification was updated, but refreshing the directory failed (${refreshResult.error}).`;
+        setOfficeDirectoryWarning(warningMsg);
+        toast.warning(warningMsg);
+        return;
+      }
       toast.success(verify ? 'Office verified successfully.' : 'Office unverified.');
-      await loadAdminOffices();
     } catch (err: any) {
       toast.error(err.message || 'Failed to update office verification');
     }
@@ -296,21 +309,38 @@ export function AdminUsers() {
           active,
         }),
       });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.message || data.error || 'Failed to update office status');
+      const data = await res.json().catch(() => null);
+      if (!res.ok) throw new Error(data?.message || data?.error || 'Failed to update office status');
+      if (data?.office) {
+        setAdminOffices((prev) => upsertOfficeInDirectory(prev, data.office));
+      }
+      const refreshResult = await loadAdminOffices({ suppressErrorToast: true });
+      if (!refreshResult.ok && data?.office) {
+        setAdminOffices((prev) => upsertOfficeInDirectory(prev, data.office));
+        const warningMsg = `Office "${data.office.name}" status was updated, but refreshing the directory failed (${refreshResult.error}).`;
+        setOfficeDirectoryWarning(warningMsg);
+        toast.warning(warningMsg);
+        return;
+      }
       toast.success(active ? 'Office activated successfully.' : 'Office deactivated.');
-      await loadAdminOffices();
     } catch (err: any) {
       toast.error(err.message || 'Failed to update office status');
     }
   }
 
   async function handleCreateOffice() {
-    if (!newOfficeName.trim()) {
-      toast.error('Office name is required.');
+    if (isCreatingOfficeRef.current || isCreatingOffice) return;
+    const trimmedName = newOfficeName.trim();
+    const trimmedDesc = newOfficeDesc.trim();
+    if (trimmedName.length < 2) {
+      const msg = 'Office name must be at least 2 characters.';
+      setCreateOfficeError(msg);
+      toast.error(msg);
       return;
     }
+    isCreatingOfficeRef.current = true;
     setIsCreatingOffice(true);
+    setCreateOfficeError(null);
     try {
       const token = await getAccessToken();
       const res = await fetch('/api/admin/offices', {
@@ -321,22 +351,64 @@ export function AdminUsers() {
         },
         body: JSON.stringify({
           action: 'create_office',
-          name: newOfficeName.trim(),
-          code: newOfficeCode.trim() || undefined,
-          description: newOfficeDesc.trim() || undefined,
+          name: trimmedName,
+          description: trimmedDesc || undefined,
         }),
       });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.message || data.error || 'Failed to create office');
-      toast.success('Office created successfully.');
+      const data = await res.json().catch(() => null) as {
+        ok?: boolean;
+        idempotent?: boolean;
+        alreadyExists?: boolean;
+        office?: AdminOfficeRecord;
+        message?: string;
+        error?: string;
+      } | null;
+
+      if (!res.ok) {
+        if (res.status === 409 && data?.office) {
+          setAdminOffices((prev) => upsertOfficeInDirectory(prev, data.office!));
+        }
+        const message = data?.message || data?.error || `Failed to create office (HTTP ${res.status}).`;
+        setCreateOfficeError(message);
+        toast.error(message);
+        return;
+      }
+
+      if (!data?.office) {
+        const message = 'Office creation response was incomplete. Refresh the directory to verify before retrying.';
+        setCreateOfficeError(message);
+        toast.error(message);
+        return;
+      }
+
+      const confirmedOffice = data.office;
+      setAdminOffices((prev) => upsertOfficeInDirectory(prev, confirmedOffice));
+      setOfficeDirectoryWarning(null);
       setShowAddOfficeModal(false);
       setNewOfficeName('');
-      setNewOfficeCode('');
       setNewOfficeDesc('');
-      await loadAdminOffices();
+      setCreateOfficeError(null);
+
+      const refreshResult = await loadAdminOffices({ suppressErrorToast: true });
+      if (!refreshResult.ok) {
+        setAdminOffices((prev) => upsertOfficeInDirectory(prev, confirmedOffice));
+        const warningMsg = `Office "${confirmedOffice.name}" was created, but refreshing the directory failed (${refreshResult.error || 'network error'}). Showing the newly created office.`;
+        setOfficeDirectoryWarning(warningMsg);
+        toast.warning(warningMsg);
+        return;
+      }
+
+      toast.success(
+        data.idempotent || data.alreadyExists
+          ? `Office "${confirmedOffice.name}" was already saved and synced to the directory.`
+          : `Office "${confirmedOffice.name}" created. It remains hidden from visitors until verified by a Superadmin.`
+      );
     } catch (err: any) {
-      toast.error(err.message || 'Failed to create office');
+      const message = err?.message || 'Failed to create office. Your inputs were preserved so you can safely retry.';
+      setCreateOfficeError(message);
+      toast.error(message);
     } finally {
+      isCreatingOfficeRef.current = false;
       setIsCreatingOffice(false);
     }
   }
@@ -1008,15 +1080,45 @@ export function AdminUsers() {
                 Campus Office Directory
               </h2>
               <p className="text-xs text-[var(--color-text-secondary)]">
-                Superadmin-governed institutional offices and departments. Only verified offices are selectable for visitor requests.
+                Superadmin-governed institutional offices and departments. New offices start Active / Unverified and cannot be selected by visitors until verified by a Superadmin.
               </p>
             </div>
             {canManageOffices && (
-              <Button onClick={() => setShowAddOfficeModal(true)} icon={<Plus className="h-4 w-4" />}>
+              <Button
+                onClick={() => {
+                  setCreateOfficeError(null);
+                  setShowAddOfficeModal(true);
+                }}
+                icon={<Plus className="h-4 w-4" />}
+              >
                 Add Office
               </Button>
             )}
           </div>
+
+          {officeDirectoryWarning && (
+            <div role="status" className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between rounded-lg border border-amber-300 bg-amber-50 px-4 py-3 text-xs text-amber-900">
+              <div className="flex items-center gap-2">
+                <AlertCircle className="h-4 w-4 flex-shrink-0 text-amber-700" />
+                <span>{officeDirectoryWarning}</span>
+              </div>
+              <Button size="sm" variant="secondary" onClick={() => void loadAdminOffices()} icon={<RefreshCw className="h-3.5 w-3.5" />}>
+                Retry Refresh
+              </Button>
+            </div>
+          )}
+
+          {officeDirectoryError && !officeDirectoryWarning && (
+            <div role="alert" className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between rounded-lg border border-[var(--color-danger-border)] bg-[var(--color-danger-light)] px-4 py-3 text-xs text-[var(--color-danger-dark)]">
+              <div className="flex items-center gap-2">
+                <AlertCircle className="h-4 w-4 flex-shrink-0 text-[var(--color-danger)]" />
+                <span>{officeDirectoryError}</span>
+              </div>
+              <Button size="sm" variant="secondary" onClick={() => void loadAdminOffices()} icon={<RefreshCw className="h-3.5 w-3.5" />}>
+                Retry
+              </Button>
+            </div>
+          )}
 
           {loadingAdminOffices ? (
             <div className="flex h-32 items-center justify-center">
@@ -1027,7 +1129,6 @@ export function AdminUsers() {
               <DataTableHead>
                 <DataTableRow>
                   <DataTableCell isHeader>Office Name</DataTableCell>
-                  <DataTableCell isHeader>Code</DataTableCell>
                   <DataTableCell isHeader>Description</DataTableCell>
                   <DataTableCell isHeader>Status</DataTableCell>
                   <DataTableCell isHeader>Verification</DataTableCell>
@@ -1036,12 +1137,11 @@ export function AdminUsers() {
                 </DataTableRow>
               </DataTableHead>
               <tbody>
-                {adminOffices.map((office) => (
+                {adminOffices.map((office) => {
+                  const statusMeta = getOfficeDirectoryStatusMeta(office);
+                  return (
                   <DataTableRow key={office.id}>
                     <DataTableCell className="font-semibold">{office.name}</DataTableCell>
-                    <DataTableCell className="text-xs font-mono text-[var(--color-text-secondary)]">
-                      {office.code || '—'}
-                    </DataTableCell>
                     <DataTableCell className="text-xs text-[var(--color-text-secondary)] max-w-xs truncate">
                       {office.description || '—'}
                     </DataTableCell>
@@ -1052,15 +1152,20 @@ export function AdminUsers() {
                       />
                     </DataTableCell>
                     <DataTableCell>
-                      {office.verified ? (
-                        <span className="inline-flex items-center gap-1 rounded-full bg-emerald-50 px-2 py-0.5 text-xs font-medium text-emerald-700 border border-emerald-200">
-                          <CheckCircle2 className="h-3 w-3" /> Verified
-                        </span>
-                      ) : (
-                        <span className="inline-flex items-center gap-1 rounded-full bg-amber-50 px-2 py-0.5 text-xs font-medium text-amber-700 border border-amber-200">
-                          Unverified
-                        </span>
-                      )}
+                      <div className="space-y-1">
+                        {office.verified ? (
+                          <span className="inline-flex items-center gap-1 rounded-full bg-emerald-50 px-2 py-0.5 text-xs font-medium text-emerald-700 border border-emerald-200">
+                            <CheckCircle2 className="h-3 w-3" /> {statusMeta.combinedLabel}
+                          </span>
+                        ) : (
+                          <span className="inline-flex items-center gap-1 rounded-full bg-amber-50 px-2 py-0.5 text-xs font-medium text-amber-700 border border-amber-200">
+                            {statusMeta.combinedLabel}
+                          </span>
+                        )}
+                        <p className="text-[11px] text-[var(--color-text-muted)]">
+                          {statusMeta.visitorHint}
+                        </p>
+                      </div>
                     </DataTableCell>
                     <DataTableCell>
                       {office.dedicatedAccount ? (
@@ -1151,7 +1256,7 @@ export function AdminUsers() {
                           >
                             {office.active ? 'Disable Office' : 'Enable Office'}
                           </Button>
-                          {canVerifyOffice && (
+                          {canVerifyOffice ? (
                             office.verified ? (
                               <Button
                                 variant="secondary"
@@ -1168,16 +1273,21 @@ export function AdminUsers() {
                                 Verify
                               </Button>
                             )
-                          )}
+                          ) : !office.verified ? (
+                            <span className="text-[11px] text-[var(--color-text-muted)] px-1">
+                              Superadmin verification required
+                            </span>
+                          ) : null}
                         </div>
                       )}
                     </DataTableCell>
                   </DataTableRow>
-                ))}
+                  );
+                })}
                 {adminOffices.length === 0 && (
                   <tr>
-                    <td colSpan={7} className="py-8 text-center text-[var(--color-text-muted)]">
-                      No offices recorded.
+                    <td colSpan={6} className="py-8 text-center text-[var(--color-text-muted)]">
+                      {officeDirectoryError ? 'Unable to load offices.' : 'No offices recorded.'}
                     </td>
                   </tr>
                 )}
@@ -1397,12 +1507,25 @@ export function AdminUsers() {
 
       <Modal
         isOpen={showAddOfficeModal}
-        onClose={() => setShowAddOfficeModal(false)}
+        onClose={() => {
+          if (!isCreatingOffice) setShowAddOfficeModal(false);
+        }}
         title="Add Campus Office"
         preventClose={isCreatingOffice}
         size="sm"
       >
-        <div className="space-y-4">
+        <form
+          onSubmit={(e) => {
+            e.preventDefault();
+            void handleCreateOffice();
+          }}
+          className="space-y-4"
+        >
+          {createOfficeError && (
+            <div role="alert" className="rounded-lg border border-[var(--color-danger-border)] bg-[var(--color-danger-light)] p-3 text-xs text-[var(--color-danger-dark)]">
+              {createOfficeError}
+            </div>
+          )}
           <FormField label="Office Name" id="new-office-name" requirement="required">
             <Input
               id="new-office-name"
@@ -1411,15 +1534,6 @@ export function AdminUsers() {
               onChange={(e) => setNewOfficeName(e.target.value)}
               placeholder="e.g. Office of the University Registrar"
               required
-            />
-          </FormField>
-          <FormField label="Office Code" id="new-office-code">
-            <Input
-              id="new-office-code"
-              type="text"
-              value={newOfficeCode}
-              onChange={(e) => setNewOfficeCode(e.target.value)}
-              placeholder="e.g. OUR"
             />
           </FormField>
           <FormField label="Description" id="new-office-desc">
@@ -1431,15 +1545,18 @@ export function AdminUsers() {
               placeholder="Optional department description"
             />
           </FormField>
+          <p className="text-[11px] text-[var(--color-text-muted)] leading-relaxed">
+            New offices are created as <strong>Active / Unverified</strong> and remain hidden from visitors until verified by a Superadmin.
+          </p>
           <div className="flex justify-end gap-2 pt-2">
-            <Button variant="secondary" onClick={() => setShowAddOfficeModal(false)} disabled={isCreatingOffice}>
+            <Button type="button" variant="secondary" onClick={() => setShowAddOfficeModal(false)} disabled={isCreatingOffice}>
               Cancel
             </Button>
-            <Button onClick={handleCreateOffice} loading={isCreatingOffice} disabled={isCreatingOffice || !newOfficeName.trim()}>
+            <Button type="submit" loading={isCreatingOffice} disabled={isCreatingOffice || !newOfficeName.trim()}>
               Create Office
             </Button>
           </div>
-        </div>
+        </form>
       </Modal>
 
       <Modal
@@ -1471,7 +1588,6 @@ export function AdminUsers() {
                     className="rounded border-[var(--color-border)] text-[var(--color-brand)] focus:ring-[var(--color-brand)]"
                   />
                   <span className="font-semibold text-[var(--color-text-primary)]">{office.name}</span>
-                  {office.code && <span className="text-[var(--color-text-muted)]">({office.code})</span>}
                   {office.verified && (
                     <span className="ml-auto inline-flex items-center gap-0.5 text-[10px] text-emerald-700 bg-emerald-50 px-1.5 py-0.5 rounded border border-emerald-200">
                       Verified

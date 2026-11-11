@@ -3819,4 +3819,55 @@ it('GG. Migration 84 contracts: Specific-Person Request Acknowledgement & Secure
     expect(funcs).toContain('record_office_visit_acknowledgement_result');
     expect(funcs).toContain('lookup_office_visit_tracking_status');
   }, 60000);
+
+  it('HH. Migration 85 contracts: api.lookup_office_visit_tracking_status executes cleanly with decided_at', async () => {
+    const db = new PGlite();
+    const files = await applyAllMigrations(db);
+    expect(files.length).toBeGreaterThanOrEqual(85);
+
+    const officeId = '00000000-0000-4000-8000-000000000185';
+    const visitId = '00000000-0000-4000-8000-000000000285';
+    const reqId = '00000000-0000-4000-8000-000000000385';
+    const digest = 'a'.repeat(64);
+    const decidedAtIso = '2026-11-11T08:30:00Z';
+
+    await db.query(
+      `insert into public.offices (id, name, active, verified) values ($1, 'Registrar Track Fix', true, true);`,
+      [officeId]
+    );
+    await db.query(
+      `insert into public.office_visits (
+         id, visit_type, office_id, approval_status, decided_at,
+         visitor_first_name, visitor_last_name, visitor_contact_number,
+         purpose, visit_date, request_id, tracking_token_digest, tracking_token_expires_at
+       ) values (
+         $1, 'specific_person', $2, 'approved', $3::timestamptz,
+         'Juan', 'Dela Cruz', '09171234567',
+         'TOR Verification', '2026-11-20', $4, $5, now() + interval '7 days'
+       );`,
+      [visitId, officeId, decidedAtIso, reqId, digest]
+    );
+
+    const emptyRes = await db.query(
+      `select * from api.lookup_office_visit_tracking_status($1);`,
+      ['b'.repeat(64)]
+    );
+    expect(emptyRes.rows.length).toBe(0);
+
+    const foundRes = await db.query<{
+      visitor_first_name: string;
+      visitor_last_name: string;
+      office_name: string;
+      approval_status: string;
+      decided_at: Date | string | null;
+    }>(
+      `select * from api.lookup_office_visit_tracking_status($1);`,
+      [digest]
+    );
+    expect(foundRes.rows.length).toBe(1);
+    expect(foundRes.rows[0].visitor_first_name).toBe('Juan');
+    expect(foundRes.rows[0].office_name).toBe('Registrar Track Fix');
+    expect(foundRes.rows[0].approval_status).toBe('approved');
+    expect(new Date(foundRes.rows[0].decided_at as string | Date).toISOString()).toBe('2026-11-11T08:30:00.000Z');
+  }, 60000);
 });

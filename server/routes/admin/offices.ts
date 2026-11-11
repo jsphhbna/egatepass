@@ -584,17 +584,66 @@ export async function handleRequest(request: Request): Promise<Response> {
     const parsed = createOfficeSchema.safeParse(body);
     if (!parsed.success) return jsonResponse(400, { error: 'invalid_request', details: parsed.error.issues });
 
+    const normalizedName = parsed.data.name;
+    const normalizedDescription = parsed.data.description && parsed.data.description.length > 0
+      ? parsed.data.description
+      : null;
+    const requestedActive = parsed.data.active ?? true;
+
     const { data: newOffice, error: createErr } = await admin
       .from('offices')
       .insert({
-        name: parsed.data.name,
-        description: parsed.data.description || null,
-        active: parsed.data.active ?? true,
+        name: normalizedName,
+        description: normalizedDescription,
+        active: requestedActive,
+        verified: false,
+        created_by: actor.id,
+        updated_by: actor.id,
       })
-      .select()
+      .select('id, name, description, active, verified, verified_at, verified_by, created_at, updated_at')
       .single();
 
-    if (createErr) throw createErr;
+    if (createErr) {
+      const errCode = (createErr as { code?: string }).code;
+      const errMessage = String((createErr as { message?: string }).message || '').toLowerCase();
+      if (errCode === '23505' || errMessage.includes('offices_name_key') || errMessage.includes('duplicate key')) {
+        const { data: existingOffice, error: lookupErr } = await admin
+          .from('offices')
+          .select('id, name, description, active, verified, verified_at, verified_by, created_at, updated_at')
+          .eq('name', normalizedName)
+          .maybeSingle();
+
+        if (lookupErr) throw lookupErr;
+
+        if (existingOffice) {
+          const sameDescription = (existingOffice.description ?? null) === normalizedDescription;
+          const sameActive = existingOffice.active === requestedActive;
+          if (sameDescription && sameActive) {
+            return jsonResponse(200, {
+              ok: true,
+              idempotent: true,
+              alreadyExists: true,
+              office: existingOffice,
+              message: `Office "${existingOffice.name}" already exists in the directory.`,
+            });
+          }
+
+          return jsonResponse(409, {
+            error: 'office_already_exists',
+            message: `An office named "${existingOffice.name}" already exists.`,
+            office: existingOffice,
+          });
+        }
+
+        return jsonResponse(409, {
+          error: 'office_already_exists',
+          message: `An office named "${normalizedName}" already exists.`,
+        });
+      }
+
+      throw createErr;
+    }
+
     return jsonResponse(201, { ok: true, office: newOffice });
   }
 
@@ -613,7 +662,7 @@ export async function handleRequest(request: Request): Promise<Response> {
       return jsonResponse(404, { error: 'office_not_found', message: 'The specified office does not exist' });
     }
 
-    const updates: Record<string, unknown> = { updated_at: new Date().toISOString() };
+    const updates: Record<string, unknown> = { updated_at: new Date().toISOString(), updated_by: actor.id };
     if (parsed.data.name !== undefined) updates.name = parsed.data.name;
     if (parsed.data.description !== undefined) updates.description = parsed.data.description;
     if (parsed.data.active !== undefined) updates.active = parsed.data.active;
@@ -636,7 +685,17 @@ export async function handleRequest(request: Request): Promise<Response> {
       .select()
       .single();
 
-    if (updateErr) throw updateErr;
+    if (updateErr) {
+      const errCode = (updateErr as { code?: string }).code;
+      const errMessage = String((updateErr as { message?: string }).message || '').toLowerCase();
+      if (errCode === '23505' || errMessage.includes('offices_name_key') || errMessage.includes('duplicate key')) {
+        return jsonResponse(409, {
+          error: 'office_already_exists',
+          message: `An office named "${parsed.data.name ?? 'requested'}" already exists.`,
+        });
+      }
+      throw updateErr;
+    }
     return jsonResponse(200, { ok: true, office: updatedOffice });
   }
 

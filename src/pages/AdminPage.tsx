@@ -15,7 +15,6 @@ import {
   Menu,
   X,
   Printer,
-  Building2,
 } from 'lucide-react';
 import { BrandMark } from '@/components/BrandMark';
 import { ConfirmModal } from '@/components/ui';
@@ -75,7 +74,6 @@ const navGroups: NavGroupItem[] = [
   { id: 'emergency', label: 'Emergency', icon: AlertTriangle, basePath: '/admin/emergency' },
   { id: 'audit', label: 'Audit Logs', icon: ClipboardList, basePath: '/admin/audit' },
   { id: 'templates', label: 'Print Templates', icon: Printer, basePath: '/admin/templates', superAdminOnly: true },
-  { id: 'office', label: 'Office Portal', icon: Building2, basePath: '/office' },
   {
     id: 'settings',
     label: 'Settings',

@@ -43,7 +43,7 @@ export function LoginPage() {
       return;
     }
     const redirectMap: Record<string, string> = {
-      admin: '/admin', superadmin: '/admin', office_staff: '/office', entry: '/scan/entry', exit: '/scan/exit', kiosk: '/kiosk',
+      admin: '/admin', superadmin: '/admin', office_staff: '/office', entry: '/scan/entry', exit: '/scan/exit', kiosk: '/kiosk', guard_station: '/guard',
     };
     navigate(redirectMap[role] ?? '/login', { replace: true });
   }, [navigate, role, status, supabase]);
