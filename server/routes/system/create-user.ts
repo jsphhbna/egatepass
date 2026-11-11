@@ -32,7 +32,7 @@ async function handleRequest(request: Request): Promise<Response> {
     if (uniqueOfficeIds.length > 0) {
       const { data: validOffices, error: officeChkErr } = await admin
         .from('offices')
-        .select('id, active')
+        .select('id, active, publication_status, archived_at')
         .in('id', uniqueOfficeIds);
 
       if (officeChkErr) {
@@ -51,10 +51,10 @@ async function handleRequest(request: Request): Promise<Response> {
             message: 'One or more specified offices do not exist.',
           });
         }
-        if (!office.active) {
+        if (!office.active || office.publication_status === 'archived' || office.archived_at) {
           return jsonResponse(400, {
             error: 'office_inactive',
-            message: 'Cannot assign inactive offices during account creation.',
+            message: 'Cannot assign inactive or archived offices during account creation.',
           });
         }
       }

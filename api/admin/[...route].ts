@@ -10,12 +10,14 @@ import settings from '../../server/routes/admin/settings.js';
 import users from '../../server/routes/admin/users.js';
 import offices from '../../server/routes/admin/offices.js';
 import calendar from '../../server/routes/admin/calendar.js';
+import emergencyRecords from '../../server/routes/admin/emergency-records.js';
 
 const router = createGroupedRouter('admin', {
   activity,
   dashboard,
   devices,
   emergency,
+  'emergency-records': emergencyRecords,
   holds,
   records,
   'retention-maintenance': retentionMaintenance,

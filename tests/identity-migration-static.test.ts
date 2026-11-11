@@ -19,12 +19,12 @@ describe('identity migration contracts', () => {
     expect(migration).toContain('grant execute on function api.finalize_guard_password_change(uuid) to service_role');
   });
 
-  it('requires bearer identity, current-password verification, eligible Guard state, and reconciliation', () => {
+  it('requires bearer identity, current-password verification, eligible staff onboarding state, and reconciliation', () => {
     expect(endpoint.includes('getVerifiedSessionContext(admin, token)') || endpoint.includes('admin.auth.getUser(token)')).toBe(true);
-    expect(endpoint).toContain("profile.role !== 'guard'");
+    expect(endpoint).toContain("['guard', 'admin', 'superadmin', 'office_staff'].includes(profile.role)");
     expect(endpoint).toContain('passwordVerifier.auth.signInWithPassword');
     expect(endpoint).toContain('admin.auth.admin.updateUserById');
-    expect(endpoint).toContain("rpc('finalize_guard_password_change'");
+    expect(endpoint).toContain("rpc('finalize_staff_password_change'");
     expect(endpoint).toContain("'guard.password_change_finalize'");
     expect(endpoint).toContain('recordReconciliation');
     expect(endpoint).not.toMatch(/console\.(?:log|error)\([^\n]*(?:currentPassword|newPassword)/);

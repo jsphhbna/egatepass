@@ -43,6 +43,13 @@ const settingsSchema = z.object({
   returningProfileRetentionEnabled: z.boolean().optional(),
   returningProfileRetentionDays: z.number().int().min(1).max(365).optional(),
   overrideReason: z.string().trim().max(500).optional(),
+  globalRetentionFreeze: z.boolean().optional(),
+  globalRetentionFreezeReason: z.string().trim().max(500).nullable().optional(),
+  allowEmergencyException: z.boolean().optional(),
+  emergencyExceptionPolicyNote: z.string().trim().max(500).nullable().optional(),
+  emergencyRecordRetentionEnabled: z.boolean().optional(),
+  emergencyRecordRetentionDays: z.number().int().min(7).max(3650).optional(),
+  defaultExpectedGate: z.string().trim().max(80).nullable().optional(),
 }).strict();
 
 async function handleRequest(request: Request): Promise<Response> {
@@ -75,7 +82,6 @@ async function handleRequest(request: Request): Promise<Response> {
     const { admin } = getServerSupabaseClients();
     const actor = await requireStaffActor(admin, token, ['admin', 'superadmin']);
 
-    // Fetch current settings to verify if security-sensitive settings or peakMode changed
     const { data: currentSettings, error: currentSettingsError } = await admin
       .from('app_settings')
       .select('peak_mode')
@@ -114,10 +120,26 @@ async function handleRequest(request: Request): Promise<Response> {
       parsed.data.vehiclePhotoRetentionDays !== undefined ||
       parsed.data.visitorRetentionEnabled !== undefined ||
       parsed.data.returningProfileRetentionEnabled !== undefined ||
-      parsed.data.returningProfileRetentionDays !== undefined;
+      parsed.data.returningProfileRetentionDays !== undefined ||
+      parsed.data.globalRetentionFreeze !== undefined ||
+      parsed.data.globalRetentionFreezeReason !== undefined ||
+      parsed.data.allowEmergencyException !== undefined ||
+      parsed.data.emergencyExceptionPolicyNote !== undefined ||
+      parsed.data.emergencyRecordRetentionEnabled !== undefined ||
+      parsed.data.emergencyRecordRetentionDays !== undefined;
 
     if (actor.role !== 'superadmin' && changesSecuritySettings) {
       throw new HttpError(403, 'Only Super Admins may change security-sensitive settings');
+    }
+
+    if (
+      parsed.data.globalRetentionFreeze === true &&
+      (!parsed.data.globalRetentionFreezeReason || parsed.data.globalRetentionFreezeReason.trim().length < 5)
+    ) {
+      return jsonResponse(400, {
+        error: 'global_retention_freeze_reason_required',
+        message: 'A reason of at least 5 characters is required when enabling global retention freeze.',
+      });
     }
 
     const startVal = parsed.data.workingHours?.start ?? null;
@@ -140,10 +162,18 @@ async function handleRequest(request: Request): Promise<Response> {
       parsed.data.returningProfileRetentionEnabled !== undefined ||
       parsed.data.returningProfileRetentionDays !== undefined;
 
+    const usesV2Fields =
+      parsed.data.globalRetentionFreeze !== undefined ||
+      parsed.data.globalRetentionFreezeReason !== undefined ||
+      parsed.data.allowEmergencyException !== undefined ||
+      parsed.data.emergencyExceptionPolicyNote !== undefined ||
+      parsed.data.emergencyRecordRetentionEnabled !== undefined ||
+      parsed.data.emergencyRecordRetentionDays !== undefined ||
+      parsed.data.defaultExpectedGate !== undefined;
+
     const dedupedRejectionReasons = [...new Set(parsed.data.rejectionReasons)];
 
-    // Atomic single-transaction RPC invocation in schema api (logs action: 'settings_updated' + retention overrides + expiry sync)
-    const rpcResult = await admin.schema('api').rpc('save_system_settings', {
+    const baseArgs: Record<string, unknown> = {
       requested_actor_id: actor.id,
       requested_peak_mode: peakModeScope,
       requested_rejection_reasons: dedupedRejectionReasons,
@@ -172,13 +202,28 @@ async function handleRequest(request: Request): Promise<Response> {
       requested_returning_days: parsed.data.returningProfileRetentionDays ?? null,
       requested_override_reason: parsed.data.overrideReason ?? null,
       requested_request_id: randomUUID(),
-    });
+    };
 
-    // Zero direct table write fallback; fail closed atomically on any RPC error
+    const rpcName = usesV2Fields ? 'save_system_settings_v2' : 'save_system_settings';
+    const rpcArgs = usesV2Fields
+      ? {
+          ...baseArgs,
+          requested_global_retention_freeze: parsed.data.globalRetentionFreeze ?? null,
+          requested_global_retention_freeze_reason: parsed.data.globalRetentionFreezeReason ?? null,
+          requested_allow_emergency_exception: parsed.data.allowEmergencyException ?? null,
+          requested_emergency_exception_policy_note: parsed.data.emergencyExceptionPolicyNote ?? null,
+          requested_emergency_record_retention_enabled: parsed.data.emergencyRecordRetentionEnabled ?? null,
+          requested_emergency_record_retention_days: parsed.data.emergencyRecordRetentionDays ?? null,
+          requested_default_expected_gate: parsed.data.defaultExpectedGate ?? null,
+        }
+      : baseArgs;
+
+    const rpcResult = await admin.schema('api').rpc(rpcName, rpcArgs);
+
     if (rpcResult.error) {
       const errCode = rpcResult.error.code;
       const errMsg = rpcResult.error.message || 'settings_update_failed';
-      console.error('save_system_settings RPC failed:', rpcResult.error);
+      console.error(`${rpcName} RPC failed:`, rpcResult.error);
 
       if (
         errCode === '42501' ||
@@ -200,7 +245,9 @@ async function handleRequest(request: Request): Promise<Response> {
         errMsg.includes('start time must be earlier') ||
         errMsg.includes('visitor instruction') ||
         errMsg.includes('rejection reason') ||
-        errMsg.includes('retention_days')
+        errMsg.includes('retention_days') ||
+        errMsg.includes('global_retention_freeze_reason_required') ||
+        errMsg.includes('emergency_exception_policy_note_required')
       ) {
         throw new HttpError(400, errMsg);
       }
@@ -233,6 +280,13 @@ async function handleRequest(request: Request): Promise<Response> {
         reconciliation_retention_days: saved.reconciliation_retention_days ?? recRet,
         scheduling_days_ahead: saved.scheduling_days_ahead ?? schedDays,
         automatic_cleanup_enabled: saved.automatic_cleanup_enabled ?? cleanupVal,
+        globalRetentionFreeze: saved.global_retention_freeze ?? parsed.data.globalRetentionFreeze ?? false,
+        globalRetentionFreezeReason: saved.global_retention_freeze_reason ?? parsed.data.globalRetentionFreezeReason ?? null,
+        allowEmergencyException: saved.allow_emergency_exception ?? parsed.data.allowEmergencyException ?? false,
+        emergencyExceptionPolicyNote: saved.emergency_exception_policy_note ?? parsed.data.emergencyExceptionPolicyNote ?? null,
+        emergencyRecordRetentionEnabled: saved.emergency_record_retention_enabled ?? parsed.data.emergencyRecordRetentionEnabled ?? true,
+        emergencyRecordRetentionDays: saved.emergency_record_retention_days ?? parsed.data.emergencyRecordRetentionDays ?? 90,
+        defaultExpectedGate: saved.default_expected_gate ?? parsed.data.defaultExpectedGate ?? null,
       },
     });
   } catch (error) {

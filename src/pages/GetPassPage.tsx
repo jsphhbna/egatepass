@@ -254,6 +254,8 @@ export function GetPassPage() {
     thresholdConfigured?: boolean;
     thresholdMode?: 'provisional' | 'calibrated' | 'unconfigured';
     returningCalibrationConfigured?: boolean;
+    biometricStorageRetired?: boolean;
+    turnstile?: { siteKeyConfigured: boolean; serverVerifierConfigured: boolean; verified: boolean };
   } | null>(null);
   const [showReturningGateModal, setShowReturningGateModal] = useState(false);
 
@@ -318,7 +320,7 @@ export function GetPassPage() {
   const [returningSearchError, setReturningSearchError] = useState<string | null>(null);
 
   // Office & Visit Type State
-  const [offices, setOffices] = useState<Array<{ id: string; name: string; description: string | null }>>([]);
+  const [offices, setOffices] = useState<Array<{ id: string; name: string; description: string | null; requires_approval_before_pass?: boolean }>>([]);
   const [selectedOfficeId, setSelectedOfficeId] = useState<string>('');
   const [visitType, setVisitType] = useState<'general' | 'specific_person' | null>(null);
   const [personnelList, setPersonnelList] = useState<Array<{ id: string; name: string; title: string | null }>>([]);
@@ -505,6 +507,8 @@ export function GetPassPage() {
             thresholdConfigured: Boolean(data.thresholdConfigured),
             thresholdMode: data.thresholdMode || 'unconfigured',
             returningCalibrationConfigured: Boolean(data.returningCalibrationConfigured),
+            biometricStorageRetired: Boolean(data.biometricStorageRetired),
+            turnstile: data.turnstile || undefined,
           });
         }
       })
@@ -1121,6 +1125,10 @@ export function GetPassPage() {
     } else {
       if (!vals.purpose || vals.purpose.trim().length < 3) {
         toast.error('Please describe the purpose of your visit (minimum 3 characters).');
+        return;
+      }
+      if (visitorEmail.trim() && !emailVerificationToken) {
+        toast.error('Please verify the email address you entered or clear it to use online tracking only.');
         return;
       }
     }
@@ -2135,11 +2143,90 @@ export function GetPassPage() {
         officeId: selectedOfficeId || undefined,
       };
 
+      async function presentIssuedPass(issued: {
+        passId: string;
+        publicReference?: string | null;
+        qrToken: string;
+        validFrom?: string;
+        validUntil?: string;
+        returningEnrollment?: string;
+        returningProfileUpdate?: string;
+        savedVehicleStatus?: string;
+        officeVisitLinkStatus?: string;
+      }, overridePurpose?: string) {
+        if (issued.returningEnrollment === 'enrolled') {
+          toast.success('Your returning visitor profile was securely enrolled for future visits.');
+        } else if (issued.returningEnrollment === 'failed') {
+          toast.warning('Pass created successfully, but your returning visitor profile could not be enrolled. You may enroll on your next visit.');
+        }
+
+        if (issued.returningProfileUpdate === 'updated') {
+          toast.success("Your saved returning profile was updated with today's contact details.");
+        } else if (issued.returningProfileUpdate === 'failed') {
+          toast.warning("Pass created successfully, but your saved profile could not be updated. Your pass is valid for today's visit.");
+        }
+
+        if (issued.savedVehicleStatus === 'saved') {
+          toast.success('Vehicle details saved for future visits.');
+        } else if (issued.savedVehicleStatus === 'failed') {
+          toast.warning("Pass created successfully, but your vehicle details could not be saved for future visits. Your pass is valid for today's visit.");
+        }
+
+        if (issued.officeVisitLinkStatus === 'reconciliation_required') {
+          toast.info('Pass created successfully. Office visit linkage is pending reconciliation with the office.');
+        }
+
+        setPassId(issued.passId);
+        setRawQrToken(issued.qrToken);
+        const validity = issued.validFrom && issued.validUntil
+          ? formatValidityWindow(issued.validFrom, issued.validUntil)
+          : formatWorkingHours(workingHours);
+
+        let qrUrl: string | null = null;
+        try {
+          qrUrl = await generateBrandedQrDataUrl(issued.qrToken, { size: 360 });
+        } catch (qrErr) {
+          console.warn('Branded QR generation failed, falling back to standard QR:', qrErr);
+          try {
+            qrUrl = await QRCode.toDataURL(issued.qrToken, { width: 360, margin: 2, errorCorrectionLevel: 'H' });
+          } catch (fallbackErr) {
+            console.error('Standard QR generation fallback failed:', fallbackErr);
+          }
+        }
+
+        setQrDataUrl(qrUrl);
+
+        const effectiveVisitor = portalTransactionRef.current?.submittedPayload?.visitor ?? formData;
+        const presentation = createPassPresentation({
+          firstName: effectiveVisitor.firstName,
+          middleName: effectiveVisitor.middleName,
+          lastName: effectiveVisitor.lastName,
+          visitDate: effectiveVisitor.visitDate,
+          passReference: issued.publicReference || issued.passId,
+          qrToken: issued.qrToken,
+          validityWindow: validity,
+          purpose: overridePurpose || effectiveVisitor.purpose,
+          plateNumber: effectiveVisitor.arrivalMode === 'vehicle' && effectiveVisitor.vehicle?.plateNumber
+            ? effectiveVisitor.vehicle.plateNumber
+            : null,
+        });
+        setPassPresentation(presentation);
+
+        setEmailDeliverySecured(false);
+        setIsDownloaded(false);
+
+        setStep('delivery');
+        setShowEmailModal(true);
+        toast.success('Gate pass generated successfully!');
+      }
+
+      const targetOffice = offices.find((o) => o.id === selectedOfficeId);
+
       if (visitType === 'specific_person') {
         const token = portalTransactionRef.current.token;
-        const targetOffice = offices.find((o) => o.id === selectedOfficeId);
         const targetPersonnel = personnelList.find((p) => p.id === selectedPersonnelId);
         const effectivePersonnelName = requestedPersonName.trim() || targetPersonnel?.name || 'Designated Personnel';
+        const effectiveSpecificPurpose = specificPurpose || rawFormData.purpose;
 
         const requestPayload = {
           requestId: portalTransactionRef.current.requestId ?? issueRequestId.current,
@@ -2151,13 +2238,13 @@ export function GetPassPage() {
             lastName: rawFormData.lastName,
             contactNumber: phNormalized,
             email: visitorEmail.toLowerCase().trim(),
-            purpose: specificPurpose || rawFormData.purpose,
+            purpose: effectiveSpecificPurpose,
             visitDate: rawFormData.visitDate || getManilaDateString(new Date()),
           },
           officeId: selectedOfficeId,
           personnelId: selectedPersonnelId || undefined,
           requestedPersonName: effectivePersonnelName,
-          specificPurpose: specificPurpose || rawFormData.purpose,
+          specificPurpose: effectiveSpecificPurpose,
           emailVerificationToken,
           arrivalMode: rawFormData.arrivalMode,
           photoIntentId: portalTransactionRef.current.photoIntentId,
@@ -2183,6 +2270,11 @@ export function GetPassPage() {
           throw new Error(data.message || data.error || 'Failed to submit visit request.');
         }
 
+        if (data.approvalRequired === false && data.passId && data.qrToken) {
+          await presentIssuedPass(data, effectiveSpecificPurpose);
+          return;
+        }
+
         setSubmittedRequestData({
           officeName: targetOffice?.name || 'Designated Office',
           personnelName: effectivePersonnelName,
@@ -2195,72 +2287,28 @@ export function GetPassPage() {
         return;
       }
 
+      if (emailVerificationToken && visitorEmail.trim()) {
+        formData.email = visitorEmail.toLowerCase().trim();
+        formData.emailVerificationToken = emailVerificationToken;
+      }
+
       const result = await issueVisitorPass('portal', formData, photoBlob, idBlob, issueRequestId.current, undefined, portalTransactionRef.current, vehiclePhotoBlob);
 
-      if (result.returningEnrollment === 'enrolled') {
-        toast.success('Your returning visitor profile was securely enrolled for future visits.');
-      } else if (result.returningEnrollment === 'failed') {
-        toast.warning('Pass created successfully, but your returning visitor profile could not be enrolled. You may enroll on your next visit.');
+      if (result.approvalRequired) {
+        setSubmittedRequestData({
+          officeName: targetOffice?.name || result.officeName || 'Designated Office',
+          personnelName: 'General Office Reception',
+          visitDate: rawFormData.visitDate || getManilaDateString(new Date()),
+          visitorEmail: emailVerificationToken && visitorEmail.trim() ? visitorEmail.toLowerCase().trim() : 'Online tracking link',
+          trackingUrl: result.trackingUrl || undefined,
+          trackingToken: result.trackingToken || undefined,
+        });
+        setStep('request_submitted');
+        toast.success(result.message || 'Visit request submitted for office approval!');
+        return;
       }
 
-      if (result.returningProfileUpdate === 'updated') {
-        toast.success('Your saved returning profile was updated with today\'s contact details.');
-      } else if (result.returningProfileUpdate === 'failed') {
-        toast.warning('Pass created successfully, but your saved profile could not be updated. Your pass is valid for today\'s visit.');
-      }
-
-      if (result.savedVehicleStatus === 'saved') {
-        toast.success('Vehicle details saved for future visits.');
-      } else if (result.savedVehicleStatus === 'failed') {
-        toast.warning('Pass created successfully, but your vehicle details could not be saved for future visits. Your pass is valid for today\'s visit.');
-      }
-
-      if (result.officeVisitLinkStatus === 'reconciliation_required') {
-        toast.info('Pass created successfully. Office visit linkage is pending reconciliation with the office.');
-      }
-
-      setPassId(result.passId);
-      setRawQrToken(result.qrToken);
-      const validity = result.validFrom && result.validUntil
-        ? formatValidityWindow(result.validFrom, result.validUntil)
-        : formatWorkingHours(workingHours);
-
-      let qrUrl: string | null = null;
-      try {
-        qrUrl = await generateBrandedQrDataUrl(result.qrToken, { size: 360 });
-      } catch (qrErr) {
-        console.warn('Branded QR generation failed, falling back to standard QR:', qrErr);
-        try {
-          qrUrl = await QRCode.toDataURL(result.qrToken, { width: 360, margin: 2, errorCorrectionLevel: 'H' });
-        } catch (fallbackErr) {
-          console.error('Standard QR generation fallback failed:', fallbackErr);
-        }
-      }
-
-      setQrDataUrl(qrUrl);
-
-      const effectiveVisitor = portalTransactionRef.current?.submittedPayload?.visitor ?? formData;
-      const presentation = createPassPresentation({
-        firstName: effectiveVisitor.firstName,
-        middleName: effectiveVisitor.middleName,
-        lastName: effectiveVisitor.lastName,
-        visitDate: effectiveVisitor.visitDate,
-        passReference: result.publicReference || result.passId,
-        qrToken: result.qrToken,
-        validityWindow: validity,
-        purpose: effectiveVisitor.purpose,
-        plateNumber: effectiveVisitor.arrivalMode === 'vehicle' && effectiveVisitor.vehicle?.plateNumber
-          ? effectiveVisitor.vehicle.plateNumber
-          : null,
-      });
-      setPassPresentation(presentation);
-
-      setEmailDeliverySecured(false);
-      setIsDownloaded(false);
-
-      setStep('delivery');
-      setShowEmailModal(true);
-      toast.success('Gate pass generated successfully!');
+      await presentIssuedPass(result);
     } catch (err) {
       console.error('Pass generation error:', err);
       const errMsg = err instanceof Error ? err.message : 'An unexpected error occurred.';
@@ -2936,7 +2984,7 @@ export function GetPassPage() {
                           <UserCheck className="h-5 w-5" />
                         </div>
                         <span className="text-[10px] font-bold uppercase tracking-wider rounded-md bg-[#F8EEEE] text-[#7A0A0A] border border-[#7A0A0A]/30 px-2 py-0.5">
-                          Office review required
+                          {(offices.find((o) => o.id === selectedOfficeId)?.requires_approval_before_pass ?? true) ? 'Office review required' : 'Auto-approved by office'}
                         </span>
                       </div>
                       <span className="text-sm font-bold text-[var(--color-text-primary)]">A Specific Person</span>
@@ -2960,7 +3008,7 @@ export function GetPassPage() {
                           <Building2 className="h-5 w-5" />
                         </div>
                         <span className="text-[10px] font-bold uppercase tracking-wider rounded-md bg-amber-50 text-amber-900 border border-amber-300 px-2 py-0.5">
-                          QR issued after registration
+                          {selectedOfficeId && (offices.find((o) => o.id === selectedOfficeId)?.requires_approval_before_pass ?? true) ? 'Pre-approval required before QR' : 'QR issued after registration'}
                         </span>
                       </div>
                       <span className="text-sm font-bold text-[var(--color-text-primary)]">The Office Itself</span>
@@ -3101,12 +3149,80 @@ export function GetPassPage() {
 
               {/* Purpose of Visit for General Office Visit */}
               {visitType === 'general' && (
-                <VisitPurposeField
-                  value={purpose || ''}
-                  onChange={(val) => setValue('purpose', val, { shouldValidate: true })}
-                  purposes={visitPurposes}
-                  error={errors.purpose?.message}
-                />
+                <div className="space-y-4">
+                  <VisitPurposeField
+                    value={purpose || ''}
+                    onChange={(val) => setValue('purpose', val, { shouldValidate: true })}
+                    purposes={visitPurposes}
+                    error={errors.purpose?.message}
+                  />
+                  {selectedOfficeId && (offices.find((o) => o.id === selectedOfficeId)?.requires_approval_before_pass ?? true) && (
+                    <div className="rounded-xl border border-amber-200 bg-amber-50/70 p-4 space-y-3">
+                      <div className="flex items-start justify-between gap-2">
+                        <div>
+                          <span className="text-xs font-bold text-amber-950 block">Optional Email Notification (Office Pre-Approval Active)</span>
+                          <p className="text-[11px] text-amber-900 mt-0.5">
+                            This destination office requires review before your QR pass is issued. Verify your email to receive your approved QR pass directly, or leave blank to use your online tracking link.
+                          </p>
+                        </div>
+                        {emailVerificationToken && (
+                          <span className="rounded-full bg-emerald-100 text-emerald-800 text-[10px] font-bold px-2 py-0.5 inline-flex items-center gap-1 shrink-0">
+                            <CheckCircle2 className="h-3 w-3" /> Verified
+                          </span>
+                        )}
+                      </div>
+                      <div className="flex flex-col sm:flex-row gap-2">
+                        <Input
+                          type="email"
+                          placeholder="your.email@example.com (optional)"
+                          value={visitorEmail}
+                          onChange={(e) => {
+                            setVisitorEmail(e.target.value);
+                            setEmailVerificationToken(null);
+                            setCodeSent(false);
+                          }}
+                          disabled={Boolean(emailVerificationToken)}
+                          className="flex-1 text-xs"
+                        />
+                        {!emailVerificationToken && visitorEmail.trim().length > 0 && (
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant="secondary"
+                            onClick={handleSendVerificationCode}
+                            loading={isSendingVerificationCode}
+                            disabled={!visitorEmail || codeCooldown > 0}
+                            icon={<Send className="h-3.5 w-3.5" />}
+                          >
+                            {codeCooldown > 0 ? `Resend (${codeCooldown}s)` : codeSent ? 'Resend Code' : 'Send Code'}
+                          </Button>
+                        )}
+                      </div>
+                      {codeSent && !emailVerificationToken && (
+                        <div className="flex flex-col sm:flex-row gap-2 pt-1">
+                          <Input
+                            placeholder="Enter 6-digit code"
+                            maxLength={6}
+                            value={emailVerificationCode}
+                            onChange={(e) => setEmailVerificationCode(e.target.value)}
+                            className="flex-1 text-xs tracking-widest text-center font-mono font-bold"
+                          />
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant="primary"
+                            onClick={handleVerifyEmailCode}
+                            loading={isVerifyingCode}
+                            disabled={emailVerificationCode.trim().length !== 6}
+                            className="bg-emerald-600 hover:bg-emerald-700 text-white"
+                          >
+                            Verify Code
+                          </Button>
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
               )}
 
               {/* Institutional Campus Closures Banner */}
@@ -3400,6 +3516,12 @@ export function GetPassPage() {
                       </p>
                     )}
                   </div>
+                </div>
+              )}
+
+              {capabilitiesDiagnostics?.turnstile && !capabilitiesDiagnostics.turnstile.verified && (
+                <div className="rounded-xl border border-amber-300 bg-amber-50 p-3 text-xs text-amber-950" role="status">
+                  Security challenge verification (Turnstile) is not currently active on this deployment. Public registrations fail closed until configured.
                 </div>
               )}
 
@@ -4137,7 +4259,9 @@ export function GetPassPage() {
                       className="flex-1"
                       icon={<CheckCircle2 className="h-4 w-4" />}
                     >
-                      {visitType === 'specific_person' ? 'Submit Request for Office Approval' : 'Generate E-GatePass'}
+                      {(offices.find((o) => o.id === selectedOfficeId)?.requires_approval_before_pass ?? true) && selectedOfficeId
+                        ? (visitType === 'specific_person' ? 'Submit Request for Office Approval' : 'Submit Office Visit Request')
+                        : 'Generate E-GatePass'}
                     </Button>
                   </>
                 )}
@@ -5653,7 +5777,7 @@ export function GetPassPage() {
               <div>
                 <h4 className="font-bold text-[var(--color-text-primary)] text-xs mb-1">3. Ephemeral Biometric Verification</h4>
                 <p>
-                  Returning visitor facial verification operates ephemerally in transient memory. Live selfies captured during returning verification are never written to permanent storage, face templates are not stored indefinitely without consent, and comparisons are evaluated strictly in bounded memory against your original registration portrait.
+                  Biometric vector storage is disabled by default; when returning visitor 1:1 verification is enabled and calibrated, live selfies are compared ephemerally in bounded memory against your encrypted registration portrait and are never persisted as raw selfies or vector databases.
                 </p>
               </div>
 

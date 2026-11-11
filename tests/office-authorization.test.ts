@@ -151,9 +151,27 @@ describe('Office Authorization & Access Control Matrix', () => {
               }),
             };
           }
+          if (table === 'offices') {
+            return {
+              select: vi.fn().mockReturnThis(),
+              eq: vi.fn().mockReturnValue({
+                maybeSingle: vi.fn().mockResolvedValue({
+                  data: {
+                    id: officeA,
+                    active: true,
+                    publication_status: 'published',
+                    archived_at: null,
+                  },
+                  error: null,
+                }),
+              }),
+            };
+          }
           return {
             select: vi.fn().mockReturnThis(),
-            eq: vi.fn().mockResolvedValue({ data: null, error: null }),
+            eq: vi.fn().mockReturnValue({
+              maybeSingle: vi.fn().mockResolvedValue({ data: null, error: null }),
+            }),
             in: vi.fn().mockResolvedValue({ data: [], error: null }),
           };
         }),
@@ -204,9 +222,27 @@ describe('Office Authorization & Access Control Matrix', () => {
               }),
             };
           }
+          if (table === 'offices') {
+            return {
+              select: vi.fn().mockReturnThis(),
+              eq: vi.fn().mockReturnValue({
+                maybeSingle: vi.fn().mockResolvedValue({
+                  data: {
+                    id: officeA,
+                    active: true,
+                    publication_status: 'published',
+                    archived_at: null,
+                  },
+                  error: null,
+                }),
+              }),
+            };
+          }
           return {
             select: vi.fn().mockReturnThis(),
-            eq: vi.fn().mockResolvedValue({ data: null, error: null }),
+            eq: vi.fn().mockReturnValue({
+              maybeSingle: vi.fn().mockResolvedValue({ data: null, error: null }),
+            }),
             in: vi.fn().mockResolvedValue({ data: [], error: null }),
           };
         }),
@@ -289,9 +325,27 @@ describe('Office Authorization & Access Control Matrix', () => {
               }),
             };
           }
+          if (table === 'offices') {
+            return {
+              select: vi.fn().mockReturnThis(),
+              eq: vi.fn().mockReturnValue({
+                maybeSingle: vi.fn().mockResolvedValue({
+                  data: {
+                    id: officeA,
+                    active: true,
+                    publication_status: 'published',
+                    archived_at: null,
+                  },
+                  error: null,
+                }),
+              }),
+            };
+          }
           return {
             select: vi.fn().mockReturnThis(),
-            eq: vi.fn().mockResolvedValue({ data: null, error: null }),
+            eq: vi.fn().mockReturnValue({
+              maybeSingle: vi.fn().mockResolvedValue({ data: null, error: null }),
+            }),
             in: vi.fn().mockResolvedValue({ data: [], error: null }),
           };
         }),
@@ -348,9 +402,27 @@ describe('Office Authorization & Access Control Matrix', () => {
               }),
             };
           }
+          if (table === 'offices') {
+            return {
+              select: vi.fn().mockReturnThis(),
+              eq: vi.fn().mockReturnValue({
+                maybeSingle: vi.fn().mockResolvedValue({
+                  data: {
+                    id: officeA,
+                    active: true,
+                    publication_status: 'published',
+                    archived_at: null,
+                  },
+                  error: null,
+                }),
+              }),
+            };
+          }
           return {
             select: vi.fn().mockReturnThis(),
-            eq: vi.fn().mockResolvedValue({ data: null, error: null }),
+            eq: vi.fn().mockReturnValue({
+              maybeSingle: vi.fn().mockResolvedValue({ data: null, error: null }),
+            }),
             in: vi.fn().mockResolvedValue({ data: [], error: null }),
           };
         }),
@@ -395,9 +467,27 @@ describe('Office Authorization & Access Control Matrix', () => {
               }),
             };
           }
+          if (table === 'offices') {
+            return {
+              select: vi.fn().mockReturnThis(),
+              eq: vi.fn().mockReturnValue({
+                maybeSingle: vi.fn().mockResolvedValue({
+                  data: {
+                    id: officeA,
+                    active: true,
+                    publication_status: 'published',
+                    archived_at: null,
+                  },
+                  error: null,
+                }),
+              }),
+            };
+          }
           return {
             select: vi.fn().mockReturnThis(),
-            eq: vi.fn().mockResolvedValue({ data: null, error: null }),
+            eq: vi.fn().mockReturnValue({
+              maybeSingle: vi.fn().mockResolvedValue({ data: null, error: null }),
+            }),
             in: vi.fn().mockResolvedValue({ data: [], error: null }),
           };
         }),

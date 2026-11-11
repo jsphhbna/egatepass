@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { useSearchParams } from 'react-router-dom';
-import { Plus, Building2, UserCheck, CheckCircle2, Users, AlertCircle, KeyRound, Copy, Check, Eye, EyeOff, ShieldAlert, RefreshCw } from 'lucide-react';
+import { Archive, Plus, CheckCircle2, AlertCircle, KeyRound, Copy, Check, Eye, EyeOff, ShieldAlert, RefreshCw, Trash2 } from 'lucide-react';
 import { Button, FormField, Input, Select, StatusBadge, DataTable, DataTableHead, DataTableRow, DataTableCell, Modal, ConfirmModal } from '@/components/ui';
 import { toast } from 'sonner';
 import { z } from 'zod';
@@ -52,7 +52,7 @@ interface AppUserWithId {
 
 export function AdminUsers() {
   const { uid, role } = useAuth();
-  const [searchParams, setSearchParams] = useSearchParams();
+  const [searchParams] = useSearchParams();
   const currentTab = searchParams.get('tab') || 'staff';
 
   // Office Directory & Assignments State
@@ -93,8 +93,17 @@ export function AdminUsers() {
   const [showAddOfficeModal, setShowAddOfficeModal] = useState(false);
   const [newOfficeName, setNewOfficeName] = useState('');
   const [newOfficeDesc, setNewOfficeDesc] = useState('');
+  const [newOfficeRequiresApproval, setNewOfficeRequiresApproval] = useState(true);
   const [createOfficeError, setCreateOfficeError] = useState<string | null>(null);
   const [isCreatingOffice, setIsCreatingOffice] = useState(false);
+  const [archivingOffice, setArchivingOffice] = useState<AdminOfficeRecord | null>(null);
+  const [archiveStaffHandling, setArchiveStaffHandling] = useState<'keep' | 'unassign' | 'deactivate_unshared'>('keep');
+  const [archiveReason, setArchiveReason] = useState('');
+  const [isArchivingOffice, setIsArchivingOffice] = useState(false);
+  const [deletingDraftOffice, setDeletingDraftOffice] = useState<AdminOfficeRecord | null>(null);
+  const [isDeletingDraftOffice, setIsDeletingDraftOffice] = useState(false);
+  const [togglingApprovalOfficeId, setTogglingApprovalOfficeId] = useState<string | null>(null);
+  const [republishingOfficeId, setRepublishingOfficeId] = useState<string | null>(null);
   const isCreatingOfficeRef = useRef(false);
   const officeDirectoryReadGenRef = useRef(0);
 
@@ -472,6 +481,7 @@ export function AdminUsers() {
           action: 'create_office',
           name: trimmedName,
           description: trimmedDesc || undefined,
+          requiresApprovalBeforePass: canVerifyOffice ? newOfficeRequiresApproval : true,
         }),
       });
       const data = await res.json().catch(() => null) as {
@@ -506,6 +516,7 @@ export function AdminUsers() {
       setShowAddOfficeModal(false);
       setNewOfficeName('');
       setNewOfficeDesc('');
+      setNewOfficeRequiresApproval(true);
       setCreateOfficeError(null);
 
       const refreshResult = await loadAdminOffices({ suppressErrorToast: true });
@@ -529,6 +540,129 @@ export function AdminUsers() {
     } finally {
       isCreatingOfficeRef.current = false;
       setIsCreatingOffice(false);
+    }
+  }
+
+  async function handleToggleApprovalPolicy(office: AdminOfficeRecord) {
+    if (!canVerifyOffice || togglingApprovalOfficeId) return;
+    const nextValue = !(office.requires_approval_before_pass ?? true);
+    setTogglingApprovalOfficeId(office.id);
+    try {
+      const token = await getAccessToken();
+      const res = await fetch('/api/admin/offices', {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${token}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          action: 'set_approval_policy',
+          officeId: office.id,
+          requiresApprovalBeforePass: nextValue,
+        }),
+      });
+      const data = await res.json().catch(() => null);
+      if (!res.ok) throw new Error(data?.message || data?.error || 'Failed to update approval policy');
+      if (data?.office) {
+        setAdminOffices((prev) => upsertOfficeInDirectory(prev, data.office));
+      }
+      await loadAdminOffices({ suppressErrorToast: true });
+      toast.success(
+        nextValue
+          ? `"${office.name}" now requires office approval before pass issuance.`
+          : `"${office.name}" pre-approval requirement disabled by Super Admin.`,
+      );
+    } catch (err: any) {
+      toast.error(err?.message || 'Failed to update office approval policy');
+    } finally {
+      setTogglingApprovalOfficeId(null);
+    }
+  }
+
+  async function handleRepublishOffice(office: AdminOfficeRecord) {
+    if (!canVerifyOffice || republishingOfficeId) return;
+    setRepublishingOfficeId(office.id);
+    try {
+      const token = await getAccessToken();
+      const res = await fetch('/api/admin/offices', {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${token}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          action: 'set_publication_status',
+          officeId: office.id,
+          publicationStatus: 'published',
+        }),
+      });
+      const data = await res.json().catch(() => null);
+      if (!res.ok) throw new Error(data?.message || data?.error || 'Failed to republish office');
+      await loadAdminOffices({ suppressErrorToast: true });
+      toast.success(`"${office.name}" republished to the active visitor directory.`);
+    } catch (err: any) {
+      toast.error(err?.message || 'Failed to republish office');
+    } finally {
+      setRepublishingOfficeId(null);
+    }
+  }
+
+  async function handleConfirmArchiveOffice() {
+    if (!archivingOffice || isArchivingOffice) return;
+    setIsArchivingOffice(true);
+    try {
+      const token = await getAccessToken();
+      const res = await fetch('/api/admin/offices', {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${token}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          action: 'archive_office',
+          officeId: archivingOffice.id,
+          staffHandling: archiveStaffHandling,
+          reason: archiveReason.trim() || undefined,
+        }),
+      });
+      const data = await res.json().catch(() => null);
+      if (!res.ok) throw new Error(data?.message || data?.error || 'Failed to archive office');
+      toast.success(`Office "${archivingOffice.name}" archived and preserved for audit history.`);
+      setArchivingOffice(null);
+      setArchiveStaffHandling('keep');
+      setArchiveReason('');
+      await Promise.all([
+        loadAdminOffices({ suppressErrorToast: true }),
+        loadUsers(),
+      ]);
+    } catch (err: any) {
+      toast.error(err?.message || 'Failed to archive office');
+    } finally {
+      setIsArchivingOffice(false);
+    }
+  }
+
+  async function handleConfirmDeleteDraftOffice() {
+    if (!deletingDraftOffice || isDeletingDraftOffice) return;
+    setIsDeletingDraftOffice(true);
+    try {
+      const token = await getAccessToken();
+      const res = await fetch(`/api/admin/offices?id=${encodeURIComponent(deletingDraftOffice.id)}`, {
+        method: 'DELETE',
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+      });
+      const data = await res.json().catch(() => null);
+      if (!res.ok) throw new Error(data?.message || data?.error || 'Failed to delete draft office');
+      setAdminOffices((prev) => prev.filter((o) => o.id !== deletingDraftOffice.id));
+      toast.success(`Unused draft office "${deletingDraftOffice.name}" permanently deleted.`);
+      setDeletingDraftOffice(null);
+      await loadAdminOffices({ suppressErrorToast: true });
+    } catch (err: any) {
+      toast.error(err?.message || 'Failed to delete draft office');
+    } finally {
+      setIsDeletingDraftOffice(false);
     }
   }
 
@@ -934,36 +1068,7 @@ export function AdminUsers() {
         </p>
       </div>
 
-      {/* Sub-Tabs Navigation */}
-      <div className="flex border-b border-[var(--color-border)] gap-2 overflow-x-auto pb-px">
-        {[
-          { id: 'staff', label: 'Staff Accounts', icon: Users },
-          { id: 'directory', label: 'Office Directory', icon: Building2 },
-          { id: 'assignments', label: 'Office Assignments', icon: UserCheck },
-        ].map((tab) => {
-          const Icon = tab.icon;
-          const isActive = currentTab === tab.id;
-          return (
-            <button
-              key={tab.id}
-              type="button"
-              onClick={() => {
-                const next = new URLSearchParams(searchParams);
-                next.set('tab', tab.id);
-                setSearchParams(next);
-              }}
-              className={`flex items-center gap-2 px-4 py-2.5 text-xs font-bold whitespace-nowrap border-b-2 transition-colors ${
-                isActive
-                  ? 'border-[#7A0A0A] text-[#7A0A0A]'
-                  : 'border-transparent text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)]'
-              }`}
-            >
-              <Icon className="h-4 w-4" />
-              <span>{tab.label}</span>
-            </button>
-          );
-        })}
-      </div>
+      {/* Sub-navigation handled exclusively via the Admin Sidebar */}
 
       {currentTab === 'staff' && (
         <div className="space-y-6">
@@ -1303,6 +1408,24 @@ export function AdminUsers() {
                             {statusMeta.combinedLabel}
                           </span>
                         )}
+                        <div className="flex flex-wrap items-center gap-1.5">
+                          <span className={`inline-flex items-center rounded px-1.5 py-0.5 text-[10px] font-bold uppercase ${
+                            statusMeta.lifecycleLabel === 'Published'
+                              ? 'bg-emerald-100 text-emerald-800'
+                              : statusMeta.lifecycleLabel === 'Archived'
+                              ? 'bg-slate-200 text-slate-700'
+                              : 'bg-amber-100 text-amber-800'
+                          }`}>
+                            {statusMeta.lifecycleLabel}
+                          </span>
+                          <span className={`inline-flex items-center rounded px-1.5 py-0.5 text-[10px] font-semibold ${
+                            office.requires_approval_before_pass === false
+                              ? 'bg-purple-50 text-purple-800 border border-purple-200'
+                              : 'bg-blue-50 text-blue-800 border border-blue-200'
+                          }`}>
+                            {office.requires_approval_before_pass === false ? 'Pre-Approval Optional' : 'Pre-Approval Required'}
+                          </span>
+                        </div>
                         <p className="text-[11px] text-[var(--color-text-muted)]">
                           {statusMeta.visitorHint}
                         </p>
@@ -1388,15 +1511,26 @@ export function AdminUsers() {
                               </Button>
                             </>
                           )}
-                          <Button
-                            variant="secondary"
-                            size="sm"
-                            onClick={() => handleToggleOfficeActive(office.id, !office.active)}
-                          >
-                            {office.active ? 'Disable Office' : 'Enable Office'}
-                          </Button>
+                          {office.publication_status !== 'archived' && (
+                            <Button
+                              variant="secondary"
+                              size="sm"
+                              onClick={() => handleToggleOfficeActive(office.id, !office.active)}
+                            >
+                              {office.active ? 'Disable Office' : 'Enable Office'}
+                            </Button>
+                          )}
                           {canVerifyOffice ? (
-                            office.verified ? (
+                            office.publication_status === 'archived' ? (
+                              <Button
+                                size="sm"
+                                loading={republishingOfficeId === office.id}
+                                disabled={republishingOfficeId === office.id}
+                                onClick={() => void handleRepublishOffice(office)}
+                              >
+                                Republish
+                              </Button>
+                            ) : office.verified ? (
                               <Button
                                 variant="secondary"
                                 size="sm"
@@ -1417,6 +1551,43 @@ export function AdminUsers() {
                               Superadmin verification required
                             </span>
                           ) : null}
+                          {canVerifyOffice && office.publication_status !== 'archived' && (
+                            <Button
+                              variant="secondary"
+                              size="sm"
+                              loading={togglingApprovalOfficeId === office.id}
+                              disabled={togglingApprovalOfficeId === office.id}
+                              onClick={() => void handleToggleApprovalPolicy(office)}
+                            >
+                              {office.requires_approval_before_pass === false ? 'Require Approval' : 'Allow Unapproved'}
+                            </Button>
+                          )}
+                          {canVerifyOffice && office.publication_status !== 'archived' && (
+                            <Button
+                              variant="secondary"
+                              size="sm"
+                              icon={<Archive className="h-3.5 w-3.5" />}
+                              onClick={() => {
+                                setArchivingOffice(office);
+                                setArchiveStaffHandling('keep');
+                                setArchiveReason('');
+                              }}
+                            >
+                              Archive
+                            </Button>
+                          )}
+                          {(office.publication_status === 'draft' || !office.verified) &&
+                            office.publication_status !== 'archived' &&
+                            !office.hasDependencies && (
+                              <Button
+                                variant="destructive"
+                                size="sm"
+                                icon={<Trash2 className="h-3.5 w-3.5" />}
+                                onClick={() => setDeletingDraftOffice(office)}
+                              >
+                                Delete Draft
+                              </Button>
+                            )}
                         </div>
                       )}
                     </DataTableCell>
@@ -1712,8 +1883,24 @@ export function AdminUsers() {
               placeholder="Optional department description"
             />
           </FormField>
+          {canVerifyOffice && (
+            <label className="flex items-start gap-2 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface-subtle)] p-3 text-xs cursor-pointer">
+              <input
+                type="checkbox"
+                checked={newOfficeRequiresApproval}
+                onChange={(e) => setNewOfficeRequiresApproval(e.target.checked)}
+                className="mt-0.5 h-4 w-4 rounded border-[var(--color-border)] text-[var(--color-brand)]"
+              />
+              <span>
+                <strong className="text-[var(--color-text-primary)]">Require office approval before QR pass issuance</strong>
+                <span className="block text-[11px] text-[var(--color-text-secondary)]">
+                  Default is ON. Unchecking allows immediate pass generation unless otherwise required by office visit type.
+                </span>
+              </span>
+            </label>
+          )}
           <p className="text-[11px] text-[var(--color-text-muted)] leading-relaxed">
-            New offices are created as <strong>Active / Unverified</strong> and remain hidden from visitors until verified by a Superadmin.
+            New offices start as <strong>Draft (Unverified)</strong> and remain hidden from public visitors until published/verified by a Super Admin.
           </p>
           <div className="flex justify-end gap-2 pt-2">
             <Button type="button" variant="secondary" onClick={() => setShowAddOfficeModal(false)} disabled={isCreatingOffice}>
@@ -1997,6 +2184,80 @@ export function AdminUsers() {
         confirmText="Reset & Generate Password"
         onConfirm={handleConfirmResetCredentials}
         loading={isResetting}
+      />
+
+      {/* Archive Office Modal */}
+      <Modal
+        isOpen={!!archivingOffice}
+        onClose={() => {
+          if (!isArchivingOffice) {
+            setArchivingOffice(null);
+            setArchiveReason('');
+          }
+        }}
+        title="Archive Campus Office"
+        preventClose={isArchivingOffice}
+        size="sm"
+      >
+        {archivingOffice && (
+          <div className="space-y-4">
+            <p className="text-xs text-[var(--color-text-secondary)] leading-relaxed">
+              Archiving <strong className="text-[var(--color-text-primary)]">{archivingOffice.name}</strong> removes it from public visitor selection while preserving all historical visits, passes, and audit records.
+            </p>
+            <div>
+              <label htmlFor="archive-staff-handling" className="mb-1 block text-xs font-semibold text-[var(--color-text-primary)]">
+                Assigned Office Staff Handling
+              </label>
+              <Select
+                id="archive-staff-handling"
+                value={archiveStaffHandling}
+                onChange={(e) => setArchiveStaffHandling(e.target.value as 'keep' | 'unassign' | 'deactivate_unshared')}
+              >
+                <option value="keep">Keep existing staff assignments (audit reference)</option>
+                <option value="unassign">Unassign all staff from this office</option>
+                <option value="deactivate_unshared">Unassign and deactivate unshared office accounts</option>
+              </Select>
+            </div>
+            <FormField label="Archive Reason (Optional)" id="archive-office-reason">
+              <Input
+                id="archive-office-reason"
+                type="text"
+                value={archiveReason}
+                onChange={(e) => setArchiveReason(e.target.value)}
+                placeholder="e.g. Department merged or relocated"
+                maxLength={300}
+              />
+            </FormField>
+            <div className="flex justify-end gap-2 pt-2">
+              <Button variant="secondary" onClick={() => setArchivingOffice(null)} disabled={isArchivingOffice}>
+                Cancel
+              </Button>
+              <Button onClick={() => void handleConfirmArchiveOffice()} loading={isArchivingOffice} disabled={isArchivingOffice}>
+                Archive Office
+              </Button>
+            </div>
+          </div>
+        )}
+      </Modal>
+
+      {/* Delete Unused Draft Office Confirm Modal */}
+      <ConfirmModal
+        isOpen={!!deletingDraftOffice}
+        onClose={() => {
+          if (!isDeletingDraftOffice) setDeletingDraftOffice(null);
+        }}
+        title="Delete Unused Draft Office?"
+        description={
+          deletingDraftOffice ? (
+            <>
+              Permanently delete unused draft office <strong>{deletingDraftOffice.name}</strong>? Offices with any visit history or active dependencies cannot be deleted and must be archived instead.
+            </>
+          ) : ''
+        }
+        confirmText="Delete Draft"
+        isDestructive
+        onConfirm={() => void handleConfirmDeleteDraftOffice()}
+        loading={isDeletingDraftOffice}
       />
     </div>
   );

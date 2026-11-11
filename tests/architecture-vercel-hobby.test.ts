@@ -86,15 +86,15 @@ describe('Vercel Hobby Plan Function Limit Architecture Regressions', () => {
     });
   });
 
-  describe('2. Route Contract Matrix Integrity (35 Preserved API Endpoints)', () => {
-    it('contains exactly 35 route contracts in the matrix', () => {
-      expect(ROUTE_CONTRACT_MATRIX.length).toBe(35);
+  describe('2. Route Contract Matrix Integrity (38 Preserved & Consolidated API Endpoints)', () => {
+    it('contains exactly 38 route contracts in the matrix', () => {
+      expect(ROUTE_CONTRACT_MATRIX.length).toBe(38);
     });
 
-    it('contains all 35 historical external API paths with no duplicates', () => {
+    it('contains all historical external API paths with no duplicates', () => {
       const paths = ROUTE_CONTRACT_MATRIX.map((r) => r.path);
       const uniquePaths = new Set(paths);
-      expect(uniquePaths.size).toBe(35);
+      expect(uniquePaths.size).toBe(38);
 
       for (const expectedPath of EXPECTED_30_ROUTES) {
         expect(paths).toContain(expectedPath);
@@ -120,12 +120,12 @@ describe('Vercel Hobby Plan Function Limit Architecture Regressions', () => {
     it('allows lookup by path and by group', () => {
       expect(getRouteByPath('/api/admin/dashboard')?.subpath).toBe('dashboard');
       expect(getRouteByPath('/api/create-device')?.group).toBe('device');
-      expect(getRoutesByGroup('auth').length).toBe(4);
+      expect(getRoutesByGroup('auth').length).toBe(5);
       expect(getRoutesByGroup('passes').length).toBe(5);
       expect(getRoutesByGroup('device').length).toBe(6);
-      expect(getRoutesByGroup('gate').length).toBe(5);
+      expect(getRoutesByGroup('gate').length).toBe(6);
       expect(getRoutesByGroup('system').length).toBe(6);
-      expect(getRoutesByGroup('admin').length).toBe(9);
+      expect(getRoutesByGroup('admin').length).toBe(10);
     });
   });
 

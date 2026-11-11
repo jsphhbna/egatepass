@@ -12,7 +12,14 @@ export function PrivacyModal() {
 
   // Only show if a staff user has not accepted yet.
   if (status !== 'authenticated' || !userData || userData.kind !== 'staff') return null;
-  if (userData.role !== 'admin' && userData.role !== 'superadmin' && userData.role !== 'guard') return null;
+  if (
+    userData.role !== 'admin' &&
+    userData.role !== 'superadmin' &&
+    userData.role !== 'guard' &&
+    userData.role !== 'office_staff'
+  ) {
+    return null;
+  }
   if (userData.privacyAcceptedAt !== null || accepted) return null;
 
   async function handleAccept() {

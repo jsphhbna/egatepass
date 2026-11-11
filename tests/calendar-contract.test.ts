@@ -43,6 +43,8 @@ describe('Institutional Calendar Frontend/API Contract & Governance Test Suite',
         description: 'National Regular Holiday',
         active: true,
         published: true,
+        archived_at: null,
+        archived_by: null,
         created_by: superadminId,
         updated_by: superadminId,
         created_at: '2026-11-01T00:00:00Z',
@@ -57,6 +59,8 @@ describe('Institutional Calendar Frontend/API Contract & Governance Test Suite',
         description: 'University semestral closure',
         active: true,
         published: true,
+        archived_at: null,
+        archived_by: null,
         created_by: superadminId,
         updated_by: superadminId,
         created_at: '2026-11-01T00:00:00Z',
@@ -71,6 +75,8 @@ describe('Institutional Calendar Frontend/API Contract & Governance Test Suite',
         description: 'Internal server maintenance',
         active: false,
         published: false,
+        archived_at: null,
+        archived_by: null,
         created_by: superadminId,
         updated_by: superadminId,
         created_at: '2026-11-01T00:00:00Z',
@@ -79,6 +85,110 @@ describe('Institutional Calendar Frontend/API Contract & Governance Test Suite',
     ];
 
     const mockAdminClient = {
+      schema: vi.fn((schemaName: string) => ({
+        rpc: vi.fn(async (fnName: string, args: any) => {
+          if (schemaName !== 'api') return { data: null, error: null };
+          if (fnName === 'save_campus_calendar_closure') {
+            if (args.requested_actor_id !== superadminId) {
+              return { data: null, error: { code: '42501', message: 'superadmin_required' } };
+            }
+            const id = args.requested_closure_id;
+            if (!id) {
+              if (args.requested_end_date < args.requested_start_date) {
+                return { data: null, error: { code: '22023', message: 'end_date must be >= start_date' } };
+              }
+              const newRow = {
+                id: '44444444-4444-4444-8444-444444444444',
+                title: args.requested_title,
+                closure_type: args.requested_closure_type,
+                start_date: args.requested_start_date,
+                end_date: args.requested_end_date,
+                description: args.requested_description ?? null,
+                active: args.requested_active ?? true,
+                published: args.requested_published ?? true,
+                archived_at: null,
+                archived_by: null,
+                created_by: args.requested_actor_id,
+                updated_by: args.requested_actor_id,
+                created_at: '2026-11-09T00:00:00Z',
+                updated_at: '2026-11-09T00:00:00Z',
+              };
+              mockClosures.push(newRow);
+              return {
+                data: {
+                  id: newRow.id,
+                  title: newRow.title,
+                  closureType: newRow.closure_type,
+                  startDate: newRow.start_date,
+                  endDate: newRow.end_date,
+                  description: newRow.description,
+                  active: newRow.active,
+                  published: newRow.published,
+                  archivedAt: null,
+                },
+                error: null,
+              };
+            }
+
+            const idx = mockClosures.findIndex((r) => r.id === id);
+            if (idx < 0) {
+              return { data: null, error: { code: 'P0002', message: 'closure_not_found' } };
+            }
+            const cur = mockClosures[idx]!;
+            const nextStart = args.requested_start_date ?? cur.start_date;
+            const nextEnd = args.requested_end_date ?? cur.end_date;
+            if (nextEnd < nextStart) {
+              return { data: null, error: { code: '22023', message: 'end_date must be >= start_date' } };
+            }
+            const updated = {
+              ...cur,
+              title: args.requested_title ?? cur.title,
+              closure_type: args.requested_closure_type ?? cur.closure_type,
+              start_date: nextStart,
+              end_date: nextEnd,
+              description: args.requested_description !== null ? args.requested_description : cur.description,
+              active: args.requested_archive ? false : (args.requested_active !== null ? args.requested_active : cur.active),
+              published: args.requested_archive ? false : (args.requested_published !== null ? args.requested_published : cur.published),
+              archived_at: args.requested_archive ? '2026-11-12T00:00:00Z' : cur.archived_at,
+              archived_by: args.requested_archive ? args.requested_actor_id : cur.archived_by,
+              updated_by: args.requested_actor_id,
+              updated_at: '2026-11-12T00:00:00Z',
+            };
+            mockClosures[idx] = updated;
+            return {
+              data: {
+                id: updated.id,
+                title: updated.title,
+                closureType: updated.closure_type,
+                startDate: updated.start_date,
+                endDate: updated.end_date,
+                description: updated.description,
+                active: updated.active,
+                published: updated.published,
+                archivedAt: updated.archived_at,
+              },
+              error: null,
+            };
+          }
+
+          if (fnName === 'delete_campus_calendar_closure') {
+            if (args.requested_actor_id !== superadminId) {
+              return { data: null, error: { code: '42501', message: 'superadmin_required' } };
+            }
+            const idx = mockClosures.findIndex((r) => r.id === args.requested_closure_id);
+            if (idx < 0) {
+              return { data: null, error: { code: 'P0002', message: 'closure_not_found' } };
+            }
+            const cur = mockClosures[idx]!;
+            if (cur.published || cur.active) {
+              return { data: null, error: { code: '42501', message: 'published_or_active_closure_must_be_archived' } };
+            }
+            mockClosures.splice(idx, 1);
+            return { data: { deleted: true }, error: null };
+          }
+          return { data: null, error: null };
+        }),
+      })),
       from: vi.fn((table: string) => {
         if (table === 'campus_calendar_closures') {
           return {
@@ -88,6 +198,10 @@ describe('Institutional Calendar Frontend/API Contract & Governance Test Suite',
                 order: vi.fn().mockImplementation(() => builder),
                 eq: vi.fn((field: string, val: any) => {
                   filtered = filtered.filter((r: any) => r[field] === val);
+                  return builder;
+                }),
+                is: vi.fn((field: string, val: any) => {
+                  filtered = filtered.filter((r: any) => (r[field] ?? null) === val);
                   return builder;
                 }),
                 gte: vi.fn((field: string, val: any) => {
@@ -467,6 +581,47 @@ describe('Institutional Calendar Frontend/API Contract & Governance Test Suite',
       const body = await res.json();
       expect(body.ok).toBe(true);
       expect(mockClosures.some((c) => c.id === '33333333-3333-4333-8333-333333333333')).toBe(false);
+    });
+
+    it('rejects deleting published/active closure with 409 and allows archiving instead', async () => {
+      vi.spyOn(actorsModule, 'requireStaffActor').mockResolvedValue({
+        id: superadminId,
+        email: 'superadmin@earist.edu.ph',
+        role: 'superadmin',
+      });
+
+      const delReq = new Request('http://localhost/api/admin/calendar', {
+        method: 'DELETE',
+        headers: {
+          Authorization: 'Bearer valid-superadmin-token',
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          id: '11111111-1111-4111-8111-111111111111',
+        }),
+      });
+      const delRes = await adminCalendarHandler(delReq);
+      expect(delRes.status).toBe(409);
+      const delBody = await delRes.json();
+      expect(delBody.error).toBe('published_or_active_closure_must_be_archived');
+
+      const archReq = new Request('http://localhost/api/admin/calendar', {
+        method: 'PATCH',
+        headers: {
+          Authorization: 'Bearer valid-superadmin-token',
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          id: '11111111-1111-4111-8111-111111111111',
+          archive: true,
+        }),
+      });
+      const archRes = await adminCalendarHandler(archReq);
+      expect(archRes.status).toBe(200);
+      const archBody = await archRes.json();
+      expect(archBody.closure.active).toBe(false);
+      expect(archBody.closure.published).toBe(false);
+      expect(archBody.closure.archivedAt).toBeTruthy();
     });
 
     it('returns 404 closure_not_found when deleting non-existent ID', async () => {

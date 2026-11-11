@@ -1,4 +1,4 @@
-export type CalendarClosureType = 'holiday' | 'campus_closure';
+export type CalendarClosureType = 'holiday' | 'campus_closure' | 'emergency_suspension';
 
 export interface CampusCalendarClosure {
   id: string;
@@ -9,6 +9,8 @@ export interface CampusCalendarClosure {
   description: string | null;
   active: boolean;
   published: boolean;
+  archived?: boolean;
+  archivedAt?: string | null;
   createdBy?: string | null;
   updatedBy?: string | null;
   createdAt?: string;

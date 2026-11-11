@@ -49,7 +49,7 @@ export const ROUTE_CONTRACT_MATRIX: readonly RouteContract[] = [
     path: '/api/admin/records',
     group: 'admin',
     subpath: 'records',
-    allowedMethods: ['GET'],
+    allowedMethods: ['GET', 'PATCH'],
     handlerModule: 'server/routes/admin/records.ts',
   },
   {
@@ -72,6 +72,13 @@ export const ROUTE_CONTRACT_MATRIX: readonly RouteContract[] = [
     subpath: 'users',
     allowedMethods: ['GET'],
     handlerModule: 'server/routes/admin/users.ts',
+  },
+  {
+    path: '/api/admin/emergency-records',
+    group: 'admin',
+    subpath: 'emergency-records',
+    allowedMethods: ['GET', 'POST'],
+    handlerModule: 'server/routes/admin/emergency-records.ts',
   },
 
   // Auth Router (4 routes)
@@ -102,6 +109,13 @@ export const ROUTE_CONTRACT_MATRIX: readonly RouteContract[] = [
     subpath: 'resend-webhook',
     allowedMethods: ['POST'],
     handlerModule: 'server/routes/auth/resend-webhook.ts',
+  },
+  {
+    path: '/api/auth/session-activity',
+    group: 'auth',
+    subpath: 'session-activity',
+    allowedMethods: ['GET', 'POST'],
+    handlerModule: 'server/routes/auth/session-activity.ts',
   },
 
   // Passes Router (5 routes)
@@ -220,6 +234,13 @@ export const ROUTE_CONTRACT_MATRIX: readonly RouteContract[] = [
     subpath: 'guard-station-feed',
     allowedMethods: ['GET'],
     handlerModule: 'server/routes/gate/guard-station-feed.ts',
+  },
+  {
+    path: '/api/gate/emergency-device',
+    group: 'gate',
+    subpath: 'emergency-device',
+    allowedMethods: ['GET', 'POST'],
+    handlerModule: 'server/routes/gate/emergency-device.ts',
   },
 
   // System Router (6 routes)

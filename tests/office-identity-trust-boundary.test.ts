@@ -73,7 +73,17 @@ describe('Office Visit Identity Trust Boundary', () => {
           limit: () => chain,
           maybeSingle: async () => {
             if (table === 'offices') {
-              return { data: { id: officeId, name: 'Office of the Registrar', active: true }, error: null };
+              return {
+                data: {
+                  id: officeId,
+                  name: 'Office of the Registrar',
+                  active: true,
+                  publication_status: 'published',
+                  requires_approval_before_pass: true,
+                  archived_at: null,
+                },
+                error: null,
+              };
             }
             if (table === 'office_personnel') {
               return { data: { id: personnelId, office_id: officeId, name: 'Registrar Staff', active: true }, error: null };

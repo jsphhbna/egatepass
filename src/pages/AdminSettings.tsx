@@ -1,17 +1,14 @@
-import { useState, useEffect, useRef, useCallback } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import {
   Save,
   Trash2,
   AlertTriangle,
   Plus,
-  Calendar,
   Shield,
   Clock,
   Users,
-  User,
   Database,
-  X,
   CheckCircle,
   FileText,
   Lock,
@@ -22,9 +19,10 @@ import {
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { Button, Card, Input, Select, ConfirmModal, LoadingState, Modal, FormField } from '@/components/ui';
+import { CampusCalendar } from '@/components/CampusCalendar';
 import { PasswordResetCard } from '@/components/ChangePasswordCard';
 import { DEFAULT_REJECTION_REASONS, normalizeVisitPurposes } from '@/lib/settingsDefaults';
-import type { VisitPurposeOption, CampusCalendarClosure, CalendarClosureType } from '@/types';
+import type { VisitPurposeOption } from '@/types';
 import { useAuth } from '@/hooks/useAuth';
 import { isSuperAdmin } from '@/lib/permissions';
 import { getAccessToken } from '@/services/auth';
@@ -56,144 +54,8 @@ export const DEFAULT_VISITOR_INSTRUCTIONS: string[] = [
 
 export function AdminSettings() {
   const { role, userData } = useAuth();
-  const [searchParams, setSearchParams] = useSearchParams();
+  const [searchParams] = useSearchParams();
   const currentTab = searchParams.get('tab') || 'general';
-
-  // Campus Calendar State
-  const [closures, setClosures] = useState<CampusCalendarClosure[]>([]);
-  const [loadingClosures, setLoadingClosures] = useState(false);
-  const [showAddClosureModal, setShowAddClosureModal] = useState(false);
-  const [newClosureStartDate, setNewClosureStartDate] = useState('');
-  const [newClosureEndDate, setNewClosureEndDate] = useState('');
-  const [newClosureTitle, setNewClosureTitle] = useState('');
-  const [newClosureDescription, setNewClosureDescription] = useState('');
-  const [newClosureType, setNewClosureType] = useState<CalendarClosureType>('holiday');
-  const [isSavingClosure, setIsSavingClosure] = useState(false);
-  const [deletingClosure, setDeletingClosure] = useState<CampusCalendarClosure | null>(null);
-  const [isDeletingClosure, setIsDeletingClosure] = useState(false);
-
-  const loadAdminClosures = useCallback(async () => {
-    setLoadingClosures(true);
-    try {
-      const token = await getAccessToken();
-      const res = await fetch('/api/admin/calendar', {
-        headers: token ? { Authorization: `Bearer ${token}` } : {},
-      });
-      if (res.ok) {
-        const data = await res.json();
-        setClosures(data.closures || []);
-      }
-    } catch (err) {
-      console.error('Failed to load closures:', err);
-    } finally {
-      setLoadingClosures(false);
-    }
-  }, []);
-
-  useEffect(() => {
-    if (currentTab === 'calendar') {
-      void loadAdminClosures();
-    }
-  }, [currentTab, loadAdminClosures]);
-
-  async function handleAddClosure() {
-    if (!newClosureStartDate) {
-      toast.error('Please select a start date.');
-      return;
-    }
-    const effectiveEnd = newClosureEndDate || newClosureStartDate;
-    if (effectiveEnd < newClosureStartDate) {
-      toast.error('End date cannot be earlier than start date.');
-      return;
-    }
-    if (!newClosureTitle.trim()) {
-      toast.error('Please enter a closure title.');
-      return;
-    }
-    setIsSavingClosure(true);
-    try {
-      const token = await getAccessToken();
-      const res = await fetch('/api/admin/calendar', {
-        method: 'POST',
-        headers: {
-          Authorization: `Bearer ${token}`,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          title: newClosureTitle.trim(),
-          closureType: newClosureType,
-          startDate: newClosureStartDate,
-          endDate: effectiveEnd,
-          description: newClosureDescription.trim() || undefined,
-          active: true,
-          published: true,
-        }),
-      });
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) {
-        throw new Error(data.message || data.error || (data.details && data.details[0]?.message) || 'Failed to create closure');
-      }
-      toast.success('Campus closure added successfully.');
-      setShowAddClosureModal(false);
-      setNewClosureStartDate('');
-      setNewClosureEndDate('');
-      setNewClosureTitle('');
-      setNewClosureDescription('');
-      setNewClosureType('holiday');
-      await loadAdminClosures();
-    } catch (err: any) {
-      toast.error(err.message || 'Failed to add closure.');
-    } finally {
-      setIsSavingClosure(false);
-    }
-  }
-
-  async function handleToggleClosure(id: string, field: 'active' | 'published', val: boolean) {
-    try {
-      const token = await getAccessToken();
-      const res = await fetch('/api/admin/calendar', {
-        method: 'PATCH',
-        headers: {
-          Authorization: `Bearer ${token}`,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          id,
-          [field]: val,
-        }),
-      });
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(data.message || data.error || 'Failed to update closure');
-      toast.success(`Closure ${field === 'active' ? (val ? 'activated' : 'deactivated') : (val ? 'published' : 'hidden')}.`);
-      await loadAdminClosures();
-    } catch (err: any) {
-      toast.error(err.message || 'Failed to update closure.');
-    }
-  }
-
-  async function handleDeleteClosure(closure: CampusCalendarClosure) {
-    setIsDeletingClosure(true);
-    try {
-      const token = await getAccessToken();
-      const res = await fetch('/api/admin/calendar', {
-        method: 'DELETE',
-        headers: {
-          Authorization: `Bearer ${token}`,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ id: closure.id }),
-      });
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(data.message || data.error || 'Failed to delete closure');
-      toast.success('Closure deleted successfully.');
-      setDeletingClosure(null);
-      await loadAdminClosures();
-    } catch (err: any) {
-      toast.error(err.message || 'Failed to delete closure.');
-    } finally {
-      setIsDeletingClosure(false);
-    }
-  }
 
   const canManageSecuritySettings = isSuperAdmin(role);
   const [loading, setLoading] = useState(true);
@@ -213,6 +75,20 @@ export function AdminSettings() {
     rejectionReasons: DEFAULT_REJECTION_REASONS,
     visitPurposes: [] as VisitPurposeOption[],
     visitorInstructions: DEFAULT_VISITOR_INSTRUCTIONS,
+    globalRetentionFreeze: false,
+    globalRetentionFreezeReason: '',
+    globalRetentionFreezeUpdatedAt: null as string | null,
+    allowEmergencyException: false,
+    emergencyExceptionPolicyNote: '',
+    emergencyRecordRetentionEnabled: true,
+    emergencyRecordRetentionDays: '90',
+    defaultExpectedGate: '',
+    securityInfo: {
+      turnstileSiteKeyConfigured: false,
+      turnstileVerifierConfigured: false,
+      turnstileFullyVerified: false,
+      biometricStorageRetired: true,
+    },
   });
   const [retentionInputs, setRetentionInputs] = useState(() => createRetentionInputValues(DEFAULT_RETENTION_POLICY));
   const [retentionErrors, setRetentionErrors] = useState<RetentionInputErrors>({});
@@ -265,6 +141,20 @@ export function AdminSettings() {
           visitorInstructions: Array.isArray(data.visitorInstructions) && data.visitorInstructions.length > 0
             ? data.visitorInstructions
             : DEFAULT_VISITOR_INSTRUCTIONS,
+          globalRetentionFreeze: Boolean(data.globalRetentionFreeze),
+          globalRetentionFreezeReason: typeof data.globalRetentionFreezeReason === 'string' ? data.globalRetentionFreezeReason : '',
+          globalRetentionFreezeUpdatedAt: typeof data.globalRetentionFreezeUpdatedAt === 'string' ? data.globalRetentionFreezeUpdatedAt : null,
+          allowEmergencyException: Boolean(data.allowEmergencyException),
+          emergencyExceptionPolicyNote: typeof data.emergencyExceptionPolicyNote === 'string' ? data.emergencyExceptionPolicyNote : '',
+          emergencyRecordRetentionEnabled: typeof data.emergencyRecordRetentionEnabled === 'boolean' ? data.emergencyRecordRetentionEnabled : true,
+          emergencyRecordRetentionDays: String(typeof data.emergencyRecordRetentionDays === 'number' ? data.emergencyRecordRetentionDays : 90),
+          defaultExpectedGate: typeof data.defaultExpectedGate === 'string' ? data.defaultExpectedGate : '',
+          securityInfo: {
+            turnstileSiteKeyConfigured: Boolean(data.security?.turnstileSiteKeyConfigured),
+            turnstileVerifierConfigured: Boolean(data.security?.turnstileVerifierConfigured),
+            turnstileFullyVerified: Boolean(data.security?.turnstileFullyVerified),
+            biometricStorageRetired: data.security?.biometricStorageRetired !== false,
+          },
         });
         setRetentionInputs(createRetentionInputValues(retentionPolicy));
         setLoadError(null);
@@ -326,6 +216,26 @@ export function AdminSettings() {
         toast.error(msg);
         return;
       }
+      const parsedEmergencyDays = Number(settings.emergencyRecordRetentionDays || '90');
+      if (
+        canManageSecuritySettings &&
+        (!Number.isInteger(parsedEmergencyDays) || parsedEmergencyDays < 30 || parsedEmergencyDays > 365)
+      ) {
+        const msg = 'Emergency gate records retention period must be a whole number between 30 and 365 days.';
+        setSaveError(msg);
+        toast.error(msg);
+        return;
+      }
+      if (
+        canManageSecuritySettings &&
+        settings.globalRetentionFreeze &&
+        settings.globalRetentionFreezeReason.trim().length < 5
+      ) {
+        const msg = 'Provide a Global Retention Freeze reason of at least 5 characters before saving.';
+        setSaveError(msg);
+        toast.error(msg);
+        return;
+      }
       setSaving(true);
       const operationalSettings = {
         peakMode: settings.peakMode,
@@ -349,6 +259,15 @@ export function AdminSettings() {
             returningProfileRetentionEnabled: settings.returningProfileRetentionEnabled,
             vehiclePhotoRetentionDays: Number(retentionInputs.vehiclePhotoRetentionDays || 30),
             returningProfileRetentionDays: Number(retentionInputs.returningProfileRetentionDays || 30),
+            emergencyRecordRetentionEnabled: settings.emergencyRecordRetentionEnabled,
+            emergencyRecordRetentionDays: parsedEmergencyDays,
+            globalRetentionFreeze: settings.globalRetentionFreeze,
+            globalRetentionFreezeReason: settings.globalRetentionFreeze
+              ? settings.globalRetentionFreezeReason.trim()
+              : null,
+            allowEmergencyException: settings.allowEmergencyException,
+            emergencyExceptionPolicyNote: settings.emergencyExceptionPolicyNote.trim() || null,
+            defaultExpectedGate: settings.defaultExpectedGate.trim() || null,
             overrideReason: retentionOverrideReason.trim() || undefined,
           }
         : operationalSettings;
@@ -523,6 +442,9 @@ export function AdminSettings() {
         }
 
         const data = await res.json() as {
+          result?: string;
+          frozen?: boolean;
+          freezeReason?: string | null;
           visitorsAffected: number;
           eligibleEvidenceCount?: number;
           retentionDays?: number;
@@ -532,6 +454,11 @@ export function AdminSettings() {
           nextCursor?: string | null;
           snapshotAt?: string;
         };
+
+        if (data.frozen || data.result === 'frozen') {
+          toast.warning(`Global Institutional Retention Freeze is active (${data.freezeReason || 'No reason recorded'}). All purges are suspended.`);
+          return;
+        }
 
         totalVisitorsAffected += data.visitorsAffected ?? 0;
         photoDays = data.photoRetentionDays ?? photoDays;
@@ -615,12 +542,21 @@ export function AdminSettings() {
         }
 
         const data = await res.json() as {
+          result?: string;
+          frozen?: boolean;
+          freezeReason?: string | null;
           successCount: number;
           failedCount: number;
           hasMore: boolean;
           nextCursor?: string | null;
           snapshotAt?: string;
         };
+
+        if (data.frozen || data.result === 'frozen') {
+          toast.warning(`Override blocked: Global Institutional Retention Freeze is active (${data.freezeReason || 'No reason recorded'}).`);
+          setShowOverridePurgeModal(false);
+          return;
+        }
 
         totalSuccess += data.successCount;
         totalFailed += data.failedCount;
@@ -687,6 +623,9 @@ export function AdminSettings() {
         }
 
         const data = await res.json() as {
+          result?: string;
+          frozen?: boolean;
+          freezeReason?: string | null;
           successCount: number;
           failedCount: number;
           visitorsAffected?: number;
@@ -696,6 +635,12 @@ export function AdminSettings() {
           nextCursor?: string | null;
           snapshotAt?: string;
         };
+
+        if (data.frozen || data.result === 'frozen') {
+          toast.warning(`Purge aborted: Global Institutional Retention Freeze is active (${data.freezeReason || 'No reason recorded'}).`);
+          setShowPurgeConfirm(false);
+          return;
+        }
 
         totalSuccess += data.successCount;
         totalFailed += data.failedCount + (data.orphanFailedCount || 0);
@@ -766,7 +711,7 @@ export function AdminSettings() {
     );
   }
 
-  const showSaveButton = ['general', 'visitor_ux', 'retention'].includes(currentTab);
+  const showSaveButton = ['general', 'visitor_ux', 'security', 'retention'].includes(currentTab);
 
   return (
     <div className="mx-auto max-w-6xl space-y-6">
@@ -797,40 +742,6 @@ export function AdminSettings() {
           <span className="font-medium">{saveError}</span>
         </div>
       )}
-
-      {/* Sub-Tabs Navigation */}
-      <div className="flex border-b border-[var(--color-border)] gap-2 overflow-x-auto pb-px">
-        {[
-          { id: 'general', label: 'General System', icon: Clock },
-          { id: 'calendar', label: 'Campus Calendar', icon: Calendar },
-          { id: 'visitor_ux', label: 'Visitor Experience', icon: Users },
-          { id: 'security', label: 'Security & Privacy', icon: Shield },
-          { id: 'retention', label: 'Data Retention', icon: Database },
-          { id: 'personal', label: 'Personal & Password', icon: User },
-        ].map((tab) => {
-          const Icon = tab.icon;
-          const isActive = currentTab === tab.id;
-          return (
-            <button
-              key={tab.id}
-              type="button"
-              onClick={() => {
-                const next = new URLSearchParams(searchParams);
-                next.set('tab', tab.id);
-                setSearchParams(next);
-              }}
-              className={`flex items-center gap-2 px-4 py-2.5 text-xs font-bold whitespace-nowrap border-b-2 transition-colors ${
-                isActive
-                  ? 'border-[#7A0A0A] text-[#7A0A0A]'
-                  : 'border-transparent text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)]'
-              }`}
-            >
-              <Icon className="h-4 w-4" />
-              <span>{tab.label}</span>
-            </button>
-          );
-        })}
-      </div>
 
       {/* ===================== TAB: GENERAL SYSTEM ===================== */}
       {currentTab === 'general' && (
@@ -869,6 +780,25 @@ export function AdminSettings() {
               </div>
             </div>
             <p className="mt-4 text-xs font-semibold text-[var(--color-text-muted)]">Timezone: Asia/Manila (UTC+08:00)</p>
+          </Card>
+
+          <Card className="p-6">
+            <h2 className="text-xl font-bold text-[var(--color-text-primary)]">Default Expected Gate</h2>
+            <p className="mb-4 mt-2 text-sm leading-relaxed text-[var(--color-text-secondary)]">
+              Default expected gate assigned automatically to visitor passes and office visits unless manually updated by Admin/Guard oversight. Managed by Super Admin.
+            </p>
+            <div className="max-w-sm">
+              <FormField label="Default Expected Gate" id="default-expected-gate">
+                <Input
+                  id="default-expected-gate"
+                  value={settings.defaultExpectedGate}
+                  maxLength={80}
+                  placeholder="Main Gate"
+                  disabled={!canManageSecuritySettings || settingsBusy}
+                  onChange={(e) => setSettings((s) => ({ ...s, defaultExpectedGate: e.target.value }))}
+                />
+              </FormField>
+            </div>
           </Card>
 
           {/* Peak Mode */}
@@ -933,114 +863,7 @@ export function AdminSettings() {
 
       {/* ===================== TAB: CAMPUS CALENDAR ===================== */}
       {currentTab === 'calendar' && (
-        <div className="space-y-6">
-          <Card className="p-6">
-            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 border-b border-[var(--color-border)] pb-4 mb-6">
-              <div>
-                <h2 className="text-xl font-bold text-[var(--color-text-primary)]">Institutional Campus Calendar</h2>
-                <p className="text-xs text-[var(--color-text-secondary)] mt-1">
-                  Manage campus closures, holidays, emergency suspensions, and administrative non-working days. Visitors cannot request gate passes for closed dates.
-                </p>
-              </div>
-              {canManageSecuritySettings && (
-                <Button
-                  onClick={() => setShowAddClosureModal(true)}
-                  icon={<Plus className="h-4 w-4" />}
-                  size="sm"
-                >
-                  Add Campus Closure
-                </Button>
-              )}
-            </div>
-
-            {loadingClosures ? (
-              <LoadingState label="Loading calendar closures..." className="py-12" />
-            ) : closures.length === 0 ? (
-              <div className="text-center py-12 text-[var(--color-text-muted)] text-sm">
-                <Calendar className="h-10 w-10 mx-auto mb-2 opacity-40" />
-                <p>No campus calendar closures recorded.</p>
-              </div>
-            ) : (
-              <div className="overflow-x-auto">
-                <table className="w-full text-left text-xs">
-                  <thead>
-                    <tr className="border-b border-[var(--color-border)] text-[var(--color-text-secondary)] uppercase tracking-wider font-semibold">
-                      <th className="py-3 px-3">Date / Range</th>
-                      <th className="py-3 px-3">Title</th>
-                      <th className="py-3 px-3">Description</th>
-                      <th className="py-3 px-3">Type</th>
-                      <th className="py-3 px-3">Status</th>
-                      {canManageSecuritySettings && <th className="py-3 px-3 text-right">Actions</th>}
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-[var(--color-border)]">
-                    {closures.map((c) => (
-                      <tr key={c.id} className="hover:bg-[var(--color-canvas)]">
-                        <td className="py-3 px-3 font-bold text-[var(--color-text-primary)] whitespace-nowrap">
-                          {c.startDate === c.endDate ? c.startDate : `${c.startDate} to ${c.endDate}`}
-                        </td>
-                        <td className="py-3 px-3 font-semibold text-[var(--color-text-primary)]">
-                          {c.title}
-                        </td>
-                        <td className="py-3 px-3 text-[var(--color-text-secondary)]">
-                          {c.description || '—'}
-                        </td>
-                        <td className="py-3 px-3">
-                          <span className="rounded-md bg-slate-100 text-slate-800 px-2 py-0.5 font-bold uppercase text-[10px]">
-                            {c.closureType === 'campus_closure' ? 'Campus Closure' : 'Holiday'}
-                          </span>
-                        </td>
-                        <td className="py-3 px-3">
-                          <div className="flex items-center gap-1.5">
-                            <span className={`h-2 w-2 rounded-full ${c.active ? 'bg-emerald-500' : 'bg-gray-400'}`} />
-                            <span className="font-medium text-[11px]">{c.active ? 'Active' : 'Inactive'}</span>
-                            {c.published ? (
-                              <span className="rounded bg-blue-50 text-blue-700 px-1 py-0.2 text-[9px] font-bold">
-                                Public
-                              </span>
-                            ) : (
-                              <span className="rounded bg-gray-100 text-gray-600 px-1 py-0.2 text-[9px] font-bold">
-                                Hidden
-                              </span>
-                            )}
-                          </div>
-                        </td>
-                        {canManageSecuritySettings && (
-                          <td className="py-3 px-3 text-right whitespace-nowrap">
-                            <div className="inline-flex items-center gap-2">
-                              <button
-                                type="button"
-                                onClick={() => handleToggleClosure(c.id, 'active', !c.active)}
-                                className="text-[11px] font-bold text-[#7A0A0A] hover:underline"
-                              >
-                                {c.active ? 'Deactivate' : 'Activate'}
-                              </button>
-                              <button
-                                type="button"
-                                onClick={() => handleToggleClosure(c.id, 'published', !c.published)}
-                                className="text-[11px] font-medium text-slate-600 hover:underline"
-                              >
-                                {c.published ? 'Hide' : 'Publish'}
-                              </button>
-                              <button
-                                type="button"
-                                onClick={() => setDeletingClosure(c)}
-                                className="p-1 text-rose-600 hover:text-rose-800"
-                                title="Delete closure"
-                              >
-                                <Trash2 className="h-3.5 w-3.5" />
-                              </button>
-                            </div>
-                          </td>
-                        )}
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            )}
-          </Card>
-        </div>
+        <CampusCalendar canEdit={canManageSecuritySettings} />
       )}
 
       {/* ===================== TAB: VISITOR EXPERIENCE ===================== */}
@@ -1206,11 +1029,13 @@ export function AdminSettings() {
         <div className="space-y-6">
           <Card className="p-6">
             <div className="flex items-center gap-3 border-b border-[var(--color-border)] pb-4 mb-6">
-              <Shield className="h-6 w-6 text-[#7A0A0A]" />
+              <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-[#7A0A0A]/10 text-[#7A0A0A]">
+                <Shield className="h-5 w-5" />
+              </div>
               <div>
                 <h2 className="text-xl font-bold text-[var(--color-text-primary)]">System Security Policies & Safeguards</h2>
                 <p className="text-xs text-[var(--color-text-secondary)] mt-0.5">
-                  Authoritative security boundaries, active defenses, and verification controls enforced across EARIST E-GatePass.
+                  Authoritative runtime security state, human session controls, and emergency device boundaries.
                 </p>
               </div>
             </div>
@@ -1219,13 +1044,13 @@ export function AdminSettings() {
               <div className="p-4 rounded-xl border border-[var(--color-border)] bg-[var(--color-canvas)] space-y-2">
                 <div className="flex items-center gap-2 text-[#7A0A0A] font-bold text-sm">
                   <Clock className="h-4 w-4" />
-                  <span>Session Inactivity Timeout</span>
+                  <span>Human Inactivity Timeout</span>
                 </div>
                 <p className="text-xs text-[var(--color-text-secondary)] leading-relaxed">
-                  Strict 15-minute inactivity session expiration enforced across admin, staff, and guard terminals to protect unattended campus workstations.
+                  15-minute inactivity session expiration with 60-second warning modal and cross-tab sync enforced for human staff sessions (Admin, Superadmin, Office Staff). Managed gate/kiosk/emergency devices are strictly exempt.
                 </p>
                 <div className="inline-flex items-center gap-1.5 text-[11px] font-semibold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded">
-                  <CheckCircle className="h-3.5 w-3.5" /> Enforced (15m)
+                  <CheckCircle className="h-3.5 w-3.5" /> Enforced for Staff (15m)
                 </div>
               </div>
 
@@ -1235,46 +1060,52 @@ export function AdminSettings() {
                   <span>Cloudflare Turnstile Bot Defense</span>
                 </div>
                 <p className="text-xs text-[var(--color-text-secondary)] leading-relaxed">
-                  Cryptographic challenge validation on public pass registrations and returning visitor lookups to prevent automated harvesting and denial-of-service.
+                  Bot verification fails closed (HTTP 503) when site or server verifier configuration is incomplete instead of silently bypassing verification. Site key: {settings.securityInfo.turnstileSiteKeyConfigured ? 'Configured' : 'Missing'} · Server verifier: {settings.securityInfo.turnstileVerifierConfigured ? 'Configured' : 'Missing'}.
                 </p>
-                <div className="inline-flex items-center gap-1.5 text-[11px] font-semibold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded">
-                  <CheckCircle className="h-3.5 w-3.5" /> Active & Verified
-                </div>
+                {settings.securityInfo.turnstileFullyVerified ? (
+                  <div className="inline-flex items-center gap-1.5 text-[11px] font-semibold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded">
+                    <CheckCircle className="h-3.5 w-3.5" /> Configured &amp; Enforced
+                  </div>
+                ) : (
+                  <div className="inline-flex items-center gap-1.5 text-[11px] font-semibold text-amber-800 bg-amber-50 px-2 py-0.5 rounded border border-amber-200">
+                    <AlertTriangle className="h-3.5 w-3.5" /> Fail-Closed (Keys Incomplete)
+                  </div>
+                )}
               </div>
 
               <div className="p-4 rounded-xl border border-[var(--color-border)] bg-[var(--color-canvas)] space-y-2">
                 <div className="flex items-center gap-2 text-[#7A0A0A] font-bold text-sm">
                   <Camera className="h-4 w-4" />
-                  <span>Facial Verification Threshold</span>
+                  <span>Returning Identity Verification</span>
                 </div>
                 <p className="text-xs text-[var(--color-text-secondary)] leading-relaxed">
-                  Configured in provisional mode (<code className="font-mono text-[10px] bg-slate-200 px-1 rounded">RETURNING_FACE_THRESHOLD_MODE=provisional</code>). Match scores provide advisory guidance; human checkpoint verification is required.
+                  Provisional verification mode with legacy raw biometric template storage retired. Encrypted lookup tokens assist staff workflows; visual gate ID inspection remains mandatory.
                 </p>
                 <div className="inline-flex items-center gap-1.5 text-[11px] font-semibold text-blue-700 bg-blue-50 px-2 py-0.5 rounded">
-                  <CheckCircle className="h-3.5 w-3.5" /> Provisional Mode
+                  <CheckCircle className="h-3.5 w-3.5" /> {settings.securityInfo.biometricStorageRetired ? 'Raw Templates Retired' : 'Provisional Mode'}
                 </div>
               </div>
 
               <div className="p-4 rounded-xl border border-[var(--color-border)] bg-[var(--color-canvas)] space-y-2">
                 <div className="flex items-center gap-2 text-[#7A0A0A] font-bold text-sm">
                   <KeyRound className="h-4 w-4" />
-                  <span>Pass Cryptographic Signatures</span>
+                  <span>Pass &amp; Manifest Cryptography</span>
                 </div>
                 <p className="text-xs text-[var(--color-text-secondary)] leading-relaxed">
-                  Every issued E-GatePass QR payload is digitally signed with Ed25519 cryptography, preventing barcode forgery, replay attacks, or offline tampering.
+                  Gate passes are Ed25519 sealed; Emergency Device 24-hour gate manifests are ECDSA P-256 SHA-256 signed and encrypted at rest in AES-256-GCM IndexedDB vaults.
                 </p>
                 <div className="inline-flex items-center gap-1.5 text-[11px] font-semibold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded">
-                  <CheckCircle className="h-3.5 w-3.5" /> Ed25519 Sealed
+                  <CheckCircle className="h-3.5 w-3.5" /> Ed25519 + ECDSA P-256
                 </div>
               </div>
 
               <div className="p-4 rounded-xl border border-[var(--color-border)] bg-[var(--color-canvas)] space-y-2">
                 <div className="flex items-center gap-2 text-[#7A0A0A] font-bold text-sm">
                   <Lock className="h-4 w-4" />
-                  <span>Anti-Abuse & Rate Limiting</span>
+                  <span>Anti-Abuse &amp; Rate Limiting</span>
                 </div>
                 <p className="text-xs text-[var(--color-text-secondary)] leading-relaxed">
-                  Multi-tier rate limiting on email delivery, SMS/OTP issuance, and visitor records queries prevents API abuse and credential stuffing.
+                  Multi-tier rate limiting on email delivery, pass issuance, and returning visitor lookups prevents API abuse and automated enumeration.
                 </p>
                 <div className="inline-flex items-center gap-1.5 text-[11px] font-semibold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded">
                   <CheckCircle className="h-3.5 w-3.5" /> Active Limits
@@ -1287,13 +1118,44 @@ export function AdminSettings() {
                   <span>Immutable Audit Trail</span>
                 </div>
                 <p className="text-xs text-[var(--color-text-secondary)] leading-relaxed">
-                  All security updates, staff role changes, policy overrides, and pass state transitions are permanently written to tamper-evident audit logs.
+                  All security updates, office lifecycle actions, retention freezes, and emergency reconciliations are permanently written to append-only audit logs.
                 </p>
                 <div className="inline-flex items-center gap-1.5 text-[11px] font-semibold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded">
                   <CheckCircle className="h-3.5 w-3.5" /> Audit Logging On
                 </div>
               </div>
             </div>
+          </Card>
+
+          <Card className="p-6 space-y-4">
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+              <div>
+                <h3 className="text-lg font-bold text-[var(--color-text-primary)]">Emergency Offline Device Exception Policy</h3>
+                <p className="mt-1 text-xs text-[var(--color-text-secondary)]">
+                  Defaults to OFF. Only Super Admin may enable policy-gated emergency exceptions on signed Emergency Device gate manifests.
+                </p>
+              </div>
+              <label className="flex items-center gap-2.5 rounded-xl border border-[var(--color-border)] bg-[var(--color-canvas)] px-3 py-2 text-xs font-bold">
+                <input
+                  type="checkbox"
+                  checked={settings.allowEmergencyException}
+                  disabled={!canManageSecuritySettings || settingsBusy}
+                  onChange={(e) => setSettings((s) => ({ ...s, allowEmergencyException: e.target.checked }))}
+                  className="h-4 w-4 rounded text-[#7A0A0A]"
+                />
+                <span>{settings.allowEmergencyException ? 'Exceptions Allowed (Policy On)' : 'Exceptions Disabled (Default OFF)'}</span>
+              </label>
+            </div>
+            <FormField label="Emergency Exception Policy Note" id="emergency-exception-note">
+              <Input
+                id="emergency-exception-note"
+                value={settings.emergencyExceptionPolicyNote}
+                maxLength={300}
+                disabled={!canManageSecuritySettings || settingsBusy}
+                placeholder="Instructions displayed on Emergency Device consoles when exceptions are enabled"
+                onChange={(e) => setSettings((s) => ({ ...s, emergencyExceptionPolicyNote: e.target.value }))}
+              />
+            </FormField>
           </Card>
         </div>
       )}
@@ -1319,6 +1181,52 @@ export function AdminSettings() {
                 />
                 Enable Daily Automated Cleanup
               </label>
+            </div>
+
+            {/* Global Institutional Retention Freeze */}
+            <div className={`mb-6 rounded-xl border p-4 space-y-3 ${settings.globalRetentionFreeze ? 'border-rose-400 bg-rose-50' : 'border-[var(--color-border)] bg-[var(--color-canvas)]'}`}>
+              <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                <div>
+                  <div className="flex items-center gap-2">
+                    <ShieldAlert className={`h-4 w-4 ${settings.globalRetentionFreeze ? 'text-rose-700' : 'text-[#7A0A0A]'}`} />
+                    <span className="text-sm font-bold text-[var(--color-text-primary)]">
+                      Global Institutional Retention Freeze
+                    </span>
+                    {settings.globalRetentionFreeze && (
+                      <span className="rounded bg-rose-700 px-2 py-0.5 text-[10px] font-bold uppercase text-white">
+                        Freeze Active
+                      </span>
+                    )}
+                  </div>
+                  <p className="mt-1 text-xs text-[var(--color-text-secondary)]">
+                    When enabled, both automated CRON maintenance and manual purges are immediately halted across all categories until lifted by Super Admin.
+                  </p>
+                </div>
+                <label className="flex items-center gap-2 cursor-pointer text-xs font-bold shrink-0">
+                  <input
+                    type="checkbox"
+                    checked={settings.globalRetentionFreeze}
+                    disabled={!canManageSecuritySettings || settingsBusy}
+                    onChange={(e) => setSettings((s) => ({ ...s, globalRetentionFreeze: e.target.checked }))}
+                    className="h-4 w-4 rounded text-rose-700"
+                  />
+                  <span>{settings.globalRetentionFreeze ? 'Unfreeze on Save' : 'Enable Global Freeze'}</span>
+                </label>
+              </div>
+              <FormField
+                label="Institutional Freeze Authorization Reason"
+                requirement={settings.globalRetentionFreeze ? 'required' : 'optional'}
+                id="global-retention-freeze-reason"
+              >
+                <Input
+                  id="global-retention-freeze-reason"
+                  value={settings.globalRetentionFreezeReason}
+                  maxLength={300}
+                  disabled={!canManageSecuritySettings || settingsBusy}
+                  placeholder="e.g., Ongoing incident audit / legal preservation directive (min 5 chars when enabled)"
+                  onChange={(e) => setSettings((s) => ({ ...s, globalRetentionFreezeReason: e.target.value }))}
+                />
+              </FormField>
             </div>
 
             {/* Granular Categories Grid */}
@@ -1507,7 +1415,7 @@ export function AdminSettings() {
                     </label>
                   </div>
                   <p className="text-xs text-[var(--color-text-secondary)]">
-                    Fast-track phone lookup hashes and 128-d biometric facial embeddings for returning visitors.
+                    Encrypted phone lookup tokens and sanitized metadata for returning visitors (legacy raw facial templates retired).
                   </p>
                   <div>
                     <label className="block text-xs font-semibold text-[var(--color-text-secondary)] mb-1">
@@ -1560,6 +1468,42 @@ export function AdminSettings() {
                     )}
                   </div>
                 </div>
+
+                {/* 7. Emergency Gate Records */}
+                <div className="p-4 rounded-xl border border-[var(--color-border)] bg-[var(--color-canvas)] space-y-3">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <ShieldAlert className="h-4 w-4 text-[#7A0A0A]" />
+                      <span className="text-sm font-bold text-[var(--color-text-primary)]">Emergency Offline Records</span>
+                    </div>
+                    <label className="flex items-center gap-2 cursor-pointer text-xs font-semibold">
+                      <input
+                        type="checkbox"
+                        checked={settings.emergencyRecordRetentionEnabled}
+                        disabled={!canManageSecuritySettings || settingsBusy}
+                        onChange={(e) => setSettings((s) => ({ ...s, emergencyRecordRetentionEnabled: e.target.checked }))}
+                        className="rounded text-[#7A0A0A] h-4 w-4"
+                      />
+                      <span>{settings.emergencyRecordRetentionEnabled ? 'Anonymize Expired' : 'Retain Indefinitely'}</span>
+                    </label>
+                  </div>
+                  <p className="text-xs text-[var(--color-text-secondary)]">
+                    OFFLINE MODE RECORDED intake PII is anonymized on schedule while retaining aggregate contingency counts and audit references.
+                  </p>
+                  <div>
+                    <label className="block text-xs font-semibold text-[var(--color-text-secondary)] mb-1">
+                      Retention Period (30 to 365 days)
+                    </label>
+                    <Input
+                      type="number"
+                      min={30}
+                      max={365}
+                      value={settings.emergencyRecordRetentionDays}
+                      disabled={!canManageSecuritySettings || !settings.emergencyRecordRetentionEnabled || settingsBusy}
+                      onChange={(e) => setSettings((s) => ({ ...s, emergencyRecordRetentionDays: e.target.value }))}
+                    />
+                  </div>
+                </div>
               </div>
 
               {/* Administrative Policy Override Note */}
@@ -1602,17 +1546,19 @@ export function AdminSettings() {
                       <Button
                         variant="destructive"
                         onClick={handlePurgeClick}
-                        disabled={settingsBusy}
+                        disabled={settingsBusy || settings.globalRetentionFreeze}
                         loading={calculatingPurge}
                         icon={<Trash2 className="h-4 w-4" />}
                       >
-                        {calculatingPurge ? 'Calculating...' : purging ? 'Purging...' : 'Run Standard Purge'}
+                        {settings.globalRetentionFreeze
+                          ? 'Purge Frozen'
+                          : calculatingPurge ? 'Calculating...' : purging ? 'Purging...' : 'Run Standard Purge'}
                       </Button>
                       {canManageSecuritySettings && (
                         <Button
                           variant="secondary"
                           onClick={() => setShowOverridePurgeModal(true)}
-                          disabled={settingsBusy}
+                          disabled={settingsBusy || settings.globalRetentionFreeze}
                           className="border-red-300 text-red-900 hover:bg-red-50"
                           icon={<ShieldAlert className="h-4 w-4 text-red-700" />}
                         >
@@ -1652,114 +1598,6 @@ export function AdminSettings() {
           <PasswordResetCard />
         </div>
       )}
-
-      {/* Campus Closure Add Modal */}
-      {showAddClosureModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-xs">
-          <div className="w-full max-w-md rounded-2xl bg-white p-6 shadow-xl space-y-4">
-            <div className="flex items-center justify-between border-b border-[var(--color-border)] pb-3">
-              <h3 className="font-bold text-base text-[var(--color-text-primary)]">Add Campus Closure</h3>
-              <button
-                type="button"
-                onClick={() => setShowAddClosureModal(false)}
-                className="text-[var(--color-text-muted)] hover:text-[var(--color-text-primary)]"
-              >
-                <X className="h-5 w-5" />
-              </button>
-            </div>
-            <div className="space-y-3 text-xs">
-              <div className="grid grid-cols-2 gap-2">
-                <div>
-                  <label className="block font-semibold mb-1">Start Date *</label>
-                  <Input
-                    type="date"
-                    value={newClosureStartDate}
-                    onChange={(e) => {
-                      setNewClosureStartDate(e.target.value);
-                      if (!newClosureEndDate || newClosureEndDate < e.target.value) {
-                        setNewClosureEndDate(e.target.value);
-                      }
-                    }}
-                  />
-                </div>
-                <div>
-                  <label className="block font-semibold mb-1">End Date *</label>
-                  <Input
-                    type="date"
-                    value={newClosureEndDate}
-                    min={newClosureStartDate}
-                    onChange={(e) => setNewClosureEndDate(e.target.value)}
-                  />
-                </div>
-              </div>
-              <div>
-                <label className="block font-semibold mb-1">Title *</label>
-                <Input
-                  placeholder="e.g. Rizal Day / University Foundation Week"
-                  value={newClosureTitle}
-                  onChange={(e) => setNewClosureTitle(e.target.value)}
-                />
-              </div>
-              <div>
-                <label className="block font-semibold mb-1">Reason / Description</label>
-                <Input
-                  placeholder="e.g. Regular Holiday / Severe Weather Suspension"
-                  value={newClosureDescription}
-                  onChange={(e) => setNewClosureDescription(e.target.value)}
-                />
-              </div>
-              <div>
-                <label className="block font-semibold mb-1">Closure Type</label>
-                <select
-                  value={newClosureType}
-                  onChange={(e) => setNewClosureType(e.target.value as CalendarClosureType)}
-                  className="w-full rounded-xl border border-[var(--color-border)] bg-white p-2 text-xs font-semibold"
-                >
-                  <option value="holiday">Official Holiday</option>
-                  <option value="campus_closure">Campus Closure / Suspension / Maintenance</option>
-                </select>
-              </div>
-            </div>
-            <div className="flex justify-end gap-2 pt-2">
-              <Button
-                variant="secondary"
-                size="sm"
-                onClick={() => setShowAddClosureModal(false)}
-              >
-                Cancel
-              </Button>
-              <Button
-                variant="primary"
-                size="sm"
-                onClick={handleAddClosure}
-                loading={isSavingClosure}
-              >
-                Add Closure
-              </Button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Delete Closure Modal */}
-      <ConfirmModal
-        isOpen={!!deletingClosure}
-        onClose={() => setDeletingClosure(null)}
-        title="Delete Campus Closure?"
-        description={
-          deletingClosure ? (
-            <>
-              Are you sure you want to delete <strong className="text-[var(--color-text-primary)]">{deletingClosure.title}</strong> ({deletingClosure.startDate === deletingClosure.endDate ? deletingClosure.startDate : `${deletingClosure.startDate} to ${deletingClosure.endDate}`})?
-            </>
-          ) : ''
-        }
-        onConfirm={() => {
-          if (deletingClosure) void handleDeleteClosure(deletingClosure);
-        }}
-        confirmText="Delete Closure"
-        isDestructive
-        loading={isDeletingClosure}
-      />
 
       {/* Purge Confirm Modal */}
       <ConfirmModal

@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { readFileSync } from 'node:fs';
+import { getDefaultHomeForRole } from '../src/lib/permissions';
 
 describe('PATCH 1: Staff First-Password-Change State Machine Tests', () => {
   const useAuthSrc = readFileSync('src/hooks/useAuth.tsx', 'utf8');
@@ -18,8 +19,11 @@ describe('PATCH 1: Staff First-Password-Change State Machine Tests', () => {
 
     it('1B. LoginPage navigates on both authenticated and requires_password_change', () => {
       expect(loginPageSrc).toContain("status !== 'authenticated' && status !== 'requires_password_change'");
-      expect(loginPageSrc).toMatch(/admin:\s*'\/admin'/);
-      expect(loginPageSrc).toMatch(/superadmin:\s*'\/admin'/);
+      expect(loginPageSrc).toContain('navigate(getDefaultHomeForRole(role), { replace: true });');
+      expect(getDefaultHomeForRole('admin')).toBe('/admin');
+      expect(getDefaultHomeForRole('superadmin')).toBe('/admin');
+      expect(getDefaultHomeForRole('office_staff')).toBe('/office');
+      expect(getDefaultHomeForRole('guard')).toBe('/login');
       expect(loginPageSrc).not.toMatch(/guard:\s*'\/guard'/);
     });
 

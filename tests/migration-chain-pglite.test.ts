@@ -531,14 +531,16 @@ describe('Permanent PostgreSQL Migration Chain & Schema Contracts (PGlite)', () 
 
     // 1. Anon safe columns -> ALLOWED
     await db.exec('set role anon;');
-    const anonQuery = await db.query<{ working_hours_start: string; visit_purposes: any; visitor_instructions: any; image_retention_days: number; visitor_retention_days: number }>(
-      'select working_hours_start, working_hours_end, timezone, scheduling_days_ahead, peak_mode, visit_purposes, visitor_instructions, image_retention_days, visitor_retention_days from public.app_settings;'
+    const anonQuery = await db.query<{ working_hours_start: string; visit_purposes: any; visitor_instructions: any }>(
+      'select working_hours_start, working_hours_end, timezone, scheduling_days_ahead, peak_mode, visit_purposes, visitor_instructions from public.app_settings;'
     );
     expect(anonQuery.rows.length).toBe(1);
     expect(anonQuery.rows[0].working_hours_start).toBeDefined();
     expect(anonQuery.rows[0].visitor_instructions).toBeDefined();
-    expect(anonQuery.rows[0].image_retention_days).toBeDefined();
-    expect(anonQuery.rows[0].visitor_retention_days).toBeDefined();
+    // 2. Sensitive / retention / unapproved fields -> DENIED for anon
+    await expect(db.query('select image_retention_days from public.app_settings;')).rejects.toThrow(/permission denied/);
+    await expect(db.query('select visitor_retention_days from public.app_settings;')).rejects.toThrow(/permission denied/);
+    // Sensitive retention columns denied for anon above
 
     // 2. Sensitive / unapproved fields -> STILL DENIED for anon
     await expect(
@@ -555,13 +557,13 @@ describe('Permanent PostgreSQL Migration Chain & Schema Contracts (PGlite)', () 
 
     // 3. Authenticated safe columns -> ALLOWED, sensitive columns -> DENIED
     await db.exec('set role authenticated;');
-    const authQuery = await db.query<{ visitor_instructions: any; image_retention_days: number; visitor_retention_days: number }>(
-      'select visitor_instructions, image_retention_days, visitor_retention_days from public.app_settings;'
+    const authQuery = await db.query<{ visitor_instructions: any }>(
+      'select visitor_instructions from public.app_settings;'
     );
     expect(authQuery.rows.length).toBe(1);
     expect(authQuery.rows[0].visitor_instructions).toBeDefined();
-    expect(authQuery.rows[0].image_retention_days).toBeDefined();
-    expect(authQuery.rows[0].visitor_retention_days).toBeDefined();
+    await expect(db.query('select image_retention_days from public.app_settings;')).rejects.toThrow(/permission denied/);
+    await expect(db.query('select visitor_retention_days from public.app_settings;')).rejects.toThrow(/permission denied/);
 
     await expect(
       db.query('select automatic_cleanup_enabled from public.app_settings;')
@@ -597,7 +599,7 @@ describe('Permanent PostgreSQL Migration Chain & Schema Contracts (PGlite)', () 
                 // 6. Authenticated role safe columns -> ALLOWED
     await db.exec('set role authenticated;');
     const authSafeQuery = await db.query(
-      'select working_hours_start, working_hours_end, timezone, scheduling_days_ahead, peak_mode, visit_purposes, visitor_instructions, image_retention_days, visitor_retention_days from public.app_settings;'
+      'select working_hours_start, working_hours_end, timezone, scheduling_days_ahead, peak_mode, visit_purposes, visitor_instructions from public.app_settings;'
     );
     expect(authSafeQuery.rows.length).toBe(1);
 
@@ -689,7 +691,7 @@ describe('Permanent PostgreSQL Migration Chain & Schema Contracts (PGlite)', () 
 
     // 1. Pre-auth anon role
     await db.exec(`set role anon; set request.jwt.claims = '';`);
-    const anonSettings = await db.query('select working_hours_start, visitor_retention_days, visitor_instructions from public.app_settings;');
+    const anonSettings = await db.query('select working_hours_start, visitor_instructions from public.app_settings;');
     expect(anonSettings.rows.length).toBe(1);
     await expect(db.query('select automatic_cleanup_enabled from public.app_settings;')).rejects.toThrow(/permission denied/);
     await db.exec('reset role;');
@@ -700,7 +702,7 @@ describe('Permanent PostgreSQL Migration Chain & Schema Contracts (PGlite)', () 
     expect(portalActorRes.rows.length).toBe(1);
     expect(portalActorRes.rows[0].actor_kind).toBe('visitor');
     // Can read safe settings columns only
-    const visitorSettings = await db.query('select working_hours_start, visitor_retention_days, visitor_instructions from public.app_settings;');
+    const visitorSettings = await db.query('select working_hours_start, visitor_instructions from public.app_settings;');
     expect(visitorSettings.rows.length).toBe(1);
     await expect(db.query('select * from public.app_settings;')).rejects.toThrow(/permission denied/);
     await expect(db.query('select automatic_cleanup_enabled from public.app_settings;')).rejects.toThrow(/permission denied/);
@@ -3600,7 +3602,36 @@ describe('Permanent PostgreSQL Migration Chain & Schema Contracts (PGlite)', () 
       );
     `)).rejects.toThrow(/visit_date_closed: Christmas Holiday/);
 
-    // Free-text requested_person_name succeeds on open date
+    // Verify draft/unpublished office cannot accept visit requests, then publish office and test open date
+    const reqIdDraft = 'a1111111-0000-0000-0000-000000000099';
+    await expect(db.query(`
+      select * from api.create_specific_person_visit_request(
+        '${visitorUserId}'::uuid,
+        '${reqIdDraft}'::uuid,
+        '${validOfficeId}'::uuid,
+        null::uuid,
+        'Maria'::text,
+        null::text,
+        'Santos'::text,
+        '+639171234567'::text,
+        'maria@example.com'::text,
+        'Consultation inquiry'::text,
+        (current_date + interval '1 day')::date,
+        'no_vehicle'::text,
+        null::jsonb,
+        null::jsonb,
+        null::uuid, null::integer, null::text,
+        null::uuid, null::integer, null::text,
+        null::uuid, null::integer, null::text,
+        'new'::text,
+        null::uuid, null::text, null::uuid, null::uuid,
+        'Dr. Reyes'::text
+      );
+    `)).rejects.toThrow(/office_not_found_or_unpublished/);
+
+    await db.exec(`update public.offices set publication_status = 'published', verified = true where id = '${validOfficeId}';`);
+
+    // Free-text requested_person_name succeeds on open date for published office
     const reqId3 = 'a1111111-0000-0000-0000-000000000003';
     const photoIntentId = '22222222-2222-2222-2222-222222222222';
     const idIntentId = '33333333-3333-3333-3333-333333333333';
@@ -4142,5 +4173,242 @@ it('GG. Migration 84 contracts: Specific-Person Request Acknowledgement & Secure
     `);
     expect(auditActions.rows.map((r) => r.action)).toContain('settings_updated');
     expect(auditActions.rows.map((r) => r.action)).toContain('maintenance.retention_override');
+  }, 60000);
+
+  it('JJ. Migration 87-90 contracts: Emergency signing keys, office governance lifecycle, human inactivity timeout & retention freeze', async () => {
+    const db = new PGlite();
+    const files = await applyAllMigrations(db);
+    expect(files.length).toBeGreaterThanOrEqual(91);
+
+    const saId = 'f0000000-0000-4000-8000-000000000001';
+    const adminId = 'f0000000-0000-4000-8000-000000000002';
+
+    await db.exec(`
+      insert into auth.users (id, email, is_anonymous) values
+        ('${saId}', 'jj-sa@earist.edu.ph', false),
+        ('${adminId}', 'jj-admin@earist.edu.ph', false)
+      on conflict (id) do nothing;
+      insert into public.staff_profiles (user_id, display_name, role, active, must_change_password, privacy_accepted_at) values
+        ('${saId}', 'JJ Superadmin', 'superadmin', true, false, now()),
+        ('${adminId}', 'JJ Admin', 'admin', true, false, now())
+      on conflict (user_id) do update set active = true, must_change_password = false, role = excluded.role;
+    `);
+
+    // 1. Emergency signing key RPCs (M90 Sec 12): service_role only + roundtrip
+    const storedKey = await db.query<{ res: any }>(`
+      select api.store_emergency_signing_key(
+        'emk-test-1',
+        '-----BEGIN PUBLIC KEY-----\nTEST\n-----END PUBLIC KEY-----',
+        '-----BEGIN PRIVATE KEY-----\nTEST\n-----END PRIVATE KEY-----'
+      ) as res;
+    `);
+    expect(storedKey.rows[0].res.id).toBe('emk-test-1');
+    expect(storedKey.rows[0].res.algorithm).toBe('ECDSA_P256_SHA256');
+
+    const activeKey = await db.query<{ res: any }>(`select api.get_active_emergency_signing_key() as res;`);
+    expect(activeKey.rows[0].res.id).toBe('emk-test-1');
+
+    // Authenticated non-service role must be rejected
+    await db.exec(`set role authenticated;`);
+    await expect(db.query(`select api.get_active_emergency_signing_key();`)).rejects.toThrow(/permission denied|service role required/);
+    await db.exec(`reset role;`);
+
+    // 2. Office lifecycle & deletion guard
+    const offRes = await db.query<{ res: any }>(`
+      select api.save_office_record('${saId}'::uuid, null, 'JJ Governance Office', 'Lifecycle test', true, false, gen_random_uuid()) as res;
+    `);
+    const offId = offRes.rows[0].res.id;
+    expect(offRes.rows[0].res.publicationStatus).toBe('draft');
+    expect(offRes.rows[0].res.requiresApprovalBeforePass).toBe(false);
+
+    const pubRes = await db.query<{ res: any }>(`
+      select api.update_office_publication('${saId}'::uuid, '${offId}'::uuid, 'published', gen_random_uuid()) as res;
+    `);
+    expect(pubRes.rows[0].res.publicationStatus).toBe('published');
+    expect(pubRes.rows[0].res.active).toBe(true);
+    expect(pubRes.rows[0].res.publishedAt).toBeTruthy();
+
+    await expect(db.query(`
+      select api.delete_draft_office('${saId}'::uuid, '${offId}'::uuid, gen_random_uuid());
+    `)).rejects.toThrow(/draft/i);
+
+    const polRes = await db.query<{ res: any }>(`
+      select api.update_office_approval_policy('${saId}'::uuid, '${offId}'::uuid, true, gen_random_uuid()) as res;
+    `);
+    expect(polRes.rows[0].res.requiresApprovalBeforePass).toBe(true);
+
+    const archRes = await db.query<{ res: any }>(`
+      select api.archive_office('${saId}'::uuid, '${offId}'::uuid, 'keep', 'Department consolidated', gen_random_uuid()) as res;
+    `);
+    expect(archRes.rows[0].res.publicationStatus).toBe('archived');
+    expect(archRes.rows[0].res.active).toBe(false);
+
+    // 3. Human inactivity session touch, idle expiration & explicit expire (M90)
+    const sid = 'a1b2c3d4-0000-4000-8000-000000000001';
+    const s1 = await db.query<{ res: any }>(`
+      select api.touch_staff_session('${sid}', '${saId}'::uuid, false, gen_random_uuid()) as res;
+    `);
+    expect(s1.rows[0].res.valid).toBe(true);
+    expect(s1.rows[0].res.expired).toBe(false);
+    expect(s1.rows[0].res.idleTimeoutSeconds).toBe(900);
+
+    await db.query(`
+      update public.staff_sessions set expires_at = now() - interval '1 minute' where session_id = '${sid}';
+    `);
+    const s2 = await db.query<{ res: any }>(`
+      select api.touch_staff_session('${sid}', '${saId}'::uuid, false, gen_random_uuid()) as res;
+    `);
+    expect(s2.rows[0].res.valid).toBe(false);
+    expect(s2.rows[0].res.expired).toBe(true);
+    expect(s2.rows[0].res.reason).toBe('idle_timeout_15m');
+
+    const sid2 = 'a1b2c3d4-0000-4000-8000-000000000002';
+    await db.query(`select api.touch_staff_session('${sid2}', '${saId}'::uuid, false, gen_random_uuid());`);
+    const expRes = await db.query<{ res: any }>(`
+      select api.expire_staff_session('${sid2}', '${saId}'::uuid, 'idle_timeout_15m', gen_random_uuid()) as res;
+    `);
+    expect(expRes.rows[0].res.expired).toBe(true);
+    const s3 = await db.query<{ res: any }>(`
+      select api.touch_staff_session('${sid2}', '${saId}'::uuid, false, gen_random_uuid()) as res;
+    `);
+    expect(s3.rows[0].res.valid).toBe(false);
+    expect(s3.rows[0].res.expired).toBe(true);
+
+    // 4. Emergency device sync + sequence collision + Admin reconciliation (M89)
+    const emgDevUserId = 'd1000000-0000-4000-8000-000000000001';
+    const emgRecId = 'e1000000-0000-4000-8000-000000000001';
+    const emgRecCollideId = 'e1000000-0000-4000-8000-000000000002';
+    await db.exec(`
+      insert into auth.users (id, email, is_anonymous) values
+        ('${emgDevUserId}', 'emg-jj@devices.egatepass.invalid', false)
+      on conflict (id) do nothing;
+      insert into public.devices (user_id, alias, name, type, gate, status) values
+        ('${emgDevUserId}', 'emg-jj', 'Emergency JJ Tablet', 'emergency_device'::public.device_type, 'Main Gate', 'active')
+      on conflict (user_id) do nothing;
+    `);
+    const syncOk = await db.query<{ res: any }>(`
+      select api.record_emergency_sync_item(
+        gen_random_uuid(),
+        '${emgDevUserId}'::uuid,
+        '${emgRecId}'::uuid,
+        'Main Gate',
+        'Maria Clara',
+        'Sampaloc, Manila',
+        'Document Claim',
+        '${offId}'::uuid,
+        'JJ Governance Office',
+        'resolved_snapshot',
+        true,
+        true,
+        'I confirm that the visitor physically presented an identification document and that I visually inspected it.',
+        now(),
+        1,
+        'snap-v1',
+        null,
+        'valid',
+        false,
+        null
+      ) as res;
+    `);
+    expect(syncOk.rows[0].res.accepted).toBe(true);
+    expect(syncOk.rows[0].res.classification).toBe('OFFLINE MODE RECORDED');
+
+    const syncCollision = await db.query<{ res: any }>(`
+      select api.record_emergency_sync_item(
+        gen_random_uuid(),
+        '${emgDevUserId}'::uuid,
+        '${emgRecCollideId}'::uuid,
+        'Main Gate',
+        'Jose Rizal',
+        'Intramuros, Manila',
+        'Verification',
+        '${offId}'::uuid,
+        'JJ Governance Office',
+        'resolved_snapshot',
+        true,
+        true,
+        'I confirm that the visitor physically presented an identification document and that I visually inspected it.',
+        now(),
+        1,
+        'snap-v1',
+        null,
+        'valid',
+        false,
+        null
+      ) as res;
+    `);
+    expect(syncCollision.rows[0].res.httpStatus).toBe(409);
+    expect(syncCollision.rows[0].res.outcome).toBe('conflict_sequence_collision');
+
+    const recOk = await db.query<{ res: any }>(`
+      select api.reconcile_emergency_gate_record(
+        '${adminId}'::uuid,
+        '${emgRecId}'::uuid,
+        'accepted'::public.emergency_reconciliation_status,
+        'Verified physical ID log at Main Gate.',
+        gen_random_uuid()
+      ) as res;
+    `);
+    expect(recOk.rows[0].res.reconciliationStatus).toBe('accepted');
+    expect(recOk.rows[0].res.classification).toBe('OFFLINE MODE RECORDED');
+
+    // 5. Global retention freeze blocks anonymize_expired_emergency_gate_record
+    await db.query(`
+      select api.save_system_settings_v2(
+        requested_actor_id => '${saId}'::uuid,
+        requested_global_retention_freeze => true,
+        requested_global_retention_freeze_reason => 'Legal investigation hold',
+        requested_request_id => gen_random_uuid()
+      );
+    `);
+    const freezeRes = await db.query<{ res: any }>(`
+      select api.anonymize_expired_emergency_gate_record('${emgRecId}'::uuid) as res;
+    `);
+    expect(freezeRes.rows[0].res.anonymized).toBe(false);
+    expect(freezeRes.rows[0].res.reason).toBe('global_retention_freeze_active');
+
+    await db.query(`
+      select api.save_system_settings_v2(
+        requested_actor_id => '${saId}'::uuid,
+        requested_global_retention_freeze => false,
+        requested_global_retention_freeze_reason => 'Hold lifted',
+        requested_request_id => gen_random_uuid()
+      );
+    `);
+    const afterUnfreezeRes = await db.query<{ res: any }>(`
+      select api.anonymize_expired_emergency_gate_record('${emgRecId}'::uuid) as res;
+    `);
+    expect(afterUnfreezeRes.rows[0].res.anonymized).toBe(false);
+    expect(afterUnfreezeRes.rows[0].res.reason).toBe('not_expired');
+
+    // 5b. M91 lint fixes: api.delete_draft_office (reconciliation_tasks reference_type/reference_id) & api.retire_device ('revoked' + deleted_at)
+    const draft91 = await db.query<{ res: any }>(`
+      select api.save_office_record('${saId}'::uuid, null::uuid, 'Unused Draft 91', 'To be deleted', true, true, gen_random_uuid()) as res;
+    `);
+    const draft91Id = draft91.rows[0].res.id;
+    const del91 = await db.query<{ res: any }>(`
+      select api.delete_draft_office('${saId}'::uuid, '${draft91Id}'::uuid, gen_random_uuid()) as res;
+    `);
+    expect(del91.rows[0].res.deleted).toBe(true);
+
+    await db.query(`
+      select api.retire_device('${saId}'::uuid, '${emgDevUserId}'::uuid, gen_random_uuid());
+    `);
+    const devCheck = await db.query<{ status: string; deleted_at: string | null }>(`
+      select status::text as status, deleted_at::text as deleted_at from public.devices where user_id = '${emgDevUserId}'::uuid;
+    `);
+    expect(devCheck.rows[0].status).toBe('revoked');
+    expect(devCheck.rows[0].deleted_at).toBeTruthy();
+    await expect(
+      db.query(`select api.update_device_profile('${saId}'::uuid, '${emgDevUserId}'::uuid, 'active'::public.device_status, null, gen_random_uuid(), 'Renamed', null);`)
+    ).rejects.toThrow(/cannot modify retired device/);
+
+    // 6. Public anon settings select allowed on 7 cols, denied on sensitive columns
+    await db.exec(`set role anon;`);
+    const pubSettings = await db.query(`select working_hours_start, peak_mode, visitor_instructions from public.app_settings;`);
+    expect(pubSettings.rows.length).toBe(1);
+    await expect(db.query(`select automatic_cleanup_enabled from public.app_settings;`)).rejects.toThrow(/permission denied/);
+    await expect(db.query(`select global_retention_freeze from public.app_settings;`)).rejects.toThrow(/permission denied/);
+    await db.exec(`reset role;`);
   }, 60000);
 });

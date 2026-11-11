@@ -1,4 +1,11 @@
-import { getManilaDateString, formatManilaTime, formatManilaMonthYear, getManilaDateParts, type DateInput } from '@/lib/manilaTime';
+import {
+  getManilaDateString,
+  getManilaMonthKey,
+  formatManilaTime,
+  formatManilaMonthYear,
+  getManilaDateParts,
+  type DateInput,
+} from '@/lib/manilaTime';
 import { useMemo, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import {
@@ -9,25 +16,31 @@ import {
 } from 'date-fns';
 import {
   AlertCircle,
+  AlertTriangle,
   Loader2,
   ArrowLeftCircle,
   ArrowRightCircle,
   Ban,
+  Calendar,
   Clock,
   MapPin,
   MessageSquareText,
   RefreshCw,
+  ShieldAlert,
   Sparkles,
   Users,
-  LayoutDashboard,
-  BarChart3,
-  FileSpreadsheet,
 } from 'lucide-react';
-import { Button, Card, Skeleton, StatCard } from '@/components/ui';
-import { DashboardExportActions } from '@/components/DashboardExportActions';
+import { Button, Card, Input, Select, Skeleton, StatCard, StatusBadge } from '@/components/ui';
+import {
+  DashboardExportActions,
+  type DashboardExportTruncationInfo,
+} from '@/components/DashboardExportActions';
 import {
   refreshAdminDashboardData,
+  setDashboardPeriodQuery,
   useAdminDashboardData,
+  type DashboardPeriodQuery,
+  type DashboardPeriodType,
 } from '@/hooks/useAdminDashboardData';
 import type { GatePass } from '@/types';
 
@@ -62,8 +75,56 @@ function averageApprovalTime(passes: GatePass[]): string {
 export function AdminDashboard() {
   const dashboard = useAdminDashboardData();
   const [retrying, setRetrying] = useState(false);
-  const [searchParams, setSearchParams] = useSearchParams();
+  const [searchParams] = useSearchParams();
   const currentTab = (searchParams.get('tab') as 'overview' | 'analytics' | 'reports') || 'overview';
+
+  const initialManilaParts = getManilaDateParts();
+  const [periodType, setPeriodType] = useState<DashboardPeriodType>('today');
+  const [selectedDate, setSelectedDate] = useState<string>(() => getManilaDateString());
+  const [selectedMonth, setSelectedMonth] = useState<string>(() => getManilaMonthKey(new Date()));
+  const [selectedYear, setSelectedYear] = useState<string>(() => String(initialManilaParts.year));
+  const [rangeFrom, setRangeFrom] = useState<string>(() => getManilaDateString());
+  const [rangeTo, setRangeTo] = useState<string>(() => getManilaDateString());
+  const [periodError, setPeriodError] = useState<string | null>(null);
+  const [appliedPeriodQuery, setAppliedPeriodQuery] = useState<DashboardPeriodQuery>({ period: 'today' });
+  const [reportTruncation, setReportTruncation] = useState<DashboardExportTruncationInfo | null>(null);
+
+  async function applyPeriodFilter(nextType: DashboardPeriodType = periodType) {
+    setPeriodError(null);
+    let nextQuery: DashboardPeriodQuery = { period: nextType };
+    if (nextType === 'date') {
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(selectedDate)) {
+        setPeriodError('Choose a valid calendar date.');
+        return;
+      }
+      nextQuery = { period: 'date', date: selectedDate };
+    } else if (nextType === 'month') {
+      if (!/^\d{4}-\d{2}$/.test(selectedMonth)) {
+        setPeriodError('Choose a valid month.');
+        return;
+      }
+      nextQuery = { period: 'month', month: selectedMonth };
+    } else if (nextType === 'year') {
+      if (!/^\d{4}$/.test(selectedYear)) {
+        setPeriodError('Enter a 4-digit year (e.g. 2026).');
+        return;
+      }
+      nextQuery = { period: 'year', year: selectedYear };
+    } else if (nextType === 'range') {
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(rangeFrom) || !/^\d{4}-\d{2}-\d{2}$/.test(rangeTo)) {
+        setPeriodError('Enter valid start and end dates.');
+        return;
+      }
+      if (rangeFrom > rangeTo) {
+        setPeriodError('Start date cannot be after end date.');
+        return;
+      }
+      nextQuery = { period: 'range', dateFrom: rangeFrom, dateTo: rangeTo };
+    }
+    setReportTruncation(null);
+    setAppliedPeriodQuery(nextQuery);
+    await setDashboardPeriodQuery(nextQuery);
+  }
 
   async function handleRetry() {
     if (retrying) return;
@@ -171,40 +232,119 @@ export function AdminDashboard() {
               </>
             )}
           </div>
-          <DashboardExportActions passes={metrics.calendarPasses} summary={exportSummary} />
+          <DashboardExportActions
+            passes={metrics.calendarPasses}
+            summary={exportSummary}
+            periodQuery={appliedPeriodQuery}
+            periodLabel={dashboard.periodMeta?.label}
+            onReportTruncation={setReportTruncation}
+          />
         </div>
       </header>
 
-      {/* Sub-Tabs Navigation */}
-      <div className="flex border-b border-[var(--color-border)] gap-2 overflow-x-auto pb-px">
-        {[
-          { id: 'overview', label: 'Overview', icon: LayoutDashboard },
-          { id: 'analytics', label: 'Analytics', icon: BarChart3 },
-          { id: 'reports', label: 'Reports & Export', icon: FileSpreadsheet },
-        ].map((tab) => {
-          const Icon = tab.icon;
-          const isActive = currentTab === tab.id;
-          return (
-            <button
-              key={tab.id}
-              type="button"
-              onClick={() => {
-                const next = new URLSearchParams(searchParams);
-                next.set('tab', tab.id);
-                setSearchParams(next);
-              }}
-              className={`flex items-center gap-2 px-4 py-2.5 text-xs font-bold whitespace-nowrap border-b-2 transition-colors ${
-                isActive
-                  ? 'border-[#7A0A0A] text-[#7A0A0A]'
-                  : 'border-transparent text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)]'
-              }`}
-            >
-              <Icon className="h-4 w-4" />
-              <span>{tab.label}</span>
-            </button>
-          );
-        })}
-      </div>
+      {(reportTruncation?.truncated || dashboard.offlineModeMetrics?.truncated) && (
+        <div
+          role="alert"
+          className="flex items-start gap-2.5 rounded-lg border border-amber-300 bg-amber-50 p-3.5 text-xs text-amber-950"
+        >
+          <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-amber-700" aria-hidden="true" />
+          <div>
+            <p className="font-bold">Export / Dataset Truncation Notice</p>
+            <p className="mt-0.5">
+              {reportTruncation?.truncated
+                ? `Complete report export returned the first ${reportTruncation.maxRows.toLocaleString()} of ${reportTruncation.totalMatchingCount.toLocaleString()} matching QR pass rows. `
+                : null}
+              {dashboard.offlineModeMetrics?.truncated
+                ? `Offline Mode metrics exceed ${reportTruncation?.maxRows ?? 5000} rows (${dashboard.offlineModeMetrics.total.toLocaleString()} total recorded). `
+                : null}
+              Narrow your date, month, or range filter to inspect or export an untruncated slice.
+            </p>
+          </div>
+        </div>
+      )}
+
+      {(currentTab === 'analytics' || currentTab === 'reports') && (
+        <Card className="p-4">
+          <div className="flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
+            <div className="flex flex-wrap items-end gap-3">
+              <div className="w-44">
+                <label htmlFor="dashboard-period-type" className="mb-1 flex items-center gap-1.5 text-xs font-semibold text-[var(--color-text-secondary)]">
+                  <Calendar className="h-3.5 w-3.5 text-[var(--color-brand)]" />
+                  Manila Period Scope
+                </label>
+                <Select
+                  id="dashboard-period-type"
+                  value={periodType}
+                  onChange={(e) => {
+                    const nextType = e.target.value as DashboardPeriodType;
+                    setPeriodType(nextType);
+                    if (nextType === 'today') {
+                      void applyPeriodFilter('today');
+                    }
+                  }}
+                >
+                  <option value="today">Today (Live)</option>
+                  <option value="date">Specific Date</option>
+                  <option value="month">Calendar Month</option>
+                  <option value="year">Calendar Year</option>
+                  <option value="range">Custom Date Range</option>
+                </Select>
+              </div>
+
+              {periodType === 'date' && (
+                <div className="w-44">
+                  <label htmlFor="dashboard-period-date" className="mb-1 block text-xs font-semibold text-[var(--color-text-secondary)]">Date (PH)</label>
+                  <Input id="dashboard-period-date" type="date" value={selectedDate} onChange={(e) => setSelectedDate(e.target.value)} />
+                </div>
+              )}
+
+              {periodType === 'month' && (
+                <div className="w-44">
+                  <label htmlFor="dashboard-period-month" className="mb-1 block text-xs font-semibold text-[var(--color-text-secondary)]">Month</label>
+                  <Input id="dashboard-period-month" type="month" value={selectedMonth} onChange={(e) => setSelectedMonth(e.target.value)} />
+                </div>
+              )}
+
+              {periodType === 'year' && (
+                <div className="w-32">
+                  <label htmlFor="dashboard-period-year" className="mb-1 block text-xs font-semibold text-[var(--color-text-secondary)]">Year</label>
+                  <Input id="dashboard-period-year" type="number" min={2024} max={2099} value={selectedYear} onChange={(e) => setSelectedYear(e.target.value)} />
+                </div>
+              )}
+
+              {periodType === 'range' && (
+                <>
+                  <div className="w-40">
+                    <label htmlFor="dashboard-range-from" className="mb-1 block text-xs font-semibold text-[var(--color-text-secondary)]">From Date</label>
+                    <Input id="dashboard-range-from" type="date" value={rangeFrom} onChange={(e) => setRangeFrom(e.target.value)} />
+                  </div>
+                  <div className="w-40">
+                    <label htmlFor="dashboard-range-to" className="mb-1 block text-xs font-semibold text-[var(--color-text-secondary)]">To Date</label>
+                    <Input id="dashboard-range-to" type="date" value={rangeTo} onChange={(e) => setRangeTo(e.target.value)} />
+                  </div>
+                </>
+              )}
+
+              <Button type="button" size="sm" onClick={() => void applyPeriodFilter(periodType)}>
+                Apply Period
+              </Button>
+            </div>
+
+            <div className="text-xs text-[var(--color-text-secondary)]">
+              <span className="font-semibold text-[var(--color-text-primary)]">
+                {dashboard.periodMeta?.label || 'Today'}
+              </span>
+              {' · '}
+              <span>{dashboard.periodMeta?.timezone || 'Asia/Manila'} (+08:00)</span>
+            </div>
+          </div>
+          {periodError && (
+            <p role="alert" className="mt-2 text-xs font-medium text-[var(--color-danger)]">
+              {periodError}
+            </p>
+          )}
+        </Card>
+      )}
 
       {currentTab === 'overview' && (
         <div className="space-y-6">
@@ -229,22 +369,50 @@ export function AdminDashboard() {
               <SummaryRow label="Rejected after scanning today" value={metrics.rejectedToday} color="text-[var(--color-danger)]" last />
             </div>
           </Card>
+
+          <OfflineModeMetricsPanel metrics={dashboard.offlineModeMetrics} periodLabel={dashboard.periodMeta?.label} />
         </div>
       )}
 
       {currentTab === 'analytics' && (
         <div className="space-y-6">
+          {dashboard.periodCounts && (
+            <Card className="p-6">
+              <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
+                <div>
+                  <h2 className="text-lg font-bold text-[var(--color-text-primary)]">
+                    Period QR Pass Breakdown — {dashboard.periodMeta?.label || 'Selected Period'}
+                  </h2>
+                  <p className="text-xs text-[var(--color-text-secondary)]">
+                    Authoritative server-computed QR pass totals ({dashboard.periodMeta?.startDate} to {dashboard.periodMeta?.endDate} Manila).
+                  </p>
+                </div>
+              </div>
+              <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-7">
+                <PeriodMetricTile label="Total QR" value={dashboard.periodCounts.total} />
+                <PeriodMetricTile label="Issued" value={dashboard.periodCounts.issued} />
+                <PeriodMetricTile label="Inside" value={dashboard.periodCounts.inside} />
+                <PeriodMetricTile label="Exited" value={dashboard.periodCounts.exited} />
+                <PeriodMetricTile label="Pending" value={dashboard.periodCounts.pending} />
+                <PeriodMetricTile label="Rejected" value={dashboard.periodCounts.rejected} />
+                <PeriodMetricTile label="Expired" value={dashboard.periodCounts.expired} />
+              </div>
+            </Card>
+          )}
+
           <section aria-labelledby="insights-heading">
             <div className="mb-3">
-              <h2 id="insights-heading" className="text-lg font-bold text-[var(--color-text-primary)]">Today's Insights</h2>
-              <p className="text-sm text-[var(--color-text-secondary)]">The most common activity recorded today.</p>
+              <h2 id="insights-heading" className="text-lg font-bold text-[var(--color-text-primary)]">Period Insights</h2>
+              <p className="text-sm text-[var(--color-text-secondary)]">The most common QR pass activity recorded in the selected scope.</p>
             </div>
             <div className="grid gap-4 md:grid-cols-3">
-              <InsightCard icon={<MessageSquareText className="h-5 w-5" />} title="Top Visit Purpose" insight={metrics.topPurpose} description="Most common visit purpose among passes created today." />
-              <InsightCard icon={<Ban className="h-5 w-5" />} title="Top Rejection Reason" insight={metrics.topRejection} description="Most common reason among visitors scanned today who were rejected." />
-              <InsightCard icon={<MapPin className="h-5 w-5" />} title="Busiest Entry Gate" insight={metrics.busiestGate} description="Gate with the most visitor scans recorded today." />
+              <InsightCard icon={<MessageSquareText className="h-5 w-5" />} title="Top Visit Purpose" insight={metrics.topPurpose} description="Most common visit purpose among passes in this scope." />
+              <InsightCard icon={<Ban className="h-5 w-5" />} title="Top Rejection Reason" insight={metrics.topRejection} description="Most common reason among rejected visitors in this scope." />
+              <InsightCard icon={<MapPin className="h-5 w-5" />} title="Busiest Entry Gate" insight={metrics.busiestGate} description="Gate with the most QR scans recorded in this scope." />
             </div>
           </section>
+
+          <OfflineModeMetricsPanel metrics={dashboard.offlineModeMetrics} periodLabel={dashboard.periodMeta?.label} />
 
           <IssuedPassesCalendar passes={metrics.calendarPasses} calendarCounts={metrics.calendarCounts} />
         </div>
@@ -257,17 +425,24 @@ export function AdminDashboard() {
               <div>
                 <h2 className="text-xl font-bold text-[var(--color-text-primary)]">Institutional Pass Reports & Export</h2>
                 <p className="mt-1 text-sm text-[var(--color-text-secondary)]">
-                  Export complete visitor pass logs and aggregated daily summaries in CSV, Excel, or PDF formats.
+                  Export complete period-filtered visitor pass logs (up to 5,000 rows per batch with truncation warnings) in CSV, Excel, or PDF formats.
                 </p>
               </div>
-              <DashboardExportActions passes={metrics.calendarPasses} summary={exportSummary} />
+              <DashboardExportActions
+                passes={metrics.calendarPasses}
+                summary={exportSummary}
+                periodQuery={appliedPeriodQuery}
+                periodLabel={dashboard.periodMeta?.label}
+                showCompleteFormats
+                onReportTruncation={setReportTruncation}
+              />
             </div>
 
             <div className="mt-6 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
               <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface-subtle)] p-4">
-                <p className="text-xs font-semibold text-[var(--color-text-muted)] uppercase tracking-wider">Passes Today</p>
-                <p className="mt-1 text-2xl font-bold text-[var(--color-text-primary)]">{metrics.todayTotal}</p>
-                <p className="mt-1 text-xs text-[var(--color-text-secondary)]">Registered since midnight</p>
+                <p className="text-xs font-semibold text-[var(--color-text-muted)] uppercase tracking-wider">Period QR Total</p>
+                <p className="mt-1 text-2xl font-bold text-[var(--color-text-primary)]">{dashboard.periodCounts?.total ?? metrics.todayTotal}</p>
+                <p className="mt-1 text-xs text-[var(--color-text-secondary)]">{dashboard.periodMeta?.label || 'Today'}</p>
               </div>
               <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface-subtle)] p-4">
                 <p className="text-xs font-semibold text-[var(--color-text-muted)] uppercase tracking-wider">Month to Date</p>
@@ -276,19 +451,64 @@ export function AdminDashboard() {
               </div>
               <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface-subtle)] p-4">
                 <p className="text-xs font-semibold text-[var(--color-text-muted)] uppercase tracking-wider">Completed Visits</p>
-                <p className="mt-2 text-2xl font-bold text-[var(--color-success)]">{metrics.exitedToday}</p>
-                <p className="mt-1 text-xs text-[var(--color-text-secondary)]">Visitors signed out today</p>
+                <p className="mt-2 text-2xl font-bold text-[var(--color-success)]">{dashboard.periodCounts?.exited ?? metrics.exitedToday}</p>
+                <p className="mt-1 text-xs text-[var(--color-text-secondary)]">Visitors signed out in scope</p>
               </div>
               <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface-subtle)] p-4">
-                <p className="text-xs font-semibold text-[var(--color-text-muted)] uppercase tracking-wider">Rejected Entries</p>
-                <p className="mt-2 text-2xl font-bold text-[var(--color-danger)]">{metrics.rejectedToday}</p>
-                <p className="mt-1 text-xs text-[var(--color-text-secondary)]">Denied by gate security today</p>
+                <p className="text-xs font-semibold text-[var(--color-text-muted)] uppercase tracking-wider">OFFLINE MODE RECORDED</p>
+                <p className="mt-2 text-2xl font-bold text-amber-800">{dashboard.offlineModeMetrics?.total ?? 0}</p>
+                <p className="mt-1 text-xs text-[var(--color-text-secondary)]">Separate from QR passes</p>
               </div>
             </div>
           </Card>
+
+          <OfflineModeMetricsPanel metrics={dashboard.offlineModeMetrics} periodLabel={dashboard.periodMeta?.label} />
         </div>
       )}
     </div>
+  );
+}
+
+function PeriodMetricTile({ label, value }: { label: string; value: number }) {
+  return (
+    <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface-subtle)] p-3">
+      <p className="text-[11px] font-semibold uppercase tracking-wide text-[var(--color-text-muted)]">{label}</p>
+      <p className="mt-1 text-xl font-bold text-[var(--color-text-primary)]">{value}</p>
+    </div>
+  );
+}
+
+function OfflineModeMetricsPanel({
+  metrics,
+  periodLabel,
+}: {
+  metrics?: import('@/hooks/useAdminDashboardData').DashboardOfflineMetrics;
+  periodLabel?: string;
+}) {
+  return (
+    <Card className="border-amber-200 bg-amber-50/40 p-6">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <div className="flex flex-wrap items-center gap-2">
+            <ShieldAlert className="h-5 w-5 text-amber-700" aria-hidden="true" />
+            <h2 className="text-lg font-bold text-[var(--color-text-primary)]">Emergency Offline Gate Records</h2>
+            <StatusBadge status="warning" label="OFFLINE MODE RECORDED" />
+          </div>
+          <p className="mt-1 text-xs text-[var(--color-text-secondary)]">
+            Emergency offline gate entries ({periodLabel || 'Selected Period'}) are classified permanently as{' '}
+            <strong>OFFLINE MODE RECORDED</strong>, isolated from standard QR pass metrics, and never converted into QR passes.
+          </p>
+        </div>
+      </div>
+      <div className="mt-4 grid gap-3 sm:grid-cols-3 lg:grid-cols-6">
+        <PeriodMetricTile label="Total Offline" value={metrics?.total ?? 0} />
+        <PeriodMetricTile label="Needs Review" value={metrics?.needsReview ?? 0} />
+        <PeriodMetricTile label="Received" value={metrics?.received ?? 0} />
+        <PeriodMetricTile label="Accepted" value={metrics?.accepted ?? 0} />
+        <PeriodMetricTile label="Duplicate / Rejected" value={(metrics?.duplicate ?? 0) + (metrics?.rejected ?? 0)} />
+        <PeriodMetricTile label="Policy Exception" value={metrics?.exceptionApplied ?? 0} />
+      </div>
+    </Card>
   );
 }
 

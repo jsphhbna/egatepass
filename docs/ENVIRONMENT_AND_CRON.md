@@ -123,7 +123,8 @@ stateDiagram-v2
 1. **Pass Status Protection**: Passes in status `pending` or `inside` are NEVER purged.
 2. **Active Passes**: Passes that are currently active and unexpired are NEVER purged.
 3. **Incident Holds**: Any visitor or pass with an active row in `public.incident_holds` is indefinitely protected from deletion until explicitly released by an administrator.
-4. **Protected Audit Events**: Security-critical governance actions are permanently preserved:
+4. **Global Institutional Retention Freeze**: When `public.app_settings.global_retention_freeze = true`, scheduled and manual `/api/admin/retention-maintenance`, `/api/purge-images`, and `api.anonymize_expired_emergency_gate_record` halt cleanly before performing any deletion (`maintenance.retention_halted_by_freeze`).
+5. **Protected Audit Events**: Security-critical governance actions are permanently preserved:
    - **Current Canonical Actions**:
      `superadmin.bootstrap`, `staff.create`, `staff.update`,
      `device.create`, `device.update`, `device.retire`, `device.password_update`,

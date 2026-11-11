@@ -23,7 +23,7 @@ const DEVICE_ALIAS_PATTERN = /^[a-z0-9][a-z0-9-]{2,62}$/;
 
 const deviceSchema = z.object({
   name: z.string().min(2, 'Name is required').max(50),
-  type: z.enum(['entry', 'exit', 'kiosk', 'guard_station'], {
+  type: z.enum(['entry', 'exit', 'kiosk', 'guard_station', 'emergency_device'], {
     message: 'Select a device type',
   }),
   gate: z.string().min(1, 'Gate/location is required').max(50),
@@ -48,7 +48,7 @@ type DeviceFormData = z.infer<typeof deviceSchema>;
 export function DevicesPage() {
   const { role } = useAuth();
   const canManageCredentials = isSuperAdmin(role);
-  const [searchParams, setSearchParams] = useSearchParams();
+  const [searchParams] = useSearchParams();
   const activeTab = searchParams.get('tab') || 'all';
   const [devices, setDevices] = useState<DeviceWithId[]>([]);
   const [loading, setLoading] = useState(true);
@@ -378,6 +378,7 @@ export function DevicesPage() {
       exit: 'Exit scanner',
       kiosk: 'Registration kiosk',
       guard_station: 'Guard station',
+      emergency_device: 'Emergency offline device',
     };
     return map[type];
   }
@@ -389,14 +390,14 @@ export function DevicesPage() {
   );
 
   const scannerCount = devices.filter((d) => d.type === 'entry' || d.type === 'exit').length;
-  const stationCount = devices.filter((d) => d.type === 'kiosk' || d.type === 'guard_station').length;
+  const stationCount = devices.filter((d) => d.type === 'kiosk' || d.type === 'guard_station' || d.type === 'emergency_device').length;
 
   const filteredDevices = devices.filter((d) => {
     if (activeTab === 'scanners') {
       return d.type === 'entry' || d.type === 'exit';
     }
     if (activeTab === 'stations') {
-      return d.type === 'kiosk' || d.type === 'guard_station';
+      return d.type === 'kiosk' || d.type === 'guard_station' || d.type === 'emergency_device';
     }
     return true;
   });
@@ -465,6 +466,7 @@ export function DevicesPage() {
               <option value="exit">Exit Scanner</option>
               <option value="kiosk">Kiosk</option>
               <option value="guard_station">Guard Station</option>
+              <option value="emergency_device">Emergency Offline Device</option>
             </Select>
           </FormField>
 
@@ -526,56 +528,29 @@ export function DevicesPage() {
         </form>
       </Modal>
 
-      {/* Device Category Tabs */}
-      <div className="flex flex-wrap gap-2 border-b border-[var(--color-border)] pb-2 mb-6" role="tablist" aria-label="Device categories">
-        <button
-          type="button"
-          role="tab"
-          aria-selected={activeTab === 'all'}
-          onClick={() => setSearchParams({ tab: 'all' })}
-          className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors ${
-            activeTab === 'all'
-              ? 'bg-[var(--color-brand)] text-white shadow-xs'
-              : 'bg-white text-[var(--color-text-secondary)] hover:bg-[var(--color-surface-hover)] border border-[var(--color-border)]'
-          }`}
-        >
-          <span>All Terminals</span>
-          <span className={`px-1.5 py-0.2 rounded-full text-[10px] ${activeTab === 'all' ? 'bg-white/20 text-white' : 'bg-gray-100 text-gray-700'}`}>
-            {devices.length}
+      {/* Device Category Filter Summary (controlled via Sidebar) */}
+      <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] px-4 py-2.5 mb-6 text-xs">
+        <div className="flex items-center gap-2">
+          <span className="font-bold text-[var(--color-text-primary)]">
+            {activeTab === 'scanners'
+              ? 'Gate Scanners'
+              : activeTab === 'stations'
+              ? 'Kiosks, Guard Stations & Emergency Devices'
+              : 'All Registered Terminals'}
           </span>
-        </button>
-        <button
-          type="button"
-          role="tab"
-          aria-selected={activeTab === 'scanners'}
-          onClick={() => setSearchParams({ tab: 'scanners' })}
-          className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors ${
-            activeTab === 'scanners'
-              ? 'bg-[var(--color-brand)] text-white shadow-xs'
-              : 'bg-white text-[var(--color-text-secondary)] hover:bg-[var(--color-surface-hover)] border border-[var(--color-border)]'
-          }`}
-        >
-          <span>Gate Scanners</span>
-          <span className={`px-1.5 py-0.2 rounded-full text-[10px] ${activeTab === 'scanners' ? 'bg-white/20 text-white' : 'bg-gray-100 text-gray-700'}`}>
-            {scannerCount}
+          <span className="text-[var(--color-text-muted)]">· Category controlled by Admin sidebar</span>
+        </div>
+        <div className="flex flex-wrap items-center gap-2">
+          <span className={`px-2 py-0.5 rounded-full font-semibold ${activeTab === 'all' ? 'bg-[var(--color-brand)] text-white' : 'bg-gray-100 text-gray-700'}`}>
+            All Terminals: {devices.length}
           </span>
-        </button>
-        <button
-          type="button"
-          role="tab"
-          aria-selected={activeTab === 'stations'}
-          onClick={() => setSearchParams({ tab: 'stations' })}
-          className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors ${
-            activeTab === 'stations'
-              ? 'bg-[var(--color-brand)] text-white shadow-xs'
-              : 'bg-white text-[var(--color-text-secondary)] hover:bg-[var(--color-surface-hover)] border border-[var(--color-border)]'
-          }`}
-        >
-          <span>Kiosks & Stations</span>
-          <span className={`px-1.5 py-0.2 rounded-full text-[10px] ${activeTab === 'stations' ? 'bg-white/20 text-white' : 'bg-gray-100 text-gray-700'}`}>
-            {stationCount}
+          <span className={`px-2 py-0.5 rounded-full font-semibold ${activeTab === 'scanners' ? 'bg-[var(--color-brand)] text-white' : 'bg-gray-100 text-gray-700'}`}>
+            Gate Scanners: {scannerCount}
           </span>
-        </button>
+          <span className={`px-2 py-0.5 rounded-full font-semibold ${activeTab === 'stations' ? 'bg-[var(--color-brand)] text-white' : 'bg-gray-100 text-gray-700'}`}>
+            Kiosks & Stations: {stationCount}
+          </span>
+        </div>
       </div>
 
       {/* Device List */}

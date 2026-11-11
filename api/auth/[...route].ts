@@ -3,12 +3,14 @@ import completePasswordChange from '../../server/routes/auth/complete-password-c
 import resendWebhook from '../../server/routes/auth/resend-webhook.js';
 import resetPassword from '../../server/routes/auth/reset-password.js';
 import sendEmailHook from '../../server/routes/auth/send-email-hook.js';
+import sessionActivity from '../../server/routes/auth/session-activity.js';
 
 const router = createGroupedRouter('auth', {
   'complete-password-change': completePasswordChange,
   'resend-webhook': resendWebhook,
   'reset-password': resetPassword,
   'send-email-hook': sendEmailHook,
+  'session-activity': sessionActivity,
 });
 
 export const { fetch, handleRequest, GET, POST, PUT, PATCH, DELETE, HEAD, OPTIONS } = router;

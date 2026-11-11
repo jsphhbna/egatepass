@@ -120,12 +120,22 @@ describe('retention policy compatibility', () => {
     expect(updateDeviceAuthTs).toContain("action: 'device.password_update'");
     expect(isProtectedAuditAction('device.password_update')).toBe(true);
 
-    // 5. Settings update emits settings_updated
+    // 5. Settings update emits settings_updated atomically via database RPC
     const updateSettingsTs = readFileSync(
       'server/routes/system/update-settings.ts',
       'utf8'
     );
-    expect(updateSettingsTs).toContain("action: 'settings_updated'");
+    const saveSettingsSql = readFileSync(
+      'supabase/migrations/20261112000100_phase1_reliability_repairs.sql',
+      'utf8'
+    );
+    const saveSettingsV2Sql = readFileSync(
+      'supabase/migrations/20261112000500_security_hardening_sessions_and_retention.sql',
+      'utf8'
+    );
+    expect(updateSettingsTs).toContain('save_system_settings');
+    expect(saveSettingsV2Sql).toContain('api.save_system_settings(');
+    expect(saveSettingsSql).toContain("'settings_updated'");
     expect(isProtectedAuditAction('settings_updated')).toBe(true);
 
     // 6. Incident hold release emits incident_hold.released

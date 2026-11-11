@@ -7,6 +7,7 @@ import { LandingPage } from '@/pages/LandingPage';
 import { OfflineBanner } from '@/components/OfflineBanner';
 import { LoadingState } from '@/components/ui';
 import { PrivacyModal } from '@/components/PrivacyModal';
+import { HumanInactivityGuard } from '@/components/HumanInactivityGuard';
 
 import { RouteErrorBoundary } from '@/components/RouteErrorBoundary';
 
@@ -28,6 +29,7 @@ const AdminPrintTemplatesPage = lazy(() => import('@/pages/AdminPrintTemplatesPa
 const DevicesPage = lazy(() => import('@/pages/DevicesPage').then((module) => ({ default: module.DevicesPage })));
 const EntryScanPage = lazy(() => import('@/pages/EntryScanPage').then((module) => ({ default: module.EntryScanPage })));
 const ExitScanPage = lazy(() => import('@/pages/ExitScanPage').then((module) => ({ default: module.ExitScanPage })));
+const EmergencyDevicePage = lazy(() => import('@/pages/EmergencyDevicePage').then((module) => ({ default: module.EmergencyDevicePage })));
 const OfficeDashboardPage = lazy(() => import('@/pages/OfficeDashboardPage').then((module) => ({ default: module.OfficeDashboardPage })));
 const TrackVisitPage = lazy(() => import('@/pages/TrackVisitPage').then((module) => ({ default: module.TrackVisitPage })));
 const NotFoundPage = lazy(() => import('@/pages/NotFoundPage').then((module) => ({ default: module.NotFoundPage })));
@@ -67,6 +69,7 @@ export function App() {
       <OfflineBanner />
       <AuthenticatedPrivacyGate />
       <BrowserRouter>
+        <HumanInactivityGuard />
         <a href="#main-content" className="skip-link">
           Skip to main content
         </a>
@@ -105,6 +108,11 @@ export function App() {
             {/* Guard Station — requires guard_station device or admin role */}
             <Route element={<ProtectedRoute allowedRoles={['guard_station', 'admin', 'superadmin']} />}>
               <Route path="/guard" element={<GuardPage />} />
+            </Route>
+
+            {/* Emergency Device — strict gate-locked offline intake console */}
+            <Route element={<ProtectedRoute allowedRoles={['emergency_device']} />}>
+              <Route path="/emergency-device" element={<EmergencyDevicePage />} />
             </Route>
 
             {/* Office Portal — requires office_staff, admin, or superadmin role */}

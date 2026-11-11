@@ -1,11 +1,23 @@
-import { Download, Printer } from 'lucide-react';
+import { useState } from 'react';
+import { Download, FileSpreadsheet, FileText, Printer, ShieldAlert } from 'lucide-react';
+import { toast } from 'sonner';
 import { Button } from '@/components/ui';
 import { escapeCsvCell } from '@/lib/completeExport';
 import {
   formatManilaDateTime,
+  formatManilaFileTimestamp,
   formatManilaMonthYear,
   getManilaMonthKey,
 } from '@/lib/manilaTime';
+import {
+  exportReportToCsv,
+  exportReportToExcel,
+  exportReportToPdf,
+} from '@/lib/reportExport';
+import {
+  fetchDashboardReportData,
+  type DashboardPeriodQuery,
+} from '@/hooks/useAdminDashboardData';
 import type { GatePass } from '@/types';
 
 export interface DashboardReportSummary {
@@ -23,9 +35,21 @@ export interface DashboardReportSummary {
   }>;
 }
 
+export interface DashboardExportTruncationInfo {
+  truncated: boolean;
+  totalMatchingCount: number;
+  offlineTotalCount: number;
+  maxRows: number;
+  offlineTruncated: boolean;
+}
+
 interface DashboardExportActionsProps {
   passes: GatePass[];
   summary: DashboardReportSummary;
+  periodQuery?: DashboardPeriodQuery;
+  periodLabel?: string;
+  showCompleteFormats?: boolean;
+  onReportTruncation?: (info: DashboardExportTruncationInfo | null) => void;
 }
 
 const reportColumns = [
@@ -182,15 +206,211 @@ function printReport(passes: GatePass[], summary: DashboardReportSummary) {
   document.body.appendChild(printFrame);
 }
 
-export function DashboardExportActions({ passes, summary }: DashboardExportActionsProps) {
+export function DashboardExportActions({
+  passes,
+  summary,
+  periodQuery,
+  periodLabel,
+  showCompleteFormats = false,
+  onReportTruncation,
+}: DashboardExportActionsProps) {
+  const [exportingFormat, setExportingFormat] = useState<'csv' | 'xlsx' | 'pdf' | 'offline' | null>(null);
+
+  async function handleCompleteExport(format: 'csv' | 'xlsx' | 'pdf') {
+    if (!periodQuery) {
+      if (format === 'csv') downloadCsv(passes, summary);
+      return;
+    }
+    setExportingFormat(format);
+    try {
+      const payload = await fetchDashboardReportData(periodQuery);
+      onReportTruncation?.({
+        truncated: payload.truncated,
+        totalMatchingCount: payload.totalMatchingCount,
+        offlineTotalCount: payload.offlineTotalCount,
+        maxRows: payload.maxRows,
+        offlineTruncated: Boolean(payload.offlineModeMetrics?.truncated),
+      });
+
+      const resolvedLabel = payload.periodMeta?.label || periodLabel || periodQuery.period;
+      const timestamp = formatManilaFileTimestamp(new Date());
+      const filename = `egatepass-dashboard-${periodQuery.period}-${timestamp}`;
+      const columns = [
+        { header: 'Visitor Name', key: 'visitorName', width: 24 },
+        { header: 'Purpose', key: 'purpose', width: 32 },
+        { header: 'Status', key: 'status', width: 12 },
+        { header: 'Source', key: 'source', width: 14 },
+        { header: 'Gate', key: 'gate', width: 14 },
+        { header: 'Issued At (Manila)', key: 'issuedAt', width: 22 },
+        { header: 'Scanned At (Manila)', key: 'scannedAt', width: 22 },
+        { header: 'Time In (Manila)', key: 'timeIn', width: 22 },
+        { header: 'Time Out (Manila)', key: 'timeOut', width: 22 },
+        { header: 'Rejection Reason', key: 'rejectionReason', width: 28 },
+      ];
+      const rows = payload.passes.map((p) => ({
+        visitorName: p.visitorName,
+        purpose: p.purpose,
+        status: formatLabel(p.status),
+        source: formatLabel(p.source),
+        gate: p.gate || 'Not assigned',
+        issuedAt: formatTimestamp(p.issuedAt),
+        scannedAt: formatTimestamp(p.scannedAt),
+        timeIn: formatTimestamp(p.timeIn),
+        timeOut: formatTimestamp(p.timeOut),
+        rejectionReason: p.rejectionReason || '',
+      }));
+
+      const commonOptions = {
+        reportTitle: 'Institutional Visitor Pass Report',
+        sheetName: 'Visitor Passes',
+        filename,
+        columns,
+        rows,
+        filterMetadata: {
+          Period: resolvedLabel,
+          Timezone: 'Asia/Manila (+08:00)',
+          'Matching QR Passes': String(payload.totalMatchingCount),
+          'OFFLINE MODE RECORDED (Isolated)': String(payload.offlineTotalCount),
+          ...(payload.truncated ? { Truncated: `First ${payload.maxRows} of ${payload.totalMatchingCount} rows` } : {}),
+        },
+        totalRecords: payload.totalMatchingCount,
+      };
+
+      if (format === 'csv') {
+        await exportReportToCsv(commonOptions);
+      } else if (format === 'xlsx') {
+        await exportReportToExcel(commonOptions);
+      } else {
+        await exportReportToPdf(commonOptions);
+      }
+
+      if (payload.truncated) {
+        toast.warning(`Exported first ${payload.maxRows} of ${payload.totalMatchingCount} matching QR pass records. Narrow the period filter for complete results.`);
+      } else {
+        toast.success(`Exported ${rows.length} QR pass record${rows.length === 1 ? '' : 's'} (${format.toUpperCase()}).`);
+      }
+    } catch (err: any) {
+      toast.error(err?.message || 'Failed to export dashboard report');
+    } finally {
+      setExportingFormat(null);
+    }
+  }
+
+  async function handleExportOfflineCsv() {
+    if (!periodQuery) return;
+    setExportingFormat('offline');
+    try {
+      const payload = await fetchDashboardReportData(periodQuery);
+      onReportTruncation?.({
+        truncated: payload.truncated,
+        totalMatchingCount: payload.totalMatchingCount,
+        offlineTotalCount: payload.offlineTotalCount,
+        maxRows: payload.maxRows,
+        offlineTruncated: Boolean(payload.offlineModeMetrics?.truncated),
+      });
+      const resolvedLabel = payload.periodMeta?.label || periodLabel || periodQuery.period;
+      const timestamp = formatManilaFileTimestamp(new Date());
+      await exportReportToCsv({
+        reportTitle: 'Offline Mode Recorded Gate Intake Report',
+        filename: `egatepass-offline-mode-recorded-${periodQuery.period}-${timestamp}`,
+        columns: [
+          { header: 'Classification', key: 'classification', width: 24 },
+          { header: 'Gate', key: 'gate', width: 14 },
+          { header: 'Local Seq', key: 'localSequence', width: 10 },
+          { header: 'Visitor Name', key: 'visitorName', width: 24 },
+          { header: 'Declared Address', key: 'declaredAddress', width: 32 },
+          { header: 'Address Status', key: 'addressStatus', width: 16 },
+          { header: 'Purpose', key: 'purpose', width: 28 },
+          { header: 'Destination Office', key: 'officeName', width: 24 },
+          { header: 'ID Physically Inspected', key: 'idPhysicallyInspected', width: 18 },
+          { header: 'Emergency Exception', key: 'emergencyExceptionApplied', width: 18 },
+          { header: 'Reconciliation Status', key: 'reconciliationStatus', width: 18 },
+          { header: 'Local Recorded At (Manila)', key: 'localRecordedAt', width: 22 },
+          { header: 'Server Synced At (Manila)', key: 'serverReceivedAt', width: 22 },
+        ],
+        rows: payload.offlineRecords.map((r) => ({
+          ...r,
+          idPhysicallyInspected: r.idPhysicallyInspected ? 'Yes' : 'No',
+          emergencyExceptionApplied: r.emergencyExceptionApplied ? 'Yes' : 'No',
+          localRecordedAt: formatManilaDateTime(r.localRecordedAt),
+          serverReceivedAt: formatManilaDateTime(r.serverReceivedAt),
+        })),
+        filterMetadata: {
+          Period: resolvedLabel,
+          Classification: 'OFFLINE MODE RECORDED (Never auto-converted to QR pass)',
+        },
+      });
+      if (payload.offlineModeMetrics?.truncated) {
+        toast.warning(`Offline export capped at ${payload.maxRows} of ${payload.offlineTotalCount} rows.`);
+      } else {
+        toast.success(`Exported ${payload.offlineRecords.length} OFFLINE MODE RECORDED record${payload.offlineRecords.length === 1 ? '' : 's'}.`);
+      }
+    } catch (err: any) {
+      toast.error(err?.message || 'Failed to export offline records');
+    } finally {
+      setExportingFormat(null);
+    }
+  }
+
   return (
     <div className="flex flex-wrap gap-2" aria-label="Export dashboard data">
-      <Button type="button" variant="secondary" size="sm" icon={<Printer className="h-4 w-4" />} onClick={() => printReport(passes, summary)}>
+      <Button
+        type="button"
+        variant="secondary"
+        size="sm"
+        icon={<Printer className="h-4 w-4" />}
+        onClick={() => printReport(passes, summary)}
+      >
         Print Report
       </Button>
-      <Button type="button" variant="secondary" size="sm" icon={<Download className="h-4 w-4" />} onClick={() => downloadCsv(passes, summary)}>
+      <Button
+        type="button"
+        variant="secondary"
+        size="sm"
+        icon={<Download className="h-4 w-4" />}
+        loading={exportingFormat === 'csv'}
+        disabled={exportingFormat !== null}
+        onClick={() => (periodQuery ? void handleCompleteExport('csv') : downloadCsv(passes, summary))}
+      >
         Download CSV
       </Button>
+      {showCompleteFormats && periodQuery && (
+        <>
+          <Button
+            type="button"
+            variant="secondary"
+            size="sm"
+            icon={<FileSpreadsheet className="h-4 w-4" />}
+            loading={exportingFormat === 'xlsx'}
+            disabled={exportingFormat !== null}
+            onClick={() => void handleCompleteExport('xlsx')}
+          >
+            Export Excel (.xlsx)
+          </Button>
+          <Button
+            type="button"
+            variant="secondary"
+            size="sm"
+            icon={<FileText className="h-4 w-4" />}
+            loading={exportingFormat === 'pdf'}
+            disabled={exportingFormat !== null}
+            onClick={() => void handleCompleteExport('pdf')}
+          >
+            Export PDF
+          </Button>
+          <Button
+            type="button"
+            variant="secondary"
+            size="sm"
+            icon={<ShieldAlert className="h-4 w-4 text-amber-700" />}
+            loading={exportingFormat === 'offline'}
+            disabled={exportingFormat !== null}
+            onClick={() => void handleExportOfflineCsv()}
+          >
+            Export Offline Mode CSV
+          </Button>
+        </>
+      )}
     </div>
   );
 }

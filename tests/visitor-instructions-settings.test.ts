@@ -185,23 +185,33 @@ describe('Group E: Configurable Visitor Instructions & Public Settings Access Co
 
       // Can SELECT public safe columns
       const res = await db.query<{
+        working_hours_start: string;
         visitor_instructions: any;
-        image_retention_days: number;
-        photo_retention_days: number;
-        id_retention_days: number;
-        visitor_retention_days: number;
       }>(`
-        select visitor_instructions, image_retention_days, photo_retention_days, id_retention_days, visitor_retention_days
+        select working_hours_start, working_hours_end, timezone, scheduling_days_ahead, peak_mode, visit_purposes, visitor_instructions
         from public.app_settings;
       `);
       expect(res.rows.length).toBe(1);
+      expect(res.rows[0].working_hours_start).toBeDefined();
       expect(res.rows[0].visitor_instructions).toBeDefined();
-      expect(res.rows[0].image_retention_days).toBeDefined();
-      expect(res.rows[0].photo_retention_days).toBeDefined();
-      expect(res.rows[0].id_retention_days).toBeDefined();
-      expect(res.rows[0].visitor_retention_days).toBeDefined();
 
-      // CANNOT SELECT unapproved sensitive columns
+      // Sensitive & retention columns remain denied
+      await expect(
+        db.query('select image_retention_days from public.app_settings;')
+      ).rejects.toThrow(/permission denied/);
+
+      await expect(
+        db.query('select photo_retention_days from public.app_settings;')
+      ).rejects.toThrow(/permission denied/);
+
+      await expect(
+        db.query('select id_retention_days from public.app_settings;')
+      ).rejects.toThrow(/permission denied/);
+
+      await expect(
+        db.query('select visitor_retention_days from public.app_settings;')
+      ).rejects.toThrow(/permission denied/);
+
       await expect(
         db.query('select automatic_cleanup_enabled from public.app_settings;')
       ).rejects.toThrow(/permission denied/);
@@ -229,23 +239,33 @@ describe('Group E: Configurable Visitor Instructions & Public Settings Access Co
 
       // Can SELECT public safe columns (e.g. Kiosk device or signed-in visitor)
       const res = await db.query<{
+        working_hours_start: string;
         visitor_instructions: any;
-        image_retention_days: number;
-        photo_retention_days: number;
-        id_retention_days: number;
-        visitor_retention_days: number;
       }>(`
-        select visitor_instructions, image_retention_days, photo_retention_days, id_retention_days, visitor_retention_days
+        select working_hours_start, working_hours_end, timezone, scheduling_days_ahead, peak_mode, visit_purposes, visitor_instructions
         from public.app_settings;
       `);
       expect(res.rows.length).toBe(1);
+      expect(res.rows[0].working_hours_start).toBeDefined();
       expect(res.rows[0].visitor_instructions).toBeDefined();
-      expect(res.rows[0].image_retention_days).toBeDefined();
-      expect(res.rows[0].photo_retention_days).toBeDefined();
-      expect(res.rows[0].id_retention_days).toBeDefined();
-      expect(res.rows[0].visitor_retention_days).toBeDefined();
 
-      // CANNOT SELECT unapproved sensitive columns
+      // Sensitive & retention columns remain denied
+      await expect(
+        db.query('select image_retention_days from public.app_settings;')
+      ).rejects.toThrow(/permission denied/);
+
+      await expect(
+        db.query('select photo_retention_days from public.app_settings;')
+      ).rejects.toThrow(/permission denied/);
+
+      await expect(
+        db.query('select id_retention_days from public.app_settings;')
+      ).rejects.toThrow(/permission denied/);
+
+      await expect(
+        db.query('select visitor_retention_days from public.app_settings;')
+      ).rejects.toThrow(/permission denied/);
+
       await expect(
         db.query('select automatic_cleanup_enabled from public.app_settings;')
       ).rejects.toThrow(/permission denied/);

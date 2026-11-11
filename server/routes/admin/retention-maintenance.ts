@@ -6,9 +6,18 @@ import { jsonResponse, readBearerToken } from '../../http.js';
 import { getServerSupabaseClients } from '../../supabase.js';
 
 const maintenanceSchema = z.object({
-  dryRun: z.boolean().default(false),
-  batchSize: z.number().int().min(1).max(200).default(50),
+  dryRun: z.boolean().optional(),
+  confirmExecution: z.boolean().optional(),
+  batchSize: z.number().int().min(1).max(200).optional(),
 }).strict();
+
+const TERMINAL_OFFICE_ATTENDANCE = new Set(['completed', 'exited_unconfirmed', 'cancelled', 'expired']);
+
+function isActiveOfficeVisit(visit: { approval_status?: string | null; attendance_status?: string | null }): boolean {
+  const isTerminalApproval = visit.approval_status === 'rejected';
+  const isTerminalAttendance = TERMINAL_OFFICE_ATTENDANCE.has(String(visit.attendance_status || ''));
+  return !(isTerminalApproval || isTerminalAttendance);
+}
 
 interface CallerContext {
   isCron: boolean;
@@ -87,7 +96,15 @@ async function handleRequest(request: Request): Promise<Response> {
     const { admin } = getServerSupabaseClients();
     const caller = await authenticateMaintenance(request, admin);
 
-    let dryRun = false;
+    if (request.method === 'GET' && !caller.isCron) {
+      return jsonResponse(403, {
+        error: 'cron_only_get',
+        message: 'GET method is reserved for scheduled cron execution. Use POST with confirmExecution for manual runs.',
+      });
+    }
+
+    let dryRun = caller.isCron ? false : true;
+    let confirmExecution = false;
     let batchSize = 50;
 
     if (request.method === 'GET') {
@@ -98,18 +115,39 @@ async function handleRequest(request: Request): Promise<Response> {
     } else {
       const text = await request.text().catch(() => '');
       if (text.trim().length > 0) {
-        const parsed = maintenanceSchema.safeParse(JSON.parse(text));
-        if (parsed.success) {
-          dryRun = parsed.data.dryRun;
-          batchSize = parsed.data.batchSize;
+        let rawJson: unknown;
+        try {
+          rawJson = JSON.parse(text);
+        } catch {
+          return jsonResponse(400, {
+            error: 'invalid_json_body',
+            message: 'Request body must be valid JSON.',
+          });
         }
+        const parsed = maintenanceSchema.safeParse(rawJson);
+        if (!parsed.success) {
+          return jsonResponse(400, {
+            error: 'invalid_request',
+            message: 'Invalid maintenance request payload.',
+          });
+        }
+        dryRun = parsed.data.dryRun ?? (caller.isCron ? false : true);
+        confirmExecution = parsed.data.confirmExecution === true;
+        batchSize = parsed.data.batchSize ?? 50;
       }
+    }
+
+    if (!caller.isCron && !dryRun && !confirmExecution) {
+      return jsonResponse(400, {
+        error: 'confirmation_required',
+        message: 'Manual live retention execution requires confirmExecution: true alongside dryRun: false.',
+      });
     }
 
     // Load retention settings (fail-closed if authoritative settings cannot be retrieved)
     const { data: settings, error: settingsError } = await admin
       .from('app_settings')
-      .select('automatic_cleanup_enabled, image_retention_days, photo_retention_days, id_retention_days, photo_retention_enabled, id_retention_enabled, vehicle_photo_retention_enabled, vehicle_photo_retention_days, visitor_retention_enabled, visitor_retention_days, returning_profile_retention_enabled, returning_profile_retention_days, reconciliation_retention_days, audit_retention_days')
+      .select('automatic_cleanup_enabled, image_retention_days, photo_retention_days, id_retention_days, photo_retention_enabled, id_retention_enabled, vehicle_photo_retention_enabled, vehicle_photo_retention_days, visitor_retention_enabled, visitor_retention_days, returning_profile_retention_enabled, returning_profile_retention_days, reconciliation_retention_days, audit_retention_days, global_retention_freeze, global_retention_freeze_reason, emergency_record_retention_enabled, emergency_record_retention_days')
       .eq('singleton', true)
       .maybeSingle();
 
@@ -132,7 +170,10 @@ async function handleRequest(request: Request): Promise<Response> {
       anonymousAuthDeleted: 0,
       anonymousAuthDeleteFailures: 0,
       returningProfilesCleaned: 0,
+      returningFaceTemplatesCleaned: 0,
       returningAttemptsCleaned: 0,
+      emergencyRecordsEligible: 0,
+      emergencyRecordsAnonymized: 0,
       stalePassesExpired: 0,
       errors: [] as string[],
     };
@@ -180,6 +221,44 @@ async function handleRequest(request: Request): Promise<Response> {
         success: false,
         result: 'failure',
         reason: 'settings_unavailable',
+        maintenance: metrics,
+      });
+    }
+
+    if (Boolean((settings as any).global_retention_freeze)) {
+      const freezeReason = (settings as any).global_retention_freeze_reason ?? null;
+      const { error: freezeAuditErr } = await admin.from('audit_events').insert({
+        actor_id: caller.actorId ?? null,
+        actor_kind: caller.isCron ? 'system' : 'staff',
+        actor_role: caller.isCron ? 'cron' : 'superadmin',
+        action: 'maintenance.retention_frozen_skip',
+        target_type: 'system',
+        target_id: 'retention_maintenance',
+        outcome: 'success',
+        after_state: {
+          global_retention_freeze: true,
+          freezeReason,
+          dryRun,
+          callerType: metrics.callerType,
+        },
+      });
+      if (freezeAuditErr) {
+        metrics.errors.push(`audit_insert_failed: ${freezeAuditErr.message || 'audit_insert_failed'}`);
+        await recordReconciliation(
+          admin,
+          'maintenance.audit_insert_failed',
+          'system',
+          'retention_maintenance',
+          freezeAuditErr.message || 'audit_insert_failed',
+          { callerType: metrics.callerType, stage: 'global_retention_freeze' }
+        ).catch(() => undefined);
+      }
+      return jsonResponse(200, {
+        success: true,
+        result: 'frozen',
+        frozen: true,
+        reason: 'global_retention_freeze_active',
+        freezeReason,
         maintenance: metrics,
       });
     }
@@ -653,6 +732,29 @@ async function handleRequest(request: Request): Promise<Response> {
 
           if (activePasses && activePasses.length > 0) continue;
 
+          // Safeguard 4: check active office visits (fail-closed on uncertainty)
+          const { data: visitorOfficeVisits, error: visitorOfficeVisitErr } = await admin
+            .from('office_visits')
+            .select('id, approval_status, attendance_status')
+            .eq('visitor_id', visitor.id);
+
+          if (visitorOfficeVisitErr) {
+            metrics.errors.push(`office_visit_query_failed_${visitor.id}: ${visitorOfficeVisitErr.message}`);
+            await recordReconciliation(
+              admin,
+              'visitor.office_visit_check_failed',
+              'visitors',
+              visitor.id,
+              visitorOfficeVisitErr.message,
+              { protection_type: 'office_visits' }
+            ).catch(() => undefined);
+            continue;
+          }
+
+          if (visitorOfficeVisits && visitorOfficeVisits.some((ov: any) => isActiveOfficeVisit(ov))) {
+            continue;
+          }
+
           // Anonymize personal fields while preserving relational IDs
           const { error: anonErr } = await admin
             .from('visitors')
@@ -724,38 +826,85 @@ async function handleRequest(request: Request): Promise<Response> {
               continue;
             }
 
-            // Safeguard 1: check if linked visitor is currently on campus
-            const { data: insidePasses } = await admin
+            // Safeguard 1: check if linked visitor is currently on campus (fail-closed)
+            const { data: insidePasses, error: insideErr } = await admin
               .from('visitors')
               .select('id, passes!inner(status)')
               .eq('returning_profile_id', p.id)
               .eq('passes.status', 'inside')
               .limit(1);
+            if (insideErr) {
+              metrics.errors.push(`returning_inside_check_failed_${p.id}: ${insideErr.message}`);
+              continue;
+            }
             if (insidePasses && insidePasses.length > 0) continue;
 
-            // Safeguard 2: check if linked visitor has active or future issued passes
-            const { data: activePasses } = await admin
+            // Safeguard 2: check if linked visitor has active or future issued passes (fail-closed)
+            const { data: activePasses, error: activeErr } = await admin
               .from('visitors')
               .select('id, passes!inner(id, status, valid_until)')
               .eq('returning_profile_id', p.id)
               .or(`passes.status.in.(inside,pending),and(passes.status.eq.issued,passes.valid_until.gt.${now})`)
               .limit(1);
+            if (activeErr) {
+              metrics.errors.push(`returning_active_pass_check_failed_${p.id}: ${activeErr.message}`);
+              continue;
+            }
             if (activePasses && activePasses.length > 0) continue;
 
-            // Safeguard 3: check active incident holds
-            const { data: holds } = await admin
+            // Safeguard 3: check active incident holds (fail-closed)
+            const { data: holds, error: holdsErr } = await admin
               .from('incident_holds')
               .select('id, visitors!inner(returning_profile_id)')
               .eq('visitors.returning_profile_id', p.id)
               .eq('active', true)
               .limit(1);
+            if (holdsErr) {
+              metrics.errors.push(`returning_hold_check_failed_${p.id}: ${holdsErr.message}`);
+              continue;
+            }
             if (holds && holds.length > 0) continue;
+
+            // Safeguard 4: check active office visits linked to visitors using this returning profile (fail-closed)
+            const { data: linkedVisitors, error: linkedVisErr } = await admin
+              .from('visitors')
+              .select('id')
+              .eq('returning_profile_id', p.id);
+            if (linkedVisErr) {
+              metrics.errors.push(`returning_linked_visitors_check_failed_${p.id}: ${linkedVisErr.message}`);
+              continue;
+            }
+            const linkedVisitorIds = (linkedVisitors ?? []).map((lv: any) => lv.id).filter(Boolean);
+            if (linkedVisitorIds.length > 0) {
+              const { data: linkedVisits, error: linkedVisitsErr } = await admin
+                .from('office_visits')
+                .select('id, approval_status, attendance_status')
+                .in('visitor_id', linkedVisitorIds);
+              if (linkedVisitsErr) {
+                metrics.errors.push(`returning_office_visit_check_failed_${p.id}: ${linkedVisitsErr.message}`);
+                continue;
+              }
+              if (linkedVisits && linkedVisits.some((ov: any) => isActiveOfficeVisit(ov))) {
+                continue;
+              }
+            }
 
             eligibleProfileIds.push(p.id);
           }
 
           if (eligibleProfileIds.length > 0) {
             if (!dryRun) {
+              const { count: tplDelCount, error: tplDelErr } = await admin
+                .from('returning_face_templates')
+                .delete({ count: 'exact' })
+                .in('profile_id', eligibleProfileIds);
+
+              if (tplDelErr) {
+                metrics.errors.push(`returning_face_template_delete_failed: ${tplDelErr.message}`);
+              } else {
+                metrics.returningFaceTemplatesCleaned += tplDelCount ?? 0;
+              }
+
               const { error: delErr } = await admin
                 .from('returning_visitor_profiles')
                 .delete()
@@ -768,6 +917,86 @@ async function handleRequest(request: Request): Promise<Response> {
               }
             } else {
               metrics.returningProfilesCleaned = eligibleProfileIds.length;
+            }
+          }
+        }
+
+        // Legacy returning_face_templates cleanup for expired or orphaned profiles not under holds/active passes/visits
+        const { data: legacyTemplates, error: legacyTplErr } = await admin
+          .from('returning_face_templates')
+          .select('id, profile_id, created_at')
+          .lte('created_at', returningCutoff)
+          .order('created_at', { ascending: true })
+          .limit(batchSize);
+
+        if (legacyTplErr) {
+          metrics.errors.push(`returning_face_template_query_failed: ${legacyTplErr.message}`);
+        } else if (legacyTemplates && legacyTemplates.length > 0) {
+          const tplProfileIds = Array.from(new Set(legacyTemplates.map((t: any) => t.profile_id).filter(Boolean)));
+          const { data: tplProfiles, error: tplProfErr } = tplProfileIds.length > 0
+            ? await admin
+                .from('returning_visitor_profiles')
+                .select('id, expires_at, last_used_at')
+                .in('id', tplProfileIds)
+            : { data: [] as any[], error: null };
+
+          if (tplProfErr) {
+            metrics.errors.push(`returning_face_template_profile_check_failed: ${tplProfErr.message}`);
+          } else {
+            const profileMap = new Map((tplProfiles ?? []).map((pr: any) => [pr.id, pr]));
+            const eligibleLegacyTplIds: string[] = [];
+
+            for (const tpl of legacyTemplates) {
+              const prof = profileMap.get(tpl.profile_id);
+              if (prof) {
+                const isExpired = prof.expires_at && prof.expires_at <= now;
+                const isStale = !prof.last_used_at || new Date(prof.last_used_at).getTime() <= Date.now() - returningProfileDays * 86_400_000;
+                if (!isExpired || !isStale) continue;
+
+                const { data: holds, error: holdsErr } = await admin
+                  .from('incident_holds')
+                  .select('id, visitors!inner(returning_profile_id)')
+                  .eq('visitors.returning_profile_id', prof.id)
+                  .eq('active', true)
+                  .limit(1);
+                if (holdsErr || (holds && holds.length > 0)) continue;
+
+                const { data: activePasses, error: activeErr } = await admin
+                  .from('visitors')
+                  .select('id, passes!inner(id, status, valid_until)')
+                  .eq('returning_profile_id', prof.id)
+                  .or(`passes.status.in.(inside,pending),and(passes.status.eq.issued,passes.valid_until.gt.${now})`)
+                  .limit(1);
+                if (activeErr || (activePasses && activePasses.length > 0)) continue;
+
+                const { data: linkedVis, error: linkedVisErr } = await admin
+                  .from('visitors')
+                  .select('id')
+                  .eq('returning_profile_id', prof.id);
+                if (linkedVisErr) continue;
+                const lvIds = (linkedVis ?? []).map((lv: any) => lv.id).filter(Boolean);
+                if (lvIds.length > 0) {
+                  const { data: lvVisits, error: lvVisitsErr } = await admin
+                    .from('office_visits')
+                    .select('id, approval_status, attendance_status')
+                    .in('visitor_id', lvIds);
+                  if (lvVisitsErr || (lvVisits && lvVisits.some((ov: any) => isActiveOfficeVisit(ov)))) continue;
+                }
+              }
+              eligibleLegacyTplIds.push(tpl.id);
+            }
+
+            if (eligibleLegacyTplIds.length > 0 && !dryRun) {
+              const { count: extraTplCount, error: extraTplDelErr } = await admin
+                .from('returning_face_templates')
+                .delete({ count: 'exact' })
+                .in('id', eligibleLegacyTplIds);
+
+              if (extraTplDelErr) {
+                metrics.errors.push(`returning_face_template_cleanup_failed: ${extraTplDelErr.message}`);
+              } else {
+                metrics.returningFaceTemplatesCleaned += extraTplCount ?? 0;
+              }
             }
           }
         }
@@ -786,6 +1015,48 @@ async function handleRequest(request: Request): Promise<Response> {
       }
     } catch (retentionErr) {
       metrics.errors.push(`returning_retention_error: ${retentionErr instanceof Error ? retentionErr.message : 'unknown'}`);
+    }
+
+    // =========================================================================
+    // 3.7 EMERGENCY OFFLINE GATE RECORDS RETENTION (M90)
+    // =========================================================================
+    try {
+      const emergencyRetentionEnabled = (settings as any).emergency_record_retention_enabled ?? true;
+      const emergencyRetentionDays = (settings as any).emergency_record_retention_days ?? 90;
+      const emergencyCutoff = new Date(Date.now() - emergencyRetentionDays * 86_400_000).toISOString();
+
+      if (emergencyRetentionEnabled) {
+        const { data: emergencyCandidates, error: emergencyQueryErr } = await admin
+          .from('emergency_gate_records')
+          .select('id, local_recorded_at, reconciliation_status, anonymized_at')
+          .is('anonymized_at', null)
+          .not('reconciliation_status', 'in', '(pending_sync,received,needs_review)')
+          .lte('local_recorded_at', emergencyCutoff)
+          .order('local_recorded_at', { ascending: true })
+          .limit(batchSize);
+
+        if (emergencyQueryErr) {
+          metrics.errors.push(`emergency_records_query_failed: ${emergencyQueryErr.message}`);
+        } else if (emergencyCandidates && emergencyCandidates.length > 0) {
+          metrics.emergencyRecordsEligible = emergencyCandidates.length;
+          if (!dryRun) {
+            for (const rec of emergencyCandidates) {
+              const { data: anonRes, error: anonRpcErr } = await admin
+                .schema('api')
+                .rpc('anonymize_expired_emergency_gate_record', {
+                  requested_record_id: rec.id,
+                });
+              if (anonRpcErr) {
+                metrics.errors.push(`emergency_record_anonymize_failed_${rec.id}: ${anonRpcErr.message}`);
+              } else if (anonRes && (anonRes as any).anonymized === true) {
+                metrics.emergencyRecordsAnonymized += 1;
+              }
+            }
+          }
+        }
+      }
+    } catch (emergencyRetErr) {
+      metrics.errors.push(`emergency_retention_error: ${emergencyRetErr instanceof Error ? emergencyRetErr.message : 'unknown'}`);
     }
 
     // =========================================================================
@@ -1094,7 +1365,10 @@ async function handleRequest(request: Request): Promise<Response> {
       metrics.reconciliationTasksCleaned > 0 ||
       metrics.verificationCodesCleaned > 0 ||
       metrics.rateLimitBucketsCleaned > 0 ||
-      metrics.anonymousAuthDeleted > 0;
+      metrics.anonymousAuthDeleted > 0 ||
+      metrics.returningProfilesCleaned > 0 ||
+      metrics.returningFaceTemplatesCleaned > 0 ||
+      metrics.emergencyRecordsAnonymized > 0;
 
     let preAuditOutcome: 'success' | 'partial' | 'failure' =
       metrics.errors.length === 0 ? 'success' : (hasWorkDone ? 'partial' : 'failure');

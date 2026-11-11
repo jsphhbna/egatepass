@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import { requireOfficeStaffActor } from '../../lib/office.js';
 import { jsonResponse, readBearerToken } from '../../http.js';
@@ -44,9 +45,10 @@ export async function handleRequest(request: Request): Promise<Response> {
             }
             const { data: assignedOffices, error: aErr } = await admin
               .from('offices')
-              .select('id, name, description, active, verified')
+              .select('id, name, description, active, verified, publication_status, requires_approval_before_pass, archived_at')
               .in('id', actor.assignedOfficeIds)
               .eq('active', true)
+              .is('archived_at', null)
               .order('name');
 
             if (aErr) throw aErr;
@@ -57,12 +59,12 @@ export async function handleRequest(request: Request): Promise<Response> {
         }
       }
 
-      // Public visitor view: only active AND verified offices
       const { data: offices, error: offErr } = await admin
         .from('offices')
-        .select('id, name, description, active, verified')
+        .select('id, name, description, active, verified, publication_status, requires_approval_before_pass, archived_at')
         .eq('active', true)
-        .eq('verified', true)
+        .eq('publication_status', 'published')
+        .is('archived_at', null)
         .order('name');
 
       if (offErr) {
@@ -73,7 +75,6 @@ export async function handleRequest(request: Request): Promise<Response> {
       return jsonResponse(200, { offices: offices || [] });
     }
 
-    // Check if caller is authorized office staff/admin
     let isStaff = false;
     if (token) {
       try {
@@ -87,12 +88,26 @@ export async function handleRequest(request: Request): Promise<Response> {
       }
     }
 
+    if (!isStaff) {
+      const { data: officeRow, error: pubErr } = await admin
+        .from('offices')
+        .select('id, active, publication_status, archived_at')
+        .eq('id', officeId)
+        .maybeSingle();
+
+      if (pubErr) {
+        return jsonResponse(500, { error: 'failed_to_verify_office' });
+      }
+      if (!officeRow || !officeRow.active || officeRow.publication_status !== 'published' || officeRow.archived_at) {
+        return jsonResponse(200, { personnel: [] });
+      }
+    }
+
     let personnelQuery = admin
       .from('office_personnel')
       .select('id, office_id, name, title, active, created_at, updated_at')
       .eq('office_id', officeId);
 
-    // Unauthenticated public visitors only receive active staff; office staff see all
     if (!isStaff) {
       personnelQuery = personnelQuery.eq('active', true);
     }
@@ -119,20 +134,34 @@ export async function handleRequest(request: Request): Promise<Response> {
 
       const actor = await requireOfficeStaffActor(admin, token, parsed.data.officeId);
 
-      const { data: inserted, error: insertErr } = await admin
-        .from('office_personnel')
-        .insert({
-          office_id: parsed.data.officeId,
-          name: parsed.data.name,
-          title: parsed.data.title || null,
-          active: true,
-          created_by: actor.id,
-        })
-        .select()
-        .single();
+      const { data: saved, error: rpcErr } = await admin.schema('api').rpc('save_office_personnel_record', {
+        requested_actor_id: actor.id,
+        requested_personnel_id: null,
+        requested_office_id: parsed.data.officeId,
+        requested_name: parsed.data.name,
+        requested_title: parsed.data.title ?? null,
+        requested_active: true,
+        requested_request_id: randomUUID(),
+      });
 
-      if (insertErr) throw insertErr;
-      return jsonResponse(201, { personnel: inserted });
+      if (rpcErr) {
+        const code = (rpcErr as { code?: string }).code;
+        if (code === '42501') return jsonResponse(403, { error: rpcErr.message || 'access_denied' });
+        if (code === '22023') return jsonResponse(400, { error: rpcErr.message || 'invalid_request' });
+        throw rpcErr;
+      }
+
+      const row = (saved || {}) as Record<string, unknown>;
+      return jsonResponse(201, {
+        personnel: {
+          id: row.id,
+          office_id: row.officeId ?? parsed.data.officeId,
+          officeId: row.officeId ?? parsed.data.officeId,
+          name: row.name,
+          title: row.title ?? null,
+          active: row.active ?? true,
+        },
+      });
     }
 
     if (method === 'PATCH') {
@@ -152,23 +181,35 @@ export async function handleRequest(request: Request): Promise<Response> {
 
       const actor = await requireOfficeStaffActor(admin, token, existing.office_id);
 
-      const updateData: Record<string, unknown> = {
-        updated_at: new Date().toISOString(),
-        updated_by: actor.id,
-      };
-      if (parsed.data.name !== undefined) updateData.name = parsed.data.name;
-      if (parsed.data.title !== undefined) updateData.title = parsed.data.title || null;
-      if (parsed.data.active !== undefined) updateData.active = parsed.data.active;
+      const { data: saved, error: rpcErr } = await admin.schema('api').rpc('save_office_personnel_record', {
+        requested_actor_id: actor.id,
+        requested_personnel_id: effectivePersonnelId,
+        requested_office_id: existing.office_id,
+        requested_name: parsed.data.name ?? null,
+        requested_title: parsed.data.title !== undefined ? parsed.data.title : null,
+        requested_active: parsed.data.active !== undefined ? parsed.data.active : null,
+        requested_request_id: randomUUID(),
+      });
 
-      const { data: updated, error: updateErr } = await admin
-        .from('office_personnel')
-        .update(updateData)
-        .eq('id', effectivePersonnelId)
-        .select()
-        .single();
+      if (rpcErr) {
+        const code = (rpcErr as { code?: string }).code;
+        if (code === 'P0002') return jsonResponse(404, { error: 'personnel_not_found' });
+        if (code === '42501') return jsonResponse(403, { error: rpcErr.message || 'access_denied' });
+        if (code === '22023') return jsonResponse(400, { error: rpcErr.message || 'invalid_request' });
+        throw rpcErr;
+      }
 
-      if (updateErr) throw updateErr;
-      return jsonResponse(200, { personnel: updated });
+      const row = (saved || {}) as Record<string, unknown>;
+      return jsonResponse(200, {
+        personnel: {
+          id: row.id,
+          office_id: row.officeId ?? existing.office_id,
+          officeId: row.officeId ?? existing.office_id,
+          name: row.name,
+          title: row.title ?? null,
+          active: row.active,
+        },
+      });
     }
 
     return jsonResponse(405, { error: 'Method not allowed' }, { Allow: 'GET, POST, PATCH' });

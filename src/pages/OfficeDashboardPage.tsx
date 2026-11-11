@@ -775,6 +775,11 @@ export function OfficeDashboardPage() {
                             <Calendar className="h-3 w-3" />
                             Visit Date: {visit.visitDate}
                           </span>
+                          {visit.expectedGate && (
+                            <span className="inline-flex items-center gap-1 rounded bg-slate-100 px-1.5 py-0.5 font-semibold text-slate-700">
+                              Expected Gate: {visit.expectedGate}
+                            </span>
+                          )}
                           <span className="flex items-center gap-1">
                             <Phone className="h-3 w-3" />
                             {visit.visitorContactNumber}
@@ -974,6 +979,9 @@ export function OfficeDashboardPage() {
             <p><strong>Office:</strong> {approveModalVisit?.officeName}</p>
             <p><strong>Target Personnel:</strong> {approveModalVisit?.personnelName}</p>
             <p><strong>Scheduled Date:</strong> {approveModalVisit?.visitDate}</p>
+            {approveModalVisit?.expectedGate && (
+              <p><strong>Expected Entry Gate:</strong> {approveModalVisit.expectedGate}</p>
+            )}
             <p><strong>Visitor Email:</strong> {approveModalVisit?.visitorEmail}</p>
           </div>
           <p className="text-xs text-[var(--color-text-muted)]">

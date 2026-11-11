@@ -302,9 +302,9 @@ describe('CROSS-LAYER PASS EMAIL CONTRACT & DELIVERY CLOSURE', () => {
 
     it('maintains the same passId, rawQrToken, and qrDataUrl through the entire delivery flow', () => {
       // In GetPassPage, setPassId and setRawQrToken are only set from result of issueVisitorPass
-      expect(getPassSrc).toContain('setPassId(result.passId);');
-      expect(getPassSrc).toContain('setRawQrToken(result.qrToken);');
-      expect(getPassSrc).toContain('generateBrandedQrDataUrl(result.qrToken');
+      expect(getPassSrc).toContain('setPassId(issued.passId);');
+      expect(getPassSrc).toContain('setRawQrToken(issued.qrToken);');
+      expect(getPassSrc).toContain('generateBrandedQrDataUrl(issued.qrToken');
       expect(getPassSrc).toContain('setQrDataUrl(qrUrl);');
 
       // EmailPassModal receives the exact same passId and rawQrToken

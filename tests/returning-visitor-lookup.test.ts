@@ -2,17 +2,26 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import * as supabaseModule from '../server/supabase.js';
 import * as actorsModule from '../server/actors.js';
 import lookupReturningHandler from '../server/routes/passes/lookup-returning.js';
+import { resetTurnstileReplayCache } from '../server/lib/turnstile.js';
 
 describe('Returning Visitor 1:1 Profile Discovery & Masking Contract (lookup-returning)', () => {
   const originalEnv = { ...process.env };
   const actorId = '11111111-1111-4111-8111-111111111111';
 
   beforeEach(() => {
+    resetTurnstileReplayCache();
     process.env = {
       ...originalEnv,
       RETURNING_MATCH_TOKEN_SECRET: 'test-secret-at-least-32-characters-long!',
       RATE_LIMIT_HMAC_SECRET: 'test-rate-limit-secret-32-characters!',
+      TURNSTILE_SECRET_KEY: 'test-turnstile-secret-at-least-32-chars!',
     };
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      new Response(JSON.stringify({ success: true, hostname: 'localhost' }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      }),
+    );
   });
 
   afterEach(() => {
@@ -83,7 +92,7 @@ describe('Returning Visitor 1:1 Profile Discovery & Masking Contract (lookup-ret
         authorization: 'Bearer token',
         'content-type': 'application/json',
       },
-      body: JSON.stringify({ firstName: 'Juan', lastName: 'Cruz', contactNumber: '09171234567' }),
+      body: JSON.stringify({ firstName: 'Juan', lastName: 'Cruz', contactNumber: '09171234567', captchaToken: 'cf-turnstile-429-test' }),
     });
 
     const res = await lookupReturningHandler.fetch(req);
@@ -119,7 +128,7 @@ describe('Returning Visitor 1:1 Profile Discovery & Masking Contract (lookup-ret
         authorization: 'Bearer token',
         'content-type': 'application/json',
       },
-      body: JSON.stringify({ firstName: 'Juan', lastName: 'Cruz', contactNumber: '09171234567' }),
+      body: JSON.stringify({ firstName: 'Juan', lastName: 'Cruz', contactNumber: '09171234567', captchaToken: 'cf-turnstile-429-test' }),
     });
 
     const res = await lookupReturningHandler.fetch(req);
@@ -187,6 +196,7 @@ describe('Returning Visitor 1:1 Profile Discovery & Masking Contract (lookup-ret
         lastName: 'Cruz',
         middleName: 'Dela',
         contactNumber: '09171234567',
+        captchaToken: 'cf-turnstile-masked-test',
       }),
     });
 
@@ -308,6 +318,7 @@ describe('Returning Visitor 1:1 Profile Discovery & Masking Contract (lookup-ret
         firstName: 'Nonexistent',
         lastName: 'Person',
         contactNumber: '09171234567',
+        captchaToken: 'cf-turnstile-empty-test',
       }),
     });
 
@@ -315,5 +326,46 @@ describe('Returning Visitor 1:1 Profile Discovery & Masking Contract (lookup-ret
     expect(res.status).toBe(200);
     const json = await res.json();
     expect(json.candidates).toEqual([]);
+  });
+
+  it('fails closed with 503 missing_validation_runtime_secret when TURNSTILE_SECRET_KEY is unset', async () => {
+    delete process.env.TURNSTILE_SECRET_KEY;
+
+    vi.spyOn(actorsModule, 'getVerifiedSessionContext').mockResolvedValue({
+      actorId,
+      role: 'visitor',
+      isAnonymous: true,
+      isRecoverySession: false,
+      user: { id: actorId },
+      identity: 'test-user',
+    } as any);
+
+    const mockAdmin = {
+      schema: vi.fn(),
+      from: vi.fn(),
+    };
+    vi.spyOn(supabaseModule, 'getServerSupabaseClients').mockReturnValue({
+      admin: mockAdmin as any,
+      client: {} as any,
+    });
+
+    const req = new Request('http://localhost/api/passes/lookup-returning', {
+      method: 'POST',
+      headers: {
+        authorization: 'Bearer token',
+        'content-type': 'application/json',
+      },
+      body: JSON.stringify({
+        firstName: 'Juan',
+        lastName: 'Cruz',
+        contactNumber: '09171234567',
+        captchaToken: 'cf-turnstile-fail-closed-test',
+      }),
+    });
+
+    const res = await lookupReturningHandler.fetch(req);
+    expect(res.status).toBe(503);
+    const json = await res.json();
+    expect(json.error).toBe('missing_validation_runtime_secret');
   });
 });

@@ -214,6 +214,47 @@ describe('Admin Dedicated Office Account Provisioning & Governance (Phase A & F)
             });
             return { data: null, error: null };
           }
+          if (name === 'save_office_record') {
+            if (!args.requested_office_id) {
+              const nowIso = new Date().toISOString();
+              const newOffice = {
+                id: randomUUID(),
+                name: args.requested_name,
+                description: args.requested_description ?? null,
+                active: args.requested_active ?? true,
+                verified: false,
+                publication_status: 'draft',
+                requires_approval_before_pass: args.requested_requires_approval_before_pass ?? true,
+                created_at: nowIso,
+                updated_at: nowIso,
+              };
+              mockDbData.offices.push(newOffice);
+              return { data: newOffice, error: null };
+            }
+            const existing = mockDbData.offices.find((o) => o.id === args.requested_office_id);
+            if (!existing) return { data: null, error: { message: 'office_not_found' } };
+            if (args.requested_name !== null && args.requested_name !== undefined) existing.name = args.requested_name;
+            if (args.requested_description !== undefined) existing.description = args.requested_description;
+            if (args.requested_active !== null && args.requested_active !== undefined) existing.active = args.requested_active;
+            if (args.requested_requires_approval_before_pass !== null && args.requested_requires_approval_before_pass !== undefined) {
+              existing.requires_approval_before_pass = args.requested_requires_approval_before_pass;
+            }
+            existing.updated_at = new Date().toISOString();
+            return { data: existing, error: null };
+          }
+          if (name === 'update_office_publication') {
+            const existing = mockDbData.offices.find((o) => o.id === args.requested_office_id);
+            if (!existing) return { data: null, error: { message: 'office_not_found' } };
+            const isPublished = args.requested_status === 'published';
+            const nowIso = new Date().toISOString();
+            existing.publication_status = args.requested_status;
+            existing.verified = isPublished;
+            existing.verified_at = isPublished ? nowIso : null;
+            existing.published_at = isPublished ? nowIso : null;
+            existing.archived_at = args.requested_status === 'archived' ? nowIso : null;
+            existing.updated_at = nowIso;
+            return { data: existing, error: null };
+          }
           if (name === 'reset_staff_temporary_password') {
             const staff = mockDbData.staff_profiles.find((p) => p.user_id === args.requested_user_id);
             if (staff) staff.must_change_password = true;

@@ -20,6 +20,7 @@ import identifyReturningHandler, {
 } from '../server/routes/passes/identify-returning.js';
 import capabilitiesHandler from '../server/routes/passes/capabilities.js';
 import lookupReturningHandler from '../server/routes/passes/lookup-returning.js';
+import { resetTurnstileReplayCache } from '../server/lib/turnstile.js';
 
 describe('Returning Visitor Provisional 1:1 Biometric & Enrollment Architecture (Comprehensive)', () => {
   const originalEnv = { ...process.env };
@@ -45,11 +46,19 @@ describe('Returning Visitor Provisional 1:1 Biometric & Enrollment Architecture 
   }
 
   beforeEach(() => {
+    resetTurnstileReplayCache();
     process.env = { ...originalEnv };
     process.env.RETURNING_VISITOR_TEMPLATE_KEY = testKey;
     process.env.RETURNING_MATCH_TOKEN_SECRET = testSecret;
     process.env.RETURNING_FACE_MIN_COSINE = '0.363';
     process.env.RETURNING_FACE_THRESHOLD_MODE = 'provisional';
+    process.env.TURNSTILE_SECRET_KEY = 'test-turnstile-secret-at-least-32-chars!';
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      new Response(JSON.stringify({ success: true, hostname: 'localhost' }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      }),
+    );
   });
 
   afterEach(() => {
@@ -151,7 +160,12 @@ describe('Returning Visitor Provisional 1:1 Biometric & Enrollment Architecture 
           authorization: 'Bearer dummy-token',
           'content-type': 'application/json',
         },
-        body: JSON.stringify({ firstName: 'Juan', lastName: 'Dela Cruz', contactNumber: '09171234567' }),
+        body: JSON.stringify({
+          firstName: 'Juan',
+          lastName: 'Dela Cruz',
+          contactNumber: '09171234567',
+          captchaToken: 'cf-turnstile-provisional-test',
+        }),
       });
 
       const res = await lookupReturningHandler.fetch(req);

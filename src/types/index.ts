@@ -7,7 +7,7 @@ export type Timestamp = AppTimestamp;
    ============================================================ */
 export type UserRole = 'guard' | 'admin' | 'superadmin' | 'office_staff';
 
-export type DeviceType = 'entry' | 'exit' | 'kiosk' | 'guard_station';
+export type DeviceType = 'entry' | 'exit' | 'kiosk' | 'guard_station' | 'emergency_device';
 
 export type DeviceStatus = 'active' | 'revoked';
 
@@ -71,6 +71,7 @@ export interface GatePass {
   decidedByUid: string | null;
   rejectionReason: string | null;
   gate: string | null;
+  expectedGate?: string | null;
 }
 
 export interface VisitLog {

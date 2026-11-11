@@ -40,6 +40,15 @@ async function handleRequest(request: Request): Promise<Response> {
         reconciliation_retention_days,
         visitor_instructions,
         automatic_cleanup_enabled,
+        global_retention_freeze,
+        global_retention_freeze_reason,
+        global_retention_freeze_updated_by,
+        global_retention_freeze_updated_at,
+        allow_emergency_exception,
+        emergency_exception_policy_note,
+        emergency_record_retention_enabled,
+        emergency_record_retention_days,
+        default_expected_gate,
         updated_at
       `)
       .eq('singleton', true)
@@ -54,6 +63,9 @@ async function handleRequest(request: Request): Promise<Response> {
     const endTime = typeof data.working_hours_end === 'string'
       ? data.working_hours_end.slice(0, 5)
       : '17:00';
+
+    const turnstileSiteKeyConfigured = Boolean(process.env.VITE_TURNSTILE_SITE_KEY?.trim());
+    const turnstileVerifierConfigured = Boolean(process.env.TURNSTILE_SECRET_KEY?.trim());
 
     return jsonResponse(200, {
       workingHours: {
@@ -82,6 +94,21 @@ async function handleRequest(request: Request): Promise<Response> {
       auditRetentionDays: data.audit_retention_days,
       reconciliationRetentionDays: data.reconciliation_retention_days,
       automaticCleanupEnabled: (data as any).automatic_cleanup_enabled ?? true,
+      globalRetentionFreeze: Boolean((data as any).global_retention_freeze),
+      globalRetentionFreezeReason: (data as any).global_retention_freeze_reason ?? null,
+      globalRetentionFreezeUpdatedBy: (data as any).global_retention_freeze_updated_by ?? null,
+      globalRetentionFreezeUpdatedAt: (data as any).global_retention_freeze_updated_at ?? null,
+      allowEmergencyException: Boolean((data as any).allow_emergency_exception),
+      emergencyExceptionPolicyNote: (data as any).emergency_exception_policy_note ?? null,
+      emergencyRecordRetentionEnabled: (data as any).emergency_record_retention_enabled ?? true,
+      emergencyRecordRetentionDays: (data as any).emergency_record_retention_days ?? 90,
+      defaultExpectedGate: (data as any).default_expected_gate ?? null,
+      security: {
+        turnstileSiteKeyConfigured,
+        turnstileVerifierConfigured,
+        turnstileFullyVerified: turnstileSiteKeyConfigured && turnstileVerifierConfigured,
+        biometricStorageRetired: true,
+      },
       schedulingDaysAhead: data.scheduling_days_ahead,
       updatedAt: data.updated_at,
     });

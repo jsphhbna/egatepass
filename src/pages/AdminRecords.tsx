@@ -1,7 +1,7 @@
 import { useAuth } from '@/hooks/useAuth';
 import { formatManilaDateTime, formatManilaTime, formatManilaIso, formatManilaFileTimestamp, getManilaDatePresetRange, type DatePresetKey } from '@/lib/manilaTime';
 import { getActiveIncidentHoldsForRecord, createIncidentHold, releaseIncidentHold, type IncidentHold } from '@/services/incidentHold';
-import { AlertTriangle, Download, Eye, Printer, ShieldAlert, ShieldCheck, Users, History, Search } from 'lucide-react';
+import { AlertTriangle, ClipboardCheck, Download, Eye, MapPin, Printer, ShieldAlert, ShieldCheck } from 'lucide-react';
 import { useState, useEffect, useRef } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { Card, Input, Select, Button, DataTable, DataTableHead, DataTableRow, DataTableCell, Modal, StatusBadge } from '@/components/ui';
@@ -43,6 +43,39 @@ interface SerializedRecordPass {
   decidedByUid: string | null;
   rejectionReason: string | null;
   gate: string | null;
+  expectedGate?: string | null;
+}
+
+interface EmergencyOfflineRecord {
+  id: string;
+  gate: string;
+  visitor_full_name: string;
+  declared_address: string | null;
+  address_status: string | null;
+  purpose: string;
+  destination_office_name_snapshot: string | null;
+  office_resolution_status: string | null;
+  id_physically_inspected: boolean;
+  record_classification: string | null;
+  local_recorded_at: string;
+  server_received_at: string;
+  local_sequence: number;
+  snapshot_version: string | null;
+  emergency_exception_applied: boolean;
+  reconciliation_status: 'received' | 'needs_review' | 'accepted' | 'duplicate' | 'rejected' | string;
+  reconciliation_notes: string | null;
+  reconciled_at: string | null;
+  device_name?: string | null;
+  device_alias?: string | null;
+}
+
+interface OfflineSummaryCounts {
+  totalCount: number;
+  needsReviewCount: number;
+  receivedCount: number;
+  acceptedCount: number;
+  duplicateCount: number;
+  rejectedCount: number;
 }
 
 const RECORDS_PAGE_SIZE = 50;
@@ -76,14 +109,31 @@ export function deserializeRecordPass(p: SerializedRecordPass): GatePassWithId {
     decidedByUid: p.decidedByUid,
     rejectionReason: p.rejectionReason,
     gate: p.gate,
+    expectedGate: p.expectedGate ?? null,
   };
 }
 
 export function AdminRecords() {
   const { role } = useAuth();
-  const [searchParams, setSearchParams] = useSearchParams();
-  const currentTab = (searchParams.get('tab') as 'current' | 'history' | 'search') || 'search';
+  const [searchParams] = useSearchParams();
+  const currentTab = (searchParams.get('tab') as 'current' | 'history' | 'search' | 'offline') || 'search';
+  const isOfflineTab = currentTab === 'offline';
   const [passes, setPasses] = useState<GatePassWithId[]>([]);
+  const [exportTruncatedNotice, setExportTruncatedNotice] = useState<string | null>(null);
+  const [expectedGateDraft, setExpectedGateDraft] = useState('');
+  const [savingExpectedGate, setSavingExpectedGate] = useState(false);
+
+  // Offline Mode Recorded state
+  const [offlineRecords, setOfflineRecords] = useState<EmergencyOfflineRecord[]>([]);
+  const [offlineSummary, setOfflineSummary] = useState<OfflineSummaryCounts | null>(null);
+  const [offlineLoading, setOfflineLoading] = useState(false);
+  const [offlineError, setOfflineError] = useState<string | null>(null);
+  const [offlineStatusFilter, setOfflineStatusFilter] = useState<string>('all');
+  const [offlineGateFilter, setOfflineGateFilter] = useState<string>('');
+  const [reconcilingRecord, setReconcilingRecord] = useState<EmergencyOfflineRecord | null>(null);
+  const [reconcileDecision, setReconcileDecision] = useState<'accepted' | 'needs_review' | 'duplicate' | 'rejected'>('accepted');
+  const [reconcileNotes, setReconcileNotes] = useState('');
+  const [submittingReconcile, setSubmittingReconcile] = useState(false);
   const [loading, setLoading] = useState(true);
   const [dateFrom, setDateFrom] = useState('');
   const [dateTo, setDateTo] = useState('');
@@ -119,10 +169,113 @@ export function AdminRecords() {
       setDateFrom('');
       setDateTo('');
       setDatePreset('');
+    } else if (currentTab === 'offline') {
+      setStatusFilter('');
+      setDateFrom('');
+      setDateTo('');
+      setDatePreset('');
     } else {
       setStatusFilter('');
+      setDateFrom('');
+      setDateTo('');
+      setDatePreset('');
     }
   }, [currentTab]);
+
+  async function loadOfflineRecords() {
+    setOfflineLoading(true);
+    setOfflineError(null);
+    try {
+      const token = await getAccessToken();
+      const params = new URLSearchParams();
+      if (offlineStatusFilter && offlineStatusFilter !== 'all') params.set('status', offlineStatusFilter);
+      if (offlineGateFilter.trim()) params.set('gate', offlineGateFilter.trim());
+      if (dateFrom) params.set('dateFrom', dateFrom);
+      if (dateTo) params.set('dateTo', dateTo);
+      const res = await fetch(`/api/admin/emergency-records?${params.toString()}`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      const data = await res.json().catch(() => null) as {
+        records?: EmergencyOfflineRecord[];
+        summary?: OfflineSummaryCounts;
+        error?: string;
+        message?: string;
+      } | null;
+      if (!res.ok) throw new Error(data?.message || data?.error || 'Failed to load offline gate records');
+      setOfflineRecords(data?.records ?? []);
+      setOfflineSummary(data?.summary ?? null);
+    } catch (err: any) {
+      const msg = err?.message || 'Unable to load offline gate records';
+      setOfflineRecords([]);
+      setOfflineError(msg);
+      toast.error(msg);
+    } finally {
+      setOfflineLoading(false);
+    }
+  }
+
+  async function handleSaveExpectedGate() {
+    if (!selectedPass) return;
+    const trimmedGate = expectedGateDraft.trim();
+    if (!trimmedGate) {
+      toast.error('Enter an expected gate name before saving.');
+      return;
+    }
+    setSavingExpectedGate(true);
+    try {
+      const token = await getAccessToken();
+      const res = await fetch('/api/admin/records', {
+        method: 'PATCH',
+        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          passId: selectedPass.id,
+          expectedGate: trimmedGate,
+        }),
+      });
+      const data = await res.json().catch(() => null) as { error?: string; message?: string; expectedGate?: string } | null;
+      if (!res.ok) throw new Error(data?.message || data?.error || 'Failed to assign expected gate');
+      const nextGate = data?.expectedGate ?? trimmedGate;
+      setPasses((prev) => prev.map((p) => (p.id === selectedPass.id ? { ...p, expectedGate: nextGate } : p)));
+      setSelectedPass((prev) => (prev && prev.id === selectedPass.id ? { ...prev, expectedGate: nextGate } : prev));
+      selectedPassRef.current = selectedPassRef.current ? { ...selectedPassRef.current, expectedGate: nextGate } : null;
+      toast.success(`Expected gate updated to "${nextGate}".`);
+    } catch (err: any) {
+      toast.error(err?.message || 'Failed to update expected gate');
+    } finally {
+      setSavingExpectedGate(false);
+    }
+  }
+
+  async function handleSubmitReconcile() {
+    if (!reconcilingRecord) return;
+    if (reconcileNotes.trim().length < 5) {
+      toast.error('Reconciliation notes must be at least 5 characters.');
+      return;
+    }
+    setSubmittingReconcile(true);
+    try {
+      const token = await getAccessToken();
+      const res = await fetch('/api/admin/emergency-records', {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          recordId: reconcilingRecord.id,
+          decision: reconcileDecision,
+          notes: reconcileNotes.trim(),
+        }),
+      });
+      const data = await res.json().catch(() => null) as { error?: string; message?: string } | null;
+      if (!res.ok) throw new Error(data?.message || data?.error || 'Failed to reconcile offline record');
+      toast.success(`Offline record marked as "${reconcileDecision}".`);
+      setReconcilingRecord(null);
+      setReconcileNotes('');
+      await loadOfflineRecords();
+    } catch (err: any) {
+      toast.error(err?.message || 'Reconciliation failed');
+    } finally {
+      setSubmittingReconcile(false);
+    }
+  }
 
   const recordsQueryGenerationRef = useRef(0);
   const recordsAbortControllerRef = useRef<AbortController | null>(null);
@@ -319,8 +472,12 @@ export function AdminRecords() {
   }
 
   useEffect(() => {
-    void loadRootRecords();
-  }, [dateFrom, dateTo, statusFilter, debouncedSearch]);
+    if (isOfflineTab) {
+      void loadOfflineRecords();
+    } else {
+      void loadRootRecords();
+    }
+  }, [isOfflineTab, dateFrom, dateTo, statusFilter, debouncedSearch, offlineStatusFilter, offlineGateFilter]);
 
   const filteredPasses = passes;
 
@@ -328,6 +485,7 @@ export function AdminRecords() {
     const currentGen = ++holdLookupGenerationRef.current;
     setSelectedPass(pass);
     selectedPassRef.current = pass;
+    setExpectedGateDraft(pass.expectedGate || '');
     setHoldLookupState({ status: 'loading', passId: pass.id, visitorId: pass.visitorId });
     try {
       const holds = await getActiveIncidentHoldsForRecord({
@@ -430,12 +588,100 @@ export function AdminRecords() {
   async function exportRecords(format: 'csv' | 'xlsx' | 'pdf') {
     setExporting(true);
     setExportFormat(format);
+    setExportTruncatedNotice(null);
     const exportSearch = search.trim();
     const exportDateFrom = dateFrom;
     const exportDateTo = dateTo;
     const exportStatus = statusFilter;
 
     try {
+      if (isOfflineTab) {
+        const token = await getAccessToken();
+        const params = new URLSearchParams();
+        params.set('mode', 'offline');
+        params.set('export', 'all');
+        if (offlineStatusFilter && offlineStatusFilter !== 'all') params.set('status', offlineStatusFilter);
+        if (exportDateFrom) params.set('dateFrom', exportDateFrom);
+        if (exportDateTo) params.set('dateTo', exportDateTo);
+        const res = await fetch(`/api/admin/records?${params.toString()}`, {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        const payload = await res.json().catch(() => null) as {
+          offlineRecords?: Array<{
+            classification: string;
+            gate: string;
+            localSequence: number;
+            visitorName: string;
+            declaredAddress: string | null;
+            purpose: string;
+            officeName: string | null;
+            idPhysicallyInspected: boolean;
+            emergencyExceptionApplied: boolean;
+            reconciliationStatus: string;
+            localRecordedAt: string;
+            serverReceivedAt: string;
+          }>;
+          offlineTotalCount?: number;
+          truncated?: boolean;
+          error?: string;
+        } | null;
+        if (!res.ok) throw new Error(payload?.error || 'Failed to export offline records');
+        const rows = (payload?.offlineRecords ?? []).map((r) => ({
+          classification: r.classification || 'OFFLINE MODE RECORDED',
+          gate: r.gate,
+          localSequence: r.localSequence,
+          visitorName: r.visitorName,
+          declaredAddress: r.declaredAddress || '',
+          purpose: r.purpose,
+          officeName: r.officeName || '',
+          idPhysicallyInspected: r.idPhysicallyInspected ? 'Yes' : 'No',
+          emergencyExceptionApplied: r.emergencyExceptionApplied ? 'Yes' : 'No',
+          reconciliationStatus: r.reconciliationStatus,
+          localRecordedAt: formatManilaIso(new Date(r.localRecordedAt).getTime()),
+          serverReceivedAt: formatManilaIso(new Date(r.serverReceivedAt).getTime()),
+        }));
+        const fileBase = `egatepass-offline-mode-recorded-${formatManilaFileTimestamp(new Date())}`;
+        const reportOpts = {
+          title: 'EARIST E-GatePass — OFFLINE MODE RECORDED Log',
+          filename: fileBase,
+          columns: [
+            { header: 'Classification', key: 'classification', width: 22 },
+            { header: 'Gate', key: 'gate', width: 14 },
+            { header: 'Seq', key: 'localSequence', width: 8 },
+            { header: 'Visitor Name', key: 'visitorName', width: 22 },
+            { header: 'Declared Address', key: 'declaredAddress', width: 30 },
+            { header: 'Purpose', key: 'purpose', width: 26 },
+            { header: 'Destination Office', key: 'officeName', width: 22 },
+            { header: 'ID Inspected', key: 'idPhysicallyInspected', width: 12 },
+            { header: 'Exception Applied', key: 'emergencyExceptionApplied', width: 14 },
+            { header: 'Reconciliation', key: 'reconciliationStatus', width: 16 },
+            { header: 'Recorded (Manila)', key: 'localRecordedAt', width: 20 },
+            { header: 'Synced (Manila)', key: 'serverReceivedAt', width: 20 },
+          ],
+          rows,
+          generatedAt: formatManilaDateTime(new Date()),
+          generatedBy: 'Authorized Admin',
+          filterMetadata: {
+            Classification: 'OFFLINE MODE RECORDED',
+            Status: offlineStatusFilter || 'all',
+            DateRange: exportDateFrom || exportDateTo ? `${exportDateFrom || '...'} to ${exportDateTo || '...'}` : 'All Dates',
+            Timezone: 'Asia/Manila (UTC+8)',
+          },
+          totalRecords: payload?.offlineTotalCount ?? rows.length,
+        };
+        if (format === 'csv') await exportReportToCsv(reportOpts);
+        else if (format === 'xlsx') await exportReportToExcel(reportOpts);
+        else await exportReportToPdf(reportOpts);
+
+        if (payload?.truncated) {
+          const notice = `Offline export capped at ${EXPORT_MAX_ROWS.toLocaleString()} of ${(payload.offlineTotalCount ?? rows.length).toLocaleString()} records. Narrow your filters for an untruncated export.`;
+          setExportTruncatedNotice(notice);
+          toast.warning(notice);
+        } else {
+          toast.success(`Exported ${rows.length.toLocaleString()} OFFLINE MODE RECORDED record${rows.length === 1 ? '' : 's'}.`);
+        }
+        return;
+      }
       const exportResult = await collectCursorPages<GatePassWithId, string>(
         async (cursor, pageSize) => {
           const res = await fetchRecordsPage({
@@ -522,7 +768,9 @@ export function AdminRecords() {
       }
 
       if (exportResult.truncated) {
-        toast.warning(`Export reached the ${EXPORT_MAX_ROWS.toLocaleString()} record safety limit. Narrow the filters for a complete file.`);
+        const notice = `Export reached the ${EXPORT_MAX_ROWS.toLocaleString()} record safety limit. Narrow the filters for a complete file.`;
+        setExportTruncatedNotice(notice);
+        toast.warning(notice);
       } else {
         toast.success(`Exported ${exportPasses.length.toLocaleString()} filtered record${exportPasses.length === 1 ? '' : 's'}.`);
       }
@@ -586,49 +834,15 @@ export function AdminRecords() {
         </div>
       </div>
 
-      {/* Sub-Tabs Navigation */}
-      <div className="flex border-b border-[var(--color-border)] gap-2 overflow-x-auto pb-px print:hidden">
-        {[
-          { id: 'search', label: 'Search & Records', icon: Search },
-          { id: 'current', label: 'Current Visitors', icon: Users },
-          { id: 'history', label: 'Visit History', icon: History },
-        ].map((tab) => {
-          const Icon = tab.icon;
-          const isActive = currentTab === tab.id;
-          return (
-            <button
-              key={tab.id}
-              type="button"
-              onClick={() => {
-                const next = new URLSearchParams(searchParams);
-                next.set('tab', tab.id);
-                setSearchParams(next);
-                if (tab.id === 'current') {
-                  setStatusFilter('inside');
-                  setDateFrom('');
-                  setDateTo('');
-                  setDatePreset('');
-                } else if (tab.id === 'history') {
-                  setStatusFilter('exited,expired,rejected');
-                  setDateFrom('');
-                  setDateTo('');
-                  setDatePreset('');
-                } else {
-                  setStatusFilter('');
-                }
-              }}
-              className={`flex items-center gap-2 px-4 py-2.5 text-xs font-bold whitespace-nowrap border-b-2 transition-colors ${
-                isActive
-                  ? 'border-[#7A0A0A] text-[#7A0A0A]'
-                  : 'border-transparent text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)]'
-              }`}
-            >
-              <Icon className="h-4 w-4" />
-              <span>{tab.label}</span>
-            </button>
-          );
-        })}
-      </div>
+      {exportTruncatedNotice && (
+        <div role="alert" className="flex items-start gap-2.5 rounded-lg border border-amber-300 bg-amber-50 p-3.5 text-xs text-amber-950 print:hidden">
+          <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-amber-700" aria-hidden="true" />
+          <div>
+            <p className="font-bold">Export Limit Notice</p>
+            <p className="mt-0.5">{exportTruncatedNotice}</p>
+          </div>
+        </div>
+      )}
 
       {/* Print Header */}
       <div className="hidden print:block mb-4">
@@ -710,16 +924,29 @@ export function AdminRecords() {
         </div>
 
         <div className="flex flex-wrap gap-4">
-          <div className="min-w-0 flex-1 sm:min-w-52">
-            <label htmlFor="visitor-search" className="mb-2 block text-sm font-medium text-[var(--color-text-secondary)]">Search Name</label>
-            <Input
-              id="visitor-search"
-              type="text"
-              placeholder="Search visitors..."
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-            />
-          </div>
+          {!isOfflineTab ? (
+            <div className="min-w-0 flex-1 sm:min-w-52">
+              <label htmlFor="visitor-search" className="mb-2 block text-sm font-medium text-[var(--color-text-secondary)]">Search Name</label>
+              <Input
+                id="visitor-search"
+                type="text"
+                placeholder="Search visitors..."
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+              />
+            </div>
+          ) : (
+            <div className="min-w-0 flex-1 sm:min-w-52">
+              <label htmlFor="offline-gate-filter" className="mb-2 block text-sm font-medium text-[var(--color-text-secondary)]">Filter by Gate</label>
+              <Input
+                id="offline-gate-filter"
+                type="text"
+                placeholder="e.g. Main Gate"
+                value={offlineGateFilter}
+                onChange={(e) => setOfflineGateFilter(e.target.value)}
+              />
+            </div>
+          )}
           
           <div className="w-full sm:w-44">
             <label htmlFor="visitor-date-from" className="mb-2 block text-sm font-medium text-[var(--color-text-secondary)]">From Date</label>
@@ -747,26 +974,178 @@ export function AdminRecords() {
             />
           </div>
 
-          <div className="w-full sm:w-48">
-            <label className="mb-2 block text-sm font-medium text-[var(--color-text-secondary)]">Status</label>
-            <Select
-              value={statusFilter}
-              onChange={(e) => setStatusFilter(e.target.value)}
-              aria-label="Filter by status"
-            >
-              <option value="">All Statuses</option>
-              <option value="inside">Currently Inside</option>
-              <option value="exited,expired,rejected">Closed / Historical</option>
-              <option value="issued">Issued (Not Entered)</option>
-              <option value="pending">Pending Approval</option>
-              <option value="exited">Exited</option>
-              <option value="rejected">Rejected</option>
-              <option value="expired">Expired</option>
-          </Select>
-        </div>
+          {!isOfflineTab ? (
+            <div className="w-full sm:w-48">
+              <label className="mb-2 block text-sm font-medium text-[var(--color-text-secondary)]">Status</label>
+              <Select
+                value={statusFilter}
+                onChange={(e) => setStatusFilter(e.target.value)}
+                aria-label="Filter by status"
+              >
+                <option value="">All Statuses</option>
+                <option value="inside">Currently Inside</option>
+                <option value="exited,expired,rejected">Closed / Historical</option>
+                <option value="issued">Issued (Not Entered)</option>
+                <option value="pending">Pending Approval</option>
+                <option value="exited">Exited</option>
+                <option value="rejected">Rejected</option>
+                <option value="expired">Expired</option>
+              </Select>
+            </div>
+          ) : (
+            <div className="w-full sm:w-48">
+              <label className="mb-2 block text-sm font-medium text-[var(--color-text-secondary)]">Reconciliation</label>
+              <Select
+                value={offlineStatusFilter}
+                onChange={(e) => setOfflineStatusFilter(e.target.value)}
+                aria-label="Filter offline reconciliation status"
+              >
+                <option value="all">All Statuses</option>
+                <option value="needs_review">Needs Review</option>
+                <option value="received">Received</option>
+                <option value="accepted">Accepted</option>
+                <option value="duplicate">Duplicate</option>
+                <option value="rejected">Rejected</option>
+              </Select>
+            </div>
+          )}
         </div>
       </Card>
 
+      {isOfflineTab ? (
+        <div className="space-y-4">
+          <Card className="border-amber-200 bg-amber-50/50 p-4">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div className="flex items-center gap-2">
+                <ShieldAlert className="h-5 w-5 text-amber-700" aria-hidden="true" />
+                <div>
+                  <div className="flex items-center gap-2">
+                    <h2 className="text-base font-bold text-[var(--color-text-primary)]">Emergency Offline Mode Gate Records</h2>
+                    <StatusBadge status="warning" label="OFFLINE MODE RECORDED" />
+                  </div>
+                  <p className="mt-0.5 text-xs text-[var(--color-text-secondary)]">
+                    Synced from authorized Emergency Devices after physical ID inspection. These entries remain permanently classified as OFFLINE MODE RECORDED and never auto-convert into QR passes.
+                  </p>
+                </div>
+              </div>
+              {offlineSummary && (
+                <div className="flex flex-wrap gap-2 text-xs font-semibold">
+                  <span className="rounded bg-white px-2.5 py-1 border border-[var(--color-border)]">Total: {offlineSummary.totalCount}</span>
+                  <span className="rounded bg-amber-100 text-amber-900 px-2.5 py-1">Needs Review: {offlineSummary.needsReviewCount}</span>
+                  <span className="rounded bg-emerald-100 text-emerald-900 px-2.5 py-1">Accepted: {offlineSummary.acceptedCount}</span>
+                </div>
+              )}
+            </div>
+          </Card>
+
+          <DataTable>
+            <DataTableHead>
+              <DataTableRow>
+                <DataTableCell isHeader>Visitor / Destination</DataTableCell>
+                <DataTableCell isHeader>Classification</DataTableCell>
+                <DataTableCell isHeader>Gate & Seq</DataTableCell>
+                <DataTableCell isHeader>Recorded (Manila)</DataTableCell>
+                <DataTableCell isHeader>Reconciliation</DataTableCell>
+                <DataTableCell isHeader className="text-right">Action</DataTableCell>
+              </DataTableRow>
+            </DataTableHead>
+            <tbody className="divide-y divide-[var(--color-border)] bg-[var(--color-surface)]">
+              {offlineLoading ? (
+                <tr>
+                  <td colSpan={6} className="py-8 text-center text-[var(--color-text-muted)]">
+                    Loading offline gate records...
+                  </td>
+                </tr>
+              ) : offlineError ? (
+                <tr>
+                  <td colSpan={6} className="py-8 text-center">
+                    <p className="text-sm font-medium text-[var(--color-danger)]">{offlineError}</p>
+                    <Button className="mt-2" size="sm" variant="secondary" onClick={() => void loadOfflineRecords()}>
+                      Retry
+                    </Button>
+                  </td>
+                </tr>
+              ) : offlineRecords.length === 0 ? (
+                <tr>
+                  <td colSpan={6} className="py-8 text-center text-[var(--color-text-muted)]">
+                    No offline gate records found for the selected filters.
+                  </td>
+                </tr>
+              ) : (
+                offlineRecords.map((rec) => (
+                  <DataTableRow key={rec.id}>
+                    <DataTableCell>
+                      <p className="font-bold text-[var(--color-text-primary)]">{rec.visitor_full_name}</p>
+                      <p className="text-xs text-[var(--color-text-secondary)]">
+                        {rec.destination_office_name_snapshot || 'Campus Visit'} — {rec.purpose}
+                      </p>
+                      {rec.declared_address && (
+                        <p className="text-[11px] text-[var(--color-text-muted)]">Address: {rec.declared_address}</p>
+                      )}
+                    </DataTableCell>
+                    <DataTableCell>
+                      <StatusBadge status="warning" label="OFFLINE MODE RECORDED" />
+                      <div className="mt-1 flex flex-wrap gap-1 text-[10px] text-[var(--color-text-muted)]">
+                        <span>{rec.id_physically_inspected ? 'ID Inspected' : 'No ID Flag'}</span>
+                        {rec.emergency_exception_applied && (
+                          <span className="rounded bg-red-50 px-1 text-red-700 font-semibold">Policy Exception</span>
+                        )}
+                      </div>
+                    </DataTableCell>
+                    <DataTableCell className="whitespace-nowrap text-xs">
+                      <span className="font-semibold text-[var(--color-text-primary)]">{rec.gate}</span>
+                      <span className="block font-mono text-[11px] text-[var(--color-text-muted)]">
+                        Seq #{rec.local_sequence}{rec.device_alias ? ` (${rec.device_alias})` : ''}
+                      </span>
+                    </DataTableCell>
+                    <DataTableCell className="whitespace-nowrap text-xs text-[var(--color-text-secondary)]">
+                      {formatManilaDateTime(new Date(rec.local_recorded_at).getTime())}
+                    </DataTableCell>
+                    <DataTableCell>
+                      <StatusBadge
+                        status={
+                          rec.reconciliation_status === 'accepted'
+                            ? 'approved'
+                            : rec.reconciliation_status === 'rejected'
+                            ? 'rejected'
+                            : rec.reconciliation_status === 'needs_review'
+                            ? 'warning'
+                            : 'pending'
+                        }
+                        label={rec.reconciliation_status.replace(/_/g, ' ')}
+                      />
+                      {rec.reconciliation_notes && (
+                        <p className="mt-1 max-w-44 truncate text-[11px] text-[var(--color-text-muted)]" title={rec.reconciliation_notes || undefined}>
+                          {rec.reconciliation_notes}
+                        </p>
+                      )}
+                    </DataTableCell>
+                    <DataTableCell className="text-right">
+                      <Button
+                        variant="secondary"
+                        size="sm"
+                        icon={<ClipboardCheck className="h-3.5 w-3.5" />}
+                        onClick={() => {
+                          setReconcilingRecord(rec);
+                          setReconcileDecision(
+                            rec.reconciliation_status === 'needs_review' || rec.reconciliation_status === 'duplicate' || rec.reconciliation_status === 'rejected'
+                              ? rec.reconciliation_status
+                              : 'accepted',
+                          );
+                          setReconcileNotes(rec.reconciliation_notes || '');
+                        }}
+                      >
+                        Reconcile
+                      </Button>
+                    </DataTableCell>
+                  </DataTableRow>
+                ))
+              )}
+            </tbody>
+          </DataTable>
+        </div>
+      ) : (
+      <>
       {/* Table */}
       <div className="print:border-none print:shadow-none print:m-0 print:p-0">
         <DataTable>
@@ -828,6 +1207,11 @@ export function AdminRecords() {
                         {pass.gate && <span className="block text-[11px] text-[var(--color-text-muted)] font-mono">Gate: {pass.gate}</span>}
                       </>
                     ) : '—'}
+                    {pass.expectedGate && (
+                      <span className="block text-[11px] text-[var(--color-brand)] font-medium">
+                        Expected: {pass.expectedGate}
+                      </span>
+                    )}
                   </DataTableCell>
                   <DataTableCell className="whitespace-nowrap text-[var(--color-text-secondary)] print:px-2">
                     {pass.timeOut ? formatManilaTime(pass.timeOut.toMillis()) : '—'}
@@ -850,6 +1234,8 @@ export function AdminRecords() {
           </div>
         )}
       </div>
+      </>
+      )}
 
       <Modal
         isOpen={!!selectedPass}
@@ -869,11 +1255,41 @@ export function AdminRecords() {
             </div>
 
             <dl className="grid gap-4 rounded-xl border border-[var(--color-border)] bg-[var(--color-canvas)] p-4 sm:grid-cols-2">
-              <PassDetail label="Entry gate" value={selectedPass.gate || 'Not recorded'} />
+              <PassDetail label="Expected gate" value={selectedPass.expectedGate || 'Not assigned'} />
+              <PassDetail label="Actual entry gate" value={selectedPass.gate || 'Not recorded'} />
               <PassDetail label="Issued" value={selectedPass.issuedAt ? formatManilaDateTime(selectedPass.issuedAt.toMillis()) : 'Not recorded'} />
               <PassDetail label="Time in" value={selectedPass.timeIn ? formatManilaDateTime(selectedPass.timeIn.toMillis()) : 'Not recorded'} />
               <PassDetail label="Time out" value={selectedPass.timeOut ? formatManilaDateTime(selectedPass.timeOut.toMillis()) : 'Not recorded'} />
             </dl>
+
+            {(role === 'admin' || role === 'superadmin') && (
+              <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface-subtle)] p-4">
+                <label htmlFor="expected-gate-input" className="mb-1.5 flex items-center gap-1.5 text-xs font-bold uppercase tracking-wide text-[var(--color-text-primary)]">
+                  <MapPin className="h-3.5 w-3.5 text-[var(--color-brand)]" />
+                  Assign Expected Entry Gate
+                </label>
+                <div className="flex flex-wrap gap-2">
+                  <Input
+                    id="expected-gate-input"
+                    type="text"
+                    value={expectedGateDraft}
+                    onChange={(e) => setExpectedGateDraft(e.target.value)}
+                    placeholder="e.g. Main Gate / Gate 1"
+                    maxLength={80}
+                    className="flex-1 min-w-44"
+                  />
+                  <Button
+                    type="button"
+                    size="sm"
+                    onClick={() => void handleSaveExpectedGate()}
+                    loading={savingExpectedGate}
+                    disabled={savingExpectedGate || !expectedGateDraft.trim()}
+                  >
+                    Save Expected Gate
+                  </Button>
+                </div>
+              </div>
+            )}
 
             <div className="grid gap-5 sm:grid-cols-2">
               <VerificationImage title="Visitor photo" publicId={selectedPass.photoPublicId} />
@@ -1023,6 +1439,80 @@ export function AdminRecords() {
             </Button>
           </div>
         </div>
+      </Modal>
+
+      {/* Offline Record Reconciliation Modal */}
+      <Modal
+        isOpen={!!reconcilingRecord}
+        onClose={() => {
+          if (!submittingReconcile) {
+            setReconcilingRecord(null);
+            setReconcileNotes('');
+          }
+        }}
+        title="Reconcile OFFLINE MODE RECORDED Entry"
+        preventClose={submittingReconcile}
+      >
+        {reconcilingRecord && (
+          <div className="space-y-4">
+            <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs">
+              <div className="flex items-center justify-between gap-2">
+                <span className="font-bold text-[var(--color-text-primary)]">{reconcilingRecord.visitor_full_name}</span>
+                <StatusBadge status="warning" label="OFFLINE MODE RECORDED" />
+              </div>
+              <p className="mt-1 text-[var(--color-text-secondary)]">
+                Gate: {reconcilingRecord.gate} · Seq #{reconcilingRecord.local_sequence} · Office: {reconcilingRecord.destination_office_name_snapshot || 'Campus'}
+              </p>
+            </div>
+            <div>
+              <label htmlFor="reconcile-decision-select" className="mb-1 block text-xs font-semibold text-[var(--color-text-primary)]">
+                Reconciliation Decision
+              </label>
+              <Select
+                id="reconcile-decision-select"
+                value={reconcileDecision}
+                onChange={(e) => setReconcileDecision(e.target.value as 'accepted' | 'needs_review' | 'duplicate' | 'rejected')}
+              >
+                <option value="accepted">Accepted (Verified Offline Entry)</option>
+                <option value="needs_review">Needs Review</option>
+                <option value="duplicate">Duplicate Offline Submission</option>
+                <option value="rejected">Rejected / Invalid Record</option>
+              </Select>
+            </div>
+            <div>
+              <label htmlFor="reconcile-notes-input" className="mb-1 block text-xs font-semibold text-[var(--color-text-primary)]">
+                Reconciliation Notes (Required, min 5 chars)
+              </label>
+              <textarea
+                id="reconcile-notes-input"
+                rows={3}
+                value={reconcileNotes}
+                onChange={(e) => setReconcileNotes(e.target.value)}
+                className="w-full rounded-lg border border-[var(--color-border)] p-2.5 text-sm"
+                placeholder="Document physical log verification or discrepancy resolution..."
+              />
+            </div>
+            <div className="flex justify-end gap-2">
+              <Button
+                variant="secondary"
+                onClick={() => {
+                  setReconcilingRecord(null);
+                  setReconcileNotes('');
+                }}
+                disabled={submittingReconcile}
+              >
+                Cancel
+              </Button>
+              <Button
+                onClick={() => void handleSubmitReconcile()}
+                loading={submittingReconcile}
+                disabled={reconcileNotes.trim().length < 5}
+              >
+                Save Reconciliation
+              </Button>
+            </div>
+          </div>
+        )}
       </Modal>
     </div>
   );

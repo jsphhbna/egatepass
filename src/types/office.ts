@@ -11,11 +11,16 @@ export type OfficeAttendanceStatus =
 
 export type OfficeVisitType = 'general' | 'specific_person';
 
+export type OfficePublicationStatus = 'draft' | 'published' | 'archived';
+
 export interface Office {
   id: string;
   name: string;
   description?: string | null;
   active: boolean;
+  publicationStatus?: OfficePublicationStatus;
+  requiresApprovalBeforePass?: boolean;
+  archivedAt?: string | null;
   createdAt?: string;
   updatedAt?: string;
 }
@@ -74,6 +79,7 @@ export interface OfficeVisitRecord {
 
   purpose: string;
   visitDate: string;
+  expectedGate?: string | null;
   arrivalMode: 'no_vehicle' | 'vehicle';
 
   vehicleDetails?: {

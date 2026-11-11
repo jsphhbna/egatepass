@@ -136,6 +136,11 @@ describe('Office Visit Upload Hold Revalidation and Scheduling Invariants (PGlit
 
     const officeRes = await db.query<{ id: string }>(`select id from public.offices limit 1;`);
     officeId = officeRes.rows[0].id;
+    await db.exec(`
+      update public.offices
+      set verified = true, verified_at = now(), publication_status = 'published', published_at = now()
+      where id = '${officeId}';
+    `);
 
     const persRes = await db.query<{ id: string }>(`
       insert into public.office_personnel (office_id, name, title)

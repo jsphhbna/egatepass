@@ -453,11 +453,12 @@ Visitor Portal (/get-pass)
 | **Visitor** | Registers online, receives digital QR pass | Anonymous Supabase session (`storageKey: egatepass-portal-auth`) with Turnstile verification |
 | **Office Staff** | Reviews visit requests, manages office directory, confirms visitor arrival | Authenticated staff account (`role = 'office_staff'`) bound to assigned office(s) |
 | **Guard Station Device** | High-visibility gate entry monitor and live entry tracking | Managed device credentials (`devices` table, `device_type = 'guard_station'`) |
+| **Emergency Device** | Outage-resilient offline gate intake device (AES-GCM vault + signed P-256 manifest, permanent `OFFLINE MODE RECORDED` classification) | Managed device credentials (`devices` table, `device_type = 'emergency_device'`; exempt from human inactivity timeout) |
 | **Kiosk Device** | Self-service registration & local OCR on campus | Managed device credentials (`devices` table, `device_type = 'kiosk'`) |
 | **Entry Scanner** | Scans QR code at campus gates | Authenticated scanner device bound to gate identifier |
 | **Exit Scanner** | Verifies exiting visitors at gate barriers | Authenticated scanner device bound to gate identifier |
-| **Admin** | Manages staff accounts, hardware devices, walk-in recovery | Authenticated staff account (`role = 'admin'`) |
-| **Super Admin** | Configures system settings, retention windows, promotes admins | Authenticated staff account (`role = 'superadmin'`) |
+| **Admin** | Manages staff accounts, hardware devices, walk-in recovery | Authenticated staff account (`role = 'admin'`, 15-minute inactivity timeout) |
+| **Super Admin** | Configures system settings, retention freeze, office lifecycle & pre-approval policy, promotes admins | Authenticated staff account (`role = 'superadmin'`, 15-minute inactivity timeout) |
 | **Legacy Guard (Disabled)** | Decommissioned role; personal gate authority removed | Disabled (logins are intercepted and signed out immediately) |
 
 ### Capability Authority Matrix
@@ -483,6 +484,7 @@ Visitor Portal (/get-pass)
 
 - **Portal Actor Continuity**: The online visitor portal strictly uses `requirePortalSupabase()` bound to `storageKey: 'egatepass-portal-auth'`, providing complete process and credential isolation from operator accounts (`storageKey: 'egatepass-operator-auth'`). Every portal issuance transaction enforces an active anonymous visitor session (`is_anonymous: true`) matching `transaction.actorId`. All upload intents, face preflights, and biometric verification requests use the visitor bearer token.
 - **Layout-Aware Structured OCR**: Client-side OCR (`src/lib/ocr.ts`) employs a spatial layout parser with bounding-box reconstruction, fuzzy PhilSys/LTO label classification, candidate extraction across same-row and vertically aligned fields, confidence-based prefilling with thresholding (>= 60) that never overwrites user-entered values, and worker generation fencing. LTO Driver's Licenses follow standard comma splitting where text before the comma denotes the surname, and tokens after the comma assign the final token to middle name and preceding tokens to given names.
+- **Emergency Offline Gate Continuity, Office Lifecycle & Human Session Governance**: Dedicated `emergency_device` terminals operate offline with gate-scoped 24-hour ECDSA P-256 SHA-256 manifests and AES-GCM IndexedDB vaults, classifying all synced records permanently as `OFFLINE MODE RECORDED` for Admin reconciliation (never auto-converted into QR passes). Campus offices enforce a Superadmin-governed `draft -> published -> archived` lifecycle and per-office `requires_approval_before_pass` routing. Human staff sessions enforce a 15-minute sliding inactivity timeout (`/api/auth/session-activity`, `HumanInactivityGuard.tsx`) while managed hardware devices remain exempt, and Superadmin `global_retention_freeze` pauses all automated/manual/emergency retention purges fail-closed.
 
 ---
 

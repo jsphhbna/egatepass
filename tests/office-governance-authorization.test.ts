@@ -36,6 +36,9 @@ describe('Office Governance & Authorization Test Suite', () => {
         description: 'Student records and transcripts',
         active: true,
         verified: true,
+        publication_status: 'published',
+        requires_approval_before_pass: true,
+        archived_at: null,
         verified_at: '2026-11-01T00:00:00Z',
         verified_by: superadminId,
         created_at: '2026-11-01T00:00:00Z',
@@ -47,6 +50,9 @@ describe('Office Governance & Authorization Test Suite', () => {
         description: 'Under review',
         active: true,
         verified: false,
+        publication_status: 'draft',
+        requires_approval_before_pass: true,
+        archived_at: null,
         verified_at: null,
         verified_by: null,
         created_at: '2026-11-02T00:00:00Z',
@@ -58,6 +64,9 @@ describe('Office Governance & Authorization Test Suite', () => {
         description: 'Currently closed',
         active: false,
         verified: true,
+        publication_status: 'published',
+        requires_approval_before_pass: true,
+        archived_at: null,
         verified_at: '2026-11-01T00:00:00Z',
         verified_by: superadminId,
         created_at: '2026-11-01T00:00:00Z',
@@ -137,6 +146,10 @@ describe('Office Governance & Authorization Test Suite', () => {
                 order: vi.fn().mockImplementation(() => builder),
                 eq: vi.fn((field: string, val: any) => {
                   filtered = filtered.filter((r) => r[field] === val);
+                  return builder;
+                }),
+                is: vi.fn((field: string, val: any) => {
+                  filtered = filtered.filter((r) => (r[field] ?? null) === val);
                   return builder;
                 }),
                 in: vi.fn((field: string, vals: any[]) => {
@@ -309,6 +322,62 @@ describe('Office Governance & Authorization Test Suite', () => {
               });
             }
             return { data: { userId: args.requested_user_id, officeIds: ids }, error: null };
+          }
+          if (name === 'save_office_record') {
+            if (!args.requested_office_id) {
+              const dup = mockOffices.find((o) => o.name.toLowerCase() === String(args.requested_name || '').toLowerCase());
+              if (dup) {
+                return { data: null, error: { code: '23505', message: 'office_name_duplicate' } };
+              }
+              const newOffice = {
+                id: '44444444-4444-4444-8444-444444444444',
+                name: args.requested_name,
+                description: args.requested_description ?? null,
+                active: args.requested_active ?? true,
+                verified: false,
+                publication_status: 'draft',
+                requires_approval_before_pass: args.requested_requires_approval_before_pass ?? true,
+                archived_at: null,
+                verified_at: null,
+                verified_by: null,
+                created_at: '2026-11-09T00:00:00Z',
+                updated_at: '2026-11-09T00:00:00Z',
+              };
+              mockOffices.push(newOffice);
+              return { data: newOffice, error: null };
+            }
+            const idx = mockOffices.findIndex((o) => o.id === args.requested_office_id);
+            if (idx < 0) return { data: null, error: { code: 'P0002', message: 'office_not_found' } };
+            mockOffices[idx] = {
+              ...mockOffices[idx],
+              name: args.requested_name ?? mockOffices[idx].name,
+              description: args.requested_description !== null ? args.requested_description : mockOffices[idx].description,
+              active: args.requested_active !== null ? args.requested_active : mockOffices[idx].active,
+              requires_approval_before_pass:
+                args.requested_requires_approval_before_pass !== null
+                  ? args.requested_requires_approval_before_pass
+                  : mockOffices[idx].requires_approval_before_pass,
+              updated_at: new Date().toISOString(),
+            };
+            return { data: mockOffices[idx], error: null };
+          }
+          if (name === 'update_office_publication') {
+            if (args.requested_actor_id !== superadminId) {
+              return { data: null, error: { code: '42501', message: 'superadmin_required' } };
+            }
+            const idx = mockOffices.findIndex((o) => o.id === args.requested_office_id);
+            if (idx < 0) return { data: null, error: { code: 'P0002', message: 'office_not_found' } };
+            const isPub = args.requested_status === 'published';
+            mockOffices[idx] = {
+              ...mockOffices[idx],
+              publication_status: args.requested_status,
+              verified: isPub,
+              verified_at: isPub ? '2026-11-12T00:00:00Z' : null,
+              verified_by: isPub ? args.requested_actor_id : null,
+              archived_at: args.requested_status === 'archived' ? '2026-11-12T00:00:00Z' : null,
+              updated_at: new Date().toISOString(),
+            };
+            return { data: mockOffices[idx], error: null };
           }
           return { data: null, error: null };
         }),

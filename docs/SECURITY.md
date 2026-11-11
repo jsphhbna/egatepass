@@ -83,7 +83,7 @@ flowchart TD
 ### Identity Resolution Rules:
 1. **Anonymous Visitors**: Have valid Supabase Auth anonymous UIDs. Confined to requesting upload intents and submitting pass issuance.
 2. **Staff Members**: Identified by a matching row in `public.staff_profiles` where `active = true`. Full operational eligibility also requires a confirmed Auth email (`email_confirmed_at IS NOT NULL`), completed password onboarding (`must_change_password = false`), privacy acceptance (`privacy_accepted_at IS NOT NULL`), an unconfined session (not recovery-confined), and an authorized staff role (`guard`, `admin`, `superadmin`, `office_staff`).
-3. **Managed Devices**: Identified by a matching row in `public.devices` where `status = 'active'` and `deleted_at IS NULL`. Types: `entry`, `exit`, `kiosk`.
+3. **Managed Devices**: Identified by a matching row in `public.devices` where `status = 'active'` and `deleted_at IS NULL`. Types: `entry`, `exit`, `kiosk`, `guard_station`, `emergency_device`. All managed devices are strictly exempt from human 15-minute inactivity sign-out (`HumanInactivityGuard.tsx` & `/api/auth/session-activity`).
 4. **Recovery Sessions**: Explicitly flagged when authenticated via recovery magic links. Confined strictly to password reset and blocked from scanner, guard, and admin operations (`recovery_session_forbidden`).
 
 ---
@@ -862,6 +862,25 @@ The shared pure SVG template generator (`src/lib/digitalPassArtifact.ts`) uses s
 ### 29.9 Manila-Authoritative Dynamic Scheduling & Office Hours
 - Visit date validation dynamically checks the configured `scheduling_days_ahead` (default: 30 days) and campus operating hours (`working_hours_start = '08:00'`, `working_hours_end = '22:00'`) in `public.app_settings` under the `Asia/Manila` time zone.
 - Pass validity windows on approval are bounded strictly to `working_hours_start` and `working_hours_end` of the requested visit date in Manila local time.
+
+---
+
+## 30. Emergency Device Cryptography, Human Inactivity Timeout, Retention Freeze & Truthful Runtime Controls
+
+### 30.1 Emergency Device Signed Manifests & AES-GCM Vault
+- Offline gate continuity runs exclusively on managed `emergency_device` terminals (`/device/emergency`). Online sync fetches a 24-hour gate-scoped manifest signed server-side via ECDSA P-256 SHA-256 (`IEEE P1363`, `server/lib/emergency-manifest.ts`) and verified in browser WebCrypto (`src/lib/offline/emergencyManifestVerifier.ts`). Signing keys reside in `private.emergency_signing_keys` (`api.get_active_emergency_signing_key`, `api.store_emergency_signing_key`, optional `EMERGENCY_MANIFEST_SIGNING_PRIVATE_KEY` override) with `service_role`-only access.
+- Offline visitor entries are stored encrypted in browser IndexedDB using AES-GCM (`src/lib/offline/emergencyCryptoIdb.ts`), require physical ID visual inspection attestation (`PHYSICAL_ID_ATTESTATION_TEXT`), respect the default-OFF Superadmin exception toggle (`allow_emergency_exception`), synchronize monotonically (`api.record_emergency_sync_item`), carry the permanent `OFFLINE MODE RECORDED` classification (zero automatic QR issuance), and require Admin/Superadmin manual reconciliation (`api.reconcile_emergency_gate_record`).
+
+### 30.2 Human 15-Minute Inactivity Timeout & Device Exemption
+- Human staff sessions (`admin`, `superadmin`, `office_staff`) track server-side sliding expiration in `public.staff_sessions` (`api.touch_staff_session`, `api.expire_staff_session` via `/api/auth/session-activity`) coordinated across browser tabs with a 60-second countdown warning (`HumanInactivityGuard.tsx`). Managed device sessions never enter `staff_sessions` and never time out for inactivity.
+
+### 30.3 Institutional Global Retention Freeze & Restricted Anonymous Settings Privileges
+- Superadmin `global_retention_freeze` (`public.app_settings` updated atomically via `api.save_system_settings_v2`) immediately halts `/api/purge-images` (fail-closed `503`), `/api/admin/retention-maintenance` (halted with `maintenance.retention_halted_by_freeze` audit log), and `api.anonymize_expired_emergency_gate_record` (`global_retention_freeze_active`).
+- Column-level `SELECT` privilege on `public.app_settings` for `anon` is restricted strictly to 7 public schedule/display columns (`working_hours_start`, `working_hours_end`, `peak_mode`, `scheduling_days_ahead`, `visitor_instructions`, `visit_purposes`, `rejection_reasons`), denying access to internal retention/freeze/policy flags.
+
+### 30.4 Biometric Storage Retirement & Turnstile Server Runtime Reporting
+- `/api/passes/capabilities` reports `biometricStorageRetired: true` accurately, matching zero server-side biometric vector storage by default.
+- `/api/passes/lookup-returning` fails closed with HTTP `503 missing_validation_runtime_secret` whenever the server Turnstile secret key is unconfigured in serverless environment variables, and `/api/passes/capabilities` exposes real server Turnstile readiness (`turnstile.verified`) so UI advisories remain truthful.
 
 
 

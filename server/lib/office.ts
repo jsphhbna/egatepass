@@ -1,6 +1,6 @@
-import { createHmac, timingSafeEqual } from 'node:crypto';
+import { createHmac, randomUUID, timingSafeEqual } from 'node:crypto';
 import type { SupabaseClient } from '@supabase/supabase-js';
-import { getVerifiedSessionContext, HttpError, type StaffActor } from '../actors.js';
+import { enforceHumanStaffSessionActivity, getVerifiedSessionContext, HttpError, type StaffActor } from '../actors.js';
 
 export interface OfficeStaffActor extends StaffActor {
   assignedOfficeIds: string[];
@@ -55,6 +55,8 @@ export async function requireOfficeStaffActor(
   if (!['admin', 'superadmin', 'office_staff'].includes(profile.role)) {
     throw new HttpError(403, 'access_denied');
   }
+
+  await enforceHumanStaffSessionActivity(admin, session.sessionId, session.user.id);
 
   // Retrieve assigned office IDs
   const { data: assignments, error: assignError } = await admin
@@ -155,4 +157,34 @@ export function verifyEmailVerificationProofToken(token: string, expectedEmail: 
   } catch {
     return false;
   }
+}
+
+export async function assignPassExpectedGate(
+  admin: SupabaseClient,
+  actorId: string,
+  passId: string,
+  expectedGate: string,
+) {
+  const { data, error } = await admin.schema('api').rpc('assign_pass_expected_gate', {
+    requested_actor_id: actorId,
+    requested_pass_id: passId,
+    requested_expected_gate: expectedGate,
+    requested_request_id: randomUUID(),
+  });
+
+  if (error) {
+    const code = (error as { code?: string }).code;
+    if (code === 'P0002') {
+      throw new HttpError(404, 'pass_not_found');
+    }
+    if (code === '22023') {
+      throw new HttpError(400, error.message || 'invalid_expected_gate');
+    }
+    if (code === '42501') {
+      throw new HttpError(403, error.message || 'access_denied');
+    }
+    throw error;
+  }
+
+  return data;
 }

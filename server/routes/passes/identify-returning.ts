@@ -384,6 +384,7 @@ async function handleRequest(request: Request): Promise<Response> {
     let targetEmbedding: Float32Array | null = null;
     let origEvDate: string | null = null;
     let historicalIdDate: string | null = null;
+    let usedLegacyTemplateFallback = false;
 
     try {
       const profQuery = admin.from('returning_visitor_profiles');
@@ -442,6 +443,8 @@ async function handleRequest(request: Request): Promise<Response> {
                     templateKey,
                     tpl.key_version
                   );
+                  usedLegacyTemplateFallback = true;
+                  console.warn('returning_legacy_template_fallback_used', { profileId: profile.id, stage: 'profile_lookup' });
                 } catch (decErr) {
                   console.error('Decryption failed for template:', tpl.id || profileId, decErr);
                   return jsonResponse(500, { error: 'biometric_decryption_failed' });
@@ -550,6 +553,8 @@ async function handleRequest(request: Request): Promise<Response> {
                 templateKey,
                 targetTemplate.key_version
               );
+              usedLegacyTemplateFallback = true;
+              console.warn('returning_legacy_template_fallback_used', { profileId: profile.id, stage: 'embedding_fallback' });
             } catch (decErr) {
               console.error('Fallback decryption failed for legacy template:', decErr);
               return jsonResponse(500, { error: 'biometric_decryption_failed' });
@@ -683,6 +688,7 @@ async function handleRequest(request: Request): Promise<Response> {
         similarity: Number(cosineScore.toFixed(4)),
         threshold: minCosine,
         thresholdMode,
+        referenceSource: usedLegacyTemplateFallback ? 'legacy_template_fallback' : 'original_portrait',
         verificationState: isCalibrated ? 'calibrated' : 'provisional',
         guardVerificationRequired: !isCalibrated,
         message: isCalibrated

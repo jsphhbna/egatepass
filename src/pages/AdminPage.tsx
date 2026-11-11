@@ -57,6 +57,7 @@ const navGroups: NavGroupItem[] = [
       { to: '/admin/visitors?tab=search', label: 'Search & Records' },
       { to: '/admin/visitors?tab=current', label: 'Current Visitors' },
       { to: '/admin/visitors?tab=history', label: 'Visit History' },
+      { to: '/admin/visitors?tab=offline', label: 'Offline Mode Recorded' },
     ],
   },
   {
@@ -70,7 +71,17 @@ const navGroups: NavGroupItem[] = [
       { to: '/admin/devices?tab=stations', label: 'Kiosks & Stations' },
     ],
   },
-  { id: 'users', label: 'Users', icon: Users, basePath: '/admin/users' },
+  {
+    id: 'users',
+    label: 'Users',
+    icon: Users,
+    basePath: '/admin/users',
+    children: [
+      { to: '/admin/users?tab=staff', label: 'Staff Accounts' },
+      { to: '/admin/users?tab=directory', label: 'Office Directory' },
+      { to: '/admin/users?tab=assignments', label: 'Office Assignments' },
+    ],
+  },
   { id: 'emergency', label: 'Emergency', icon: AlertTriangle, basePath: '/admin/emergency' },
   { id: 'audit', label: 'Audit Logs', icon: ClipboardList, basePath: '/admin/audit' },
   { id: 'templates', label: 'Print Templates', icon: Printer, basePath: '/admin/templates', superAdminOnly: true },
@@ -272,6 +283,8 @@ export function AdminPage() {
                                 ? location.pathname === '/admin/settings' && (!location.search || location.search === '?tab=general')
                                 : child.to.includes('tab=search')
                                 ? location.pathname === '/admin/visitors' && (!location.search || location.search === '?tab=search')
+                                : child.to.includes('tab=staff')
+                                ? location.pathname === '/admin/users' && (!location.search || location.search === '?tab=staff')
                                 : child.to.includes('admin/devices?tab=all')
                                 ? location.pathname === '/admin/devices' && (!location.search || location.search === '?tab=all')
                                 : currentFull === child.to;

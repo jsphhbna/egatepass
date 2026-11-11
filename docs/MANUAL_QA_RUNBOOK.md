@@ -809,6 +809,16 @@ stateDiagram-v2
    - Confirm an "Address Detected from ID" suggestion card appears showing parsed Barangay, Municipality, Province, and Region.
    - Click **Use Detected Address**; confirm fields prefill seamlessly without manual typing while preserving user editability.
 
+### 12.5 Emergency Device, Office Lifecycle, Inactivity Timeout & Retention Freeze QA
+1. **Emergency Device Offline Lifecycle (`/device/emergency` & `/admin/records?mode=offline`)**:
+   - Register an `emergency_device` bound to a physical gate, log in online to download a signed 24-hour ECDSA P-256 manifest, disconnect network, record a walk-in visitor confirming physical ID visual inspection (zero selfies, zero ID uploads, zero QR issuance), reconnect, sync, and verify Admin reconciliation marks the entry `OFFLINE MODE RECORDED`.
+2. **Office Governance Lifecycle & Pre-Approval Toggle (`/admin/users?tab=directory` & `/get-pass`)**:
+   - Create an office (`Draft`), verify it stays hidden on `/get-pass`, click **Publish** (becomes selectable), toggle per-office **Pre-Approval** policy (`requires_approval_before_pass`), verify unused draft deletion succeeds (`Delete Draft`) while active/published offices require archival (`Archive`), and inspect `expectedGate` display on `/office`.
+3. **Human 15-Minute Inactivity Timeout & Exemption**:
+   - Confirm human staff sessions display the 60-second countdown prompt before 15 minutes of inactivity and auto-sign out at 15 minutes across tabs; confirm managed devices (`kiosk`, `entry`, `exit`, `guard_station`, `emergency_device`) never trigger inactivity timeout.
+4. **Global Retention Freeze, Period Analytics & Interactive Campus Calendar**:
+   - Enable `global_retention_freeze` in **System Settings** with a reason and verify manual/scheduled purge halts cleanly; test **Dashboard** period modes (`today`, `date`, `month`, `year`, `range`) and CSV/XLSX/PDF export completeness; verify month/year calendar closure planning, overlap warnings, draft delete, and archive lifecycle.
+
 ---
 
 ## 13. Physical Hardware Verification Disclaimer

@@ -192,49 +192,60 @@ erDiagram
 
 ## 3. Canonical API Route Architecture
 
-The platform's API surface is declared in `server/route-map.ts`. All 30 endpoints execute within Vercel Serverless Function instances:
+The platform's core route contract matrix is declared in `server/route-map.ts` (`38 core contract endpoints`), while additional portal, office, lookup, calendar, and reference endpoints share the exact **6 physical Vercel Serverless Function entrypoints** under `api/*/[...route].ts`:
 
-### 3.1 Admin Router (9 routes: `/api/admin/*`)
+### 3.1 Admin Router (10 matrix routes + `/api/admin/offices`: `/api/admin/*`)
 - `GET /api/admin/activity`: Historical audit event query for administrators.
-- `GET /api/admin/dashboard`: High-level operational metrics and active gate counters.
+- `GET /api/admin/dashboard`: Unified `Asia/Manila` (`+08:00`) period-filtered operational analytics (`today`, `date`, `month`, `year`, `range`), `OFFLINE MODE RECORDED` isolated counts, and server report rows.
 - `GET /api/admin/devices`: Hardware scanner fleet inventory and status list.
 - `GET /api/admin/emergency`: Real-time campus population roll-call for safety evacuations.
+- `GET, POST /api/admin/emergency-records`: Synchronized offline emergency gate record listing and Admin/Superadmin manual reconciliation (`accepted`, `needs_review`, `duplicate`, `rejected`).
 - `GET, POST, DELETE, PATCH /api/admin/holds`: Incident hold management on visitor records.
-- `GET /api/admin/records`: Paginated visitor pass log with filtering by date and gate.
-- `GET, POST /api/admin/retention-maintenance`: Manual or cron-authenticated retention engine.
-- `GET /api/admin/settings`: Institutional configuration (working hours, retention days).
+- `GET, POST /api/admin/offices`: Campus office directory CRUD, publication lifecycle (`draft`, `published`, `archived`), `requires_approval_before_pass` policy updates, unused-draft deletion, and staff provisioning/assignments.
+- `GET, PATCH /api/admin/records`: Paginated visitor pass log (`mode=online|offline`, date range, gate filter) and hold/record state actions.
+- `GET, POST /api/admin/retention-maintenance`: Manual or cron-authenticated retention engine (halted cleanly when `global_retention_freeze` is active).
+- `GET /api/admin/settings`: Institutional configuration (working hours, retention days, `global_retention_freeze`, emergency exception policy, diagnostics).
 - `GET /api/admin/users`: Staff member list and profile state management.
 
-### 3.2 Auth Router (4 routes: `/api/auth/*`)
+### 3.2 Auth Router (5 routes: `/api/auth/*`)
 - `POST /api/auth/complete-password-change`: Password update handler.
 - `POST /api/auth/reset-password`: Trigger password reset email.
 - `POST /api/auth/send-email-hook`: Supabase Auth standard webhook receiver for outbound transactional emails.
 - `POST /api/auth/resend-webhook`: Resend delivery observability webhook receiver (external rewrite path: `POST /api/webhooks/resend`).
+- `GET, POST /api/auth/session-activity`: Human staff 15-minute inactivity sliding window enforcement (`public.staff_sessions`) with strict exemption for managed device sessions.
 
-### 3.3 Passes Router (2 routes: `/api/passes/*`)
-- `POST /api/passes/issue`: Atomically validates evidence upload intents and issues QR gate passes.
+### 3.3 Passes Router (5 matrix routes + portal & office subpaths: `/api/passes/*`)
 - `POST /api/passes/email`: Two-step verification challenge and dispatch of QR passes via email.
+- `POST /api/passes/issue`: Atomically validates evidence upload intents and issues QR gate passes (or creates pre-approval general office visit requests when `requires_approval_before_pass = true`).
+- `POST /api/passes/verify-identity`: Validates captured face quality and ID document invariants.
+- `POST /api/passes/abandon-intent`: Releases unsubmitted upload intents immediately on cancellation.
+- `GET /api/passes/returning-id-preview`: Calibrated returning-visitor historical ID document stream.
+- Additional dispatched subpaths on `api/passes/[...route].ts`: `GET /api/passes/capabilities`, `POST /api/passes/lookup-returning`, `POST /api/passes/identify-returning`, `GET /api/passes/returning-photo-preview`, `POST /api/passes/request-office-visit`, `GET /api/passes/track`, `/api/office/*` (visits, decide, confirm-arrival, personnel, portrait-preview, verify-email, retry-email), `/api/vehicles/*`, and `/api/location/search`.
 
 ### 3.4 Device Router (6 routes: `/api/*`)
-- `POST /api/create-device`: Register new gate or kiosk scanner device.
+- `POST /api/create-device`: Register new gate, kiosk, guard station, or emergency device.
 - `DELETE /api/delete-device`: Decommission and soft-delete device hardware.
 - `POST /api/update-device`: Update device display name, gate binding, or type.
 - `POST /api/update-device-auth`: Rotate device login credentials.
 - `POST /api/device/reauthenticate`: Trusted server reauthentication of active kiosk device credentials.
 - `GET /api/device/thermal-template`: Kiosk endpoint retrieving canonical published thermal pass template.
 
-### 3.5 Gate Router (4 routes: `/api/*`)
+### 3.5 Gate Router (6 routes: `/api/*`)
 - `POST /api/scan-pass`: Scanner endpoint for entry and exit events; verifies `token_digest` and gate.
 - `POST /api/decide-visit`: Guard console decision endpoint (approve or reject entry).
 - `GET /api/evidence`: Authenticated proxy for streaming private visitor photos and ID cards.
 - `POST /api/sync-offline-registration`: Guard offline registration synchronization endpoint with trusted server-side byte inspection and transactional receipt generation.
+- `GET /api/guard-station-feed`: High-visibility live gate monitor feed for `guard_station` devices and admins.
+- `GET, POST /api/gate/emergency-device`: Gate-scoped ECDSA P-256 SHA-256 signed offline manifest distribution (`GET`) and monotonic batch synchronization (`POST`) for `emergency_device` hardware.
 
-### 3.6 System Router (5 routes: `/api/*`)
+### 3.6 System Router (6 matrix routes + `/api/system/calendar`: `/api/*`)
 - `POST /api/create-user`: Provision staff account.
 - `POST /api/update-user`: Update staff role or status.
-- `POST /api/update-settings`: Super Admin system settings update.
-- `POST /api/purge-images`: Super Admin manual image purge.
+- `POST /api/decommission-user`: Permanent decommission of deactivated staff accounts.
+- `POST /api/update-settings`: Super Admin system settings update (`api.save_system_settings_v2` including `global_retention_freeze`).
+- `POST /api/purge-images`: Super Admin manual image purge (blocked fail-closed when `global_retention_freeze` is active).
 - `GET, PATCH /api/reconciliation-items`: Super Admin review and resolution of cross-system anomalies.
+- `GET, POST /api/system/calendar`: Public active campus calendar closure feed (`GET`) and Super Admin month/year holiday/closure/emergency suspension management (`POST`, including draft delete and archive lifecycle).
 
 ---
 
@@ -800,3 +811,20 @@ Outage Architecture & Authority Delegation
   - **Warning Alert**: Alternating dual-tone pulse (587 Hz D5 $\to$ 440 Hz A4) alerting guards to unconfirmed office departures.
   - **Error Tone**: Low dissonant buzzer (220 Hz A3 sawtooth) on invalid or rejected scans.
   - Includes user-toggled audio mute controls with `localStorage` persistence (`egatepass_scanner_audio_muted`) on both Entry and Exit scanner interfaces.
+
+### 12.22 Emergency Device Offline System, Office Governance Lifecycle, Period Analytics, Human Inactivity Timeout & Retention Freeze (Migrations 87–91)
+- **Dedicated Emergency Device Offline Subsystem (`emergency_device`)**:
+  - `emergency_device` is a dedicated hardware `device_type` bound to an assigned gate. Online synchronization issues an ECDSA P-256 SHA-256 (IEEE P1363) 24-hour gate-scoped manifest (`/api/gate/emergency-device`, `server/lib/emergency-manifest.ts`, keys stored server-side in `private.emergency_signing_keys` via `api.get_active_emergency_signing_key` / `api.store_emergency_signing_key` with optional `EMERGENCY_MANIFEST_SIGNING_PRIVATE_KEY` override).
+  - Client verification uses WebCrypto (`src/lib/offline/emergencyManifestVerifier.ts`) and encrypts offline intake payloads locally using AES-GCM inside IndexedDB (`src/lib/offline/emergencyCryptoIdb.ts`). Offline intake enforces physical ID visual inspection attestation (`PHYSICAL_ID_ATTESTATION_TEXT`), zero selfies/ID uploads/postal codes/QR synthesis, and default-OFF policy-gated exceptions (`allow_emergency_exception`).
+  - Synchronized entries are permanently stored with classification `OFFLINE MODE RECORDED` (zero automatic offline-to-QR conversion) and undergo manual Admin/Superadmin reconciliation (`/api/admin/emergency-records`).
+- **Office Publication Lifecycle & Per-Office Pre-Approval Policy**:
+  - `public.offices` tracks explicit `publication_status` (`draft`, `published`, `archived`), `archived_at`/`archived_by`, and Superadmin-governed `requires_approval_before_pass` (default `true`). Only `published` active offices appear in visitor registration dropdowns; unused `draft` offices can be deleted via `api.delete_draft_office`, whereas active/used offices archive safely (`api.archive_office`).
+  - When `requires_approval_before_pass = true`, both `specific_person` and `general` visits create a pending `office_visits` request and return `trackingUrl` without issuing a pre-approval QR; when `false`, approved portal passes issue atomically.
+- **Single-Source Sidebar Admin Navigation, Period Analytics & Complete Exports**:
+  - `AdminPage.tsx` synchronizes `?tab=` URL query state as the single navigation source across Dashboard Analytics, Emergency Monitor, Emergency Devices/Inventory, Visitor Records, User/Office Governance, Security Holds, Audit Logs, and System Settings (duplicate child tab bars removed).
+  - `/api/admin/dashboard` filters deterministically in `Asia/Manila` (`+08:00`) across `today`, `date`, `month`, `year`, and `range` while isolating `OFFLINE MODE RECORDED` tallies; complete CSV/XLSX/PDF exports traverse up to `EXPORT_MAX_ROWS` (`5000`) and expose an explicit `truncated` flag.
+- **15-Minute Human Inactivity Timeout, Interactive Campus Calendar & Global Retention Freeze**:
+  - `HumanInactivityGuard.tsx` + `POST /api/auth/session-activity` + `public.staff_sessions` enforce a 15-minute idle timeout (with 60-second warning countdown and multi-tab sync) for human staff accounts while strictly exempting all managed hardware devices.
+  - `CampusCalendar.tsx` + `/api/system/calendar` support interactive month/year planning (`holiday`, `campus_closure`, `emergency_suspension`) with overlap warnings, draft deletion, and publish/archive controls.
+  - `public.app_settings.global_retention_freeze` halts manual `/api/purge-images`, scheduled/manual `/api/admin/retention-maintenance`, and `api.anonymize_expired_emergency_gate_record` fail-closed when enabled, and `public.app_settings` restricts `anon` `SELECT` strictly to 7 public display/schedule columns.
+  - `/api/passes/capabilities` truthfully reports `biometricStorageRetired: true` and reflects live Turnstile server configuration readiness (`turnstile.verified`).

@@ -13,9 +13,10 @@ export async function handleRequest(request: Request): Promise<Response> {
 
   let query = admin
     .from('campus_calendar_closures')
-    .select('id, title, closure_type, start_date, end_date, description, active, published')
+    .select('id, title, closure_type, start_date, end_date, description, active, published, archived_at')
     .eq('active', true)
     .eq('published', true)
+    .is('archived_at', null)
     .order('start_date', { ascending: true });
 
   if (fromDate) {

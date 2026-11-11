@@ -4,6 +4,7 @@ import decideVisit from '../../server/routes/gate/decide-visit.js';
 import evidence from '../../server/routes/gate/evidence.js';
 import syncOfflineRegistration from '../../server/routes/gate/sync-offline-registration.js';
 import guardStationFeed from '../../server/routes/gate/guard-station-feed.js';
+import emergencyDevice from '../../server/routes/gate/emergency-device.js';
 
 const router = createGroupedRouter('gate', {
   'scan-pass': scanPass,
@@ -11,6 +12,7 @@ const router = createGroupedRouter('gate', {
   evidence,
   'sync-offline-registration': syncOfflineRegistration,
   'guard-station-feed': guardStationFeed,
+  'emergency-device': emergencyDevice,
 });
 
 export const { fetch, handleRequest, GET, POST, PUT, PATCH, DELETE, HEAD, OPTIONS } = router;

@@ -94,7 +94,7 @@ async function handleRequest(request: Request): Promise<Response> {
 
     const { data: settingsData, error: settingsError } = await admin
       .from('app_settings')
-      .select('image_retention_days, photo_retention_days, id_retention_days, photo_retention_enabled, id_retention_enabled, vehicle_photo_retention_enabled, vehicle_photo_retention_days')
+      .select('image_retention_days, photo_retention_days, id_retention_days, photo_retention_enabled, id_retention_enabled, vehicle_photo_retention_enabled, vehicle_photo_retention_days, global_retention_freeze, global_retention_freeze_reason')
       .eq('singleton', true)
       .maybeSingle();
 
@@ -102,6 +102,52 @@ async function handleRequest(request: Request): Promise<Response> {
       return jsonResponse(500, {
         error: 'settings_unavailable',
         message: 'Authoritative retention settings could not be retrieved. Failing closed.',
+      });
+    }
+
+    if (Boolean((settingsData as any).global_retention_freeze)) {
+      const freezeReason = (settingsData as any).global_retention_freeze_reason ?? null;
+      const { error: freezeAuditErr } = await admin.from('audit_events').insert({
+        actor_id: actor.id,
+        actor_kind: 'staff',
+        actor_role: actor.role,
+        action: 'maintenance.retention_frozen_skip',
+        target_type: 'visitor_evidence',
+        target_id: 'batch',
+        outcome: 'success',
+        after_state: {
+          endpoint: 'purge-images',
+          global_retention_freeze: true,
+          freezeReason,
+          dryRun: Boolean(body.dryRun),
+        },
+      });
+      if (freezeAuditErr) {
+        await recordReconciliation(
+          admin,
+          'image_purge.freeze_audit_failed',
+          'visitor_evidence',
+          'batch',
+          freezeAuditErr.message || 'audit_insert_failed',
+          { actorId: actor.id }
+        ).catch(() => undefined);
+      }
+
+      return jsonResponse(200, {
+        result: 'frozen',
+        frozen: true,
+        reason: 'global_retention_freeze_active',
+        freezeReason,
+        dryRun: Boolean(body.dryRun),
+        evidenceDeleted: 0,
+        visitorsAffected: 0,
+        scannedCount: 0,
+        hasMore: false,
+        nextCursor: null,
+        successCount: 0,
+        failedCount: 0,
+        failedEvidence: 0,
+        eligibleEvidenceCount: 0,
       });
     }
 

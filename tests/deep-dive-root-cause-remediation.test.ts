@@ -222,8 +222,8 @@ describe('Deep-Dive Root-Cause Remediation Test Suite', () => {
 
       // 1. Create active office
       const officeRes = await db.query<{ id: string }>(`
-        insert into public.offices (name, description, active)
-        values ('Admissions Office', 'Student admissions and registrar', true)
+        insert into public.offices (name, description, active, verified, publication_status)
+        values ('Admissions Office', 'Student admissions and registrar', true, true, 'published')
         returning id;
       `);
       const officeId = officeRes.rows[0].id;
@@ -256,7 +256,7 @@ describe('Deep-Dive Root-Cause Remediation Test Suite', () => {
       const requestId = '88888888-8888-4888-8888-888888888888';
       const matchTokenDigest = 'provisional_match_token_digest_1234567890';
 
-      await db.query(`insert into auth.users (id, email) values ('${actorId}', 'juan.luna@earist.edu.ph');`);
+      await db.query(`insert into auth.users (id, email, is_anonymous) values ('${actorId}', 'juan.luna@earist.edu.ph', true);`);
 
       // 4. Create returning identity attempt with provisional mode and provisional_matched outcome
       await db.query(`
@@ -316,8 +316,8 @@ describe('Deep-Dive Root-Cause Remediation Test Suite', () => {
       await db.exec(`set request.jwt.claim.role = 'service_role';`);
 
       const officeRes = await db.query<{ id: string }>(`
-        insert into public.offices (name, description, active)
-        values ('Registrar', 'Student records', true) returning id;
+        insert into public.offices (name, description, active, verified, publication_status)
+        values ('Registrar', 'Student records', true, true, 'published') returning id;
       `);
       const officeId = officeRes.rows[0].id;
 
@@ -329,7 +329,7 @@ describe('Deep-Dive Root-Cause Remediation Test Suite', () => {
 
       const actorId = '12121212-1212-4212-8212-121212121212';
       const requestId = '23232323-2323-4323-8323-232323232323';
-      await db.query(`insert into auth.users (id, email) values ('${actorId}', 'pedro@earist.edu.ph');`);
+      await db.query(`insert into auth.users (id, email, is_anonymous) values ('${actorId}', 'pedro@earist.edu.ph', true);`);
 
       // Provide contradictory vehicle details on no_vehicle
       let threw = false;
@@ -400,8 +400,8 @@ describe('Deep-Dive Root-Cause Remediation Test Suite', () => {
 
       // Attempt to register another visit declaring the same vehicle plate
       const officeRes = await db.query<{ id: string }>(`
-        insert into public.offices (name, description, active)
-        values ('Cashier', 'Payment processing', true) returning id;
+        insert into public.offices (name, description, active, verified, publication_status)
+        values ('Cashier', 'Payment processing', true, true, 'published') returning id;
       `);
       const officeId = officeRes.rows[0].id;
 
@@ -413,7 +413,7 @@ describe('Deep-Dive Root-Cause Remediation Test Suite', () => {
 
       const actorId = '34343434-3434-4434-8434-343434343434';
       const requestId = '56565656-5656-4656-8656-565656565656';
-      await db.query(`insert into auth.users (id, email) values ('${actorId}', 'collision@earist.edu.ph');`);
+      await db.query(`insert into auth.users (id, email, is_anonymous) values ('${actorId}', 'collision@earist.edu.ph', true);`);
       const dummyUploadIntent = await db.query<{ id: string }>(`
         insert into public.upload_intents (owner_id, source, kind, bucket_id, object_path, content_type, max_bytes, status, expires_at)
         values ('${actorId}', 'portal', 'vehicle_photo', 'visitor-photos', 'v.jpg', 'image/jpeg', 5000000, 'uploaded', now() + interval '1 hour')

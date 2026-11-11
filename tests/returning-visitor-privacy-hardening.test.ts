@@ -8,6 +8,7 @@ import identifyReturningHandler, { computeMatchTokenDigest } from '../server/rou
 import passIssueHandler from '../server/routes/passes/issue.js';
 import * as supabaseModule from '../server/supabase.js';
 import * as actorsModule from '../server/actors.js';
+import { resetTurnstileReplayCache } from '../server/lib/turnstile.js';
 
 describe('Returning Visitor Privacy Hardening, Profile Linkage & Verification Boundaries', () => {
   const originalEnv = process.env;
@@ -19,15 +20,23 @@ describe('Returning Visitor Privacy Hardening, Profile Linkage & Verification Bo
   const mockTokenSecret = 'test-token-secret-must-be-at-least-32-chars-long!';
 
   beforeEach(() => {
+    resetTurnstileReplayCache();
     process.env = {
       ...originalEnv,
       PASS_TOKEN_SECRET: mockTokenSecret,
       RETURNING_MATCH_TOKEN_SECRET: mockTokenSecret,
       RATE_LIMIT_HMAC_SECRET: mockTokenSecret,
+      TURNSTILE_SECRET_KEY: 'test-turnstile-secret-at-least-32-chars!',
       RETURNING_FACE_THRESHOLD_MODE: 'provisional',
       RETURNING_FACE_MIN_COSINE: '0.363',
     };
     vi.restoreAllMocks();
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      new Response(JSON.stringify({ success: true, hostname: 'localhost' }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      }),
+    );
   });
 
   afterEach(() => {
@@ -244,6 +253,7 @@ describe('Returning Visitor Privacy Hardening, Profile Linkage & Verification Bo
           firstName: 'Maria',
           lastName: 'Santos',
           contactNumber: '09171234567',
+          captchaToken: 'cf-turnstile-privacy-hardening-test',
         }),
       });
 

@@ -1,10 +1,11 @@
 import { TurnstileWidget } from '@/components/TurnstileWidget';
 import { useEffect, useState } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { Eye, EyeOff } from 'lucide-react';
 import { toast } from 'sonner';
 import { useAuth } from '@/hooks/useAuth';
 import { normalizeLoginIdentity } from '@/lib/identity';
+import { getDefaultHomeForRole } from '@/lib/permissions';
 import { evaluateAuthTurnstilePolicy } from '@/services/auth';
 import { supabase } from '@/lib/supabase';
 import { BrandMark } from '@/components/BrandMark';
@@ -12,7 +13,9 @@ import { Button, Card, FormField, Input } from '@/components/ui';
 
 export function LoginPage() {
   const navigate = useNavigate();
+  const location = useLocation();
   const { status, role, serviceStatus, serviceMessage } = useAuth();
+  const idleTimeoutNotice = new URLSearchParams(location.search).get('reason') === 'idle_timeout';
   const [identity, setIdentity] = useState('');
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
@@ -42,10 +45,7 @@ export function LoginPage() {
       setError('This legacy Guard account is disabled. Gate monitoring now uses a Guard Station device.');
       return;
     }
-    const redirectMap: Record<string, string> = {
-      admin: '/admin', superadmin: '/admin', office_staff: '/office', entry: '/scan/entry', exit: '/scan/exit', kiosk: '/kiosk', guard_station: '/guard',
-    };
-    navigate(redirectMap[role] ?? '/login', { replace: true });
+    navigate(getDefaultHomeForRole(role), { replace: true });
   }, [navigate, role, status, supabase]);
 
   async function handleResendVerification() {
@@ -150,6 +150,12 @@ export function LoginPage() {
           <h1 className="text-2xl font-bold text-[var(--color-text-primary)]">Sign In</h1>
           <p className="mt-1 text-sm text-[var(--color-text-secondary)]">EARIST E-GatePass Staff Portal</p>
         </div>
+
+        {idleTimeoutNotice && (
+          <div className="mb-5 rounded-lg border border-[var(--color-warning)] bg-[var(--color-warning-light)] px-4 py-3 text-sm text-[var(--color-text-primary)]" role="status">
+            Your staff session was signed out after 15 minutes of inactivity. Please sign in again.
+          </div>
+        )}
 
         {serviceStatus === 'unavailable' && (
           <div className="mb-5 rounded-lg border border-[var(--color-warning)] bg-[var(--color-warning-light)] px-4 py-3 text-sm text-[var(--color-text-primary)]" role="status">

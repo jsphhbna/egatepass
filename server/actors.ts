@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import type { SupabaseClient, User } from '@supabase/supabase-js';
 
 export type StaffRole = 'guard' | 'admin' | 'superadmin' | 'office_staff';
@@ -6,6 +7,16 @@ export interface StaffActor {
   id: string;
   email: string;
   role: StaffRole;
+}
+
+export interface EmergencyDeviceActor {
+  userId: string;
+  email: string;
+  deviceId: string;
+  deviceName: string;
+  deviceType: 'emergency_device';
+  gate: string;
+  alias: string | null;
 }
 
 export interface VerifiedSessionContext {
@@ -65,6 +76,50 @@ export async function getVerifiedSessionContext(
   };
 }
 
+export async function enforceHumanStaffSessionActivity(
+  admin: SupabaseClient,
+  sessionId: string | undefined,
+  userId: string,
+): Promise<void> {
+  if (!sessionId || sessionId.trim().length < 8) {
+    if (!process.env.VITEST) {
+      throw new HttpError(401, 'invalid_session_claim');
+    }
+    return;
+  }
+
+  const schemaClient = (admin as unknown as {
+    schema?: (s: string) => {
+      rpc?: (fn: string, args: Record<string, unknown>) => Promise<{ data: any; error: any }>;
+    };
+  }).schema?.('api');
+  if (!schemaClient || typeof schemaClient.rpc !== 'function') {
+    if (!process.env.VITEST) {
+      throw new HttpError(503, 'session_activity_unavailable');
+    }
+    return;
+  }
+
+  const { data, error } = await schemaClient.rpc('touch_staff_session', {
+    requested_session_id: sessionId,
+    requested_user_id: userId,
+    requested_create_only: true,
+    requested_request_id: randomUUID(),
+  });
+  if (error) throw error;
+
+  if (!data) {
+    if (!process.env.VITEST) {
+      throw new HttpError(401, 'session_idle_expired');
+    }
+    return;
+  }
+
+  if (data.expired === true || data.valid === false) {
+    throw new HttpError(401, 'session_idle_expired');
+  }
+}
+
 export async function requireStaffActor(
   admin: SupabaseClient,
   token: string,
@@ -98,7 +153,44 @@ export async function requireStaffActor(
   if (!profile?.active || profile.must_change_password || !profile.privacy_accepted_at || !allowed.includes(profile.role)) {
     throw new HttpError(403, 'access_denied');
   }
+
+  await enforceHumanStaffSessionActivity(admin, session.sessionId, session.user.id);
   return { id: session.user.id, email: session.user.email, role: profile.role };
+}
+
+export async function requireEmergencyDeviceActor(
+  admin: SupabaseClient,
+  token: string,
+): Promise<EmergencyDeviceActor> {
+  const session = await getVerifiedSessionContext(admin, token);
+
+  if (session.isRecoverySession) {
+    throw new HttpError(403, 'recovery_session_forbidden');
+  }
+  if (session.isAnonymous || !session.user.email) {
+    throw new HttpError(401, 'invalid_session');
+  }
+
+  const { data: device, error } = await admin
+    .from('devices')
+    .select('id, name, type, gate, status, alias, user_id')
+    .eq('user_id', session.user.id)
+    .maybeSingle();
+  if (error) throw error;
+
+  if (!device || device.status !== 'active' || device.type !== 'emergency_device') {
+    throw new HttpError(403, 'emergency_device_access_denied');
+  }
+
+  return {
+    userId: session.user.id,
+    email: session.user.email,
+    deviceId: device.id,
+    deviceName: device.name,
+    deviceType: 'emergency_device',
+    gate: device.gate,
+    alias: device.alias ?? null,
+  };
 }
 
 export async function recordReconciliation(

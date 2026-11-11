@@ -25,12 +25,90 @@ interface SerializedPass {
   gate: string | null;
 }
 
+export type DashboardPeriodType = 'today' | 'date' | 'month' | 'year' | 'range';
+
+export interface DashboardPeriodQuery {
+  period: DashboardPeriodType;
+  date?: string;
+  month?: string;
+  year?: string;
+  dateFrom?: string;
+  dateTo?: string;
+}
+
+export interface DashboardPeriodMeta {
+  period: DashboardPeriodType;
+  startDate: string;
+  endDate: string;
+  periodStart: string;
+  periodEnd: string;
+  timezone: string;
+  label: string;
+}
+
+export interface DashboardPeriodCounts {
+  total: number;
+  issued: number;
+  inside: number;
+  exited: number;
+  pending: number;
+  rejected: number;
+  expired: number;
+}
+
+export interface DashboardOfflineMetrics {
+  classification: 'OFFLINE MODE RECORDED';
+  total: number;
+  pendingSync: number;
+  received: number;
+  accepted: number;
+  needsReview: number;
+  duplicate: number;
+  rejected: number;
+  exceptionApplied: number;
+  truncated: boolean;
+}
+
+export interface SerializedOfflineDashboardRecord {
+  id: string;
+  gate: string;
+  visitorName: string;
+  declaredAddress: string | null;
+  addressStatus: string | null;
+  purpose: string;
+  officeName: string | null;
+  officeResolutionStatus: string | null;
+  idPhysicallyInspected: boolean;
+  classification: string;
+  localRecordedAt: string;
+  serverReceivedAt: string;
+  localSequence: number;
+  snapshotVersion: string | null;
+  emergencyExceptionApplied: boolean;
+  reconciliationStatus: string;
+  reconciliationNotes: string | null;
+  reconciledAt: string | null;
+}
+
+export interface DashboardReportPayload {
+  periodMeta?: DashboardPeriodMeta;
+  periodCounts?: DashboardPeriodCounts;
+  offlineModeMetrics?: DashboardOfflineMetrics;
+  passes: GatePass[];
+  offlineRecords: SerializedOfflineDashboardRecord[];
+  totalMatchingCount: number;
+  offlineTotalCount: number;
+  truncated: boolean;
+  maxRows: number;
+}
+
 export interface DashboardCounts {
   todayTotal: number;
   monthTotal?: number;
   currentlyInside: number;
   exitedToday: number;
   pendingToday: number;
+  allPending?: number;
   rejectedToday: number;
 }
 
@@ -43,17 +121,32 @@ export interface DashboardInsights {
 
 interface DashboardApiResponse {
   counts?: DashboardCounts;
+  periodMeta?: DashboardPeriodMeta;
+  periodCounts?: DashboardPeriodCounts;
+  offlineModeMetrics?: DashboardOfflineMetrics;
   insights?: DashboardInsights;
   calendarCounts?: Record<string, number>;
   recentPasses: SerializedPass[];
   insidePasses: SerializedPass[];
   exitedTodayPasses: SerializedPass[];
   decisionsTodayPasses: SerializedPass[];
+  reportRows?: {
+    passes: SerializedPass[];
+    offlineRecords: SerializedOfflineDashboardRecord[];
+    totalMatchingCount: number;
+    offlineTotalCount: number;
+    truncated: boolean;
+    maxRows: number;
+  };
   error?: string;
+  message?: string;
 }
 
 export interface DashboardDataSnapshot {
   counts?: DashboardCounts;
+  periodMeta?: DashboardPeriodMeta;
+  periodCounts?: DashboardPeriodCounts;
+  offlineModeMetrics?: DashboardOfflineMetrics;
   insights?: DashboardInsights;
   calendarCounts?: Record<string, number>;
   recentPasses: GatePass[];
@@ -71,6 +164,9 @@ export interface DashboardDataSnapshot {
 
 const initialSnapshot: DashboardDataSnapshot = {
   counts: undefined,
+  periodMeta: undefined,
+  periodCounts: undefined,
+  offlineModeMetrics: undefined,
   insights: undefined,
   calendarCounts: undefined,
   recentPasses: [],
@@ -86,6 +182,8 @@ const initialSnapshot: DashboardDataSnapshot = {
   updatedAt: null,
 };
 
+const DEFAULT_PERIOD_QUERY: DashboardPeriodQuery = { period: 'today' };
+let activeQuery: DashboardPeriodQuery = { ...DEFAULT_PERIOD_QUERY };
 let currentSnapshot = initialSnapshot;
 let pollTimer: ReturnType<typeof setInterval> | null = null;
 let activeRequest: {
@@ -98,6 +196,23 @@ let queuedFollowUp = false;
 let latestIntent = 0;
 let storeEpoch = 0;
 const subscribers = new Set<() => void>();
+
+export function buildDashboardApiUrl(query: DashboardPeriodQuery, includeReportRows = false): string {
+  if (query.period === 'today' && !includeReportRows) {
+    return '/api/admin/dashboard';
+  }
+  const params = new URLSearchParams();
+  params.set('period', query.period);
+  if (query.period === 'date' && query.date) params.set('date', query.date);
+  if (query.period === 'month' && query.month) params.set('month', query.month);
+  if (query.period === 'year' && query.year) params.set('year', query.year);
+  if (query.period === 'range') {
+    if (query.dateFrom) params.set('dateFrom', query.dateFrom);
+    if (query.dateTo) params.set('dateTo', query.dateTo);
+  }
+  if (includeReportRows) params.set('includeReportRows', 'true');
+  return `/api/admin/dashboard?${params.toString()}`;
+}
 
 interface QueuedRetryDeferred {
   resolve: () => void;
@@ -173,10 +288,11 @@ function fetchDashboardData(isManualRetry = false): Promise<void> {
   };
   emitChange();
 
+  const queryForRequest = { ...activeQuery };
   return (async () => {
     try {
       const token = await getAccessToken();
-      const response = await fetch('/api/admin/dashboard', {
+      const response = await fetch(buildDashboardApiUrl(queryForRequest, false), {
         headers: { Authorization: `Bearer ${token}` },
         signal: controller.signal,
       });
@@ -186,11 +302,14 @@ function fetchDashboardData(isManualRetry = false): Promise<void> {
         return;
       }
       if (!response.ok) {
-        throw new Error(data?.error || 'Failed to load dashboard data');
+        throw new Error(data?.message || data?.error || 'Failed to load dashboard data');
       }
 
       currentSnapshot = {
         counts: data?.counts,
+        periodMeta: data?.periodMeta,
+        periodCounts: data?.periodCounts,
+        offlineModeMetrics: data?.offlineModeMetrics,
         insights: data?.insights,
         calendarCounts: data?.calendarCounts,
         recentPasses: (data?.recentPasses ?? []).map(deserializePass),
@@ -298,6 +417,48 @@ function subscribe(callback: () => void) {
   };
 }
 
+export function getDashboardPeriodQuery(): DashboardPeriodQuery {
+  return { ...activeQuery };
+}
+
+export function setDashboardPeriodQuery(nextQuery: DashboardPeriodQuery): Promise<void> {
+  activeQuery = { ...nextQuery };
+  storeEpoch++;
+  if (activeRequest) {
+    activeRequest.controller.abort();
+    activeRequest = null;
+  }
+  isFetching = false;
+  queuedFollowUp = false;
+  const resolvers = pendingManualResolvers;
+  pendingManualResolvers = [];
+  resolvers.forEach((r) => r.resolve());
+  return fetchDashboardData(true);
+}
+
+export async function fetchDashboardReportData(query?: DashboardPeriodQuery): Promise<DashboardReportPayload> {
+  const token = await getAccessToken();
+  const effectiveQuery = query ?? activeQuery;
+  const response = await fetch(buildDashboardApiUrl(effectiveQuery, true), {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  const data = await response.json().catch(() => null) as DashboardApiResponse | null;
+  if (!response.ok || !data) {
+    throw new Error(data?.message || data?.error || 'Failed to load complete dashboard report data');
+  }
+  return {
+    periodMeta: data.periodMeta,
+    periodCounts: data.periodCounts,
+    offlineModeMetrics: data.offlineModeMetrics,
+    passes: (data.reportRows?.passes ?? data.recentPasses ?? []).map(deserializePass),
+    offlineRecords: data.reportRows?.offlineRecords ?? [],
+    totalMatchingCount: data.reportRows?.totalMatchingCount ?? data.recentPasses?.length ?? 0,
+    offlineTotalCount: data.reportRows?.offlineTotalCount ?? 0,
+    truncated: Boolean(data.reportRows?.truncated),
+    maxRows: data.reportRows?.maxRows ?? 5000,
+  };
+}
+
 export function refreshAdminDashboardData(): Promise<void> {
   return fetchDashboardData(true);
 }
@@ -317,6 +478,7 @@ export function _resetDashboardStoreForTesting() {
   }
   isFetching = false;
   queuedFollowUp = false;
+  activeQuery = { ...DEFAULT_PERIOD_QUERY };
   const resolvers = pendingManualResolvers;
   pendingManualResolvers = [];
   resolvers.forEach((r) => r.resolve());

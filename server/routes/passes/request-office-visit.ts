@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { randomBytes, createHash } from 'node:crypto';
+import { randomBytes, createHash, createHmac } from 'node:crypto';
 import { getVerifiedSessionContext, HttpError } from '../../actors.js';
 import { jsonResponse, readBearerToken } from '../../http.js';
 import { getServerSupabaseClients } from '../../supabase.js';
@@ -10,6 +10,8 @@ import { inspectUploadIntent } from '../../upload-inspection.js';
 import { computeMatchTokenDigest } from './identify-returning.js';
 import { encryptQrPayload, decryptQrPayload } from '../../lib/encryption.js';
 import { deliverOfficeAcknowledgementEmail, type OutboxDeliveryResult } from '../../lib/officeDelivery.js';
+import { generateQrPngBuffer, sendResendEmail } from '../../email.js';
+import { renderOfficeVisitApprovedEmail } from '../../templates/index.js';
 import { getBaseUrl } from '../../templates/branding.js';
 
 const namePart = z.string().trim().min(1).max(50);
@@ -18,12 +20,13 @@ const requestSchema = z.object({
   requestId: z.string().uuid(),
   source: z.enum(['portal', 'kiosk']).default('portal'),
   registrationMode: z.enum(['new', 'returning']).default('new'),
+  visitType: z.enum(['general', 'specific_person']).optional().default('specific_person'),
   visitor: z.object({
     firstName: namePart,
     middleName: z.string().trim().max(50).optional(),
     lastName: namePart,
     contactNumber: z.string().min(7).max(32),
-    email: z.string().trim().email().max(255),
+    email: z.string().trim().email().max(255).optional(),
     purpose: z.string().trim().min(3).max(300),
     visitDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
   }),
@@ -31,7 +34,8 @@ const requestSchema = z.object({
   personnelId: z.string().uuid().nullable().optional(),
   requestedPersonName: z.string().trim().min(2).max(150).nullable().optional(),
   specificPurpose: z.string().trim().min(3).max(300),
-  emailVerificationToken: z.string().min(1),
+  emailVerificationToken: z.string().min(1).optional(),
+  expectedGate: z.string().trim().min(1).max(50).optional(),
   arrivalMode: z.enum(['no_vehicle', 'vehicle']).optional().default('no_vehicle'),
   homeLocation: z.object({
     lat: z.number(),
@@ -59,9 +63,30 @@ const requestSchema = z.object({
     profileId: z.string().uuid().optional(),
     matchToken: z.string().optional(),
   }).optional(),
-}).refine((data) => Boolean(data.requestedPersonName?.trim() || data.personnelId), {
-  message: 'Either requestedPersonName or personnelId is required',
-  path: ['requestedPersonName'],
+}).superRefine((data, ctx) => {
+  if (data.visitType === 'specific_person') {
+    if (!data.visitor.email) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['visitor', 'email'],
+        message: 'Email is required for specific-person office visit requests.',
+      });
+    }
+    if (!data.emailVerificationToken) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['emailVerificationToken'],
+        message: 'Verified email token is required for specific-person office visit requests.',
+      });
+    }
+    if (!data.requestedPersonName?.trim() && !data.personnelId) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['requestedPersonName'],
+        message: 'Either requestedPersonName or personnelId is required',
+      });
+    }
+  }
 });
 
 export async function handleRequest(request: Request): Promise<Response> {
@@ -85,18 +110,27 @@ export async function handleRequest(request: Request): Promise<Response> {
     throw new HttpError(403, 'recovery_session_forbidden');
   }
 
-  // Cryptographically verify email verification proof token
-  const isEmailVerified = verifyEmailVerificationProofToken(
-    parsed.data.emailVerificationToken,
-    parsed.data.visitor.email,
-    session.user.id
-  );
+  // Cryptographically verify email verification proof token whenever email is supplied or required
+  const normalizedVisitorEmail = parsed.data.visitor.email?.toLowerCase().trim() || null;
+  if (normalizedVisitorEmail || parsed.data.visitType === 'specific_person') {
+    if (!parsed.data.emailVerificationToken || !normalizedVisitorEmail) {
+      return jsonResponse(403, {
+        error: 'email_verification_invalid',
+        message: 'Email verification is required for this office visit request.',
+      });
+    }
+    const isEmailVerified = verifyEmailVerificationProofToken(
+      parsed.data.emailVerificationToken,
+      normalizedVisitorEmail,
+      session.user.id
+    );
 
-  if (!isEmailVerified) {
-    return jsonResponse(403, {
-      error: 'email_verification_invalid',
-      message: 'Email verification proof token is invalid or has expired. Please verify your email.',
-    });
+    if (!isEmailVerified) {
+      return jsonResponse(403, {
+        error: 'email_verification_invalid',
+        message: 'Email verification proof token is invalid or has expired. Please verify your email.',
+      });
+    }
   }
 
   // Normalize phone number
@@ -112,32 +146,36 @@ export async function handleRequest(request: Request): Promise<Response> {
     canonicalContact = canonical;
   }
 
-  // Verify office and personnel exist and are active
+  // Verify office is active & published, and validate optional personnel
   const { data: office, error: officeErr } = await admin
     .from('offices')
-    .select('id, name, active')
+    .select('id, name, active, publication_status, requires_approval_before_pass, archived_at')
     .eq('id', parsed.data.officeId)
     .maybeSingle();
 
-  if (officeErr || !office || !office.active) {
+  if (officeErr || !office || !office.active || office.publication_status !== 'published' || office.archived_at) {
     return jsonResponse(404, {
       error: 'office_not_found',
-      message: 'The requested office is not found or is currently inactive.',
+      message: 'The requested office is not found, inactive, or not yet published.',
     });
   }
 
-  const { data: personnel, error: persErr } = await admin
-    .from('office_personnel')
-    .select('id, name, office_id, active')
-    .eq('id', parsed.data.personnelId)
-    .eq('office_id', parsed.data.officeId)
-    .maybeSingle();
+  let personnel: { id: string; name: string; office_id: string; active: boolean } | null = null;
+  if (parsed.data.personnelId) {
+    const { data: persRow, error: persErr } = await admin
+      .from('office_personnel')
+      .select('id, name, office_id, active')
+      .eq('id', parsed.data.personnelId)
+      .eq('office_id', parsed.data.officeId)
+      .maybeSingle();
 
-  if (persErr || !personnel || !personnel.active) {
-    return jsonResponse(404, {
-      error: 'personnel_not_found',
-      message: 'The requested personnel is not found or is currently inactive in this office.',
-    });
+    if (persErr || !persRow || !persRow.active) {
+      return jsonResponse(404, {
+        error: 'personnel_not_found',
+        message: 'The requested personnel is not found or is currently inactive in this office.',
+      });
+    }
+    personnel = persRow;
   }
 
   let normalizedPlateDisplay: string | null = null;
@@ -334,6 +372,22 @@ export async function handleRequest(request: Request): Promise<Response> {
     console.error('Failed to encrypt tracking token for delivery outbox:', encErr);
   }
 
+  let passQrToken: string | null = null;
+  let passTokenDigest: string | null = null;
+  if (!office.requires_approval_before_pass) {
+    const passSecret = process.env.PASS_TOKEN_SECRET?.trim();
+    if (!passSecret || passSecret.length < 32) {
+      return jsonResponse(503, {
+        error: 'pass_token_secret_unavailable',
+        message: 'Pass token signing service is temporarily unavailable.',
+      });
+    }
+    passQrToken = createHmac('sha256', passSecret)
+      .update(`${session.user.id}:${parsed.data.requestId}`)
+      .digest('base64url');
+    passTokenDigest = createHash('sha256').update(passQrToken).digest('hex');
+  }
+
   // Call api.create_specific_person_visit_request RPC
   const { data: rpcResult, error: rpcError } = await admin.schema('api').rpc('create_specific_person_visit_request', {
     requested_actor_id: session.user.id,
@@ -344,7 +398,7 @@ export async function handleRequest(request: Request): Promise<Response> {
     requested_middle_name: parsed.data.visitor.middleName || null,
     requested_last_name: parsed.data.visitor.lastName,
     requested_contact_number: canonicalContact,
-    requested_email: parsed.data.visitor.email.toLowerCase().trim(),
+    requested_email: normalizedVisitorEmail,
     requested_purpose: parsed.data.specificPurpose,
     requested_visit_date: parsed.data.visitor.visitDate,
     requested_arrival_mode: parsed.data.arrivalMode,
@@ -368,6 +422,10 @@ export async function handleRequest(request: Request): Promise<Response> {
     requested_tracking_token_digest: trackingTokenDigest,
     requested_tracking_token_expires_at: trackingTokenExpiresAt,
     requested_encrypted_tracking_token: encryptedTrackingToken,
+    requested_visit_type: parsed.data.visitType,
+    requested_source: parsed.data.source,
+    requested_pass_token_digest: passTokenDigest,
+    requested_expected_gate: parsed.data.expectedGate ?? null,
   });
 
   if (rpcError) {
@@ -380,6 +438,9 @@ export async function handleRequest(request: Request): Promise<Response> {
     if (rpcError.message?.includes('visit_date_beyond_horizon')) {
       return jsonResponse(422, { error: 'visit_date_beyond_horizon', message: 'Requested visit date exceeds maximum advance scheduling limit.' });
     }
+    if (rpcError.message?.includes('visit_window_already_closed')) {
+      return jsonResponse(422, { error: 'visit_window_already_closed', message: 'Visiting hours have already closed for the selected date.' });
+    }
     if (rpcError.message?.includes('visit_date_closed')) {
       const match = rpcError.message.match(/visit_date_closed:\s*(.+)/);
       const title = match && match[1] ? match[1].trim() : 'Campus is closed on this date.';
@@ -388,8 +449,14 @@ export async function handleRequest(request: Request): Promise<Response> {
         message: `The campus is closed on the selected visit date (${title}). Please select another date.`,
       });
     }
+    if (rpcError.message?.includes('office_not_found_or_unpublished')) {
+      return jsonResponse(422, { error: 'office_not_found_or_unpublished', message: 'The selected office is unavailable or unpublished.' });
+    }
     if (rpcError.message?.includes('office_not_found_or_inactive')) {
       return jsonResponse(422, { error: 'office_not_found_or_inactive', message: 'The selected office is inactive, unverified, or does not exist.' });
+    }
+    if (rpcError.message?.includes('plate_already_active_on_campus')) {
+      return jsonResponse(409, { error: 'plate_already_active_on_campus', message: 'This vehicle is currently registered as on campus under an active pass.' });
     }
     if (rpcError.message?.includes('valid_matched_identity_verification_required')) {
       return jsonResponse(422, { error: 'identity_verification_required', message: 'Valid matched identity verification required.' });
@@ -423,50 +490,102 @@ export async function handleRequest(request: Request): Promise<Response> {
   }
 
   const trackingUrl = `${getBaseUrl()}/track#t=${effectiveTrackingToken}`;
+  const resolvedPersonnelName = personnel ? personnel.name : (parsed.data.requestedPersonName?.trim() || null);
+  const visitorFullName = [
+    parsed.data.visitor.firstName,
+    parsed.data.visitor.middleName,
+    parsed.data.visitor.lastName,
+  ].filter(Boolean).join(' ');
 
-  // Attempt initial acknowledgement email dispatch via outbox
   let emailDelivery: OutboxDeliveryResult | null = null;
-  try {
-    const visitorFullName = [
-      parsed.data.visitor.firstName,
-      parsed.data.visitor.middleName,
-      parsed.data.visitor.lastName,
-    ].filter(Boolean).join(' ');
-
-    emailDelivery = await deliverOfficeAcknowledgementEmail(admin, {
-      visitId: resultRow.visit_id,
-      recipientEmail: parsed.data.visitor.email.toLowerCase().trim(),
-      visitorName: visitorFullName,
-      officeName: office.name,
-      personnelName: personnel ? personnel.name : (parsed.data.requestedPersonName?.trim() || null),
-      visitDate: parsed.data.visitor.visitDate,
-      purpose: parsed.data.specificPurpose,
-      trackingUrl,
-    });
-  } catch (deliveryEx) {
-    console.error('Non-fatal error delivering acknowledgement email:', deliveryEx);
-    emailDelivery = {
-      status: 'failed',
-      providerMessageId: null,
-      error: deliveryEx instanceof Error ? deliveryEx.message : 'acknowledgement_delivery_failed',
-    };
+  if (normalizedVisitorEmail) {
+    if (resultRow.approval_status === 'approved' && resultRow.public_reference && passQrToken) {
+      try {
+        const publicRef = String(resultRow.public_reference);
+        const qrBuffer = await generateQrPngBuffer(passQrToken);
+        const attachmentFilename = `egatepass-${publicRef.slice(0, 8)}.png`;
+        const html = await renderOfficeVisitApprovedEmail({
+          fullName: visitorFullName,
+          officeName: office.name,
+          personnelName: resolvedPersonnelName || 'General Office Reception',
+          visitDate: parsed.data.visitor.visitDate,
+          purpose: parsed.data.specificPurpose,
+          publicReference: publicRef,
+          attachmentFilename,
+        });
+        const sendRes = await sendResendEmail({
+          to: normalizedVisitorEmail,
+          subject: `Approved: EARIST E-GatePass for ${office.name}`,
+          html,
+          attachments: [
+            {
+              filename: attachmentFilename,
+              content: qrBuffer.toString('base64'),
+              content_type: 'image/png',
+            },
+          ],
+          idempotencyKey: `office-auto-approval-${resultRow.visit_id}`,
+          correlationId: String(resultRow.visit_id),
+        });
+        emailDelivery = { status: 'sent', providerMessageId: sendRes.id || null, error: null };
+      } catch (deliveryEx) {
+        console.error('Non-fatal error delivering auto-approved QR email:', deliveryEx);
+        emailDelivery = {
+          status: 'failed',
+          providerMessageId: null,
+          error: deliveryEx instanceof Error ? deliveryEx.message : 'auto_approval_delivery_failed',
+        };
+      }
+    } else {
+      try {
+        emailDelivery = await deliverOfficeAcknowledgementEmail(admin, {
+          visitId: resultRow.visit_id,
+          recipientEmail: normalizedVisitorEmail,
+          visitorName: visitorFullName,
+          officeName: office.name,
+          personnelName: resolvedPersonnelName || 'General Office Reception',
+          visitDate: parsed.data.visitor.visitDate,
+          purpose: parsed.data.specificPurpose,
+          trackingUrl,
+        });
+      } catch (deliveryEx) {
+        console.error('Non-fatal error delivering acknowledgement email:', deliveryEx);
+        emailDelivery = {
+          status: 'failed',
+          providerMessageId: null,
+          error: deliveryEx instanceof Error ? deliveryEx.message : 'acknowledgement_delivery_failed',
+        };
+      }
+    }
   }
 
+  const isAutoApproved = resultRow.approval_status === 'approved' && Boolean(resultRow.public_reference) && Boolean(passQrToken);
   return jsonResponse(201, {
     ok: true,
+    approvalRequired: !isAutoApproved,
     visitId: resultRow.visit_id,
     requestId: resultRow.request_id,
     approvalStatus: resultRow.approval_status,
     attendanceStatus: resultRow.attendance_status,
     officeName: office.name,
-    personnelName: personnel.name,
+    personnelName: resolvedPersonnelName,
     trackingToken: effectiveTrackingToken,
     trackingUrl,
+    ...(isAutoApproved ? {
+      passId: resultRow.public_reference,
+      publicReference: resultRow.public_reference,
+      qrToken: passQrToken,
+      validFrom: resultRow.valid_from,
+      validUntil: resultRow.valid_until,
+      decisionSource: resultRow.decision_source ?? 'auto_office_policy',
+    } : {}),
     emailDelivery: emailDelivery ? {
       status: emailDelivery.status,
       providerMessageId: emailDelivery.providerMessageId,
     } : undefined,
-    message: 'Your visit request has been submitted for office review. You will receive an email once approved or rejected.',
+    message: isAutoApproved
+      ? 'Your office visit pass has been issued and is ready for gate presentation.'
+      : 'Your visit request has been submitted for office review. You will receive an email once approved or rejected.',
   });
 }
 

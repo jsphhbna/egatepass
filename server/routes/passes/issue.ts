@@ -1,6 +1,6 @@
-import { createHash, createHmac } from 'node:crypto';
+import { createHash, createHmac, randomBytes } from 'node:crypto';
 import { z } from 'zod';
-import { getVerifiedSessionContext, HttpError, recordReconciliation } from '../../actors.js';
+import { getVerifiedSessionContext, HttpError } from '../../actors.js';
 import { jsonResponse, readBearerToken } from '../../http.js';
 import { getServerSupabaseClients } from '../../supabase.js';
 import { normalizePhMobile } from '../../../src/lib/phPhone.js';
@@ -11,6 +11,10 @@ import {
   buildExpectedPsgcReferences,
   validatePsgcReferences,
 } from '../../lib/psgc-reference.js';
+import { verifyEmailVerificationProofToken } from '../../lib/office.js';
+import { encryptQrPayload, decryptQrPayload } from '../../lib/encryption.js';
+import { deliverOfficeAcknowledgementEmail, type OutboxDeliveryResult } from '../../lib/officeDelivery.js';
+import { getBaseUrl } from '../../templates/branding.js';
 
 const namePart = z.string().trim().min(1).max(50);
 const requestSchema = z.object({
@@ -22,10 +26,13 @@ const requestSchema = z.object({
     middleName: z.string().trim().max(50).optional(),
     lastName: namePart,
     contactNumber: z.string().min(7).max(32),
+    email: z.string().trim().email().max(255).optional(),
     homeAddress: z.string().trim().max(300).optional(),
     purpose: z.string().trim().min(3).max(300),
     visitDate: z.iso.date(),
   }),
+  emailVerificationToken: z.string().min(1).optional(),
+  expectedGate: z.string().trim().min(1).max(50).optional(),
   arrivalMode: z.enum(['no_vehicle', 'vehicle']).optional(),
   homeLocation: z.object({
     lat: z.number(),
@@ -480,40 +487,14 @@ async function handleRequest(request: Request): Promise<Response> {
 
       let replayOfficeVisitLinkStatus: 'linked' | 'reconciliation_required' | 'not_applicable' = 'not_applicable';
       if (parsed.data.officeId && existingPass.id) {
-        try {
-          const { data: ovRows, error: ovErr } = await admin.schema('api').rpc('record_general_office_visit', {
-            requested_actor_id: actorId,
-            requested_pass_id: existingPass.id,
-            requested_office_id: parsed.data.officeId,
-            requested_request_id: parsed.data.requestId,
-          });
-          const ovRow = Array.isArray(ovRows) ? ovRows[0] : ovRows;
-          if (ovErr || !ovRow?.visit_id) {
-            replayOfficeVisitLinkStatus = 'reconciliation_required';
-            console.warn('Failed to link general office visit on idempotent replay:', ovErr || 'missing_visit_id');
-            await recordReconciliation(
-              admin,
-              'general_office_visit.replay_failed',
-              'passes',
-              existingPass.id,
-              ovErr instanceof Error ? ovErr.message : (ovErr ? String(ovErr) : 'missing_visit_id'),
-              { officeId: parsed.data.officeId, requestId: parsed.data.requestId }
-            ).catch(() => undefined);
-          } else {
-            replayOfficeVisitLinkStatus = 'linked';
-          }
-        } catch (ovErr) {
-          replayOfficeVisitLinkStatus = 'reconciliation_required';
-          console.warn('Failed to link general office visit on idempotent replay:', ovErr);
-          await recordReconciliation(
-            admin,
-            'general_office_visit.replay_failed',
-            'passes',
-            existingPass.id,
-            ovErr instanceof Error ? ovErr.message : 'general_office_visit_link_failed',
-            { officeId: parsed.data.officeId, requestId: parsed.data.requestId }
-          ).catch(() => undefined);
-        }
+        const { data: linkedVisit, error: linkedVisitErr } = await admin
+          .from('office_visits')
+          .select('id')
+          .eq('pass_id', existingPass.id)
+          .eq('office_id', parsed.data.officeId)
+          .maybeSingle();
+        if (linkedVisitErr) throw linkedVisitErr;
+        replayOfficeVisitLinkStatus = linkedVisit?.id ? 'linked' : 'reconciliation_required';
       }
 
       let replaySavedVehicleStatus: 'saved' | 'failed' | 'not_requested' = 'not_requested';
@@ -562,6 +543,77 @@ async function handleRequest(request: Request): Promise<Response> {
         officeVisitLinkStatus: replayOfficeVisitLinkStatus,
         savedVehicleStatus: replaySavedVehicleStatus,
       });
+    }
+
+    const normalizedVisitorEmail = parsed.data.visitor.email?.toLowerCase().trim() || null;
+    if (normalizedVisitorEmail) {
+      if (
+        !parsed.data.emailVerificationToken
+        || !verifyEmailVerificationProofToken(parsed.data.emailVerificationToken, normalizedVisitorEmail, actorId)
+      ) {
+        return jsonResponse(403, {
+          error: 'email_verification_invalid',
+          message: 'Email verification proof token is invalid or has expired. Please verify your email.',
+        });
+      }
+    }
+
+    // Validate destination office & approval policy before issuance
+    let targetOffice: {
+      id: string;
+      name: string;
+      active: boolean;
+      publication_status: string;
+      requires_approval_before_pass: boolean;
+      archived_at: string | null;
+    } | null = null;
+    if (parsed.data.officeId) {
+      const { data: off, error: offErr } = await admin
+        .from('offices')
+        .select('id, name, active, publication_status, requires_approval_before_pass, archived_at')
+        .eq('id', parsed.data.officeId)
+        .maybeSingle();
+      if (offErr) throw offErr;
+      if (!off || !off.active || off.publication_status !== 'published' || off.archived_at) {
+        return jsonResponse(422, {
+          error: 'office_not_found_or_unpublished',
+          message: 'The selected destination office is unavailable or unpublished.',
+        });
+      }
+      targetOffice = off;
+
+      if (targetOffice.requires_approval_before_pass) {
+        const { data: existingVisit, error: existingVisitErr } = await admin
+          .from('office_visits')
+          .select('id, request_id, office_id, visitor_actor_id, approval_status, attendance_status, pass_id')
+          .eq('request_id', parsed.data.requestId)
+          .maybeSingle();
+        if (existingVisitErr) throw existingVisitErr;
+        if (existingVisit) {
+          if (existingVisit.visitor_actor_id !== actorId) {
+            return jsonResponse(403, { error: 'request_id_actor_mismatch' });
+          }
+          if (existingVisit.office_id !== parsed.data.officeId) {
+            return jsonResponse(409, { error: 'idempotency_conflict' });
+          }
+          if (existingVisit.approval_status !== 'approved' || !existingVisit.pass_id) {
+            return jsonResponse(200, {
+              ok: true,
+              approvalRequired: true,
+              passId: null,
+              publicReference: null,
+              qrToken: null,
+              visitId: existingVisit.id,
+              requestId: existingVisit.request_id,
+              approvalStatus: existingVisit.approval_status,
+              attendanceStatus: existingVisit.attendance_status,
+              officeName: targetOffice.name,
+              officeVisitLinkStatus: 'pending_approval',
+              message: 'Your office visit request has already been submitted for approval.',
+            });
+          }
+        }
+      }
     }
 
     // Rate limiting for portal operations (only for new pass issuances)
@@ -640,6 +692,8 @@ async function handleRequest(request: Request): Promise<Response> {
 
     // Mode-specific verification checks
     let returningMatchDigest: string | null = null;
+    let boundIdentityVerificationId: string | null = null;
+    let boundReturningAttemptId: string | null = null;
     if (parsed.data.source === 'portal') {
       if (parsed.data.registrationMode === 'new') {
         if (!parsed.data.idIntentId) {
@@ -648,7 +702,7 @@ async function handleRequest(request: Request): Promise<Response> {
 
         const { data: attempt, error: attemptError } = await admin
           .from('portal_identity_verification_attempts')
-          .select('owner_id, request_id, photo_intent_id, id_intent_id, outcome, expires_at')
+          .select('id, owner_id, request_id, photo_intent_id, id_intent_id, outcome, expires_at')
           .eq('request_id', parsed.data.requestId)
           .eq('owner_id', actorId)
           .eq('photo_intent_id', parsed.data.photoIntentId)
@@ -670,6 +724,7 @@ async function handleRequest(request: Request): Promise<Response> {
             message: 'Identity verification has expired. Please retry verification.',
           });
         }
+        boundIdentityVerificationId = attempt.id;
       } else if (parsed.data.registrationMode === 'returning') {
         const ret = parsed.data.returning;
         if (!ret?.profileId || !ret?.matchToken) {
@@ -708,6 +763,7 @@ async function handleRequest(request: Request): Promise<Response> {
             message: 'Valid returning visitor identification required. Please identify yourself first.',
           });
         }
+        boundReturningAttemptId = retAttempt.id;
       }
     }
 
@@ -726,6 +782,133 @@ async function handleRequest(request: Request): Promise<Response> {
       : null;
 
     const visitor = parsed.data.visitor;
+
+    // Route general office visits through pre-pass approval workflow when required by destination office
+    if (parsed.data.officeId && targetOffice?.requires_approval_before_pass) {
+      const psgc = parsed.data.psgc;
+      const addressDetails = psgc ? {
+        psgcVersion: psgc.version || '2026-q3',
+        regionCode: psgc.regionCode,
+        provinceCode: psgc.provinceCode || null,
+        cityCode: psgc.cityCode,
+        barangayCode: psgc.barangayCode,
+        homeBuilding: psgc.houseBuilding || null,
+        homeStreet: psgc.street || null,
+        homeAddress: visitor.homeAddress?.trim() || null,
+        lat: normalizedHomeLocation?.lat ?? null,
+        lon: normalizedHomeLocation?.lon ?? null,
+      } : (normalizedHomeLocation || visitor.homeAddress ? {
+        homeAddress: visitor.homeAddress?.trim() || null,
+        lat: normalizedHomeLocation?.lat ?? null,
+        lon: normalizedHomeLocation?.lon ?? null,
+      } : null);
+
+      const vehicleDetails = parsed.data.arrivalMode === 'vehicle' && parsed.data.vehicle ? {
+        vehicleType: parsed.data.vehicle.vehicleType,
+        plateNumber: normalizedPlateDisplay,
+        color: normalizedVehicleColor ?? parsed.data.vehicle.color,
+        makeModel: parsed.data.vehicle.makeModel?.trim() || '',
+      } : null;
+
+      const rawTrackingToken = randomBytes(32).toString('base64url');
+      const trackingTokenDigest = createHash('sha256').update(rawTrackingToken).digest('hex');
+      const trackingTokenExpiresAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString();
+      let encryptedTrackingToken: string | null = null;
+      try {
+        encryptedTrackingToken = encryptQrPayload(rawTrackingToken);
+      } catch (encErr) {
+        console.error('Failed to encrypt tracking token for pre-approval general visit:', encErr);
+      }
+
+      const { data: visitRpcRes, error: visitRpcErr } = await admin.schema('api').rpc('create_specific_person_visit_request', {
+        requested_actor_id: actorId,
+        requested_request_id: parsed.data.requestId,
+        requested_office_id: parsed.data.officeId,
+        requested_personnel_id: null,
+        requested_first_name: visitor.firstName,
+        requested_middle_name: visitor.middleName || null,
+        requested_last_name: visitor.lastName,
+        requested_contact_number: canonicalContact,
+        requested_email: normalizedVisitorEmail,
+        requested_purpose: visitor.purpose,
+        requested_visit_date: visitor.visitDate,
+        requested_arrival_mode: parsed.data.arrivalMode || 'no_vehicle',
+        requested_vehicle_details: vehicleDetails,
+        requested_address_details: addressDetails,
+        requested_photo_intent_id: parsed.data.registrationMode === 'returning' ? null : (parsed.data.photoIntentId ?? null),
+        requested_photo_bytes: parsed.data.registrationMode === 'returning' ? null : (photo?.bytes ?? null),
+        requested_photo_sha256: parsed.data.registrationMode === 'returning' ? null : (photo?.sha256 ?? null),
+        requested_id_intent_id: parsed.data.registrationMode === 'returning' ? null : (parsed.data.idIntentId ?? null),
+        requested_id_bytes: parsed.data.registrationMode === 'returning' ? null : (identification?.bytes ?? null),
+        requested_id_sha256: parsed.data.registrationMode === 'returning' ? null : (identification?.sha256 ?? null),
+        requested_vehicle_photo_intent_id: vehiclePhotoIntentId ?? null,
+        requested_vehicle_photo_bytes: vehiclePhoto?.bytes ?? null,
+        requested_vehicle_photo_sha256: vehiclePhoto?.sha256 ?? null,
+        requested_registration_mode: parsed.data.registrationMode,
+        requested_returning_profile_id: parsed.data.registrationMode === 'returning' ? (parsed.data.returning?.profileId ?? null) : null,
+        requested_returning_match_token_digest: parsed.data.registrationMode === 'returning' ? returningMatchDigest : null,
+        requested_identity_verification_id: boundIdentityVerificationId,
+        requested_returning_attempt_id: boundReturningAttemptId,
+        requested_person_name: null,
+        requested_tracking_token_digest: trackingTokenDigest,
+        requested_tracking_token_expires_at: trackingTokenExpiresAt,
+        requested_encrypted_tracking_token: encryptedTrackingToken,
+        requested_visit_type: 'general',
+        requested_source: parsed.data.source,
+        requested_pass_token_digest: null,
+        requested_expected_gate: parsed.data.expectedGate ?? null,
+      });
+
+      if (visitRpcErr) throw visitRpcErr;
+      const visitRow = Array.isArray(visitRpcRes) ? visitRpcRes[0] : visitRpcRes;
+      if (!visitRow?.visit_id) throw new Error('request_creation_failed');
+
+      let effectiveTrackingToken = rawTrackingToken;
+      if (visitRow.encrypted_tracking_token) {
+        try {
+          effectiveTrackingToken = decryptQrPayload(visitRow.encrypted_tracking_token);
+        } catch {
+          // keep freshly generated token
+        }
+      }
+      const trackingUrl = `${getBaseUrl()}/track#t=${effectiveTrackingToken}`;
+      let emailDelivery: OutboxDeliveryResult | null = null;
+      if (normalizedVisitorEmail) {
+        try {
+          emailDelivery = await deliverOfficeAcknowledgementEmail(admin, {
+            visitId: visitRow.visit_id,
+            recipientEmail: normalizedVisitorEmail,
+            visitorName: [visitor.firstName, visitor.middleName, visitor.lastName].filter(Boolean).join(' '),
+            officeName: targetOffice.name,
+            personnelName: 'General Office Reception',
+            visitDate: visitor.visitDate,
+            purpose: visitor.purpose,
+            trackingUrl,
+          });
+        } catch (ackErr) {
+          console.error('Non-fatal acknowledgement email failure for pre-approval visit:', ackErr);
+        }
+      }
+
+      return jsonResponse(201, {
+        ok: true,
+        approvalRequired: true,
+        passId: null,
+        publicReference: null,
+        qrToken: null,
+        visitId: visitRow.visit_id,
+        requestId: visitRow.request_id,
+        approvalStatus: visitRow.approval_status,
+        attendanceStatus: visitRow.attendance_status,
+        officeName: targetOffice.name,
+        trackingToken: effectiveTrackingToken,
+        trackingUrl,
+        emailDelivery: emailDelivery ? { status: emailDelivery.status, providerMessageId: emailDelivery.providerMessageId } : undefined,
+        officeVisitLinkStatus: 'pending_approval',
+        message: 'Your office visit request has been submitted for approval. Your pass will be issued once approved.',
+      });
+    }
+
     let data: IssueResult | null = null;
 
     if (parsed.data.source === 'portal') {
@@ -777,6 +960,8 @@ async function handleRequest(request: Request): Promise<Response> {
         requested_returning_match_token_digest: parsed.data.registrationMode === 'returning' ? returningMatchDigest : null,
         requested_save_vehicle: parsed.data.arrivalMode === 'vehicle' ? Boolean(parsed.data.vehicle?.saveVehicle ?? parsed.data.saveVehicle) : false,
         requested_save_profile_updates: parsed.data.registrationMode === 'returning' ? Boolean(parsed.data.returning?.saveUpdates) : false,
+        requested_office_id: parsed.data.officeId ?? null,
+        requested_expected_gate: parsed.data.expectedGate ?? null,
       }).single<IssueResult>();
 
       if (rpcRes.error || !rpcRes.data) throw rpcRes.error ?? new Error('issue_failed');
@@ -801,6 +986,8 @@ async function handleRequest(request: Request): Promise<Response> {
         requested_id_bytes: identification?.bytes ?? null,
         requested_id_sha256: identification?.sha256 ?? null,
         requested_token_digest: tokenDigest,
+        requested_office_id: parsed.data.officeId ?? null,
+        requested_expected_gate: parsed.data.expectedGate ?? null,
       }).single<IssueResult>();
 
       if (rpcRes.error || !rpcRes.data) throw rpcRes.error ?? new Error('issue_failed');
@@ -979,50 +1166,17 @@ async function handleRequest(request: Request): Promise<Response> {
         }
       }
 
-      let officeVisitLinkStatus: 'linked' | 'reconciliation_required' | 'not_applicable' = 'not_applicable';
-      if (parsed.data.officeId && data?.pass_id) {
-        try {
-          const { data: ovRows, error: ovErr } = await admin.schema('api').rpc('record_general_office_visit', {
-            requested_actor_id: actorId,
-            requested_pass_id: data.pass_id,
-            requested_office_id: parsed.data.officeId,
-            requested_request_id: parsed.data.requestId,
-          });
-          const ovRow = Array.isArray(ovRows) ? ovRows[0] : ovRows;
-          if (ovErr || !ovRow?.visit_id) {
-            officeVisitLinkStatus = 'reconciliation_required';
-            console.error('Failed to link general office visit:', ovErr || 'missing_visit_id');
-            await recordReconciliation(
-              admin,
-              'general_office_visit.failed',
-              'passes',
-              data.pass_id,
-              ovErr instanceof Error ? ovErr.message : (ovErr ? String(ovErr) : 'missing_visit_id'),
-              { officeId: parsed.data.officeId, requestId: parsed.data.requestId }
-            ).catch(() => undefined);
-          } else {
-            officeVisitLinkStatus = 'linked';
-          }
-        } catch (ovErr) {
-          console.error('Failed to link general office visit:', ovErr);
-          officeVisitLinkStatus = 'reconciliation_required';
-          await recordReconciliation(
-            admin,
-            'general_office_visit.failed',
-            'passes',
-            data.pass_id,
-            ovErr instanceof Error ? ovErr.message : 'general_office_visit_link_failed',
-            { officeId: parsed.data.officeId, requestId: parsed.data.requestId }
-          ).catch(() => undefined);
-        }
-      }
+      const officeVisitLinkStatus: 'linked' | 'not_applicable' = parsed.data.officeId ? 'linked' : 'not_applicable';
 
     return jsonResponse(201, {
+      ok: true,
+      approvalRequired: false,
       passId: data.public_reference,
       publicReference: data.public_reference,
       qrToken,
       validFrom: data.valid_from,
       validUntil: data.valid_until,
+      officeName: targetOffice?.name ?? null,
       returningEnrollment: returningEnrollmentStatus,
       returningProfileUpdate: returningProfileUpdateStatus,
       savedVehicleStatus,
@@ -1197,9 +1351,24 @@ export function mapDatabaseIssueError(
     return { status: 409, error: 'pass_token_secret_rotated' };
   }
 
-  // Pass expired
+  // Pass expired / window closed / office governance
   if (msg === 'pass_has_expired' || msg.includes('pass has expired')) {
     return { status: 422, error: 'pass_has_expired', message: 'The requested pass has expired.' };
+  }
+  if (msg.includes('visit_window_already_closed') || msg.includes('visit window already closed')) {
+    return { status: 422, error: 'visit_window_already_closed', message: 'Visiting hours for the selected date have already closed.' };
+  }
+  if (msg.includes('office_approval_required')) {
+    return { status: 409, error: 'office_approval_required', message: 'This destination office requires office approval before a pass can be issued.' };
+  }
+  if (msg.includes('office_not_found_or_unpublished') || msg.includes('office_not_found_or_inactive')) {
+    return { status: 422, error: 'office_not_found_or_unpublished', message: 'The selected destination office is inactive, unpublished, or archived.' };
+  }
+  if (msg.includes('plate_already_active_on_campus')) {
+    return { status: 409, error: 'plate_already_active_on_campus', message: 'This vehicle is currently registered as on campus under an active pass.' };
+  }
+  if (msg.includes('expected_gate_too_long')) {
+    return { status: 422, error: 'expected_gate_too_long', message: 'Expected gate name must be 50 characters or fewer.' };
   }
 
   // Generic 22023 without matching above

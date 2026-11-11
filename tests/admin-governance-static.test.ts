@@ -28,6 +28,8 @@ const adminEmergencyApi = readFileSync('server/routes/admin/emergency.ts', 'utf8
 const reconciliationApi = readFileSync('server/routes/system/reconciliation-items.ts', 'utf8');
 
 const governanceMigration = readFileSync('supabase/migrations/20261020000700_admin_governance.sql', 'utf8');
+const phase1ReliabilityMigration = readFileSync('supabase/migrations/20261112000100_phase1_reliability_repairs.sql', 'utf8');
+const hardeningMigration = readFileSync('supabase/migrations/20261112000500_security_hardening_sessions_and_retention.sql', 'utf8');
 
 describe('Admin and Operations Runtime Migration (M4/S6)', () => {
   it('removes all direct Firebase and Firestore imports from Admin UI pages', () => {
@@ -110,7 +112,9 @@ describe('Admin and Operations Runtime Migration (M4/S6)', () => {
     expect(governanceMigration).toContain("'device.update'");
     expect(governanceMigration).toContain("'device.retire'");
     expect(updateDeviceAuthApi).toContain("action: 'device.password_update'");
-    expect(updateSettingsApi).toContain("action: 'settings_updated'");
+    expect(updateSettingsApi).toContain('save_system_settings_v2');
+    expect(hardeningMigration).toContain('api.save_system_settings(');
+    expect(phase1ReliabilityMigration).toContain("'settings_updated'");
     expect(purgeImagesApi).toContain("action: 'image_purge'");
   });
 

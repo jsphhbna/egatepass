@@ -175,6 +175,11 @@ describe('Office Schema Reconciliation & Visitor Ownership Contracts (PGlite)', 
     // Get an office id and create active personnel
     const officeRes = await db.query<{ id: string }>(`select id from public.offices limit 1;`);
     const officeId = officeRes.rows[0].id;
+    await db.exec(`
+      update public.offices
+      set verified = true, verified_at = now(), publication_status = 'published', published_at = now()
+      where id = '${officeId}';
+    `);
 
     const personnelRes = await db.query<{ id: string }>(`
       insert into public.office_personnel (office_id, name, title)

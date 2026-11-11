@@ -106,6 +106,8 @@ export interface VisitorRegistration {
   enrollReturning?: boolean;
   enrollBiometric?: boolean;
   officeId?: string;
+  expectedGate?: string;
+  emailVerificationToken?: string;
 }
 
 export interface IssuedPass {
@@ -114,10 +116,19 @@ export interface IssuedPass {
   qrToken: string;
   validFrom: string;
   validUntil: string;
+  approvalRequired?: boolean;
+  visitId?: string;
+  requestId?: string;
+  approvalStatus?: string;
+  attendanceStatus?: string;
+  officeName?: string;
+  trackingToken?: string;
+  trackingUrl?: string;
+  message?: string;
   returningEnrollment?: 'enrolled' | 'failed' | 'not_requested';
   returningProfileUpdate?: 'updated' | 'failed' | 'not_requested';
   savedVehicleStatus?: 'saved' | 'failed' | 'not_requested';
-  officeVisitLinkStatus?: 'linked' | 'reconciliation_required' | 'not_applicable';
+  officeVisitLinkStatus?: 'linked' | 'reconciliation_required' | 'pending_approval' | 'not_applicable';
 }
 
 interface UploadIntent {
@@ -1580,10 +1591,12 @@ export async function issueVisitorPass(
           middleName: effectiveVisitor.middleName,
           lastName: effectiveVisitor.lastName,
           contactNumber: effectiveVisitor.contactNumber,
+          email: effectiveVisitor.email?.trim() || undefined,
           purpose: effectiveVisitor.purpose,
           visitDate: effectiveVisitor.visitDate,
           homeAddress: effectiveVisitor.homeAddress?.trim() || undefined,
         },
+        emailVerificationToken: effectiveVisitor.emailVerificationToken?.trim() || undefined,
         arrivalMode: effectiveVisitor.arrivalMode,
         homeLocation: effectiveVisitor.homeLocation || undefined,
         psgc: effectiveVisitor.psgc || undefined,
@@ -1599,6 +1612,7 @@ export async function issueVisitorPass(
         photoIntentId: effectiveVisitor.registrationMode === 'returning' ? undefined : (photoIntentId || undefined),
         idIntentId: effectiveVisitor.registrationMode === 'returning' ? undefined : (idIntentId || undefined),
         officeId: effectiveVisitor.officeId || undefined,
+        expectedGate: effectiveVisitor.expectedGate?.trim() || undefined,
       }),
     }, 15000);
   } catch (networkErr) {
@@ -1613,6 +1627,19 @@ export async function issueVisitorPass(
   }
 
   const body = await response.json().catch(() => null) as (IssuedPass & { error?: string }) | null;
+  if (response.ok && body?.approvalRequired === true) {
+    if (transaction) {
+      transaction.phase = 'committed';
+    }
+    return {
+      ...body,
+      passId: body.passId ?? '',
+      qrToken: body.qrToken ?? '',
+      validFrom: body.validFrom ?? '',
+      validUntil: body.validUntil ?? '',
+      approvalRequired: true,
+    };
+  }
   if (!response.ok || !body?.passId || !body.qrToken) {
     const errCode = body?.error || 'issue_failed';
     const outcome = classifySubmissionOutcome(response.status, errCode);
@@ -1635,6 +1662,10 @@ export async function issueVisitorPass(
         message = 'Please select your approximate residential location on the map.';
       } else if (errCode === 'invalid_home_location') {
         message = 'Approximate residential coordinates are invalid.';
+      } else if (errCode === 'office_not_published' || errCode === 'office_unavailable') {
+        message = 'This destination office is not currently open for visitor registration.';
+      } else if (errCode === 'office_approval_before_pass_required') {
+        message = 'Visits to this office require office approval before a gate pass can be issued. Submit an office visit request instead.';
       } else if (errCode?.includes('vehicle')) {
         message = 'Please check your vehicle declaration details.';
       } else if (body && (body as any).message) {
@@ -1715,12 +1746,22 @@ export interface RegistrationSettingsData {
   photo_retention_days?: number | null;
   id_retention_days?: number | null;
   visitor_retention_days?: number | null;
+  vehicle_photo_retention_days?: number | null;
+  returning_profile_retention_days?: number | null;
+  default_expected_gate?: string | null;
+  biometric_storage_retired?: boolean;
+  turnstile?: {
+    siteKeyConfigured: boolean;
+    serverVerifierConfigured: boolean;
+    verified: boolean;
+  } | null;
 }
 
 export async function loadRegistrationSettings(source: RegistrationSource): Promise<RegistrationSettingsData> {
   const client = source === 'portal' ? requirePortalSupabase() : requireSupabase();
+  // Select only the 7 non-sensitive public columns granted to anon/authenticated in PostgreSQL.
   const selectCols =
-    'working_hours_start, working_hours_end, timezone, scheduling_days_ahead, peak_mode, visit_purposes, visitor_instructions, image_retention_days, photo_retention_days, id_retention_days, visitor_retention_days';
+    'working_hours_start, working_hours_end, timezone, scheduling_days_ahead, peak_mode, visit_purposes, visitor_instructions';
 
   const { data, error } = await client
     .from('app_settings')
@@ -1743,6 +1784,44 @@ export async function loadRegistrationSettings(source: RegistrationSource): Prom
   }
 
   const raw = data as unknown as Record<string, unknown>;
+  const hasDirectRetentionKeys =
+    'photo_retention_days' in raw ||
+    'id_retention_days' in raw ||
+    'visitor_retention_days' in raw ||
+    'image_retention_days' in raw;
+
+  let capabilitiesData: {
+    biometricStorageRetired?: boolean;
+    turnstile?: { siteKeyConfigured: boolean; serverVerifierConfigured: boolean; verified: boolean };
+    registrationConfig?: {
+      defaultExpectedGate?: string | null;
+      retentionSummary?: {
+        photoRetentionDays?: number;
+        idRetentionDays?: number;
+        vehiclePhotoRetentionDays?: number;
+        visitorRetentionDays?: number;
+        returningProfileRetentionDays?: number;
+      };
+    };
+  } | null = null;
+
+  if (!hasDirectRetentionKeys && typeof fetch === 'function') {
+    try {
+      const capRes = await withTimeout(
+        fetch('/api/passes/capabilities', { method: 'GET' }),
+        5000,
+        'Capabilities lookup timed out'
+      );
+      if (capRes.ok) {
+        capabilitiesData = await capRes.json().catch(() => null);
+      }
+    } catch {
+      capabilitiesData = null;
+    }
+  }
+
+  const retSummary = capabilitiesData?.registrationConfig?.retentionSummary;
+
   return {
     working_hours_start: (raw.working_hours_start as string) ?? null,
     working_hours_end: (raw.working_hours_end as string) ?? null,
@@ -1751,10 +1830,33 @@ export async function loadRegistrationSettings(source: RegistrationSource): Prom
     peak_mode: (raw.peak_mode as string) ?? null,
     visit_purposes: raw.visit_purposes,
     visitor_instructions: Array.isArray(raw.visitor_instructions) ? (raw.visitor_instructions as string[]) : null,
-    image_retention_days: typeof raw.image_retention_days === 'number' ? raw.image_retention_days : null,
-    photo_retention_days: typeof raw.photo_retention_days === 'number' ? raw.photo_retention_days : null,
-    id_retention_days: typeof raw.id_retention_days === 'number' ? raw.id_retention_days : null,
-    visitor_retention_days: typeof raw.visitor_retention_days === 'number' ? raw.visitor_retention_days : null,
+    image_retention_days:
+      typeof raw.image_retention_days === 'number'
+        ? raw.image_retention_days
+        : (typeof retSummary?.photoRetentionDays === 'number' ? retSummary.photoRetentionDays : null),
+    photo_retention_days:
+      typeof raw.photo_retention_days === 'number'
+        ? raw.photo_retention_days
+        : (typeof retSummary?.photoRetentionDays === 'number' ? retSummary.photoRetentionDays : null),
+    id_retention_days:
+      typeof raw.id_retention_days === 'number'
+        ? raw.id_retention_days
+        : (typeof retSummary?.idRetentionDays === 'number' ? retSummary.idRetentionDays : null),
+    visitor_retention_days:
+      typeof raw.visitor_retention_days === 'number'
+        ? raw.visitor_retention_days
+        : (typeof retSummary?.visitorRetentionDays === 'number' ? retSummary.visitorRetentionDays : null),
+    vehicle_photo_retention_days:
+      typeof raw.vehicle_photo_retention_days === 'number'
+        ? raw.vehicle_photo_retention_days
+        : (typeof retSummary?.vehiclePhotoRetentionDays === 'number' ? retSummary.vehiclePhotoRetentionDays : null),
+    returning_profile_retention_days:
+      typeof raw.returning_profile_retention_days === 'number'
+        ? raw.returning_profile_retention_days
+        : (typeof retSummary?.returningProfileRetentionDays === 'number' ? retSummary.returningProfileRetentionDays : null),
+    default_expected_gate: capabilitiesData?.registrationConfig?.defaultExpectedGate ?? null,
+    biometric_storage_retired: capabilitiesData?.biometricStorageRetired ?? true,
+    turnstile: capabilitiesData?.turnstile ?? null,
   };
 }
 

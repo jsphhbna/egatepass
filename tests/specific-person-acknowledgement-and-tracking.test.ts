@@ -85,7 +85,14 @@ describe('Specific-Person Request Acknowledgement & Secure Status Tracking', () 
               select: () => ({
                 eq: () => ({
                   maybeSingle: async () => ({
-                    data: { id: testOfficeId, name: 'Office of the Registrar', active: true },
+                    data: {
+                      id: testOfficeId,
+                      name: 'Office of the Registrar',
+                      active: true,
+                      publication_status: 'published',
+                      requires_approval_before_pass: true,
+                      archived_at: null,
+                    },
                     error: null,
                   }),
                 }),
@@ -249,7 +256,14 @@ describe('Specific-Person Request Acknowledgement & Secure Status Tracking', () 
               select: () => ({
                 eq: () => ({
                   maybeSingle: async () => ({
-                    data: { id: testOfficeId, name: 'Office of the Registrar', active: true },
+                    data: {
+                      id: testOfficeId,
+                      name: 'Office of the Registrar',
+                      active: true,
+                      publication_status: 'published',
+                      requires_approval_before_pass: true,
+                      archived_at: null,
+                    },
                     error: null,
                   }),
                 }),

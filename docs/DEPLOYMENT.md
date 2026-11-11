@@ -89,6 +89,7 @@ Configure environment variables in your Vercel Project Settings (**Settings > En
 | `RESEND_FROM_EMAIL` | Production, Dev | No | Authoritative sender address: `EARIST E-GatePass <notifications@egatepass.tech>` |
 | `SEND_EMAIL_HOOK_SECRET` | **Production Only** | **Yes** | Secret for Supabase Auth Standard Webhook signature verification |
 | `RESEND_WEBHOOK_SECRET` | **Production Only** | **Yes** | Secret for Resend Delivery Webhook standard signature verification |
+| `EMERGENCY_MANIFEST_SIGNING_PRIVATE_KEY` | Production, Dev | **Yes** | Optional PKCS#8 ECDSA P-256 override for Emergency Device signed manifests (auto-managed in DB when unset) |
 
 > **PREVIEW ENVIRONMENT ISOLATION RULE**: Production privileged server secrets (`SUPABASE_SECRET_KEY`, `PASS_TOKEN_SECRET`, `RATE_LIMIT_HMAC_SECRET`, `CRON_SECRET`, `RESEND_API_KEY`, `SEND_EMAIL_HOOK_SECRET`, `RESEND_WEBHOOK_SECRET`) MUST NEVER be injected into generic Vercel Preview environments. Generic Preview environments are SSO-protected and receive only public frontend configuration.
 

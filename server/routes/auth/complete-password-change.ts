@@ -45,8 +45,8 @@ async function handleRequest(request: Request): Promise<Response> {
       .maybeSingle();
     if (profileError) throw profileError;
 
-    // Human staff onboarding: guard, admin, and superadmin
-    if (!profile || (profile.role !== 'guard' && !['admin', 'superadmin'].includes(profile.role)) || !profile.active || !profile.must_change_password) {
+    // Human staff onboarding: office_staff, admin, superadmin (and legacy guard if active)
+    if (!profile || !['guard', 'admin', 'superadmin', 'office_staff'].includes(profile.role) || !profile.active || !profile.must_change_password) {
       return jsonResponse(403, { error: 'password_change_not_allowed' });
     }
 
@@ -64,8 +64,7 @@ async function handleRequest(request: Request): Promise<Response> {
       });
       if (passwordError) throw passwordError;
 
-      // finalize_guard_password_change is generalized in migration to finalize_staff_password_change
-      const { error: finalizeError } = await admin.schema('api').rpc('finalize_guard_password_change', {
+      const { error: finalizeError } = await admin.schema('api').rpc('finalize_staff_password_change', {
         target_user_id: user.id,
       });
       if (finalizeError) {

@@ -66,9 +66,84 @@ function createPGliteOfficeAdapter(db: PGlite) {
         listUsers: vi.fn(async () => ({ data: { users: [] }, error: null })),
       },
     },
+    schema: (schemaName: string) => ({
+      rpc: vi.fn(async (fnName: string, args: any) => {
+        if (schemaName !== 'api') return { data: null, error: null };
+        if (fnName === 'save_office_record') {
+          try {
+            if (!args.requested_office_id) {
+              const res = await db.query(
+                `insert into public.offices (
+                   name, description, active, verified, publication_status, requires_approval_before_pass, created_by, updated_by
+                 ) values ($1, $2, coalesce($3, true), false, 'draft', coalesce($4, true), $5, $5)
+                 returning *`,
+                [
+                  args.requested_name,
+                  args.requested_description ?? null,
+                  args.requested_active,
+                  args.requested_requires_approval_before_pass,
+                  args.requested_actor_id,
+                ],
+              );
+              return { data: res.rows[0], error: null };
+            }
+            const res = await db.query(
+              `update public.offices set
+                 name = coalesce($2, name),
+                 description = coalesce($3, description),
+                 active = coalesce($4, active),
+                 requires_approval_before_pass = coalesce($5, requires_approval_before_pass),
+                 updated_by = $6,
+                 updated_at = now()
+               where id = $1
+               returning *`,
+              [
+                args.requested_office_id,
+                args.requested_name ?? null,
+                args.requested_description ?? null,
+                args.requested_active ?? null,
+                args.requested_requires_approval_before_pass ?? null,
+                args.requested_actor_id,
+              ],
+            );
+            return { data: res.rows[0] ?? null, error: res.rows[0] ? null : { code: 'P0002', message: 'office_not_found' } };
+          } catch (err: any) {
+            return {
+              data: null,
+              error: {
+                code: err?.code,
+                message: err?.message || String(err),
+                constraint: err?.constraint,
+              },
+            };
+          }
+        }
+        if (fnName === 'update_office_publication') {
+          const isPublished = args.requested_status === 'published';
+          const res = await db.query(
+            `update public.offices set
+               publication_status = $2::text,
+               verified = $3::boolean,
+               verified_at = case when $3::boolean then coalesce(verified_at, now()) else null end,
+               verified_by = case when $3::boolean then $4::uuid else null end,
+               published_at = case when $3::boolean then coalesce(published_at, now()) else null end,
+               published_by = case when $3::boolean then $4::uuid else null end,
+               archived_at = case when $2::text = 'archived' then now() else null end,
+               archived_by = case when $2::text = 'archived' then $4::uuid else null end,
+               updated_by = $4::uuid,
+               updated_at = now()
+             where id = $1::uuid
+             returning *`,
+            [args.requested_office_id, args.requested_status, isPublished, args.requested_actor_id],
+          );
+          return { data: res.rows[0] ?? null, error: res.rows[0] ? null : { code: 'P0002', message: 'office_not_found' } };
+        }
+        return { data: null, error: null };
+      }),
+    }),
     from: (table: string) => {
       if (table === 'offices') {
-        const filters: Array<{ col: string; op: 'eq' | 'in'; val: any }> = [];
+        const filters: Array<{ col: string; op: 'eq' | 'in' | 'is' | 'ilike'; val: any }> = [];
         let orderCol = 'name';
         let ascending = true;
 
@@ -79,6 +154,11 @@ function createPGliteOfficeAdapter(db: PGlite) {
             if (f.op === 'eq') {
               params.push(f.val);
               clauses.push(`${f.col} = $${params.length}`);
+            } else if (f.op === 'ilike') {
+              params.push(f.val);
+              clauses.push(`lower(${f.col}) = lower($${params.length})`);
+            } else if (f.op === 'is') {
+              clauses.push(f.val === null ? `${f.col} is null` : `${f.col} is not null`);
             } else if (f.op === 'in') {
               if (!Array.isArray(f.val) || f.val.length === 0) return { data: [], error: null };
               const placeholders = f.val.map((v: any) => {
@@ -100,6 +180,14 @@ function createPGliteOfficeAdapter(db: PGlite) {
           select: (_cols?: string) => builder,
           eq: (col: string, val: any) => {
             filters.push({ col, op: 'eq', val });
+            return builder;
+          },
+          ilike: (col: string, val: any) => {
+            filters.push({ col, op: 'ilike', val });
+            return builder;
+          },
+          is: (col: string, val: any) => {
+            filters.push({ col, op: 'is', val });
             return builder;
           },
           in: (col: string, val: any[]) => {
@@ -244,6 +332,12 @@ describe('Issue B: Office Creation Reliability, Idempotency, Visibility & Unsupp
           verified boolean not null default false,
           verified_at timestamptz,
           verified_by uuid references public.staff_profiles(user_id) on delete set null,
+          publication_status text not null default 'draft',
+          requires_approval_before_pass boolean not null default true,
+          published_at timestamptz,
+          published_by uuid references public.staff_profiles(user_id) on delete set null,
+          archived_at timestamptz,
+          archived_by uuid references public.staff_profiles(user_id) on delete set null,
           created_at timestamptz not null default now(),
           updated_at timestamptz not null default now(),
           created_by uuid references public.staff_profiles(user_id) on delete set null,
@@ -582,7 +676,7 @@ describe('Issue B: Office Creation Reliability, Idempotency, Visibility & Unsupp
       expect(container.textContent).toContain('Active / Unverified');
       expect(container.textContent).toContain('Inactive / Verified');
       expect(container.textContent).toContain('Inactive / Unverified');
-      expect(container.textContent).toContain('Hidden from visitors until verified by Superadmin');
+      expect(container.textContent).toContain('Draft office — hidden from visitors until published by Superadmin');
 
       const addBtn = Array.from(container.querySelectorAll('button')).find((b) => b.textContent?.includes('Add Office'));
       expect(addBtn).toBeDefined();
@@ -614,6 +708,7 @@ describe('Issue B: Office Creation Reliability, Idempotency, Visibility & Unsupp
         action: 'create_office',
         name: 'Research Office',
         description: 'Innovation center',
+        requiresApprovalBeforePass: true,
       });
       expect(capturedPostBody).not.toHaveProperty('code');
       expect(container.textContent).toContain('Research Office');

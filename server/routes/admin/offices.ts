@@ -4,11 +4,15 @@ import { HttpError, recordReconciliation, requireStaffActor } from '../../actors
 import { jsonResponse, readBearerToken } from '../../http.js';
 import { getServerSupabaseClients } from '../../supabase.js';
 
+const OFFICE_SELECT_COLUMNS =
+  'id, name, description, active, verified, verified_at, verified_by, publication_status, requires_approval_before_pass, published_at, published_by, archived_at, archived_by, archive_reason, created_at, updated_at';
+
 const createOfficeSchema = z.object({
   action: z.literal('create_office').optional(),
   name: z.string().trim().min(2).max(100),
   description: z.string().trim().max(300).optional(),
   active: z.boolean().optional().default(true),
+  requiresApprovalBeforePass: z.boolean().optional(),
 });
 
 const assignStaffSchema = z.object({
@@ -29,7 +33,70 @@ const patchOfficeSchema = z.object({
   description: z.string().trim().max(300).optional(),
   active: z.boolean().optional(),
   verified: z.boolean().optional(),
+  publicationStatus: z.enum(['draft', 'published', 'archived']).optional(),
+  requiresApprovalBeforePass: z.boolean().optional(),
 });
+
+const setPublicationSchema = z.object({
+  action: z.literal('set_publication_status'),
+  officeId: z.string().uuid(),
+  publicationStatus: z.enum(['draft', 'published', 'archived']),
+});
+
+const archiveOfficeSchema = z.object({
+  action: z.literal('archive_office'),
+  officeId: z.string().uuid(),
+  staffHandling: z.enum(['keep', 'unassign', 'deactivate_unshared']).optional().default('keep'),
+  reason: z.string().trim().max(300).optional(),
+});
+
+const setApprovalPolicySchema = z.object({
+  action: z.literal('set_approval_policy'),
+  officeId: z.string().uuid(),
+  requiresApprovalBeforePass: z.boolean(),
+});
+
+const deleteDraftOfficeSchema = z.object({
+  action: z.literal('delete_draft_office'),
+  officeId: z.string().uuid(),
+});
+
+function mapOfficeRpcError(err: unknown, fallbackName?: string): Response | null {
+  const code = String((err as { code?: string })?.code || '');
+  const message = String((err as { message?: string })?.message || '');
+  const lower = message.toLowerCase();
+
+  if (code === '42501' || lower.includes('superadmin_required') || lower.includes('administrator required')) {
+    return jsonResponse(403, { error: 'superadmin_required', message: message || 'Insufficient permissions.' });
+  }
+  if (code === 'P0002' || lower.includes('office_not_found')) {
+    return jsonResponse(404, { error: 'office_not_found', message: 'The specified office does not exist.' });
+  }
+  if (code === '23505' || lower.includes('office_name_duplicate') || lower.includes('offices_name_key') || lower.includes('duplicate key')) {
+    return jsonResponse(409, {
+      error: 'office_already_exists',
+      message: `An office named "${fallbackName ?? 'requested'}" already exists.`,
+    });
+  }
+  if (
+    code === '40900'
+    || lower.includes('only_unused_draft_office_may_be_deleted')
+    || lower.includes('office_has_dependencies_use_archive')
+    || lower.includes('archived_office_cannot_revert_to_draft')
+  ) {
+    return jsonResponse(409, { error: message || 'office_state_conflict', message });
+  }
+  if (
+    code === '22023'
+    || lower.includes('archived_office_must_be_republished_first')
+    || lower.includes('office_name_required')
+    || lower.includes('invalid_publication_status')
+    || lower.includes('invalid_staff_handling')
+  ) {
+    return jsonResponse(400, { error: message || 'invalid_request', message });
+  }
+  return null;
+}
 
 const provisionAccountSchema = z.object({
   action: z.literal('provision_account'),
@@ -200,7 +267,7 @@ export async function handleRequest(request: Request): Promise<Response> {
 
     const { data: offices, error: officeErr } = await admin
       .from('offices')
-      .select('id, name, description, active, verified, verified_at, verified_by, created_at, updated_at')
+      .select(OFFICE_SELECT_COLUMNS)
       .order('name', { ascending: true });
 
     if (officeErr) {
@@ -995,30 +1062,137 @@ export async function handleRequest(request: Request): Promise<Response> {
         return jsonResponse(400, { error: 'invalid_office_id' });
       }
 
-      const { data: existingOffice, error: chkErr } = await admin
-        .from('offices')
-        .select('id')
-        .eq('id', officeId)
-        .maybeSingle();
-      if (chkErr) throw chkErr;
-      if (!existingOffice) {
-        return jsonResponse(404, { error: 'office_not_found', message: 'The specified office does not exist' });
+      const isVerify = body.action === 'verify_office';
+      const { data: rpcRes, error: vErr } = await admin.schema('api').rpc('update_office_publication', {
+        requested_actor_id: actor.id,
+        requested_office_id: officeId,
+        requested_status: isVerify ? 'published' : 'draft',
+        requested_request_id: randomUUID(),
+      });
+      if (vErr) {
+        const mapped = mapOfficeRpcError(vErr);
+        if (mapped) return mapped;
+        throw vErr;
       }
 
-      const isVerify = body.action === 'verify_office';
-      const { data: updatedOffice, error: vErr } = await admin
+      const { data: updatedOffice, error: fetchErr } = await admin
         .from('offices')
-        .update({
-          verified: isVerify,
-          verified_at: isVerify ? new Date().toISOString() : null,
-          verified_by: isVerify ? actor.id : null,
-          updated_at: new Date().toISOString(),
-        })
+        .select(OFFICE_SELECT_COLUMNS)
         .eq('id', officeId)
-        .select()
-        .single();
-      if (vErr) throw vErr;
-      return jsonResponse(200, { ok: true, office: updatedOffice });
+        .maybeSingle();
+      if (fetchErr) throw fetchErr;
+      return jsonResponse(200, { ok: true, office: updatedOffice ?? rpcRes });
+    }
+
+    if (body?.action === 'set_publication_status') {
+      if (actor.role !== 'superadmin') {
+        return jsonResponse(403, {
+          error: 'superadmin_required',
+          message: 'Only superadmin can publish, unpublish, or archive campus offices.',
+        });
+      }
+      const parsed = setPublicationSchema.safeParse(body);
+      if (!parsed.success) return jsonResponse(400, { error: 'invalid_request', details: parsed.error.issues });
+
+      const { data: rpcRes, error: pubErr } = await admin.schema('api').rpc('update_office_publication', {
+        requested_actor_id: actor.id,
+        requested_office_id: parsed.data.officeId,
+        requested_status: parsed.data.publicationStatus,
+        requested_request_id: randomUUID(),
+      });
+      if (pubErr) {
+        const mapped = mapOfficeRpcError(pubErr);
+        if (mapped) return mapped;
+        throw pubErr;
+      }
+
+      const { data: updatedOffice, error: fetchErr } = await admin
+        .from('offices')
+        .select(OFFICE_SELECT_COLUMNS)
+        .eq('id', parsed.data.officeId)
+        .maybeSingle();
+      if (fetchErr) throw fetchErr;
+      return jsonResponse(200, { ok: true, office: updatedOffice ?? rpcRes });
+    }
+
+    if (body?.action === 'archive_office') {
+      if (actor.role !== 'superadmin') {
+        return jsonResponse(403, {
+          error: 'superadmin_required',
+          message: 'Only superadmin can archive campus offices.',
+        });
+      }
+      const parsed = archiveOfficeSchema.safeParse(body);
+      if (!parsed.success) return jsonResponse(400, { error: 'invalid_request', details: parsed.error.issues });
+
+      const { data: rpcRes, error: archErr } = await admin.schema('api').rpc('archive_office', {
+        requested_actor_id: actor.id,
+        requested_office_id: parsed.data.officeId,
+        requested_staff_handling: parsed.data.staffHandling,
+        requested_reason: parsed.data.reason ?? null,
+        requested_request_id: randomUUID(),
+      });
+      if (archErr) {
+        const mapped = mapOfficeRpcError(archErr);
+        if (mapped) return mapped;
+        throw archErr;
+      }
+
+      const { data: updatedOffice, error: fetchErr } = await admin
+        .from('offices')
+        .select(OFFICE_SELECT_COLUMNS)
+        .eq('id', parsed.data.officeId)
+        .maybeSingle();
+      if (fetchErr) throw fetchErr;
+      return jsonResponse(200, { ok: true, result: rpcRes, office: updatedOffice ?? rpcRes });
+    }
+
+    if (body?.action === 'set_approval_policy') {
+      if (actor.role !== 'superadmin') {
+        return jsonResponse(403, {
+          error: 'superadmin_required',
+          message: 'Only superadmin can change office pre-approval pass requirements.',
+        });
+      }
+      const parsed = setApprovalPolicySchema.safeParse(body);
+      if (!parsed.success) return jsonResponse(400, { error: 'invalid_request', details: parsed.error.issues });
+
+      const { data: rpcRes, error: polErr } = await admin.schema('api').rpc('update_office_approval_policy', {
+        requested_actor_id: actor.id,
+        requested_office_id: parsed.data.officeId,
+        requested_requires_approval: parsed.data.requiresApprovalBeforePass,
+        requested_request_id: randomUUID(),
+      });
+      if (polErr) {
+        const mapped = mapOfficeRpcError(polErr);
+        if (mapped) return mapped;
+        throw polErr;
+      }
+
+      const { data: updatedOffice, error: fetchErr } = await admin
+        .from('offices')
+        .select(OFFICE_SELECT_COLUMNS)
+        .eq('id', parsed.data.officeId)
+        .maybeSingle();
+      if (fetchErr) throw fetchErr;
+      return jsonResponse(200, { ok: true, office: updatedOffice ?? rpcRes });
+    }
+
+    if (body?.action === 'delete_draft_office') {
+      const parsed = deleteDraftOfficeSchema.safeParse(body);
+      if (!parsed.success) return jsonResponse(400, { error: 'invalid_request', details: parsed.error.issues });
+
+      const { data: rpcRes, error: delErr } = await admin.schema('api').rpc('delete_draft_office', {
+        requested_actor_id: actor.id,
+        requested_office_id: parsed.data.officeId,
+        requested_request_id: randomUUID(),
+      });
+      if (delErr) {
+        const mapped = mapOfficeRpcError(delErr);
+        if (mapped) return mapped;
+        throw delErr;
+      }
+      return jsonResponse(200, { ok: true, deleted: true, result: rpcRes });
     }
 
     if (body?.action === 'assign_staff') {
@@ -1027,7 +1201,7 @@ export async function handleRequest(request: Request): Promise<Response> {
 
       const { data: office, error: offErr } = await admin
         .from('offices')
-        .select('id, name, active')
+        .select('id, name, active, publication_status, archived_at')
         .eq('id', parsed.data.officeId)
         .maybeSingle();
       if (offErr) {
@@ -1036,6 +1210,10 @@ export async function handleRequest(request: Request): Promise<Response> {
       }
       if (!office) {
         return jsonResponse(404, { error: 'office_not_found', message: 'The specified office does not exist' });
+      }
+      if ((office as { publication_status?: string; archived_at?: string | null }).publication_status === 'archived'
+          || Boolean((office as { archived_at?: string | null }).archived_at)) {
+        return jsonResponse(409, { error: 'office_archived', message: 'Cannot assign staff to an archived office.' });
       }
       if (!office.active) {
         return jsonResponse(400, { error: 'office_inactive', message: 'Cannot assign staff to an inactive office.' });
@@ -1093,33 +1271,43 @@ export async function handleRequest(request: Request): Promise<Response> {
     const parsed = createOfficeSchema.safeParse(body);
     if (!parsed.success) return jsonResponse(400, { error: 'invalid_request', details: parsed.error.issues });
 
-    const normalizedName = parsed.data.name;
+    const normalizedName = parsed.data.name.replace(/\s+/g, ' ').trim();
     const normalizedDescription = parsed.data.description && parsed.data.description.length > 0
       ? parsed.data.description
       : null;
     const requestedActive = parsed.data.active ?? true;
+    const requestedApprovalPolicy = parsed.data.requiresApprovalBeforePass;
 
-    const { data: newOffice, error: createErr } = await admin
-      .from('offices')
-      .insert({
-        name: normalizedName,
-        description: normalizedDescription,
-        active: requestedActive,
-        verified: false,
-        created_by: actor.id,
-        updated_by: actor.id,
-      })
-      .select('id, name, description, active, verified, verified_at, verified_by, created_at, updated_at')
-      .single();
+    if (requestedApprovalPolicy === false && actor.role !== 'superadmin') {
+      return jsonResponse(403, {
+        error: 'superadmin_required',
+        message: 'Only superadmin can disable pre-approval pass requirements for an office.',
+      });
+    }
+
+    const { data: rpcCreated, error: createErr } = await admin.schema('api').rpc('save_office_record', {
+      requested_actor_id: actor.id,
+      requested_office_id: null,
+      requested_name: normalizedName,
+      requested_description: normalizedDescription,
+      requested_active: requestedActive,
+      requested_requires_approval_before_pass: requestedApprovalPolicy ?? null,
+      requested_request_id: randomUUID(),
+    });
 
     if (createErr) {
       const errCode = (createErr as { code?: string }).code;
       const errMessage = String((createErr as { message?: string }).message || '').toLowerCase();
-      if (errCode === '23505' || errMessage.includes('offices_name_key') || errMessage.includes('duplicate key')) {
+      if (
+        errCode === '23505'
+        || errMessage.includes('office_name_duplicate')
+        || errMessage.includes('offices_name_key')
+        || errMessage.includes('duplicate key')
+      ) {
         const { data: existingOffice, error: lookupErr } = await admin
           .from('offices')
-          .select('id, name, description, active, verified, verified_at, verified_by, created_at, updated_at')
-          .eq('name', normalizedName)
+          .select(OFFICE_SELECT_COLUMNS)
+          .ilike('name', normalizedName)
           .maybeSingle();
 
         if (lookupErr) throw lookupErr;
@@ -1150,10 +1338,25 @@ export async function handleRequest(request: Request): Promise<Response> {
         });
       }
 
+      const mapped = mapOfficeRpcError(createErr, normalizedName);
+      if (mapped) return mapped;
       throw createErr;
     }
 
-    return jsonResponse(201, { ok: true, office: newOffice });
+    const createdId = (rpcCreated as { id?: string } | null)?.id;
+    let fullCreatedOffice = rpcCreated;
+    if (createdId) {
+      const { data: fetchedOffice } = await admin
+        .from('offices')
+        .select(OFFICE_SELECT_COLUMNS)
+        .eq('id', createdId)
+        .maybeSingle();
+      if (fetchedOffice) {
+        fullCreatedOffice = fetchedOffice;
+      }
+    }
+
+    return jsonResponse(201, { ok: true, office: fullCreatedOffice });
   }
 
   if (request.method === 'PATCH') {
@@ -1163,7 +1366,7 @@ export async function handleRequest(request: Request): Promise<Response> {
 
     const { data: existingOffice, error: chkErr } = await admin
       .from('offices')
-      .select('id')
+      .select(OFFICE_SELECT_COLUMNS)
       .eq('id', parsed.data.id)
       .maybeSingle();
     if (chkErr) throw chkErr;
@@ -1171,44 +1374,112 @@ export async function handleRequest(request: Request): Promise<Response> {
       return jsonResponse(404, { error: 'office_not_found', message: 'The specified office does not exist' });
     }
 
-    const updates: Record<string, unknown> = { updated_at: new Date().toISOString(), updated_by: actor.id };
-    if (parsed.data.name !== undefined) updates.name = parsed.data.name;
-    if (parsed.data.description !== undefined) updates.description = parsed.data.description;
-    if (parsed.data.active !== undefined) updates.active = parsed.data.active;
-    if (parsed.data.verified !== undefined) {
-      if (actor.role !== 'superadmin') {
-        return jsonResponse(403, {
-          error: 'superadmin_required',
-          message: 'Only superadmin can modify office verification status',
-        });
-      }
-      updates.verified = parsed.data.verified;
-      updates.verified_at = parsed.data.verified ? new Date().toISOString() : null;
-      updates.verified_by = parsed.data.verified ? actor.id : null;
+    const hasPublicationChange = parsed.data.publicationStatus !== undefined || parsed.data.verified !== undefined;
+    if (hasPublicationChange && actor.role !== 'superadmin') {
+      return jsonResponse(403, {
+        error: 'superadmin_required',
+        message: 'Only superadmin can modify office verification or publication status.',
+      });
     }
 
-    const { data: updatedOffice, error: updateErr } = await admin
+    const existingApproval = (existingOffice as { requires_approval_before_pass?: boolean }).requires_approval_before_pass ?? true;
+    if (
+      parsed.data.requiresApprovalBeforePass !== undefined
+      && parsed.data.requiresApprovalBeforePass !== existingApproval
+      && actor.role !== 'superadmin'
+    ) {
+      return jsonResponse(403, {
+        error: 'superadmin_required',
+        message: 'Only superadmin can modify office pre-approval pass requirements.',
+      });
+    }
+
+    const targetPublicationStatus = parsed.data.publicationStatus
+      ?? (parsed.data.verified !== undefined ? (parsed.data.verified ? 'published' : 'draft') : undefined);
+
+    const hasFieldUpdates =
+      parsed.data.name !== undefined
+      || parsed.data.description !== undefined
+      || parsed.data.active !== undefined
+      || parsed.data.requiresApprovalBeforePass !== undefined;
+
+    if (targetPublicationStatus === 'published') {
+      const { error: pubErr } = await admin.schema('api').rpc('update_office_publication', {
+        requested_actor_id: actor.id,
+        requested_office_id: parsed.data.id,
+        requested_status: 'published',
+        requested_request_id: randomUUID(),
+      });
+      if (pubErr) {
+        const mapped = mapOfficeRpcError(pubErr, parsed.data.name);
+        if (mapped) return mapped;
+        throw pubErr;
+      }
+    }
+
+    if (hasFieldUpdates) {
+      const { error: saveErr } = await admin.schema('api').rpc('save_office_record', {
+        requested_actor_id: actor.id,
+        requested_office_id: parsed.data.id,
+        requested_name: parsed.data.name ?? null,
+        requested_description: parsed.data.description ?? null,
+        requested_active: parsed.data.active ?? null,
+        requested_requires_approval_before_pass: parsed.data.requiresApprovalBeforePass ?? null,
+        requested_request_id: randomUUID(),
+      });
+      if (saveErr) {
+        const mapped = mapOfficeRpcError(saveErr, parsed.data.name);
+        if (mapped) return mapped;
+        throw saveErr;
+      }
+    }
+
+    if (targetPublicationStatus && targetPublicationStatus !== 'published') {
+      const { error: pubErr } = await admin.schema('api').rpc('update_office_publication', {
+        requested_actor_id: actor.id,
+        requested_office_id: parsed.data.id,
+        requested_status: targetPublicationStatus,
+        requested_request_id: randomUUID(),
+      });
+      if (pubErr) {
+        const mapped = mapOfficeRpcError(pubErr, parsed.data.name);
+        if (mapped) return mapped;
+        throw pubErr;
+      }
+    }
+
+    const { data: updatedOffice, error: fetchErr } = await admin
       .from('offices')
-      .update(updates)
+      .select(OFFICE_SELECT_COLUMNS)
       .eq('id', parsed.data.id)
-      .select()
       .single();
-
-    if (updateErr) {
-      const errCode = (updateErr as { code?: string }).code;
-      const errMessage = String((updateErr as { message?: string }).message || '').toLowerCase();
-      if (errCode === '23505' || errMessage.includes('offices_name_key') || errMessage.includes('duplicate key')) {
-        return jsonResponse(409, {
-          error: 'office_already_exists',
-          message: `An office named "${parsed.data.name ?? 'requested'}" already exists.`,
-        });
-      }
-      throw updateErr;
-    }
+    if (fetchErr) throw fetchErr;
     return jsonResponse(200, { ok: true, office: updatedOffice });
   }
 
-  return jsonResponse(405, { error: 'method_not_allowed' }, { Allow: 'GET, POST, PATCH' });
+  if (request.method === 'DELETE') {
+    const url = new URL(request.url);
+    const body = await request.json().catch(() => null);
+    const candidateId = url.searchParams.get('id') || body?.officeId || body?.id;
+    const parsedId = z.string().uuid().safeParse(candidateId);
+    if (!parsedId.success) {
+      return jsonResponse(400, { error: 'invalid_office_id', message: 'A valid office id is required.' });
+    }
+
+    const { data: rpcRes, error: delErr } = await admin.schema('api').rpc('delete_draft_office', {
+      requested_actor_id: actor.id,
+      requested_office_id: parsedId.data,
+      requested_request_id: randomUUID(),
+    });
+    if (delErr) {
+      const mapped = mapOfficeRpcError(delErr);
+      if (mapped) return mapped;
+      throw delErr;
+    }
+    return jsonResponse(200, { ok: true, deleted: true, result: rpcRes });
+  }
+
+  return jsonResponse(405, { error: 'method_not_allowed' }, { Allow: 'GET, POST, PATCH, DELETE' });
   } catch (error) {
     if (error instanceof HttpError) {
       return jsonResponse(error.status, { error: error.code });

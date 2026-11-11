@@ -120,29 +120,38 @@ async function handleRequest(request: Request): Promise<Response> {
 
     const actorId = session.user.id;
 
-    // 0. CAPTCHA verification: if TURNSTILE_SECRET_KEY is configured in server runtime, enforce direct siteverify
+    // 0. Mandatory server-side Turnstile verification (fail closed when secret is absent)
     const turnstileSecret = process.env.TURNSTILE_SECRET_KEY?.trim();
-    if (turnstileSecret) {
-      const captchaToken = parsed.data.captchaToken || request.headers.get('x-captcha-token') || '';
-      const remoteIp = request.headers.get('x-forwarded-for')?.split(',')[0]?.trim();
-      const turnstileRes = await verifyTurnstileToken({
-        token: captchaToken,
-        secretKey: turnstileSecret,
-        remoteIp,
+    if (!turnstileSecret) {
+      return jsonResponse(503, {
+        error: 'missing_validation_runtime_secret',
+        message: 'Bot challenge verification secret is not configured on the server.',
       });
+    }
 
-      if (!turnstileRes.valid) {
-        if (turnstileRes.error === 'siteverify_provider_error' || turnstileRes.error === 'siteverify_timeout') {
-          return jsonResponse(503, {
-            error: turnstileRes.error,
-            message: turnstileRes.message,
-          });
-        }
-        return jsonResponse(400, {
-          error: turnstileRes.error || 'invalid_captcha_token',
-          message: turnstileRes.message || 'Verification challenge failed. Please retry.',
+    const captchaToken = parsed.data.captchaToken || request.headers.get('x-captcha-token') || '';
+    const remoteIp = request.headers.get('x-forwarded-for')?.split(',')[0]?.trim();
+    const turnstileRes = await verifyTurnstileToken({
+      token: captchaToken,
+      secretKey: turnstileSecret,
+      remoteIp,
+    });
+
+    if (!turnstileRes.valid) {
+      if (
+        turnstileRes.error === 'siteverify_provider_error' ||
+        turnstileRes.error === 'siteverify_timeout' ||
+        turnstileRes.error === 'missing_validation_runtime_secret'
+      ) {
+        return jsonResponse(503, {
+          error: turnstileRes.error,
+          message: turnstileRes.message,
         });
       }
+      return jsonResponse(400, {
+        error: turnstileRes.error || 'invalid_captcha_token',
+        message: turnstileRes.message || 'Verification challenge failed. Please retry.',
+      });
     }
 
     // 1. Rate limiting - Actor Bucket (15 lookups per 5 minutes)
