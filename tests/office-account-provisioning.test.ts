@@ -92,7 +92,7 @@ describe('Admin Dedicated Office Account Provisioning & Governance (Phase A & F)
         {
           user_id: TARGET_USER_ID,
           office_id: TARGET_OFFICE_ID,
-          assigned_at: new Date().toISOString(),
+          created_at: new Date().toISOString(),
           created_by: ADMIN_ID,
         },
       ],

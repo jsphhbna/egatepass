@@ -36,6 +36,7 @@ const provisionAccountSchema = z.object({
   officeId: z.string().uuid(),
   staffEmail: z.string().trim().email().max(320),
   displayName: z.string().trim().min(2).max(100).optional(),
+  operationId: z.string().uuid().optional(),
 });
 
 const resetCredentialsSchema = z.object({
@@ -55,6 +56,101 @@ const toggleAccountActiveSchema = z.object({
   userId: z.string().uuid(),
   active: z.boolean(),
 });
+
+type OfficeStaffDirectoryEntry = {
+  userId: string;
+  displayName: string;
+  role: string;
+  active: boolean;
+  mustChangePassword: boolean;
+  email?: string;
+  emailConfirmed?: boolean;
+};
+
+type AuthUserRecord = {
+  id: string;
+  email?: string | null;
+  email_confirmed_at?: string | null;
+  app_metadata?: Record<string, unknown> | null;
+};
+
+async function findAuthUserByEmail(
+  admin: ReturnType<typeof getServerSupabaseClients>['admin'],
+  normalizedEmail: string,
+): Promise<AuthUserRecord | null> {
+  const perPage = 200;
+  for (let page = 1; page <= 25; page += 1) {
+    const res = await admin.auth.admin.listUsers({ page, perPage });
+    if (res.error) {
+      throw res.error;
+    }
+    const users = (res.data?.users || []) as AuthUserRecord[];
+    const match = users.find((u) => (u.email || '').toLowerCase().trim() === normalizedEmail);
+    if (match) return match;
+    if (users.length < perPage) break;
+  }
+  return null;
+}
+
+async function hydrateAuthStaffEntries(
+  admin: ReturnType<typeof getServerSupabaseClients>['admin'],
+  staffMap: Map<string, OfficeStaffDirectoryEntry>,
+): Promise<boolean> {
+  const targetIds = new Set(staffMap.keys());
+  if (targetIds.size === 0) return false;
+
+  const resolvedIds = new Set<string>();
+  let hadWarning = false;
+
+  try {
+    const perPage = 200;
+    for (let page = 1; page <= 25 && resolvedIds.size < targetIds.size; page += 1) {
+      const res = await admin.auth.admin.listUsers({ page, perPage });
+      if (res.error) {
+        hadWarning = true;
+        console.warn('Could not list auth users for office staff directory:', res.error);
+        break;
+      }
+      const users = (res.data?.users || []) as AuthUserRecord[];
+      for (const u of users) {
+        const entry = staffMap.get(u.id);
+        if (entry) {
+          entry.email = u.email ?? '';
+          entry.emailConfirmed = Boolean(u.email_confirmed_at);
+          resolvedIds.add(u.id);
+        }
+      }
+      if (users.length < perPage) break;
+    }
+  } catch (err) {
+    hadWarning = true;
+    console.warn('Could not list auth users for office staff directory:', err);
+  }
+
+  const unresolved = Array.from(targetIds).filter((uid) => !resolvedIds.has(uid));
+  if (unresolved.length > 0 && typeof admin.auth?.admin?.getUserById === 'function') {
+    const results = await Promise.allSettled(
+      unresolved.map((uid) => admin.auth.admin.getUserById(uid))
+    );
+    for (let i = 0; i < unresolved.length; i += 1) {
+      const uid = unresolved[i]!;
+      const settled = results[i];
+      if (settled?.status === 'fulfilled' && !settled.value.error && settled.value.data?.user) {
+        const u = settled.value.data.user as AuthUserRecord;
+        const entry = staffMap.get(uid);
+        if (entry) {
+          entry.email = u.email ?? '';
+          entry.emailConfirmed = Boolean(u.email_confirmed_at);
+          resolvedIds.add(uid);
+        }
+      } else {
+        hadWarning = true;
+      }
+    }
+  }
+
+  return hadWarning;
+}
 
 export function generateTemporaryPassword(): string {
   const upper = 'ABCDEFGHJKLMNPQRSTUVWXYZ';
@@ -107,22 +203,34 @@ export async function handleRequest(request: Request): Promise<Response> {
       .select('id, name, description, active, verified, verified_at, verified_by, created_at, updated_at')
       .order('name', { ascending: true });
 
-    if (officeErr) throw officeErr;
+    if (officeErr) {
+      console.error('Failed to load offices directory:', officeErr);
+      return jsonResponse(503, { error: 'office_directory_load_failed', message: 'Failed to load office directory.' });
+    }
 
     const { data: assignments, error: assignErr } = await admin
       .from('office_staff_assignments')
-      .select('office_id, user_id, assigned_at');
+      .select('office_id, user_id');
 
-    if (assignErr) throw assignErr;
+    if (assignErr) {
+      console.error('Failed to load office staff assignments:', assignErr);
+      return jsonResponse(503, { error: 'office_assignments_load_failed', message: 'Failed to load office staff assignments.' });
+    }
 
     const allAssignedUserIds = Array.from(new Set((assignments || []).map((a) => a.user_id)));
-    let staffMap = new Map<string, { userId: string; displayName: string; role: string; active: boolean; mustChangePassword: boolean; email?: string; emailConfirmed?: boolean }>();
+    const staffMap = new Map<string, OfficeStaffDirectoryEntry>();
+    const warnings: string[] = [];
 
     if (allAssignedUserIds.length > 0) {
-      const { data: profiles } = await admin
+      const { data: profiles, error: profErr } = await admin
         .from('staff_profiles')
         .select('user_id, display_name, role, active, must_change_password')
         .in('user_id', allAssignedUserIds);
+
+      if (profErr) {
+        console.error('Failed to load assigned staff profiles:', profErr);
+        return jsonResponse(503, { error: 'staff_profiles_load_failed', message: 'Failed to load assigned staff profiles.' });
+      }
 
       for (const p of profiles || []) {
         staffMap.set(p.user_id, {
@@ -134,17 +242,9 @@ export async function handleRequest(request: Request): Promise<Response> {
         });
       }
 
-      try {
-        const { data: authPage } = await admin.auth.admin.listUsers({ page: 1, perPage: 100 });
-        for (const u of authPage?.users || []) {
-          const entry = staffMap.get(u.id);
-          if (entry) {
-            entry.email = u.email ?? '';
-            entry.emailConfirmed = Boolean(u.email_confirmed_at);
-          }
-        }
-      } catch (err) {
-        console.warn('Could not fetch auth emails for office staff:', err);
+      const authLookupHadWarning = await hydrateAuthStaffEntries(admin, staffMap);
+      if (authLookupHadWarning) {
+        warnings.push('auth_directory_partial');
       }
     }
 
@@ -155,18 +255,30 @@ export async function handleRequest(request: Request): Promise<Response> {
       assignmentMap.set(a.office_id, list);
     }
 
-    let personnelMap = new Map<string, Array<{ id: string; name: string; title: string | null; active: boolean }>>();
+    const personnelMap = new Map<string, Array<{ id: string; name: string; title: string | null; active: boolean }>>();
+    let personnelUnavailable = false;
     if (withPersonnel) {
-      const { data: personnel, error: persErr } = await admin
-        .from('office_personnel')
-        .select('id, office_id, name, title, active')
-        .order('name', { ascending: true });
+      try {
+        const { data: personnel, error: persErr } = await admin
+          .from('office_personnel')
+          .select('id, office_id, name, title, active')
+          .order('name', { ascending: true });
 
-      if (persErr) throw persErr;
-      for (const p of personnel || []) {
-        const list = personnelMap.get(p.office_id) || [];
-        list.push({ id: p.id, name: p.name, title: p.title, active: p.active });
-        personnelMap.set(p.office_id, list);
+        if (persErr) {
+          console.warn('Optional office_personnel lookup failed; returning base office directory:', persErr);
+          personnelUnavailable = true;
+          warnings.push('personnel_unavailable');
+        } else {
+          for (const p of personnel || []) {
+            const list = personnelMap.get(p.office_id) || [];
+            list.push({ id: p.id, name: p.name, title: p.title, active: p.active });
+            personnelMap.set(p.office_id, list);
+          }
+        }
+      } catch (err) {
+        console.warn('Optional office_personnel lookup threw; returning base office directory:', err);
+        personnelUnavailable = true;
+        warnings.push('personnel_unavailable');
       }
     }
 
@@ -188,7 +300,11 @@ export async function handleRequest(request: Request): Promise<Response> {
       };
     });
 
-    return jsonResponse(200, { offices: result });
+    return jsonResponse(200, {
+      offices: result,
+      ...(personnelUnavailable ? { personnelUnavailable: true } : {}),
+      ...(warnings.length > 0 ? { warnings } : {}),
+    });
   }
 
   // General mutations (create office, provision, reset credentials, assign) permitted for admin and superadmin.
@@ -203,7 +319,8 @@ export async function handleRequest(request: Request): Promise<Response> {
       const parsed = provisionAccountSchema.safeParse(body);
       if (!parsed.success) return jsonResponse(400, { error: 'invalid_request', details: parsed.error.issues });
 
-      const { officeId, staffEmail, displayName } = parsed.data;
+      const { officeId, staffEmail, displayName, operationId: suppliedOperationId } = parsed.data;
+      const operationId = suppliedOperationId ?? randomUUID();
 
       const { data: office, error: offErr } = await admin
         .from('offices')
@@ -211,7 +328,10 @@ export async function handleRequest(request: Request): Promise<Response> {
         .eq('id', officeId)
         .maybeSingle();
 
-      if (offErr) throw offErr;
+      if (offErr) {
+        console.error('Failed to look up office for provisioning:', offErr);
+        return jsonResponse(503, { error: 'office_lookup_failed', message: 'Failed to verify office record.' });
+      }
       if (!office) {
         return jsonResponse(404, { error: 'office_not_found', message: 'The specified office does not exist' });
       }
@@ -221,56 +341,366 @@ export async function handleRequest(request: Request): Promise<Response> {
       }
 
       const email = staffEmail.toLowerCase().trim();
-      const temporaryPassword = generateTemporaryPassword();
       const staffName = (displayName || `${office.name} Staff`).trim();
 
-      const created = await admin.auth.admin.createUser({
-        email,
-        password: temporaryPassword,
-        email_confirm: false,
+      const markOperation = async (params: {
+        authUserId?: string | null;
+        status?: string;
+        emailDeliveryStatus?: string;
+        errorCode?: string | null;
+        errorMessage?: string | null;
+        reconciliationRecorded?: boolean;
+      }) => {
+        const updateRes = await admin.schema('api').rpc('update_office_provisioning_operation', {
+          requested_actor_id: actor.id,
+          requested_operation_id: operationId,
+          requested_auth_user_id: params.authUserId ?? null,
+          requested_status: params.status ?? null,
+          requested_email_delivery_status: params.emailDeliveryStatus ?? null,
+          requested_error_code: params.errorCode === undefined ? null : (params.errorCode ?? ''),
+          requested_error_message: params.errorMessage === undefined ? null : (params.errorMessage ?? ''),
+          requested_reconciliation_recorded: params.reconciliationRecorded ?? null,
+        });
+        if (updateRes.error) {
+          console.error('Failed to update provisioning operation journal:', updateRes.error);
+        }
+      };
+
+      const claimRes = await admin.schema('api').rpc('claim_office_provisioning_operation', {
+        requested_actor_id: actor.id,
+        requested_operation_id: operationId,
+        requested_office_id: officeId,
+        requested_email: email,
+        requested_display_name: staffName,
       });
 
-      if (created.error || !created.data.user) {
-        const err = created.error;
-        const msg = typeof err === 'object' && err !== null && 'message' in err ? String(err.message).toLowerCase() : '';
-        if (msg.includes('already exists') || msg.includes('already registered')) {
-          return jsonResponse(409, {
-            error: 'email_already_exists',
-            message: `An account with email "${email}" is already registered. Please use their assigned account or specify another valid email.`,
-          });
+      if (claimRes.error) {
+        const errCode = claimRes.error.code;
+        const errMsg = claimRes.error.message || 'provisioning_journal_unavailable';
+        if (errCode === 'P0002') {
+          return jsonResponse(404, { error: 'office_not_found', message: 'The specified office does not exist' });
         }
-        throw created.error ?? new Error('auth_user_creation_failed');
+        if (errCode === '42501') {
+          if (errMsg.includes('office is inactive')) {
+            return jsonResponse(400, { error: 'office_inactive', message: 'Cannot provision accounts for inactive offices' });
+          }
+          return jsonResponse(403, { error: 'forbidden', message: errMsg });
+        }
+        if (errCode === '22023') {
+          return jsonResponse(400, { error: 'invalid_request', message: errMsg });
+        }
+        if (errCode === 'PGRST202' || errMsg.includes('claim_office_provisioning_operation')) {
+          return jsonResponse(503, { error: 'service_unavailable_migration_required', message: 'Database migration 86 is required.' });
+        }
+        return jsonResponse(503, { error: 'provisioning_journal_unavailable', message: 'Could not initialize provisioning operation journal.' });
       }
 
-      const newUserId = created.data.user.id;
+      const claimPayload = (claimRes.data && typeof claimRes.data === 'object' ? claimRes.data : {}) as {
+        action?: string;
+        officeName?: string;
+        operation?: {
+          operation_id?: string;
+          auth_user_id?: string | null;
+          status?: string;
+          email_delivery_status?: string;
+          display_name?: string;
+          reconciliation_recorded?: boolean;
+        };
+      };
+      const claimAction = claimPayload.action || 'proceed';
+      const claimedOp = claimPayload.operation || {};
+
+      if (claimAction === 'operation_mismatch') {
+        return jsonResponse(409, {
+          error: 'operation_id_mismatch',
+          message: 'This provisioning operation ID is already bound to a different office or email.',
+          operationId,
+        });
+      }
+
+      if (claimAction === 'compensation_failed') {
+        return jsonResponse(409, {
+          error: 'provisioning_compensation_failed',
+          compensationStatus: 'compensation_failed',
+          reconciliationRequired: true,
+          message: 'A previous provisioning attempt with this operation ID requires administrator reconciliation before retrying.',
+          operationId,
+        });
+      }
+
+      if (claimAction === 'replay_completed') {
+        const existingUserId = claimedOp.auth_user_id ?? null;
+        let staffSummary: OfficeStaffDirectoryEntry = {
+          userId: existingUserId || '',
+          displayName: claimedOp.display_name || staffName,
+          role: 'office_staff',
+          active: true,
+          mustChangePassword: true,
+          email,
+          emailConfirmed: false,
+        };
+
+        if (existingUserId) {
+          const [{ data: staffRow }, authLookup] = await Promise.all([
+            admin
+              .from('staff_profiles')
+              .select('user_id, display_name, role, active, must_change_password')
+              .eq('user_id', existingUserId)
+              .maybeSingle(),
+            admin.auth.admin.getUserById(existingUserId).catch(() => ({ data: { user: null }, error: null })),
+          ]);
+          const authUser = (authLookup as { data?: { user?: AuthUserRecord | null } })?.data?.user ?? null;
+          staffSummary = {
+            userId: existingUserId,
+            displayName: staffRow?.display_name || staffSummary.displayName,
+            role: staffRow?.role || 'office_staff',
+            active: staffRow?.active ?? true,
+            mustChangePassword: staffRow?.must_change_password ?? true,
+            email: authUser?.email || email,
+            emailConfirmed: Boolean(authUser?.email_confirmed_at),
+          };
+        }
+
+        const emailSent = claimedOp.email_delivery_status === 'sent';
+        const emailFailed = claimedOp.email_delivery_status === 'failed';
+
+        return jsonResponse(200, {
+          ok: true,
+          replayed: true,
+          outcome: 'replayed_completed',
+          operationId,
+          officeId,
+          userId: existingUserId,
+          email: staffSummary.email || email,
+          temporaryPasswordIssued: false,
+          mustChangePassword: staffSummary.mustChangePassword,
+          emailConfirmed: Boolean(staffSummary.emailConfirmed),
+          verificationEmailSent: emailSent,
+          ...(emailFailed
+            ? {
+                reconciliationRequired: true,
+                warning: 'This office account was already provisioned earlier, but its initial verification email failed. Use Resend Verification Email or Reset Credentials if the temporary password was lost.',
+              }
+            : {}),
+          staffAccountSummary: staffSummary,
+        });
+      }
+
+      let targetUserId: string | null = null;
+      let temporaryPassword: string | undefined;
+      let temporaryPasswordIssued = false;
+      let createdFreshAuthUser = false;
+
+      if (claimAction === 'resume_incomplete' && claimedOp.auth_user_id) {
+        const authLookup = await admin.auth.admin.getUserById(claimedOp.auth_user_id).catch(() => ({ data: { user: null }, error: { message: 'lookup_failed' } }));
+        const existingAuthUser = (authLookup as { data?: { user?: AuthUserRecord | null } })?.data?.user ?? null;
+        const appMeta = (existingAuthUser?.app_metadata || {}) as Record<string, unknown>;
+        const emailMatches = (existingAuthUser?.email || '').toLowerCase().trim() === email;
+        const provenanceMatches =
+          Boolean(existingAuthUser) &&
+          emailMatches &&
+          appMeta.provisioning_source === 'office_account' &&
+          (!appMeta.provisioning_operation_id || appMeta.provisioning_operation_id === operationId) &&
+          (!appMeta.provisioning_office_id || appMeta.provisioning_office_id === officeId);
+
+        if (!provenanceMatches || !existingAuthUser) {
+          await markOperation({
+            status: 'failed',
+            errorCode: 'existing_account_conflict',
+            errorMessage: 'Incomplete operation could not verify provisioning provenance.',
+          });
+          return jsonResponse(409, {
+            error: 'existing_account_conflict',
+            message: `An existing account for "${email}" does not match the provenance of this provisioning operation.`,
+            operationId,
+          });
+        }
+
+        targetUserId = existingAuthUser.id;
+      } else {
+        const candidatePassword = generateTemporaryPassword();
+        const created = await admin.auth.admin.createUser({
+          email,
+          password: candidatePassword,
+          email_confirm: false,
+          app_metadata: {
+            provisioning_source: 'office_account',
+            provisioning_operation_id: operationId,
+            provisioning_office_id: officeId,
+          },
+        });
+
+        if (created.error || !created.data?.user) {
+          const err = created.error;
+          const msg = typeof err === 'object' && err !== null && 'message' in err ? String(err.message).toLowerCase() : '';
+          const errCode = typeof err === 'object' && err !== null && 'code' in err ? String((err as { code?: string }).code).toLowerCase() : '';
+          const isDuplicate =
+            msg.includes('already exists') ||
+            msg.includes('already registered') ||
+            errCode === 'email_exists';
+
+          if (!isDuplicate) {
+            await markOperation({
+              status: 'failed',
+              errorCode: errCode || 'auth_user_creation_failed',
+              errorMessage: msg || 'auth_user_creation_failed',
+            });
+            return jsonResponse(503, {
+              error: 'auth_user_creation_failed',
+              message: 'Failed to create Auth user for the office account. Please retry.',
+              operationId,
+            });
+          }
+
+          let existingAuthUser: AuthUserRecord | null = null;
+          try {
+            existingAuthUser = await findAuthUserByEmail(admin, email);
+          } catch (lookupErr) {
+            console.error('Paginated auth lookup failed on duplicate email:', lookupErr);
+            await markOperation({
+              status: 'failed',
+              errorCode: 'auth_lookup_failed',
+              errorMessage: 'Could not inspect existing auth user after duplicate email error.',
+            });
+            return jsonResponse(503, {
+              error: 'auth_lookup_failed',
+              message: 'An account with this email may already exist, and Auth directory lookup failed.',
+              operationId,
+            });
+          }
+
+          const appMeta = (existingAuthUser?.app_metadata || {}) as Record<string, unknown>;
+          const provenanceMatches =
+            Boolean(existingAuthUser) &&
+            appMeta.provisioning_source === 'office_account' &&
+            appMeta.provisioning_operation_id === operationId &&
+            appMeta.provisioning_office_id === officeId;
+
+          if (!existingAuthUser || !provenanceMatches) {
+            await markOperation({
+              status: 'failed',
+              errorCode: 'existing_account_conflict',
+              errorMessage: 'Email is already registered to an unrelated account.',
+            });
+            return jsonResponse(409, {
+              error: 'existing_account_conflict',
+              message: `An account with email "${email}" is already registered outside this provisioning operation. Use another email or assign an existing verified office staff account.`,
+              operationId,
+            });
+          }
+
+          const [{ data: existingProfile }, { data: existingDevice }] = await Promise.all([
+            admin
+              .from('staff_profiles')
+              .select('user_id, role')
+              .eq('user_id', existingAuthUser.id)
+              .maybeSingle(),
+            admin
+              .from('devices')
+              .select('id')
+              .eq('user_id', existingAuthUser.id)
+              .maybeSingle(),
+          ]);
+
+          if (existingDevice || (existingProfile && existingProfile.role !== 'office_staff')) {
+            await markOperation({
+              status: 'failed',
+              errorCode: 'existing_account_conflict',
+              errorMessage: 'Matched email belongs to a device or non-office staff account.',
+            });
+            return jsonResponse(409, {
+              error: 'existing_account_conflict',
+              message: `The existing account for "${email}" belongs to another account type and cannot be adopted.`,
+              operationId,
+            });
+          }
+
+          targetUserId = existingAuthUser.id;
+          temporaryPasswordIssued = false;
+        } else {
+          targetUserId = created.data.user.id;
+          temporaryPassword = candidatePassword;
+          temporaryPasswordIssued = true;
+          createdFreshAuthUser = true;
+        }
+      }
+
+      await markOperation({
+        authUserId: targetUserId,
+        status: 'auth_created',
+        emailDeliveryStatus: 'pending',
+        errorCode: '',
+        errorMessage: '',
+      });
 
       // Atomic DB provisioning via RPC: staff_profiles (role=office_staff, must_change_password=true) + office_staff_assignments + audit_events
       const rpcRes = await admin.schema('api').rpc('provision_office_staff_account', {
         requested_actor_id: actor.id,
-        requested_user_id: newUserId,
+        requested_user_id: targetUserId,
         requested_office_id: officeId,
         requested_name: staffName,
-        requested_request_id: randomUUID(),
+        requested_request_id: operationId,
       });
 
       if (rpcRes.error) {
-        // Rollback created auth user
-        console.error('Database provisioning failed, rolling back Auth user:', rpcRes.error);
-        const delRes = await admin.auth.admin.deleteUser(newUserId).catch((e) => ({ error: e }));
+        console.error('Database provisioning failed:', rpcRes.error);
+        if (!createdFreshAuthUser) {
+          await markOperation({
+            authUserId: targetUserId,
+            status: 'failed',
+            errorCode: rpcRes.error.code || 'provisioning_failed',
+            errorMessage: rpcRes.error.message,
+          });
+          return jsonResponse(500, {
+            error: 'provisioning_failed',
+            compensationStatus: 'skipped_existing_user',
+            message: 'Failed to provision office staff profile in database during retry.',
+            operationId,
+            details: rpcRes.error.message,
+          });
+        }
+
+        const delRes = await admin.auth.admin.deleteUser(targetUserId).catch((e) => ({ error: e }));
         if (delRes?.error) {
           console.error('CRITICAL: Auth rollback failed during office provisioning compensation:', delRes.error);
           await recordReconciliation(
             admin,
             'office.provision_compensation_failed',
             'auth.users',
-            newUserId,
+            targetUserId,
             `Rollback failed after DB error: ${rpcRes.error.message}`,
-            { officeId, email }
+            { officeId, email, operationId }
           ).catch(() => undefined);
+          await markOperation({
+            authUserId: targetUserId,
+            status: 'compensation_failed',
+            emailDeliveryStatus: 'not_attempted',
+            errorCode: 'provisioning_compensation_failed',
+            errorMessage: rpcRes.error.message,
+            reconciliationRecorded: true,
+          });
+          return jsonResponse(500, {
+            error: 'provisioning_compensation_failed',
+            compensationStatus: 'compensation_failed',
+            reconciliationRequired: true,
+            message: 'Failed to provision office staff profile in database and rollback of the temporary Auth account failed. Administrator reconciliation is required.',
+            operationId,
+            details: rpcRes.error.message,
+          });
         }
+
+        await markOperation({
+          authUserId: targetUserId,
+          status: 'compensated',
+          emailDeliveryStatus: 'not_attempted',
+          errorCode: rpcRes.error.code || 'provisioning_failed',
+          errorMessage: rpcRes.error.message,
+        });
         return jsonResponse(500, {
           error: 'provisioning_failed',
-          message: 'Failed to provision office staff profile in database. Auth account rolled back.',
+          compensationStatus: 'rolled_back',
+          message: 'Failed to provision office staff profile in database. Auth account was rolled back.',
+          operationId,
           details: rpcRes.error.message,
         });
       }
@@ -281,27 +711,76 @@ export async function handleRequest(request: Request): Promise<Response> {
         email,
       }).catch((err) => ({ error: err }));
 
+      const staffAccountSummary: OfficeStaffDirectoryEntry = {
+        userId: targetUserId,
+        displayName: staffName,
+        role: 'office_staff',
+        active: true,
+        mustChangePassword: true,
+        email,
+        emailConfirmed: false,
+      };
+
       if (resendResult?.error) {
+        const deliveryErrMsg = (resendResult.error as { message?: string })?.message || 'resend_failed';
         console.warn('Office staff verification email delivery failed:', resendResult.error);
         await recordReconciliation(
           admin,
           'office.verification_email_failed',
           'staff_profiles',
-          newUserId,
-          (resendResult.error as any)?.message || 'resend_failed',
-          { email, officeId }
+          targetUserId,
+          deliveryErrMsg,
+          { email, officeId, operationId }
         ).catch(() => undefined);
+
+        await markOperation({
+          authUserId: targetUserId,
+          status: 'completed',
+          emailDeliveryStatus: 'failed',
+          errorCode: 'verification_email_failed',
+          errorMessage: deliveryErrMsg,
+          reconciliationRecorded: true,
+        });
+
+        return jsonResponse(200, {
+          ok: true,
+          outcome: 'provisioned_email_failed',
+          operationId,
+          officeId,
+          userId: targetUserId,
+          email,
+          ...(temporaryPasswordIssued && temporaryPassword ? { temporaryPassword } : {}),
+          temporaryPasswordIssued,
+          mustChangePassword: true,
+          emailConfirmed: false,
+          verificationEmailSent: false,
+          reconciliationRequired: true,
+          warning: 'Office account created, but the verification email could not be delivered. Retry verification email from the office directory.',
+          staffAccountSummary,
+        });
       }
+
+      await markOperation({
+        authUserId: targetUserId,
+        status: 'completed',
+        emailDeliveryStatus: 'sent',
+        errorCode: '',
+        errorMessage: '',
+      });
 
       return jsonResponse(200, {
         ok: true,
+        outcome: 'provisioned',
+        operationId,
         officeId,
-        userId: newUserId,
+        userId: targetUserId,
         email,
-        temporaryPassword,
+        ...(temporaryPasswordIssued && temporaryPassword ? { temporaryPassword } : {}),
+        temporaryPasswordIssued,
         mustChangePassword: true,
         emailConfirmed: false,
-        verificationEmailSent: !resendResult?.error,
+        verificationEmailSent: true,
+        staffAccountSummary,
       });
     }
 
@@ -414,13 +893,22 @@ export async function handleRequest(request: Request): Promise<Response> {
 
       const { data: staff, error: stErr } = await admin
         .from('staff_profiles')
-        .select('user_id, display_name, role, active')
+        .select('user_id, display_name, role, active, decommissioned_at')
         .eq('user_id', userId)
         .maybeSingle();
 
-      if (stErr) throw stErr;
+      if (stErr) {
+        console.error('Failed to look up staff for verification resend:', stErr);
+        return jsonResponse(503, { error: 'staff_lookup_failed', message: 'Failed to verify staff account.' });
+      }
       if (!staff) {
         return jsonResponse(404, { error: 'staff_not_found', message: 'Staff profile not found' });
+      }
+      if ((staff as { decommissioned_at?: string | null }).decommissioned_at) {
+        return jsonResponse(409, { error: 'target_decommissioned', message: 'Cannot send verification email for a decommissioned staff account.' });
+      }
+      if (!staff.active) {
+        return jsonResponse(409, { error: 'staff_inactive', message: 'Cannot send verification email for an inactive staff account.' });
       }
 
       if (officeId) {
@@ -539,31 +1027,52 @@ export async function handleRequest(request: Request): Promise<Response> {
 
       const { data: office, error: offErr } = await admin
         .from('offices')
-        .select('id')
+        .select('id, name, active')
         .eq('id', parsed.data.officeId)
         .maybeSingle();
-      if (offErr) throw offErr;
+      if (offErr) {
+        console.error('Failed to verify office for assignment:', offErr);
+        return jsonResponse(503, { error: 'office_lookup_failed', message: 'Failed to verify the target office.' });
+      }
       if (!office) {
         return jsonResponse(404, { error: 'office_not_found', message: 'The specified office does not exist' });
+      }
+      if (!office.active) {
+        return jsonResponse(400, { error: 'office_inactive', message: 'Cannot assign staff to an inactive office.' });
       }
 
       const { data: staff, error: stErr } = await admin
         .from('staff_profiles')
-        .select('user_id, role, active')
+        .select('user_id, role, active, decommissioned_at')
         .eq('user_id', parsed.data.userId)
         .maybeSingle();
-      if (stErr) throw stErr;
+      if (stErr) {
+        console.error('Failed to verify staff profile for assignment:', stErr);
+        return jsonResponse(503, { error: 'staff_lookup_failed', message: 'Failed to verify staff account.' });
+      }
       if (!staff) {
         return jsonResponse(404, { error: 'staff_not_found', message: 'The specified staff account does not exist' });
+      }
+      if ((staff as { decommissioned_at?: string | null }).decommissioned_at) {
+        return jsonResponse(409, { error: 'target_decommissioned', message: 'Cannot assign a decommissioned staff account.' });
+      }
+      if (!staff.active) {
+        return jsonResponse(409, { error: 'staff_inactive', message: 'Cannot assign an inactive staff account.' });
+      }
+      if (staff.role !== 'office_staff') {
+        return jsonResponse(400, { error: 'invalid_staff_role', message: 'Only office_staff accounts can be assigned to offices.' });
       }
 
       const { error: insErr } = await admin.from('office_staff_assignments').upsert({
         user_id: parsed.data.userId,
         office_id: parsed.data.officeId,
         created_by: actor.id,
-      }, { onConflict: 'office_id,user_id' });
+      }, { onConflict: 'user_id,office_id' });
 
-      if (insErr) throw insErr;
+      if (insErr) {
+        console.error('Failed to save office staff assignment:', insErr);
+        return jsonResponse(503, { error: 'office_assignment_failed', message: 'Failed to save office staff assignment.' });
+      }
       return jsonResponse(200, { ok: true, message: 'Staff assigned to office successfully.' });
     }
 

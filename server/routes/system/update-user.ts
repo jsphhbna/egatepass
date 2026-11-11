@@ -24,79 +24,112 @@ async function handleRequest(request: Request): Promise<Response> {
   try {
     const { admin } = getServerSupabaseClients();
     const actor = await requireStaffActor(admin, token, ['admin', 'superadmin']);
-    if (parsed.data.officeIds !== undefined) {
-      if (actor.role !== 'superadmin') {
-        return jsonResponse(403, {
-          error: 'superadmin_required',
-          message: 'Only superadmin can modify office assignments',
+    const uniqueOfficeIds =
+      parsed.data.officeIds !== undefined ? [...new Set(parsed.data.officeIds)] : undefined;
+
+    if (uniqueOfficeIds !== undefined && actor.role !== 'superadmin') {
+      return jsonResponse(403, {
+        error: 'superadmin_required',
+        message: 'Only superadmin can modify office assignments',
+      });
+    }
+
+    if (uniqueOfficeIds !== undefined && uniqueOfficeIds.length > 0) {
+      if (parsed.data.active === false) {
+        return jsonResponse(400, {
+          error: 'staff_inactive',
+          message: 'Cannot assign offices while deactivating a staff account.',
         });
       }
+      if (parsed.data.role !== undefined && parsed.data.role !== 'office_staff') {
+        return jsonResponse(400, {
+          error: 'invalid_staff_role',
+          message: 'Office assignments are only supported for office_staff accounts.',
+        });
+      }
+    }
 
-      if (parsed.data.officeIds.length > 0) {
-        const { data: existingOffices, error: chkErr } = await admin
-          .from('offices')
-          .select('id')
-          .in('id', parsed.data.officeIds);
-        if (chkErr) throw chkErr;
-        if (!existingOffices || existingOffices.length !== parsed.data.officeIds.length) {
-          return jsonResponse(400, {
-            error: 'invalid_office_id',
-            message: 'One or more specified offices do not exist.',
+    const shouldUpdateProfile =
+      parsed.data.role !== undefined || parsed.data.active !== undefined;
+
+    if (shouldUpdateProfile) {
+      const updated = await admin.schema('api').rpc('update_staff_profile', {
+        requested_actor_id: actor.id,
+        requested_user_id: parsed.data.targetUid,
+        requested_role: parsed.data.role ?? null,
+        requested_active: parsed.data.active ?? null,
+        requested_request_id: randomUUID(),
+      });
+      if (updated.error) {
+        if (updated.error.code === '22023' || updated.error.message?.includes('legacy_guard_role_disabled')) {
+          return jsonResponse(422, { error: 'legacy_guard_role_disabled', message: 'The legacy guard role is disabled and cannot be assigned.' });
+        }
+        if (updated.error.code === 'P0004' || updated.error.message?.includes('target_decommissioned')) {
+          return jsonResponse(409, { error: 'target_decommissioned' });
+        }
+        if (updated.error.code === '23514') return jsonResponse(409, { error: 'cannot_remove_last_superadmin' });
+        if (updated.error.code === '42501') return jsonResponse(403, { error: 'access_denied' });
+        throw updated.error;
+      }
+      if (parsed.data.active !== undefined) {
+        const authUpdate = await admin.auth.admin.updateUserById(parsed.data.targetUid, {
+          ban_duration: parsed.data.active ? 'none' : '876000h',
+        });
+        if (authUpdate.error) {
+          await recordReconciliation(admin, 'staff.auth_status', 'staff_profile', parsed.data.targetUid, authUpdate.error.code ?? 'auth_update_failed', { active: parsed.data.active });
+          return jsonResponse(503, {
+            error: 'profile_updated_auth_reconciliation_required',
+            result: 'partial',
+            profileUpdated: true,
+            authSynchronized: false,
+            reconciliationRequired: true,
+            message: 'The staff profile was updated, but authentication synchronization requires reconciliation.',
           });
         }
       }
-
-      const { error: delErr } = await admin
-        .from('office_staff_assignments')
-        .delete()
-        .eq('user_id', parsed.data.targetUid);
-      if (delErr) throw delErr;
-
-      if (parsed.data.officeIds.length > 0) {
-        const assignments = parsed.data.officeIds.map((officeId) => ({
-          user_id: parsed.data.targetUid,
-          office_id: officeId,
-          assigned_by: actor.id,
-        }));
-        const { error: insErr } = await admin.from('office_staff_assignments').insert(assignments);
-        if (insErr) throw insErr;
-      }
     }
 
-    const updated = await admin.schema('api').rpc('update_staff_profile', {
-      requested_actor_id: actor.id,
-      requested_user_id: parsed.data.targetUid,
-      requested_role: parsed.data.role ?? null,
-      requested_active: parsed.data.active ?? null,
-      requested_request_id: randomUUID(),
-    });
-    if (updated.error) {
-      if (updated.error.code === '22023' || updated.error.message?.includes('legacy_guard_role_disabled')) {
-        return jsonResponse(422, { error: 'legacy_guard_role_disabled', message: 'The legacy guard role is disabled and cannot be assigned.' });
-      }
-      if (updated.error.code === 'P0004' || updated.error.message?.includes('target_decommissioned')) {
-        return jsonResponse(409, { error: 'target_decommissioned' });
-      }
-      if (updated.error.code === '23514') return jsonResponse(409, { error: 'cannot_remove_last_superadmin' });
-      if (updated.error.code === '42501') return jsonResponse(403, { error: 'access_denied' });
-      throw updated.error;
-    }
-    if (parsed.data.active !== undefined) {
-      const authUpdate = await admin.auth.admin.updateUserById(parsed.data.targetUid, {
-        ban_duration: parsed.data.active ? 'none' : '876000h',
+    if (uniqueOfficeIds !== undefined) {
+      const assignRes = await admin.schema('api').rpc('replace_staff_office_assignments', {
+        requested_actor_id: actor.id,
+        requested_user_id: parsed.data.targetUid,
+        requested_office_ids: uniqueOfficeIds,
+        requested_request_id: randomUUID(),
       });
-      if (authUpdate.error) {
-        await recordReconciliation(admin, 'staff.auth_status', 'staff_profile', parsed.data.targetUid, authUpdate.error.code ?? 'auth_update_failed', { active: parsed.data.active });
-        return jsonResponse(503, {
-          error: 'profile_updated_auth_reconciliation_required',
-          result: 'partial',
-          profileUpdated: true,
-          authSynchronized: false,
-          reconciliationRequired: true,
-          message: 'The staff profile was updated, but authentication synchronization requires reconciliation.',
-        });
+
+      if (assignRes.error) {
+        const errCode = assignRes.error.code;
+        const errMsg = assignRes.error.message || '';
+        if (errCode === 'P0004' || errMsg.includes('target_decommissioned')) {
+          return jsonResponse(409, { error: 'target_decommissioned', message: 'Cannot modify a decommissioned staff account.' });
+        }
+        if (errCode === '42501') {
+          if (errMsg.includes('superadmin')) {
+            return jsonResponse(403, { error: 'superadmin_required', message: 'Only superadmin can modify office assignments' });
+          }
+          if (errMsg.includes('office is inactive')) {
+            return jsonResponse(400, { error: 'office_inactive', message: 'Cannot assign an inactive office.' });
+          }
+          if (errMsg.includes('inactive')) {
+            return jsonResponse(409, { error: 'staff_inactive', message: 'Cannot assign offices to an inactive staff account.' });
+          }
+          return jsonResponse(403, { error: 'access_denied', message: errMsg });
+        }
+        if (errCode === 'P0002') {
+          if (errMsg.includes('office')) {
+            return jsonResponse(400, { error: 'invalid_office_id', message: 'One or more specified offices do not exist.' });
+          }
+          return jsonResponse(404, { error: 'staff_not_found', message: 'Target staff profile was not found.' });
+        }
+        if (errCode === '22023') {
+          return jsonResponse(400, { error: 'invalid_office_assignment', message: errMsg });
+        }
+        throw assignRes.error;
       }
+
+      return jsonResponse(200, { ok: true, officeIds: uniqueOfficeIds });
     }
+
     return jsonResponse(200, { ok: true });
   } catch (error) {
     if (error instanceof HttpError) return jsonResponse(error.status, { error: error.code });

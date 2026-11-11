@@ -23,7 +23,7 @@ import {
 import { toast } from 'sonner';
 import { Button, Card, Input, Select, ConfirmModal, LoadingState, Modal, FormField } from '@/components/ui';
 import { PasswordResetCard } from '@/components/ChangePasswordCard';
-import { normalizeVisitPurposes } from '@/lib/settingsDefaults';
+import { DEFAULT_REJECTION_REASONS, normalizeVisitPurposes } from '@/lib/settingsDefaults';
 import type { VisitPurposeOption, CampusCalendarClosure, CalendarClosureType } from '@/types';
 import { useAuth } from '@/hooks/useAuth';
 import { isSuperAdmin } from '@/lib/permissions';
@@ -198,6 +198,7 @@ export function AdminSettings() {
   const canManageSecuritySettings = isSuperAdmin(role);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
+  const [saveError, setSaveError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [purging, setPurging] = useState(false);
   const [calculatingPurge, setCalculatingPurge] = useState(false);
@@ -209,6 +210,7 @@ export function AdminSettings() {
     ...DEFAULT_RETENTION_POLICY,
     workingHours: DEFAULT_WORKING_HOURS,
     peakMode: 'off' as PeakModeScope,
+    rejectionReasons: DEFAULT_REJECTION_REASONS,
     visitPurposes: [] as VisitPurposeOption[],
     visitorInstructions: DEFAULT_VISITOR_INSTRUCTIONS,
   });
@@ -231,9 +233,12 @@ export function AdminSettings() {
   const [overrideCategories, setOverrideCategories] = useState<string[]>(['photo', 'id', 'vehicle_photo']);
   const [isExecutingOverride, setIsExecutingOverride] = useState(false);
 
-  async function loadSettings() {
-    setLoading(true);
-    setLoadError(null);
+  async function loadSettings(options?: { background?: boolean }): Promise<{ ok: boolean; error?: string }> {
+    const isBackground = Boolean(options?.background);
+    if (!isBackground) {
+      setLoading(true);
+      setLoadError(null);
+    }
     try {
       const token = await getAccessToken();
       const res = await fetch('/api/admin/settings', {
@@ -246,10 +251,16 @@ export function AdminSettings() {
         const peakScope: PeakModeScope = (['off', 'portal', 'kiosk', 'both'].includes(rawScope)
           ? rawScope
           : (data.peakMode ? 'both' : 'off')) as PeakModeScope;
+        const loadedRejectionReasons = Array.isArray(data.rejectionReasons)
+          ? data.rejectionReasons
+              .filter((r: unknown): r is string => typeof r === 'string' && r.trim().length > 0)
+              .map((r: string) => r.trim())
+          : DEFAULT_REJECTION_REASONS;
         setSettings({
           ...retentionPolicy,
           workingHours: normalizeWorkingHours(data.workingHours),
           peakMode: peakScope,
+          rejectionReasons: loadedRejectionReasons,
           visitPurposes: normalizeVisitPurposes(data.visitPurposes),
           visitorInstructions: Array.isArray(data.visitorInstructions) && data.visitorInstructions.length > 0
             ? data.visitorInstructions
@@ -257,19 +268,28 @@ export function AdminSettings() {
         });
         setRetentionInputs(createRetentionInputValues(retentionPolicy));
         setLoadError(null);
+        return { ok: true };
       } else {
-        const errorData = await res.json().catch(() => null) as { error?: string } | null;
-        const errMsg = errorData?.error || `Failed to load settings (HTTP ${res.status})`;
-        setLoadError(errMsg);
-        toast.error(errMsg);
+        const errorData = await res.json().catch(() => null) as { message?: string; error?: string } | null;
+        const errMsg = errorData?.message || errorData?.error || `Failed to load settings (HTTP ${res.status})`;
+        if (!isBackground) {
+          setLoadError(errMsg);
+          toast.error(errMsg);
+        }
+        return { ok: false, error: errMsg };
       }
     } catch (err) {
       const errMsg = err instanceof Error ? err.message : 'Network failure loading system settings';
       console.error(err);
-      setLoadError(errMsg);
-      toast.error('Failed to load settings');
+      if (!isBackground) {
+        setLoadError(errMsg);
+        toast.error(errMsg);
+      }
+      return { ok: false, error: errMsg };
     } finally {
-      setLoading(false);
+      if (!isBackground) {
+        setLoading(false);
+      }
     }
   }
 
@@ -280,28 +300,36 @@ export function AdminSettings() {
   async function handleSave() {
     if (settingsMutationInFlightRef.current || settingsBusy) return;
     settingsMutationInFlightRef.current = true;
+    setSaveError(null);
     try {
       const retentionValidation = canManageSecuritySettings
         ? validateRetentionInputs(retentionInputs)
         : null;
       if (retentionValidation && !retentionValidation.success) {
         setRetentionErrors(retentionValidation.errors);
-        toast.error('Correct the highlighted retention settings before saving');
+        const msg = 'Correct the highlighted retention settings before saving.';
+        setSaveError(msg);
+        toast.error(msg);
         return;
       }
       setRetentionErrors({});
       if (settings.workingHours.start >= settings.workingHours.end) {
-        toast.error('Campus opening time must be earlier than closing time');
+        const msg = 'Campus opening time must be earlier than closing time.';
+        setSaveError(msg);
+        toast.error(msg);
         return;
       }
       const missingPrompt = settings.visitPurposes.find((purpose) => purpose.requiresDetails && purpose.detailPrompt.trim().length < 3);
       if (missingPrompt) {
-        toast.error(`Add an instruction for “${missingPrompt.label}” before saving`);
+        const msg = `Add an instruction for “${missingPrompt.label}” before saving.`;
+        setSaveError(msg);
+        toast.error(msg);
         return;
       }
       setSaving(true);
       const operationalSettings = {
         peakMode: settings.peakMode,
+        rejectionReasons: settings.rejectionReasons,
         visitPurposes: settings.visitPurposes.map((purpose) => ({
           ...purpose,
           detailPrompt: purpose.requiresDetails ? purpose.detailPrompt.trim() : '',
@@ -331,14 +359,32 @@ export function AdminSettings() {
         headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
         body: JSON.stringify(settingsToSave),
       });
-      const result = await response.json().catch(() => null) as { error?: string } | null;
-      if (!response.ok) throw new Error(result?.error || 'Failed to save settings');
+      const result = await response.json().catch(() => null) as {
+        error?: string;
+        message?: string;
+        details?: Array<{ path?: Array<string | number>; message?: string }>;
+      } | null;
+      if (!response.ok) {
+        const firstIssue = Array.isArray(result?.details) ? result.details[0] : undefined;
+        const issueDetail = firstIssue?.message
+          ? (firstIssue.path?.length ? `${firstIssue.path.join('.')}: ${firstIssue.message}` : firstIssue.message)
+          : null;
+        throw new Error(issueDetail || result?.message || result?.error || `Failed to save settings (HTTP ${response.status})`);
+      }
+      setSaveError(null);
       toast.success('Settings saved successfully');
       setRetentionOverrideReason('');
-      void loadSettings();
+      const refreshed = await loadSettings({ background: true });
+      if (!refreshed.ok && refreshed.error) {
+        const refreshMsg = `Settings saved, but reloading latest configuration failed: ${refreshed.error}`;
+        setSaveError(refreshMsg);
+        toast.warning(refreshMsg);
+      }
     } catch (err) {
       console.error(err);
-      toast.error('Failed to save settings');
+      const errMsg = err instanceof Error && err.message ? err.message : 'Failed to save settings';
+      setSaveError(errMsg);
+      toast.error(errMsg);
     } finally {
       setSaving(false);
       settingsMutationInFlightRef.current = false;
@@ -744,6 +790,13 @@ export function AdminSettings() {
           </Button>
         )}
       </div>
+
+      {saveError && (
+        <div role="alert" className="flex items-start gap-2.5 rounded-lg border border-[var(--color-danger-border)] bg-[var(--color-danger-light)] px-4 py-3 text-xs text-[var(--color-danger-dark)]">
+          <AlertTriangle className="h-4 w-4 mt-0.5 flex-shrink-0 text-[var(--color-danger)]" />
+          <span className="font-medium">{saveError}</span>
+        </div>
+      )}
 
       {/* Sub-Tabs Navigation */}
       <div className="flex border-b border-[var(--color-border)] gap-2 overflow-x-auto pb-px">

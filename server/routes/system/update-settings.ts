@@ -62,7 +62,13 @@ async function handleRequest(request: Request): Promise<Response> {
 
   const parsed = settingsSchema.safeParse(rawBody);
   if (!parsed.success) {
-    return jsonResponse(400, { error: 'invalid_settings', details: parsed.error.issues });
+    const firstIssue = parsed.error.issues[0];
+    const issuePath = firstIssue?.path?.length ? firstIssue.path.join('.') : 'settings';
+    return jsonResponse(400, {
+      error: 'invalid_settings',
+      message: firstIssue ? `Invalid ${issuePath}: ${firstIssue.message}` : 'Invalid settings payload.',
+      details: parsed.error.issues,
+    });
   }
 
   try {
@@ -70,11 +76,16 @@ async function handleRequest(request: Request): Promise<Response> {
     const actor = await requireStaffActor(admin, token, ['admin', 'superadmin']);
 
     // Fetch current settings to verify if security-sensitive settings or peakMode changed
-    const { data: currentSettings } = await admin
+    const { data: currentSettings, error: currentSettingsError } = await admin
       .from('app_settings')
       .select('peak_mode')
       .eq('singleton', true)
       .maybeSingle();
+
+    if (currentSettingsError) {
+      console.error('Failed to read current settings before update:', currentSettingsError);
+      throw new HttpError(503, 'settings_load_failed');
+    }
 
     let peakModeScope: 'off' | 'portal' | 'kiosk' | 'both';
     if (typeof parsed.data.peakMode === 'boolean') {
@@ -120,57 +131,6 @@ async function handleRequest(request: Request): Promise<Response> {
     const schedDays = parsed.data.schedulingDaysAhead ?? null;
     const cleanupVal = parsed.data.automaticCleanupEnabled ?? null;
 
-    // Atomic audited RPC invocation in schema api (logs action: 'settings_updated' in same SQL transaction)
-    const rpcResult = await admin.schema('api').rpc('update_app_settings', {
-      requested_actor_id: actor.id,
-      requested_peak_mode: peakModeScope,
-      requested_rejection_reasons: [...new Set(parsed.data.rejectionReasons)],
-      requested_visit_purposes: parsed.data.visitPurposes,
-      requested_working_hours_start: startVal,
-      requested_working_hours_end: endVal,
-      requested_image_retention_days: imgRet,
-      requested_visitor_retention_days: visRet,
-      requested_audit_retention_days: audRet,
-      requested_reconciliation_retention_days: recRet,
-      requested_scheduling_days_ahead: schedDays,
-      requested_automatic_cleanup_enabled: cleanupVal,
-      requested_request_id: randomUUID(),
-      requested_photo_retention_days: photoRet,
-      requested_id_retention_days: idRet,
-    });
-
-    // P0-03: Zero direct table write fallback; fail closed on any RPC error
-    if (rpcResult.error) {
-      const errCode = rpcResult.error.code;
-      const errMsg = rpcResult.error.message || 'settings_update_failed';
-      console.error('update_app_settings RPC failed:', rpcResult.error);
-
-      if (errCode === '42501' || errMsg.includes('access_denied') || errMsg.includes('permission denied')) {
-        throw new HttpError(403, errMsg);
-      }
-      if (errCode === 'P0002' || errMsg.includes('not_found')) {
-        throw new HttpError(404, errMsg);
-      }
-      if (errCode === '23514' || errMsg.includes('check_violation') || errMsg.includes('opening time must be earlier')) {
-        throw new HttpError(400, errMsg);
-      }
-      if (errCode === 'PGRST202' || errMsg.includes('function api.update_app_settings') || errMsg.includes('Could not find the function')) {
-        throw new HttpError(503, 'service_unavailable_migration_required');
-      }
-      throw new HttpError(503, errMsg);
-    }
-
-    if (parsed.data.visitorInstructions !== undefined) {
-      const instrResult = await admin.schema('api').rpc('update_visitor_instructions', {
-        requested_actor_id: actor.id,
-        requested_instructions: parsed.data.visitorInstructions,
-      });
-      if (instrResult.error) {
-        console.error('update_visitor_instructions RPC failed:', instrResult.error);
-        throw new HttpError(400, instrResult.error.message || 'invalid_visitor_instructions');
-      }
-    }
-
     const hasGranularRetentionUpdates =
       parsed.data.photoRetentionEnabled !== undefined ||
       parsed.data.idRetentionEnabled !== undefined ||
@@ -180,83 +140,107 @@ async function handleRequest(request: Request): Promise<Response> {
       parsed.data.returningProfileRetentionEnabled !== undefined ||
       parsed.data.returningProfileRetentionDays !== undefined;
 
-    if (hasGranularRetentionUpdates && actor.role === 'superadmin') {
-      const { data: cur } = await admin
-        .from('app_settings')
-        .select(`
-          photo_retention_enabled,
-          photo_retention_days,
-          id_retention_enabled,
-          id_retention_days,
-          vehicle_photo_retention_enabled,
-          vehicle_photo_retention_days,
-          visitor_retention_enabled,
-          visitor_retention_days,
-          returning_profile_retention_enabled,
-          returning_profile_retention_days
-        `)
-        .eq('singleton', true)
-        .maybeSingle();
+    const dedupedRejectionReasons = [...new Set(parsed.data.rejectionReasons)];
 
-      const photoEn = parsed.data.photoRetentionEnabled ?? (cur as any)?.photo_retention_enabled ?? true;
-      const photoD = photoRet ?? (cur as any)?.photo_retention_days ?? 7;
-      const idEn = parsed.data.idRetentionEnabled ?? (cur as any)?.id_retention_enabled ?? true;
-      const idD = idRet ?? (cur as any)?.id_retention_days ?? 30;
-      const vehEn = parsed.data.vehiclePhotoRetentionEnabled ?? (cur as any)?.vehicle_photo_retention_enabled ?? true;
-      const vehD = parsed.data.vehiclePhotoRetentionDays ?? (cur as any)?.vehicle_photo_retention_days ?? 30;
-      const visEn = parsed.data.visitorRetentionEnabled ?? (cur as any)?.visitor_retention_enabled ?? true;
-      const visD = visRet ?? (cur as any)?.visitor_retention_days ?? 180;
-      const retEn = parsed.data.returningProfileRetentionEnabled ?? (cur as any)?.returning_profile_retention_enabled ?? true;
-      const retD = parsed.data.returningProfileRetentionDays ?? (cur as any)?.returning_profile_retention_days ?? 30;
+    // Atomic single-transaction RPC invocation in schema api (logs action: 'settings_updated' + retention overrides + expiry sync)
+    const rpcResult = await admin.schema('api').rpc('save_system_settings', {
+      requested_actor_id: actor.id,
+      requested_peak_mode: peakModeScope,
+      requested_rejection_reasons: dedupedRejectionReasons,
+      requested_visit_purposes: parsed.data.visitPurposes,
+      requested_visitor_instructions: parsed.data.visitorInstructions ?? null,
+      requested_working_hours_start: startVal,
+      requested_working_hours_end: endVal,
+      requested_image_retention_days: imgRet,
+      requested_photo_retention_days: photoRet,
+      requested_id_retention_days: idRet,
+      requested_visitor_retention_days: visRet,
+      requested_audit_retention_days: audRet,
+      requested_reconciliation_retention_days: recRet,
+      requested_scheduling_days_ahead: schedDays,
+      requested_automatic_cleanup_enabled: cleanupVal,
+      requested_update_retention_policies: actor.role === 'superadmin' && hasGranularRetentionUpdates,
+      requested_photo_enabled: parsed.data.photoRetentionEnabled ?? null,
+      requested_policy_photo_days: photoRet,
+      requested_id_enabled: parsed.data.idRetentionEnabled ?? null,
+      requested_policy_id_days: idRet,
+      requested_vehicle_enabled: parsed.data.vehiclePhotoRetentionEnabled ?? null,
+      requested_vehicle_days: parsed.data.vehiclePhotoRetentionDays ?? null,
+      requested_visitor_enabled: parsed.data.visitorRetentionEnabled ?? null,
+      requested_policy_visitor_days: visRet,
+      requested_returning_enabled: parsed.data.returningProfileRetentionEnabled ?? null,
+      requested_returning_days: parsed.data.returningProfileRetentionDays ?? null,
+      requested_override_reason: parsed.data.overrideReason ?? null,
+      requested_request_id: randomUUID(),
+    });
 
-      const retRes = await admin.schema('api').rpc('update_retention_policies', {
-        requested_actor_id: actor.id,
-        requested_photo_enabled: photoEn,
-        requested_photo_days: photoD,
-        requested_id_enabled: idEn,
-        requested_id_days: idD,
-        requested_vehicle_enabled: vehEn,
-        requested_vehicle_days: vehD,
-        requested_visitor_enabled: visEn,
-        requested_visitor_days: visD,
-        requested_returning_enabled: retEn,
-        requested_returning_days: retD,
-        requested_override_reason: parsed.data.overrideReason ?? 'Superadmin policy update',
-      });
-      if (retRes.error) {
-        console.error('update_retention_policies RPC failed:', retRes.error);
-        throw new HttpError(400, retRes.error.message || 'invalid_retention_policy');
+    // Zero direct table write fallback; fail closed atomically on any RPC error
+    if (rpcResult.error) {
+      const errCode = rpcResult.error.code;
+      const errMsg = rpcResult.error.message || 'settings_update_failed';
+      console.error('save_system_settings RPC failed:', rpcResult.error);
+
+      if (
+        errCode === '42501' ||
+        errMsg.includes('access_denied') ||
+        errMsg.includes('permission denied') ||
+        errMsg.includes('super administrator required') ||
+        errMsg.includes('administrator required')
+      ) {
+        throw new HttpError(403, errMsg);
       }
+      if (errCode === 'P0002' || errMsg.includes('not_found')) {
+        throw new HttpError(404, errMsg);
+      }
+      if (
+        errCode === '23514' ||
+        errCode === '22023' ||
+        errMsg.includes('check_violation') ||
+        errMsg.includes('opening time must be earlier') ||
+        errMsg.includes('start time must be earlier') ||
+        errMsg.includes('visitor instruction') ||
+        errMsg.includes('rejection reason') ||
+        errMsg.includes('retention_days')
+      ) {
+        throw new HttpError(400, errMsg);
+      }
+      if (errCode === 'PGRST202' || errMsg.includes('function api.save_system_settings') || errMsg.includes('Could not find the function')) {
+        throw new HttpError(503, 'service_unavailable_migration_required');
+      }
+      throw new HttpError(503, errMsg);
     }
+
+    const saved = (rpcResult.data && typeof rpcResult.data === 'object' ? rpcResult.data : {}) as Record<string, unknown>;
 
     return jsonResponse(200, {
       success: true,
+      atomic: true,
       settings: {
-        peak_mode: peakModeScope,
-        rejection_reasons: parsed.data.rejectionReasons,
-        visit_purposes: parsed.data.visitPurposes,
-        visitor_instructions: parsed.data.visitorInstructions,
-        visitorInstructions: parsed.data.visitorInstructions,
-        working_hours_start: startVal,
-        working_hours_end: endVal,
-        image_retention_days: imgRet,
-        photo_retention_days: photoRet,
-        id_retention_days: idRet,
-        photoRetentionDays: photoRet,
-        idRetentionDays: idRet,
-        visitor_retention_days: visRet,
-        audit_retention_days: audRet,
-        reconciliation_retention_days: recRet,
-        scheduling_days_ahead: schedDays,
-        automatic_cleanup_enabled: cleanupVal,
+        peak_mode: saved.peak_mode ?? peakModeScope,
+        rejection_reasons: saved.rejection_reasons ?? dedupedRejectionReasons,
+        visit_purposes: saved.visit_purposes ?? parsed.data.visitPurposes,
+        visitor_instructions: saved.visitor_instructions ?? parsed.data.visitorInstructions,
+        visitorInstructions: saved.visitor_instructions ?? parsed.data.visitorInstructions,
+        working_hours_start: saved.working_hours_start ?? startVal,
+        working_hours_end: saved.working_hours_end ?? endVal,
+        image_retention_days: saved.image_retention_days ?? imgRet,
+        photo_retention_days: saved.photo_retention_days ?? photoRet,
+        id_retention_days: saved.id_retention_days ?? idRet,
+        photoRetentionDays: saved.photo_retention_days ?? photoRet,
+        idRetentionDays: saved.id_retention_days ?? idRet,
+        visitor_retention_days: saved.visitor_retention_days ?? visRet,
+        audit_retention_days: saved.audit_retention_days ?? audRet,
+        reconciliation_retention_days: saved.reconciliation_retention_days ?? recRet,
+        scheduling_days_ahead: saved.scheduling_days_ahead ?? schedDays,
+        automatic_cleanup_enabled: saved.automatic_cleanup_enabled ?? cleanupVal,
       },
     });
   } catch (error) {
     if (error instanceof HttpError) {
-      return jsonResponse(error.status, { error: error.message });
+      return jsonResponse(error.status, { error: error.code, message: error.message });
     }
     console.error('Settings update failed.', error instanceof Error ? error.message : 'unknown_error');
-    return jsonResponse(503, { error: 'service_unavailable' });
+    return jsonResponse(503, { error: 'service_unavailable', message: 'Failed to save system settings.' });
   }
 }
 

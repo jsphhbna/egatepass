@@ -251,11 +251,12 @@ describe('Issue B: Office Creation Reliability, Idempotency, Visibility & Unsupp
         );
 
         create table public.office_staff_assignments (
+          id uuid primary key default gen_random_uuid(),
           office_id uuid not null references public.offices(id) on delete cascade,
           user_id uuid not null references public.staff_profiles(user_id) on delete cascade,
-          assigned_at timestamptz not null default now(),
+          created_at timestamptz not null default now(),
           created_by uuid,
-          primary key (office_id, user_id)
+          unique (user_id, office_id)
         );
 
         create table public.office_personnel (

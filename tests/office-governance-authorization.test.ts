@@ -17,7 +17,7 @@ describe('Office Governance & Authorization Test Suite', () => {
   const office3Id = '33333333-3333-4333-8333-333333333333'; // inactive & verified
 
   let mockOffices: Array<any> = [];
-  let mockAssignments: Array<{ office_id: string; user_id: string; assigned_at?: string; assigned_by?: string }> = [];
+  let mockAssignments: Array<{ office_id: string; user_id: string; created_at?: string; created_by?: string }> = [];
   let mockStaffProfiles: Array<any> = [];
   let mockPersonnel: Array<any> = [];
 
@@ -100,8 +100,8 @@ describe('Office Governance & Authorization Test Suite', () => {
       {
         office_id: office1Id,
         user_id: staffUserId1,
-        assigned_at: '2026-11-01T00:00:00Z',
-        assigned_by: superadminId,
+        created_at: '2026-11-01T00:00:00Z',
+        created_by: superadminId,
       },
     ];
 
@@ -286,7 +286,32 @@ describe('Office Governance & Authorization Test Suite', () => {
         return {} as any;
       }),
       schema: vi.fn(() => ({
-        rpc: vi.fn().mockResolvedValue({ error: null }),
+        rpc: vi.fn(async (name: string, args: any) => {
+          if (name === 'replace_staff_office_assignments') {
+            const target = mockStaffProfiles.find((p) => p.user_id === args.requested_user_id);
+            if (!target) return { data: null, error: { code: 'P0002', message: 'staff user not found' } };
+            const ids: string[] = Array.isArray(args.requested_office_ids) ? [...new Set<string>(args.requested_office_ids)] : [];
+            if (ids.length > 0) {
+              if (!target.active) return { data: null, error: { code: '42501', message: 'staff account is inactive' } };
+              if (target.role !== 'office_staff') return { data: null, error: { code: '22023', message: 'office assignments require office_staff role' } };
+              const matched = mockOffices.filter((o) => ids.includes(o.id));
+              if (matched.length !== ids.length) {
+                return { data: null, error: { code: 'P0002', message: 'one or more office ids do not exist' } };
+              }
+            }
+            mockAssignments = mockAssignments.filter((a) => a.user_id !== args.requested_user_id);
+            for (const oid of ids) {
+              mockAssignments.push({
+                user_id: args.requested_user_id,
+                office_id: oid,
+                created_by: args.requested_actor_id,
+                created_at: new Date().toISOString(),
+              });
+            }
+            return { data: { userId: args.requested_user_id, officeIds: ids }, error: null };
+          }
+          return { data: null, error: null };
+        }),
       })),
       rpc: vi.fn().mockResolvedValue({ error: null }),
       auth: {

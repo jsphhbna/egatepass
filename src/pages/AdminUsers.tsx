@@ -24,6 +24,17 @@ const userSchema = z.object({
 });
 type UserFormData = z.infer<typeof userSchema>;
 
+function createClientUuid(): string {
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+    return crypto.randomUUID();
+  }
+  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
+    const r = Math.floor(Math.random() * 16);
+    const v = c === 'x' ? r : (r & 0x3) | 0x8;
+    return v.toString(16);
+  });
+}
+
 interface AppUserWithId {
   uid: string;
   name: string;
@@ -51,16 +62,28 @@ export function AdminUsers() {
   const [provisioningOffice, setProvisioningOffice] = useState<{ id: string; name: string } | null>(null);
   const [provisionCustomEmail, setProvisionCustomEmail] = useState('');
   const [provisionDisplayName, setProvisionDisplayName] = useState('');
+  const [provisionOperationId, setProvisionOperationId] = useState('');
+  const [provisionError, setProvisionError] = useState<string | null>(null);
   const [isProvisioning, setIsProvisioning] = useState(false);
+  const isProvisioningRef = useRef(false);
+
+  const [resendingUserId, setResendingUserId] = useState<string | null>(null);
+  const resendingUserRef = useRef<string | null>(null);
 
   const [resettingOffice, setResettingOffice] = useState<{ id: string; name: string; userId: string; email: string } | null>(null);
   const [isResetting, setIsResetting] = useState(false);
 
   const [credentialsModalData, setCredentialsModalData] = useState<{
+    officeId?: string;
+    userId?: string;
     officeName: string;
     email: string;
-    temporaryPassword: string;
+    temporaryPassword?: string;
+    temporaryPasswordIssued?: boolean;
     mustChangePassword: boolean;
+    verificationEmailSent?: boolean;
+    warning?: string;
+    replayed?: boolean;
   } | null>(null);
   const [revealPassword, setRevealPassword] = useState(false);
   const [copiedPassword, setCopiedPassword] = useState(false);
@@ -79,6 +102,7 @@ export function AdminUsers() {
   const [assigningUser, setAssigningUser] = useState<AppUserWithId | null>(null);
   const [selectedOfficeIdsForUser, setSelectedOfficeIdsForUser] = useState<string[]>([]);
   const [isSavingAssignments, setIsSavingAssignments] = useState(false);
+  const isSavingAssignmentsRef = useRef(false);
 
   const loadAdminOffices = useCallback(async (options?: { suppressErrorToast?: boolean }): Promise<{ ok: boolean; error?: string }> => {
     const currentGen = ++officeDirectoryReadGenRef.current;
@@ -129,13 +153,33 @@ export function AdminUsers() {
     }
   }, [currentTab, loadAdminOffices]);
 
+  function openProvisionModal(office: { id: string; name: string }) {
+    setProvisioningOffice(office);
+    setProvisionDisplayName(`${office.name} Staff`);
+    setProvisionCustomEmail('');
+    setProvisionError(null);
+    setProvisionOperationId(createClientUuid());
+  }
+
   async function handleProvisionDedicatedAccount() {
-    if (!provisioningOffice || isProvisioning) return;
-    if (!provisionCustomEmail.trim()) {
-      toast.error('Reachable staff email address is required.');
+    if (!provisioningOffice || isProvisioningRef.current || isProvisioning) return;
+    const trimmedEmail = provisionCustomEmail.trim();
+    if (!trimmedEmail) {
+      const msg = 'Reachable staff email address is required.';
+      setProvisionError(msg);
+      toast.error(msg);
       return;
     }
+
+    const opId = provisionOperationId || createClientUuid();
+    if (!provisionOperationId) {
+      setProvisionOperationId(opId);
+    }
+
+    isProvisioningRef.current = true;
     setIsProvisioning(true);
+    setProvisionError(null);
+
     try {
       const token = await getAccessToken();
       const res = await fetch('/api/admin/offices', {
@@ -147,27 +191,91 @@ export function AdminUsers() {
         body: JSON.stringify({
           action: 'provision_account',
           officeId: provisioningOffice.id,
-          staffEmail: provisionCustomEmail.trim(),
+          staffEmail: trimmedEmail,
           displayName: provisionDisplayName.trim() || undefined,
+          operationId: opId,
         }),
       });
       const data = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(data.message || data.error || 'Failed to provision office account');
+      if (!res.ok) {
+        throw new Error(data.message || data.error || `Failed to provision office account (HTTP ${res.status})`);
+      }
+
+      const targetOffice = provisioningOffice;
+      const temporaryPasswordIssued = data.temporaryPasswordIssued !== undefined
+        ? Boolean(data.temporaryPasswordIssued)
+        : Boolean(data.temporaryPassword);
+      const verificationEmailSent = data.verificationEmailSent !== false;
+      const warningMsg = data.warning || (!verificationEmailSent
+        ? 'Office account created, but verification email could not be delivered. Retry verification email below or from the directory.'
+        : undefined);
+      const resolvedEmail = data.email || trimmedEmail;
 
       setCredentialsModalData({
-        officeName: provisioningOffice.name,
-        email: data.email,
+        officeId: targetOffice.id,
+        userId: data.userId,
+        officeName: targetOffice.name,
+        email: resolvedEmail,
         temporaryPassword: data.temporaryPassword,
-        mustChangePassword: true,
+        temporaryPasswordIssued,
+        mustChangePassword: data.mustChangePassword ?? true,
+        verificationEmailSent,
+        warning: warningMsg,
+        replayed: Boolean(data.replayed),
       });
+
       setProvisioningOffice(null);
       setProvisionCustomEmail('');
       setProvisionDisplayName('');
-      toast.success('Dedicated office account provisioned successfully.');
-      await loadAdminOffices();
+      setProvisionError(null);
+      setProvisionOperationId('');
+
+      setAdminOffices((prev) => {
+        const existingOffice = prev.find((o) => o.id === targetOffice.id);
+        const summary = data.staffAccountSummary || (data.userId
+          ? {
+              userId: data.userId,
+              displayName: provisionDisplayName.trim() || `${targetOffice.name} Staff`,
+              role: 'office_staff',
+              active: true,
+              mustChangePassword: true,
+              email: resolvedEmail,
+              emailConfirmed: Boolean(data.emailConfirmed),
+            }
+          : (existingOffice?.dedicatedAccount ?? null));
+        const priorAssigned = existingOffice?.assignedStaff || [];
+        const nextAssigned = summary && !priorAssigned.some((item) => item.userId === summary.userId)
+          ? [...priorAssigned, summary]
+          : priorAssigned;
+        return upsertOfficeInDirectory(prev, {
+          id: targetOffice.id,
+          name: existingOffice?.name ?? targetOffice.name,
+          assignedStaff: nextAssigned,
+          dedicatedAccount: summary || null,
+        });
+      });
+
+      if (!verificationEmailSent) {
+        toast.warning(warningMsg || 'Office account provisioned, but verification email failed.');
+      } else if (data.replayed) {
+        toast.info('This provisioning operation was already completed earlier.');
+      } else {
+        toast.success('Dedicated office account provisioned successfully.');
+      }
+
+      const refreshRes = await loadAdminOffices({ suppressErrorToast: true });
+      if (!refreshRes.ok) {
+        const refreshWarning = `Dedicated office account was provisioned cleanly, but refreshing the office directory failed (${refreshRes.error || 'unknown error'}). Showing updated local state until refresh succeeds.`;
+        setOfficeDirectoryWarning(refreshWarning);
+        setOfficeDirectoryError(null);
+        toast.warning(refreshWarning);
+      }
     } catch (err: any) {
-      toast.error(err.message || 'Failed to provision office account');
+      const msg = err?.message || 'Failed to provision office account';
+      setProvisionError(msg);
+      toast.error(msg);
     } finally {
+      isProvisioningRef.current = false;
       setIsProvisioning(false);
     }
   }
@@ -209,6 +317,9 @@ export function AdminUsers() {
   }
 
   async function handleResendVerification(userId: string, officeId: string) {
+    if (resendingUserRef.current) return;
+    resendingUserRef.current = userId;
+    setResendingUserId(userId);
     try {
       const token = await getAccessToken();
       const res = await fetch('/api/admin/offices', {
@@ -225,9 +336,17 @@ export function AdminUsers() {
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(data.message || data.error || 'Failed to resend verification email');
+      setCredentialsModalData((prev) =>
+        prev && prev.userId === userId
+          ? { ...prev, verificationEmailSent: true, warning: undefined }
+          : prev
+      );
       toast.success('Verification email resent successfully.');
     } catch (err: any) {
       toast.error(err.message || 'Failed to resend verification email');
+    } finally {
+      resendingUserRef.current = null;
+      setResendingUserId(null);
     }
   }
 
@@ -414,7 +533,8 @@ export function AdminUsers() {
   }
 
   async function handleSaveOfficeAssignments() {
-    if (!assigningUser) return;
+    if (!assigningUser || isSavingAssignmentsRef.current || isSavingAssignments) return;
+    isSavingAssignmentsRef.current = true;
     setIsSavingAssignments(true);
     try {
       const token = await getAccessToken();
@@ -429,14 +549,18 @@ export function AdminUsers() {
           officeIds: selectedOfficeIdsForUser,
         }),
       });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.message || data.error || 'Failed to update office assignments');
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.message || data.error || `Failed to update office assignments (HTTP ${res.status})`);
       toast.success('Office assignments updated successfully.');
       setAssigningUser(null);
-      await loadUsers();
+      await Promise.all([
+        loadUsers(),
+        loadAdminOffices({ suppressErrorToast: true }),
+      ]);
     } catch (err: any) {
       toast.error(err.message || 'Failed to update office assignments');
     } finally {
+      isSavingAssignmentsRef.current = false;
       setIsSavingAssignments(false);
     }
   }
@@ -446,6 +570,7 @@ export function AdminUsers() {
   const canVerifyOffice = isSuperAdmin(role);
   const [users, setUsers] = useState<AppUserWithId[]>([]);
   const [loading, setLoading] = useState(true);
+  const [usersLoadError, setUsersLoadError] = useState<string | null>(null);
   const [statusFilter, setStatusFilter] = useState<'all' | 'active' | 'inactive' | 'decommissioned'>('active');
   const [nextCursor, setNextCursor] = useState<string | null>(null);
   const [hasMore, setHasMore] = useState(false);
@@ -489,21 +614,25 @@ export function AdminUsers() {
     setLoadingMore(false);
 
     setLoading(true);
+    setUsersLoadError(null);
     try {
       const response = await fetch('/api/admin/users?limit=50', {
         headers: { Authorization: `Bearer ${await getAccessToken()}` },
         signal: controller.signal,
       });
-      const body = await response.json().catch(() => null) as { users?: AppUserWithId[]; nextCursor?: string | null; hasMore?: boolean; error?: string } | null;
+      const body = await response.json().catch(() => null) as { users?: AppUserWithId[]; nextCursor?: string | null; hasMore?: boolean; message?: string; error?: string } | null;
       if (controller.signal.aborted || currentGen !== usersReadGenerationRef.current) return;
-      if (!response.ok) throw new Error(body?.error || 'Failed to load users');
+      if (!response.ok) throw new Error(body?.message || body?.error || `Failed to load users (HTTP ${response.status})`);
       setUsers(body?.users ?? []);
       setNextCursor(body?.nextCursor ?? null);
       setHasMore(body?.hasMore ?? false);
+      setUsersLoadError(null);
     } catch (err: any) {
       if (controller.signal.aborted || currentGen !== usersReadGenerationRef.current) return;
       console.error(err);
-      toast.error('Failed to load users');
+      const errMsg = err?.message || 'Failed to load users';
+      setUsersLoadError(errMsg);
+      toast.error(errMsg);
     } finally {
       if (currentGen === usersReadGenerationRef.current) {
         setLoading(false);
@@ -929,6 +1058,18 @@ export function AdminUsers() {
         </form>
       </Modal>
 
+      {usersLoadError && (
+        <div role="alert" className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between rounded-lg border border-[var(--color-danger-border)] bg-[var(--color-danger-light)] px-4 py-3 text-xs text-[var(--color-danger-dark)]">
+          <div className="flex items-center gap-2">
+            <AlertCircle className="h-4 w-4 flex-shrink-0 text-[var(--color-danger)]" />
+            <span>{usersLoadError}</span>
+          </div>
+          <Button size="sm" variant="secondary" onClick={() => void loadUsers()} icon={<RefreshCw className="h-3.5 w-3.5" />}>
+            Retry
+          </Button>
+        </div>
+      )}
+
       {loading ? (
         <div className="flex h-32 items-center justify-center">
           <div className="h-8 w-8 animate-spin rounded-full border-4 border-[var(--color-border)] border-t-[var(--color-brand)]" role="status" aria-label="Loading users" />
@@ -1203,11 +1344,7 @@ export function AdminUsers() {
                             <Button
                               size="sm"
                               variant="secondary"
-                              onClick={() => {
-                                setProvisioningOffice({ id: office.id, name: office.name });
-                                setProvisionDisplayName(`${office.name} Staff`);
-                                setProvisionCustomEmail('');
-                              }}
+                              onClick={() => openProvisionModal({ id: office.id, name: office.name })}
                               icon={<KeyRound className="h-3.5 w-3.5 text-[#7A0A0A]" />}
                             >
                               Provision Account
@@ -1218,6 +1355,8 @@ export function AdminUsers() {
                                 <Button
                                   size="sm"
                                   variant="secondary"
+                                  loading={resendingUserId === office.dedicatedAccount.userId}
+                                  disabled={resendingUserId !== null}
                                   onClick={() => handleResendVerification(office.dedicatedAccount!.userId, office.id)}
                                   title="Resend verification email to staff"
                                 >
@@ -1310,6 +1449,31 @@ export function AdminUsers() {
             </div>
           </div>
 
+          {(usersLoadError || officeDirectoryError) && (
+            <div role="alert" className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between rounded-lg border border-[var(--color-danger-border)] bg-[var(--color-danger-light)] px-4 py-3 text-xs text-[var(--color-danger-dark)]">
+              <div className="flex items-center gap-2">
+                <AlertCircle className="h-4 w-4 flex-shrink-0 text-[var(--color-danger)]" />
+                <span>{officeDirectoryError || usersLoadError}</span>
+              </div>
+              <Button
+                size="sm"
+                variant="secondary"
+                onClick={() => {
+                  void loadUsers();
+                  void loadAdminOffices();
+                }}
+                icon={<RefreshCw className="h-3.5 w-3.5" />}
+              >
+                Retry
+              </Button>
+            </div>
+          )}
+
+          {(loading || loadingAdminOffices) ? (
+            <div className="flex h-32 items-center justify-center">
+              <div className="h-8 w-8 animate-spin rounded-full border-4 border-[var(--color-border)] border-t-[var(--color-brand)]" role="status" aria-label="Loading office assignments" />
+            </div>
+          ) : (
           <DataTable>
             <DataTableHead>
               <DataTableRow>
@@ -1371,12 +1535,15 @@ export function AdminUsers() {
               {users.filter((u) => u.role === 'office_staff').length === 0 && (
                 <tr>
                   <td colSpan={5} className="py-8 text-center text-[var(--color-text-muted)]">
-                    No Office Staff accounts found. Create an Office Staff user first under Staff Accounts.
+                    {usersLoadError || officeDirectoryError
+                      ? 'Could not load office staff assignments.'
+                      : 'No Office Staff accounts found. Create an Office Staff user first under Staff Accounts.'}
                   </td>
                 </tr>
               )}
             </tbody>
           </DataTable>
+          )}
         </div>
       )}
 
@@ -1615,7 +1782,12 @@ export function AdminUsers() {
       {provisioningOffice && (
         <Modal
           isOpen={true}
-          onClose={() => setProvisioningOffice(null)}
+          onClose={() => {
+            if (!isProvisioning) {
+              setProvisioningOffice(null);
+              setProvisionError(null);
+            }
+          }}
           title={`Provision Dedicated Account — ${provisioningOffice.name}`}
           size="md"
         >
@@ -1632,6 +1804,13 @@ export function AdminUsers() {
               </p>
             </div>
 
+            {provisionError && (
+              <div role="alert" className="flex items-start gap-2 rounded-lg border border-[var(--color-danger-border)] bg-[var(--color-danger-light)] px-3 py-2.5 text-xs text-[var(--color-danger-dark)]">
+                <AlertCircle className="h-4 w-4 mt-0.5 flex-shrink-0 text-[var(--color-danger)]" />
+                <span>{provisionError}</span>
+              </div>
+            )}
+
             <FormField label="Staff Account Display Name" id="provision-display-name">
               <Input
                 id="provision-display-name"
@@ -1647,7 +1826,14 @@ export function AdminUsers() {
                 type="email"
                 required
                 value={provisionCustomEmail}
-                onChange={(e) => setProvisionCustomEmail(e.target.value)}
+                onChange={(e) => {
+                  const nextEmail = e.target.value;
+                  if (provisionError && nextEmail.trim().toLowerCase() !== provisionCustomEmail.trim().toLowerCase()) {
+                    setProvisionOperationId(createClientUuid());
+                  }
+                  setProvisionError(null);
+                  setProvisionCustomEmail(nextEmail);
+                }}
                 placeholder="e.g. registrar.custodian@earist.edu.ph"
               />
               <p className="mt-1 text-[11px] text-[var(--color-text-secondary)]">
@@ -1658,7 +1844,10 @@ export function AdminUsers() {
             <div className="flex justify-end gap-2 pt-2">
               <Button
                 variant="secondary"
-                onClick={() => setProvisioningOffice(null)}
+                onClick={() => {
+                  setProvisioningOffice(null);
+                  setProvisionError(null);
+                }}
                 disabled={isProvisioning}
               >
                 Cancel
@@ -1688,17 +1877,50 @@ export function AdminUsers() {
           size="md"
         >
           <div className="space-y-4">
-            <div className="rounded-xl border border-amber-300 bg-amber-50 p-3.5 text-xs text-amber-950 space-y-1.5">
-              <div className="font-bold flex items-center gap-1.5 text-amber-900">
-                <ShieldAlert className="h-4 w-4 text-amber-700" /> ONE-TIME CREDENTIALS DISPLAY
+            {(credentialsModalData.warning || credentialsModalData.verificationEmailSent === false) && (
+              <div role="status" className="rounded-xl border border-amber-400 bg-amber-50 p-3.5 text-xs text-amber-950 space-y-2">
+                <div className="font-bold flex items-center gap-1.5 text-amber-900">
+                  <AlertCircle className="h-4 w-4 text-amber-700" /> Verification Email Pending
+                </div>
+                <p>
+                  {credentialsModalData.warning || 'The office account was created, but the verification email could not be delivered.'}
+                </p>
+                {credentialsModalData.userId && credentialsModalData.officeId && (
+                  <Button
+                    size="sm"
+                    variant="secondary"
+                    loading={resendingUserId === credentialsModalData.userId}
+                    disabled={resendingUserId !== null}
+                    onClick={() => void handleResendVerification(credentialsModalData.userId!, credentialsModalData.officeId!)}
+                  >
+                    Retry Verification Email
+                  </Button>
+                )}
               </div>
-              <p>
-                These credentials will <strong>only be displayed this one time</strong>. Copy them now and securely transmit them to the designated office personnel.
-              </p>
-              <p className="font-semibold text-amber-900">
-                The account holder will be strictly required to change this temporary password upon first login before accessing office features.
-              </p>
-            </div>
+            )}
+
+            {credentialsModalData.temporaryPasswordIssued !== false && credentialsModalData.temporaryPassword ? (
+              <div className="rounded-xl border border-amber-300 bg-amber-50 p-3.5 text-xs text-amber-950 space-y-1.5">
+                <div className="font-bold flex items-center gap-1.5 text-amber-900">
+                  <ShieldAlert className="h-4 w-4 text-amber-700" /> ONE-TIME CREDENTIALS DISPLAY
+                </div>
+                <p>
+                  These credentials will <strong>only be displayed this one time</strong>. Copy them now and securely transmit them to the designated office personnel.
+                </p>
+                <p className="font-semibold text-amber-900">
+                  The account holder will be strictly required to change this temporary password upon first login before accessing office features.
+                </p>
+              </div>
+            ) : (
+              <div className="rounded-xl border border-blue-200 bg-blue-50/60 p-3.5 text-xs text-blue-950 space-y-1">
+                <div className="font-bold flex items-center gap-1.5 text-blue-900">
+                  <ShieldAlert className="h-4 w-4 text-blue-700" /> Provisioning Request Already Completed
+                </div>
+                <p>
+                  Temporary passwords are never replayed after completion. If the custodian needs a new temporary password, use <strong>Reset Credentials</strong> in the Office Directory.
+                </p>
+              </div>
+            )}
 
             <div className="divide-y divide-[var(--color-border)] rounded-xl border border-[var(--color-border)] bg-[var(--color-canvas)] text-xs">
               <div className="p-3 flex justify-between items-center">
@@ -1709,33 +1931,35 @@ export function AdminUsers() {
                 <span className="text-[var(--color-text-secondary)] font-medium">Login Email:</span>
                 <span className="font-mono font-bold text-[var(--color-text-primary)] select-all">{credentialsModalData.email}</span>
               </div>
-              <div className="p-3 space-y-1.5">
-                <div className="flex justify-between items-center">
-                  <span className="text-[var(--color-text-secondary)] font-medium">Temporary Password:</span>
-                  <button
-                    type="button"
-                    onClick={() => setRevealPassword(!revealPassword)}
-                    className="text-[11px] text-[#7A0A0A] font-semibold flex items-center gap-1 hover:underline"
-                  >
-                    {revealPassword ? <EyeOff className="h-3 w-3" /> : <Eye className="h-3 w-3" />}
-                    {revealPassword ? 'Hide' : 'Reveal'}
-                  </button>
-                </div>
-                <div className="flex items-center gap-2">
-                  <div className="flex-1 font-mono font-bold text-sm bg-white p-2.5 rounded-lg border border-[var(--color-border)] tracking-wider">
-                    {revealPassword ? credentialsModalData.temporaryPassword : '••••••••••••••••'}
+              {credentialsModalData.temporaryPasswordIssued !== false && credentialsModalData.temporaryPassword && (
+                <div className="p-3 space-y-1.5">
+                  <div className="flex justify-between items-center">
+                    <span className="text-[var(--color-text-secondary)] font-medium">Temporary Password:</span>
+                    <button
+                      type="button"
+                      onClick={() => setRevealPassword(!revealPassword)}
+                      className="text-[11px] text-[#7A0A0A] font-semibold flex items-center gap-1 hover:underline"
+                    >
+                      {revealPassword ? <EyeOff className="h-3 w-3" /> : <Eye className="h-3 w-3" />}
+                      {revealPassword ? 'Hide' : 'Reveal'}
+                    </button>
                   </div>
-                  <Button
-                    type="button"
-                    size="sm"
-                    variant="secondary"
-                    onClick={() => handleCopyPassword(credentialsModalData.temporaryPassword)}
-                    icon={copiedPassword ? <Check className="h-4 w-4 text-emerald-600" /> : <Copy className="h-4 w-4" />}
-                  >
-                    {copiedPassword ? 'Copied' : 'Copy'}
-                  </Button>
+                  <div className="flex items-center gap-2">
+                    <div className="flex-1 font-mono font-bold text-sm bg-white p-2.5 rounded-lg border border-[var(--color-border)] tracking-wider">
+                      {revealPassword ? credentialsModalData.temporaryPassword : '••••••••••••••••'}
+                    </div>
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="secondary"
+                      onClick={() => handleCopyPassword(credentialsModalData.temporaryPassword!)}
+                      icon={copiedPassword ? <Check className="h-4 w-4 text-emerald-600" /> : <Copy className="h-4 w-4" />}
+                    >
+                      {copiedPassword ? 'Copied' : 'Copy'}
+                    </Button>
+                  </div>
                 </div>
-              </div>
+              )}
               <div className="p-3 flex justify-between items-center">
                 <span className="text-[var(--color-text-secondary)] font-medium">Mandatory Password Change:</span>
                 <span className="inline-flex items-center gap-1 text-emerald-700 font-bold bg-emerald-50 px-2 py-0.5 rounded">

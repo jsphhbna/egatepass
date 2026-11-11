@@ -24,6 +24,42 @@ async function handleRequest(request: Request): Promise<Response> {
     const { admin } = getServerSupabaseClients();
     const actor = await requireStaffActor(admin, token, ['superadmin']);
 
+    const uniqueOfficeIds =
+      parsed.data.role === 'office_staff' && parsed.data.officeIds
+        ? [...new Set(parsed.data.officeIds)]
+        : [];
+
+    if (uniqueOfficeIds.length > 0) {
+      const { data: validOffices, error: officeChkErr } = await admin
+        .from('offices')
+        .select('id, active')
+        .in('id', uniqueOfficeIds);
+
+      if (officeChkErr) {
+        return jsonResponse(503, {
+          error: 'office_lookup_failed',
+          message: 'Unable to verify selected offices.',
+        });
+      }
+
+      const officeById = new Map((validOffices ?? []).map((o) => [o.id, o]));
+      for (const oid of uniqueOfficeIds) {
+        const office = officeById.get(oid);
+        if (!office) {
+          return jsonResponse(400, {
+            error: 'invalid_office_id',
+            message: 'One or more specified offices do not exist.',
+          });
+        }
+        if (!office.active) {
+          return jsonResponse(400, {
+            error: 'office_inactive',
+            message: 'Cannot assign inactive offices during account creation.',
+          });
+        }
+      }
+    }
+
     const normalizedEmail = parsed.data.email.toLowerCase().trim();
     const created = await admin.auth.admin.createUser({
       email: normalizedEmail,
@@ -87,15 +123,29 @@ async function handleRequest(request: Request): Promise<Response> {
       throw profile.error;
     }
 
-    if (parsed.data.role === 'office_staff' && parsed.data.officeIds && parsed.data.officeIds.length > 0) {
-      const assignments = parsed.data.officeIds.map((officeId) => ({
-        user_id: targetId,
-        office_id: officeId,
-        assigned_by: actor.id,
-      }));
-      const { error: assignErr } = await admin.from('office_staff_assignments').insert(assignments);
-      if (assignErr) {
-        console.warn('Failed to assign initial offices to new office staff:', assignErr);
+    if (uniqueOfficeIds.length > 0) {
+      const assignRes = await admin.schema('api').rpc('replace_staff_office_assignments', {
+        requested_actor_id: actor.id,
+        requested_user_id: targetId,
+        requested_office_ids: uniqueOfficeIds,
+        requested_request_id: randomUUID(),
+      });
+      if (assignRes.error) {
+        console.error('Initial office assignment failed for created staff:', assignRes.error);
+        await recordReconciliation(
+          admin,
+          'office.create_user_assignments',
+          'staff_profile',
+          targetId,
+          assignRes.error.code ?? 'office_assignment_failed',
+          { officeCount: uniqueOfficeIds.length }
+        ).catch(() => undefined);
+        return jsonResponse(500, {
+          error: 'office_assignment_failed',
+          message: 'Staff account was created, but assigning initial offices failed. Reconciliation has been recorded.',
+          userId: targetId,
+          reconciliationRequired: true,
+        });
       }
     }
 

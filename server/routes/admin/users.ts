@@ -83,16 +83,26 @@ async function handleRequest(request: Request): Promise<Response> {
       }
     }
 
-    const { data: assignments } = await admin
-      .from('office_staff_assignments')
-      .select('user_id, office_id')
-      .in('user_id', pageItems.map((p) => p.user_id));
-
     const userOfficesMap = new Map<string, string[]>();
-    for (const a of assignments || []) {
-      const list = userOfficesMap.get(a.user_id) || [];
-      list.push(a.office_id);
-      userOfficesMap.set(a.user_id, list);
+    if (pageItems.length > 0) {
+      const { data: assignments, error: assignErr } = await admin
+        .from('office_staff_assignments')
+        .select('user_id, office_id')
+        .in('user_id', pageItems.map((p) => p.user_id));
+
+      if (assignErr) {
+        console.error('Staff office assignments query failed:', assignErr.message);
+        return jsonResponse(503, {
+          error: 'office_assignments_load_failed',
+          message: 'Failed to load staff office assignments.',
+        });
+      }
+
+      for (const a of assignments || []) {
+        const list = userOfficesMap.get(a.user_id) || [];
+        list.push(a.office_id);
+        userOfficesMap.set(a.user_id, list);
+      }
     }
 
     return jsonResponse(200, {

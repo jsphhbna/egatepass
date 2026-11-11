@@ -3870,4 +3870,277 @@ it('GG. Migration 84 contracts: Specific-Person Request Acknowledgement & Secure
     expect(foundRes.rows[0].approval_status).toBe('approved');
     expect(new Date(foundRes.rows[0].decided_at as string | Date).toISOString()).toBe('2026-11-11T08:30:00.000Z');
   }, 60000);
+
+  it('II. Migration 86 contracts: Phase 1 provisioning journal, atomic office assignments, and atomic system settings save', async () => {
+    const db = new PGlite();
+    const files = await applyAllMigrations(db);
+    expect(files.length).toBeGreaterThanOrEqual(86);
+
+    const superadminId = '10000000-0000-4000-8000-000000000001';
+    const adminId = '10000000-0000-4000-8000-000000000002';
+    const staffUser1 = '10000000-0000-4000-8000-000000000003';
+    const staffUserDecomm = '10000000-0000-4000-8000-000000000004';
+    const provisionedAuthUser = '10000000-0000-4000-8000-000000000005';
+    const strangerAuthUser = '10000000-0000-4000-8000-000000000006';
+    const visitorOwner = '10000000-0000-4000-8000-000000000007';
+
+    const office1 = '20000000-0000-4000-8000-000000000001';
+    const office2 = '20000000-0000-4000-8000-000000000002';
+    const officeInactive = '20000000-0000-4000-8000-000000000003';
+    const officeMissing = '20000000-0000-4000-8000-000000000099';
+
+    const opId1 = '30000000-0000-4000-8000-000000000001';
+    const opId2 = '30000000-0000-4000-8000-000000000002';
+
+    // 1. Verify RLS, privileges, and routine execute grants
+    const tblPrivs = await db.query<{ grantee: string; privilege_type: string }>(`
+      select grantee, privilege_type
+      from information_schema.table_privileges
+      where table_schema = 'public' and table_name = 'office_provisioning_operations';
+    `);
+    const opGrantees = tblPrivs.rows.filter((r) => ['anon', 'authenticated', 'service_role'].includes(r.grantee));
+    expect(opGrantees.filter((r) => r.grantee === 'service_role').map((r) => r.privilege_type)).toEqual(['SELECT']);
+    expect(opGrantees.some((r) => r.grantee === 'anon' || r.grantee === 'authenticated')).toBe(false);
+
+    for (const routine of [
+      'claim_office_provisioning_operation',
+      'update_office_provisioning_operation',
+      'replace_staff_office_assignments',
+      'save_system_settings',
+    ]) {
+      const rp = await db.query<{ grantee: string }>(`
+        select grantee from information_schema.routine_privileges
+        where specific_schema = 'api' and routine_name = $1;
+      `, [routine]);
+      const grantees = rp.rows.map((r) => r.grantee);
+      expect(grantees).toContain('service_role');
+      expect(grantees).not.toContain('anon');
+      expect(grantees).not.toContain('authenticated');
+    }
+
+    // Seed users, offices, and existing staff profiles
+    await db.exec(`
+      insert into auth.users (id, email) values
+        ('${superadminId}', 'superadmin86@earist.edu.ph'),
+        ('${adminId}', 'admin86@earist.edu.ph'),
+        ('${staffUser1}', 'staff86@earist.edu.ph'),
+        ('${staffUserDecomm}', 'decomm86@earist.edu.ph'),
+        ('${provisionedAuthUser}', 'registrar86@earist.edu.ph'),
+        ('${strangerAuthUser}', 'stranger86@earist.edu.ph'),
+        ('${visitorOwner}', 'visitor86@example.com');
+
+      insert into public.staff_profiles (user_id, display_name, role, active, must_change_password, privacy_accepted_at) values
+        ('${superadminId}', 'Superadmin 86', 'superadmin', true, false, now()),
+        ('${adminId}', 'Admin 86', 'admin', true, false, now()),
+        ('${staffUser1}', 'Staff 86', 'office_staff', true, false, now()),
+        ('${staffUserDecomm}', 'Decomm 86', 'office_staff', false, false, now()),
+        ('${strangerAuthUser}', 'Existing Admin', 'admin', true, false, now());
+
+      update public.staff_profiles
+      set decommissioned_at = now(), decommissioned_by = '${superadminId}', decommission_reason = 'Retired test staff'
+      where user_id = '${staffUserDecomm}';
+
+      insert into public.offices (id, name, active, verified) values
+        ('${office1}', 'Registrar 86', true, true),
+        ('${office2}', 'Cashier 86', true, false),
+        ('${officeInactive}', 'Archived Office 86', false, false);
+    `);
+
+    // 2. Provisioning operation journal lifecycle & provenance
+    const claim1 = await db.query<{ res: any }>(`
+      select api.claim_office_provisioning_operation($1::uuid, $2::uuid, $3::uuid, 'Registrar86@EARIST.edu.ph', 'Registrar Custodian') as res;
+    `, [adminId, opId1, office1]);
+    expect(claim1.rows[0].res.action).toBe('proceed');
+
+    // Mismatched office/email on same operation_id returns operation_mismatch
+    const mismatch = await db.query<{ res: any }>(`
+      select api.claim_office_provisioning_operation($1::uuid, $2::uuid, $3::uuid, 'other@earist.edu.ph', 'Other Staff') as res;
+    `, [adminId, opId1, office1]);
+    expect(mismatch.rows[0].res.action).toBe('operation_mismatch');
+
+    await db.query(`
+      select api.update_office_provisioning_operation($1::uuid, $2::uuid, $3::uuid, 'auth_created', 'pending', null, null, null);
+    `, [adminId, opId1, provisionedAuthUser]);
+
+    // Cannot hijack existing non-office profile without provenance
+    await expect(db.query(`
+      select api.provision_office_staff_account($1::uuid, $2::uuid, $3::uuid, 'Hijack Attempt', $4::uuid);
+    `, [adminId, strangerAuthUser, office1, opId2])).rejects.toThrow(/staff_profile_already_exists/);
+
+    // First legitimate completion creates profile, assignment (with created_by), audit event, and marks completed
+    await db.query(`
+      select api.provision_office_staff_account($1::uuid, $2::uuid, $3::uuid, 'Registrar Custodian', $4::uuid);
+    `, [adminId, provisionedAuthUser, office1, opId1]);
+
+    const opRow1 = await db.query<{ status: string; auth_user_id: string }>(`
+      select status, auth_user_id from public.office_provisioning_operations where operation_id = $1::uuid;
+    `, [opId1]);
+    expect(opRow1.rows[0]).toEqual({ status: 'completed', auth_user_id: provisionedAuthUser });
+
+    const assignCheck = await db.query<{ created_by: string }>(`
+      select created_by from public.office_staff_assignments where user_id = $1::uuid and office_id = $2::uuid;
+    `, [provisionedAuthUser, office1]);
+    expect(assignCheck.rows[0].created_by).toBe(adminId);
+
+    // Claiming completed op returns replay_completed without creating duplicate rows
+    const replayClaim = await db.query<{ res: any }>(`
+      select api.claim_office_provisioning_operation($1::uuid, $2::uuid, $3::uuid, 'registrar86@earist.edu.ph', 'Registrar Custodian') as res;
+    `, [adminId, opId1, office1]);
+    expect(replayClaim.rows[0].res.action).toBe('replay_completed');
+
+    // 3. Atomic bulk staff office assignments (api.replace_staff_office_assignments)
+    await db.query(`
+      select api.replace_staff_office_assignments($1::uuid, $2::uuid, array[$3::uuid, $4::uuid], gen_random_uuid());
+    `, [superadminId, staffUser1, office1, office2]);
+
+    const initialStaffAssign = await db.query<{ office_id: string }>(`
+      select office_id from public.office_staff_assignments where user_id = $1::uuid order by office_id;
+    `, [staffUser1]);
+    expect(initialStaffAssign.rows.map((r) => r.office_id)).toEqual([office1, office2].sort());
+
+    // Partial invalid office must roll back the entire replacement and preserve [office1, office2]
+    await expect(db.query(`
+      select api.replace_staff_office_assignments($1::uuid, $2::uuid, array[$3::uuid, $4::uuid], gen_random_uuid());
+    `, [superadminId, staffUser1, office1, officeMissing])).rejects.toThrow(/one or more office ids do not exist/);
+
+    // Assigning new inactive office must fail and preserve [office1, office2]
+    await expect(db.query(`
+      select api.replace_staff_office_assignments($1::uuid, $2::uuid, array[$3::uuid, $4::uuid], gen_random_uuid());
+    `, [superadminId, staffUser1, office1, officeInactive])).rejects.toThrow(/office is inactive/);
+
+    const preservedAssign = await db.query<{ office_id: string }>(`
+      select office_id from public.office_staff_assignments where user_id = $1::uuid order by office_id;
+    `, [staffUser1]);
+    expect(preservedAssign.rows.map((r) => r.office_id)).toEqual([office1, office2].sort());
+
+    // Rejects decommissioned target
+    await expect(db.query(`
+      select api.replace_staff_office_assignments($1::uuid, $2::uuid, array[$3::uuid], gen_random_uuid());
+    `, [superadminId, staffUserDecomm, office1])).rejects.toThrow(/target_decommissioned/);
+
+    // Emptying staffUser1 preserves provisionedAuthUser's assignment
+    await db.query(`
+      select api.replace_staff_office_assignments($1::uuid, $2::uuid, array[]::uuid[], gen_random_uuid());
+    `, [superadminId, staffUser1]);
+    const clearedAssign = await db.query<{ office_id: string }>(`
+      select office_id from public.office_staff_assignments where user_id = $1::uuid;
+    `, [staffUser1]);
+    expect(clearedAssign.rows.length).toBe(0);
+    const untouchedOther = await db.query<{ office_id: string }>(`
+      select office_id from public.office_staff_assignments where user_id = $1::uuid;
+    `, [provisionedAuthUser]);
+    expect(untouchedOther.rows.map((r) => r.office_id)).toEqual([office1]);
+
+    // 4. Atomic system settings save (api.save_system_settings) + evidence expiry sync + full rollback
+    const visId = '40000000-0000-4000-8000-000000000001';
+    const visId2 = '40000000-0000-4000-8000-000000000011';
+    const intUnpurged = '40000000-0000-4000-8000-000000000002';
+    const intPurged = '40000000-0000-4000-8000-000000000003';
+    const evidUnpurged = '40000000-0000-4000-8000-000000000004';
+    const evidPurged = '40000000-0000-4000-8000-000000000005';
+
+    await db.exec(`
+      insert into public.visitors (id, owner_id, source, full_name, contact_number, email, purpose, visit_date, consent_accepted_at)
+      values
+        ('${visId}', '${visitorOwner}', 'portal', 'Settings Sync Visitor 1', '09171234567', 'vsync1@example.com', 'Meeting', '2026-11-20', now()),
+        ('${visId2}', '${visitorOwner}', 'portal', 'Settings Sync Visitor 2', '09171234568', 'vsync2@example.com', 'Meeting', '2026-11-20', now());
+
+      insert into public.upload_intents (id, owner_id, source, kind, bucket_id, object_path, content_type, max_bytes, expires_at, status, claimed_at, visitor_id)
+      values
+        ('${intUnpurged}', '${visitorOwner}', 'portal', 'photo', 'visitor-photos', 'v/p1.jpg', 'image/jpeg', 1024, now() + interval '1 day', 'claimed', now(), '${visId}'),
+        ('${intPurged}', '${visitorOwner}', 'portal', 'photo', 'visitor-photos', 'v/p2.jpg', 'image/jpeg', 1024, now() + interval '1 day', 'claimed', now(), '${visId2}');
+
+      insert into public.visitor_evidence (id, visitor_id, upload_intent_id, kind, bucket_id, object_path, content_type, byte_size, sha256_hex, created_at, verified_at, expires_at, purged_at)
+      values
+        ('${evidUnpurged}', '${visId}', '${intUnpurged}', 'photo', 'visitor-photos', 'v/p1.jpg', 'image/jpeg', 1024, repeat('a', 64), '2026-11-01T00:00:00Z', '2026-11-01T00:00:00Z', '2026-11-08T00:00:00Z', null),
+        ('${evidPurged}', '${visId2}', '${intPurged}', 'photo', 'visitor-photos', 'v/p2.jpg', 'image/jpeg', 1024, repeat('b', 64), '2026-11-01T00:00:00Z', '2026-11-01T00:00:00Z', '2026-11-08T00:00:00Z', '2026-11-09T00:00:00Z');
+    `);
+
+    // Admin allowed to update operational settings while keeping existing/explicit rejection_reasons; blocked on security changes
+    await expect(db.query(`
+      select api.save_system_settings(
+        $1::uuid,
+        'kiosk'::public.peak_mode_scope,
+        '["Expired ID"]'::jsonb,
+        '[{"label":"Meeting","requiresDetails":false,"detailPrompt":""}]'::jsonb
+      );
+    `, [adminId])).rejects.toThrow(/super administrator required/);
+
+    const preAudit = await db.query<{ cnt: string }>(`select count(*)::text as cnt from public.audit_events;`);
+    const preSettings = await db.query<{ rejection_reasons: any; visitor_instructions: any }>(`
+      select rejection_reasons, visitor_instructions from public.app_settings where singleton = true;
+    `);
+
+    // Invalid visitor_instructions aborts the ENTIRE save_system_settings transaction cleanly (nothing committed!)
+    await expect(db.query(`
+      select api.save_system_settings(
+        $1::uuid,
+        'both'::public.peak_mode_scope,
+        '["Should Roll Back Reason"]'::jsonb,
+        '[{"label":"Meeting","requiresDetails":false,"detailPrompt":""}]'::jsonb,
+        '["xx"]'::jsonb
+      );
+    `, [superadminId])).rejects.toThrow(/each visitor instruction must be 3 to 180 characters/);
+
+    const afterRollbackSettings = await db.query<{ rejection_reasons: any; visitor_instructions: any }>(`
+      select rejection_reasons, visitor_instructions from public.app_settings where singleton = true;
+    `);
+    expect(afterRollbackSettings.rows[0].rejection_reasons).toEqual(preSettings.rows[0].rejection_reasons);
+    expect(afterRollbackSettings.rows[0].visitor_instructions).toEqual(preSettings.rows[0].visitor_instructions);
+    const afterRollbackAudit = await db.query<{ cnt: string }>(`select count(*)::text as cnt from public.audit_events;`);
+    expect(afterRollbackAudit.rows[0].cnt).toBe(preAudit.rows[0].cnt);
+
+    // Valid atomic Superadmin save updates operational + instructions + retention + evidence expiry + both audit events
+    const saveOk = await db.query<{ res: any }>(`
+      select api.save_system_settings(
+        $1::uuid,
+        'portal'::public.peak_mode_scope,
+        '["Expired ID","Unverified Companion"]'::jsonb,
+        '[{"label":"Document submission","requiresDetails":true,"detailPrompt":"Specify office window"}]'::jsonb,
+        '["Present valid school or government ID."]'::jsonb,
+        '07:30'::time,
+        '18:00'::time,
+        14::smallint,
+        14::smallint,
+        45::smallint,
+        90::smallint,
+        365::smallint,
+        90::smallint,
+        14::smallint,
+        true,
+        true,
+        true,
+        14,
+        true,
+        45,
+        true,
+        30,
+        true,
+        90,
+        true,
+        30,
+        'Phase 1 retention adjustment',
+        gen_random_uuid()
+      ) as res;
+    `, [superadminId]);
+    expect(saveOk.rows[0].res.peak_mode).toBe('portal');
+    expect(saveOk.rows[0].res.rejection_reasons).toEqual(['Expired ID', 'Unverified Companion']);
+    expect(saveOk.rows[0].res.photo_retention_days).toBe(14);
+    expect(saveOk.rows[0].res.id_retention_days).toBe(45);
+    expect(saveOk.rows[0].res.retention_override_recorded).toBe(true);
+
+    const evidCheck = await db.query<{ id: string; expires_at: Date | string }>(`
+      select id, expires_at from public.visitor_evidence where id in ($1::uuid, $2::uuid);
+    `, [evidUnpurged, evidPurged]);
+    const unpurgedRow = evidCheck.rows.find((r) => r.id === evidUnpurged)!;
+    const purgedRow = evidCheck.rows.find((r) => r.id === evidPurged)!;
+    expect(new Date(unpurgedRow.expires_at).toISOString()).toBe('2026-11-15T00:00:00.000Z');
+    expect(new Date(purgedRow.expires_at).toISOString()).toBe('2026-11-08T00:00:00.000Z');
+
+    const auditActions = await db.query<{ action: string }>(`
+      select action from public.audit_events where action in ('settings_updated', 'maintenance.retention_override');
+    `);
+    expect(auditActions.rows.map((r) => r.action)).toContain('settings_updated');
+    expect(auditActions.rows.map((r) => r.action)).toContain('maintenance.retention_override');
+  }, 60000);
 });

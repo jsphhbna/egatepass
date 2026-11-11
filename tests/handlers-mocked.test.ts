@@ -438,24 +438,31 @@ describe('Behavioral Mocked-Handler Tests [PASS (MOCKED HANDLER)]', () => {
             }
             return { data: null, error: new Error('Device not found in RPC') };
           }
-          if (fn === 'update_app_settings') {
+          if (fn === 'save_system_settings' || fn === 'update_app_settings') {
+            const existing = (mockDbData.app_settings[0] || {}) as Record<string, any>;
             const updated = {
               id: 1,
               singleton: true,
-              peak_mode: args.requested_peak_mode,
-              automatic_cleanup_enabled: args.requested_automatic_cleanup_enabled ?? args.requested_automatic_cleanup,
-              purposes: args.requested_purposes,
-              working_hours_start: args.requested_working_hours_start || '08:00',
-              working_hours_end: args.requested_working_hours_end || '17:00',
+              peak_mode: args.requested_peak_mode ?? existing.peak_mode ?? 'off',
+              automatic_cleanup_enabled:
+                args.requested_automatic_cleanup_enabled ??
+                args.requested_automatic_cleanup ??
+                existing.automatic_cleanup_enabled ??
+                true,
+              purposes: args.requested_purposes ?? existing.purposes,
+              working_hours_start: args.requested_working_hours_start ?? existing.working_hours_start ?? '08:00',
+              working_hours_end: args.requested_working_hours_end ?? existing.working_hours_end ?? '17:00',
               timezone: 'Asia/Manila',
-              rejection_reasons: args.requested_rejection_reasons || ['Incomplete requirements'],
-              visit_purposes: args.requested_visit_purposes || args.requested_purposes,
-              visitor_retention_days: args.requested_visitor_retention_days || 90,
-              image_retention_days: args.requested_image_retention_days || 30,
-              photo_retention_days: args.requested_photo_retention_days ?? 7,
-              id_retention_days: args.requested_id_retention_days ?? 30,
-              audit_retention_days: 365,
-              reconciliation_retention_days: 90,
+              rejection_reasons: args.requested_rejection_reasons ?? existing.rejection_reasons ?? ['Incomplete requirements'],
+              visit_purposes: args.requested_visit_purposes ?? args.requested_purposes ?? existing.visit_purposes,
+              visitor_instructions: args.requested_visitor_instructions ?? existing.visitor_instructions,
+              visitor_retention_days: args.requested_visitor_retention_days ?? existing.visitor_retention_days ?? 90,
+              image_retention_days: args.requested_image_retention_days ?? existing.image_retention_days ?? 30,
+              photo_retention_days: args.requested_photo_retention_days ?? existing.photo_retention_days ?? 7,
+              id_retention_days: args.requested_id_retention_days ?? existing.id_retention_days ?? 30,
+              audit_retention_days: args.requested_audit_retention_days ?? existing.audit_retention_days ?? 365,
+              reconciliation_retention_days: args.requested_reconciliation_retention_days ?? existing.reconciliation_retention_days ?? 90,
+              scheduling_days_ahead: args.requested_scheduling_days_ahead ?? existing.scheduling_days_ahead ?? 7,
               updated_at: new Date().toISOString(),
             };
             mockDbData.app_settings = [updated];
@@ -1637,7 +1644,7 @@ describe('Behavioral Mocked-Handler Tests [PASS (MOCKED HANDLER)]', () => {
   // =========================================================================
   describe('P0-03: Settings RPC Failure Must Fail Closed (api/update-settings.ts)', () => {
     it('fails closed with 503 and performs ZERO direct table update when RPC fails', async () => {
-      mockRpcFailures['update_app_settings'] = {
+      mockRpcFailures['save_system_settings'] = {
         code: '50000',
         message: 'Database write transaction aborted',
       };
@@ -4263,9 +4270,9 @@ describe('Behavioral Mocked-Handler Tests [PASS (MOCKED HANDLER)]', () => {
       expect(postJson.settings.photoRetentionDays).toBe(14);
       expect(postJson.settings.idRetentionDays).toBe(45);
 
-      // 4. Verify the RPC receives 14/45
-      expect(lastRpcArgs['update_app_settings'].requested_photo_retention_days).toBe(14);
-      expect(lastRpcArgs['update_app_settings'].requested_id_retention_days).toBe(45);
+      // 4. Verify the atomic save_system_settings RPC receives 14/45
+      expect(lastRpcArgs['save_system_settings'].requested_photo_retention_days).toBe(14);
+      expect(lastRpcArgs['save_system_settings'].requested_id_retention_days).toBe(45);
 
       // 5. Reloads and gets 14/45
       const reloadReq = new Request('http://localhost/api/admin/settings', {
