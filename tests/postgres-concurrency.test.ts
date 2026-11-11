@@ -620,9 +620,9 @@ runSuite('True PostgreSQL Concurrency, Canonical Approval Integrity & Email Reco
           insert into auth.users (id, email) values ('${staffActorId}', 'staff@earist.edu.ph') on conflict (id) do nothing;
           insert into auth.users (id, email, is_anonymous) values ('${visitorId}', '${visitorEmail}', true) on conflict (id) do nothing;
 
-          insert into public.offices (id, name, description, active)
-          values ('${officeId}', 'Registrar Office', 'Academic', true)
-          on conflict (id) do nothing;
+          insert into public.offices (id, name, description, active, verified, publication_status)
+          values ('${officeId}', 'Registrar Office', 'Academic', true, true, 'published')
+          on conflict (id) do update set active = true, verified = true, publication_status = 'published';
 
           insert into public.office_personnel (id, office_id, name, title, active)
           values ('${personnelId}', '${officeId}', 'Director Santos', 'Registrar', true)
@@ -1553,9 +1553,9 @@ runSuite('True PostgreSQL Concurrency, Canonical Approval Integrity & Email Reco
       try {
         await client.query(`set request.jwt.claim.role = 'service_role';`);
         await client.query(`
-          insert into public.offices (id, name, description, active)
-          values ('${officeId}', 'Finding D State Office', 'REG70', true)
-          on conflict (id) do nothing;
+          insert into public.offices (id, name, description, active, verified, publication_status)
+          values ('${officeId}', 'Finding D State Office', 'REG70', true, true, 'published')
+          on conflict (id) do update set active = true, verified = true, publication_status = 'published';
 
           insert into auth.users (id, email, email_confirmed_at)
           values ('${staffId}', 'staff.state@earist.edu.ph', now())
@@ -1801,9 +1801,9 @@ runSuite('True PostgreSQL Concurrency, Canonical Approval Integrity & Email Reco
       try {
         await client.query(`set request.jwt.claim.role = 'service_role';`);
         await client.query(`
-          insert into public.offices (id, name, description, active)
-          values ('${officeId}', 'Finding E Race Admissions Office', 'ADM70', true)
-          on conflict (id) do nothing;
+          insert into public.offices (id, name, description, active, verified, publication_status)
+          values ('${officeId}', 'Finding E Race Admissions Office', 'ADM70', true, true, 'published')
+          on conflict (id) do update set active = true, verified = true, publication_status = 'published';
 
           insert into auth.users (id, email, email_confirmed_at)
           values ('${staffId}', 'staff.race@earist.edu.ph', now())
@@ -1987,11 +1987,11 @@ runSuite('True PostgreSQL Concurrency, Canonical Approval Integrity & Email Reco
 
         // 1. Offices
         await client.query(`
-          insert into public.offices (id, name, description, active)
+          insert into public.offices (id, name, description, active, verified, publication_status)
           values
-            ('${office1Id}', 'Finding F Office One RLS', 'O1RLS', true),
-            ('${office2Id}', 'Finding F Office Two RLS', 'O2RLS', true)
-          on conflict (id) do nothing;
+            ('${office1Id}', 'Finding F Office One RLS', 'O1RLS', true, true, 'published'),
+            ('${office2Id}', 'Finding F Office Two RLS', 'O2RLS', true, true, 'published')
+          on conflict (id) do update set active = true, verified = true, publication_status = 'published';
 
           insert into auth.users (id, email, is_anonymous)
           values ('${visitorOwnerId}', 'owner.rls@earist.edu.ph', true)
