@@ -227,6 +227,21 @@ async function handleRequest(request: Request): Promise<Response> {
 
     if (Boolean((settings as any).global_retention_freeze)) {
       const freezeReason = (settings as any).global_retention_freeze_reason ?? null;
+
+      // Non-destructive housekeeping: Authoritative pass expiration is preserved during retention freeze
+      try {
+        const { data: expiredPassesCount, error: expirePassesErr } = await admin
+          .schema('api')
+          .rpc('expire_stale_passes');
+        if (expirePassesErr) {
+          metrics.errors.push(`expire_stale_passes_failed: ${expirePassesErr.message}`);
+        } else {
+          metrics.stalePassesExpired = expiredPassesCount ?? 0;
+        }
+      } catch (passExpireErr: any) {
+        metrics.errors.push(`expire_stale_passes_exception: ${passExpireErr.message}`);
+      }
+
       const { error: freezeAuditErr } = await admin.from('audit_events').insert({
         actor_id: caller.actorId ?? null,
         actor_kind: caller.isCron ? 'system' : 'staff',
@@ -240,6 +255,7 @@ async function handleRequest(request: Request): Promise<Response> {
           freezeReason,
           dryRun,
           callerType: metrics.callerType,
+          stalePassesExpired: metrics.stalePassesExpired,
         },
       });
       if (freezeAuditErr) {

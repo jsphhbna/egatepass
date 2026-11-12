@@ -220,8 +220,12 @@ export function EmergencyDevicePage() {
         }
 
         const res = await fetch('/api/gate/emergency-device', {
-          method: 'GET',
-          headers: { Authorization: `Bearer ${token}` },
+          method: 'POST',
+          headers: {
+            Authorization: `Bearer ${token}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({ action: 'request_manifest' }),
         });
         const data = (await res.json()) as {
           manifest?: SignedEmergencyManifest;
@@ -455,7 +459,7 @@ export function EmergencyDevicePage() {
           emergencyExceptionReason: rec.emergencyExceptionReason,
         }));
 
-        const res = await fetch('/api/gate/emergency-device', {
+        let res = await fetch('/api/gate/emergency-device', {
           method: 'POST',
           headers: {
             Authorization: `Bearer ${token}`,
@@ -463,6 +467,18 @@ export function EmergencyDevicePage() {
           },
           body: JSON.stringify({ items: payloadItems }),
         });
+
+        if (res.status === 403) {
+          // Attempt safe recovery sync for retired emergency device
+          res = await fetch('/api/gate/emergency-device', {
+            method: 'POST',
+            headers: {
+              Authorization: `Bearer ${token}`,
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({ action: 'recovery_sync', items: payloadItems }),
+          });
+        }
 
         const data = (await res.json()) as SyncApiResponse & { error?: string };
         if (!res.ok || !Array.isArray(data.results)) {

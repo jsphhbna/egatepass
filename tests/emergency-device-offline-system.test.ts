@@ -346,7 +346,9 @@ describe('Emergency Device Offline Crypto, Vault, Sync & Reconciliation Suite', 
         not: vi.fn(() => b),
         or: vi.fn(() => b),
         gte: vi.fn(() => b),
+        gt: vi.fn(() => b),
         lte: vi.fn(() => b),
+        ilike: vi.fn(() => b),
         order: vi.fn(() => b),
         limit: vi.fn(() => b),
         maybeSingle: vi.fn(async () => resolved),
@@ -438,7 +440,9 @@ describe('Emergency Device Offline Crypto, Vault, Sync & Reconciliation Suite', 
 
     const manifestRes = await emergencyDeviceRoute.fetch(
       new Request('http://localhost/api/gate/emergency-device', {
-        headers: { Authorization: 'Bearer device-token' },
+        method: 'POST',
+        headers: { Authorization: 'Bearer device-token', 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'request_manifest' }),
       }),
     );
     expect(manifestRes.status).toBe(200);

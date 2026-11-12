@@ -28,7 +28,7 @@ describe('Returning Visitor Provisional 1:1 Biometric & Enrollment Architecture 
   const testSecret = '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef';
   const actorId = '11111111-1111-4111-8111-111111111111';
   const requestId = '22222222-2222-4222-8222-222222222222';
-  const photoIntentId = '33333333-3333-4333-8333-333333333333';
+  const photoBase64 = '/9j/2wBDAAYEBQYFBAYGBQYHBwYIChAKCgkJChQODwwQFxQYGBcUFhYaHSUfGhsjHBYWICwgIyYnKSopGR8tMC0oMCUoKSj/2wBDAQcHBwoIChMKChMoGhYaKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCj/wAARCABkAGQDASIAAhEBAxEB/8QAFAABAAAAAAAAAAAAAAAAAAAAAP/EABQQAQAAAAAAAAAAAAAAAAAAAAD/xAAUAQEAAAAAAAAAAAAAAAAAAAAA/8QAFBEBAAAAAAAAAAAAAAAAAAAAAP/aAAwDAQACEQMRAD8AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA//2Q==';
   const profileId = '44444444-4444-4444-8444-444444444444';
 
   function makeDescriptor(base: number): Float32Array {
@@ -282,7 +282,7 @@ describe('Returning Visitor Provisional 1:1 Biometric & Enrollment Architecture 
           authorization: 'Bearer dummy-token',
           'content-type': 'application/json',
         },
-        body: JSON.stringify({ requestId, profileId, photoIntentId }),
+        body: JSON.stringify({ requestId, profileId, photoBase64 }),
       });
 
       const res = await identifyReturningHandler.fetch(req);
@@ -353,7 +353,7 @@ describe('Returning Visitor Provisional 1:1 Biometric & Enrollment Architecture 
           authorization: 'Bearer dummy-token',
           'content-type': 'application/json',
         },
-        body: JSON.stringify({ requestId, profileId, photoIntentId }),
+        body: JSON.stringify({ requestId, profileId, photoBase64 }),
       });
 
       const res = await identifyReturningHandler.fetch(req);
@@ -409,7 +409,7 @@ describe('Returning Visitor Provisional 1:1 Biometric & Enrollment Architecture 
           authorization: 'Bearer dummy-token',
           'content-type': 'application/json',
         },
-        body: JSON.stringify({ requestId, profileId, photoIntentId }),
+        body: JSON.stringify({ requestId, profileId, photoBase64 }),
       });
 
       const res = await identifyReturningHandler.fetch(req);
@@ -471,7 +471,7 @@ describe('Returning Visitor Provisional 1:1 Biometric & Enrollment Architecture 
           authorization: 'Bearer dummy-token',
           'content-type': 'application/json',
         },
-        body: JSON.stringify({ requestId, profileId, photoIntentId }),
+        body: JSON.stringify({ requestId, profileId, photoBase64 }),
       });
 
       const res = await identifyReturningHandler.fetch(req);

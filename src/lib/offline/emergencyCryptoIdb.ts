@@ -76,6 +76,10 @@ export interface EmergencyVaultStorageAdapter {
   putRecordBlob(blob: EncryptedBlobRecord): Promise<void>;
   getLastSequence(deviceUserId: string): Promise<number>;
   setLastSequence(deviceUserId: string, seq: number): Promise<void>;
+  allocateSequenceAndPutRecord?(
+    deviceUserId: string,
+    buildBlob: (seq: number) => Promise<EncryptedBlobRecord>,
+  ): Promise<{ seq: number; blob: EncryptedBlobRecord }>;
   clearDeviceVault(deviceUserId: string): Promise<void>;
 }
 
@@ -207,6 +211,31 @@ function createIndexedDbAdapter(): EmergencyVaultStorageAdapter {
       await idbReq(tx.objectStore(STORE_META).put({ id: `seq:${deviceUserId}`, value: seq }));
       db.close();
     },
+    async allocateSequenceAndPutRecord(deviceUserId: string, buildBlob: (seq: number) => Promise<EncryptedBlobRecord>) {
+      const db = await openIndexedDb();
+      try {
+        const tx = db.transaction([STORE_META, STORE_RECORDS], 'readwrite');
+        const metaStore = tx.objectStore(STORE_META);
+        const recordStore = tx.objectStore(STORE_RECORDS);
+
+        const row = await idbReq<{ id: string; value: number } | undefined>(
+          metaStore.get(`seq:${deviceUserId}`),
+        );
+        const prevSeq = typeof row?.value === 'number' ? row.value : 0;
+        const nextSeq = prevSeq + 1;
+        await idbReq(metaStore.put({ id: `seq:${deviceUserId}`, value: nextSeq }));
+        const blob = await buildBlob(nextSeq);
+        await idbReq(recordStore.put(blob));
+        await new Promise<void>((resolve, reject) => {
+          tx.oncomplete = () => resolve();
+          tx.onerror = () => reject(tx.error);
+          tx.onabort = () => reject(tx.error || new Error('Transaction aborted'));
+        });
+        return { seq: nextSeq, blob };
+      } finally {
+        db.close();
+      }
+    },
     async clearDeviceVault(deviceUserId: string) {
       const db = await openIndexedDb();
       const tx = db.transaction([STORE_MANIFESTS, STORE_RECORDS, STORE_META, STORE_KEYS], 'readwrite');
@@ -324,11 +353,8 @@ export async function enqueueEmergencyRecord(input: EnqueueEmergencyRecordInput)
   }
 
   const storage = getStorage();
-  const prevSeq = await storage.getLastSequence(input.deviceUserId);
-  const nextSeq = prevSeq + 1;
-  await storage.setLastSequence(input.deviceUserId, nextSeq);
 
-  const record: EmergencyOfflineRecord = {
+  const recordTemplate: Omit<EmergencyOfflineRecord, 'localSequence'> = {
     recordId: globalThis.crypto.randomUUID(),
     requestId: globalThis.crypto.randomUUID(),
     deviceUserId: input.deviceUserId,
@@ -343,7 +369,6 @@ export async function enqueueEmergencyRecord(input: EnqueueEmergencyRecordInput)
     idPhysicallyInspected: true,
     idInspectionAttestationText: PHYSICAL_ID_ATTESTATION_TEXT,
     localRecordedAt: new Date().toISOString(),
-    localSequence: nextSeq,
     snapshotVersion: input.snapshotVersion || 'no-manifest',
     manifestId: input.manifestId,
     leaseStatusAtRecord: input.leaseStatusAtRecord,
@@ -355,8 +380,34 @@ export async function enqueueEmergencyRecord(input: EnqueueEmergencyRecordInput)
     serverMessage: null,
   };
 
-  const blob = await encryptJsonPayload(input.deviceUserId, record.recordId, record);
-  await storage.putRecordBlob(blob);
+  let record: EmergencyOfflineRecord;
+
+  if (typeof storage.allocateSequenceAndPutRecord === 'function') {
+    const res = await storage.allocateSequenceAndPutRecord(input.deviceUserId, async (nextSeq) => {
+      record = {
+        ...recordTemplate,
+        localSequence: nextSeq,
+      };
+      return await encryptJsonPayload(input.deviceUserId, record.recordId, record);
+    });
+    record = {
+      ...recordTemplate,
+      localSequence: res.seq,
+    };
+  } else {
+    const prevSeq = await storage.getLastSequence(input.deviceUserId);
+    const nextSeq = prevSeq + 1;
+    await storage.setLastSequence(input.deviceUserId, nextSeq);
+
+    record = {
+      ...recordTemplate,
+      localSequence: nextSeq,
+    };
+
+    const blob = await encryptJsonPayload(input.deviceUserId, record.recordId, record);
+    await storage.putRecordBlob(blob);
+  }
+
   return record;
 }
 
@@ -381,8 +432,15 @@ export async function updateEmergencyRecordSyncState(
   const existing = all.find((r) => r.recordId === recordId);
   if (!existing) return null;
 
+  const isConfirmedSynced = syncStatus === 'synced';
   const updated: EmergencyOfflineRecord = {
     ...existing,
+    visitorFullName: isConfirmedSynced
+      ? '[Synced Receipt - PII Cleared]'
+      : existing.visitorFullName,
+    declaredAddress: isConfirmedSynced
+      ? '[Cleared upon server acknowledgement]'
+      : existing.declaredAddress,
     syncStatus,
     serverOutcome,
     serverMessage,

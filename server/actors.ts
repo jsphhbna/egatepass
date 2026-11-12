@@ -17,6 +17,8 @@ export interface EmergencyDeviceActor {
   deviceType: 'emergency_device';
   gate: string;
   alias: string | null;
+  status: string;
+  deletedAt: string | null;
 }
 
 export interface VerifiedSessionContext {
@@ -161,6 +163,7 @@ export async function requireStaffActor(
 export async function requireEmergencyDeviceActor(
   admin: SupabaseClient,
   token: string,
+  options?: { allowRetired?: boolean },
 ): Promise<EmergencyDeviceActor> {
   const session = await getVerifiedSessionContext(admin, token);
 
@@ -173,12 +176,21 @@ export async function requireEmergencyDeviceActor(
 
   const { data: device, error } = await admin
     .from('devices')
-    .select('id, name, type, gate, status, alias, user_id')
+    .select('id, name, type, gate, status, alias, user_id, deleted_at')
     .eq('user_id', session.user.id)
     .maybeSingle();
   if (error) throw error;
 
-  if (!device || device.status !== 'active' || device.type !== 'emergency_device') {
+  if (!device || device.type !== 'emergency_device') {
+    throw new HttpError(403, 'emergency_device_access_denied');
+  }
+
+  const isRetired = device.status === 'revoked' || device.deleted_at !== null;
+  if (isRetired) {
+    if (!options?.allowRetired) {
+      throw new HttpError(403, 'emergency_device_access_denied');
+    }
+  } else if (device.status !== 'active') {
     throw new HttpError(403, 'emergency_device_access_denied');
   }
 
@@ -190,6 +202,8 @@ export async function requireEmergencyDeviceActor(
     deviceType: 'emergency_device',
     gate: device.gate,
     alias: device.alias ?? null,
+    status: device.status,
+    deletedAt: (device.deleted_at as string | null) ?? null,
   };
 }
 

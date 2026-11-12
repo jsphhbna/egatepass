@@ -882,6 +882,17 @@ The shared pure SVG template generator (`src/lib/digitalPassArtifact.ts`) uses s
 - `/api/passes/capabilities` reports `biometricStorageRetired: true` accurately, matching zero server-side biometric vector storage by default.
 - `/api/passes/lookup-returning` fails closed with HTTP `503 missing_validation_runtime_secret` whenever the server Turnstile secret key is unconfigured in serverless environment variables, and `/api/passes/capabilities` exposes real server Turnstile readiness (`turnstile.verified`) so UI advisories remain truthful.
 
+### 30.5 Office Directory Schema, Admin Credential Authorization, and Returning Visitor Retention Rules
+- **Office Hydration Resilience & Schema Alignment**: `/api/admin/offices` queries strictly canonical schema columns (`OFFICE_SELECT_COLUMNS`), omitting non-existent legacy fields such as `archive_reason`. Mutation responses gracefully fallback to structured RPC results with `hydrationWarning: true` if post-mutation queries fail, preventing cascading errors.
+- **Admin Credential-Reset Authorization Boundary**: Password resets triggered via `/api/admin/offices` are strictly scoped: regular `admin` callers can only reset credentials for staff assigned to their own office (`actor.officeId === targetStaff.office_id` and `targetStaff.role === 'office_staff'`). Superadmins are prohibited from self-reset (`cannot_reset_self`) and peer Superadmin resets (`cannot_reset_superadmin`) through the office endpoint. Obsolete 3-argument RPC overloads are removed in favor of caller-verified 4-argument procedures.
+- **Returning Visitor Portrait Retention Invariant**: Registration portraits stored in `visitor_evidence` for approved returning visitors are retained for the full 30-day returning profile validity window (`app_settings.returning_profile_retention_days`). `api.claim_evidence_for_purge` explicitly holds active returning profile portraits, while raw biometric template embeddings (`returning_face_templates`) are truncated. Identify-returning workflows enforce live front-camera selfie buffers and reject detached upload intents (`photoIntentId`).
+
+### 30.6 Emergency Recovery Sync, Atomic Local IDB Vault, and Protected Reconciliation
+- **Recovery Sync for Retired Emergency Devices**: Retired emergency hardware (`status = 'retired'`) is granted access to `/api/gate/emergency-device` exclusively with `action: 'recovery_sync'`. Records recorded prior to retirement with valid manifests are quarantined into `needs_review` without restoring device operational status.
+- **Atomic Local Vault Transactions**: Local offline intake records allocate their sequence counter and insert record blobs in a single atomic IndexedDB transaction across `[STORE_META, STORE_RECORDS]`. Upon server synchronization confirmation, local record payloads purge all PII while retaining audit receipt metadata (`piiClearedAt`).
+- **Emergency Keyset Pagination & Finalized Decision Integrity**: `/api/admin/emergency-records` implements compound keyset cursor pagination `(server_received_at, id)` and computes summary metrics across the full filtered dataset. Reconciliations require a client-generated `requestId` for idempotency and reject modifications to finalized decisions (`accepted` or `rejected`) with HTTP 409 Conflict.
+- **Stale Pass Expiry Continuity**: Under `global_retention_freeze`, destructive purges are suspended, but pass validity expiration (`api.expire_stale_passes`) continues running to maintain authoritative pass states.
+
 
 
 

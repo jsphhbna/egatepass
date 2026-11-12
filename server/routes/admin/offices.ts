@@ -5,7 +5,7 @@ import { jsonResponse, readBearerToken } from '../../http.js';
 import { getServerSupabaseClients } from '../../supabase.js';
 
 const OFFICE_SELECT_COLUMNS =
-  'id, name, description, active, verified, verified_at, verified_by, publication_status, requires_approval_before_pass, published_at, published_by, archived_at, archived_by, archive_reason, created_at, updated_at';
+  'id, name, description, active, verified, verified_at, verified_by, publication_status, requires_approval_before_pass, published_at, published_by, archived_at, archived_by, created_at, updated_at';
 
 const createOfficeSchema = z.object({
   action: z.literal('create_office').optional(),
@@ -871,6 +871,41 @@ export async function handleRequest(request: Request): Promise<Response> {
         return jsonResponse(404, { error: 'staff_not_found', message: 'Staff profile not found' });
       }
 
+      if (!staff.active) {
+        return jsonResponse(400, {
+          error: 'staff_account_inactive',
+          message: 'Cannot reset credentials for a deactivated staff profile.',
+        });
+      }
+
+      if (actor.role === 'admin') {
+        if (!officeId) {
+          return jsonResponse(400, {
+            error: 'office_id_required',
+            message: 'Office ID is required for administrator credential resets.',
+          });
+        }
+        if (staff.role !== 'office_staff') {
+          return jsonResponse(403, {
+            error: 'forbidden_target_role',
+            message: 'Administrators can only reset credentials for office staff accounts.',
+          });
+        }
+      } else if (actor.role === 'superadmin') {
+        if (userId === actor.id) {
+          return jsonResponse(403, {
+            error: 'cannot_reset_self',
+            message: 'Superadmins cannot reset their own credentials through this action.',
+          });
+        }
+        if (staff.role === 'superadmin') {
+          return jsonResponse(403, {
+            error: 'cannot_reset_superadmin',
+            message: 'Superadmin credentials cannot be reset through this action.',
+          });
+        }
+      }
+
       // If officeId is specified, verify that the staff is assigned to that office
       if (officeId) {
         const { data: assignment, error: assignErr } = await admin
@@ -1080,7 +1115,10 @@ export async function handleRequest(request: Request): Promise<Response> {
         .select(OFFICE_SELECT_COLUMNS)
         .eq('id', officeId)
         .maybeSingle();
-      if (fetchErr) throw fetchErr;
+      if (fetchErr) {
+        console.warn('Hydration query failed after verify_office:', fetchErr);
+        return jsonResponse(200, { ok: true, office: rpcRes, hydrationWarning: true });
+      }
       return jsonResponse(200, { ok: true, office: updatedOffice ?? rpcRes });
     }
 
@@ -1111,7 +1149,10 @@ export async function handleRequest(request: Request): Promise<Response> {
         .select(OFFICE_SELECT_COLUMNS)
         .eq('id', parsed.data.officeId)
         .maybeSingle();
-      if (fetchErr) throw fetchErr;
+      if (fetchErr) {
+        console.warn('Hydration query failed after set_publication_status:', fetchErr);
+        return jsonResponse(200, { ok: true, office: rpcRes, hydrationWarning: true });
+      }
       return jsonResponse(200, { ok: true, office: updatedOffice ?? rpcRes });
     }
 
@@ -1143,7 +1184,10 @@ export async function handleRequest(request: Request): Promise<Response> {
         .select(OFFICE_SELECT_COLUMNS)
         .eq('id', parsed.data.officeId)
         .maybeSingle();
-      if (fetchErr) throw fetchErr;
+      if (fetchErr) {
+        console.warn('Hydration query failed after archive_office:', fetchErr);
+        return jsonResponse(200, { ok: true, result: rpcRes, office: rpcRes, hydrationWarning: true });
+      }
       return jsonResponse(200, { ok: true, result: rpcRes, office: updatedOffice ?? rpcRes });
     }
 
@@ -1174,7 +1218,10 @@ export async function handleRequest(request: Request): Promise<Response> {
         .select(OFFICE_SELECT_COLUMNS)
         .eq('id', parsed.data.officeId)
         .maybeSingle();
-      if (fetchErr) throw fetchErr;
+      if (fetchErr) {
+        console.warn('Hydration query failed after set_approval_policy:', fetchErr);
+        return jsonResponse(200, { ok: true, office: rpcRes, hydrationWarning: true });
+      }
       return jsonResponse(200, { ok: true, office: updatedOffice ?? rpcRes });
     }
 
@@ -1453,7 +1500,10 @@ export async function handleRequest(request: Request): Promise<Response> {
       .select(OFFICE_SELECT_COLUMNS)
       .eq('id', parsed.data.id)
       .single();
-    if (fetchErr) throw fetchErr;
+    if (fetchErr) {
+      console.warn('Hydration query failed after patch office:', fetchErr);
+      return jsonResponse(200, { ok: true, office: { ...parsed.data }, hydrationWarning: true });
+    }
     return jsonResponse(200, { ok: true, office: updatedOffice });
   }
 

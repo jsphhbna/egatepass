@@ -828,3 +828,33 @@ Outage Architecture & Authority Delegation
   - `CampusCalendar.tsx` + `/api/system/calendar` support interactive month/year planning (`holiday`, `campus_closure`, `emergency_suspension`) with overlap warnings, draft deletion, and publish/archive controls.
   - `public.app_settings.global_retention_freeze` halts manual `/api/purge-images`, scheduled/manual `/api/admin/retention-maintenance`, and `api.anonymize_expired_emergency_gate_record` fail-closed when enabled, and `public.app_settings` restricts `anon` `SELECT` strictly to 7 public display/schedule columns.
   - `/api/passes/capabilities` truthfully reports `biometricStorageRetired: true` and reflects live Turnstile server configuration readiness (`turnstile.verified`).
+
+### 12.23 Post-M91 Reliability, Security & Emergency Recovery Hardening (Migrations 92–93)
+- **Office Directory Schema Alignment & Hydration Resilience**:
+  - Removed non-existent `archive_reason` from `OFFICE_SELECT_COLUMNS` in `/api/admin/offices`.
+  - Implemented resilient fallback during office mutations: if the subsequent hydration query fails, the endpoint returns `{ ok: true, office: rpcResult, hydrationWarning: true }` without causing client-visible 500 errors.
+- **Admin Credential Reset Authorization & Overload Cleanup**:
+  - Migration M92 dropped obsolete 3-argument overload `api.reset_staff_temporary_password(uuid, uuid, uuid)` in favor of the canonical 4-argument version requiring caller user ID.
+  - Enforced strict authorization: regular `admin` callers can only reset credentials for staff assigned to their own office (`targetStaff.role === 'office_staff'` and `actor.officeId === targetStaff.office_id`); Superadmins cannot reset their own password (`cannot_reset_self`) or another Superadmin (`cannot_reset_superadmin`) through the office endpoint.
+- **Returning Visitor Portrait Retention & Live Selfie Enforcement**:
+  - Migration M92 truncated obsolete `returning_face_templates` biometric embeddings and updated `api.claim_evidence_for_purge` to protect registration portraits of active 30-day returning visitor profiles from premature deletion.
+  - Removed `photoIntentId` and direct upload download vectors from `/api/passes/identify-returning`; visitors must supply a live front-camera selfie buffer for face comparison. If reference portraits are missing/unreadable, the system returns `{ requiresNewRegistration: true }`.
+- **Dynamic 30-Day Returning Profile Retention Window**:
+  - `api.issue_online_pass_v6` dynamically queries `app_settings.returning_profile_retention_days` (defaulting to 30 days) rather than hardcoded 365 days.
+- **Retired Emergency Device Safe Recovery Sync**:
+  - Added `action: 'recovery_sync'` to `/api/gate/emergency-device` allowing retired emergency hardware to sync offline intake records logged prior to device retirement into quarantine (`needs_review`) without re-activating the device.
+  - `requireEmergencyDeviceActor` supports `allowRetired: true` exclusively for recovery operations.
+- **Emergency Records Compound Keyset Pagination & Full Summary Counts**:
+  - `/api/admin/emergency-records` uses a compound keyset cursor `(server_received_at, id)` encoded as base64 `cursor` with `hasMore` and `nextCursor`.
+  - Summary metrics (`totalCount`, `needsReviewCount`, `receivedCount`, `acceptedCount`, `duplicateCount`, `rejectedCount`) are computed across the full filtered dataset via parallel count queries rather than the current page slice.
+- **Reconciliation Idempotency & Finalized Decision Protection**:
+  - Reconciliations accept client `requestId` and return 409 Conflict if attempting to modify or overwrite finalized decisions (`accepted` or `rejected`).
+- **Read-Only Emergency Manifest Retrieval**:
+  - `GET /api/gate/emergency-device` is strictly read-only, retrieving cached unexpired signed manifests without key signing side effects. Active manifest requests/refreshes require `POST` with `action === 'request_manifest'`.
+- **Atomic Local Emergency Storage & Post-Sync PII Minimization**:
+  - `allocateSequenceAndPutRecord` in IndexedDB atomically updates the sequence counter and inserts record blobs within a single transaction spanning `[STORE_META, STORE_RECORDS]`.
+  - Once sync is confirmed by the server, local IndexedDB record payloads replace PII fields with `[Synced Receipt - PII Cleared]` while retaining audit metadata (`piiClearedAt`).
+- **Emergency Snapshot Gate Pre-Filtering**:
+  - Queries for `expectedPasses` and `office_visits` pre-filter by `assigned_gate_id` in SQL before applying query limits.
+- **Retention Freeze Stale Pass Expiry Semantics**:
+  - Under `global_retention_freeze`, destructive image/record purge operations are halted, but non-destructive `api.expire_stale_passes` continues running to ensure expired passes transition from `active` to `expired` on schedule.

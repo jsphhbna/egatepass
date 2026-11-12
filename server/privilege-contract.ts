@@ -260,6 +260,7 @@ export const SERVER_DIRECT_TABLE_OPERATIONS: DirectServerTableOperation[] = [
   { file: 'server/actors.ts', table: 'devices', operations: ['SELECT'], purpose: 'Verify emergency device identity and gate binding' },
   { file: 'server/routes/auth/session-activity.ts', table: 'staff_profiles', operations: ['SELECT'], purpose: 'Check human staff eligibility for idle session tracking' },
   { file: 'server/routes/auth/session-activity.ts', table: 'devices', operations: ['SELECT'], purpose: 'Identify device accounts exempt from human 15m idle timeout' },
+  { file: 'server/routes/gate/emergency-device.ts', table: 'emergency_device_manifests', operations: ['SELECT'], purpose: 'Read cached unexpired manifest for read-only GET' },
   { file: 'server/routes/gate/emergency-device.ts', table: 'app_settings', operations: ['SELECT'], purpose: 'Read emergency exception policy configuration' },
   { file: 'server/routes/gate/emergency-device.ts', table: 'offices', operations: ['SELECT'], purpose: 'Load published active offices and approval policy for offline manifest' },
   { file: 'server/routes/gate/emergency-device.ts', table: 'passes', operations: ['SELECT'], purpose: 'Load gate-scoped active expected passes for offline manifest' },

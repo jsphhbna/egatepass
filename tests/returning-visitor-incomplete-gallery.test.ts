@@ -131,7 +131,7 @@ describe('Returning Visitor Fail-Closed Gallery & Descriptor Validation (Priorit
   describe('4. Fail-Closed Gallery Evaluation Contract (Endpoint)', () => {
     const actorId = '11111111-1111-4111-8111-111111111111';
     const requestId = '22222222-2222-4222-8222-222222222222';
-    const photoIntentId = '33333333-3333-4333-8333-333333333333';
+    const photoBase64 = '/9j/2wBDAAYEBQYFBAYGBQYHBwYIChAKCgkJChQODwwQFxQYGBcUFhYaHSUfGhsjHBYWICwgIyYnKSopGR8tMC0oMCUoKSj/2wBDAQcHBwoIChMKChMoGhYaKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCj/wAARCABkAGQDASIAAhEBAxEB/8QAFAABAAAAAAAAAAAAAAAAAAAAAP/EABQQAQAAAAAAAAAAAAAAAAAAAAD/xAAUAQEAAAAAAAAAAAAAAAAAAAAA/8QAFBEBAAAAAAAAAAAAAAAAAAAAAP/aAAwDAQACEQMRAD8AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA//2Q==';
 
     // Helper: make dummy normalized descriptor
     function makeDescriptor(seed: number): Float32Array {
@@ -230,7 +230,7 @@ describe('Returning Visitor Fail-Closed Gallery & Descriptor Validation (Priorit
           authorization: 'Bearer dummy-token',
           'content-type': 'application/json',
         },
-        body: JSON.stringify({ requestId, profileId: badProfileId, photoIntentId }),
+        body: JSON.stringify({ requestId, profileId: badProfileId, photoBase64 }),
       });
 
       const res = await identifyReturningHandler.fetch(req);
@@ -331,7 +331,7 @@ describe('Returning Visitor Fail-Closed Gallery & Descriptor Validation (Priorit
           authorization: 'Bearer dummy-token',
           'content-type': 'application/json',
         },
-        body: JSON.stringify({ requestId, profileId: goodProfileId, photoIntentId }),
+        body: JSON.stringify({ requestId, profileId: goodProfileId, photoBase64 }),
       });
 
       const res = await identifyReturningHandler.fetch(req);

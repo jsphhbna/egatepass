@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import { HttpError, requireStaffActor } from '../../actors.js';
+import { decodeCursorStrict, encodeCursor } from '../../cursor.js';
 import { jsonResponse, readBearerToken } from '../../http.js';
 import { normalizeGateName } from '../../lib/emergency-manifest.js';
 import { getServerSupabaseClients } from '../../supabase.js';
@@ -9,6 +10,7 @@ const reconcileBodySchema = z.object({
   recordId: z.string().uuid(),
   decision: z.enum(['accepted', 'needs_review', 'duplicate', 'rejected']),
   notes: z.string().trim().min(5).max(1000),
+  requestId: z.string().uuid().optional(),
 }).strict();
 
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
@@ -46,13 +48,31 @@ async function handleGet(request: Request): Promise<Response> {
       return jsonResponse(400, { error: 'invalid_date_range' });
     }
 
+    const cursorParam = url.searchParams.get('cursor')?.trim() || '';
+    let currentCursor: { timestamp: string; id: string } | null = null;
+    if (cursorParam) {
+      try {
+        const decoded = decodeCursorStrict(cursorParam, { idType: 'uuid' });
+        if (decoded?.timestamp && decoded?.id) {
+          currentCursor = { timestamp: decoded.timestamp, id: decoded.id };
+        }
+      } catch {
+        return jsonResponse(400, { error: 'invalid_cursor', message: 'Malformed compound cursor' });
+      }
+    }
+
     let query = admin
       .from('emergency_gate_records')
-      .select('*', { count: 'exact' })
+      .select('*')
       .order('server_received_at', { ascending: false })
       .order('id', { ascending: false })
-      .limit(limit);
+      .limit(limit + 1);
 
+    if (currentCursor) {
+      query = query.or(
+        `server_received_at.lt.${currentCursor.timestamp},and(server_received_at.eq.${currentCursor.timestamp},id.lt.${currentCursor.id})`,
+      );
+    }
     if (recordIdParam) {
       query = query.eq('id', recordIdParam);
     }
@@ -69,10 +89,23 @@ async function handleGet(request: Request): Promise<Response> {
       query = query.lte('local_recorded_at', `${dateTo}T23:59:59.999+08:00`);
     }
 
-    const { data: rows, count, error } = await query;
+    const { data: rawRows, error } = await query;
     if (error) throw error;
 
-    const recordList = rows || [];
+    const pageRows = rawRows || [];
+    let hasMore = false;
+    let nextCursor: string | null = null;
+
+    if (pageRows.length > limit) {
+      hasMore = true;
+      pageRows.pop();
+      const last = pageRows[pageRows.length - 1];
+      if (last?.server_received_at && last?.id) {
+        nextCursor = encodeCursor(last.server_received_at, last.id);
+      }
+    }
+
+    const recordList = pageRows;
     const recordIds = recordList.map((r) => r.id as string);
     const deviceUserIds = Array.from(
       new Set(recordList.map((r) => r.device_user_id as string).filter(Boolean)),
@@ -118,19 +151,47 @@ async function handleGet(request: Request): Promise<Response> {
       };
     });
 
+    // Calculate summary counts across the entire filtered dataset (not just the current page)
+    const buildSummaryFilter = (base: any) => {
+      let q = base;
+      if (recordIdParam) q = q.eq('id', recordIdParam);
+      if (gateParam && gateParam !== 'all') q = q.eq('normalized_gate', normalizeGateName(gateParam));
+      if (dateFrom) q = q.gte('local_recorded_at', `${dateFrom}T00:00:00+08:00`);
+      if (dateTo) q = q.lte('local_recorded_at', `${dateTo}T23:59:59.999+08:00`);
+      return q;
+    };
+
+    const [
+      totalCountRes,
+      needsReviewCountRes,
+      receivedCountRes,
+      acceptedCountRes,
+      duplicateCountRes,
+      rejectedCountRes,
+    ] = await Promise.all([
+      buildSummaryFilter(admin.from('emergency_gate_records').select('*', { count: 'exact', head: true })),
+      buildSummaryFilter(admin.from('emergency_gate_records').select('*', { count: 'exact', head: true }).eq('reconciliation_status', 'needs_review')),
+      buildSummaryFilter(admin.from('emergency_gate_records').select('*', { count: 'exact', head: true }).eq('reconciliation_status', 'received')),
+      buildSummaryFilter(admin.from('emergency_gate_records').select('*', { count: 'exact', head: true }).eq('reconciliation_status', 'accepted')),
+      buildSummaryFilter(admin.from('emergency_gate_records').select('*', { count: 'exact', head: true }).eq('reconciliation_status', 'duplicate')),
+      buildSummaryFilter(admin.from('emergency_gate_records').select('*', { count: 'exact', head: true }).eq('reconciliation_status', 'rejected')),
+    ]);
+
     const summary = {
-      totalCount: count ?? records.length,
-      needsReviewCount: records.filter((r) => r.reconciliation_status === 'needs_review').length,
-      receivedCount: records.filter((r) => r.reconciliation_status === 'received').length,
-      acceptedCount: records.filter((r) => r.reconciliation_status === 'accepted').length,
-      duplicateCount: records.filter((r) => r.reconciliation_status === 'duplicate').length,
-      rejectedCount: records.filter((r) => r.reconciliation_status === 'rejected').length,
+      totalCount: totalCountRes.count ?? 0,
+      needsReviewCount: needsReviewCountRes.count ?? 0,
+      receivedCount: receivedCountRes.count ?? 0,
+      acceptedCount: acceptedCountRes.count ?? 0,
+      duplicateCount: duplicateCountRes.count ?? 0,
+      rejectedCount: rejectedCountRes.count ?? 0,
     };
 
     return jsonResponse(200, {
       classification: 'OFFLINE MODE RECORDED',
       records,
-      total: count ?? records.length,
+      total: summary.totalCount,
+      hasMore,
+      nextCursor,
       summary,
     });
   } catch (error) {
@@ -156,24 +217,29 @@ async function handlePost(request: Request): Promise<Response> {
       return jsonResponse(400, { error: 'invalid_reconciliation_request' });
     }
 
+    const clientRequestId = parsed.data.requestId || randomUUID();
     const { data, error } = await admin.schema('api').rpc('reconcile_emergency_gate_record', {
       requested_actor_id: actor.id,
       requested_record_id: parsed.data.recordId,
       requested_decision: parsed.data.decision,
       requested_notes: parsed.data.notes,
-      requested_request_id: randomUUID(),
+      requested_request_id: clientRequestId,
     });
 
     if (error) {
       const code = (error as { code?: string }).code;
+      const msg = String(error.message || '');
       if (code === 'P0002') {
         return jsonResponse(404, { error: 'emergency_record_not_found' });
       }
+      if (code === '40900' || msg.includes('record_already_finalized') || msg.includes('reconciliation_request_conflict')) {
+        return jsonResponse(409, { error: 'reconciliation_conflict', message: msg });
+      }
       if (code === '22023') {
-        return jsonResponse(400, { error: error.message || 'invalid_reconciliation_request' });
+        return jsonResponse(400, { error: msg || 'invalid_reconciliation_request' });
       }
       if (code === '42501') {
-        return jsonResponse(403, { error: error.message || 'access_denied' });
+        return jsonResponse(403, { error: msg || 'access_denied' });
       }
       throw error;
     }

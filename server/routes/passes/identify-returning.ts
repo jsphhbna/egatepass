@@ -19,7 +19,6 @@ import { getVerifiedSessionContext, HttpError } from '../../actors.js';
 import { jsonResponse, readBearerToken } from '../../http.js';
 import { getServerSupabaseClients } from '../../supabase.js';
 import { getClientNetworkIdentifier } from './issue.js';
-import { inspectAndDownloadUpload } from './verify-identity.js';
 import {
   analyzeFaceImage,
   decryptFaceTemplate,
@@ -187,7 +186,6 @@ async function handleRequest(request: Request): Promise<Response> {
 
   let profileId = '';
   let requestId = '';
-  let photoIntentId: string | null = null;
   let selfieBuffer: Buffer | null = null;
 
   const contentType = request.headers.get('content-type') || '';
@@ -215,8 +213,6 @@ async function handleRequest(request: Request): Promise<Response> {
     if (body.photoBase64 && typeof body.photoBase64 === 'string') {
       const cleanB64 = body.photoBase64.replace(/^data:image\/\w+;base64,/, '');
       selfieBuffer = Buffer.from(cleanB64, 'base64');
-    } else if (body.photoIntentId && typeof body.photoIntentId === 'string') {
-      photoIntentId = body.photoIntentId.trim();
     }
   }
 
@@ -225,7 +221,7 @@ async function handleRequest(request: Request): Promise<Response> {
     return jsonResponse(400, { error: 'invalid_request', message: 'Valid UUID profileId and requestId are required.' });
   }
 
-  if (!selfieBuffer && !photoIntentId) {
+  if (!selfieBuffer) {
     return jsonResponse(400, { error: 'photo_required', message: 'A live selfie is required for verification.' });
   }
 
@@ -306,11 +302,8 @@ async function handleRequest(request: Request): Promise<Response> {
       });
     }
 
-    // 3. Obtain selfie buffer
-    if (!selfieBuffer && photoIntentId) {
-      const photoResult = await inspectAndDownloadUpload(admin, photoIntentId, actorId, 'photo');
-      selfieBuffer = photoResult.buffer;
-    } else if (!selfieBuffer || selfieBuffer.length > 5 * 1024 * 1024 || !validImageMagic(selfieBuffer)) {
+    // 3. Validate selfie buffer
+    if (!selfieBuffer || selfieBuffer.length > 5 * 1024 * 1024 || !validImageMagic(selfieBuffer)) {
       return jsonResponse(422, {
         ok: false,
         error: 'invalid_image_payload',
@@ -573,6 +566,7 @@ async function handleRequest(request: Request): Promise<Response> {
         matched: false,
         error: 'reference_portrait_unavailable',
         message: 'Original reference portrait could not be located under retention policy. Please register as a new visitor.',
+        requiresNewRegistration: true,
       });
     }
 
@@ -611,7 +605,7 @@ async function handleRequest(request: Request): Promise<Response> {
       const { error: insertErr } = await admin.from('returning_identity_attempts').insert({
         owner_id: actorId,
         request_id: requestId,
-        photo_intent_id: photoIntentId,
+        photo_intent_id: null,
         matched_profile_id: profile.id,
         outcome: attemptOutcome,
         threshold_mode: thresholdMode,
@@ -743,7 +737,7 @@ async function handleRequest(request: Request): Promise<Response> {
     const { error: failInsertErr } = await admin.from('returning_identity_attempts').insert({
       owner_id: actorId,
       request_id: requestId,
-      photo_intent_id: photoIntentId,
+      photo_intent_id: null,
       matched_profile_id: profile.id,
       outcome: 'low_similarity',
       threshold_mode: thresholdMode,

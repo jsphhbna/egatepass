@@ -1445,14 +1445,14 @@ export async function lookupReturningVisitor(
 
 export async function identifyReturningVisitor(
   transaction: PortalIssueTransaction,
-  photoBlobOrIntentId: Blob | string,
+  photoBlobOrBase64: Blob | string,
   profileId: string
 ): Promise<ReturningIdentifyResult> {
   const { token } = await getVerifiedPortalSession(transaction);
 
   let res: Response;
   try {
-    if (typeof photoBlobOrIntentId === 'string') {
+    if (typeof photoBlobOrBase64 === 'string') {
       res = await withTimeout(
         fetch('/api/passes/identify-returning', {
           method: 'POST',
@@ -1463,7 +1463,7 @@ export async function identifyReturningVisitor(
           body: JSON.stringify({
             requestId: transaction.requestId,
             profileId,
-            photoIntentId: photoBlobOrIntentId,
+            photoBase64: photoBlobOrBase64,
           }),
         }),
         30000,
@@ -1471,7 +1471,7 @@ export async function identifyReturningVisitor(
       );
     } else {
       const formData = new FormData();
-      formData.append('photo', photoBlobOrIntentId, 'selfie.jpg');
+      formData.append('photo', photoBlobOrBase64, 'selfie.jpg');
       formData.append('profileId', profileId);
       formData.append('requestId', transaction.requestId);
 
