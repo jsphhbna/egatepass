@@ -15,3 +15,6 @@ export function readBearerToken(request: Request): string | null {
   const match = request.headers.get('authorization')?.match(/^Bearer ([^\s]+)$/);
   return match?.[1] ?? null;
 }
+
+export { PG_UUID_REGEX, pgUuidSchema, isPgUuid } from './lib/uuid.js';
+

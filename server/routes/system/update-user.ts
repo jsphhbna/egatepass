@@ -1,14 +1,14 @@
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import { HttpError, recordReconciliation, requireStaffActor } from '../../actors.js';
-import { jsonResponse, readBearerToken } from '../../http.js';
+import { jsonResponse, readBearerToken, pgUuidSchema } from '../../http.js';
 import { getServerSupabaseClients } from '../../supabase.js';
 
 const schema = z.object({
-  targetUid: z.string().uuid(),
+  targetUid: pgUuidSchema,
   role: z.enum(['guard', 'admin', 'superadmin', 'office_staff']).optional(),
   active: z.boolean().optional(),
-  officeIds: z.array(z.string().uuid()).optional(),
+  officeIds: z.array(pgUuidSchema).optional(),
 }).strict().refine((value) => value.role !== undefined || value.active !== undefined || value.officeIds !== undefined);
 
 async function handleRequest(request: Request): Promise<Response> {

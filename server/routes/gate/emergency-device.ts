@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import { HttpError, requireEmergencyDeviceActor } from '../../actors.js';
-import { jsonResponse, readBearerToken } from '../../http.js';
+import { jsonResponse, readBearerToken, pgUuidSchema } from '../../http.js';
 import {
   EMERGENCY_LEASE_TTL_MS,
   normalizeGateName,
@@ -13,13 +13,13 @@ import {
 import { getServerSupabaseClients } from '../../supabase.js';
 
 const syncItemSchema = z.object({
-  requestId: z.string().uuid(),
-  recordId: z.string().uuid(),
+  requestId: pgUuidSchema,
+  recordId: pgUuidSchema,
   claimedGate: z.string().trim().min(1).max(80),
   visitorFullName: z.string().trim().min(2).max(160),
   declaredAddress: z.string().trim().min(5).max(400),
   purpose: z.string().trim().min(2).max(500),
-  destinationOfficeId: z.string().uuid().nullable(),
+  destinationOfficeId: pgUuidSchema.nullable(),
   destinationOfficeNameSnapshot: z.string().trim().min(2).max(160),
   officeResolutionStatus: z.enum(['resolved_snapshot', 'unresolved_stale_snapshot']),
   officeRequiresApprovalSnapshot: z.boolean(),
@@ -28,7 +28,7 @@ const syncItemSchema = z.object({
   localRecordedAt: z.string().datetime({ offset: true }),
   localSequence: z.number().int().min(1),
   snapshotVersion: z.string().trim().min(1).max(128),
-  manifestId: z.string().uuid().nullable(),
+  manifestId: pgUuidSchema.nullable(),
   leaseStatusAtRecord: z.enum([
     'valid',
     'stale_lease',

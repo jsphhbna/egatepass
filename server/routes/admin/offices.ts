@@ -1,7 +1,7 @@
 import { randomBytes, randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import { HttpError, recordReconciliation, requireStaffActor } from '../../actors.js';
-import { jsonResponse, readBearerToken } from '../../http.js';
+import { jsonResponse, readBearerToken, pgUuidSchema } from '../../http.js';
 import { getServerSupabaseClients } from '../../supabase.js';
 
 const OFFICE_SELECT_COLUMNS =
@@ -17,18 +17,18 @@ const createOfficeSchema = z.object({
 
 const assignStaffSchema = z.object({
   action: z.literal('assign_staff'),
-  userId: z.string().uuid(),
-  officeId: z.string().uuid(),
+  userId: pgUuidSchema,
+  officeId: pgUuidSchema,
 });
 
 const removeStaffSchema = z.object({
   action: z.literal('remove_staff'),
-  userId: z.string().uuid(),
-  officeId: z.string().uuid(),
+  userId: pgUuidSchema,
+  officeId: pgUuidSchema,
 });
 
 const patchOfficeSchema = z.object({
-  id: z.string().uuid(),
+  id: pgUuidSchema,
   name: z.string().trim().min(2).max(100).optional(),
   description: z.string().trim().max(300).optional(),
   active: z.boolean().optional(),
@@ -39,26 +39,26 @@ const patchOfficeSchema = z.object({
 
 const setPublicationSchema = z.object({
   action: z.literal('set_publication_status'),
-  officeId: z.string().uuid(),
+  officeId: pgUuidSchema,
   publicationStatus: z.enum(['draft', 'published', 'archived']),
 });
 
 const archiveOfficeSchema = z.object({
   action: z.literal('archive_office'),
-  officeId: z.string().uuid(),
+  officeId: pgUuidSchema,
   staffHandling: z.enum(['keep', 'unassign', 'deactivate_unshared']).optional().default('keep'),
   reason: z.string().trim().max(300).optional(),
 });
 
 const setApprovalPolicySchema = z.object({
   action: z.literal('set_approval_policy'),
-  officeId: z.string().uuid(),
+  officeId: pgUuidSchema,
   requiresApprovalBeforePass: z.boolean(),
 });
 
 const deleteDraftOfficeSchema = z.object({
   action: z.literal('delete_draft_office'),
-  officeId: z.string().uuid(),
+  officeId: pgUuidSchema,
 });
 
 function mapOfficeRpcError(err: unknown, fallbackName?: string): Response | null {
@@ -100,27 +100,27 @@ function mapOfficeRpcError(err: unknown, fallbackName?: string): Response | null
 
 const provisionAccountSchema = z.object({
   action: z.literal('provision_account'),
-  officeId: z.string().uuid(),
+  officeId: pgUuidSchema,
   staffEmail: z.string().trim().email().max(320),
   displayName: z.string().trim().min(2).max(100).optional(),
-  operationId: z.string().uuid().optional(),
+  operationId: pgUuidSchema.optional(),
 });
 
 const resetCredentialsSchema = z.object({
   action: z.literal('reset_account_credentials'),
-  userId: z.string().uuid(),
-  officeId: z.string().uuid().optional(),
+  userId: pgUuidSchema,
+  officeId: pgUuidSchema.optional(),
 });
 
 const resendVerificationSchema = z.object({
   action: z.literal('resend_verification_email'),
-  userId: z.string().uuid(),
-  officeId: z.string().uuid().optional(),
+  userId: pgUuidSchema,
+  officeId: pgUuidSchema.optional(),
 });
 
 const toggleAccountActiveSchema = z.object({
   action: z.literal('toggle_account_active'),
-  userId: z.string().uuid(),
+  userId: pgUuidSchema,
   active: z.boolean(),
 });
 
@@ -1511,7 +1511,7 @@ export async function handleRequest(request: Request): Promise<Response> {
     const url = new URL(request.url);
     const body = await request.json().catch(() => null);
     const candidateId = url.searchParams.get('id') || body?.officeId || body?.id;
-    const parsedId = z.string().uuid().safeParse(candidateId);
+    const parsedId = pgUuidSchema.safeParse(candidateId);
     if (!parsedId.success) {
       return jsonResponse(400, { error: 'invalid_office_id', message: 'A valid office id is required.' });
     }

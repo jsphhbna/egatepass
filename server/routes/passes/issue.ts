@@ -1,7 +1,7 @@
 import { createHash, createHmac, randomBytes } from 'node:crypto';
 import { z } from 'zod';
 import { getVerifiedSessionContext, HttpError } from '../../actors.js';
-import { jsonResponse, readBearerToken } from '../../http.js';
+import { jsonResponse, readBearerToken, pgUuidSchema } from '../../http.js';
 import { getServerSupabaseClients } from '../../supabase.js';
 import { normalizePhMobile } from '../../../src/lib/phPhone.js';
 import { normalizeVehiclePlate } from '../../../src/lib/vehiclePlate.js';
@@ -18,7 +18,7 @@ import { getBaseUrl } from '../../templates/branding.js';
 
 const namePart = z.string().trim().min(1).max(50);
 const requestSchema = z.object({
-  requestId: z.string().uuid(),
+  requestId: pgUuidSchema,
   source: z.enum(['portal', 'kiosk']),
   registrationMode: z.enum(['new', 'returning']).default('new'),
   visitor: z.object({
@@ -55,21 +55,21 @@ const requestSchema = z.object({
     color: z.string().trim().min(2).max(40).optional(),
     makeModel: z.string().trim().max(100).optional(),
     catalogStatus: z.string().trim().optional(),
-    photoIntentId: z.string().uuid().optional(),
-    savedVehicleId: z.string().uuid().optional(),
+    photoIntentId: pgUuidSchema.optional(),
+    savedVehicleId: pgUuidSchema.optional(),
     saveVehicle: z.boolean().optional(),
   }).optional(),
-  vehiclePhotoIntentId: z.string().uuid().optional(),
+  vehiclePhotoIntentId: pgUuidSchema.optional(),
   returning: z.object({
-    profileId: z.string().uuid().optional(),
+    profileId: pgUuidSchema.optional(),
     matchToken: z.string().optional(),
     saveUpdates: z.boolean().optional(),
   }).optional(),
   enrollReturning: z.boolean().optional(),
   saveVehicle: z.boolean().optional(),
-  photoIntentId: z.string().uuid().nullable().optional(),
-  idIntentId: z.string().uuid().nullable().optional(),
-  officeId: z.string().uuid().optional(),
+  photoIntentId: pgUuidSchema.nullable().optional(),
+  idIntentId: pgUuidSchema.nullable().optional(),
+  officeId: pgUuidSchema.optional(),
 });
 
 function validMagic(bytes: Uint8Array, contentType: string): boolean {

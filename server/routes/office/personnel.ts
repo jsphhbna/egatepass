@@ -1,19 +1,19 @@
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import { requireOfficeStaffActor } from '../../lib/office.js';
-import { jsonResponse, readBearerToken } from '../../http.js';
+import { jsonResponse, readBearerToken, pgUuidSchema } from '../../http.js';
 import { getServerSupabaseClients } from '../../supabase.js';
 import { HttpError } from '../../actors.js';
 
 const postSchema = z.object({
-  officeId: z.string().uuid(),
+  officeId: pgUuidSchema,
   name: z.string().trim().min(2).max(150),
   title: z.string().trim().max(120).optional().nullable(),
 }).strict();
 
 const patchSchema = z.object({
-  personnelId: z.string().uuid().optional(),
-  id: z.string().uuid().optional(),
+  personnelId: pgUuidSchema.optional(),
+  id: pgUuidSchema.optional(),
   name: z.string().trim().min(2).max(150).optional(),
   title: z.string().trim().max(120).optional().nullable(),
   active: z.boolean().optional(),

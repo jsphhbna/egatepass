@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import { randomBytes, createHash, createHmac } from 'node:crypto';
 import { getVerifiedSessionContext, HttpError } from '../../actors.js';
-import { jsonResponse, readBearerToken } from '../../http.js';
+import { jsonResponse, readBearerToken, pgUuidSchema } from '../../http.js';
 import { getServerSupabaseClients } from '../../supabase.js';
 import { normalizePhMobile } from '../../../src/lib/phPhone.js';
 import { normalizeVehiclePlate } from '../../../src/lib/vehiclePlate.js';
@@ -17,7 +17,7 @@ import { getBaseUrl } from '../../templates/branding.js';
 const namePart = z.string().trim().min(1).max(50);
 
 const requestSchema = z.object({
-  requestId: z.string().uuid(),
+  requestId: pgUuidSchema,
   source: z.enum(['portal', 'kiosk']).default('portal'),
   registrationMode: z.enum(['new', 'returning']).default('new'),
   visitType: z.enum(['general', 'specific_person']).optional().default('specific_person'),
@@ -30,8 +30,8 @@ const requestSchema = z.object({
     purpose: z.string().trim().min(3).max(300),
     visitDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
   }),
-  officeId: z.string().uuid(),
-  personnelId: z.string().uuid().nullable().optional(),
+  officeId: pgUuidSchema,
+  personnelId: pgUuidSchema.nullable().optional(),
   requestedPersonName: z.string().trim().min(2).max(150).nullable().optional(),
   specificPurpose: z.string().trim().min(3).max(300),
   emailVerificationToken: z.string().min(1).optional(),
@@ -56,11 +56,11 @@ const requestSchema = z.object({
     color: z.string().trim().min(2).max(40).optional(),
     makeModel: z.string().trim().max(100).optional(),
   }).optional(),
-  photoIntentId: z.string().uuid().nullable().optional(),
-  idIntentId: z.string().uuid().nullable().optional(),
-  vehiclePhotoIntentId: z.string().uuid().nullable().optional(),
+  photoIntentId: pgUuidSchema.nullable().optional(),
+  idIntentId: pgUuidSchema.nullable().optional(),
+  vehiclePhotoIntentId: pgUuidSchema.nullable().optional(),
   returning: z.object({
-    profileId: z.string().uuid().optional(),
+    profileId: pgUuidSchema.optional(),
     matchToken: z.string().optional(),
   }).optional(),
 }).superRefine((data, ctx) => {

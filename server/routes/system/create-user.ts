@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import { HttpError, recordReconciliation, requireStaffActor } from '../../actors.js';
-import { jsonResponse, readBearerToken } from '../../http.js';
+import { jsonResponse, readBearerToken, pgUuidSchema } from '../../http.js';
 import { passwordSchema } from '../../password-policy.js';
 import { getServerSupabaseClients } from '../../supabase.js';
 
@@ -10,7 +10,7 @@ const schema = z.object({
   email: z.string().email().max(320),
   password: passwordSchema,
   role: z.enum(['admin', 'office_staff']),
-  officeIds: z.array(z.string().uuid()).optional(),
+  officeIds: z.array(pgUuidSchema).optional(),
 }).strict();
 
 async function handleRequest(request: Request): Promise<Response> {
