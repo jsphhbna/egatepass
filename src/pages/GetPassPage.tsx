@@ -322,7 +322,7 @@ export function GetPassPage() {
   const [returningSearchError, setReturningSearchError] = useState<string | null>(null);
 
   // Office & Visit Type State
-  const [offices, setOffices] = useState<Array<{ id: string; name: string; description: string | null; requires_approval_before_pass?: boolean }>>([]);
+  const [offices, setOffices] = useState<Array<{ id: string; name: string; description: string | null }>>([]);
   const [selectedOfficeId, setSelectedOfficeId] = useState<string>('');
   const [visitType, setVisitType] = useState<'general' | 'specific_person' | null>(null);
   const [personnelList, setPersonnelList] = useState<Array<{ id: string; name: string; title: string | null }>>([]);

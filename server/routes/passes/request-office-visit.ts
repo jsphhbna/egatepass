@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { randomBytes, createHash, createHmac } from 'node:crypto';
+import { randomBytes, createHash } from 'node:crypto';
 import { getVerifiedSessionContext, HttpError } from '../../actors.js';
 import { jsonResponse, readBearerToken, pgUuidSchema } from '../../http.js';
 import { getServerSupabaseClients } from '../../supabase.js';
@@ -10,8 +10,6 @@ import { inspectUploadIntent } from '../../upload-inspection.js';
 import { computeMatchTokenDigest } from './identify-returning.js';
 import { encryptQrPayload, decryptQrPayload } from '../../lib/encryption.js';
 import { deliverOfficeAcknowledgementEmail, type OutboxDeliveryResult } from '../../lib/officeDelivery.js';
-import { generateQrPngBuffer, sendResendEmail } from '../../email.js';
-import { renderOfficeVisitApprovedEmail } from '../../templates/index.js';
 import { getBaseUrl } from '../../templates/branding.js';
 
 const namePart = z.string().trim().min(1).max(50);
@@ -374,19 +372,7 @@ export async function handleRequest(request: Request): Promise<Response> {
 
   let passQrToken: string | null = null;
   let passTokenDigest: string | null = null;
-  if (!office.requires_approval_before_pass) {
-    const passSecret = process.env.PASS_TOKEN_SECRET?.trim();
-    if (!passSecret || passSecret.length < 32) {
-      return jsonResponse(503, {
-        error: 'pass_token_secret_unavailable',
-        message: 'Pass token signing service is temporarily unavailable.',
-      });
-    }
-    passQrToken = createHmac('sha256', passSecret)
-      .update(`${session.user.id}:${parsed.data.requestId}`)
-      .digest('base64url');
-    passTokenDigest = createHash('sha256').update(passQrToken).digest('hex');
-  }
+  // Specific person visit requests unconditionally require office approval; no pass token is issued at request creation.
 
   // Call api.create_specific_person_visit_request RPC
   const { data: rpcResult, error: rpcError } = await admin.schema('api').rpc('create_specific_person_visit_request', {
@@ -499,67 +485,28 @@ export async function handleRequest(request: Request): Promise<Response> {
 
   let emailDelivery: OutboxDeliveryResult | null = null;
   if (normalizedVisitorEmail) {
-    if (resultRow.approval_status === 'approved' && resultRow.public_reference && passQrToken) {
-      try {
-        const publicRef = String(resultRow.public_reference);
-        const qrBuffer = await generateQrPngBuffer(passQrToken);
-        const attachmentFilename = `egatepass-${publicRef.slice(0, 8)}.png`;
-        const html = await renderOfficeVisitApprovedEmail({
-          fullName: visitorFullName,
-          officeName: office.name,
-          personnelName: resolvedPersonnelName || 'General Office Reception',
-          visitDate: parsed.data.visitor.visitDate,
-          purpose: parsed.data.specificPurpose,
-          publicReference: publicRef,
-          attachmentFilename,
-        });
-        const sendRes = await sendResendEmail({
-          to: normalizedVisitorEmail,
-          subject: `Approved: EARIST E-GatePass for ${office.name}`,
-          html,
-          attachments: [
-            {
-              filename: attachmentFilename,
-              content: qrBuffer.toString('base64'),
-              content_type: 'image/png',
-            },
-          ],
-          idempotencyKey: `office-auto-approval-${resultRow.visit_id}`,
-          correlationId: String(resultRow.visit_id),
-        });
-        emailDelivery = { status: 'sent', providerMessageId: sendRes.id || null, error: null };
-      } catch (deliveryEx) {
-        console.error('Non-fatal error delivering auto-approved QR email:', deliveryEx);
-        emailDelivery = {
-          status: 'failed',
-          providerMessageId: null,
-          error: deliveryEx instanceof Error ? deliveryEx.message : 'auto_approval_delivery_failed',
-        };
-      }
-    } else {
-      try {
-        emailDelivery = await deliverOfficeAcknowledgementEmail(admin, {
-          visitId: resultRow.visit_id,
-          recipientEmail: normalizedVisitorEmail,
-          visitorName: visitorFullName,
-          officeName: office.name,
-          personnelName: resolvedPersonnelName || 'General Office Reception',
-          visitDate: parsed.data.visitor.visitDate,
-          purpose: parsed.data.specificPurpose,
-          trackingUrl,
-        });
-      } catch (deliveryEx) {
-        console.error('Non-fatal error delivering acknowledgement email:', deliveryEx);
-        emailDelivery = {
-          status: 'failed',
-          providerMessageId: null,
-          error: deliveryEx instanceof Error ? deliveryEx.message : 'acknowledgement_delivery_failed',
-        };
-      }
+    try {
+      emailDelivery = await deliverOfficeAcknowledgementEmail(admin, {
+        visitId: resultRow.visit_id,
+        recipientEmail: normalizedVisitorEmail,
+        visitorName: visitorFullName,
+        officeName: office.name,
+        personnelName: resolvedPersonnelName || 'General Office Reception',
+        visitDate: parsed.data.visitor.visitDate,
+        purpose: parsed.data.specificPurpose,
+        trackingUrl,
+      });
+    } catch (deliveryEx) {
+      console.error('Non-fatal error delivering acknowledgement email:', deliveryEx);
+      emailDelivery = {
+        status: 'failed',
+        providerMessageId: null,
+        error: deliveryEx instanceof Error ? deliveryEx.message : 'acknowledgement_delivery_failed',
+      };
     }
   }
 
-  const isAutoApproved = resultRow.approval_status === 'approved' && Boolean(resultRow.public_reference) && Boolean(passQrToken);
+  const isAutoApproved = false;
   return jsonResponse(201, {
     ok: true,
     approvalRequired: !isAutoApproved,

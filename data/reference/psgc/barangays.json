@@ -1,5 +1,1550 @@
 [
   {
+    "code": "0314010001",
+    "cityCode": "0314010000",
+    "name": "Tikay"
+  },
+  {
+    "code": "0314010002",
+    "cityCode": "0314010000",
+    "name": "Dakila"
+  },
+  {
+    "code": "0314010003",
+    "cityCode": "0314010000",
+    "name": "Guinhawa"
+  },
+  {
+    "code": "0421030001",
+    "cityCode": "0421030000",
+    "name": "Molino I"
+  },
+  {
+    "code": "0421030002",
+    "cityCode": "0421030000",
+    "name": "Molino II"
+  },
+  {
+    "code": "0421030003",
+    "cityCode": "0421030000",
+    "name": "Molino III"
+  },
+  {
+    "code": "0421030004",
+    "cityCode": "0421030000",
+    "name": "Habay I"
+  },
+  {
+    "code": "0421060001",
+    "cityCode": "0421060000",
+    "name": "Salitran I"
+  },
+  {
+    "code": "0421060002",
+    "cityCode": "0421060000",
+    "name": "Salitran II"
+  },
+  {
+    "code": "0421060003",
+    "cityCode": "0421060000",
+    "name": "Burol I"
+  },
+  {
+    "code": "0434040001",
+    "cityCode": "0434040000",
+    "name": "Bucal"
+  },
+  {
+    "code": "0434040002",
+    "cityCode": "0434040000",
+    "name": "Pansol"
+  },
+  {
+    "code": "0434040003",
+    "cityCode": "0434040000",
+    "name": "Canlubang"
+  },
+  {
+    "code": "0434280001",
+    "cityCode": "0434280000",
+    "name": "Balibago"
+  },
+  {
+    "code": "0434280002",
+    "cityCode": "0434280000",
+    "name": "Don Jose"
+  },
+  {
+    "code": "0458010001",
+    "cityCode": "0458010000",
+    "name": "San Roque"
+  },
+  {
+    "code": "0458010002",
+    "cityCode": "0458010000",
+    "name": "Dela Paz"
+  },
+  {
+    "code": "0458010003",
+    "cityCode": "0458010000",
+    "name": "Mayamot"
+  },
+  {
+    "code": "0722170001",
+    "cityCode": "0722170000",
+    "name": "Lahug"
+  },
+  {
+    "code": "0722170002",
+    "cityCode": "0722170000",
+    "name": "Mabolo"
+  },
+  {
+    "code": "0722170003",
+    "cityCode": "0722170000",
+    "name": "Guadalupe"
+  },
+  {
+    "code": "1124020001",
+    "cityCode": "1124020000",
+    "name": "Poblacion"
+  },
+  {
+    "code": "1124020002",
+    "cityCode": "1124020000",
+    "name": "Buhangin"
+  },
+  {
+    "code": "1124020003",
+    "cityCode": "1124020000",
+    "name": "Talomo"
+  },
+  {
+    "code": "1380100001",
+    "cityCode": "1380100000",
+    "name": "Barangay 1"
+  },
+  {
+    "code": "1380100002",
+    "cityCode": "1380100000",
+    "name": "Barangay 2"
+  },
+  {
+    "code": "1380100003",
+    "cityCode": "1380100000",
+    "name": "Barangay 3"
+  },
+  {
+    "code": "1380100004",
+    "cityCode": "1380100000",
+    "name": "Barangay 4"
+  },
+  {
+    "code": "1380100005",
+    "cityCode": "1380100000",
+    "name": "Barangay 5"
+  },
+  {
+    "code": "1380100006",
+    "cityCode": "1380100000",
+    "name": "Barangay 6"
+  },
+  {
+    "code": "1380100007",
+    "cityCode": "1380100000",
+    "name": "Barangay 7"
+  },
+  {
+    "code": "1380100008",
+    "cityCode": "1380100000",
+    "name": "Barangay 8"
+  },
+  {
+    "code": "1380100009",
+    "cityCode": "1380100000",
+    "name": "Barangay 9"
+  },
+  {
+    "code": "1380100010",
+    "cityCode": "1380100000",
+    "name": "Barangay 10"
+  },
+  {
+    "code": "1380100011",
+    "cityCode": "1380100000",
+    "name": "Barangay 11"
+  },
+  {
+    "code": "1380100012",
+    "cityCode": "1380100000",
+    "name": "Barangay 12"
+  },
+  {
+    "code": "1380100013",
+    "cityCode": "1380100000",
+    "name": "Barangay 13"
+  },
+  {
+    "code": "1380100014",
+    "cityCode": "1380100000",
+    "name": "Barangay 14"
+  },
+  {
+    "code": "1380100015",
+    "cityCode": "1380100000",
+    "name": "Barangay 15"
+  },
+  {
+    "code": "1380100016",
+    "cityCode": "1380100000",
+    "name": "Barangay 16"
+  },
+  {
+    "code": "1380100017",
+    "cityCode": "1380100000",
+    "name": "Barangay 17"
+  },
+  {
+    "code": "1380100018",
+    "cityCode": "1380100000",
+    "name": "Barangay 18"
+  },
+  {
+    "code": "1380100019",
+    "cityCode": "1380100000",
+    "name": "Barangay 19"
+  },
+  {
+    "code": "1380100020",
+    "cityCode": "1380100000",
+    "name": "Barangay 20"
+  },
+  {
+    "code": "1380100021",
+    "cityCode": "1380100000",
+    "name": "Barangay 21"
+  },
+  {
+    "code": "1380100022",
+    "cityCode": "1380100000",
+    "name": "Barangay 22"
+  },
+  {
+    "code": "1380100023",
+    "cityCode": "1380100000",
+    "name": "Barangay 23"
+  },
+  {
+    "code": "1380100024",
+    "cityCode": "1380100000",
+    "name": "Barangay 24"
+  },
+  {
+    "code": "1380100025",
+    "cityCode": "1380100000",
+    "name": "Barangay 25"
+  },
+  {
+    "code": "1380100026",
+    "cityCode": "1380100000",
+    "name": "Barangay 26"
+  },
+  {
+    "code": "1380100027",
+    "cityCode": "1380100000",
+    "name": "Barangay 27"
+  },
+  {
+    "code": "1380100028",
+    "cityCode": "1380100000",
+    "name": "Barangay 28"
+  },
+  {
+    "code": "1380100029",
+    "cityCode": "1380100000",
+    "name": "Barangay 29"
+  },
+  {
+    "code": "1380100030",
+    "cityCode": "1380100000",
+    "name": "Barangay 30"
+  },
+  {
+    "code": "1380100031",
+    "cityCode": "1380100000",
+    "name": "Barangay 31"
+  },
+  {
+    "code": "1380100032",
+    "cityCode": "1380100000",
+    "name": "Barangay 32"
+  },
+  {
+    "code": "1380100033",
+    "cityCode": "1380100000",
+    "name": "Barangay 33"
+  },
+  {
+    "code": "1380100034",
+    "cityCode": "1380100000",
+    "name": "Barangay 34"
+  },
+  {
+    "code": "1380100035",
+    "cityCode": "1380100000",
+    "name": "Barangay 35"
+  },
+  {
+    "code": "1380100036",
+    "cityCode": "1380100000",
+    "name": "Barangay 36"
+  },
+  {
+    "code": "1380100037",
+    "cityCode": "1380100000",
+    "name": "Barangay 37"
+  },
+  {
+    "code": "1380100038",
+    "cityCode": "1380100000",
+    "name": "Barangay 38"
+  },
+  {
+    "code": "1380100039",
+    "cityCode": "1380100000",
+    "name": "Barangay 39"
+  },
+  {
+    "code": "1380100040",
+    "cityCode": "1380100000",
+    "name": "Barangay 40"
+  },
+  {
+    "code": "1380100041",
+    "cityCode": "1380100000",
+    "name": "Barangay 41"
+  },
+  {
+    "code": "1380100042",
+    "cityCode": "1380100000",
+    "name": "Barangay 42"
+  },
+  {
+    "code": "1380100043",
+    "cityCode": "1380100000",
+    "name": "Barangay 43"
+  },
+  {
+    "code": "1380100044",
+    "cityCode": "1380100000",
+    "name": "Barangay 44"
+  },
+  {
+    "code": "1380100045",
+    "cityCode": "1380100000",
+    "name": "Barangay 45"
+  },
+  {
+    "code": "1380100046",
+    "cityCode": "1380100000",
+    "name": "Barangay 46"
+  },
+  {
+    "code": "1380100047",
+    "cityCode": "1380100000",
+    "name": "Barangay 47"
+  },
+  {
+    "code": "1380100048",
+    "cityCode": "1380100000",
+    "name": "Barangay 48"
+  },
+  {
+    "code": "1380100049",
+    "cityCode": "1380100000",
+    "name": "Barangay 49"
+  },
+  {
+    "code": "1380100050",
+    "cityCode": "1380100000",
+    "name": "Barangay 50"
+  },
+  {
+    "code": "1380100051",
+    "cityCode": "1380100000",
+    "name": "Barangay 51"
+  },
+  {
+    "code": "1380100052",
+    "cityCode": "1380100000",
+    "name": "Barangay 52"
+  },
+  {
+    "code": "1380100053",
+    "cityCode": "1380100000",
+    "name": "Barangay 53"
+  },
+  {
+    "code": "1380100054",
+    "cityCode": "1380100000",
+    "name": "Barangay 54"
+  },
+  {
+    "code": "1380100055",
+    "cityCode": "1380100000",
+    "name": "Barangay 55"
+  },
+  {
+    "code": "1380100056",
+    "cityCode": "1380100000",
+    "name": "Barangay 56"
+  },
+  {
+    "code": "1380100057",
+    "cityCode": "1380100000",
+    "name": "Barangay 57"
+  },
+  {
+    "code": "1380100058",
+    "cityCode": "1380100000",
+    "name": "Barangay 58"
+  },
+  {
+    "code": "1380100059",
+    "cityCode": "1380100000",
+    "name": "Barangay 59"
+  },
+  {
+    "code": "1380100060",
+    "cityCode": "1380100000",
+    "name": "Barangay 60"
+  },
+  {
+    "code": "1380100061",
+    "cityCode": "1380100000",
+    "name": "Barangay 61"
+  },
+  {
+    "code": "1380100062",
+    "cityCode": "1380100000",
+    "name": "Barangay 62"
+  },
+  {
+    "code": "1380100063",
+    "cityCode": "1380100000",
+    "name": "Barangay 63"
+  },
+  {
+    "code": "1380100064",
+    "cityCode": "1380100000",
+    "name": "Barangay 64"
+  },
+  {
+    "code": "1380100065",
+    "cityCode": "1380100000",
+    "name": "Barangay 65"
+  },
+  {
+    "code": "1380100066",
+    "cityCode": "1380100000",
+    "name": "Barangay 66"
+  },
+  {
+    "code": "1380100067",
+    "cityCode": "1380100000",
+    "name": "Barangay 67"
+  },
+  {
+    "code": "1380100068",
+    "cityCode": "1380100000",
+    "name": "Barangay 68"
+  },
+  {
+    "code": "1380100069",
+    "cityCode": "1380100000",
+    "name": "Barangay 69"
+  },
+  {
+    "code": "1380100070",
+    "cityCode": "1380100000",
+    "name": "Barangay 70"
+  },
+  {
+    "code": "1380100071",
+    "cityCode": "1380100000",
+    "name": "Barangay 71"
+  },
+  {
+    "code": "1380100072",
+    "cityCode": "1380100000",
+    "name": "Barangay 72"
+  },
+  {
+    "code": "1380100073",
+    "cityCode": "1380100000",
+    "name": "Barangay 73"
+  },
+  {
+    "code": "1380100074",
+    "cityCode": "1380100000",
+    "name": "Barangay 74"
+  },
+  {
+    "code": "1380100075",
+    "cityCode": "1380100000",
+    "name": "Barangay 75"
+  },
+  {
+    "code": "1380100076",
+    "cityCode": "1380100000",
+    "name": "Barangay 76"
+  },
+  {
+    "code": "1380100077",
+    "cityCode": "1380100000",
+    "name": "Barangay 77"
+  },
+  {
+    "code": "1380100078",
+    "cityCode": "1380100000",
+    "name": "Barangay 78"
+  },
+  {
+    "code": "1380100079",
+    "cityCode": "1380100000",
+    "name": "Barangay 79"
+  },
+  {
+    "code": "1380100080",
+    "cityCode": "1380100000",
+    "name": "Barangay 80"
+  },
+  {
+    "code": "1380100081",
+    "cityCode": "1380100000",
+    "name": "Barangay 81"
+  },
+  {
+    "code": "1380100082",
+    "cityCode": "1380100000",
+    "name": "Barangay 82"
+  },
+  {
+    "code": "1380100083",
+    "cityCode": "1380100000",
+    "name": "Barangay 83"
+  },
+  {
+    "code": "1380100084",
+    "cityCode": "1380100000",
+    "name": "Barangay 84"
+  },
+  {
+    "code": "1380100085",
+    "cityCode": "1380100000",
+    "name": "Barangay 85"
+  },
+  {
+    "code": "1380100086",
+    "cityCode": "1380100000",
+    "name": "Barangay 86"
+  },
+  {
+    "code": "1380100087",
+    "cityCode": "1380100000",
+    "name": "Barangay 87"
+  },
+  {
+    "code": "1380100088",
+    "cityCode": "1380100000",
+    "name": "Barangay 88"
+  },
+  {
+    "code": "1380100089",
+    "cityCode": "1380100000",
+    "name": "Barangay 89"
+  },
+  {
+    "code": "1380100090",
+    "cityCode": "1380100000",
+    "name": "Barangay 90"
+  },
+  {
+    "code": "1380100091",
+    "cityCode": "1380100000",
+    "name": "Barangay 91"
+  },
+  {
+    "code": "1380100092",
+    "cityCode": "1380100000",
+    "name": "Barangay 92"
+  },
+  {
+    "code": "1380100093",
+    "cityCode": "1380100000",
+    "name": "Barangay 93"
+  },
+  {
+    "code": "1380100094",
+    "cityCode": "1380100000",
+    "name": "Barangay 94"
+  },
+  {
+    "code": "1380100095",
+    "cityCode": "1380100000",
+    "name": "Barangay 95"
+  },
+  {
+    "code": "1380100096",
+    "cityCode": "1380100000",
+    "name": "Barangay 96"
+  },
+  {
+    "code": "1380100097",
+    "cityCode": "1380100000",
+    "name": "Barangay 97"
+  },
+  {
+    "code": "1380100098",
+    "cityCode": "1380100000",
+    "name": "Barangay 98"
+  },
+  {
+    "code": "1380100099",
+    "cityCode": "1380100000",
+    "name": "Barangay 99"
+  },
+  {
+    "code": "1380100100",
+    "cityCode": "1380100000",
+    "name": "Barangay 100"
+  },
+  {
+    "code": "1380100101",
+    "cityCode": "1380100000",
+    "name": "Barangay 101"
+  },
+  {
+    "code": "1380100102",
+    "cityCode": "1380100000",
+    "name": "Barangay 102"
+  },
+  {
+    "code": "1380100103",
+    "cityCode": "1380100000",
+    "name": "Barangay 103"
+  },
+  {
+    "code": "1380100104",
+    "cityCode": "1380100000",
+    "name": "Barangay 104"
+  },
+  {
+    "code": "1380100105",
+    "cityCode": "1380100000",
+    "name": "Barangay 105"
+  },
+  {
+    "code": "1380100106",
+    "cityCode": "1380100000",
+    "name": "Barangay 106"
+  },
+  {
+    "code": "1380100107",
+    "cityCode": "1380100000",
+    "name": "Barangay 107"
+  },
+  {
+    "code": "1380100108",
+    "cityCode": "1380100000",
+    "name": "Barangay 108"
+  },
+  {
+    "code": "1380100109",
+    "cityCode": "1380100000",
+    "name": "Barangay 109"
+  },
+  {
+    "code": "1380100110",
+    "cityCode": "1380100000",
+    "name": "Barangay 110"
+  },
+  {
+    "code": "1380100111",
+    "cityCode": "1380100000",
+    "name": "Barangay 111"
+  },
+  {
+    "code": "1380100112",
+    "cityCode": "1380100000",
+    "name": "Barangay 112"
+  },
+  {
+    "code": "1380100113",
+    "cityCode": "1380100000",
+    "name": "Barangay 113"
+  },
+  {
+    "code": "1380100114",
+    "cityCode": "1380100000",
+    "name": "Barangay 114"
+  },
+  {
+    "code": "1380100115",
+    "cityCode": "1380100000",
+    "name": "Barangay 115"
+  },
+  {
+    "code": "1380100116",
+    "cityCode": "1380100000",
+    "name": "Barangay 116"
+  },
+  {
+    "code": "1380100117",
+    "cityCode": "1380100000",
+    "name": "Barangay 117"
+  },
+  {
+    "code": "1380100118",
+    "cityCode": "1380100000",
+    "name": "Barangay 118"
+  },
+  {
+    "code": "1380100119",
+    "cityCode": "1380100000",
+    "name": "Barangay 119"
+  },
+  {
+    "code": "1380100120",
+    "cityCode": "1380100000",
+    "name": "Barangay 120"
+  },
+  {
+    "code": "1380100121",
+    "cityCode": "1380100000",
+    "name": "Barangay 121"
+  },
+  {
+    "code": "1380100122",
+    "cityCode": "1380100000",
+    "name": "Barangay 122"
+  },
+  {
+    "code": "1380100123",
+    "cityCode": "1380100000",
+    "name": "Barangay 123"
+  },
+  {
+    "code": "1380100124",
+    "cityCode": "1380100000",
+    "name": "Barangay 124"
+  },
+  {
+    "code": "1380100125",
+    "cityCode": "1380100000",
+    "name": "Barangay 125"
+  },
+  {
+    "code": "1380100126",
+    "cityCode": "1380100000",
+    "name": "Barangay 126"
+  },
+  {
+    "code": "1380100127",
+    "cityCode": "1380100000",
+    "name": "Barangay 127"
+  },
+  {
+    "code": "1380100128",
+    "cityCode": "1380100000",
+    "name": "Barangay 128"
+  },
+  {
+    "code": "1380100129",
+    "cityCode": "1380100000",
+    "name": "Barangay 129"
+  },
+  {
+    "code": "1380100130",
+    "cityCode": "1380100000",
+    "name": "Barangay 130"
+  },
+  {
+    "code": "1380100131",
+    "cityCode": "1380100000",
+    "name": "Barangay 131"
+  },
+  {
+    "code": "1380100132",
+    "cityCode": "1380100000",
+    "name": "Barangay 132"
+  },
+  {
+    "code": "1380100133",
+    "cityCode": "1380100000",
+    "name": "Barangay 133"
+  },
+  {
+    "code": "1380100134",
+    "cityCode": "1380100000",
+    "name": "Barangay 134"
+  },
+  {
+    "code": "1380100135",
+    "cityCode": "1380100000",
+    "name": "Barangay 135"
+  },
+  {
+    "code": "1380100136",
+    "cityCode": "1380100000",
+    "name": "Barangay 136"
+  },
+  {
+    "code": "1380100137",
+    "cityCode": "1380100000",
+    "name": "Barangay 137"
+  },
+  {
+    "code": "1380100138",
+    "cityCode": "1380100000",
+    "name": "Barangay 138"
+  },
+  {
+    "code": "1380100139",
+    "cityCode": "1380100000",
+    "name": "Barangay 139"
+  },
+  {
+    "code": "1380100140",
+    "cityCode": "1380100000",
+    "name": "Barangay 140"
+  },
+  {
+    "code": "1380100141",
+    "cityCode": "1380100000",
+    "name": "Barangay 141"
+  },
+  {
+    "code": "1380100142",
+    "cityCode": "1380100000",
+    "name": "Barangay 142"
+  },
+  {
+    "code": "1380100143",
+    "cityCode": "1380100000",
+    "name": "Barangay 143"
+  },
+  {
+    "code": "1380100144",
+    "cityCode": "1380100000",
+    "name": "Barangay 144"
+  },
+  {
+    "code": "1380100145",
+    "cityCode": "1380100000",
+    "name": "Barangay 145"
+  },
+  {
+    "code": "1380100146",
+    "cityCode": "1380100000",
+    "name": "Barangay 146"
+  },
+  {
+    "code": "1380100147",
+    "cityCode": "1380100000",
+    "name": "Barangay 147"
+  },
+  {
+    "code": "1380100148",
+    "cityCode": "1380100000",
+    "name": "Barangay 148"
+  },
+  {
+    "code": "1380100149",
+    "cityCode": "1380100000",
+    "name": "Barangay 149"
+  },
+  {
+    "code": "1380100150",
+    "cityCode": "1380100000",
+    "name": "Barangay 150"
+  },
+  {
+    "code": "1380100151",
+    "cityCode": "1380100000",
+    "name": "Barangay 151"
+  },
+  {
+    "code": "1380100152",
+    "cityCode": "1380100000",
+    "name": "Barangay 152"
+  },
+  {
+    "code": "1380100153",
+    "cityCode": "1380100000",
+    "name": "Barangay 153"
+  },
+  {
+    "code": "1380100154",
+    "cityCode": "1380100000",
+    "name": "Barangay 154"
+  },
+  {
+    "code": "1380100155",
+    "cityCode": "1380100000",
+    "name": "Barangay 155"
+  },
+  {
+    "code": "1380100156",
+    "cityCode": "1380100000",
+    "name": "Barangay 156"
+  },
+  {
+    "code": "1380100157",
+    "cityCode": "1380100000",
+    "name": "Barangay 157"
+  },
+  {
+    "code": "1380100158",
+    "cityCode": "1380100000",
+    "name": "Barangay 158"
+  },
+  {
+    "code": "1380100159",
+    "cityCode": "1380100000",
+    "name": "Barangay 159"
+  },
+  {
+    "code": "1380100160",
+    "cityCode": "1380100000",
+    "name": "Barangay 160"
+  },
+  {
+    "code": "1380100161",
+    "cityCode": "1380100000",
+    "name": "Barangay 161"
+  },
+  {
+    "code": "1380100162",
+    "cityCode": "1380100000",
+    "name": "Barangay 162"
+  },
+  {
+    "code": "1380100163",
+    "cityCode": "1380100000",
+    "name": "Barangay 163"
+  },
+  {
+    "code": "1380100164",
+    "cityCode": "1380100000",
+    "name": "Barangay 164"
+  },
+  {
+    "code": "1380100165",
+    "cityCode": "1380100000",
+    "name": "Barangay 165"
+  },
+  {
+    "code": "1380100166",
+    "cityCode": "1380100000",
+    "name": "Barangay 166"
+  },
+  {
+    "code": "1380100167",
+    "cityCode": "1380100000",
+    "name": "Barangay 167"
+  },
+  {
+    "code": "1380100168",
+    "cityCode": "1380100000",
+    "name": "Barangay 168"
+  },
+  {
+    "code": "1380100169",
+    "cityCode": "1380100000",
+    "name": "Barangay 169"
+  },
+  {
+    "code": "1380100170",
+    "cityCode": "1380100000",
+    "name": "Barangay 170"
+  },
+  {
+    "code": "1380100171",
+    "cityCode": "1380100000",
+    "name": "Barangay 171"
+  },
+  {
+    "code": "1380100172",
+    "cityCode": "1380100000",
+    "name": "Barangay 172"
+  },
+  {
+    "code": "1380100173",
+    "cityCode": "1380100000",
+    "name": "Barangay 173"
+  },
+  {
+    "code": "1380100174",
+    "cityCode": "1380100000",
+    "name": "Barangay 174"
+  },
+  {
+    "code": "1380100175",
+    "cityCode": "1380100000",
+    "name": "Barangay 175"
+  },
+  {
+    "code": "1380100177",
+    "cityCode": "1380100000",
+    "name": "Barangay 177"
+  },
+  {
+    "code": "1380100178",
+    "cityCode": "1380100000",
+    "name": "Barangay 178"
+  },
+  {
+    "code": "1380100179",
+    "cityCode": "1380100000",
+    "name": "Barangay 179"
+  },
+  {
+    "code": "1380100180",
+    "cityCode": "1380100000",
+    "name": "Barangay 180"
+  },
+  {
+    "code": "1380100181",
+    "cityCode": "1380100000",
+    "name": "Barangay 181"
+  },
+  {
+    "code": "1380100182",
+    "cityCode": "1380100000",
+    "name": "Barangay 182"
+  },
+  {
+    "code": "1380100183",
+    "cityCode": "1380100000",
+    "name": "Barangay 183"
+  },
+  {
+    "code": "1380100184",
+    "cityCode": "1380100000",
+    "name": "Barangay 184"
+  },
+  {
+    "code": "1380100185",
+    "cityCode": "1380100000",
+    "name": "Barangay 185"
+  },
+  {
+    "code": "1380100186",
+    "cityCode": "1380100000",
+    "name": "Barangay 186"
+  },
+  {
+    "code": "1380100187",
+    "cityCode": "1380100000",
+    "name": "Barangay 187"
+  },
+  {
+    "code": "1380100188",
+    "cityCode": "1380100000",
+    "name": "Barangay 188"
+  },
+  {
+    "code": "1380100189",
+    "cityCode": "1380100000",
+    "name": "Barangay 176-A"
+  },
+  {
+    "code": "1380100190",
+    "cityCode": "1380100000",
+    "name": "Barangay 176-B"
+  },
+  {
+    "code": "1380100191",
+    "cityCode": "1380100000",
+    "name": "Barangay 176-C"
+  },
+  {
+    "code": "1380100192",
+    "cityCode": "1380100000",
+    "name": "Barangay 176-D"
+  },
+  {
+    "code": "1380100193",
+    "cityCode": "1380100000",
+    "name": "Barangay 176-E"
+  },
+  {
+    "code": "1380100194",
+    "cityCode": "1380100000",
+    "name": "Barangay 176-F"
+  },
+  {
+    "code": "1380200001",
+    "cityCode": "1380200000",
+    "name": "Almanza Uno"
+  },
+  {
+    "code": "1380200002",
+    "cityCode": "1380200000",
+    "name": "Daniel Fajardo"
+  },
+  {
+    "code": "1380200003",
+    "cityCode": "1380200000",
+    "name": "Elias Aldana"
+  },
+  {
+    "code": "1380200004",
+    "cityCode": "1380200000",
+    "name": "Ilaya"
+  },
+  {
+    "code": "1380200005",
+    "cityCode": "1380200000",
+    "name": "Manuyo Uno"
+  },
+  {
+    "code": "1380200006",
+    "cityCode": "1380200000",
+    "name": "Pamplona Uno"
+  },
+  {
+    "code": "1380200007",
+    "cityCode": "1380200000",
+    "name": "Pulang Lupa Uno"
+  },
+  {
+    "code": "1380200008",
+    "cityCode": "1380200000",
+    "name": "Talon Uno"
+  },
+  {
+    "code": "1380200009",
+    "cityCode": "1380200000",
+    "name": "Zapote"
+  },
+  {
+    "code": "1380200010",
+    "cityCode": "1380200000",
+    "name": "Almanza Dos"
+  },
+  {
+    "code": "1380200011",
+    "cityCode": "1380200000",
+    "name": "B. F. International Village"
+  },
+  {
+    "code": "1380200012",
+    "cityCode": "1380200000",
+    "name": "Manuyo Dos"
+  },
+  {
+    "code": "1380200013",
+    "cityCode": "1380200000",
+    "name": "Pamplona Dos"
+  },
+  {
+    "code": "1380200014",
+    "cityCode": "1380200000",
+    "name": "Pamplona Tres"
+  },
+  {
+    "code": "1380200015",
+    "cityCode": "1380200000",
+    "name": "Pilar"
+  },
+  {
+    "code": "1380200016",
+    "cityCode": "1380200000",
+    "name": "Pulang Lupa Dos"
+  },
+  {
+    "code": "1380200017",
+    "cityCode": "1380200000",
+    "name": "Talon Dos"
+  },
+  {
+    "code": "1380200018",
+    "cityCode": "1380200000",
+    "name": "Talon Tres"
+  },
+  {
+    "code": "1380200019",
+    "cityCode": "1380200000",
+    "name": "Talon Kuatro"
+  },
+  {
+    "code": "1380200020",
+    "cityCode": "1380200000",
+    "name": "Talon Singko"
+  },
+  {
+    "code": "1380300001",
+    "cityCode": "1380300000",
+    "name": "Bangkal"
+  },
+  {
+    "code": "1380300002",
+    "cityCode": "1380300000",
+    "name": "Bel-Air"
+  },
+  {
+    "code": "1380300005",
+    "cityCode": "1380300000",
+    "name": "Carmona"
+  },
+  {
+    "code": "1380300006",
+    "cityCode": "1380300000",
+    "name": "Dasmariñas"
+  },
+  {
+    "code": "1380300008",
+    "cityCode": "1380300000",
+    "name": "Forbes Park"
+  },
+  {
+    "code": "1380300009",
+    "cityCode": "1380300000",
+    "name": "Guadalupe Nuevo"
+  },
+  {
+    "code": "1380300010",
+    "cityCode": "1380300000",
+    "name": "Guadalupe Viejo"
+  },
+  {
+    "code": "1380300011",
+    "cityCode": "1380300000",
+    "name": "Kasilawan"
+  },
+  {
+    "code": "1380300012",
+    "cityCode": "1380300000",
+    "name": "La Paz"
+  },
+  {
+    "code": "1380300013",
+    "cityCode": "1380300000",
+    "name": "Magallanes"
+  },
+  {
+    "code": "1380300014",
+    "cityCode": "1380300000",
+    "name": "Olympia"
+  },
+  {
+    "code": "1380300015",
+    "cityCode": "1380300000",
+    "name": "Palanan"
+  },
+  {
+    "code": "1380300017",
+    "cityCode": "1380300000",
+    "name": "Pinagkaisahan"
+  },
+  {
+    "code": "1380300018",
+    "cityCode": "1380300000",
+    "name": "Pio Del Pilar"
+  },
+  {
+    "code": "1380300020",
+    "cityCode": "1380300000",
+    "name": "Poblacion"
+  },
+  {
+    "code": "1380300023",
+    "cityCode": "1380300000",
+    "name": "San Antonio"
+  },
+  {
+    "code": "1380300024",
+    "cityCode": "1380300000",
+    "name": "San Isidro"
+  },
+  {
+    "code": "1380300025",
+    "cityCode": "1380300000",
+    "name": "San Lorenzo"
+  },
+  {
+    "code": "1380300026",
+    "cityCode": "1380300000",
+    "name": "Santa Cruz"
+  },
+  {
+    "code": "1380300027",
+    "cityCode": "1380300000",
+    "name": "Singkamas"
+  },
+  {
+    "code": "1380300029",
+    "cityCode": "1380300000",
+    "name": "Tejeros"
+  },
+  {
+    "code": "1380300030",
+    "cityCode": "1380300000",
+    "name": "Urdaneta"
+  },
+  {
+    "code": "1380300031",
+    "cityCode": "1380300000",
+    "name": "Valenzuela"
+  },
+  {
+    "code": "1380400001",
+    "cityCode": "1380400000",
+    "name": "Acacia"
+  },
+  {
+    "code": "1380400002",
+    "cityCode": "1380400000",
+    "name": "Baritan"
+  },
+  {
+    "code": "1380400003",
+    "cityCode": "1380400000",
+    "name": "Bayan-bayanan"
+  },
+  {
+    "code": "1380400004",
+    "cityCode": "1380400000",
+    "name": "Catmon"
+  },
+  {
+    "code": "1380400005",
+    "cityCode": "1380400000",
+    "name": "Concepcion"
+  },
+  {
+    "code": "1380400006",
+    "cityCode": "1380400000",
+    "name": "Dampalit"
+  },
+  {
+    "code": "1380400007",
+    "cityCode": "1380400000",
+    "name": "Flores"
+  },
+  {
+    "code": "1380400008",
+    "cityCode": "1380400000",
+    "name": "Hulong Duhat"
+  },
+  {
+    "code": "1380400009",
+    "cityCode": "1380400000",
+    "name": "Ibaba"
+  },
+  {
+    "code": "1380400010",
+    "cityCode": "1380400000",
+    "name": "Longos"
+  },
+  {
+    "code": "1380400011",
+    "cityCode": "1380400000",
+    "name": "Maysilo"
+  },
+  {
+    "code": "1380400012",
+    "cityCode": "1380400000",
+    "name": "Muzon"
+  },
+  {
+    "code": "1380400013",
+    "cityCode": "1380400000",
+    "name": "Niugan"
+  },
+  {
+    "code": "1380400014",
+    "cityCode": "1380400000",
+    "name": "Panghulo"
+  },
+  {
+    "code": "1380400015",
+    "cityCode": "1380400000",
+    "name": "Potrero"
+  },
+  {
+    "code": "1380400016",
+    "cityCode": "1380400000",
+    "name": "San Agustin"
+  },
+  {
+    "code": "1380400017",
+    "cityCode": "1380400000",
+    "name": "Santolan"
+  },
+  {
+    "code": "1380400018",
+    "cityCode": "1380400000",
+    "name": "Tañong"
+  },
+  {
+    "code": "1380400019",
+    "cityCode": "1380400000",
+    "name": "Tinajeros"
+  },
+  {
+    "code": "1380400020",
+    "cityCode": "1380400000",
+    "name": "Tonsuya"
+  },
+  {
+    "code": "1380400021",
+    "cityCode": "1380400000",
+    "name": "Tugatog"
+  },
+  {
+    "code": "1380500001",
+    "cityCode": "1380500000",
+    "name": "Addition Hills"
+  },
+  {
+    "code": "1380500002",
+    "cityCode": "1380500000",
+    "name": "Bagong Silang"
+  },
+  {
+    "code": "1380500003",
+    "cityCode": "1380500000",
+    "name": "Barangka Drive"
+  },
+  {
+    "code": "1380500004",
+    "cityCode": "1380500000",
+    "name": "Barangka Ibaba"
+  },
+  {
+    "code": "1380500005",
+    "cityCode": "1380500000",
+    "name": "Barangka Ilaya"
+  },
+  {
+    "code": "1380500006",
+    "cityCode": "1380500000",
+    "name": "Barangka Itaas"
+  },
+  {
+    "code": "1380500007",
+    "cityCode": "1380500000",
+    "name": "Burol"
+  },
+  {
+    "code": "1380500008",
+    "cityCode": "1380500000",
+    "name": "Buayang Bato"
+  },
+  {
+    "code": "1380500009",
+    "cityCode": "1380500000",
+    "name": "Daang Bakal"
+  },
+  {
+    "code": "1380500010",
+    "cityCode": "1380500000",
+    "name": "Hagdang Bato Itaas"
+  },
+  {
+    "code": "1380500011",
+    "cityCode": "1380500000",
+    "name": "Hagdang Bato Libis"
+  },
+  {
+    "code": "1380500012",
+    "cityCode": "1380500000",
+    "name": "Harapin Ang Bukas"
+  },
+  {
+    "code": "1380500013",
+    "cityCode": "1380500000",
+    "name": "Highway Hills"
+  },
+  {
+    "code": "1380500014",
+    "cityCode": "1380500000",
+    "name": "Hulo"
+  },
+  {
+    "code": "1380500015",
+    "cityCode": "1380500000",
+    "name": "Mabini-J. Rizal"
+  },
+  {
+    "code": "1380500016",
+    "cityCode": "1380500000",
+    "name": "Malamig"
+  },
+  {
+    "code": "1380500017",
+    "cityCode": "1380500000",
+    "name": "Mauway"
+  },
+  {
+    "code": "1380500018",
+    "cityCode": "1380500000",
+    "name": "Namayan"
+  },
+  {
+    "code": "1380500019",
+    "cityCode": "1380500000",
+    "name": "New Zañiga"
+  },
+  {
+    "code": "1380500020",
+    "cityCode": "1380500000",
+    "name": "Old Zañiga"
+  },
+  {
+    "code": "1380500021",
+    "cityCode": "1380500000",
+    "name": "Pag-asa"
+  },
+  {
+    "code": "1380500022",
+    "cityCode": "1380500000",
+    "name": "Plainview"
+  },
+  {
+    "code": "1380500023",
+    "cityCode": "1380500000",
+    "name": "Pleasant Hills"
+  },
+  {
+    "code": "1380500024",
+    "cityCode": "1380500000",
+    "name": "Poblacion"
+  },
+  {
+    "code": "1380500025",
+    "cityCode": "1380500000",
+    "name": "San Jose"
+  },
+  {
+    "code": "1380500026",
+    "cityCode": "1380500000",
+    "name": "Vergara"
+  },
+  {
+    "code": "1380500027",
+    "cityCode": "1380500000",
+    "name": "Wack-wack Greenhills"
+  },
+  {
+    "code": "1380600408",
+    "cityCode": "1380600000",
+    "name": "Barangay 408 (Zone 42 / EARIST Campus)"
+  },
+  {
     "code": "1380601001",
     "cityCode": "1380600000",
     "name": "Barangay 1"
@@ -1977,7 +3522,7 @@
   {
     "code": "1380606014",
     "cityCode": "1380600000",
-    "name": "Barangay 408"
+    "name": "Barangay 408 (Zone 42 / EARIST Campus)"
   },
   {
     "code": "1380606015",
@@ -4485,319 +6030,1454 @@
     "name": "Barangay 818-A"
   },
   {
-    "code": "1380800001",
-    "cityCode": "1380800000",
-    "name": "Bel-Air"
-  },
-  {
-    "code": "1380800002",
-    "cityCode": "1380800000",
-    "name": "Poblacion"
-  },
-  {
-    "code": "1380800003",
-    "cityCode": "1380800000",
-    "name": "San Lorenzo"
-  },
-  {
-    "code": "1380800004",
-    "cityCode": "1380800000",
-    "name": "San Antonio"
-  },
-  {
-    "code": "1380800005",
-    "cityCode": "1380800000",
-    "name": "Pio del Pilar"
-  },
-  {
-    "code": "1380800006",
-    "cityCode": "1380800000",
-    "name": "Palanan"
-  },
-  {
-    "code": "1381900001",
-    "cityCode": "1381900000",
-    "name": "Fort Bonifacio (BGC)"
-  },
-  {
-    "code": "1381900002",
-    "cityCode": "1381900000",
-    "name": "Pinagsama"
-  },
-  {
-    "code": "1381900003",
-    "cityCode": "1381900000",
-    "name": "Western Bicutan"
-  },
-  {
-    "code": "1381900004",
-    "cityCode": "1381900000",
-    "name": "Ususan"
-  },
-  {
     "code": "1380700001",
     "cityCode": "1380700000",
-    "name": "Wack-Wack Greenhills"
+    "name": "Barangka"
   },
   {
     "code": "1380700002",
     "cityCode": "1380700000",
-    "name": "Highway Hills"
+    "name": "Calumpang"
   },
   {
     "code": "1380700003",
     "cityCode": "1380700000",
-    "name": "Barangka Ilaya"
+    "name": "Concepcion Uno"
   },
   {
-    "code": "1380300001",
-    "cityCode": "1380300000",
-    "name": "Barangay 1"
+    "code": "1380700004",
+    "cityCode": "1380700000",
+    "name": "Jesus De La Peña"
   },
   {
-    "code": "1380300002",
-    "cityCode": "1380300000",
-    "name": "Barangay 2"
+    "code": "1380700005",
+    "cityCode": "1380700000",
+    "name": "Malanday"
   },
   {
-    "code": "1380300171",
-    "cityCode": "1380300000",
-    "name": "Barangay 171 (Bagumbong)"
+    "code": "1380700006",
+    "cityCode": "1380700000",
+    "name": "Nangka"
   },
   {
-    "code": "1380300176",
-    "cityCode": "1380300000",
-    "name": "Barangay 176 (Bagong Silang)"
+    "code": "1380700007",
+    "cityCode": "1380700000",
+    "name": "Parang"
   },
   {
-    "code": "1381500001",
-    "cityCode": "1381500000",
-    "name": "Barangay 1 (Poblacion)"
+    "code": "1380700008",
+    "cityCode": "1380700000",
+    "name": "San Roque"
   },
   {
-    "code": "1381500076",
-    "cityCode": "1381500000",
-    "name": "Barangay 76 (Mall of Asia Complex)"
+    "code": "1380700009",
+    "cityCode": "1380700000",
+    "name": "Santa Elena"
   },
   {
-    "code": "1381500183",
-    "cityCode": "1381500000",
-    "name": "Barangay 183 (Villamor Airbase)"
+    "code": "1380700010",
+    "cityCode": "1380700000",
+    "name": "Santo Niño"
   },
   {
-    "code": "1381400001",
-    "cityCode": "1381400000",
-    "name": "BF Homes"
+    "code": "1380700011",
+    "cityCode": "1380700000",
+    "name": "Tañong"
   },
   {
-    "code": "1381400002",
-    "cityCode": "1381400000",
-    "name": "San Antonio"
+    "code": "1380700012",
+    "cityCode": "1380700000",
+    "name": "Concepcion Dos"
   },
   {
-    "code": "1381400003",
-    "cityCode": "1381400000",
-    "name": "Don Bosco"
+    "code": "1380700013",
+    "cityCode": "1380700000",
+    "name": "Marikina Heights"
   },
   {
-    "code": "1381400004",
-    "cityCode": "1381400000",
-    "name": "Baclaran"
+    "code": "1380700014",
+    "cityCode": "1380700000",
+    "name": "Industrial Valley"
   },
   {
-    "code": "1381100001",
-    "cityCode": "1381100000",
+    "code": "1380700015",
+    "cityCode": "1380700000",
+    "name": "Fortune"
+  },
+  {
+    "code": "1380700016",
+    "cityCode": "1380700000",
+    "name": "Tumana"
+  },
+  {
+    "code": "1380800001",
+    "cityCode": "1380800000",
     "name": "Alabang"
   },
   {
-    "code": "1381100002",
-    "cityCode": "1381100000",
-    "name": "Ayala Alabang"
+    "code": "1380800002",
+    "cityCode": "1380800000",
+    "name": "Bayanan"
   },
   {
-    "code": "1381100003",
-    "cityCode": "1381100000",
+    "code": "1380800003",
+    "cityCode": "1380800000",
+    "name": "Buli"
+  },
+  {
+    "code": "1380800004",
+    "cityCode": "1380800000",
+    "name": "Cupang"
+  },
+  {
+    "code": "1380800005",
+    "cityCode": "1380800000",
+    "name": "Poblacion"
+  },
+  {
+    "code": "1380800006",
+    "cityCode": "1380800000",
     "name": "Putatan"
+  },
+  {
+    "code": "1380800007",
+    "cityCode": "1380800000",
+    "name": "Sucat"
+  },
+  {
+    "code": "1380800008",
+    "cityCode": "1380800000",
+    "name": "Tunasan"
+  },
+  {
+    "code": "1380800009",
+    "cityCode": "1380800000",
+    "name": "New Alabang Village"
+  },
+  {
+    "code": "1380900001",
+    "cityCode": "1380900000",
+    "name": "Sipac-Almacen"
+  },
+  {
+    "code": "1380900002",
+    "cityCode": "1380900000",
+    "name": "Bagumbayan North"
+  },
+  {
+    "code": "1380900003",
+    "cityCode": "1380900000",
+    "name": "Bagumbayan South"
+  },
+  {
+    "code": "1380900004",
+    "cityCode": "1380900000",
+    "name": "Bangculasi"
+  },
+  {
+    "code": "1380900005",
+    "cityCode": "1380900000",
+    "name": "Daanghari"
+  },
+  {
+    "code": "1380900006",
+    "cityCode": "1380900000",
+    "name": "Navotas East"
+  },
+  {
+    "code": "1380900007",
+    "cityCode": "1380900000",
+    "name": "Navotas West"
+  },
+  {
+    "code": "1380900008",
+    "cityCode": "1380900000",
+    "name": "North Bay Boulevard North"
+  },
+  {
+    "code": "1380900009",
+    "cityCode": "1380900000",
+    "name": "NBBS Kaunlaran"
+  },
+  {
+    "code": "1380900010",
+    "cityCode": "1380900000",
+    "name": "San Jose"
+  },
+  {
+    "code": "1380900011",
+    "cityCode": "1380900000",
+    "name": "San Rafael Village"
+  },
+  {
+    "code": "1380900012",
+    "cityCode": "1380900000",
+    "name": "San Roque"
+  },
+  {
+    "code": "1380900013",
+    "cityCode": "1380900000",
+    "name": "Tangos South"
+  },
+  {
+    "code": "1380900014",
+    "cityCode": "1380900000",
+    "name": "Tanza 1"
+  },
+  {
+    "code": "1380900015",
+    "cityCode": "1380900000",
+    "name": "NBBS Dagat-dagatan"
+  },
+  {
+    "code": "1380900016",
+    "cityCode": "1380900000",
+    "name": "NBBS Proper"
+  },
+  {
+    "code": "1380900017",
+    "cityCode": "1380900000",
+    "name": "Tangos North"
+  },
+  {
+    "code": "1380900018",
+    "cityCode": "1380900000",
+    "name": "Tanza 2"
   },
   {
     "code": "1381000001",
     "cityCode": "1381000000",
-    "name": "Concepcion Uno"
+    "name": "Baclaran"
   },
   {
     "code": "1381000002",
     "cityCode": "1381000000",
-    "name": "Marikina Heights"
+    "name": "Don Galo"
   },
   {
     "code": "1381000003",
     "cityCode": "1381000000",
+    "name": "La Huerta"
+  },
+  {
+    "code": "1381000004",
+    "cityCode": "1381000000",
+    "name": "San Dionisio"
+  },
+  {
+    "code": "1381000005",
+    "cityCode": "1381000000",
     "name": "Santo Niño"
   },
   {
-    "code": "1380500001",
-    "cityCode": "1380500000",
-    "name": "Pamplona Uno"
+    "code": "1381000006",
+    "cityCode": "1381000000",
+    "name": "Tambo"
   },
   {
-    "code": "1380500002",
-    "cityCode": "1380500000",
-    "name": "BF International Village"
+    "code": "1381000007",
+    "cityCode": "1381000000",
+    "name": "B. F. Homes"
   },
   {
-    "code": "1381800001",
-    "cityCode": "1381800000",
-    "name": "Greenhills"
+    "code": "1381000008",
+    "cityCode": "1381000000",
+    "name": "Don Bosco"
   },
   {
-    "code": "1381800002",
-    "cityCode": "1381800000",
-    "name": "West Crame"
+    "code": "1381000009",
+    "cityCode": "1381000000",
+    "name": "Marcelo Green Village"
   },
   {
-    "code": "1381700001",
-    "cityCode": "1381700000",
-    "name": "Aguho"
+    "code": "1381000010",
+    "cityCode": "1381000000",
+    "name": "Merville"
   },
   {
-    "code": "1381700002",
-    "cityCode": "1381700000",
-    "name": "San Roque"
+    "code": "1381000011",
+    "cityCode": "1381000000",
+    "name": "Moonwalk"
   },
   {
-    "code": "1411020001",
-    "cityCode": "1411020000",
-    "name": "Session Road Area"
+    "code": "1381000012",
+    "cityCode": "1381000000",
+    "name": "San Antonio"
   },
   {
-    "code": "1411020002",
-    "cityCode": "1411020000",
-    "name": "Camp 7"
+    "code": "1381000013",
+    "cityCode": "1381000000",
+    "name": "San Isidro"
   },
   {
-    "code": "1411020003",
-    "cityCode": "1411020000",
-    "name": "Loakan Proper"
+    "code": "1381000014",
+    "cityCode": "1381000000",
+    "name": "San Martin De Porres"
   },
   {
-    "code": "0421030001",
-    "cityCode": "0421030000",
-    "name": "Molino I"
+    "code": "1381000015",
+    "cityCode": "1381000000",
+    "name": "Sun Valley"
   },
   {
-    "code": "0421030002",
-    "cityCode": "0421030000",
-    "name": "Molino II"
+    "code": "1381000016",
+    "cityCode": "1381000000",
+    "name": "Vitalez"
   },
   {
-    "code": "0421030003",
-    "cityCode": "0421030000",
-    "name": "Molino III"
+    "code": "1381100001",
+    "cityCode": "1381100000",
+    "name": "Barangay 1"
   },
   {
-    "code": "0421030004",
-    "cityCode": "0421030000",
-    "name": "Habay I"
+    "code": "1381100002",
+    "cityCode": "1381100000",
+    "name": "Barangay 2"
   },
   {
-    "code": "0421060001",
-    "cityCode": "0421060000",
-    "name": "Salitran I"
+    "code": "1381100003",
+    "cityCode": "1381100000",
+    "name": "Barangay 3"
   },
   {
-    "code": "0421060002",
-    "cityCode": "0421060000",
-    "name": "Salitran II"
+    "code": "1381100004",
+    "cityCode": "1381100000",
+    "name": "Barangay 4"
   },
   {
-    "code": "0421060003",
-    "cityCode": "0421060000",
-    "name": "Burol I"
+    "code": "1381100005",
+    "cityCode": "1381100000",
+    "name": "Barangay 5"
   },
   {
-    "code": "0434040001",
-    "cityCode": "0434040000",
-    "name": "Bucal"
+    "code": "1381100006",
+    "cityCode": "1381100000",
+    "name": "Barangay 6"
   },
   {
-    "code": "0434040002",
-    "cityCode": "0434040000",
-    "name": "Pansol"
+    "code": "1381100007",
+    "cityCode": "1381100000",
+    "name": "Barangay 7"
   },
   {
-    "code": "0434040003",
-    "cityCode": "0434040000",
-    "name": "Canlubang"
+    "code": "1381100008",
+    "cityCode": "1381100000",
+    "name": "Barangay 8"
   },
   {
-    "code": "0434280001",
-    "cityCode": "0434280000",
-    "name": "Balibago"
+    "code": "1381100009",
+    "cityCode": "1381100000",
+    "name": "Barangay 9"
   },
   {
-    "code": "0434280002",
-    "cityCode": "0434280000",
-    "name": "Don Jose"
+    "code": "1381100010",
+    "cityCode": "1381100000",
+    "name": "Barangay 10"
   },
   {
-    "code": "0458010001",
-    "cityCode": "0458010000",
-    "name": "San Roque"
+    "code": "1381100011",
+    "cityCode": "1381100000",
+    "name": "Barangay 11"
   },
   {
-    "code": "0458010002",
-    "cityCode": "0458010000",
+    "code": "1381100012",
+    "cityCode": "1381100000",
+    "name": "Barangay 12"
+  },
+  {
+    "code": "1381100013",
+    "cityCode": "1381100000",
+    "name": "Barangay 13"
+  },
+  {
+    "code": "1381100014",
+    "cityCode": "1381100000",
+    "name": "Barangay 14"
+  },
+  {
+    "code": "1381100015",
+    "cityCode": "1381100000",
+    "name": "Barangay 15"
+  },
+  {
+    "code": "1381100016",
+    "cityCode": "1381100000",
+    "name": "Barangay 16"
+  },
+  {
+    "code": "1381100017",
+    "cityCode": "1381100000",
+    "name": "Barangay 17"
+  },
+  {
+    "code": "1381100018",
+    "cityCode": "1381100000",
+    "name": "Barangay 18"
+  },
+  {
+    "code": "1381100019",
+    "cityCode": "1381100000",
+    "name": "Barangay 19"
+  },
+  {
+    "code": "1381100020",
+    "cityCode": "1381100000",
+    "name": "Barangay 20"
+  },
+  {
+    "code": "1381100021",
+    "cityCode": "1381100000",
+    "name": "Barangay 21"
+  },
+  {
+    "code": "1381100022",
+    "cityCode": "1381100000",
+    "name": "Barangay 22"
+  },
+  {
+    "code": "1381100023",
+    "cityCode": "1381100000",
+    "name": "Barangay 23"
+  },
+  {
+    "code": "1381100024",
+    "cityCode": "1381100000",
+    "name": "Barangay 24"
+  },
+  {
+    "code": "1381100025",
+    "cityCode": "1381100000",
+    "name": "Barangay 25"
+  },
+  {
+    "code": "1381100026",
+    "cityCode": "1381100000",
+    "name": "Barangay 26"
+  },
+  {
+    "code": "1381100027",
+    "cityCode": "1381100000",
+    "name": "Barangay 27"
+  },
+  {
+    "code": "1381100028",
+    "cityCode": "1381100000",
+    "name": "Barangay 28"
+  },
+  {
+    "code": "1381100029",
+    "cityCode": "1381100000",
+    "name": "Barangay 29"
+  },
+  {
+    "code": "1381100030",
+    "cityCode": "1381100000",
+    "name": "Barangay 30"
+  },
+  {
+    "code": "1381100031",
+    "cityCode": "1381100000",
+    "name": "Barangay 31"
+  },
+  {
+    "code": "1381100032",
+    "cityCode": "1381100000",
+    "name": "Barangay 32"
+  },
+  {
+    "code": "1381100033",
+    "cityCode": "1381100000",
+    "name": "Barangay 33"
+  },
+  {
+    "code": "1381100034",
+    "cityCode": "1381100000",
+    "name": "Barangay 34"
+  },
+  {
+    "code": "1381100035",
+    "cityCode": "1381100000",
+    "name": "Barangay 35"
+  },
+  {
+    "code": "1381100036",
+    "cityCode": "1381100000",
+    "name": "Barangay 36"
+  },
+  {
+    "code": "1381100037",
+    "cityCode": "1381100000",
+    "name": "Barangay 37"
+  },
+  {
+    "code": "1381100038",
+    "cityCode": "1381100000",
+    "name": "Barangay 38"
+  },
+  {
+    "code": "1381100039",
+    "cityCode": "1381100000",
+    "name": "Barangay 39"
+  },
+  {
+    "code": "1381100040",
+    "cityCode": "1381100000",
+    "name": "Barangay 40"
+  },
+  {
+    "code": "1381100041",
+    "cityCode": "1381100000",
+    "name": "Barangay 41"
+  },
+  {
+    "code": "1381100042",
+    "cityCode": "1381100000",
+    "name": "Barangay 42"
+  },
+  {
+    "code": "1381100043",
+    "cityCode": "1381100000",
+    "name": "Barangay 43"
+  },
+  {
+    "code": "1381100044",
+    "cityCode": "1381100000",
+    "name": "Barangay 44"
+  },
+  {
+    "code": "1381100045",
+    "cityCode": "1381100000",
+    "name": "Barangay 45"
+  },
+  {
+    "code": "1381100046",
+    "cityCode": "1381100000",
+    "name": "Barangay 46"
+  },
+  {
+    "code": "1381100047",
+    "cityCode": "1381100000",
+    "name": "Barangay 47"
+  },
+  {
+    "code": "1381100048",
+    "cityCode": "1381100000",
+    "name": "Barangay 48"
+  },
+  {
+    "code": "1381100049",
+    "cityCode": "1381100000",
+    "name": "Barangay 49"
+  },
+  {
+    "code": "1381100050",
+    "cityCode": "1381100000",
+    "name": "Barangay 50"
+  },
+  {
+    "code": "1381100051",
+    "cityCode": "1381100000",
+    "name": "Barangay 51"
+  },
+  {
+    "code": "1381100052",
+    "cityCode": "1381100000",
+    "name": "Barangay 52"
+  },
+  {
+    "code": "1381100053",
+    "cityCode": "1381100000",
+    "name": "Barangay 53"
+  },
+  {
+    "code": "1381100054",
+    "cityCode": "1381100000",
+    "name": "Barangay 54"
+  },
+  {
+    "code": "1381100055",
+    "cityCode": "1381100000",
+    "name": "Barangay 55"
+  },
+  {
+    "code": "1381100056",
+    "cityCode": "1381100000",
+    "name": "Barangay 56"
+  },
+  {
+    "code": "1381100057",
+    "cityCode": "1381100000",
+    "name": "Barangay 57"
+  },
+  {
+    "code": "1381100058",
+    "cityCode": "1381100000",
+    "name": "Barangay 58"
+  },
+  {
+    "code": "1381100059",
+    "cityCode": "1381100000",
+    "name": "Barangay 59"
+  },
+  {
+    "code": "1381100060",
+    "cityCode": "1381100000",
+    "name": "Barangay 60"
+  },
+  {
+    "code": "1381100061",
+    "cityCode": "1381100000",
+    "name": "Barangay 61"
+  },
+  {
+    "code": "1381100062",
+    "cityCode": "1381100000",
+    "name": "Barangay 62"
+  },
+  {
+    "code": "1381100063",
+    "cityCode": "1381100000",
+    "name": "Barangay 63"
+  },
+  {
+    "code": "1381100064",
+    "cityCode": "1381100000",
+    "name": "Barangay 64"
+  },
+  {
+    "code": "1381100065",
+    "cityCode": "1381100000",
+    "name": "Barangay 65"
+  },
+  {
+    "code": "1381100066",
+    "cityCode": "1381100000",
+    "name": "Barangay 66"
+  },
+  {
+    "code": "1381100067",
+    "cityCode": "1381100000",
+    "name": "Barangay 67"
+  },
+  {
+    "code": "1381100068",
+    "cityCode": "1381100000",
+    "name": "Barangay 68"
+  },
+  {
+    "code": "1381100069",
+    "cityCode": "1381100000",
+    "name": "Barangay 69"
+  },
+  {
+    "code": "1381100070",
+    "cityCode": "1381100000",
+    "name": "Barangay 70"
+  },
+  {
+    "code": "1381100071",
+    "cityCode": "1381100000",
+    "name": "Barangay 71"
+  },
+  {
+    "code": "1381100072",
+    "cityCode": "1381100000",
+    "name": "Barangay 72"
+  },
+  {
+    "code": "1381100073",
+    "cityCode": "1381100000",
+    "name": "Barangay 73"
+  },
+  {
+    "code": "1381100074",
+    "cityCode": "1381100000",
+    "name": "Barangay 74"
+  },
+  {
+    "code": "1381100075",
+    "cityCode": "1381100000",
+    "name": "Barangay 75"
+  },
+  {
+    "code": "1381100076",
+    "cityCode": "1381100000",
+    "name": "Barangay 76"
+  },
+  {
+    "code": "1381100077",
+    "cityCode": "1381100000",
+    "name": "Barangay 77"
+  },
+  {
+    "code": "1381100078",
+    "cityCode": "1381100000",
+    "name": "Barangay 78"
+  },
+  {
+    "code": "1381100079",
+    "cityCode": "1381100000",
+    "name": "Barangay 79"
+  },
+  {
+    "code": "1381100080",
+    "cityCode": "1381100000",
+    "name": "Barangay 80"
+  },
+  {
+    "code": "1381100081",
+    "cityCode": "1381100000",
+    "name": "Barangay 81"
+  },
+  {
+    "code": "1381100082",
+    "cityCode": "1381100000",
+    "name": "Barangay 82"
+  },
+  {
+    "code": "1381100083",
+    "cityCode": "1381100000",
+    "name": "Barangay 83"
+  },
+  {
+    "code": "1381100084",
+    "cityCode": "1381100000",
+    "name": "Barangay 84"
+  },
+  {
+    "code": "1381100085",
+    "cityCode": "1381100000",
+    "name": "Barangay 85"
+  },
+  {
+    "code": "1381100086",
+    "cityCode": "1381100000",
+    "name": "Barangay 86"
+  },
+  {
+    "code": "1381100087",
+    "cityCode": "1381100000",
+    "name": "Barangay 87"
+  },
+  {
+    "code": "1381100088",
+    "cityCode": "1381100000",
+    "name": "Barangay 88"
+  },
+  {
+    "code": "1381100089",
+    "cityCode": "1381100000",
+    "name": "Barangay 89"
+  },
+  {
+    "code": "1381100090",
+    "cityCode": "1381100000",
+    "name": "Barangay 90"
+  },
+  {
+    "code": "1381100091",
+    "cityCode": "1381100000",
+    "name": "Barangay 91"
+  },
+  {
+    "code": "1381100092",
+    "cityCode": "1381100000",
+    "name": "Barangay 92"
+  },
+  {
+    "code": "1381100093",
+    "cityCode": "1381100000",
+    "name": "Barangay 93"
+  },
+  {
+    "code": "1381100094",
+    "cityCode": "1381100000",
+    "name": "Barangay 94"
+  },
+  {
+    "code": "1381100095",
+    "cityCode": "1381100000",
+    "name": "Barangay 95"
+  },
+  {
+    "code": "1381100096",
+    "cityCode": "1381100000",
+    "name": "Barangay 96"
+  },
+  {
+    "code": "1381100097",
+    "cityCode": "1381100000",
+    "name": "Barangay 97"
+  },
+  {
+    "code": "1381100098",
+    "cityCode": "1381100000",
+    "name": "Barangay 98"
+  },
+  {
+    "code": "1381100099",
+    "cityCode": "1381100000",
+    "name": "Barangay 99"
+  },
+  {
+    "code": "1381100100",
+    "cityCode": "1381100000",
+    "name": "Barangay 100"
+  },
+  {
+    "code": "1381100101",
+    "cityCode": "1381100000",
+    "name": "Barangay 101"
+  },
+  {
+    "code": "1381100102",
+    "cityCode": "1381100000",
+    "name": "Barangay 102"
+  },
+  {
+    "code": "1381100103",
+    "cityCode": "1381100000",
+    "name": "Barangay 103"
+  },
+  {
+    "code": "1381100104",
+    "cityCode": "1381100000",
+    "name": "Barangay 104"
+  },
+  {
+    "code": "1381100105",
+    "cityCode": "1381100000",
+    "name": "Barangay 105"
+  },
+  {
+    "code": "1381100106",
+    "cityCode": "1381100000",
+    "name": "Barangay 106"
+  },
+  {
+    "code": "1381100107",
+    "cityCode": "1381100000",
+    "name": "Barangay 107"
+  },
+  {
+    "code": "1381100108",
+    "cityCode": "1381100000",
+    "name": "Barangay 108"
+  },
+  {
+    "code": "1381100109",
+    "cityCode": "1381100000",
+    "name": "Barangay 109"
+  },
+  {
+    "code": "1381100110",
+    "cityCode": "1381100000",
+    "name": "Barangay 110"
+  },
+  {
+    "code": "1381100111",
+    "cityCode": "1381100000",
+    "name": "Barangay 111"
+  },
+  {
+    "code": "1381100112",
+    "cityCode": "1381100000",
+    "name": "Barangay 112"
+  },
+  {
+    "code": "1381100113",
+    "cityCode": "1381100000",
+    "name": "Barangay 113"
+  },
+  {
+    "code": "1381100114",
+    "cityCode": "1381100000",
+    "name": "Barangay 114"
+  },
+  {
+    "code": "1381100115",
+    "cityCode": "1381100000",
+    "name": "Barangay 115"
+  },
+  {
+    "code": "1381100116",
+    "cityCode": "1381100000",
+    "name": "Barangay 116"
+  },
+  {
+    "code": "1381100117",
+    "cityCode": "1381100000",
+    "name": "Barangay 117"
+  },
+  {
+    "code": "1381100118",
+    "cityCode": "1381100000",
+    "name": "Barangay 118"
+  },
+  {
+    "code": "1381100119",
+    "cityCode": "1381100000",
+    "name": "Barangay 119"
+  },
+  {
+    "code": "1381100120",
+    "cityCode": "1381100000",
+    "name": "Barangay 120"
+  },
+  {
+    "code": "1381100121",
+    "cityCode": "1381100000",
+    "name": "Barangay 121"
+  },
+  {
+    "code": "1381100122",
+    "cityCode": "1381100000",
+    "name": "Barangay 122"
+  },
+  {
+    "code": "1381100123",
+    "cityCode": "1381100000",
+    "name": "Barangay 123"
+  },
+  {
+    "code": "1381100124",
+    "cityCode": "1381100000",
+    "name": "Barangay 124"
+  },
+  {
+    "code": "1381100125",
+    "cityCode": "1381100000",
+    "name": "Barangay 125"
+  },
+  {
+    "code": "1381100126",
+    "cityCode": "1381100000",
+    "name": "Barangay 126"
+  },
+  {
+    "code": "1381100127",
+    "cityCode": "1381100000",
+    "name": "Barangay 127"
+  },
+  {
+    "code": "1381100128",
+    "cityCode": "1381100000",
+    "name": "Barangay 128"
+  },
+  {
+    "code": "1381100129",
+    "cityCode": "1381100000",
+    "name": "Barangay 129"
+  },
+  {
+    "code": "1381100130",
+    "cityCode": "1381100000",
+    "name": "Barangay 130"
+  },
+  {
+    "code": "1381100131",
+    "cityCode": "1381100000",
+    "name": "Barangay 131"
+  },
+  {
+    "code": "1381100132",
+    "cityCode": "1381100000",
+    "name": "Barangay 132"
+  },
+  {
+    "code": "1381100133",
+    "cityCode": "1381100000",
+    "name": "Barangay 133"
+  },
+  {
+    "code": "1381100134",
+    "cityCode": "1381100000",
+    "name": "Barangay 134"
+  },
+  {
+    "code": "1381100135",
+    "cityCode": "1381100000",
+    "name": "Barangay 135"
+  },
+  {
+    "code": "1381100136",
+    "cityCode": "1381100000",
+    "name": "Barangay 136"
+  },
+  {
+    "code": "1381100137",
+    "cityCode": "1381100000",
+    "name": "Barangay 137"
+  },
+  {
+    "code": "1381100138",
+    "cityCode": "1381100000",
+    "name": "Barangay 138"
+  },
+  {
+    "code": "1381100139",
+    "cityCode": "1381100000",
+    "name": "Barangay 139"
+  },
+  {
+    "code": "1381100140",
+    "cityCode": "1381100000",
+    "name": "Barangay 140"
+  },
+  {
+    "code": "1381100141",
+    "cityCode": "1381100000",
+    "name": "Barangay 141"
+  },
+  {
+    "code": "1381100142",
+    "cityCode": "1381100000",
+    "name": "Barangay 142"
+  },
+  {
+    "code": "1381100143",
+    "cityCode": "1381100000",
+    "name": "Barangay 143"
+  },
+  {
+    "code": "1381100144",
+    "cityCode": "1381100000",
+    "name": "Barangay 144"
+  },
+  {
+    "code": "1381100145",
+    "cityCode": "1381100000",
+    "name": "Barangay 145"
+  },
+  {
+    "code": "1381100146",
+    "cityCode": "1381100000",
+    "name": "Barangay 146"
+  },
+  {
+    "code": "1381100147",
+    "cityCode": "1381100000",
+    "name": "Barangay 147"
+  },
+  {
+    "code": "1381100148",
+    "cityCode": "1381100000",
+    "name": "Barangay 148"
+  },
+  {
+    "code": "1381100149",
+    "cityCode": "1381100000",
+    "name": "Barangay 149"
+  },
+  {
+    "code": "1381100150",
+    "cityCode": "1381100000",
+    "name": "Barangay 150"
+  },
+  {
+    "code": "1381100151",
+    "cityCode": "1381100000",
+    "name": "Barangay 151"
+  },
+  {
+    "code": "1381100152",
+    "cityCode": "1381100000",
+    "name": "Barangay 152"
+  },
+  {
+    "code": "1381100153",
+    "cityCode": "1381100000",
+    "name": "Barangay 153"
+  },
+  {
+    "code": "1381100154",
+    "cityCode": "1381100000",
+    "name": "Barangay 154"
+  },
+  {
+    "code": "1381100155",
+    "cityCode": "1381100000",
+    "name": "Barangay 155"
+  },
+  {
+    "code": "1381100156",
+    "cityCode": "1381100000",
+    "name": "Barangay 156"
+  },
+  {
+    "code": "1381100157",
+    "cityCode": "1381100000",
+    "name": "Barangay 157"
+  },
+  {
+    "code": "1381100158",
+    "cityCode": "1381100000",
+    "name": "Barangay 158"
+  },
+  {
+    "code": "1381100159",
+    "cityCode": "1381100000",
+    "name": "Barangay 159"
+  },
+  {
+    "code": "1381100160",
+    "cityCode": "1381100000",
+    "name": "Barangay 160"
+  },
+  {
+    "code": "1381100161",
+    "cityCode": "1381100000",
+    "name": "Barangay 161"
+  },
+  {
+    "code": "1381100162",
+    "cityCode": "1381100000",
+    "name": "Barangay 162"
+  },
+  {
+    "code": "1381100163",
+    "cityCode": "1381100000",
+    "name": "Barangay 163"
+  },
+  {
+    "code": "1381100164",
+    "cityCode": "1381100000",
+    "name": "Barangay 164"
+  },
+  {
+    "code": "1381100165",
+    "cityCode": "1381100000",
+    "name": "Barangay 165"
+  },
+  {
+    "code": "1381100166",
+    "cityCode": "1381100000",
+    "name": "Barangay 166"
+  },
+  {
+    "code": "1381100167",
+    "cityCode": "1381100000",
+    "name": "Barangay 167"
+  },
+  {
+    "code": "1381100168",
+    "cityCode": "1381100000",
+    "name": "Barangay 168"
+  },
+  {
+    "code": "1381100169",
+    "cityCode": "1381100000",
+    "name": "Barangay 169"
+  },
+  {
+    "code": "1381100170",
+    "cityCode": "1381100000",
+    "name": "Barangay 170"
+  },
+  {
+    "code": "1381100171",
+    "cityCode": "1381100000",
+    "name": "Barangay 171"
+  },
+  {
+    "code": "1381100172",
+    "cityCode": "1381100000",
+    "name": "Barangay 172"
+  },
+  {
+    "code": "1381100173",
+    "cityCode": "1381100000",
+    "name": "Barangay 173"
+  },
+  {
+    "code": "1381100174",
+    "cityCode": "1381100000",
+    "name": "Barangay 174"
+  },
+  {
+    "code": "1381100175",
+    "cityCode": "1381100000",
+    "name": "Barangay 175"
+  },
+  {
+    "code": "1381100176",
+    "cityCode": "1381100000",
+    "name": "Barangay 176"
+  },
+  {
+    "code": "1381100177",
+    "cityCode": "1381100000",
+    "name": "Barangay 177"
+  },
+  {
+    "code": "1381100178",
+    "cityCode": "1381100000",
+    "name": "Barangay 178"
+  },
+  {
+    "code": "1381100179",
+    "cityCode": "1381100000",
+    "name": "Barangay 179"
+  },
+  {
+    "code": "1381100180",
+    "cityCode": "1381100000",
+    "name": "Barangay 180"
+  },
+  {
+    "code": "1381100181",
+    "cityCode": "1381100000",
+    "name": "Barangay 181"
+  },
+  {
+    "code": "1381100182",
+    "cityCode": "1381100000",
+    "name": "Barangay 182"
+  },
+  {
+    "code": "1381100183",
+    "cityCode": "1381100000",
+    "name": "Barangay 183"
+  },
+  {
+    "code": "1381100184",
+    "cityCode": "1381100000",
+    "name": "Barangay 184"
+  },
+  {
+    "code": "1381100185",
+    "cityCode": "1381100000",
+    "name": "Barangay 185"
+  },
+  {
+    "code": "1381100186",
+    "cityCode": "1381100000",
+    "name": "Barangay 186"
+  },
+  {
+    "code": "1381100187",
+    "cityCode": "1381100000",
+    "name": "Barangay 187"
+  },
+  {
+    "code": "1381100188",
+    "cityCode": "1381100000",
+    "name": "Barangay 188"
+  },
+  {
+    "code": "1381100189",
+    "cityCode": "1381100000",
+    "name": "Barangay 189"
+  },
+  {
+    "code": "1381100190",
+    "cityCode": "1381100000",
+    "name": "Barangay 190"
+  },
+  {
+    "code": "1381100191",
+    "cityCode": "1381100000",
+    "name": "Barangay 191"
+  },
+  {
+    "code": "1381100192",
+    "cityCode": "1381100000",
+    "name": "Barangay 192"
+  },
+  {
+    "code": "1381100193",
+    "cityCode": "1381100000",
+    "name": "Barangay 193"
+  },
+  {
+    "code": "1381100194",
+    "cityCode": "1381100000",
+    "name": "Barangay 194"
+  },
+  {
+    "code": "1381100195",
+    "cityCode": "1381100000",
+    "name": "Barangay 195"
+  },
+  {
+    "code": "1381100196",
+    "cityCode": "1381100000",
+    "name": "Barangay 196"
+  },
+  {
+    "code": "1381100197",
+    "cityCode": "1381100000",
+    "name": "Barangay 197"
+  },
+  {
+    "code": "1381100198",
+    "cityCode": "1381100000",
+    "name": "Barangay 198"
+  },
+  {
+    "code": "1381100199",
+    "cityCode": "1381100000",
+    "name": "Barangay 199"
+  },
+  {
+    "code": "1381100200",
+    "cityCode": "1381100000",
+    "name": "Barangay 200"
+  },
+  {
+    "code": "1381100201",
+    "cityCode": "1381100000",
+    "name": "Barangay 201"
+  },
+  {
+    "code": "1381200001",
+    "cityCode": "1381200000",
+    "name": "Bagong Ilog"
+  },
+  {
+    "code": "1381200002",
+    "cityCode": "1381200000",
+    "name": "Bagong Katipunan"
+  },
+  {
+    "code": "1381200003",
+    "cityCode": "1381200000",
+    "name": "Bambang"
+  },
+  {
+    "code": "1381200004",
+    "cityCode": "1381200000",
+    "name": "Buting"
+  },
+  {
+    "code": "1381200005",
+    "cityCode": "1381200000",
+    "name": "Caniogan"
+  },
+  {
+    "code": "1381200006",
+    "cityCode": "1381200000",
     "name": "Dela Paz"
   },
   {
-    "code": "0458010003",
-    "cityCode": "0458010000",
-    "name": "Mayamot"
+    "code": "1381200007",
+    "cityCode": "1381200000",
+    "name": "Kalawaan"
   },
   {
-    "code": "0314010001",
-    "cityCode": "0314010000",
-    "name": "Tikay"
+    "code": "1381200008",
+    "cityCode": "1381200000",
+    "name": "Kapasigan"
   },
   {
-    "code": "0314010002",
-    "cityCode": "0314010000",
-    "name": "Dakila"
+    "code": "1381200009",
+    "cityCode": "1381200000",
+    "name": "Kapitolyo"
   },
   {
-    "code": "0314010003",
-    "cityCode": "0314010000",
-    "name": "Guinhawa"
+    "code": "1381200010",
+    "cityCode": "1381200000",
+    "name": "Malinao"
   },
   {
-    "code": "0722170001",
-    "cityCode": "0722170000",
-    "name": "Lahug"
+    "code": "1381200011",
+    "cityCode": "1381200000",
+    "name": "Manggahan"
   },
   {
-    "code": "0722170002",
-    "cityCode": "0722170000",
-    "name": "Mabolo"
+    "code": "1381200012",
+    "cityCode": "1381200000",
+    "name": "Maybunga"
   },
   {
-    "code": "0722170003",
-    "cityCode": "0722170000",
-    "name": "Guadalupe"
+    "code": "1381200013",
+    "cityCode": "1381200000",
+    "name": "Oranbo"
   },
   {
-    "code": "1124020001",
-    "cityCode": "1124020000",
-    "name": "Poblacion"
+    "code": "1381200014",
+    "cityCode": "1381200000",
+    "name": "Palatiw"
   },
   {
-    "code": "1124020002",
-    "cityCode": "1124020000",
-    "name": "Buhangin"
+    "code": "1381200015",
+    "cityCode": "1381200000",
+    "name": "Pinagbuhatan"
   },
   {
-    "code": "1124020003",
-    "cityCode": "1124020000",
-    "name": "Talomo"
+    "code": "1381200016",
+    "cityCode": "1381200000",
+    "name": "Pineda"
+  },
+  {
+    "code": "1381200017",
+    "cityCode": "1381200000",
+    "name": "Rosario"
+  },
+  {
+    "code": "1381200018",
+    "cityCode": "1381200000",
+    "name": "Sagad"
+  },
+  {
+    "code": "1381200019",
+    "cityCode": "1381200000",
+    "name": "San Antonio"
+  },
+  {
+    "code": "1381200020",
+    "cityCode": "1381200000",
+    "name": "San Joaquin"
+  },
+  {
+    "code": "1381200021",
+    "cityCode": "1381200000",
+    "name": "San Jose"
+  },
+  {
+    "code": "1381200022",
+    "cityCode": "1381200000",
+    "name": "San Miguel"
+  },
+  {
+    "code": "1381200023",
+    "cityCode": "1381200000",
+    "name": "San Nicolas"
+  },
+  {
+    "code": "1381200024",
+    "cityCode": "1381200000",
+    "name": "Santa Cruz"
+  },
+  {
+    "code": "1381200025",
+    "cityCode": "1381200000",
+    "name": "Santa Rosa"
+  },
+  {
+    "code": "1381200026",
+    "cityCode": "1381200000",
+    "name": "Santo Tomas"
+  },
+  {
+    "code": "1381200027",
+    "cityCode": "1381200000",
+    "name": "Santolan"
+  },
+  {
+    "code": "1381200028",
+    "cityCode": "1381200000",
+    "name": "Sumilang"
+  },
+  {
+    "code": "1381200029",
+    "cityCode": "1381200000",
+    "name": "Ugong"
+  },
+  {
+    "code": "1381200030",
+    "cityCode": "1381200000",
+    "name": "Santa Lucia"
   },
   {
     "code": "1381300001",
@@ -5510,244 +8190,299 @@
     "name": "North Fairview"
   },
   {
-    "code": "1381200001",
-    "cityCode": "1381200000",
-    "name": "Bagong Ilog"
+    "code": "1381400001",
+    "cityCode": "1381400000",
+    "name": "Addition Hills"
   },
   {
-    "code": "1381200002",
-    "cityCode": "1381200000",
-    "name": "Bagong Katipunan"
+    "code": "1381400002",
+    "cityCode": "1381400000",
+    "name": "Balong-Bato"
   },
   {
-    "code": "1381200003",
-    "cityCode": "1381200000",
-    "name": "Bambang"
+    "code": "1381400003",
+    "cityCode": "1381400000",
+    "name": "Batis"
   },
   {
-    "code": "1381200004",
-    "cityCode": "1381200000",
-    "name": "Buting"
+    "code": "1381400004",
+    "cityCode": "1381400000",
+    "name": "Corazon De Jesus"
   },
   {
-    "code": "1381200005",
-    "cityCode": "1381200000",
-    "name": "Caniogan"
+    "code": "1381400005",
+    "cityCode": "1381400000",
+    "name": "Ermitaño"
   },
   {
-    "code": "1381200006",
-    "cityCode": "1381200000",
-    "name": "Dela Paz"
+    "code": "1381400006",
+    "cityCode": "1381400000",
+    "name": "Halo-halo"
   },
   {
-    "code": "1381200007",
-    "cityCode": "1381200000",
-    "name": "Kalawaan"
+    "code": "1381400007",
+    "cityCode": "1381400000",
+    "name": "Isabelita"
   },
   {
-    "code": "1381200008",
-    "cityCode": "1381200000",
-    "name": "Kapasigan"
+    "code": "1381400008",
+    "cityCode": "1381400000",
+    "name": "Kabayanan"
   },
   {
-    "code": "1381200009",
-    "cityCode": "1381200000",
-    "name": "Kapitolyo"
+    "code": "1381400009",
+    "cityCode": "1381400000",
+    "name": "Little Baguio"
   },
   {
-    "code": "1381200010",
-    "cityCode": "1381200000",
-    "name": "Malinao"
+    "code": "1381400010",
+    "cityCode": "1381400000",
+    "name": "Maytunas"
   },
   {
-    "code": "1381200011",
-    "cityCode": "1381200000",
-    "name": "Manggahan"
+    "code": "1381400011",
+    "cityCode": "1381400000",
+    "name": "Onse"
   },
   {
-    "code": "1381200012",
-    "cityCode": "1381200000",
-    "name": "Maybunga"
+    "code": "1381400012",
+    "cityCode": "1381400000",
+    "name": "Pasadeña"
   },
   {
-    "code": "1381200013",
-    "cityCode": "1381200000",
-    "name": "Oranbo"
+    "code": "1381400013",
+    "cityCode": "1381400000",
+    "name": "Pedro Cruz"
   },
   {
-    "code": "1381200014",
-    "cityCode": "1381200000",
-    "name": "Palatiw"
+    "code": "1381400014",
+    "cityCode": "1381400000",
+    "name": "Progreso"
   },
   {
-    "code": "1381200015",
-    "cityCode": "1381200000",
-    "name": "Pinagbuhatan"
+    "code": "1381400015",
+    "cityCode": "1381400000",
+    "name": "Rivera"
   },
   {
-    "code": "1381200016",
-    "cityCode": "1381200000",
-    "name": "Pineda"
+    "code": "1381400016",
+    "cityCode": "1381400000",
+    "name": "Salapan"
   },
   {
-    "code": "1381200017",
-    "cityCode": "1381200000",
-    "name": "Rosario"
+    "code": "1381400017",
+    "cityCode": "1381400000",
+    "name": "San Perfecto"
   },
   {
-    "code": "1381200018",
-    "cityCode": "1381200000",
-    "name": "Sagad"
-  },
-  {
-    "code": "1381200019",
-    "cityCode": "1381200000",
-    "name": "San Antonio"
-  },
-  {
-    "code": "1381200020",
-    "cityCode": "1381200000",
-    "name": "San Joaquin"
-  },
-  {
-    "code": "1381200021",
-    "cityCode": "1381200000",
-    "name": "San Jose"
-  },
-  {
-    "code": "1381200022",
-    "cityCode": "1381200000",
-    "name": "San Miguel"
-  },
-  {
-    "code": "1381200023",
-    "cityCode": "1381200000",
-    "name": "San Nicolas (Pob.)"
-  },
-  {
-    "code": "1381200024",
-    "cityCode": "1381200000",
-    "name": "Santa Cruz"
-  },
-  {
-    "code": "1381200025",
-    "cityCode": "1381200000",
-    "name": "Santa Rosa"
-  },
-  {
-    "code": "1381200026",
-    "cityCode": "1381200000",
-    "name": "Santo Tomas"
-  },
-  {
-    "code": "1381200027",
-    "cityCode": "1381200000",
-    "name": "Santolan"
-  },
-  {
-    "code": "1381200028",
-    "cityCode": "1381200000",
-    "name": "Sumilang"
-  },
-  {
-    "code": "1381200029",
-    "cityCode": "1381200000",
-    "name": "Ugong"
-  },
-  {
-    "code": "1381200030",
-    "cityCode": "1381200000",
+    "code": "1381400018",
+    "cityCode": "1381400000",
     "name": "Santa Lucia"
   },
   {
-    "code": "1380900001",
-    "cityCode": "1380900000",
-    "name": "Sipac-Almacen"
+    "code": "1381400019",
+    "cityCode": "1381400000",
+    "name": "Tibagan"
   },
   {
-    "code": "1380900002",
-    "cityCode": "1380900000",
-    "name": "Bagumbayan North"
+    "code": "1381400020",
+    "cityCode": "1381400000",
+    "name": "West Crame"
   },
   {
-    "code": "1380900003",
-    "cityCode": "1380900000",
-    "name": "Bagumbayan South"
+    "code": "1381400021",
+    "cityCode": "1381400000",
+    "name": "Greenhills"
   },
   {
-    "code": "1380900004",
-    "cityCode": "1380900000",
-    "name": "Bangculasi"
+    "code": "1381500001",
+    "cityCode": "1381500000",
+    "name": "Tanyag"
   },
   {
-    "code": "1380900005",
-    "cityCode": "1380900000",
-    "name": "Daanghari"
+    "code": "1381500002",
+    "cityCode": "1381500000",
+    "name": "Bagumbayan"
   },
   {
-    "code": "1380900006",
-    "cityCode": "1380900000",
-    "name": "Navotas East"
+    "code": "1381500003",
+    "cityCode": "1381500000",
+    "name": "Bambang"
   },
   {
-    "code": "1380900007",
-    "cityCode": "1380900000",
-    "name": "Navotas West"
+    "code": "1381500004",
+    "cityCode": "1381500000",
+    "name": "Calzada"
   },
   {
-    "code": "1380900008",
-    "cityCode": "1380900000",
-    "name": "North Bay Boulevard North"
+    "code": "1381500005",
+    "cityCode": "1381500000",
+    "name": "Hagonoy"
   },
   {
-    "code": "1380900009",
-    "cityCode": "1380900000",
-    "name": "NBBS Kaunlaran"
+    "code": "1381500006",
+    "cityCode": "1381500000",
+    "name": "Ibayo-Tipas"
   },
   {
-    "code": "1380900010",
-    "cityCode": "1380900000",
-    "name": "San Jose (Pob.)"
+    "code": "1381500007",
+    "cityCode": "1381500000",
+    "name": "Ligid-Tipas"
   },
   {
-    "code": "1380900011",
-    "cityCode": "1380900000",
-    "name": "San Rafael Village"
+    "code": "1381500008",
+    "cityCode": "1381500000",
+    "name": "Lower Bicutan"
   },
   {
-    "code": "1380900012",
-    "cityCode": "1380900000",
-    "name": "San Roque"
+    "code": "1381500009",
+    "cityCode": "1381500000",
+    "name": "Maharlika Village"
   },
   {
-    "code": "1380900013",
-    "cityCode": "1380900000",
-    "name": "Tangos South"
+    "code": "1381500010",
+    "cityCode": "1381500000",
+    "name": "Napindan"
   },
   {
-    "code": "1380900014",
-    "cityCode": "1380900000",
-    "name": "Tanza 1"
+    "code": "1381500011",
+    "cityCode": "1381500000",
+    "name": "Palingon"
   },
   {
-    "code": "1380900015",
-    "cityCode": "1380900000",
-    "name": "NBBS Dagat-dagatan"
+    "code": "1381500012",
+    "cityCode": "1381500000",
+    "name": "Santa Ana"
   },
   {
-    "code": "1380900016",
-    "cityCode": "1380900000",
-    "name": "NBBS Proper"
+    "code": "1381500013",
+    "cityCode": "1381500000",
+    "name": "Central Signal Village"
   },
   {
-    "code": "1380900017",
-    "cityCode": "1380900000",
-    "name": "Tangos North"
+    "code": "1381500014",
+    "cityCode": "1381500000",
+    "name": "Tuktukan"
   },
   {
-    "code": "1380900018",
-    "cityCode": "1380900000",
-    "name": "Tanza 2"
+    "code": "1381500015",
+    "cityCode": "1381500000",
+    "name": "Upper Bicutan"
+  },
+  {
+    "code": "1381500016",
+    "cityCode": "1381500000",
+    "name": "Ususan"
+  },
+  {
+    "code": "1381500017",
+    "cityCode": "1381500000",
+    "name": "Wawa"
+  },
+  {
+    "code": "1381500018",
+    "cityCode": "1381500000",
+    "name": "Western Bicutan"
+  },
+  {
+    "code": "1381500019",
+    "cityCode": "1381500000",
+    "name": "Central Bicutan"
+  },
+  {
+    "code": "1381500020",
+    "cityCode": "1381500000",
+    "name": "Fort Bonifacio"
+  },
+  {
+    "code": "1381500021",
+    "cityCode": "1381500000",
+    "name": "Katuparan"
+  },
+  {
+    "code": "1381500022",
+    "cityCode": "1381500000",
+    "name": "New Lower Bicutan"
+  },
+  {
+    "code": "1381500023",
+    "cityCode": "1381500000",
+    "name": "North Daang Hari"
+  },
+  {
+    "code": "1381500024",
+    "cityCode": "1381500000",
+    "name": "North Signal Village"
+  },
+  {
+    "code": "1381500025",
+    "cityCode": "1381500000",
+    "name": "Pinagsama"
+  },
+  {
+    "code": "1381500026",
+    "cityCode": "1381500000",
+    "name": "San Miguel"
+  },
+  {
+    "code": "1381500027",
+    "cityCode": "1381500000",
+    "name": "South Daang Hari"
+  },
+  {
+    "code": "1381500028",
+    "cityCode": "1381500000",
+    "name": "South Signal Village"
+  },
+  {
+    "code": "1381500029",
+    "cityCode": "1381500000",
+    "name": "Cembo"
+  },
+  {
+    "code": "1381500030",
+    "cityCode": "1381500000",
+    "name": "Comembo"
+  },
+  {
+    "code": "1381500031",
+    "cityCode": "1381500000",
+    "name": "East Rembo"
+  },
+  {
+    "code": "1381500032",
+    "cityCode": "1381500000",
+    "name": "Pembo"
+  },
+  {
+    "code": "1381500033",
+    "cityCode": "1381500000",
+    "name": "Pitogo"
+  },
+  {
+    "code": "1381500034",
+    "cityCode": "1381500000",
+    "name": "Post Proper Northside"
+  },
+  {
+    "code": "1381500035",
+    "cityCode": "1381500000",
+    "name": "Post Proper Southside"
+  },
+  {
+    "code": "1381500036",
+    "cityCode": "1381500000",
+    "name": "Rizal"
+  },
+  {
+    "code": "1381500037",
+    "cityCode": "1381500000",
+    "name": "South Cembo"
+  },
+  {
+    "code": "1381500038",
+    "cityCode": "1381500000",
+    "name": "West Rembo"
   },
   {
     "code": "1381600001",
@@ -5802,7 +8537,7 @@
   {
     "code": "1381600011",
     "cityCode": "1381600000",
-    "name": "Gen. T. de Leon"
+    "name": "Gen. T. De Leon"
   },
   {
     "code": "1381600012",
@@ -5862,7 +8597,7 @@
   {
     "code": "1381600023",
     "cityCode": "1381600000",
-    "name": "Paso de Blas"
+    "name": "Paso De Blas"
   },
   {
     "code": "1381600024",
@@ -5902,7 +8637,7 @@
   {
     "code": "1381600031",
     "cityCode": "1381600000",
-    "name": "Veinte Reales"
+    "name": "Viente Reales"
   },
   {
     "code": "1381600032",
@@ -5913,5 +8648,70 @@
     "code": "1381600033",
     "cityCode": "1381600000",
     "name": "Canumay East"
+  },
+  {
+    "code": "1381701001",
+    "cityCode": "1381700000",
+    "name": "Aguho"
+  },
+  {
+    "code": "1381701002",
+    "cityCode": "1381700000",
+    "name": "Magtanggol"
+  },
+  {
+    "code": "1381701003",
+    "cityCode": "1381700000",
+    "name": "Martires Del 96"
+  },
+  {
+    "code": "1381701004",
+    "cityCode": "1381700000",
+    "name": "Poblacion"
+  },
+  {
+    "code": "1381701005",
+    "cityCode": "1381700000",
+    "name": "San Pedro"
+  },
+  {
+    "code": "1381701006",
+    "cityCode": "1381700000",
+    "name": "San Roque"
+  },
+  {
+    "code": "1381701007",
+    "cityCode": "1381700000",
+    "name": "Santa Ana"
+  },
+  {
+    "code": "1381701008",
+    "cityCode": "1381700000",
+    "name": "Santo Rosario-Kanluran"
+  },
+  {
+    "code": "1381701009",
+    "cityCode": "1381700000",
+    "name": "Santo Rosario-Silangan"
+  },
+  {
+    "code": "1381701010",
+    "cityCode": "1381700000",
+    "name": "Tabacalera"
+  },
+  {
+    "code": "1411020001",
+    "cityCode": "1411020000",
+    "name": "Session Road Area"
+  },
+  {
+    "code": "1411020002",
+    "cityCode": "1411020000",
+    "name": "Camp 7"
+  },
+  {
+    "code": "1411020003",
+    "cityCode": "1411020000",
+    "name": "Loakan Proper"
   }
 ]

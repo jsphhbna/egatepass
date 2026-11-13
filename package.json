@@ -11,7 +11,7 @@
     "prebuild": "node scripts/sync-tesseract-assets.mjs && node scripts/bundle-email-templates.mjs && node scripts/generate-build-meta.mjs",
     "pretest": "node scripts/sync-tesseract-assets.mjs && node scripts/bundle-email-templates.mjs && node scripts/generate-build-meta.mjs",
     "dev": "vite",
-    "build": "tsc && vite build",
+    "build": "node scripts/build-production.mjs",
     "preview": "vite preview",
     "test": "vitest run",
     "test:unit": "vitest run",

@@ -62,3 +62,5 @@ scripts/*
 !scripts/calibrate-returning-face.mjs
 !scripts/build-reference-datasets.mjs
 !scripts/generate-returning-secrets.mjs
+!scripts/build-production.mjs
+!scripts/reconcile-psgc-ncr.mjs

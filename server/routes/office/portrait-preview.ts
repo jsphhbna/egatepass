@@ -49,11 +49,47 @@ export async function handleRequest(request: Request): Promise<Response> {
       return jsonResponse(403, { error: 'invalid_or_expired_preview_token' });
     }
 
+    const nowIso = new Date().toISOString();
     let bucketId = 'visitor-photos';
     let objectPath = visit.visitor_photo_path;
 
+    if (objectPath) {
+      // Check if evidence or upload intent for this objectPath is expired or purged
+      const [{ data: evMatch }, { data: intentMatch }] = await Promise.all([
+        admin
+          .from('visitor_evidence')
+          .select('purged_at, expires_at')
+          .eq('object_path', objectPath)
+          .maybeSingle(),
+        visit.photo_intent_id
+          ? admin
+              .from('upload_intents')
+              .select('purged_at, expires_at, held_until')
+              .eq('id', visit.photo_intent_id)
+              .maybeSingle()
+          : Promise.resolve({ data: null }),
+      ]);
+
+      if (evMatch) {
+        if (evMatch.purged_at || (evMatch.expires_at && evMatch.expires_at <= nowIso)) {
+          return jsonResponse(410, {
+            error: 'photo_expired_under_retention',
+            message: 'Visitor photo was removed under retention policy.',
+          });
+        }
+      } else if (intentMatch) {
+        const isHeld = Boolean(intentMatch.held_until && intentMatch.held_until > nowIso);
+        if (intentMatch.purged_at || (!isHeld && intentMatch.expires_at <= nowIso)) {
+          return jsonResponse(410, {
+            error: 'photo_expired_under_retention',
+            message: 'Visitor photo was removed under retention policy or upload expiration.',
+          });
+        }
+      }
+    }
+
     if (!objectPath) {
-      // 1. Check if returning visitor profile has photo evidence
+      // 1. Check if returning visitor profile has original photo evidence
       if (visit.returning_profile_id) {
         const { data: retVisitors } = await admin
           .from('visitors')
@@ -63,14 +99,14 @@ export async function handleRequest(request: Request): Promise<Response> {
         if (vIds.length > 0) {
           const { data: ev } = await admin
             .from('visitor_evidence')
-            .select('bucket_id, object_path, purged_at')
+            .select('bucket_id, object_path, purged_at, expires_at')
             .in('visitor_id', vIds)
             .eq('kind', 'photo')
             .order('created_at', { ascending: true })
             .limit(1)
             .maybeSingle();
           if (ev) {
-            if (ev.purged_at) {
+            if (ev.purged_at || (ev.expires_at && ev.expires_at <= nowIso)) {
               return jsonResponse(410, {
                 error: 'photo_expired_under_retention',
                 message: 'Visitor photo was removed under retention policy.',
@@ -86,14 +122,14 @@ export async function handleRequest(request: Request): Promise<Response> {
       if (!objectPath && visit.visitor_id) {
         const { data: ev } = await admin
           .from('visitor_evidence')
-          .select('bucket_id, object_path, purged_at')
+          .select('bucket_id, object_path, purged_at, expires_at')
           .eq('visitor_id', visit.visitor_id)
           .eq('kind', 'photo')
           .order('created_at', { ascending: true })
           .limit(1)
           .maybeSingle();
         if (ev) {
-          if (ev.purged_at) {
+          if (ev.purged_at || (ev.expires_at && ev.expires_at <= nowIso)) {
             return jsonResponse(410, {
               error: 'photo_expired_under_retention',
               message: 'Visitor photo was removed under retention policy.',
@@ -112,7 +148,6 @@ export async function handleRequest(request: Request): Promise<Response> {
           .eq('id', visit.photo_intent_id)
           .maybeSingle();
         if (intent) {
-          const nowIso = new Date().toISOString();
           const isHeld = Boolean(intent.held_until && intent.held_until > nowIso);
           if (intent.purged_at || (!isHeld && intent.expires_at <= nowIso)) {
             return jsonResponse(410, {

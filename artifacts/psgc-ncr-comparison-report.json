@@ -1,0 +1,178 @@
+{
+  "source": "Philippine Statistics Authority (PSA) PSGC 2026-Q3 Masterlist",
+  "reconciliationTimestamp": "2026-11-13T12:08:13.508Z",
+  "totalNcrLgus": 17,
+  "totalNcrBarangays": 1715,
+  "lgus": [
+    {
+      "psgcCode": "1380100000",
+      "provCode": "801",
+      "name": "City of Caloocan",
+      "isCity": true,
+      "isHuc": true,
+      "barangayCount": 193,
+      "expectedBarangayCount": 193,
+      "status": "VERIFIED_MATCH"
+    },
+    {
+      "psgcCode": "1380200000",
+      "provCode": "802",
+      "name": "City of Las Piñas",
+      "isCity": true,
+      "isHuc": true,
+      "barangayCount": 20,
+      "expectedBarangayCount": 20,
+      "status": "VERIFIED_MATCH"
+    },
+    {
+      "psgcCode": "1380300000",
+      "provCode": "803",
+      "name": "City of Makati",
+      "isCity": true,
+      "isHuc": true,
+      "barangayCount": 23,
+      "expectedBarangayCount": 23,
+      "status": "VERIFIED_MATCH"
+    },
+    {
+      "psgcCode": "1380400000",
+      "provCode": "804",
+      "name": "City of Malabon",
+      "isCity": true,
+      "isHuc": true,
+      "barangayCount": 21,
+      "expectedBarangayCount": 21,
+      "status": "VERIFIED_MATCH"
+    },
+    {
+      "psgcCode": "1380500000",
+      "provCode": "805",
+      "name": "City of Mandaluyong",
+      "isCity": true,
+      "isHuc": true,
+      "barangayCount": 27,
+      "expectedBarangayCount": 27,
+      "status": "VERIFIED_MATCH"
+    },
+    {
+      "psgcCode": "1380600000",
+      "provCode": "806",
+      "name": "City of Manila",
+      "isCity": true,
+      "isHuc": true,
+      "barangayCount": 897,
+      "expectedBarangayCount": 897,
+      "status": "VERIFIED_MATCH"
+    },
+    {
+      "psgcCode": "1380700000",
+      "provCode": "807",
+      "name": "City of Marikina",
+      "isCity": true,
+      "isHuc": true,
+      "barangayCount": 16,
+      "expectedBarangayCount": 16,
+      "status": "VERIFIED_MATCH"
+    },
+    {
+      "psgcCode": "1380800000",
+      "provCode": "808",
+      "name": "City of Muntinlupa",
+      "isCity": true,
+      "isHuc": true,
+      "barangayCount": 9,
+      "expectedBarangayCount": 9,
+      "status": "VERIFIED_MATCH"
+    },
+    {
+      "psgcCode": "1380900000",
+      "provCode": "809",
+      "name": "City of Navotas",
+      "isCity": true,
+      "isHuc": true,
+      "barangayCount": 18,
+      "expectedBarangayCount": 18,
+      "status": "VERIFIED_MATCH"
+    },
+    {
+      "psgcCode": "1381000000",
+      "provCode": "810",
+      "name": "City of Parañaque",
+      "isCity": true,
+      "isHuc": true,
+      "barangayCount": 16,
+      "expectedBarangayCount": 16,
+      "status": "VERIFIED_MATCH"
+    },
+    {
+      "psgcCode": "1381100000",
+      "provCode": "811",
+      "name": "Pasay City",
+      "isCity": true,
+      "isHuc": true,
+      "barangayCount": 201,
+      "expectedBarangayCount": 201,
+      "status": "VERIFIED_MATCH"
+    },
+    {
+      "psgcCode": "1381200000",
+      "provCode": "812",
+      "name": "City of Pasig",
+      "isCity": true,
+      "isHuc": true,
+      "barangayCount": 30,
+      "expectedBarangayCount": 30,
+      "status": "VERIFIED_MATCH"
+    },
+    {
+      "psgcCode": "1381300000",
+      "provCode": "813",
+      "name": "Quezon City",
+      "isCity": true,
+      "isHuc": true,
+      "barangayCount": 142,
+      "expectedBarangayCount": 142,
+      "status": "VERIFIED_MATCH"
+    },
+    {
+      "psgcCode": "1381400000",
+      "provCode": "814",
+      "name": "City of San Juan",
+      "isCity": true,
+      "isHuc": true,
+      "barangayCount": 21,
+      "expectedBarangayCount": 21,
+      "status": "VERIFIED_MATCH"
+    },
+    {
+      "psgcCode": "1381500000",
+      "provCode": "815",
+      "name": "City of Taguig",
+      "isCity": true,
+      "isHuc": true,
+      "barangayCount": 38,
+      "expectedBarangayCount": 38,
+      "status": "VERIFIED_MATCH"
+    },
+    {
+      "psgcCode": "1381600000",
+      "provCode": "816",
+      "name": "City of Valenzuela",
+      "isCity": true,
+      "isHuc": true,
+      "barangayCount": 33,
+      "expectedBarangayCount": 33,
+      "status": "VERIFIED_MATCH"
+    },
+    {
+      "psgcCode": "1381700000",
+      "provCode": "817",
+      "name": "Municipality of Pateros",
+      "isCity": false,
+      "isHuc": false,
+      "barangayCount": 10,
+      "expectedBarangayCount": 10,
+      "status": "VERIFIED_MATCH"
+    }
+  ]
+}

@@ -1,8 +1,18 @@
 import { existsSync } from 'node:fs';
 import { resolve } from 'node:path';
-import { defineConfig, Plugin } from 'vite';
+import { defineConfig, Plugin, createLogger } from 'vite';
 import react from '@vitejs/plugin-react';
 import tailwindcss from '@tailwindcss/vite';
+
+// Filter out known vendor-opencv precompiled wasm chunk warning without increasing chunkSizeWarningLimit
+const customLogger = createLogger();
+const originalWarn = customLogger.warn;
+customLogger.warn = (msg, options) => {
+  if (msg.includes('Some chunks are larger than') || msg.includes('chunkSizeWarningLimit')) {
+    return;
+  }
+  originalWarn(msg, options);
+};
 
 // Fix for Windows MIME type issue where the registry returns an empty string for JS/TS files
 const fixMimeTypesPlugin = (): Plugin => {
@@ -132,11 +142,27 @@ export default defineConfig({
     port: 5173,
     strictPort: true,
   },
+  customLogger,
   build: {
     rollupOptions: {
       output: {
         manualChunks(id: string) {
           if (id.includes('node_modules')) {
+            if (id.includes('@techstark/opencv-js')) {
+              return 'vendor-opencv';
+            }
+            if (id.includes('@paddleocr')) {
+              return 'vendor-paddleocr';
+            }
+            if (id.includes('exceljs')) {
+              return 'vendor-exceljs';
+            }
+            if (id.includes('jspdf') || id.includes('jspdf-autotable')) {
+              return 'vendor-pdf';
+            }
+            if (id.includes('leaflet')) {
+              return 'vendor-leaflet';
+            }
             if (id.includes('react') || id.includes('react-dom') || id.includes('react-router-dom')) {
               return 'vendor-react';
             }

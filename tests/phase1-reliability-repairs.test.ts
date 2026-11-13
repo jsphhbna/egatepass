@@ -525,7 +525,7 @@ describe('Phase 1 Reliability Repairs — Comprehensive Regression Suite', () =>
       const s1 = usersJson.users.find((u: any) => u.uid === STAFF_1_ID);
       expect(s1.assignedOfficeIds).toEqual([]);
 
-      // create-user rejects inactive office BEFORE calling auth.admin.createUser
+      // create-user rejects non-admin role (office_staff) BEFORE calling auth.admin.createUser
       const { admin } = supabaseModule.getServerSupabaseClients();
       const preCreateCalls = (admin.auth.admin.createUser as any).mock.calls.length;
       const createBadRes = await invokeRoute(
@@ -538,12 +538,11 @@ describe('Phase 1 Reliability Repairs — Comprehensive Regression Suite', () =>
             email: 'new.custodian@earist.edu.ph',
             password: 'ValidPassword123!',
             role: 'office_staff',
-            officeIds: [OFFICE_INACTIVE],
           }),
         })
       );
       expect(createBadRes.status).toBe(400);
-      expect((await createBadRes.json()).error).toBe('office_inactive');
+      expect((await createBadRes.json()).error).toBe('invalid_request');
       expect((admin.auth.admin.createUser as any).mock.calls.length).toBe(preCreateCalls);
     });
   });

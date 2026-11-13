@@ -1,5 +1,141 @@
 [
   {
+    "code": "1380100000",
+    "regionCode": "1300000000",
+    "provinceCode": null,
+    "name": "City of Caloocan",
+    "isCity": true,
+    "isHuc": true
+  },
+  {
+    "code": "1380200000",
+    "regionCode": "1300000000",
+    "provinceCode": null,
+    "name": "City of Las Piñas",
+    "isCity": true,
+    "isHuc": true
+  },
+  {
+    "code": "1380300000",
+    "regionCode": "1300000000",
+    "provinceCode": null,
+    "name": "City of Makati",
+    "isCity": true,
+    "isHuc": true
+  },
+  {
+    "code": "1380400000",
+    "regionCode": "1300000000",
+    "provinceCode": null,
+    "name": "City of Malabon",
+    "isCity": true,
+    "isHuc": true
+  },
+  {
+    "code": "1380500000",
+    "regionCode": "1300000000",
+    "provinceCode": null,
+    "name": "City of Mandaluyong",
+    "isCity": true,
+    "isHuc": true
+  },
+  {
+    "code": "1380600000",
+    "regionCode": "1300000000",
+    "provinceCode": null,
+    "name": "City of Manila",
+    "isCity": true,
+    "isHuc": true
+  },
+  {
+    "code": "1380700000",
+    "regionCode": "1300000000",
+    "provinceCode": null,
+    "name": "City of Marikina",
+    "isCity": true,
+    "isHuc": true
+  },
+  {
+    "code": "1380800000",
+    "regionCode": "1300000000",
+    "provinceCode": null,
+    "name": "City of Muntinlupa",
+    "isCity": true,
+    "isHuc": true
+  },
+  {
+    "code": "1380900000",
+    "regionCode": "1300000000",
+    "provinceCode": null,
+    "name": "City of Navotas",
+    "isCity": true,
+    "isHuc": true
+  },
+  {
+    "code": "1381000000",
+    "regionCode": "1300000000",
+    "provinceCode": null,
+    "name": "City of Parañaque",
+    "isCity": true,
+    "isHuc": true
+  },
+  {
+    "code": "1381100000",
+    "regionCode": "1300000000",
+    "provinceCode": null,
+    "name": "Pasay City",
+    "isCity": true,
+    "isHuc": true
+  },
+  {
+    "code": "1381200000",
+    "regionCode": "1300000000",
+    "provinceCode": null,
+    "name": "City of Pasig",
+    "isCity": true,
+    "isHuc": true
+  },
+  {
+    "code": "1381300000",
+    "regionCode": "1300000000",
+    "provinceCode": null,
+    "name": "Quezon City",
+    "isCity": true,
+    "isHuc": true
+  },
+  {
+    "code": "1381400000",
+    "regionCode": "1300000000",
+    "provinceCode": null,
+    "name": "City of San Juan",
+    "isCity": true,
+    "isHuc": true
+  },
+  {
+    "code": "1381500000",
+    "regionCode": "1300000000",
+    "provinceCode": null,
+    "name": "City of Taguig",
+    "isCity": true,
+    "isHuc": true
+  },
+  {
+    "code": "1381600000",
+    "regionCode": "1300000000",
+    "provinceCode": null,
+    "name": "City of Valenzuela",
+    "isCity": true,
+    "isHuc": true
+  },
+  {
+    "code": "1381700000",
+    "regionCode": "1300000000",
+    "provinceCode": null,
+    "name": "Municipality of Pateros",
+    "isCity": false,
+    "isHuc": false
+  },
+  {
     "code": "1705301000",
     "regionCode": "1700000000",
     "provinceCode": "1753000000",
@@ -1632,14 +1768,6 @@
     "isHuc": false
   },
   {
-    "code": "1380600000",
-    "regionCode": "1300000000",
-    "provinceCode": null,
-    "name": "City of Manila",
-    "isCity": true,
-    "isHuc": true
-  },
-  {
     "code": "1004304000",
     "regionCode": "1000000000",
     "provinceCode": "1043000000",
@@ -2976,14 +3104,6 @@
     "isHuc": false
   },
   {
-    "code": "1380300000",
-    "regionCode": "1300000000",
-    "provinceCode": null,
-    "name": "City of Caloocan",
-    "isCity": true,
-    "isHuc": true
-  },
-  {
     "code": "0102906000",
     "regionCode": "0100000000",
     "provinceCode": "0129000000",
@@ -3280,14 +3400,6 @@
     "isHuc": false
   },
   {
-    "code": "1380500000",
-    "regionCode": "1300000000",
-    "provinceCode": null,
-    "name": "City of Las Piñas",
-    "isCity": true,
-    "isHuc": true
-  },
-  {
     "code": "0500506000",
     "regionCode": "0500000000",
     "provinceCode": "0505000000",
@@ -3328,22 +3440,6 @@
     "isHuc": false
   },
   {
-    "code": "1380800000",
-    "regionCode": "1300000000",
-    "provinceCode": null,
-    "name": "City of Makati",
-    "isCity": true,
-    "isHuc": true
-  },
-  {
-    "code": "1380400000",
-    "regionCode": "1300000000",
-    "provinceCode": null,
-    "name": "City of Malabon",
-    "isCity": true,
-    "isHuc": true
-  },
-  {
     "code": "1001312000",
     "regionCode": "1000000000",
     "provinceCode": "1013000000",
@@ -3360,14 +3456,6 @@
     "isHuc": false
   },
   {
-    "code": "1380700000",
-    "regionCode": "1300000000",
-    "provinceCode": null,
-    "name": "City of Mandaluyong",
-    "isCity": true,
-    "isHuc": true
-  },
-  {
     "code": "0731300000",
     "regionCode": "0700000000",
     "provinceCode": null,
@@ -3382,14 +3470,6 @@
     "name": "City of Marawi",
     "isCity": true,
     "isHuc": false
-  },
-  {
-    "code": "1381000000",
-    "regionCode": "1300000000",
-    "provinceCode": null,
-    "name": "City of Marikina",
-    "isCity": true,
-    "isHuc": true
   },
   {
     "code": "0504111000",
@@ -3416,14 +3496,6 @@
     "isHuc": false
   },
   {
-    "code": "1381100000",
-    "regionCode": "1300000000",
-    "provinceCode": null,
-    "name": "City of Muntinlupa",
-    "isCity": true,
-    "isHuc": true
-  },
-  {
     "code": "0501724000",
     "regionCode": "0500000000",
     "provinceCode": "0517000000",
@@ -3438,14 +3510,6 @@
     "name": "City of Naga",
     "isCity": true,
     "isHuc": false
-  },
-  {
-    "code": "1380900000",
-    "regionCode": "1300000000",
-    "provinceCode": null,
-    "name": "City of Navotas",
-    "isCity": true,
-    "isHuc": true
   },
   {
     "code": "0331400000",
@@ -3494,22 +3558,6 @@
     "name": "City of Panabo",
     "isCity": true,
     "isHuc": false
-  },
-  {
-    "code": "1381400000",
-    "regionCode": "1300000000",
-    "provinceCode": null,
-    "name": "City of Parañaque",
-    "isCity": true,
-    "isHuc": true
-  },
-  {
-    "code": "1381200000",
-    "regionCode": "1300000000",
-    "provinceCode": null,
-    "name": "City of Pasig",
-    "isCity": true,
-    "isHuc": true
   },
   {
     "code": "0603035000",
@@ -3582,14 +3630,6 @@
     "name": "City of San Jose Del Monte",
     "isCity": true,
     "isHuc": false
-  },
-  {
-    "code": "1381800000",
-    "regionCode": "1300000000",
-    "provinceCode": null,
-    "name": "City of San Juan",
-    "isCity": true,
-    "isHuc": true
   },
   {
     "code": "0403424000",
@@ -3712,14 +3752,6 @@
     "isHuc": false
   },
   {
-    "code": "1381900000",
-    "regionCode": "1300000000",
-    "provinceCode": null,
-    "name": "City of Taguig",
-    "isCity": true,
-    "isHuc": true
-  },
-  {
     "code": "1102319000",
     "regionCode": "1100000000",
     "provinceCode": "1123000000",
@@ -3822,14 +3854,6 @@
     "name": "City of Valencia",
     "isCity": true,
     "isHuc": false
-  },
-  {
-    "code": "1381600000",
-    "regionCode": "1300000000",
-    "provinceCode": null,
-    "name": "City of Valenzuela",
-    "isCity": true,
-    "isHuc": true
   },
   {
     "code": "1804531000",
@@ -9016,14 +9040,6 @@
     "isHuc": false
   },
   {
-    "code": "1381500000",
-    "regionCode": "1300000000",
-    "provinceCode": null,
-    "name": "Pasay City",
-    "isCity": true,
-    "isHuc": true
-  },
-  {
     "code": "1403208000",
     "regionCode": "1400000000",
     "provinceCode": "1432000000",
@@ -9054,14 +9070,6 @@
     "name": "Pata",
     "isCity": false,
     "isHuc": false
-  },
-  {
-    "code": "1381700000",
-    "regionCode": "1300000000",
-    "provinceCode": null,
-    "name": "Pateros",
-    "isCity": false,
-    "isHuc": true
   },
   {
     "code": "1906611000",
@@ -9670,14 +9678,6 @@
     "name": "Quezon",
     "isCity": false,
     "isHuc": false
-  },
-  {
-    "code": "1381300000",
-    "regionCode": "1300000000",
-    "provinceCode": null,
-    "name": "Quezon City",
-    "isCity": true,
-    "isHuc": true
   },
   {
     "code": "0802618000",

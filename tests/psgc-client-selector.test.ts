@@ -168,7 +168,7 @@ describe('PSGC Client Library & Address Resolution Contract', () => {
     });
 
     it('resolves unique city match with 1550 for Mandaluyong City', async () => {
-      const result = await resolvePostalCode('1380700000');
+      const result = await resolvePostalCode('1380500000');
       expect(result.postalCode).toBe('1550');
       expect(result.mappingType).toBe('unique_city');
       expect(result.isAutoFilled).toBe(true);

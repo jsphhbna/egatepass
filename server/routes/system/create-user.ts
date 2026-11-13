@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import { HttpError, recordReconciliation, requireStaffActor } from '../../actors.js';
-import { jsonResponse, readBearerToken, pgUuidSchema } from '../../http.js';
+import { jsonResponse, readBearerToken } from '../../http.js';
 import { passwordSchema } from '../../password-policy.js';
 import { getServerSupabaseClients } from '../../supabase.js';
 
@@ -9,8 +9,7 @@ const schema = z.object({
   name: z.string().trim().min(2).max(50),
   email: z.string().email().max(320),
   password: passwordSchema,
-  role: z.enum(['admin', 'office_staff']),
-  officeIds: z.array(pgUuidSchema).optional(),
+  role: z.literal('admin'),
 }).strict();
 
 async function handleRequest(request: Request): Promise<Response> {
@@ -23,42 +22,6 @@ async function handleRequest(request: Request): Promise<Response> {
   try {
     const { admin } = getServerSupabaseClients();
     const actor = await requireStaffActor(admin, token, ['superadmin']);
-
-    const uniqueOfficeIds: string[] =
-      (parsed.data.role as string) === 'office_staff' && parsed.data.officeIds
-        ? [...new Set(parsed.data.officeIds)]
-        : [];
-
-    if (uniqueOfficeIds.length > 0) {
-      const { data: validOffices, error: officeChkErr } = await admin
-        .from('offices')
-        .select('id, active, publication_status, archived_at')
-        .in('id', uniqueOfficeIds);
-
-      if (officeChkErr) {
-        return jsonResponse(503, {
-          error: 'office_lookup_failed',
-          message: 'Unable to verify selected offices.',
-        });
-      }
-
-      const officeById = new Map((validOffices ?? []).map((o) => [o.id, o]));
-      for (const oid of uniqueOfficeIds) {
-        const office = officeById.get(oid);
-        if (!office) {
-          return jsonResponse(400, {
-            error: 'invalid_office_id',
-            message: 'One or more specified offices do not exist.',
-          });
-        }
-        if (!office.active || office.publication_status === 'archived' || office.archived_at) {
-          return jsonResponse(400, {
-            error: 'office_inactive',
-            message: 'Cannot assign inactive or archived offices during account creation.',
-          });
-        }
-      }
-    }
 
     const normalizedEmail = parsed.data.email.toLowerCase().trim();
     const created = await admin.auth.admin.createUser({
@@ -121,32 +84,6 @@ async function handleRequest(request: Request): Promise<Response> {
         await recordReconciliation(admin, 'staff.create.rollback_auth', 'staff_profile', targetId, cleanup.error.code ?? 'cleanup_failed');
       }
       throw profile.error;
-    }
-
-    if (uniqueOfficeIds.length > 0) {
-      const assignRes = await admin.schema('api').rpc('replace_staff_office_assignments', {
-        requested_actor_id: actor.id,
-        requested_user_id: targetId,
-        requested_office_ids: uniqueOfficeIds,
-        requested_request_id: randomUUID(),
-      });
-      if (assignRes.error) {
-        console.error('Initial office assignment failed for created staff:', assignRes.error);
-        await recordReconciliation(
-          admin,
-          'office.create_user_assignments',
-          'staff_profile',
-          targetId,
-          assignRes.error.code ?? 'office_assignment_failed',
-          { officeCount: uniqueOfficeIds.length }
-        ).catch(() => undefined);
-        return jsonResponse(500, {
-          error: 'office_assignment_failed',
-          message: 'Staff account was created, but assigning initial offices failed. Reconciliation has been recorded.',
-          userId: targetId,
-          reconciliationRequired: true,
-        });
-      }
     }
 
     const resend = await admin.auth.resend({
