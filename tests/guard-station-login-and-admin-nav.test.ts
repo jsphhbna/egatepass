@@ -348,6 +348,7 @@ describe('Issue A & Issue C: Guard Station Auth Lifecycle & Admin Sidebar Naviga
               }
               return builder;
             }),
+            gt: vi.fn(() => builder),
             gte: vi.fn(() => builder),
             lte: vi.fn(() => builder),
             or: vi.fn(() => builder),

@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { useSearchParams } from 'react-router-dom';
-import { Archive, Plus, CheckCircle2, AlertCircle, KeyRound, Copy, Check, Eye, EyeOff, ShieldAlert, RefreshCw, Trash2 } from 'lucide-react';
+import { Archive, Plus, CheckCircle2, AlertCircle, KeyRound, Copy, Check, Eye, EyeOff, ShieldAlert, RefreshCw, Trash2, MoreVertical } from 'lucide-react';
 import { Button, FormField, Input, Select, StatusBadge, DataTable, DataTableHead, DataTableRow, DataTableCell, Modal, ConfirmModal } from '@/components/ui';
 import { toast } from 'sonner';
 import { z } from 'zod';
@@ -57,6 +57,7 @@ export function AdminUsers() {
 
   // Office Directory & Assignments State
   const [adminOffices, setAdminOffices] = useState<AdminOfficeRecord[]>([]);
+  const [actionMenuOfficeId, setActionMenuOfficeId] = useState<string | null>(null);
 
   // Office Provisioning & Dedicated Credentials State (Phase F)
   const [provisioningOffice, setProvisioningOffice] = useState<{ id: string; name: string } | null>(null);
@@ -102,7 +103,6 @@ export function AdminUsers() {
   const [isArchivingOffice, setIsArchivingOffice] = useState(false);
   const [deletingDraftOffice, setDeletingDraftOffice] = useState<AdminOfficeRecord | null>(null);
   const [isDeletingDraftOffice, setIsDeletingDraftOffice] = useState(false);
-  const [togglingApprovalOfficeId, setTogglingApprovalOfficeId] = useState<string | null>(null);
   const [republishingOfficeId, setRepublishingOfficeId] = useState<string | null>(null);
   const isCreatingOfficeRef = useRef(false);
   const officeDirectoryReadGenRef = useRef(0);
@@ -540,42 +540,6 @@ export function AdminUsers() {
     } finally {
       isCreatingOfficeRef.current = false;
       setIsCreatingOffice(false);
-    }
-  }
-
-  async function handleToggleApprovalPolicy(office: AdminOfficeRecord) {
-    if (!canVerifyOffice || togglingApprovalOfficeId) return;
-    const nextValue = !(office.requires_approval_before_pass ?? true);
-    setTogglingApprovalOfficeId(office.id);
-    try {
-      const token = await getAccessToken();
-      const res = await fetch('/api/admin/offices', {
-        method: 'POST',
-        headers: {
-          Authorization: `Bearer ${token}`,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          action: 'set_approval_policy',
-          officeId: office.id,
-          requiresApprovalBeforePass: nextValue,
-        }),
-      });
-      const data = await res.json().catch(() => null);
-      if (!res.ok) throw new Error(data?.message || data?.error || 'Failed to update approval policy');
-      if (data?.office) {
-        setAdminOffices((prev) => upsertOfficeInDirectory(prev, data.office));
-      }
-      await loadAdminOffices({ suppressErrorToast: true });
-      toast.success(
-        nextValue
-          ? `"${office.name}" now requires office approval before pass issuance.`
-          : `"${office.name}" pre-approval requirement disabled by Super Admin.`,
-      );
-    } catch (err: any) {
-      toast.error(err?.message || 'Failed to update office approval policy');
-    } finally {
-      setTogglingApprovalOfficeId(null);
     }
   }
 
@@ -1153,8 +1117,10 @@ export function AdminUsers() {
               aria-required="true"
             >
               <option value="admin">Admin</option>
-              <option value="office_staff">Office Staff</option>
             </Select>
+            <p className="mt-1 text-[11px] text-[var(--color-text-muted)]">
+              Office Staff accounts are provisioned directly through the <strong>Office Directory</strong> tab.
+            </p>
           </FormField>
 
           <Button type="submit" disabled={isSubmitting} className="w-full" loading={isSubmitting}>
@@ -1418,13 +1384,6 @@ export function AdminUsers() {
                           }`}>
                             {statusMeta.lifecycleLabel}
                           </span>
-                          <span className={`inline-flex items-center rounded px-1.5 py-0.5 text-[10px] font-semibold ${
-                            office.requires_approval_before_pass === false
-                              ? 'bg-purple-50 text-purple-800 border border-purple-200'
-                              : 'bg-blue-50 text-blue-800 border border-blue-200'
-                          }`}>
-                            {office.requires_approval_before_pass === false ? 'Pre-Approval Optional' : 'Pre-Approval Required'}
-                          </span>
                         </div>
                         <p className="text-[11px] text-[var(--color-text-muted)]">
                           {statusMeta.visitorHint}
@@ -1462,8 +1421,8 @@ export function AdminUsers() {
                     </DataTableCell>
                     <DataTableCell className="text-right">
                       {canManageOffices && (
-                        <div className="inline-flex flex-wrap items-center gap-1.5 justify-end">
-                          {!office.dedicatedAccount ? (
+                        <div className="flex items-center justify-end gap-2">
+                          {!office.dedicatedAccount && (
                             <Button
                               size="sm"
                               variant="secondary"
@@ -1472,122 +1431,172 @@ export function AdminUsers() {
                             >
                               Provision Account
                             </Button>
-                          ) : (
-                            <>
-                              {office.dedicatedAccount.emailConfirmed === false && (
-                                <Button
-                                  size="sm"
-                                  variant="secondary"
-                                  loading={resendingUserId === office.dedicatedAccount.userId}
-                                  disabled={resendingUserId !== null}
-                                  onClick={() => handleResendVerification(office.dedicatedAccount!.userId, office.id)}
-                                  title="Resend verification email to staff"
-                                >
-                                  Resend Verification
-                                </Button>
-                              )}
-                              <Button
-                                size="sm"
-                                variant="secondary"
-                                onClick={() => setResettingOffice({
-                                  id: office.id,
-                                  name: office.name,
-                                  userId: office.dedicatedAccount!.userId,
-                                  email: office.dedicatedAccount!.email || `${office.name} Account`,
-                                })}
-                                title="Reset account credentials"
-                              >
-                                Reset Password
-                              </Button>
-                              <Button
-                                size="sm"
-                                variant="secondary"
-                                onClick={() => handleToggleOfficeAccountActive(
-                                  office.dedicatedAccount!.userId,
-                                  !office.dedicatedAccount!.active
-                                )}
-                              >
-                                {office.dedicatedAccount.active ? 'Deactivate' : 'Reactivate'}
-                              </Button>
-                            </>
                           )}
-                          {office.publication_status !== 'archived' && (
-                            <Button
-                              variant="secondary"
-                              size="sm"
-                              onClick={() => handleToggleOfficeActive(office.id, !office.active)}
+                          <div className="relative inline-block text-left">
+                            <button
+                              type="button"
+                              onClick={() => setActionMenuOfficeId(actionMenuOfficeId === office.id ? null : office.id)}
+                              className="rounded-lg p-2 text-[var(--color-text-secondary)] hover:bg-[var(--color-surface-hover)] focus:outline-none"
+                              aria-label={`Actions for ${office.name}`}
                             >
-                              {office.active ? 'Disable Office' : 'Enable Office'}
-                            </Button>
-                          )}
-                          {canVerifyOffice ? (
-                            office.publication_status === 'archived' ? (
-                              <Button
-                                size="sm"
-                                loading={republishingOfficeId === office.id}
-                                disabled={republishingOfficeId === office.id}
-                                onClick={() => void handleRepublishOffice(office)}
-                              >
-                                Republish
-                              </Button>
-                            ) : office.verified ? (
-                              <Button
-                                variant="secondary"
-                                size="sm"
-                                onClick={() => handleVerifyOffice(office.id, false)}
-                              >
-                                Unverify
-                              </Button>
-                            ) : (
-                              <Button
-                                size="sm"
-                                onClick={() => handleVerifyOffice(office.id, true)}
-                              >
-                                Verify
-                              </Button>
-                            )
-                          ) : !office.verified ? (
-                            <span className="text-[11px] text-[var(--color-text-muted)] px-1">
-                              Superadmin verification required
-                            </span>
-                          ) : null}
-                          {canVerifyOffice && office.publication_status !== 'archived' && (
-                            <Button
-                              variant="secondary"
-                              size="sm"
-                              loading={togglingApprovalOfficeId === office.id}
-                              disabled={togglingApprovalOfficeId === office.id}
-                              onClick={() => void handleToggleApprovalPolicy(office)}
-                            >
-                              {office.requires_approval_before_pass === false ? 'Require Approval' : 'Allow Unapproved'}
-                            </Button>
-                          )}
-                          {canVerifyOffice && office.publication_status !== 'archived' && (
-                            <Button
-                              variant="secondary"
-                              size="sm"
-                              icon={<Archive className="h-3.5 w-3.5" />}
-                              onClick={() => {
-                                setArchivingOffice(office);
-                                setArchiveStaffHandling('keep');
-                                setArchiveReason('');
-                              }}
-                            >
-                              Archive
-                            </Button>
-                          )}
-                          {(office.publication_status === 'draft' || !office.verified) &&
-                            office.publication_status !== 'archived' &&
-                            !office.hasDependencies && (
-                              <Button
-                                variant="destructive"
-                                size="sm"
-                                icon={<Trash2 className="h-3.5 w-3.5" />}
-                                onClick={() => setDeletingDraftOffice(office)}
-                              >
-                                Delete Draft
-                              </Button>
+                              <MoreVertical className="h-4 w-4" />
+                            </button>
+
+                            {actionMenuOfficeId === office.id && (
+                              <>
+                                <div
+                                  className="fixed inset-0 z-20"
+                                  onClick={() => setActionMenuOfficeId(null)}
+                                />
+                                <div className="absolute right-0 z-30 mt-1 w-52 rounded-xl border border-[var(--color-border)] bg-white py-1.5 shadow-lg space-y-0.5 text-left">
+                                  {!office.dedicatedAccount ? (
+                                    <button
+                                      type="button"
+                                      onClick={() => {
+                                        setActionMenuOfficeId(null);
+                                        openProvisionModal({ id: office.id, name: office.name });
+                                      }}
+                                      className="flex w-full items-center gap-2 px-3 py-2 text-xs font-semibold text-[var(--color-text-primary)] hover:bg-[var(--color-surface)]"
+                                    >
+                                      <KeyRound className="h-3.5 w-3.5 text-[#7A0A0A]" />
+                                      Provision Account
+                                    </button>
+                                  ) : (
+                                    <>
+                                      {office.dedicatedAccount.emailConfirmed === false && (
+                                        <button
+                                          type="button"
+                                          onClick={() => {
+                                            setActionMenuOfficeId(null);
+                                            handleResendVerification(office.dedicatedAccount!.userId, office.id);
+                                          }}
+                                          className="flex w-full items-center gap-2 px-3 py-2 text-xs font-semibold text-amber-800 hover:bg-amber-50"
+                                        >
+                                          <RefreshCw className="h-3.5 w-3.5" />
+                                          Resend Verification
+                                        </button>
+                                      )}
+                                      <button
+                                        type="button"
+                                        onClick={() => {
+                                          setActionMenuOfficeId(null);
+                                          setResettingOffice({
+                                            id: office.id,
+                                            name: office.name,
+                                            userId: office.dedicatedAccount!.userId,
+                                            email: office.dedicatedAccount!.email || `${office.name} Account`,
+                                          });
+                                        }}
+                                        className="flex w-full items-center gap-2 px-3 py-2 text-xs font-semibold text-[var(--color-text-primary)] hover:bg-[var(--color-surface)]"
+                                      >
+                                        <KeyRound className="h-3.5 w-3.5" />
+                                        Reset Credentials
+                                      </button>
+                                      <button
+                                        type="button"
+                                        onClick={() => {
+                                          setActionMenuOfficeId(null);
+                                          handleToggleOfficeAccountActive(
+                                            office.dedicatedAccount!.userId,
+                                            !office.dedicatedAccount!.active
+                                          );
+                                        }}
+                                        className="flex w-full items-center gap-2 px-3 py-2 text-xs font-semibold text-[var(--color-text-primary)] hover:bg-[var(--color-surface)]"
+                                      >
+                                        {office.dedicatedAccount.active ? 'Deactivate Account' : 'Reactivate Account'}
+                                      </button>
+                                    </>
+                                  )}
+
+                                  <div className="my-1 border-t border-[var(--color-border)]" />
+
+                                  {office.publication_status !== 'archived' && (
+                                    <button
+                                      type="button"
+                                      onClick={() => {
+                                        setActionMenuOfficeId(null);
+                                        handleToggleOfficeActive(office.id, !office.active);
+                                      }}
+                                      className="flex w-full items-center gap-2 px-3 py-2 text-xs font-semibold text-[var(--color-text-primary)] hover:bg-[var(--color-surface)]"
+                                    >
+                                      {office.active ? 'Disable Office' : 'Enable Office'}
+                                    </button>
+                                  )}
+
+                                  {canVerifyOffice && (
+                                    office.publication_status === 'archived' ? (
+                                      <button
+                                        type="button"
+                                        onClick={() => {
+                                          setActionMenuOfficeId(null);
+                                          void handleRepublishOffice(office);
+                                        }}
+                                        className="flex w-full items-center gap-2 px-3 py-2 text-xs font-semibold text-emerald-700 hover:bg-emerald-50"
+                                      >
+                                        <CheckCircle2 className="h-3.5 w-3.5" />
+                                        Republish Office
+                                      </button>
+                                    ) : office.verified ? (
+                                      <button
+                                        type="button"
+                                        onClick={() => {
+                                          setActionMenuOfficeId(null);
+                                          handleVerifyOffice(office.id, false);
+                                        }}
+                                        className="flex w-full items-center gap-2 px-3 py-2 text-xs font-semibold text-[var(--color-text-secondary)] hover:bg-[var(--color-surface)]"
+                                      >
+                                        Unverify Office
+                                      </button>
+                                    ) : (
+                                      <button
+                                        type="button"
+                                        onClick={() => {
+                                          setActionMenuOfficeId(null);
+                                          handleVerifyOffice(office.id, true);
+                                        }}
+                                        className="flex w-full items-center gap-2 px-3 py-2 text-xs font-semibold text-emerald-700 hover:bg-emerald-50"
+                                      >
+                                        <CheckCircle2 className="h-3.5 w-3.5" />
+                                        Verify Office
+                                      </button>
+                                    )
+                                  )}
+
+                                  {canVerifyOffice && office.publication_status !== 'archived' && (
+                                    <button
+                                      type="button"
+                                      onClick={() => {
+                                        setActionMenuOfficeId(null);
+                                        setArchivingOffice(office);
+                                        setArchiveStaffHandling('keep');
+                                        setArchiveReason('');
+                                      }}
+                                      className="flex w-full items-center gap-2 px-3 py-2 text-xs font-semibold text-amber-800 hover:bg-amber-50"
+                                    >
+                                      <Archive className="h-3.5 w-3.5" />
+                                      Archive Office
+                                    </button>
+                                  )}
+
+                                  {(office.publication_status === 'draft' || !office.verified) &&
+                                    office.publication_status !== 'archived' &&
+                                    !office.hasDependencies && (
+                                      <button
+                                        type="button"
+                                        onClick={() => {
+                                          setActionMenuOfficeId(null);
+                                          setDeletingDraftOffice(office);
+                                        }}
+                                        className="flex w-full items-center gap-2 px-3 py-2 text-xs font-semibold text-[var(--color-danger)] hover:bg-[var(--color-danger-light)]"
+                                      >
+                                        <Trash2 className="h-3.5 w-3.5" />
+                                        Delete Draft
+                                      </button>
+                                    )}
+                                </div>
+                              </>
                             )}
+                          </div>
                         </div>
                       )}
                     </DataTableCell>

@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect, useMemo, useCallback } from 'react';
+import { useState, useRef, useEffect, useMemo, useCallback, lazy, Suspense } from 'react';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
@@ -41,7 +41,6 @@ import { TurnstileWidget, type TurnstileWidgetRef } from '@/components/Turnstile
 import { AuthenticatedImage } from '@/components/AuthenticatedImage';
 import { generateBrandedQrDataUrl } from '@/lib/brandedQr';
 import QRCode from 'qrcode';
-import { recognizeIdImage, terminateLocalOcrWorker, getNextOcrJobId } from '@/lib/ocr';
 import { evaluateLiveFaceQuality, evaluateIdImageQuality, evaluateReturningSelfiePrecheck } from '@/lib/imageQuality';
 import { hydrateReturningAddress } from '@/lib/returningAddressHydration';
 import { normalizePhMobile, validatePhMobile } from '@/lib/phPhone';
@@ -76,16 +75,17 @@ import {
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { Button, Card, Input, FormField, Stepper, PageShell } from '@/components/ui';
-import { EmailPassModal } from '@/components/EmailPassModal';
+const EmailPassModal = lazy(() => import('@/components/EmailPassModal').then((m) => ({ default: m.EmailPassModal })));
 import { TimedSkipWarningModal } from '@/components/TimedSkipWarningModal';
 import { VisitPurposeField } from '@/components/VisitPurposeField';
 import { DEFAULT_VISIT_PURPOSES, normalizeVisitPurposes } from '@/lib/settingsDefaults';
 import type { VisitPurposeOption } from '@/types';
 import { DEFAULT_WORKING_HOURS, formatValidityWindow, formatWorkingHours, MAX_VISIT_ADVANCE_DAYS, normalizeWorkingHours } from '@/lib/workingHours';
 import { getManilaDateString, getLatestVisitDateString, validateVisitDate } from '@/lib/scheduling';
-import { createPassPresentation, type PassPresentation, renderPassCardToDataUrl } from '@/lib/passPresentation';
-import { InstitutionalPassCard } from '@/components/InstitutionalPassCard';
-import { parseAddressFromOcr, type DetectedAddressDetails } from '@/lib/addressOcr';
+import { createPassPresentation, type PassPresentation } from '@/lib/passPresentation';
+const InstitutionalPassCard = lazy(() => import('@/components/InstitutionalPassCard').then((m) => ({ default: m.InstitutionalPassCard })));
+import { recognizeIdImage, terminateLocalOcrWorker } from '@/lib/ocr';
+import type { DetectedAddressDetails } from '@/lib/addressOcr';
 
 const MAX_RAW_ID_FILE_BYTES = 10 * 1024 * 1024;
 
@@ -327,6 +327,7 @@ export function GetPassPage() {
   const [selectedPersonnelId, setSelectedPersonnelId] = useState<string>('');
   const [requestedPersonName, setRequestedPersonName] = useState<string>('');
   const [specificPurpose, setSpecificPurpose] = useState<string>('');
+  const [officeSchedules, setOfficeSchedules] = useState<Array<{ id: string; schedule_date: string; status: string; reason?: string }>>([]);
 
   // Institutional Calendar Closures & OCR Address States
   const [calendarClosures, setCalendarClosures] = useState<import('@/types').CampusCalendarClosure[]>([]);
@@ -349,6 +350,7 @@ export function GetPassPage() {
     visitorEmail: string;
     trackingUrl?: string;
     trackingToken?: string;
+    emailDeliveryStatus?: string;
   } | null>(null);
 
   useEffect(() => {
@@ -371,12 +373,17 @@ export function GetPassPage() {
         if (data?.closures) setCalendarClosures(data.closures);
       })
       .catch((err) => console.error('Failed to load campus calendar closures:', err));
+
+    return () => {
+      void terminateLocalOcrWorker();
+    };
   }, []);
 
   useEffect(() => {
     if (!selectedOfficeId) {
       setPersonnelList([]);
       setSelectedPersonnelId('');
+      setOfficeSchedules([]);
       return;
     }
     fetch(`/api/office/personnel?officeId=${selectedOfficeId}`)
@@ -385,6 +392,20 @@ export function GetPassPage() {
         if (data?.personnel) setPersonnelList(data.personnel);
       })
       .catch((err) => console.error('Failed to load personnel:', err));
+
+    fetch(`/api/office/calendar?officeId=${encodeURIComponent(selectedOfficeId)}`)
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data) => {
+        if (data?.schedules && Array.isArray(data.schedules)) {
+          setOfficeSchedules(data.schedules);
+        } else {
+          setOfficeSchedules([]);
+        }
+      })
+      .catch((err) => {
+        console.warn('Failed to load office calendar schedules:', err);
+        setOfficeSchedules([]);
+      });
   }, [selectedOfficeId]);
 
   // Live Face State (Single custom camera)
@@ -460,6 +481,37 @@ export function GetPassPage() {
   const [passId, setPassId] = useState<string | null>(null);
   const [passPresentation, setPassPresentation] = useState<PassPresentation | null>(null);
   const [rawQrToken, setRawQrToken] = useState<string | null>(null);
+  const [qrRenderingError, setQrRenderingError] = useState(false);
+
+  const handleRetryQrRendering = async () => {
+    if (!rawQrToken) return;
+    try {
+      let qrUrl: string | null = null;
+      try {
+        qrUrl = await generateBrandedQrDataUrl(rawQrToken, { size: 360 });
+      } catch (qrErr) {
+        console.warn('Branded QR generation failed, falling back to standard QR:', qrErr);
+        try {
+          qrUrl = await QRCode.toDataURL(rawQrToken, { width: 360, margin: 2, errorCorrectionLevel: 'H' });
+        } catch (fallbackErr) {
+          console.error('Standard QR generation fallback failed:', fallbackErr);
+        }
+      }
+
+      if (!qrUrl) {
+        toast.error('Could not render QR code image. Please try again.');
+        return;
+      }
+
+      setQrDataUrl(qrUrl);
+      setQrRenderingError(false);
+      setStep('delivery');
+      setShowEmailModal(true);
+      toast.success('Gate pass generated successfully!');
+    } catch {
+      toast.error('Failed to regenerate QR code. Please try again.');
+    }
+  };
   const [showEmailModal, setShowEmailModal] = useState(false);
   const [showSkipWarning, setShowSkipWarning] = useState(false);
   const [emailDeliverySecured, setEmailDeliverySecured] = useState(false);
@@ -533,7 +585,7 @@ export function GetPassPage() {
   useEffect(() => {
     return () => {
       ocrGenerationRef.current += 1;
-      void terminateLocalOcrWorker();
+      void import('@/lib/ocr').then(({ terminateLocalOcrWorker }) => terminateLocalOcrWorker()).catch(() => {});
     };
   }, []);
 
@@ -674,7 +726,7 @@ export function GetPassPage() {
 
   function resetRegistrationFlow() {
     ocrGenerationRef.current += 1;
-    void terminateLocalOcrWorker();
+    void import('@/lib/ocr').then(({ terminateLocalOcrWorker }) => terminateLocalOcrWorker()).catch(() => {});
 
     // 1. Reset React Hook Form values to clean defaults
     reset({
@@ -1127,10 +1179,6 @@ export function GetPassPage() {
         toast.error('Please describe the purpose of your visit (minimum 3 characters).');
         return;
       }
-      if (visitorEmail.trim() && !emailVerificationToken) {
-        toast.error('Please verify the email address you entered or clear it to use online tracking only.');
-        return;
-      }
     }
 
     if (!vals.visitDate) {
@@ -1142,6 +1190,14 @@ export function GetPassPage() {
     const matchedClosure = calendarClosures.find((c) => c.active !== false && visitDate >= c.startDate && visitDate <= c.endDate);
     if (matchedClosure) {
       toast.error(`Campus is closed on ${visitDate}: ${matchedClosure.title}${matchedClosure.description ? ` (${matchedClosure.description})` : ''}. Please select an open date.`);
+      return;
+    }
+
+    const matchedOfficeClosure = officeSchedules.find(
+      (s) => s.schedule_date === visitDate && ['closed', 'maintenance', 'holiday'].includes(s.status)
+    );
+    if (matchedOfficeClosure) {
+      toast.error(`The selected office is marked ${matchedOfficeClosure.status} on ${visitDate}${matchedOfficeClosure.reason ? `: ${matchedOfficeClosure.reason}` : ''}. Please choose another visit date.`);
       return;
     }
 
@@ -1613,6 +1669,7 @@ export function GetPassPage() {
       setVerificationError(null);
 
       // 2. Perform local OCR recognition in browser memory: recognizeIdImage(file)
+      const { getNextOcrJobId } = await import('@/lib/ocr');
       const currentJobId = getNextOcrJobId();
       ocrJobIdRef.current = currentJobId;
       const parsed = await recognizeIdImage(file, undefined, currentJobId);
@@ -1656,6 +1713,7 @@ export function GetPassPage() {
       }
 
       if (parsed.address) {
+        const { parseAddressFromOcr } = await import('@/lib/addressOcr');
         const detected = parseAddressFromOcr(parsed.address);
         if (detected) {
           setDetectedOcrAddress(detected);
@@ -2194,8 +2252,6 @@ export function GetPassPage() {
           }
         }
 
-        setQrDataUrl(qrUrl);
-
         const effectiveVisitor = portalTransactionRef.current?.submittedPayload?.visitor ?? formData;
         const presentation = createPassPresentation({
           firstName: effectiveVisitor.firstName,
@@ -2211,6 +2267,15 @@ export function GetPassPage() {
             : null,
         });
         setPassPresentation(presentation);
+
+        if (!qrUrl) {
+          setQrRenderingError(true);
+          toast.error('Pass record registered, but visual QR rendering failed. Please click "Retry QR Code Rendering".');
+          return;
+        }
+
+        setQrRenderingError(false);
+        setQrDataUrl(qrUrl);
 
         setEmailDeliverySecured(false);
         setIsDownloaded(false);
@@ -2330,6 +2395,7 @@ export function GetPassPage() {
       return;
     }
     try {
+      const { renderPassCardToDataUrl } = await import('@/lib/passPresentation');
       const passCardDataUrl = await renderPassCardToDataUrl(passPresentation, { qrDataUrl: qrDataUrl || undefined });
       const link = document.createElement('a');
       link.download = `egatepass-${passPresentation.passReference}.png`;
@@ -2507,7 +2573,7 @@ export function GetPassPage() {
                           Setup Pending
                         </span>
                       ) : (
-                        <span className="rounded-full bg-emerald-50 text-emerald-900 border border-emerald-300 px-2.5 py-0.5 text-[10px] font-bold">
+                        <span className="rounded-full bg-emerald-50 text-emerald-800 border border-emerald-200 px-2.5 py-0.5 text-[10px] font-bold">
                           Ready
                         </span>
                       )}
@@ -2961,6 +3027,24 @@ export function GetPassPage() {
                       {offices.find((o) => o.id === selectedOfficeId)?.description}
                     </p>
                   )}
+                  {selectedOfficeId && officeSchedules.length > 0 && (
+                    <div className="mt-2 rounded-xl border border-amber-200 bg-amber-50/70 p-3 text-xs text-amber-900 space-y-1">
+                      <div className="font-bold flex items-center gap-1.5">
+                        <AlertTriangle className="h-3.5 w-3.5 text-amber-700" />
+                        <span>Office Schedule Notice</span>
+                      </div>
+                      <p className="text-[11px] leading-relaxed">
+                        This office has custom schedule dates this month:
+                      </p>
+                      <ul className="list-disc pl-4 text-[11px] space-y-0.5">
+                        {officeSchedules.map((s) => (
+                          <li key={s.id || s.schedule_date}>
+                            <strong>{s.schedule_date}</strong>: <span className="capitalize font-semibold">{s.status}</span>{s.reason ? ` — ${s.reason}` : ''}
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
                 </div>
 
                 {/* Visit Type Cards — Mandatory Selection */}
@@ -2984,7 +3068,7 @@ export function GetPassPage() {
                           <UserCheck className="h-5 w-5" />
                         </div>
                         <span className="text-[10px] font-bold uppercase tracking-wider rounded-md bg-[#F8EEEE] text-[#7A0A0A] border border-[#7A0A0A]/30 px-2 py-0.5">
-                          {(offices.find((o) => o.id === selectedOfficeId)?.requires_approval_before_pass ?? true) ? 'Office review required' : 'Auto-approved by office'}
+                          Office Approval Required
                         </span>
                       </div>
                       <span className="text-sm font-bold text-[var(--color-text-primary)]">A Specific Person</span>
@@ -3007,8 +3091,8 @@ export function GetPassPage() {
                         <div className={`p-2 rounded-lg ${visitType === 'general' ? 'bg-[#7A0A0A] text-white' : 'bg-gray-100 text-gray-700'}`}>
                           <Building2 className="h-5 w-5" />
                         </div>
-                        <span className="text-[10px] font-bold uppercase tracking-wider rounded-md bg-amber-50 text-amber-900 border border-amber-300 px-2 py-0.5">
-                          {selectedOfficeId && (offices.find((o) => o.id === selectedOfficeId)?.requires_approval_before_pass ?? true) ? 'Pre-approval required before QR' : 'QR issued after registration'}
+                        <span className="text-[10px] font-bold uppercase tracking-wider rounded-md bg-emerald-50 text-emerald-900 border border-emerald-300 px-2 py-0.5">
+                          Issued After Registration
                         </span>
                       </div>
                       <span className="text-sm font-bold text-[var(--color-text-primary)]">The Office Itself</span>
@@ -3156,72 +3240,31 @@ export function GetPassPage() {
                     purposes={visitPurposes}
                     error={errors.purpose?.message}
                   />
-                  {selectedOfficeId && (offices.find((o) => o.id === selectedOfficeId)?.requires_approval_before_pass ?? true) && (
-                    <div className="rounded-xl border border-amber-200 bg-amber-50/70 p-4 space-y-3">
-                      <div className="flex items-start justify-between gap-2">
-                        <div>
-                          <span className="text-xs font-bold text-amber-950 block">Optional Email Notification (Office Pre-Approval Active)</span>
-                          <p className="text-[11px] text-amber-900 mt-0.5">
-                            This destination office requires review before your QR pass is issued. Verify your email to receive your approved QR pass directly, or leave blank to use your online tracking link.
-                          </p>
-                        </div>
-                        {emailVerificationToken && (
-                          <span className="rounded-full bg-emerald-100 text-emerald-800 text-[10px] font-bold px-2 py-0.5 inline-flex items-center gap-1 shrink-0">
-                            <CheckCircle2 className="h-3 w-3" /> Verified
-                          </span>
-                        )}
-                      </div>
-                      <div className="flex flex-col sm:flex-row gap-2">
-                        <Input
-                          type="email"
-                          placeholder="your.email@example.com (optional)"
-                          value={visitorEmail}
-                          onChange={(e) => {
-                            setVisitorEmail(e.target.value);
-                            setEmailVerificationToken(null);
-                            setCodeSent(false);
-                          }}
-                          disabled={Boolean(emailVerificationToken)}
-                          className="flex-1 text-xs"
-                        />
-                        {!emailVerificationToken && visitorEmail.trim().length > 0 && (
-                          <Button
-                            type="button"
-                            size="sm"
-                            variant="secondary"
-                            onClick={handleSendVerificationCode}
-                            loading={isSendingVerificationCode}
-                            disabled={!visitorEmail || codeCooldown > 0}
-                            icon={<Send className="h-3.5 w-3.5" />}
-                          >
-                            {codeCooldown > 0 ? `Resend (${codeCooldown}s)` : codeSent ? 'Resend Code' : 'Send Code'}
-                          </Button>
-                        )}
-                      </div>
-                      {codeSent && !emailVerificationToken && (
-                        <div className="flex flex-col sm:flex-row gap-2 pt-1">
-                          <Input
-                            placeholder="Enter 6-digit code"
-                            maxLength={6}
-                            value={emailVerificationCode}
-                            onChange={(e) => setEmailVerificationCode(e.target.value)}
-                            className="flex-1 text-xs tracking-widest text-center font-mono font-bold"
-                          />
-                          <Button
-                            type="button"
-                            size="sm"
-                            variant="primary"
-                            onClick={handleVerifyEmailCode}
-                            loading={isVerifyingCode}
-                            disabled={emailVerificationCode.trim().length !== 6}
-                            className="bg-emerald-600 hover:bg-emerald-700 text-white"
-                          >
-                            Verify Code
-                          </Button>
-                        </div>
-                      )}
-                    </div>
-                  )}
+                  {/* Optional Email Notification for General Office Visit */}
+                  <div className="rounded-xl border border-[var(--color-border)] bg-white p-4 space-y-2">
+                    <label htmlFor="general-visitor-email" className="block text-xs font-bold uppercase tracking-wider text-[var(--color-text-primary)]">
+                      Email Address (Optional)
+                    </label>
+                    <p className="text-[11px] text-[var(--color-text-secondary)]">
+                      Optionally provide your email to receive a digital copy of your E-GatePass. No verification code is required for general office visits.
+                    </p>
+                    <Input
+                      id="general-visitor-email"
+                      type="email"
+                      placeholder="your.email@example.com (optional)"
+                      value={visitorEmail}
+                      onChange={(e) => setVisitorEmail(e.target.value)}
+                      className="text-xs"
+                    />
+                  </div>
+
+                  {/* General Office Attendance Notice */}
+                  <div className="rounded-xl border border-blue-200 bg-blue-50/70 p-3.5 text-xs text-blue-950 flex items-start gap-2.5">
+                    <Info className="h-4 w-4 text-blue-700 shrink-0 mt-0.5" />
+                    <p className="leading-relaxed">
+                      <strong>Office Attendance Notice:</strong> After entering the campus, proceed to the selected office and inform the office staff that you have arrived. Ask them to confirm your visit so your office attendance is recorded.
+                    </p>
+                  </div>
                 </div>
               )}
 
@@ -3268,6 +3311,18 @@ export function GetPassPage() {
                         <AlertTriangle className="h-3.5 w-3.5" />
                         Campus is closed on this date: {match.title}{match.description ? ` (${match.description})` : ''}
                       </p>
+                    );
+                  }
+                  const officeMatch = currDate ? officeSchedules.find((s) => s.schedule_date === currDate && ['closed', 'maintenance', 'holiday'].includes(s.status)) : undefined;
+                  if (officeMatch) {
+                    return (
+                      <div className="mt-2 rounded-xl border border-rose-300 bg-rose-50 p-3 text-xs text-rose-900 flex items-start gap-2">
+                        <AlertTriangle className="h-4 w-4 text-rose-700 shrink-0 mt-0.5" />
+                        <div>
+                          <p className="font-bold">Selected Office is {officeMatch.status.toUpperCase()} on this date</p>
+                          <p className="mt-0.5">{officeMatch.reason || 'The office has scheduled a closure on this date.'} Please choose another date when the office is open.</p>
+                        </div>
+                      </div>
                     );
                   }
                   return null;
@@ -3516,12 +3571,6 @@ export function GetPassPage() {
                       </p>
                     )}
                   </div>
-                </div>
-              )}
-
-              {capabilitiesDiagnostics?.turnstile && !capabilitiesDiagnostics.turnstile.verified && (
-                <div className="rounded-xl border border-amber-300 bg-amber-50 p-3 text-xs text-amber-950" role="status">
-                  Security challenge verification (Turnstile) is not currently active on this deployment. Public registrations fail closed until configured.
                 </div>
               )}
 
@@ -5246,9 +5295,28 @@ export function GetPassPage() {
           {/* ============================== STEP 7: GENERATING ============================== */}
           {step === 'generating' && (
             <div role="status" aria-live="polite" aria-label="Generating gate pass" className="py-16 text-center space-y-4">
-              <Loader2 className="mx-auto h-12 w-12 animate-spin text-[var(--color-brand)]" />
-              <h3 className="text-lg font-bold text-[var(--color-text-primary)]">Issuing Official E-GatePass…</h3>
-              <p className="text-sm text-[var(--color-text-secondary)]">Securing your pass record and generating QR token.</p>
+              {qrRenderingError ? (
+                <div className="space-y-4 max-w-md mx-auto">
+                  <AlertCircle className="mx-auto h-12 w-12 text-amber-600" />
+                  <h3 className="text-lg font-bold text-[var(--color-text-primary)]">Pass Issued — QR Generation Paused</h3>
+                  <p className="text-sm text-[var(--color-text-secondary)]">
+                    Your pass was safely recorded, but preparing the visual QR image encountered an issue. Click below to render your QR code.
+                  </p>
+                  <Button
+                    type="button"
+                    onClick={handleRetryQrRendering}
+                    className="w-full bg-[#7A0A0A] hover:bg-[#5C0808] text-white font-semibold py-2.5 rounded-xl shadow-sm"
+                  >
+                    Retry QR Code Rendering
+                  </Button>
+                </div>
+              ) : (
+                <>
+                  <Loader2 className="mx-auto h-12 w-12 animate-spin text-[var(--color-brand)]" />
+                  <h3 className="text-lg font-bold text-[var(--color-text-primary)]">Issuing Official E-GatePass…</h3>
+                  <p className="text-sm text-[var(--color-text-secondary)]">Securing your pass record and generating QR token.</p>
+                </>
+              )}
             </div>
           )}
 
@@ -5315,7 +5383,57 @@ export function GetPassPage() {
                   <p className="leading-relaxed">
                     3. If the appointment is rejected, you will receive an email explaining the office&apos;s reason.
                   </p>
+                  <div className="mt-3 pt-2 border-t border-amber-200 text-amber-900 leading-relaxed font-medium">
+                    <strong>Attendance Notice:</strong> After entering the campus, proceed to the office and inform the specific person or office staff that you have arrived. Ask them to confirm your arrival so your office visit is recorded. A gate scan alone is not proof of office attendance.
+                  </div>
                 </div>
+
+                {/* Email Delivery Status Card */}
+                {submittedRequestData?.visitorEmail && (
+                  <div className="rounded-xl border border-slate-200 bg-slate-50 p-4 text-xs space-y-2">
+                    <div className="flex items-center justify-between">
+                      <span className="font-bold text-slate-900">Submission Acknowledgement Email</span>
+                      {(() => {
+                        const status = submittedRequestData.emailDeliveryStatus || 'pending';
+                        if (status === 'delivered') {
+                          return (
+                            <span className="inline-flex items-center gap-1 rounded-full bg-emerald-100 text-emerald-800 text-[10px] font-bold px-2 py-0.5">
+                              <CheckCircle2 className="h-3 w-3" /> Delivered
+                            </span>
+                          );
+                        }
+                        if (status === 'sent') {
+                          return (
+                            <span className="inline-flex items-center gap-1 rounded-full bg-blue-100 text-blue-800 text-[10px] font-bold px-2 py-0.5">
+                              <CheckCircle2 className="h-3 w-3" /> Sent to Provider
+                            </span>
+                          );
+                        }
+                        if (status === 'failed') {
+                          return (
+                            <span className="inline-flex items-center gap-1 rounded-full bg-rose-100 text-rose-800 text-[10px] font-bold px-2 py-0.5">
+                              <AlertTriangle className="h-3 w-3" /> Delivery Issue
+                            </span>
+                          );
+                        }
+                        return (
+                          <span className="inline-flex items-center gap-1 rounded-full bg-amber-100 text-amber-800 text-[10px] font-bold px-2 py-0.5">
+                            <Clock className="h-3 w-3" /> Processing
+                          </span>
+                        );
+                      })()}
+                    </div>
+                    <p className="text-slate-600 leading-relaxed">
+                      {(() => {
+                        const status = submittedRequestData.emailDeliveryStatus || 'pending';
+                        if (status === 'delivered') return `Delivery confirmed to ${submittedRequestData.visitorEmail}. Check your inbox for your tracking confirmation.`;
+                        if (status === 'sent') return `Tracking confirmation email accepted by the email provider for delivery to ${submittedRequestData.visitorEmail}.`;
+                        if (status === 'failed') return `Email dispatch encountered an issue. Please save your private tracking link below to monitor your request status.`;
+                        return `Your submission acknowledgement email is currently queued for delivery to ${submittedRequestData.visitorEmail}.`;
+                      })()}
+                    </p>
+                  </div>
+                )}
 
                 {submittedRequestData?.trackingUrl && (
                   <div className="rounded-xl border border-slate-200 bg-slate-50 p-4 text-xs space-y-2">
@@ -5327,15 +5445,20 @@ export function GetPassPage() {
                       <span className="text-[10px] font-semibold text-slate-500 uppercase tracking-wide">Account-Free</span>
                     </div>
                     <p className="text-slate-600 leading-relaxed">
-                      We sent a submission acknowledgement email to <strong>{submittedRequestData.visitorEmail}</strong> with your private tracking link. You can also track your request directly:
+                      You can monitor your review status anytime using this link:
                     </p>
+                    {submittedRequestData.trackingToken && (
+                      <div className="text-[11px] font-mono bg-white p-2 rounded-lg border border-slate-200 text-slate-800">
+                        Tracking Token: <span className="font-bold">{submittedRequestData.trackingToken}</span>
+                      </div>
+                    )}
                     <div className="pt-1 flex flex-col sm:flex-row gap-2">
                       <a
                         href={submittedRequestData.trackingUrl}
                         className="inline-flex items-center justify-center gap-1.5 rounded-lg bg-[#700f14] px-4 py-2 text-xs font-bold text-white hover:bg-[#851218] transition-colors shadow-xs"
                       >
                         <Clock className="h-3.5 w-3.5" />
-                        <span>Track My Request Now</span>
+                        <span>Open Status Tracker</span>
                       </a>
                     </div>
                   </div>
@@ -5399,7 +5522,9 @@ export function GetPassPage() {
 
               {qrDataUrl && passPresentation ? (
                 <div className="flex justify-center py-2">
-                  <InstitutionalPassCard presentation={passPresentation} qrDataUrl={qrDataUrl} />
+                  <Suspense fallback={<div className="h-64 w-full animate-pulse bg-gray-100 rounded-2xl" />}>
+                    <InstitutionalPassCard presentation={passPresentation} qrDataUrl={qrDataUrl} />
+                  </Suspense>
                 </div>
               ) : (
                 <div className="rounded-xl border border-amber-300 bg-amber-50 p-6 text-center text-xs text-amber-900 space-y-2">
@@ -5545,29 +5670,31 @@ export function GetPassPage() {
 
       {/* Email Pass Modal */}
       {passId && (
-        <EmailPassModal
-          isOpen={showEmailModal && !showSkipWarning}
-          onClose={() => setShowEmailModal(false)}
-          passId={passId || ''}
-          qrToken={rawQrToken || ''}
-          source="portal"
-          mode={step === 'delivery' ? 'delivery-gate' : 'modal'}
-          onSuccess={() => {
-            setEmailDeliverySecured(true);
-            setEmailOutcomeUnknown(false);
-            setEmailSkipped(false);
-            setShowEmailModal(false);
-            setStep('done');
-          }}
-          onUnknown={() => {
-            setEmailDeliverySecured(false);
-            setEmailOutcomeUnknown(true);
-            setEmailSkipped(false);
-            setShowEmailModal(false);
-            setStep('done');
-          }}
-          onSkip={() => setShowSkipWarning(true)}
-        />
+        <Suspense fallback={null}>
+          <EmailPassModal
+            isOpen={showEmailModal && !showSkipWarning}
+            onClose={() => setShowEmailModal(false)}
+            passId={passId || ''}
+            qrToken={rawQrToken || ''}
+            source="portal"
+            mode={step === 'delivery' ? 'delivery-gate' : 'modal'}
+            onSuccess={() => {
+              setEmailDeliverySecured(true);
+              setEmailOutcomeUnknown(false);
+              setEmailSkipped(false);
+              setShowEmailModal(false);
+              setStep('done');
+            }}
+            onUnknown={() => {
+              setEmailDeliverySecured(false);
+              setEmailOutcomeUnknown(true);
+              setEmailSkipped(false);
+              setShowEmailModal(false);
+              setStep('done');
+            }}
+            onSkip={() => setShowSkipWarning(true)}
+          />
+        </Suspense>
       )}
 
       {/* Skip Warning Modal */}

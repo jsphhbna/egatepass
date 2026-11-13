@@ -185,7 +185,40 @@ const initialSnapshot: DashboardDataSnapshot = {
 const DEFAULT_PERIOD_QUERY: DashboardPeriodQuery = { period: 'today' };
 let activeQuery: DashboardPeriodQuery = { ...DEFAULT_PERIOD_QUERY };
 let currentSnapshot = initialSnapshot;
-let pollTimer: ReturnType<typeof setInterval> | null = null;
+let pollTimeout: ReturnType<typeof setTimeout> | null = null;
+let consecutiveDashboardFailures = 0;
+const BASE_POLL_INTERVAL_MS = 15000;
+const MAX_POLL_INTERVAL_MS = 120000;
+
+function scheduleNextDashboardPoll() {
+  if (pollTimeout) {
+    clearTimeout(pollTimeout);
+    pollTimeout = null;
+  }
+  if (subscribers.size === 0) return;
+
+  const delay = consecutiveDashboardFailures > 1
+    ? Math.min(BASE_POLL_INTERVAL_MS * Math.pow(1.5, consecutiveDashboardFailures - 1), MAX_POLL_INTERVAL_MS)
+    : BASE_POLL_INTERVAL_MS;
+
+  pollTimeout = setTimeout(async () => {
+    if (typeof document !== 'undefined' && document.hidden) {
+      // Paused while tab is backgrounded
+      return;
+    }
+    await fetchDashboardData();
+    scheduleNextDashboardPoll();
+  }, delay);
+}
+
+if (typeof document !== 'undefined') {
+  document.addEventListener('visibilitychange', () => {
+    if (!document.hidden && subscribers.size > 0) {
+      void fetchDashboardData();
+      scheduleNextDashboardPoll();
+    }
+  });
+}
 let activeRequest: {
   id: number;
   epoch: number;
@@ -324,10 +357,12 @@ function fetchDashboardData(isManualRetry = false): Promise<void> {
         refreshError: null,
         updatedAt: Date.now(),
       };
+      consecutiveDashboardFailures = 0;
       emitChange();
     } catch (error) {
       if (!controller.signal.aborted && currentIntent === latestIntent && requestEpoch === storeEpoch) {
         console.error('Dashboard data fetch error:', error);
+        consecutiveDashboardFailures++;
         const errorMessage = error instanceof Error ? error.message : 'The dashboard could not load visitor data.';
 
         if (hasExistingData) {
@@ -390,18 +425,16 @@ function subscribe(callback: () => void) {
   if (subscribers.size === 1) {
     storeEpoch++;
     void fetchDashboardData();
-    pollTimer = setInterval(() => {
-      void fetchDashboardData();
-    }, 15000);
+    scheduleNextDashboardPoll();
   }
 
   return () => {
     subscribers.delete(callback);
     if (subscribers.size === 0) {
       storeEpoch++;
-      if (pollTimer) {
-        clearInterval(pollTimer);
-        pollTimer = null;
+      if (pollTimeout) {
+        clearTimeout(pollTimeout);
+        pollTimeout = null;
       }
       if (activeRequest) {
         activeRequest.controller.abort();
@@ -468,10 +501,11 @@ export function useAdminDashboardData() {
 }
 
 export function _resetDashboardStoreForTesting() {
-  if (pollTimer) {
-    clearInterval(pollTimer);
-    pollTimer = null;
+  if (pollTimeout) {
+    clearTimeout(pollTimeout);
+    pollTimeout = null;
   }
+  consecutiveDashboardFailures = 0;
   if (activeRequest) {
     activeRequest.controller.abort();
     activeRequest = null;

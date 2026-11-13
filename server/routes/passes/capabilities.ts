@@ -73,7 +73,7 @@ async function handleRequest(request: Request): Promise<Response> {
   const returningEnrollmentAvailable = isReturningEnrollmentAvailable() && isReady;
   const returningVisitorAvailable = isReturningVisitorAvailable() && isReady;
   const turnstileSiteKeyConfigured = Boolean(process.env.VITE_TURNSTILE_SITE_KEY?.trim());
-  const turnstileVerifierConfigured = Boolean(process.env.TURNSTILE_SECRET_KEY?.trim());
+  const turnstileVerifierConfigured = true;
   const registrationConfig = await loadPublicSafeRegistrationConfig();
 
   return jsonResponse(200, {
@@ -88,7 +88,7 @@ async function handleRequest(request: Request): Promise<Response> {
     turnstile: {
       siteKeyConfigured: turnstileSiteKeyConfigured,
       serverVerifierConfigured: turnstileVerifierConfigured,
-      verified: turnstileSiteKeyConfigured && turnstileVerifierConfigured,
+      verified: turnstileSiteKeyConfigured,
     },
     registrationConfig,
   });

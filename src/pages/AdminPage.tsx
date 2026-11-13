@@ -45,7 +45,6 @@ const navGroups: NavGroupItem[] = [
     children: [
       { to: '/admin?tab=overview', label: 'Overview' },
       { to: '/admin?tab=analytics', label: 'Analytics' },
-      { to: '/admin?tab=reports', label: 'Reports' },
     ],
   },
   {
@@ -55,8 +54,7 @@ const navGroups: NavGroupItem[] = [
     basePath: '/admin/visitors',
     children: [
       { to: '/admin/visitors?tab=search', label: 'Search & Records' },
-      { to: '/admin/visitors?tab=current', label: 'Current Visitors' },
-      { to: '/admin/visitors?tab=history', label: 'Visit History' },
+      { to: '/admin/visitors?tab=reports', label: 'Visitor Reports' },
       { to: '/admin/visitors?tab=offline', label: 'Offline Mode Recorded' },
     ],
   },
@@ -79,7 +77,6 @@ const navGroups: NavGroupItem[] = [
     children: [
       { to: '/admin/users?tab=staff', label: 'Staff Accounts' },
       { to: '/admin/users?tab=directory', label: 'Office Directory' },
-      { to: '/admin/users?tab=assignments', label: 'Office Assignments' },
     ],
   },
   { id: 'emergency', label: 'Emergency', icon: AlertTriangle, basePath: '/admin/emergency' },

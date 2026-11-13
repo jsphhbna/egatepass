@@ -1,8 +1,8 @@
 import { useAuth } from '@/hooks/useAuth';
-import { formatManilaDateTime, formatManilaTime, formatManilaIso, formatManilaFileTimestamp, getManilaDatePresetRange, type DatePresetKey } from '@/lib/manilaTime';
+import { formatManilaDateTime, formatManilaTime, formatManilaIso, formatManilaFileTimestamp, getManilaDatePresetRange, getManilaDateString, type DatePresetKey } from '@/lib/manilaTime';
 import { getActiveIncidentHoldsForRecord, createIncidentHold, releaseIncidentHold, type IncidentHold } from '@/services/incidentHold';
-import { AlertTriangle, ClipboardCheck, Download, Eye, MapPin, Printer, ShieldAlert, ShieldCheck } from 'lucide-react';
-import { useState, useEffect, useRef } from 'react';
+import { AlertTriangle, ClipboardCheck, Download, Eye, MapPin, Printer, ShieldAlert, ShieldCheck, RefreshCw } from 'lucide-react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { Card, Input, Select, Button, DataTable, DataTableHead, DataTableRow, DataTableCell, Modal, StatusBadge } from '@/components/ui';
 import { AuthenticatedImage } from '@/components/AuthenticatedImage';
@@ -21,6 +21,18 @@ export type HoldLookupState =
 
 interface GatePassWithId extends GatePass {
   id: string;
+  contactNumber?: string | null;
+  homeAddress?: string | null;
+  homeStreet?: string | null;
+  homeBuilding?: string | null;
+  barangayName?: string | null;
+  cityName?: string | null;
+  provinceName?: string | null;
+  regionName?: string | null;
+  destinationOffice?: string | null;
+  attendanceStatus?: string | null;
+  visitType?: string | null;
+  approvalStatus?: string | null;
 }
 
 interface SerializedRecordPass {
@@ -28,6 +40,18 @@ interface SerializedRecordPass {
   visitorId: string;
   visitorName: string;
   purpose: string;
+  contactNumber?: string | null;
+  homeAddress?: string | null;
+  homeStreet?: string | null;
+  homeBuilding?: string | null;
+  barangayName?: string | null;
+  cityName?: string | null;
+  provinceName?: string | null;
+  regionName?: string | null;
+  destinationOffice?: string | null;
+  attendanceStatus?: string | null;
+  visitType?: string | null;
+  approvalStatus?: string | null;
   photoPublicId: string | null;
   idImagePublicId: string | null;
   source: PassSource;
@@ -94,6 +118,18 @@ export function deserializeRecordPass(p: SerializedRecordPass): GatePassWithId {
     visitorId: p.visitorId,
     visitorName: p.visitorName,
     purpose: p.purpose,
+    contactNumber: p.contactNumber ?? null,
+    homeAddress: p.homeAddress ?? null,
+    homeStreet: p.homeStreet ?? null,
+    homeBuilding: p.homeBuilding ?? null,
+    barangayName: p.barangayName ?? null,
+    cityName: p.cityName ?? null,
+    provinceName: p.provinceName ?? null,
+    regionName: p.regionName ?? null,
+    destinationOffice: p.destinationOffice ?? null,
+    attendanceStatus: p.attendanceStatus ?? null,
+    visitType: p.visitType ?? null,
+    approvalStatus: p.approvalStatus ?? null,
     photoPublicId: p.photoPublicId ?? '',
     idImagePublicId: p.idImagePublicId,
     source: p.source,
@@ -116,8 +152,9 @@ export function deserializeRecordPass(p: SerializedRecordPass): GatePassWithId {
 export function AdminRecords() {
   const { role } = useAuth();
   const [searchParams] = useSearchParams();
-  const currentTab = (searchParams.get('tab') as 'current' | 'history' | 'search' | 'offline') || 'search';
+  const currentTab = (searchParams.get('tab') as 'current' | 'history' | 'search' | 'offline' | 'reports') || 'search';
   const isOfflineTab = currentTab === 'offline';
+  const isReportsTab = currentTab === 'reports';
   const [passes, setPasses] = useState<GatePassWithId[]>([]);
   const [exportTruncatedNotice, setExportTruncatedNotice] = useState<string | null>(null);
   const [expectedGateDraft, setExpectedGateDraft] = useState('');
@@ -788,61 +825,71 @@ export function AdminRecords() {
       <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
         <div>
           <h1 className="text-2xl font-bold text-[var(--color-text-primary)]">
-            Visitor Records
+            {isReportsTab ? 'Visitor Reports' : isOfflineTab ? 'Emergency Offline Gate Records' : 'Visitor Records'}
           </h1>
           <p className="text-sm text-[var(--color-text-secondary)] mt-1">
-            View and export gate pass history
+            {isReportsTab
+              ? 'Detailed institutional visitor compliance and operational exception reports'
+              : isOfflineTab
+              ? 'Review, reconcile, and audit emergency offline entries recorded during connectivity loss'
+              : 'View and export gate pass history'}
           </p>
         </div>
-        <div className="flex flex-wrap items-center gap-2 print:hidden">
-          <Button
-            onClick={() => window.print()}
-            variant="secondary"
-            icon={<Printer className="h-4 w-4" />}
-          >
-            Print loaded view
-          </Button>
-          <div className="flex items-center gap-1.5">
+        {!isReportsTab && (
+          <div className="flex flex-wrap items-center gap-2 print:hidden">
             <Button
-              onClick={() => void exportRecords('csv')}
-              disabled={exporting}
-              loading={exporting && exportFormat === 'csv'}
-              icon={<Download className="h-4 w-4" />}
+              onClick={() => window.print()}
               variant="secondary"
+              icon={<Printer className="h-4 w-4" />}
             >
-              CSV
+              Print loaded view
             </Button>
-            <Button
-              onClick={() => void exportRecords('xlsx')}
-              disabled={exporting}
-              loading={exporting && exportFormat === 'xlsx'}
-              icon={<Download className="h-4 w-4" />}
-              variant="secondary"
-            >
-              Excel
-            </Button>
-            <Button
-              onClick={() => void exportRecords('pdf')}
-              disabled={exporting}
-              loading={exporting && exportFormat === 'pdf'}
-              icon={<Download className="h-4 w-4" />}
-              variant="secondary"
-            >
-              PDF
-            </Button>
+            <div className="flex items-center gap-1.5">
+              <Button
+                onClick={() => void exportRecords('csv')}
+                disabled={exporting}
+                loading={exporting && exportFormat === 'csv'}
+                icon={<Download className="h-4 w-4" />}
+                variant="secondary"
+              >
+                CSV
+              </Button>
+              <Button
+                onClick={() => void exportRecords('xlsx')}
+                disabled={exporting}
+                loading={exporting && exportFormat === 'xlsx'}
+                icon={<Download className="h-4 w-4" />}
+                variant="secondary"
+              >
+                Excel
+              </Button>
+              <Button
+                onClick={() => void exportRecords('pdf')}
+                disabled={exporting}
+                loading={exporting && exportFormat === 'pdf'}
+                icon={<Download className="h-4 w-4" />}
+                variant="secondary"
+              >
+                PDF
+              </Button>
+            </div>
           </div>
-        </div>
+        )}
       </div>
 
-      {exportTruncatedNotice && (
-        <div role="alert" className="flex items-start gap-2.5 rounded-lg border border-amber-300 bg-amber-50 p-3.5 text-xs text-amber-950 print:hidden">
-          <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-amber-700" aria-hidden="true" />
-          <div>
-            <p className="font-bold">Export Limit Notice</p>
-            <p className="mt-0.5">{exportTruncatedNotice}</p>
-          </div>
-        </div>
-      )}
+      {isReportsTab ? (
+        <VisitorReportsView onSelectPass={handleSelectPass} />
+      ) : (
+        <>
+          {exportTruncatedNotice && (
+            <div role="alert" className="flex items-start gap-2.5 rounded-lg border border-amber-300 bg-amber-50 p-3.5 text-xs text-amber-950 print:hidden">
+              <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-amber-700" aria-hidden="true" />
+              <div>
+                <p className="font-bold">Export Limit Notice</p>
+                <p className="mt-0.5">{exportTruncatedNotice}</p>
+              </div>
+            </div>
+          )}
 
       {/* Print Header */}
       <div className="hidden print:block mb-4">
@@ -1236,6 +1283,8 @@ export function AdminRecords() {
       </div>
       </>
       )}
+      </>
+      )}
 
       <Modal
         isOpen={!!selectedPass}
@@ -1255,6 +1304,24 @@ export function AdminRecords() {
             </div>
 
             <dl className="grid gap-4 rounded-xl border border-[var(--color-border)] bg-[var(--color-canvas)] p-4 sm:grid-cols-2">
+              <PassDetail label="Contact Number" value={selectedPass.contactNumber || 'Not recorded'} />
+              <PassDetail label="Purpose of Visit" value={selectedPass.purpose || 'Not recorded'} />
+              <PassDetail label="Destination Office" value={selectedPass.destinationOffice || 'General Campus'} />
+              <PassDetail label="Office Attendance" value={selectedPass.attendanceStatus ? selectedPass.attendanceStatus.replace(/_/g, ' ') : 'Not recorded'} />
+              <PassDetail
+                label="Full Residential Address"
+                value={
+                  [
+                    selectedPass.homeBuilding,
+                    selectedPass.homeStreet,
+                    selectedPass.barangayName,
+                    selectedPass.cityName,
+                    selectedPass.provinceName,
+                    selectedPass.regionName,
+                  ].filter(Boolean).join(', ') || selectedPass.homeAddress || 'Not recorded'
+                }
+                className="sm:col-span-2"
+              />
               <PassDetail label="Expected gate" value={selectedPass.expectedGate || 'Not assigned'} />
               <PassDetail label="Actual entry gate" value={selectedPass.gate || 'Not recorded'} />
               <PassDetail label="Issued" value={selectedPass.issuedAt ? formatManilaDateTime(selectedPass.issuedAt.toMillis()) : 'Not recorded'} />
@@ -1518,9 +1585,9 @@ export function AdminRecords() {
   );
 }
 
-function PassDetail({ label, value }: { label: string; value: string }) {
+function PassDetail({ label, value, className = '' }: { label: string; value: string; className?: string }) {
   return (
-    <div>
+    <div className={className}>
       <dt className="text-xs font-bold uppercase tracking-wide text-[var(--color-text-muted)]">{label}</dt>
       <dd className="mt-1 break-words text-sm font-semibold text-[var(--color-text-primary)]">{value}</dd>
     </div>
@@ -1537,5 +1604,297 @@ function VerificationImage({ title, publicId, emptyText = 'Image unavailable' }:
         <div className="flex h-64 items-center justify-center rounded-xl border border-dashed border-[var(--color-border-strong)] bg-[var(--color-canvas)] p-4 text-center text-sm text-[var(--color-text-muted)]">{emptyText}</div>
       )}
     </section>
+  );
+}
+
+type ReportCategory =
+  | 'missing_timeout'
+  | 'currently_inside'
+  | 'exited_unconfirmed'
+  | 'specific_unconfirmed'
+  | 'approved_no_arrival';
+
+interface VisitorReportsViewProps {
+  onSelectPass: (pass: GatePassWithId) => void;
+}
+
+function VisitorReportsView({ onSelectPass }: VisitorReportsViewProps) {
+  const [reportCategory, setReportCategory] = useState<ReportCategory>('missing_timeout');
+  const [reportDateFrom, setReportDateFrom] = useState<string>(() => getManilaDateString());
+  const [reportDateTo, setReportDateTo] = useState<string>(() => getManilaDateString());
+  const [loading, setLoading] = useState(false);
+  const [reportPasses, setReportPasses] = useState<GatePassWithId[]>([]);
+  const [exporting, setExporting] = useState(false);
+
+  const reportDescriptions: Record<ReportCategory, { title: string; desc: string }> = {
+    missing_timeout: {
+      title: 'Missing Time-Out Report',
+      desc: 'Visitors who entered campus (time-in recorded) but have no time-out exit recorded.',
+    },
+    currently_inside: {
+      title: 'Currently Inside Campus Report',
+      desc: 'Active visitors currently verified inside campus premises.',
+    },
+    exited_unconfirmed: {
+      title: 'Exited Without Office Confirmation',
+      desc: 'Visitors who clocked out at gate exits without office arrival confirmation recorded.',
+    },
+    specific_unconfirmed: {
+      title: 'Specific-Person Visits Not Confirmed by Office',
+      desc: 'Visitors with approved specific-person visits whose office arrival was never confirmed by the host office.',
+    },
+    approved_no_arrival: {
+      title: 'Approved Requests Who Never Arrived at Gate',
+      desc: 'Visitors with issued/approved QR passes who never recorded a gate entry scan.',
+    },
+  };
+
+  const loadReportData = useCallback(async () => {
+    setLoading(true);
+    try {
+      const token = await getAccessToken();
+      const params = new URLSearchParams();
+      params.set('pageSize', '250');
+      if (reportDateFrom) params.set('dateFrom', reportDateFrom);
+      if (reportDateTo) params.set('dateTo', reportDateTo);
+
+      const res = await fetch(`/api/admin/records?${params.toString()}`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!res.ok) throw new Error('Failed to load report records');
+      const data = await res.json();
+      const items: GatePassWithId[] = (data?.passes || []).map(deserializeRecordPass);
+
+      let filtered = items;
+      if (reportCategory === 'missing_timeout') {
+        filtered = items.filter((p) => p.timeIn != null && p.timeOut == null);
+      } else if (reportCategory === 'currently_inside') {
+        filtered = items.filter((p) => p.status === 'inside' || (p.timeIn != null && p.timeOut == null));
+      } else if (reportCategory === 'exited_unconfirmed') {
+        filtered = items.filter((p) => p.timeOut != null && p.attendanceStatus !== 'confirmed');
+      } else if (reportCategory === 'specific_unconfirmed') {
+        filtered = items.filter(
+          (p) =>
+            (p.visitType === 'specific_person' || p.approvalStatus === 'approved') &&
+            p.timeIn != null &&
+            p.attendanceStatus !== 'confirmed'
+        );
+      } else if (reportCategory === 'approved_no_arrival') {
+        filtered = items.filter((p) => (p.status === 'issued' || p.approvalStatus === 'approved') && p.timeIn == null);
+      }
+
+      setReportPasses(filtered);
+    } catch (err: any) {
+      toast.error(err?.message || 'Failed to generate report.');
+      setReportPasses([]);
+    } finally {
+      setLoading(false);
+    }
+  }, [reportCategory, reportDateFrom, reportDateTo]);
+
+  useEffect(() => {
+    void loadReportData();
+  }, [loadReportData]);
+
+  async function handleExportCsv() {
+    if (reportPasses.length === 0) {
+      toast.error('No matching records to export.');
+      return;
+    }
+    setExporting(true);
+    try {
+      const info = reportDescriptions[reportCategory];
+      const filename = `visitor_report_${reportCategory}_${formatManilaFileTimestamp(new Date())}`;
+      await exportReportToCsv({
+        title: info.title,
+        reportTitle: info.title,
+        columns: [
+          { header: 'Visitor Name', key: 'visitorName' },
+          { header: 'Contact Number', key: 'contactNumber', format: (v) => v || '—' },
+          { header: 'Destination Office', key: 'destinationOffice', format: (v) => v || 'General Campus' },
+          {
+            header: 'Residential Address',
+            key: 'homeAddress',
+            format: (_v, r) =>
+              [r.homeBuilding, r.homeStreet, r.barangayName, r.cityName, r.provinceName, r.regionName]
+                .filter(Boolean)
+                .join(', ') ||
+              r.homeAddress ||
+              '—',
+          },
+          { header: 'Purpose', key: 'purpose' },
+          { header: 'Pass Status', key: 'status' },
+          { header: 'Time In', key: 'timeIn', format: (v) => (v ? formatManilaDateTime(v.toMillis()) : '—') },
+          { header: 'Time Out', key: 'timeOut', format: (v) => (v ? formatManilaDateTime(v.toMillis()) : '—') },
+          { header: 'Office Attendance', key: 'attendanceStatus', format: (v) => (v ? v.replace(/_/g, ' ') : '—') },
+          { header: 'Gate', key: 'gate', format: (v) => v || '—' },
+        ],
+        rows: reportPasses,
+        filterMetadata: {
+          'Report Category': info.title,
+          'Date Range': `${reportDateFrom} to ${reportDateTo}`,
+        },
+        filename: `${filename}.csv`,
+      });
+      toast.success(`Exported ${reportPasses.length} records to CSV.`);
+    } catch (err: any) {
+      toast.error(err?.message || 'Failed to export CSV report.');
+    } finally {
+      setExporting(false);
+    }
+  }
+
+  const meta = reportDescriptions[reportCategory];
+
+  return (
+    <div className="space-y-5">
+      <Card className="p-5">
+        <div className="flex flex-wrap items-end gap-4">
+          <div className="min-w-0 flex-1 sm:min-w-64">
+            <label htmlFor="report-category-select" className="mb-1.5 block text-xs font-bold uppercase tracking-wide text-[var(--color-text-secondary)]">
+              Report Category
+            </label>
+            <Select
+              id="report-category-select"
+              value={reportCategory}
+              onChange={(e) => setReportCategory(e.target.value as ReportCategory)}
+            >
+              <option value="missing_timeout">Missing Time-Out</option>
+              <option value="currently_inside">Currently Inside Campus</option>
+              <option value="exited_unconfirmed">Exited Without Office Confirmation</option>
+              <option value="specific_unconfirmed">Specific-Person Not Confirmed by Office</option>
+              <option value="approved_no_arrival">Approved Requests (Never Arrived at Gate)</option>
+            </Select>
+          </div>
+
+          <div className="w-full sm:w-44">
+            <label htmlFor="report-date-from" className="mb-1.5 block text-xs font-bold uppercase tracking-wide text-[var(--color-text-secondary)]">
+              From Date
+            </label>
+            <Input
+              id="report-date-from"
+              type="date"
+              value={reportDateFrom}
+              onChange={(e) => setReportDateFrom(e.target.value)}
+            />
+          </div>
+
+          <div className="w-full sm:w-44">
+            <label htmlFor="report-date-to" className="mb-1.5 block text-xs font-bold uppercase tracking-wide text-[var(--color-text-secondary)]">
+              To Date
+            </label>
+            <Input
+              id="report-date-to"
+              type="date"
+              value={reportDateTo}
+              onChange={(e) => setReportDateTo(e.target.value)}
+            />
+          </div>
+
+          <div className="flex items-center gap-2">
+            <Button
+              type="button"
+              variant="secondary"
+              onClick={() => void loadReportData()}
+              loading={loading}
+              icon={<RefreshCw className="h-4 w-4" />}
+            >
+              Refresh
+            </Button>
+            <Button
+              type="button"
+              variant="primary"
+              className="bg-[#7A0A0A] hover:bg-[#600808] text-white"
+              onClick={() => void handleExportCsv()}
+              loading={exporting}
+              disabled={reportPasses.length === 0}
+              icon={<Download className="h-4 w-4" />}
+            >
+              Export CSV
+            </Button>
+          </div>
+        </div>
+      </Card>
+
+      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] p-4 gap-3">
+        <div>
+          <h2 className="text-sm font-bold text-[var(--color-text-primary)]">{meta.title}</h2>
+          <p className="text-xs text-[var(--color-text-secondary)] mt-0.5">{meta.desc}</p>
+        </div>
+        <div className="flex items-center gap-2">
+          <span className="rounded-full bg-[#7A0A0A]/10 px-3 py-1 text-xs font-bold text-[#7A0A0A]">
+            {reportPasses.length} {reportPasses.length === 1 ? 'Record' : 'Records'} Found
+          </span>
+        </div>
+      </div>
+
+      {loading ? (
+        <div className="flex h-40 items-center justify-center">
+          <div className="h-8 w-8 animate-spin rounded-full border-4 border-[var(--color-border)] border-t-[var(--color-brand)]" role="status" aria-label="Loading report" />
+        </div>
+      ) : reportPasses.length === 0 ? (
+        <Card className="p-8 text-center text-sm text-[var(--color-text-muted)]">
+          No records matched the selected report criteria for this date range.
+        </Card>
+      ) : (
+        <DataTable>
+          <DataTableHead>
+            <DataTableRow>
+              <DataTableCell isHeader>Visitor Name</DataTableCell>
+              <DataTableCell isHeader>Contact Number</DataTableCell>
+              <DataTableCell isHeader>Office</DataTableCell>
+              <DataTableCell isHeader>Time In</DataTableCell>
+              <DataTableCell isHeader>Time Out</DataTableCell>
+              <DataTableCell isHeader>Attendance</DataTableCell>
+              <DataTableCell isHeader>Status</DataTableCell>
+              <DataTableCell isHeader className="text-right">Actions</DataTableCell>
+            </DataTableRow>
+          </DataTableHead>
+          <tbody>
+            {reportPasses.map((pass) => (
+              <DataTableRow key={pass.id}>
+                <DataTableCell className="font-semibold text-xs text-[var(--color-text-primary)]">
+                  {pass.visitorName}
+                </DataTableCell>
+                <DataTableCell className="text-xs text-[var(--color-text-secondary)]">
+                  {pass.contactNumber || '—'}
+                </DataTableCell>
+                <DataTableCell className="text-xs text-[var(--color-text-secondary)]">
+                  {pass.destinationOffice || 'General Campus'}
+                </DataTableCell>
+                <DataTableCell className="text-xs text-[var(--color-text-secondary)]">
+                  {pass.timeIn ? formatManilaTime(pass.timeIn.toDate()) : '—'}
+                </DataTableCell>
+                <DataTableCell className="text-xs text-[var(--color-text-secondary)]">
+                  {pass.timeOut ? formatManilaTime(pass.timeOut.toDate()) : '—'}
+                </DataTableCell>
+                <DataTableCell className="text-xs">
+                  <span className={`inline-block rounded px-1.5 py-0.5 text-[10px] font-semibold ${
+                    pass.attendanceStatus === 'confirmed'
+                      ? 'bg-emerald-100 text-emerald-800'
+                      : 'bg-amber-100 text-amber-800'
+                  }`}>
+                    {pass.attendanceStatus ? pass.attendanceStatus.replace(/_/g, ' ') : 'awaiting'}
+                  </span>
+                </DataTableCell>
+                <DataTableCell>
+                  <StatusBadge status={pass.status} />
+                </DataTableCell>
+                <DataTableCell className="text-right">
+                  <Button
+                    size="sm"
+                    variant="secondary"
+                    icon={<Eye className="h-3.5 w-3.5" />}
+                    onClick={() => onSelectPass(pass)}
+                  >
+                    Details
+                  </Button>
+                </DataTableCell>
+              </DataTableRow>
+            ))}
+          </tbody>
+        </DataTable>
+      )}
+    </div>
   );
 }

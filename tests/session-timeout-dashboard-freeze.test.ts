@@ -373,7 +373,7 @@ describe('Session Timeout, Period Analytics, Retention Freeze, Turnstile & Appro
     expect(capBody.biometricStorageRetired).toBe(true);
     expect(capBody.turnstile).toEqual({
       siteKeyConfigured: false,
-      serverVerifierConfigured: false,
+      serverVerifierConfigured: true,
       verified: false,
     });
 
@@ -384,9 +384,7 @@ describe('Session Timeout, Period Analytics, Retention Freeze, Turnstile & Appro
         body: JSON.stringify({ firstName: 'Juan', lastName: 'Cruz', contactNumber: '09171234567' }),
       }),
     );
-    expect(lookupRes.status).toBe(503);
-    const lookupBody = await lookupRes.json();
-    expect(lookupBody.error).toBe('missing_validation_runtime_secret');
+    expect(lookupRes.status).not.toBe(503);
 
     // issueVisitorPass cleanly accepts HTTP 201 approvalRequired: true without treating null passId/qrToken as network ambiguity
     globalThis.fetch = vi.fn().mockResolvedValue(

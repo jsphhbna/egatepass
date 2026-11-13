@@ -38,6 +38,7 @@ describe('Service Role Least-Privilege Architecture Contract', () => {
       'location_search_cache',
       'maintenance_state',
       'nominatim_rate_limiter',
+      'office_calendar_schedules',
       'office_personnel',
       'office_provisioning_operations',
       'office_staff_assignments',

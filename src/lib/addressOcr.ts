@@ -1,9 +1,9 @@
 /**
  * src/lib/addressOcr.ts
  *
- * Extracts structured Philippine address components (house/building, street,
- * barangay, city/municipality, province, postal code) from OCR address text.
- * Used to suggest non-intrusive autofill cards on ID uploads.
+ * Extracts structured Philippine address suggestions (house/building, street,
+ * barangay, city/municipality, province, region) from OCR address text.
+ * Strictly avoids collecting or suggesting postal codes.
  */
 
 import citiesData from '../../data/reference/psgc/cities.json';
@@ -16,7 +16,6 @@ export interface DetectedAddressDetails {
   barangay?: string;
   city?: string;
   province?: string;
-  postalCode?: string;
   cityCode?: string;
   barangayCode?: string;
   provinceCode?: string;
@@ -50,13 +49,10 @@ export function parseAddressFromOcr(rawAddress: string): DetectedAddressDetails 
 
   let remaining = cleanRaw;
 
-  // 1. Extract 4-digit postal code (usually at the end or preceded by ZIP/Postal)
-  let postalCode: string | undefined;
-  const postalMatch = remaining.match(/\b(1\d{3}|[2-9]\d{3})\b/);
-  if (postalMatch) {
-    postalCode = postalMatch[1];
-    remaining = remaining.replace(postalMatch[0], ' ').trim();
-  }
+  // 1. Strip postal code / zip if present in raw OCR text so it doesn't pollute street tokens,
+  // strictly avoiding collecting or returning postal codes per Phase 3 & 9 requirements.
+  remaining = remaining.replace(/\b(?:zip|postal(?:\s*code)?)\s*:?\s*\d{4}\b/gi, ' ');
+  remaining = remaining.replace(/\b(1\d{3}|[2-9]\d{3})\b/g, ' ').replace(/\s+/g, ' ').trim();
 
   // 2. Extract Province by scanning provincesData
   let province: string | undefined;
@@ -64,7 +60,8 @@ export function parseAddressFromOcr(rawAddress: string): DetectedAddressDetails 
   let regionCode: string | undefined;
 
   for (const prov of provincesData as any[]) {
-    const provRegex = new RegExp(`\\b${prov.name}\\b`, 'i');
+    // Avoid matching province name if it's part of an explicit city name (e.g. "Quezon City", "Cebu City", "Iloilo City")
+    const provRegex = new RegExp(`\\b${prov.name}\\b(?!\\s+city\\b)`, 'i');
     if (provRegex.test(remaining)) {
       province = prov.name;
       provinceCode = prov.code;
@@ -83,34 +80,75 @@ export function parseAddressFromOcr(rawAddress: string): DetectedAddressDetails 
     remaining = remaining.replace(bgyMatch[0], ' ').trim();
   }
 
-  // 4. Extract City / Municipality or Manila District
+  // 4. Extract City / Municipality
   let city: string | undefined;
   let cityCode: string | undefined;
 
-  // Check Manila Districts first
-  const isManilaDistrict = MANILA_DISTRICTS.some((district) => {
-    const dRegex = new RegExp(`\\b${district}\\b`, 'i');
-    return dRegex.test(cleanRaw);
+  const sortedCities = [...(citiesData as any[])].sort((a, b) => {
+    if (a.isHuc && !b.isHuc) return -1;
+    if (!a.isHuc && b.isHuc) return 1;
+    if (a.isCity && !b.isCity) return -1;
+    if (!a.isCity && b.isCity) return 1;
+    return b.name.length - a.name.length;
   });
 
-  if (isManilaDistrict || /\b(?:city\s+of\s+manila|manila\s+city|manila)\b/i.test(remaining)) {
+  // Pass 0: Check for explicit Manila / City of Manila first to prevent Manila districts
+  // (like Sampaloc, Santa Cruz, San Miguel) matching same-named provincial municipalities
+  if (/\b(?:city\s+of\s+manila|manila\s+city|manila)\b/i.test(remaining)) {
     city = 'City of Manila';
     cityCode = '1380600000';
     regionCode = '1300000000'; // NCR
     remaining = remaining.replace(/\b(?:city\s+of\s+manila|manila\s+city|manila)\b/gi, ' ').trim();
-  } else {
-    // Check known cities (prefer longer base names first)
-    const sortedCities = [...(citiesData as any[])].sort((a, b) => b.name.length - a.name.length);
+  }
+
+  // Pass 1: Look for exact city name or explicit city phrases ("City of X", "X City")
+  if (!city) {
     for (const c of sortedCities) {
-      const baseName = c.name.replace(/^(?:City\s+of\s+|Municipality\s+of\s+)/i, '').trim();
+      const escapedFullName = c.name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      const baseName = c.name
+        .replace(/^(?:City\s+of\s+|Municipality\s+of\s+)/i, '')
+        .replace(/\s+City$/i, '')
+        .trim();
       const escapedBase = baseName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-      const cRegex = new RegExp(`\\b(?:city\\s+of\\s+${escapedBase}|${escapedBase}\\s+city|${escapedBase})\\b`, 'i');
-      if (cRegex.test(remaining)) {
+      const explicitRegex = new RegExp(`\\b(?:${escapedFullName}|city\\s+of\\s+${escapedBase}|${escapedBase}\\s+city)\\b`, 'i');
+      if (explicitRegex.test(remaining)) {
         city = c.name;
         cityCode = c.code;
         if (!regionCode && c.regionCode) regionCode = c.regionCode;
         if (!provinceCode && c.provinceCode) provinceCode = c.provinceCode;
-        remaining = remaining.replace(cRegex, ' ').trim();
+        remaining = remaining.replace(explicitRegex, ' ').trim();
+        break;
+      }
+    }
+  }
+
+  // Pass 2: Look for Manila or Manila Districts (if not part of a street name)
+  if (!city) {
+    const isManilaDistrict = MANILA_DISTRICTS.some((district) => {
+      const dRegex = new RegExp(`\\b${district}\\b(?!\\s*(?:st|street|ave|avenue|rd|road|blvd|boulevard|lane|way)\\b)`, 'i');
+      return dRegex.test(cleanRaw);
+    });
+
+    if (isManilaDistrict || /\b(?:city\s+of\s+manila|manila\s+city|manila)\b/i.test(remaining)) {
+      city = 'City of Manila';
+      cityCode = '1380600000';
+      regionCode = '1300000000'; // NCR
+      remaining = remaining.replace(/\b(?:city\s+of\s+manila|manila\s+city|manila)\b/gi, ' ').trim();
+    }
+  }
+
+  // Pass 3: Look for base city/municipality name not followed by a street suffix
+  if (!city) {
+    for (const c of sortedCities) {
+      const baseName = c.name.replace(/^(?:City\s+of\s+|Municipality\s+of\s+)/i, '').trim();
+      const escapedBase = baseName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      const baseRegex = new RegExp(`\\b${escapedBase}\\b(?!\\s*(?:st|street|ave|avenue|rd|road|blvd|boulevard|lane|way)\\b)`, 'i');
+      if (baseRegex.test(remaining)) {
+        city = c.name;
+        cityCode = c.code;
+        if (!regionCode && c.regionCode) regionCode = c.regionCode;
+        if (!provinceCode && c.provinceCode) provinceCode = c.provinceCode;
+        remaining = remaining.replace(baseRegex, ' ').trim();
         break;
       }
     }
@@ -145,7 +183,6 @@ export function parseAddressFromOcr(rawAddress: string): DetectedAddressDetails 
     barangay,
     city,
     province,
-    postalCode,
     cityCode,
     provinceCode,
     regionCode,

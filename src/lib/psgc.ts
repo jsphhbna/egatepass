@@ -45,6 +45,10 @@ export interface StructuredAddress {
 
 const memoryCache = new Map<string, PsgcLocation[]>();
 
+export function clearPsgcCacheForTesting(): void {
+  memoryCache.clear();
+}
+
 /**
  * Fetch all 18 official Philippine regions.
  */
@@ -209,6 +213,8 @@ export async function fetchPsgcCities(parentCode: string): Promise<PsgcLocation[
 
 /**
  * Fetch barangays for a given city or municipality.
+ * Queries Supabase psgc_locations first when online to guarantee complete data
+ * (never treating a partial bundled list as complete), falling back to bundle if offline.
  */
 export async function fetchPsgcBarangays(cityCode: string): Promise<PsgcLocation[]> {
   const cacheKey = `barangays_${cityCode}`;
@@ -216,22 +222,7 @@ export async function fetchPsgcBarangays(cityCode: string): Promise<PsgcLocation
     return memoryCache.get(cacheKey)!;
   }
 
-  // 1. Primary: Bundled reference data (0 ms in-memory response)
-  if (Array.isArray(barangaysData)) {
-    const bundled: PsgcLocation[] = (barangaysData as any[])
-      .filter((b) => b.cityCode === cityCode)
-      .map((b) => ({
-        code: b.code,
-        parentCode: b.cityCode,
-        name: b.name,
-        level: 'barangay',
-      }));
-    if (bundled.length > 0) {
-      memoryCache.set(cacheKey, bundled);
-      return bundled;
-    }
-  }
-
+  // 1. Primary: Live Supabase psgc_locations when online
   try {
     const supabase = requirePortalSupabase();
     const { data, error } = await supabase
@@ -253,7 +244,23 @@ export async function fetchPsgcBarangays(cityCode: string): Promise<PsgcLocation
       return mapped;
     }
   } catch {
-    // Fall back
+    // Supabase unavailable / offline -> fall back to bundled dataset
+  }
+
+  // 2. Fallback: Bundled reference data (offline resilience)
+  if (Array.isArray(barangaysData)) {
+    const bundled: PsgcLocation[] = (barangaysData as any[])
+      .filter((b) => b.cityCode === cityCode)
+      .map((b) => ({
+        code: b.code,
+        parentCode: b.cityCode,
+        name: b.name,
+        level: 'barangay',
+      }));
+    if (bundled.length > 0) {
+      memoryCache.set(cacheKey, bundled);
+      return bundled;
+    }
   }
 
   return [];

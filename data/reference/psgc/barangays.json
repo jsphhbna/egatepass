@@ -4485,66 +4485,6 @@
     "name": "Barangay 818-A"
   },
   {
-    "code": "1381200001",
-    "cityCode": "1381200000",
-    "name": "Batasan Hills"
-  },
-  {
-    "code": "1381200002",
-    "cityCode": "1381200000",
-    "name": "Commonwealth"
-  },
-  {
-    "code": "1381200003",
-    "cityCode": "1381200000",
-    "name": "Holy Spirit"
-  },
-  {
-    "code": "1381200004",
-    "cityCode": "1381200000",
-    "name": "Bagong Silangan"
-  },
-  {
-    "code": "1381200005",
-    "cityCode": "1381200000",
-    "name": "Payatas"
-  },
-  {
-    "code": "1381200006",
-    "cityCode": "1381200000",
-    "name": "U.P. Campus"
-  },
-  {
-    "code": "1381200007",
-    "cityCode": "1381200000",
-    "name": "Loyola Heights"
-  },
-  {
-    "code": "1381200008",
-    "cityCode": "1381200000",
-    "name": "Socorro (Cubao)"
-  },
-  {
-    "code": "1381200009",
-    "cityCode": "1381200000",
-    "name": "South Triangle"
-  },
-  {
-    "code": "1381200010",
-    "cityCode": "1381200000",
-    "name": "Kamuning"
-  },
-  {
-    "code": "1381200011",
-    "cityCode": "1381200000",
-    "name": "Pinyahan"
-  },
-  {
-    "code": "1381200012",
-    "cityCode": "1381200000",
-    "name": "Tandang Sora"
-  },
-  {
     "code": "1380800001",
     "cityCode": "1380800000",
     "name": "Bel-Air"
@@ -4593,26 +4533,6 @@
     "code": "1381900004",
     "cityCode": "1381900000",
     "name": "Ususan"
-  },
-  {
-    "code": "1381600001",
-    "cityCode": "1381600000",
-    "name": "San Antonio (Ortigas)"
-  },
-  {
-    "code": "1381600002",
-    "cityCode": "1381600000",
-    "name": "Kapitolyo"
-  },
-  {
-    "code": "1381600003",
-    "cityCode": "1381600000",
-    "name": "Ugong"
-  },
-  {
-    "code": "1381600004",
-    "cityCode": "1381600000",
-    "name": "Rosario"
   },
   {
     "code": "1380700001",
@@ -4712,7 +4632,7 @@
   {
     "code": "1381000003",
     "cityCode": "1381000000",
-    "name": "Santo Niño"
+    "name": "Santo Ni\u00f1o"
   },
   {
     "code": "1382000001",
@@ -4748,26 +4668,6 @@
     "code": "1381800002",
     "cityCode": "1381800000",
     "name": "West Crame"
-  },
-  {
-    "code": "1380900001",
-    "cityCode": "1380900000",
-    "name": "Potrero"
-  },
-  {
-    "code": "1380900002",
-    "cityCode": "1380900000",
-    "name": "Concepcion"
-  },
-  {
-    "code": "1381300001",
-    "cityCode": "1381300000",
-    "name": "San Jose"
-  },
-  {
-    "code": "1381300002",
-    "cityCode": "1381300000",
-    "name": "North Bay Boulevard South"
   },
   {
     "code": "1381700001",
@@ -4913,5 +4813,955 @@
     "code": "1124020003",
     "cityCode": "1124020000",
     "name": "Talomo"
+  },
+  {
+    "code": "1381300001",
+    "cityCode": "1381300000",
+    "name": "Alicia"
+  },
+  {
+    "code": "1381300002",
+    "cityCode": "1381300000",
+    "name": "Amihan"
+  },
+  {
+    "code": "1381300003",
+    "cityCode": "1381300000",
+    "name": "Apolonio Samson"
+  },
+  {
+    "code": "1381300004",
+    "cityCode": "1381300000",
+    "name": "Aurora"
+  },
+  {
+    "code": "1381300005",
+    "cityCode": "1381300000",
+    "name": "Baesa"
+  },
+  {
+    "code": "1381300006",
+    "cityCode": "1381300000",
+    "name": "Bagbag"
+  },
+  {
+    "code": "1381300007",
+    "cityCode": "1381300000",
+    "name": "Bagumbuhay"
+  },
+  {
+    "code": "1381300008",
+    "cityCode": "1381300000",
+    "name": "Bagong Lipunan Ng Crame"
+  },
+  {
+    "code": "1381300009",
+    "cityCode": "1381300000",
+    "name": "Bagong Pag-asa"
+  },
+  {
+    "code": "1381300010",
+    "cityCode": "1381300000",
+    "name": "Bagong Silangan"
+  },
+  {
+    "code": "1381300011",
+    "cityCode": "1381300000",
+    "name": "Bagumbayan"
+  },
+  {
+    "code": "1381300012",
+    "cityCode": "1381300000",
+    "name": "Bahay Toro"
+  },
+  {
+    "code": "1381300013",
+    "cityCode": "1381300000",
+    "name": "Balingasa"
+  },
+  {
+    "code": "1381300014",
+    "cityCode": "1381300000",
+    "name": "Bayanihan"
+  },
+  {
+    "code": "1381300015",
+    "cityCode": "1381300000",
+    "name": "Blue Ridge A"
+  },
+  {
+    "code": "1381300016",
+    "cityCode": "1381300000",
+    "name": "Blue Ridge B"
+  },
+  {
+    "code": "1381300017",
+    "cityCode": "1381300000",
+    "name": "Botocan"
+  },
+  {
+    "code": "1381300018",
+    "cityCode": "1381300000",
+    "name": "Bungad"
+  },
+  {
+    "code": "1381300019",
+    "cityCode": "1381300000",
+    "name": "Camp Aguinaldo"
+  },
+  {
+    "code": "1381300020",
+    "cityCode": "1381300000",
+    "name": "Central"
+  },
+  {
+    "code": "1381300021",
+    "cityCode": "1381300000",
+    "name": "Claro"
+  },
+  {
+    "code": "1381300022",
+    "cityCode": "1381300000",
+    "name": "Commonwealth"
+  },
+  {
+    "code": "1381300023",
+    "cityCode": "1381300000",
+    "name": "New Era"
+  },
+  {
+    "code": "1381300024",
+    "cityCode": "1381300000",
+    "name": "Kristong Hari"
+  },
+  {
+    "code": "1381300025",
+    "cityCode": "1381300000",
+    "name": "Culiat"
+  },
+  {
+    "code": "1381300026",
+    "cityCode": "1381300000",
+    "name": "Damar"
+  },
+  {
+    "code": "1381300027",
+    "cityCode": "1381300000",
+    "name": "Damayan"
+  },
+  {
+    "code": "1381300028",
+    "cityCode": "1381300000",
+    "name": "Damayang Lagi"
+  },
+  {
+    "code": "1381300029",
+    "cityCode": "1381300000",
+    "name": "Del Monte"
+  },
+  {
+    "code": "1381300030",
+    "cityCode": "1381300000",
+    "name": "Dioquino Zobel"
+  },
+  {
+    "code": "1381300031",
+    "cityCode": "1381300000",
+    "name": "Do\u00f1a Imelda"
+  },
+  {
+    "code": "1381300032",
+    "cityCode": "1381300000",
+    "name": "Do\u00f1a Josefa"
+  },
+  {
+    "code": "1381300033",
+    "cityCode": "1381300000",
+    "name": "Don Manuel"
+  },
+  {
+    "code": "1381300034",
+    "cityCode": "1381300000",
+    "name": "Duyan-duyan"
+  },
+  {
+    "code": "1381300035",
+    "cityCode": "1381300000",
+    "name": "E. Rodriguez"
+  },
+  {
+    "code": "1381300036",
+    "cityCode": "1381300000",
+    "name": "East Kamias"
+  },
+  {
+    "code": "1381300037",
+    "cityCode": "1381300000",
+    "name": "Escopa I"
+  },
+  {
+    "code": "1381300038",
+    "cityCode": "1381300000",
+    "name": "Escopa II"
+  },
+  {
+    "code": "1381300039",
+    "cityCode": "1381300000",
+    "name": "Escopa III"
+  },
+  {
+    "code": "1381300040",
+    "cityCode": "1381300000",
+    "name": "Escopa IV"
+  },
+  {
+    "code": "1381300041",
+    "cityCode": "1381300000",
+    "name": "Fairview"
+  },
+  {
+    "code": "1381300042",
+    "cityCode": "1381300000",
+    "name": "N.S. Amoranto"
+  },
+  {
+    "code": "1381300043",
+    "cityCode": "1381300000",
+    "name": "Gulod"
+  },
+  {
+    "code": "1381300044",
+    "cityCode": "1381300000",
+    "name": "Horseshoe"
+  },
+  {
+    "code": "1381300045",
+    "cityCode": "1381300000",
+    "name": "Immaculate Concepcion"
+  },
+  {
+    "code": "1381300046",
+    "cityCode": "1381300000",
+    "name": "Kaligayahan"
+  },
+  {
+    "code": "1381300047",
+    "cityCode": "1381300000",
+    "name": "Kalusugan"
+  },
+  {
+    "code": "1381300048",
+    "cityCode": "1381300000",
+    "name": "Kamuning"
+  },
+  {
+    "code": "1381300049",
+    "cityCode": "1381300000",
+    "name": "Katipunan"
+  },
+  {
+    "code": "1381300050",
+    "cityCode": "1381300000",
+    "name": "Kaunlaran"
+  },
+  {
+    "code": "1381300051",
+    "cityCode": "1381300000",
+    "name": "Krus Na Ligas"
+  },
+  {
+    "code": "1381300052",
+    "cityCode": "1381300000",
+    "name": "Laging Handa"
+  },
+  {
+    "code": "1381300053",
+    "cityCode": "1381300000",
+    "name": "Libis"
+  },
+  {
+    "code": "1381300054",
+    "cityCode": "1381300000",
+    "name": "Lourdes"
+  },
+  {
+    "code": "1381300055",
+    "cityCode": "1381300000",
+    "name": "Loyola Heights"
+  },
+  {
+    "code": "1381300056",
+    "cityCode": "1381300000",
+    "name": "Maharlika"
+  },
+  {
+    "code": "1381300057",
+    "cityCode": "1381300000",
+    "name": "Malaya"
+  },
+  {
+    "code": "1381300058",
+    "cityCode": "1381300000",
+    "name": "Manresa"
+  },
+  {
+    "code": "1381300059",
+    "cityCode": "1381300000",
+    "name": "Mangga"
+  },
+  {
+    "code": "1381300060",
+    "cityCode": "1381300000",
+    "name": "Mariana"
+  },
+  {
+    "code": "1381300061",
+    "cityCode": "1381300000",
+    "name": "Mariblo"
+  },
+  {
+    "code": "1381300062",
+    "cityCode": "1381300000",
+    "name": "Marilag"
+  },
+  {
+    "code": "1381300063",
+    "cityCode": "1381300000",
+    "name": "Masagana"
+  },
+  {
+    "code": "1381300064",
+    "cityCode": "1381300000",
+    "name": "Masambong"
+  },
+  {
+    "code": "1381300065",
+    "cityCode": "1381300000",
+    "name": "Santo Domingo"
+  },
+  {
+    "code": "1381300066",
+    "cityCode": "1381300000",
+    "name": "Matandang Balara"
+  },
+  {
+    "code": "1381300067",
+    "cityCode": "1381300000",
+    "name": "Milagrosa"
+  },
+  {
+    "code": "1381300068",
+    "cityCode": "1381300000",
+    "name": "Nagkaisang Nayon"
+  },
+  {
+    "code": "1381300069",
+    "cityCode": "1381300000",
+    "name": "Nayong Kanluran"
+  },
+  {
+    "code": "1381300070",
+    "cityCode": "1381300000",
+    "name": "Novaliches Proper"
+  },
+  {
+    "code": "1381300071",
+    "cityCode": "1381300000",
+    "name": "Obrero"
+  },
+  {
+    "code": "1381300072",
+    "cityCode": "1381300000",
+    "name": "Old Capitol Site"
+  },
+  {
+    "code": "1381300073",
+    "cityCode": "1381300000",
+    "name": "Paang Bundok"
+  },
+  {
+    "code": "1381300074",
+    "cityCode": "1381300000",
+    "name": "Pag-ibig Sa Nayon"
+  },
+  {
+    "code": "1381300075",
+    "cityCode": "1381300000",
+    "name": "Paligsahan"
+  },
+  {
+    "code": "1381300076",
+    "cityCode": "1381300000",
+    "name": "Paltok"
+  },
+  {
+    "code": "1381300077",
+    "cityCode": "1381300000",
+    "name": "Pansol"
+  },
+  {
+    "code": "1381300078",
+    "cityCode": "1381300000",
+    "name": "Paraiso"
+  },
+  {
+    "code": "1381300079",
+    "cityCode": "1381300000",
+    "name": "Pasong Putik Proper"
+  },
+  {
+    "code": "1381300080",
+    "cityCode": "1381300000",
+    "name": "Pasong Tamo"
+  },
+  {
+    "code": "1381300081",
+    "cityCode": "1381300000",
+    "name": "Phil-Am"
+  },
+  {
+    "code": "1381300082",
+    "cityCode": "1381300000",
+    "name": "Pinyahan"
+  },
+  {
+    "code": "1381300083",
+    "cityCode": "1381300000",
+    "name": "Pinagkaisahan"
+  },
+  {
+    "code": "1381300084",
+    "cityCode": "1381300000",
+    "name": "Project 6"
+  },
+  {
+    "code": "1381300085",
+    "cityCode": "1381300000",
+    "name": "Quirino 2-A"
+  },
+  {
+    "code": "1381300086",
+    "cityCode": "1381300000",
+    "name": "Quirino 2-B"
+  },
+  {
+    "code": "1381300087",
+    "cityCode": "1381300000",
+    "name": "Quirino 2-C"
+  },
+  {
+    "code": "1381300088",
+    "cityCode": "1381300000",
+    "name": "Quirino 3-A"
+  },
+  {
+    "code": "1381300089",
+    "cityCode": "1381300000",
+    "name": "Ramon Magsaysay"
+  },
+  {
+    "code": "1381300090",
+    "cityCode": "1381300000",
+    "name": "Roxas"
+  },
+  {
+    "code": "1381300091",
+    "cityCode": "1381300000",
+    "name": "Sacred Heart"
+  },
+  {
+    "code": "1381300092",
+    "cityCode": "1381300000",
+    "name": "Saint Ignatius"
+  },
+  {
+    "code": "1381300093",
+    "cityCode": "1381300000",
+    "name": "Saint Peter"
+  },
+  {
+    "code": "1381300094",
+    "cityCode": "1381300000",
+    "name": "Salvacion"
+  },
+  {
+    "code": "1381300095",
+    "cityCode": "1381300000",
+    "name": "San Agustin"
+  },
+  {
+    "code": "1381300096",
+    "cityCode": "1381300000",
+    "name": "San Antonio"
+  },
+  {
+    "code": "1381300097",
+    "cityCode": "1381300000",
+    "name": "San Bartolome"
+  },
+  {
+    "code": "1381300098",
+    "cityCode": "1381300000",
+    "name": "San Isidro"
+  },
+  {
+    "code": "1381300099",
+    "cityCode": "1381300000",
+    "name": "San Isidro Labrador"
+  },
+  {
+    "code": "1381300100",
+    "cityCode": "1381300000",
+    "name": "San Jose"
+  },
+  {
+    "code": "1381300101",
+    "cityCode": "1381300000",
+    "name": "San Martin De Porres"
+  },
+  {
+    "code": "1381300102",
+    "cityCode": "1381300000",
+    "name": "San Roque"
+  },
+  {
+    "code": "1381300103",
+    "cityCode": "1381300000",
+    "name": "San Vicente"
+  },
+  {
+    "code": "1381300104",
+    "cityCode": "1381300000",
+    "name": "Santa Cruz"
+  },
+  {
+    "code": "1381300105",
+    "cityCode": "1381300000",
+    "name": "Santa Lucia"
+  },
+  {
+    "code": "1381300106",
+    "cityCode": "1381300000",
+    "name": "Santa Monica"
+  },
+  {
+    "code": "1381300107",
+    "cityCode": "1381300000",
+    "name": "Santa Teresita"
+  },
+  {
+    "code": "1381300108",
+    "cityCode": "1381300000",
+    "name": "Santo Cristo"
+  },
+  {
+    "code": "1381300109",
+    "cityCode": "1381300000",
+    "name": "Santo Ni\u00f1o"
+  },
+  {
+    "code": "1381300110",
+    "cityCode": "1381300000",
+    "name": "Santol"
+  },
+  {
+    "code": "1381300111",
+    "cityCode": "1381300000",
+    "name": "Sauyo"
+  },
+  {
+    "code": "1381300112",
+    "cityCode": "1381300000",
+    "name": "Sienna"
+  },
+  {
+    "code": "1381300113",
+    "cityCode": "1381300000",
+    "name": "Sikatuna Village"
+  },
+  {
+    "code": "1381300114",
+    "cityCode": "1381300000",
+    "name": "Silangan"
+  },
+  {
+    "code": "1381300115",
+    "cityCode": "1381300000",
+    "name": "Socorro"
+  },
+  {
+    "code": "1381300116",
+    "cityCode": "1381300000",
+    "name": "South Triangle"
+  },
+  {
+    "code": "1381300117",
+    "cityCode": "1381300000",
+    "name": "Tagumpay"
+  },
+  {
+    "code": "1381300118",
+    "cityCode": "1381300000",
+    "name": "Talayan"
+  },
+  {
+    "code": "1381300119",
+    "cityCode": "1381300000",
+    "name": "Talipapa"
+  },
+  {
+    "code": "1381300120",
+    "cityCode": "1381300000",
+    "name": "Tandang Sora"
+  },
+  {
+    "code": "1381300121",
+    "cityCode": "1381300000",
+    "name": "Tatalon"
+  },
+  {
+    "code": "1381300122",
+    "cityCode": "1381300000",
+    "name": "Teachers Village East"
+  },
+  {
+    "code": "1381300123",
+    "cityCode": "1381300000",
+    "name": "Teachers Village West"
+  },
+  {
+    "code": "1381300124",
+    "cityCode": "1381300000",
+    "name": "U.P. Campus"
+  },
+  {
+    "code": "1381300125",
+    "cityCode": "1381300000",
+    "name": "U.P. Village"
+  },
+  {
+    "code": "1381300126",
+    "cityCode": "1381300000",
+    "name": "Ugong Norte"
+  },
+  {
+    "code": "1381300127",
+    "cityCode": "1381300000",
+    "name": "Unang Sigaw"
+  },
+  {
+    "code": "1381300128",
+    "cityCode": "1381300000",
+    "name": "Valencia"
+  },
+  {
+    "code": "1381300129",
+    "cityCode": "1381300000",
+    "name": "Vasra"
+  },
+  {
+    "code": "1381300130",
+    "cityCode": "1381300000",
+    "name": "Veterans Village"
+  },
+  {
+    "code": "1381300131",
+    "cityCode": "1381300000",
+    "name": "Villa Maria Clara"
+  },
+  {
+    "code": "1381300132",
+    "cityCode": "1381300000",
+    "name": "West Kamias"
+  },
+  {
+    "code": "1381300133",
+    "cityCode": "1381300000",
+    "name": "West Triangle"
+  },
+  {
+    "code": "1381300134",
+    "cityCode": "1381300000",
+    "name": "White Plains"
+  },
+  {
+    "code": "1381300135",
+    "cityCode": "1381300000",
+    "name": "Balong Bato"
+  },
+  {
+    "code": "1381300136",
+    "cityCode": "1381300000",
+    "name": "Capri"
+  },
+  {
+    "code": "1381300137",
+    "cityCode": "1381300000",
+    "name": "Sangandaan"
+  },
+  {
+    "code": "1381300138",
+    "cityCode": "1381300000",
+    "name": "Payatas"
+  },
+  {
+    "code": "1381300139",
+    "cityCode": "1381300000",
+    "name": "Batasan Hills"
+  },
+  {
+    "code": "1381300140",
+    "cityCode": "1381300000",
+    "name": "Holy Spirit"
+  },
+  {
+    "code": "1381300141",
+    "cityCode": "1381300000",
+    "name": "Greater Lagro"
+  },
+  {
+    "code": "1381300142",
+    "cityCode": "1381300000",
+    "name": "North Fairview"
+  },
+  {
+    "code": "1381200001",
+    "cityCode": "1381200000",
+    "name": "Bagong Ilog"
+  },
+  {
+    "code": "1381200002",
+    "cityCode": "1381200000",
+    "name": "Bagong Katipunan"
+  },
+  {
+    "code": "1381200003",
+    "cityCode": "1381200000",
+    "name": "Bambang"
+  },
+  {
+    "code": "1381200004",
+    "cityCode": "1381200000",
+    "name": "Buting"
+  },
+  {
+    "code": "1381200005",
+    "cityCode": "1381200000",
+    "name": "Caniogan"
+  },
+  {
+    "code": "1381200006",
+    "cityCode": "1381200000",
+    "name": "Dela Paz"
+  },
+  {
+    "code": "1381200007",
+    "cityCode": "1381200000",
+    "name": "Kalawaan"
+  },
+  {
+    "code": "1381200008",
+    "cityCode": "1381200000",
+    "name": "Kapasigan"
+  },
+  {
+    "code": "1381200009",
+    "cityCode": "1381200000",
+    "name": "Kapitolyo"
+  },
+  {
+    "code": "1381200010",
+    "cityCode": "1381200000",
+    "name": "Malinao"
+  },
+  {
+    "code": "1381200011",
+    "cityCode": "1381200000",
+    "name": "Manggahan"
+  },
+  {
+    "code": "1381200012",
+    "cityCode": "1381200000",
+    "name": "Maybunga"
+  },
+  {
+    "code": "1381200013",
+    "cityCode": "1381200000",
+    "name": "Oranbo"
+  },
+  {
+    "code": "1381200014",
+    "cityCode": "1381200000",
+    "name": "Palatiw"
+  },
+  {
+    "code": "1381200015",
+    "cityCode": "1381200000",
+    "name": "Pinagbuhatan"
+  },
+  {
+    "code": "1381200016",
+    "cityCode": "1381200000",
+    "name": "Pineda"
+  },
+  {
+    "code": "1381200017",
+    "cityCode": "1381200000",
+    "name": "Rosario"
+  },
+  {
+    "code": "1381200018",
+    "cityCode": "1381200000",
+    "name": "Sagad"
+  },
+  {
+    "code": "1381200019",
+    "cityCode": "1381200000",
+    "name": "San Antonio"
+  },
+  {
+    "code": "1381200020",
+    "cityCode": "1381200000",
+    "name": "San Joaquin"
+  },
+  {
+    "code": "1381200021",
+    "cityCode": "1381200000",
+    "name": "San Jose"
+  },
+  {
+    "code": "1381200022",
+    "cityCode": "1381200000",
+    "name": "San Miguel"
+  },
+  {
+    "code": "1381200023",
+    "cityCode": "1381200000",
+    "name": "San Nicolas (Pob.)"
+  },
+  {
+    "code": "1381200024",
+    "cityCode": "1381200000",
+    "name": "Santa Cruz"
+  },
+  {
+    "code": "1381200025",
+    "cityCode": "1381200000",
+    "name": "Santa Rosa"
+  },
+  {
+    "code": "1381200026",
+    "cityCode": "1381200000",
+    "name": "Santo Tomas"
+  },
+  {
+    "code": "1381200027",
+    "cityCode": "1381200000",
+    "name": "Santolan"
+  },
+  {
+    "code": "1381200028",
+    "cityCode": "1381200000",
+    "name": "Sumilang"
+  },
+  {
+    "code": "1381200029",
+    "cityCode": "1381200000",
+    "name": "Ugong"
+  },
+  {
+    "code": "1381200030",
+    "cityCode": "1381200000",
+    "name": "Santa Lucia"
+  },
+  {
+    "code": "1380900001",
+    "cityCode": "1380900000",
+    "name": "Sipac-Almacen"
+  },
+  {
+    "code": "1380900002",
+    "cityCode": "1380900000",
+    "name": "Bagumbayan North"
+  },
+  {
+    "code": "1380900003",
+    "cityCode": "1380900000",
+    "name": "Bagumbayan South"
+  },
+  {
+    "code": "1380900004",
+    "cityCode": "1380900000",
+    "name": "Bangculasi"
+  },
+  {
+    "code": "1380900005",
+    "cityCode": "1380900000",
+    "name": "Daanghari"
+  },
+  {
+    "code": "1380900006",
+    "cityCode": "1380900000",
+    "name": "Navotas East"
+  },
+  {
+    "code": "1380900007",
+    "cityCode": "1380900000",
+    "name": "Navotas West"
+  },
+  {
+    "code": "1380900008",
+    "cityCode": "1380900000",
+    "name": "North Bay Boulevard North"
+  },
+  {
+    "code": "1380900009",
+    "cityCode": "1380900000",
+    "name": "NBBS Kaunlaran"
+  },
+  {
+    "code": "1380900010",
+    "cityCode": "1380900000",
+    "name": "San Jose (Pob.)"
+  },
+  {
+    "code": "1380900011",
+    "cityCode": "1380900000",
+    "name": "San Rafael Village"
+  },
+  {
+    "code": "1380900012",
+    "cityCode": "1380900000",
+    "name": "San Roque"
+  },
+  {
+    "code": "1380900013",
+    "cityCode": "1380900000",
+    "name": "Tangos South"
+  },
+  {
+    "code": "1380900014",
+    "cityCode": "1380900000",
+    "name": "Tanza 1"
+  },
+  {
+    "code": "1380900015",
+    "cityCode": "1380900000",
+    "name": "NBBS Dagat-dagatan"
+  },
+  {
+    "code": "1380900016",
+    "cityCode": "1380900000",
+    "name": "NBBS Proper"
+  },
+  {
+    "code": "1380900017",
+    "cityCode": "1380900000",
+    "name": "Tangos North"
+  },
+  {
+    "code": "1380900018",
+    "cityCode": "1380900000",
+    "name": "Tanza 2"
   }
 ]

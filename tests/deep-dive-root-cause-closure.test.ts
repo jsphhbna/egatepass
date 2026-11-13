@@ -885,16 +885,17 @@ describe('Deep Dive 1 + Deep Dive 2 Root-Cause Closure Test Suite', () => {
       const modalContent = fs.readFileSync(modalPath, 'utf8');
       const forgotContent = fs.readFileSync(forgotPath, 'utf8');
 
-      expect(cardContent).toContain('TurnstileWidget');
-      expect(cardContent).toContain('sendPasswordReset(');
-      expect(cardContent).toContain('captchaToken');
-
+      // Public password-reset surfaces enforce CAPTCHA token provision
       expect(modalContent).toContain('TurnstileWidget');
       expect(modalContent).toContain('sendPasswordReset(');
       expect(modalContent).toContain('captchaToken');
 
       expect(forgotContent).toContain('TurnstileWidget');
       expect(forgotContent).toContain('sendPasswordReset(');
+
+      // Authenticated Superadmin password change executes in-place without CAPTCHA
+      expect(cardContent).toContain('updateUser(');
+      expect(cardContent).toContain('currentPassword');
     });
 
     it('verifies Peak Mode confirmation displays staged status instead of premature success', () => {

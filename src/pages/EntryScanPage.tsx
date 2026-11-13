@@ -17,6 +17,7 @@ import {
   playErrorBeep,
   isScannerAudioMuted,
   setScannerAudioMuted,
+  getScannerAudioState,
 } from '@/lib/scannerAudio';
 import {
   type ScanStatus,
@@ -48,20 +49,30 @@ export function EntryScanPage() {
   const debounceRef = useRef(false);
   const resetTimerRef = useRef<NodeJS.Timeout | null>(null);
 
-  const [isMuted, setIsMuted] = useState(isScannerAudioMuted());
+  type AudioUiStatus = 'sound_off' | 'enable_sound' | 'sound_on';
+  const [audioStatus, setAudioStatus] = useState<AudioUiStatus>(() => {
+    if (isScannerAudioMuted()) return 'sound_off';
+    const state = getScannerAudioState();
+    return state === 'running' ? 'sound_on' : 'enable_sound';
+  });
 
-  function toggleAudioMute() {
-    initScannerAudio();
-    const next = !isMuted;
-    setScannerAudioMuted(next);
-    setIsMuted(next);
-    if (!next) {
-      playSuccessBeep();
-      toast.success('Scanner audio enabled');
-    } else {
+  const handleAudioButtonClick = useCallback(async () => {
+    if (audioStatus === 'sound_on') {
+      setScannerAudioMuted(true);
+      setAudioStatus('sound_off');
       toast.info('Scanner audio muted');
+    } else {
+      const resumed = await initScannerAudio();
+      setScannerAudioMuted(false);
+      if (resumed) {
+        setAudioStatus('sound_on');
+        playSuccessBeep();
+        toast.success('Scanner audio enabled');
+      } else {
+        setAudioStatus('enable_sound');
+      }
     }
-  }
+  }, [audioStatus]);
 
   const [scannerKey, setScannerKey] = useState(0);
   function retryCamera() {
@@ -152,7 +163,7 @@ export function EntryScanPage() {
         const scanner = createOptimizedQrScanner(scannerId);
         scannerRef.current = scanner;
         await scanner.start(
-          { facingMode: 'environment' },
+          { facingMode: 'user' },
           QR_SCAN_CONFIG,
           (decodedText) => {
             if (!debounceRef.current) processQR(decodedText);
@@ -220,13 +231,37 @@ export function EntryScanPage() {
           <p className="text-xs font-bold uppercase tracking-[0.2em] text-[var(--color-accent)]">Entry scanner</p>
           <button
             type="button"
-            onClick={toggleAudioMute}
-            aria-label={isMuted ? 'Unmute scanner audio' : 'Mute scanner audio'}
-            className="ml-2 inline-flex items-center gap-1 rounded-full bg-white/10 px-2 py-1 text-xs font-medium text-white/80 hover:bg-white/20 transition-colors"
-            title={isMuted ? 'Scanner audio muted. Click to enable sound.' : 'Scanner audio active. Click to mute.'}
+            onClick={handleAudioButtonClick}
+            aria-label={
+              audioStatus === 'sound_on'
+                ? 'Mute scanner audio'
+                : audioStatus === 'enable_sound'
+                ? 'Enable scanner sound (requires user gesture)'
+                : 'Turn on scanner audio'
+            }
+            className="ml-2 inline-flex items-center gap-1.5 rounded-full bg-white/10 px-2.5 py-1 text-xs font-medium text-white/80 hover:bg-white/20 transition-colors"
+            title={
+              audioStatus === 'sound_on'
+                ? 'Audio active. Click to mute.'
+                : audioStatus === 'enable_sound'
+                ? 'Audio requires browser activation. Click to enable sound.'
+                : 'Audio muted. Click to turn sound on.'
+            }
           >
-            {isMuted ? <VolumeX className="h-3.5 w-3.5 text-amber-300" /> : <Volume2 className="h-3.5 w-3.5 text-emerald-300" />}
-            <span className="text-[10px]">{isMuted ? 'Muted' : 'Sound On'}</span>
+            {audioStatus === 'sound_on' ? (
+              <Volume2 className="h-3.5 w-3.5 text-emerald-300" />
+            ) : audioStatus === 'enable_sound' ? (
+              <VolumeX className="h-3.5 w-3.5 text-amber-300 animate-pulse" />
+            ) : (
+              <VolumeX className="h-3.5 w-3.5 text-white/60" />
+            )}
+            <span className="text-[10px]">
+              {audioStatus === 'sound_on'
+                ? 'Sound On'
+                : audioStatus === 'enable_sound'
+                ? 'Enable Sound'
+                : 'Sound Off'}
+            </span>
           </button>
         </div>
         <h1 className="text-xl font-extrabold text-white sm:text-2xl">{gate}</h1>

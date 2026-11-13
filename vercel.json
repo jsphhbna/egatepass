@@ -5,7 +5,7 @@
     "syd1"
   ],
   "functions": {
-    "api/**/*.ts": {
+    "api/passes/[...route].ts": {
       "includeFiles": "{public/fonts/**,server/models/**,node_modules/onnxruntime-node/bin/**}"
     }
   },

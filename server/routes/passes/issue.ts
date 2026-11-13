@@ -546,9 +546,9 @@ async function handleRequest(request: Request): Promise<Response> {
     }
 
     const normalizedVisitorEmail = parsed.data.visitor.email?.toLowerCase().trim() || null;
-    if (normalizedVisitorEmail) {
+    if (parsed.data.emailVerificationToken) {
       if (
-        !parsed.data.emailVerificationToken
+        !normalizedVisitorEmail
         || !verifyEmailVerificationProofToken(parsed.data.emailVerificationToken, normalizedVisitorEmail, actorId)
       ) {
         return jsonResponse(403, {
@@ -558,7 +558,7 @@ async function handleRequest(request: Request): Promise<Response> {
       }
     }
 
-    // Validate destination office & approval policy before issuance
+    // Validate destination office & date availability before issuance
     let targetOffice: {
       id: string;
       name: string;
@@ -582,36 +582,49 @@ async function handleRequest(request: Request): Promise<Response> {
       }
       targetOffice = off;
 
-      if (targetOffice.requires_approval_before_pass) {
-        const { data: existingVisit, error: existingVisitErr } = await admin
-          .from('office_visits')
-          .select('id, request_id, office_id, visitor_actor_id, approval_status, attendance_status, pass_id')
-          .eq('request_id', parsed.data.requestId)
-          .maybeSingle();
-        if (existingVisitErr) throw existingVisitErr;
-        if (existingVisit) {
-          if (existingVisit.visitor_actor_id !== actorId) {
-            return jsonResponse(403, { error: 'request_id_actor_mismatch' });
-          }
-          if (existingVisit.office_id !== parsed.data.officeId) {
-            return jsonResponse(409, { error: 'idempotency_conflict' });
-          }
-          if (existingVisit.approval_status !== 'approved' || !existingVisit.pass_id) {
-            return jsonResponse(200, {
-              ok: true,
-              approvalRequired: true,
-              passId: null,
-              publicReference: null,
-              qrToken: null,
-              visitId: existingVisit.id,
-              requestId: existingVisit.request_id,
-              approvalStatus: existingVisit.approval_status,
-              attendanceStatus: existingVisit.attendance_status,
-              officeName: targetOffice.name,
-              officeVisitLinkStatus: 'pending_approval',
-              message: 'Your office visit request has already been submitted for approval.',
-            });
-          }
+      // Check office-specific calendar schedule for the requested date
+      const { data: officeSched } = await admin
+        .from('office_calendar_schedules')
+        .select('status, reason')
+        .eq('office_id', parsed.data.officeId)
+        .eq('schedule_date', parsed.data.visitor.visitDate)
+        .maybeSingle();
+      if (officeSched && ['closed', 'maintenance', 'holiday'].includes(officeSched.status)) {
+        return jsonResponse(422, {
+          error: 'office_closed_on_date',
+          message: `The selected office is ${officeSched.status} on ${parsed.data.visitor.visitDate}${officeSched.reason ? `: ${officeSched.reason}` : ''}. Please select an open date.`,
+        });
+      }
+
+      // Check if an existing visit request is already pending approval
+      const { data: existingVisit, error: existingVisitErr } = await admin
+        .from('office_visits')
+        .select('id, request_id, office_id, visitor_actor_id, approval_status, attendance_status, pass_id')
+        .eq('request_id', parsed.data.requestId)
+        .maybeSingle();
+      if (existingVisitErr) throw existingVisitErr;
+      if (existingVisit) {
+        if (existingVisit.visitor_actor_id !== actorId) {
+          return jsonResponse(403, { error: 'request_id_actor_mismatch' });
+        }
+        if (existingVisit.office_id !== parsed.data.officeId) {
+          return jsonResponse(409, { error: 'idempotency_conflict' });
+        }
+        if (existingVisit.approval_status !== 'approved' || !existingVisit.pass_id) {
+          return jsonResponse(200, {
+            ok: true,
+            approvalRequired: true,
+            passId: null,
+            publicReference: null,
+            qrToken: null,
+            visitId: existingVisit.id,
+            requestId: existingVisit.request_id,
+            approvalStatus: existingVisit.approval_status,
+            attendanceStatus: existingVisit.attendance_status,
+            officeName: targetOffice.name,
+            officeVisitLinkStatus: 'pending_approval',
+            message: 'Your office visit request has already been submitted for approval.',
+          });
         }
       }
     }
@@ -1187,9 +1200,17 @@ async function handleRequest(request: Request): Promise<Response> {
     const errObj = typeof error === 'object' && error !== null ? error as Record<string, unknown> : {};
     const errCode = typeof errObj.code === 'string' ? errObj.code : '';
     const errMessage = typeof errObj.message === 'string' ? errObj.message : (error instanceof Error ? error.message : 'unknown_error');
-    console.error('Pass issuance failed.', errCode || errMessage);
 
     const mapped = mapDatabaseIssueError(errCode, errMessage);
+
+    // Safe structured diagnostics without logging visitor PII or request bodies
+    console.error('Pass issuance failed.', {
+      code: errCode || 'unknown_code',
+      category: mapped.error,
+      requestId: parsed.data?.requestId ?? 'unknown',
+      source: parsed.data?.source ?? 'portal',
+    });
+
     return jsonResponse(mapped.status, { error: mapped.error, message: mapped.message });
   }
 }
@@ -1229,6 +1250,55 @@ export function mapDatabaseIssueError(
     return { status: 422, error: 'invalid_arrival_mode', message: 'Explicit arrival mode selection is required.' };
   }
 
+  // Registration mode
+  if (msg.includes('invalid registration mode') || msg.includes('invalid_registration_mode')) {
+    return { status: 422, error: 'invalid_registration_mode', message: 'The registration mode (new or returning) is invalid.' };
+  }
+
+  // Idempotency conflict
+  if (msg.includes('idempotency parameter mismatch') || msg.includes('idempotency actor mismatch')) {
+    return {
+      status: 409,
+      error: 'idempotency_conflict',
+      message: 'A previous submission with this request ID used different parameters. Please start a fresh registration.',
+    };
+  }
+
+  // Philippine mobile contact number
+  if (msg.includes('philippine mobile number') || msg.includes('invalid contact number')) {
+    return {
+      status: 422,
+      error: 'invalid_contact_number',
+      message: 'A valid Philippine mobile number (e.g. 09171234567 or +639171234567) is required.',
+    };
+  }
+
+  // PSGC Address hierarchy / relationships
+  if (
+    msg.includes('psgc') ||
+    msg.includes('barangay does not belong') ||
+    msg.includes('city/municipality does not belong') ||
+    msg.includes('province does not belong') ||
+    msg.includes('invalid psgc') ||
+    msg.includes('structured psgc residential address required')
+  ) {
+    let detail = 'The selected residential address hierarchy is invalid.';
+    if (msg.includes('barangay does not belong')) {
+      detail = 'The selected barangay does not belong to the selected city/municipality.';
+    } else if (msg.includes('city/municipality does not belong')) {
+      detail = 'The selected city/municipality does not belong to the selected region/province.';
+    } else if (msg.includes('province does not belong')) {
+      detail = 'The selected province does not belong to the selected region.';
+    } else if (msg.includes('structured psgc residential address required')) {
+      detail = 'A valid Philippine residential address (region, city, and barangay) is required.';
+    }
+    return {
+      status: 422,
+      error: 'invalid_address_hierarchy',
+      message: detail,
+    };
+  }
+
   // Vehicle inside campus / unique constraint
   if (
     msg.includes('vehicle already inside') ||
@@ -1246,6 +1316,17 @@ export function mapDatabaseIssueError(
       status: 422,
       error: 'visit_date_closed',
       message: `The campus is closed on the selected visit date (${title}). Please select another date.`,
+    };
+  }
+
+  // Office closed on date
+  if (msg.includes('office_closed_on_date')) {
+    const match = msg.match(/office_closed_on_date:\s*(.+)/);
+    const reason = match && match[1] ? match[1].trim() : 'The destination office is unavailable on this date.';
+    return {
+      status: 422,
+      error: 'office_closed_on_date',
+      message: `The destination office is closed or unavailable on the selected date (${reason}). Please select another date.`,
     };
   }
 
@@ -1311,11 +1392,12 @@ export function mapDatabaseIssueError(
   // Upload intent
   if (
     msg.includes('upload intent') ||
+    msg.includes('intent not found or expired') ||
     msg.includes('missing_uploaded_object') ||
     msg.includes('invalid_uploaded_content') ||
     msg === 'invalid_upload_intent'
   ) {
-    return { status: 422, error: 'invalid_upload_intent', message: 'Uploaded evidence could not be verified. Please retry uploading.' };
+    return { status: 422, error: 'invalid_upload_intent', message: 'Uploaded evidence could not be verified or has expired. Please retry uploading your photo/ID.' };
   }
 
   // Identity verification

@@ -328,7 +328,7 @@ describe('Returning Visitor 1:1 Profile Discovery & Masking Contract (lookup-ret
     expect(json.candidates).toEqual([]);
   });
 
-  it('fails closed with 503 missing_validation_runtime_secret when TURNSTILE_SECRET_KEY is unset', async () => {
+  it('succeeds without requiring TURNSTILE_SECRET_KEY in Vercel environment', async () => {
     delete process.env.TURNSTILE_SECRET_KEY;
 
     vi.spyOn(actorsModule, 'getVerifiedSessionContext').mockResolvedValue({
@@ -341,8 +341,39 @@ describe('Returning Visitor 1:1 Profile Discovery & Masking Contract (lookup-ret
     } as any);
 
     const mockAdmin = {
-      schema: vi.fn(),
-      from: vi.fn(),
+      schema: vi.fn().mockReturnValue({
+        rpc: vi.fn().mockResolvedValue({ data: true, error: null }),
+      }),
+      from: vi.fn((table: string) => {
+        if (table === 'returning_visitor_profiles') {
+          return {
+            select: vi.fn().mockReturnThis(),
+            ilike: vi.fn().mockReturnThis(),
+            gt: vi.fn().mockReturnThis(),
+            is: vi.fn().mockReturnThis(),
+            limit: vi.fn().mockResolvedValue({
+              data: [
+                {
+                  id: 'a1111111-1111-4111-8111-111111111111',
+                  first_name: 'Juan',
+                  middle_name: null,
+                  last_name: 'Cruz',
+                  contact_number_e164: '+639171234567',
+                  psgc_city_code: '1381300000',
+                  psgc_barangay_code: '1381300005',
+                  psgc_city_municipality_name: 'Quezon City',
+                  psgc_barangay_name: 'Baesa',
+                  psgc_province_name: null,
+                  psgc_region_name: 'NCR',
+                  created_at: new Date().toISOString(),
+                },
+              ],
+              error: null,
+            }),
+          };
+        }
+        return {};
+      }),
     };
     vi.spyOn(supabaseModule, 'getServerSupabaseClients').mockReturnValue({
       admin: mockAdmin as any,
@@ -359,13 +390,14 @@ describe('Returning Visitor 1:1 Profile Discovery & Masking Contract (lookup-ret
         firstName: 'Juan',
         lastName: 'Cruz',
         contactNumber: '09171234567',
-        captchaToken: 'cf-turnstile-fail-closed-test',
       }),
     });
 
     const res = await lookupReturningHandler.fetch(req);
-    expect(res.status).toBe(503);
+    expect(res.status).toBe(200);
     const json = await res.json();
-    expect(json.error).toBe('missing_validation_runtime_secret');
+    expect(json.found).toBe(true);
+    expect(json.candidates.length).toBe(1);
+    expect(json.candidates[0].profileId).toBe('a1111111-1111-4111-8111-111111111111');
   });
 });

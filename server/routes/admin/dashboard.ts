@@ -326,11 +326,6 @@ async function handleRequest(request: Request): Promise<Response> {
     const window = resolvePeriodWindow(url, manilaDateString);
     const includeReportRows = ['true', '1'].includes((url.searchParams.get('includeReportRows') || '').trim().toLowerCase());
 
-    const expireRes = await admin.schema('api').rpc('expire_stale_passes');
-    if (expireRes.error) {
-      throw new HttpError(503, 'service_unavailable');
-    }
-
     const startToday = `${manilaDateString}T00:00:00+08:00`;
     const endToday = `${manilaDateString}T23:59:59.999+08:00`;
     const startMonth = `${manilaDateString.slice(0, 7)}-01T00:00:00+08:00`;

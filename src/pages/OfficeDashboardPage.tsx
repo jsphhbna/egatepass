@@ -1,13 +1,10 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { useAuth } from '@/hooks/useAuth';
 import { getAccessToken, signOutCurrentActor } from '@/services/auth';
 import {
   Building2,
   CheckCircle2,
-  Clock,
   Clock3,
-  Filter,
   LogOut,
   Plus,
   RefreshCw,
@@ -15,12 +12,12 @@ import {
   User,
   UserCheck,
   XCircle,
-  AlertTriangle,
   Users,
-  ShieldCheck,
   Calendar,
   Mail,
   Phone,
+  CalendarDays,
+  Trash2,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { BrandMark } from '@/components/BrandMark';
@@ -28,21 +25,19 @@ import { Button, Modal, Input } from '@/components/ui';
 import { AuthenticatedImage } from '@/components/AuthenticatedImage';
 import type { Office, OfficePersonnel, OfficeVisitRecord } from '@/types/office';
 
-type QueueTab = 'pending' | 'approved' | 'awaiting_confirmation' | 'confirmed' | 'history';
-
 export function OfficeDashboardPage() {
-  const { userData, role } = useAuth();
   const navigate = useNavigate();
 
   const [offices, setOffices] = useState<Office[]>([]);
   const [selectedOfficeId, setSelectedOfficeId] = useState<string>('');
-  const [activeQueue, setActiveQueue] = useState<QueueTab>('pending');
-  const [visits, setVisits] = useState<OfficeVisitRecord[]>([]);
+  const [pendingVisits, setPendingVisits] = useState<OfficeVisitRecord[]>([]);
+  const [confirmationVisits, setConfirmationVisits] = useState<OfficeVisitRecord[]>([]);
   const [personnelList, setPersonnelList] = useState<OfficePersonnel[]>([]);
   const [searchQuery, setSearchQuery] = useState('');
   const [dateFilter, setDateFilter] = useState('');
   const [isLoading, setIsLoading] = useState(true);
   const [isRefreshing, setIsRefreshing] = useState(false);
+  const [mobileTab, setMobileTab] = useState<'pending' | 'confirmation'>('pending');
 
   // Queue Counts
   const [queueCounts, setQueueCounts] = useState<{
@@ -59,7 +54,7 @@ export function OfficeDashboardPage() {
     history: 0,
   });
 
-  // Modal States
+  // Action Modals
   const [approveModalVisit, setApproveModalVisit] = useState<OfficeVisitRecord | null>(null);
   const [isApproving, setIsApproving] = useState(false);
 
@@ -70,11 +65,23 @@ export function OfficeDashboardPage() {
   const [confirmArrivalVisit, setConfirmArrivalVisit] = useState<OfficeVisitRecord | null>(null);
   const [isConfirmingArrival, setIsConfirmingArrival] = useState(false);
 
+  // Personnel Modal
   const [isPersonnelModalOpen, setIsPersonnelModalOpen] = useState(false);
   const [newPersonnelName, setNewPersonnelName] = useState('');
   const [newPersonnelTitle, setNewPersonnelTitle] = useState('');
   const [isSavingPersonnel, setIsSavingPersonnel] = useState(false);
   const [togglingPersonnelId, setTogglingPersonnelId] = useState<string | null>(null);
+
+  // Office Calendar Modal State
+  const [isCalendarModalOpen, setIsCalendarModalOpen] = useState(false);
+  const [officeSchedules, setOfficeSchedules] = useState<Array<{ id: string; schedule_date: string; status: string; reason?: string }>>([]);
+  const [calendarYear, setCalendarYear] = useState<number>(new Date().getFullYear());
+  const [calendarMonth, setCalendarMonth] = useState<number>(new Date().getMonth() + 1); // 1-12
+  const [selectedDateForEdit, setSelectedDateForEdit] = useState<string | null>(null);
+  const [scheduleStatus, setScheduleStatus] = useState<'open' | 'closed' | 'maintenance' | 'holiday'>('closed');
+  const [scheduleReason, setScheduleReason] = useState<string>('');
+  const [isSavingSchedule, setIsSavingSchedule] = useState(false);
+  const [loadingSchedules, setLoadingSchedules] = useState(false);
 
   const [isSigningOut, setIsSigningOut] = useState(false);
   const [retryingEmailVisitId, setRetryingEmailVisitId] = useState<string | null>(null);
@@ -151,7 +158,7 @@ export function OfficeDashboardPage() {
     }
   }, []);
 
-  // Fetch Visits for Current Queue & Office
+  // Fetch Visits for Both Queues
   const loadVisits = useCallback(async (showRefreshing = false) => {
     if (!selectedOfficeId) return;
     if (showRefreshing) setIsRefreshing(true);
@@ -161,7 +168,7 @@ export function OfficeDashboardPage() {
       const token = await getAccessToken();
       const params = new URLSearchParams({
         officeId: selectedOfficeId,
-        queue: activeQueue,
+        queue: 'split',
       });
       if (searchQuery.trim()) params.set('search', searchQuery.trim());
       if (dateFilter) params.set('date', dateFilter);
@@ -175,32 +182,29 @@ export function OfficeDashboardPage() {
       }
 
       const data = await res.json();
-      setVisits(data.visits || []);
+      const allVisits = data.visits || [];
+
+      // Separate into two authoritative queues
+      const pending = data.pendingVisits || allVisits.filter(
+        (v: OfficeVisitRecord) => v.approvalStatus === 'pending' && v.visitType === 'specific_person'
+      );
+      const confirmation = data.confirmationVisits || allVisits.filter(
+        (v: OfficeVisitRecord) => v.attendanceStatus === 'awaiting_office_confirmation'
+      );
+
+      setPendingVisits(pending);
+      setConfirmationVisits(confirmation);
 
       // Update Counts
-      const [pRes, aRes, wRes, cRes, hRes] = await Promise.all([
-        fetch(`/api/office/visits?officeId=${selectedOfficeId}&queue=pending&limit=1`, { headers: { Authorization: `Bearer ${token}` } }),
-        fetch(`/api/office/visits?officeId=${selectedOfficeId}&queue=approved&limit=1`, { headers: { Authorization: `Bearer ${token}` } }),
-        fetch(`/api/office/visits?officeId=${selectedOfficeId}&queue=awaiting_confirmation&limit=1`, { headers: { Authorization: `Bearer ${token}` } }),
-        fetch(`/api/office/visits?officeId=${selectedOfficeId}&queue=confirmed&limit=1`, { headers: { Authorization: `Bearer ${token}` } }),
-        fetch(`/api/office/visits?officeId=${selectedOfficeId}&queue=history&limit=1`, { headers: { Authorization: `Bearer ${token}` } }),
-      ]);
-
-      const [pData, aData, wData, cData, hData] = await Promise.all([
-        pRes.json().catch(() => ({ total: 0 })),
-        aRes.json().catch(() => ({ total: 0 })),
-        wRes.json().catch(() => ({ total: 0 })),
-        cRes.json().catch(() => ({ total: 0 })),
-        hRes.json().catch(() => ({ total: 0 })),
-      ]);
-
-      setQueueCounts({
-        pending: pData.total ?? pData.visits?.length ?? 0,
-        approved: aData.total ?? aData.visits?.length ?? 0,
-        awaiting_confirmation: wData.total ?? wData.visits?.length ?? 0,
-        confirmed: cData.total ?? cData.visits?.length ?? 0,
-        history: hData.total ?? hData.visits?.length ?? 0,
-      });
+      if (data.counts) {
+        setQueueCounts({
+          pending: data.counts.pending ?? 0,
+          approved: data.counts.approved ?? 0,
+          awaiting_confirmation: data.counts.awaiting_confirmation ?? 0,
+          confirmed: data.counts.confirmed ?? 0,
+          history: data.counts.history ?? 0,
+        });
+      }
     } catch (err) {
       console.error('Error loading visits:', err);
       toast.error('Unable to refresh visit records.');
@@ -208,7 +212,24 @@ export function OfficeDashboardPage() {
       setIsLoading(false);
       setIsRefreshing(false);
     }
-  }, [activeQueue, dateFilter, searchQuery, selectedOfficeId]);
+  }, [dateFilter, searchQuery, selectedOfficeId]);
+
+  // Load Office Calendar Schedules
+  const loadOfficeSchedules = useCallback(async () => {
+    if (!selectedOfficeId) return;
+    setLoadingSchedules(true);
+    try {
+      const res = await fetch(`/api/office/calendar?officeId=${encodeURIComponent(selectedOfficeId)}`);
+      if (res.ok) {
+        const data = await res.json();
+        setOfficeSchedules(data.schedules || []);
+      }
+    } catch (err) {
+      console.warn('Failed to load office calendar schedules:', err);
+    } finally {
+      setLoadingSchedules(false);
+    }
+  }, [selectedOfficeId]);
 
   useEffect(() => {
     loadOfficesAndPersonnel();
@@ -218,8 +239,9 @@ export function OfficeDashboardPage() {
     if (selectedOfficeId) {
       loadPersonnelForOffice(selectedOfficeId);
       loadVisits();
+      loadOfficeSchedules();
     }
-  }, [selectedOfficeId, loadPersonnelForOffice, loadVisits]);
+  }, [selectedOfficeId, loadPersonnelForOffice, loadVisits, loadOfficeSchedules]);
 
   // Handle Approve Specific-Person Visit
   async function handleApproveVisit() {
@@ -345,7 +367,7 @@ export function OfficeDashboardPage() {
     }
   }
 
-  // Handle Retry / Reconcile Email Delivery for a decided visit
+  // Handle Retry / Reconcile Email Delivery
   async function handleRetryEmail(
     visitId: string,
     action: 'retry' | 'mark_delivered' | 'permit_retry' = 'retry',
@@ -373,7 +395,7 @@ export function OfficeDashboardPage() {
     }
   }
 
-  // Handle Add Personnel to Office
+  // Handle Add Personnel
   async function handleAddPersonnel(e: React.FormEvent) {
     e.preventDefault();
     if (!selectedOfficeId || !newPersonnelName.trim()) return;
@@ -390,10 +412,8 @@ export function OfficeDashboardPage() {
         }),
       });
 
-      if (!res.ok) {
-        const data = await res.json();
-        throw new Error(data.message || 'Failed to create personnel');
-      }
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.message || data.error || 'Failed to add personnel');
 
       toast.success('Personnel added successfully.');
       setNewPersonnelName('');
@@ -409,7 +429,6 @@ export function OfficeDashboardPage() {
 
   // Handle Toggle Personnel Active Status
   async function handleTogglePersonnel(person: OfficePersonnel) {
-    if (togglingPersonnelId) return;
     setTogglingPersonnelId(person.id);
     try {
       const token = await getAccessToken();
@@ -418,76 +437,264 @@ export function OfficeDashboardPage() {
         headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
         body: JSON.stringify({
           personnelId: person.id,
-          id: person.id,
           active: !person.active,
         }),
       });
 
-      if (!res.ok) throw new Error('Failed to update personnel');
-      toast.success(`Personnel ${person.name} is now ${!person.active ? 'active' : 'inactive'}.`);
-      await loadPersonnelForOffice(selectedOfficeId);
-    } catch {
-      toast.error('Failed to update personnel status.');
+      if (!res.ok) throw new Error('Failed to update personnel status');
+      toast.success(`Personnel marked ${!person.active ? 'Active' : 'Inactive'}.`);
+      loadPersonnelForOffice(selectedOfficeId);
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : 'Failed to update status.';
+      toast.error(msg);
     } finally {
       setTogglingPersonnelId(null);
     }
   }
 
+  // Handle Save Calendar Schedule Date
+  async function handleSaveSchedule() {
+    if (!selectedDateForEdit || !selectedOfficeId) return;
+    setIsSavingSchedule(true);
+    try {
+      const token = await getAccessToken();
+      const res = await fetch('/api/office/calendar', {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${token}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          officeId: selectedOfficeId,
+          scheduleDate: selectedDateForEdit,
+          status: scheduleStatus,
+          reason: scheduleReason.trim() || undefined,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.message || data.error || 'Failed to update schedule');
+      toast.success(`Schedule saved for ${selectedDateForEdit}: ${scheduleStatus}`);
+      setSelectedDateForEdit(null);
+      setScheduleReason('');
+      loadOfficeSchedules();
+    } catch (err: any) {
+      toast.error(err.message || 'Failed to save date schedule');
+    } finally {
+      setIsSavingSchedule(false);
+    }
+  }
+
+  // Handle Reset Date Schedule to Open
+  async function handleDeleteSchedule(scheduleDate: string) {
+    if (!selectedOfficeId) return;
+    try {
+      const token = await getAccessToken();
+      const res = await fetch(`/api/office/calendar?officeId=${encodeURIComponent(selectedOfficeId)}&scheduleDate=${encodeURIComponent(scheduleDate)}`, {
+        method: 'DELETE',
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!res.ok) {
+        const data = await res.json();
+        throw new Error(data.message || data.error || 'Failed to reset schedule');
+      }
+      toast.success(`Schedule reset to Open for ${scheduleDate}`);
+      setSelectedDateForEdit(null);
+      setScheduleReason('');
+      loadOfficeSchedules();
+    } catch (err: any) {
+      toast.error(err.message || 'Failed to reset schedule');
+    }
+  }
+
   const selectedOffice = offices.find((o) => o.id === selectedOfficeId);
+
+  // Helper to render visitor cards
+  const renderVisitorCard = (visit: OfficeVisitRecord, queueType: 'pending' | 'confirmation') => {
+    const isSpecificPerson = visit.visitType === 'specific_person';
+
+    return (
+      <div
+        key={visit.id}
+        className="overflow-hidden rounded-2xl border border-[var(--color-border)] bg-white p-4 shadow-xs transition-shadow hover:shadow-md space-y-3"
+      >
+        <div className="flex items-start gap-3">
+          {/* Portrait preview with secure AuthenticatedImage */}
+          <div className="h-14 w-14 flex-shrink-0 overflow-hidden rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)]">
+            {visit.portraitPreviewToken ? (
+              <AuthenticatedImage
+                srcUrl={`/api/office/portrait-preview?token=${visit.portraitPreviewToken}`}
+                alt={visit.visitorDisplayName || visit.visitorFullName}
+                className="h-full w-full object-cover"
+                fallbackText="Selfie"
+              />
+            ) : (
+              <div className="flex h-full w-full items-center justify-center text-[var(--color-text-muted)]">
+                <User className="h-6 w-6" />
+              </div>
+            )}
+          </div>
+
+          <div className="flex-1 min-w-0">
+            <div className="flex flex-wrap items-center gap-1.5">
+              <h4 className="text-sm font-bold text-[var(--color-text-primary)] truncate">
+                {visit.visitorDisplayName || visit.visitorFullName}
+              </h4>
+              <span
+                className={`rounded-md px-1.5 py-0.5 text-[10px] font-extrabold uppercase tracking-wide ${
+                  isSpecificPerson
+                    ? 'bg-purple-100 text-purple-800 border border-purple-200'
+                    : 'bg-blue-100 text-blue-800 border border-blue-200'
+                }`}
+              >
+                {isSpecificPerson ? 'Specific Person' : 'General Visit'}
+              </span>
+            </div>
+
+            {isSpecificPerson && visit.personnelName && (
+              <p className="text-[11px] font-semibold text-[#7A0A0A] flex items-center gap-1 mt-0.5">
+                <UserCheck className="h-3 w-3 shrink-0" />
+                <span>Requested: <strong>{visit.personnelName}</strong></span>
+              </p>
+            )}
+
+            <div className="flex flex-wrap items-center gap-2 text-[10px] text-[var(--color-text-secondary)] mt-1">
+              <span className="flex items-center gap-1">
+                <Calendar className="h-3 w-3 text-slate-400" />
+                {visit.visitDate}
+              </span>
+              <span className="flex items-center gap-1">
+                <Phone className="h-3 w-3 text-slate-400" />
+                {visit.visitorContactNumber}
+              </span>
+              {visit.expectedGate && (
+                <span className="rounded bg-slate-100 px-1 py-0.2 text-[10px] text-slate-700">
+                  Gate: {visit.expectedGate}
+                </span>
+              )}
+              <span className="flex items-center gap-1">
+                <Clock3 className="h-3 w-3 text-slate-400" />
+                {formatManilaTime(visit.createdAt)}
+              </span>
+            </div>
+          </div>
+        </div>
+
+        {/* Prominent Visit Purpose Callout */}
+        <div className={`rounded-xl p-3 text-xs ${
+          queueType === 'pending'
+            ? 'border border-[#7A0A0A]/20 bg-[#F8EEEE]/50 text-[#7A0A0A]'
+            : 'border border-amber-200 bg-amber-50/70 text-amber-950'
+        }`}>
+          <span className="text-[10px] font-black uppercase tracking-wider block opacity-75">
+            {queueType === 'pending' ? 'Appointment Purpose' : 'Visit Purpose'}
+          </span>
+          <p className="font-semibold text-xs text-[var(--color-text-primary)] mt-0.5 leading-relaxed">
+            {visit.purpose}
+          </p>
+        </div>
+
+        {/* Email & Outbox Delivery Status */}
+        {visit.visitorEmail && (
+          <div className="flex items-center justify-between text-[11px] text-[var(--color-text-muted)] pt-1 border-t border-[var(--color-border)]">
+            <span className="flex items-center gap-1 truncate max-w-[200px]" title={visit.visitorEmail}>
+              <Mail className="h-3 w-3 text-slate-400 shrink-0" />
+              <span className="truncate">{visit.visitorEmail}</span>
+            </span>
+            {visit.emailDeliveryStatus === 'delivered' && (
+              <span className="rounded px-1.5 py-0.5 bg-emerald-100 text-emerald-800 text-[10px] font-bold">
+                Delivered
+              </span>
+            )}
+            {visit.emailDeliveryStatus === 'sent' && (
+              <span className="rounded px-1.5 py-0.5 bg-blue-100 text-blue-800 text-[10px] font-bold">
+                Sent to Provider
+              </span>
+            )}
+            {visit.emailDeliveryStatus === 'pending' && (
+              <span className="rounded px-1.5 py-0.5 bg-slate-100 text-slate-700 text-[10px] font-bold">
+                Pending Email
+              </span>
+            )}
+            {visit.emailDeliveryStatus === 'failed' && (
+              <span className="flex items-center gap-1">
+                <span className="rounded px-1.5 py-0.5 bg-rose-100 text-rose-800 text-[10px] font-bold">
+                  Email Failed
+                </span>
+                <button
+                  type="button"
+                  onClick={() => handleRetryEmail(visit.id, 'retry')}
+                  disabled={retryingEmailVisitId === visit.id}
+                  className="text-[10px] text-blue-700 underline font-semibold hover:text-blue-900 cursor-pointer"
+                >
+                  {retryingEmailVisitId === visit.id ? 'Retrying…' : 'Retry'}
+                </button>
+              </span>
+            )}
+          </div>
+        )}
+
+        {/* Actions */}
+        <div className="pt-1 flex items-center justify-end gap-2">
+          {queueType === 'pending' ? (
+            <>
+              <Button
+                variant="destructive"
+                size="sm"
+                onClick={() => {
+                  setRejectModalVisit(visit);
+                  setRejectionReason('');
+                }}
+                icon={<XCircle className="h-3.5 w-3.5" />}
+                className="text-xs"
+              >
+                Reject
+              </Button>
+              <Button
+                variant="primary"
+                size="sm"
+                onClick={() => setApproveModalVisit(visit)}
+                icon={<CheckCircle2 className="h-3.5 w-3.5" />}
+                className="bg-[#7A0A0A] hover:bg-[#600808] text-white text-xs font-bold"
+              >
+                Approve & Issue Pass
+              </Button>
+            </>
+          ) : (
+            <Button
+              variant="primary"
+              size="sm"
+              onClick={() => setConfirmArrivalVisit(visit)}
+              icon={<CheckCircle2 className="h-4 w-4" />}
+              className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs shadow-xs w-full sm:w-auto"
+            >
+              Confirm Office Arrival
+            </Button>
+          )}
+        </div>
+      </div>
+    );
+  };
 
   return (
     <div className="min-h-screen bg-[var(--color-canvas)] text-[var(--color-text-primary)]">
-      {/* Top Navigation Bar */}
-      <header className="sticky top-0 z-30 border-b border-[var(--color-border)] bg-white/95 backdrop-blur shadow-xs">
+      {/* Top Navigation Bar with EARIST Maroon Identity */}
+      <header className="sticky top-0 z-30 border-b border-[#7A0A0A]/20 bg-white/95 backdrop-blur-md shadow-xs">
         <div className="mx-auto flex max-w-7xl items-center justify-between px-4 py-3 sm:px-6">
           <div className="flex items-center gap-3">
-            <BrandMark size="sm" />
-            <div>
-              <div className="flex items-center gap-2">
-                <span className="text-base font-extrabold text-[#7A0A0A] sm:text-lg">EARIST E-GatePass</span>
-                <span className="rounded-md bg-[#7A0A0A]/10 px-2 py-0.5 text-[11px] font-bold uppercase tracking-wide text-[#7A0A0A]">
-                  Office Portal
-                </span>
-              </div>
-              <p className="text-xs text-[var(--color-text-secondary)]">Visit Management & Attendance Confirmation</p>
-            </div>
+            <BrandMark />
+            <div className="hidden h-5 w-px bg-gray-200 sm:block" />
+            <span className="hidden text-xs font-extrabold uppercase tracking-wider text-[#7A0A0A] sm:inline-block">
+              Office Portal
+            </span>
           </div>
 
-          <div className="flex items-center gap-3">
-            <div className="hidden sm:flex flex-col text-right">
-              <span className="text-xs font-bold text-[var(--color-text-primary)]">
-                {userData?.kind === 'staff' ? userData.name : 'Staff Member'}
-              </span>
-              <span className="text-[11px] text-[var(--color-text-secondary)] capitalize">{role?.replace('_', ' ')}</span>
-            </div>
-
-            <Button
-              variant="secondary"
-              size="sm"
-              onClick={handleSignOut}
-              disabled={isSigningOut}
-              icon={<LogOut className="h-4 w-4" />}
-            >
-              <span className="hidden sm:inline">Sign Out</span>
-            </Button>
-          </div>
-        </div>
-      </header>
-
-      <main className="mx-auto max-w-7xl px-4 py-6 sm:px-6">
-        {/* Office Switcher & Quick Actions */}
-        <div className="mb-6 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between rounded-2xl border border-[var(--color-border)] bg-white p-4 shadow-xs">
-          <div className="flex flex-1 flex-col sm:flex-row sm:items-center gap-3">
-            <label htmlFor="office-select" className="text-xs font-bold uppercase tracking-wider text-[var(--color-text-secondary)] sm:min-w-28">
-              Target Office:
-            </label>
-            <div className="relative flex-1 max-w-md">
-              <Building2 className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[var(--color-text-muted)]" />
+          <div className="flex items-center gap-2">
+            {offices.length > 1 && (
               <select
-                id="office-select"
+                aria-label="Select office"
                 value={selectedOfficeId}
                 onChange={(e) => setSelectedOfficeId(e.target.value)}
-                className="w-full rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] py-2 pl-9 pr-8 text-sm font-semibold text-[var(--color-text-primary)] focus:border-[#7A0A0A] focus:outline-none focus:ring-1 focus:ring-[#7A0A0A]"
+                className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] py-1.5 px-3 text-xs font-semibold text-[var(--color-text-primary)] focus:border-[#7A0A0A] focus:outline-none"
               >
                 {offices.map((o) => (
                   <option key={o.id} value={o.id}>
@@ -495,17 +702,27 @@ export function OfficeDashboardPage() {
                   </option>
                 ))}
               </select>
-            </div>
-          </div>
+            )}
 
-          <div className="flex items-center gap-2">
+            <Button
+              variant="secondary"
+              size="sm"
+              onClick={() => setIsCalendarModalOpen(true)}
+              disabled={!selectedOfficeId}
+              icon={<CalendarDays className="h-3.5 w-3.5 text-[#7A0A0A]" />}
+              className="border-[#7A0A0A]/30 text-[#7A0A0A] hover:bg-[#F8EEEE]"
+            >
+              Office Calendar
+            </Button>
+
             <Button
               variant="secondary"
               size="sm"
               onClick={() => setIsPersonnelModalOpen(true)}
-              icon={<Users className="h-4 w-4" />}
+              disabled={!selectedOfficeId}
+              icon={<Users className="h-3.5 w-3.5 text-gray-700" />}
             >
-              Personnel Directory ({personnelList.length})
+              Directory ({personnelList.length})
             </Button>
 
             <Button
@@ -513,13 +730,25 @@ export function OfficeDashboardPage() {
               size="sm"
               onClick={() => loadVisits(true)}
               disabled={isRefreshing}
-              icon={<RefreshCw className={`h-4 w-4 ${isRefreshing ? 'animate-spin' : ''}`} />}
+              icon={<RefreshCw className={`h-3.5 w-3.5 ${isRefreshing ? 'animate-spin' : ''}`} />}
             >
               Refresh
             </Button>
+
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={handleSignOut}
+              disabled={isSigningOut}
+              icon={<LogOut className="h-3.5 w-3.5" />}
+            >
+              Sign Out
+            </Button>
           </div>
         </div>
+      </header>
 
+      <main className="mx-auto max-w-7xl px-4 py-6 sm:px-6">
         {/* No Office Assigned Banner */}
         {noOfficeAssigned && (
           <div className="mb-6 rounded-2xl border border-amber-300 bg-amber-50 p-6 text-center space-y-3 shadow-xs">
@@ -528,151 +757,62 @@ export function OfficeDashboardPage() {
             </div>
             <h2 className="text-lg font-bold text-amber-950">No Office Assigned</h2>
             <p className="text-xs text-amber-800 max-w-md mx-auto leading-relaxed">
-              Your staff account is currently not assigned to any university office. Please contact the University Administrator to assign you to an office before accessing visit queues.
+              Your staff account is currently not assigned to any university office. Please contact the University Administrator to assign you to an office.
             </p>
           </div>
         )}
 
-        {/* Office Banner */}
+        {/* Office Header Banner */}
         {selectedOffice && (
-          <div className="mb-6 rounded-2xl border border-[#7A0A0A]/15 bg-gradient-to-r from-[#7A0A0A]/5 via-white to-transparent p-5">
-            <div className="flex items-center gap-3">
-              <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-[#7A0A0A] text-white shadow-sm">
-                <Building2 className="h-6 w-6" />
+          <div className="mb-6 rounded-2xl border border-[#7A0A0A]/15 bg-gradient-to-r from-[#7A0A0A]/10 via-[#F8EEEE]/40 to-transparent p-5">
+            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+              <div className="flex items-center gap-3">
+                <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-[#7A0A0A] text-white shadow-xs">
+                  <Building2 className="h-6 w-6" />
+                </div>
+                <div>
+                  <h1 className="text-xl font-black text-[#7A0A0A] sm:text-2xl">{selectedOffice.name}</h1>
+                  <p className="text-xs text-[var(--color-text-secondary)] mt-0.5">
+                    {selectedOffice.description || 'Designated university office for visitor management.'}
+                  </p>
+                </div>
               </div>
-              <div>
-                <h1 className="text-xl font-black text-[#7A0A0A] sm:text-2xl">{selectedOffice.name}</h1>
-                <p className="text-xs text-[var(--color-text-secondary)] mt-0.5">
-                  {selectedOffice.description || 'Designated university office for visitor management.'}
-                </p>
+
+              {/* Quick Summary Badges */}
+              <div className="flex items-center gap-2">
+                <div className="rounded-xl border border-[#7A0A0A]/20 bg-white px-3 py-1.5 text-center shadow-xs">
+                  <span className="text-[10px] font-bold uppercase tracking-wider text-[var(--color-text-secondary)] block">Pending Review</span>
+                  <span className="text-sm font-black text-[#7A0A0A]">{queueCounts.pending}</span>
+                </div>
+                <div className="rounded-xl border border-amber-300 bg-white px-3 py-1.5 text-center shadow-xs">
+                  <span className="text-[10px] font-bold uppercase tracking-wider text-amber-800 block">At Gate / Campus</span>
+                  <span className="text-sm font-black text-amber-700">{queueCounts.awaiting_confirmation}</span>
+                </div>
               </div>
             </div>
           </div>
         )}
 
-        {/* Queue Navigation Tabs */}
-        <div className="mb-6 flex overflow-x-auto no-scrollbar gap-2 border-b border-[var(--color-border)] pb-2">
-          <button
-            type="button"
-            onClick={() => setActiveQueue('pending')}
-            className={`flex items-center gap-2 rounded-xl px-4 py-2.5 text-xs font-bold transition-all ${
-              activeQueue === 'pending'
-                ? 'bg-[#7A0A0A] text-white shadow-sm'
-                : 'bg-white text-[var(--color-text-secondary)] hover:bg-[var(--color-surface)] border border-[var(--color-border)]'
-            }`}
-          >
-            <Clock3 className="h-4 w-4" />
-            <span>Pending Approval</span>
-            <span
-              className={`ml-1 rounded-full px-2 py-0.5 text-[10px] font-extrabold ${
-                activeQueue === 'pending' ? 'bg-white text-[#7A0A0A]' : 'bg-[#7A0A0A]/10 text-[#7A0A0A]'
-              }`}
-            >
-              {queueCounts.pending}
-            </span>
-          </button>
-
-          <button
-            type="button"
-            onClick={() => setActiveQueue('approved')}
-            className={`flex items-center gap-2 rounded-xl px-4 py-2.5 text-xs font-bold transition-all ${
-              activeQueue === 'approved'
-                ? 'bg-[#7A0A0A] text-white shadow-sm'
-                : 'bg-white text-[var(--color-text-secondary)] hover:bg-[var(--color-surface)] border border-[var(--color-border)]'
-            }`}
-          >
-            <ShieldCheck className="h-4 w-4" />
-            <span>Approved / QR Issued</span>
-            <span
-              className={`ml-1 rounded-full px-2 py-0.5 text-[10px] font-extrabold ${
-                activeQueue === 'approved' ? 'bg-white text-[#7A0A0A]' : 'bg-gray-100 text-gray-700'
-              }`}
-            >
-              {queueCounts.approved}
-            </span>
-          </button>
-
-          <button
-            type="button"
-            onClick={() => setActiveQueue('awaiting_confirmation')}
-            className={`flex items-center gap-2 rounded-xl px-4 py-2.5 text-xs font-bold transition-all ${
-              activeQueue === 'awaiting_confirmation'
-                ? 'bg-amber-600 text-white shadow-sm'
-                : 'bg-amber-50/50 text-amber-800 hover:bg-amber-100/50 border border-amber-200'
-            }`}
-          >
-            <AlertTriangle className="h-4 w-4" />
-            <span>Awaiting Office Confirmation</span>
-            <span
-              className={`ml-1 rounded-full px-2 py-0.5 text-[10px] font-extrabold ${
-                activeQueue === 'awaiting_confirmation' ? 'bg-white text-amber-800' : 'bg-amber-200 text-amber-900'
-              }`}
-            >
-              {queueCounts.awaiting_confirmation}
-            </span>
-          </button>
-
-          <button
-            type="button"
-            onClick={() => setActiveQueue('confirmed')}
-            className={`flex items-center gap-2 rounded-xl px-4 py-2.5 text-xs font-bold transition-all ${
-              activeQueue === 'confirmed'
-                ? 'bg-emerald-700 text-white shadow-sm'
-                : 'bg-emerald-50/50 text-emerald-800 hover:bg-emerald-100/50 border border-emerald-200'
-            }`}
-          >
-            <CheckCircle2 className="h-4 w-4" />
-            <span>Currently at Office</span>
-            <span
-              className={`ml-1 rounded-full px-2 py-0.5 text-[10px] font-extrabold ${
-                activeQueue === 'confirmed' ? 'bg-white text-emerald-800' : 'bg-emerald-200 text-emerald-900'
-              }`}
-            >
-              {queueCounts.confirmed}
-            </span>
-          </button>
-
-          <button
-            type="button"
-            onClick={() => setActiveQueue('history')}
-            className={`flex items-center gap-2 rounded-xl px-4 py-2.5 text-xs font-bold transition-all ${
-              activeQueue === 'history'
-                ? 'bg-zinc-800 text-white shadow-sm'
-                : 'bg-white text-[var(--color-text-secondary)] hover:bg-[var(--color-surface)] border border-[var(--color-border)]'
-            }`}
-          >
-            <Clock className="h-4 w-4" />
-            <span>Completed / Exceptions</span>
-            <span
-              className={`ml-1 rounded-full px-2 py-0.5 text-[10px] font-extrabold ${
-                activeQueue === 'history' ? 'bg-white text-zinc-900' : 'bg-gray-100 text-gray-700'
-              }`}
-            >
-              {queueCounts.history}
-            </span>
-          </button>
-        </div>
-
-        {/* Filter & Search Bar */}
+        {/* Search & Filter Bar */}
         <div className="mb-6 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <div className="relative flex-1 max-w-md">
             <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[var(--color-text-muted)]" />
             <input
               type="text"
-              placeholder="Search visitor name, phone, purpose..."
+              placeholder="Search visitor name or purpose…"
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
-              className="w-full rounded-xl border border-[var(--color-border)] bg-white py-2 pl-9 pr-4 text-xs font-medium text-[var(--color-text-primary)] placeholder-[var(--color-text-muted)] focus:border-[#7A0A0A] focus:outline-none focus:ring-1 focus:ring-[#7A0A0A]"
+              className="w-full rounded-xl border border-[var(--color-border)] bg-white py-2 pl-9 pr-4 text-xs font-medium text-[var(--color-text-primary)] focus:border-[#7A0A0A] focus:outline-none focus:ring-1 focus:ring-[#7A0A0A]"
             />
           </div>
 
           <div className="flex items-center gap-2">
-            <Filter className="h-4 w-4 text-[var(--color-text-muted)]" />
-            <Input
+            <input
               type="date"
+              aria-label="Filter by visit date"
               value={dateFilter}
               onChange={(e) => setDateFilter(e.target.value)}
-              className="text-xs"
+              className="rounded-xl border border-[var(--color-border)] bg-white py-2 px-3 text-xs font-semibold text-[var(--color-text-primary)] focus:border-[#7A0A0A] focus:outline-none focus:ring-1 focus:ring-[#7A0A0A]"
             />
             {dateFilter && (
               <Button size="sm" variant="ghost" onClick={() => setDateFilter('')}>
@@ -682,286 +822,311 @@ export function OfficeDashboardPage() {
           </div>
         </div>
 
-        {/* Queue Content */}
+        {/* Mobile Tab Switcher */}
+        <div className="lg:hidden mb-4 grid grid-cols-2 gap-2">
+          <button
+            type="button"
+            onClick={() => setMobileTab('pending')}
+            className={`flex items-center justify-center gap-2 rounded-xl py-2.5 px-3 text-xs font-bold transition-all ${
+              mobileTab === 'pending'
+                ? 'bg-[#7A0A0A] text-white shadow-xs'
+                : 'bg-white text-[var(--color-text-secondary)] border border-[var(--color-border)]'
+            }`}
+          >
+            <Clock3 className="h-4 w-4" />
+            <span>Pending Approval ({pendingVisits.length})</span>
+          </button>
+          <button
+            type="button"
+            onClick={() => setMobileTab('confirmation')}
+            className={`flex items-center justify-center gap-2 rounded-xl py-2.5 px-3 text-xs font-bold transition-all ${
+              mobileTab === 'confirmation'
+                ? 'bg-amber-600 text-white shadow-xs'
+                : 'bg-white text-[var(--color-text-secondary)] border border-[var(--color-border)]'
+            }`}
+          >
+            <CheckCircle2 className="h-4 w-4" />
+            <span>Arrivals ({confirmationVisits.length})</span>
+          </button>
+        </div>
+
+        {/* ============================================================ */}
+        {/* TWO-QUEUE SPLIT VIEW (Side-by-side on desktop, stacked/tab on mobile) */}
+        {/* ============================================================ */}
         {isLoading ? (
           <div className="flex min-h-[300px] flex-col items-center justify-center rounded-2xl border border-[var(--color-border)] bg-white p-8">
             <div className="h-8 w-8 animate-spin rounded-full border-2 border-[#7A0A0A] border-t-transparent" />
             <p className="mt-3 text-xs font-semibold text-[var(--color-text-secondary)]">Loading visit records…</p>
           </div>
-        ) : visits.length === 0 ? (
-          <div className="flex min-h-[300px] flex-col items-center justify-center rounded-2xl border border-dashed border-[var(--color-border)] bg-white p-8 text-center">
-            <Building2 className="h-10 w-10 text-[var(--color-text-muted)]" />
-            <h2 className="mt-3 text-base font-bold text-[var(--color-text-primary)]">No visits in this queue</h2>
-            <p className="mt-1 text-xs text-[var(--color-text-secondary)] max-w-sm">
-              {activeQueue === 'pending'
-                ? 'No pending visitor requests awaiting review for this office.'
-                : activeQueue === 'awaiting_confirmation'
-                ? 'No visitors have passed the gate scanner awaiting office confirmation.'
-                : 'There are currently no records matching the selected queue and filters.'}
-            </p>
-          </div>
         ) : (
-          <div className="grid grid-cols-1 gap-4">
-            {visits.map((visit) => {
-              const isSpecificPerson = visit.visitType === 'specific_person';
-
-              return (
-                <div
-                  key={visit.id}
-                  className="overflow-hidden rounded-2xl border border-[var(--color-border)] bg-white p-5 shadow-xs transition-shadow hover:shadow-md"
-                >
-                  <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
-                    <div className="flex items-start gap-4">
-                      {/* Portrait preview */}
-                      <div className="h-16 w-16 flex-shrink-0 overflow-hidden rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)]">
-                        {visit.portraitPreviewToken ? (
-                          <AuthenticatedImage
-                            srcUrl={`/api/office/portrait-preview?token=${visit.portraitPreviewToken}`}
-                            alt={visit.visitorDisplayName || visit.visitorFullName}
-                            className="h-full w-full object-cover"
-                            fallbackText="Selfie"
-                          />
-                        ) : (
-                          <div className="flex h-full w-full items-center justify-center text-[var(--color-text-muted)]">
-                            <User className="h-8 w-8" />
-                          </div>
-                        )}
-                      </div>
-
-                      <div className="space-y-1">
-                        <div className="flex flex-wrap items-center gap-2">
-                          <h3 className="text-base font-bold text-[var(--color-text-primary)]">
-                            {visit.visitorDisplayName || visit.visitorFullName}
-                          </h3>
-                          <span
-                            className={`rounded-md px-2 py-0.5 text-[10px] font-extrabold uppercase tracking-wide ${
-                              isSpecificPerson
-                                ? 'bg-purple-100 text-purple-800 border border-purple-200'
-                                : 'bg-blue-100 text-blue-800 border border-blue-200'
-                            }`}
-                          >
-                            {isSpecificPerson ? 'Specific Person' : 'General Office Visit'}
-                          </span>
-
-                          {/* Attendance Status Badge */}
-                          <span
-                            className={`rounded-md px-2 py-0.5 text-[10px] font-bold ${
-                              visit.attendanceStatus === 'confirmed'
-                                ? 'bg-emerald-100 text-emerald-800'
-                                : visit.attendanceStatus === 'awaiting_office_confirmation'
-                                ? 'bg-amber-100 text-amber-800 font-extrabold animate-pulse'
-                                : visit.attendanceStatus === 'exited_unconfirmed'
-                                ? 'bg-red-100 text-red-800'
-                                : 'bg-gray-100 text-gray-700'
-                            }`}
-                          >
-                            {visit.attendanceStatus.replace(/_/g, ' ')}
-                          </span>
-                        </div>
-
-                        {isSpecificPerson && visit.personnelName && (
-                          <p className="text-xs font-semibold text-[#7A0A0A] flex items-center gap-1">
-                            <UserCheck className="h-3.5 w-3.5" />
-                            <span>Requested Appointment with: <strong>{visit.personnelName}</strong> ({visit.personnelTitle || 'Personnel'})</span>
-                          </p>
-                        )}
-
-                        <p className="text-xs text-[var(--color-text-secondary)]">
-                          <strong>Purpose:</strong> {visit.purpose}
-                        </p>
-
-                        <div className="flex flex-wrap items-center gap-4 text-[11px] text-[var(--color-text-muted)] pt-1">
-                          <span className="flex items-center gap-1">
-                            <Calendar className="h-3 w-3" />
-                            Visit Date: {visit.visitDate}
-                          </span>
-                          {visit.expectedGate && (
-                            <span className="inline-flex items-center gap-1 rounded bg-slate-100 px-1.5 py-0.5 font-semibold text-slate-700">
-                              Expected Gate: {visit.expectedGate}
-                            </span>
-                          )}
-                          <span className="flex items-center gap-1">
-                            <Phone className="h-3 w-3" />
-                            {visit.visitorContactNumber}
-                          </span>
-                          {visit.visitorEmail && (
-                            <span className="flex items-center gap-1">
-                              <Mail className="h-3 w-3" />
-                              {visit.visitorEmail}
-                              {visit.emailDeliveryStatus === 'delivered' && (
-                                <span className="ml-1 rounded px-1.5 py-0.5 bg-emerald-100 text-emerald-800 text-[10px] font-bold">
-                                  {visit.confirmationSource === 'manual_staff' ? 'Manually confirmed' : 'Delivered by Provider'}
-                                </span>
-                              )}
-                              {visit.emailDeliveryStatus === 'sent' && (
-                                <span className="ml-1 rounded px-1.5 py-0.5 bg-blue-100 text-blue-800 text-[10px] font-bold">
-                                  Sent to Provider
-                                </span>
-                              )}
-                              {visit.emailDeliveryStatus === 'processing' && (
-                                <span className="ml-1 rounded px-1.5 py-0.5 bg-indigo-100 text-indigo-800 text-[10px] font-bold">
-                                  Processing
-                                </span>
-                              )}
-                              {visit.emailDeliveryStatus === 'pending' && (
-                                <span className="ml-1 rounded px-1.5 py-0.5 bg-slate-100 text-slate-800 text-[10px] font-bold">
-                                  Pending Dispatch
-                                </span>
-                              )}
-                              {visit.emailDeliveryStatus === 'unknown' && (
-                                <span className="ml-1 rounded px-1.5 py-0.5 bg-amber-100 text-amber-800 text-[10px] font-bold" title="Provider outcome is uncertain. Blind retry is frozen until webhook reconciliation.">
-                                  Outcome Uncertain
-                                </span>
-                              )}
-                              {visit.emailDeliveryStatus === 'reconciliation_required' && (
-                                <span className="ml-1 rounded px-1.5 py-0.5 bg-orange-100 text-orange-800 text-[10px] font-bold">
-                                  Reconciliation Required
-                                </span>
-                              )}
-                              {visit.emailDeliveryStatus === 'failed' && (
-                                <span className="ml-1 rounded px-1.5 py-0.5 bg-red-100 text-red-800 text-[10px] font-bold">
-                                  Failed
-                                </span>
-                              )}
-                            </span>
-                          )}
-                          <span className="flex items-center gap-1">
-                            <Clock className="h-3 w-3" />
-                            Requested: {formatManilaTime(visit.createdAt)}
-                          </span>
-                        </div>
-                      </div>
-                    </div>
-
-                    {/* Action Buttons based on status */}
-                    <div className="flex flex-wrap items-center gap-2 pt-2 sm:pt-0">
-                      {(visit.approvalStatus === 'approved' || visit.approvalStatus === 'rejected') && (
-                        <>
-                          {visit.emailDeliveryStatus === 'failed' && (
-                            <Button
-                              variant="secondary"
-                              size="sm"
-                              onClick={() => handleRetryEmail(visit.id, 'retry')}
-                              loading={retryingEmailVisitId === visit.id}
-                              icon={<Mail className="h-3.5 w-3.5 text-red-600" />}
-                              className="border-red-200 bg-red-50 text-red-800 hover:bg-red-100 text-xs font-semibold"
-                            >
-                              Retry Email
-                            </Button>
-                          )}
-                          {visit.emailDeliveryStatus === 'pending' && (
-                            <Button
-                              variant="secondary"
-                              size="sm"
-                              onClick={() => handleRetryEmail(visit.id, 'retry')}
-                              loading={retryingEmailVisitId === visit.id}
-                              icon={<Mail className="h-3.5 w-3.5 text-slate-600" />}
-                              className="border-slate-300 bg-slate-50 text-slate-800 hover:bg-slate-100 text-xs font-semibold"
-                            >
-                              Dispatch Email
-                            </Button>
-                          )}
-                          {visit.emailDeliveryStatus === 'processing' && (
-                            <Button
-                              variant="secondary"
-                              size="sm"
-                              onClick={() => handleRetryEmail(visit.id, 'retry')}
-                              loading={retryingEmailVisitId === visit.id}
-                              icon={<Mail className="h-3.5 w-3.5 text-indigo-600" />}
-                              className="border-indigo-200 bg-indigo-50 text-indigo-800 hover:bg-indigo-100 text-xs font-semibold"
-                            >
-                              Re-dispatch Email
-                            </Button>
-                          )}
-                          {(visit.emailDeliveryStatus === 'unknown' || visit.emailDeliveryStatus === 'reconciliation_required') && (
-                            <div className="flex items-center gap-1.5 flex-wrap">
-                              <span className="text-[11px] text-amber-700 bg-amber-50 px-2 py-1 rounded border border-amber-200 font-medium">
-                                Awaiting provider reconciliation
-                              </span>
-                              <Button
-                                variant="secondary"
-                                size="sm"
-                                onClick={() => handleRetryEmail(visit.id, 'mark_delivered')}
-                                loading={retryingEmailVisitId === visit.id}
-                                className="border-emerald-200 bg-emerald-50 text-emerald-800 hover:bg-emerald-100 text-xs font-semibold"
-                              >
-                                Mark Delivered
-                              </Button>
-                              <Button
-                                variant="secondary"
-                                size="sm"
-                                onClick={() => handleRetryEmail(visit.id, 'permit_retry')}
-                                loading={retryingEmailVisitId === visit.id}
-                                className="border-amber-200 bg-amber-50 text-amber-800 hover:bg-amber-100 text-xs font-semibold"
-                              >
-                                Permit Retry
-                              </Button>
-                            </div>
-                          )}
-                        </>
-                      )}
-                      {activeQueue === 'pending' && isSpecificPerson && (
-                        <>
-                          <Button
-                            variant="primary"
-                            size="sm"
-                            onClick={() => setApproveModalVisit(visit)}
-                            icon={<CheckCircle2 className="h-4 w-4" />}
-                            className="bg-emerald-600 hover:bg-emerald-700 text-white"
-                          >
-                            Approve & Issue Pass
-                          </Button>
-                          <Button
-                            variant="destructive"
-                            size="sm"
-                            onClick={() => {
-                              setRejectModalVisit(visit);
-                              setRejectionReason('');
-                            }}
-                            icon={<XCircle className="h-4 w-4" />}
-                          >
-                            Reject
-                          </Button>
-                        </>
-                      )}
-
-                      {activeQueue === 'awaiting_confirmation' && (
-                        <Button
-                          variant="primary"
-                          size="md"
-                          onClick={() => setConfirmArrivalVisit(visit)}
-                          icon={<CheckCircle2 className="h-5 w-5" />}
-                          className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold shadow-md"
-                        >
-                          Confirm Office Arrival
-                        </Button>
-                      )}
-
-                      {activeQueue === 'confirmed' && (
-                        <div className="rounded-xl bg-emerald-50 border border-emerald-200 px-3 py-1.5 text-right">
-                          <span className="text-[11px] font-bold text-emerald-800 flex items-center gap-1 justify-end">
-                            <CheckCircle2 className="h-3.5 w-3.5" /> Arrived at Office
-                          </span>
-                          <span className="text-[10px] text-emerald-600">
-                            Confirmed at {formatManilaTime(visit.confirmedAt)}
-                          </span>
-                        </div>
-                      )}
-
-                      {activeQueue === 'history' && visit.rejectionReason && (
-                        <div className="rounded-xl bg-red-50 border border-red-200 px-3 py-1.5 max-w-xs text-xs text-red-800">
-                          <span className="font-bold">Rejection Reason:</span>
-                          <p className="text-[11px] mt-0.5">{visit.rejectionReason}</p>
-                        </div>
-                      )}
-                    </div>
-                  </div>
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 items-start">
+            {/* ----------------- PANEL 1: PENDING APPROVAL ----------------- */}
+            <div className={`space-y-4 ${mobileTab !== 'pending' ? 'hidden lg:block' : ''}`}>
+              <div className="flex items-center justify-between pb-3 border-b-2 border-[#7A0A0A]">
+                <div>
+                  <h2 className="text-base font-black text-[#7A0A0A] flex items-center gap-2">
+                    <Clock3 className="h-5 w-5" />
+                    <span>Pending Approval</span>
+                    <span className="rounded-full bg-[#7A0A0A] px-2.5 py-0.5 text-xs font-bold text-white">
+                      {pendingVisits.length}
+                    </span>
+                  </h2>
+                  <p className="text-xs text-[var(--color-text-secondary)] mt-0.5">
+                    Specific-person appointment requests requiring office review.
+                  </p>
                 </div>
-              );
-            })}
+              </div>
+
+              {pendingVisits.length === 0 ? (
+                <div className="flex min-h-[220px] flex-col items-center justify-center rounded-2xl border border-dashed border-[var(--color-border)] bg-white p-6 text-center">
+                  <CheckCircle2 className="h-8 w-8 text-emerald-600 mb-2" />
+                  <p className="text-xs font-bold text-[var(--color-text-primary)]">All Caught Up</p>
+                  <p className="text-[11px] text-[var(--color-text-secondary)] mt-0.5 max-w-xs">
+                    No specific-person appointments currently pending review.
+                  </p>
+                </div>
+              ) : (
+                <div className="space-y-3">
+                  {pendingVisits.map((v) => renderVisitorCard(v, 'pending'))}
+                </div>
+              )}
+            </div>
+
+            {/* ----------------- PANEL 2: OFFICE CONFIRMATION ----------------- */}
+            <div className={`space-y-4 ${mobileTab !== 'confirmation' ? 'hidden lg:block' : ''}`}>
+              <div className="flex items-center justify-between pb-3 border-b-2 border-amber-600">
+                <div>
+                  <h2 className="text-base font-black text-amber-900 flex items-center gap-2">
+                    <CheckCircle2 className="h-5 w-5 text-amber-600" />
+                    <span>Office Confirmation</span>
+                    <span className="rounded-full bg-amber-600 px-2.5 py-0.5 text-xs font-bold text-white">
+                      {confirmationVisits.length}
+                    </span>
+                  </h2>
+                  <p className="text-xs text-[var(--color-text-secondary)] mt-0.5">
+                    Visitors who entered campus and are awaiting arrival confirmation.
+                  </p>
+                </div>
+              </div>
+
+              {confirmationVisits.length === 0 ? (
+                <div className="flex min-h-[220px] flex-col items-center justify-center rounded-2xl border border-dashed border-[var(--color-border)] bg-white p-6 text-center">
+                  <Building2 className="h-8 w-8 text-[var(--color-text-muted)] mb-2" />
+                  <p className="text-xs font-bold text-[var(--color-text-primary)]">No Pending Confirmations</p>
+                  <p className="text-[11px] text-[var(--color-text-secondary)] mt-0.5 max-w-xs">
+                    Visitors will appear here as soon as their pass is scanned at the entrance gate.
+                  </p>
+                </div>
+              ) : (
+                <div className="space-y-3">
+                  {confirmationVisits.map((v) => renderVisitorCard(v, 'confirmation'))}
+                </div>
+              )}
+            </div>
           </div>
         )}
       </main>
+
+      {/* ============================================================ */}
+      {/* OFFICE CALENDAR & AVAILABILITY MODAL */}
+      {/* ============================================================ */}
+      <Modal
+        isOpen={isCalendarModalOpen}
+        onClose={() => {
+          setIsCalendarModalOpen(false);
+          setSelectedDateForEdit(null);
+        }}
+        title={`Office Availability & Calendar — ${selectedOffice?.name || 'Office'}`}
+      >
+        <div className="space-y-4 max-h-[75vh] overflow-y-auto pr-1">
+          <p className="text-xs text-[var(--color-text-secondary)] leading-relaxed">
+            Configure dates when this office is Open, Closed, under Maintenance, or observing a Holiday. Visitors will see these statuses during registration.
+          </p>
+
+          {/* Month / Year Selectors */}
+          <div className="flex items-center gap-3">
+            <select
+              aria-label="Select calendar month"
+              value={calendarMonth}
+              onChange={(e) => {
+                setCalendarMonth(parseInt(e.target.value, 10));
+                setSelectedDateForEdit(null);
+              }}
+              className="rounded-xl border border-[var(--color-border)] bg-white py-1.5 px-3 text-xs font-bold text-[var(--color-text-primary)]"
+            >
+              {[
+                'January', 'February', 'March', 'April', 'May', 'June',
+                'July', 'August', 'September', 'October', 'November', 'December'
+              ].map((m, idx) => (
+                <option key={m} value={idx + 1}>{m}</option>
+              ))}
+            </select>
+
+            <select
+              aria-label="Select calendar year"
+              value={calendarYear}
+              onChange={(e) => {
+                setCalendarYear(parseInt(e.target.value, 10));
+                setSelectedDateForEdit(null);
+              }}
+              className="rounded-xl border border-[var(--color-border)] bg-white py-1.5 px-3 text-xs font-bold text-[var(--color-text-primary)]"
+            >
+              {[new Date().getFullYear(), new Date().getFullYear() + 1].map((y) => (
+                <option key={y} value={y}>{y}</option>
+              ))}
+            </select>
+            {loadingSchedules && (
+              <span className="text-[11px] text-[var(--color-text-muted)] animate-pulse">Loading schedules...</span>
+            )}
+          </div>
+
+          {/* Monthly Calendar Grid */}
+          <div className="rounded-xl border border-[var(--color-border)] bg-white p-3">
+            <div className="grid grid-cols-7 gap-1 text-center text-[10px] font-bold text-[var(--color-text-secondary)] pb-2 border-b border-[var(--color-border)]">
+              <span>Sun</span>
+              <span>Mon</span>
+              <span>Tue</span>
+              <span>Wed</span>
+              <span>Thu</span>
+              <span>Fri</span>
+              <span>Sat</span>
+            </div>
+
+            {/* Days Grid */}
+            {(() => {
+              const daysInMonth = new Date(calendarYear, calendarMonth, 0).getDate();
+              const firstDayIndex = new Date(calendarYear, calendarMonth - 1, 1).getDay();
+              const days = [];
+
+              // Leading blank days
+              for (let i = 0; i < firstDayIndex; i++) {
+                days.push(<div key={`blank-${i}`} className="p-2 min-h-[52px]" />);
+              }
+
+              // Days of current month
+              for (let day = 1; day <= daysInMonth; day++) {
+                const dayStr = String(day).padStart(2, '0');
+                const monthStr = String(calendarMonth).padStart(2, '0');
+                const dateKey = `${calendarYear}-${monthStr}-${dayStr}`;
+
+                const sched = officeSchedules.find((s) => s.schedule_date === dateKey);
+                const isSelected = selectedDateForEdit === dateKey;
+
+                let badgeColor = 'bg-slate-100 text-slate-700';
+                if (sched?.status === 'closed') badgeColor = 'bg-rose-100 text-rose-800 border border-rose-300';
+                else if (sched?.status === 'maintenance') badgeColor = 'bg-amber-100 text-amber-900 border border-amber-300';
+                else if (sched?.status === 'holiday') badgeColor = 'bg-purple-100 text-purple-900 border border-purple-300';
+                else if (sched?.status === 'open') badgeColor = 'bg-emerald-100 text-emerald-800';
+
+                days.push(
+                  <button
+                    key={dateKey}
+                    type="button"
+                    onClick={() => {
+                      setSelectedDateForEdit(dateKey);
+                      setScheduleStatus((sched?.status as any) || 'closed');
+                      setScheduleReason(sched?.reason || '');
+                    }}
+                    className={`min-h-[52px] p-1.5 rounded-lg border text-left flex flex-col justify-between transition-all ${
+                      isSelected
+                        ? 'border-[#7A0A0A] bg-[#F8EEEE] ring-1 ring-[#7A0A0A]'
+                        : 'border-slate-100 hover:border-slate-300 bg-white'
+                    }`}
+                  >
+                    <span className="text-[11px] font-bold text-[var(--color-text-primary)]">{day}</span>
+                    {sched && sched.status !== 'open' ? (
+                      <span className={`text-[9px] font-black uppercase tracking-tight rounded px-1 py-0.2 truncate block ${badgeColor}`}>
+                        {sched.status}
+                      </span>
+                    ) : (
+                      <span className="text-[9px] text-slate-400">Open</span>
+                    )}
+                  </button>
+                );
+              }
+
+              return <div className="grid grid-cols-7 gap-1 pt-2">{days}</div>;
+            })()}
+          </div>
+
+          {/* Edit Date Status Form */}
+          {selectedDateForEdit && (
+            <div className="rounded-xl border border-[#7A0A0A]/30 bg-[#F8EEEE]/40 p-4 space-y-3">
+              <div className="flex items-center justify-between">
+                <span className="text-xs font-bold text-[#7A0A0A]">
+                  Edit Schedule for: <strong>{selectedDateForEdit}</strong>
+                </span>
+                {officeSchedules.some((s) => s.schedule_date === selectedDateForEdit) && (
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => handleDeleteSchedule(selectedDateForEdit)}
+                    icon={<Trash2 className="h-3 w-3 text-rose-600" />}
+                    className="text-xs text-rose-700"
+                  >
+                    Reset to Open
+                  </Button>
+                )}
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
+                <div>
+                  <label className="block text-[11px] font-bold uppercase text-[var(--color-text-secondary)] mb-1">
+                    Availability Status
+                  </label>
+                  <select
+                    value={scheduleStatus}
+                    onChange={(e) => setScheduleStatus(e.target.value as any)}
+                    className="w-full rounded-xl border border-[var(--color-border)] bg-white py-1.5 px-3 text-xs font-semibold focus:border-[#7A0A0A] focus:outline-none"
+                  >
+                    <option value="closed">Closed</option>
+                    <option value="maintenance">Maintenance</option>
+                    <option value="holiday">Holiday</option>
+                    <option value="open">Open (Normal)</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block text-[11px] font-bold uppercase text-[var(--color-text-secondary)] mb-1">
+                    Reason / Description (optional)
+                  </label>
+                  <Input
+                    placeholder="e.g. Faculty Planning Seminar"
+                    value={scheduleReason}
+                    onChange={(e) => setScheduleReason(e.target.value)}
+                    className="text-xs"
+                  />
+                </div>
+              </div>
+
+              <div className="flex justify-end gap-2 pt-1">
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  onClick={() => setSelectedDateForEdit(null)}
+                >
+                  Cancel
+                </Button>
+                <Button
+                  variant="primary"
+                  size="sm"
+                  onClick={handleSaveSchedule}
+                  loading={isSavingSchedule}
+                  className="bg-[#7A0A0A] hover:bg-[#600808] text-white"
+                >
+                  Save Date Status
+                </Button>
+              </div>
+            </div>
+          )}
+
+          <div className="flex justify-end pt-2">
+            <Button variant="secondary" onClick={() => setIsCalendarModalOpen(false)}>
+              Done
+            </Button>
+          </div>
+        </div>
+      </Modal>
 
       {/* Approve Modal */}
       <Modal
@@ -1020,7 +1185,7 @@ export function OfficeDashboardPage() {
       >
         <div className="space-y-4">
           <p className="text-sm text-[var(--color-text-secondary)]">
-            Please provide a mandatory reason for rejecting the visit request from <strong>{rejectModalVisit?.visitorDisplayName || rejectModalVisit?.visitorFullName}</strong>. This explanation will be included in the polite rejection notice emailed to the visitor.
+            Please provide a mandatory reason for rejecting the visit request from <strong>{rejectModalVisit?.visitorDisplayName || rejectModalVisit?.visitorFullName}</strong>.
           </p>
 
           <div>
@@ -1032,7 +1197,7 @@ export function OfficeDashboardPage() {
               rows={3}
               value={rejectionReason}
               onChange={(e) => setRejectionReason(e.target.value)}
-              placeholder="e.g. The requested personnel is attending an off-campus seminar today. Please reschedule for tomorrow."
+              placeholder="e.g. The requested personnel is attending an off-campus seminar today. Please reschedule."
               className="w-full rounded-xl border border-[var(--color-border)] bg-white p-3 text-sm text-[var(--color-text-primary)] focus:border-[#7A0A0A] focus:outline-none focus:ring-1 focus:ring-[#7A0A0A]"
             />
           </div>
@@ -1078,12 +1243,8 @@ export function OfficeDashboardPage() {
             {confirmArrivalVisit?.personnelName && (
               <p><strong>Assigned To:</strong> {confirmArrivalVisit.personnelName}</p>
             )}
-            <p><strong>Gate Entry Recorded:</strong> Yes (Visitor is currently inside campus)</p>
+            <p><strong>Gate Entry Recorded:</strong> Yes (Visitor is inside campus)</p>
           </div>
-
-          <p className="text-xs text-[var(--color-text-muted)]">
-            Confirming arrival marks their visit as attended, ensuring campus security will allow normal exit without attendance exception warnings.
-          </p>
 
           <div className="flex justify-end gap-3 pt-2">
             <Button
@@ -1112,7 +1273,6 @@ export function OfficeDashboardPage() {
         title={`Personnel Directory — ${selectedOffice?.name || 'Office'}`}
       >
         <div className="space-y-6 max-h-[70vh] overflow-y-auto pr-1">
-          {/* Add Personnel Form */}
           <form onSubmit={handleAddPersonnel} className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] p-4 space-y-3">
             <h3 className="text-xs font-bold uppercase tracking-wider text-[var(--color-text-primary)]">
               Add New Faculty / Staff Member
@@ -1138,13 +1298,13 @@ export function OfficeDashboardPage() {
                 loading={isSavingPersonnel}
                 disabled={!newPersonnelName.trim()}
                 icon={<Plus className="h-4 w-4" />}
+                className="bg-[#7A0A0A] hover:bg-[#600808] text-white"
               >
                 Add Personnel
               </Button>
             </div>
           </form>
 
-          {/* Directory List */}
           <div className="space-y-2">
             <h3 className="text-xs font-bold uppercase tracking-wider text-[var(--color-text-secondary)]">
               Active Directory ({personnelList.length})

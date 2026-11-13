@@ -37,6 +37,14 @@ export async function initScannerAudio(): Promise<boolean> {
   return ctx.state === 'running';
 }
 
+export function getScannerAudioState(): 'running' | 'suspended' | 'unavailable' {
+  if (typeof window === 'undefined') return 'unavailable';
+  if (!audioCtx) return 'suspended';
+  if (audioCtx.state === 'running') return 'running';
+  if (audioCtx.state === 'suspended') return 'suspended';
+  return 'unavailable';
+}
+
 export function isScannerAudioMuted(): boolean {
   if (typeof window !== 'undefined') {
     const saved = localStorage.getItem('egatepass_scanner_audio_muted');

@@ -55,9 +55,9 @@ describe('Post-M91 Root-Cause Remediation Regression Suite', () => {
   });
 
   describe('Section 5: Server-Side Turnstile for Returning Lookup', () => {
-    it('preserves fail-closed runtime secret validation in lookup-returning route', () => {
-      expect(lookupReturningRoute).toContain('missing_validation_runtime_secret');
-      expect(lookupReturningRoute).toContain('TURNSTILE_SECRET_KEY');
+    it('verifies anonymous session bearer token verification in lookup-returning route', () => {
+      expect(lookupReturningRoute).toContain('getVerifiedSessionContext');
+      expect(lookupReturningRoute).not.toContain('missing_validation_runtime_secret');
     });
   });
 

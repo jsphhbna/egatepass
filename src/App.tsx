@@ -32,6 +32,7 @@ const ExitScanPage = lazy(() => import('@/pages/ExitScanPage').then((module) => 
 const EmergencyDevicePage = lazy(() => import('@/pages/EmergencyDevicePage').then((module) => ({ default: module.EmergencyDevicePage })));
 const OfficeDashboardPage = lazy(() => import('@/pages/OfficeDashboardPage').then((module) => ({ default: module.OfficeDashboardPage })));
 const TrackVisitPage = lazy(() => import('@/pages/TrackVisitPage').then((module) => ({ default: module.TrackVisitPage })));
+const VerifiedSuccessPage = lazy(() => import('@/pages/VerifiedSuccessPage').then((module) => ({ default: module.VerifiedSuccessPage })));
 const NotFoundPage = lazy(() => import('@/pages/NotFoundPage').then((module) => ({ default: module.NotFoundPage })));
 
 function GetPassLoadingFallback() {
@@ -89,6 +90,8 @@ export function App() {
             />
             <Route path="/login" element={<LoginPage />} />
             <Route path="/track" element={<TrackVisitPage />} />
+            <Route path="/auth/verified" element={<VerifiedSuccessPage />} />
+            <Route path="/verified" element={<VerifiedSuccessPage />} />
             <Route path="/forgot-password" element={<ForgotPasswordPage />} />
             <Route path="/reset-password" element={<ResetPasswordPage />} />
 

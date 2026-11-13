@@ -86,7 +86,7 @@ export async function requireOfficeStaffActor(
  * Creates an HMAC-signed token for office staff to view a visitor's portrait.
  * Format: v1.<visitId>.<actorId>.<expiresAt>.<sig>
  */
-export function createOfficePortraitToken(visitId: string, actorId: string, ttlSeconds = 600): string {
+export function createOfficePortraitToken(visitId: string, actorId: string, ttlSeconds = 3600): string {
   const secret = getOfficeTokenSecret();
   const expiresAt = Math.floor(Date.now() / 1000) + ttlSeconds;
   const payload = `office_p.${visitId}.${actorId}.${expiresAt}`;

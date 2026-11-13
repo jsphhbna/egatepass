@@ -2867,7 +2867,7 @@
     "code": "0403403000",
     "regionCode": "0400000000",
     "provinceCode": "0434000000",
-    "name": "City of Biñan",
+    "name": "City of Bi\u00f1an",
     "isCity": true,
     "isHuc": false
   },
@@ -3075,7 +3075,7 @@
     "code": "0402106000",
     "regionCode": "0400000000",
     "provinceCode": "0421000000",
-    "name": "City of Dasmariñas",
+    "name": "City of Dasmari\u00f1as",
     "isCity": true,
     "isHuc": false
   },
@@ -3283,7 +3283,7 @@
     "code": "1380500000",
     "regionCode": "1300000000",
     "provinceCode": null,
-    "name": "City of Las Piñas",
+    "name": "City of Las Pi\u00f1as",
     "isCity": true,
     "isHuc": true
   },
@@ -3336,7 +3336,7 @@
     "isHuc": true
   },
   {
-    "code": "1380900000",
+    "code": "1380400000",
     "regionCode": "1300000000",
     "provinceCode": null,
     "name": "City of Malabon",
@@ -3440,7 +3440,7 @@
     "isHuc": false
   },
   {
-    "code": "1381300000",
+    "code": "1380900000",
     "regionCode": "1300000000",
     "provinceCode": null,
     "name": "City of Navotas",
@@ -3499,12 +3499,12 @@
     "code": "1381400000",
     "regionCode": "1300000000",
     "provinceCode": null,
-    "name": "City of Parañaque",
+    "name": "City of Para\u00f1aque",
     "isCity": true,
     "isHuc": true
   },
   {
-    "code": "1381600000",
+    "code": "1381200000",
     "regionCode": "1300000000",
     "provinceCode": null,
     "name": "City of Pasig",
@@ -4539,7 +4539,7 @@
     "code": "0301424000",
     "regionCode": "0300000000",
     "provinceCode": "0314000000",
-    "name": "Doña Remedios Trinidad",
+    "name": "Do\u00f1a Remedios Trinidad",
     "isCity": false,
     "isHuc": false
   },
@@ -4563,7 +4563,7 @@
     "code": "0603017000",
     "regionCode": "0600000000",
     "provinceCode": "0630000000",
-    "name": "Dueñas",
+    "name": "Due\u00f1as",
     "isCity": false,
     "isHuc": false
   },
@@ -6731,7 +6731,7 @@
     "code": "0403411000",
     "regionCode": "0400000000",
     "provinceCode": "0434000000",
-    "name": "Los Baños",
+    "name": "Los Ba\u00f1os",
     "isCity": false,
     "isHuc": false
   },
@@ -9107,7 +9107,7 @@
     "code": "0201519000",
     "regionCode": "0200000000",
     "provinceCode": "0215000000",
-    "name": "Peñablanca",
+    "name": "Pe\u00f1ablanca",
     "isCity": false,
     "isHuc": false
   },
@@ -9115,7 +9115,7 @@
     "code": "0304921000",
     "regionCode": "0300000000",
     "provinceCode": "0349000000",
-    "name": "Peñaranda",
+    "name": "Pe\u00f1aranda",
     "isCity": false,
     "isHuc": false
   },
@@ -9123,7 +9123,7 @@
     "code": "1400117000",
     "regionCode": "1400000000",
     "provinceCode": "1401000000",
-    "name": "Peñarrubia",
+    "name": "Pe\u00f1arrubia",
     "isCity": false,
     "isHuc": false
   },
@@ -9299,7 +9299,7 @@
     "code": "0907209000",
     "regionCode": "0900000000",
     "provinceCode": "0972000000",
-    "name": "Piñan",
+    "name": "Pi\u00f1an",
     "isCity": false,
     "isHuc": false
   },
@@ -9672,7 +9672,7 @@
     "isHuc": false
   },
   {
-    "code": "1381200000",
+    "code": "1381300000",
     "regionCode": "1300000000",
     "provinceCode": null,
     "name": "Quezon City",
@@ -9995,7 +9995,7 @@
     "code": "0501731000",
     "regionCode": "0500000000",
     "provinceCode": "0517000000",
-    "name": "Sagñay",
+    "name": "Sag\u00f1ay",
     "isCity": false,
     "isHuc": false
   },
@@ -11347,7 +11347,7 @@
     "code": "0201526000",
     "regionCode": "0200000000",
     "provinceCode": "0215000000",
-    "name": "Santo Niño",
+    "name": "Santo Ni\u00f1o",
     "isCity": false,
     "isHuc": false
   },
@@ -11355,7 +11355,7 @@
     "code": "0806018000",
     "regionCode": "0800000000",
     "provinceCode": "0860000000",
-    "name": "Santo Niño",
+    "name": "Santo Ni\u00f1o",
     "isCity": false,
     "isHuc": false
   },
@@ -11363,7 +11363,7 @@
     "code": "1206318000",
     "regionCode": "1200000000",
     "provinceCode": "1263000000",
-    "name": "Santo Niño",
+    "name": "Santo Ni\u00f1o",
     "isCity": false,
     "isHuc": false
   },
@@ -11483,7 +11483,7 @@
     "code": "0304917000",
     "regionCode": "0300000000",
     "provinceCode": "0349000000",
-    "name": "Science City of Muñoz",
+    "name": "Science City of Mu\u00f1oz",
     "isCity": true,
     "isHuc": false
   },
@@ -11507,7 +11507,7 @@
     "code": "0907214000",
     "regionCode": "0900000000",
     "provinceCode": "0972000000",
-    "name": "Sergio Osmeña Sr.",
+    "name": "Sergio Osme\u00f1a Sr.",
     "isCity": false,
     "isHuc": false
   },
@@ -11811,7 +11811,7 @@
     "code": "1705324000",
     "regionCode": "1700000000",
     "provinceCode": "1753000000",
-    "name": "Sofronio Española",
+    "name": "Sofronio Espa\u00f1ola",
     "isCity": false,
     "isHuc": false
   },

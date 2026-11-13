@@ -43,7 +43,28 @@ interface RawRecordPassRow {
     full_name: string;
     purpose: string;
     visit_date?: string | null;
+    contact_number?: string | null;
+    home_address?: string | null;
+    home_street?: string | null;
+    home_building?: string | null;
+    barangay_name?: string | null;
+    city_name?: string | null;
+    province_name?: string | null;
+    region_name?: string | null;
     visitor_evidence: Array<{ id: string; kind: 'photo' | 'id' }>;
+  } | null;
+  office_visits?: Array<{
+    id: string;
+    attendance_status: string;
+    visit_type?: string;
+    approval_status?: string;
+    offices?: { name: string } | null;
+  }> | {
+    id: string;
+    attendance_status: string;
+    visit_type?: string;
+    approval_status?: string;
+    offices?: { name: string } | null;
   } | null;
 }
 
@@ -75,12 +96,30 @@ function mapPass(row: RawRecordPassRow) {
   const photoId = evidenceList.find((e) => e.kind === 'photo')?.id ?? null;
   const idImageId = evidenceList.find((e) => e.kind === 'id')?.id ?? null;
 
+  const officeVisit = Array.isArray(row.office_visits) ? row.office_visits[0] : row.office_visits;
+  const destinationOffice = officeVisit?.offices?.name ?? null;
+  const attendanceStatus = officeVisit?.attendance_status ?? null;
+  const visitType = officeVisit?.visit_type ?? null;
+  const approvalStatus = officeVisit?.approval_status ?? null;
+
   return {
     id: row.id,
     visitorId: row.visitor_id,
     visitorName: visitor?.full_name ?? '',
     purpose: visitor?.purpose ?? '',
     visitDate: visitor?.visit_date ?? null,
+    contactNumber: visitor?.contact_number ?? null,
+    homeAddress: visitor?.home_address ?? null,
+    homeStreet: visitor?.home_street ?? null,
+    homeBuilding: visitor?.home_building ?? null,
+    barangayName: visitor?.barangay_name ?? null,
+    cityName: visitor?.city_name ?? null,
+    provinceName: visitor?.province_name ?? null,
+    regionName: visitor?.region_name ?? null,
+    destinationOffice,
+    attendanceStatus,
+    visitType,
+    approvalStatus,
     photoPublicId: photoId,
     idImagePublicId: idImageId,
     source: row.source,
@@ -204,9 +243,26 @@ async function handleGet(request: Request): Promise<Response> {
             full_name,
             purpose,
             visit_date,
+            contact_number,
+            home_address,
+            home_street,
+            home_building,
+            barangay_name,
+            city_name,
+            province_name,
+            region_name,
             visitor_evidence (
               id,
               kind
+            )
+          ),
+          office_visits (
+            id,
+            attendance_status,
+            visit_type,
+            approval_status,
+            offices (
+              name
             )
           )
         `,

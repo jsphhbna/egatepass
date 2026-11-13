@@ -51,7 +51,7 @@ export async function handleRequest(request: Request): Promise<Response> {
       .maybeSingle();
 
     const rawQueue = url.searchParams.get('queue') || url.searchParams.get('status') || 'pending';
-    const ALLOWED_QUEUES = ['pending', 'approved', 'awaiting_confirmation', 'confirmed', 'history'] as const;
+    const ALLOWED_QUEUES = ['pending', 'approved', 'awaiting_confirmation', 'confirmed', 'history', 'split'] as const;
     if (!ALLOWED_QUEUES.includes(rawQueue as any)) {
       return jsonResponse(400, {
         error: 'invalid_queue_filter',
@@ -64,11 +64,11 @@ export async function handleRequest(request: Request): Promise<Response> {
     const limit = Math.min(Math.max(parseInt(url.searchParams.get('limit') || '50', 10), 1), 100);
     const offset = Math.max(parseInt(url.searchParams.get('offset') || '0', 10), 0);
 
-    let query = admin
-      .from('office_visits')
-      .select(`
+    const SELECT_FIELDS = `
         id,
         visit_type,
+        registration_mode,
+        returning_profile_id,
         office_id,
         personnel_id,
         requested_person_name,
@@ -89,6 +89,7 @@ export async function handleRequest(request: Request): Promise<Response> {
         visitor_email,
         visitor_email_verified,
         visitor_photo_path,
+        photo_intent_id,
         purpose,
         visit_date,
         arrival_mode,
@@ -116,12 +117,19 @@ export async function handleRequest(request: Request): Promise<Response> {
           name,
           title
         )
-      `, { count: 'exact' })
+      `;
+
+    let query = admin
+      .from('office_visits')
+      .select(SELECT_FIELDS, { count: 'exact' })
       .eq('office_id', effectiveOfficeId);
 
     // Apply queue section filter
     if (statusFilter === 'pending') {
-      query = query.eq('approval_status', 'pending');
+      // Pending approval queue: strictly specific-person visits needing office review
+      query = query
+        .eq('visit_type', 'specific_person')
+        .eq('approval_status', 'pending');
     } else if (statusFilter === 'approved') {
       // Approved specific-person visits awaiting campus entry
       query = query
@@ -136,6 +144,9 @@ export async function handleRequest(request: Request): Promise<Response> {
     } else if (statusFilter === 'history') {
       // Completed, rejected, exited_unconfirmed, cancelled, expired
       query = query.or('approval_status.eq.rejected,attendance_status.in.(completed,exited_unconfirmed,cancelled,expired)');
+    } else if (statusFilter === 'split') {
+      // Fetch both pending specific-person and awaiting_confirmation queues
+      query = query.or('and(visit_type.eq.specific_person,approval_status.eq.pending),attendance_status.eq.awaiting_office_confirmation');
     }
 
     if (dateFilter) {
@@ -180,8 +191,8 @@ export async function handleRequest(request: Request): Promise<Response> {
         .filter(Boolean)
         .join(' ');
 
-      const portraitToken = row.visitor_photo_path
-        ? createOfficePortraitToken(row.id, actor.id)
+      const portraitToken = (row.visitor_photo_path || row.registration_mode === 'returning' || row.visitor_id || row.photo_intent_id)
+        ? createOfficePortraitToken(row.id, actor.id, 3600)
         : null;
 
       const targetEmailType = row.approval_status === 'rejected' ? 'rejection' : 'approval';
@@ -245,10 +256,21 @@ export async function handleRequest(request: Request): Promise<Response> {
       };
     });
 
+    const pendingVisits = visits.filter((v: any) => v.approvalStatus === 'pending' && v.visitType === 'specific_person');
+    const confirmationVisits = visits.filter((v: any) => v.attendanceStatus === 'awaiting_office_confirmation');
+
+    const queueCounts = {
+      pending: pendingVisits.length,
+      awaiting_confirmation: confirmationVisits.length,
+    };
+
     return jsonResponse(200, {
       office: officeInfo,
       visits,
+      pendingVisits,
+      confirmationVisits,
       total: count || 0,
+      counts: queueCounts,
       limit,
       offset,
       ...(outboxLookupFailed ? { warning: 'outbox_lookup_failed', emailStatusDegraded: true } : {}),

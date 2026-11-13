@@ -247,6 +247,12 @@ export const SERVICE_ROLE_TABLE_CONTRACT: Record<string, ServerTablePrivilegeCon
     forbiddenPrivileges: [],
     justification: 'Server reads active closures for public system and admin views, and superadmins manage closures.',
   },
+  office_calendar_schedules: {
+    table: 'office_calendar_schedules',
+    allowedPrivileges: ['SELECT', 'INSERT', 'UPDATE', 'DELETE'],
+    forbiddenPrivileges: [],
+    justification: 'Server reads, upserts, and deletes office-specific calendar schedules on behalf of authorized staff.',
+  },
 };
 
 /**
@@ -390,6 +396,9 @@ export const SERVER_DIRECT_TABLE_OPERATIONS: DirectServerTableOperation[] = [
   { file: 'server/routes/office/personnel.ts', table: 'offices', operations: ['SELECT'], purpose: 'List active offices when officeId not specified' },
   { file: 'server/routes/office/personnel.ts', table: 'office_personnel', operations: ['SELECT'], purpose: 'List office personnel and verify office ownership (mutations use SECURITY DEFINER RPCs)' },
   { file: 'server/routes/office/portrait-preview.ts', table: 'office_visits', operations: ['SELECT'], purpose: 'Lookup visit photo path and office for preview authorization' },
+  { file: 'server/routes/office/portrait-preview.ts', table: 'visitors', operations: ['SELECT'], purpose: 'Lookup returning visitor profile for historical photo resolution' },
+  { file: 'server/routes/office/portrait-preview.ts', table: 'visitor_evidence', operations: ['SELECT'], purpose: 'Lookup historical registration portrait for returning visitor' },
+  { file: 'server/routes/office/portrait-preview.ts', table: 'upload_intents', operations: ['SELECT'], purpose: 'Lookup original upload intent for active portrait resolution' },
   { file: 'server/routes/office/verify-email.ts', table: 'office_visit_email_verifications', operations: ['SELECT', 'INSERT', 'UPDATE'], purpose: 'Record and verify visitor email verification challenges' },
   { file: 'server/routes/office/visits.ts', table: 'offices', operations: ['SELECT'], purpose: 'Lookup office metadata for dashboard' },
   { file: 'server/routes/office/visits.ts', table: 'office_visits', operations: ['SELECT'], purpose: 'Query office visits queue' },
@@ -405,4 +414,6 @@ export const SERVER_DIRECT_TABLE_OPERATIONS: DirectServerTableOperation[] = [
   { file: 'server/routes/office/retry-email.ts', table: 'offices', operations: ['SELECT'], purpose: 'Fetch office name for retry email' },
   { file: 'server/routes/office/retry-email.ts', table: 'office_personnel', operations: ['SELECT'], purpose: 'Fetch personnel name for retry email' },
   { file: 'server/routes/office/retry-email.ts', table: 'office_visit_email_outbox', operations: ['SELECT', 'UPDATE'], purpose: 'Claim and update email outbox state during delivery retry' },
+  { file: 'server/routes/office/calendar.ts', table: 'office_calendar_schedules', operations: ['SELECT', 'INSERT', 'UPDATE', 'DELETE'], purpose: 'Read, upsert, and delete office-specific availability schedules' },
+  { file: 'server/routes/passes/issue.ts', table: 'office_calendar_schedules', operations: ['SELECT'], purpose: 'Validate office schedule availability for visit date' },
 ];

@@ -20,9 +20,7 @@ import {
   Loader2,
   ArrowLeftCircle,
   ArrowRightCircle,
-  Ban,
   Calendar,
-  Clock,
   MapPin,
   MessageSquareText,
   RefreshCw,
@@ -138,19 +136,27 @@ export function AdminDashboard() {
   const metrics = useMemo(() => {
     const todayManila = getManilaDateString();
     const todayPasses = dashboard.recentPasses.filter((pass) => getManilaDateString(pass.issuedAt.toDate()) === todayManila);
-    const rejectedToday = dashboard.decisionsTodayPasses.filter((pass) => pass.status === 'rejected');
     const counts = dashboard.counts;
+
+    // Expected Visitors Today: online visitors with valid issued QR pass for today's date in Asia/Manila,
+    // excluding unissued, pending, kiosk, or cancelled.
+    const expectedToday = dashboard.recentPasses.filter((pass) => {
+      const passDate = pass.validFrom ? getManilaDateString(pass.validFrom.toDate()) : getManilaDateString(pass.issuedAt.toDate());
+      return (
+        passDate === todayManila &&
+        pass.source !== 'kiosk' &&
+        (pass.status === 'issued' || pass.status === 'inside' || pass.status === 'exited')
+      );
+    }).length;
 
     return {
       todayTotal: counts ? counts.todayTotal : todayPasses.length,
+      expectedToday,
       monthTotal: counts?.monthTotal ?? 0,
       currentlyInside: counts ? counts.currentlyInside : dashboard.insidePasses.length,
       exitedToday: counts ? counts.exitedToday : dashboard.exitedTodayPasses.length,
-      pendingToday: counts ? counts.pendingToday : dashboard.recentPasses.filter((p) => p.status === 'pending').length,
-      rejectedToday: counts ? counts.rejectedToday : rejectedToday.length,
       avgApprovalTime: dashboard.insights?.avgApprovalTime ?? averageApprovalTime(dashboard.decisionsTodayPasses),
       topPurpose: dashboard.insights?.topPurpose ?? mostCommon(todayPasses.map((pass) => pass.purpose?.split(' — ')[0]?.trim())),
-      topRejection: dashboard.insights?.topRejection ?? mostCommon(rejectedToday.map((pass) => pass.rejectionReason)),
       busiestGate: dashboard.insights?.busiestGate ?? mostCommon(dashboard.decisionsTodayPasses.map((pass) => pass.gate)),
       calendarPasses: dashboard.recentPasses,
       calendarCounts: dashboard.calendarCounts,
@@ -159,23 +165,18 @@ export function AdminDashboard() {
 
   const exportSummary = {
     visitorsToday: metrics.todayTotal,
+    expectedToday: metrics.expectedToday,
     monthTotal: metrics.monthTotal,
     currentlyInside: metrics.currentlyInside,
     exitedToday: metrics.exitedToday,
-    pendingApproval: metrics.pendingToday,
-    rejectedToday: metrics.rejectedToday,
+    pendingApproval: 0,
+    rejectedToday: 0,
     insights: [
       {
         title: 'Top Visit Purpose',
         value: metrics.topPurpose.label,
         count: metrics.topPurpose.count,
         description: 'Most common visit purpose among passes created today.',
-      },
-      {
-        title: 'Top Rejection Reason',
-        value: metrics.topRejection.label,
-        count: metrics.topRejection.count,
-        description: 'Most common reason among visitors scanned today who were rejected.',
       },
       {
         title: 'Busiest Entry Gate',
@@ -350,25 +351,14 @@ export function AdminDashboard() {
         <div className="space-y-6">
           <section aria-labelledby="visitor-stats-heading">
             <h2 id="visitor-stats-heading" className="sr-only">Visitor statistics</h2>
-            <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
+            <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5">
               <StatCard title="Visitors Today" value={metrics.todayTotal} icon={<Users className="h-5 w-5 text-[var(--color-brand)]" />} description="Passes created since midnight." />
+              <StatCard title="Expected Visitors Today" value={metrics.expectedToday} icon={<Calendar className="h-5 w-5 text-indigo-600" />} description="Online visitors with valid QR pass for today." />
               <StatCard title="Currently Inside" value={metrics.currentlyInside} icon={<ArrowRightCircle className="h-5 w-5 text-[var(--color-success)]" />} description="All approved visitors who have not exited." />
               <StatCard title="Exited Today" value={metrics.exitedToday} icon={<ArrowLeftCircle className="h-5 w-5 text-[var(--color-text-secondary)]" />} description="Visits with an exit time recorded today." />
-              <StatCard title="Pending Approval" value={metrics.pendingToday} icon={<Clock className="h-5 w-5 text-[var(--color-warning)]" />} description="Visitors scanned today and waiting for a guard." />
-              <StatCard title="Rejected Today" value={metrics.rejectedToday} icon={<Ban className="h-5 w-5 text-[var(--color-danger)]" />} description="Visitors scanned today whose entry was rejected." />
-              <StatCard title="Avg Approval Time" value={metrics.avgApprovalTime} icon={<Sparkles className="h-5 w-5 text-[var(--color-brand)]" />} description="Average wait from scan to approval for visitors scanned today." />
+              <StatCard title="Avg Approval Time" value={metrics.avgApprovalTime} icon={<Sparkles className="h-5 w-5 text-[var(--color-brand)]" />} description="Average wait from scan to approval." />
             </div>
           </section>
-
-          <Card className="p-6">
-            <h2 className="mb-5 text-xl font-bold text-[var(--color-text-primary)]">Operational Summary</h2>
-            <div className="space-y-4">
-              <SummaryRow label="Approved and currently inside" value={metrics.currentlyInside} color="text-[var(--color-success)]" />
-              <SummaryRow label="Completed visits today" value={metrics.exitedToday} />
-              <SummaryRow label="Waiting for approval" value={metrics.pendingToday} color="text-[var(--color-warning)]" />
-              <SummaryRow label="Rejected after scanning today" value={metrics.rejectedToday} color="text-[var(--color-danger)]" last />
-            </div>
-          </Card>
 
           <OfflineModeMetricsPanel metrics={dashboard.offlineModeMetrics} periodLabel={dashboard.periodMeta?.label} />
         </div>
@@ -405,9 +395,8 @@ export function AdminDashboard() {
               <h2 id="insights-heading" className="text-lg font-bold text-[var(--color-text-primary)]">Period Insights</h2>
               <p className="text-sm text-[var(--color-text-secondary)]">The most common QR pass activity recorded in the selected scope.</p>
             </div>
-            <div className="grid gap-4 md:grid-cols-3">
+            <div className="grid gap-4 md:grid-cols-2">
               <InsightCard icon={<MessageSquareText className="h-5 w-5" />} title="Top Visit Purpose" insight={metrics.topPurpose} description="Most common visit purpose among passes in this scope." />
-              <InsightCard icon={<Ban className="h-5 w-5" />} title="Top Rejection Reason" insight={metrics.topRejection} description="Most common reason among rejected visitors in this scope." />
               <InsightCard icon={<MapPin className="h-5 w-5" />} title="Busiest Entry Gate" insight={metrics.busiestGate} description="Gate with the most QR scans recorded in this scope." />
             </div>
           </section>
@@ -595,10 +584,6 @@ export function IssuedPassesCalendar({
       </div>
     </Card>
   );
-}
-
-function SummaryRow({ label, value, color = 'text-[var(--color-text-primary)]', last = false }: { label: string; value: number; color?: string; last?: boolean }) {
-  return <div className={`flex items-center justify-between gap-4 pb-3 ${last ? '' : 'border-b border-[var(--color-border)]'}`}><span className="text-sm font-medium text-[var(--color-text-secondary)]">{label}</span><span className={`text-lg font-bold ${color}`}>{value}</span></div>;
 }
 
 function DashboardSkeleton() {

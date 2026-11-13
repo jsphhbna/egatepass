@@ -227,6 +227,9 @@ export function GuardPage() {
         if (pollTimeoutRef.current) clearTimeout(pollTimeoutRef.current);
         pollTimeoutRef.current = setTimeout(() => {
           if (isMountedRef.current && navigator.onLine) {
+            if (typeof document !== 'undefined' && document.hidden) {
+              return; // Paused while tab is backgrounded
+            }
             void fetchFeed(true);
           }
         }, 4000);
@@ -236,6 +239,23 @@ export function GuardPage() {
 
   useEffect(() => {
     void fetchFeed();
+
+    const handleVisibilityChange = () => {
+      if (typeof document !== 'undefined' && !document.hidden && isMountedRef.current && navigator.onLine) {
+        if (pollTimeoutRef.current) clearTimeout(pollTimeoutRef.current);
+        void fetchFeed(true);
+      }
+    };
+
+    if (typeof document !== 'undefined') {
+      document.addEventListener('visibilitychange', handleVisibilityChange);
+    }
+
+    return () => {
+      if (typeof document !== 'undefined') {
+        document.removeEventListener('visibilitychange', handleVisibilityChange);
+      }
+    };
   }, [fetchFeed]);
 
   const handleManualRefresh = () => {

@@ -1,8 +1,9 @@
-import { useState, type ChangeEvent } from 'react';
-import {
-  AddressCascadingSelector,
-  type SelectedPsgcAddress,
-} from './AddressCascadingSelector';
+import { useState, lazy, Suspense, type ChangeEvent } from 'react';
+import type { SelectedPsgcAddress } from './AddressCascadingSelector';
+
+const AddressCascadingSelector = lazy(() =>
+  import('./AddressCascadingSelector').then((m) => ({ default: m.AddressCascadingSelector }))
+);
 import { isCityOfManila, lookupManilaDistrictForBarangay } from '@/lib/manilaDistricts';
 import { MapPin, ChevronRight } from 'lucide-react';
 import { FormField, Input } from '@/components/ui';
@@ -119,12 +120,16 @@ export function StructuredAddressField({
       </div>
 
       {/* Cascading Address Selector Modal */}
-      <AddressCascadingSelector
-        isOpen={isModalOpen}
-        onClose={() => setIsModalOpen(false)}
-        onSelect={handleAddressSelected}
-        initialAddress={value}
-      />
+      {isModalOpen && (
+        <Suspense fallback={null}>
+          <AddressCascadingSelector
+            isOpen={isModalOpen}
+            onClose={() => setIsModalOpen(false)}
+            onSelect={handleAddressSelected}
+            initialAddress={value}
+          />
+        </Suspense>
+      )}
     </div>
   );
 }

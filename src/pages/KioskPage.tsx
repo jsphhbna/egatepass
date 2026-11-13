@@ -514,6 +514,11 @@ export function KioskPage() {
       validityWindow: validity ?? undefined,
     });
 
+    if (!qrUrl) {
+      toast.error('Pass was issued, but visual QR code generation failed. Please notify the guard station.');
+      return;
+    }
+
     setCurrentPassPresentation(presentation);
     setQrDataUrl(qrUrl);
     setStep('done');

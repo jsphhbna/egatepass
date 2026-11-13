@@ -24,7 +24,6 @@ import { getServerSupabaseClients } from '../../supabase.js';
 import { normalizePhMobile } from '../../../src/lib/phPhone.js';
 import { getClientNetworkIdentifier } from './issue.js';
 import { createPreviewToken } from './returning-photo-preview.js';
-import { verifyTurnstileToken } from '../../lib/turnstile.js';
 
 // Rejects wildcards, control characters, and common injection patterns
 const safeNameRegex = /^[^%_*\\<>=;`$[\]{}|]+$/u;
@@ -119,40 +118,6 @@ async function handleRequest(request: Request): Promise<Response> {
     }
 
     const actorId = session.user.id;
-
-    // 0. Mandatory server-side Turnstile verification (fail closed when secret is absent)
-    const turnstileSecret = process.env.TURNSTILE_SECRET_KEY?.trim();
-    if (!turnstileSecret) {
-      return jsonResponse(503, {
-        error: 'missing_validation_runtime_secret',
-        message: 'Bot challenge verification secret is not configured on the server.',
-      });
-    }
-
-    const captchaToken = parsed.data.captchaToken || request.headers.get('x-captcha-token') || '';
-    const remoteIp = request.headers.get('x-forwarded-for')?.split(',')[0]?.trim();
-    const turnstileRes = await verifyTurnstileToken({
-      token: captchaToken,
-      secretKey: turnstileSecret,
-      remoteIp,
-    });
-
-    if (!turnstileRes.valid) {
-      if (
-        turnstileRes.error === 'siteverify_provider_error' ||
-        turnstileRes.error === 'siteverify_timeout' ||
-        turnstileRes.error === 'missing_validation_runtime_secret'
-      ) {
-        return jsonResponse(503, {
-          error: turnstileRes.error,
-          message: turnstileRes.message,
-        });
-      }
-      return jsonResponse(400, {
-        error: turnstileRes.error || 'invalid_captcha_token',
-        message: turnstileRes.message || 'Verification challenge failed. Please retry.',
-      });
-    }
 
     // 1. Rate limiting - Actor Bucket (15 lookups per 5 minutes)
     const actorKeyHex = createHash('sha256').update(`actor:${actorId}`).digest('hex');
@@ -258,9 +223,6 @@ async function handleRequest(request: Request): Promise<Response> {
         cityCode && m.psgc_city_code === cityCode &&
         (!brgyCode || m.psgc_barangay_code === brgyCode)
       );
-      if (normalizedPhone && (cityCode || brgyCode)) {
-        return phoneMatch && addressMatch;
-      }
       return phoneMatch || addressMatch;
     });
 

@@ -1431,13 +1431,7 @@ export async function lookupReturningVisitor(
   }
 
   if (!res.ok || !body) {
-    return {
-      found: false,
-      count: 0,
-      candidates: [],
-      error: body?.error || 'lookup_failed',
-      message: body?.message || 'Could not find returning visitor profile.',
-    };
+    throw new Error(body?.message || body?.error || 'Returning visitor search service is temporarily unavailable.');
   }
 
   return body;
