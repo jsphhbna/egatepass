@@ -63,4 +63,6 @@ scripts/*
 !scripts/build-reference-datasets.mjs
 !scripts/generate-returning-secrets.mjs
 !scripts/build-production.mjs
+!scripts/install-production.mjs
 !scripts/reconcile-psgc-ncr.mjs
+!scripts/verify-and-report-ncr-psgc.mjs

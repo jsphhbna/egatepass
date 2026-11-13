@@ -1,6 +1,7 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "framework": "vite",
+  "installCommand": "node scripts/install-production.mjs",
   "buildCommand": "node scripts/build-production.mjs",
   "regions": [
     "syd1"

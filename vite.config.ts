@@ -1,17 +1,23 @@
 import { existsSync } from 'node:fs';
 import { resolve } from 'node:path';
-import { defineConfig, Plugin, createLogger } from 'vite';
+import { defineConfig, Plugin } from 'vite';
 import react from '@vitejs/plugin-react';
 import tailwindcss from '@tailwindcss/vite';
 
-// Filter out known vendor-opencv precompiled wasm chunk warning without increasing chunkSizeWarningLimit
-const customLogger = createLogger();
-const originalWarn = customLogger.warn;
-customLogger.warn = (msg, options) => {
-  if (msg.includes('Some chunks are larger than') || msg.includes('chunkSizeWarningLimit')) {
-    return;
-  }
-  originalWarn(msg, options);
+// Prevent Vite from bundling the pre-compiled 11.3 MB PaddleOCR worker as an inlined Rollup chunk.
+// Points createDefaultWorker directly to the static /paddleocr/worker-entry.js asset.
+const paddleOcrWorkerPlugin = (): Plugin => {
+  return {
+    name: 'paddleocr-worker-resolver',
+    transform(code, id) {
+      if (id.includes('@paddleocr') && id.includes('index.mjs')) {
+        return code.replace(
+          'new URL("./assets/worker-entry-C9UNuyOJ.js", import.meta.url)',
+          '"/paddleocr/worker-entry.js"'
+        );
+      }
+    },
+  };
 };
 
 // Fix for Windows MIME type issue where the registry returns an empty string for JS/TS files
@@ -129,28 +135,28 @@ const vercelApiDevPlugin = (): Plugin => {
 };
 
 export default defineConfig({
-  plugins: [react(), tailwindcss(), fixMimeTypesPlugin(), vercelApiDevPlugin()],
+  plugins: [react(), tailwindcss(), fixMimeTypesPlugin(), vercelApiDevPlugin(), paddleOcrWorkerPlugin()],
   define: {
     __EGATEPASS_BUILD_ID__: JSON.stringify(process.env.VERCEL_GIT_COMMIT_SHA || process.env.BUILD_ID || `build-${Date.now().toString(36)}`),
   },
   resolve: {
     alias: {
-      '@': import.meta.dirname + '/src',
+      '@': resolve(import.meta.dirname, 'src'),
+      '@techstark/opencv-js': resolve(import.meta.dirname, 'src/lib/opencvLoader.ts'),
     },
   },
   server: {
     port: 5173,
     strictPort: true,
   },
-  customLogger,
   build: {
     rollupOptions: {
       output: {
         manualChunks(id: string) {
+          if (id.includes('data/reference/psgc') || id.includes('src/lib/psgc.ts')) {
+            return 'psgc-data';
+          }
           if (id.includes('node_modules')) {
-            if (id.includes('@techstark/opencv-js')) {
-              return 'vendor-opencv';
-            }
             if (id.includes('@paddleocr')) {
               return 'vendor-paddleocr';
             }
