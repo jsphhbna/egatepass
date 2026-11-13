@@ -14,6 +14,22 @@ const patchExpectedGateSchema = z.object({
   expectedGate: z.string().trim().min(1).max(80),
 }).strict();
 
+function extractErrorDiagnostics(error: unknown): { code?: string; message: string; details?: string; hint?: string } {
+  if (error instanceof Error) {
+    return { message: error.message };
+  }
+  if (error && typeof error === 'object') {
+    const errObj = error as Record<string, unknown>;
+    return {
+      code: typeof errObj.code === 'string' ? errObj.code : undefined,
+      message: typeof errObj.message === 'string' ? errObj.message : 'unknown_error',
+      details: typeof errObj.details === 'string' ? errObj.details : undefined,
+      hint: typeof errObj.hint === 'string' ? errObj.hint : undefined,
+    };
+  }
+  return { message: String(error) || 'unknown_error' };
+}
+
 function isValidManilaDate(value: string): boolean {
   if (!DATE_RE.test(value)) return false;
   const parsed = new Date(`${value}T00:00:00+08:00`);
@@ -47,10 +63,10 @@ interface RawRecordPassRow {
     home_address?: string | null;
     home_street?: string | null;
     home_building?: string | null;
-    barangay_name?: string | null;
-    city_name?: string | null;
-    province_name?: string | null;
-    region_name?: string | null;
+    psgc_barangay_name?: string | null;
+    psgc_city_municipality_name?: string | null;
+    psgc_province_name?: string | null;
+    psgc_region_name?: string | null;
     visitor_evidence: Array<{ id: string; kind: 'photo' | 'id' }>;
   } | null;
   office_visits?: Array<{
@@ -112,10 +128,10 @@ function mapPass(row: RawRecordPassRow) {
     homeAddress: visitor?.home_address ?? null,
     homeStreet: visitor?.home_street ?? null,
     homeBuilding: visitor?.home_building ?? null,
-    barangayName: visitor?.barangay_name ?? null,
-    cityName: visitor?.city_name ?? null,
-    provinceName: visitor?.province_name ?? null,
-    regionName: visitor?.region_name ?? null,
+    barangayName: visitor?.psgc_barangay_name ?? null,
+    cityName: visitor?.psgc_city_municipality_name ?? null,
+    provinceName: visitor?.psgc_province_name ?? null,
+    regionName: visitor?.psgc_region_name ?? null,
     destinationOffice,
     attendanceStatus,
     visitType,
@@ -247,10 +263,10 @@ async function handleGet(request: Request): Promise<Response> {
             home_address,
             home_street,
             home_building,
-            barangay_name,
-            city_name,
-            province_name,
-            region_name,
+            psgc_barangay_name,
+            psgc_city_municipality_name,
+            psgc_province_name,
+            psgc_region_name,
             visitor_evidence (
               id,
               kind
@@ -415,7 +431,7 @@ async function handleGet(request: Request): Promise<Response> {
     });
   } catch (error) {
     if (error instanceof HttpError) return jsonResponse(error.status, { error: error.code });
-    console.error('Visitor records load failed.', error instanceof Error ? error.message : 'unknown_error');
+    console.error('Visitor records load failed.', JSON.stringify(extractErrorDiagnostics(error)));
     return jsonResponse(503, { error: 'service_unavailable' });
   }
 }

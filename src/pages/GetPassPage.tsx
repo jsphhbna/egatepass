@@ -433,6 +433,7 @@ export function GetPassPage() {
 
   // Optional OCR State (File picker only, no custom camera)
   const [isProcessingOcr, setIsProcessingOcr] = useState(false);
+  const [ocrProgress, setOcrProgress] = useState<{ percent: number; status: string } | null>(null);
   const [ocrSuccessNotice, setOcrSuccessNotice] = useState<string | null>(null);
   const ocrFileInputRef = useRef<HTMLInputElement>(null);
   const ocrGenerationRef = useRef(0);
@@ -537,6 +538,7 @@ export function GetPassPage() {
   const [transactionPhase, setTransactionPhase] = useState<IssueTransactionPhase | null>(null);
   const currentPhase = transactionPhase ?? portalTransactionRef.current?.phase;
   const livePhotoIntentIdRef = useRef<string | null>(null);
+  const confirmingLiveFaceRef = useRef(false);
 
   const [visitorInstructions, setVisitorInstructions] = useState<string[]>([
     'Follow the EARIST visitor dress code and campus policies.',
@@ -1674,7 +1676,15 @@ export function GetPassPage() {
       const { getNextOcrJobId } = await import('@/lib/ocr');
       const currentJobId = getNextOcrJobId();
       ocrJobIdRef.current = currentJobId;
-      const parsed = await recognizeIdImage(file, undefined, currentJobId);
+      const parsed = await recognizeIdImage(
+        file,
+        (percent, status) => {
+          if (generation === ocrGenerationRef.current && ocrJobIdRef.current === currentJobId) {
+            setOcrProgress({ percent, status: status || 'Reading ID...' });
+          }
+        },
+        currentJobId
+      );
       if (generation !== ocrGenerationRef.current || ocrJobIdRef.current !== currentJobId) return;
 
       // 3. Prefill empty fields, preserving user-entered values - ONLY CONFIDENT FIELDS (>= 60)
@@ -1741,6 +1751,7 @@ export function GetPassPage() {
     } finally {
       if (generation === ocrGenerationRef.current) {
         setIsProcessingOcr(false);
+        setOcrProgress(null);
       }
     }
   }
@@ -1777,7 +1788,8 @@ export function GetPassPage() {
   }
 
   async function onConfirmLivePhoto() {
-    if (!photoBlob) return;
+    if (!photoBlob || confirmingLiveFaceRef.current) return;
+    confirmingLiveFaceRef.current = true;
     setIsEvaluatingFaceQuality(true);
     setLiveFaceError(null);
 
@@ -1976,6 +1988,7 @@ export function GetPassPage() {
         reasonCode: 'quality_error',
       });
     } finally {
+      confirmingLiveFaceRef.current = false;
       setIsEvaluatingFaceQuality(false);
     }
   }
@@ -2117,6 +2130,10 @@ export function GetPassPage() {
     void onSubmit();
   }
 
+  function handleRetrieveOriginalPass() {
+    void onSubmit();
+  }
+
   // ============================================================
   // STEP 6: PASS ISSUANCE (onSubmit)
   // ============================================================
@@ -2127,8 +2144,11 @@ export function GetPassPage() {
     }
 
     if (portalTransactionRef.current?.phase === 'existing_pass_conflict') {
-      toast.error('An existing pass was already created for this request. Please ask the Guard for assistance.');
-      return;
+      if (!portalTransactionRef.current?.submittedPayload) {
+        toast.error('An existing pass was already created for this request. Please ask the Guard for assistance.');
+        return;
+      }
+      toast.info('Retrieving original gate pass…');
     }
 
     if (!identityVerified) {
@@ -2254,19 +2274,20 @@ export function GetPassPage() {
           }
         }
 
-        const effectiveVisitor = portalTransactionRef.current?.submittedPayload?.visitor ?? formData;
+        const effectiveVisitor: any = portalTransactionRef.current?.submittedPayload?.visitor ?? getValues();
+        const effectivePlateNumber = effectiveVisitor.arrivalMode === 'vehicle'
+          ? (effectiveVisitor.vehicle?.plateNumber || effectiveVisitor.plateNumber || null)
+          : null;
         const presentation = createPassPresentation({
           firstName: effectiveVisitor.firstName,
           middleName: effectiveVisitor.middleName,
           lastName: effectiveVisitor.lastName,
-          visitDate: effectiveVisitor.visitDate,
+          visitDate: effectiveVisitor.visitDate || getManilaDateString(new Date()),
           passReference: issued.publicReference || issued.passId,
           qrToken: issued.qrToken,
           validityWindow: validity,
-          purpose: overridePurpose || effectiveVisitor.purpose,
-          plateNumber: effectiveVisitor.arrivalMode === 'vehicle' && effectiveVisitor.vehicle?.plateNumber
-            ? effectiveVisitor.vehicle.plateNumber
-            : null,
+          purpose: overridePurpose || effectiveVisitor.purpose || 'Campus Visit',
+          plateNumber: effectivePlateNumber,
         });
         setPassPresentation(presentation);
 
@@ -2378,7 +2399,7 @@ export function GetPassPage() {
       }
 
       await presentIssuedPass(result);
-    } catch (err) {
+    } catch (err: any) {
       console.error('Pass generation error:', err);
       const errMsg = err instanceof Error ? err.message : 'An unexpected error occurred.';
       setSubmitError(errMsg);
@@ -2817,6 +2838,22 @@ export function GetPassPage() {
                   </Button>
                 </div>
 
+                {ocrProgress && (
+                  <div className="mt-3 space-y-1.5 rounded-lg bg-blue-50 border border-blue-200 p-2.5 text-xs text-blue-900">
+                    <div className="flex justify-between font-medium">
+                      <span>{ocrProgress.status}</span>
+                      <span>{ocrProgress.percent}%</span>
+                    </div>
+                    <div className="h-1.5 w-full bg-blue-100 rounded-full overflow-hidden">
+                      <div
+                        className="h-full bg-blue-600 rounded-full transition-all duration-300"
+                        style={{ width: `${Math.max(5, ocrProgress.percent)}%` }}
+                      />
+                    </div>
+                    <p className="text-[11px] text-blue-700/80">You can also type your details below manually at any time.</p>
+                  </div>
+                )}
+
                 {ocrSuccessNotice && (
                   <div className="mt-3 flex items-center gap-2 rounded-lg bg-emerald-50 border border-emerald-200 p-2.5 text-xs text-emerald-800">
                     <CheckCircle2 className="h-4 w-4 flex-shrink-0 text-emerald-600" />
@@ -3240,23 +3277,6 @@ export function GetPassPage() {
                     purposes={visitPurposes}
                     error={errors.purpose?.message}
                   />
-                  {/* Optional Email Notification for General Office Visit */}
-                  <div className="rounded-xl border border-[var(--color-border)] bg-white p-4 space-y-2">
-                    <label htmlFor="general-visitor-email" className="block text-xs font-bold uppercase tracking-wider text-[var(--color-text-primary)]">
-                      Email Address (Optional)
-                    </label>
-                    <p className="text-[11px] text-[var(--color-text-secondary)]">
-                      Optionally provide your email to receive a digital copy of your E-GatePass. No verification code is required for general office visits.
-                    </p>
-                    <Input
-                      id="general-visitor-email"
-                      type="email"
-                      placeholder="your.email@example.com (optional)"
-                      value={visitorEmail}
-                      onChange={(e) => setVisitorEmail(e.target.value)}
-                      className="text-xs"
-                    />
-                  </div>
 
                   {/* General Office Attendance Notice */}
                   <div className="rounded-xl border border-blue-200 bg-blue-50/70 p-3.5 text-xs text-blue-950 flex items-start gap-2.5">
@@ -3940,7 +3960,7 @@ export function GetPassPage() {
                     <span>Existing Pass Detected</span>
                   </div>
                   <p>
-                    An existing pass was already created for this request, but the local retry no longer matches it. Do not create another pass. Please ask the Guard for assistance.
+                    An existing pass was already created for this request, but the local retry no longer matches it. Do not create another pass. Please ask the Guard for assistance. You can retrieve your original official gate pass below or start a new pass registration.
                   </p>
                 </div>
               ) : (currentPhase === 'ambiguous' || portalTransactionRef.current?.phase === 'ambiguous') ? (
@@ -4273,20 +4293,39 @@ export function GetPassPage() {
                   >
                     Start Over
                   </Button>
+                ) : currentPhase === 'existing_pass_conflict' || portalTransactionRef.current?.phase === 'existing_pass_conflict' ? (
+                  <>
+                    <Button
+                      variant="secondary"
+                      onClick={handleStartOver}
+                      className="flex-1"
+                      icon={<RotateCcw className="h-4 w-4" />}
+                    >
+                      Start New Pass
+                    </Button>
+                    <Button
+                      onClick={handleRetrieveOriginalPass}
+                      className="flex-1"
+                      disabled={!portalTransactionRef.current?.submittedPayload}
+                      icon={<CheckCircle2 className="h-4 w-4" />}
+                    >
+                      Retrieve Original Pass
+                    </Button>
+                  </>
                 ) : (
                   <>
                     <Button
                       variant="secondary"
                       onClick={() => setStep('visit')}
                       className="flex-1"
-                      disabled={currentPhase === 'existing_pass_conflict' || currentPhase === 'ambiguous'}
+                      disabled={currentPhase === 'ambiguous'}
                       icon={<ArrowLeft className="h-4 w-4" />}
                     >
                       Back to Details
                     </Button>
                     <Button
                       onClick={onSubmit}
-                      disabled={!identityVerified || currentPhase === 'existing_pass_conflict'}
+                      disabled={!identityVerified}
                       className="flex-1"
                       icon={<CheckCircle2 className="h-4 w-4" />}
                     >
@@ -5297,24 +5336,47 @@ export function GetPassPage() {
 
               {/* Action Buttons */}
               <div className="flex gap-3 pt-2">
-                <Button
-                  variant="secondary"
-                  onClick={() => setStep('returning_confirm')}
-                  className="flex-1"
-                  icon={<ArrowLeft className="h-4 w-4" />}
-                >
-                  Edit Visit Details
-                </Button>
-                <Button
-                  onClick={onSubmit}
-                  disabled={!identityVerified || currentPhase === 'existing_pass_conflict'}
-                  className="flex-1"
-                  icon={<CheckCircle2 className="h-4 w-4" />}
-                >
-                  {visitType === 'specific_person'
-                    ? 'Submit Request for Office Approval'
-                    : 'Generate E-GatePass'}
-                </Button>
+                {currentPhase === 'existing_pass_conflict' || portalTransactionRef.current?.phase === 'existing_pass_conflict' ? (
+                  <>
+                    <Button
+                      variant="secondary"
+                      onClick={handleStartOver}
+                      className="flex-1"
+                      icon={<RotateCcw className="h-4 w-4" />}
+                    >
+                      Start New Pass
+                    </Button>
+                    <Button
+                      onClick={handleRetrieveOriginalPass}
+                      className="flex-1"
+                      disabled={!portalTransactionRef.current?.submittedPayload}
+                      icon={<CheckCircle2 className="h-4 w-4" />}
+                    >
+                      Retrieve Original Pass
+                    </Button>
+                  </>
+                ) : (
+                  <>
+                    <Button
+                      variant="secondary"
+                      onClick={() => setStep('returning_confirm')}
+                      className="flex-1"
+                      icon={<ArrowLeft className="h-4 w-4" />}
+                    >
+                      Edit Visit Details
+                    </Button>
+                    <Button
+                      onClick={onSubmit}
+                      disabled={!identityVerified}
+                      className="flex-1"
+                      icon={<CheckCircle2 className="h-4 w-4" />}
+                    >
+                      {visitType === 'specific_person'
+                        ? 'Submit Request for Office Approval'
+                        : 'Generate E-GatePass'}
+                    </Button>
+                  </>
+                )}
               </div>
             </div>
           )}

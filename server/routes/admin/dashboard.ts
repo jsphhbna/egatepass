@@ -31,6 +31,22 @@ const YEAR_RE = /^\d{4}$/;
 
 type DashboardPeriodType = 'today' | 'date' | 'month' | 'year' | 'range';
 
+function extractErrorDiagnostics(error: unknown): { code?: string; message: string; details?: string; hint?: string } {
+  if (error instanceof Error) {
+    return { message: error.message };
+  }
+  if (error && typeof error === 'object') {
+    const errObj = error as Record<string, unknown>;
+    return {
+      code: typeof errObj.code === 'string' ? errObj.code : undefined,
+      message: typeof errObj.message === 'string' ? errObj.message : 'unknown_error',
+      details: typeof errObj.details === 'string' ? errObj.details : undefined,
+      hint: typeof errObj.hint === 'string' ? errObj.hint : undefined,
+    };
+  }
+  return { message: String(error) || 'unknown_error' };
+}
+
 function isValidManilaDate(value: string): boolean {
   if (!DATE_RE.test(value)) return false;
   const parsed = new Date(`${value}T00:00:00+08:00`);
@@ -519,7 +535,7 @@ async function handleRequest(request: Request): Promise<Response> {
     });
   } catch (error) {
     if (error instanceof HttpError) return jsonResponse(error.status, { error: error.code });
-    console.error('Dashboard metrics load failed.', error instanceof Error ? error.message : 'unknown_error');
+    console.error('Dashboard metrics load failed.', JSON.stringify(extractErrorDiagnostics(error)));
     return jsonResponse(503, { error: 'service_unavailable' });
   }
 }

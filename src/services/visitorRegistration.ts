@@ -331,10 +331,12 @@ export interface IssueTransaction {
   pendingAbandonments?: string[];
   submittedPayload?: {
     visitor: VisitorRegistration;
+    wirePayload?: any;
     source?: RegistrationSource;
     photoIntentId?: string | null;
     idIntentId?: string | null;
     vehiclePhotoIntentId?: string | null;
+    [key: string]: any;
   } | null;
 }
 
@@ -1560,23 +1562,19 @@ export async function issueVisitorPass(
     }
   }
 
-  // If transaction had previously submitted a payload in an ambiguous attempt, preserve the exact payload for replay safety
-  const effectiveVisitor = (transaction?.phase === 'ambiguous' && transaction?.submittedPayload?.visitor)
-    ? transaction.submittedPayload.visitor
+  // If transaction had previously submitted a payload in an ambiguous or replayed attempt, preserve the exact payload for replay safety
+  const existingFrozen = transaction?.submittedPayload;
+  const isReplay = Boolean(
+    existingFrozen && (transaction?.phase === 'ambiguous' || transaction?.phase === 'existing_pass_conflict' || transaction?.phase === 'dispatched')
+  );
+
+  const effectiveVisitor = (isReplay && existingFrozen?.visitor)
+    ? existingFrozen.visitor
     : visitor;
 
-  // Record submitted payload and transition to 'dispatched' immediately before network dispatch
-  if (transaction) {
-    transaction.submittedPayload = { visitor: { ...effectiveVisitor } };
-    transaction.phase = 'dispatched';
-  }
-
-  let response: Response;
-  try {
-    response = await fetchWithTimeout('/api/passes/issue', {
-      method: 'POST',
-      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify({
+  const wirePayload = (isReplay && existingFrozen?.wirePayload)
+    ? existingFrozen.wirePayload
+    : {
         requestId: effectiveRequestId,
         source,
         registrationMode: effectiveVisitor.registrationMode || (effectiveVisitor.returning?.profileId ? 'returning' : 'new'),
@@ -1607,7 +1605,29 @@ export async function issueVisitorPass(
         idIntentId: effectiveVisitor.registrationMode === 'returning' ? undefined : (idIntentId || undefined),
         officeId: effectiveVisitor.officeId || undefined,
         expectedGate: effectiveVisitor.expectedGate?.trim() || undefined,
-      }),
+      };
+
+  // Record submitted payload (deep clone and freeze) and transition to 'dispatched' immediately before network dispatch
+  if (transaction) {
+    if (!existingFrozen || !isReplay) {
+      transaction.submittedPayload = Object.freeze({
+        visitor: JSON.parse(JSON.stringify(effectiveVisitor)),
+        wirePayload: JSON.parse(JSON.stringify(wirePayload)),
+        source,
+        photoIntentId,
+        idIntentId,
+        vehiclePhotoIntentId,
+      });
+    }
+    transaction.phase = 'dispatched';
+  }
+
+  let response: Response;
+  try {
+    response = await fetchWithTimeout('/api/passes/issue', {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify(wirePayload),
     }, 15000);
   } catch (networkErr) {
     if (transaction) {

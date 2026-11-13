@@ -12,7 +12,7 @@ const paddleOcrWorkerPlugin = (): Plugin => {
     transform(code, id) {
       if (id.includes('@paddleocr') && id.includes('index.mjs')) {
         return code.replace(
-          'new URL("./assets/worker-entry-C9UNuyOJ.js", import.meta.url)',
+          /new URL\(["']\.\/assets\/worker-entry-[^"']+\.js["'],\s*import\.meta\.url\)/g,
           '"/paddleocr/worker-entry.js"'
         );
       }

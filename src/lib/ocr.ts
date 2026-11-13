@@ -410,7 +410,7 @@ export function getNextOcrJobId(): number {
  * Fenced with workerGeneration to prevent late-resolving orphaned workers.
  */
 export async function getLocalOcrWorker(
-  onProgress?: (progress: number) => void
+  onProgress?: (progress: number, status?: string) => void
 ): Promise<any> {
   if (cachedWorkerPromise) {
     return cachedWorkerPromise;
@@ -432,9 +432,9 @@ export async function getLocalOcrWorker(
         const status = m.status || '';
         const p = typeof m.progress === 'number' ? m.progress : 0;
         if (status.includes('loading') || status.includes('initializing')) {
-          onProgress(Math.min(30, Math.round(p * 30)));
+          onProgress(Math.min(30, Math.round(p * 30)), 'Loading OCR components...');
         } else if (status.includes('recognizing')) {
-          onProgress(Math.min(95, 30 + Math.round(p * 65)));
+          onProgress(Math.min(95, 30 + Math.round(p * 65)), 'Reading ID text...');
         }
       },
     });
@@ -498,11 +498,11 @@ export async function terminateLocalOcrWorker(): Promise<void> {
  */
 export async function recognizeIdImage(
   imageSource: Blob | File | string,
-  onProgress?: (progress: number) => void,
+  onProgress?: (progress: number, status?: string) => void,
   jobId?: number
 ): Promise<ParsedIdNames> {
   if (onProgress) {
-    onProgress(5);
+    onProgress(5, 'Preparing ID image for recognition...');
   }
 
   // 1. Primary Engine: Browser-local PaddleOCR.js (PP-OCRv6 Small, Tagalog/English)
@@ -518,6 +518,9 @@ export async function recognizeIdImage(
       }
     } catch (paddleErr) {
       console.warn('PaddleOCR engine unready or failed, falling back to Tesseract:', paddleErr);
+      if (onProgress) {
+        onProgress(30, 'Secondary engine reading ID...');
+      }
     }
   }
 

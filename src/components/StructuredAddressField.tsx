@@ -15,8 +15,6 @@ export interface StructuredAddressFieldProps {
   onHouseBuildingChange: (val: string) => void;
   street: string;
   onStreetChange: (val: string) => void;
-  postalCode?: string;
-  onPostalCodeChange?: (val: string) => void;
   error?: string;
   disabled?: boolean;
 }

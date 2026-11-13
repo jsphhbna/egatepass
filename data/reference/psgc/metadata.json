@@ -10,14 +10,19 @@
     "highlyUrbanizedCities": 33,
     "independentComponentCities": 5,
     "componentCities": 111,
+    "cities": 149,
     "municipalities": 1493,
-    "barangays": 42011
+    "barangays": 42010,
+    "ncrBarangays": 1715,
+    "manilaBarangays": 897
   },
   "normalizedTotals": {
     "regions": 18,
     "provinces": 82,
     "citiesAndMunicipalities": 1642,
-    "barangays": 42012
+    "barangays": 42010,
+    "ncrBarangays": 1715,
+    "manilaBarangays": 897
   },
-  "updatedAt": "2026-11-02T19:59:25.360Z"
+  "updatedAt": "2026-11-14T02:00:00.000Z"
 }

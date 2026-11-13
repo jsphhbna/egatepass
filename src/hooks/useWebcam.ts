@@ -36,6 +36,33 @@ export interface UseWebcamResult {
   capture: (options?: UseWebcamCaptureOptions) => Blob | null;
 }
 
+export function classifyCameraError(err: unknown): string {
+  if (err instanceof DOMException) {
+    switch (err.name) {
+      case 'NotAllowedError':
+      case 'PermissionDeniedError':
+        return 'Camera access was denied. Please allow camera permissions in your browser settings, then try again.';
+      case 'NotFoundError':
+      case 'DevicesNotFoundError':
+        return 'No camera was found on your device. Please ensure a camera is connected.';
+      case 'NotReadableError':
+      case 'TrackStartError':
+        return 'The camera is currently in use by another application or tab. Please close other camera apps and try again.';
+      case 'OverconstrainedError':
+      case 'ConstraintNotSatisfiedError':
+        return 'The requested camera resolution or settings are not supported by your device camera.';
+      case 'AbortError':
+        return 'Camera access was aborted. Please try again.';
+      default:
+        return `Camera error (${err.name}): ${err.message || 'Unable to start camera'}.`;
+    }
+  }
+  if (err instanceof Error) {
+    return err.message || 'Failed to access camera. Please check your device.';
+  }
+  return 'Failed to access camera. Please check your device.';
+}
+
 export function useWebcam(options: UseWebcamOptions = {}): UseWebcamResult {
   const { facingMode = 'user', width = 640, height = 480, allowCaptureMirroring = true, targetAspectRatio } = options;
   const videoRef = useRef<HTMLVideoElement>(null);
@@ -119,11 +146,7 @@ export function useWebcam(options: UseWebcamOptions = {}): UseWebcamResult {
       if (!mountedRef.current || generation !== generationRef.current) {
         return;
       }
-      const message =
-        err instanceof DOMException && err.name === 'NotAllowedError'
-          ? 'Camera access was denied. Allow camera access in your browser settings, then try again.'
-          : 'Failed to access camera. Please check your device.';
-      setError(message);
+      setError(classifyCameraError(err));
       setIsActive(false);
     } finally {
       if (mountedRef.current && generation === generationRef.current) {
@@ -212,11 +235,7 @@ export function useWebcam(options: UseWebcamOptions = {}): UseWebcamResult {
       if (!mountedRef.current || generation !== generationRef.current) {
         return;
       }
-      const message =
-        err instanceof DOMException && err.name === 'NotAllowedError'
-          ? 'Camera access was denied. Allow camera access in your browser settings, then try again.'
-          : 'Failed to switch camera. Please check your device.';
-      setError(message);
+      setError(classifyCameraError(err));
       setIsActive(false);
     } finally {
       if (mountedRef.current && generation === generationRef.current) {
@@ -330,6 +349,14 @@ export function useWebcam(options: UseWebcamOptions = {}): UseWebcamResult {
   );
 
   // Cleanup on unmount
+  // Ensure media stream is safely attached when video element mounts or remounts
+  useEffect(() => {
+    if (isActive && streamRef.current && videoRef.current && videoRef.current.srcObject !== streamRef.current) {
+      videoRef.current.srcObject = streamRef.current;
+      videoRef.current.play().catch(() => undefined);
+    }
+  });
+
   useEffect(() => {
     mountedRef.current = true;
     return () => {

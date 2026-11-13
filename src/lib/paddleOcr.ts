@@ -34,12 +34,14 @@ export interface PaddleOcrPredictionResult {
 
 let cachedPaddleOcrInstance: any = null;
 let paddleOcrInitPromise: Promise<any> | null = null;
+const PADDLE_INIT_TIMEOUT_MS = 15000;
+const PADDLE_PREDICT_TIMEOUT_MS = 15000;
 
 /**
  * Lazily initialize and return a singleton PaddleOCR instance configured for PP-OCRv6 Small models.
  */
 export async function getPaddleOcrInstance(
-  onProgress?: (progress: number) => void
+  onProgress?: (progress: number, status?: string) => void
 ): Promise<any> {
   if (cachedPaddleOcrInstance) {
     return cachedPaddleOcrInstance;
@@ -49,11 +51,13 @@ export async function getPaddleOcrInstance(
     return paddleOcrInitPromise;
   }
 
-  paddleOcrInitPromise = (async () => {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+
+  const initPromise = (async () => {
     try {
-      if (onProgress) onProgress(10);
+      if (onProgress) onProgress(10, 'Initializing neural OCR engine...');
       const { PaddleOCR } = await import('@paddleocr/paddleocr-js');
-      if (onProgress) onProgress(25);
+      if (onProgress) onProgress(25, 'Loading PP-OCRv6 Tagalog/English model...');
 
       // Explicitly configure PP-OCRv6 with Tagalog ('tl') / English language support
       // worker: false avoids spawning Vite worker chunk with unhashed URL that triggers 404/reload
@@ -66,7 +70,7 @@ export async function getPaddleOcrInstance(
         },
       });
 
-      if (onProgress) onProgress(40);
+      if (onProgress) onProgress(40, 'Neural OCR engine ready');
       cachedPaddleOcrInstance = ocr;
       return ocr;
     } catch (err) {
@@ -76,6 +80,23 @@ export async function getPaddleOcrInstance(
     }
   })();
 
+  const timeoutPromise = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => {
+      reject(new Error(`PaddleOCR initialization timed out after ${PADDLE_INIT_TIMEOUT_MS}ms`));
+    }, PADDLE_INIT_TIMEOUT_MS);
+  });
+
+  paddleOcrInitPromise = Promise.race([initPromise, timeoutPromise])
+    .then((ocr) => {
+      if (timer) clearTimeout(timer);
+      return ocr;
+    })
+    .catch(async (err) => {
+      if (timer) clearTimeout(timer);
+      await terminatePaddleOcr();
+      throw err;
+    });
+
   return paddleOcrInitPromise;
 }
 
@@ -83,16 +104,19 @@ export async function getPaddleOcrInstance(
  * Terminate or reset the PaddleOCR instance to free browser memory.
  */
 export async function terminatePaddleOcr(): Promise<void> {
-  if (cachedPaddleOcrInstance) {
+  const instance = cachedPaddleOcrInstance;
+  cachedPaddleOcrInstance = null;
+  paddleOcrInitPromise = null;
+  if (instance) {
     try {
-      if (typeof cachedPaddleOcrInstance.terminate === 'function') {
-        await cachedPaddleOcrInstance.terminate();
+      if (typeof instance.terminate === 'function') {
+        await instance.terminate();
+      } else if (typeof instance.destroy === 'function') {
+        await instance.destroy();
       }
     } catch {
       // Ignore termination errors during disposal
     }
-    cachedPaddleOcrInstance = null;
-    paddleOcrInitPromise = null;
   }
 }
 
@@ -245,15 +269,31 @@ export function extractAddressFromOcrLines(lines: OcrLine[]): string {
  */
 export async function recognizeIdImageWithPaddle(
   imageSource: Blob | File,
-  onProgress?: (progress: number) => void
+  onProgress?: (progress: number, status?: string) => void
 ): Promise<ParsedIdNames> {
   const ocr = await getPaddleOcrInstance(onProgress);
 
-  if (onProgress) onProgress(60);
+  if (onProgress) onProgress(50, 'Detecting text regions...');
 
-  const [prediction] = (await ocr.predict(imageSource)) as [PaddleOcrPredictionResult];
+  let predictTimer: ReturnType<typeof setTimeout> | undefined;
+  const timeoutPromise = new Promise<never>((_, reject) => {
+    predictTimer = setTimeout(() => {
+      reject(new Error(`PaddleOCR prediction timed out after ${PADDLE_PREDICT_TIMEOUT_MS}ms`));
+    }, PADDLE_PREDICT_TIMEOUT_MS);
+  });
 
-  if (onProgress) onProgress(85);
+  let prediction: PaddleOcrPredictionResult;
+  try {
+    const predictPromise = ocr.predict(imageSource).then((res: any) => (Array.isArray(res) ? res[0] : res));
+    prediction = await Promise.race([predictPromise, timeoutPromise]);
+  } catch (err) {
+    await terminatePaddleOcr();
+    throw err;
+  } finally {
+    if (predictTimer) clearTimeout(predictTimer);
+  }
+
+  if (onProgress) onProgress(80, 'Extracting ID details...');
 
   const imgW = prediction?.image?.width || 1000;
   const imgH = prediction?.image?.height || 650;

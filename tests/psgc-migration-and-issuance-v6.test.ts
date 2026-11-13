@@ -274,7 +274,7 @@ describe('Migration 50: PSGC Reference System and api.issue_online_pass_v6', () 
     expect(visCheck.rows[0].psgc_region_name).toBe('National Capital Region (NCR)');
     expect(visCheck.rows[0].psgc_province_name).toBeNull();
     expect(visCheck.rows[0].psgc_city_municipality_name).toBe('City of Manila');
-    expect(visCheck.rows[0].psgc_barangay_name).toContain('EARIST');
+    expect(visCheck.rows[0].psgc_barangay_name).toMatch(/Barangay 408/);
     expect(visCheck.rows[0].home_building).toBe('Unit 401');
     expect(visCheck.rows[0].home_street).toBe('Nagtahan St.');
     expect(visCheck.rows[0].postal_code).toBe('1008');

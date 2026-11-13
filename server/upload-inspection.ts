@@ -38,14 +38,28 @@ export async function inspectUploadIntent(
 ): Promise<InspectedUpload> {
   const { data, error } = await admin.from('upload_intents').select('*').eq('id', id).maybeSingle<IntentRow>();
   if (error) throw error;
-  if (
-    !data ||
-    data.owner_id !== actorId ||
-    data.source !== source ||
-    data.kind !== kind ||
-    data.status !== 'pending' ||
-    new Date(data.expires_at).getTime() <= Date.now()
-  ) {
+  if (!data) {
+    console.warn(`[UPLOAD-INSPECT] Upload intent (${kind}) rejected: intent_not_found`);
+    throw new Error('invalid_upload_intent');
+  }
+  if (data.owner_id !== actorId) {
+    console.warn(`[UPLOAD-INSPECT] Upload intent (${kind}) rejected: intent_owner_mismatch`);
+    throw new Error('invalid_upload_intent');
+  }
+  if (data.source !== source) {
+    console.warn(`[UPLOAD-INSPECT] Upload intent (${kind}) rejected: intent_source_mismatch (actual=${data.source}, expected=${source})`);
+    throw new Error('invalid_upload_intent');
+  }
+  if (data.kind !== kind) {
+    console.warn(`[UPLOAD-INSPECT] Upload intent (${kind}) rejected: intent_kind_mismatch (actual=${data.kind}, expected=${kind})`);
+    throw new Error('invalid_upload_intent');
+  }
+  if (data.status !== 'pending') {
+    console.warn(`[UPLOAD-INSPECT] Upload intent (${kind}) rejected: intent_status_not_pending (status=${data.status})`);
+    throw new Error('invalid_upload_intent');
+  }
+  if (new Date(data.expires_at).getTime() <= Date.now()) {
+    console.warn(`[UPLOAD-INSPECT] Upload intent (${kind}) rejected: intent_expired (expiredAt=${data.expires_at})`);
     throw new Error('invalid_upload_intent');
   }
 

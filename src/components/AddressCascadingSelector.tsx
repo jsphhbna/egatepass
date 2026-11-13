@@ -6,9 +6,16 @@ import {
   fetchPsgcCities,
   fetchPsgcBarangays,
   type PsgcLocation,
-  type PostalResolution,
 } from '@/lib/psgc';
 import { MapPin, Search, ChevronRight, X, ArrowLeft, Check, AlertCircle } from 'lucide-react';
+
+export interface PostalResolution {
+  postalCode: string;
+  isAutoFilled: boolean;
+  requiresConfirmation: boolean;
+  mappingType: string;
+  message?: string;
+}
 
 export interface SelectedPsgcAddress {
   version: string;
@@ -18,7 +25,7 @@ export interface SelectedPsgcAddress {
   barangay: { code: string; name: string };
   postalCode?: string | null;
   postalCodeSource?: string | null;
-  postalResolution?: PostalResolution;
+  postalResolution?: PostalResolution | null;
 }
 
 export interface AddressCascadingSelectorProps {
@@ -250,8 +257,6 @@ export function AddressCascadingSelector({
       province: selectedProvince ? { code: selectedProvince.code, name: selectedProvince.name } : null,
       city: { code: selectedCity.code, name: selectedCity.name },
       barangay: { code: selectedBarangay.code, name: selectedBarangay.name },
-      postalCode: null,
-      postalCodeSource: null,
     });
     onClose();
   }

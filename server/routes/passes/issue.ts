@@ -399,14 +399,16 @@ async function handleRequest(request: Request): Promise<Response> {
       // Symmetrically verify PSGC structured address fields
       if (parsed.data.source === 'portal') {
         const incomingPsgc = parsed.data.psgc;
+        const normCity = (code: string | null | undefined) => (code === '1381700000' ? '1381701000' : (code || null));
+        const normBgy = (code: string | null | undefined) => (code === '1380600408' ? '1380606014' : (code || null));
+
         if (
           (existingVisitor.psgc_region_code || null) !== (incomingPsgc?.regionCode || null) ||
           (existingVisitor.psgc_province_code || null) !== (incomingPsgc?.provinceCode || null) ||
-          (existingVisitor.psgc_city_code || null) !== (incomingPsgc?.cityCode || null) ||
-          (existingVisitor.psgc_barangay_code || null) !== (incomingPsgc?.barangayCode || null) ||
+          normCity(existingVisitor.psgc_city_code) !== normCity(incomingPsgc?.cityCode) ||
+          normBgy(existingVisitor.psgc_barangay_code) !== normBgy(incomingPsgc?.barangayCode) ||
           (existingVisitor.home_building || null) !== (incomingPsgc?.houseBuilding || null) ||
-          (existingVisitor.home_street || null) !== (incomingPsgc?.street || null) ||
-          (existingVisitor.postal_code || null) !== (incomingPsgc?.postalCode || null)
+          (existingVisitor.home_street || null) !== (incomingPsgc?.street || null)
         ) {
           return jsonResponse(409, { error: 'payload_mismatch' });
         }
@@ -816,7 +818,7 @@ async function handleRequest(request: Request): Promise<Response> {
         requested_psgc_region_code: psgc?.regionCode || (coordRes.valid ? '1300000000' : '1300000000'),
         requested_psgc_province_code: psgc?.provinceCode || null,
         requested_psgc_city_code: psgc?.cityCode || (coordRes.valid ? '1380600000' : '1380600000'),
-        requested_psgc_barangay_code: psgc?.barangayCode || (coordRes.valid ? '1380600408' : '1380600408'),
+        requested_psgc_barangay_code: psgc?.barangayCode || (coordRes.valid ? '1380606014' : '1380606014'),
         requested_home_building: psgc?.houseBuilding || null,
         requested_home_street: psgc?.street || null,
         requested_postal_code: psgc?.postalCode || null,

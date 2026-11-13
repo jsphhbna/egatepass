@@ -30,7 +30,7 @@ const PSA_NCR_LGUS = [
   { code: '1381400000', provCode: '814', name: 'City of San Juan', expectedOfficialBarangays: 21 },
   { code: '1381500000', provCode: '815', name: 'City of Taguig', expectedOfficialBarangays: 38 },
   { code: '1381600000', provCode: '816', name: 'City of Valenzuela', expectedOfficialBarangays: 33 },
-  { code: '1381700000', provCode: '817', name: 'Municipality of Pateros', expectedOfficialBarangays: 10 },
+  { code: '1381701000', provCode: '817', name: 'Municipality of Pateros', expectedOfficialBarangays: 10 },
 ];
 
 async function main() {

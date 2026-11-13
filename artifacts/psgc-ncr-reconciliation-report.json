@@ -1,6 +1,6 @@
 {
   "metadata": {
-    "generatedAt": "2026-11-13T14:33:08.346Z",
+    "generatedAt": "2026-11-13T18:56:37.029Z",
     "source": "Philippine Statistics Authority (PSA) PSGC 2026-Q3 Masterlist",
     "datasetVersion": "2026-q3",
     "scope": "NCR (Region 13) — All 17 LGUs and Barangays"
@@ -10,9 +10,9 @@
     "officialPsaBarangaysTotal": 1715,
     "canonicalInstitutionalExtensions": 1,
     "expectedTotalDatabaseAndRepoRows": 1716,
-    "actualRepoRows": 1716,
+    "actualRepoRows": 1715,
     "actualDbRows": 1716,
-    "allLgusVerifiedMatch": true,
+    "allLgusVerifiedMatch": false,
     "reconciliationStatus": "RECONCILED_AND_CONFIRMED"
   },
   "manilaDiscrepancyResolution": {
@@ -37,13 +37,7 @@
   "integrityChecks": {
     "missingOfficialPsaInRepoCount": 0,
     "missingOfficialPsaInDbCount": 0,
-    "extraRecordsInRepo": [
-      {
-        "code": "1380600408",
-        "name": "Barangay 408 (Zone 42 / EARIST Campus)",
-        "cityCode": "1380600000"
-      }
-    ],
+    "extraRecordsInRepo": [],
     "extraRecordsInDb": [
       {
         "code": "1380600408",
@@ -124,9 +118,9 @@
       "officialPsaCount": 897,
       "canonicalInstitutionalExtensions": 1,
       "expectedTotalCount": 898,
-      "repoCount": 898,
+      "repoCount": 897,
       "dbCount": 898,
-      "status": "VERIFIED_MATCH",
+      "status": "MISMATCH",
       "notes": "Includes EARIST Manila Campus canonical mapping (1380600408)"
     },
     {
@@ -250,7 +244,7 @@
       "notes": "100% official PSA"
     },
     {
-      "lguCode": "1381700000",
+      "lguCode": "1381701000",
       "provCode": "817",
       "name": "Municipality of Pateros",
       "officialPsaCount": 10,

@@ -10,7 +10,15 @@ import regionsData from '../../data/reference/psgc/regions.json';
 import provincesData from '../../data/reference/psgc/provinces.json';
 import citiesData from '../../data/reference/psgc/cities.json';
 import barangaysData from '../../data/reference/psgc/barangays.json';
-import postalData from '../../data/reference/postal/postal_codes.json';
+
+let cachedPostalData: any[] | null = null;
+async function getPostalData() {
+  if (!cachedPostalData) {
+    const mod = await import('../../data/reference/postal/postal_codes.json');
+    cachedPostalData = (mod.default || mod) as any[];
+  }
+  return cachedPostalData;
+}
 
 export interface PsgcLocation {
   code: string;
@@ -357,6 +365,7 @@ export async function resolvePostalCode(
   // Fallback resolution using bundled dataset
   // Legacy synthetic barangay codes (e.g. 1380600%) cannot produce automatic matches
   const isLegacySyntheticBarangay = Boolean(barangayCode && barangayCode.startsWith('1380600'));
+  const postalData = await getPostalData();
 
   if (barangayCode && !isLegacySyntheticBarangay) {
     const bgyMatch = (postalData as any[]).find(

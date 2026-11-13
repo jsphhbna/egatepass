@@ -82,28 +82,40 @@ if (!fs.existsSync(langModelPath) || fs.statSync(langModelPath).size < 1000) {
 console.log(`[SYNC-OCR] Successfully verified and synchronized OCR assets in ${targetDir}`);
 
 // 4. Synchronize PaddleOCR worker asset
-const paddleWorkerSrc = path.join(projectRoot, 'node_modules/@paddleocr/paddleocr-js/dist/assets/worker-entry-C9UNuyOJ.js');
-const paddleTargetDir = path.join(projectRoot, 'public/paddleocr');
-if (fs.existsSync(paddleWorkerSrc)) {
-  if (!fs.existsSync(paddleTargetDir)) {
-    fs.mkdirSync(paddleTargetDir, { recursive: true });
-  }
-  const paddleWorkerDest = path.join(paddleTargetDir, 'worker-entry.js');
-  copyIfChanged(paddleWorkerSrc, paddleWorkerDest);
-  console.log(`[SYNC-OCR] Synchronized PaddleOCR worker to ${paddleWorkerDest}`);
+const paddleAssetsDir = path.join(projectRoot, 'node_modules/@paddleocr/paddleocr-js/dist/assets');
+if (!fs.existsSync(paddleAssetsDir)) {
+  console.error(`[SYNC-OCR] Missing PaddleOCR assets directory at ${paddleAssetsDir}`);
+  process.exit(1);
 }
+const paddleWorkerFiles = fs.readdirSync(paddleAssetsDir).filter(
+  (file) => file.startsWith('worker-entry') && file.endsWith('.js') && !file.endsWith('.map')
+);
+if (paddleWorkerFiles.length === 0) {
+  console.error(`[SYNC-OCR] No worker-entry*.js found in ${paddleAssetsDir}`);
+  process.exit(1);
+}
+const paddleWorkerSrc = path.join(paddleAssetsDir, paddleWorkerFiles[0]);
+const paddleTargetDir = path.join(projectRoot, 'public/paddleocr');
+if (!fs.existsSync(paddleTargetDir)) {
+  fs.mkdirSync(paddleTargetDir, { recursive: true });
+}
+const paddleWorkerDest = path.join(paddleTargetDir, 'worker-entry.js');
+copyIfChanged(paddleWorkerSrc, paddleWorkerDest);
+console.log(`[SYNC-OCR] Synchronized PaddleOCR worker (${paddleWorkerFiles[0]}) to ${paddleWorkerDest}`);
 
 // 5. Synchronize OpenCV pre-compiled asset for on-demand browser loading
 const opencvSrc = path.join(projectRoot, 'node_modules/@techstark/opencv-js/dist/opencv.js');
-const vendorTargetDir = path.join(projectRoot, 'public/vendor');
-if (fs.existsSync(opencvSrc)) {
-  if (!fs.existsSync(vendorTargetDir)) {
-    fs.mkdirSync(vendorTargetDir, { recursive: true });
-  }
-  const opencvDest = path.join(vendorTargetDir, 'opencv.js');
-  copyIfChanged(opencvSrc, opencvDest);
-  console.log(`[SYNC-OCR] Synchronized OpenCV runtime asset to ${opencvDest}`);
+if (!fs.existsSync(opencvSrc)) {
+  console.error(`[SYNC-OCR] Mandatory OpenCV runtime asset missing at ${opencvSrc}`);
+  process.exit(1);
 }
+const vendorTargetDir = path.join(projectRoot, 'public/vendor');
+if (!fs.existsSync(vendorTargetDir)) {
+  fs.mkdirSync(vendorTargetDir, { recursive: true });
+}
+const opencvDest = path.join(vendorTargetDir, 'opencv.js');
+copyIfChanged(opencvSrc, opencvDest);
+console.log(`[SYNC-OCR] Synchronized OpenCV runtime asset to ${opencvDest}`);
 
 function copyIfChanged(src, dest) {
   const srcBuf = fs.readFileSync(src);

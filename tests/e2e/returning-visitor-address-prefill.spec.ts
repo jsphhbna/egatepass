@@ -523,7 +523,7 @@ test.describe('Returning Visitor Address Prefill & UI Hydration Integration Suit
         region: { code: '1300000000', name: 'NCR' },
         province: null,
         city: { code: '1380600000', name: 'City of Manila' },
-        barangay: { code: '1380600408', name: 'Barangay 408 (Sampaloc / EARIST Nagtahan)' },
+        barangay: { code: '1380606014', name: 'Barangay 408' },
         houseBuilding: 'Unit 4B',
         street: 'Nagtahan St.',
         postalCode: '1008',

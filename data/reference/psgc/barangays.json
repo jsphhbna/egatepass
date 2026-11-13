@@ -1540,11 +1540,6 @@
     "name": "Wack-wack Greenhills"
   },
   {
-    "code": "1380600408",
-    "cityCode": "1380600000",
-    "name": "Barangay 408 (Zone 42 / EARIST Campus)"
-  },
-  {
     "code": "1380601001",
     "cityCode": "1380600000",
     "name": "Barangay 1"
@@ -3522,7 +3517,7 @@
   {
     "code": "1380606014",
     "cityCode": "1380600000",
-    "name": "Barangay 408 (Zone 42 / EARIST Campus)"
+    "name": "Barangay 408"
   },
   {
     "code": "1380606015",
@@ -8651,52 +8646,52 @@
   },
   {
     "code": "1381701001",
-    "cityCode": "1381700000",
+    "cityCode": "1381701000",
     "name": "Aguho"
   },
   {
     "code": "1381701002",
-    "cityCode": "1381700000",
+    "cityCode": "1381701000",
     "name": "Magtanggol"
   },
   {
     "code": "1381701003",
-    "cityCode": "1381700000",
+    "cityCode": "1381701000",
     "name": "Martires Del 96"
   },
   {
     "code": "1381701004",
-    "cityCode": "1381700000",
+    "cityCode": "1381701000",
     "name": "Poblacion"
   },
   {
     "code": "1381701005",
-    "cityCode": "1381700000",
+    "cityCode": "1381701000",
     "name": "San Pedro"
   },
   {
     "code": "1381701006",
-    "cityCode": "1381700000",
+    "cityCode": "1381701000",
     "name": "San Roque"
   },
   {
     "code": "1381701007",
-    "cityCode": "1381700000",
+    "cityCode": "1381701000",
     "name": "Santa Ana"
   },
   {
     "code": "1381701008",
-    "cityCode": "1381700000",
+    "cityCode": "1381701000",
     "name": "Santo Rosario-Kanluran"
   },
   {
     "code": "1381701009",
-    "cityCode": "1381700000",
+    "cityCode": "1381701000",
     "name": "Santo Rosario-Silangan"
   },
   {
     "code": "1381701010",
-    "cityCode": "1381700000",
+    "cityCode": "1381701000",
     "name": "Tabacalera"
   },
   {

@@ -8,13 +8,14 @@
  */
 
 let cvPromise: Promise<any> | null = null;
+const OPENCV_INIT_TIMEOUT_MS = 15000;
 
 export async function loadOpenCv(): Promise<any> {
   if (cvPromise) {
     return cvPromise;
   }
 
-  cvPromise = (async () => {
+  const promise = (async () => {
     // 1. If already initialized on window (e.g. previous load or preloaded)
     if (typeof window !== 'undefined' && (window as any).cv && (window as any).cv.Mat) {
       return (window as any).cv;
@@ -23,24 +24,59 @@ export async function loadOpenCv(): Promise<any> {
     // 2. Browser dynamic script injection for genuine zero-bundle on-demand loading
     if (typeof window !== 'undefined' && typeof document !== 'undefined') {
       return new Promise((resolve, reject) => {
+        const startTime = Date.now();
+        let timeoutTimer: ReturnType<typeof setTimeout> | null = null;
+        let pollTimer: ReturnType<typeof setTimeout> | null = null;
+
+        const cleanup = () => {
+          if (timeoutTimer) clearTimeout(timeoutTimer);
+          if (pollTimer) clearTimeout(pollTimer);
+        };
+
+        timeoutTimer = setTimeout(() => {
+          cleanup();
+          reject(new Error(`OpenCV initialization timed out after ${OPENCV_INIT_TIMEOUT_MS}ms`));
+        }, OPENCV_INIT_TIMEOUT_MS);
+
         // If window.cv exists but is pending initialization
         if ((window as any).cv && typeof (window as any).cv.then === 'function') {
-          (window as any).cv.then(resolve).catch(reject);
+          (window as any).cv
+            .then((cv: any) => {
+              cleanup();
+              resolve(cv);
+            })
+            .catch((err: any) => {
+              cleanup();
+              reject(err);
+            });
           return;
         }
 
+        const checkReady = () => {
+          if (Date.now() - startTime > OPENCV_INIT_TIMEOUT_MS) {
+            cleanup();
+            reject(new Error(`OpenCV readiness polling timed out after ${OPENCV_INIT_TIMEOUT_MS}ms`));
+            return;
+          }
+          const cv = (window as any).cv;
+          if (cv && cv.Mat) {
+            cleanup();
+            resolve(cv);
+          } else if (cv && typeof cv.then === 'function') {
+            cv.then((c: any) => {
+              cleanup();
+              resolve(c);
+            }).catch((e: any) => {
+              cleanup();
+              reject(e);
+            });
+          } else {
+            pollTimer = setTimeout(checkReady, 50);
+          }
+        };
+
         const existingScript = document.querySelector('script[src="/vendor/opencv.js"]');
         if (existingScript) {
-          const checkReady = () => {
-            const cv = (window as any).cv;
-            if (cv && cv.Mat) {
-              resolve(cv);
-            } else if (cv && typeof cv.then === 'function') {
-              cv.then(resolve).catch(reject);
-            } else {
-              setTimeout(checkReady, 50);
-            }
-          };
           checkReady();
           return;
         }
@@ -50,22 +86,20 @@ export async function loadOpenCv(): Promise<any> {
         script.async = true;
 
         script.onload = () => {
-          const checkReady = () => {
-            const cv = (window as any).cv;
-            if (cv && cv.Mat) {
+          const cv = (window as any).cv;
+          if (cv && typeof cv.onRuntimeInitialized !== 'undefined') {
+            const originalOnRuntimeInit = cv.onRuntimeInitialized;
+            cv.onRuntimeInitialized = () => {
+              if (typeof originalOnRuntimeInit === 'function') originalOnRuntimeInit();
+              cleanup();
               resolve(cv);
-            } else if (cv && typeof cv.then === 'function') {
-              cv.then(resolve).catch(reject);
-            } else if (cv && typeof cv.onRuntimeInitialized !== 'undefined') {
-              cv.onRuntimeInitialized = () => resolve(cv);
-            } else {
-              setTimeout(checkReady, 50);
-            }
-          };
+            };
+          }
           checkReady();
         };
 
         script.onerror = (err) => {
+          cleanup();
           reject(new Error(`Failed to load OpenCV from /vendor/opencv.js: ${err}`));
         };
 
@@ -90,7 +124,26 @@ export async function loadOpenCv(): Promise<any> {
     }
   })();
 
+  cvPromise = promise.catch((err) => {
+    cvPromise = null; // Clear cached promise on failure so retries can occur
+    throw err;
+  });
+
   return cvPromise;
 }
 
-export default loadOpenCv();
+const lazyOpenCv = {
+  then<TResult1 = any, TResult2 = never>(
+    onfulfilled?: ((value: any) => TResult1 | PromiseLike<TResult1>) | null,
+    onrejected?: ((reason: any) => TResult2 | PromiseLike<TResult2>) | null,
+  ): Promise<TResult1 | TResult2> {
+    return loadOpenCv().then(onfulfilled, onrejected);
+  },
+  catch<TResult = never>(
+    onrejected?: ((reason: any) => TResult | PromiseLike<TResult>) | null,
+  ): Promise<any | TResult> {
+    return loadOpenCv().catch(onrejected);
+  },
+};
+
+export default lazyOpenCv;
