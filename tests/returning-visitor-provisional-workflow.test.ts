@@ -70,19 +70,19 @@ describe('Returning Visitor Provisional 1:1 Biometric & Enrollment Architecture 
   // 1. ARCHITECTURAL DECOUPLING (ENROLLMENT VS VERIFICATION)
   // =========================================================================
   describe('1. Architectural Decoupling: Enrollment vs Verification', () => {
-    it('allows enrollment readiness when only template key is configured, without verification threshold', async () => {
+    it('blocks enrollment when template key is absent or retired', async () => {
       delete process.env.RETURNING_MATCH_TOKEN_SECRET;
       delete process.env.RETURNING_FACE_MIN_COSINE;
       delete process.env.RETURNING_FACE_THRESHOLD_MODE;
 
-      expect(isReturningEnrollmentAvailable()).toBe(true);
+      expect(isReturningEnrollmentAvailable()).toBe(false);
       expect(isReturningVisitorAvailable()).toBe(false);
 
       const res = await capabilitiesHandler.fetch(
         new Request('http://localhost/api/passes/capabilities', { method: 'GET' })
       );
       const data = await res.json();
-      expect(data.returningEnrollmentAvailable).toBe(true);
+      expect(data.returningEnrollmentAvailable).toBe(false);
       expect(data.returningVisitorAvailable).toBe(false);
       expect(data.thresholdConfigured).toBe(false);
       expect(data.thresholdMode).toBe('unconfigured');
@@ -96,9 +96,9 @@ describe('Returning Visitor Provisional 1:1 Biometric & Enrollment Architecture 
       expect(isReturningEnrollmentAvailable()).toBe(false);
     });
 
-    it('blocks verification if match token secret is missing even if threshold and template key exist', () => {
+    it('blocks verification if match token secret is missing even if threshold exists', () => {
       delete process.env.RETURNING_MATCH_TOKEN_SECRET;
-      expect(isReturningEnrollmentAvailable()).toBe(true);
+      expect(isReturningEnrollmentAvailable()).toBe(false);
       expect(isReturningVisitorAvailable()).toBe(false);
     });
   });
@@ -217,39 +217,44 @@ describe('Returning Visitor Provisional 1:1 Biometric & Enrollment Architecture 
       });
     }
 
-    it('matches when 1:1 cosine similarity exceeds provisional threshold 0.363', async () => {
-      const genuineDesc = makeDescriptor(1.0);
-      setupAuthAndPhotoMocks(genuineDesc);
-
-      const encrypted = encryptFaceTemplate(genuineDesc, testKey, 'v1');
-
-      const mockAdmin = {
+    function createMockAdmin(profileData: any) {
+      return {
         schema: vi.fn().mockReturnValue({
           rpc: vi.fn().mockResolvedValue({ data: true, error: null }),
         }),
         from: vi.fn((table: string) => {
-          if (table === 'returning_face_templates') {
+          if (table === 'returning_visitor_profiles') {
             return {
               select: vi.fn().mockReturnThis(),
               eq: vi.fn().mockReturnThis(),
               maybeSingle: vi.fn().mockResolvedValue({
+                data: profileData,
+                error: null,
+              }),
+            };
+          }
+          if (table === 'visitors') {
+            return {
+              select: vi.fn().mockReturnThis(),
+              eq: vi.fn().mockResolvedValue({
+                data: [{ id: 'vis-1' }],
+                error: null,
+              }),
+            };
+          }
+          if (table === 'visitor_evidence') {
+            return {
+              select: vi.fn().mockReturnThis(),
+              in: vi.fn().mockReturnThis(),
+              eq: vi.fn().mockReturnThis(),
+              is: vi.fn().mockReturnThis(),
+              order: vi.fn().mockReturnThis(),
+              limit: vi.fn().mockReturnThis(),
+              maybeSingle: vi.fn().mockResolvedValue({
                 data: {
-                  id: 'tpl-1',
-                  profile_id: profileId,
-                  encrypted_embedding: encrypted.encryptedEmbedding,
-                  iv: encrypted.iv,
-                  auth_tag: encrypted.authTag,
-                  key_version: encrypted.keyVersion,
-                  returning_visitor_profiles: {
-                    id: profileId,
-                    first_name: 'Juan',
-                    middle_name: null,
-                    last_name: 'Cruz',
-                    contact_number_e164: '+639171234567',
-                    home_address: '123 Rizal St',
-                    expires_at: '2099-01-01T00:00:00Z',
-                    revoked_at: null,
-                  },
+                  bucket_id: 'pass-portraits',
+                  object_path: 'portraits/orig.jpg',
+                  created_at: '2026-01-01T00:00:00Z',
                 },
                 error: null,
               }),
@@ -269,7 +274,31 @@ describe('Returning Visitor Provisional 1:1 Biometric & Enrollment Architecture 
           }
           return {};
         }),
+        storage: {
+          from: vi.fn().mockReturnValue({
+            download: vi.fn().mockResolvedValue({
+              data: new Blob([Buffer.from('dummy-reference-portrait')]),
+              error: null,
+            }),
+          }),
+        },
       };
+    }
+
+    it('matches when 1:1 cosine similarity exceeds provisional threshold 0.363', async () => {
+      const genuineDesc = makeDescriptor(1.0);
+      setupAuthAndPhotoMocks(genuineDesc);
+
+      const mockAdmin = createMockAdmin({
+        id: profileId,
+        first_name: 'Juan',
+        middle_name: null,
+        last_name: 'Cruz',
+        contact_number_e164: '+639171234567',
+        home_address: '123 Rizal St',
+        expires_at: '2099-01-01T00:00:00Z',
+        revoked_at: null,
+      });
 
       vi.spyOn(supabaseModule, 'getServerSupabaseClients').mockReturnValue({
         admin: mockAdmin as any,
@@ -298,49 +327,47 @@ describe('Returning Visitor Provisional 1:1 Biometric & Enrollment Architecture 
     it('rejects with matched=false when different person has similarity below 0.363', async () => {
       const genuineDesc = makeDescriptor(1.0);
       const impostorDesc = makeDescriptor(99.0); // Different face vector
-      setupAuthAndPhotoMocks(impostorDesc);
+      
+      // Live selfie gets impostorDesc, reference portrait gets genuineDesc
+      vi.spyOn(actorsModule, 'getVerifiedSessionContext').mockResolvedValue({
+        actorId,
+        role: 'visitor',
+        isAnonymous: true,
+        isRecoverySession: false,
+        user: { id: actorId },
+        identity: 'anon-user',
+        email: null,
+      } as any);
 
-      const encrypted = encryptFaceTemplate(genuineDesc, testKey, 'v1');
+      vi.spyOn(verifyIdentityModule, 'inspectAndDownloadUpload').mockResolvedValue({
+        buffer: Buffer.from('dummy-photo-buffer'),
+        contentType: 'image/jpeg',
+        byteSize: 1024,
+      });
 
-      const mockAdmin = {
-        schema: vi.fn().mockReturnValue({
-          rpc: vi.fn().mockResolvedValue({ data: true, error: null }),
-        }),
-        from: vi.fn((table: string) => {
-          if (table === 'returning_face_templates') {
-            return {
-              select: vi.fn().mockReturnThis(),
-              eq: vi.fn().mockReturnThis(),
-              maybeSingle: vi.fn().mockResolvedValue({
-                data: {
-                  id: 'tpl-1',
-                  profile_id: profileId,
-                  encrypted_embedding: encrypted.encryptedEmbedding,
-                  iv: encrypted.iv,
-                  auth_tag: encrypted.authTag,
-                  key_version: encrypted.keyVersion,
-                  returning_visitor_profiles: {
-                    id: profileId,
-                    first_name: 'Juan',
-                    middle_name: null,
-                    last_name: 'Cruz',
-                    contact_number_e164: '+639171234567',
-                    expires_at: '2099-01-01T00:00:00Z',
-                    revoked_at: null,
-                  },
-                },
-                error: null,
-              }),
-            };
-          }
-          if (table === 'returning_identity_attempts') {
-            return {
-              insert: vi.fn().mockResolvedValue({ error: null }),
-            };
-          }
-          return {};
-        }),
-      };
+      let callCount = 0;
+      vi.spyOn(faceEngine, 'analyzeFaceImage').mockImplementation(async () => {
+        callCount++;
+        return {
+          quality: { passed: true, code: 'ok', message: 'ok' },
+          faces: [],
+          dominantFace: null,
+          descriptor: callCount === 1 ? impostorDesc : genuineDesc,
+          modelName: 'opencv_zoo_yunet_sface',
+          modelVersion: 'yunet_2023mar_sface_2021dec',
+        };
+      });
+
+      const mockAdmin = createMockAdmin({
+        id: profileId,
+        first_name: 'Juan',
+        middle_name: null,
+        last_name: 'Cruz',
+        contact_number_e164: '+639171234567',
+        home_address: '123 Rizal St',
+        expires_at: '2099-01-01T00:00:00Z',
+        revoked_at: null,
+      });
 
       vi.spyOn(supabaseModule, 'getServerSupabaseClients').mockReturnValue({
         admin: mockAdmin as any,
@@ -430,27 +457,19 @@ describe('Returning Visitor Provisional 1:1 Biometric & Enrollment Architecture 
           rpc: vi.fn().mockResolvedValue({ data: true, error: null }),
         }),
         from: vi.fn((table: string) => {
-          if (table === 'returning_face_templates') {
+          if (table === 'returning_visitor_profiles') {
             return {
               select: vi.fn().mockReturnThis(),
               eq: vi.fn().mockReturnThis(),
               maybeSingle: vi.fn().mockResolvedValue({
                 data: {
-                  id: 'tpl-1',
-                  profile_id: profileId,
-                  encrypted_embedding: encrypted.encryptedEmbedding,
-                  iv: encrypted.iv,
-                  auth_tag: encrypted.authTag,
-                  key_version: encrypted.keyVersion,
-                  returning_visitor_profiles: {
-                    id: profileId,
-                    first_name: 'Juan',
-                    last_name: 'Cruz',
-                    contact_number_e164: '+639171234567',
-                    // Expired in 2020
-                    expires_at: '2020-01-01T00:00:00Z',
-                    revoked_at: null,
-                  },
+                  id: profileId,
+                  first_name: 'Juan',
+                  last_name: 'Cruz',
+                  contact_number_e164: '+639171234567',
+                  // Expired in 2020
+                  expires_at: '2020-01-01T00:00:00Z',
+                  revoked_at: null,
                 },
                 error: null,
               }),

@@ -77,8 +77,8 @@ describe('Returning Visitor Biometrics & Safety Gate Contract', () => {
       delete process.env.RETURNING_FACE_MIN_COSINE;
       delete process.env.RETURNING_FACE_THRESHOLD_MODE;
 
-      expect(isTemplateKeyConfigured()).toBe(true);
-      expect(isReturningEnrollmentAvailable()).toBe(true); // Enrollment is ready!
+      expect(isTemplateKeyConfigured()).toBe(false);
+      expect(isReturningEnrollmentAvailable()).toBe(false); // Enrollment is retired
       expect(isReturningCryptoConfigured()).toBe(false); // Verification crypto is incomplete
       expect(isThresholdConfigured()).toBe(false);
       expect(isReturningVisitorAvailable()).toBe(false); // Verification gate remains closed
@@ -86,7 +86,7 @@ describe('Returning Visitor Biometrics & Safety Gate Contract', () => {
       const req = new Request('http://localhost/api/passes/capabilities', { method: 'GET' });
       const res = await capabilitiesHandler.fetch(req);
       const data = await res.json();
-      expect(data.returningEnrollmentAvailable).toBe(true);
+      expect(data.returningEnrollmentAvailable).toBe(false);
       expect(data.returningVisitorAvailable).toBe(false);
       expect(data.thresholdMode).toBe('unconfigured');
     });
@@ -107,7 +107,7 @@ describe('Returning Visitor Biometrics & Safety Gate Contract', () => {
       const res = await capabilitiesHandler.fetch(req);
       const data = await res.json();
       expect(data.returningVisitorAvailable).toBe(true);
-      expect(data.returningEnrollmentAvailable).toBe(true);
+      expect(data.returningEnrollmentAvailable).toBe(false);
       expect(data.returningCryptoConfigured).toBe(true);
       expect(data.thresholdConfigured).toBe(true);
       expect(data.thresholdMode).toBe('provisional');

@@ -175,37 +175,37 @@ describe('Returning Visitor Fail-Closed Gallery & Descriptor Validation (Priorit
         modelVersion: 'v1',
       });
 
-      // Template 1 has corrupted ciphertext and invalid auth tag
+      // Reference portrait missing for candidate
       const badProfileId = '55555555-5555-4555-8555-555555555555';
-      const corruptedTemplate = {
-        id: '22222222-2222-4222-8222-222222222222',
-        profile_id: badProfileId,
-        encrypted_embedding: 'deadbeef1234',
-        iv: '0102030405060708090a0b0c',
-        auth_tag: '0102030405060708090a0b0c0d0e0f10',
-        key_version: 'v1',
-        returning_visitor_profiles: {
-          id: badProfileId,
-          first_name: 'Corrupt',
-          middle_name: null,
-          last_name: 'Visitor',
-          contact_number_e164: '+639171111111',
-          expires_at: '2099-01-01T00:00:00Z',
-          revoked_at: null,
-        },
-      };
 
       const mockAdmin = {
         schema: vi.fn().mockReturnValue({
           rpc: vi.fn().mockResolvedValue({ data: true, error: null }),
         }),
         from: vi.fn((table: string) => {
-          if (table === 'returning_face_templates') {
+          if (table === 'returning_visitor_profiles') {
             return {
               select: vi.fn().mockReturnThis(),
               eq: vi.fn().mockReturnThis(),
               maybeSingle: vi.fn().mockResolvedValue({
-                data: corruptedTemplate,
+                data: {
+                  id: badProfileId,
+                  first_name: 'NoPortrait',
+                  middle_name: null,
+                  last_name: 'Visitor',
+                  contact_number_e164: '+639171111111',
+                  expires_at: '2099-01-01T00:00:00Z',
+                  revoked_at: null,
+                },
+                error: null,
+              }),
+            };
+          }
+          if (table === 'visitors') {
+            return {
+              select: vi.fn().mockReturnThis(),
+              eq: vi.fn().mockResolvedValue({
+                data: [], // No linked visitors or portrait found
                 error: null,
               }),
             };
@@ -235,12 +235,13 @@ describe('Returning Visitor Fail-Closed Gallery & Descriptor Validation (Priorit
 
       const res = await identifyReturningHandler.fetch(req);
       const json = await res.json();
-      expect(res.status).toBe(500);
-      expect(json.error).toBe('biometric_decryption_failed');
+      expect(res.status).toBe(422);
+      expect(json.error).toBe('reference_portrait_unavailable');
+      expect(json.requiresNewRegistration).toBe(true);
       expect(json.matchToken).toBeUndefined();
     });
 
-    it('returns 200 matched=true on 1:1 match with valid candidate profile', async () => {
+    it('returns 200 matched=true on 1:1 match with valid candidate profile and reference portrait', async () => {
       vi.spyOn(actorsModule, 'getVerifiedSessionContext').mockResolvedValue({
         actorId,
         role: 'visitor',
@@ -267,39 +268,54 @@ describe('Returning Visitor Fail-Closed Gallery & Descriptor Validation (Priorit
         modelVersion: 'v1',
       });
 
-      const validDesc = makeDescriptor(1.0); // Exact match
-      const encryptedValid = encryptFaceTemplate(validDesc, testKey, 'v1');
-
       const goodProfileId = '66666666-6666-4666-8666-666666666666';
-      const validTemplate = {
-        id: '77777777-7777-4777-8777-777777777777',
-        profile_id: goodProfileId,
-        encrypted_embedding: encryptedValid.encryptedEmbedding,
-        iv: encryptedValid.iv,
-        auth_tag: encryptedValid.authTag,
-        key_version: encryptedValid.keyVersion,
-        returning_visitor_profiles: {
-          id: goodProfileId,
-          first_name: 'Good',
-          middle_name: null,
-          last_name: 'Match',
-          contact_number_e164: '+639172222222',
-          expires_at: '2099-01-01T00:00:00Z',
-          revoked_at: null,
-        },
-      };
 
       const mockAdmin = {
         schema: vi.fn().mockReturnValue({
           rpc: vi.fn().mockResolvedValue({ data: true, error: null }),
         }),
         from: vi.fn((table: string) => {
-          if (table === 'returning_face_templates') {
+          if (table === 'returning_visitor_profiles') {
             return {
               select: vi.fn().mockReturnThis(),
               eq: vi.fn().mockReturnThis(),
               maybeSingle: vi.fn().mockResolvedValue({
-                data: validTemplate,
+                data: {
+                  id: goodProfileId,
+                  first_name: 'Good',
+                  middle_name: null,
+                  last_name: 'Match',
+                  contact_number_e164: '+639172222222',
+                  expires_at: '2099-01-01T00:00:00Z',
+                  revoked_at: null,
+                },
+                error: null,
+              }),
+            };
+          }
+          if (table === 'visitors') {
+            return {
+              select: vi.fn().mockReturnThis(),
+              eq: vi.fn().mockResolvedValue({
+                data: [{ id: 'vis-1' }],
+                error: null,
+              }),
+            };
+          }
+          if (table === 'visitor_evidence') {
+            return {
+              select: vi.fn().mockReturnThis(),
+              in: vi.fn().mockReturnThis(),
+              eq: vi.fn().mockReturnThis(),
+              is: vi.fn().mockReturnThis(),
+              order: vi.fn().mockReturnThis(),
+              limit: vi.fn().mockReturnThis(),
+              maybeSingle: vi.fn().mockResolvedValue({
+                data: {
+                  bucket_id: 'pass-portraits',
+                  object_path: 'portraits/good.jpg',
+                  created_at: '2026-01-01T00:00:00Z',
+                },
                 error: null,
               }),
             };
@@ -318,6 +334,14 @@ describe('Returning Visitor Fail-Closed Gallery & Descriptor Validation (Priorit
           }
           return {};
         }),
+        storage: {
+          from: vi.fn().mockReturnValue({
+            download: vi.fn().mockResolvedValue({
+              data: new Blob([Buffer.from('dummy-portrait')]),
+              error: null,
+            }),
+          }),
+        },
       };
 
       vi.spyOn(supabaseModule, 'getServerSupabaseClients').mockReturnValue({
