@@ -332,7 +332,6 @@ export const SERVER_DIRECT_TABLE_OPERATIONS: DirectServerTableOperation[] = [
   { file: 'server/routes/passes/abandon-intent.ts', table: 'upload_intents', operations: ['SELECT', 'UPDATE'], purpose: 'Inspect upload intent metadata and record storage cleanup marker' },
   { file: 'server/routes/passes/identify-returning.ts', table: 'upload_intents', operations: ['SELECT'], purpose: 'Validate photo upload intent for returning visitor recognition' },
   { file: 'server/routes/passes/identify-returning.ts', table: 'returning_visitor_profiles', operations: ['SELECT'], purpose: 'Fetch returning visitor profile for ephemeral verification' },
-  { file: 'server/routes/passes/identify-returning.ts', table: 'returning_face_templates', operations: ['SELECT'], purpose: 'Query active encrypted face templates for 1:N comparison' },
   { file: 'server/routes/passes/identify-returning.ts', table: 'visitors', operations: ['SELECT'], purpose: 'Lookup linked visitors for original reference portrait' },
   { file: 'server/routes/passes/identify-returning.ts', table: 'visitor_evidence', operations: ['SELECT'], purpose: 'Fetch original reference portrait and historical ID' },
   { file: 'server/routes/passes/identify-returning.ts', table: 'returning_visitor_vehicles', operations: ['SELECT'], purpose: 'Fetch saved vehicles for identified returning visitor' },

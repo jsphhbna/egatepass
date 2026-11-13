@@ -55,37 +55,6 @@ export function hydrateReturningAddress(
   ) {
     const cleanBuilding = typeof psgc.houseBuilding === 'string' ? psgc.houseBuilding.trim() : '';
     const cleanStreet = typeof psgc.street === 'string' ? psgc.street.trim() : '';
-    const cleanPostal = typeof psgc.postalCode === 'string' ? psgc.postalCode.trim() : '';
-    const cleanSource = typeof psgc.postalCodeSource === 'string' ? psgc.postalCodeSource.trim() : null;
-
-    let postalResolution: SelectedPsgcAddress['postalResolution'] = undefined;
-    if (cleanPostal) {
-      if (cleanSource === 'PHLPost') {
-        const candidateMapping =
-          psgc.postalResolution?.mappingType ||
-          (psgc as any).postalMappingType;
-
-        const knownMapping =
-          candidateMapping === 'exact_barangay' || candidateMapping === 'unique_city'
-            ? candidateMapping
-            : 'unknown';
-
-        postalResolution = {
-          postalCode: cleanPostal,
-          isAutoFilled: true,
-          requiresConfirmation: false,
-          mappingType: knownMapping,
-          message: 'PHLPost standard postal code',
-        };
-      } else {
-        postalResolution = {
-          postalCode: cleanPostal,
-          isAutoFilled: false,
-          requiresConfirmation: false,
-          mappingType: 'unmapped',
-        };
-      }
-    }
 
     return {
       selectedPsgc: {
@@ -108,13 +77,10 @@ export function hydrateReturningAddress(
           code: psgc.barangay.code.trim(),
           name: (psgc.barangay.name || '').trim(),
         },
-        postalCode: cleanPostal || null,
-        postalCodeSource: cleanSource || (cleanPostal ? 'manual' : null),
-        postalResolution,
       },
       homeBuilding: cleanBuilding,
       homeStreet: cleanStreet,
-      postalCode: cleanPostal,
+      postalCode: '',
     };
   }
 

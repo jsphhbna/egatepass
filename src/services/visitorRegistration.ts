@@ -177,6 +177,23 @@ export type IssueTransactionPhase =
 
 export type PortalIssueTransactionPhase = IssueTransactionPhase;
 
+/**
+ * Recursively freezes plain objects and arrays to guarantee immutable transaction snapshots.
+ */
+export function deepFreeze<T>(obj: T): Readonly<T> {
+  if (obj === null || typeof obj !== 'object') {
+    return obj;
+  }
+  Object.freeze(obj);
+  for (const key of Object.getOwnPropertyNames(obj)) {
+    const val = (obj as any)[key];
+    if (val !== null && typeof val === 'object' && !Object.isFrozen(val)) {
+      deepFreeze(val);
+    }
+  }
+  return obj as Readonly<T>;
+}
+
 export function shouldReuseUploadedIntentForIssue(
   transaction: IssueTransaction | null | undefined,
   checkpoint: UploadCheckpoint | null | undefined,
@@ -185,9 +202,9 @@ export function shouldReuseUploadedIntentForIssue(
   if (!checkpoint || !intentId || !checkpoint.uploaded) {
     return false;
   }
-  // Case A — Ambiguous transaction: reuse original intent for exact replay
+  // Case A — Ambiguous or conflict transaction: reuse original intent for exact replay
   // even if local expiresAt has passed (server may already have committed the original pass).
-  if (transaction?.phase === 'ambiguous') {
+  if (transaction?.phase === 'ambiguous' || transaction?.phase === 'existing_pass_conflict' || transaction?.phase === 'dispatched') {
     return true;
   }
   // Case B — Normal/editable transaction: only reuse when checkpoint has a valid future expiresAt.
@@ -1524,15 +1541,27 @@ export async function issueVisitorPass(
 
   const effectiveRequestId = transaction?.requestId ? transaction.requestId : requestId;
 
-  // Upload photo intent with retry-safe checkpointing for new visitor
+  // If transaction had previously submitted a payload in an ambiguous or replayed attempt, preserve the exact payload for replay safety
+  const existingFrozen = transaction?.submittedPayload;
+  const isReplay = Boolean(
+    existingFrozen && (transaction?.phase === 'ambiguous' || transaction?.phase === 'existing_pass_conflict' || transaction?.phase === 'dispatched')
+  );
+
   let photoIntentId: string | null = null;
   let idIntentId: string | null = null;
+  let vehiclePhotoIntentId: string | null = null;
 
-  if (visitor.registrationMode === 'returning') {
+  if (isReplay && existingFrozen) {
+    // Exact replay: strictly reuse existing frozen intent IDs, zero new upload intents created
+    photoIntentId = existingFrozen.photoIntentId ?? transaction?.photoIntentId ?? null;
+    idIntentId = existingFrozen.idIntentId ?? transaction?.idIntentId ?? null;
+    vehiclePhotoIntentId = existingFrozen.vehiclePhotoIntentId ?? transaction?.vehiclePhotoIntentId ?? null;
+  } else if (visitor.registrationMode === 'returning') {
     // Ephemeral returning visitor verification: no photo or ID upload intent created or reused
     photoIntentId = null;
     idIntentId = null;
   } else {
+    // Upload photo intent with retry-safe checkpointing for new visitor
     if (shouldReuseUploadedIntentForIssue(transaction, transaction?.photoCheckpoint, transaction?.photoIntentId)) {
       photoIntentId = transaction!.photoIntentId!;
     } else if (photo) {
@@ -1551,9 +1580,8 @@ export async function issueVisitorPass(
     }
   }
 
-  // If vehicle arrival declared, upload vehicle photo with retry-safe checkpointing
-  let vehiclePhotoIntentId: string | null = null;
-  if (visitor.arrivalMode === 'vehicle') {
+  // If vehicle arrival declared and not exact replay, upload vehicle photo with retry-safe checkpointing
+  if (!isReplay && visitor.arrivalMode === 'vehicle') {
     if (shouldReuseUploadedIntentForIssue(transaction, transaction?.vehiclePhotoCheckpoint, transaction?.vehiclePhotoIntentId)) {
       vehiclePhotoIntentId = transaction!.vehiclePhotoIntentId!;
     } else if (vehiclePhoto) {
@@ -1561,12 +1589,6 @@ export async function issueVisitorPass(
       vehiclePhotoIntentId = vehRes.intentId;
     }
   }
-
-  // If transaction had previously submitted a payload in an ambiguous or replayed attempt, preserve the exact payload for replay safety
-  const existingFrozen = transaction?.submittedPayload;
-  const isReplay = Boolean(
-    existingFrozen && (transaction?.phase === 'ambiguous' || transaction?.phase === 'existing_pass_conflict' || transaction?.phase === 'dispatched')
-  );
 
   const effectiveVisitor = (isReplay && existingFrozen?.visitor)
     ? existingFrozen.visitor
@@ -1607,16 +1629,25 @@ export async function issueVisitorPass(
         expectedGate: effectiveVisitor.expectedGate?.trim() || undefined,
       };
 
-  // Record submitted payload (deep clone and freeze) and transition to 'dispatched' immediately before network dispatch
+  // Record submitted payload (recursively deep-frozen) and transition to 'dispatched' immediately before network dispatch
   if (transaction) {
     if (!existingFrozen || !isReplay) {
-      transaction.submittedPayload = Object.freeze({
+      transaction.submittedPayload = deepFreeze({
         visitor: JSON.parse(JSON.stringify(effectiveVisitor)),
         wirePayload: JSON.parse(JSON.stringify(wirePayload)),
         source,
         photoIntentId,
         idIntentId,
         vehiclePhotoIntentId,
+        requestId: effectiveRequestId,
+        actorId: transaction.actorId,
+        registrationMode: effectiveVisitor.registrationMode,
+        arrivalMode: effectiveVisitor.arrivalMode,
+        psgc: effectiveVisitor.psgc ? JSON.parse(JSON.stringify(effectiveVisitor.psgc)) : null,
+        vehicle: effectiveVisitor.vehicle ? JSON.parse(JSON.stringify(effectiveVisitor.vehicle)) : null,
+        officeId: effectiveVisitor.officeId || null,
+        returning: effectiveVisitor.returning ? JSON.parse(JSON.stringify(effectiveVisitor.returning)) : null,
+        emailVerificationToken: effectiveVisitor.emailVerificationToken?.trim() || null,
       });
     }
     transaction.phase = 'dispatched';

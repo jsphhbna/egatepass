@@ -77,26 +77,22 @@ describe('hydrateReturningAddress — complete profile', () => {
     expect(result.homeStreet).toBe('Nagtahan St.');
   });
 
-  it('restores postalCode from profile.psgc.postalCode', () => {
+  it('does not restore postalCode even if present in legacy profile', () => {
     const result = hydrateReturningAddress(makeProfile());
-    expect(result.postalCode).toBe('1008');
-  });
-
-  it('also sets postalCode in selectedPsgc so the selector shows it correctly', () => {
-    const result = hydrateReturningAddress(makeProfile());
-    expect(result.selectedPsgc!.postalCode).toBe('1008');
+    expect(result.postalCode).toBe('');
+    expect(result.selectedPsgc!.postalCode).toBeUndefined();
   });
 });
 
 // ---------------------------------------------------------------------------
-// 2. Postal code is a separate top-level field, not buried inside selectedPsgc only
+// 2. Postal code decommissioning — hydration never restores postal codes
 // ---------------------------------------------------------------------------
 
-describe('hydrateReturningAddress — postal code independence', () => {
-  it('postalCode field mirrors selectedPsgc.postalCode exactly', () => {
+describe('hydrateReturningAddress — postal code decommissioning', () => {
+  it('postalCode is always empty string and never restored from legacy profile', () => {
     const result = hydrateReturningAddress(makeProfile({ postalCode: '5000' }));
-    expect(result.postalCode).toBe('5000');
-    expect(result.selectedPsgc!.postalCode).toBe('5000');
+    expect(result.postalCode).toBe('');
+    expect(result.selectedPsgc!.postalCode).toBeUndefined();
   });
 
   it('postalCode is empty string when not in profile, not undefined', () => {
@@ -124,14 +120,14 @@ describe('hydrateReturningAddress — partial profile (missing optional fields)'
   it('missing houseBuilding does NOT erase the other restored fields', () => {
     const result = hydrateReturningAddress(makeProfile({ houseBuilding: undefined }));
     expect(result.homeStreet).toBe('Nagtahan St.');
-    expect(result.postalCode).toBe('1008');
+    expect(result.postalCode).toBe('');
     expect(result.selectedPsgc).not.toBeNull();
   });
 
   it('missing street does NOT erase the other restored fields', () => {
     const result = hydrateReturningAddress(makeProfile({ street: undefined }));
     expect(result.homeBuilding).toBe('Unit 4B');
-    expect(result.postalCode).toBe('1008');
+    expect(result.postalCode).toBe('');
     expect(result.selectedPsgc).not.toBeNull();
   });
 
@@ -171,12 +167,12 @@ describe('hydrateReturningAddress — cross-profile isolation', () => {
     // Second profile should have its own values — not the first's
     expect(second.homeBuilding).toBe('Blk 3 Lot 7');
     expect(second.homeStreet).toBe('Rizal Ave.');
-    expect(second.postalCode).toBe('6000');
+    expect(second.postalCode).toBe('');
     expect(second.selectedPsgc!.city.code).toBe('0722718000');
 
     // First profile result is unaffected (functional purity)
     expect(first.homeBuilding).toBe('Unit 4B');
-    expect(first.postalCode).toBe('1008');
+    expect(first.postalCode).toBe('');
   });
 
   it('second profile with empty houseBuilding clears homeBuilding (no leakage)', () => {
@@ -312,7 +308,7 @@ describe('GetPassPage address hydration — source contract', () => {
 // ---------------------------------------------------------------------------
 
 describe('issue.ts returning profile update — PSGC persistence', () => {
-  it('issue.ts saveUpdates block includes psgc field assignments', async () => {
+  it('issue.ts saveUpdates block includes psgc field assignments without postal codes', async () => {
     const src = await import('fs').then((fs) =>
       fs.readFileSync('server/routes/passes/issue.ts', 'utf-8')
     );
@@ -321,7 +317,7 @@ describe('issue.ts returning profile update — PSGC persistence', () => {
     expect(src).toContain('profileUpdate.psgc_barangay_code');
     expect(src).toContain('profileUpdate.home_building');
     expect(src).toContain('profileUpdate.home_street');
-    expect(src).toContain('profileUpdate.postal_code');
+    expect(src).not.toContain('profileUpdate.postal_code');
   });
 
   it('issue.ts only updates PSGC when regionCode, cityCode, barangayCode are all present', async () => {
@@ -341,18 +337,18 @@ describe('issue.ts returning profile update — PSGC persistence', () => {
 });
 
 // ---------------------------------------------------------------------------
-// 10. identify-returning.ts — profile query selects all address columns
+// 10. identify-returning.ts — profile query selects all address columns without postal
 // ---------------------------------------------------------------------------
 
 describe('identify-returning.ts — profile query completeness', () => {
-  it('selects home_building, home_street, postal_code, postal_code_source', async () => {
+  it('selects home_building and home_street without postal fields', async () => {
     const src = await import('fs').then((fs) =>
       fs.readFileSync('server/routes/passes/identify-returning.ts', 'utf-8')
     );
     expect(src).toContain('home_building');
     expect(src).toContain('home_street');
-    expect(src).toContain('postal_code');
-    expect(src).toContain('postal_code_source');
+    expect(src).not.toContain('postal_code');
+    expect(src).not.toContain('postal_code_source');
   });
 
   it('serializes houseBuilding from home_building in the success response', async () => {
@@ -369,11 +365,11 @@ describe('identify-returning.ts — profile query completeness', () => {
     expect(src).toMatch(/street:\s*(?:cleanStreet|profile\.home_street)/);
   });
 
-  it('serializes postalCode from postal_code in the success response', async () => {
+  it('does not serialize postalCode or postal_code in the success response', async () => {
     const src = await import('fs').then((fs) =>
       fs.readFileSync('server/routes/passes/identify-returning.ts', 'utf-8')
     );
-    expect(src).toMatch(/postalCode:\s*(?:cleanPostal|profile\.postal_code)/);
+    expect(src).not.toMatch(/postalCode:\s*(?:cleanPostal|profile\.postal_code)/);
   });
 
   it('guards psgc serialization on region/city/barangay codes being present', async () => {

@@ -350,7 +350,7 @@ async function handleRequest(request: Request): Promise<Response> {
           id, owner_id, source, full_name, contact_number, purpose, visit_date, home_address,
           registration_mode, arrival_mode, returning_profile_id, home_location_lat, home_location_lon,
           psgc_region_code, psgc_province_code, psgc_city_code, psgc_barangay_code,
-          home_building, home_street, postal_code
+          home_building, home_street
         `)
         .eq('id', existingPass.visitor_id)
         .maybeSingle();
@@ -821,8 +821,8 @@ async function handleRequest(request: Request): Promise<Response> {
         requested_psgc_barangay_code: psgc?.barangayCode || (coordRes.valid ? '1380606014' : '1380606014'),
         requested_home_building: psgc?.houseBuilding || null,
         requested_home_street: psgc?.street || null,
-        requested_postal_code: psgc?.postalCode || null,
-        requested_postal_code_source: psgc?.postalCodeSource || null,
+        requested_postal_code: null,
+        requested_postal_code_source: null,
         // Legacy coordinates (optional)
         requested_home_location_lat: normalizedHomeLocation?.lat ?? null,
         requested_home_location_lon: normalizedHomeLocation?.lon ?? null,
@@ -958,8 +958,6 @@ async function handleRequest(request: Request): Promise<Response> {
             profileUpdate.psgc_barangay_name = updateBarangayName;
             profileUpdate.home_building = psgc.houseBuilding && psgc.houseBuilding.trim() ? psgc.houseBuilding.trim() : null;
             profileUpdate.home_street = psgc.street && psgc.street.trim() ? psgc.street.trim() : null;
-            profileUpdate.postal_code = psgc.postalCode && psgc.postalCode.trim() ? psgc.postalCode.trim() : null;
-            profileUpdate.postal_code_source = psgc.postalCodeSource && psgc.postalCodeSource.trim() ? psgc.postalCodeSource.trim() : null;
 
             if (!visitor.homeAddress || !visitor.homeAddress.trim()) {
               const formattedUpdateAddress = [

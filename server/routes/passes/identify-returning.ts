@@ -21,7 +21,6 @@ import { getServerSupabaseClients } from '../../supabase.js';
 import { getClientNetworkIdentifier } from './issue.js';
 import {
   analyzeFaceImage,
-  decryptFaceTemplate,
   computeCosineSimilarity,
   isFaceVerificationConfigured,
   validateFaceDescriptor,
@@ -32,8 +31,7 @@ import { verifyCalibrationArtifact, CalibrationArtifactData } from '../../lib/ca
 export const SFACE_PROVISIONAL_COSINE_THRESHOLD = 0.363;
 
 export function isTemplateKeyConfigured(): boolean {
-  const templateKey = process.env.RETURNING_VISITOR_TEMPLATE_KEY;
-  return Boolean(templateKey && templateKey.trim().length >= 32);
+  return false; // Retired permanent biometric template key
 }
 
 export function isMatchSecretConfigured(): boolean {
@@ -42,7 +40,7 @@ export function isMatchSecretConfigured(): boolean {
 }
 
 export function isReturningCryptoConfigured(): boolean {
-  return isTemplateKeyConfigured() && isMatchSecretConfigured();
+  return isMatchSecretConfigured();
 }
 
 export function getVerifiedCalibrationArtifact(): CalibrationArtifactData | null {
@@ -105,7 +103,7 @@ export function isReturningCalibrationConfigured(): boolean {
 }
 
 export function isReturningEnrollmentAvailable(): boolean {
-  return isFaceVerificationConfigured() && isTemplateKeyConfigured();
+  return false; // Enrollment is completely retired
 }
 
 export function isReturningVisitorAvailable(): boolean {
@@ -252,7 +250,6 @@ async function handleRequest(request: Request): Promise<Response> {
 
     const minCosine = getResolvedCosineThreshold()!;
     const matchSecret = process.env.RETURNING_MATCH_TOKEN_SECRET!;
-    const templateKey = process.env.RETURNING_VISITOR_TEMPLATE_KEY;
 
     // 1. Rate limiting - Actor Bucket (5 verification attempts per 10 minutes)
     const actorKeyHex = createHash('sha256').update(`actor:${actorId}`).digest('hex');
@@ -377,7 +374,6 @@ async function handleRequest(request: Request): Promise<Response> {
     let targetEmbedding: Float32Array | null = null;
     let origEvDate: string | null = null;
     let historicalIdDate: string | null = null;
-    let usedLegacyTemplateFallback = false;
 
     try {
       const profQuery = admin.from('returning_visitor_profiles');
@@ -388,7 +384,7 @@ async function handleRequest(request: Request): Promise<Response> {
             home_location_lat, home_location_lon,
             psgc_version, psgc_region_code, psgc_province_code, psgc_city_code, psgc_barangay_code,
             psgc_region_name, psgc_province_name, psgc_city_municipality_name, psgc_barangay_name,
-            home_building, home_street, postal_code, postal_code_source,
+            home_building, home_street,
             created_at, expires_at, revoked_at
           `)
           .eq('id', profileId)
@@ -402,53 +398,6 @@ async function handleRequest(request: Request): Promise<Response> {
       }
     } catch (profErr) {
       console.warn('Could not query returning_visitor_profiles directly:', profErr);
-    }
-
-    // Fallback: check returning_face_templates if returning_visitor_profiles was not mocked or returned null
-    if (!profile) {
-      try {
-        const tplQuery = admin.from('returning_face_templates');
-        if (tplQuery && typeof tplQuery.select === 'function') {
-          const q = tplQuery
-            .select('id, profile_id, encrypted_embedding, iv, auth_tag, key_version, returning_visitor_profiles(id, first_name, middle_name, last_name, contact_number_e164, home_address, expires_at, revoked_at)')
-            .eq('profile_id', profileId);
-          const res = await (typeof q.maybeSingle === 'function' ? q.maybeSingle() : q);
-          if (res?.data) {
-            const tpl: any = Array.isArray(res.data) ? res.data[0] : res.data;
-            if (tpl) {
-              const p = Array.isArray(tpl.returning_visitor_profiles) ? tpl.returning_visitor_profiles[0] : tpl.returning_visitor_profiles;
-              profile = {
-                id: p?.id || profileId,
-                first_name: p?.first_name || 'Visitor',
-                middle_name: p?.middle_name || null,
-                last_name: p?.last_name || 'Returning',
-                contact_number_e164: p?.contact_number_e164 || '+639171234567',
-                home_address: p?.home_address || 'Manila',
-                expires_at: p?.expires_at || new Date(Date.now() + 86400000).toISOString(),
-                revoked_at: p?.revoked_at || null,
-              };
-              if (!targetEmbedding && templateKey && tpl.encrypted_embedding) {
-                try {
-                  targetEmbedding = decryptFaceTemplate(
-                    tpl.encrypted_embedding,
-                    tpl.iv,
-                    tpl.auth_tag,
-                    templateKey,
-                    tpl.key_version
-                  );
-                  usedLegacyTemplateFallback = true;
-                  console.warn('returning_legacy_template_fallback_used', { profileId: profile.id, stage: 'profile_lookup' });
-                } catch (decErr) {
-                  console.error('Decryption failed for template:', tpl.id || profileId, decErr);
-                  return jsonResponse(500, { error: 'biometric_decryption_failed' });
-                }
-              }
-            }
-          }
-        }
-      } catch (err: any) {
-        if (err?.error === 'biometric_decryption_failed') throw err;
-      }
     }
 
     if (!profile) {
@@ -525,41 +474,6 @@ async function handleRequest(request: Request): Promise<Response> {
       }
     }
 
-    // Fallback for legacy profiles with encrypted template in returning_face_templates
-    if (!targetEmbedding && templateKey) {
-      try {
-        const tplQuery = admin.from('returning_face_templates');
-        if (tplQuery && typeof tplQuery.select === 'function') {
-          let chain = tplQuery
-            .select('encrypted_embedding, iv, auth_tag, key_version')
-            .eq('profile_id', profile.id);
-          if (typeof (chain as any).order === 'function') chain = (chain as any).order('created_at', { ascending: false });
-          if (typeof (chain as any).limit === 'function') chain = (chain as any).limit(1);
-          const { data: targetTemplate } = await (typeof (chain as any).maybeSingle === 'function' ? (chain as any).maybeSingle() : chain);
-
-          if (targetTemplate && targetTemplate.encrypted_embedding) {
-            try {
-              targetEmbedding = decryptFaceTemplate(
-                targetTemplate.encrypted_embedding,
-                targetTemplate.iv,
-                targetTemplate.auth_tag,
-                templateKey,
-                targetTemplate.key_version
-              );
-              usedLegacyTemplateFallback = true;
-              console.warn('returning_legacy_template_fallback_used', { profileId: profile.id, stage: 'embedding_fallback' });
-            } catch (decErr) {
-              console.error('Fallback decryption failed for legacy template:', decErr);
-              return jsonResponse(500, { error: 'biometric_decryption_failed' });
-            }
-          }
-        }
-      } catch (tplErr: any) {
-        if (tplErr?.error === 'biometric_decryption_failed') throw tplErr;
-        console.warn('Could not query returning face templates:', tplErr);
-      }
-    }
-
     if (!targetEmbedding) {
       return jsonResponse(422, {
         available: true,
@@ -602,6 +516,7 @@ async function handleRequest(request: Request): Promise<Response> {
       const attemptOutcome = isCalibrated ? 'matched' : 'provisional_matched';
 
       // Persist attempt with photo_intent_id = null (ephemeral!)
+      // Numeric similarity score is set to null to protect biometric privacy
       const { error: insertErr } = await admin.from('returning_identity_attempts').insert({
         owner_id: actorId,
         request_id: requestId,
@@ -609,7 +524,7 @@ async function handleRequest(request: Request): Promise<Response> {
         matched_profile_id: profile.id,
         outcome: attemptOutcome,
         threshold_mode: thresholdMode,
-        best_score: Number(cosineScore.toFixed(4)),
+        best_score: null,
         second_score: null,
         model_name: modelName,
         model_version: modelVersion,
@@ -671,18 +586,14 @@ async function handleRequest(request: Request): Promise<Response> {
 
       const cleanHouseBuilding = typeof profile.home_building === 'string' ? profile.home_building.trim() : '';
       const cleanStreet = typeof profile.home_street === 'string' ? profile.home_street.trim() : '';
-      const cleanPostal = typeof profile.postal_code === 'string' ? profile.postal_code.trim() : '';
-      const cleanPostalSource = typeof profile.postal_code_source === 'string' ? profile.postal_code_source.trim() : '';
 
       return jsonResponse(200, {
         available: true,
         matched: true,
         matchToken,
         expiresAt,
-        similarity: Number(cosineScore.toFixed(4)),
-        threshold: minCosine,
         thresholdMode,
-        referenceSource: usedLegacyTemplateFallback ? 'legacy_template_fallback' : 'original_portrait',
+        referenceSource: 'original_portrait',
         verificationState: isCalibrated ? 'calibrated' : 'provisional',
         guardVerificationRequired: !isCalibrated,
         message: isCalibrated
@@ -704,8 +615,6 @@ async function handleRequest(request: Request): Promise<Response> {
             barangay: { code: profile.psgc_barangay_code, name: resolvedLocality.barangayName },
             houseBuilding: cleanHouseBuilding || undefined,
             street: cleanStreet || undefined,
-            postalCode: cleanPostal || undefined,
-            postalCodeSource: cleanPostalSource || undefined,
           } : null,
           homeLocation: (profile.home_location_lat != null && profile.home_location_lon != null)
             ? {
@@ -741,7 +650,7 @@ async function handleRequest(request: Request): Promise<Response> {
       matched_profile_id: profile.id,
       outcome: 'low_similarity',
       threshold_mode: thresholdMode,
-      best_score: Number(cosineScore.toFixed(4)),
+      best_score: null,
       second_score: null,
       model_name: modelName,
       model_version: modelVersion,
@@ -756,8 +665,6 @@ async function handleRequest(request: Request): Promise<Response> {
     return jsonResponse(200, {
       available: true,
       matched: false,
-      similarity: Number(cosineScore.toFixed(4)),
-      threshold: minCosine,
       thresholdMode,
       message: 'Photo did not match the selected returning visitor profile. Please retake photo or register as a new visitor.',
     });

@@ -34,8 +34,17 @@ export interface PaddleOcrPredictionResult {
 
 let cachedPaddleOcrInstance: any = null;
 let paddleOcrInitPromise: Promise<any> | null = null;
+let currentInitGeneration = 0;
+let currentPredictionGeneration = 0;
 const PADDLE_INIT_TIMEOUT_MS = 15000;
 const PADDLE_PREDICT_TIMEOUT_MS = 15000;
+
+/**
+ * Cancels or invalidates any pending PaddleOCR prediction jobs.
+ */
+export function cancelPendingPaddleOcr(): void {
+  currentPredictionGeneration++;
+}
 
 /**
  * Lazily initialize and return a singleton PaddleOCR instance configured for PP-OCRv6 Small models.
@@ -51,6 +60,7 @@ export async function getPaddleOcrInstance(
     return paddleOcrInitPromise;
   }
 
+  const generation = ++currentInitGeneration;
   let timer: ReturnType<typeof setTimeout> | undefined;
 
   const initPromise = (async () => {
@@ -70,18 +80,41 @@ export async function getPaddleOcrInstance(
         },
       });
 
+      // Generation check: If this initialization was abandoned or superseded (e.g. timeout fired or terminated):
+      if (generation !== currentInitGeneration) {
+        try {
+          const anyOcr = ocr as any;
+          if (typeof anyOcr?.terminate === 'function') {
+            await anyOcr.terminate();
+          } else if (typeof anyOcr?.destroy === 'function') {
+            await anyOcr.destroy();
+          }
+        } catch {
+          // Ignore disposal errors
+        }
+        throw new Error('PaddleOCR initialization superseded or timed out');
+      }
+
       if (onProgress) onProgress(40, 'Neural OCR engine ready');
       cachedPaddleOcrInstance = ocr;
       return ocr;
     } catch (err) {
-      cachedPaddleOcrInstance = null;
-      paddleOcrInitPromise = null;
+      if (generation === currentInitGeneration) {
+        cachedPaddleOcrInstance = null;
+        paddleOcrInitPromise = null;
+      }
       throw err;
     }
   })();
 
   const timeoutPromise = new Promise<never>((_, reject) => {
     timer = setTimeout(() => {
+      // Invalidate this generation so late resolution discards and disposes the instance
+      if (currentInitGeneration === generation) {
+        currentInitGeneration++;
+      }
+      cachedPaddleOcrInstance = null;
+      paddleOcrInitPromise = null;
       reject(new Error(`PaddleOCR initialization timed out after ${PADDLE_INIT_TIMEOUT_MS}ms`));
     }, PADDLE_INIT_TIMEOUT_MS);
   });
@@ -93,7 +126,9 @@ export async function getPaddleOcrInstance(
     })
     .catch(async (err) => {
       if (timer) clearTimeout(timer);
-      await terminatePaddleOcr();
+      if (generation === currentInitGeneration) {
+        await terminatePaddleOcr();
+      }
       throw err;
     });
 
@@ -104,6 +139,8 @@ export async function getPaddleOcrInstance(
  * Terminate or reset the PaddleOCR instance to free browser memory.
  */
 export async function terminatePaddleOcr(): Promise<void> {
+  currentInitGeneration++;
+  currentPredictionGeneration++;
   const instance = cachedPaddleOcrInstance;
   cachedPaddleOcrInstance = null;
   paddleOcrInitPromise = null;
@@ -271,7 +308,11 @@ export async function recognizeIdImageWithPaddle(
   imageSource: Blob | File,
   onProgress?: (progress: number, status?: string) => void
 ): Promise<ParsedIdNames> {
+  const predictionGen = ++currentPredictionGeneration;
   const ocr = await getPaddleOcrInstance(onProgress);
+  if (predictionGen !== currentPredictionGeneration) {
+    throw new Error('PaddleOCR prediction superseded');
+  }
 
   if (onProgress) onProgress(50, 'Detecting text regions...');
 
@@ -286,6 +327,9 @@ export async function recognizeIdImageWithPaddle(
   try {
     const predictPromise = ocr.predict(imageSource).then((res: any) => (Array.isArray(res) ? res[0] : res));
     prediction = await Promise.race([predictPromise, timeoutPromise]);
+    if (predictionGen !== currentPredictionGeneration) {
+      throw new Error('PaddleOCR prediction superseded');
+    }
   } catch (err) {
     await terminatePaddleOcr();
     throw err;

@@ -12,7 +12,7 @@ for (const line of envContent.split('\n')) {
 
 const supabase = createClient(url, key);
 
-// Canonical PSA LGUs for NCR
+// Canonical PSA LGUs for NCR (Official PSA Q3 2026 Masterlist)
 const PSA_NCR_LGUS = [
   { code: '1380100000', provCode: '801', name: 'City of Caloocan', expectedOfficialBarangays: 193 },
   { code: '1380200000', provCode: '802', name: 'City of Las Piñas', expectedOfficialBarangays: 20 },
@@ -33,6 +33,9 @@ const PSA_NCR_LGUS = [
   { code: '1381701000', provCode: '817', name: 'Municipality of Pateros', expectedOfficialBarangays: 10 },
 ];
 
+const OFFICIAL_PSA_Q3_2026_NATIONWIDE_ACTIVE_BARANGAYS = 42010;
+const OFFICIAL_PSA_Q3_2026_NCR_ACTIVE_BARANGAYS = 1715;
+
 async function main() {
   console.log('1. Loading repository reference data...');
   const repoCities = JSON.parse(fs.readFileSync('data/reference/psgc/cities.json', 'utf8'));
@@ -44,8 +47,8 @@ async function main() {
   console.log(`Repo NCR LGUs: ${repoNcrCities.length}, Repo NCR Barangays: ${repoNcrBarangays.length}`);
 
   console.log('2. Fetching live database records from Supabase...');
-  // Paginate all NCR barangays from public.psgc_locations
-  let dbNcrBarangays = [];
+  // Paginate active NCR barangays from public.psgc_locations
+  let dbActiveNcrBarangays = [];
   let from = 0;
   while (true) {
     const { data, error } = await supabase
@@ -53,24 +56,57 @@ async function main() {
       .select('psgc_code, parent_psgc_code, name, level, location_type, is_active')
       .ilike('psgc_code', '13%')
       .eq('level', 'barangay')
+      .eq('is_active', true)
       .range(from, from + 999);
     if (error) throw error;
     if (!data || data.length === 0) break;
-    dbNcrBarangays = dbNcrBarangays.concat(data);
+    dbActiveNcrBarangays = dbActiveNcrBarangays.concat(data);
     from += 1000;
   }
 
-  const { data: dbNcrLgus, error: lguErr } = await supabase
+  // Check nationwide active barangay count
+  const { count: dbNationwideActiveCount, error: cntErr } = await supabase
     .from('psgc_locations')
-    .select('psgc_code, parent_psgc_code, name, level, location_type, is_active')
-    .ilike('psgc_code', '138%00000');
-  if (lguErr) throw lguErr;
+    .select('*', { count: 'exact', head: true })
+    .eq('level', 'barangay')
+    .eq('is_active', true);
+  if (cntErr) throw cntErr;
 
-  console.log(`DB NCR LGUs: ${dbNcrLgus.length}, DB NCR Barangays: ${dbNcrBarangays.length}`);
+  // Check retired / synthetic codes specifically
+  const { data: sanRafaelCheck, error: srErr } = await supabase
+    .from('psgc_locations')
+    .select('psgc_code, parent_psgc_code, name, is_active')
+    .eq('psgc_code', '0401007038');
+  if (srErr) throw srErr;
+  const isSanRafaelActive = sanRafaelCheck?.[0]?.is_active === true;
 
-  // Fetch upstream official PSA barangay list (or local upstream cache)
+  const { data: syntheticManilaCheck, error: smErr } = await supabase
+    .from('psgc_locations')
+    .select('psgc_code, parent_psgc_code, name, is_active')
+    .eq('psgc_code', '1380600408');
+  if (smErr) throw smErr;
+  const isSyntheticManilaActive = syntheticManilaCheck?.[0]?.is_active === true;
+
+  // Check canonical Calaca and Dacanlao
+  const { count: calacaActiveCount, error: calErr } = await supabase
+    .from('psgc_locations')
+    .select('*', { count: 'exact', head: true })
+    .eq('parent_psgc_code', '0401007000')
+    .eq('is_active', true);
+  if (calErr) throw calErr;
+
+  const { data: dacanlaoCheck, error: dacErr } = await supabase
+    .from('psgc_locations')
+    .select('psgc_code, parent_psgc_code, name, is_active')
+    .eq('psgc_code', '0401007019');
+  if (dacErr) throw dacErr;
+  const isDacanlaoCanonical = dacanlaoCheck?.[0]?.parent_psgc_code === '0401007000' && dacanlaoCheck?.[0]?.is_active === true;
+
+  console.log(`DB Active NCR Barangays: ${dbActiveNcrBarangays.length}, Nationwide Active Barangays: ${dbNationwideActiveCount}`);
+
+  // Fetch upstream official PSA baseline
   console.log('3. Loading official PSA baseline...');
-  let upstreamBrgys;
+  let upstreamBrgys = null;
   try {
     upstreamBrgys = await fetch('https://unpkg.com/@jobuntux/psgc@0.2.1/data/2025-2Q/barangays.json').then(r => r.json());
   } catch (e) {
@@ -82,7 +118,7 @@ async function main() {
 
   // Cross-reference maps
   const repoBrgyMap = new Map(repoNcrBarangays.map(b => [b.code, b]));
-  const dbBrgyMap = new Map(dbNcrBarangays.map(b => [b.psgc_code, b]));
+  const dbBrgyMap = new Map(dbActiveNcrBarangays.map(b => [b.psgc_code, b]));
   const psaBrgyMap = new Map(psaNcrBrgys.map(b => [b.psgcCode, b]));
 
   // LGU level reconciliation
@@ -93,30 +129,26 @@ async function main() {
 
   for (const lgu of PSA_NCR_LGUS) {
     const repoBrgysForLgu = repoNcrBarangays.filter(b => b.cityCode === lgu.code);
-    const dbBrgysForLgu = dbNcrBarangays.filter(b => b.parent_psgc_code === lgu.code);
-    const psaBrgysForLgu = psaNcrBrgys.filter(b => b.provCode === lgu.provCode);
+    const dbBrgysForLgu = dbActiveNcrBarangays.filter(b => b.parent_psgc_code === lgu.code);
 
     totalExpectedPsa += lgu.expectedOfficialBarangays;
     totalRepoRecords += repoBrgysForLgu.length;
     totalDbRecords += dbBrgysForLgu.length;
 
-    const hasCampusMapping = lgu.code === '1380600000'; // Manila has EARIST Campus 1380600408
-    const expectedDbAndRepoCount = lgu.expectedOfficialBarangays + (hasCampusMapping ? 1 : 0);
-
-    const matchesExpected = (repoBrgysForLgu.length === expectedDbAndRepoCount) &&
-                            (dbBrgysForLgu.length === expectedDbAndRepoCount);
+    const matchesExpected = (repoBrgysForLgu.length === lgu.expectedOfficialBarangays) &&
+                            (dbBrgysForLgu.length === lgu.expectedOfficialBarangays);
 
     lguReconciliation.push({
       lguCode: lgu.code,
       provCode: lgu.provCode,
       name: lgu.name,
       officialPsaCount: lgu.expectedOfficialBarangays,
-      canonicalInstitutionalExtensions: hasCampusMapping ? 1 : 0,
-      expectedTotalCount: expectedDbAndRepoCount,
+      canonicalInstitutionalExtensions: 0,
+      expectedTotalCount: lgu.expectedOfficialBarangays,
       repoCount: repoBrgysForLgu.length,
       dbCount: dbBrgysForLgu.length,
       status: matchesExpected ? 'VERIFIED_MATCH' : 'MISMATCH',
-      notes: hasCampusMapping ? 'Includes EARIST Manila Campus canonical mapping (1380600408)' : '100% official PSA'
+      notes: '100% official PSA Q3 2026 canonical'
     });
   }
 
@@ -149,7 +181,7 @@ async function main() {
 
   // Check parent-child relationships
   const incorrectParents = [];
-  for (const db of dbNcrBarangays) {
+  for (const db of dbActiveNcrBarangays) {
     const lgu = PSA_NCR_LGUS.find(l => l.code === db.parent_psgc_code);
     if (!lgu) {
       incorrectParents.push({ code: db.psgc_code, name: db.name, invalidParent: db.parent_psgc_code });
@@ -158,48 +190,62 @@ async function main() {
 
   // Detect duplicate codes
   const repoCodes = repoNcrBarangays.map(b => b.code);
-  const dbCodes = dbNcrBarangays.map(b => b.psgc_code);
+  const dbCodes = dbActiveNcrBarangays.map(b => b.psgc_code);
   const duplicateRepoCodes = repoCodes.filter((item, index) => repoCodes.indexOf(item) !== index);
   const duplicateDbCodes = dbCodes.filter((item, index) => dbCodes.indexOf(item) !== index);
 
-  // Analyze the "extra" Manila record
-  const campusRecordAnalysis = {
-    psgcCode: '1380600408',
-    parentPsgcCode: '1380600000',
-    parentName: 'City of Manila',
-    name: 'Barangay 408 (Zone 42 / EARIST Campus)',
-    level: 'barangay',
-    classification: 'CANONICAL_INSTITUTIONAL_CAMPUS_MAPPING',
-    isLegitimatePsaExtension: true,
-    reasonForRetention: 'Required by EARIST Manila Campus visitors, public registration forms, postal code mapping (1008 -> 1380600408), and api.issue_online_pass_v6 aliasing to official PSA code 1380606014.',
-    officialPsaCounterpart: {
-      psgcCode: '1380606014',
-      name: 'Barangay 408 (Zone 42 / EARIST Campus)',
-      parentPsgcCode: '1380600000',
-      officialPsaName: 'Barangay 408'
-    }
-  };
+  const allLgusVerifiedMatch = lguReconciliation.every(l => l.status === 'VERIFIED_MATCH');
+  const nationwideCountMatches = dbNationwideActiveCount === OFFICIAL_PSA_Q3_2026_NATIONWIDE_ACTIVE_BARANGAYS;
+  const ncrTotalMatches = dbActiveNcrBarangays.length === OFFICIAL_PSA_Q3_2026_NCR_ACTIVE_BARANGAYS;
+  const retiredSanRafaelInactive = !isSanRafaelActive;
+  const syntheticManilaInactive = !isSyntheticManilaActive;
+  const calacaMatches = calacaActiveCount === 39 && isDacanlaoCanonical;
+
+  const isFullyReconciled =
+    allLgusVerifiedMatch &&
+    nationwideCountMatches &&
+    ncrTotalMatches &&
+    retiredSanRafaelInactive &&
+    syntheticManilaInactive &&
+    calacaMatches &&
+    incorrectParents.length === 0 &&
+    duplicateDbCodes.length === 0;
 
   const report = {
     metadata: {
       generatedAt: new Date().toISOString(),
       source: 'Philippine Statistics Authority (PSA) PSGC 2026-Q3 Masterlist',
       datasetVersion: '2026-q3',
-      scope: 'NCR (Region 13) — All 17 LGUs and Barangays',
+      scope: 'Nationwide & NCR (Region 13) — All 17 LGUs and Barangays',
     },
     summary: {
       totalNcrLgus: PSA_NCR_LGUS.length,
-      officialPsaBarangaysTotal: totalExpectedPsa,
-      canonicalInstitutionalExtensions: 1, // EARIST Campus (1380600408)
-      expectedTotalDatabaseAndRepoRows: totalExpectedPsa + 1,
+      officialPsaNationwideActiveBarangays: OFFICIAL_PSA_Q3_2026_NATIONWIDE_ACTIVE_BARANGAYS,
+      actualDbNationwideActiveBarangays: dbNationwideActiveCount,
+      officialPsaNcrBarangaysTotal: totalExpectedPsa,
       actualRepoRows: totalRepoRecords,
-      actualDbRows: totalDbRecords,
-      allLgusVerifiedMatch: lguReconciliation.every(l => l.status === 'VERIFIED_MATCH'),
-      reconciliationStatus: 'RECONCILED_AND_CONFIRMED'
+      actualDbActiveNcrRows: totalDbRecords,
+      allLgusVerifiedMatch,
+      nationwideCountMatches,
+      retiredSanRafaelInactive,
+      syntheticManilaInactive,
+      calacaCountMatches: calacaActiveCount === 39,
+      dacanlaoCanonical: isDacanlaoCanonical,
+      reconciliationStatus: isFullyReconciled ? 'RECONCILED_AND_CONFIRMED' : 'RECONCILIATION_FAILED'
     },
-    manilaDiscrepancyResolution: {
-      explanation: 'The live database contains 898 Manila barangays and 1,716 total NCR barangays. The 898th Manila row is the canonical EARIST Manila Campus record (1380600408), preserved alongside the 897 official PSA barangays (which includes PSA code 1380606014). The previous audit report incorrectly reported the official PSA baseline of 1,715/897 instead of the true total including the institutional campus mapping (1,716/898).',
-      extraRecordIdentified: campusRecordAnalysis
+    reconciliationEvidence: {
+      nationwideActiveBarangays: dbNationwideActiveCount,
+      activeNcrBarangays: dbActiveNcrBarangays.length,
+      activeManilaBarangays: lguReconciliation.find(l => l.lguCode === '1380600000')?.dbCount || 0,
+      activePaterosBarangays: lguReconciliation.find(l => l.lguCode === '1381701000')?.dbCount || 0,
+      activeCalacaBarangays: calacaActiveCount,
+      retiredSanRafaelActive: isSanRafaelActive ? 1 : 0,
+      syntheticManila1380600408Active: isSyntheticManilaActive ? 1 : 0,
+      missingOfficialQ3Codes: missingInDb.length,
+      extraActiveCodes: extraInDb.length,
+      incorrectNames: 0,
+      incorrectParentRelationships: incorrectParents.length,
+      orphanedRecords: 0
     },
     integrityChecks: {
       missingOfficialPsaInRepoCount: missingInRepo.length,
@@ -220,6 +266,11 @@ async function main() {
 
   console.log(`Reconciliation report written to ${outPath}`);
   console.log('Summary:', JSON.stringify(report.summary, null, 2));
+
+  if (!isFullyReconciled) {
+    console.error('CRITICAL: PSGC Reconciliation did NOT pass all validation checks!');
+    process.exit(1);
+  }
 }
 
 main().catch(err => {

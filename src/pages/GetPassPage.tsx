@@ -2114,6 +2114,16 @@ export function GetPassPage() {
   }
 
   function handleStartOver() {
+    if (
+      currentPhase === 'existing_pass_conflict' ||
+      portalTransactionRef.current?.phase === 'existing_pass_conflict' ||
+      currentPhase === 'ambiguous' ||
+      portalTransactionRef.current?.phase === 'ambiguous' ||
+      currentPhase === 'submission_uncertain_hold'
+    ) {
+      handleAmbiguousCancelAndAskGuard();
+      return;
+    }
     resetRegistrationFlow();
   }
 
@@ -4297,11 +4307,11 @@ export function GetPassPage() {
                   <>
                     <Button
                       variant="secondary"
-                      onClick={handleStartOver}
+                      onClick={handleAmbiguousCancelAndAskGuard}
                       className="flex-1"
-                      icon={<RotateCcw className="h-4 w-4" />}
+                      icon={<ShieldAlert className="h-4 w-4" />}
                     >
-                      Start New Pass
+                      Ask Guard for Assistance
                     </Button>
                     <Button
                       onClick={handleRetrieveOriginalPass}
@@ -5131,18 +5141,35 @@ export function GetPassPage() {
               )}
 
               {/* Verification Badge */}
-              <div className="rounded-xl border border-emerald-300 bg-emerald-50 p-3.5 flex items-center justify-between text-xs text-emerald-900">
-                <div className="flex items-center gap-2">
-                  <CheckCircle2 className="h-5 w-5 text-emerald-600 flex-shrink-0" />
-                  <div>
-                    <span className="font-bold block">Biometric Identity Verified</span>
-                    <span className="text-[11px] text-emerald-800">Your live face matches your enrolled returning profile.</span>
+              {returningProfile.verificationState === 'calibrated' ? (
+                <div className="rounded-xl border border-emerald-300 bg-emerald-50 p-3.5 flex items-center justify-between text-xs text-emerald-900">
+                  <div className="flex items-center gap-2">
+                    <CheckCircle2 className="h-5 w-5 text-emerald-600 flex-shrink-0" />
+                    <div>
+                      <span className="font-bold block">Biometric Identity Verified</span>
+                      <span className="text-[11px] text-emerald-800">Your live face matches your original registration portrait.</span>
+                    </div>
                   </div>
+                  <span className="rounded-full bg-emerald-600 text-white font-bold text-[10px] px-2.5 py-0.5 uppercase tracking-wide">
+                    Verified
+                  </span>
                 </div>
-                <span className="rounded-full bg-emerald-600 text-white font-bold text-[10px] px-2.5 py-0.5 uppercase tracking-wide">
-                  Verified
-                </span>
-              </div>
+              ) : (
+                <div className="rounded-xl border border-amber-300 bg-amber-50 p-3.5 flex items-center justify-between text-xs text-amber-900" role="alert">
+                  <div className="flex items-center gap-2">
+                    <AlertCircle className="h-5 w-5 text-amber-600 flex-shrink-0" />
+                    <div>
+                      <span className="font-bold block">Face Comparison Completed</span>
+                      <span className="text-[11px] text-amber-800">
+                        Please present your physical ID to the guard for final identity verification at the gate.
+                      </span>
+                    </div>
+                  </div>
+                  <span className="rounded-full bg-amber-600 text-white font-bold text-[10px] px-2.5 py-0.5 uppercase tracking-wide">
+                    ID Required
+                  </span>
+                </div>
+              )}
 
               {/* Group 1: Verified Visitor Information */}
               <div className="rounded-xl bg-[var(--color-surface)] p-4 text-sm border border-[var(--color-border)] space-y-3">
@@ -5312,6 +5339,7 @@ export function GetPassPage() {
                       <div className="rounded-lg border border-amber-200 bg-amber-50/70 aspect-[3/4] max-h-48 flex flex-col items-center justify-center text-center p-3 text-xs text-amber-900">
                         <Info className="w-5 h-5 text-amber-700 mb-1.5" />
                         <span className="font-semibold">Previous ID document is on file with campus records.</span>
+                        <span className="text-[11px] text-amber-800 mt-1">Please bring your physical ID to the gate for guard verification.</span>
                       </div>
                     )}
                   </div>
@@ -5340,11 +5368,11 @@ export function GetPassPage() {
                   <>
                     <Button
                       variant="secondary"
-                      onClick={handleStartOver}
+                      onClick={handleAmbiguousCancelAndAskGuard}
                       className="flex-1"
-                      icon={<RotateCcw className="h-4 w-4" />}
+                      icon={<ShieldAlert className="h-4 w-4" />}
                     >
-                      Start New Pass
+                      Ask Guard for Assistance
                     </Button>
                     <Button
                       onClick={handleRetrieveOriginalPass}

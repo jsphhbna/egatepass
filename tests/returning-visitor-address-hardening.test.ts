@@ -231,8 +231,8 @@ describe('PART 2: resolvePsgcLocalityFallback & Address Normalization', () => {
     expect(hydrated.homeBuilding).toBe('');
     expect(hydrated.homeStreet).toBe('');
     expect(hydrated.postalCode).toBe('');
-    expect(hydrated.selectedPsgc?.postalCode).toBeNull();
-    expect(hydrated.selectedPsgc?.postalCodeSource).toBeNull();
+    expect(hydrated.selectedPsgc?.postalCode).toBeUndefined();
+    expect(hydrated.selectedPsgc?.postalCodeSource).toBeUndefined();
   });
 });
 
@@ -240,8 +240,8 @@ describe('PART 2: resolvePsgcLocalityFallback & Address Normalization', () => {
 // PART 3: Postal Code Metadata & Source Stability
 // ---------------------------------------------------------------------------
 
-describe('PART 3: Postal Code Metadata Preservation', () => {
-  it('1. An exact barangay mapping remains exact when its type is genuinely available', () => {
+describe('PART 3: Postal Code Decommissioning and Hydration Independence', () => {
+  it('1. Returning profile hydration does not restore postal code or resolution metadata', () => {
     const hydrated = hydrateReturningAddress({
       psgc: {
         version: '2026-q3',
@@ -255,12 +255,13 @@ describe('PART 3: Postal Code Metadata Preservation', () => {
       },
     });
 
-    expect(hydrated.selectedPsgc?.postalResolution?.mappingType).toBe('exact_barangay');
-    expect(hydrated.selectedPsgc?.postalResolution?.isAutoFilled).toBe(true);
-    expect(hydrated.selectedPsgc?.postalCodeSource).toBe('PHLPost');
+    expect(hydrated.postalCode).toBe('');
+    expect(hydrated.selectedPsgc?.postalResolution).toBeUndefined();
+    expect(hydrated.selectedPsgc?.postalCode).toBeUndefined();
+    expect(hydrated.selectedPsgc?.postalCodeSource).toBeUndefined();
   });
 
-  it('2. A unique city mapping remains unique when its type is genuinely available', () => {
+  it('2. Unique city mapping in legacy profile is ignored during hydration', () => {
     const hydrated = hydrateReturningAddress({
       psgc: {
         version: '2026-q3',
@@ -274,12 +275,12 @@ describe('PART 3: Postal Code Metadata Preservation', () => {
       },
     });
 
-    expect(hydrated.selectedPsgc?.postalResolution?.mappingType).toBe('unique_city');
-    expect(hydrated.selectedPsgc?.postalResolution?.isAutoFilled).toBe(true);
-    expect(hydrated.selectedPsgc?.postalCodeSource).toBe('PHLPost');
+    expect(hydrated.postalCode).toBe('');
+    expect(hydrated.selectedPsgc?.postalResolution).toBeUndefined();
+    expect(hydrated.selectedPsgc?.postalCodeSource).toBeUndefined();
   });
 
-  it('3. Unknown mapping metadata is represented as unknown, not falsely as exact barangay', () => {
+  it('3. Unknown mapping metadata in legacy profile is ignored during hydration', () => {
     const hydrated = hydrateReturningAddress({
       psgc: {
         version: '2026-q3',
@@ -292,12 +293,11 @@ describe('PART 3: Postal Code Metadata Preservation', () => {
       },
     });
 
-    expect(hydrated.selectedPsgc?.postalResolution?.isAutoFilled).toBe(true);
-    expect(hydrated.selectedPsgc?.postalResolution?.mappingType).toBe('unknown');
-    expect(hydrated.selectedPsgc?.postalResolution?.mappingType).not.toBe('exact_barangay');
+    expect(hydrated.postalCode).toBe('');
+    expect(hydrated.selectedPsgc?.postalResolution).toBeUndefined();
   });
 
-  it('4. PHLPost postal source survives hydration', () => {
+  it('4. PHLPost postal source does not survive hydration', () => {
     const hydrated = hydrateReturningAddress({
       psgc: {
         version: '2026-q3',
@@ -310,11 +310,11 @@ describe('PART 3: Postal Code Metadata Preservation', () => {
       },
     });
 
-    expect(hydrated.selectedPsgc?.postalCodeSource).toBe('PHLPost');
-    expect(hydrated.selectedPsgc?.postalCode).toBe('1008');
+    expect(hydrated.selectedPsgc?.postalCodeSource).toBeUndefined();
+    expect(hydrated.selectedPsgc?.postalCode).toBeUndefined();
   });
 
-  it('5. Manual postal source stays manual', () => {
+  it('5. Manual postal source does not survive hydration', () => {
     const hydrated = hydrateReturningAddress({
       psgc: {
         version: '2026-q3',
@@ -327,9 +327,8 @@ describe('PART 3: Postal Code Metadata Preservation', () => {
       },
     });
 
-    expect(hydrated.selectedPsgc?.postalResolution?.isAutoFilled).toBe(false);
-    expect(hydrated.selectedPsgc?.postalResolution?.mappingType).toBe('unmapped');
-    expect(hydrated.selectedPsgc?.postalCodeSource).toBe('manual');
+    expect(hydrated.selectedPsgc?.postalResolution).toBeUndefined();
+    expect(hydrated.selectedPsgc?.postalCodeSource).toBeUndefined();
   });
 
   it('6. Reopening and confirming an unchanged address preserves the source without degrading to manual', () => {
@@ -382,7 +381,7 @@ describe('PART 3: Postal Code Metadata Preservation', () => {
     expect(updated.postalCodeSource).toBe('manual');
     expect(updated.postalResolution.isAutoFilled).toBe(false);
   });
-  it('8. Unknown mapping metadata does not break the postal-code UI or selector', () => {
+  it('8. Unknown mapping metadata does not break hydration and results in no postal fields', () => {
     const hydrated = hydrateReturningAddress({
       psgc: {
         version: '2026-q3',
@@ -395,9 +394,8 @@ describe('PART 3: Postal Code Metadata Preservation', () => {
       },
     });
 
-    expect(hydrated.selectedPsgc?.postalResolution).toBeDefined();
-    expect(hydrated.selectedPsgc?.postalResolution?.isAutoFilled).toBe(true);
-    expect(hydrated.selectedPsgc?.postalResolution?.message).toBe('PHLPost standard postal code');
+    expect(hydrated.selectedPsgc?.postalResolution).toBeUndefined();
+    expect(hydrated.postalCode).toBe('');
   });
 });
 
@@ -711,8 +709,8 @@ describe('PART 4: Returning Profile Persistence in issue.ts', () => {
     expect(update.psgc_barangay_name).toBe('Biñan Proper');
     expect(update.home_building).toBe('Unit 4B');
     expect(update.home_street).toBe('Nagtahan St.');
-    expect(update.postal_code).toBe('4024');
-    expect(update.postal_code_source).toBe('PHLPost');
+    expect(update.postal_code).toBeUndefined();
+    expect(update.postal_code_source).toBeUndefined();
   });
 
   it('2. City locality with level "municipality" is recognized and persisted in psgc_city_municipality_name', async () => {
@@ -957,7 +955,7 @@ describe('PART 4: Returning Profile Persistence in issue.ts', () => {
     const update = getCapturedUpdate();
     expect(update.home_building).toBeNull();
     expect(update.home_street).toBeNull();
-    expect(update.postal_code).toBeNull();
+    expect(update.postal_code).toBeUndefined();
   });
 
   it('16. saveUpdates: false causes no profile update and returns returningProfileUpdate: not_requested', async () => {
@@ -1351,11 +1349,8 @@ describe('PART 5: Postal Code State Synchronization & Manual Override Behavioral
         },
       },
     });
-    expect(hydrated.selectedPsgc?.postalResolution?.mappingType).toBe('unknown');
-    expect(hydrated.selectedPsgc?.postalResolution?.isAutoFilled).toBe(true);
-
-    const badges = deriveBadgeState('1008', hydrated.selectedPsgc);
-    expect(badges.isPhlPostAutoFilled).toBe(true);
+    expect(hydrated.selectedPsgc?.postalResolution).toBeUndefined();
+    expect(hydrated.postalCode).toBe('');
   });
 });
 

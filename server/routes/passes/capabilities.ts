@@ -3,7 +3,6 @@ import { isFaceVerificationConfigured, isFaceVerificationReady } from '../../lib
 import { getServerSupabaseClients } from '../../supabase.js';
 import {
   isReturningVisitorAvailable,
-  isReturningEnrollmentAvailable,
   isReturningCryptoConfigured,
   isThresholdConfigured,
   getThresholdMode,
@@ -66,28 +65,30 @@ async function handleRequest(request: Request): Promise<Response> {
   }
 
   const isReady = await isFaceVerificationReady();
-  const facialRecognitionConfigured = isFaceVerificationConfigured() && isReady;
+  const faceEngineReady = isFaceVerificationConfigured() && isReady;
   const returningCryptoConfigured = isReturningCryptoConfigured();
   const thresholdConfigured = isThresholdConfigured();
   const thresholdMode = getThresholdMode();
-  const returningEnrollmentAvailable = isReturningEnrollmentAvailable() && isReady;
   const returningVisitorAvailable = isReturningVisitorAvailable() && isReady;
+  const calibrationConfigured = isReturningCalibrationConfigured();
   const turnstileSiteKeyConfigured = Boolean(process.env.VITE_TURNSTILE_SITE_KEY?.trim());
-  const turnstileVerifierConfigured = true;
   const registrationConfig = await loadPublicSafeRegistrationConfig();
 
   return jsonResponse(200, {
     returningVisitorAvailable,
-    returningEnrollmentAvailable,
-    facialRecognitionConfigured,
+    returningEnrollmentAvailable: false,
+    facialRecognitionConfigured: faceEngineReady,
+    portraitComparisonAvailable: returningVisitorAvailable,
+    faceEngineReady,
     returningCryptoConfigured,
     thresholdConfigured,
     thresholdMode,
-    returningCalibrationConfigured: isReturningCalibrationConfigured(),
+    calibrationConfigured,
+    returningCalibrationConfigured: calibrationConfigured,
     biometricStorageRetired: true,
     turnstile: {
       siteKeyConfigured: turnstileSiteKeyConfigured,
-      serverVerifierConfigured: turnstileVerifierConfigured,
+      serverVerifierConfigured: turnstileSiteKeyConfigured,
       verified: turnstileSiteKeyConfigured,
     },
     registrationConfig,

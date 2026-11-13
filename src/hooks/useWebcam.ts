@@ -1,4 +1,4 @@
-import { useRef, useState, useCallback, useEffect } from 'react';
+import { useRef, useState, useCallback, useEffect, useMemo } from 'react';
 
 export interface UseWebcamOptions {
   facingMode?: 'user' | 'environment';
@@ -65,7 +65,22 @@ export function classifyCameraError(err: unknown): string {
 
 export function useWebcam(options: UseWebcamOptions = {}): UseWebcamResult {
   const { facingMode = 'user', width = 640, height = 480, allowCaptureMirroring = true, targetAspectRatio } = options;
-  const videoRef = useRef<HTMLVideoElement>(null);
+  const videoElRef = useRef<HTMLVideoElement | null>(null);
+  const videoResolverRef = useRef<((el: HTMLVideoElement) => void) | null>(null);
+
+  const videoRef = useMemo(() => ({
+    get current() {
+      return videoElRef.current;
+    },
+    set current(el: HTMLVideoElement | null) {
+      videoElRef.current = el;
+      if (el && videoResolverRef.current) {
+        videoResolverRef.current(el);
+        videoResolverRef.current = null;
+      }
+    },
+  }), []);
+
   const streamRef = useRef<MediaStream | null>(null);
   const isStartingRef = useRef(false);
   const generationRef = useRef(0);
@@ -115,13 +130,74 @@ export function useWebcam(options: UseWebcamOptions = {}): UseWebcamResult {
 
       streamRef.current = stream;
 
-      if (videoRef.current) {
-        videoRef.current.srcObject = stream;
-        await videoRef.current.play().catch(() => undefined);
+      let video = videoRef.current;
+      if (!video && typeof document !== 'undefined') {
+        const hasVideoInDom = document.querySelector('video') !== null;
+        if (hasVideoInDom) {
+          video = await Promise.race([
+            new Promise<HTMLVideoElement>((res) => {
+              videoResolverRef.current = res;
+            }),
+            new Promise<null>((res) => setTimeout(() => res(null), 1500)),
+          ]);
+        }
+      }
+
+      if (video) {
+        video.srcObject = stream;
+        await new Promise<void>((resolve, reject) => {
+          if (video.readyState >= 2) return resolve();
+          let settled = false;
+          const onReady = () => {
+            if (settled) return;
+            settled = true;
+            cleanup();
+            resolve();
+          };
+          const onError = (e: any) => {
+            if (settled) return;
+            settled = true;
+            cleanup();
+            reject(e || new Error('Video failed to load stream data.'));
+          };
+          const cleanup = () => {
+            video.removeEventListener('loadedmetadata', onReady);
+            video.removeEventListener('canplay', onReady);
+            video.removeEventListener('error', onError);
+          };
+          video.addEventListener('loadedmetadata', onReady, { once: true });
+          video.addEventListener('canplay', onReady, { once: true });
+          video.addEventListener('error', onError, { once: true });
+          setTimeout(() => {
+            if (!settled) {
+              settled = true;
+              cleanup();
+              resolve();
+            }
+          }, 1500);
+        });
+
+        if (!mountedRef.current || generation !== generationRef.current) {
+          stream.getTracks().forEach((track) => track.stop());
+          return;
+        }
+
+        await video.play();
       }
 
       const tracks = typeof stream.getVideoTracks === 'function' ? stream.getVideoTracks() : stream.getTracks();
       const track = tracks?.[0];
+      if (tracks) {
+        tracks.forEach((t) => {
+          t.onended = () => {
+            if (mountedRef.current && generationRef.current === generation) {
+              setError('Camera device was disconnected. Please reconnect your camera.');
+              setIsActive(false);
+            }
+          };
+        });
+      }
+
       let realFacingMode: 'user' | 'environment' = targetFacingMode;
       if (track && typeof track.getSettings === 'function') {
         const settings = track.getSettings();
@@ -145,6 +221,10 @@ export function useWebcam(options: UseWebcamOptions = {}): UseWebcamResult {
     } catch (err) {
       if (!mountedRef.current || generation !== generationRef.current) {
         return;
+      }
+      if (streamRef.current) {
+        streamRef.current.getTracks().forEach((track) => track.stop());
+        streamRef.current = null;
       }
       setError(classifyCameraError(err));
       setIsActive(false);
@@ -206,7 +286,7 @@ export function useWebcam(options: UseWebcamOptions = {}): UseWebcamResult {
 
       if (videoRef.current) {
         videoRef.current.srcObject = stream;
-        await videoRef.current.play().catch(() => undefined);
+        await videoRef.current.play();
       }
 
       const tracks = typeof stream.getVideoTracks === 'function' ? stream.getVideoTracks() : stream.getTracks();
@@ -234,6 +314,10 @@ export function useWebcam(options: UseWebcamOptions = {}): UseWebcamResult {
     } catch (err) {
       if (!mountedRef.current || generation !== generationRef.current) {
         return;
+      }
+      if (streamRef.current) {
+        streamRef.current.getTracks().forEach((track) => track.stop());
+        streamRef.current = null;
       }
       setError(classifyCameraError(err));
       setIsActive(false);

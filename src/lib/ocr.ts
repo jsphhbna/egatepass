@@ -60,6 +60,7 @@ export type OcrFailureCode =
   | 'worker_initialization_failed'
   | 'recognition_failed'
   | 'recognition_timeout'
+  | 'pipeline_timeout'
   | 'image_decode_failed';
 
 export class OcrError extends Error {
@@ -491,12 +492,40 @@ export async function terminateLocalOcrWorker(): Promise<void> {
   }
 }
 
+const OVERARCHING_OCR_TIMEOUT_MS = 25000;
+
 /**
  * Recognize text from an image Blob, File, or image element offline.
  * Implements two-pass enhancement (standard vs. high contrast) with explicit PSM configuration,
  * structured layout parsing, field-by-field merge, and independent per-pass timeout budgets.
+ * Bounded by an overarching 25s timeout across the entire OCR pipeline.
  */
 export async function recognizeIdImage(
+  imageSource: Blob | File | string,
+  onProgress?: (progress: number, status?: string) => void,
+  jobId?: number
+): Promise<ParsedIdNames> {
+  let overarchingTimer: ReturnType<typeof setTimeout> | undefined;
+  const timeoutPromise = new Promise<never>((_, reject) => {
+    overarchingTimer = setTimeout(() => {
+      reject(new OcrError('pipeline_timeout', 'Overall OCR pipeline timed out after 25s'));
+    }, OVERARCHING_OCR_TIMEOUT_MS);
+  });
+
+  try {
+    return await Promise.race([
+      executeOcrPipeline(imageSource, onProgress, jobId),
+      timeoutPromise,
+    ]);
+  } catch (err) {
+    await terminateLocalOcrWorker();
+    throw err;
+  } finally {
+    if (overarchingTimer) clearTimeout(overarchingTimer);
+  }
+}
+
+async function executeOcrPipeline(
   imageSource: Blob | File | string,
   onProgress?: (progress: number, status?: string) => void,
   jobId?: number

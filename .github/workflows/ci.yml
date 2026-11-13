@@ -49,6 +49,9 @@ jobs:
       - name: Typecheck Server & API
         run: npm run typecheck:api
 
+      - name: Typecheck Client & Frontend
+        run: npm run typecheck:client
+
       - name: Test PostgreSQL Migrations (PGlite Chain)
         run: npm run test:migrations
 
