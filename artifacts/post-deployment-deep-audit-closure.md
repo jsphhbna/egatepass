@@ -4,6 +4,7 @@
 **Branch:** `main`  
 **Production URL:** `https://egatepass.tech`  
 **Audit Baseline Date:** November 14, 2026  
+**Implementation Commits:** `88b97498` (audit remediation), `cbd44eb7` (test suite alignment)  
 **Latest Remote Supabase Migration:** Migration 103 — `20261114000200_psgc_calaca_dacanlao_reconciliation_and_postal_retirement.sql`  
 **Five-Stack Ecosystem Restrictions:** GitHub (Repo/CI), Vercel (Hobby Serverless), Supabase (Free-Tier Postgres/Storage), Resend (Transactional Email), Cloudflare (Turnstile). Zero synthetic rows; zero external infrastructure additions.
 
