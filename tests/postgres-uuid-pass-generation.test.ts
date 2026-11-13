@@ -110,12 +110,13 @@ describe('Pass generation & office visit request with seeded Postgres UUIDs', ()
     return builder;
   }
 
-  it('successfully routes pass request with seeded officeId when office requires approval', async () => {
+  it('successfully generates immediate pass with seeded officeId even when legacy office requires approval is true (Priority 0)', async () => {
     const actorId = randomUUID();
     const seededOfficeId = '11111111-0000-0000-0000-000000000007';
     const photoIntentId = randomUUID();
     const idIntentId = randomUUID();
     const reqId = randomUUID();
+    const publicRef = randomUUID();
 
     (getVerifiedSessionContext as any).mockResolvedValue({
       user: { id: actorId, is_anonymous: true },
@@ -141,23 +142,18 @@ describe('Pass generation & office visit request with seeded Postgres UUIDs', ()
             if (fnName === 'consume_rate_limit') {
               return Promise.resolve({ data: true, error: null });
             }
-            if (fnName === 'create_specific_person_visit_request') {
-              return Promise.resolve({
-                data: [{
-                  visit_id: randomUUID(),
-                  request_id: params.requested_request_id,
-                  approval_status: 'pending',
-                  attendance_status: 'awaiting_entry',
-                  encrypted_tracking_token: 'iv:tag:ciphertext',
-                  pass_id: null,
-                  public_reference: null,
-                  valid_from: null,
-                  valid_until: null,
-                  decision_source: null,
-                  office_requires_approval_snapshot: true,
-                }],
-                error: null,
-              });
+            if (fnName === 'issue_online_pass_v6') {
+              return {
+                single: vi.fn().mockResolvedValue({
+                  data: {
+                    pass_id: publicRef,
+                    public_reference: publicRef,
+                    valid_from: '2026-11-12T08:00:00Z',
+                    valid_until: '2026-11-12T17:00:00Z',
+                  },
+                  error: null,
+                }),
+              };
             }
             return Promise.resolve({ data: null, error: null });
           }),
@@ -205,9 +201,9 @@ describe('Pass generation & office visit request with seeded Postgres UUIDs', ()
     const res = await (issuePassHandler as any).fetch(req);
     const body = await res.json();
     expect(res.status).toBe(201);
-    expect(body.ok).toBe(true);
-    expect(body.approvalRequired).toBe(true);
-    expect(body.officeName).toBe('Admissions and Testing Office');
+    expect(body.passId).toBe(publicRef);
+    expect(body.publicReference).toBe(publicRef);
+    expect(body.qrToken).toBeDefined();
   });
 
   it('successfully generates immediate pass with seeded officeId when office does not require approval', async () => {

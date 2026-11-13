@@ -235,7 +235,11 @@ describe('Office Staff Email Verification Lifecycle & Password Reset Safety', ()
 
     // Verify verification email was dispatched via admin.auth.resend
     expect(resendCalls).toHaveLength(1);
-    expect(resendCalls[0]).toEqual({ type: 'signup', email: 'new.staff@earist.edu.ph' });
+    expect(resendCalls[0]).toEqual({
+      type: 'signup',
+      email: 'new.staff@earist.edu.ph',
+      options: { emailRedirectTo: 'https://egatepass.tech/auth/verified' },
+    });
   });
 
   it('proves unverified staff account cannot access normal application functionality', async () => {
@@ -290,7 +294,11 @@ describe('Office Staff Email Verification Lifecycle & Password Reset Safety', ()
     expect(data.verificationEmailSent).toBe(true);
 
     expect(resendCalls).toHaveLength(1);
-    expect(resendCalls[0]).toEqual({ type: 'signup', email: 'registrar.staff@earist.edu.ph' });
+    expect(resendCalls[0]).toEqual({
+      type: 'signup',
+      email: 'registrar.staff@earist.edu.ph',
+      options: { emailRedirectTo: 'https://egatepass.tech/auth/verified' },
+    });
   });
 
   it('rejects resend verification if the account email is already verified', async () => {

@@ -55,6 +55,7 @@ export async function handleRequest(request: Request): Promise<Response> {
         visit_date,
         approval_status,
         requested_person_name,
+        pass_id,
         offices ( name ),
         office_personnel ( name )
       `)
@@ -70,7 +71,34 @@ export async function handleRequest(request: Request): Promise<Response> {
     }
 
     if (visit.approval_status !== 'pending') {
-      return jsonResponse(409, { error: 'visit_already_decided' });
+      if (visit.approval_status === parsed.data.decision) {
+        if (visit.approval_status === 'approved' && visit.pass_id) {
+          const { data: existingPass } = await admin
+            .from('passes')
+            .select('public_reference, valid_from, valid_until')
+            .eq('id', visit.pass_id)
+            .maybeSingle();
+
+          return jsonResponse(200, {
+            ok: true,
+            decision: 'approved',
+            passId: visit.pass_id,
+            publicReference: existingPass?.public_reference || null,
+            validFrom: existingPass?.valid_from || null,
+            validUntil: existingPass?.valid_until || null,
+            message: 'Visit already approved.',
+          });
+        }
+        return jsonResponse(200, {
+          ok: true,
+          decision: 'rejected',
+          message: 'Visit already rejected.',
+        });
+      }
+      return jsonResponse(409, {
+        error: 'visit_already_decided',
+        message: 'Visit has already been decided with a different decision.',
+      });
     }
 
     const visitorName = `${visit.visitor_first_name} ${visit.visitor_last_name}`.trim();

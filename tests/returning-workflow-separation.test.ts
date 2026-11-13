@@ -144,7 +144,7 @@ describe('Returning Visitor Workflow Separation & Locality Review Contract', () 
         getPassSrc.indexOf("{step === 'arrival_setup' && (")
       );
       expect(frontdoorStep).not.toContain('Provisional Mode (0.363)');
-      expect(frontdoorStep).toContain('Ready');
+      expect(frontdoorStep).not.toContain('Ready');
     });
   });
 

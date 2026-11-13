@@ -139,8 +139,8 @@ export function AdminDashboard() {
     const counts = dashboard.counts;
 
     // Expected Visitors Today: online visitors with valid issued QR pass for today's date in Asia/Manila,
-    // excluding unissued, pending, kiosk, or cancelled.
-    const expectedToday = dashboard.recentPasses.filter((pass) => {
+    // excluding unissued, pending, kiosk, or cancelled. Query database counts directly when available.
+    const expectedToday = counts?.expectedVisitorsToday ?? dashboard.recentPasses.filter((pass) => {
       const passDate = pass.validFrom ? getManilaDateString(pass.validFrom.toDate()) : getManilaDateString(pass.issuedAt.toDate());
       return (
         passDate === todayManila &&

@@ -4632,22 +4632,7 @@
   {
     "code": "1381000003",
     "cityCode": "1381000000",
-    "name": "Santo Ni\u00f1o"
-  },
-  {
-    "code": "1382000001",
-    "cityCode": "1382000000",
-    "name": "Karuhatan"
-  },
-  {
-    "code": "1382000002",
-    "cityCode": "1382000000",
-    "name": "Malinta"
-  },
-  {
-    "code": "1382000003",
-    "cityCode": "1382000000",
-    "name": "Malanday"
+    "name": "Santo Niño"
   },
   {
     "code": "1380500001",
@@ -4967,12 +4952,12 @@
   {
     "code": "1381300031",
     "cityCode": "1381300000",
-    "name": "Do\u00f1a Imelda"
+    "name": "Doña Imelda"
   },
   {
     "code": "1381300032",
     "cityCode": "1381300000",
-    "name": "Do\u00f1a Josefa"
+    "name": "Doña Josefa"
   },
   {
     "code": "1381300033",
@@ -5357,7 +5342,7 @@
   {
     "code": "1381300109",
     "cityCode": "1381300000",
-    "name": "Santo Ni\u00f1o"
+    "name": "Santo Niño"
   },
   {
     "code": "1381300110",
@@ -5763,5 +5748,170 @@
     "code": "1380900018",
     "cityCode": "1380900000",
     "name": "Tanza 2"
+  },
+  {
+    "code": "1381600001",
+    "cityCode": "1381600000",
+    "name": "Arkong Bato"
+  },
+  {
+    "code": "1381600002",
+    "cityCode": "1381600000",
+    "name": "Bagbaguin"
+  },
+  {
+    "code": "1381600003",
+    "cityCode": "1381600000",
+    "name": "Balangkas"
+  },
+  {
+    "code": "1381600004",
+    "cityCode": "1381600000",
+    "name": "Parada"
+  },
+  {
+    "code": "1381600005",
+    "cityCode": "1381600000",
+    "name": "Bignay"
+  },
+  {
+    "code": "1381600006",
+    "cityCode": "1381600000",
+    "name": "Bisig"
+  },
+  {
+    "code": "1381600007",
+    "cityCode": "1381600000",
+    "name": "Canumay West"
+  },
+  {
+    "code": "1381600008",
+    "cityCode": "1381600000",
+    "name": "Karuhatan"
+  },
+  {
+    "code": "1381600009",
+    "cityCode": "1381600000",
+    "name": "Coloong"
+  },
+  {
+    "code": "1381600010",
+    "cityCode": "1381600000",
+    "name": "Dalandanan"
+  },
+  {
+    "code": "1381600011",
+    "cityCode": "1381600000",
+    "name": "Gen. T. de Leon"
+  },
+  {
+    "code": "1381600012",
+    "cityCode": "1381600000",
+    "name": "Isla"
+  },
+  {
+    "code": "1381600013",
+    "cityCode": "1381600000",
+    "name": "Lawang Bato"
+  },
+  {
+    "code": "1381600014",
+    "cityCode": "1381600000",
+    "name": "Lingunan"
+  },
+  {
+    "code": "1381600015",
+    "cityCode": "1381600000",
+    "name": "Mabolo"
+  },
+  {
+    "code": "1381600016",
+    "cityCode": "1381600000",
+    "name": "Malanday"
+  },
+  {
+    "code": "1381600017",
+    "cityCode": "1381600000",
+    "name": "Malinta"
+  },
+  {
+    "code": "1381600018",
+    "cityCode": "1381600000",
+    "name": "Mapulang Lupa"
+  },
+  {
+    "code": "1381600019",
+    "cityCode": "1381600000",
+    "name": "Marulas"
+  },
+  {
+    "code": "1381600020",
+    "cityCode": "1381600000",
+    "name": "Maysan"
+  },
+  {
+    "code": "1381600021",
+    "cityCode": "1381600000",
+    "name": "Palasan"
+  },
+  {
+    "code": "1381600022",
+    "cityCode": "1381600000",
+    "name": "Pariancillo Villa"
+  },
+  {
+    "code": "1381600023",
+    "cityCode": "1381600000",
+    "name": "Paso de Blas"
+  },
+  {
+    "code": "1381600024",
+    "cityCode": "1381600000",
+    "name": "Pasolo"
+  },
+  {
+    "code": "1381600025",
+    "cityCode": "1381600000",
+    "name": "Poblacion"
+  },
+  {
+    "code": "1381600026",
+    "cityCode": "1381600000",
+    "name": "Pulo"
+  },
+  {
+    "code": "1381600027",
+    "cityCode": "1381600000",
+    "name": "Punturin"
+  },
+  {
+    "code": "1381600028",
+    "cityCode": "1381600000",
+    "name": "Rincon"
+  },
+  {
+    "code": "1381600029",
+    "cityCode": "1381600000",
+    "name": "Tagalag"
+  },
+  {
+    "code": "1381600030",
+    "cityCode": "1381600000",
+    "name": "Ugong"
+  },
+  {
+    "code": "1381600031",
+    "cityCode": "1381600000",
+    "name": "Veinte Reales"
+  },
+  {
+    "code": "1381600032",
+    "cityCode": "1381600000",
+    "name": "Wawang Pulo"
+  },
+  {
+    "code": "1381600033",
+    "cityCode": "1381600000",
+    "name": "Canumay East"
   }
 ]

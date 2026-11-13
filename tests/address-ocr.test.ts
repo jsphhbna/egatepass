@@ -13,6 +13,8 @@ describe('Address OCR Extraction Unit Tests', () => {
     const parsed = parseAddressFromOcr(raw);
 
     expect(parsed).not.toBeNull();
+    expect(parsed?.houseBuilding).toBe('123');
+    expect(parsed?.street).toBe('Valencia St.');
     expect(parsed?.city).toBe('City of Manila');
     expect(parsed?.cityCode).toBe('1380600000');
     expect(parsed?.barangay).toBe('408');
@@ -25,6 +27,7 @@ describe('Address OCR Extraction Unit Tests', () => {
     const parsed = parseAddressFromOcr(raw);
 
     expect(parsed).not.toBeNull();
+    expect(parsed?.houseBuilding).toBe('Block 5 Lot 12');
     expect(parsed?.province).toBe('Pampanga');
     expect(parsed?.city).toBe('City of Angeles');
     expect(parsed?.barangay).toBe('San Jose');

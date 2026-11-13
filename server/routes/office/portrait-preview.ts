@@ -108,10 +108,18 @@ export async function handleRequest(request: Request): Promise<Response> {
       if (!objectPath && visit.photo_intent_id) {
         const { data: intent } = await admin
           .from('upload_intents')
-          .select('bucket_id, object_path')
+          .select('bucket_id, object_path, expires_at, purged_at, held_until')
           .eq('id', visit.photo_intent_id)
           .maybeSingle();
         if (intent) {
+          const nowIso = new Date().toISOString();
+          const isHeld = Boolean(intent.held_until && intent.held_until > nowIso);
+          if (intent.purged_at || (!isHeld && intent.expires_at <= nowIso)) {
+            return jsonResponse(410, {
+              error: 'photo_expired_under_retention',
+              message: 'Visitor photo was removed under retention policy or upload expiration.',
+            });
+          }
           bucketId = intent.bucket_id || 'visitor-photos';
           objectPath = intent.object_path;
         }

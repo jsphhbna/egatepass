@@ -776,6 +776,7 @@ export async function handleRequest(request: Request): Promise<Response> {
       const resendResult = await admin.auth.resend({
         type: 'signup',
         email,
+        options: { emailRedirectTo: 'https://egatepass.tech/auth/verified' },
       }).catch((err) => ({ error: err }));
 
       const staffAccountSummary: OfficeStaffDirectoryEntry = {
@@ -1045,6 +1046,7 @@ export async function handleRequest(request: Request): Promise<Response> {
       const resendRes = await admin.auth.resend({
         type: 'signup',
         email: authUser.user.email!,
+        options: { emailRedirectTo: 'https://egatepass.tech/auth/verified' },
       }).catch((e) => ({ error: e }));
 
       if (resendRes?.error) {

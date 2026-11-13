@@ -103,6 +103,7 @@ export interface DashboardReportPayload {
 }
 
 export interface DashboardCounts {
+  expectedVisitorsToday?: number;
   todayTotal: number;
   monthTotal?: number;
   currentlyInside: number;

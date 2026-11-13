@@ -72,8 +72,10 @@ import {
   Clock3,
   AlertTriangle,
   Send,
+  Copy,
 } from 'lucide-react';
 import { toast } from 'sonner';
+import { VisitorMonthlyCalendar } from '@/components/VisitorMonthlyCalendar';
 import { Button, Card, Input, FormField, Stepper, PageShell } from '@/components/ui';
 const EmailPassModal = lazy(() => import('@/components/EmailPassModal').then((m) => ({ default: m.EmailPassModal })));
 import { TimedSkipWarningModal } from '@/components/TimedSkipWarningModal';
@@ -2347,6 +2349,7 @@ export function GetPassPage() {
           visitorEmail: visitorEmail.toLowerCase().trim(),
           trackingUrl: data.trackingUrl || undefined,
           trackingToken: data.trackingToken || undefined,
+          emailDeliveryStatus: data.emailDelivery?.status || 'pending',
         });
         setStep('request_submitted');
         return;
@@ -2367,6 +2370,7 @@ export function GetPassPage() {
           visitorEmail: emailVerificationToken && visitorEmail.trim() ? visitorEmail.toLowerCase().trim() : 'Online tracking link',
           trackingUrl: result.trackingUrl || undefined,
           trackingToken: result.trackingToken || undefined,
+          emailDeliveryStatus: (result as any).emailDelivery?.status || 'pending',
         });
         setStep('request_submitted');
         toast.success(result.message || 'Visit request submitted for office approval!');
@@ -2568,20 +2572,16 @@ export function GetPassPage() {
                       <div className="h-12 w-12 rounded-xl bg-slate-100 text-slate-700 flex items-center justify-center">
                         <UserCheck className="h-6 w-6" />
                       </div>
-                      {returningAvailable === false ? (
+                      {returningAvailable === false && (
                         <span className="rounded-full bg-amber-50 text-amber-900 border border-amber-300 px-2.5 py-0.5 text-[10px] font-bold">
                           Setup Pending
-                        </span>
-                      ) : (
-                        <span className="rounded-full bg-emerald-50 text-emerald-800 border border-emerald-200 px-2.5 py-0.5 text-[10px] font-bold">
-                          Ready
                         </span>
                       )}
                     </div>
                     <div>
                       <h3 className="font-bold text-base text-[var(--color-text-primary)]">Returning Visitor</h3>
                       <p className="text-xs text-[var(--color-text-secondary)] mt-1 leading-relaxed">
-                        Fast check-in using your previously enrolled facial profile and saved visitor credentials.
+                        Fast check-in for visitors with a previously registered record.
                       </p>
                       {returningAvailable === false ? (
                         <p className="text-[11px] text-amber-900/80 mt-2 font-medium leading-relaxed">
@@ -3288,46 +3288,28 @@ export function GetPassPage() {
                 </div>
               )}
 
-              {/* Visit Date */}
-              <FormField
-                label="Visit Date"
-                requirement="required"
-                error={errors.visitDate?.message}
-                hint={`Schedule from today (${today}) up to ${latestVisitDate}`}
-              >
-                <Input
-                  id="visit-date"
-                  type="date"
-                  min={today}
-                  max={latestVisitDate}
-                  {...register('visitDate')}
+              {/* Visit Date & Monthly Calendar */}
+              <div className="space-y-2">
+                <label className="block text-xs font-bold uppercase tracking-wider text-[var(--color-text-primary)]">
+                  Visit Date & Availability Calendar <span className="text-[var(--color-danger)]">*</span>
+                </label>
+                <VisitorMonthlyCalendar
+                  selectedOfficeId={selectedOfficeId}
+                  selectedOfficeName={offices.find((o) => o.id === selectedOfficeId)?.name}
+                  selectedDate={getValues('visitDate') || ''}
+                  onSelectDate={(date) => setValue('visitDate', date, { shouldValidate: true })}
+                  officeSchedules={officeSchedules}
+                  campusClosures={calendarClosures}
+                  minDate={today}
+                  maxDate={latestVisitDate}
                 />
-                {(() => {
-                  const currDate = getValues('visitDate');
-                  const match = currDate ? calendarClosures.find((c) => c.active !== false && currDate >= c.startDate && currDate <= c.endDate) : undefined;
-                  if (match) {
-                    return (
-                      <p className="mt-1.5 text-xs font-semibold text-rose-700 flex items-center gap-1">
-                        <AlertTriangle className="h-3.5 w-3.5" />
-                        Campus is closed on this date: {match.title}{match.description ? ` (${match.description})` : ''}
-                      </p>
-                    );
-                  }
-                  const officeMatch = currDate ? officeSchedules.find((s) => s.schedule_date === currDate && ['closed', 'maintenance', 'holiday'].includes(s.status)) : undefined;
-                  if (officeMatch) {
-                    return (
-                      <div className="mt-2 rounded-xl border border-rose-300 bg-rose-50 p-3 text-xs text-rose-900 flex items-start gap-2">
-                        <AlertTriangle className="h-4 w-4 text-rose-700 shrink-0 mt-0.5" />
-                        <div>
-                          <p className="font-bold">Selected Office is {officeMatch.status.toUpperCase()} on this date</p>
-                          <p className="mt-0.5">{officeMatch.reason || 'The office has scheduled a closure on this date.'} Please choose another date when the office is open.</p>
-                        </div>
-                      </div>
-                    );
-                  }
-                  return null;
-                })()}
-              </FormField>
+                <input type="date" className="sr-only" min={today} max={latestVisitDate} id="visit-date" {...register('visitDate')} />
+                {errors.visitDate && (
+                  <p className="text-xs font-semibold text-[var(--color-danger)] mt-1">
+                    {errors.visitDate.message}
+                  </p>
+                )}
+              </div>
 
               {/* Vehicle Declaration Section */}
               {arrivalMode === 'vehicle' && (
@@ -4308,8 +4290,8 @@ export function GetPassPage() {
                       className="flex-1"
                       icon={<CheckCircle2 className="h-4 w-4" />}
                     >
-                      {(offices.find((o) => o.id === selectedOfficeId)?.requires_approval_before_pass ?? true) && selectedOfficeId
-                        ? (visitType === 'specific_person' ? 'Submit Request for Office Approval' : 'Submit Office Visit Request')
+                      {visitType === 'specific_person'
+                        ? 'Submit Request for Office Approval'
                         : 'Generate E-GatePass'}
                     </Button>
                   </>
@@ -4782,9 +4764,52 @@ export function GetPassPage() {
                 error={errors.purpose?.message}
               />
 
-              <FormField label="Visit Date" requirement="required" error={errors.visitDate?.message}>
-                <Input type="date" min={today} max={latestVisitDate} {...register('visitDate')} />
-              </FormField>
+              {/* Destination Office & Visit Date */}
+              <div className="space-y-4">
+                <div>
+                  <label htmlFor="returning-destination-office-select" className="block text-xs font-bold uppercase tracking-wider text-[var(--color-text-primary)] mb-1">
+                    Destination University Office
+                  </label>
+                  <div className="relative">
+                    <Building2 className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[var(--color-text-muted)]" />
+                    <select
+                      id="returning-destination-office-select"
+                      value={selectedOfficeId}
+                      onChange={(e) => setSelectedOfficeId(e.target.value)}
+                      className="w-full rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] py-2.5 pl-9 pr-8 text-sm font-semibold text-[var(--color-text-primary)] focus:border-[#7A0A0A] focus:outline-none focus:ring-1 focus:ring-[#7A0A0A]"
+                    >
+                      <option value="">Campus General Visit (or select specific office)</option>
+                      {offices.map((o) => (
+                        <option key={o.id} value={o.id}>
+                          {o.name}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                </div>
+
+                <div className="space-y-2">
+                  <label className="block text-xs font-bold uppercase tracking-wider text-[var(--color-text-primary)]">
+                    Visit Date & Availability Calendar <span className="text-[var(--color-danger)]">*</span>
+                  </label>
+                  <VisitorMonthlyCalendar
+                    selectedOfficeId={selectedOfficeId || 'general'}
+                    selectedOfficeName={offices.find((o) => o.id === selectedOfficeId)?.name || 'Campus'}
+                    selectedDate={getValues('visitDate') || ''}
+                    onSelectDate={(date) => setValue('visitDate', date, { shouldValidate: true })}
+                    officeSchedules={officeSchedules}
+                    campusClosures={calendarClosures}
+                    minDate={today}
+                    maxDate={latestVisitDate}
+                  />
+                  <input type="date" className="sr-only" min={today} max={latestVisitDate} {...register('visitDate')} />
+                  {errors.visitDate && (
+                    <p className="text-xs font-semibold text-[var(--color-danger)] mt-1">
+                      {errors.visitDate.message}
+                    </p>
+                  )}
+                </div>
+              </div>
 
               {/* Explicit Arrival Method For Today's Visit */}
               <div className="space-y-3 pt-2 border-t border-[var(--color-border)]">
@@ -5286,7 +5311,9 @@ export function GetPassPage() {
                   className="flex-1"
                   icon={<CheckCircle2 className="h-4 w-4" />}
                 >
-                  Generate E-GatePass
+                  {visitType === 'specific_person'
+                    ? 'Submit Request for Office Approval'
+                    : 'Generate E-GatePass'}
                 </Button>
               </div>
             </div>
@@ -5460,6 +5487,23 @@ export function GetPassPage() {
                         <Clock className="h-3.5 w-3.5" />
                         <span>Open Status Tracker</span>
                       </a>
+                      <button
+                        type="button"
+                        onClick={async () => {
+                          try {
+                            if (submittedRequestData.trackingUrl) {
+                              await navigator.clipboard.writeText(submittedRequestData.trackingUrl);
+                              toast.success('Tracking link copied to clipboard!');
+                            }
+                          } catch {
+                            toast.error('Failed to copy link. Please copy the URL directly.');
+                          }
+                        }}
+                        className="inline-flex items-center justify-center gap-1.5 rounded-lg border border-slate-300 bg-white px-4 py-2 text-xs font-bold text-slate-800 hover:bg-slate-100 transition-colors shadow-xs"
+                      >
+                        <Copy className="h-3.5 w-3.5 text-slate-600" />
+                        <span>Copy Tracking Link</span>
+                      </button>
                     </div>
                   </div>
                 )}

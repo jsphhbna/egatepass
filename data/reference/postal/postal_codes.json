@@ -694,8 +694,8 @@
     "regionName": "National Capital Region (NCR)",
     "provinceName": null,
     "localityName": "Valenzuela City",
-    "psgcLocalityCode": "1382000000",
-    "barangayPsgcCode": "1382000001",
+    "psgcLocalityCode": "1381600000",
+    "barangayPsgcCode": "1381600001",
     "mappingType": "exact_barangay",
     "mappingStatus": "verified"
   },
@@ -704,8 +704,8 @@
     "regionName": "National Capital Region (NCR)",
     "provinceName": null,
     "localityName": "Valenzuela City",
-    "psgcLocalityCode": "1382000000",
-    "barangayPsgcCode": "1382000002",
+    "psgcLocalityCode": "1381600000",
+    "barangayPsgcCode": "1381600002",
     "mappingType": "exact_barangay",
     "mappingStatus": "verified"
   },
@@ -714,8 +714,8 @@
     "regionName": "National Capital Region (NCR)",
     "provinceName": null,
     "localityName": "Valenzuela City",
-    "psgcLocalityCode": "1382000000",
-    "barangayPsgcCode": "1382000003",
+    "psgcLocalityCode": "1381600000",
+    "barangayPsgcCode": "1381600003",
     "mappingType": "exact_barangay",
     "mappingStatus": "verified"
   },

@@ -57,4 +57,28 @@ describe('FEATURE 3 CONTRACT: EARIST Branded QR Code and Scanner Decoding', () =
     expect(code).not.toBeNull();
     expect(code!.data).toBe(complexToken);
   });
+
+  it('client and server branded QR generators both decode to the exact same token via jsQR', async () => {
+    const rawToken = 'v1.4a8b7c9d-1111-2222-3333-444455556666.sig_abc123XYZ_789';
+
+    // 1. Server PNG buffer
+    const serverBuf = await generateBrandedQrPngBuffer(rawToken);
+    const serverPng = PNG.sync.read(serverBuf);
+    const serverCode = jsQR(new Uint8ClampedArray(serverPng.data), serverPng.width, serverPng.height);
+
+    // 2. Client Data URL (base64 PNG)
+    const clientDataUrl = await generateBrandedQrDataUrl(rawToken);
+    const clientBase64 = clientDataUrl.replace(/^data:image\/png;base64,/, '');
+    const clientBuf = Buffer.from(clientBase64, 'base64');
+    const clientPng = PNG.sync.read(clientBuf);
+    const clientCode = jsQR(new Uint8ClampedArray(clientPng.data), clientPng.width, clientPng.height);
+
+    expect(serverCode).not.toBeNull();
+    expect(serverCode!.data).toBe(rawToken);
+
+    expect(clientCode).not.toBeNull();
+    expect(clientCode!.data).toBe(rawToken);
+
+    expect(clientCode!.data).toBe(serverCode!.data);
+  });
 });

@@ -24,8 +24,8 @@ async function handleRequest(request: Request): Promise<Response> {
     const { admin } = getServerSupabaseClients();
     const actor = await requireStaffActor(admin, token, ['superadmin']);
 
-    const uniqueOfficeIds =
-      parsed.data.role === 'office_staff' && parsed.data.officeIds
+    const uniqueOfficeIds: string[] =
+      (parsed.data.role as string) === 'office_staff' && parsed.data.officeIds
         ? [...new Set(parsed.data.officeIds)]
         : [];
 
@@ -149,7 +149,11 @@ async function handleRequest(request: Request): Promise<Response> {
       }
     }
 
-    const resend = await admin.auth.resend({ type: 'signup', email: normalizedEmail });
+    const resend = await admin.auth.resend({
+      type: 'signup',
+      email: normalizedEmail,
+      options: { emailRedirectTo: 'https://egatepass.tech/auth/verified' },
+    });
     if (resend.error) {
       await recordReconciliation(admin, 'staff.verification_email', 'staff_profile', targetId, resend.error.code ?? 'email_failed');
     }

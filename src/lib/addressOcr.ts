@@ -99,6 +99,12 @@ export function parseAddressFromOcr(rawAddress: string): DetectedAddressDetails 
     cityCode = '1380600000';
     regionCode = '1300000000'; // NCR
     remaining = remaining.replace(/\b(?:city\s+of\s+manila|manila\s+city|manila)\b/gi, ' ').trim();
+    for (const district of MANILA_DISTRICTS) {
+      const dRegex = new RegExp(`\\b${district}\\b(?!\\s*(?:st|street|ave|avenue|rd|road|blvd|boulevard|lane|way)\\b)`, 'i');
+      if (dRegex.test(remaining)) {
+        remaining = remaining.replace(dRegex, ' ').trim();
+      }
+    }
   }
 
   // Pass 1: Look for exact city name or explicit city phrases ("City of X", "X City")
@@ -134,6 +140,12 @@ export function parseAddressFromOcr(rawAddress: string): DetectedAddressDetails 
       cityCode = '1380600000';
       regionCode = '1300000000'; // NCR
       remaining = remaining.replace(/\b(?:city\s+of\s+manila|manila\s+city|manila)\b/gi, ' ').trim();
+      for (const district of MANILA_DISTRICTS) {
+        const dRegex = new RegExp(`\\b${district}\\b(?!\\s*(?:st|street|ave|avenue|rd|road|blvd|boulevard|lane|way)\\b)`, 'i');
+        if (dRegex.test(remaining)) {
+          remaining = remaining.replace(dRegex, ' ').trim();
+        }
+      }
     }
   }
 
@@ -155,8 +167,8 @@ export function parseAddressFromOcr(rawAddress: string): DetectedAddressDetails 
   }
 
   // 5. Clean remaining for street / houseBuilding
-  const streetTokens = remaining
-    .replace(/^[,\s.-]+|[,\s.-]+$/g, '')
+  const cleanRemaining = remaining.replace(/^[,\s-]+|[,\s-]+$/g, '').trim();
+  const streetTokens = cleanRemaining
     .split(',')
     .map((s) => s.trim())
     .filter(Boolean);
@@ -164,7 +176,21 @@ export function parseAddressFromOcr(rawAddress: string): DetectedAddressDetails 
   let houseBuilding: string | undefined;
   let street = '';
 
-  if (streetTokens.length >= 2) {
+  // 5A. Check for pure house/lot/building number without street (e.g. "Block 5 Lot 12", "Unit 402")
+  const pureHouseRegex = /^((?:(?:Unit|Bldg|Building|Blk|Block|Lot|Room|Rm|Phase|Ph)\.?\s*[\w#\/-]+(?:\s+(?:Unit|Bldg|Building|Blk|Block|Lot|Room|Rm|Phase|Ph)\.?\s*[\w#\/-]+)*|\d+[A-Za-z0-9#\/-]*))$/i;
+  // 5B. Check for house number / unit prefix followed by street name (e.g. "123 Valencia St.", "Unit 402, Legaspi Towers")
+  const housePrefixRegex = /^((?:(?:Unit|Bldg|Building|Blk|Block|Lot|Room|Rm|Phase|Ph)\.?\s*[\w#\/-]+(?:\s+(?:Unit|Bldg|Building|Blk|Block|Lot|Room|Rm|Phase|Ph)\.?\s*[\w#\/-]+)*|\d+[A-Za-z0-9#\/-]*))\s*(?:,\s*|\s+)(.+)$/i;
+
+  const pureHouseMatch = cleanRemaining.match(pureHouseRegex);
+  const housePrefixMatch = cleanRemaining.match(housePrefixRegex);
+
+  if (pureHouseMatch && pureHouseMatch[1]) {
+    houseBuilding = pureHouseMatch[1].trim();
+    street = '';
+  } else if (housePrefixMatch && housePrefixMatch[1] && housePrefixMatch[2]) {
+    houseBuilding = housePrefixMatch[1].trim();
+    street = housePrefixMatch[2].replace(/^[,\s-]+|[,\s-]+$/g, '').trim();
+  } else if (streetTokens.length >= 2) {
     houseBuilding = streetTokens[0];
     street = streetTokens.slice(1).join(', ');
   } else if (streetTokens.length === 1) {
@@ -172,13 +198,13 @@ export function parseAddressFromOcr(rawAddress: string): DetectedAddressDetails 
   }
 
   // If we couldn't parse anything meaningful, return null
-  if (!street && !barangay && !city && !province) {
+  if (!street && !houseBuilding && !barangay && !city && !province) {
     return null;
   }
 
   return {
     raw: cleanRaw,
-    street: street || cleanRaw,
+    street: street || houseBuilding || cleanRaw,
     houseBuilding,
     barangay,
     city,

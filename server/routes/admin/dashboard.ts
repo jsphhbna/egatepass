@@ -332,6 +332,7 @@ async function handleRequest(request: Request): Promise<Response> {
 
     // C-01: Filter pendingToday by entry_scanned_at within Manila local day, distinct from all-time pending
     const [
+      expectedTodayRes,
       todayCountRes,
       monthCountRes,
       insideCountRes,
@@ -353,6 +354,13 @@ async function handleRequest(request: Request): Promise<Response> {
       offlineResult,
       reportPassesResult,
     ] = await Promise.all([
+      admin
+        .from('passes')
+        .select('id', { count: 'exact', head: true })
+        .neq('source', 'kiosk')
+        .in('status', ['issued', 'inside', 'exited'])
+        .lte('valid_from', endToday)
+        .gte('valid_until', startToday),
       admin.from('passes').select('id', { count: 'exact', head: true }).gte('issued_at', startToday).lte('issued_at', endToday),
       admin.from('passes').select('id', { count: 'exact', head: true }).gte('issued_at', startMonth).lte('issued_at', endToday),
       admin.from('passes').select('id', { count: 'exact', head: true }).eq('status', 'inside'),
@@ -391,6 +399,7 @@ async function handleRequest(request: Request): Promise<Response> {
         : Promise.resolve({ data: null, count: null, error: null }),
     ]);
 
+    if (expectedTodayRes.error) throw expectedTodayRes.error;
     if (todayCountRes.error) throw todayCountRes.error;
     if (monthCountRes.error) throw monthCountRes.error;
     if (insideCountRes.error) throw insideCountRes.error;
@@ -461,6 +470,7 @@ async function handleRequest(request: Request): Promise<Response> {
 
     return jsonResponse(200, {
       counts: {
+        expectedVisitorsToday: expectedTodayRes.count ?? 0,
         todayTotal: todayCountRes.count ?? 0,
         monthTotal: monthCountRes.count ?? 0,
         currentlyInside: insideCountRes.count ?? 0,

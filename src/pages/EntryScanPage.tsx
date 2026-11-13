@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { useAuth } from '@/hooks/useAuth';
 import { getAccessToken, signOutCurrentActor } from '@/services/auth';
 import { Html5Qrcode } from 'html5-qrcode';
-import { LogOut as LogOutIcon, Volume2, VolumeX } from 'lucide-react';
+import { LogOut as LogOutIcon, Volume2, VolumeX, FlipHorizontal, Camera, Zap, ZapOff } from 'lucide-react';
 import { toast } from 'sonner';
 import { Clock3, QrCode, XCircle, AlertTriangle, CheckCircle2 } from 'lucide-react';
 import { BrandMark } from '@/components/BrandMark';
@@ -83,6 +83,36 @@ export function EntryScanPage() {
     setScannerKey((k) => k + 1);
   }
 
+  const [facingMode, setFacingMode] = useState<'user' | 'environment'>('user');
+  const [isMirrored, setIsMirrored] = useState(true);
+  const [hasTorch, setHasTorch] = useState(false);
+  const [isTorchOn, setIsTorchOn] = useState(false);
+
+  const toggleFacingMode = () => {
+    const nextMode = facingMode === 'user' ? 'environment' : 'user';
+    setFacingMode(nextMode);
+    setIsMirrored(nextMode === 'user');
+    setIsTorchOn(false);
+    retryCamera();
+  };
+
+  const toggleMirror = () => {
+    setIsMirrored((m) => !m);
+  };
+
+  const toggleTorch = async () => {
+    if (!scannerRef.current) return;
+    try {
+      const nextTorch = !isTorchOn;
+      await scannerRef.current.applyVideoConstraints({
+        advanced: [{ torch: nextTorch } as any],
+      });
+      setIsTorchOn(nextTorch);
+    } catch {
+      toast.info('Flashlight not supported on this camera');
+    }
+  };
+
   const device = userData?.kind === 'device' ? userData : null;
   const gate = device?.gate ?? 'Unknown Gate';
 
@@ -162,14 +192,31 @@ export function EntryScanPage() {
       try {
         const scanner = createOptimizedQrScanner(scannerId);
         scannerRef.current = scanner;
-        await scanner.start(
-          { facingMode: 'user' },
-          QR_SCAN_CONFIG,
-          (decodedText) => {
-            if (!debounceRef.current) processQR(decodedText);
-          },
-          () => {},
-        );
+        try {
+          await scanner.start(
+            { facingMode },
+            QR_SCAN_CONFIG,
+            (decodedText) => {
+              if (!debounceRef.current) processQR(decodedText);
+            },
+            () => {},
+          );
+        } catch (initialErr) {
+          if (facingMode === 'user') {
+            await scanner.start(
+              { facingMode: 'environment' },
+              QR_SCAN_CONFIG,
+              (decodedText) => {
+                if (!debounceRef.current) processQR(decodedText);
+              },
+              () => {},
+            );
+            setFacingMode('environment');
+            setIsMirrored(false);
+          } else {
+            throw initialErr;
+          }
+        }
         if (cancelled) {
           await scanner.stop().catch(() => undefined);
           return;
@@ -177,6 +224,14 @@ export function EntryScanPage() {
         setCameraState('active');
         setCameraError(null);
         await enableContinuousFocus(scanner);
+        try {
+          const track = scanner.getRunningTrackCameraCapabilities();
+          if (track && (track as any).torch) {
+            setHasTorch(true);
+          }
+        } catch {
+          setHasTorch(false);
+        }
       } catch (error: unknown) {
         console.error('QR scanner init error:', error);
         if (cancelled) return;
@@ -269,7 +324,45 @@ export function EntryScanPage() {
       </div>
 
       <div className="scanner-viewport relative mb-5 overflow-hidden rounded-2xl border border-white/15 bg-black shadow-lg">
-        <div id="entry-qr-reader" className="h-full w-full" />
+        <div id="entry-qr-reader" className={`h-full w-full ${isMirrored ? '[&_video]:scale-x-[-1]' : '[&_video]:scale-x-1'}`} />
+
+        {/* Camera Controls Overlay */}
+        {cameraState === 'active' && (
+          <div className="absolute top-3 right-3 z-30 flex items-center gap-1.5 bg-black/60 backdrop-blur-xs p-1.5 rounded-xl border border-white/10">
+            {hasTorch && (
+              <button
+                type="button"
+                onClick={toggleTorch}
+                title={isTorchOn ? 'Turn flashlight off' : 'Turn flashlight on'}
+                aria-label="Toggle flashlight"
+                className="p-1.5 rounded-lg text-white hover:bg-white/20 transition-colors"
+              >
+                {isTorchOn ? <Zap className="h-4 w-4 text-amber-300" /> : <ZapOff className="h-4 w-4 text-white/70" />}
+              </button>
+            )}
+            <button
+              type="button"
+              onClick={toggleMirror}
+              title={isMirrored ? 'Disable preview mirror' : 'Enable preview mirror'}
+              aria-label="Toggle preview mirror"
+              className={`p-1.5 rounded-lg transition-colors ${
+                isMirrored ? 'bg-white/20 text-white' : 'text-white/70 hover:bg-white/20'
+              }`}
+            >
+              <FlipHorizontal className="h-4 w-4" />
+            </button>
+            <button
+              type="button"
+              onClick={toggleFacingMode}
+              title={`Switch to ${facingMode === 'user' ? 'Back' : 'Front'} Camera`}
+              aria-label="Switch camera"
+              className="p-1.5 rounded-lg text-white/80 hover:bg-white/20 transition-colors flex items-center gap-1 text-[11px] font-semibold"
+            >
+              <Camera className="h-4 w-4" />
+              <span className="hidden sm:inline">{facingMode === 'user' ? 'Front' : 'Back'}</span>
+            </button>
+          </div>
+        )}
         {cameraState !== 'active' && (
           <div className="absolute inset-0 z-20 flex flex-col items-center justify-center bg-black/90 p-4 text-center text-white space-y-3">
             {cameraState === 'starting' ? (

@@ -8,13 +8,6 @@ import {
   type PsgcLocation,
   type PostalResolution,
 } from '@/lib/psgc';
-import {
-  isCityOfManila,
-  getManilaCongressionalDistricts,
-  getManilaAdministrativeDistricts,
-  lookupManilaDistrictForBarangay,
-  filterManilaBarangays,
-} from '@/lib/manilaDistricts';
 import { MapPin, Search, ChevronRight, X, ArrowLeft, Check, AlertCircle } from 'lucide-react';
 
 export interface SelectedPsgcAddress {
@@ -52,14 +45,6 @@ export function AddressCascadingSelector({
   const [selectedProvince, setSelectedProvince] = useState<PsgcLocation | null>(null);
   const [selectedCity, setSelectedCity] = useState<PsgcLocation | null>(null);
   const [selectedBarangay, setSelectedBarangay] = useState<PsgcLocation | null>(null);
-
-  // Manila specific filters
-  const [selectedManilaDistrict, setSelectedManilaDistrict] = useState<string | null>(null);
-  const [selectedManilaArea, setSelectedManilaArea] = useState<string | null>(null);
-
-  const isManila = useMemo(() => {
-    return isCityOfManila(selectedCity?.code, selectedCity?.name);
-  }, [selectedCity]);
 
   // Available options per step
   const [regions, setRegions] = useState<PsgcLocation[]>([]);
@@ -103,24 +88,9 @@ export function AddressCascadingSelector({
           level: 'barangay',
         });
 
-        if (isCityOfManila(initialAddress.city?.code, initialAddress.city?.name) && initialAddress.barangay) {
-          const manilaMatch = lookupManilaDistrictForBarangay(initialAddress.barangay);
-          if (manilaMatch) {
-            setSelectedManilaDistrict(manilaMatch.congressionalDistrict);
-            setSelectedManilaArea(manilaMatch.administrativeDistrict);
-          } else {
-            setSelectedManilaDistrict(null);
-            setSelectedManilaArea(null);
-          }
-        } else {
-          setSelectedManilaDistrict(null);
-          setSelectedManilaArea(null);
-        }
-
         setCurrentStep('confirm');
 
-        // Preload hierarchy for the initial address so navigating back or clicking 'Change'
-        // has the proper options available instead of an empty list
+        // Preload hierarchy for the initial address so navigating back has proper options available
         if (initialAddress.city?.code) {
           fetchPsgcBarangays(initialAddress.city.code).then(setBarangays).catch(() => {});
         }
@@ -175,8 +145,6 @@ export function AddressCascadingSelector({
     setSelectedProvince(null);
     setSelectedCity(null);
     setSelectedBarangay(null);
-    setSelectedManilaDistrict(null);
-    setSelectedManilaArea(null);
     setProvinces([]);
     setCities([]);
     setBarangays([]);
@@ -188,8 +156,6 @@ export function AddressCascadingSelector({
     setSelectedProvince(null);
     setSelectedCity(null);
     setSelectedBarangay(null);
-    setSelectedManilaDistrict(null);
-    setSelectedManilaArea(null);
 
     // NCR check: NCR has NO provinces
     if (region.code === '1300000000' || !region.hasProvinces) {
@@ -217,8 +183,6 @@ export function AddressCascadingSelector({
     setSelectedProvince(province);
     setSelectedCity(null);
     setSelectedBarangay(null);
-    setSelectedManilaDistrict(null);
-    setSelectedManilaArea(null);
 
     setLoading(true);
     try {
@@ -233,8 +197,6 @@ export function AddressCascadingSelector({
   async function handleSelectCity(city: PsgcLocation) {
     setSelectedCity(city);
     setSelectedBarangay(null);
-    setSelectedManilaDistrict(null);
-    setSelectedManilaArea(null);
 
     setLoading(true);
     try {
@@ -248,13 +210,6 @@ export function AddressCascadingSelector({
 
   function handleSelectBarangay(bgy: PsgcLocation) {
     setSelectedBarangay(bgy);
-    if (isCityOfManila(selectedCity?.code, selectedCity?.name)) {
-      const manilaMatch = lookupManilaDistrictForBarangay(bgy);
-      if (manilaMatch) {
-        setSelectedManilaDistrict(manilaMatch.congressionalDistrict);
-        setSelectedManilaArea(manilaMatch.administrativeDistrict);
-      }
-    }
     setCurrentStep('confirm');
   }
 
@@ -301,7 +256,7 @@ export function AddressCascadingSelector({
     onClose();
   }
 
-  // Filter current list by search query and optional Manila locality filters
+  // Filter current list by search query
   const filteredItems = useMemo(() => {
     const term = searchTerm.trim().toLowerCase();
     let sourceList: Array<{ code: string; name: string }> = [];
@@ -309,20 +264,11 @@ export function AddressCascadingSelector({
     if (currentStep === 'region') sourceList = regions;
     else if (currentStep === 'province') sourceList = provinces;
     else if (currentStep === 'city') sourceList = cities;
-    else if (currentStep === 'barangay') {
-      if (isManila && (selectedManilaDistrict || selectedManilaArea)) {
-        sourceList = filterManilaBarangays(barangays, {
-          congressionalDistrict: selectedManilaDistrict,
-          administrativeDistrict: selectedManilaArea,
-        });
-      } else {
-        sourceList = barangays;
-      }
-    }
+    else if (currentStep === 'barangay') sourceList = barangays;
 
     if (!term) return sourceList;
     return sourceList.filter((item) => item.name.toLowerCase().includes(term));
-  }, [currentStep, searchTerm, regions, provinces, cities, barangays, isManila, selectedManilaDistrict, selectedManilaArea]);
+  }, [currentStep, searchTerm, regions, provinces, cities, barangays]);
 
   if (!isOpen) return null;
 
@@ -356,7 +302,7 @@ export function AddressCascadingSelector({
               {currentStep === 'region' && 'Select Region'}
               {currentStep === 'province' && 'Select Province'}
               {currentStep === 'city' && 'Select City / Municipality'}
-              {currentStep === 'barangay' && `Select Barangay${selectedManilaArea ? ` (${selectedManilaArea})` : ''}`}
+              {currentStep === 'barangay' && 'Select Barangay'}
               {currentStep === 'confirm' && 'Confirm Residential Address'}
             </h3>
           </div>
@@ -406,7 +352,7 @@ export function AddressCascadingSelector({
             </>
           )}
 
-          {/* City */}
+          {/* City / Municipality */}
           {(selectedProvince || (selectedRegion && !selectedRegion.hasProvinces)) && (
             <>
               <ChevronRight className="w-3.5 h-3.5 text-[var(--color-text-muted,#687386)] flex-shrink-0" />
@@ -452,63 +398,6 @@ export function AddressCascadingSelector({
         {/* Content Body */}
         {currentStep !== 'confirm' ? (
           <div className="flex flex-col flex-1 min-h-0">
-            {/* Optional Manila Locality Filter Bar */}
-            {currentStep === 'barangay' && isManila && (
-              <div className="px-3.5 py-2.5 bg-[var(--color-surface-subtle,#F8FAFC)] border-b border-[var(--color-border,#E2E8F0)] grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs">
-                <div>
-                  <label htmlFor="manila-district-select" className="block text-[11px] font-bold text-[var(--color-text-secondary,#5F6B7F)] uppercase tracking-wider mb-1">
-                    Congressional District
-                  </label>
-                  <select
-                    id="manila-district-select"
-                    data-testid="manila-district-select"
-                    value={selectedManilaDistrict || ''}
-                    onChange={(e) => {
-                      const nextDistrict = e.target.value || null;
-                      setSelectedManilaDistrict(nextDistrict);
-                      if (nextDistrict && selectedManilaArea) {
-                        const validAreas = getManilaAdministrativeDistricts(nextDistrict);
-                        if (!validAreas.includes(selectedManilaArea)) {
-                          setSelectedManilaArea(null);
-                        }
-                      }
-                    }}
-                    className="w-full px-2.5 py-1.5 bg-white border border-[var(--color-border,#E2E8F0)] rounded-lg text-xs font-semibold text-[var(--color-text-primary,#172033)] focus:outline-none focus:ring-1 focus:ring-[#7A0A0A]"
-                  >
-                    <option value="">All Districts (I – VI)</option>
-                    {getManilaCongressionalDistricts().map((dist) => (
-                      <option key={dist} value={dist}>
-                        {dist}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-
-                <div>
-                  <label htmlFor="manila-area-select" className="block text-[11px] font-bold text-[var(--color-text-secondary,#5F6B7F)] uppercase tracking-wider mb-1">
-                    Administrative Area
-                  </label>
-                  <select
-                    id="manila-area-select"
-                    data-testid="manila-area-select"
-                    value={selectedManilaArea || ''}
-                    onChange={(e) => {
-                      const nextArea = e.target.value || null;
-                      setSelectedManilaArea(nextArea);
-                    }}
-                    className="w-full px-2.5 py-1.5 bg-white border border-[var(--color-border,#E2E8F0)] rounded-lg text-xs font-semibold text-[var(--color-text-primary,#172033)] focus:outline-none focus:ring-1 focus:ring-[#7A0A0A]"
-                  >
-                    <option value="">All Areas</option>
-                    {getManilaAdministrativeDistricts(selectedManilaDistrict).map((area) => (
-                      <option key={area} value={area}>
-                        {area}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-              </div>
-            )}
-
             {/* Search Input Bar */}
             <div className="p-3.5 border-b border-[var(--color-border,#E2E8F0)] bg-[var(--color-surface,#FFFFFF)]">
               <div className="relative flex items-center">
@@ -518,11 +407,7 @@ export function AddressCascadingSelector({
                   type="text"
                   value={searchTerm}
                   onChange={(e) => setSearchTerm(e.target.value)}
-                  placeholder={
-                    currentStep === 'barangay' && isManila
-                      ? 'Search Manila barangay (e.g. 408, Sampaloc)...'
-                      : `Search ${currentStep}...`
-                  }
+                  placeholder={`Search ${currentStep}...`}
                   className="w-full pl-9 pr-9 py-2.5 bg-[var(--color-surface-subtle,#F8FAFC)] border border-[var(--color-border,#E2E8F0)] rounded-xl text-sm text-[var(--color-text-primary,#172033)] placeholder-[var(--color-text-muted,#687386)] focus:outline-none focus:ring-2 focus:ring-[#7A0A0A]/20 focus:border-[#7A0A0A] transition-all"
                 />
                 {searchTerm && (
@@ -601,17 +486,6 @@ export function AddressCascadingSelector({
                   </span>
                   <p className="text-sm font-bold text-[var(--color-text-primary,#172033)] mt-0.5">{selectedCity?.name}</p>
                 </div>
-
-                {isManila && (selectedManilaDistrict || selectedManilaArea) && (
-                  <div>
-                    <span className="text-xs text-[var(--color-text-secondary,#5F6B7F)] uppercase tracking-wider font-semibold">
-                      Manila District & Area
-                    </span>
-                    <p className="text-sm font-bold text-[var(--color-text-primary,#172033)] mt-0.5">
-                      {[selectedManilaDistrict, selectedManilaArea].filter(Boolean).join(' • ')}
-                    </p>
-                  </div>
-                )}
 
                 <div>
                   <span className="text-xs text-[var(--color-text-secondary,#5F6B7F)] uppercase tracking-wider font-semibold">

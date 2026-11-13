@@ -393,6 +393,7 @@ export const SERVER_DIRECT_TABLE_OPERATIONS: DirectServerTableOperation[] = [
   { file: 'server/routes/office/decide.ts', table: 'offices', operations: ['SELECT'], purpose: 'Fetch office name for decision email' },
   { file: 'server/routes/office/decide.ts', table: 'office_personnel', operations: ['SELECT'], purpose: 'Fetch personnel name for decision email' },
   { file: 'server/routes/office/decide.ts', table: 'office_visit_email_outbox', operations: ['SELECT', 'INSERT', 'UPDATE'], purpose: 'Record and update email outbox state' },
+  { file: 'server/routes/office/decide.ts', table: 'passes', operations: ['SELECT'], purpose: 'Fetch pass presentation for idempotent approved decision' },
   { file: 'server/routes/office/personnel.ts', table: 'offices', operations: ['SELECT'], purpose: 'List active offices when officeId not specified' },
   { file: 'server/routes/office/personnel.ts', table: 'office_personnel', operations: ['SELECT'], purpose: 'List office personnel and verify office ownership (mutations use SECURITY DEFINER RPCs)' },
   { file: 'server/routes/office/portrait-preview.ts', table: 'office_visits', operations: ['SELECT'], purpose: 'Lookup visit photo path and office for preview authorization' },
