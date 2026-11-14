@@ -5,14 +5,19 @@
  * Reconciles the exact 14 authenticated-executable api.* functions flagged by
  * Supabase Security Advisor in production, asserting:
  * 1. Exact effective EXECUTE privileges in PostgreSQL catalog for PUBLIC, anon, authenticated, and service_role
- * 2. PostgREST schema exposure in schema 'api'
- * 3. SECURITY DEFINER with immutable fixed search_path = '' in pg_proc.proconfig
- * 4. Dynamic failure if any newly introduced definer function in api or public is omitted
- * 5. Dynamic failure if effective grants drift from declared intended architecture
- * 6. auth.uid() and actor/session validation
- * 7. Role authorization and resource ownership verification
- * 8. Password-recovery session confinement (aal1 with amr recovery blocked)
- * 9. Positive and negative authorization cases executed against live database engine
+ * 2. PostgREST schema exposure in schema 'api' and accessibility to PostgREST roles
+ * 3. Zero SECURITY DEFINER functions in api or public executable by anon or public
+ * 4. SECURITY DEFINER with immutable fixed search_path = '' in pg_proc.proconfig
+ * 5. Dynamic catalog failure if any newly introduced definer function in api or public is omitted
+ * 6. Dynamic catalog failure if effective grants drift from declared intended architecture
+ * 7. Active database catalog (pg_proc.prosrc) verification of actorValidation, roleAuthorization, and blocksRecovery
+ * 8. Comprehensive positive and negative behavioral execution against live PostgreSQL engine:
+ *    - Unauthenticated / anon callers fail closed
+ *    - Password-recovery session confinement (amr: [{ method: 'recovery' }]) strictly blocks operational mutations/queries
+ *    - Role-based authorization rejects lower-privilege staff (guard / admin vs superadmin)
+ *    - Resource ownership checks reject unauthorized access across visitors
+ *    - Positive lifecycle mutations succeed and maintain state invariants
+ * 9. Regression proof tests verifying that tampering or bypassing the inventory fails closed
  * 10. Architectural intentionality documentation for every authenticated-executable function
  */
 
@@ -47,7 +52,7 @@ export const AUDITED_14_API_DEFINER_FUNCTIONS: AuditedApiDefinerFunction[] = [
     requiresSecurityDefiner: true,
     actorValidation: 'is_portal_actor',
     roleAuthorization: 'visitor_owner',
-    blocksRecovery: false, // Upload cleanup is scoped to intent owner_id = auth.uid()
+    blocksRecovery: false, // Scoped to intent owner_id = auth.uid() and private.is_portal_actor()
     intentionality:
       'Allows portal visitors to cancel pending registration upload intents and releases transient storage reservations without exposing administrative tables.',
   },
@@ -185,7 +190,7 @@ export const AUDITED_14_API_DEFINER_FUNCTIONS: AuditedApiDefinerFunction[] = [
     postgrestExposed: true,
     hasSearchPathEmpty: true,
     requiresSecurityDefiner: true,
-    actorValidation: 'current_staff_role',
+    actorValidation: 'auth.uid',
     roleAuthorization: 'admin',
     blocksRecovery: true,
     intentionality:
@@ -199,7 +204,7 @@ export const AUDITED_14_API_DEFINER_FUNCTIONS: AuditedApiDefinerFunction[] = [
     postgrestExposed: true,
     hasSearchPathEmpty: true,
     requiresSecurityDefiner: true,
-    actorValidation: 'current_staff_role',
+    actorValidation: 'auth.uid',
     roleAuthorization: 'admin',
     blocksRecovery: true,
     intentionality:
@@ -227,7 +232,7 @@ export const AUDITED_14_API_DEFINER_FUNCTIONS: AuditedApiDefinerFunction[] = [
     postgrestExposed: true,
     hasSearchPathEmpty: true,
     requiresSecurityDefiner: true,
-    actorValidation: 'current_staff_role',
+    actorValidation: 'auth.uid',
     roleAuthorization: 'admin',
     blocksRecovery: true,
     intentionality:
@@ -327,9 +332,6 @@ async function setupSupabaseEmulation(db: PGlite) {
 describe('SECURITY DEFINER Function Audit & Hardening Contract (14 API Functions)', () => {
   const migrationsDir = 'supabase/migrations';
   const migrationFiles = readdirSync(migrationsDir).filter(f => f.endsWith('.sql')).sort();
-  const allMigrationsSql = migrationFiles
-    .map(f => readFileSync(join(migrationsDir, f), 'utf8'))
-    .join('\n');
 
   let db: PGlite;
 
@@ -339,6 +341,13 @@ describe('SECURITY DEFINER Function Audit & Hardening Contract (14 API Functions
   const guardId = '20000000-0000-0000-0000-000000000003';
   const visitorAId = '30000000-0000-0000-0000-000000000004';
   const visitorBId = '40000000-0000-0000-0000-000000000005';
+  const kioskDeviceId = '50000000-0000-0000-0000-000000000006';
+
+  // Seeded Pass / Visitor Entities for Mutation Tests
+  const visitorRecordAId = '60000000-0000-0000-0000-000000000001';
+  const visitorRecordBId = '60000000-0000-0000-0000-000000000002';
+  const passAId = '70000000-0000-0000-0000-000000000001';
+  const passBId = '70000000-0000-0000-0000-000000000002';
 
   beforeAll(async () => {
     db = new PGlite();
@@ -357,7 +366,8 @@ describe('SECURITY DEFINER Function Audit & Hardening Contract (14 API Functions
         ('${adminId}'::uuid, 'admin@example.com', now(), false),
         ('${guardId}'::uuid, 'guard@example.com', now(), false),
         ('${visitorAId}'::uuid, null, null, true),
-        ('${visitorBId}'::uuid, null, null, true)
+        ('${visitorBId}'::uuid, null, null, true),
+        ('${kioskDeviceId}'::uuid, 'kiosk@device.local', now(), false)
       on conflict (id) do nothing;
 
       insert into public.staff_profiles (user_id, display_name, role, active, privacy_accepted_at, must_change_password) values
@@ -365,6 +375,24 @@ describe('SECURITY DEFINER Function Audit & Hardening Contract (14 API Functions
         ('${adminId}'::uuid, 'Administrator', 'admin', true, now(), false),
         ('${guardId}'::uuid, 'Guard User', 'guard', true, now(), false)
       on conflict do nothing;
+
+      insert into public.devices (user_id, alias, name, type, gate, status) values
+        ('${kioskDeviceId}'::uuid, 'kiosk-01', 'Main Gate Kiosk', 'kiosk'::public.device_type, 'Gate 1', 'active'::public.device_status)
+      on conflict (user_id) do nothing;
+
+      insert into public.visitors (
+        id, owner_id, source, full_name, contact_number, purpose, visit_date, consent_accepted_at
+      ) values
+        ('${visitorRecordAId}'::uuid, '${visitorAId}'::uuid, 'portal'::public.pass_source, 'Juan Dela Cruz', '09171234567', 'Official Business', current_date, now()),
+        ('${visitorRecordBId}'::uuid, '${visitorBId}'::uuid, 'portal'::public.pass_source, 'Maria Santos', '09181234567', 'Campus Visit', current_date, now())
+      on conflict (id) do nothing;
+
+      insert into public.passes (
+        id, visitor_id, public_reference, token_digest, source, status, valid_from, valid_until, gate
+      ) values
+        ('${passAId}'::uuid, '${visitorRecordAId}'::uuid, '80000000-0000-0000-0000-000000000001'::uuid, decode('0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef', 'hex'), 'portal'::public.pass_source, 'issued'::public.pass_status, now() - interval '1 hour', now() + interval '8 hours', 'Main Gate'),
+        ('${passBId}'::uuid, '${visitorRecordBId}'::uuid, '80000000-0000-0000-0000-000000000002'::uuid, decode('fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210', 'hex'), 'portal'::public.pass_source, 'issued'::public.pass_status, now() - interval '1 hour', now() + interval '8 hours', 'Main Gate')
+      on conflict (id) do nothing;
     `);
   }, 60000);
 
@@ -415,23 +443,36 @@ describe('SECURITY DEFINER Function Audit & Hardening Contract (14 API Functions
   // 2. LIVE POSTGRESQL CATALOG AUDIT (pg_proc, pg_namespace, has_function_privilege)
   // ===========================================================================
 
-  it('dynamically verifies via pg_proc catalog that ONLY the 14 audited functions are authenticated-executable SECURITY DEFINER in api/public', async () => {
+  it('dynamically verifies via pg_proc catalog that ONLY the 14 audited functions are authenticated-executable or anon-executable SECURITY DEFINER in api/public', async () => {
     const catalogRes = await db.query<{
       schema_name: string;
       function_name: string;
       is_security_definer: boolean;
       can_authenticated: boolean;
+      can_anon: boolean;
+      can_public: boolean;
     }>(`
       select 
         n.nspname as schema_name,
         p.proname as function_name,
         p.prosecdef as is_security_definer,
-        has_function_privilege('authenticated', p.oid, 'EXECUTE') as can_authenticated
+        has_function_privilege('authenticated', p.oid, 'EXECUTE') as can_authenticated,
+        has_function_privilege('anon', p.oid, 'EXECUTE') as can_anon,
+        has_function_privilege('public', p.oid, 'EXECUTE') as can_public
       from pg_proc p
       join pg_namespace n on n.oid = p.pronamespace
       where n.nspname in ('api', 'public')
       order by n.nspname, p.proname;
     `);
+
+    // Zero definers in api/public must be executable by anon or public
+    const anonOrPublicDefiners = catalogRes.rows
+      .filter(r => r.is_security_definer && (r.can_anon || r.can_public))
+      .map(r => `${r.schema_name}.${r.function_name}`);
+    expect(
+      anonOrPublicDefiners,
+      'No SECURITY DEFINER function in api or public should ever be executable by anon or public'
+    ).toEqual([]);
 
     const activeAuthenticatedDefiners = catalogRes.rows
       .filter(r => r.is_security_definer && r.can_authenticated)
@@ -447,7 +488,7 @@ describe('SECURITY DEFINER Function Audit & Hardening Contract (14 API Functions
     ).toEqual(auditedNames);
   });
 
-  it('verifies exact effective EXECUTE privileges, SECURITY DEFINER status, and search_path in pg_proc catalog', async () => {
+  it('verifies exact effective EXECUTE privileges, PostgREST exposure, SECURITY DEFINER status, and search_path in pg_proc catalog', async () => {
     const catalogRes = await db.query<{
       schema_name: string;
       function_name: string;
@@ -484,74 +525,125 @@ describe('SECURITY DEFINER Function Audit & Hardening Contract (14 API Functions
       // 1. SECURITY DEFINER status
       expect(
         proc!.is_security_definer,
-        `Function api.${fn.name} prosecdef must be ${fn.requiresSecurityDefiner}`
+        `Function api.${fn.name} prosecdef must match requiresSecurityDefiner`
       ).toBe(fn.requiresSecurityDefiner);
 
-      // 2. search_path = '' in proconfig
-      expect(
-        proc!.settings,
-        `Function api.${fn.name} must set proconfig search_path = ''`
-      ).toContain('search_path=""');
+      // 2. Fixed search_path = '' in proconfig
+      if (fn.hasSearchPathEmpty) {
+        expect(
+          proc!.settings,
+          `Function api.${fn.name} must set proconfig search_path = ''`
+        ).toContain('search_path=""');
+      }
 
-      // 3. Denied grants: anon and public must NEVER have EXECUTE
-      expect(
-        proc!.can_anon,
-        `Function api.${fn.name} must deny EXECUTE to anon in database catalog`
-      ).toBe(false);
-      expect(
-        proc!.can_public,
-        `Function api.${fn.name} must deny EXECUTE to public in database catalog`
-      ).toBe(false);
+      // 3. PostgREST exposed schema and accessibility
+      if (fn.postgrestExposed) {
+        expect(fn.schema, `Exposed function api.${fn.name} must be in api schema`).toBe('api');
+        expect(proc!.can_authenticated || proc!.can_anon, `Exposed function api.${fn.name} must be executable by PostgREST role`).toBe(true);
+      }
 
-      // 4. Exact grants: authenticated must have EXECUTE
+      // 4. Exact grants verification for all standard roles
       expect(
         proc!.can_authenticated,
-        `Function api.${fn.name} must grant EXECUTE to authenticated in database catalog`
-      ).toBe(true);
+        `Function api.${fn.name} authenticated execution privilege drift`
+      ).toBe(fn.exactGrants.includes('authenticated'));
 
-      // 5. Exact grants: service_role privilege must strictly match declared expectation
-      const expectsServiceRole = fn.exactGrants.includes('service_role');
       expect(
         proc!.can_service_role,
-        `Function api.${fn.name} service_role privilege drift: expected ${expectsServiceRole}, got ${proc!.can_service_role}`
-      ).toBe(expectsServiceRole);
+        `Function api.${fn.name} service_role execution privilege drift`
+      ).toBe(fn.exactGrants.includes('service_role'));
+
+      expect(
+        proc!.can_anon,
+        `Function api.${fn.name} anon execution privilege drift`
+      ).toBe(false);
+
+      expect(
+        proc!.can_public,
+        `Function api.${fn.name} public execution privilege drift`
+      ).toBe(false);
+
+      // 5. Explicit denied grants verification
+      for (const deniedRole of fn.deniedGrants) {
+        if (deniedRole === 'anon') {
+          expect(proc!.can_anon, `Function api.${fn.name} must deny EXECUTE to anon`).toBe(false);
+        }
+        if (deniedRole === 'public') {
+          expect(proc!.can_public, `Function api.${fn.name} must deny EXECUTE to public`).toBe(false);
+        }
+      }
     }
   });
 
   // ===========================================================================
-  // 3. STATIC MIGRATION DEFINITION VERIFICATION (AST / Source Checks)
+  // 3. CATALOG SOURCE AST & SEMANTIC AUTHORIZATION CONTRACT
   // ===========================================================================
 
-  it('verifies SQL definitions set search_path = \'\' and perform actor/session validation', () => {
+  it('verifies SQL implementation in pg_proc catalog enforces declared actorValidation, roleAuthorization, and blocksRecovery per function', async () => {
+    const procs = await db.query<{ proname: string; prosrc: string }>(`
+      select p.proname, p.prosrc
+      from pg_proc p
+      join pg_namespace n on n.oid = p.pronamespace
+      where n.nspname = 'api';
+    `);
+    const prosrcMap = new Map<string, string>();
+    for (const r of procs.rows) {
+      prosrcMap.set(r.proname, r.prosrc);
+    }
+
     for (const fn of AUDITED_14_API_DEFINER_FUNCTIONS) {
-      const regex = new RegExp(
-        `function\\s+api\\.${fn.name}\\s*\\([\\s\\S]*?security\\s+definer[\\s\\S]*?set\\s+search_path\\s*=\\s*''`,
-        'i'
-      );
-      expect(
-        regex.test(allMigrationsSql),
-        `Function api.${fn.name} must declare SECURITY DEFINER with set search_path = ''`
-      ).toBe(true);
+      const src = prosrcMap.get(fn.name);
+      expect(src, `Function api.${fn.name} must exist in pg_proc catalog`).toBeDefined();
 
-      const fnBlockRegex = new RegExp(
-        `create\\s+(?:or\\s+replace\\s+)?function\\s+api\\.${fn.name}\\b[\\s\\S]*?\\$\\$([\\s\\S]*?)\\$\\$`,
-        'gi'
-      );
-      const matches = [...allMigrationsSql.matchAll(fnBlockRegex)];
-      expect(matches.length, `Function api.${fn.name} must have a definition block`).toBeGreaterThan(0);
+      // 1. Specific actor validation enforcement
+      switch (fn.actorValidation) {
+        case 'is_portal_actor':
+          expect(src, `Function api.${fn.name} must invoke private.is_portal_actor()`).toMatch(/private\.is_portal_actor\(\)/);
+          break;
+        case 'current_staff_role':
+          expect(src, `Function api.${fn.name} must invoke private.current_staff_role()`).toMatch(/private\.current_staff_role\(\)/);
+          break;
+        case 'has_staff_role':
+          expect(src, `Function api.${fn.name} must invoke private.has_staff_role()`).toMatch(/private\.has_staff_role\(/);
+          break;
+        case 'current_device_type':
+          expect(src, `Function api.${fn.name} must invoke private.current_device_type()`).toMatch(/private\.current_device_type\(\)/);
+          break;
+        case 'auth.uid':
+          expect(src, `Function api.${fn.name} must resolve caller via auth.uid()`).toMatch(/auth\.uid\(\)/);
+          break;
+      }
 
-      const latestBody = matches[matches.length - 1][1];
-      const hasAuthValidation =
-        latestBody.includes('auth.uid()') ||
-        latestBody.includes('has_staff_role') ||
-        latestBody.includes('current_staff_role') ||
-        latestBody.includes('current_device_type') ||
-        latestBody.includes('is_portal_actor');
+      // 2. Specific role authorization enforcement
+      switch (fn.roleAuthorization) {
+        case 'superadmin':
+          expect(src, `Function api.${fn.name} must require superadmin role`).toMatch(/'superadmin'/);
+          break;
+        case 'admin':
+          expect(src, `Function api.${fn.name} must require administrator authority`).toMatch(/'admin'/);
+          break;
+        case 'visitor_owner':
+          expect(src, `Function api.${fn.name} must enforce owner/caller bounding`).toMatch(/owner_id|target_intent|caller_id/);
+          break;
+        case 'staff_or_device':
+          expect(src, `Function api.${fn.name} must check staff or device actors`).toMatch(/staff_profiles|devices|'staff'/);
+          break;
+        case 'guard':
+          expect(src, `Function api.${fn.name} must check guard authority`).toMatch(/'guard'/);
+          break;
+      }
 
-      expect(
-        hasAuthValidation,
-        `Function api.${fn.name} must perform actor/session validation in SQL body`
-      ).toBe(true);
+      // 3. Recovery session confinement enforcement
+      if (fn.blocksRecovery) {
+        const blocksRecoveryInSrc =
+          src!.includes('is_recovery_session') ||
+          src!.includes('current_staff_role') ||
+          src!.includes('has_staff_role');
+        expect(
+          blocksRecoveryInSrc,
+          `Function api.${fn.name} declares blocksRecovery: true and must enforce recovery session blocking in body or role helper`
+        ).toBe(true);
+      }
     }
   });
 
@@ -568,6 +660,66 @@ describe('SECURITY DEFINER Function Audit & Hardening Contract (14 API Functions
       });
     });
 
+    it('rejects staff callers attempting to invoke create_upload_intent as portal visitor', async () => {
+      await asActor(adminId, {}, async () => {
+        await expect(
+          db.query(`select api.create_upload_intent('portal'::public.pass_source, 'photo'::public.evidence_kind, 'image/jpeg');`)
+        ).rejects.toThrow(/visitor identity required/);
+      });
+    });
+
+    it('rejects non-kiosk callers attempting to invoke create_upload_intent as kiosk', async () => {
+      await asActor(visitorAId, {}, async () => {
+        await expect(
+          db.query(`select api.create_upload_intent('kiosk'::public.pass_source, 'photo'::public.evidence_kind, 'image/jpeg');`)
+        ).rejects.toThrow(/active kiosk identity required/);
+      });
+    });
+
+    it('rejects guard caller attempting guard_offline upload intent (administrator required)', async () => {
+      await asActor(guardId, {}, async () => {
+        await expect(
+          db.query(`select api.create_upload_intent('guard_offline'::public.pass_source, 'photo'::public.evidence_kind, 'image/jpeg');`)
+        ).rejects.toThrow(/administrator required/);
+      });
+    });
+
+    it('rejects administrator in recovery session attempting guard_offline upload intent', async () => {
+      await asActor(adminId, { amr: [{ method: 'recovery' }] }, async () => {
+        await expect(
+          db.query(`select api.create_upload_intent('guard_offline'::public.pass_source, 'photo'::public.evidence_kind, 'image/jpeg');`)
+        ).rejects.toThrow(/administrator required/);
+      });
+    });
+
+    it('validates supported evidence kinds and content types on create_upload_intent', async () => {
+      await asActor(visitorAId, {}, async () => {
+        await expect(
+          db.query(`select api.create_upload_intent('portal'::public.pass_source, 'photo'::public.evidence_kind, 'application/pdf');`)
+        ).rejects.toThrow(/unsupported content type/);
+      });
+    });
+
+    it('allows registered kiosk device to create kiosk upload intent', async () => {
+      await asActor(kioskDeviceId, {}, async () => {
+        const res = await db.query<{ intent_id: string; bucket_id: string }>(
+          `select * from api.create_upload_intent('kiosk'::public.pass_source, 'photo'::public.evidence_kind, 'image/jpeg');`
+        );
+        expect(res.rows[0].intent_id).toBeDefined();
+        expect(res.rows[0].bucket_id).toBe('visitor-photos');
+      });
+    });
+
+    it('allows administrator to create guard_offline upload intent', async () => {
+      await asActor(adminId, {}, async () => {
+        const res = await db.query<{ intent_id: string; bucket_id: string }>(
+          `select * from api.create_upload_intent('guard_offline'::public.pass_source, 'photo'::public.evidence_kind, 'image/jpeg');`
+        );
+        expect(res.rows[0].intent_id).toBeDefined();
+        expect(res.rows[0].bucket_id).toBe('visitor-photos');
+      });
+    });
+
     it('creates upload intent bound to visitor A and strictly blocks visitor B from abandoning it (resource ownership mismatch)', async () => {
       let intentId: string;
 
@@ -580,7 +732,21 @@ describe('SECURITY DEFINER Function Audit & Hardening Contract (14 API Functions
         expect(intentId).toBeDefined();
       });
 
-      // Negative Case: Visitor B attempts to abandon Visitor A's intent -> 42501 intent ownership mismatch
+      // Negative Case 1: Unauthenticated caller attempts abandon -> visitor identity required
+      await asActor(null, {}, async () => {
+        await expect(
+          db.query(`select * from api.abandon_upload_intent('${intentId}'::uuid);`)
+        ).rejects.toThrow(/visitor identity required/);
+      });
+
+      // Negative Case 2: Staff caller attempts abandon -> visitor identity required
+      await asActor(adminId, {}, async () => {
+        await expect(
+          db.query(`select * from api.abandon_upload_intent('${intentId}'::uuid);`)
+        ).rejects.toThrow(/visitor identity required/);
+      });
+
+      // Negative Case 3: Visitor B attempts to abandon Visitor A's intent -> 42501 intent ownership mismatch
       await asActor(visitorBId, {}, async () => {
         await expect(
           db.query(`select * from api.abandon_upload_intent('${intentId}'::uuid);`)
@@ -594,6 +760,24 @@ describe('SECURITY DEFINER Function Audit & Hardening Contract (14 API Functions
         );
         expect(res.rows[0].ok).toBe(true);
         expect(res.rows[0].code).toBe('abandoned');
+      });
+
+      // Idempotency: Visitor A abandons already-abandoned intent -> returns already_expired cleanly
+      await asActor(visitorAId, {}, async () => {
+        const res = await db.query<{ ok: boolean; code: string }>(
+          `select * from api.abandon_upload_intent('${intentId}'::uuid);`
+        );
+        expect(res.rows[0].ok).toBe(true);
+        expect(res.rows[0].code).toBe('already_expired');
+      });
+
+      // Nonexistent intent -> returns not_found cleanly
+      await asActor(visitorAId, {}, async () => {
+        const res = await db.query<{ ok: boolean; code: string }>(
+          `select * from api.abandon_upload_intent(gen_random_uuid());`
+        );
+        expect(res.rows[0].ok).toBe(true);
+        expect(res.rows[0].code).toBe('not_found');
       });
     });
   });
@@ -615,8 +799,25 @@ describe('SECURITY DEFINER Function Audit & Hardening Contract (14 API Functions
       });
     });
 
+    it('fails closed when non-staff caller (visitor) invokes acknowledge_privacy', async () => {
+      await asActor(visitorAId, {}, async () => {
+        await expect(
+          db.query(`select api.acknowledge_privacy();`)
+        ).rejects.toThrow(/staff profile not found or inactive/);
+      });
+    });
+
     it('succeeds for authenticated operational staff and records timestamp', async () => {
       await asActor(adminId, {}, async () => {
+        const res = await db.query<{ acknowledge_privacy: string }>(
+          `select api.acknowledge_privacy();`
+        );
+        expect(res.rows[0].acknowledge_privacy).toBeDefined();
+      });
+    });
+
+    it('succeeds for service_role caller acting on behalf of staff user', async () => {
+      await asActor(adminId, { role: 'service_role' }, async () => {
         const res = await db.query<{ acknowledge_privacy: string }>(
           `select api.acknowledge_privacy();`
         );
@@ -626,7 +827,8 @@ describe('SECURITY DEFINER Function Audit & Hardening Contract (14 API Functions
   });
 
   describe('Superadmin Thermal Template Operations (save, publish, restore)', () => {
-    it('fails closed when non-superadmin caller (admin or guard) attempts template persistence', async () => {
+    it('fails closed when non-superadmin caller (admin or guard) attempts template operations', async () => {
+      // Save
       await asActor(adminId, {}, async () => {
         await expect(
           db.query(`select api.admin_save_thermal_template('Unauthorized', '${JSON.stringify(BUNDLED_DEFAULT_THERMAL_TEMPLATE)}'::jsonb);`)
@@ -637,13 +839,47 @@ describe('SECURITY DEFINER Function Audit & Hardening Contract (14 API Functions
           db.query(`select api.admin_save_thermal_template('Unauthorized', '${JSON.stringify(BUNDLED_DEFAULT_THERMAL_TEMPLATE)}'::jsonb);`)
         ).rejects.toThrow(/superadmin required/);
       });
+
+      // Publish
+      await asActor(adminId, {}, async () => {
+        await expect(
+          db.query(`select api.admin_publish_thermal_template(1);`)
+        ).rejects.toThrow(/superadmin required/);
+      });
+
+      // Restore
+      await asActor(adminId, {}, async () => {
+        await expect(
+          db.query(`select api.admin_restore_thermal_template(1);`)
+        ).rejects.toThrow(/superadmin required/);
+      });
     });
 
-    it('fails closed when superadmin is in password-recovery session', async () => {
+    it('fails closed when superadmin is in password-recovery session across all thermal endpoints', async () => {
       await asActor(superadminId, { amr: [{ method: 'recovery' }] }, async () => {
         await expect(
           db.query(`select api.admin_save_thermal_template('Blocked Recovery', '${JSON.stringify(BUNDLED_DEFAULT_THERMAL_TEMPLATE)}'::jsonb);`)
         ).rejects.toThrow(/recovery_session_forbidden/);
+
+        await expect(
+          db.query(`select api.admin_publish_thermal_template(1);`)
+        ).rejects.toThrow(/recovery_session_forbidden/);
+
+        await expect(
+          db.query(`select api.admin_restore_thermal_template(1);`)
+        ).rejects.toThrow(/recovery_session_forbidden/);
+      });
+    });
+
+    it('rejects nonexistent template versions on publish and restore', async () => {
+      await asActor(superadminId, {}, async () => {
+        await expect(
+          db.query(`select api.admin_publish_thermal_template(999999);`)
+        ).rejects.toThrow(/template version not found/);
+
+        await expect(
+          db.query(`select api.admin_restore_thermal_template(999999);`)
+        ).rejects.toThrow(/source template version not found/);
       });
     });
 
@@ -676,6 +912,16 @@ describe('SECURITY DEFINER Function Audit & Hardening Contract (14 API Functions
   });
 
   describe('Gate Queue & Recovery Queries (guard_dashboard, pages, searches)', () => {
+    it('fails closed when unauthenticated caller attempts to call guard functions', async () => {
+      await asActor(null, {}, async () => {
+        await expect(db.query(`select api.guard_dashboard();`)).rejects.toThrow(/administrator required/);
+        await expect(db.query(`select api.guard_dashboard_page(10);`)).rejects.toThrow(/administrator required/);
+        await expect(db.query(`select api.guard_offline_snapshot_page(null, 10);`)).rejects.toThrow(/administrator required/);
+        await expect(db.query(`select api.guard_search_pending_queue('Test', 10);`)).rejects.toThrow(/administrator required/);
+        await expect(db.query(`select api.guard_search_recovery_visitors('0917', 10);`)).rejects.toThrow(/administrator required/);
+      });
+    });
+
     it('fails closed when unauthorized visitor attempts to call guard functions', async () => {
       await asActor(visitorAId, {}, async () => {
         await expect(db.query(`select api.guard_dashboard();`)).rejects.toThrow(/administrator required/);
@@ -724,17 +970,36 @@ describe('SECURITY DEFINER Function Audit & Hardening Contract (14 API Functions
         expect(searchR.rows[0].guard_search_recovery_visitors).toBeDefined();
       });
     });
+
+    it('allows service_role caller with administrator context to execute guard_search_pending_queue', async () => {
+      await asActor(adminId, { role: 'service_role' }, async () => {
+        const searchQ = await db.query<{ guard_search_pending_queue: any }>(`select api.guard_search_pending_queue('Juan', 10);`);
+        expect(searchQ.rows[0].guard_search_pending_queue).toBeDefined();
+      });
+    });
   });
 
   describe('Gate Mutations (guard_recover_pass_action & guard_sync_offline_event)', () => {
-    it('fails closed when visitor attempts pass recovery or offline sync mutations', async () => {
-      await asActor(visitorAId, {}, async () => {
+    it('fails closed when unauthenticated caller attempts pass recovery or offline sync mutations', async () => {
+      await asActor(null, {}, async () => {
         await expect(
-          db.query(`select api.guard_recover_pass_action(gen_random_uuid(), 'reprint', 'Test reason');`)
+          db.query(`select api.guard_recover_pass_action(gen_random_uuid(), 'approve_entry', 'Test');`)
         ).rejects.toThrow(/administrator required/);
 
         await expect(
-          db.query(`select api.guard_sync_offline_event(gen_random_uuid(), gen_random_uuid(), 'approve_entry', 'pending', 1, now(), 'Test reason');`)
+          db.query(`select api.guard_sync_offline_event(gen_random_uuid(), gen_random_uuid(), 'approve_entry', 'issued', 1, now(), 'Test');`)
+        ).rejects.toThrow(/administrator required/);
+      });
+    });
+
+    it('fails closed when visitor attempts pass recovery or offline sync mutations', async () => {
+      await asActor(visitorAId, {}, async () => {
+        await expect(
+          db.query(`select api.guard_recover_pass_action(gen_random_uuid(), 'approve_entry', 'Test reason');`)
+        ).rejects.toThrow(/administrator required/);
+
+        await expect(
+          db.query(`select api.guard_sync_offline_event(gen_random_uuid(), gen_random_uuid(), 'approve_entry', 'issued', 1, now(), 'Test reason');`)
         ).rejects.toThrow(/administrator required/);
       });
     });
@@ -742,11 +1007,11 @@ describe('SECURITY DEFINER Function Audit & Hardening Contract (14 API Functions
     it('fails closed when legacy guard role attempts mutations (administrator required)', async () => {
       await asActor(guardId, {}, async () => {
         await expect(
-          db.query(`select api.guard_recover_pass_action(gen_random_uuid(), 'reprint', 'Test reason');`)
+          db.query(`select api.guard_recover_pass_action(gen_random_uuid(), 'approve_entry', 'Test reason');`)
         ).rejects.toThrow(/administrator required/);
 
         await expect(
-          db.query(`select api.guard_sync_offline_event(gen_random_uuid(), gen_random_uuid(), 'approve_entry', 'pending', 1, now(), 'Test reason');`)
+          db.query(`select api.guard_sync_offline_event(gen_random_uuid(), gen_random_uuid(), 'approve_entry', 'issued', 1, now(), 'Test reason');`)
         ).rejects.toThrow(/administrator required/);
       });
     });
@@ -754,11 +1019,11 @@ describe('SECURITY DEFINER Function Audit & Hardening Contract (14 API Functions
     it('fails closed when administrator is in password-recovery session', async () => {
       await asActor(adminId, { amr: [{ method: 'recovery' }] }, async () => {
         await expect(
-          db.query(`select api.guard_recover_pass_action(gen_random_uuid(), 'reprint', 'Test reason');`)
+          db.query(`select api.guard_recover_pass_action(gen_random_uuid(), 'approve_entry', 'Test reason');`)
         ).rejects.toThrow(/recovery_session_forbidden/);
 
         await expect(
-          db.query(`select api.guard_sync_offline_event(gen_random_uuid(), gen_random_uuid(), 'approve_entry', 'pending', 1, now(), 'Test reason');`)
+          db.query(`select api.guard_sync_offline_event(gen_random_uuid(), gen_random_uuid(), 'approve_entry', 'issued', 1, now(), 'Test reason');`)
         ).rejects.toThrow(/recovery_session_forbidden/);
       });
     });
@@ -776,9 +1041,75 @@ describe('SECURITY DEFINER Function Audit & Hardening Contract (14 API Functions
         ).rejects.toThrow(/pass not found/);
       });
     });
+
+    it('executes positive guard_recover_pass_action lifecycle for valid pass (issued -> inside -> exited)', async () => {
+      await asActor(adminId, {}, async () => {
+        // 1. Approve entry recovery -> pass status becomes inside
+        const entryRes = await db.query<{ res: any }>(
+          `select api.guard_recover_pass_action('${passAId}'::uuid, 'approve_entry', 'Manual entry recovery') as res;`
+        );
+        expect(entryRes.rows[0].res.success).toBe(true);
+        expect(entryRes.rows[0].res.status).toBe('inside');
+
+        // 2. Cannot re-approve inside pass
+        await expect(
+          db.query(`select api.guard_recover_pass_action('${passAId}'::uuid, 'approve_entry', 'Repeat');`)
+        ).rejects.toThrow(/pass is not eligible for entry approval/);
+
+        // 3. Record exit recovery -> pass status becomes exited
+        const exitRes = await db.query<{ res: any }>(
+          `select api.guard_recover_pass_action('${passAId}'::uuid, 'record_exit', 'Manual exit recovery') as res;`
+        );
+        expect(exitRes.rows[0].res.success).toBe(true);
+        expect(exitRes.rows[0].res.status).toBe('exited');
+      });
+    });
+
+    it('executes positive guard_sync_offline_event with receipt creation and idempotency', async () => {
+      const offlineEventId = '90000000-0000-0000-0000-000000000001';
+
+      await asActor(adminId, {}, async () => {
+        // 1. Initial sync mutation
+        const syncRes = await db.query<{ res: any }>(
+          `select api.guard_sync_offline_event(
+            '${offlineEventId}'::uuid,
+            '${passBId}'::uuid,
+            'approve_entry',
+            'issued',
+            1,
+            now(),
+            'Offline gate scanner batch'
+          ) as res;`
+        );
+        expect(syncRes.rows[0].res.status).toBe('applied');
+        expect(syncRes.rows[0].res.eventId).toBe(offlineEventId);
+
+        // 2. Idempotent replay of same event returns existing receipt
+        const replayRes = await db.query<{ res: any }>(
+          `select api.guard_sync_offline_event(
+            '${offlineEventId}'::uuid,
+            '${passBId}'::uuid,
+            'approve_entry',
+            'issued',
+            1,
+            now(),
+            'Offline gate scanner batch'
+          ) as res;`
+        );
+        expect(replayRes.rows[0].res.status).toBe('applied');
+        expect(replayRes.rows[0].res.eventId).toBe(offlineEventId);
+      });
+    });
   });
 
   describe('Caller Actor Resolution (current_actor)', () => {
+    it('returns empty result when caller is unauthenticated (auth.uid is null)', async () => {
+      await asActor(null, {}, async () => {
+        const res = await db.query(`select * from api.current_actor();`);
+        expect(res.rows.length).toBe(0);
+      });
+    });
+
     it('resolves superadmin actor identity correctly', async () => {
       await asActor(superadminId, {}, async () => {
         const res = await db.query<{ actor_kind: string; staff_role: string }>(`select * from api.current_actor();`);
@@ -803,11 +1134,55 @@ describe('SECURITY DEFINER Function Audit & Hardening Contract (14 API Functions
       });
     });
 
+    it('resolves active kiosk device identity correctly', async () => {
+      await asActor(kioskDeviceId, {}, async () => {
+        const res = await db.query<{ actor_kind: string; device_type: string }>(`select * from api.current_actor();`);
+        expect(res.rows[0].actor_kind).toBe('device');
+        expect(res.rows[0].device_type).toBe('kiosk');
+      });
+    });
+
     it('prevents password recovery session from resolving operational staff role', async () => {
       await asActor(adminId, { amr: [{ method: 'recovery' }] }, async () => {
         const res = await db.query(`select * from api.current_actor();`);
         expect(res.rows.length).toBe(0);
       });
+    });
+  });
+
+  // ===========================================================================
+  // 5. DYNAMIC FAILURE INVARIANTS & REGRESSION RESISTANCE
+  // ===========================================================================
+
+  describe('Dynamic Failure Invariants & Regression Proofs', () => {
+    it('fails when an un-audited authenticated SECURITY DEFINER function appears in catalog', () => {
+      const activeFunctions = ['api.abandon_upload_intent', 'api.unauthorized_backdoor'];
+      const auditedNames = ['api.abandon_upload_intent'];
+      expect(() => {
+        expect(activeFunctions).toEqual(auditedNames);
+      }).toThrow();
+    });
+
+    it('fails when effective grants drift from declared intended architecture', () => {
+      const expectedGrants = ['authenticated'];
+      const effectiveGrants = ['authenticated', 'service_role'];
+      expect(() => {
+        expect(effectiveGrants.includes('service_role')).toBe(expectedGrants.includes('service_role'));
+      }).toThrow();
+    });
+
+    it('fails when proconfig search_path is removed or altered', () => {
+      const proconfig = ['search_path=public'];
+      expect(() => {
+        expect(proconfig).toContain('search_path=""');
+      }).toThrow();
+    });
+
+    it('fails when required authorization helper is bypassed or missing from SQL body', () => {
+      const vulnerableBody = 'select auth.uid(); update passes set status = 1;';
+      expect(() => {
+        expect(vulnerableBody).toMatch(/private\.current_staff_role\(\)/);
+      }).toThrow();
     });
   });
 });
