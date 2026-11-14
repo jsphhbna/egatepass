@@ -141,9 +141,9 @@ export const SERVICE_ROLE_TABLE_CONTRACT: Record<string, ServerTablePrivilegeCon
   },
   returning_face_templates: {
     table: 'returning_face_templates',
-    allowedPrivileges: ['SELECT', 'INSERT', 'DELETE'],
-    forbiddenPrivileges: ['UPDATE'],
-    justification: 'Server reads legacy encrypted face templates during transition and deletes expired or orphaned legacy templates in retention-maintenance.ts. Direct UPDATE is forbidden.',
+    allowedPrivileges: [],
+    forbiddenPrivileges: ['SELECT', 'INSERT', 'UPDATE', 'DELETE'],
+    justification: 'Permanent biometric template architecture has been completely retired. Table has no application runtime access.',
   },
   returning_identity_attempts: {
     table: 'returning_identity_attempts',
@@ -300,7 +300,6 @@ export const SERVER_DIRECT_TABLE_OPERATIONS: DirectServerTableOperation[] = [
   { file: 'server/routes/admin/retention-maintenance.ts', table: 'returning_identity_attempts', operations: ['DELETE'], purpose: 'Purge expired returning visitor match attempts' },
   { file: 'server/routes/admin/retention-maintenance.ts', table: 'office_visits', operations: ['SELECT'], purpose: 'Protect active office visit actors from anonymous auth retention cleanup' },
   { file: 'server/routes/admin/retention-maintenance.ts', table: 'emergency_gate_records', operations: ['SELECT'], purpose: 'Scan expired reconciled emergency gate records for anonymization via api.anonymize_expired_emergency_gate_record' },
-  { file: 'server/routes/admin/retention-maintenance.ts', table: 'returning_face_templates', operations: ['SELECT', 'DELETE'], purpose: 'Purge legacy returning biometric templates for expired or orphaned profiles' },
   { file: 'server/routes/admin/settings.ts', table: 'app_settings', operations: ['SELECT'], purpose: 'Read current settings' },
   { file: 'server/routes/admin/users.ts', table: 'staff_profiles', operations: ['SELECT'], purpose: 'List staff users' },
   { file: 'server/routes/admin/users.ts', table: 'office_staff_assignments', operations: ['SELECT'], purpose: 'Query office assignments for staff listing' },

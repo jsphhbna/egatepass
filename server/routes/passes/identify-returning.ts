@@ -8,7 +8,7 @@
  * Key privacy invariants:
  * - Fresh selfie is ephemeral: zero upload intents, zero storage writes, zero evidence records.
  * - Single-pass OpenCV SFace quality evaluation and 128-d descriptor extraction in memory.
- * - In-memory cosine similarity against original reference portrait (or legacy template fallback).
+ * - In-memory cosine similarity against original reference portrait.
  * - Issues a single-use opaque match token upon successful 1:1 verification.
  * - Bounded buffer is released from memory immediately after comparison.
  */

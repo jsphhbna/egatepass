@@ -110,7 +110,9 @@ function renderHook<T>(hook: () => T) {
 
   function TestComponent() {
     result.current = hook();
-    return null;
+    return React.createElement('video', {
+      ref: (result.current as any).videoRef,
+    });
   }
 
   act(() => {
@@ -192,6 +194,22 @@ describe('PART A: Camera Orientation & Unmirrored Returning Visitor Contract', (
 describe('PART B: Retake Lifecycle, Blank Screen Prevention & Camera Cleanup', () => {
   beforeEach(() => {
     vi.restoreAllMocks();
+    Object.defineProperty(HTMLMediaElement.prototype, 'readyState', {
+      value: 4,
+      configurable: true,
+      writable: true,
+    });
+    HTMLMediaElement.prototype.play = vi.fn().mockResolvedValue(undefined);
+    let _srcObject: any = null;
+    Object.defineProperty(HTMLMediaElement.prototype, 'srcObject', {
+      get() {
+        return _srcObject;
+      },
+      set(val) {
+        _srcObject = val;
+      },
+      configurable: true,
+    });
   });
 
   it('Separates camera unmount from preview URL cleanup so URL changes never call faceWebcam.stop()', () => {

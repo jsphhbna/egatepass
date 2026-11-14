@@ -4,10 +4,10 @@ import {
   fetchPsgcProvinces,
   fetchPsgcCities,
   fetchPsgcBarangays,
-  resolvePostalCode,
   formatStructuredAddress,
   clearPsgcCacheForTesting,
 } from '../src/lib/psgc';
+import * as psgcModule from '../src/lib/psgc';
 import { parseAddressFromOcr } from '../src/lib/addressOcr';
 import * as supabaseModule from '../src/lib/supabase';
 
@@ -158,47 +158,9 @@ describe('PSGC Client Library & Address Resolution Contract', () => {
     expect(brgy408?.parentCode).toBe('1380600000');
   });
 
-  describe('Postal Code Resolution Confidence Contract', () => {
-    it('resolves exact barangay match with 1008 for Barangay 408, Manila (EARIST)', async () => {
-      const result = await resolvePostalCode('1380600000', '1380606014');
-      expect(result.postalCode).toBe('1008');
-      expect(result.mappingType).toBe('exact_barangay');
-      expect(result.isAutoFilled).toBe(true);
-      expect(result.requiresConfirmation).toBe(false);
-    });
-
-    it('resolves unique city match with 1550 for Mandaluyong City', async () => {
-      const result = await resolvePostalCode('1380500000');
-      expect(result.postalCode).toBe('1550');
-      expect(result.mappingType).toBe('unique_city');
-      expect(result.isAutoFilled).toBe(true);
-      expect(result.requiresConfirmation).toBe(false);
-    });
-
-    it('resolves unique city match with 3000 for City of Malolos, Bulacan', async () => {
-      const result = await resolvePostalCode('0314010000');
-      expect(result.postalCode).toBe('3000');
-      expect(result.mappingType).toBe('unique_city');
-      expect(result.isAutoFilled).toBe(true);
-      expect(result.requiresConfirmation).toBe(false);
-    });
-
-    it('resolves multi-code city requiring manual postal confirmation for City of Manila without exact barangay mapping (e.g. Barangay 856)', async () => {
-      // Barangay 856 has no exact barangay mapping; City of Manila has 8 different postal delivery zones
-      const result = await resolvePostalCode('1380600000', '1380612024');
-      expect(result.postalCode).toBeNull();
-      expect(result.mappingType).toBe('multi_code_city');
-      expect(result.isAutoFilled).toBe(false);
-      expect(result.requiresConfirmation).toBe(true);
-      expect(result.message).toContain('Postal code varies');
-    });
-
-    it('returns empty with manual confirmation for unmapped location', async () => {
-      const result = await resolvePostalCode('9999990000', '9999999999');
-      expect(result.postalCode).toBeNull();
-      expect(result.mappingType).toBe('unmapped');
-      expect(result.isAutoFilled).toBe(false);
-      expect(result.requiresConfirmation).toBe(true);
+  describe('Postal Code Resolution Confidence Contract (Decommissioned)', () => {
+    it('confirms resolvePostalCode is decommissioned from psgc library', () => {
+      expect((psgcModule as any).resolvePostalCode).toBeUndefined();
     });
   });
 

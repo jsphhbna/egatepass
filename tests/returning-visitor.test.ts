@@ -1,8 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import fs from 'node:fs';
 import {
-  parseTemplateKey,
-  encryptFaceTemplate,
-  decryptFaceTemplate,
   computeCosineSimilarity,
   SFACE_COSINE_THRESHOLD,
   SFACE_REFERENCE_LANDMARKS,
@@ -179,67 +177,12 @@ describe('Returning Visitor Biometrics & Safety Gate Contract', () => {
     });
   });
 
-  describe('2. Biometric Template AES-256-GCM Encryption / Decryption', () => {
-    const testSecret = '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef';
-
-    it('parses 64-char hex, 32-byte raw, or hashes fallback key', () => {
-      const hexKey = parseTemplateKey(testSecret);
-      expect(hexKey.length).toBe(32);
-
-      const rawKey = parseTemplateKey('12345678901234567890123456789012');
-      expect(rawKey.length).toBe(32);
-
-      const fallbackKey = parseTemplateKey('any-other-random-passphrase');
-      expect(fallbackKey.length).toBe(32);
-    });
-
-    it('encrypts and decrypts 128-d Float32Array embedding with exact fidelity', () => {
-      // Generate synthetic 128-element face embedding
-      const originalEmbedding = new Float32Array(128);
-      for (let i = 0; i < 128; i++) {
-        originalEmbedding[i] = (i - 64) * 0.0123;
-      }
-
-      const encrypted = encryptFaceTemplate(originalEmbedding, testSecret, 'v1');
-      expect(encrypted.keyVersion).toBe('v1');
-      expect(typeof encrypted.encryptedEmbedding).toBe('string');
-      expect(encrypted.iv.length).toBe(24); // 12 bytes = 24 hex chars
-      expect(encrypted.authTag.length).toBe(32); // 16 bytes = 32 hex chars
-
-      const decrypted = decryptFaceTemplate(
-        encrypted.encryptedEmbedding,
-        encrypted.iv,
-        encrypted.authTag,
-        testSecret
-      );
-
-      expect(decrypted.length).toBe(128);
-      for (let i = 0; i < 128; i++) {
-        expect(Math.abs(decrypted[i]! - originalEmbedding[i]!)).toBeLessThan(1e-6);
-      }
-    });
-
-    it('fails decryption closed if ciphertext or auth tag is tampered', () => {
-      const originalEmbedding = new Float32Array([0.1, 0.2, 0.3, 0.4]);
-      const encrypted = encryptFaceTemplate(originalEmbedding, testSecret);
-
-      // Tamper ciphertext
-      const tamperedCiphertext =
-        encrypted.encryptedEmbedding.slice(0, -2) +
-        (encrypted.encryptedEmbedding.slice(-2) === 'aa' ? 'bb' : 'aa');
-
-      expect(() => {
-        decryptFaceTemplate(tamperedCiphertext, encrypted.iv, encrypted.authTag, testSecret);
-      }).toThrow();
-
-      // Tamper auth tag
-      const tamperedTag =
-        encrypted.authTag.slice(0, -2) +
-        (encrypted.authTag.slice(-2) === 'aa' ? 'bb' : 'aa');
-
-      expect(() => {
-        decryptFaceTemplate(encrypted.encryptedEmbedding, encrypted.iv, tamperedTag, testSecret);
-      }).toThrow();
+  describe('2. Biometric Template AES-256-GCM Encryption / Decryption (Retired)', () => {
+    it('verifies template encryption functions are removed following biometric template retirement', () => {
+      const faceEngineSrc = fs.readFileSync('server/lib/face-engine.ts', 'utf8');
+      expect(faceEngineSrc).not.toContain('encryptFaceTemplate');
+      expect(faceEngineSrc).not.toContain('decryptFaceTemplate');
+      expect(faceEngineSrc).not.toContain('parseTemplateKey');
     });
   });
 

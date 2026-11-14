@@ -170,7 +170,6 @@ async function handleRequest(request: Request): Promise<Response> {
       anonymousAuthDeleted: 0,
       anonymousAuthDeleteFailures: 0,
       returningProfilesCleaned: 0,
-      returningFaceTemplatesCleaned: 0,
       returningAttemptsCleaned: 0,
       emergencyRecordsEligible: 0,
       emergencyRecordsAnonymized: 0,
@@ -910,17 +909,6 @@ async function handleRequest(request: Request): Promise<Response> {
 
           if (eligibleProfileIds.length > 0) {
             if (!dryRun) {
-              const { count: tplDelCount, error: tplDelErr } = await admin
-                .from('returning_face_templates')
-                .delete({ count: 'exact' })
-                .in('profile_id', eligibleProfileIds);
-
-              if (tplDelErr) {
-                metrics.errors.push(`returning_face_template_delete_failed: ${tplDelErr.message}`);
-              } else {
-                metrics.returningFaceTemplatesCleaned += tplDelCount ?? 0;
-              }
-
               const { error: delErr } = await admin
                 .from('returning_visitor_profiles')
                 .delete()
@@ -933,86 +921,6 @@ async function handleRequest(request: Request): Promise<Response> {
               }
             } else {
               metrics.returningProfilesCleaned = eligibleProfileIds.length;
-            }
-          }
-        }
-
-        // Legacy returning_face_templates cleanup for expired or orphaned profiles not under holds/active passes/visits
-        const { data: legacyTemplates, error: legacyTplErr } = await admin
-          .from('returning_face_templates')
-          .select('id, profile_id, created_at')
-          .lte('created_at', returningCutoff)
-          .order('created_at', { ascending: true })
-          .limit(batchSize);
-
-        if (legacyTplErr) {
-          metrics.errors.push(`returning_face_template_query_failed: ${legacyTplErr.message}`);
-        } else if (legacyTemplates && legacyTemplates.length > 0) {
-          const tplProfileIds = Array.from(new Set(legacyTemplates.map((t: any) => t.profile_id).filter(Boolean)));
-          const { data: tplProfiles, error: tplProfErr } = tplProfileIds.length > 0
-            ? await admin
-                .from('returning_visitor_profiles')
-                .select('id, expires_at, last_used_at')
-                .in('id', tplProfileIds)
-            : { data: [] as any[], error: null };
-
-          if (tplProfErr) {
-            metrics.errors.push(`returning_face_template_profile_check_failed: ${tplProfErr.message}`);
-          } else {
-            const profileMap = new Map((tplProfiles ?? []).map((pr: any) => [pr.id, pr]));
-            const eligibleLegacyTplIds: string[] = [];
-
-            for (const tpl of legacyTemplates) {
-              const prof = profileMap.get(tpl.profile_id);
-              if (prof) {
-                const isExpired = prof.expires_at && prof.expires_at <= now;
-                const isStale = !prof.last_used_at || new Date(prof.last_used_at).getTime() <= Date.now() - returningProfileDays * 86_400_000;
-                if (!isExpired || !isStale) continue;
-
-                const { data: holds, error: holdsErr } = await admin
-                  .from('incident_holds')
-                  .select('id, visitors!inner(returning_profile_id)')
-                  .eq('visitors.returning_profile_id', prof.id)
-                  .eq('active', true)
-                  .limit(1);
-                if (holdsErr || (holds && holds.length > 0)) continue;
-
-                const { data: activePasses, error: activeErr } = await admin
-                  .from('visitors')
-                  .select('id, passes!inner(id, status, valid_until)')
-                  .eq('returning_profile_id', prof.id)
-                  .or(`passes.status.in.(inside,pending),and(passes.status.eq.issued,passes.valid_until.gt.${now})`)
-                  .limit(1);
-                if (activeErr || (activePasses && activePasses.length > 0)) continue;
-
-                const { data: linkedVis, error: linkedVisErr } = await admin
-                  .from('visitors')
-                  .select('id')
-                  .eq('returning_profile_id', prof.id);
-                if (linkedVisErr) continue;
-                const lvIds = (linkedVis ?? []).map((lv: any) => lv.id).filter(Boolean);
-                if (lvIds.length > 0) {
-                  const { data: lvVisits, error: lvVisitsErr } = await admin
-                    .from('office_visits')
-                    .select('id, approval_status, attendance_status')
-                    .in('visitor_id', lvIds);
-                  if (lvVisitsErr || (lvVisits && lvVisits.some((ov: any) => isActiveOfficeVisit(ov)))) continue;
-                }
-              }
-              eligibleLegacyTplIds.push(tpl.id);
-            }
-
-            if (eligibleLegacyTplIds.length > 0 && !dryRun) {
-              const { count: extraTplCount, error: extraTplDelErr } = await admin
-                .from('returning_face_templates')
-                .delete({ count: 'exact' })
-                .in('id', eligibleLegacyTplIds);
-
-              if (extraTplDelErr) {
-                metrics.errors.push(`returning_face_template_cleanup_failed: ${extraTplDelErr.message}`);
-              } else {
-                metrics.returningFaceTemplatesCleaned += extraTplCount ?? 0;
-              }
             }
           }
         }
@@ -1383,7 +1291,6 @@ async function handleRequest(request: Request): Promise<Response> {
       metrics.rateLimitBucketsCleaned > 0 ||
       metrics.anonymousAuthDeleted > 0 ||
       metrics.returningProfilesCleaned > 0 ||
-      metrics.returningFaceTemplatesCleaned > 0 ||
       metrics.emergencyRecordsAnonymized > 0;
 
     let preAuditOutcome: 'success' | 'partial' | 'failure' =

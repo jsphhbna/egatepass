@@ -31,7 +31,9 @@ function renderHook<T>(hook: () => T) {
 
   function TestComponent() {
     result.current = hook();
-    return null;
+    return React.createElement('video', {
+      ref: (result.current as any).videoRef,
+    });
   }
 
   act(() => {
@@ -57,6 +59,22 @@ function renderHook<T>(hook: () => T) {
 describe('Group B: System-Wide Camera Controller Refactor', () => {
   beforeEach(() => {
     vi.restoreAllMocks();
+    Object.defineProperty(HTMLMediaElement.prototype, 'readyState', {
+      value: 4,
+      configurable: true,
+      writable: true,
+    });
+    HTMLMediaElement.prototype.play = vi.fn().mockResolvedValue(undefined);
+    let _srcObject: any = null;
+    Object.defineProperty(HTMLMediaElement.prototype, 'srcObject', {
+      get() {
+        return _srcObject;
+      },
+      set(val) {
+        _srcObject = val;
+      },
+      configurable: true,
+    });
   });
 
   it('initializes front camera with activeFacingMode=user, mirrorPreview=true, mirrorCapture=true', async () => {

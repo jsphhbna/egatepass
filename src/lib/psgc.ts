@@ -1,8 +1,9 @@
 /**
  * src/lib/psgc.ts
  *
- * Official Philippine Standard Geographic Code (PSGC) and PHLPost Postal Code client library.
- * Provides caching, cascading hierarchy traversal, and postal code resolution.
+ * Official Philippine Standard Geographic Code (PSGC) client library.
+ * Provides caching and cascading hierarchy traversal for administrative regions,
+ * provinces, cities/municipalities, and barangays.
  */
 
 import { requirePortalSupabase } from './supabase';
@@ -10,15 +11,6 @@ import regionsData from '../../data/reference/psgc/regions.json';
 import provincesData from '../../data/reference/psgc/provinces.json';
 import citiesData from '../../data/reference/psgc/cities.json';
 import barangaysData from '../../data/reference/psgc/barangays.json';
-
-let cachedPostalData: any[] | null = null;
-async function getPostalData() {
-  if (!cachedPostalData) {
-    const mod = await import('../../data/reference/postal/postal_codes.json');
-    cachedPostalData = (mod.default || mod) as any[];
-  }
-  return cachedPostalData;
-}
 
 export interface PsgcLocation {
   code: string;
@@ -274,145 +266,7 @@ export async function fetchPsgcBarangays(cityCode: string): Promise<PsgcLocation
   return [];
 }
 
-/**
- * Resolve PHLPost postal code for the selected locality and barangay.
- * Follows strict match confidence rules:
- * 1. Exact barangay match -> auto-filled.
- * 2. Unique city match -> auto-filled.
- * 3. Multi-code city -> ambiguous; prompts user confirmation/entry.
- * 4. Unmapped -> prompt manual entry.
- */
-export async function resolvePostalCode(
-  cityCode: string,
-  barangayCode?: string
-): Promise<PostalResolution> {
-  let supabase: any = null;
-  try {
-    supabase = requirePortalSupabase();
-  } catch {
-    supabase = null;
-  }
 
-  let dbLookupFailed = false;
-
-  if (supabase) {
-    try {
-      // 1. Check exact barangay match
-      if (barangayCode) {
-        const { data: bgyMatch, error: bgyError } = await supabase
-          .from('postal_code_reference')
-          .select('postal_code, mapping_type')
-          .eq('barangay_psgc_code', barangayCode)
-          .eq('is_active', true)
-          .limit(1)
-          .maybeSingle();
-
-        if (bgyError) {
-          dbLookupFailed = true;
-        } else if (bgyMatch) {
-          return {
-            postalCode: bgyMatch.postal_code,
-            mappingType: 'exact_barangay',
-            isAutoFilled: true,
-            requiresConfirmation: false,
-          };
-        }
-      }
-
-      // 2. Check unique city match
-      const { data: cityMatches, error: cityError } = await supabase
-        .from('postal_code_reference')
-        .select('postal_code, mapping_type')
-        .eq('psgc_locality_code', cityCode)
-        .eq('is_active', true);
-
-      if (cityError) {
-        dbLookupFailed = true;
-      } else if (cityMatches && cityMatches.length > 0) {
-        const uniqueCodes = Array.from(new Set(cityMatches.map((m: any) => m.postal_code as string))) as string[];
-        if (uniqueCodes.length === 1 && cityMatches[0]?.mapping_type === 'unique_city') {
-          return {
-            postalCode: uniqueCodes[0] ?? null,
-            mappingType: 'unique_city',
-            isAutoFilled: true,
-            requiresConfirmation: false,
-          };
-        } else if (uniqueCodes.length > 1) {
-          return {
-            postalCode: null,
-            mappingType: 'multi_code_city',
-            isAutoFilled: false,
-            requiresConfirmation: true,
-            message: 'Postal code varies by delivery area. Please confirm your applicable postal code.',
-          };
-        }
-      }
-    } catch {
-      dbLookupFailed = true;
-    }
-  }
-
-  if (dbLookupFailed) {
-    return {
-      postalCode: null,
-      mappingType: 'service_unavailable',
-      isAutoFilled: false,
-      requiresConfirmation: true,
-      message: 'Postal lookup service could not be reached. Please enter your 4-digit postal code manually.',
-    };
-  }
-
-  // Fallback resolution using bundled dataset
-  // Legacy synthetic barangay codes (e.g. 1380600%) cannot produce automatic matches
-  const isLegacySyntheticBarangay = Boolean(barangayCode && barangayCode.startsWith('1380600'));
-  const postalData = await getPostalData();
-
-  if (barangayCode && !isLegacySyntheticBarangay) {
-    const bgyMatch = (postalData as any[]).find(
-      (p) => p.barangayPsgcCode === barangayCode && p.psgcLocalityCode === cityCode
-    );
-    if (bgyMatch) {
-      return {
-        postalCode: bgyMatch.postalCode,
-        mappingType: 'exact_barangay',
-        isAutoFilled: true,
-        requiresConfirmation: false,
-      };
-    }
-  }
-
-  const cityMatches = (postalData as any[]).filter(
-    (p) => p.psgcLocalityCode === cityCode
-  );
-
-  if (cityMatches.length > 0) {
-    const uniqueCodes = Array.from(new Set(cityMatches.map((m) => m.postalCode)));
-    if (uniqueCodes.length === 1 && cityMatches[0]?.mappingType === 'unique_city') {
-      return {
-        postalCode: (uniqueCodes[0] as string) ?? null,
-        mappingType: 'unique_city',
-        isAutoFilled: true,
-        requiresConfirmation: false,
-      };
-    } else if (uniqueCodes.length > 1) {
-      return {
-        postalCode: null,
-        mappingType: 'multi_code_city',
-        isAutoFilled: false,
-        requiresConfirmation: true,
-        message: 'Postal code varies by delivery area. Please confirm your applicable postal code.',
-      };
-    }
-  }
-
-  return {
-    postalCode: null,
-    mappingType: 'unmapped',
-    isAutoFilled: false,
-    requiresConfirmation: true,
-    message: 'No automatic postal mapping found. Please enter your 4-digit postal code.',
-  };
-}
 
 /**
  * Format a human-readable composed address from structured PSGC fields.

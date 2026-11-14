@@ -4,7 +4,6 @@ import {
   computeCosineSimilarity,
   checkFaceRuntimeReadiness,
   resetFaceRuntimeReadiness,
-  encryptFaceTemplate,
 } from '../server/lib/face-engine.js';
 import * as faceEngine from '../server/lib/face-engine.js';
 import * as supabaseModule from '../server/supabase.js';

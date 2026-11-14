@@ -257,7 +257,7 @@ export function GetPassPage() {
     thresholdMode?: 'provisional' | 'calibrated' | 'unconfigured';
     returningCalibrationConfigured?: boolean;
     biometricStorageRetired?: boolean;
-    turnstile?: { siteKeyConfigured: boolean; serverVerifierConfigured: boolean; verified: boolean };
+    turnstile?: { siteKeyConfigured: boolean; serverVerifierConfigured?: boolean; verified?: boolean };
   } | null>(null);
   const [showReturningGateModal, setShowReturningGateModal] = useState(false);
 
@@ -730,7 +730,10 @@ export function GetPassPage() {
 
   function resetRegistrationFlow() {
     ocrGenerationRef.current += 1;
-    void import('@/lib/ocr').then(({ terminateLocalOcrWorker }) => terminateLocalOcrWorker()).catch(() => {});
+    void import('@/lib/ocr').then(({ cancelPendingOcrJobs, terminateLocalOcrWorker }) => {
+      cancelPendingOcrJobs();
+      return terminateLocalOcrWorker();
+    }).catch(() => {});
 
     // 1. Reset React Hook Form values to clean defaults
     reset({
@@ -1653,6 +1656,7 @@ export function GetPassPage() {
     }
 
     const generation = ++ocrGenerationRef.current;
+    void import('@/lib/ocr').then(({ cancelPendingOcrJobs }) => cancelPendingOcrJobs()).catch(() => {});
     setIsProcessingOcr(true);
     setOcrSuccessNotice(null);
 

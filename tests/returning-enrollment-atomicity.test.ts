@@ -41,8 +41,6 @@ describe('Returning Visitor & Ephemeral Verification Pass Issuance Invariants', 
       isRecoverySession: false,
     });
 
-    const encryptSpy = vi.spyOn(faceEngineModule, 'encryptFaceTemplate');
-
     function createQueryBuilder(table: string) {
       const q: any = {
         _table: table,
@@ -202,7 +200,6 @@ describe('Returning Visitor & Ephemeral Verification Pass Issuance Invariants', 
         rpc: rpcMock,
       }),
       rpcMock,
-      encryptSpy,
     };
 
     vi.spyOn(supabaseModule, 'getServerSupabaseClients').mockReturnValue({
@@ -308,7 +305,7 @@ describe('Returning Visitor & Ephemeral Verification Pass Issuance Invariants', 
     }));
 
     // Verifies obsolete biometric template encryption was NOT invoked
-    expect(admin.encryptSpy).not.toHaveBeenCalled();
+    expect((faceEngineModule as any).encryptFaceTemplate).toBeUndefined();
     expect(admin.rpcMock).not.toHaveBeenCalledWith('enroll_returning_visitor_v1', expect.anything());
   });
 

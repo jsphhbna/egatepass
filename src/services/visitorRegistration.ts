@@ -1797,8 +1797,8 @@ export interface RegistrationSettingsData {
   biometric_storage_retired?: boolean;
   turnstile?: {
     siteKeyConfigured: boolean;
-    serverVerifierConfigured: boolean;
-    verified: boolean;
+    serverVerifierConfigured?: boolean;
+    verified?: boolean;
   } | null;
 }
 
@@ -1837,7 +1837,7 @@ export async function loadRegistrationSettings(source: RegistrationSource): Prom
 
   let capabilitiesData: {
     biometricStorageRetired?: boolean;
-    turnstile?: { siteKeyConfigured: boolean; serverVerifierConfigured: boolean; verified: boolean };
+    turnstile?: { siteKeyConfigured: boolean; serverVerifierConfigured?: boolean; verified?: boolean };
     registrationConfig?: {
       defaultExpectedGate?: string | null;
       retentionSummary?: {

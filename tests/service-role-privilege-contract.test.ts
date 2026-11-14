@@ -149,4 +149,16 @@ describe('Service Role Least-Privilege Architecture Contract', () => {
     expect(rateContract.allowedPrivileges).toHaveLength(0);
     expect(rateContract.forbiddenPrivileges).toEqual(['SELECT', 'INSERT', 'UPDATE', 'DELETE']);
   });
+
+  it('strictly isolates returning_face_templates from direct server table access following biometric retirement', () => {
+    const templateContract = SERVICE_ROLE_TABLE_CONTRACT['returning_face_templates'];
+    expect(templateContract).toBeDefined();
+    expect(templateContract.allowedPrivileges).toHaveLength(0);
+    expect(templateContract.forbiddenPrivileges).toEqual(['SELECT', 'INSERT', 'UPDATE', 'DELETE']);
+
+    const directOperations = SERVER_DIRECT_TABLE_OPERATIONS.filter(
+      (op) => op.table === 'returning_face_templates'
+    );
+    expect(directOperations).toHaveLength(0);
+  });
 });

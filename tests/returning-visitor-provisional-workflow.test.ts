@@ -1,8 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import {
-  parseTemplateKey,
-  encryptFaceTemplate,
-  decryptFaceTemplate,
   computeCosineSimilarity,
   validateFaceDescriptor,
 } from '../server/lib/face-engine.js';
@@ -449,8 +446,6 @@ describe('Returning Visitor Provisional 1:1 Biometric & Enrollment Architecture 
     it('rejects expired or revoked profiles with 422', async () => {
       const genuineDesc = makeDescriptor(1.0);
       setupAuthAndPhotoMocks(genuineDesc);
-
-      const encrypted = encryptFaceTemplate(genuineDesc, testKey, 'v1');
 
       const mockAdmin = {
         schema: vi.fn().mockReturnValue({

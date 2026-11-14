@@ -179,3 +179,95 @@ Direct query against remote Supabase confirmed:
 | **Priority 6** | Superadmin records & dashboard use live schema | `admin-dashboard-polling.test.ts` (7/7) | **CONFIRMED PASS** |
 | **Priority 7** | Client TypeScript check in CI | `npm run typecheck:client` & `ci.yml` | **CONFIRMED PASS** |
 | **Priority 7** | Clean production build | `npm run build` exits code 0 | **CONFIRMED PASS** |
+
+---
+
+# November 14, 2026 — Final Audit Closure Follow-up
+
+## 1. Executive Summary
+
+Following the post-deployment audit on November 14, 2026, all residual biometric template pathways, fabricated Turnstile capabilities, camera lifecycle races, OCR cancellation gaps, and runtime postal code references were completely resolved and verified.
+
+## 2. Implementation Deliverables
+
+### A. Retention Maintenance & Privilege Contract Lockdown
+- **File:** `server/routes/admin/retention-maintenance.ts`
+  - Removed `returningFaceTemplatesCleaned` metric initialization and counting.
+  - Removed all direct `admin.from('returning_face_templates').delete()` queries from profile cleanup and legacy template expiration loops.
+  - Zero `.from('returning_face_templates')` invocations remain anywhere in `server/` or `api/`.
+- **File:** `server/privilege-contract.ts`
+  - Updated `SERVICE_ROLE_TABLE_CONTRACT.returning_face_templates`:
+    - `allowedPrivileges: []`
+    - `forbiddenPrivileges: ['SELECT', 'INSERT', 'UPDATE', 'DELETE']`
+    - Justification: *"Permanent biometric template architecture has been completely retired. Table has no application runtime access."*
+  - Deleted the registered direct operation in `SERVER_DIRECT_TABLE_OPERATIONS`.
+- **Verification:** `tests/service-role-privilege-contract.test.ts` (6/6 PASS).
+
+### B. Truthful Turnstile Capability Reporting & Architecture Alignment
+- **File:** `server/routes/passes/capabilities.ts`
+  - Replaced hardcoded `serverVerifierConfigured: true` and `verified: turnstileSiteKeyConfigured` with truthful reporting:
+    ```typescript
+    turnstile: {
+      siteKeyConfigured: turnstileSiteKeyConfigured,
+    }
+    ```
+  - Eliminates fabricated verification claims in public capabilities.
+- **File:** `server/lib/turnstile.ts`
+  - Added architectural notice documenting that standalone server-side siteverify validation is decommissioned.
+  - Production Turnstile challenge validation is performed natively through Supabase Auth (`signInAnonymously({ options: { captchaToken } })`), eliminating the need to expose or configure `TURNSTILE_SECRET_KEY` in Vercel serverless functions.
+- **Verification:** `tests/session-timeout-dashboard-freeze.test.ts` & `tests/turnstile-siteverify.test.ts` (PASS).
+
+### C. Fail-Closed Camera Controller Lifecycle (`useWebcam.ts`)
+- **File:** `src/hooks/useWebcam.ts`
+  - Replaced DOM polling and `document.querySelector('video')` with a dual-mode React callback ref and ref object with getter/setter.
+  - Enforced fail-closed startup: `isActive` is set to `true` strictly when:
+    1. Stream matches the active generation.
+    2. Video element is mounted and attached (`video.srcObject = stream`).
+    3. Video readyState reaches `>= 2` (`loadedmetadata` / `canplay`).
+    4. `await video.play()` resolves without error (rejections are classified and never swallowed).
+    5. MediaStream video tracks remain active.
+  - Camera switching (`switchCamera`) executes the exact same readiness sequence, stopping all prior tracks before requesting the next device.
+- **Verification:** `tests/camera-controller-refactor.test.ts` (9/9 PASS), `tests/use-webcam-race.test.ts` (3/3 PASS), and `tests/returning-visitor-camera-and-blur.test.ts` (25/25 PASS).
+
+### D. Generation-Safe OCR Cancellation & Timeout Protection
+- **Files:** `src/lib/paddleOcr.ts`, `src/lib/ocr.ts`, `src/pages/GetPassPage.tsx`
+  - Implemented `cancelPendingOcrJobs()` which increments the global OCR job counter and cancels pending PaddleOCR predictions.
+  - Adopted official `@paddleocr/paddleocr-js` `.dispose()` method for orderly model cleanup.
+  - Passed `jobId` and stale-check predicate down to `recognizeIdImageWithPaddle`.
+  - Enforced 25s overarching pipeline timeout (`OVERARCHING_OCR_TIMEOUT_MS = 25000`).
+  - Guaranteed in `GetPassPage.tsx` that ID image blobs and preview URLs are preserved on OCR error or timeout, manual input is never blocked, and confidence threshold (`>= 60`) is enforced.
+- **Verification:** `tests/portal-ocr-contract.test.ts` (10/10 PASS) and `tests/ocr-registration-flow-preservation.test.ts` (14/14 PASS).
+
+### E. Runtime Postal Code Decommissioning
+- **Files:** `src/lib/psgc.ts`, `src/components/AddressCascadingSelector.tsx`, `tests/psgc-client-selector.test.ts`
+  - Removed `resolvePostalCode()` and bundled `postal_codes.json` import from `src/lib/psgc.ts`.
+  - Removed postal code reference database queries.
+  - Confirmed `formatStructuredAddress` outputs canonical administrative hierarchy without postal codes.
+  - Verified `AddressCascadingSelector` emits clean administrative hierarchy (`region`, `province`, `city`, `barangay`).
+- **Verification:** `tests/postal-code-decommissioning.test.ts` (6/6 PASS) and `tests/psgc-alias-and-postal-integrity.test.ts` (2/2 PASS).
+
+### F. Retired Biometric Key & Env Var Decommissioning
+- **File:** `server/lib/face-engine.ts`
+  - Permanently removed `parseTemplateKey`, `getActiveTemplateKeyVersion`, `getVersionedTemplateKey`, `encryptFaceTemplate`, and `decryptFaceTemplate`.
+  - Removed unused `node:crypto` import.
+- **File:** `server/routes/passes/identify-returning.ts`
+  - Removed lingering comments referencing legacy template fallbacks.
+- **Vercel Production Environment:**
+  - Removed `RETURNING_VISITOR_TEMPLATE_KEY` from production.
+  - Removed `RETURNING_VISITOR_ACTIVE_KEY_VERSION` from production.
+  - Verified via `vercel env ls` that neither variable exists in production.
+- **Verification:** `tests/face-engine.test.ts` (14/14 PASS) and `tests/returning-enrollment-atomicity.test.ts` (7/7 PASS).
+
+## 3. Final Verification Matrix
+
+| Verification Step | Command / Evidence | Status |
+|---|---|---|
+| API Typecheck | `npm run typecheck:api` | **PASS (0 errors)** |
+| Client Typecheck | `npm run typecheck:client` | **PASS (0 errors)** |
+| Migration Chain (PGlite) | `npm run test:migrations` | **PASS (49/49)** |
+| Architecture Contracts | `npm run test:contracts` | **PASS (25/25)** |
+| Unit & Integration Tests | `npm run test:unit` | **PASS (2,232/2,232 passed, 195 files)** |
+| Production Build | `npm run build` | **PASS (Vite production bundle)** |
+| Vercel Env Var Retirement | `vercel env ls` | **CONFIRMED (Zero template keys)** |
+| Supabase PSGC Counts | Read-only check | **CONFIRMED (42,010 nationwide, 1,715 NCR, 897 Manila)** |
+

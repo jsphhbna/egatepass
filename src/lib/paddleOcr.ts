@@ -84,7 +84,9 @@ export async function getPaddleOcrInstance(
       if (generation !== currentInitGeneration) {
         try {
           const anyOcr = ocr as any;
-          if (typeof anyOcr?.terminate === 'function') {
+          if (typeof anyOcr?.dispose === 'function') {
+            await anyOcr.dispose();
+          } else if (typeof anyOcr?.terminate === 'function') {
             await anyOcr.terminate();
           } else if (typeof anyOcr?.destroy === 'function') {
             await anyOcr.destroy();
@@ -146,7 +148,9 @@ export async function terminatePaddleOcr(): Promise<void> {
   paddleOcrInitPromise = null;
   if (instance) {
     try {
-      if (typeof instance.terminate === 'function') {
+      if (typeof instance.dispose === 'function') {
+        await instance.dispose();
+      } else if (typeof instance.terminate === 'function') {
         await instance.terminate();
       } else if (typeof instance.destroy === 'function') {
         await instance.destroy();
@@ -306,11 +310,16 @@ export function extractAddressFromOcrLines(lines: OcrLine[]): string {
  */
 export async function recognizeIdImageWithPaddle(
   imageSource: Blob | File,
-  onProgress?: (progress: number, status?: string) => void
+  onProgress?: (progress: number, status?: string) => void,
+  jobId?: number,
+  isJobStale?: (id: number) => boolean
 ): Promise<ParsedIdNames> {
   const predictionGen = ++currentPredictionGeneration;
   const ocr = await getPaddleOcrInstance(onProgress);
-  if (predictionGen !== currentPredictionGeneration) {
+  if (
+    predictionGen !== currentPredictionGeneration ||
+    (jobId != null && isJobStale && isJobStale(jobId))
+  ) {
     throw new Error('PaddleOCR prediction superseded');
   }
 
@@ -327,7 +336,10 @@ export async function recognizeIdImageWithPaddle(
   try {
     const predictPromise = ocr.predict(imageSource).then((res: any) => (Array.isArray(res) ? res[0] : res));
     prediction = await Promise.race([predictPromise, timeoutPromise]);
-    if (predictionGen !== currentPredictionGeneration) {
+    if (
+      predictionGen !== currentPredictionGeneration ||
+      (jobId != null && isJobStale && isJobStale(jobId))
+    ) {
       throw new Error('PaddleOCR prediction superseded');
     }
   } catch (err) {

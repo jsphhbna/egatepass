@@ -11,12 +11,8 @@ import {
   getSimilarityTransformMatrix,
   SFACE_REFERENCE_LANDMARKS,
   extractFaceDescriptorFromBuffer,
-  getVersionedTemplateKey,
-  encryptFaceTemplate,
-  decryptFaceTemplate,
   SFACE_COSINE_THRESHOLD,
   evaluateFaceCropQuality,
-  getActiveTemplateKeyVersion,
   isFaceVerificationConfigured,
 } from '../server/lib/face-engine.js';
 
@@ -178,33 +174,12 @@ describe('Local Face Engine Contract (YuNet + SFace)', () => {
     expect(Math.sqrt(sumSq)).toBeCloseTo(1.0, 5);
   });
 
-  it('10. Versioned keyring and template encryption / decryption contract', () => {
-    const keyV1 = '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef';
-    const keyV2 = 'fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210';
-    const keyring = {
-      v1: keyV1,
-      v2: keyV2,
-    };
-
-    expect(getVersionedTemplateKey('v1', keyring)).toBe(keyV1);
-    expect(getVersionedTemplateKey('v2', keyring)).toBe(keyV2);
-    expect(() => getVersionedTemplateKey('v3', keyring)).toThrow(/unsupported_template_key_version/);
-
-    // Test encryption with v2 key
-    const dummyDescriptor = new Float32Array(128);
-    for (let i = 0; i < 128; i++) dummyDescriptor[i] = i * 0.005;
-
-    const enc = encryptFaceTemplate(dummyDescriptor, keyring as any, 'v2');
-    expect(enc.keyVersion).toBe('v2');
-
-    const dec = decryptFaceTemplate(enc.encryptedEmbedding, enc.iv, enc.authTag, keyring as any, 'v2');
-    expect(dec).toHaveLength(128);
-    for (let i = 0; i < 128; i++) {
-      expect(dec[i]).toBeCloseTo(dummyDescriptor[i]!, 4);
-    }
-
-    // Tampering with key version or attempting to decrypt v2 with v1 fails auth tag check
-    expect(() => decryptFaceTemplate(enc.encryptedEmbedding, enc.iv, enc.authTag, keyring as any, 'v1')).toThrow();
+  it('10. Template encryption and key functions are retired from face-engine.ts', () => {
+    const faceEngineSrc = fs.readFileSync(path.resolve('server/lib/face-engine.ts'), 'utf-8');
+    expect(faceEngineSrc).not.toContain('encryptFaceTemplate');
+    expect(faceEngineSrc).not.toContain('decryptFaceTemplate');
+    expect(faceEngineSrc).not.toContain('getActiveTemplateKeyVersion');
+    expect(faceEngineSrc).not.toContain('getVersionedTemplateKey');
   });
 
   it('11. Single-pass image analysis efficiency & dominant face extraction', async () => {
@@ -236,14 +211,10 @@ describe('Local Face Engine Contract (YuNet + SFace)', () => {
     expect(errorResult.code).toBe('decode_failed');
   });
 
-  it('13. Template key versioning active defaults and environment override', () => {
-    const defaultVer = getActiveTemplateKeyVersion();
-    expect(defaultVer).toBe('v1');
-
-    process.env.RETURNING_VISITOR_ACTIVE_KEY_VERSION = 'v2';
-    expect(getActiveTemplateKeyVersion()).toBe('v2');
-    delete process.env.RETURNING_VISITOR_ACTIVE_KEY_VERSION;
-    expect(getActiveTemplateKeyVersion()).toBe('v1');
+  it('13. Biometric storage retired: face-engine.ts has zero permanent template storage', () => {
+    const faceEngineSrc = fs.readFileSync(path.resolve('server/lib/face-engine.ts'), 'utf-8');
+    expect(faceEngineSrc).not.toContain('RETURNING_VISITOR_TEMPLATE_KEY');
+    expect(faceEngineSrc).not.toContain('RETURNING_VISITOR_ACTIVE_KEY_VERSION');
   });
 
   it('14. Independent capability checks', () => {

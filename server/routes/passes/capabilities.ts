@@ -88,8 +88,6 @@ async function handleRequest(request: Request): Promise<Response> {
     biometricStorageRetired: true,
     turnstile: {
       siteKeyConfigured: turnstileSiteKeyConfigured,
-      serverVerifierConfigured: true,
-      verified: turnstileSiteKeyConfigured,
     },
     registrationConfig,
   });

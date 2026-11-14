@@ -3,13 +3,14 @@
  *
  * Cloudflare Turnstile Server-Side Siteverify & Abuse Defense Module
  *
- * Provides cryptographic validation of Cloudflare Turnstile challenge tokens:
- * 1. Communicates directly with Cloudflare siteverify endpoint.
- * 2. Enforces single-use token consumption via in-memory replay cache (anti-replay).
- * 3. Enforces permitted hostname validation (e.g. egatepass.tech, localhost).
- * 4. Enforces action and cdata matching when configured.
- * 5. Fails closed with structured diagnostics on timeout, provider errors, or missing secrets.
- * 6. Never logs raw challenge tokens, secrets, or visitor PII.
+ * ARCHITECTURAL NOTICE (November 2026):
+ * Standalone server-side Turnstile verification via serverless functions is decommissioned.
+ * Production Turnstile challenge validation is handled natively through Supabase Auth
+ * (Authentication > Bot Protection / CAPTCHA) during anonymous and authenticated visitor
+ * sign-ins. This eliminates the need to expose or configure TURNSTILE_SECRET_KEY in Vercel
+ * serverless environments.
+ *
+ * The helpers below remain available for testing and historical contract compatibility.
  */
 
 import { createHash } from 'node:crypto';

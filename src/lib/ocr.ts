@@ -407,6 +407,14 @@ export function getNextOcrJobId(): number {
 }
 
 /**
+ * Cancels all pending OCR jobs across both PaddleOCR and Tesseract engines.
+ */
+export function cancelPendingOcrJobs(): void {
+  globalOcrJobCounter++;
+  void import('./paddleOcr.js').then(({ cancelPendingPaddleOcr }) => cancelPendingPaddleOcr()).catch(() => {});
+}
+
+/**
  * Lazily initialize and return a singleton Tesseract worker configured for offline execution.
  * Fenced with workerGeneration to prevent late-resolving orphaned workers.
  */
@@ -478,6 +486,7 @@ export async function getLocalOcrWorker(
  * Terminate any running OCR worker and release memory.
  */
 export async function terminateLocalOcrWorker(): Promise<void> {
+  globalOcrJobCounter++;
   workerGeneration++;
   const currentWorker = activeWorkerInstance;
   activeWorkerInstance = null;
@@ -489,6 +498,13 @@ export async function terminateLocalOcrWorker(): Promise<void> {
     } catch {
       // Ignore termination errors during cleanup
     }
+  }
+
+  try {
+    const { terminatePaddleOcr } = await import('./paddleOcr.js');
+    await terminatePaddleOcr();
+  } catch {
+    // Ignore Paddle termination errors during cleanup
   }
 }
 
@@ -538,7 +554,12 @@ async function executeOcrPipeline(
   if (typeof window !== 'undefined' && typeof imageSource !== 'string' && (imageSource as any) instanceof Blob) {
     try {
       const { recognizeIdImageWithPaddle } = await import('./paddleOcr.js');
-      const paddleResult = await recognizeIdImageWithPaddle(imageSource, onProgress);
+      const paddleResult = await recognizeIdImageWithPaddle(
+        imageSource,
+        onProgress,
+        jobId,
+        (id) => id !== globalOcrJobCounter
+      );
       if (jobId != null && jobId !== globalOcrJobCounter) {
         return { firstName: '', middleName: '', lastName: '', confidence: 0 };
       }

@@ -373,8 +373,6 @@ describe('Session Timeout, Period Analytics, Retention Freeze, Turnstile & Appro
     expect(capBody.biometricStorageRetired).toBe(true);
     expect(capBody.turnstile).toEqual({
       siteKeyConfigured: false,
-      serverVerifierConfigured: true,
-      verified: false,
     });
 
     const lookupRes = await lookupReturningRoute.fetch(
