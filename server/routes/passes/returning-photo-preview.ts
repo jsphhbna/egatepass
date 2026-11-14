@@ -300,28 +300,69 @@ async function handleRequest(request: Request): Promise<Response> {
     return jsonResponse(500, { error: 'database_error' });
   }
 
-  const vIds = (visitors || []).map((v) => v.id);
+  let vIds = (visitors || []).map((v) => v.id);
   if (vIds.length === 0) {
-    return jsonResponse(404, { error: 'preview_unavailable' });
+    // Secondary fallback lookup: if returning_profile_id was not directly linked on historical visitor records,
+    // match by profile first_name, last_name, and contact_number_e164
+    const { data: profile } = await admin
+      .from('returning_visitor_profiles')
+      .select('first_name, last_name, contact_number_e164')
+      .eq('id', resolvedProfileId)
+      .maybeSingle();
+
+    if (profile) {
+      const fullName = `${profile.first_name} ${profile.last_name}`.trim();
+      const { data: fallbackVisitors } = await admin
+        .from('visitors')
+        .select('id')
+        .eq('contact_number', profile.contact_number_e164)
+        .ilike('full_name', fullName)
+        .order('created_at', { ascending: true })
+        .limit(5);
+
+      if (fallbackVisitors && fallbackVisitors.length > 0) {
+        vIds = fallbackVisitors.map((v) => v.id);
+      }
+    }
+  }
+
+  if (vIds.length === 0) {
+    return jsonResponse(404, { error: 'preview_unavailable', message: 'No registration records found for profile.' });
   }
 
   const { data: evidence, error: evErr } = await admin
     .from('visitor_evidence')
-    .select('bucket_id, object_path, content_type')
+    .select('bucket_id, object_path, content_type, purged_at, expires_at, created_at')
     .in('visitor_id', vIds)
     .eq('kind', requestedKind)
-    .is('purged_at', null)
     .order('created_at', { ascending: true })
     .limit(1)
     .maybeSingle();
 
-  if (evErr || !evidence) {
-    return jsonResponse(404, { error: 'preview_unavailable' });
+  if (evErr) {
+    console.error('Error fetching visitor evidence for profile preview:', evErr);
+    return jsonResponse(500, { error: 'database_error' });
+  }
+
+  if (!evidence) {
+    return jsonResponse(404, { error: 'preview_unavailable', message: 'Evidence not found.' });
+  }
+
+  // Retention check: if evidence was purged or expired under the retention policy, return 410 Gone
+  const now = new Date();
+  const isPurged = Boolean(evidence.purged_at);
+  const isExpired = Boolean(evidence.expires_at && new Date(evidence.expires_at) <= now);
+
+  if (isPurged || isExpired) {
+    return jsonResponse(410, {
+      error: 'photo_expired_under_retention',
+      message: 'Original portrait was removed under retention policy.',
+    });
   }
 
   const downloaded = await admin.storage.from(evidence.bucket_id).download(evidence.object_path);
   if (downloaded.error || !downloaded.data) {
-    return jsonResponse(404, { error: 'preview_unavailable' });
+    return jsonResponse(404, { error: 'preview_unavailable', message: 'Object not found in storage.' });
   }
 
   const bytes = new Uint8Array(await downloaded.data.arrayBuffer());

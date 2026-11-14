@@ -61,8 +61,10 @@ export async function handleRequest(request: Request): Promise<Response> {
     const statusFilter = rawQueue;
     const searchQuery = (url.searchParams.get('search') || '').trim();
     const dateFilter = url.searchParams.get('date') || '';
-    const limit = Math.min(Math.max(parseInt(url.searchParams.get('limit') || '50', 10), 1), 100);
-    const offset = Math.max(parseInt(url.searchParams.get('offset') || '0', 10), 0);
+    const rawLimit = parseInt(url.searchParams.get('limit') || '50', 10);
+    const limit = Math.min(Math.max(Number.isFinite(rawLimit) ? rawLimit : 50, 1), 100);
+    const rawOffset = parseInt(url.searchParams.get('offset') || '0', 10);
+    const offset = Math.max(Number.isFinite(rawOffset) ? rawOffset : 0, 0);
 
     const SELECT_FIELDS = `
         id,
@@ -149,12 +151,13 @@ export async function handleRequest(request: Request): Promise<Response> {
       query = query.or('and(visit_type.eq.specific_person,approval_status.eq.pending),attendance_status.eq.awaiting_office_confirmation');
     }
 
-    if (dateFilter) {
+    if (dateFilter && /^\d{4}-\d{2}-\d{2}$/.test(dateFilter)) {
       query = query.eq('visit_date', dateFilter);
     }
 
-    if (searchQuery) {
-      query = query.or(`visitor_first_name.ilike.%${searchQuery}%,visitor_last_name.ilike.%${searchQuery}%,purpose.ilike.%${searchQuery}%`);
+    const sanitizedSearch = searchQuery.replace(/[^\w\s-]/g, ' ').trim();
+    if (sanitizedSearch) {
+      query = query.or(`visitor_first_name.ilike.%${sanitizedSearch}%,visitor_last_name.ilike.%${sanitizedSearch}%,purpose.ilike.%${sanitizedSearch}%`);
     }
 
     query = query

@@ -152,8 +152,8 @@ export async function handleRequest(request: Request): Promise<Response> {
 
       if (error) {
         const code = (error as { code?: string }).code;
-        if (code === '42501') return jsonResponse(403, { error: 'superadmin_required', message: error.message });
-        if (code === '22023') return jsonResponse(400, { error: 'invalid_request', message: error.message });
+        if (code === '42501') return jsonResponse(403, { error: 'superadmin_required', message: 'Superadmin privileges required' });
+        if (code === '22023') return jsonResponse(400, { error: 'invalid_request', message: error.message?.includes('startDate') ? 'endDate must be greater than or equal to startDate' : 'Invalid calendar closure parameters' });
         throw error;
       }
 
@@ -214,10 +214,10 @@ export async function handleRequest(request: Request): Promise<Response> {
           return jsonResponse(404, { error: 'closure_not_found', message: 'Campus calendar closure not found' });
         }
         if (code === '42501') {
-          return jsonResponse(403, { error: 'superadmin_required', message: error.message });
+          return jsonResponse(403, { error: 'superadmin_required', message: 'Superadmin privileges required' });
         }
         if (code === '22023') {
-          return jsonResponse(400, { error: 'invalid_request', message: error.message || 'endDate must be greater than or equal to startDate' });
+          return jsonResponse(400, { error: 'invalid_request', message: 'endDate must be greater than or equal to startDate' });
         }
         throw error;
       }

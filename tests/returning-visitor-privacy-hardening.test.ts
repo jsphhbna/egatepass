@@ -307,6 +307,249 @@ describe('Returning Visitor Privacy Hardening, Profile Linkage & Verification Bo
       expect(json.error).toBe('forbidden_evidence_kind');
     });
 
+    it('serves original registration portrait when valid v3 photo preview token is presented', async () => {
+      vi.spyOn(actorsModule, 'getVerifiedSessionContext').mockResolvedValue({
+        actorId: mockActorId,
+        role: 'visitor',
+        isAnonymous: true,
+        isRecoverySession: false,
+        user: { id: mockActorId },
+        identity: 'test-user',
+      } as any);
+
+      const mockAdmin = {
+        from: vi.fn().mockImplementation((table: string) => {
+          if (table === 'visitors') {
+            return {
+              select: vi.fn().mockReturnThis(),
+              eq: vi.fn().mockResolvedValue({
+                data: [{ id: 'vis-123' }],
+                error: null,
+              }),
+            };
+          }
+          if (table === 'visitor_evidence') {
+            return {
+              select: vi.fn().mockReturnThis(),
+              in: vi.fn().mockReturnThis(),
+              eq: vi.fn().mockReturnThis(),
+              order: vi.fn().mockReturnThis(),
+              limit: vi.fn().mockReturnThis(),
+              maybeSingle: vi.fn().mockResolvedValue({
+                data: {
+                  bucket_id: 'visitor-photos',
+                  object_path: 'portraits/vis-123.jpg',
+                  content_type: 'image/jpeg',
+                  purged_at: null,
+                  expires_at: null,
+                  created_at: '2026-11-01T00:00:00Z',
+                },
+                error: null,
+              }),
+            };
+          }
+          return {};
+        }),
+        storage: {
+          from: vi.fn().mockReturnValue({
+            download: vi.fn().mockResolvedValue({
+              data: new Blob([Buffer.from([0xff, 0xd8, 0xff, 0xe0])], { type: 'image/jpeg' }),
+              error: null,
+            }),
+          }),
+        },
+      };
+
+      vi.spyOn(supabaseModule, 'getServerSupabaseClients').mockReturnValue({
+        admin: mockAdmin as any,
+        client: {} as any,
+      });
+
+      const photoToken = createPreviewToken(mockProfileId, mockActorId, mockTokenSecret, 300, 'photo');
+      const req = new Request(
+        `http://localhost/api/passes/returning-photo-preview?profileId=${mockProfileId}&token=${photoToken}&kind=photo`,
+        {
+          method: 'GET',
+          headers: {
+            authorization: 'Bearer token',
+          },
+        }
+      );
+
+      const res = await returningPhotoPreviewHandler.fetch(req);
+      expect(res.status).toBe(200);
+      expect(res.headers.get('content-type')).toBe('image/jpeg');
+      expect(res.headers.get('cache-control')).toBe('private, no-store, max-age=0');
+      const buf = await res.arrayBuffer();
+      expect(buf.byteLength).toBe(4);
+    });
+
+    it('returns 410 photo_expired_under_retention when portrait evidence was purged or expired', async () => {
+      vi.spyOn(actorsModule, 'getVerifiedSessionContext').mockResolvedValue({
+        actorId: mockActorId,
+        role: 'visitor',
+        isAnonymous: true,
+        isRecoverySession: false,
+        user: { id: mockActorId },
+        identity: 'test-user',
+      } as any);
+
+      const mockAdmin = {
+        from: vi.fn().mockImplementation((table: string) => {
+          if (table === 'visitors') {
+            return {
+              select: vi.fn().mockReturnThis(),
+              eq: vi.fn().mockResolvedValue({
+                data: [{ id: 'vis-123' }],
+                error: null,
+              }),
+            };
+          }
+          if (table === 'visitor_evidence') {
+            return {
+              select: vi.fn().mockReturnThis(),
+              in: vi.fn().mockReturnThis(),
+              eq: vi.fn().mockReturnThis(),
+              order: vi.fn().mockReturnThis(),
+              limit: vi.fn().mockReturnThis(),
+              maybeSingle: vi.fn().mockResolvedValue({
+                data: {
+                  bucket_id: 'visitor-photos',
+                  object_path: 'portraits/vis-123.jpg',
+                  content_type: 'image/jpeg',
+                  purged_at: '2026-11-10T00:00:00Z',
+                  expires_at: '2026-11-10T00:00:00Z',
+                  created_at: '2026-10-10T00:00:00Z',
+                },
+                error: null,
+              }),
+            };
+          }
+          return {};
+        }),
+      };
+
+      vi.spyOn(supabaseModule, 'getServerSupabaseClients').mockReturnValue({
+        admin: mockAdmin as any,
+        client: {} as any,
+      });
+
+      const photoToken = createPreviewToken(mockProfileId, mockActorId, mockTokenSecret, 300, 'photo');
+      const req = new Request(
+        `http://localhost/api/passes/returning-photo-preview?profileId=${mockProfileId}&token=${photoToken}&kind=photo`,
+        {
+          method: 'GET',
+          headers: {
+            authorization: 'Bearer token',
+          },
+        }
+      );
+
+      const res = await returningPhotoPreviewHandler.fetch(req);
+      expect(res.status).toBe(410);
+      const json = await res.json();
+      expect(json.error).toBe('photo_expired_under_retention');
+    });
+
+    it('falls back to matching visitors by profile name and phone when returning_profile_id is unlinked', async () => {
+      vi.spyOn(actorsModule, 'getVerifiedSessionContext').mockResolvedValue({
+        actorId: mockActorId,
+        role: 'visitor',
+        isAnonymous: true,
+        isRecoverySession: false,
+        user: { id: mockActorId },
+        identity: 'test-user',
+      } as any);
+
+      const mockAdmin = {
+        from: vi.fn().mockImplementation((table: string) => {
+          if (table === 'visitors') {
+            return {
+              select: vi.fn().mockReturnThis(),
+              eq: vi.fn().mockImplementation((col: string, val: string) => {
+                if (col === 'returning_profile_id') {
+                  // Direct link has 0 rows
+                  return Promise.resolve({ data: [], error: null });
+                }
+                // Secondary fallback by contact_number
+                return {
+                  ilike: vi.fn().mockReturnThis(),
+                  order: vi.fn().mockReturnThis(),
+                  limit: vi.fn().mockResolvedValue({
+                    data: [{ id: 'vis-fallback-999' }],
+                    error: null,
+                  }),
+                };
+              }),
+            };
+          }
+          if (table === 'returning_visitor_profiles') {
+            return {
+              select: vi.fn().mockReturnThis(),
+              eq: vi.fn().mockReturnThis(),
+              maybeSingle: vi.fn().mockResolvedValue({
+                data: {
+                  first_name: 'Juan',
+                  last_name: 'Dela Cruz',
+                  contact_number_e164: '+639171234567',
+                },
+                error: null,
+              }),
+            };
+          }
+          if (table === 'visitor_evidence') {
+            return {
+              select: vi.fn().mockReturnThis(),
+              in: vi.fn().mockReturnThis(),
+              eq: vi.fn().mockReturnThis(),
+              order: vi.fn().mockReturnThis(),
+              limit: vi.fn().mockReturnThis(),
+              maybeSingle: vi.fn().mockResolvedValue({
+                data: {
+                  bucket_id: 'visitor-photos',
+                  object_path: 'portraits/vis-fallback.jpg',
+                  content_type: 'image/jpeg',
+                  purged_at: null,
+                  expires_at: null,
+                  created_at: '2026-11-01T00:00:00Z',
+                },
+                error: null,
+              }),
+            };
+          }
+          return {};
+        }),
+        storage: {
+          from: vi.fn().mockReturnValue({
+            download: vi.fn().mockResolvedValue({
+              data: new Blob([Buffer.from([0x01, 0x02])], { type: 'image/jpeg' }),
+              error: null,
+            }),
+          }),
+        },
+      };
+
+      vi.spyOn(supabaseModule, 'getServerSupabaseClients').mockReturnValue({
+        admin: mockAdmin as any,
+        client: {} as any,
+      });
+
+      const photoToken = createPreviewToken(mockProfileId, mockActorId, mockTokenSecret, 300, 'photo');
+      const req = new Request(
+        `http://localhost/api/passes/returning-photo-preview?profileId=${mockProfileId}&token=${photoToken}&kind=photo`,
+        {
+          method: 'GET',
+          headers: {
+            authorization: 'Bearer token',
+          },
+        }
+      );
+
+      const res = await returningPhotoPreviewHandler.fetch(req);
+      expect(res.status).toBe(200);
+      expect(res.headers.get('content-type')).toBe('image/jpeg');
+    });
+
     it('rejects ID preview in provisional mode with 403 provisional_mode_cannot_authorize_id_access', async () => {
       vi.spyOn(actorsModule, 'getVerifiedSessionContext').mockResolvedValue({
         actorId: mockActorId,

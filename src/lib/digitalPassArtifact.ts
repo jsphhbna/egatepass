@@ -11,6 +11,22 @@ export function escapeXml(str: string | null | undefined): string {
     .replace(/'/g, '&apos;');
 }
 
+export function isSafeQrDataUrl(url: string | null | undefined): boolean {
+  if (!url || typeof url !== 'string') return false;
+  const trimmed = url.trim();
+  if (
+    trimmed.startsWith('data:image/png;base64,') ||
+    trimmed.startsWith('data:image/jpeg;base64,') ||
+    trimmed.startsWith('data:image/webp;base64,') ||
+    trimmed.startsWith('data:image/svg+xml;') ||
+    trimmed.startsWith('blob:')
+  ) {
+    // Protocol is safe; ensure no raw line breaks or control chars
+    return !/[\r\n\t]/.test(trimmed);
+  }
+  return false;
+}
+
 export interface CanonicalNameLayout {
   isTwoLines: boolean;
   line1: string;
@@ -149,6 +165,8 @@ export function generateCanonicalDigitalPassSvg(
   <text x="240" y="${nameLayout.line2Y}" text-anchor="middle" font-family="'Egatepass Noto Sans', 'Noto Sans', Arial, sans-serif" font-size="${nameLayout.fontSize}" font-weight="bold" fill="#18181B" data-testid="canonical-pass-visitor-name"${nameLayout.line2Attrs}>${escapeXml(nameLayout.line2!)}</text>`
     : `<text x="240" y="${nameLayout.line1Y}" text-anchor="middle" font-family="'Egatepass Noto Sans', 'Noto Sans', Arial, sans-serif" font-size="${nameLayout.fontSize}" font-weight="bold" fill="#18181B" data-testid="canonical-pass-visitor-name"${nameLayout.line1Attrs}>${escapeXml(nameLayout.line1)}</text>`;
 
+  const safeQrHref = isSafeQrDataUrl(qrDataUrl) ? escapeXml(qrDataUrl.trim()) : '';
+
   return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 480 696" width="480" height="696" style="background:#ffffff;">
   <!-- Background -->
   <rect width="480" height="696" fill="#FFFFFF"/>
@@ -171,7 +189,7 @@ export function generateCanonicalDigitalPassSvg(
 
   <!-- QR Container & Image -->
   <rect x="107" y="182" width="266" height="266" fill="#FFFFFF" stroke="#E4E4E7" stroke-width="1" rx="8"/>
-  <image href="${qrDataUrl}" x="115" y="190" width="250" height="250" preserveAspectRatio="xMidYMid meet" data-testid="canonical-pass-qr-image"/>
+  <image href="${safeQrHref}" x="115" y="190" width="250" height="250" preserveAspectRatio="xMidYMid meet" data-testid="canonical-pass-qr-image"/>
 
   <!-- Pass Reference -->
   <text x="240" y="485" text-anchor="middle" font-family="'Egatepass Noto Sans', 'Noto Sans', Arial, sans-serif" font-size="16" font-weight="bold" fill="#18181B" data-testid="canonical-pass-reference">Ref: ${escapedRef}</text>

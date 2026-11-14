@@ -823,12 +823,17 @@ async function handleRequest(request: Request): Promise<Response> {
       const returningCutoff = new Date(Date.now() - returningProfileDays * 86_400_000).toISOString();
 
       if (returningProfilesEnabled) {
-        const { data: expiredProfiles, error: profErr } = await admin
+        let profQuery = admin
           .from('returning_visitor_profiles')
-          .select('id, created_at, last_used_at, expires_at')
-          .lte('expires_at', now)
-          .lte('created_at', returningCutoff)
-          .limit(batchSize);
+          .select('id, created_at, last_used_at, expires_at, revoked_at');
+
+        if (typeof (profQuery as any).or === 'function') {
+          profQuery = profQuery.or(`and(expires_at.lte.${now},created_at.lte.${returningCutoff}),revoked_at.not.is.null`);
+        } else {
+          profQuery = profQuery.lte('expires_at', now).lte('created_at', returningCutoff);
+        }
+
+        const { data: expiredProfiles, error: profErr } = await profQuery.limit(batchSize);
 
         if (profErr) {
           metrics.errors.push(`returning_profile_query_failed: ${profErr.message}`);
@@ -836,8 +841,8 @@ async function handleRequest(request: Request): Promise<Response> {
           const eligibleProfileIds: string[] = [];
 
           for (const p of expiredProfiles) {
-            // Check last_used_at cutoff
-            if (p.last_used_at && new Date(p.last_used_at).getTime() > Date.now() - returningProfileDays * 86_400_000) {
+            // Check last_used_at cutoff for normal expiration (revoked profiles bypass last_used_at)
+            if (!p.revoked_at && p.last_used_at && new Date(p.last_used_at).getTime() > Date.now() - returningProfileDays * 86_400_000) {
               continue;
             }
 

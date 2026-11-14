@@ -15,7 +15,14 @@ interface GuardPasswordResetModalProps {
 }
 
 function storageKeyFor(email: string): string {
-  return `${LAST_SENT_STORAGE_KEY}:${email.trim().toLowerCase()}`;
+  // Deterministically hash the email to avoid storing raw PII in window.localStorage keys
+  let hash = 0;
+  const normalized = email.trim().toLowerCase();
+  for (let i = 0; i < normalized.length; i++) {
+    hash = ((hash << 5) - hash) + normalized.charCodeAt(i);
+    hash |= 0;
+  }
+  return `${LAST_SENT_STORAGE_KEY}:${Math.abs(hash).toString(36)}`;
 }
 
 function storedLastSentAt(email: string): number {

@@ -190,19 +190,23 @@ export async function handleLocationSearch(request: Request): Promise<Response> 
       if (oldestKey) inMemoryCache.delete(oldestKey);
     }
 
-    // 5. Update distributed database cache asynchronously (fire-and-forget)
+    // 5. Persist distributed database cache (bounded timeout prevents serverless execution truncation)
     if (adminClient) {
       const expiresAt = new Date(Date.now() + CACHE_TTL_MS).toISOString();
-      adminClient
-        .from('location_search_cache')
-        .upsert({
-          query_hash: queryHash,
-          query: rawQuery,
-          results,
-          expires_at: expiresAt,
-        })
-        .then(() => {})
-        .catch((err: any) => console.warn('Failed to persist location search cache:', err));
+      try {
+        const cachePromise = adminClient
+          .from('location_search_cache')
+          .upsert({
+            query_hash: queryHash,
+            query: rawQuery,
+            results,
+            expires_at: expiresAt,
+          });
+        const timeoutPromise = new Promise((resolve) => setTimeout(resolve, 800));
+        await Promise.race([cachePromise, timeoutPromise]);
+      } catch (err: any) {
+        console.warn('Failed to persist location search cache:', err);
+      }
     }
 
     return jsonResponse(200, { results, cached: false });

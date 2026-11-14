@@ -91,13 +91,22 @@ export async function handleRequest(request: Request): Promise<Response> {
           return jsonResponse(409, { error: 'email_already_delivered', message: 'Email is already delivered.' });
         }
         if (recErr.message?.includes('only_for_unknown_or_failed')) {
-          return jsonResponse(400, { error: 'invalid_reconciliation_state', message: recErr.message });
+          return jsonResponse(400, {
+            error: 'invalid_reconciliation_state',
+            message: 'Manual delivery reconciliation is only available for failed or unknown email delivery states.',
+          });
         }
         if (recErr.message?.includes('reconciliation_note_required')) {
-          return jsonResponse(400, { error: 'invalid_reconciliation_note', message: recErr.message });
+          return jsonResponse(400, {
+            error: 'invalid_reconciliation_note',
+            message: 'A non-empty reconciliation note is required when updating delivery state.',
+          });
         }
         if (recErr.code === '40900') {
-          return jsonResponse(409, { error: 'conflict', message: recErr.message });
+          return jsonResponse(409, {
+            error: 'conflict',
+            message: 'Reconciliation state conflict occurred. Please refresh and retry.',
+          });
         }
         throw recErr;
       }
@@ -132,7 +141,7 @@ export async function handleRequest(request: Request): Promise<Response> {
     const officeName = (visit.offices as any)?.name || 'EARIST Office';
     const personnelName = (visit as any).requested_person_name || (visit.office_personnel as any)?.name || 'Faculty / Staff';
     const formattedVisitDate = visit.visit_date instanceof Date
-      ? visit.visit_date.toISOString().slice(0, 10)
+      ? new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Manila' }).format(visit.visit_date)
       : String(visit.visit_date || '');
 
     const defaultIdempotencyKey = `office-${emailType}-${visit.id}`;

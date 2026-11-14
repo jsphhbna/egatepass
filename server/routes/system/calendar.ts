@@ -19,16 +19,24 @@ export async function handleRequest(request: Request): Promise<Response> {
     .is('archived_at', null)
     .order('start_date', { ascending: true });
 
+  const dateRegex = /^\d{4}-\d{2}-\d{2}$/;
   if (fromDate) {
+    if (!dateRegex.test(fromDate)) {
+      return jsonResponse(400, { error: 'invalid_date_format', message: 'from date must be in YYYY-MM-DD format.' });
+    }
     query = query.gte('end_date', fromDate);
   }
   if (toDate) {
+    if (!dateRegex.test(toDate)) {
+      return jsonResponse(400, { error: 'invalid_date_format', message: 'to date must be in YYYY-MM-DD format.' });
+    }
     query = query.lte('start_date', toDate);
   }
 
   const { data, error } = await query;
   if (error) {
-    return jsonResponse(500, { error: 'database_error', message: error.message });
+    console.error('Public calendar query database error:', error);
+    return jsonResponse(500, { error: 'database_error', message: 'Failed to retrieve campus calendar closures.' });
   }
 
   const closures = (data || []).map((row) => ({

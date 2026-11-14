@@ -8,8 +8,11 @@ import {
 import * as officeLib from '../server/lib/office.js';
 import requestOfficeVisitHandler from '../server/routes/passes/request-office-visit.js';
 import decideHandler from '../server/routes/office/decide.js';
+import visitsHandler from '../server/routes/office/visits.js';
+import personnelHandler from '../server/routes/office/personnel.js';
 import * as supabaseModule from '../server/supabase.js';
 import * as actorsModule from '../server/actors.js';
+import * as officeDeliveryModule from '../server/lib/officeDelivery.js';
 
 vi.mock('../server/upload-inspection.js', () => ({
   inspectUploadIntent: vi.fn().mockResolvedValue({ bytes: 2048, sha256: 'a'.repeat(64) }),
@@ -420,6 +423,189 @@ describe('Office Visit Workflow & Approval Subsystem', () => {
       expect(res.status).toBe(403);
       const body = await res.json();
       expect(body.error).toBe('unauthorized_for_this_office');
+    });
+
+    it('formats Date instance in Asia/Manila calendar date when deciding office visit', async () => {
+      vi.spyOn(officeLib, 'requireOfficeStaffActor').mockResolvedValue({
+        id: 'staff-user-1',
+        email: 'staff1@earist.edu.ph',
+        role: 'office_staff',
+        assignedOfficeIds: [testOfficeId],
+      });
+
+      // Construct a Date that corresponds to 2026-11-08 02:00:00 in Manila (2026-11-07 18:00:00 UTC)
+      // toISOString().slice(0, 10) would yield '2026-11-07', but Manila date is '2026-11-08'
+      const manilaDateObj = new Date('2026-11-07T18:00:00.000Z');
+
+      const mockAdminClient = {
+        from: vi.fn((table: string) => {
+          if (table === 'office_visits') {
+            return {
+              select: vi.fn().mockReturnThis(),
+              eq: vi.fn().mockReturnThis(),
+              maybeSingle: vi.fn().mockResolvedValue({
+                data: {
+                  id: testVisitId,
+                  office_id: testOfficeId,
+                  visitor_first_name: 'Maria',
+                  visitor_last_name: 'Santos',
+                  visitor_email: 'maria@example.com',
+                  purpose: 'Meeting',
+                  visit_date: manilaDateObj,
+                  approval_status: 'pending',
+                  offices: { name: 'College of Engineering' },
+                  office_personnel: { name: 'Dr. Jane Smith' },
+                },
+                error: null,
+              }),
+            };
+          }
+          return {
+            select: vi.fn().mockReturnThis(),
+            eq: vi.fn().mockReturnThis(),
+            maybeSingle: vi.fn().mockResolvedValue({ data: null, error: null }),
+          };
+        }),
+        schema: vi.fn(() => ({
+          rpc: vi.fn().mockResolvedValue({
+            data: [{
+              ok: true,
+              public_reference: 'PASS-12345678',
+              pass_id: 'pass-uuid-1',
+            }],
+            error: null,
+          }),
+        })),
+      };
+
+      vi.spyOn(supabaseModule, 'getServerSupabaseClients').mockReturnValue({
+        admin: mockAdminClient as any,
+        anon: {} as any,
+      });
+
+      let deliveredVisitDate = '';
+      vi.spyOn(officeDeliveryModule, 'deliverOfficeEmail').mockImplementation(async (_admin, options: any) => {
+        const content = await options.prepareContent({
+          encrypted_token_payload: 'enc-payload',
+        });
+        if (content.html.includes('2026-11-08')) {
+          deliveredVisitDate = '2026-11-08';
+        }
+        return { status: 'sent', providerMessageId: 'msg-1', error: null };
+      });
+
+      const req = new Request('http://localhost/api/office/decide', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: 'Bearer staff-token',
+        },
+        body: JSON.stringify({
+          visitId: testVisitId,
+          decision: 'rejected',
+          rejectionReason: 'Not available today',
+        }),
+      });
+
+      const res = await decideHandler.fetch(req);
+      expect(res.status).toBe(200);
+      const body = await res.json();
+      expect(body.ok).toBe(true);
+      expect(body.decision).toBe('rejected');
+      expect(deliveredVisitDate).toBe('2026-11-08');
+    });
+  });
+
+  describe('GET /api/office/visits Query Hardening & Sanitization', () => {
+    it('safely handles non-numeric limit/offset and sanitizes PostgREST syntax in search', async () => {
+      vi.spyOn(officeLib, 'requireOfficeStaffActor').mockResolvedValue({
+        id: 'staff-user-1',
+        email: 'staff1@earist.edu.ph',
+        role: 'office_staff',
+        assignedOfficeIds: [testOfficeId],
+      });
+
+      let appliedRange: [number, number] | null = null;
+      let appliedOrFilter: string | null = null;
+
+      const mockAdminClient = {
+        from: vi.fn((table: string) => {
+          if (table === 'offices') {
+            return {
+              select: vi.fn().mockReturnThis(),
+              eq: vi.fn().mockReturnThis(),
+              maybeSingle: vi.fn().mockResolvedValue({
+                data: { id: testOfficeId, name: 'College of Engineering' },
+                error: null,
+              }),
+            };
+          }
+          if (table === 'office_visits') {
+            const queryBuilder: any = {
+              select: vi.fn().mockReturnThis(),
+              eq: vi.fn().mockReturnThis(),
+              or: vi.fn((filterStr: string) => {
+                appliedOrFilter = filterStr;
+                return queryBuilder;
+              }),
+              order: vi.fn().mockReturnThis(),
+              range: vi.fn((from: number, to: number) => {
+                appliedRange = [from, to];
+                return Promise.resolve({ data: [], count: 0, error: null });
+              }),
+            };
+            return queryBuilder;
+          }
+          return {
+            select: vi.fn().mockReturnThis(),
+            eq: vi.fn().mockReturnThis(),
+            maybeSingle: vi.fn().mockResolvedValue({ data: null, error: null }),
+          };
+        }),
+      };
+
+      vi.spyOn(supabaseModule, 'getServerSupabaseClients').mockReturnValue({
+        admin: mockAdminClient as any,
+        anon: {} as any,
+      });
+
+      // Pass non-numeric limit and offset, and comma-containing search query (PostgREST syntax injection vector)
+      const req = new Request(`http://localhost/api/office/visits?officeId=${testOfficeId}&limit=invalid&offset=bad&search=Dela%20Cruz,%20Juan%20(Dean)&date=2026-11-14`, {
+        method: 'GET',
+        headers: {
+          Authorization: 'Bearer staff-token',
+        },
+      });
+
+      const res = await visitsHandler.fetch(req);
+      expect(res.status).toBe(200);
+      const body = await res.json();
+      expect(Array.isArray(body.visits)).toBe(true);
+      expect(body.limit).toBe(50);
+      expect(body.offset).toBe(0);
+
+      // Verify limit fell back to 50 and offset to 0 (so range is [0, 49])
+      expect(appliedRange).toEqual([0, 49]);
+
+      // Verify appliedOrFilter has stripped injection commas and parentheses from the search term
+      expect(appliedOrFilter).not.toBeNull();
+      expect(appliedOrFilter).not.toContain('Cruz,');
+      expect(appliedOrFilter).not.toContain('(');
+      expect(appliedOrFilter).not.toContain(')');
+      expect(appliedOrFilter).toContain('Dela Cruz  Juan  Dean');
+    });
+  });
+
+  describe('GET /api/office/personnel Input Validation', () => {
+    it('rejects invalid non-UUID officeId parameter with 400', async () => {
+      const req = new Request('http://localhost/api/office/personnel?officeId=not-a-valid-uuid', {
+        method: 'GET',
+      });
+
+      const res = await personnelHandler.fetch(req);
+      expect(res.status).toBe(400);
+      const body = await res.json();
+      expect(body.error).toBe('invalid_office_id');
     });
   });
 });

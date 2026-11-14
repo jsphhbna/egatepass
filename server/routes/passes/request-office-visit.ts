@@ -453,7 +453,7 @@ export async function handleRequest(request: Request): Promise<Response> {
     console.error('Failed to create specific-person visit request:', rpcError);
     return jsonResponse(500, {
       error: 'request_creation_failed',
-      message: rpcError.message || 'Unable to record visit request.',
+      message: 'Unable to record visit request at this time. Please try again shortly.',
     });
   }
 

@@ -203,8 +203,25 @@ async function handleRequest(request: Request): Promise<Response> {
       query = query.ilike('middle_name', safeMiddle);
     }
 
-    // Limit preliminary database candidate set
-    const { data: matches, error: searchError } = await query.limit(10);
+    const cityCode = parsed.data.psgcCityCode?.trim();
+    const brgyCode = parsed.data.psgcBarangayCode?.trim();
+
+    // Push secondary factor into SQL when supported to prevent premature namesake cutoff
+    if (typeof (query as any).eq === 'function') {
+      if (normalizedPhone && cityCode && typeof (query as any).or === 'function') {
+        query = query.or(`contact_number_e164.eq.${normalizedPhone},psgc_city_code.eq.${cityCode}`);
+      } else if (normalizedPhone) {
+        query = query.eq('contact_number_e164', normalizedPhone);
+      } else if (cityCode) {
+        query = query.eq('psgc_city_code', cityCode);
+        if (brgyCode) {
+          query = query.eq('psgc_barangay_code', brgyCode);
+        }
+      }
+    }
+
+    // Retrieve candidate set (expanded to 25 to accommodate metropolitan namesakes)
+    const { data: matches, error: searchError } = await query.limit(25);
 
     if (searchError) {
       console.error('Profile search error in lookup-returning:', searchError);
@@ -214,9 +231,6 @@ async function handleRequest(request: Request): Promise<Response> {
     let filtered = matches || [];
 
     // Filter by additional factor (phone match OR locality match)
-    const cityCode = parsed.data.psgcCityCode?.trim();
-    const brgyCode = parsed.data.psgcBarangayCode?.trim();
-
     filtered = filtered.filter((m) => {
       const phoneMatch = Boolean(normalizedPhone && m.contact_number_e164 === normalizedPhone);
       const addressMatch = Boolean(

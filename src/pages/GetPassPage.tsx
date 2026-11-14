@@ -45,6 +45,7 @@ import { evaluateLiveFaceQuality, evaluateIdImageQuality, evaluateReturningSelfi
 import { hydrateReturningAddress } from '@/lib/returningAddressHydration';
 import { normalizePhMobile, validatePhMobile } from '@/lib/phPhone';
 import { normalizeVehiclePlate } from '@/lib/vehiclePlate';
+import { fetchWithTimeout } from '@/lib/fetchWithTimeout';
 import {
   Camera,
   CheckCircle2,
@@ -362,14 +363,14 @@ export function GetPassPage() {
   }, [codeCooldown]);
 
   useEffect(() => {
-    fetch('/api/office/personnel')
+    fetchWithTimeout('/api/office/personnel', undefined, 12000)
       .then((r) => r.json())
       .then((data) => {
         if (data?.offices) setOffices(data.offices);
       })
       .catch((err) => console.error('Failed to load offices:', err));
 
-    fetch('/api/system/calendar')
+    fetchWithTimeout('/api/system/calendar', undefined, 12000)
       .then((r) => r.json())
       .then((data) => {
         if (data?.closures) setCalendarClosures(data.closures);
@@ -388,14 +389,14 @@ export function GetPassPage() {
       setOfficeSchedules([]);
       return;
     }
-    fetch(`/api/office/personnel?officeId=${selectedOfficeId}`)
+    fetchWithTimeout(`/api/office/personnel?officeId=${selectedOfficeId}`, undefined, 12000)
       .then((r) => r.json())
       .then((data) => {
         if (data?.personnel) setPersonnelList(data.personnel);
       })
       .catch((err) => console.error('Failed to load personnel:', err));
 
-    fetch(`/api/office/calendar?officeId=${encodeURIComponent(selectedOfficeId)}`)
+    fetchWithTimeout(`/api/office/calendar?officeId=${encodeURIComponent(selectedOfficeId)}`, undefined, 12000)
       .then((res) => (res.ok ? res.json() : null))
       .then((data) => {
         if (data?.schedules && Array.isArray(data.schedules)) {
@@ -1090,7 +1091,7 @@ export function GetPassPage() {
         }
       }
       const token = portalTransactionRef.current?.token;
-      const res = await fetch('/api/office/verify-email', {
+      const res = await fetchWithTimeout('/api/office/verify-email', {
         method: 'POST',
         headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -1098,7 +1099,7 @@ export function GetPassPage() {
           email: visitorEmail.toLowerCase().trim(),
           fullName: `${getValues('firstName')} ${getValues('lastName')}`.trim(),
         }),
-      });
+      }, 15000);
       const data = await res.json();
       if (!res.ok) {
         throw new Error(data.message || data.error || 'Failed to send verification code.');
@@ -1121,7 +1122,7 @@ export function GetPassPage() {
     setIsVerifyingCode(true);
     try {
       const authToken = portalTransactionRef.current?.token;
-      const res = await fetch('/api/office/verify-email', {
+      const res = await fetchWithTimeout('/api/office/verify-email', {
         method: 'POST',
         headers: { Authorization: `Bearer ${authToken}`, 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -1129,7 +1130,7 @@ export function GetPassPage() {
           email: visitorEmail.toLowerCase().trim(),
           code: emailVerificationCode.trim(),
         }),
-      });
+      }, 15000);
       const data = await res.json();
       if (!res.ok) {
         throw new Error(data.message || data.error || 'Invalid verification code.');
@@ -2358,14 +2359,14 @@ export function GetPassPage() {
           returning: formData.returning,
         };
 
-        const res = await fetch('/api/request-office-visit', {
+        const res = await fetchWithTimeout('/api/request-office-visit', {
           method: 'POST',
           headers: {
             Authorization: `Bearer ${token}`,
             'Content-Type': 'application/json',
           },
           body: JSON.stringify(requestPayload),
-        });
+        }, 25000);
 
         const data = await res.json();
         if (!res.ok) {
@@ -4509,35 +4510,64 @@ export function GetPassPage() {
                         <div
                           key={cand.profileId}
                           onClick={() => setSelectedReturningCandidate(cand)}
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter' || e.key === ' ') {
+                              e.preventDefault();
+                              setSelectedReturningCandidate(cand);
+                            }
+                          }}
                           role="button"
                           tabIndex={0}
-                          className={`p-4 rounded-xl border-2 transition-all cursor-pointer flex items-center justify-between ${
+                          aria-pressed={isSelected}
+                          className={`p-3.5 rounded-xl border-2 transition-all cursor-pointer flex items-center gap-3 sm:gap-4 ${
                             isSelected
-                              ? 'border-[#7A0A0A] bg-[#F8EEEE]/40 shadow-xs'
+                              ? 'border-[#7A0A0A] bg-[#F8EEEE]/50 shadow-xs ring-1 ring-[#7A0A0A]/20'
                               : 'border-[var(--color-border)] bg-white hover:border-slate-300'
                           }`}
                         >
-                          <div className="space-y-1">
+                          {/* Original Registration Portrait Thumbnail (approx. 56-60px) */}
+                          <div className="h-14 w-14 sm:h-15 sm:w-15 rounded-xl overflow-hidden border border-slate-200 bg-slate-100 shrink-0 shadow-2xs">
+                            {cand.previewUrl ? (
+                              <AuthenticatedImage
+                                srcUrl={cand.previewUrl}
+                                authToken={portalToken || portalTransactionRef.current?.token}
+                                alt={`Registration portrait for ${cand.maskedName}`}
+                                fallbackText="Portrait unavailable"
+                                compact
+                                className="h-full w-full object-cover"
+                              />
+                            ) : (
+                              <div className="h-full w-full flex items-center justify-center bg-slate-100 text-slate-400">
+                                <User className="h-6 w-6 text-slate-400" />
+                              </div>
+                            )}
+                          </div>
+
+                          {/* Masked Visitor Details */}
+                          <div className="min-w-0 flex-1 space-y-1">
                             <div className="flex items-center gap-2">
-                              <span className="font-bold text-sm text-[var(--color-text-primary)]">
+                              <span className="font-bold text-sm text-[var(--color-text-primary)] truncate">
                                 {cand.maskedName}
                               </span>
                               {isSelected && (
-                                <span className="bg-[#7A0A0A] text-white text-[10px] font-bold px-2 py-0.5 rounded-full">
+                                <span className="bg-[#7A0A0A] text-white text-[10px] font-bold px-2 py-0.5 rounded-full shrink-0">
                                   Selected
                                 </span>
                               )}
                             </div>
-                            <div className="text-xs text-[var(--color-text-secondary)] flex items-center gap-3">
+                            <div className="text-xs text-[var(--color-text-secondary)] flex flex-wrap items-center gap-x-2 gap-y-0.5">
                               <span>Phone: {cand.maskedContact}</span>
                               <span>•</span>
-                              <span>{cand.partialLocality}</span>
+                              <span className="truncate">{cand.partialLocality}</span>
                             </div>
                           </div>
+
+                          {/* Selection Radio Indicator */}
                           <div
-                            className={`h-5 w-5 rounded-full border flex items-center justify-center ${
+                            className={`h-5 w-5 rounded-full border flex items-center justify-center shrink-0 transition-colors ${
                               isSelected ? 'border-[#7A0A0A] bg-[#7A0A0A] text-white' : 'border-slate-300 bg-white'
                             }`}
+                            aria-hidden="true"
                           >
                             {isSelected && <div className="h-2 w-2 rounded-full bg-white" />}
                           </div>
@@ -5573,32 +5603,45 @@ export function GetPassPage() {
                         Tracking Token: <span className="font-bold">{submittedRequestData.trackingToken}</span>
                       </div>
                     )}
-                    <div className="pt-1 flex flex-col sm:flex-row gap-2">
-                      <a
-                        href={submittedRequestData.trackingUrl}
-                        className="inline-flex items-center justify-center gap-1.5 rounded-lg bg-[#700f14] px-4 py-2 text-xs font-bold text-white hover:bg-[#851218] transition-colors shadow-xs"
-                      >
-                        <Clock className="h-3.5 w-3.5" />
-                        <span>Open Status Tracker</span>
-                      </a>
-                      <button
-                        type="button"
-                        onClick={async () => {
-                          try {
-                            if (submittedRequestData.trackingUrl) {
-                              await navigator.clipboard.writeText(submittedRequestData.trackingUrl);
-                              toast.success('Tracking link copied to clipboard!');
-                            }
-                          } catch {
-                            toast.error('Failed to copy link. Please copy the URL directly.');
-                          }
-                        }}
-                        className="inline-flex items-center justify-center gap-1.5 rounded-lg border border-slate-300 bg-white px-4 py-2 text-xs font-bold text-slate-800 hover:bg-slate-100 transition-colors shadow-xs"
-                      >
-                        <Copy className="h-3.5 w-3.5 text-slate-600" />
-                        <span>Copy Tracking Link</span>
-                      </button>
-                    </div>
+                    {(() => {
+                      const rawUrl = submittedRequestData.trackingUrl || '';
+                      const isSafe = (
+                        rawUrl.startsWith('/track') ||
+                        (typeof window !== 'undefined' && rawUrl.startsWith(`${window.location.origin}/track`))
+                      ) && !rawUrl.toLowerCase().startsWith('javascript:');
+                      const safeTrackingHref = isSafe ? rawUrl : undefined;
+
+                      return (
+                        <div className="pt-1 flex flex-col sm:flex-row gap-2">
+                          {safeTrackingHref && (
+                            <a
+                              href={safeTrackingHref}
+                              className="inline-flex items-center justify-center gap-1.5 rounded-lg bg-[#700f14] px-4 py-2 text-xs font-bold text-white hover:bg-[#851218] transition-colors shadow-xs"
+                            >
+                              <Clock className="h-3.5 w-3.5" />
+                              <span>Open Status Tracker</span>
+                            </a>
+                          )}
+                          <button
+                            type="button"
+                            onClick={async () => {
+                              try {
+                                if (safeTrackingHref) {
+                                  await navigator.clipboard.writeText(safeTrackingHref);
+                                  toast.success('Tracking link copied to clipboard!');
+                                }
+                              } catch {
+                                toast.error('Failed to copy link. Please copy the URL directly.');
+                              }
+                            }}
+                            className="inline-flex items-center justify-center gap-1.5 rounded-lg border border-slate-300 bg-white px-4 py-2 text-xs font-bold text-slate-800 hover:bg-slate-100 transition-colors shadow-xs"
+                          >
+                            <Copy className="h-3.5 w-3.5 text-slate-600" />
+                            <span>Copy Tracking Link</span>
+                          </button>
+                        </div>
+                      );
+                    })()}
                   </div>
                 )}
               </div>
@@ -5870,16 +5913,18 @@ export function GetPassPage() {
             <div className="rounded-xl border border-amber-200/80 bg-amber-50/50 p-4 space-y-3">
               <div className="flex items-center gap-4">
                 {candidateMatch.previewUrl ? (
-                  <div className="h-16 w-16 rounded-xl overflow-hidden border border-amber-300 bg-slate-100 shrink-0">
+                  <div className="h-16 w-16 sm:h-18 sm:w-18 rounded-xl overflow-hidden border border-amber-300 bg-slate-100 shrink-0 shadow-2xs">
                     <AuthenticatedImage
                       srcUrl={candidateMatch.previewUrl}
                       authToken={portalToken || portalTransactionRef.current?.token}
                       alt="Previous visit photo preview"
+                      fallbackText="Portrait unavailable"
+                      compact
                       className="h-full w-full object-cover"
                     />
                   </div>
                 ) : (
-                  <div className="h-16 w-16 rounded-xl border border-dashed border-amber-300 bg-amber-100/50 flex items-center justify-center shrink-0">
+                  <div className="h-16 w-16 sm:h-18 sm:w-18 rounded-xl border border-dashed border-amber-300 bg-amber-100/50 flex items-center justify-center shrink-0">
                     <User className="h-7 w-7 text-amber-800" />
                   </div>
                 )}

@@ -687,7 +687,7 @@ async function handleRequest(request: Request): Promise<Response> {
     if (parsed.data.source === 'portal') {
       const psgc = parsed.data.psgc;
       const hasPsgc = Boolean(psgc && psgc.regionCode && psgc.cityCode && psgc.barangayCode);
-      if (!hasPsgc && !coordRes.valid) {
+      if (!hasPsgc) {
         return jsonResponse(422, {
           error: 'psgc_address_required',
           message: 'A complete structured Philippine address (region, city/municipality, and barangay) is required.',
@@ -813,10 +813,10 @@ async function handleRequest(request: Request): Promise<Response> {
         requested_arrival_mode: parsed.data.arrivalMode!,
         // Structured PSGC Address (Strict: no silent substitution)
         requested_psgc_version: psgc?.version || '2026-q3',
-        requested_psgc_region_code: psgc?.regionCode || (coordRes.valid ? '1300000000' : '1300000000'),
+        requested_psgc_region_code: psgc?.regionCode ?? null,
         requested_psgc_province_code: psgc?.provinceCode || null,
-        requested_psgc_city_code: psgc?.cityCode || (coordRes.valid ? '1380600000' : '1380600000'),
-        requested_psgc_barangay_code: psgc?.barangayCode || (coordRes.valid ? '1380606014' : '1380606014'),
+        requested_psgc_city_code: psgc?.cityCode ?? null,
+        requested_psgc_barangay_code: psgc?.barangayCode ?? null,
         requested_home_building: psgc?.houseBuilding || null,
         requested_home_street: psgc?.street || null,
         // Legacy RPC signature compatibility: historical columns exist in database but are decommissioned from application runtime

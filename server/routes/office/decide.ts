@@ -103,7 +103,7 @@ export async function handleRequest(request: Request): Promise<Response> {
 
     const visitorName = `${visit.visitor_first_name} ${visit.visitor_last_name}`.trim();
     const formattedVisitDate = visit.visit_date instanceof Date
-      ? visit.visit_date.toISOString().slice(0, 10)
+      ? new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Manila' }).format(visit.visit_date)
       : String(visit.visit_date || '');
     const officeName = (visit.offices as any)?.name || 'EARIST Office';
     const personnelName = (visit as any).requested_person_name || (visit.office_personnel as any)?.name || 'Faculty / Staff';

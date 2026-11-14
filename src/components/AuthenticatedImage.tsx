@@ -8,6 +8,28 @@ interface AuthenticatedImageProps extends React.ImgHTMLAttributes<HTMLImageEleme
   authToken?: string | null;
   blob?: Blob | null;
   fallbackText?: string;
+  compact?: boolean;
+}
+
+function isSameOriginUrl(url: string): boolean {
+  if (url.startsWith('/') && !url.startsWith('//')) return true;
+  if (typeof window !== 'undefined') {
+    try {
+      const parsed = new URL(url, window.location.origin);
+      return parsed.origin === window.location.origin;
+    } catch {
+      return false;
+    }
+  }
+  return false;
+}
+
+function isSafeFetchUrl(url: string): boolean {
+  const trimmed = url.trim().toLowerCase();
+  if (trimmed.startsWith('javascript:') || trimmed.startsWith('vbscript:') || trimmed.startsWith('data:')) {
+    return false;
+  }
+  return true;
 }
 
 export function AuthenticatedImage({
@@ -16,6 +38,7 @@ export function AuthenticatedImage({
   authToken,
   blob,
   fallbackText = 'Image unavailable',
+  compact = false,
   className = '',
   ...props
 }: AuthenticatedImageProps) {
@@ -58,8 +81,16 @@ export function AuthenticatedImage({
           return;
         }
 
+        if (!isSafeFetchUrl(targetUrl)) {
+          if (active) {
+            setState('missing');
+            setLoading(false);
+          }
+          return;
+        }
+
         let token = authToken;
-        if (!token) {
+        if (!token && isSameOriginUrl(targetUrl)) {
           try {
             token = await getAccessToken();
           } catch {
@@ -74,7 +105,8 @@ export function AuthenticatedImage({
         }
 
         const headers: Record<string, string> = {};
-        if (token) {
+        // Governance: Never attach bearer authorization tokens to external or third-party origins
+        if (token && isSameOriginUrl(targetUrl)) {
           headers.Authorization = `Bearer ${token}`;
         }
 
@@ -156,6 +188,22 @@ export function AuthenticatedImage({
       : isTemporary
       ? 'Unable to load photo'
       : fallbackText;
+
+    if (compact) {
+      return (
+        <div
+          className={`flex flex-col items-center justify-center rounded-xl border border-dashed border-slate-300 bg-slate-100/80 p-1 text-center text-slate-400 select-none ${className}`}
+          role="img"
+          aria-label={message}
+          title={message}
+        >
+          <ImageOff className="h-4 w-4 shrink-0 text-slate-400" />
+          <span className="text-[9px] font-semibold text-slate-500 leading-tight mt-0.5 line-clamp-1 max-w-full px-0.5">
+            {state === 'expired' ? 'Expired' : (fallbackText || 'Unavailable')}
+          </span>
+        </div>
+      );
+    }
 
     return (
       <div

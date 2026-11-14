@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { generateCanonicalDigitalPassSvg, escapeXml } from '@/lib/digitalPassArtifact';
+import { generateCanonicalDigitalPassSvg, escapeXml, isSafeQrDataUrl } from '@/lib/digitalPassArtifact';
 import { createPassPresentation } from '@/lib/passPresentation';
 import { renderDigitalPassPngBuffer } from '../server/lib/render-digital-pass';
 
@@ -19,6 +19,29 @@ describe('Group D: Canonical Digital E-GatePass Contract & Parity', () => {
   it('escapes XML special characters to prevent SVG injection', () => {
     expect(escapeXml('<script>alert("xss")</script>')).toBe('&lt;script&gt;alert(&quot;xss&quot;)&lt;/script&gt;');
     expect(escapeXml("Juan & Maria's Pass")).toBe('Juan &amp; Maria&apos;s Pass');
+  });
+
+  it('validates QR image data URIs and defends against dangerous schemes or unescaped attributes', () => {
+    expect(isSafeQrDataUrl(sampleQrDataUrl)).toBe(true);
+    expect(isSafeQrDataUrl('data:image/jpeg;base64,12345')).toBe(true);
+    expect(isSafeQrDataUrl('data:image/webp;base64,12345')).toBe(true);
+    expect(isSafeQrDataUrl('data:image/svg+xml;<svg></svg>')).toBe(true);
+    expect(isSafeQrDataUrl('blob:http://localhost:5173/uuid-123')).toBe(true);
+
+    // Rejection of dangerous schemes and injection attempts
+    expect(isSafeQrDataUrl('javascript:alert(1)')).toBe(false);
+    expect(isSafeQrDataUrl('data:text/html;base64,PHNjcmlwdD4=')).toBe(false);
+    expect(isSafeQrDataUrl('vbscript:msgbox(1)')).toBe(false);
+    expect(isSafeQrDataUrl('http://evil.com/phish.png')).toBe(false);
+    expect(isSafeQrDataUrl(null)).toBe(false);
+    expect(isSafeQrDataUrl(undefined)).toBe(false);
+    expect(isSafeQrDataUrl('data:image/png;base64,123\n456')).toBe(false);
+
+    // In canonical SVG generation, unsafe QR URIs are stripped to empty href
+    const presentation = createPassPresentation(samplePass);
+    const svgWithMaliciousQr = generateCanonicalDigitalPassSvg(presentation, 'javascript:alert(1)');
+    expect(svgWithMaliciousQr).toContain('<image href=""');
+    expect(svgWithMaliciousQr).not.toContain('javascript:alert(1)');
   });
 
   it('generates canonical SVG with institutional brand and escaped fields', () => {

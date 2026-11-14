@@ -138,7 +138,7 @@ export async function handleRequest(request: Request): Promise<Response> {
     console.error('Failed to atomically record Resend webhook delivery event:', rpcError);
     return jsonResponse(500, {
       error: 'delivery_recording_failed',
-      message: rpcError.message,
+      message: 'Failed to record webhook delivery event.',
     });
   }
 

@@ -29,6 +29,9 @@ export async function handleRequest(request: Request): Promise<Response> {
   if (method === 'GET') {
     const url = new URL(request.url);
     const officeId = url.searchParams.get('officeId');
+    if (officeId && !pgUuidSchema.safeParse(officeId).success) {
+      return jsonResponse(400, { error: 'invalid_office_id', message: 'officeId must be a valid UUID' });
+    }
     const token = readBearerToken(request);
 
     if (!officeId) {

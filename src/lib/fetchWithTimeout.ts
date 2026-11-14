@@ -29,15 +29,17 @@ export async function fetchWithTimeout(
   }, timeoutMs);
 
   // If caller already provided a signal, link it to abort controller
+  let onCallerAbort: (() => void) | null = null;
   if (callerSignal) {
     if (callerSignal.aborted) {
       clearTimeout(timeoutId);
       controller.abort();
     } else {
-      callerSignal.addEventListener('abort', () => {
+      onCallerAbort = () => {
         clearTimeout(timeoutId);
         controller.abort();
-      });
+      };
+      callerSignal.addEventListener('abort', onCallerAbort, { once: true });
     }
   }
 
@@ -57,6 +59,9 @@ export async function fetchWithTimeout(
     throw err;
   } finally {
     clearTimeout(timeoutId);
+    if (callerSignal && onCallerAbort) {
+      callerSignal.removeEventListener('abort', onCallerAbort);
+    }
   }
 }
 

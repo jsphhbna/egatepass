@@ -80,12 +80,12 @@ async function handleRequest(request: Request): Promise<Response> {
     if (rpcError) {
       console.error('abandon_upload_intent RPC failed:', rpcError);
       if (rpcError.code === '42501') {
-        return jsonResponse(403, { error: 'visitor_identity_required', message: rpcError.message });
+        return jsonResponse(403, { error: 'visitor_identity_required', message: 'You are not authorized to abandon this upload intent.' });
       }
       if (rpcError.code === '22023') {
-        return jsonResponse(409, { error: 'intent_claimed', message: rpcError.message });
+        return jsonResponse(409, { error: 'intent_claimed', message: 'This upload intent has already been claimed or cannot be abandoned.' });
       }
-      return jsonResponse(500, { error: 'database_error', message: rpcError.message });
+      return jsonResponse(500, { error: 'database_error', message: 'Failed to abandon upload intent.' });
     }
 
     // 2. Server-side trusted removal of uploaded storage object ONLY AFTER database confirmation

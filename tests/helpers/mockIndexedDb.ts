@@ -180,6 +180,10 @@ class MockIDBDatabase {
   public keyPaths = new Map<string, string>();
   public version = 2;
 
+  close() {
+    // IDB connection closed; stores persist across connection close
+  }
+
   get objectStoreNames() {
     return {
       contains: (name: string) => this.stores.has(name),
