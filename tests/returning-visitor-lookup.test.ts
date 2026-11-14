@@ -2,14 +2,12 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import * as supabaseModule from '../server/supabase.js';
 import * as actorsModule from '../server/actors.js';
 import lookupReturningHandler from '../server/routes/passes/lookup-returning.js';
-import { resetTurnstileReplayCache } from '../server/lib/turnstile.js';
 
 describe('Returning Visitor 1:1 Profile Discovery & Masking Contract (lookup-returning)', () => {
   const originalEnv = { ...process.env };
   const actorId = '11111111-1111-4111-8111-111111111111';
 
   beforeEach(() => {
-    resetTurnstileReplayCache();
     process.env = {
       ...originalEnv,
       RETURNING_MATCH_TOKEN_SECRET: 'test-secret-at-least-32-characters-long!',

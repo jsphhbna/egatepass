@@ -77,10 +77,11 @@ describe('hydrateReturningAddress — complete profile', () => {
     expect(result.homeStreet).toBe('Nagtahan St.');
   });
 
-  it('does not restore postalCode even if present in legacy profile', () => {
+  it('does not include postalCode in hydrated result even if present in legacy profile', () => {
     const result = hydrateReturningAddress(makeProfile());
-    expect(result.postalCode).toBe('');
-    expect(result.selectedPsgc!.postalCode).toBeUndefined();
+    expect('postalCode' in result).toBe(false);
+    expect((result as any).postalCode).toBeUndefined();
+    expect((result.selectedPsgc as any)!.postalCode).toBeUndefined();
   });
 });
 
@@ -89,16 +90,17 @@ describe('hydrateReturningAddress — complete profile', () => {
 // ---------------------------------------------------------------------------
 
 describe('hydrateReturningAddress — postal code decommissioning', () => {
-  it('postalCode is always empty string and never restored from legacy profile', () => {
-    const result = hydrateReturningAddress(makeProfile({ postalCode: '5000' }));
-    expect(result.postalCode).toBe('');
-    expect(result.selectedPsgc!.postalCode).toBeUndefined();
+  it('postalCode is completely omitted from returned hydrated object', () => {
+    const result = hydrateReturningAddress(makeProfile({ postalCode: '5000' } as any));
+    expect('postalCode' in result).toBe(false);
+    expect((result as any).postalCode).toBeUndefined();
+    expect((result.selectedPsgc as any)!.postalCode).toBeUndefined();
   });
 
-  it('postalCode is empty string when not in profile, not undefined', () => {
-    const result = hydrateReturningAddress(makeProfile({ postalCode: undefined }));
-    expect(result.postalCode).toBe('');
-    expect(typeof result.postalCode).toBe('string');
+  it('profile with missing postalCode produces object without postalCode property', () => {
+    const result = hydrateReturningAddress(makeProfile({ postalCode: undefined } as any));
+    expect('postalCode' in result).toBe(false);
+    expect((result as any).postalCode).toBeUndefined();
   });
 });
 
@@ -120,14 +122,14 @@ describe('hydrateReturningAddress — partial profile (missing optional fields)'
   it('missing houseBuilding does NOT erase the other restored fields', () => {
     const result = hydrateReturningAddress(makeProfile({ houseBuilding: undefined }));
     expect(result.homeStreet).toBe('Nagtahan St.');
-    expect(result.postalCode).toBe('');
+    expect('postalCode' in result).toBe(false);
     expect(result.selectedPsgc).not.toBeNull();
   });
 
   it('missing street does NOT erase the other restored fields', () => {
     const result = hydrateReturningAddress(makeProfile({ street: undefined }));
     expect(result.homeBuilding).toBe('Unit 4B');
-    expect(result.postalCode).toBe('');
+    expect('postalCode' in result).toBe(false);
     expect(result.selectedPsgc).not.toBeNull();
   });
 
@@ -167,12 +169,12 @@ describe('hydrateReturningAddress — cross-profile isolation', () => {
     // Second profile should have its own values — not the first's
     expect(second.homeBuilding).toBe('Blk 3 Lot 7');
     expect(second.homeStreet).toBe('Rizal Ave.');
-    expect(second.postalCode).toBe('');
+    expect('postalCode' in second).toBe(false);
     expect(second.selectedPsgc!.city.code).toBe('0722718000');
 
     // First profile result is unaffected (functional purity)
     expect(first.homeBuilding).toBe('Unit 4B');
-    expect(first.postalCode).toBe('');
+    expect('postalCode' in first).toBe(false);
   });
 
   it('second profile with empty houseBuilding clears homeBuilding (no leakage)', () => {
@@ -205,9 +207,10 @@ describe('hydrateReturningAddress — no PSGC in profile', () => {
     expect(result.homeStreet).toBe('');
   });
 
-  it('returns empty postalCode', () => {
+  it('does not include postalCode in result', () => {
     const result = hydrateReturningAddress(makeProfileNoPsgc());
-    expect(result.postalCode).toBe('');
+    expect('postalCode' in result).toBe(false);
+    expect((result as any).postalCode).toBeUndefined();
   });
 });
 
@@ -399,11 +402,13 @@ describe('visitorRegistration.ts — ReturningIdentifyProfile type completeness'
     expect(src).toContain('street?: string');
   });
 
-  it('ReturningIdentifyProfile.psgc includes postalCode', async () => {
+  it('ReturningIdentifyProfile.psgc does not include postalCode or postal fields', async () => {
     const src = await import('fs').then((fs) =>
       fs.readFileSync('src/services/visitorRegistration.ts', 'utf-8')
     );
-    expect(src).toContain('postalCode?: string');
+    expect(src).not.toContain('postalCode?: string');
+    expect(src).not.toContain('postalCodeSource?: string');
+    expect(src).not.toContain('postalResolution?: PostalResolution');
   });
 
   it('ReturningIdentifyProfile.psgc includes province (nullable)', async () => {

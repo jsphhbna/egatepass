@@ -31,7 +31,7 @@ This document is the authoritative specification for all configuration and secre
 | `OFFICE_VISIT_DELIVERY_ENCRYPTION_KEY` | Production Only | **Yes** | Office visit QR bearer token encryption & recovery outbox (`server/lib/encryption.ts`) | **Yes** | 32-byte (64-hex-character) dedicated AES-256-GCM key for pass token encryption in `public.office_visit_email_outbox` |
 | `EMERGENCY_MANIFEST_SIGNING_PRIVATE_KEY` | Production, Local | **Yes** | Optional override for ECDSA P-256 emergency manifest signing (`server/lib/emergency-manifest.ts`) | No | Optional PKCS#8 PEM override. When unset, server auto-provisions/loads active P-256 keypair via `api.get_active_emergency_signing_key` in `private.emergency_signing_keys` |
 
-> **Turnstile Architecture Note**: The Cloudflare Turnstile Secret Key is configured in the Supabase Dashboard under **Authentication > Bot Protection / CAPTCHA** for `signInAnonymously`, and when configured in the serverless runtime environment it enables server-side siteverify validation in `server/lib/turnstile.ts` for `/api/passes/lookup-returning` (which fails closed with HTTP 503 `missing_validation_runtime_secret` if unset; availability is reported via `/api/passes/capabilities`). It is NEVER exposed to frontend bundles.
+> **Turnstile Architecture Note**: The Cloudflare Turnstile Secret Key is configured in the Supabase Dashboard under **Authentication > Bot Protection / CAPTCHA** for `signInAnonymously`. It is handled directly by Supabase Auth and is NEVER required or exposed in Vercel serverless runtime environments. Public Turnstile widget availability is reported via `/api/passes/capabilities` (`turnstile.siteKeyConfigured`).
 
 ---
 

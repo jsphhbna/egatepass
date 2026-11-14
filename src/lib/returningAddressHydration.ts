@@ -2,21 +2,19 @@
  * src/lib/returningAddressHydration.ts
  *
  * Typed, independently-testable helper that converts a successful
- * Returning Visitor 1:1 identification profile into the four address
+ * Returning Visitor 1:1 identification profile into the address
  * state values consumed by GetPassPage:
  *   - selectedPsgc  (SelectedPsgcAddress | null)
  *   - homeBuilding  (string)
  *   - homeStreet    (string)
- *   - postalCode    (string)
  *
  * Design rules:
- *  - All four outputs are always fully specified — never conditionally absent.
+ *  - Outputs are always fully specified — never conditionally absent.
  *  - Whitespace-only optional fields are trimmed to clean empty strings.
  *  - Stale values from a prior visitor session cannot survive into a new match.
- *  - Reconstructs postalResolution metadata so auto-fill badges and provenance
- *    survive re-opening the selector.
  *  - Does NOT read or write React state directly; callers apply the result.
- *  - Does NOT fabricate locality codes, postal codes, or names.
+ *  - Does NOT fabricate locality codes or names.
+ *  - Strictly postal-code free.
  */
 
 import type { SelectedPsgcAddress } from '@/components/AddressCascadingSelector';
@@ -29,15 +27,13 @@ export interface HydratedAddressState {
   homeBuilding: string;
   /** Street / subdivision / purok — empty string when not saved. */
   homeStreet: string;
-  /** 4-digit postal code string — empty string when not saved. */
-  postalCode: string;
 }
 
 /**
  * Derives hydrated address state from a matched returning visitor profile.
  *
  * The result is always a complete `HydratedAddressState` object.
- * Callers must apply all four fields unconditionally to avoid stale-state leaks.
+ * Callers must apply all fields unconditionally to avoid stale-state leaks.
  *
  * @param profile - The `profile` object from a successful `identifyReturningVisitor` response.
  * @returns A `HydratedAddressState` ready to spread into React state setters.
@@ -80,7 +76,6 @@ export function hydrateReturningAddress(
       },
       homeBuilding: cleanBuilding,
       homeStreet: cleanStreet,
-      postalCode: '',
     };
   }
 
@@ -89,6 +84,5 @@ export function hydrateReturningAddress(
     selectedPsgc: null,
     homeBuilding: '',
     homeStreet: '',
-    postalCode: '',
   };
 }

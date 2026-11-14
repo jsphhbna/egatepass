@@ -407,11 +407,39 @@ export function getNextOcrJobId(): number {
 }
 
 /**
- * Cancels all pending OCR jobs across both PaddleOCR and Tesseract engines.
+ * Cancels all pending OCR jobs across both PaddleOCR and Tesseract engines,
+ * immediately invalidating active generations and terminating running workers.
  */
-export function cancelPendingOcrJobs(): void {
+export async function cancelPendingOcrJobs(): Promise<void> {
   globalOcrJobCounter++;
-  void import('./paddleOcr.js').then(({ cancelPendingPaddleOcr }) => cancelPendingPaddleOcr()).catch(() => {});
+  workerGeneration++;
+
+  const currentWorker = activeWorkerInstance;
+  activeWorkerInstance = null;
+  cachedWorkerPromise = null;
+
+  const tesseractTermination = currentWorker
+    ? (async () => {
+        try {
+          if (typeof currentWorker.terminate === 'function') {
+            await currentWorker.terminate();
+          }
+        } catch {
+          // Ignore worker termination errors during cancellation
+        }
+      })()
+    : Promise.resolve();
+
+  const paddleCancellation = (async () => {
+    try {
+      const { cancelPendingPaddleOcr } = await import('./paddleOcr.js');
+      await cancelPendingPaddleOcr();
+    } catch {
+      // Ignore Paddle cancellation errors
+    }
+  })();
+
+  await Promise.all([tesseractTermination, paddleCancellation]);
 }
 
 /**
@@ -419,7 +447,8 @@ export function cancelPendingOcrJobs(): void {
  * Fenced with workerGeneration to prevent late-resolving orphaned workers.
  */
 export async function getLocalOcrWorker(
-  onProgress?: (progress: number, status?: string) => void
+  onProgress?: (progress: number, status?: string) => void,
+  maxTimeoutMs: number = OCR_INIT_TIMEOUT_MS
 ): Promise<any> {
   if (cachedWorkerPromise) {
     return cachedWorkerPromise;
@@ -427,6 +456,7 @@ export async function getLocalOcrWorker(
 
   const currentGeneration = ++workerGeneration;
   let timer: NodeJS.Timeout | undefined;
+  const effectiveTimeout = Math.min(OCR_INIT_TIMEOUT_MS, Math.max(1000, maxTimeoutMs));
 
   const initPromise = (async () => {
     // Dynamically import tesseract.js so it is never bundled into initial page chunks
@@ -461,8 +491,8 @@ export async function getLocalOcrWorker(
 
   const timeoutPromise = new Promise<never>((_, reject) => {
     timer = setTimeout(() => {
-      reject(new OcrError('worker_initialization_failed', 'OCR worker initialization timed out'));
-    }, OCR_INIT_TIMEOUT_MS);
+      reject(new OcrError('worker_initialization_failed', `OCR worker initialization timed out after ${effectiveTimeout}ms`));
+    }, effectiveTimeout);
   });
 
   cachedWorkerPromise = Promise.race([initPromise, timeoutPromise])
@@ -472,7 +502,9 @@ export async function getLocalOcrWorker(
     })
     .catch(async (err) => {
       if (timer) clearTimeout(timer);
-      await terminateLocalOcrWorker();
+      if (currentGeneration === workerGeneration) {
+        await terminateLocalOcrWorker();
+      }
       if (err instanceof OcrError) {
         throw err;
       }
@@ -484,8 +516,13 @@ export async function getLocalOcrWorker(
 
 /**
  * Terminate any running OCR worker and release memory.
+ * If called for a specific job, verifies that the job is still current to prevent stale cleanup races.
  */
-export async function terminateLocalOcrWorker(): Promise<void> {
+export async function terminateLocalOcrWorker(forJobId?: number): Promise<void> {
+  if (forJobId != null && forJobId !== globalOcrJobCounter) {
+    // Older job cleanup must not terminate newer job's active worker!
+    return;
+  }
   globalOcrJobCounter++;
   workerGeneration++;
   const currentWorker = activeWorkerInstance;
@@ -521,20 +558,23 @@ export async function recognizeIdImage(
   onProgress?: (progress: number, status?: string) => void,
   jobId?: number
 ): Promise<ParsedIdNames> {
+  const startTime = Date.now();
+  const deadline = startTime + OVERARCHING_OCR_TIMEOUT_MS;
   let overarchingTimer: ReturnType<typeof setTimeout> | undefined;
+
   const timeoutPromise = new Promise<never>((_, reject) => {
     overarchingTimer = setTimeout(() => {
-      reject(new OcrError('pipeline_timeout', 'Overall OCR pipeline timed out after 25s'));
+      reject(new OcrError('pipeline_timeout', `Overall OCR pipeline timed out after ${OVERARCHING_OCR_TIMEOUT_MS / 1000}s`));
     }, OVERARCHING_OCR_TIMEOUT_MS);
   });
 
   try {
     return await Promise.race([
-      executeOcrPipeline(imageSource, onProgress, jobId),
+      executeOcrPipeline(imageSource, onProgress, jobId, deadline),
       timeoutPromise,
     ]);
   } catch (err) {
-    await terminateLocalOcrWorker();
+    await terminateLocalOcrWorker(jobId);
     throw err;
   } finally {
     if (overarchingTimer) clearTimeout(overarchingTimer);
@@ -544,7 +584,8 @@ export async function recognizeIdImage(
 async function executeOcrPipeline(
   imageSource: Blob | File | string,
   onProgress?: (progress: number, status?: string) => void,
-  jobId?: number
+  jobId?: number,
+  deadline: number = Date.now() + OVERARCHING_OCR_TIMEOUT_MS
 ): Promise<ParsedIdNames> {
   if (onProgress) {
     onProgress(5, 'Preparing ID image for recognition...');
@@ -552,13 +593,19 @@ async function executeOcrPipeline(
 
   // 1. Primary Engine: Browser-local PaddleOCR.js (PP-OCRv6 Small, Tagalog/English)
   if (typeof window !== 'undefined' && typeof imageSource !== 'string' && (imageSource as any) instanceof Blob) {
+    const remainingBeforePaddle = deadline - Date.now();
+    if (remainingBeforePaddle < 2000) {
+      throw new OcrError('pipeline_timeout', `Overall OCR pipeline timed out after ${OVERARCHING_OCR_TIMEOUT_MS / 1000}s`);
+    }
+
     try {
       const { recognizeIdImageWithPaddle } = await import('./paddleOcr.js');
       const paddleResult = await recognizeIdImageWithPaddle(
         imageSource,
         onProgress,
         jobId,
-        (id) => id !== globalOcrJobCounter
+        (id) => id !== globalOcrJobCounter,
+        remainingBeforePaddle
       );
       if (jobId != null && jobId !== globalOcrJobCounter) {
         return { firstName: '', middleName: '', lastName: '', confidence: 0 };
@@ -566,7 +613,24 @@ async function executeOcrPipeline(
       if (paddleResult && (paddleResult.firstName || paddleResult.lastName)) {
         return paddleResult;
       }
-    } catch (paddleErr) {
+    } catch (paddleErr: any) {
+      // Priority 3: Strictly distinguish genuine Paddle failure from cancellation / supersession / timeout
+      const isSuperseded =
+        (jobId != null && jobId !== globalOcrJobCounter) ||
+        paddleErr?.message?.includes('superseded') ||
+        paddleErr?.message?.includes('cancelled');
+
+      if (isSuperseded) {
+        // Cancelled or superseded job must NOT initialize or start Tesseract fallback!
+        return { firstName: '', middleName: '', lastName: '', confidence: 0 };
+      }
+
+      // Check remaining time in shared deadline before initiating secondary fallback
+      const remainingTime = deadline - Date.now();
+      if (remainingTime < 3000) {
+        throw new OcrError('pipeline_timeout', `Insufficient time remaining in OCR deadline for secondary fallback (${remainingTime}ms remaining)`);
+      }
+
       console.warn('PaddleOCR engine unready or failed, falling back to Tesseract:', paddleErr);
       if (onProgress) {
         onProgress(30, 'Secondary engine reading ID...');
@@ -575,11 +639,20 @@ async function executeOcrPipeline(
   }
 
   // 2. Secondary / Fallback Engine: Tesseract.js
+  if (jobId != null && jobId !== globalOcrJobCounter) {
+    return { firstName: '', middleName: '', lastName: '', confidence: 0 };
+  }
+
+  const remainingBeforeTesseract = deadline - Date.now();
+  if (remainingBeforeTesseract < 3000) {
+    throw new OcrError('pipeline_timeout', `Insufficient time remaining in OCR deadline for secondary fallback (${remainingBeforeTesseract}ms remaining)`);
+  }
+
   let worker: any;
   try {
-    worker = await getLocalOcrWorker(onProgress);
+    worker = await getLocalOcrWorker(onProgress, remainingBeforeTesseract);
   } catch (err) {
-    await terminateLocalOcrWorker();
+    await terminateLocalOcrWorker(jobId);
     throw err;
   }
 
@@ -599,13 +672,19 @@ async function executeOcrPipeline(
     }
   }
 
-  // Helper for running recognition with its own bounded timeout
+  // Helper for running recognition with shared bounded timeout
   const runPassWithTimeout = async (source: any, psmMode: string): Promise<any> => {
+    const remainingPassTime = deadline - Date.now();
+    if (remainingPassTime < 1000) {
+      throw new OcrError('pipeline_timeout', 'Insufficient time remaining in OCR deadline for recognition pass');
+    }
+    const effectivePassTimeout = Math.min(OCR_RECOGNIZE_TIMEOUT_MS, remainingPassTime);
+
     let passTimer: NodeJS.Timeout | undefined;
     const passTimeout = new Promise<never>((_, reject) => {
       passTimer = setTimeout(() => {
-        reject(new OcrError('recognition_timeout', 'OCR recognition timed out'));
-      }, OCR_RECOGNIZE_TIMEOUT_MS);
+        reject(new OcrError('recognition_timeout', `OCR recognition timed out after ${effectivePassTimeout}ms`));
+      }, effectivePassTimeout);
     });
 
     try {

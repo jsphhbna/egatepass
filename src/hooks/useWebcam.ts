@@ -63,38 +63,76 @@ export function classifyCameraError(err: unknown): string {
   return 'Failed to access camera. Please check your device.';
 }
 
+/**
+ * Shared helper to attach a stream to a video element and strictly verify its readiness,
+ * playable data, and live tracks before declaring readiness.
+ */
+async function attachAndVerifyVideoElement(
+  video: HTMLVideoElement,
+  stream: MediaStream,
+  generation: number,
+  generationRef: React.MutableRefObject<number>,
+  mountedRef: React.MutableRefObject<boolean>
+): Promise<void> {
+  video.srcObject = stream;
+
+  await new Promise<void>((resolve, reject) => {
+    if (video.readyState >= 2) return resolve();
+    let settled = false;
+    const onReady = () => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      resolve();
+    };
+    const onError = (e: any) => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      reject(e || new Error('Video failed to load stream data.'));
+    };
+    const cleanup = () => {
+      video.removeEventListener('loadedmetadata', onReady);
+      video.removeEventListener('canplay', onReady);
+      video.removeEventListener('error', onError);
+    };
+    video.addEventListener('loadedmetadata', onReady, { once: true });
+    video.addEventListener('canplay', onReady, { once: true });
+    video.addEventListener('error', onError, { once: true });
+    setTimeout(() => {
+      if (!settled) {
+        settled = true;
+        cleanup();
+        if (video.readyState >= 2) {
+          resolve();
+        } else {
+          reject(new Error('Video element timed out waiting for playable stream data.'));
+        }
+      }
+    }, 3000);
+  });
+
+  if (!mountedRef.current || generation !== generationRef.current) {
+    return;
+  }
+
+  await video.play();
+
+  const tracks = typeof stream.getVideoTracks === 'function' ? stream.getVideoTracks() : stream.getTracks();
+  const track = tracks?.[0];
+  if (!track || (track.readyState && track.readyState !== 'live')) {
+    throw new Error('Camera stream track is not available.');
+  }
+}
+
 export function useWebcam(options: UseWebcamOptions = {}): UseWebcamResult {
   const { facingMode = 'user', width = 640, height = 480, allowCaptureMirroring = true, targetAspectRatio } = options;
   const videoElRef = useRef<HTMLVideoElement | null>(null);
   const videoMountWaiters = useRef<Array<(el: HTMLVideoElement) => void>>([]);
 
-  const videoRef = useMemo(() => {
-    const fn = (node: HTMLVideoElement | null) => {
-      videoElRef.current = node;
-      if (node) {
-        const waiters = [...videoMountWaiters.current];
-        videoMountWaiters.current = [];
-        waiters.forEach((cb) => cb(node));
-      }
-    };
-    Object.defineProperty(fn, 'current', {
-      get: () => videoElRef.current,
-      set: (node: HTMLVideoElement | null) => {
-        videoElRef.current = node;
-        if (node) {
-          const waiters = [...videoMountWaiters.current];
-          videoMountWaiters.current = [];
-          waiters.forEach((cb) => cb(node));
-        }
-      },
-      configurable: true,
-      enumerable: true,
-    });
-    return fn as unknown as React.RefObject<HTMLVideoElement | null>;
-  }, []);
-
   const streamRef = useRef<MediaStream | null>(null);
   const isStartingRef = useRef(false);
+  const isReattachingRef = useRef(false);
   const generationRef = useRef(0);
   const mountedRef = useRef(true);
 
@@ -117,6 +155,88 @@ export function useWebcam(options: UseWebcamOptions = {}): UseWebcamResult {
       }
     }
   }, []);
+
+  /**
+   * Reattaches the active stream to a mounted/remounted video element with fail-closed
+   * readiness verification, preventing silent playback errors or false active state.
+   */
+  const reattachStream = useCallback(async (video: HTMLVideoElement, stream: MediaStream) => {
+    if (isStartingRef.current || isReattachingRef.current) return;
+    isReattachingRef.current = true;
+    const generation = ++generationRef.current;
+    try {
+      await attachAndVerifyVideoElement(video, stream, generation, generationRef, mountedRef);
+
+      if (!mountedRef.current || generation !== generationRef.current) {
+        return;
+      }
+
+      const tracks = typeof stream.getVideoTracks === 'function' ? stream.getVideoTracks() : stream.getTracks();
+      if (tracks) {
+        tracks.forEach((t) => {
+          t.onended = () => {
+            if (mountedRef.current && generationRef.current === generation) {
+              setError('Camera device was disconnected. Please reconnect your camera.');
+              setIsActive(false);
+            }
+          };
+        });
+      }
+
+      if (mountedRef.current && generation === generationRef.current) {
+        setIsActive(true);
+        setError(null);
+      }
+    } catch (err) {
+      if (!mountedRef.current || generation !== generationRef.current) {
+        return;
+      }
+      if (streamRef.current) {
+        streamRef.current.getTracks().forEach((track) => track.stop());
+        streamRef.current = null;
+      }
+      if (videoRef.current) {
+        videoRef.current.srcObject = null;
+      }
+      setError(classifyCameraError(err));
+      setIsActive(false);
+    } finally {
+      if (mountedRef.current && generation === generationRef.current) {
+        isReattachingRef.current = false;
+      }
+    }
+  }, []);
+
+  const videoRef = useMemo(() => {
+    const fn = (node: HTMLVideoElement | null) => {
+      videoElRef.current = node;
+      if (node) {
+        const waiters = [...videoMountWaiters.current];
+        videoMountWaiters.current = [];
+        waiters.forEach((cb) => cb(node));
+        if (streamRef.current && !isStartingRef.current && node.srcObject !== streamRef.current) {
+          void reattachStream(node, streamRef.current);
+        }
+      }
+    };
+    Object.defineProperty(fn, 'current', {
+      get: () => videoElRef.current,
+      set: (node: HTMLVideoElement | null) => {
+        videoElRef.current = node;
+        if (node) {
+          const waiters = [...videoMountWaiters.current];
+          videoMountWaiters.current = [];
+          waiters.forEach((cb) => cb(node));
+          if (streamRef.current && !isStartingRef.current && node.srcObject !== streamRef.current) {
+            void reattachStream(node, streamRef.current);
+          }
+        }
+      },
+      configurable: true,
+      enumerable: true,
+    });
+    return fn as unknown as React.RefObject<HTMLVideoElement | null>;
+  }, [reattachStream]);
 
   const start = useCallback(async (startOptions?: UseWebcamStartOptions) => {
     if (isStartingRef.current || isActive) return;
@@ -162,57 +282,15 @@ export function useWebcam(options: UseWebcamOptions = {}): UseWebcamResult {
         throw new Error('No video element attached to webcam preview.');
       }
 
-      video.srcObject = stream;
-
-      await new Promise<void>((resolve, reject) => {
-        if (video.readyState >= 2) return resolve();
-        let settled = false;
-        const onReady = () => {
-          if (settled) return;
-          settled = true;
-          cleanup();
-          resolve();
-        };
-        const onError = (e: any) => {
-          if (settled) return;
-          settled = true;
-          cleanup();
-          reject(e || new Error('Video failed to load stream data.'));
-        };
-        const cleanup = () => {
-          video.removeEventListener('loadedmetadata', onReady);
-          video.removeEventListener('canplay', onReady);
-          video.removeEventListener('error', onError);
-        };
-        video.addEventListener('loadedmetadata', onReady, { once: true });
-        video.addEventListener('canplay', onReady, { once: true });
-        video.addEventListener('error', onError, { once: true });
-        setTimeout(() => {
-          if (!settled) {
-            settled = true;
-            cleanup();
-            if (video.readyState >= 2) {
-              resolve();
-            } else {
-              reject(new Error('Video element timed out waiting for playable stream data.'));
-            }
-          }
-        }, 3000);
-      });
+      await attachAndVerifyVideoElement(video, stream, generation, generationRef, mountedRef);
 
       if (!mountedRef.current || generation !== generationRef.current) {
         stream.getTracks().forEach((track) => track.stop());
         return;
       }
 
-      await video.play();
-
       const tracks = typeof stream.getVideoTracks === 'function' ? stream.getVideoTracks() : stream.getTracks();
       const track = tracks?.[0];
-      if (!track || (track.readyState && track.readyState !== 'live')) {
-        throw new Error('Camera stream track is not available.');
-      }
-
       if (tracks) {
         tracks.forEach((t) => {
           t.onended = () => {
@@ -268,6 +346,7 @@ export function useWebcam(options: UseWebcamOptions = {}): UseWebcamResult {
   const stop = useCallback(() => {
     generationRef.current += 1;
     isStartingRef.current = false;
+    isReattachingRef.current = false;
     setIsStarting(false);
     if (streamRef.current) {
       streamRef.current.getTracks().forEach((track) => track.stop());
@@ -333,55 +412,24 @@ export function useWebcam(options: UseWebcamOptions = {}): UseWebcamResult {
         throw new Error('No video element attached to webcam preview.');
       }
 
-      video.srcObject = stream;
-
-      await new Promise<void>((resolve, reject) => {
-        if (video.readyState >= 2) return resolve();
-        let settled = false;
-        const onReady = () => {
-          if (settled) return;
-          settled = true;
-          cleanup();
-          resolve();
-        };
-        const onError = (e: any) => {
-          if (settled) return;
-          settled = true;
-          cleanup();
-          reject(e || new Error('Video failed to load stream data.'));
-        };
-        const cleanup = () => {
-          video.removeEventListener('loadedmetadata', onReady);
-          video.removeEventListener('canplay', onReady);
-          video.removeEventListener('error', onError);
-        };
-        video.addEventListener('loadedmetadata', onReady, { once: true });
-        video.addEventListener('canplay', onReady, { once: true });
-        video.addEventListener('error', onError, { once: true });
-        setTimeout(() => {
-          if (!settled) {
-            settled = true;
-            cleanup();
-            if (video.readyState >= 2) {
-              resolve();
-            } else {
-              reject(new Error('Video element timed out waiting for playable stream data.'));
-            }
-          }
-        }, 3000);
-      });
+      await attachAndVerifyVideoElement(video, stream, generation, generationRef, mountedRef);
 
       if (!mountedRef.current || generation !== generationRef.current) {
         stream.getTracks().forEach((track) => track.stop());
         return;
       }
 
-      await video.play();
-
       const tracks = typeof stream.getVideoTracks === 'function' ? stream.getVideoTracks() : stream.getTracks();
       const track = tracks?.[0];
-      if (!track || (track.readyState && track.readyState !== 'live')) {
-        throw new Error('Camera stream track is not available.');
+      if (tracks) {
+        tracks.forEach((t) => {
+          t.onended = () => {
+            if (mountedRef.current && generationRef.current === generation) {
+              setError('Camera device was disconnected. Please reconnect your camera.');
+              setIsActive(false);
+            }
+          };
+        });
       }
 
       let realFacingMode: 'user' | 'environment' = targetFacingMode;
@@ -464,7 +512,8 @@ export function useWebcam(options: UseWebcamOptions = {}): UseWebcamResult {
   const capture = useCallback(
     (captureOptions?: UseWebcamCaptureOptions): Blob | null => {
       const video = videoRef.current;
-      if (!video || !isActive) return null;
+      // Capture must fail closed if video is unmounted, not active, not ready, or paused/ended
+      if (!video || !isActive || video.readyState < 2 || video.paused || video.ended) return null;
 
       const videoW = video.videoWidth || width;
       const videoH = video.videoHeight || height;
@@ -528,12 +577,15 @@ export function useWebcam(options: UseWebcamOptions = {}): UseWebcamResult {
     [isActive, mirrorCapture, allowCaptureMirroring, width, height, targetAspectRatio]
   );
 
-  // Cleanup on unmount
-  // Ensure media stream is safely attached when video element mounts or remounts
+  // Video element remount effect with fail-closed reattachment
   useEffect(() => {
-    if (isActive && streamRef.current && videoRef.current && videoRef.current.srcObject !== streamRef.current) {
-      videoRef.current.srcObject = streamRef.current;
-      videoRef.current.play().catch(() => undefined);
+    if (
+      streamRef.current &&
+      videoRef.current &&
+      videoRef.current.srcObject !== streamRef.current &&
+      !isStartingRef.current
+    ) {
+      void reattachStream(videoRef.current, streamRef.current);
     }
   });
 

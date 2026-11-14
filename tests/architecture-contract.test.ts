@@ -156,4 +156,27 @@ describe('target repository and Vercel routing contract', () => {
       // dist may not exist before build, which is fine
     }
   });
+
+  it('enforces native Supabase Auth Turnstile bot protection architecture with zero standalone siteverify', () => {
+    const fs = require('node:fs');
+    expect(fs.existsSync('server/lib/turnstile.ts')).toBe(false);
+
+    // Verify no standalone siteverify route exists in route matrix
+    for (const route of ROUTE_CONTRACT_MATRIX) {
+      expect(route.path).not.toContain('siteverify');
+    }
+
+    // Verify vercel.json rewrites contain no siteverify route
+    const vercelConfig = JSON.parse(readFileSync('vercel.json', 'utf8'));
+    const siteverifyRewrite = vercelConfig.rewrites?.find(
+      (r: any) => r.source?.includes('siteverify') || r.destination?.includes('siteverify')
+    );
+    expect(siteverifyRewrite).toBeUndefined();
+
+    // Verify capabilities source only reports siteKeyConfigured
+    const capabilitiesSrc = readFileSync('server/routes/passes/capabilities.ts', 'utf8');
+    expect(capabilitiesSrc).toContain('siteKeyConfigured: turnstileSiteKeyConfigured');
+    expect(capabilitiesSrc).not.toContain('serverVerifierConfigured');
+    expect(capabilitiesSrc).not.toContain('verified:');
+  });
 });

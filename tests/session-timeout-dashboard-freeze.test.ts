@@ -325,7 +325,7 @@ describe('Session Timeout, Period Analytics, Retention Freeze, Turnstile & Appro
     expect(auditInserts.every((a) => a.action === 'maintenance.retention_frozen_skip')).toBe(true);
   });
 
-  it('fails closed 503 when TURNSTILE_SECRET_KEY is missing and reports truthful biometric/Turnstile diagnostics and pre-approval general visits', async () => {
+  it('reports truthful biometric/Turnstile diagnostics and pre-approval general visits without requiring server TURNSTILE_SECRET_KEY', async () => {
     delete process.env.TURNSTILE_SECRET_KEY;
     delete process.env.VITE_TURNSTILE_SITE_KEY;
 

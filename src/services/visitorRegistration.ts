@@ -1,7 +1,6 @@
 import type { SupabaseClient, Session } from '@supabase/supabase-js';
 import { requirePortalSupabase, requireSupabase } from '@/lib/supabase';
 import type { HomeLocation } from '@/lib/homeLocation';
-import type { PostalResolution } from '@/lib/psgc';
 
 export type RegistrationSource = 'portal' | 'kiosk';
 
@@ -22,8 +21,6 @@ export interface PsgcAddressPayload {
   barangayCode: string;
   houseBuilding?: string;
   street?: string;
-  postalCode?: string;
-  postalCodeSource?: string;
 }
 
 export interface ReturningIdentifyProfile {
@@ -42,10 +39,6 @@ export interface ReturningIdentifyProfile {
     barangay: { code: string; name: string };
     houseBuilding?: string;
     street?: string;
-    postalCode?: string;
-    postalCodeSource?: string;
-    postalMappingType?: string;
-    postalResolution?: PostalResolution;
   } | null;
 }
 

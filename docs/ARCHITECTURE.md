@@ -763,14 +763,12 @@ Outage Architecture & Authority Delegation
   - Calibrated mode strictly requires an authentic Ed25519-signed digital signature from `EARIST_BIOMETRICS_CALIBRATION_AUTHORITY` verified against `PINNED_CALIBRATION_PUBLIC_KEY`.
   - Enforces schema version `1.0.0`, target model `yunet_sface`, inference engine `onnxruntime-node`, and checks revocation against `revokedVersions`. Without a valid artifact, explicit calibrated mode fails closed.
 
-### 12.20 Cloudflare Turnstile Architecture & Anti-Replay Defense
-- **Supabase Auth Boundary (Primary)**:
+### 12.20 Cloudflare Turnstile Architecture & Supabase Auth Verification
+- **Supabase Auth Boundary (Primary & Authoritative)**:
   - Anonymous visitor sign-in is protected by Cloudflare Turnstile Managed Challenge in the Supabase Dashboard under **Authentication > Bot Protection / CAPTCHA**.
   - `client.auth.signInAnonymously({ options: { captchaToken } })` verifies the Turnstile challenge at the Supabase Auth boundary before issuing an anonymous JWT.
-- **Server Runtime Siteverify (Secondary)**:
-  - If the server-side Turnstile verification secret is present in serverless environment variables, `server/lib/turnstile.ts` validates challenge tokens on returning visitor searches (`/api/passes/lookup-returning`).
-  - Employs an in-memory SHA-256 token replay cache (300-second TTL) to block duplicate or replayed tokens.
-  - Enforces permitted hostname validation (`egatepass.tech`, `localhost`, etc.) and 5000ms bounded HTTP timeouts via `AbortController`.
+  - Zero standalone server-side siteverify endpoint or serverless runtime secret is required or used. Supabase Bot Protection handles the Turnstile private secret directly. Server functions rely on Supabase Auth session verification.
+  - `/api/passes/capabilities` truthfully reports `turnstile.siteKeyConfigured` without claiming server verification.
 
 ### 12.21 Office Visit Management Subsystem, Approval Gating & Scanner Audio Integration
 - **Relational Schema Architecture**:
@@ -827,7 +825,7 @@ Outage Architecture & Authority Delegation
   - `HumanInactivityGuard.tsx` + `POST /api/auth/session-activity` + `public.staff_sessions` enforce a 15-minute idle timeout (with 60-second warning countdown and multi-tab sync) for human staff accounts while strictly exempting all managed hardware devices.
   - `CampusCalendar.tsx` + `/api/system/calendar` support interactive month/year planning (`holiday`, `campus_closure`, `emergency_suspension`) with overlap warnings, draft deletion, and publish/archive controls.
   - `public.app_settings.global_retention_freeze` halts manual `/api/purge-images`, scheduled/manual `/api/admin/retention-maintenance`, and `api.anonymize_expired_emergency_gate_record` fail-closed when enabled, and `public.app_settings` restricts `anon` `SELECT` strictly to 7 public display/schedule columns.
-  - `/api/passes/capabilities` truthfully reports `biometricStorageRetired: true` and reflects live Turnstile server configuration readiness (`turnstile.verified`).
+  - `/api/passes/capabilities` truthfully reports `biometricStorageRetired: true` and reflects public Turnstile widget availability (`turnstile.siteKeyConfigured`).
 
 ### 12.23 Post-M91 Reliability, Security & Emergency Recovery Hardening (Migrations 92–93)
 - **Office Directory Schema Alignment & Hydration Resilience**:

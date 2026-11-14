@@ -22,14 +22,6 @@ export interface PsgcLocation {
   isHuc?: boolean;
 }
 
-export interface PostalResolution {
-  postalCode: string | null;
-  mappingType: 'exact_barangay' | 'unique_city' | 'multi_code_city' | 'unmapped' | 'ambiguous' | 'service_unavailable' | 'unknown';
-  isAutoFilled: boolean;
-  requiresConfirmation: boolean;
-  message?: string;
-}
-
 export interface StructuredAddress {
   version: string;
   region: { code: string; name: string };
@@ -38,8 +30,6 @@ export interface StructuredAddress {
   barangay: { code: string; name: string };
   houseBuilding?: string;
   street?: string;
-  postalCode?: string;
-  postalCodeSource?: string;
   composedAddress: string;
 }
 
@@ -278,7 +268,6 @@ export function formatStructuredAddress(addr: {
   barangayName: string;
   houseBuilding?: string | null;
   street?: string | null;
-  postalCode?: string | null;
 }): string {
   const parts: string[] = [];
   if (addr.houseBuilding?.trim()) parts.push(addr.houseBuilding.trim());

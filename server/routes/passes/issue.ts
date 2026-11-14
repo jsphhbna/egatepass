@@ -43,8 +43,6 @@ const requestSchema = z.object({
     barangayCode: z.string().regex(/^\d{10}$/),
     houseBuilding: z.string().trim().max(100).optional(),
     street: z.string().trim().max(150).optional(),
-    postalCode: z.string().trim().max(10).optional(),
-    postalCodeSource: z.string().trim().max(50).optional(),
   }).optional(),
   vehicle: z.object({
     vehicleType: z.string().trim().min(1).max(40).optional(),
@@ -821,6 +819,7 @@ async function handleRequest(request: Request): Promise<Response> {
         requested_psgc_barangay_code: psgc?.barangayCode || (coordRes.valid ? '1380606014' : '1380606014'),
         requested_home_building: psgc?.houseBuilding || null,
         requested_home_street: psgc?.street || null,
+        // Legacy RPC signature compatibility: historical columns exist in database but are decommissioned from application runtime
         requested_postal_code: null,
         requested_postal_code_source: null,
         // Legacy coordinates (optional)

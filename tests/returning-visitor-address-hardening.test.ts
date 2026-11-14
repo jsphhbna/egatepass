@@ -17,11 +17,7 @@ import {
   validatePsgcReferences,
 } from '../server/lib/psgc-reference.js';
 import { hydrateReturningAddress } from '../src/lib/returningAddressHydration.js';
-import {
-  isSameLocality,
-  resolveBarangaySelectionPostalState,
-  resolveAddressConfirmation,
-} from '../src/lib/psgcAddressResolution.js';
+import { isSameLocality } from '../src/lib/psgcAddressResolution.js';
 import * as supabaseModule from '../server/supabase.js';
 import * as actorsModule from '../server/actors.js';
 import issuePassHandler from '../server/routes/passes/issue.js';
@@ -230,7 +226,8 @@ describe('PART 2: resolvePsgcLocalityFallback & Address Normalization', () => {
 
     expect(hydrated.homeBuilding).toBe('');
     expect(hydrated.homeStreet).toBe('');
-    expect(hydrated.postalCode).toBe('');
+    expect('postalCode' in hydrated).toBe(false);
+    expect((hydrated as any).postalCode).toBeUndefined();
     expect(hydrated.selectedPsgc?.postalCode).toBeUndefined();
     expect(hydrated.selectedPsgc?.postalCodeSource).toBeUndefined();
   });
@@ -252,13 +249,14 @@ describe('PART 3: Postal Code Decommissioning and Hydration Independence', () =>
         postalCode: '1008',
         postalCodeSource: 'PHLPost',
         postalMappingType: 'exact_barangay',
-      },
+      } as any,
     });
 
-    expect(hydrated.postalCode).toBe('');
-    expect(hydrated.selectedPsgc?.postalResolution).toBeUndefined();
-    expect(hydrated.selectedPsgc?.postalCode).toBeUndefined();
-    expect(hydrated.selectedPsgc?.postalCodeSource).toBeUndefined();
+    expect('postalCode' in hydrated).toBe(false);
+    expect((hydrated as any).postalCode).toBeUndefined();
+    expect((hydrated.selectedPsgc as any)?.postalResolution).toBeUndefined();
+    expect((hydrated.selectedPsgc as any)?.postalCode).toBeUndefined();
+    expect((hydrated.selectedPsgc as any)?.postalCodeSource).toBeUndefined();
   });
 
   it('2. Unique city mapping in legacy profile is ignored during hydration', () => {
@@ -272,12 +270,12 @@ describe('PART 3: Postal Code Decommissioning and Hydration Independence', () =>
         postalCode: '4024',
         postalCodeSource: 'PHLPost',
         postalMappingType: 'unique_city',
-      },
+      } as any,
     });
 
-    expect(hydrated.postalCode).toBe('');
-    expect(hydrated.selectedPsgc?.postalResolution).toBeUndefined();
-    expect(hydrated.selectedPsgc?.postalCodeSource).toBeUndefined();
+    expect('postalCode' in hydrated).toBe(false);
+    expect((hydrated.selectedPsgc as any)?.postalResolution).toBeUndefined();
+    expect((hydrated.selectedPsgc as any)?.postalCodeSource).toBeUndefined();
   });
 
   it('3. Unknown mapping metadata in legacy profile is ignored during hydration', () => {
@@ -290,11 +288,11 @@ describe('PART 3: Postal Code Decommissioning and Hydration Independence', () =>
         barangay: { code: '1380601001', name: 'Barangay 1' },
         postalCode: '1008',
         postalCodeSource: 'PHLPost',
-      },
+      } as any,
     });
 
-    expect(hydrated.postalCode).toBe('');
-    expect(hydrated.selectedPsgc?.postalResolution).toBeUndefined();
+    expect('postalCode' in hydrated).toBe(false);
+    expect((hydrated.selectedPsgc as any)?.postalResolution).toBeUndefined();
   });
 
   it('4. PHLPost postal source does not survive hydration', () => {
@@ -307,11 +305,11 @@ describe('PART 3: Postal Code Decommissioning and Hydration Independence', () =>
         barangay: { code: '1380601001', name: 'Barangay 1' },
         postalCode: '1008',
         postalCodeSource: 'PHLPost',
-      },
+      } as any,
     });
 
-    expect(hydrated.selectedPsgc?.postalCodeSource).toBeUndefined();
-    expect(hydrated.selectedPsgc?.postalCode).toBeUndefined();
+    expect((hydrated.selectedPsgc as any)?.postalCodeSource).toBeUndefined();
+    expect((hydrated.selectedPsgc as any)?.postalCode).toBeUndefined();
   });
 
   it('5. Manual postal source does not survive hydration', () => {
@@ -324,63 +322,39 @@ describe('PART 3: Postal Code Decommissioning and Hydration Independence', () =>
         barangay: { code: '1380601001', name: 'Barangay 1' },
         postalCode: '1008',
         postalCodeSource: 'manual',
-      },
+      } as any,
     });
 
-    expect(hydrated.selectedPsgc?.postalResolution).toBeUndefined();
-    expect(hydrated.selectedPsgc?.postalCodeSource).toBeUndefined();
+    expect((hydrated.selectedPsgc as any)?.postalResolution).toBeUndefined();
+    expect((hydrated.selectedPsgc as any)?.postalCodeSource).toBeUndefined();
   });
 
-  it('6. Reopening and confirming an unchanged address preserves the source without degrading to manual', () => {
-    const initial = {
-      postalCode: '1008',
-      postalCodeSource: 'PHLPost',
-      postalResolution: {
-        postalCode: '1008',
-        isAutoFilled: true,
-        requiresConfirmation: false,
-        mappingType: 'exact_barangay' as const,
+  it('6. Hydrated address contains strictly PSGC hierarchy, building, and street', () => {
+    const hydrated = hydrateReturningAddress({
+      psgc: {
+        version: '2026-q3',
+        region: { code: '1300000000', name: 'NCR' },
+        province: null,
+        city: { code: '1380600000', name: 'City of Manila' },
+        barangay: { code: '1380601001', name: 'Barangay 1' },
+        houseBuilding: 'Unit 4B',
+        street: 'Nagtahan St.',
       },
-    };
-    const candidateCode = '1008';
-    const isSameLocality = true;
-    const finalSource =
-      isSameLocality &&
-      initial.postalCodeSource === 'PHLPost' &&
-      initial.postalCode === candidateCode
-        ? 'PHLPost'
-        : 'manual';
-    expect(finalSource).toBe('PHLPost');
-    expect(initial.postalResolution.isAutoFilled).toBe(true);
+    });
+    expect(hydrated.homeBuilding).toBe('Unit 4B');
+    expect(hydrated.homeStreet).toBe('Nagtahan St.');
+    expect(hydrated.selectedPsgc).toBeDefined();
+    expect(Object.keys(hydrated)).toEqual(['selectedPsgc', 'homeBuilding', 'homeStreet']);
   });
 
-  it('7. Editing the postal code transitions state to manual override and clears auto-filled status', () => {
-    const initial = {
-      postalCode: '1008',
-      postalCodeSource: 'PHLPost',
-      postalResolution: {
-        postalCode: '1008',
-        isAutoFilled: true,
-        requiresConfirmation: false,
-        mappingType: 'exact_barangay' as const,
-      },
-    };
-    const manualEdit = '1009';
-    const updated = {
-      ...initial,
-      postalCode: manualEdit,
-      postalCodeSource: 'manual',
-      postalResolution: {
-        postalCode: manualEdit,
-        isAutoFilled: false,
-        requiresConfirmation: false,
-        mappingType: 'unmapped' as const,
-      },
-    };
-    expect(updated.postalCode).toBe('1009');
-    expect(updated.postalCodeSource).toBe('manual');
-    expect(updated.postalResolution.isAutoFilled).toBe(false);
+  it('7. Empty PSGC profile produces empty state without postal properties', () => {
+    const hydrated = hydrateReturningAddress({ psgc: null as any });
+    expect(hydrated.selectedPsgc).toBeNull();
+    expect(hydrated.homeBuilding).toBe('');
+    expect(hydrated.homeStreet).toBe('');
+    expect('postalCode' in hydrated).toBe(false);
   });
+
   it('8. Unknown mapping metadata does not break hydration and results in no postal fields', () => {
     const hydrated = hydrateReturningAddress({
       psgc: {
@@ -391,11 +365,11 @@ describe('PART 3: Postal Code Decommissioning and Hydration Independence', () =>
         barangay: { code: '1380601001', name: 'Barangay 1' },
         postalCode: '1008',
         postalCodeSource: 'PHLPost',
-      },
+      } as any,
     });
 
-    expect(hydrated.selectedPsgc?.postalResolution).toBeUndefined();
-    expect(hydrated.postalCode).toBe('');
+    expect((hydrated.selectedPsgc as any)?.postalResolution).toBeUndefined();
+    expect('postalCode' in hydrated).toBe(false);
   });
 });
 
@@ -1349,196 +1323,61 @@ describe('PART 5: Postal Code State Synchronization & Manual Override Behavioral
         },
       },
     });
-    expect(hydrated.selectedPsgc?.postalResolution).toBeUndefined();
-    expect(hydrated.postalCode).toBe('');
+    expect((hydrated.selectedPsgc as any)?.postalResolution).toBeUndefined();
+    expect('postalCode' in hydrated).toBe(false);
   });
 });
 
 // ---------------------------------------------------------------------------
-// PART 5: Same-Locality Postal State Preservation & Pure Resolution Logic
+// PART 5: Pure Locality Comparison (isSameLocality)
 // ---------------------------------------------------------------------------
 
-describe('PART 5: Same-Locality Postal State Preservation & Pure Resolution Logic', () => {
+describe('PART 5: Pure Locality Comparison (isSameLocality)', () => {
   const ncrRegion = { code: '1300000000', parentCode: null, name: 'National Capital Region', level: 'region' as const, hasProvinces: false };
   const manilaCity = { code: '1380600000', parentCode: '1300000000', name: 'City of Manila', level: 'city' as const, isCity: true };
   const bgy1 = { code: '1380601001', parentCode: '1380600000', name: 'Barangay 1', level: 'barangay' as const };
   const bgy2 = { code: '1380601002', parentCode: '1380600000', name: 'Barangay 2', level: 'barangay' as const };
 
-  const freshLookupBgy1 = {
-    postalCode: '1008',
-    mappingType: 'exact_barangay' as const,
-    isAutoFilled: true,
-    requiresConfirmation: false,
-    message: 'Barangay 1 standard postal code',
-  };
+  const calabarzonRegion = { code: '0400000000', parentCode: null, name: 'CALABARZON', level: 'region' as const };
+  const lagunaProvince = { code: '0434200000', parentCode: '0400000000', name: 'Laguna', level: 'province' as const };
+  const binanCity = { code: '0434203000', parentCode: '0434200000', name: 'City of Biñan', level: 'city' as const };
+  const binanProper = { code: '0434203001', parentCode: '0434203000', name: 'Biñan Proper', level: 'barangay' as const };
 
-  it('1. isSameLocality correctly identifies identical localities including NCR without provinces', () => {
+  it('1. isSameLocality correctly identifies identical localities in NCR (no province)', () => {
     const initial = {
       region: ncrRegion,
       province: null,
       city: manilaCity,
       barangay: bgy1,
-      postalCode: '1009',
-      postalCodeSource: 'manual' as const,
     };
 
     expect(isSameLocality(initial, { region: ncrRegion, province: null, city: manilaCity, barangay: bgy1 })).toBe(true);
     expect(isSameLocality(initial, { region: ncrRegion, province: null, city: manilaCity, barangay: bgy2 })).toBe(false);
   });
 
-  it('2. Same locality with manual override 1009 preserves 1009 and does NOT get overwritten by 1008', () => {
+  it('2. isSameLocality correctly identifies identical provincial localities with province', () => {
     const initial = {
-      region: ncrRegion,
-      province: null,
-      city: manilaCity,
-      barangay: bgy1,
-      postalCode: '1009',
-      postalCodeSource: 'manual' as const,
-      postalResolution: {
-        postalCode: '1009',
-        isAutoFilled: false,
-        requiresConfirmation: false,
-        mappingType: 'unmapped' as const,
-      },
+      region: calabarzonRegion,
+      province: lagunaProvince,
+      city: binanCity,
+      barangay: binanProper,
     };
 
-    const result = resolveBarangaySelectionPostalState({
-      initialAddress: initial,
-      isSameLocality: true,
-      freshResolution: freshLookupBgy1,
-    });
-
-    // CRITICAL INVARIANT: 1009 is preserved; fresh 1008 lookup did NOT overwrite it
-    expect(result.manualPostalCode).toBe('1009');
-    expect(result.postalResolution?.isAutoFilled).toBe(false);
-    expect(result.postalResolution?.postalCode).toBe('1009');
+    expect(isSameLocality(initial, { region: calabarzonRegion, province: lagunaProvince, city: binanCity, barangay: binanProper })).toBe(true);
+    expect(isSameLocality(initial, { region: calabarzonRegion, province: null, city: binanCity, barangay: binanProper })).toBe(false);
   });
 
-  it('3. Same locality with cleared postal code preserves empty string and does NOT get overwritten by 1008', () => {
+  it('3. isSameLocality returns false if any required locality field is missing', () => {
     const initial = {
       region: ncrRegion,
       province: null,
       city: manilaCity,
       barangay: bgy1,
-      postalCode: null,
-      postalCodeSource: null,
     };
 
-    const result = resolveBarangaySelectionPostalState({
-      initialAddress: initial,
-      isSameLocality: true,
-      freshResolution: freshLookupBgy1,
-    });
-
-    // CRITICAL INVARIANT: Empty postal code is preserved; fresh 1008 lookup did NOT overwrite it
-    expect(result.manualPostalCode).toBe('');
-    expect(result.postalResolution).toBeNull();
-  });
-
-  it('4. Same locality with unchanged PHLPost code preserves PHLPost 1008', () => {
-    const initial = {
-      region: ncrRegion,
-      province: null,
-      city: manilaCity,
-      barangay: bgy1,
-      postalCode: '1008',
-      postalCodeSource: 'PHLPost' as const,
-      postalResolution: {
-        postalCode: '1008',
-        isAutoFilled: true,
-        requiresConfirmation: false,
-        mappingType: 'exact_barangay' as const,
-      },
-    };
-
-    const result = resolveBarangaySelectionPostalState({
-      initialAddress: initial,
-      isSameLocality: true,
-      freshResolution: freshLookupBgy1,
-    });
-
-    expect(result.manualPostalCode).toBe('1008');
-    expect(result.postalResolution?.isAutoFilled).toBe(true);
-    expect(result.postalResolution?.postalCode).toBe('1008');
-  });
-
-  it('5. Different locality selection applies the fresh resolution and discards prior initial state', () => {
-    const initial = {
-      region: ncrRegion,
-      province: null,
-      city: manilaCity,
-      barangay: bgy1,
-      postalCode: '1009',
-      postalCodeSource: 'manual' as const,
-    };
-
-    const freshLookupBgy2 = {
-      postalCode: '1012',
-      mappingType: 'exact_barangay' as const,
-      isAutoFilled: true,
-      requiresConfirmation: false,
-    };
-
-    const result = resolveBarangaySelectionPostalState({
-      initialAddress: initial,
-      isSameLocality: false,
-      freshResolution: freshLookupBgy2,
-    });
-
-    expect(result.manualPostalCode).toBe('1012');
-    expect(result.postalResolution?.postalCode).toBe('1012');
-    expect(result.postalResolution?.isAutoFilled).toBe(true);
-  });
-
-  it('6. resolveAddressConfirmation preserves manual override when confirmed without change', () => {
-    const initial = {
-      region: ncrRegion,
-      province: null,
-      city: manilaCity,
-      barangay: bgy1,
-      postalCode: '1009',
-      postalCodeSource: 'manual' as const,
-    };
-
-    const confirmed = resolveAddressConfirmation({
-      initialAddress: initial,
-      selectedRegion: ncrRegion,
-      selectedProvince: null,
-      selectedCity: manilaCity,
-      selectedBarangay: bgy1,
-      postalResolution: { postalCode: '1009', isAutoFilled: false, requiresConfirmation: false, mappingType: 'unmapped' },
-      manualPostalCode: '1009',
-    });
-
-    expect(confirmed.isSameLocality).toBe(true);
-    expect(confirmed.finalPostalCode).toBe('1009');
-    expect(confirmed.finalSource).toBe('manual');
-    expect(confirmed.finalResolution?.isAutoFilled).toBe(false);
-  });
-
-  it('7. resolveAddressConfirmation records cleared state as null/undefined', () => {
-    const initial = {
-      region: ncrRegion,
-      province: null,
-      city: manilaCity,
-      barangay: bgy1,
-      postalCode: '1009',
-      postalCodeSource: 'manual' as const,
-    };
-
-    const confirmed = resolveAddressConfirmation({
-      initialAddress: initial,
-      selectedRegion: ncrRegion,
-      selectedProvince: null,
-      selectedCity: manilaCity,
-      selectedBarangay: bgy1,
-      postalResolution: null,
-      manualPostalCode: '',
-    });
-
-    expect(confirmed.isSameLocality).toBe(true);
-    expect(confirmed.finalPostalCode).toBeNull();
-    expect(confirmed.finalSource).toBeNull();
-    expect(confirmed.finalResolution).toBeUndefined();
+    expect(isSameLocality(null, { region: ncrRegion, province: null, city: manilaCity, barangay: bgy1 })).toBe(false);
+    expect(isSameLocality(initial, { region: null, province: null, city: manilaCity, barangay: bgy1 })).toBe(false);
+    expect(isSameLocality(initial, { region: ncrRegion, province: null, city: null, barangay: bgy1 })).toBe(false);
+    expect(isSameLocality(initial, { region: ncrRegion, province: null, city: manilaCity, barangay: null })).toBe(false);
   });
 });

@@ -8,7 +8,6 @@ import identifyReturningHandler, { computeMatchTokenDigest } from '../server/rou
 import passIssueHandler from '../server/routes/passes/issue.js';
 import * as supabaseModule from '../server/supabase.js';
 import * as actorsModule from '../server/actors.js';
-import { resetTurnstileReplayCache } from '../server/lib/turnstile.js';
 
 describe('Returning Visitor Privacy Hardening, Profile Linkage & Verification Boundaries', () => {
   const originalEnv = process.env;
@@ -20,7 +19,6 @@ describe('Returning Visitor Privacy Hardening, Profile Linkage & Verification Bo
   const mockTokenSecret = 'test-token-secret-must-be-at-least-32-chars-long!';
 
   beforeEach(() => {
-    resetTurnstileReplayCache();
     process.env = {
       ...originalEnv,
       PASS_TOKEN_SECRET: mockTokenSecret,

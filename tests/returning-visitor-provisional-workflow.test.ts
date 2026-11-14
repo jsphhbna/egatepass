@@ -17,7 +17,6 @@ import identifyReturningHandler, {
 } from '../server/routes/passes/identify-returning.js';
 import capabilitiesHandler from '../server/routes/passes/capabilities.js';
 import lookupReturningHandler from '../server/routes/passes/lookup-returning.js';
-import { resetTurnstileReplayCache } from '../server/lib/turnstile.js';
 
 describe('Returning Visitor Provisional 1:1 Biometric & Enrollment Architecture (Comprehensive)', () => {
   const originalEnv = { ...process.env };
@@ -43,7 +42,6 @@ describe('Returning Visitor Provisional 1:1 Biometric & Enrollment Architecture 
   }
 
   beforeEach(() => {
-    resetTurnstileReplayCache();
     process.env = { ...originalEnv };
     process.env.RETURNING_VISITOR_TEMPLATE_KEY = testKey;
     process.env.RETURNING_MATCH_TOKEN_SECRET = testSecret;

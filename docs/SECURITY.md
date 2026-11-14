@@ -794,15 +794,12 @@ The shared pure SVG template generator (`src/lib/digitalPassArtifact.ts`) uses s
 
 ## 28. Cloudflare Turnstile CAPTCHA & Abuse Defense Architecture
 
-- **Primary Defense (Supabase Auth Boundary)**:
+- **Authoritative Defense (Supabase Auth Boundary)**:
   - Anonymous visitor sign-in is gated behind Cloudflare Turnstile Bot Protection in Supabase Auth.
   - The private Turnstile Secret Key is configured securely in the Supabase Dashboard under **Authentication > Bot Protection / CAPTCHA**.
   - `client.auth.signInAnonymously({ options: { captchaToken } })` verifies the Turnstile challenge before issuing an anonymous JWT.
-- **Secondary Defense (Server Siteverify & Anti-Replay)**:
-  - If the server-side Turnstile verification secret is present in serverless environment variables, `server/lib/turnstile.ts` validates challenge tokens on returning visitor searches (`/api/passes/lookup-returning`).
-  - Employs an in-memory SHA-256 token replay cache (300-second TTL) to block duplicate or replayed tokens.
-  - Enforces permitted hostname validation (`egatepass.tech`, `localhost`, etc.) to prevent domain token stealing.
-  - Enforces bounded HTTP timeouts (5000ms via `AbortController`) and fails closed on provider outages.
+  - No standalone server-side siteverify endpoint or serverless runtime secret is required or used. Supabase Bot Protection handles the Turnstile private secret directly. Server functions rely on Supabase Auth session verification.
+  - `/api/passes/capabilities` truthfully reports `turnstile.siteKeyConfigured` without claiming server verification.
 
 ## 29. Office Visit Management Security, Token Cryptography & Safety Guarantees
 
@@ -878,9 +875,9 @@ The shared pure SVG template generator (`src/lib/digitalPassArtifact.ts`) uses s
 - Superadmin `global_retention_freeze` (`public.app_settings` updated atomically via `api.save_system_settings_v2`) immediately halts `/api/purge-images` (fail-closed `503`), `/api/admin/retention-maintenance` (halted with `maintenance.retention_halted_by_freeze` audit log), and `api.anonymize_expired_emergency_gate_record` (`global_retention_freeze_active`).
 - Column-level `SELECT` privilege on `public.app_settings` for `anon` is restricted strictly to 7 public schedule/display columns (`working_hours_start`, `working_hours_end`, `peak_mode`, `scheduling_days_ahead`, `visitor_instructions`, `visit_purposes`, `rejection_reasons`), denying access to internal retention/freeze/policy flags.
 
-### 30.4 Biometric Storage Retirement & Turnstile Server Runtime Reporting
-- `/api/passes/capabilities` reports `biometricStorageRetired: true` accurately, matching zero server-side biometric vector storage by default.
-- `/api/passes/lookup-returning` fails closed with HTTP `503 missing_validation_runtime_secret` whenever the server Turnstile secret key is unconfigured in serverless environment variables, and `/api/passes/capabilities` exposes real server Turnstile readiness (`turnstile.verified`) so UI advisories remain truthful.
+### 30.4 Biometric Storage Retirement & Turnstile Reporting
+- `/api/passes/capabilities` reports `biometricStorageRetired: true` accurately, matching zero server-side biometric vector storage.
+- `/api/passes/capabilities` truthfully exposes public Turnstile widget availability (`turnstile.siteKeyConfigured`) without claiming server verification.
 
 ### 30.5 Office Directory Schema, Admin Credential Authorization, and Returning Visitor Retention Rules
 - **Office Hydration Resilience & Schema Alignment**: `/api/admin/offices` queries strictly canonical schema columns (`OFFICE_SELECT_COLUMNS`), omitting non-existent legacy fields such as `archive_reason`. Mutation responses gracefully fallback to structured RPC results with `hydrationWarning: true` if post-mutation queries fail, preventing cascading errors.

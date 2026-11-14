@@ -192,7 +192,7 @@ describe('Returning Visitor Address Hydration & Round-Trip Contract', () => {
     expect(hydrated.selectedPsgc?.barangay.code).toBe('1380606014');
     expect(hydrated.homeBuilding).toBe('Unit 401');
     expect(hydrated.homeStreet).toBe('Nagtahan St.');
-    expect(hydrated.postalCode).toBe('');
+    expect('postalCode' in hydrated).toBe(false);
 
     // Canonical formatted string representation matches expected review output
     const formatted = formatStructuredAddress({
@@ -202,7 +202,6 @@ describe('Returning Visitor Address Hydration & Round-Trip Contract', () => {
       barangayName: hydrated.selectedPsgc!.barangay.name,
       houseBuilding: hydrated.homeBuilding,
       street: hydrated.homeStreet,
-      postalCode: hydrated.postalCode,
     });
 
     expect(formatted).toBe(

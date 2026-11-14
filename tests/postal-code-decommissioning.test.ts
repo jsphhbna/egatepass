@@ -3,8 +3,8 @@ import { hydrateReturningAddress } from '../src/lib/returningAddressHydration';
 import fs from 'fs';
 import path from 'path';
 
-describe('Priority 2: Postal Code Decommissioning Regression Protection', () => {
-  it('1. Returning-profile hydration does not restore postal codes from legacy profile', () => {
+describe('Priority 1: Postal Code Decommissioning & Application Contract Protection', () => {
+  it('1. Returning-profile hydration does not restore postal codes and output object has no postalCode property', () => {
     const legacyProfile = {
       psgc: {
         version: '2026-q3',
@@ -20,11 +20,12 @@ describe('Priority 2: Postal Code Decommissioning Regression Protection', () => 
     };
 
     const hydrated = hydrateReturningAddress(legacyProfile);
-    expect(hydrated.postalCode).toBe('');
+    expect('postalCode' in hydrated).toBe(false);
+    expect((hydrated as any).postalCode).toBeUndefined();
     expect(hydrated.selectedPsgc).toBeDefined();
-    expect(hydrated.selectedPsgc?.postalCode).toBeUndefined();
-    expect(hydrated.selectedPsgc?.postalCodeSource).toBeUndefined();
-    expect(hydrated.selectedPsgc?.postalResolution).toBeUndefined();
+    expect((hydrated.selectedPsgc as any)?.postalCode).toBeUndefined();
+    expect((hydrated.selectedPsgc as any)?.postalCodeSource).toBeUndefined();
+    expect((hydrated.selectedPsgc as any)?.postalResolution).toBeUndefined();
     expect(hydrated.homeBuilding).toBe('Unit 401');
     expect(hydrated.homeStreet).toBe('Nagtahan St.');
   });
@@ -67,12 +68,39 @@ describe('Priority 2: Postal Code Decommissioning Regression Protection', () => 
     expect(issueSrc).not.toContain('existingVisitor.postal_code !==');
   });
 
-  it('6. AddressCascadingSelector onSelect payload contains no postal code properties', () => {
+  it('6. AddressCascadingSelector onSelect payload and SelectedPsgcAddress contain no postal code properties', () => {
     const selectorSrc = fs.readFileSync(path.resolve('src/components/AddressCascadingSelector.tsx'), 'utf-8');
     // Ensure onSelect only emits administrative hierarchy
     const onSelectMatch = selectorSrc.match(/onSelect\(\{[\s\S]*?\}\);/);
     expect(onSelectMatch).toBeTruthy();
     expect(onSelectMatch![0]).not.toContain('postalCode');
     expect(onSelectMatch![0]).not.toContain('postalCodeSource');
+
+    // Interface SelectedPsgcAddress has no postal properties
+    expect(selectorSrc).not.toMatch(/export interface SelectedPsgcAddress\s*\{[\s\S]*?postalCode/);
+  });
+
+  it('7. Application contracts contain no postal properties across client interfaces', () => {
+    const psgcSrc = fs.readFileSync(path.resolve('src/lib/psgc.ts'), 'utf-8');
+    const serviceSrc = fs.readFileSync(path.resolve('src/services/visitorRegistration.ts'), 'utf-8');
+    const hydrationSrc = fs.readFileSync(path.resolve('src/lib/returningAddressHydration.ts'), 'utf-8');
+
+    // src/lib/psgc.ts
+    expect(psgcSrc).not.toContain('export interface PostalResolution');
+    expect(psgcSrc).not.toMatch(/export interface StructuredAddress\s*\{[\s\S]*?postalCode/);
+
+    // src/services/visitorRegistration.ts
+    expect(serviceSrc).not.toContain('PostalResolution');
+    expect(serviceSrc).not.toMatch(/export interface PsgcAddressPayload\s*\{[\s\S]*?postalCode/);
+    expect(serviceSrc).not.toMatch(/export interface ReturningIdentifyProfile\s*\{[\s\S]*?postalCode/);
+
+    // src/lib/returningAddressHydration.ts
+    expect(hydrationSrc).not.toMatch(/export interface HydratedAddressState\s*\{[\s\S]*?postalCode/);
+  });
+
+  it('8. Issue route Zod schema strips legacy postal properties without rejection', () => {
+    const issueSrc = fs.readFileSync(path.resolve('server/routes/passes/issue.ts'), 'utf-8');
+    expect(issueSrc).not.toMatch(/psgc:\s*z\.object\(\{[\s\S]*?postalCode/);
+    expect(issueSrc).not.toMatch(/psgc:\s*z\.object\(\{[\s\S]*?postalCodeSource/);
   });
 });

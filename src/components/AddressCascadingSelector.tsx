@@ -9,23 +9,12 @@ import {
 } from '@/lib/psgc';
 import { MapPin, Search, ChevronRight, X, ArrowLeft, Check, AlertCircle } from 'lucide-react';
 
-export interface PostalResolution {
-  postalCode: string;
-  isAutoFilled: boolean;
-  requiresConfirmation: boolean;
-  mappingType: string;
-  message?: string;
-}
-
 export interface SelectedPsgcAddress {
   version: string;
   region: { code: string; name: string };
   province: { code: string; name: string } | null;
   city: { code: string; name: string };
   barangay: { code: string; name: string };
-  postalCode?: string | null;
-  postalCodeSource?: string | null;
-  postalResolution?: PostalResolution | null;
 }
 
 export interface AddressCascadingSelectorProps {
