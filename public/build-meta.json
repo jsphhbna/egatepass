@@ -1,5 +1,6 @@
 {
-  "commitSha": "581f29058226c289bd62d248ddf3f4aebd55bd84",
-  "builtAt": "2026-11-14T14:17:39.703Z",
-  "version": "1.0.0"
+  "commitSha": "69e4b918f65714a614b36c0b9ad493e62bfffe7b",
+  "builtAt": "2026-11-14T15:42:39.011Z",
+  "version": "1.0.0",
+  "deployment": "local"
 }

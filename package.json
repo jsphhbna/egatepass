@@ -9,7 +9,7 @@
     "build:templates": "node scripts/bundle-email-templates.mjs",
     "build:meta": "node scripts/generate-build-meta.mjs",
     "prebuild": "node scripts/sync-tesseract-assets.mjs && node scripts/bundle-email-templates.mjs && node scripts/generate-build-meta.mjs",
-    "pretest": "node scripts/sync-tesseract-assets.mjs && node scripts/bundle-email-templates.mjs && node scripts/generate-build-meta.mjs",
+    "pretest": "node scripts/sync-tesseract-assets.mjs && node scripts/bundle-email-templates.mjs",
     "dev": "vite",
     "build": "node scripts/build-production.mjs",
     "preview": "vite preview",

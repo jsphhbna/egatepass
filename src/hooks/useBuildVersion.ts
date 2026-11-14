@@ -4,6 +4,13 @@ export interface BuildMeta {
   commitSha: string;
   builtAt: string;
   version: string;
+  deployment?: string;
+}
+
+function isKnownCommitSha(sha: string | null | undefined): boolean {
+  if (!sha || typeof sha !== 'string') return false;
+  const trimmed = sha.trim().toLowerCase();
+  return trimmed.length >= 7 && trimmed !== 'local-dev' && trimmed !== 'unknown';
 }
 
 export function useBuildVersion(checkIntervalMs = 180000) {
@@ -35,7 +42,12 @@ export function useBuildVersion(checkIntervalMs = 180000) {
       if (!initialFetchDone.current) {
         initialFetchDone.current = true;
         setCurrentSha(meta.commitSha);
-      } else if (currentSha && meta.commitSha !== currentSha) {
+      } else if (
+        currentSha &&
+        meta.commitSha !== currentSha &&
+        isKnownCommitSha(currentSha) &&
+        isKnownCommitSha(meta.commitSha)
+      ) {
         setLatestSha(meta.commitSha);
         setUpdateAvailable(true);
       }
@@ -46,7 +58,12 @@ export function useBuildVersion(checkIntervalMs = 180000) {
     const interval = setInterval(async () => {
       const meta = await fetchMeta();
       if (!mounted || !meta?.commitSha) return;
-      if (currentSha && meta.commitSha !== currentSha) {
+      if (
+        currentSha &&
+        meta.commitSha !== currentSha &&
+        isKnownCommitSha(currentSha) &&
+        isKnownCommitSha(meta.commitSha)
+      ) {
         setLatestSha(meta.commitSha);
         setUpdateAvailable(true);
       }
@@ -56,7 +73,12 @@ export function useBuildVersion(checkIntervalMs = 180000) {
       if (document.visibilityState === 'visible') {
         const meta = await fetchMeta();
         if (!mounted || !meta?.commitSha) return;
-        if (currentSha && meta.commitSha !== currentSha) {
+        if (
+          currentSha &&
+          meta.commitSha !== currentSha &&
+          isKnownCommitSha(currentSha) &&
+          isKnownCommitSha(meta.commitSha)
+        ) {
           setLatestSha(meta.commitSha);
           setUpdateAvailable(true);
         }

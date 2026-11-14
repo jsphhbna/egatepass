@@ -38,4 +38,7 @@ execSync('node node_modules/typescript/bin/tsc', execOpts);
 console.log('[BUILD-PROD] Running Vite production build...');
 execSync('node node_modules/vite/bin/vite.js build', execOpts);
 
+// Ensure dist/build-meta.json has authoritative build metadata post-bundle
+execSync('node scripts/generate-build-meta.mjs', execOpts);
+
 console.log('[BUILD-PROD] Production build completed successfully.');
