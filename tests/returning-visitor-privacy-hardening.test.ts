@@ -472,14 +472,24 @@ describe('Returning Visitor Privacy Hardening, Profile Linkage & Verification Bo
                   return Promise.resolve({ data: [], error: null });
                 }
                 // Secondary fallback by contact_number
-                return {
+                const candidateQueryPromise = Promise.resolve({
+                  data: [
+                    {
+                      id: 'vis-fallback-999',
+                      full_name: 'Juan Dela Cruz',
+                      returning_profile_id: null,
+                      psgc_city_code: '133900000',
+                      psgc_barangay_code: null,
+                      created_at: '2026-11-01T00:00:00Z',
+                    },
+                  ],
+                  error: null,
+                });
+                return Object.assign(candidateQueryPromise, {
                   ilike: vi.fn().mockReturnThis(),
-                  order: vi.fn().mockReturnThis(),
-                  limit: vi.fn().mockResolvedValue({
-                    data: [{ id: 'vis-fallback-999' }],
-                    error: null,
-                  }),
-                };
+                  order: vi.fn().mockReturnValue(candidateQueryPromise),
+                  limit: vi.fn().mockReturnValue(candidateQueryPromise),
+                });
               }),
             };
           }
@@ -492,6 +502,7 @@ describe('Returning Visitor Privacy Hardening, Profile Linkage & Verification Bo
                   first_name: 'Juan',
                   last_name: 'Dela Cruz',
                   contact_number_e164: '+639171234567',
+                  psgc_city_code: '133900000',
                 },
                 error: null,
               }),
