@@ -1398,6 +1398,7 @@ export interface ReturningLookupResult {
   candidates: ReturningLookupCandidate[];
   error?: string;
   message?: string;
+  portraitExpired?: boolean;
 }
 
 export async function lookupReturningVisitor(

@@ -27,6 +27,10 @@ import {
 } from '../../lib/face-engine.js';
 import { normalizePsgcLevel } from '../../lib/psgc-reference.js';
 import { verifyCalibrationArtifact, CalibrationArtifactData } from '../../lib/calibration-verifier.js';
+import {
+  resolveAuthoritativeVisitorForProfile,
+  resolveEligibleRegistrationPortrait,
+} from '../../lib/returningVisitorResolution.js';
 
 export const SFACE_PROVISIONAL_COSINE_THRESHOLD = 0.363;
 
@@ -179,6 +183,19 @@ async function handleRequest(request: Request): Promise<Response> {
     return jsonResponse(405, { error: 'method_not_allowed' }, { Allow: 'POST' });
   }
 
+  // Enforce Vercel serverless platform limit (4.5 MB platform cap, 4.2 MB request budget)
+  const contentLengthHeader = request.headers.get('content-length');
+  if (contentLengthHeader) {
+    const cl = parseInt(contentLengthHeader, 10);
+    if (Number.isFinite(cl) && cl > 4.2 * 1024 * 1024) {
+      return jsonResponse(413, {
+        ok: false,
+        error: 'payload_too_large',
+        message: 'The selfie photo exceeds the 4.2 MB platform request limit. Please retake the photo with lower resolution.',
+      });
+    }
+  }
+
   const token = readBearerToken(request);
   if (!token) return jsonResponse(401, { error: 'authentication_required' });
 
@@ -299,20 +316,28 @@ async function handleRequest(request: Request): Promise<Response> {
       });
     }
 
-    // 3. Validate selfie buffer
-    if (!selfieBuffer || selfieBuffer.length > 5 * 1024 * 1024 || !validImageMagic(selfieBuffer)) {
-      return jsonResponse(422, {
-        ok: false,
-        error: 'invalid_image_payload',
-        message: 'Please provide a valid JPEG, PNG, or WebP photo up to 5 MB.',
-      });
-    }
-
+    // 3. Validate selfie buffer (enforcing 3.5 MB application limit for raw image bytes)
     if (!selfieBuffer) {
       return jsonResponse(422, {
         ok: false,
         error: 'invalid_image_payload',
         message: 'Please provide a valid photo.',
+      });
+    }
+
+    if (selfieBuffer.length > 3.5 * 1024 * 1024) {
+      return jsonResponse(413, {
+        ok: false,
+        error: 'payload_too_large',
+        message: 'The captured photo exceeds the allowed size limit of 3.5 MB. Please retake the photo.',
+      });
+    }
+
+    if (!validImageMagic(selfieBuffer)) {
+      return jsonResponse(422, {
+        ok: false,
+        error: 'invalid_image_payload',
+        message: 'Please provide a valid JPEG, PNG, or WebP photo up to 3.5 MB.',
       });
     }
 
@@ -416,62 +441,60 @@ async function handleRequest(request: Request): Promise<Response> {
       });
     }
 
-    // 6. Obtain original reference portrait embedding from visitor_evidence storage
-    let vIds: string[] = [];
-
-    try {
-      const visitorsQuery = admin.from('visitors');
-      if (visitorsQuery && typeof visitorsQuery.select === 'function') {
-        const { data: linkedVisitors } = await visitorsQuery
-          .select('id')
-          .eq('returning_profile_id', profile.id);
-        vIds = (linkedVisitors || []).map((v) => v.id);
+    // 6. Obtain original reference portrait embedding using unified resolution
+    const resolution = await resolveAuthoritativeVisitorForProfile(admin, profile.id);
+    if (!resolution.match) {
+      if (resolution.error === 'ambiguous_historical_records') {
+        return jsonResponse(422, {
+          available: true,
+          matched: false,
+          error: 'ambiguous_historical_records',
+          message: 'Multiple historical registration records found. Cannot resolve unambiguous reference portrait.',
+        });
       }
-    } catch (vErr) {
-      console.warn('Could not query linked visitors for portrait:', vErr);
+      return jsonResponse(422, {
+        available: true,
+        matched: false,
+        error: 'reference_portrait_unavailable',
+        message: 'Original reference portrait could not be located under retention policy. Please register as a new visitor.',
+        requiresNewRegistration: true,
+      });
     }
 
-    if (vIds.length > 0) {
-      try {
-        const evidenceQuery = admin.from('visitor_evidence');
-        if (evidenceQuery && typeof evidenceQuery.select === 'function') {
-          const { data: origEvidence } = await evidenceQuery
-            .select('bucket_id, object_path, created_at')
-            .in('visitor_id', vIds)
-            .eq('kind', 'photo')
-            .is('purged_at', null)
-            .order('created_at', { ascending: true })
-            .limit(1)
-            .maybeSingle();
+    const vIds = resolution.match.visitorIds;
+    const eligiblePortrait = await resolveEligibleRegistrationPortrait(admin, vIds);
 
-          if (origEvidence && admin.storage) {
-            origEvDate = origEvidence.created_at;
-            const dl = await admin.storage.from(origEvidence.bucket_id).download(origEvidence.object_path);
-            if (!dl.error && dl.data) {
-              const origBuf = Buffer.from(await dl.data.arrayBuffer());
-              const origAnalysis = await analyzeFaceImage(origBuf, 'selfie');
-              if (origAnalysis.descriptor && validateFaceDescriptor(origAnalysis.descriptor, 128).valid) {
-                targetEmbedding = origAnalysis.descriptor;
-              }
-            }
-          }
-
-          const { data: idEv } = await evidenceQuery
-            .select('created_at')
-            .in('visitor_id', vIds)
-            .eq('kind', 'id')
-            .is('purged_at', null)
-            .order('created_at', { ascending: true })
-            .limit(1)
-            .maybeSingle();
-
-          if (idEv) {
-            historicalIdDate = idEv.created_at;
-          }
+    if (eligiblePortrait && admin.storage) {
+      origEvDate = eligiblePortrait.created_at;
+      const dl = await admin.storage.from(eligiblePortrait.bucket_id).download(eligiblePortrait.object_path);
+      if (!dl.error && dl.data) {
+        const origBuf = Buffer.from(await dl.data.arrayBuffer());
+        const origAnalysis = await analyzeFaceImage(origBuf, 'selfie');
+        if (origAnalysis.descriptor && validateFaceDescriptor(origAnalysis.descriptor, 128).valid) {
+          targetEmbedding = origAnalysis.descriptor;
         }
-      } catch (evErr) {
-        console.warn('Could not query visitor evidence for portrait:', evErr);
       }
+    }
+
+    // Historical ID date check for presentation
+    try {
+      const nowIso = new Date().toISOString();
+      const { data: idEv } = await admin
+        .from('visitor_evidence')
+        .select('created_at')
+        .in('visitor_id', vIds)
+        .eq('kind', 'id')
+        .is('purged_at', null)
+        .gt('expires_at', nowIso)
+        .order('created_at', { ascending: true })
+        .limit(1)
+        .maybeSingle();
+
+      if (idEv) {
+        historicalIdDate = idEv.created_at;
+      }
+    } catch (idErr) {
+      console.warn('Could not query historical ID evidence date:', idErr);
     }
 
     if (!targetEmbedding) {

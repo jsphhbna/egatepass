@@ -243,7 +243,7 @@ export const ROUTE_CONTRACT_MATRIX: readonly RouteContract[] = [
     handlerModule: 'server/routes/gate/emergency-device.ts',
   },
 
-  // System Router (6 routes)
+  // System Router (8 routes)
   {
     path: '/api/create-user',
     group: 'system',
@@ -285,6 +285,20 @@ export const ROUTE_CONTRACT_MATRIX: readonly RouteContract[] = [
     subpath: 'reconciliation-items',
     allowedMethods: ['GET', 'PATCH'],
     handlerModule: 'server/routes/system/reconciliation-items.ts',
+  },
+  {
+    path: '/api/system/version',
+    group: 'system',
+    subpath: 'version',
+    allowedMethods: ['GET'],
+    handlerModule: 'server/routes/system/version.ts',
+  },
+  {
+    path: '/api/system/health',
+    group: 'system',
+    subpath: 'health',
+    allowedMethods: ['GET'],
+    handlerModule: 'server/routes/system/health.ts',
   },
 ] as const;
 

@@ -415,4 +415,8 @@ export const SERVER_DIRECT_TABLE_OPERATIONS: DirectServerTableOperation[] = [
   { file: 'server/routes/office/retry-email.ts', table: 'office_visit_email_outbox', operations: ['SELECT', 'UPDATE'], purpose: 'Claim and update email outbox state during delivery retry' },
   { file: 'server/routes/office/calendar.ts', table: 'office_calendar_schedules', operations: ['SELECT', 'INSERT', 'UPDATE', 'DELETE'], purpose: 'Read, upsert, and delete office-specific availability schedules' },
   { file: 'server/routes/passes/issue.ts', table: 'office_calendar_schedules', operations: ['SELECT'], purpose: 'Validate office schedule availability for visit date' },
+  { file: 'server/lib/returningVisitorResolution.ts', table: 'visitors', operations: ['SELECT'], purpose: 'Resolve authoritative historical visitor records for returning profiles' },
+  { file: 'server/lib/returningVisitorResolution.ts', table: 'returning_visitor_profiles', operations: ['SELECT'], purpose: 'Fetch profile identity factors for strict unambiguous fallback matching' },
+  { file: 'server/lib/returningVisitorResolution.ts', table: 'visitor_evidence', operations: ['SELECT'], purpose: 'Resolve eligible original registration portrait evidence' },
+  { file: 'server/routes/system/health.ts', table: 'app_settings', operations: ['SELECT'], purpose: 'Verify database connectivity for runtime liveness/readiness' },
 ];

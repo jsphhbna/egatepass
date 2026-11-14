@@ -1032,6 +1032,9 @@ export function GetPassPage() {
         setIsCheckingReturningCandidate(false);
         return;
       }
+      if (lookupRes.portraitExpired) {
+        toast.info('Previous visitor profile found, but registration portrait expired under retention policy. Continuing as New Visitor.');
+      }
     } catch (lookupErr: any) {
       console.warn('Returning visitor auto-lookup error:', lookupErr);
       turnstileRef.current?.resetChallenge();
@@ -1331,6 +1334,11 @@ export function GetPassPage() {
         }
       } else {
         setReturningCandidates([]);
+        if (res.portraitExpired) {
+          setReturningSearchError(
+            res.message || 'Your visitor profile was found, but your original registration portrait has expired under data retention policy (7 days). Please register as a New Visitor.'
+          );
+        }
       }
       setStep('returning_results');
     } catch (err: any) {
@@ -1413,6 +1421,13 @@ export function GetPassPage() {
       return;
     }
 
+    if (returningSelfieBlob.size > 3.5 * 1024 * 1024) {
+      const msg = 'The captured photo exceeds the allowed size limit of 3.5 MB. Please retake the photo.';
+      setReturningIdentifyError(msg);
+      toast.error(msg);
+      return;
+    }
+
     setIsIdentifyingReturning(true);
     setReturningIdentifyError(null);
 
@@ -1448,7 +1463,9 @@ export function GetPassPage() {
         const rawMsg = data?.message || '';
         let userFriendlyMsg = 'Make sure your face is clearly visible, look directly at the camera and use even lighting. You can retake your selfie and try again.';
 
-        if (reasonCode === 'no_face' || reasonCode === 'no_face_in_selfie' || /no face/i.test(rawMsg)) {
+        if ((data as any)?.error === 'reference_portrait_unavailable' || (data as any)?.requiresNewRegistration) {
+          userFriendlyMsg = 'Your original verification portrait has expired under data retention policy. Please proceed with New Visitor registration.';
+        } else if (reasonCode === 'no_face' || reasonCode === 'no_face_in_selfie' || /no face/i.test(rawMsg)) {
           userFriendlyMsg = 'No face was detected in your selfie. Please position your face inside the guide, look directly at the camera, and retake.';
         } else if (reasonCode === 'multiple_faces' || /multiple/i.test(rawMsg)) {
           userFriendlyMsg = 'More than one face was detected. Please make sure only you are in frame and retake your selfie.';
@@ -4465,9 +4482,11 @@ export function GetPassPage() {
                     <User className="w-6 h-6" />
                   </div>
                   <div className="space-y-1">
-                    <h3 className="text-base font-bold text-amber-950">No Enrolled Profile Matched</h3>
+                    <h3 className="text-base font-bold text-amber-950">
+                      {returningSearchError ? 'Verification Portrait Expired' : 'No Enrolled Profile Matched'}
+                    </h3>
                     <p className="text-xs text-amber-800 max-w-md mx-auto leading-relaxed">
-                      We could not find an enrolled returning visitor profile under "{returningLookupFirst.trim()} {returningLookupLast.trim()}". Please check your spelling or register as a new visitor.
+                      {returningSearchError || `We could not find an enrolled returning visitor profile under "${returningLookupFirst.trim()} ${returningLookupLast.trim()}". Please check your spelling or register as a new visitor.`}
                     </p>
                   </div>
                   <div className="pt-2 flex flex-col sm:flex-row gap-3 justify-center">
@@ -4733,7 +4752,7 @@ export function GetPassPage() {
                       <div className="absolute inset-0 z-20 flex flex-col items-center justify-center bg-black/60 text-white text-xs p-4 text-center">
                         <Loader2 className="h-7 w-7 animate-spin mb-2 text-[var(--color-brand)]" />
                         <span className="font-semibold text-sm">Verifying facial identity…</span>
-                        <span className="text-xs text-white/80 mt-1">Comparing photo against saved template</span>
+                        <span className="text-xs text-white/80 mt-1">Comparing your selfie with your original registration portrait</span>
                       </div>
                     )}
                     {returningSelfieUrl && (
@@ -5983,7 +6002,7 @@ export function GetPassPage() {
               </div>
               <div>
                 <h3 className="font-bold text-base text-[var(--color-text-primary)]">Biometric Verification Unsuccessful</h3>
-                <p className="text-xs text-[var(--color-text-secondary)]">Photo did not match enrolled template</p>
+                <p className="text-xs text-[var(--color-text-secondary)]">Photo did not match original registration portrait</p>
               </div>
             </div>
 

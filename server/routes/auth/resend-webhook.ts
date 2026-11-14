@@ -97,7 +97,11 @@ export async function handleRequest(request: Request): Promise<Response> {
   }
 
   const recipient = Array.isArray(data.to) ? data.to[0] : (typeof data.to === 'string' ? data.to : null);
-  const outcome = (eventType === 'email.delivered' || eventType === 'email.sent') ? 'success' : 'failure';
+  const outcome = (eventType === 'email.delivered' || eventType === 'email.sent')
+    ? 'success'
+    : (eventType === 'email.delivery_delayed')
+      ? 'partial'
+      : 'failure';
   const recipientMasked = recipient ? maskEmail(recipient) : null;
   const subjectSanitized = data.subject ? String(data.subject).slice(0, 100) : null;
 

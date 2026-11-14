@@ -24,6 +24,10 @@ import { getServerSupabaseClients } from '../../supabase.js';
 import { normalizePhMobile } from '../../../src/lib/phPhone.js';
 import { getClientNetworkIdentifier } from './issue.js';
 import { createPreviewToken } from './returning-photo-preview.js';
+import {
+  resolveAuthoritativeVisitorForProfile,
+  resolveEligibleRegistrationPortrait,
+} from '../../lib/returningVisitorResolution.js';
 
 // Rejects wildcards, control characters, and common injection patterns
 const safeNameRegex = /^[^%_*\\<>=;`$[\]{}|]+$/u;
@@ -240,8 +244,28 @@ async function handleRequest(request: Request): Promise<Response> {
       return phoneMatch || addressMatch;
     });
 
-    // Enforce strict enumeration cap: at most 3 candidates returned
-    const cappedCandidates = filtered.slice(0, 3);
+    // Filter candidates by portrait retention eligibility:
+    // A profile MUST NOT be offered as a Returning Visitor candidate unless an eligible original portrait
+    // exists (purged_at IS NULL and expires_at > now()).
+    let hasExpiredPortraitCandidates = false;
+    const eligibleProfiles: typeof filtered = [];
+
+    for (const m of filtered) {
+      const resolution = await resolveAuthoritativeVisitorForProfile(admin, m.id);
+      if (!resolution.match) {
+        hasExpiredPortraitCandidates = true;
+        continue;
+      }
+      const eligiblePortrait = await resolveEligibleRegistrationPortrait(admin, resolution.match.visitorIds);
+      if (!eligiblePortrait) {
+        hasExpiredPortraitCandidates = true;
+        continue;
+      }
+      eligibleProfiles.push(m);
+    }
+
+    // Enforce strict enumeration cap: at most 3 eligible candidates returned
+    const cappedCandidates = eligibleProfiles.slice(0, 3);
 
     const tokenSecret = process.env.RETURNING_MATCH_TOKEN_SECRET?.trim();
     if (!tokenSecret || tokenSecret.length < 32) {
@@ -275,6 +299,10 @@ async function handleRequest(request: Request): Promise<Response> {
       found: candidates.length > 0,
       count: candidates.length,
       candidates,
+      portraitExpired: candidates.length === 0 && hasExpiredPortraitCandidates,
+      message: candidates.length === 0 && hasExpiredPortraitCandidates
+        ? 'Your registration profile was found, but your original verification portrait has expired under data retention (7 days). Please proceed with New Visitor registration.'
+        : undefined,
     });
   } catch (error) {
     if (error instanceof HttpError) return jsonResponse(error.status, { error: error.code });

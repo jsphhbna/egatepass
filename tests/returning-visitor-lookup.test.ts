@@ -174,6 +174,78 @@ describe('Returning Visitor 1:1 Profile Discovery & Masking Contract (lookup-ret
             }),
           };
         }
+        if (table === 'visitors') {
+          return {
+            select: vi.fn().mockReturnThis(),
+            eq: vi.fn().mockReturnThis(),
+            order: vi.fn().mockResolvedValue({
+              data: [{ id: 'v1111111-1111-4111-8111-111111111111', full_name: 'Juan Dela Cruz', contact_number: '+639171234567', created_at: new Date().toISOString() }],
+              error: null,
+            }),
+          };
+        }
+        if (table === 'visitor_evidence') {
+          return {
+            select: vi.fn().mockReturnThis(),
+            in: vi.fn().mockReturnThis(),
+            eq: vi.fn().mockReturnThis(),
+            is: vi.fn().mockReturnThis(),
+            gt: vi.fn().mockReturnThis(),
+            order: vi.fn().mockReturnThis(),
+            limit: vi.fn().mockReturnThis(),
+            maybeSingle: vi.fn().mockResolvedValue({
+              data: {
+                id: 'e1111111-1111-4111-8111-111111111111',
+                visitor_id: 'v1111111-1111-4111-8111-111111111111',
+                bucket_id: 'visitor-photos',
+                object_path: 'photo.jpg',
+                content_type: 'image/jpeg',
+                byte_size: 1024,
+                sha256_hex: 'a'.repeat(64),
+                expires_at: new Date(Date.now() + 86400000).toISOString(),
+                purged_at: null,
+                created_at: new Date().toISOString(),
+              },
+              error: null,
+            }),
+          };
+        }
+        if (table === 'visitors') {
+          return {
+            select: vi.fn().mockReturnThis(),
+            eq: vi.fn().mockReturnThis(),
+            order: vi.fn().mockResolvedValue({
+              data: [{ id: 'v1111111-1111-4111-8111-111111111111', full_name: 'Juan Cruz', contact_number: '+639171234567', created_at: new Date().toISOString() }],
+              error: null,
+            }),
+          };
+        }
+        if (table === 'visitor_evidence') {
+          return {
+            select: vi.fn().mockReturnThis(),
+            in: vi.fn().mockReturnThis(),
+            eq: vi.fn().mockReturnThis(),
+            is: vi.fn().mockReturnThis(),
+            gt: vi.fn().mockReturnThis(),
+            order: vi.fn().mockReturnThis(),
+            limit: vi.fn().mockReturnThis(),
+            maybeSingle: vi.fn().mockResolvedValue({
+              data: {
+                id: 'e1111111-1111-4111-8111-111111111111',
+                visitor_id: 'v1111111-1111-4111-8111-111111111111',
+                bucket_id: 'visitor-photos',
+                object_path: 'photo.jpg',
+                content_type: 'image/jpeg',
+                byte_size: 1024,
+                sha256_hex: 'a'.repeat(64),
+                expires_at: new Date(Date.now() + 86400000).toISOString(),
+                purged_at: null,
+                created_at: new Date().toISOString(),
+              },
+              error: null,
+            }),
+          };
+        }
         return {};
       }),
     };
@@ -297,6 +369,42 @@ describe('Returning Visitor 1:1 Profile Discovery & Masking Contract (lookup-ret
             }),
           };
         }
+        if (table === 'visitors') {
+          return {
+            select: vi.fn().mockReturnThis(),
+            eq: vi.fn().mockReturnThis(),
+            order: vi.fn().mockResolvedValue({
+              data: [{ id: 'v1111111-1111-4111-8111-111111111111', full_name: 'Juan Cruz', contact_number: '+639171234567', created_at: new Date().toISOString() }],
+              error: null,
+            }),
+          };
+        }
+        if (table === 'visitor_evidence') {
+          return {
+            select: vi.fn().mockReturnThis(),
+            in: vi.fn().mockReturnThis(),
+            eq: vi.fn().mockReturnThis(),
+            is: vi.fn().mockReturnThis(),
+            gt: vi.fn().mockReturnThis(),
+            order: vi.fn().mockReturnThis(),
+            limit: vi.fn().mockReturnThis(),
+            maybeSingle: vi.fn().mockResolvedValue({
+              data: {
+                id: 'e1111111-1111-4111-8111-111111111111',
+                visitor_id: 'v1111111-1111-4111-8111-111111111111',
+                bucket_id: 'visitor-photos',
+                object_path: 'photo.jpg',
+                content_type: 'image/jpeg',
+                byte_size: 1024,
+                sha256_hex: 'a'.repeat(64),
+                expires_at: new Date(Date.now() + 86400000).toISOString(),
+                purged_at: null,
+                created_at: new Date().toISOString(),
+              },
+              error: null,
+            }),
+          };
+        }
         return {};
       }),
     };
@@ -366,6 +474,42 @@ describe('Returning Visitor 1:1 Profile Discovery & Masking Contract (lookup-ret
                   created_at: new Date().toISOString(),
                 },
               ],
+              error: null,
+            }),
+          };
+        }
+        if (table === 'visitors') {
+          return {
+            select: vi.fn().mockReturnThis(),
+            eq: vi.fn().mockReturnThis(),
+            order: vi.fn().mockResolvedValue({
+              data: [{ id: 'v1111111-1111-4111-8111-111111111111', full_name: 'Juan Cruz', contact_number: '+639171234567', created_at: new Date().toISOString() }],
+              error: null,
+            }),
+          };
+        }
+        if (table === 'visitor_evidence') {
+          return {
+            select: vi.fn().mockReturnThis(),
+            in: vi.fn().mockReturnThis(),
+            eq: vi.fn().mockReturnThis(),
+            is: vi.fn().mockReturnThis(),
+            gt: vi.fn().mockReturnThis(),
+            order: vi.fn().mockReturnThis(),
+            limit: vi.fn().mockReturnThis(),
+            maybeSingle: vi.fn().mockResolvedValue({
+              data: {
+                id: 'e1111111-1111-4111-8111-111111111111',
+                visitor_id: 'v1111111-1111-4111-8111-111111111111',
+                bucket_id: 'visitor-photos',
+                object_path: 'photo.jpg',
+                content_type: 'image/jpeg',
+                byte_size: 1024,
+                sha256_hex: 'a'.repeat(64),
+                expires_at: new Date(Date.now() + 86400000).toISOString(),
+                purged_at: null,
+                created_at: new Date().toISOString(),
+              },
               error: null,
             }),
           };

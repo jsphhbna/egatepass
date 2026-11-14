@@ -7,6 +7,7 @@ import purgeImages from '../../server/routes/system/purge-images.js';
 import reconciliationItems from '../../server/routes/system/reconciliation-items.js';
 import calendar from '../../server/routes/system/calendar.js';
 import version from '../../server/routes/system/version.js';
+import health from '../../server/routes/system/health.js';
 
 const router = createGroupedRouter('system', {
   'create-user': createUser,
@@ -17,7 +18,7 @@ const router = createGroupedRouter('system', {
   'reconciliation-items': reconciliationItems,
   calendar,
   version,
-  health: version,
+  health,
 });
 
 export const { fetch, handleRequest, GET, POST, PUT, PATCH, DELETE, HEAD, OPTIONS } = router;

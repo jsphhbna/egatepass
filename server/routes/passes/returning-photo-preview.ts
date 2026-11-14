@@ -18,10 +18,14 @@
 
 import { createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
 import { z } from 'zod';
-import { getVerifiedSessionContext, HttpError } from '../../actors.js';
+import { getVerifiedSessionContext, HttpError, enforceHumanStaffSessionActivity } from '../../actors.js';
 import { jsonResponse, readBearerToken } from '../../http.js';
 import { getServerSupabaseClients } from '../../supabase.js';
 import { computeMatchTokenDigest } from './identify-returning.js';
+import {
+  resolveAuthoritativeVisitorForProfile,
+  resolveEligibleRegistrationPortrait,
+} from '../../lib/returningVisitorResolution.js';
 
 const idSchema = z.string().uuid();
 
@@ -261,24 +265,40 @@ async function handleRequest(request: Request): Promise<Response> {
   }
 
   // 3. Fallback: Authenticated staff (admin/superadmin) or active guard station device
-  if (!authorized && session && !session.isAnonymous) {
-    const { data: staff } = await admin
+  if (!authorized && session && !session.isAnonymous && !session.isRecoverySession) {
+    const { data: staff, error: staffError } = await admin
       .from('staff_profiles')
-      .select('role, active, must_change_password')
+      .select('role, active, must_change_password, privacy_accepted_at')
       .eq('user_id', currentActorId)
       .maybeSingle();
 
-    if (staff && staff.active && !staff.must_change_password && ['admin', 'superadmin'].includes(staff.role)) {
-      authorized = true;
-      resolvedProfileId = profileIdParam || null;
+    if (!staffError && staff && staff.active && !staff.must_change_password && staff.privacy_accepted_at && ['admin', 'superadmin'].includes(staff.role)) {
+      if (!session.user.email_confirmed_at) {
+        return jsonResponse(403, { error: 'email_verification_required' });
+      }
+      try {
+        await enforceHumanStaffSessionActivity(admin, session.sessionId, session.user.id);
+        authorized = true;
+        resolvedProfileId = profileIdParam || null;
+      } catch (staffSessionErr) {
+        if (staffSessionErr instanceof HttpError) return jsonResponse(staffSessionErr.status, { error: staffSessionErr.code });
+        return jsonResponse(403, { error: 'session_inactive' });
+      }
     } else {
-      const { data: device } = await admin
+      const { data: device, error: deviceError } = await admin
         .from('devices')
-        .select('status, type')
+        .select('status, type, deleted_at')
         .eq('user_id', currentActorId)
         .maybeSingle();
 
-      if (device && device.status === 'active' && device.type === 'guard_station') {
+      if (!deviceError && device && device.status === 'active' && device.type === 'guard_station' && !device.deleted_at) {
+        // Guard stations can ONLY access photo evidence (portraits), NEVER identification documents
+        if (requestedKind === 'id') {
+          return jsonResponse(403, {
+            error: 'guard_station_cannot_access_id',
+            message: 'Guard station devices are not permitted to access ID evidence.',
+          });
+        }
         authorized = true;
         resolvedProfileId = profileIdParam || null;
       }
@@ -289,92 +309,100 @@ async function handleRequest(request: Request): Promise<Response> {
     return jsonResponse(403, { error: 'unauthorized_preview_access' });
   }
 
-  // Find earliest visitor_evidence of requested kind for this returning profile
-  const { data: visitors, error: vErr } = await admin
-    .from('visitors')
-    .select('id')
-    .eq('returning_profile_id', resolvedProfileId);
-
-  if (vErr) {
-    console.error('Error fetching visitors for profile preview:', vErr);
-    return jsonResponse(500, { error: 'database_error' });
-  }
-
-  let vIds = (visitors || []).map((v) => v.id);
-  if (vIds.length === 0) {
-    // Secondary fallback lookup: if returning_profile_id was not directly linked on historical visitor records,
-    // match by profile first_name, last_name, and contact_number_e164
-    const { data: profile } = await admin
-      .from('returning_visitor_profiles')
-      .select('first_name, last_name, contact_number_e164')
-      .eq('id', resolvedProfileId)
-      .maybeSingle();
-
-    if (profile) {
-      const fullName = `${profile.first_name} ${profile.last_name}`.trim();
-      const { data: fallbackVisitors } = await admin
-        .from('visitors')
-        .select('id')
-        .eq('contact_number', profile.contact_number_e164)
-        .ilike('full_name', fullName)
-        .order('created_at', { ascending: true })
-        .limit(5);
-
-      if (fallbackVisitors && fallbackVisitors.length > 0) {
-        vIds = fallbackVisitors.map((v) => v.id);
-      }
+  // Unified historical visitor and evidence resolution
+  const resolution = await resolveAuthoritativeVisitorForProfile(admin, resolvedProfileId);
+  if (!resolution.match) {
+    if (resolution.error === 'ambiguous_historical_records') {
+      return jsonResponse(422, {
+        error: 'ambiguous_historical_records',
+        message: 'Multiple historical registration records found. Cannot resolve unambiguous portrait.',
+      });
     }
-  }
-
-  if (vIds.length === 0) {
-    return jsonResponse(404, { error: 'preview_unavailable', message: 'No registration records found for profile.' });
-  }
-
-  const { data: evidence, error: evErr } = await admin
-    .from('visitor_evidence')
-    .select('bucket_id, object_path, content_type, purged_at, expires_at, created_at')
-    .in('visitor_id', vIds)
-    .eq('kind', requestedKind)
-    .order('created_at', { ascending: true })
-    .limit(1)
-    .maybeSingle();
-
-  if (evErr) {
-    console.error('Error fetching visitor evidence for profile preview:', evErr);
-    return jsonResponse(500, { error: 'database_error' });
-  }
-
-  if (!evidence) {
-    return jsonResponse(404, { error: 'preview_unavailable', message: 'Evidence not found.' });
-  }
-
-  // Retention check: if evidence was purged or expired under the retention policy, return 410 Gone
-  const now = new Date();
-  const isPurged = Boolean(evidence.purged_at);
-  const isExpired = Boolean(evidence.expires_at && new Date(evidence.expires_at) <= now);
-
-  if (isPurged || isExpired) {
-    return jsonResponse(410, {
-      error: 'photo_expired_under_retention',
-      message: 'Original portrait was removed under retention policy.',
+    return jsonResponse(404, {
+      error: 'preview_unavailable',
+      message: 'No registration records found for profile.',
     });
   }
 
-  const downloaded = await admin.storage.from(evidence.bucket_id).download(evidence.object_path);
-  if (downloaded.error || !downloaded.data) {
-    return jsonResponse(404, { error: 'preview_unavailable', message: 'Object not found in storage.' });
-  }
+  const vIds = resolution.match.visitorIds;
 
-  const bytes = new Uint8Array(await downloaded.data.arrayBuffer());
-  return new Response(bytes, {
-    status: 200,
-    headers: {
-      'Content-Type': evidence.content_type || 'image/jpeg',
-      'Content-Length': String(bytes.length),
-      'Cache-Control': 'private, no-store, max-age=0',
-      'X-Content-Type-Options': 'nosniff',
-    },
-  });
+  if (requestedKind === 'photo') {
+    const eligiblePortrait = await resolveEligibleRegistrationPortrait(admin, vIds);
+    if (!eligiblePortrait) {
+      // Check if evidence existed but was purged or expired under retention policy
+      const { data: rawEvidence } = await admin
+        .from('visitor_evidence')
+        .select('purged_at, expires_at')
+        .in('visitor_id', vIds)
+        .eq('kind', 'photo')
+        .order('created_at', { ascending: true })
+        .limit(1)
+        .maybeSingle();
+
+      if (rawEvidence && (rawEvidence.purged_at || (rawEvidence.expires_at && new Date(rawEvidence.expires_at) <= new Date()))) {
+        return jsonResponse(410, {
+          error: 'photo_expired_under_retention',
+          message: 'Original portrait was removed under retention policy.',
+        });
+      }
+
+      return jsonResponse(404, { error: 'preview_unavailable', message: 'Evidence not found.' });
+    }
+
+    const downloaded = await admin.storage.from(eligiblePortrait.bucket_id).download(eligiblePortrait.object_path);
+    if (downloaded.error || !downloaded.data) {
+      return jsonResponse(404, { error: 'preview_unavailable', message: 'Object not found in storage.' });
+    }
+
+    const bytes = new Uint8Array(await downloaded.data.arrayBuffer());
+    return new Response(bytes, {
+      status: 200,
+      headers: {
+        'Content-Type': eligiblePortrait.content_type || 'image/jpeg',
+        'Content-Length': String(bytes.length),
+        'Cache-Control': 'private, no-store, max-age=0',
+        'X-Content-Type-Options': 'nosniff',
+      },
+    });
+  } else {
+    // requestedKind === 'id'
+    const nowIso = new Date().toISOString();
+    const { data: evidence, error: evErr } = await admin
+      .from('visitor_evidence')
+      .select('bucket_id, object_path, content_type, purged_at, expires_at, created_at')
+      .in('visitor_id', vIds)
+      .eq('kind', 'id')
+      .is('purged_at', null)
+      .gt('expires_at', nowIso)
+      .order('created_at', { ascending: true })
+      .limit(1)
+      .maybeSingle();
+
+    if (evErr) {
+      console.error('Error fetching visitor evidence for profile preview:', evErr);
+      return jsonResponse(500, { error: 'database_error' });
+    }
+
+    if (!evidence) {
+      return jsonResponse(404, { error: 'preview_unavailable', message: 'Evidence not found or expired under retention.' });
+    }
+
+    const downloaded = await admin.storage.from(evidence.bucket_id).download(evidence.object_path);
+    if (downloaded.error || !downloaded.data) {
+      return jsonResponse(404, { error: 'preview_unavailable', message: 'Object not found in storage.' });
+    }
+
+    const bytes = new Uint8Array(await downloaded.data.arrayBuffer());
+    return new Response(bytes, {
+      status: 200,
+      headers: {
+        'Content-Type': evidence.content_type || 'image/jpeg',
+        'Content-Length': String(bytes.length),
+        'Cache-Control': 'private, no-store, max-age=0',
+        'X-Content-Type-Options': 'nosniff',
+      },
+    });
+  }
 }
 
 export default { fetch: handleRequest };

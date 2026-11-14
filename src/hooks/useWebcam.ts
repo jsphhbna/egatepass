@@ -542,9 +542,22 @@ export function useWebcam(options: UseWebcamOptions = {}): UseWebcamResult {
         }
       }
 
+      let destW = cropW;
+      let destH = cropH;
+      const MAX_DIM = 1920;
+      if (destW > MAX_DIM || destH > MAX_DIM) {
+        if (destW >= destH) {
+          destH = Math.round((destH * MAX_DIM) / destW);
+          destW = MAX_DIM;
+        } else {
+          destW = Math.round((destW * MAX_DIM) / destH);
+          destH = MAX_DIM;
+        }
+      }
+
       const canvas = document.createElement('canvas');
-      canvas.width = cropW;
-      canvas.height = cropH;
+      canvas.width = destW;
+      canvas.height = destH;
 
       const ctx = canvas.getContext('2d');
       if (!ctx) return null;
@@ -561,7 +574,7 @@ export function useWebcam(options: UseWebcamOptions = {}): UseWebcamResult {
         ctx.scale(-1, 1);
       }
 
-      ctx.drawImage(video, cropX, cropY, cropW, cropH, 0, 0, cropW, cropH);
+      ctx.drawImage(video, cropX, cropY, cropW, cropH, 0, 0, destW, destH);
 
       // Convert to blob synchronously via dataURL for immediate use
       const dataUrl = canvas.toDataURL('image/webp', 0.85);
