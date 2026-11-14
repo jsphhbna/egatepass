@@ -135,12 +135,57 @@ describe('Returning Visitor Provisional 1:1 Biometric & Enrollment Architecture 
         }),
       };
 
+      const mockVisitor = {
+        id: 'vis-123',
+        full_name: 'Juan Santos Dela Cruz',
+        contact_number: '+639171234567',
+        returning_profile_id: profileId,
+        created_at: '2026-11-10T00:00:00Z',
+      };
+      const mockEvidence = {
+        id: 'ev-123',
+        visitor_id: 'vis-123',
+        kind: 'photo',
+        storage_path: 'visitor-photos/portrait.jpg',
+        purged_at: null,
+        expires_at: new Date(Date.now() + 86400000).toISOString(),
+        created_at: '2026-11-10T00:00:00Z',
+      };
+
       const mockAdmin = {
         schema: vi.fn().mockReturnValue({
           rpc: vi.fn().mockResolvedValue({ data: true, error: null }),
         }),
-        from: vi.fn().mockReturnValue({
-          select: vi.fn().mockReturnValue(mockQuery),
+        from: vi.fn((table: string) => {
+          if (table === 'visitors') {
+            return {
+              select: () => ({
+                eq: () => ({
+                  order: () => Promise.resolve({ data: [mockVisitor], error: null }),
+                }),
+              }),
+            };
+          }
+          if (table === 'visitor_evidence') {
+            return {
+              select: () => ({
+                in: () => ({
+                  eq: () => ({
+                    is: () => ({
+                      gt: () => ({
+                        order: () => ({
+                          limit: () => Promise.resolve({ data: [mockEvidence], error: null }),
+                        }),
+                      }),
+                    }),
+                  }),
+                }),
+              }),
+            };
+          }
+          return {
+            select: vi.fn().mockReturnValue(mockQuery),
+          };
         }),
       };
 

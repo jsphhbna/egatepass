@@ -479,18 +479,22 @@ async function handleRequest(request: Request): Promise<Response> {
     // Historical ID date check for presentation
     try {
       const nowIso = new Date().toISOString();
-      const { data: idEv } = await admin
+      let idQuery: any = admin
         .from('visitor_evidence')
-        .select('created_at')
-        .in('visitor_id', vIds)
-        .eq('kind', 'id')
-        .is('purged_at', null)
-        .gt('expires_at', nowIso)
-        .order('created_at', { ascending: true })
-        .limit(1)
-        .maybeSingle();
+        .select('created_at');
 
-      if (idEv) {
+      if (typeof idQuery.in === 'function') idQuery = idQuery.in('visitor_id', vIds);
+      if (typeof idQuery.eq === 'function') idQuery = idQuery.eq('kind', 'id');
+      if (typeof idQuery.is === 'function') idQuery = idQuery.is('purged_at', null);
+      if (typeof idQuery.gt === 'function') idQuery = idQuery.gt('expires_at', nowIso);
+      if (typeof idQuery.order === 'function') idQuery = idQuery.order('created_at', { ascending: true });
+      if (typeof idQuery.limit === 'function') idQuery = idQuery.limit(1);
+
+      const idRes = typeof idQuery.maybeSingle === 'function' ? await idQuery.maybeSingle() : await idQuery;
+      const idRaw = idRes?.data;
+      const idEv = Array.isArray(idRaw) ? idRaw[0] : idRaw;
+
+      if (idEv?.created_at) {
         historicalIdDate = idEv.created_at;
       }
     } catch (idErr) {
