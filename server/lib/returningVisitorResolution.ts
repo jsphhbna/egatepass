@@ -30,6 +30,7 @@ export interface AuthoritativeVisitorMatch {
     id: string;
     full_name: string;
     contact_number: string;
+    returning_profile_id?: string | null;
     psgc_city_code: string | null;
     psgc_barangay_code: string | null;
     created_at: string;
@@ -186,19 +187,25 @@ export async function resolveAuthoritativeVisitorForProfile(
       return { match: null, error: 'profile_not_found', details: 'Returning profile does not exist.' };
     }
 
-    // Query historical visitors with the exact normalized contact number
+    if (!profile.first_name || !profile.last_name || !profile.contact_number_e164 || !profile.psgc_city_code) {
+      return {
+        match: null,
+        error: 'no_historical_visitor_records',
+        details: 'Returning profile lacks sufficient identity or locality data for fallback matching.',
+      };
+    }
+
+    // Query historical visitors with the exact normalized contact number.
+    // Query complete candidate set without arbitrary limit to ensure deterministic uniqueness across all records.
     let phoneQuery: any = admin
       .from('visitors')
-      .select('id, full_name, contact_number, psgc_city_code, psgc_barangay_code, created_at');
+      .select('id, full_name, contact_number, returning_profile_id, psgc_city_code, psgc_barangay_code, created_at');
 
     if (typeof phoneQuery.eq === 'function') {
       phoneQuery = phoneQuery.eq('contact_number', profile.contact_number_e164);
     }
     if (typeof phoneQuery.order === 'function') {
       phoneQuery = phoneQuery.order('created_at', { ascending: true });
-    }
-    if (typeof phoneQuery.limit === 'function') {
-      phoneQuery = phoneQuery.limit(10);
     }
 
     const phoneResult = await phoneQuery;
@@ -218,14 +225,34 @@ export async function resolveAuthoritativeVisitorForProfile(
       };
     }
 
-    // Filter candidates by strict name and locality matching
+    // Filter candidates by strict identity, linkage, and locality criteria:
+    // 1. Must NOT be linked to another profile (or any returning profile).
+    // 2. Must have non-empty full_name that strictly matches the profile's names.
+    // 3. Must have non-empty psgc_city_code that strictly matches the profile's psgc_city_code.
+    // 4. If both records have psgc_barangay_code, they must match.
     const matchingCandidates = phoneVisitors.filter((v: any) => {
-      // Name match check (if full_name is present, must strictly match; if omitted in mock, allow)
-      const nameOk = !v.full_name || isNameMatching(v.full_name, profile.first_name, profile.middle_name, profile.last_name);
-      if (!nameOk) return false;
+      // Never use a historical visitor already linked to another returning profile
+      if (v.returning_profile_id) {
+        return false;
+      }
 
-      // Locality match check (if both records have city code populated, they must match)
-      if (profile.psgc_city_code && v.psgc_city_code && profile.psgc_city_code !== v.psgc_city_code) {
+      // Do not treat missing identity fields as matches: full_name must be present and non-empty
+      if (!v.full_name || typeof v.full_name !== 'string' || v.full_name.trim().length === 0) {
+        return false;
+      }
+
+      // Strict name match
+      if (!isNameMatching(v.full_name, profile.first_name, profile.middle_name, profile.last_name)) {
+        return false;
+      }
+
+      // PSGC locality requirement: city must be present on visitor and must match profile city
+      if (!v.psgc_city_code || typeof v.psgc_city_code !== 'string' || v.psgc_city_code !== profile.psgc_city_code) {
+        return false;
+      }
+
+      // Barangay check if both populated
+      if (profile.psgc_barangay_code && v.psgc_barangay_code && profile.psgc_barangay_code !== v.psgc_barangay_code) {
         return false;
       }
 
