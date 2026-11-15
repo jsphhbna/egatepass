@@ -74,10 +74,17 @@ export function LoginPage() {
       requiresMfa &&
       mfaStep === 'none'
     ) {
+      setPendingRole(role);
       void (async () => {
         if (!supabase) return;
         try {
-          const { data: factorsData } = await supabase.auth.mfa.listFactors();
+          const { data: factorsData, error: factorsError } = await supabase.auth.mfa.listFactors();
+          if (factorsError) {
+            setError(factorsError.message || 'Unable to load authentication factors. Please sign in again.');
+            await supabase.auth.signOut();
+            if (refresh) await refresh();
+            return;
+          }
           const verifiedTotp = factorsData?.totp?.find((f) => f.status === 'verified');
           if (verifiedTotp) {
             setTotpFactorId(verifiedTotp.id);
@@ -85,13 +92,14 @@ export function LoginPage() {
           } else {
             setMfaStep('enroll');
           }
-        } catch {
-          // If factors check fails, default to enrollment
-          setMfaStep('enroll');
+        } catch (err: unknown) {
+          setError(err instanceof Error ? err.message : 'Unable to load authentication factors. Please sign in again.');
+          await supabase.auth.signOut();
+          if (refresh) await refresh();
         }
       })();
     }
-  }, [status, role, requiresMfa, mfaStep]);
+  }, [status, role, requiresMfa, mfaStep, refresh]);
 
   async function handleResendVerification() {
     if (!supabase || resendCooldown > 0 || !unverifiedEmail || isSigningIn || isResendingVerification) return;
@@ -173,9 +181,11 @@ export function LoginPage() {
         // Check MFA for human staff roles
         if (staff && ['admin', 'superadmin', 'office_staff'].includes(staff.role)) {
           setPendingRole(staff.role as AuthRole);
-          const { data: aalData } = await supabase.auth.mfa.getAuthenticatorAssuranceLevel();
+          const { data: aalData, error: aalError } = await supabase.auth.mfa.getAuthenticatorAssuranceLevel();
+          if (aalError) throw aalError;
           if (aalData?.currentLevel !== 'aal2') {
-            const { data: factorsData } = await supabase.auth.mfa.listFactors();
+            const { data: factorsData, error: factorsError } = await supabase.auth.mfa.listFactors();
+            if (factorsError) throw factorsError;
             const verifiedTotp = factorsData?.totp?.find((f) => f.status === 'verified');
             if (verifiedTotp) {
               setTotpFactorId(verifiedTotp.id);
@@ -261,16 +271,23 @@ export function LoginPage() {
   }
 
   async function handleMfaCancel() {
-    setMfaStep('none');
-    setTotpCode('');
-    setTotpError(null);
-    setTotpFactorId(null);
-    setPendingRole(null);
-    if (supabase) {
-      await supabase.auth.signOut();
-    }
-    if (refresh) {
-      await refresh();
+    setIsVerifyingTotp(true);
+    try {
+      if (supabase) {
+        await supabase.auth.signOut();
+      }
+      if (refresh) {
+        await refresh();
+      }
+    } catch (err) {
+      console.error('Error during MFA cancel sign out:', err);
+    } finally {
+      setMfaStep('none');
+      setTotpCode('');
+      setTotpError(null);
+      setTotpFactorId(null);
+      setPendingRole(null);
+      setIsVerifyingTotp(false);
     }
   }
 

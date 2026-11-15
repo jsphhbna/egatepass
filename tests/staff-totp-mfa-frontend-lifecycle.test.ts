@@ -452,6 +452,164 @@ describe('Frontend TOTP MFA & AAL2 Lifecycle Verification', () => {
       expect(unenrollMock).toHaveBeenCalledWith({ factorId: 'factor-new-totp' });
       expect(onCancel).toHaveBeenCalled();
     });
+
+    it('renders error with Retry and Cancel buttons when enroll() fails, preventing user trap', async () => {
+      enrollMock.mockRejectedValueOnce(new Error('Supabase Auth Service Unavailable (503)'));
+
+      const onEnrolled = vi.fn();
+      const onCancel = vi.fn();
+
+      await act(async () => {
+        root.render(
+          React.createElement(TotpEnrollModal, {
+            isOpen: true,
+            onEnrolled,
+            onCancel,
+          })
+        );
+      });
+      await flushAsync();
+
+      expect(document.body.textContent).toContain('Supabase Auth Service Unavailable (503)');
+
+      const retryBtn = Array.from(document.body.querySelectorAll('button')).find(
+        (b) => b.textContent?.includes('Retry Setup')
+      );
+      const cancelBtn = Array.from(document.body.querySelectorAll('button')).find(
+        (b) => b.textContent?.includes('Sign Out') || b.textContent?.includes('Cancel')
+      );
+
+      expect(retryBtn).toBeDefined();
+      expect(cancelBtn).toBeDefined();
+
+      // Clicking Retry calls enrollMock again
+      enrollMock.mockResolvedValueOnce({
+        data: {
+          id: 'factor-retry-success',
+          type: 'totp',
+          totp: {
+            qr_code: '<svg viewBox="0 0 10 10"><rect width="10" height="10"/></svg>',
+            secret: 'RETRYSECRET123',
+          },
+        },
+        error: null,
+      });
+
+      await act(async () => {
+        retryBtn!.click();
+      });
+      await flushAsync();
+
+      expect(enrollMock).toHaveBeenCalledTimes(2);
+      expect(document.body.textContent).toContain('RETRYSECRET123');
+    });
+
+    it('provides Sign Out / Cancel button during QR code generation to avoid hanging lock', async () => {
+      // simulate long loading state
+      enrollMock.mockReturnValueOnce(new Promise(() => {}));
+
+      const onEnrolled = vi.fn();
+      const onCancel = vi.fn();
+
+      await act(async () => {
+        root.render(
+          React.createElement(TotpEnrollModal, {
+            isOpen: true,
+            onEnrolled,
+            onCancel,
+          })
+        );
+      });
+      await flushAsync();
+
+      expect(document.body.textContent).toContain('Generating your unique authenticator QR code...');
+
+      const cancelBtn = Array.from(document.body.querySelectorAll('button')).find(
+        (b) => b.textContent?.includes('Sign Out') || b.textContent?.includes('Cancel')
+      );
+      expect(cancelBtn).toBeDefined();
+
+      await act(async () => {
+        cancelBtn!.click();
+      });
+      await flushAsync();
+
+      expect(onCancel).toHaveBeenCalled();
+    });
+
+    it('formats SVG QR code with standard charset=utf-8 MIME prefix and URL-encodes markup', async () => {
+      enrollMock.mockResolvedValueOnce({
+        data: {
+          id: 'factor-svg-test',
+          type: 'totp',
+          totp: {
+            qr_code: 'data:image/svg+xml;utf-8,<svg viewBox="0 0 10 10"><circle r="5"/></svg>',
+            secret: 'STANDARDMIME123',
+          },
+        },
+        error: null,
+      });
+
+      const onEnrolled = vi.fn();
+      const onCancel = vi.fn();
+
+      await act(async () => {
+        root.render(
+          React.createElement(TotpEnrollModal, {
+            isOpen: true,
+            onEnrolled,
+            onCancel,
+          })
+        );
+      });
+      await flushAsync();
+
+      const img = document.body.querySelector('img') as HTMLImageElement;
+      expect(img).not.toBeNull();
+      expect(img.src).toContain('data:image/svg+xml;charset=utf-8,%3Csvg');
+    });
+
+    it('handles clipboard write failure gracefully in handleCopySecret without crashing', async () => {
+      const originalClipboard = navigator.clipboard;
+      Object.defineProperty(navigator, 'clipboard', {
+        value: {
+          writeText: vi.fn().mockRejectedValue(new Error('Clipboard permission denied')),
+        },
+        writable: true,
+        configurable: true,
+      });
+
+      const onEnrolled = vi.fn();
+      const onCancel = vi.fn();
+
+      await act(async () => {
+        root.render(
+          React.createElement(TotpEnrollModal, {
+            isOpen: true,
+            onEnrolled,
+            onCancel,
+          })
+        );
+      });
+      await flushAsync();
+
+      const copyBtn = document.body.querySelector('button[aria-label="Copy secret"]') as HTMLButtonElement;
+      expect(copyBtn).not.toBeNull();
+
+      await act(async () => {
+        copyBtn.click();
+      });
+      await flushAsync();
+
+      const { toast } = await import('sonner');
+      expect(toast.error).toHaveBeenCalledWith(expect.stringContaining('Unable to copy secret key automatically'));
+
+      Object.defineProperty(navigator, 'clipboard', {
+        value: originalClipboard,
+        writable: true,
+        configurable: true,
+      });
+    });
   });
 
   // =========================================================================
@@ -618,6 +776,123 @@ describe('Frontend TOTP MFA & AAL2 Lifecycle Verification', () => {
 
       expect(signOutMock).toHaveBeenCalled();
       expect(mockAuthState.refresh).toHaveBeenCalled();
+    });
+
+    it('fails closed, displays error, and signs out when listFactors() returns an API error during auto-trigger', async () => {
+      mockAuthState.status = 'authenticated';
+      mockAuthState.uid = 'staff-admin-error';
+      mockAuthState.role = 'admin';
+      mockAuthState.aal = 'aal1';
+      mockAuthState.requiresMfa = true;
+      mockAuthState.userData = { kind: 'staff', role: 'admin', name: 'Admin Error Case' };
+
+      listFactorsMock.mockResolvedValueOnce({
+        data: null,
+        error: new Error('Rate limit exceeded on listFactors (429)'),
+      });
+
+      await renderInRouter('/login', React.createElement(LoginPage));
+      await flushAsync();
+
+      expect(signOutMock).toHaveBeenCalled();
+      expect(mockAuthState.refresh).toHaveBeenCalled();
+      expect(document.body.textContent).toContain('Rate limit exceeded on listFactors');
+    });
+
+    it('fails closed during password submission when listFactors() returns an API error', async () => {
+      signInWithPasswordMock.mockResolvedValueOnce({
+        data: {
+          user: {
+            id: 'staff-office-1',
+            is_anonymous: false,
+            email_confirmed_at: '2026-01-01T00:00:00Z',
+          },
+        },
+        error: null,
+      });
+
+      fromMock.mockReturnValue({
+        select: () => ({
+          eq: () => ({
+            maybeSingle: vi.fn().mockResolvedValue({
+              data: { role: 'office_staff' },
+              error: null,
+            }),
+          }),
+        }),
+      });
+
+      getAalMock.mockResolvedValueOnce({
+        data: { currentLevel: 'aal1' },
+        error: null,
+      });
+
+      listFactorsMock.mockResolvedValueOnce({
+        data: null,
+        error: new Error('Supabase Auth connection lost'),
+      });
+
+      await renderInRouter('/login', React.createElement(LoginPage));
+      await flushAsync();
+
+      const emailInput = document.body.querySelector('#login-email') as HTMLInputElement;
+      const passInput = document.body.querySelector('#login-password') as HTMLInputElement;
+      expect(emailInput).not.toBeNull();
+      expect(passInput).not.toBeNull();
+
+      await act(async () => {
+        setInputValue(emailInput, 'staff@earist.edu.ph');
+        setInputValue(passInput, 'CorrectPassword123!');
+      });
+
+      const form = document.body.querySelector('form') as HTMLFormElement;
+      await act(async () => {
+        form.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
+      });
+      await flushAsync();
+
+      // Access must remain blocked, error surfaced, and no challenge/enroll state
+      expect(document.body.textContent).not.toContain('Two-Factor Challenge');
+      expect(document.body.textContent).toContain('Invalid email, device username, or password. Please try again.');
+    });
+
+    it('awaits signOut and refresh before resetting mfaStep during cancellation', async () => {
+      mockAuthState.status = 'authenticated';
+      mockAuthState.uid = 'staff-returning-1';
+      mockAuthState.role = 'admin';
+      mockAuthState.aal = 'aal1';
+      mockAuthState.requiresMfa = true;
+      mockAuthState.userData = { kind: 'staff', role: 'admin', name: 'Admin' };
+
+      listFactorsMock.mockResolvedValueOnce({
+        data: {
+          totp: [{ id: 'factor-verified-1', factor_type: 'totp', status: 'verified' }],
+        },
+        error: null,
+      });
+
+      const callOrder: string[] = [];
+      signOutMock.mockImplementationOnce(async () => {
+        callOrder.push('signOut');
+      });
+      mockAuthState.refresh = vi.fn(async () => {
+        callOrder.push('refresh');
+      });
+
+      await renderInRouter('/login', React.createElement(LoginPage));
+      await flushAsync();
+
+      const cancelBtn = Array.from(document.body.querySelectorAll('button')).find(
+        (b) => b.textContent?.includes('Sign Out') || b.textContent?.includes('Cancel')
+      );
+      expect(cancelBtn).toBeDefined();
+
+      await act(async () => {
+        cancelBtn!.click();
+      });
+      await flushAsync();
+
+      expect(callOrder).toEqual(['signOut', 'refresh']);
     });
   });
 });
