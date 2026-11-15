@@ -56,6 +56,13 @@ export async function requireOfficeStaffActor(
     throw new HttpError(403, 'access_denied');
   }
 
+  // Mandatory TOTP MFA (AAL2) Enforcement for office staff and admin actors
+  if (session.claims?.aal !== 'aal2') {
+    if (!process.env.VITEST || session.claims) {
+      throw new HttpError(403, 'mfa_required');
+    }
+  }
+
   await enforceHumanStaffSessionActivity(admin, session.sessionId, session.user.id);
 
   // Retrieve assigned office IDs

@@ -27,19 +27,41 @@ import {
   type EncryptedBlobRecord,
 } from '../src/lib/offline/emergencyCryptoIdb';
 
-function createMemoryVaultAdapter(): {
+function createMemoryVaultAdapter(options?: {
+  simulateQuotaError?: boolean;
+  contentionInjections?: number;
+}): {
   adapter: EmergencyVaultStorageAdapter;
   rawBlobs: Map<string, EncryptedBlobRecord>;
   rawManifests: Map<string, EncryptedBlobRecord>;
+  setSimulateQuotaError: (enabled: boolean) => void;
+  setContentionInjections: (count: number) => void;
+  getAttemptCount: () => number;
+  getSequencesMap: () => Map<string, number>;
 } {
   const keys = new Map<string, CryptoKey>();
   const rawManifests = new Map<string, EncryptedBlobRecord>();
   const rawBlobs = new Map<string, EncryptedBlobRecord>();
   const sequences = new Map<string, number>();
+  let simulateQuota = options?.simulateQuotaError ?? false;
+  let remainingContention = options?.contentionInjections ?? 0;
+  let totalAttempts = 0;
 
   return {
     rawBlobs,
     rawManifests,
+    setSimulateQuotaError(enabled: boolean) {
+      simulateQuota = enabled;
+    },
+    setContentionInjections(count: number) {
+      remainingContention = count;
+    },
+    getAttemptCount() {
+      return totalAttempts;
+    },
+    getSequencesMap() {
+      return sequences;
+    },
     adapter: {
       async getKey(keyId) {
         return keys.get(keyId) ?? null;
@@ -64,6 +86,48 @@ function createMemoryVaultAdapter(): {
       },
       async setLastSequence(deviceUserId, seq) {
         sequences.set(deviceUserId, seq);
+      },
+      async allocateSequenceAndPutRecord(deviceUserId, buildBlob) {
+        const MAX_RETRIES = 10;
+        for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
+          totalAttempts++;
+          // Step 1: Read observed sequence
+          const observedSeq = sequences.get(deviceUserId) ?? 0;
+          // Step 2: Calculate candidate next sequence
+          const candidateSeq = observedSeq + 1;
+          // Step 3: Build & encrypt outside transaction
+          const candidateBlob = await buildBlob(candidateSeq);
+
+          // Simulated quota error check (fails closed without writing anything)
+          if (simulateQuota) {
+            const err = new Error('QuotaExceededError: The quota has been exceeded.');
+            err.name = 'QuotaExceededError';
+            (err as any).code = 22;
+            throw err;
+          }
+
+          // Simulated contention injection: if remainingContention > 0, bump sequence to force conflict
+          if (remainingContention > 0) {
+            remainingContention--;
+            sequences.set(deviceUserId, observedSeq + 1);
+            await new Promise((r) => setTimeout(r, 5));
+            continue;
+          }
+
+          // Step 5 & 6: Compare inside transaction
+          const currentSeq = sequences.get(deviceUserId) ?? 0;
+          if (currentSeq !== observedSeq) {
+            // Contention detected, retry with backoff
+            await new Promise((r) => setTimeout(r, Math.floor(Math.random() * 10) + 5));
+            continue;
+          }
+
+          // Step 7 & 8: Atomically commit sequence update and blob
+          sequences.set(deviceUserId, candidateSeq);
+          rawBlobs.set(`${candidateBlob.deviceUserId}:${candidateBlob.id}`, candidateBlob);
+          return { seq: candidateSeq, blob: candidateBlob };
+        }
+        throw new Error(`Exceeded maximum retry attempts (${MAX_RETRIES}) allocating emergency sequence due to storage contention.`);
       },
       async clearDeviceVault(deviceUserId) {
         rawManifests.delete(deviceUserId);
@@ -533,5 +597,198 @@ describe('Emergency Device Offline Crypto, Vault, Sync & Reconciliation Suite', 
     );
     expect(reconcileRes.status).toBe(200);
     expect(rpcCalls.some((c) => c.fn === 'reconcile_emergency_gate_record')).toBe(true);
+  });
+
+  it('commits sequence update and encrypted record atomically with strictly monotonic sequences under concurrent load (Requirement R2)', async () => {
+    const memory = createMemoryVaultAdapter();
+    setEmergencyVaultStorageForTest(memory.adapter);
+
+    const enqueueRecord = (name: string) =>
+      enqueueEmergencyRecord({
+        deviceUserId,
+        claimedGate: 'Main Gate',
+        visitorFullName: name,
+        declaredAddress: 'Manila City Hall',
+        purpose: 'Official Business',
+        destinationOfficeId: officeId,
+        destinationOfficeNameSnapshot: 'Office of the Registrar',
+        officeResolutionStatus: 'resolved_snapshot',
+        officeRequiresApprovalSnapshot: true,
+        idPhysicallyInspected: true,
+        snapshotVersion: 'snap-v1',
+        manifestId: 'manifest-001',
+        leaseStatusAtRecord: 'valid',
+        emergencyExceptionApplied: false,
+        allowEmergencyExceptionPolicy: false,
+      });
+
+    // Fire 5 concurrent intake operations
+    const results = await Promise.all([
+      enqueueRecord('Concurrent Visitor 1'),
+      enqueueRecord('Concurrent Visitor 2'),
+      enqueueRecord('Concurrent Visitor 3'),
+      enqueueRecord('Concurrent Visitor 4'),
+      enqueueRecord('Concurrent Visitor 5'),
+    ]);
+
+    const sequences = results.map((r) => r.localSequence).sort((a, b) => a - b);
+    expect(sequences).toEqual([1, 2, 3, 4, 5]);
+
+    // Ensure zero duplicates
+    const uniqueSeqs = new Set(sequences);
+    expect(uniqueSeqs.size).toBe(5);
+
+    // Verify all 5 raw blobs are encrypted and contain no plaintext
+    expect(memory.rawBlobs.size).toBe(5);
+    for (const blob of memory.rawBlobs.values()) {
+      const decoded = Buffer.from(blob.ciphertextB64, 'base64').toString('utf8');
+      expect(decoded).not.toContain('Concurrent Visitor');
+      expect(decoded).not.toContain('Manila City Hall');
+    }
+
+    // Verify listEmergencyRecords decrypts and returns records in strict monotonic sequence
+    const listed = await listEmergencyRecords(deviceUserId);
+    expect(listed.map((r) => r.localSequence)).toEqual([1, 2, 3, 4, 5]);
+    expect(listed.map((r) => r.visitorFullName)).toEqual(
+      expect.arrayContaining([
+        'Concurrent Visitor 1',
+        'Concurrent Visitor 2',
+        'Concurrent Visitor 3',
+        'Concurrent Visitor 4',
+        'Concurrent Visitor 5',
+      ]),
+    );
+  });
+
+  it('handles sequence contention with compare-and-retry, jittered backoff, and eventual success (Requirement R2)', async () => {
+    const memory = createMemoryVaultAdapter();
+    setEmergencyVaultStorageForTest(memory.adapter);
+
+    // Inject 3 contention events: 3 retries before final success
+    memory.setContentionInjections(3);
+
+    const rec = await enqueueEmergencyRecord({
+      deviceUserId,
+      claimedGate: 'Main Gate',
+      visitorFullName: 'Contended Visitor',
+      declaredAddress: 'Quiapo, Manila',
+      purpose: 'Document Release',
+      destinationOfficeId: officeId,
+      destinationOfficeNameSnapshot: 'Office of the Registrar',
+      officeResolutionStatus: 'resolved_snapshot',
+      officeRequiresApprovalSnapshot: true,
+      idPhysicallyInspected: true,
+      snapshotVersion: 'snap-v1',
+      manifestId: 'manifest-001',
+      leaseStatusAtRecord: 'valid',
+      emergencyExceptionApplied: false,
+      allowEmergencyExceptionPolicy: false,
+    });
+
+    // 3 contention increments + 1 final successful commit = sequence 4
+    expect(rec.localSequence).toBe(4);
+    expect(memory.getAttemptCount()).toBe(4);
+
+    const listed = await listEmergencyRecords(deviceUserId);
+    expect(listed.length).toBe(1);
+    expect(listed[0]?.localSequence).toBe(4);
+    expect(listed[0]?.visitorFullName).toBe('Contended Visitor');
+  });
+
+  it('enforces maximum 10 retry attempts and fails closed when storage contention persists (Requirement R2)', async () => {
+    const memory = createMemoryVaultAdapter();
+    setEmergencyVaultStorageForTest(memory.adapter);
+
+    // Inject 15 contention events (exceeds MAX_RETRIES = 10)
+    memory.setContentionInjections(15);
+
+    await expect(
+      enqueueEmergencyRecord({
+        deviceUserId,
+        claimedGate: 'Main Gate',
+        visitorFullName: 'Persistent Contention Visitor',
+        declaredAddress: 'Ermita, Manila',
+        purpose: 'Meeting',
+        destinationOfficeId: officeId,
+        destinationOfficeNameSnapshot: 'Office of the Registrar',
+        officeResolutionStatus: 'resolved_snapshot',
+        officeRequiresApprovalSnapshot: true,
+        idPhysicallyInspected: true,
+        snapshotVersion: 'snap-v1',
+        manifestId: 'manifest-001',
+        leaseStatusAtRecord: 'valid',
+        emergencyExceptionApplied: false,
+        allowEmergencyExceptionPolicy: false,
+      }),
+    ).rejects.toThrow(/Exceeded maximum retry attempts \(10\)/);
+
+    expect(memory.getAttemptCount()).toBe(10);
+  });
+
+  it('fails closed on QuotaExceededError leaving neither sequence bumped nor record committed (Requirement R2)', async () => {
+    const memory = createMemoryVaultAdapter();
+    setEmergencyVaultStorageForTest(memory.adapter);
+
+    memory.setSimulateQuotaError(true);
+
+    await expect(
+      enqueueEmergencyRecord({
+        deviceUserId,
+        claimedGate: 'Main Gate',
+        visitorFullName: 'Quota Overflow Visitor',
+        declaredAddress: 'Pandacan, Manila',
+        purpose: 'Inquiry',
+        destinationOfficeId: officeId,
+        destinationOfficeNameSnapshot: 'Office of the Registrar',
+        officeResolutionStatus: 'resolved_snapshot',
+        officeRequiresApprovalSnapshot: true,
+        idPhysicallyInspected: true,
+        snapshotVersion: 'snap-v1',
+        manifestId: 'manifest-001',
+        leaseStatusAtRecord: 'valid',
+        emergencyExceptionApplied: false,
+        allowEmergencyExceptionPolicy: false,
+      }),
+    ).rejects.toThrow(/QuotaExceededError/);
+
+    // Atomic rollback invariant: sequence not bumped, no blobs stored
+    expect(memory.getSequencesMap().get(deviceUserId) ?? 0).toBe(0);
+    expect(memory.rawBlobs.size).toBe(0);
+  });
+
+  it('rejects tampered ciphertext and protects visitor PII against forgery or bit flips (Requirement R2)', async () => {
+    const memory = createMemoryVaultAdapter();
+    setEmergencyVaultStorageForTest(memory.adapter);
+
+    const rec = await enqueueEmergencyRecord({
+      deviceUserId,
+      claimedGate: 'Main Gate',
+      visitorFullName: 'Authentic Visitor',
+      declaredAddress: 'Santa Mesa, Manila',
+      purpose: 'Verification',
+      destinationOfficeId: officeId,
+      destinationOfficeNameSnapshot: 'Office of the Registrar',
+      officeResolutionStatus: 'resolved_snapshot',
+      officeRequiresApprovalSnapshot: true,
+      idPhysicallyInspected: true,
+      snapshotVersion: 'snap-v1',
+      manifestId: 'manifest-001',
+      leaseStatusAtRecord: 'valid',
+      emergencyExceptionApplied: false,
+      allowEmergencyExceptionPolicy: false,
+    });
+
+    expect(rec.localSequence).toBe(1);
+
+    // Find stored blob and tamper with ciphertext
+    const storedBlob = Array.from(memory.rawBlobs.values())[0];
+    expect(storedBlob).toBeDefined();
+
+    const rawCiphertext = Buffer.from(storedBlob!.ciphertextB64, 'base64');
+    rawCiphertext[0] = rawCiphertext[0]! ^ 0xff; // bit-flip
+    storedBlob!.ciphertextB64 = rawCiphertext.toString('base64');
+
+    // Attempting to read/decrypt tampered record must fail closed (AES-GCM authentication failure)
+    await expect(listEmergencyRecords(deviceUserId)).rejects.toThrow();
   });
 });

@@ -20,6 +20,19 @@ export default defineConfig({
   },
   projects: [
     {
+      name: 'chromium',
+      use: {
+        ...devices['Desktop Chrome'],
+        permissions: ['camera'],
+        launchOptions: {
+          args: [
+            '--use-fake-device-for-media-stream',
+            '--use-fake-ui-for-media-stream',
+          ],
+        },
+      },
+    },
+    {
       name: 'edge',
       use: {
         ...devices['Desktop Edge'],

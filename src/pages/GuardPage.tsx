@@ -375,7 +375,7 @@ export function GuardPage() {
       </header>
 
       {/* Main Station Content */}
-      <main className="mx-auto max-w-7xl px-4 py-6 sm:px-6">
+      <main id="main-content" className="mx-auto max-w-7xl px-4 py-6 sm:px-6">
         {error && (
           <div className="mb-6 flex items-center gap-3 rounded-xl border border-[var(--color-danger)] bg-[var(--color-danger-light)] p-4 text-sm text-[var(--color-danger-dark)]" role="alert">
             <AlertCircle className="h-5 w-5 flex-shrink-0" />

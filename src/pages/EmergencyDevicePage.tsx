@@ -21,7 +21,7 @@ import { toast } from 'sonner';
 import { useAuth } from '@/hooks/useAuth';
 import { getAccessToken, signOutCurrentActor } from '@/services/auth';
 import { BrandMark } from '@/components/BrandMark';
-import { Button, Card, FormField, Input, Select, StatusBadge, Textarea } from '@/components/ui';
+import { Button, Card, ConfirmModal, FormField, Input, Select, StatusBadge, Textarea } from '@/components/ui';
 import {
   PHYSICAL_ID_ATTESTATION_TEXT,
   evaluateEmergencyManifestLease,
@@ -130,6 +130,8 @@ export function EmergencyDevicePage() {
   const [isOnline, setIsOnline] = useState<boolean>(() =>
     typeof navigator !== 'undefined' ? navigator.onLine : true,
   );
+  const [showSignOutModal, setShowSignOutModal] = useState(false);
+  const [isSigningOut, setIsSigningOut] = useState(false);
   const [manifest, setManifest] = useState<SignedEmergencyManifest | null>(null);
   const [verification, setVerification] = useState<ManifestVerificationResult>({
     leaseStatus: 'no_manifest',
@@ -524,8 +526,16 @@ export function EmergencyDevicePage() {
   };
 
   const handleSignOut = async () => {
-    await signOutCurrentActor();
-    navigate('/login', { replace: true });
+    try {
+      setIsSigningOut(true);
+      await signOutCurrentActor();
+      navigate('/login', { replace: true });
+    } catch (err: unknown) {
+      toast.error('Failed to sign out cleanly.');
+    } finally {
+      setIsSigningOut(false);
+      setShowSignOutModal(false);
+    }
   };
 
   return (
@@ -593,7 +603,7 @@ export function EmergencyDevicePage() {
               type="button"
               variant="ghost"
               size="sm"
-              onClick={() => void handleSignOut()}
+              onClick={() => setShowSignOutModal(true)}
               icon={<LogOut className="h-4 w-4" />}
             >
               Sign Out
@@ -1068,6 +1078,18 @@ export function EmergencyDevicePage() {
           </div>
         </div>
       </main>
+
+      {/* Emergency Device Sign Out Confirmation Modal */}
+      <ConfirmModal
+        isOpen={showSignOutModal}
+        onClose={() => setShowSignOutModal(false)}
+        onConfirm={handleSignOut}
+        title="Sign Out of Emergency Device"
+        description="Are you sure you want to end this emergency intake session? Unsynchronized offline records will remain securely encrypted on this device until next signed in."
+        confirmText="Sign Out Device"
+        isDestructive={true}
+        loading={isSigningOut}
+      />
     </div>
   );
 }

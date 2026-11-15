@@ -176,7 +176,7 @@ export function LegacyGuardPage() {
         </div>
       </header>
 
-      <main className="mx-auto max-w-7xl px-4 py-6 sm:px-6">
+      <main id="main-content" className="mx-auto max-w-7xl px-4 py-6 sm:px-6">
         <div className="mb-6 grid grid-cols-2 gap-4 sm:grid-cols-4">
           <StatCard title="Pending Review" value={pendingTotal} icon={<Clock className="h-5 w-5 text-amber-600" />} />
           <StatCard title="Inside Campus" value={dailyStats?.inside ?? 0} icon={<UserCheck className="h-5 w-5 text-blue-600" />} />

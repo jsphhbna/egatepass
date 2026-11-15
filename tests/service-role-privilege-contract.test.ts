@@ -46,6 +46,7 @@ describe('Service Role Least-Privilege Architecture Contract', () => {
       'office_visit_email_outbox',
       'office_visit_email_verifications',
       'office_visit_events',
+      'office_visit_verification_proofs',
       'office_visits',
       'offices',
       'pass_email_verifications',

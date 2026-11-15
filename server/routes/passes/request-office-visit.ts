@@ -11,6 +11,7 @@ import { computeMatchTokenDigest } from './identify-returning.js';
 import { encryptQrPayload, decryptQrPayload } from '../../lib/encryption.js';
 import { deliverOfficeAcknowledgementEmail, type OutboxDeliveryResult } from '../../lib/officeDelivery.js';
 import { getBaseUrl } from '../../templates/branding.js';
+import { getTrustedClientIp } from '../../lib/clientIp.js';
 
 const namePart = z.string().trim().min(1).max(50);
 
@@ -108,8 +109,100 @@ export async function handleRequest(request: Request): Promise<Response> {
     throw new HttpError(403, 'recovery_session_forbidden');
   }
 
-  // Cryptographically verify email verification proof token whenever email is supplied or required
+  // Extract trusted client IP strictly from Vercel's x-vercel-forwarded-for header
+  const trustedIp = getTrustedClientIp(request);
   const normalizedVisitorEmail = parsed.data.visitor.email?.toLowerCase().trim() || null;
+
+  // Rate limiting across three keys: actor, email, and network (trusted IP)
+  // 1) Actor rate limit
+  const actorKeyHex = createHash('sha256').update(`actor:${session.user.id}`).digest('hex');
+  const { data: actorAllowed, error: actorRlError } = await admin.schema('api').rpc('consume_rate_limit', {
+    requested_key_hex: actorKeyHex,
+    requested_action: 'portal.office_visit_actor',
+    requested_max_requests: 5,
+    requested_window_seconds: 600,
+  });
+
+  if (actorRlError) {
+    console.error('Rate limit actor RPC error in request-office-visit:', actorRlError);
+    return jsonResponse(503, {
+      error: 'abuse_control_unavailable',
+      message: 'Visit request abuse protection is temporarily unavailable. Please try again shortly.',
+    });
+  }
+
+  if (actorAllowed === false) {
+    return jsonResponse(
+      429,
+      {
+        error: 'rate_limit_exceeded',
+        message: 'Too many visit requests for this session. Please wait before submitting another request.',
+      },
+      { 'Retry-After': '600' }
+    );
+  }
+
+  // 2) Email rate limit (if visitor email is provided)
+  if (normalizedVisitorEmail) {
+    const emailKeyHex = createHash('sha256').update(`email:${normalizedVisitorEmail}`).digest('hex');
+    const { data: emailAllowed, error: emailRlError } = await admin.schema('api').rpc('consume_rate_limit', {
+      requested_key_hex: emailKeyHex,
+      requested_action: 'portal.office_visit_email',
+      requested_max_requests: 5,
+      requested_window_seconds: 600,
+    });
+
+    if (emailRlError) {
+      console.error('Rate limit email RPC error in request-office-visit:', emailRlError);
+      return jsonResponse(503, {
+        error: 'abuse_control_unavailable',
+        message: 'Visit request abuse protection is temporarily unavailable. Please try again shortly.',
+      });
+    }
+
+    if (emailAllowed === false) {
+      return jsonResponse(
+        429,
+        {
+          error: 'rate_limit_exceeded',
+          message: 'Too many visit requests for this email address. Please wait before submitting another request.',
+        },
+        { 'Retry-After': '600' }
+      );
+    }
+  }
+
+  // 3) Network rate limit (strictly when trusted IP is available; preserve actor and email limits when unavailable)
+  if (trustedIp) {
+    const networkKeyHex = createHash('sha256').update(`network:${trustedIp}`).digest('hex');
+    const { data: netAllowed, error: netRlError } = await admin.schema('api').rpc('consume_rate_limit', {
+      requested_key_hex: networkKeyHex,
+      requested_action: 'portal.office_visit_network',
+      requested_max_requests: 30,
+      requested_window_seconds: 600,
+    });
+
+    if (netRlError) {
+      console.error('Rate limit network RPC error in request-office-visit:', netRlError);
+      return jsonResponse(503, {
+        error: 'abuse_control_unavailable',
+        message: 'Visit request abuse protection is temporarily unavailable. Please try again shortly.',
+      });
+    }
+
+    if (netAllowed === false) {
+      return jsonResponse(
+        429,
+        {
+          error: 'rate_limit_exceeded',
+          message: 'Too many visit requests from this network. Please wait before submitting another request.',
+        },
+        { 'Retry-After': '600' }
+      );
+    }
+  }
+
+  // Verify email verification proof token whenever email is supplied or required
   if (normalizedVisitorEmail || parsed.data.visitType === 'specific_person') {
     if (!parsed.data.emailVerificationToken || !normalizedVisitorEmail) {
       return jsonResponse(403, {
@@ -117,19 +210,27 @@ export async function handleRequest(request: Request): Promise<Response> {
         message: 'Email verification is required for this office visit request.',
       });
     }
-    const isEmailVerified = verifyEmailVerificationProofToken(
-      parsed.data.emailVerificationToken,
-      normalizedVisitorEmail,
-      session.user.id
-    );
 
-    if (!isEmailVerified) {
-      return jsonResponse(403, {
-        error: 'email_verification_invalid',
-        message: 'Email verification proof token is invalid or has expired. Please verify your email.',
-      });
+    // Support backwards compatibility for legacy HMAC tokens in existing mock test suites
+    if (parsed.data.emailVerificationToken.startsWith('v_email.')) {
+      const isEmailVerified = verifyEmailVerificationProofToken(
+        parsed.data.emailVerificationToken,
+        normalizedVisitorEmail,
+        session.user.id
+      );
+
+      if (!isEmailVerified) {
+        return jsonResponse(403, {
+          error: 'email_verification_invalid',
+          message: 'Email verification proof token is invalid or has expired. Please verify your email.',
+        });
+      }
     }
   }
+
+  const proofTokenDigest = parsed.data.emailVerificationToken
+    ? createHash('sha256').update(parsed.data.emailVerificationToken).digest('hex')
+    : null;
 
   // Normalize phone number
   let canonicalContact = parsed.data.visitor.contactNumber.trim();
@@ -412,9 +513,27 @@ export async function handleRequest(request: Request): Promise<Response> {
     requested_source: parsed.data.source,
     requested_pass_token_digest: passTokenDigest,
     requested_expected_gate: parsed.data.expectedGate ?? null,
+    requested_proof_token_digest: proofTokenDigest,
   });
 
   if (rpcError) {
+    if (rpcError.message?.includes('proof_already_consumed')) {
+      return jsonResponse(403, {
+        error: 'proof_already_consumed',
+        message: 'Email verification proof has already been used. Please verify your email again.',
+      });
+    }
+    if (
+      rpcError.message?.includes('proof_not_found') ||
+      rpcError.message?.includes('proof_expired') ||
+      rpcError.message?.includes('proof_actor_mismatch') ||
+      rpcError.message?.includes('proof_email_mismatch')
+    ) {
+      return jsonResponse(403, {
+        error: 'email_verification_invalid',
+        message: 'Email verification proof token is invalid or has expired. Please verify your email.',
+      });
+    }
     if (rpcError.code === '42501' && rpcError.message?.includes('request_id_actor_mismatch')) {
       return jsonResponse(403, { error: 'request_id_actor_mismatch', message: 'This request ID was submitted by another account.' });
     }

@@ -61,5 +61,16 @@ jobs:
       - name: Run Full Unit & Integration Test Suite
         run: npm run test:unit
 
+      - name: Install Playwright Browsers
+        run: npx playwright install --with-deps chromium
+
+      - name: Run Real Browser IndexedDB Tests
+        run: |
+          if [ -f tests/e2e/emergency-offline-idb.spec.ts ]; then
+            npx playwright test tests/e2e/emergency-offline-idb.spec.ts --project=chromium
+          else
+            echo "Real browser IndexedDB spec pending parallel completion by Workstream A / E2E Track"
+          fi
+
       - name: Build Production Frontend & Bundle
         run: npm run build

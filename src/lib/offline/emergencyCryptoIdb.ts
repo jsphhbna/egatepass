@@ -198,43 +198,166 @@ function createIndexedDbAdapter(): EmergencyVaultStorageAdapter {
     },
     async getLastSequence(deviceUserId: string) {
       const db = await openIndexedDb();
-      const tx = db.transaction(STORE_META, 'readonly');
-      const row = await idbReq<{ id: string; value: number } | undefined>(
-        tx.objectStore(STORE_META).get(`seq:${deviceUserId}`),
-      );
-      db.close();
-      return typeof row?.value === 'number' ? row.value : 0;
-    },
-    async setLastSequence(deviceUserId: string, seq: number) {
-      const db = await openIndexedDb();
-      const tx = db.transaction(STORE_META, 'readwrite');
-      await idbReq(tx.objectStore(STORE_META).put({ id: `seq:${deviceUserId}`, value: seq }));
-      db.close();
-    },
-    async allocateSequenceAndPutRecord(deviceUserId: string, buildBlob: (seq: number) => Promise<EncryptedBlobRecord>) {
-      const db = await openIndexedDb();
       try {
-        const tx = db.transaction([STORE_META, STORE_RECORDS], 'readwrite');
-        const metaStore = tx.objectStore(STORE_META);
-        const recordStore = tx.objectStore(STORE_RECORDS);
-
+        const tx = db.transaction(STORE_META, 'readonly');
         const row = await idbReq<{ id: string; value: number } | undefined>(
-          metaStore.get(`seq:${deviceUserId}`),
+          tx.objectStore(STORE_META).get(`seq:${deviceUserId}`),
         );
-        const prevSeq = typeof row?.value === 'number' ? row.value : 0;
-        const nextSeq = prevSeq + 1;
-        await idbReq(metaStore.put({ id: `seq:${deviceUserId}`, value: nextSeq }));
-        const blob = await buildBlob(nextSeq);
-        await idbReq(recordStore.put(blob));
-        await new Promise<void>((resolve, reject) => {
-          tx.oncomplete = () => resolve();
-          tx.onerror = () => reject(tx.error);
-          tx.onabort = () => reject(tx.error || new Error('Transaction aborted'));
-        });
-        return { seq: nextSeq, blob };
+        return typeof row?.value === 'number' ? row.value : 0;
       } finally {
         db.close();
       }
+    },
+    async setLastSequence(deviceUserId: string, seq: number) {
+      const db = await openIndexedDb();
+      try {
+        const tx = db.transaction(STORE_META, 'readwrite');
+        await idbReq(tx.objectStore(STORE_META).put({ id: `seq:${deviceUserId}`, value: seq }));
+      } finally {
+        db.close();
+      }
+    },
+    async allocateSequenceAndPutRecord(
+      deviceUserId: string,
+      buildBlob: (seq: number) => Promise<EncryptedBlobRecord>,
+    ): Promise<{ seq: number; blob: EncryptedBlobRecord }> {
+      const MAX_RETRIES = 10;
+      const isQuotaError = (err: any): boolean =>
+        Boolean(
+          err &&
+            (err.name === 'QuotaExceededError' ||
+              err.code === 22 ||
+              (typeof err.message === 'string' && err.message.toLowerCase().includes('quota'))),
+        );
+
+      for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
+        // Step 1: Read current sequence using completed read-only transaction
+        const dbReadOnly = await openIndexedDb();
+        let observedSeq = 0;
+        try {
+          const txRead = dbReadOnly.transaction(STORE_META, 'readonly');
+          const row = await idbReq<{ id: string; value: number } | undefined>(
+            txRead.objectStore(STORE_META).get(`seq:${deviceUserId}`),
+          );
+          observedSeq = typeof row?.value === 'number' ? row.value : 0;
+        } finally {
+          dbReadOnly.close();
+        }
+
+        // Step 2: Calculate candidate next sequence
+        const candidateSeq = observedSeq + 1;
+
+        // Step 3: Build and encrypt record OUTSIDE any active IndexedDB transaction
+        const candidateBlob = await buildBlob(candidateSeq);
+
+        // Step 4: Start short read/write transaction covering sequence metadata and record store
+        const db = await openIndexedDb();
+        try {
+          const outcome = await new Promise<'committed' | 'conflict'>((resolve, reject) => {
+            let settled = false;
+            let isAbortedForConflict = false;
+
+            const tx = db.transaction([STORE_META, STORE_RECORDS], 'readwrite');
+            const metaStore = tx.objectStore(STORE_META);
+            const recordStore = tx.objectStore(STORE_RECORDS);
+
+            // Step 5: Read current sequence inside transaction
+            const getReq = metaStore.get(`seq:${deviceUserId}`);
+
+            getReq.onsuccess = () => {
+              const currentSeq = typeof getReq.result?.value === 'number' ? getReq.result.value : 0;
+
+              // Step 6: Compare: if differed, abort and retry with fresh candidate
+              if (currentSeq !== observedSeq) {
+                settled = true;
+                isAbortedForConflict = true;
+                try {
+                  tx.abort();
+                } catch {
+                  // already aborted or closed
+                }
+                resolve('conflict');
+                return;
+              }
+
+              // Step 7: Synchronously queue sequence update and encrypted-record insertion
+              try {
+                metaStore.put({ id: `seq:${deviceUserId}`, value: candidateSeq });
+                recordStore.put(candidateBlob);
+              } catch (putErr: any) {
+                settled = true;
+                try {
+                  tx.abort();
+                } catch {
+                  // ignore
+                }
+                reject(putErr);
+              }
+            };
+
+            getReq.onerror = () => {
+              if (!settled) {
+                settled = true;
+                reject(getReq.error || new Error('idb_get_sequence_failed'));
+              }
+            };
+
+            // Step 8: Await the transaction's actual completion before reporting success
+            tx.oncomplete = () => {
+              if (!settled) {
+                settled = true;
+                resolve('committed');
+              }
+            };
+
+            tx.onabort = () => {
+              if (!settled) {
+                settled = true;
+                if (isAbortedForConflict) {
+                  resolve('conflict');
+                } else {
+                  const err = tx.error;
+                  if (isQuotaError(err)) {
+                    reject(err);
+                  } else {
+                    resolve('conflict');
+                  }
+                }
+              }
+            };
+
+            tx.onerror = () => {
+              if (!settled) {
+                settled = true;
+                const err = tx.error;
+                if (isQuotaError(err)) {
+                  reject(err);
+                } else {
+                  reject(err || new Error('Transaction error in allocateSequenceAndPutRecord'));
+                }
+              }
+            };
+          });
+
+          if (outcome === 'committed') {
+            return { seq: candidateSeq, blob: candidateBlob };
+          }
+
+          // Step 6 (cont): Contention detected, apply jittered backoff before retrying
+          const backoffMs = Math.floor(Math.random() * 20) + 10;
+          await new Promise((r) => setTimeout(r, backoffMs));
+        } catch (err: any) {
+          // If quota error, fail-fast immediately without retrying
+          if (isQuotaError(err)) {
+            throw err;
+          }
+          throw err;
+        } finally {
+          db.close();
+        }
+      }
+
+      throw new Error(`Exceeded maximum retry attempts (${MAX_RETRIES}) allocating emergency sequence due to storage contention.`);
     },
     async clearDeviceVault(deviceUserId: string) {
       const db = await openIndexedDb();
@@ -257,19 +380,36 @@ function getStorage(): EmergencyVaultStorageAdapter {
   return testAdapterOverride ?? createIndexedDbAdapter();
 }
 
+const keyPromiseMap = new Map<string, Promise<CryptoKey>>();
+
 async function getOrCreateAesKey(deviceUserId: string): Promise<CryptoKey> {
   const storage = getStorage();
   const keyId = `aes-gcm-v1:${deviceUserId}`;
   const existing = await storage.getKey(keyId);
   if (existing) return existing;
 
-  const generated = await globalThis.crypto.subtle.generateKey(
-    { name: 'AES-GCM', length: 256 },
-    false,
-    ['encrypt', 'decrypt'],
-  );
-  await storage.putKey(keyId, generated);
-  return generated;
+  const inFlight = keyPromiseMap.get(keyId);
+  if (inFlight) return await inFlight;
+
+  const keyPromise = (async () => {
+    const doubleCheck = await storage.getKey(keyId);
+    if (doubleCheck) return doubleCheck;
+
+    const generated = await globalThis.crypto.subtle.generateKey(
+      { name: 'AES-GCM', length: 256 },
+      false,
+      ['encrypt', 'decrypt'],
+    );
+    await storage.putKey(keyId, generated);
+    return generated;
+  })();
+
+  keyPromiseMap.set(keyId, keyPromise);
+  try {
+    return await keyPromise;
+  } finally {
+    keyPromiseMap.delete(keyId);
+  }
 }
 
 async function encryptJsonPayload(
@@ -455,5 +595,6 @@ export async function getLastSequence(deviceUserId: string): Promise<number> {
 }
 
 export async function clearEmergencyDeviceVault(deviceUserId: string): Promise<void> {
+  keyPromiseMap.delete(`aes-gcm-v1:${deviceUserId}`);
   await getStorage().clearDeviceVault(deviceUserId);
 }

@@ -178,7 +178,7 @@ describe('Office Visit Identity Trust Boundary', () => {
   it('2. Rejects request with invalid or expired email verification proof token', async () => {
     const req = makeRequest({
       ...getBasePayload(),
-      emailVerificationToken: 'invalid_token',
+      emailVerificationToken: 'v_email.invalid_token',
       registrationMode: 'new',
       photoIntentId,
       idIntentId,

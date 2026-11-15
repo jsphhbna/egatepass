@@ -136,8 +136,8 @@ describe('Cross-Guard Actor Isolation & Session Management (P1 Invariants)', () 
     expect(searchB.length).toBe(0);
   });
 
-  it('forced actor switch purges previous guard sensitive data and Guard B starts clean (Requirement 27)', async () => {
-    // Guard A creates offline registration
+  it('preserves Guard A pending records across Guard B session and re-accesses upon Guard A reauthentication (Requirement R3 & ADR-001)', async () => {
+    // 1. Guard A creates offline registration
     await transitionGuardOfflineStore(GUARD_A);
     await saveOfflineRegistrationWithCache(GUARD_A, {
       offlineRegistrationId: 'reg-a-only',
@@ -152,7 +152,23 @@ describe('Cross-Guard Actor Isolation & Session Management (P1 Invariants)', () 
       action: 'approved',
     });
 
-    // Guard B logs in and runs maintenance
+    // Verify Guard A has 1 pending registration
+    const initialRegsA = await getOfflineRegistrations(GUARD_A, 'pending');
+    expect(initialRegsA.length).toBe(1);
+    expect(initialRegsA[0]?.offlineRegistrationId).toBe('reg-a-only');
+
+    // 2. Guard B logs in on same device
+    await transitionGuardOfflineStore(GUARD_B);
+    expect(await getActiveGuardActorId()).toBe(GUARD_B);
+
+    // Guard B has 0 records and cannot see Guard A's data
+    const regsBInitial = await getOfflineRegistrations(GUARD_B, 'pending');
+    expect(regsBInitial.length).toBe(0);
+
+    const searchB = await searchCachedVisitors(GUARD_B, 'GuardA');
+    expect(searchB.length).toBe(0);
+
+    // Guard B runs offline maintenance - must NOT sync or destroy Guard A's records
     mockGetSession.mockResolvedValue({
       data: {
         session: {
@@ -163,18 +179,52 @@ describe('Cross-Guard Actor Isolation & Session Management (P1 Invariants)', () 
     });
 
     const res = await runOfflineMaintenance();
-    // Guard B has 0 records, so 0 registrations synced
     expect(res.summary.registrationsSynced).toBe(0);
 
-    // Requirement 27: Guard A's data was purged during forced actor transition to Guard B
-    const regsA = await getOfflineRegistrations(GUARD_A, 'pending');
-    expect(regsA.length).toBe(0);
+    // Invariant (R3): Guard A's pending registration is preserved intact
+    const regsAPreserved = await getOfflineRegistrations(GUARD_A, 'pending');
+    expect(regsAPreserved.length).toBe(1);
+    expect(regsAPreserved[0]?.offlineRegistrationId).toBe('reg-a-only');
 
+    // 3. Guard B creates their own offline registration
+    await saveOfflineRegistrationWithCache(GUARD_B, {
+      offlineRegistrationId: 'reg-b-only',
+      visitor: {
+        firstName: 'GuardB',
+        lastName: 'Visitor',
+        contactNumber: '09170000002',
+        purpose: 'Test B',
+        visitDate: '2026-10-29',
+      },
+      occurredAt: new Date().toISOString(),
+      action: 'approved',
+    });
+
+    // Guard B has 1 pending registration
     const regsB = await getOfflineRegistrations(GUARD_B, 'pending');
-    expect(regsB.length).toBe(0);
+    expect(regsB.length).toBe(1);
+    expect(regsB[0]?.offlineRegistrationId).toBe('reg-b-only');
+
+    // 4. Guard A reauthenticates on next shift
+    await transitionGuardOfflineStore(GUARD_A);
+    expect(await getActiveGuardActorId()).toBe(GUARD_A);
+
+    // Guard A re-accesses their original pending registration
+    const regsARestored = await getOfflineRegistrations(GUARD_A, 'pending');
+    expect(regsARestored.length).toBe(1);
+    expect(regsARestored[0]?.offlineRegistrationId).toBe('reg-a-only');
+    expect(regsARestored[0]?.visitor.firstName).toBe('GuardA');
+
+    // Guard A cannot access Guard B's registration
+    expect(regsARestored.some((r) => r.offlineRegistrationId === 'reg-b-only')).toBe(false);
+
+    // Guard B's records also remain preserved in storage
+    const regsBStillPreserved = await getOfflineRegistrations(GUARD_B, 'pending');
+    expect(regsBStillPreserved.length).toBe(1);
+    expect(regsBStillPreserved[0]?.offlineRegistrationId).toBe('reg-b-only');
   });
 
-  it('clearAllGuardOfflineData removes all offline data across stores', async () => {
+  it('clearAllGuardOfflineData locks/clears session metadata and cached visitors while preserving pending offline records (Requirement R3 & ADR-001)', async () => {
     await transitionGuardOfflineStore(GUARD_A);
     await saveOfflineRegistrationWithCache(GUARD_A, {
       offlineRegistrationId: 'reg-to-clear',
@@ -189,12 +239,30 @@ describe('Cross-Guard Actor Isolation & Session Management (P1 Invariants)', () 
       action: 'approved',
     });
 
+    // Verify record exists before sign-out
+    const countsBefore = await getPendingSyncCount(GUARD_A);
+    expect(countsBefore.total).toBe(1);
+
+    // Sign out clears session metadata and cached passes
     await clearAllGuardOfflineData();
 
-    const counts = await getPendingSyncCount(GUARD_A);
-    expect(counts.total).toBe(0);
-    const regs = await getOfflineRegistrations(GUARD_A);
-    expect(regs.length).toBe(0);
+    // Session metadata is cleared
+    expect(await getActiveGuardActorId()).toBeNull();
+
+    // Cached visitors are wiped from operational cache
+    const searchAfter = await searchCachedVisitors(GUARD_A, 'Clear');
+    expect(searchAfter.length).toBe(0);
+
+    // Invariant (R3): Pending unsynchronized offline registration is preserved in storage
+    const regsAfter = await getOfflineRegistrations(GUARD_A);
+    expect(regsAfter.length).toBe(1);
+    expect(regsAfter[0]?.offlineRegistrationId).toBe('reg-to-clear');
+
+    // Reauthenticating as Guard A immediately restores full access to pending sync count
+    await transitionGuardOfflineStore(GUARD_A);
+    expect(await getActiveGuardActorId()).toBe(GUARD_A);
+    const countsRestored = await getPendingSyncCount(GUARD_A);
+    expect(countsRestored.total).toBe(1);
   });
 
   it('fails closed when attempting to save without valid actorId (Requirement 25)', async () => {

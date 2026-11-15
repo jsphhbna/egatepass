@@ -748,7 +748,7 @@ export function OfficeDashboardPage() {
         </div>
       </header>
 
-      <main className="mx-auto max-w-7xl px-4 py-6 sm:px-6">
+      <main id="main-content" className="mx-auto max-w-7xl px-4 py-6 sm:px-6">
         {/* No Office Assigned Banner */}
         {noOfficeAssigned && (
           <div className="mb-6 rounded-2xl border border-amber-300 bg-amber-50 p-6 text-center space-y-3 shadow-xs">

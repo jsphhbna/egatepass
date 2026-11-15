@@ -276,7 +276,7 @@ export function EntryScanPage() {
   const config = statusConfig[status];
 
   return (
-    <main className="flex min-h-dvh flex-col items-center justify-center bg-[var(--color-scanner-canvas)] px-3 py-5 sm:px-6 sm:py-8">
+    <main id="main-content" className="flex min-h-dvh flex-col items-center justify-center bg-[var(--color-scanner-canvas)] px-3 py-5 sm:px-6 sm:py-8">
       <div
         className="mb-5 cursor-default text-center"
 

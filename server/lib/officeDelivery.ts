@@ -87,18 +87,60 @@ export async function deliverOfficeEmail(
     };
   }
 
-  if (!claim?.outbox_id) {
-    return { status: 'pending', providerMessageId: null, error: null };
-  }
+  if (!claim?.outbox_id || !claim?.claim_id) {
+    const { data: existingOutbox } = await admin
+      .from('office_visit_email_outbox')
+      .select('delivery_status, provider_message_id')
+      .eq('office_visit_id', params.visitId)
+      .eq('email_type', params.emailType)
+      .maybeSingle();
 
-  // If lease was expired, claim_id is returned as null and state is transitioned to reconciliation_required
-  if (!claim.claim_id) {
+    if (existingOutbox?.delivery_status === 'sent' || existingOutbox?.delivery_status === 'delivered') {
+      return {
+        status: existingOutbox.delivery_status,
+        providerMessageId: existingOutbox.provider_message_id || null,
+        error: null,
+      };
+    }
+
+    if (!claim?.outbox_id) {
+      return { status: 'pending', providerMessageId: null, error: null };
+    }
+
+    // If lease was expired, claim_id is returned as null and state is transitioned to reconciliation_required
     return {
       status: 'reconciliation_required',
       providerMessageId: null,
       error: 'email_delivery_outcome_unknown_reconciliation_required',
       reconciliationRequired: true,
     };
+  }
+
+  // Check 24-hour Resend idempotency window: never blindly retry past 24 hours
+  const { data: outboxMeta } = await admin
+    .from('office_visit_email_outbox')
+    .select('created_at, last_attempt_at, attempt_count')
+    .eq('id', claim.outbox_id)
+    .maybeSingle();
+
+  if (outboxMeta) {
+    const createdAtMs = new Date(outboxMeta.created_at).getTime();
+    const isPast24h = Date.now() - createdAtMs > 24 * 60 * 60 * 1000;
+    if (isPast24h && (outboxMeta.attempt_count > 1 || outboxMeta.last_attempt_at)) {
+      await admin.schema('api').rpc('record_office_visit_email_result', {
+        requested_outbox_id: claim.outbox_id,
+        requested_claim_id: claim.claim_id,
+        requested_status: 'reconciliation_required',
+        requested_provider_message_id: null,
+        requested_error: 'resend_idempotency_window_expired_reconciliation_required',
+      });
+      return {
+        status: 'reconciliation_required',
+        providerMessageId: null,
+        error: 'resend_idempotency_window_expired_reconciliation_required',
+        reconciliationRequired: true,
+      };
+    }
   }
 
   // 2. Prepare content
@@ -375,10 +417,14 @@ export async function deliverOfficeAcknowledgementEmail(
         visitId: params.visitId,
         error: claimErr.message,
       }));
+      const isReconciliation =
+        claimErr.message?.includes('outcome_unknown') ||
+        claimErr.message?.includes('reconciliation_required');
       return {
-        status: 'failed',
+        status: isReconciliation ? 'reconciliation_required' : 'failed',
         providerMessageId: null,
         error: claimErr.message,
+        reconciliationRequired: isReconciliation,
       };
     }
 
@@ -397,8 +443,58 @@ export async function deliverOfficeAcknowledgementEmail(
   }
 
   if (!claim?.outbox_id || !claim?.claim_id) {
+    const { data: existingAck } = await admin
+      .from('office_visit_acknowledgement_outbox')
+      .select('delivery_status, provider_message_id')
+      .eq('office_visit_id', params.visitId)
+      .maybeSingle();
+
+    if (existingAck?.delivery_status === 'sent' || existingAck?.delivery_status === 'delivered') {
+      return {
+        status: existingAck.delivery_status,
+        providerMessageId: existingAck.provider_message_id || null,
+        error: null,
+      };
+    }
+
+    if (existingAck?.delivery_status === 'reconciliation_required' || existingAck?.delivery_status === 'unknown') {
+      return {
+        status: 'reconciliation_required',
+        providerMessageId: null,
+        error: 'email_delivery_outcome_unknown_reconciliation_required',
+        reconciliationRequired: true,
+      };
+    }
+
     // Already sent or processing under active lease
     return { status: 'pending', providerMessageId: null, error: null };
+  }
+
+  // Check 24-hour Resend idempotency window: never blindly retry past 24 hours
+  const { data: ackMeta } = await admin
+    .from('office_visit_acknowledgement_outbox')
+    .select('created_at, last_attempt_at, attempt_count')
+    .eq('id', claim.outbox_id)
+    .maybeSingle();
+
+  if (ackMeta) {
+    const createdAtMs = new Date(ackMeta.created_at).getTime();
+    const isPast24h = Date.now() - createdAtMs > 24 * 60 * 60 * 1000;
+    if (isPast24h && (ackMeta.attempt_count > 1 || ackMeta.last_attempt_at)) {
+      await admin.schema('api').rpc('record_office_visit_acknowledgement_result', {
+        requested_outbox_id: claim.outbox_id,
+        requested_claim_id: claim.claim_id,
+        requested_status: 'reconciliation_required',
+        requested_provider_message_id: null,
+        requested_error: 'resend_idempotency_window_expired_reconciliation_required',
+      });
+      return {
+        status: 'reconciliation_required',
+        providerMessageId: null,
+        error: 'resend_idempotency_window_expired_reconciliation_required',
+        reconciliationRequired: true,
+      };
+    }
   }
 
   // 2. Prepare content
