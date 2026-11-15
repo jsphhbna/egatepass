@@ -692,6 +692,7 @@ describe('Permanent PostgreSQL Migration Chain & Schema Contracts (PGlite)', () 
       const claims = JSON.stringify({
         sub,
         role,
+        aal: 'aal2',
         amr: amr.map((method) => ({ method, timestamp: Math.floor(Date.now() / 1000) })),
       });
       await db.exec(`set request.jwt.claims = '${claims}';`);
@@ -1052,7 +1053,7 @@ describe('Permanent PostgreSQL Migration Chain & Schema Contracts (PGlite)', () 
     async function asGuard() {
       await db.exec(`
         set role authenticated;
-        set request.jwt.claims = '{"sub": "${GUARD_UID}", "role": "authenticated", "amr": [{"method": "password"}]}';
+        set request.jwt.claims = '{"sub": "${GUARD_UID}", "role": "authenticated", "aal": "aal2", "amr": [{"method": "password"}]}';
       `);
     }
 
@@ -1060,7 +1061,7 @@ describe('Permanent PostgreSQL Migration Chain & Schema Contracts (PGlite)', () 
     async function asAdmin() {
       await db.exec(`
         set role authenticated;
-        set request.jwt.claims = '{"sub": "${ADMIN_UID}", "role": "authenticated", "amr": [{"method": "password"}]}';
+        set request.jwt.claims = '{"sub": "${ADMIN_UID}", "role": "authenticated", "aal": "aal2", "amr": [{"method": "password"}]}';
       `);
     }
 
@@ -1870,7 +1871,7 @@ describe('Permanent PostgreSQL Migration Chain & Schema Contracts (PGlite)', () 
     // As Guard: verify all legacy operational RPCs throw 42501 'administrator required'
     await db.exec(`
       set role authenticated;
-      set request.jwt.claims = '{"sub": "${guardId}", "role": "authenticated", "amr": [{"method": "password"}]}';
+      set request.jwt.claims = '{"sub": "${guardId}", "role": "authenticated", "aal": "aal2", "amr": [{"method": "password"}]}';
     `);
 
     // 1. guard_dashboard
@@ -1909,7 +1910,7 @@ describe('Permanent PostgreSQL Migration Chain & Schema Contracts (PGlite)', () 
     // Under Admin: guard_dashboard succeeds
     await db.exec(`
       set role authenticated;
-      set request.jwt.claims = '{"sub": "${adminId}", "role": "authenticated", "amr": [{"method": "password"}]}';
+      set request.jwt.claims = '{"sub": "${adminId}", "role": "authenticated", "aal": "aal2", "amr": [{"method": "password"}]}';
     `);
     const adminDash = await db.query('select api.guard_dashboard();');
     expect(adminDash.rows.length).toBe(1);
@@ -1946,7 +1947,7 @@ describe('Permanent PostgreSQL Migration Chain & Schema Contracts (PGlite)', () 
     // 1. As legacy guard: guard_offline upload intent rejected with 42501 'administrator required'
     await db.exec(`
       set role authenticated;
-      set request.jwt.claims = '{"sub": "${guardId}", "role": "authenticated", "amr": [{"method": "password"}]}';
+      set request.jwt.claims = '{"sub": "${guardId}", "role": "authenticated", "aal": "aal2", "amr": [{"method": "password"}]}';
     `);
     await expect(
       db.query("select * from api.create_upload_intent('guard_offline', 'photo', 'image/jpeg');")
@@ -1955,7 +1956,7 @@ describe('Permanent PostgreSQL Migration Chain & Schema Contracts (PGlite)', () 
     // 2. As admin: guard_offline upload intent succeeds
     await db.exec(`
       set role authenticated;
-      set request.jwt.claims = '{"sub": "${adminId}", "role": "authenticated", "amr": [{"method": "password"}]}';
+      set request.jwt.claims = '{"sub": "${adminId}", "role": "authenticated", "aal": "aal2", "amr": [{"method": "password"}]}';
     `);
     const adminIntent = await db.query("select * from api.create_upload_intent('guard_offline', 'photo', 'image/jpeg');");
     expect(adminIntent.rows.length).toBe(1);
@@ -1963,7 +1964,7 @@ describe('Permanent PostgreSQL Migration Chain & Schema Contracts (PGlite)', () 
     // 3. As superadmin: guard_offline upload intent succeeds
     await db.exec(`
       set role authenticated;
-      set request.jwt.claims = '{"sub": "${superAdminId}", "role": "authenticated", "amr": [{"method": "password"}]}';
+      set request.jwt.claims = '{"sub": "${superAdminId}", "role": "authenticated", "aal": "aal2", "amr": [{"method": "password"}]}';
     `);
     const superIntent = await db.query("select * from api.create_upload_intent('guard_offline', 'photo', 'image/jpeg');");
     expect(superIntent.rows.length).toBe(1);

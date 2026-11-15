@@ -259,6 +259,40 @@ describe('target repository and Vercel routing contract', () => {
       expect(unauthHostRes.success).toBe(false);
       expect(unauthHostRes.error).toContain('not an authorized hostname');
 
+      // 3b. Missing, empty, or whitespace hostname in response rejection (Strict fail-closed)
+      globalThis.fetch = async () =>
+        new Response(
+          JSON.stringify({
+            success: true,
+            action: 'visit_registration',
+          }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } }
+        );
+
+      const missingHostRes = await verifyTurnstileToken({
+        token: 'valid-test-token',
+        secretKey: 'mock-secret-key',
+      });
+      expect(missingHostRes.success).toBe(false);
+      expect(missingHostRes.error).toContain('missing required hostname');
+
+      globalThis.fetch = async () =>
+        new Response(
+          JSON.stringify({
+            success: true,
+            hostname: '   ',
+            action: 'visit_registration',
+          }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } }
+        );
+
+      const emptyHostRes = await verifyTurnstileToken({
+        token: 'valid-test-token',
+        secretKey: 'mock-secret-key',
+      });
+      expect(emptyHostRes.success).toBe(false);
+      expect(emptyHostRes.error).toContain('missing required hostname');
+
       // 4. Action mismatch rejection
       globalThis.fetch = async () =>
         new Response(
