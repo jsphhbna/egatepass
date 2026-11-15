@@ -556,6 +556,13 @@ describe('Mandatory TOTP MFA (AAL2) Across Authorization Boundaries', () => {
           );
         $$ language sql stable;
 
+        create or replace function auth.jwt() returns jsonb as $$
+          select case
+            when nullif(current_setting('request.jwt.claims', true), '') is null then '{}'::jsonb
+            else current_setting('request.jwt.claims', true)::jsonb
+          end
+        $$ language sql stable;
+
         create or replace function auth.role() returns text as $$
           select coalesce(
             nullif(current_setting('request.jwt.claim.role', true), ''),

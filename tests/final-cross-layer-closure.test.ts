@@ -63,9 +63,18 @@ async function setupSupabaseEmulation(db: PGlite) {
       );
     $$ language sql stable;
 
+    create or replace function auth.jwt() returns jsonb as $$
+      select case
+        when nullif(current_setting('request.jwt.claims', true), '') is null then '{}'::jsonb
+        else current_setting('request.jwt.claims', true)::jsonb
+      end
+    $$ language sql stable;
+
+
     grant usage on schema auth to anon, authenticated, service_role;
     grant execute on function auth.uid() to anon, authenticated, service_role;
     grant execute on function auth.role() to anon, authenticated, service_role;
+    grant execute on function auth.jwt() to anon, authenticated, service_role;
 
     create table if not exists storage.buckets (
       id text primary key,

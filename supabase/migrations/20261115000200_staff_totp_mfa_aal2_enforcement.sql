@@ -6,22 +6,7 @@
 --              actors, and emergency-device flows without applying blanket aal2.
 -- =============================================================================
 
--- 1. Ensure auth.jwt() helper is available across all environments (PostgREST, test emulators)
-create or replace function auth.jwt()
-returns jsonb
-language sql
-stable
-as $$
-  select case
-    when nullif(current_setting('request.jwt.claims', true), '') is null then '{}'::jsonb
-    else current_setting('request.jwt.claims', true)::jsonb
-  end
-$$;
-
-grant usage on schema auth to anon, authenticated, service_role;
-grant execute on function auth.jwt() to anon, authenticated, service_role;
-
--- 2. Update private.current_staff_role() to enforce aal2 for active human staff
+-- 1. Update private.current_staff_role() to enforce aal2 for active human staff
 -- Human staff sessions at aal1 (password-only) MUST NOT resolve to an operational staff role.
 create or replace function private.current_staff_role()
 returns public.staff_role
@@ -54,7 +39,7 @@ $$;
 revoke all on function private.current_staff_role() from public, anon;
 grant execute on function private.current_staff_role() to authenticated;
 
--- 3. Update private.has_staff_role(allowed public.staff_role[])
+-- 2. Update private.has_staff_role(allowed public.staff_role[])
 -- Evaluates to true strictly when the active staff profile matches an allowed role
 -- AND the caller possesses a verified aal2 token claim.
 create or replace function private.has_staff_role(allowed public.staff_role[])
