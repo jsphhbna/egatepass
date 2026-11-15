@@ -37,6 +37,17 @@ export function TotpEnrollModal({ isOpen, onEnrolled, onCancel }: TotpEnrollModa
       setIsLoading(true);
       setError(null);
       try {
+        // Clean up any stale unverified TOTP factors first to ensure clean enrollment
+        try {
+          const { data: factorsData } = await supabase!.auth.mfa.listFactors();
+          const unverified = factorsData?.all?.filter((f) => f.factor_type === 'totp' && f.status === 'unverified') ?? [];
+          for (const factor of unverified) {
+            await supabase!.auth.mfa.unenroll({ factorId: factor.id });
+          }
+        } catch (cleanupErr) {
+          console.warn('Could not clean up stale unverified factors:', cleanupErr);
+        }
+
         const { data, error: enrollError } = await supabase!.auth.mfa.enroll({
           factorType: 'totp',
           issuer: 'EARIST E-GatePass',
@@ -47,9 +58,19 @@ export function TotpEnrollModal({ isOpen, onEnrolled, onCancel }: TotpEnrollModa
 
         if (data?.totp) {
           const rawQr = data.totp.qr_code;
-          const qrCode = rawQr.startsWith('data:')
-            ? rawQr
-            : `data:image/svg+xml;utf-8,${encodeURIComponent(rawQr)}`;
+          let qrCode = rawQr;
+          if (rawQr.startsWith('data:image/svg+xml')) {
+            const commaIdx = rawQr.indexOf(',');
+            if (commaIdx !== -1) {
+              const prefix = rawQr.slice(0, commaIdx);
+              const content = rawQr.slice(commaIdx + 1);
+              if (content.trim().startsWith('<svg')) {
+                qrCode = `${prefix},${encodeURIComponent(content)}`;
+              }
+            }
+          } else if (rawQr.trim().startsWith('<svg')) {
+            qrCode = `data:image/svg+xml;utf-8,${encodeURIComponent(rawQr)}`;
+          }
 
           setEnrollData({
             id: data.id,
@@ -87,25 +108,28 @@ export function TotpEnrollModal({ isOpen, onEnrolled, onCancel }: TotpEnrollModa
     setError(null);
 
     try {
-      // Attempt verification via official challengeAndVerify
       const { error: verifyError } = await supabase.auth.mfa.challengeAndVerify({
         factorId: enrollData.id,
         code: trimmed,
       });
 
       if (verifyError) {
-        // Fallback to separate challenge + verify if needed
-        const { data: challengeData, error: challengeError } = await supabase.auth.mfa.challenge({
-          factorId: enrollData.id,
-        });
-        if (challengeError) throw challengeError;
+        const errMsg = verifyError.message?.toLowerCase() || '';
+        if (errMsg.includes('expired')) {
+          setError('The verification challenge has expired. Please try entering a new code.');
+        } else if (errMsg.includes('invalid') || errMsg.includes('code') || errMsg.includes('mfa')) {
+          setError('Invalid verification code. Please check your authenticator app and try again.');
+        } else {
+          setError(verifyError.message || 'Verification failed. Check the code and try again.');
+        }
+        return;
+      }
 
-        const { error: secondVerifyError } = await supabase.auth.mfa.verify({
-          factorId: enrollData.id,
-          challengeId: challengeData.id,
-          code: trimmed,
-        });
-        if (secondVerifyError) throw secondVerifyError;
+      // Verify that session has reached AAL2
+      const { data: aalData, error: aalError } = await supabase.auth.mfa.getAuthenticatorAssuranceLevel();
+      if (aalError || aalData?.currentLevel !== 'aal2') {
+        setError('Verification completed but session could not be elevated to AAL2. Please try again.');
+        return;
       }
 
       toast.success('Two-factor authentication successfully configured.');
@@ -116,6 +140,17 @@ export function TotpEnrollModal({ isOpen, onEnrolled, onCancel }: TotpEnrollModa
     } finally {
       setIsVerifying(false);
     }
+  }
+
+  async function handleCancel() {
+    if (enrollData?.id && supabase) {
+      try {
+        await supabase.auth.mfa.unenroll({ factorId: enrollData.id });
+      } catch (unenrollErr) {
+        console.warn('Could not unenroll cancelled factor:', unenrollErr);
+      }
+    }
+    onCancel();
   }
 
   function handleCopySecret() {
@@ -129,7 +164,7 @@ export function TotpEnrollModal({ isOpen, onEnrolled, onCancel }: TotpEnrollModa
   return (
     <Modal
       isOpen={isOpen}
-      onClose={onCancel}
+      onClose={handleCancel}
       preventClose={true}
       title="Set Up Two-Factor Authentication"
       description="Protect your staff account with mandatory TOTP authenticator."
@@ -207,7 +242,7 @@ export function TotpEnrollModal({ isOpen, onEnrolled, onCancel }: TotpEnrollModa
               <Button
                 type="button"
                 variant="secondary"
-                onClick={onCancel}
+                onClick={handleCancel}
                 disabled={isVerifying}
               >
                 Sign Out / Cancel

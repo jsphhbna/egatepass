@@ -26,7 +26,7 @@ export function ProtectedRoute({
   loginPath = '/login',
   unauthorizedPath = '/login',
 }: ProtectedRouteProps) {
-  const { status, role } = useAuth();
+  const { status, role, requiresMfa } = useAuth();
 
   if (status === 'loading') {
     return (
@@ -42,6 +42,11 @@ export function ProtectedRoute({
 
   if (status === 'requires_password_change') {
     return <ForcePasswordChange />;
+  }
+
+  // Prevent human staff who have not satisfied mandatory AAL2 MFA from entering protected routes
+  if (requiresMfa) {
+    return <Navigate to={loginPath} replace />;
   }
 
   if (!allowedRoles.includes(role)) {

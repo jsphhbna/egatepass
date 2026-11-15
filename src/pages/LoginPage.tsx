@@ -16,7 +16,7 @@ import type { AuthRole } from '@/types';
 export function LoginPage() {
   const navigate = useNavigate();
   const location = useLocation();
-  const { status, role, requiresMfa, serviceStatus, serviceMessage } = useAuth();
+  const { status, role, requiresMfa, serviceStatus, serviceMessage, refresh } = useAuth();
   const idleTimeoutNotice = new URLSearchParams(location.search).get('reason') === 'idle_timeout';
   const [identity, setIdentity] = useState('');
   const [password, setPassword] = useState('');
@@ -224,17 +224,26 @@ export function LoginPage() {
       });
 
       if (verifyError) {
-        const { data: challengeData, error: challengeError } = await supabase.auth.mfa.challenge({
-          factorId: totpFactorId,
-        });
-        if (challengeError) throw challengeError;
+        const errMsg = verifyError.message?.toLowerCase() || '';
+        if (errMsg.includes('expired')) {
+          setTotpError('The authentication challenge has expired. Please try entering a new code.');
+        } else if (errMsg.includes('invalid') || errMsg.includes('code') || errMsg.includes('mfa')) {
+          setTotpError('Invalid authenticator code. Please check your authenticator app and try again.');
+        } else {
+          setTotpError(verifyError.message || 'Verification failed. Please try again.');
+        }
+        return;
+      }
 
-        const { error: secondVerifyError } = await supabase.auth.mfa.verify({
-          factorId: totpFactorId,
-          challengeId: challengeData.id,
-          code: trimmed,
-        });
-        if (secondVerifyError) throw secondVerifyError;
+      // Explicitly check that session is now elevated to AAL2
+      const { data: aalData, error: aalError } = await supabase.auth.mfa.getAuthenticatorAssuranceLevel();
+      if (aalError || aalData?.currentLevel !== 'aal2') {
+        throw new Error('MFA verification could not elevate session to AAL2. Please try again.');
+      }
+
+      // Refresh application auth state to observe AAL2 before redirecting
+      if (refresh) {
+        await refresh();
       }
 
       toast.success('Authentication code verified.');
@@ -259,6 +268,9 @@ export function LoginPage() {
     setPendingRole(null);
     if (supabase) {
       await supabase.auth.signOut();
+    }
+    if (refresh) {
+      await refresh();
     }
   }
 
@@ -350,7 +362,10 @@ export function LoginPage() {
 
       <TotpEnrollModal
         isOpen={mfaStep === 'enroll'}
-        onEnrolled={() => {
+        onEnrolled={async () => {
+          if (refresh) {
+            await refresh();
+          }
           setMfaStep('none');
           const targetRole = role || pendingRole;
           if (targetRole) {

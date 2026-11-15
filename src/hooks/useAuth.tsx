@@ -58,6 +58,17 @@ async function resolveRole(user: User): Promise<{ role: AuthRole; userData: Auth
     }
     if (claims?.aal === 'aal1' || claims?.aal === 'aal2') {
       aal = claims.aal;
+    } else {
+      try {
+        const { data: aalData } = await supabase.auth.mfa.getAuthenticatorAssuranceLevel();
+        if (aalData?.currentLevel === 'aal1') {
+          aal = 'aal1';
+        } else if (aalData?.currentLevel === 'aal2') {
+          aal = 'aal2';
+        }
+      } catch {
+        // Fallback silently if assurance level check is unsupported
+      }
     }
   }
 
