@@ -501,6 +501,7 @@ describe('REPAIR GROUP A: Password Recovery Authorization & Credential Governanc
       sub: SUPERADMIN_ID,
       email: 'superadmin@earist.edu.ph',
       role: 'authenticated',
+      aal: 'aal2',
       amr: [{ method: 'password', timestamp: Date.now() }],
     });
 
@@ -664,6 +665,7 @@ describe('REPAIR GROUP A: Password Recovery Authorization & Credential Governanc
       sub: SUPERADMIN_ID,
       email: 'superadmin@earist.edu.ph',
       role: 'authenticated',
+      aal: 'aal2',
       amr: [{ method: 'password', timestamp: Date.now() }],
     });
 
@@ -712,6 +714,7 @@ describe('REPAIR GROUP A: Password Recovery Authorization & Credential Governanc
       sub: SUPERADMIN_ID,
       email: 'superadmin@earist.edu.ph',
       role: 'authenticated',
+      aal: 'aal2',
       amr: [{ method: 'password', timestamp: Date.now() }],
     });
 

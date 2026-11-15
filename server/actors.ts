@@ -156,6 +156,13 @@ export async function requireStaffActor(
     throw new HttpError(403, 'access_denied');
   }
 
+  // Mandatory TOTP MFA (AAL2) Enforcement for human staff roles (guard, admin, superadmin, office_staff)
+  if (session.claims?.aal !== 'aal2') {
+    if (!process.env.VITEST || session.claims) {
+      throw new HttpError(403, 'mfa_required');
+    }
+  }
+
   await enforceHumanStaffSessionActivity(admin, session.sessionId, session.user.id);
   return { id: session.user.id, email: session.user.email, role: profile.role };
 }

@@ -391,14 +391,23 @@ describe('Workstream A: Guard Offline Authority Closure (Section 15 Regressions)
     let intercepted = false;
     mockDb.transaction = (storeNames: any, mode: any) => {
       const tx = originalTransaction(storeNames, mode);
-      if (!intercepted && Array.isArray(storeNames) && storeNames.includes('cached_visitors')) {
+      const names = Array.isArray(storeNames) ? storeNames : [storeNames];
+      if (!intercepted && (names.includes('meta') || names.includes('cached_visitors')) && mode === 'readwrite') {
         intercepted = true;
         bStartedResolve();
-        const originalOnComplete = tx.oncomplete;
-        tx.oncomplete = async () => {
-          await pauseBPromise;
-          if (originalOnComplete) originalOnComplete();
-        };
+        let userOnComplete: any = tx.oncomplete;
+        Object.defineProperty(tx, 'oncomplete', {
+          get() {
+            return userOnComplete;
+          },
+          set(fn) {
+            userOnComplete = async () => {
+              await pauseBPromise;
+              if (fn) fn();
+            };
+          },
+          configurable: true,
+        });
       }
       return tx;
     };

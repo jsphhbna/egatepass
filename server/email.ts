@@ -22,6 +22,8 @@ export interface SendEmailResult {
 
 export type EmailSender = (payload: SendEmailPayload) => Promise<SendEmailResult>;
 
+export const RESEND_IDEMPOTENCY_WINDOW_MS = 24 * 60 * 60 * 1000; // 24-hour Resend provider-side idempotency limit
+
 export class EmailDeliveryError extends Error {
   constructor(
     public readonly code: string,

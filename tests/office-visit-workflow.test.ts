@@ -140,6 +140,33 @@ describe('Office Visit Workflow & Approval Subsystem', () => {
         sessionType: 'anonymous',
       });
 
+      const mockAdminClient = {
+        rpc: vi.fn((fnName: string) => {
+          if (fnName === 'consume_rate_limit') {
+            return Promise.resolve({ data: true, error: null });
+          }
+          return Promise.resolve({ data: null, error: null });
+        }),
+        schema: vi.fn(() => ({
+          rpc: vi.fn((fnName: string) => {
+            if (fnName === 'consume_rate_limit') {
+              return Promise.resolve({ data: true, error: null });
+            }
+            return Promise.resolve({ data: null, error: null });
+          }),
+        })),
+        from: vi.fn(() => ({
+          select: vi.fn().mockReturnThis(),
+          eq: vi.fn().mockReturnThis(),
+          maybeSingle: vi.fn().mockResolvedValue({ data: null, error: null }),
+        })),
+      };
+
+      vi.spyOn(supabaseModule, 'getServerSupabaseClients').mockReturnValue({
+        admin: mockAdminClient as any,
+        anon: {} as any,
+      });
+
       const payload = {
         requestId: '55555555-5555-4555-8555-555555555555',
         source: 'portal',

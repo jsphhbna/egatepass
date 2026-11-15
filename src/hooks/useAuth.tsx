@@ -7,19 +7,26 @@ import { isUserRole } from '@/lib/permissions';
 
 const unavailableMessage = getSupabaseAvailabilityMessage();
 
-const initialState: AuthState = {
+export interface ExtendedAuthState extends AuthState {
+  aal: 'aal1' | 'aal2' | null;
+  requiresMfa: boolean;
+}
+
+const initialState: ExtendedAuthState = {
   status: supabase ? 'loading' : 'unauthenticated',
   uid: null,
   role: null,
   userData: null,
+  aal: null,
+  requiresMfa: false,
   serviceStatus: supabase ? 'available' : 'unavailable',
   serviceMessage: unavailableMessage,
   refresh: async () => {},
 };
 
-const AuthContext = createContext<AuthState>(initialState);
+const AuthContext = createContext<ExtendedAuthState>(initialState);
 
-export function useAuth(): AuthState {
+export function useAuth(): ExtendedAuthState {
   return useContext(AuthContext);
 }
 
@@ -35,9 +42,11 @@ function parseTokenClaims(token: string): Record<string, unknown> | null {
   }
 }
 
-async function resolveRole(user: User): Promise<{ role: AuthRole; userData: AuthActor | null }> {
-  if (!supabase) return { role: null, userData: null };
-  if (user.is_anonymous === true) return { role: 'visitor', userData: null };
+async function resolveRole(user: User): Promise<{ role: AuthRole; userData: AuthActor | null; aal: 'aal1' | 'aal2' | null }> {
+  if (!supabase) return { role: null, userData: null, aal: null };
+  if (user.is_anonymous === true) return { role: 'visitor', userData: null, aal: null };
+
+  let aal: 'aal1' | 'aal2' | null = null;
 
   // Safety invariant: A recovery session must NEVER be treated as an operational staff session
   const { data: sessionData } = await supabase.auth.getSession();
@@ -45,7 +54,10 @@ async function resolveRole(user: User): Promise<{ role: AuthRole; userData: Auth
     const claims = parseTokenClaims(sessionData.session.access_token);
     const isRecovery = Array.isArray(claims?.amr) && claims.amr.some((m: any) => m?.method === 'recovery');
     if (isRecovery) {
-      return { role: null, userData: null };
+      return { role: null, userData: null, aal: null };
+    }
+    if (claims?.aal === 'aal1' || claims?.aal === 'aal2') {
+      aal = claims.aal;
     }
   }
 
@@ -58,10 +70,10 @@ async function resolveRole(user: User): Promise<{ role: AuthRole; userData: Auth
   if (staffResult.error) throw staffResult.error;
   if (staffResult.data) {
     const profile = staffResult.data;
-    if (!profile.active || !isUserRole(profile.role)) return { role: null, userData: null };
+    if (!profile.active || !isUserRole(profile.role)) return { role: null, userData: null, aal: null };
     if (profile.role === 'guard') {
       await supabase.auth.signOut();
-      return { role: null, userData: null };
+      return { role: null, userData: null, aal: null };
     }
     const userData: StaffAuthActor = {
       kind: 'staff',
@@ -72,7 +84,7 @@ async function resolveRole(user: User): Promise<{ role: AuthRole; userData: Auth
       mustChangePassword: profile.must_change_password,
       privacyAcceptedAt: profile.privacy_accepted_at,
     };
-    return { role: profile.role, userData };
+    return { role: profile.role, userData, aal };
   }
 
   const deviceResult = await supabase
@@ -92,10 +104,10 @@ async function resolveRole(user: User): Promise<{ role: AuthRole; userData: Auth
       gate: device.gate,
       status: device.status,
     };
-    return { role: device.type, userData };
+    return { role: device.type, userData, aal };
   }
 
-  return { role: null, userData: null };
+  return { role: null, userData: null, aal: null };
 }
 
 interface AuthProviderProps {
@@ -103,7 +115,7 @@ interface AuthProviderProps {
 }
 
 export function AuthProvider({ children }: AuthProviderProps) {
-  const [state, setState] = useState<AuthState>(initialState);
+  const [state, setState] = useState<ExtendedAuthState>(initialState);
   const authGenerationRef = useRef(0);
 
   useEffect(() => {
@@ -118,7 +130,7 @@ export function AuthProvider({ children }: AuthProviderProps) {
       }
 
       try {
-        const { role, userData } = await resolveRole(user);
+        const { role, userData, aal } = await resolveRole(user);
         if (!active || generation !== authGenerationRef.current) return;
 
         if (!role) {
@@ -142,12 +154,17 @@ export function AuthProvider({ children }: AuthProviderProps) {
           userData?.kind === 'staff' &&
           userData.mustChangePassword === true;
 
+        const isHumanStaff = userData?.kind === 'staff';
+        const requiresMfa = isHumanStaff && aal !== 'aal2';
+
         if (active && generation === authGenerationRef.current) {
           setState({
             status: requiresPasswordChange ? 'requires_password_change' : 'authenticated',
             uid: user.id,
             role,
             userData,
+            aal,
+            requiresMfa,
             serviceStatus: 'available',
             serviceMessage: null,
             refresh,

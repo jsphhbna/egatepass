@@ -80,6 +80,7 @@ export function createKioskPassSchema(schedulingDaysAhead: number = MAX_VISIT_AD
       .regex(/^[0-9+\-() ]+$/, 'Invalid contact number format'),
     purpose: z
       .string()
+      .trim()
       .min(3, 'Please describe your purpose')
       .max(300, 'Purpose description is too long'),
     visitDate: z

@@ -12,7 +12,7 @@ function makeJwt(payload: Record<string, unknown>): string {
 describe('PATCH 4: Admin User Partial-Success Contract Tests', () => {
   const SUPERADMIN_ID = '00000000-0000-4000-a000-000000000001';
   const TARGET_GUARD_ID = '00000000-0000-4000-a000-000000000088';
-  const VALID_BEARER = `Bearer ${makeJwt({ sub: SUPERADMIN_ID, role: 'authenticated' })}`;
+  const VALID_BEARER = `Bearer ${makeJwt({ sub: SUPERADMIN_ID, role: 'authenticated', aal: 'aal2' })}`;
 
   const adminUsersSrc = readFileSync('src/pages/AdminUsers.tsx', 'utf8');
 

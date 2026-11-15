@@ -159,16 +159,37 @@ describe('target repository and Vercel routing contract', () => {
     }
   });
 
-  it('enforces native Supabase Auth Turnstile bot protection architecture with zero standalone siteverify', () => {
+  it('enforces server-side Turnstile siteverify library with fail-closed semantics and zero unauthenticated siteverify route exposure', async () => {
     const fs = require('node:fs');
-    expect(fs.existsSync('server/lib/turnstile.ts')).toBe(false);
+    expect(fs.existsSync('server/lib/turnstile.ts')).toBe(true);
 
-    // Verify no standalone siteverify route exists in route matrix
+    const { verifyTurnstileToken, isValidTurnstileHostname } = await import('../server/lib/turnstile');
+    expect(typeof verifyTurnstileToken).toBe('function');
+    expect(typeof isValidTurnstileHostname).toBe('function');
+
+    // Verify hostname validation
+    expect(isValidTurnstileHostname('egatepass.tech')).toBe(true);
+    expect(isValidTurnstileHostname('www.egatepass.tech')).toBe(true);
+    expect(isValidTurnstileHostname('localhost')).toBe(true);
+    expect(isValidTurnstileHostname('127.0.0.1')).toBe(true);
+    expect(isValidTurnstileHostname('egatepass.vercel.app')).toBe(true);
+    expect(isValidTurnstileHostname('egatepass-git-preview.vercel.app')).toBe(true);
+    expect(isValidTurnstileHostname('malicious-site.com')).toBe(false);
+    expect(isValidTurnstileHostname('unauthorized.vercel.app')).toBe(false);
+
+    // Verify fail-closed behavior on missing token or unconfigured secret
+    const failMissingToken = await verifyTurnstileToken({ token: '', secretKey: 'test-secret' });
+    expect(failMissingToken.success).toBe(false);
+
+    const failMissingSecret = await verifyTurnstileToken({ token: 'test-token', secretKey: '' });
+    expect(failMissingSecret.success).toBe(false);
+
+    // Verify no standalone public siteverify route exists in route matrix
     for (const route of ROUTE_CONTRACT_MATRIX) {
       expect(route.path).not.toContain('siteverify');
     }
 
-    // Verify vercel.json rewrites contain no siteverify route
+    // Verify vercel.json rewrites contain no public siteverify route
     const vercelConfig = JSON.parse(readFileSync('vercel.json', 'utf8'));
     const siteverifyRewrite = vercelConfig.rewrites?.find(
       (r: any) => r.source?.includes('siteverify') || r.destination?.includes('siteverify')
@@ -180,5 +201,121 @@ describe('target repository and Vercel routing contract', () => {
     expect(capabilitiesSrc).toContain('siteKeyConfigured: turnstileSiteKeyConfigured');
     expect(capabilitiesSrc).not.toContain('serverVerifierConfigured');
     expect(capabilitiesSrc).not.toContain('verified:');
+  });
+
+  it('validates Turnstile server-side Siteverify mock interactions, hostname checks, action checks, and fail-closed error handling', async () => {
+    const { verifyTurnstileToken } = await import('../server/lib/turnstile');
+
+    const originalFetch = globalThis.fetch;
+    try {
+      // 1. Success case with valid hostname and action
+      globalThis.fetch = async () =>
+        new Response(
+          JSON.stringify({
+            success: true,
+            hostname: 'egatepass.tech',
+            action: 'visit_registration',
+            cdata: 'session-123',
+            challenge_ts: '2026-11-15T00:00:00Z',
+          }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } }
+        );
+
+      const successRes = await verifyTurnstileToken({
+        token: 'valid-test-token',
+        secretKey: 'mock-secret-key',
+        expectedHostname: 'egatepass.tech',
+        expectedAction: 'visit_registration',
+      });
+      expect(successRes.success).toBe(true);
+      expect(successRes.hostname).toBe('egatepass.tech');
+      expect(successRes.action).toBe('visit_registration');
+      expect(successRes.cdata).toBe('session-123');
+
+      // 2. Hostname mismatch rejection
+      const hostMismatchRes = await verifyTurnstileToken({
+        token: 'valid-test-token',
+        secretKey: 'mock-secret-key',
+        expectedHostname: 'egatepass-git-preview.vercel.app',
+      });
+      expect(hostMismatchRes.success).toBe(false);
+      expect(hostMismatchRes.error).toContain('Turnstile hostname mismatch');
+
+      // 3. Unauthorized hostname in response rejection
+      globalThis.fetch = async () =>
+        new Response(
+          JSON.stringify({
+            success: true,
+            hostname: 'phishing-site.com',
+            action: 'visit_registration',
+          }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } }
+        );
+
+      const unauthHostRes = await verifyTurnstileToken({
+        token: 'valid-test-token',
+        secretKey: 'mock-secret-key',
+      });
+      expect(unauthHostRes.success).toBe(false);
+      expect(unauthHostRes.error).toContain('not an authorized hostname');
+
+      // 4. Action mismatch rejection
+      globalThis.fetch = async () =>
+        new Response(
+          JSON.stringify({
+            success: true,
+            hostname: 'egatepass.tech',
+            action: 'other_action',
+          }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } }
+        );
+
+      const actionMismatchRes = await verifyTurnstileToken({
+        token: 'valid-test-token',
+        secretKey: 'mock-secret-key',
+        expectedAction: 'visit_registration',
+      });
+      expect(actionMismatchRes.success).toBe(false);
+      expect(actionMismatchRes.error).toContain('Turnstile action mismatch');
+
+      // 5. Cloudflare rejected token (invalid-input-response)
+      globalThis.fetch = async () =>
+        new Response(
+          JSON.stringify({
+            success: false,
+            'error-codes': ['invalid-input-response', 'timeout-or-duplicate'],
+          }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } }
+        );
+
+      const cfRejectedRes = await verifyTurnstileToken({
+        token: 'expired-token',
+        secretKey: 'mock-secret-key',
+      });
+      expect(cfRejectedRes.success).toBe(false);
+      expect(cfRejectedRes.errorCodes).toContain('invalid-input-response');
+
+      // 6. Network failure / HTTP error fail-closed
+      globalThis.fetch = async () => new Response('Internal Server Error', { status: 500 });
+      const httpErrorRes = await verifyTurnstileToken({
+        token: 'any-token',
+        secretKey: 'mock-secret-key',
+      });
+      expect(httpErrorRes.success).toBe(false);
+      expect(httpErrorRes.error).toContain('Cloudflare Siteverify HTTP error: 500');
+
+      // 7. Network exception fail-closed
+      globalThis.fetch = async () => {
+        throw new Error('Connection reset by peer');
+      };
+      const networkExRes = await verifyTurnstileToken({
+        token: 'any-token',
+        secretKey: 'mock-secret-key',
+      });
+      expect(networkExRes.success).toBe(false);
+      expect(networkExRes.error).toContain('Connection reset by peer');
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
   });
 });

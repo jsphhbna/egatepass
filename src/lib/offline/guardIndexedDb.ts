@@ -209,31 +209,17 @@ async function prepareActorStoreInternal(actorId: string): Promise<void> {
   if (!actorId || typeof actorId !== 'string' || !actorId.trim()) {
     throw new Error('actorId required to prepare Guard store');
   }
-  const db = await openDatabase();
   const currentActor = await getMeta<string>('guard_store_actor_id');
-
-  if (!currentActor) {
-    await setMeta('guard_store_actor_id', actorId);
-    return;
-  }
 
   if (currentActor === actorId) {
     return;
   }
 
-  // Different actor: Clear ALL sensitive stores (cached_visitors, offline_registrations, offline_events, meta)
-  // to prevent Guard B from inheriting Guard A's PII, evidence blobs, or audit records
-  await new Promise<void>((resolve, reject) => {
-    const tx = db.transaction(['cached_visitors', 'offline_registrations', 'offline_events', 'meta'], 'readwrite');
-    tx.objectStore('cached_visitors').clear();
-    tx.objectStore('offline_registrations').clear();
-    tx.objectStore('offline_events').clear();
-    tx.objectStore('meta').clear();
-    tx.oncomplete = () => resolve();
-    tx.onerror = () => reject(tx.error);
-    tx.onabort = () => reject(tx.error || new Error('Actor store switch transaction aborted'));
-  });
-
+  // Non-destructive transition (Requirement R3 & ADR-001):
+  // Update active guard actor binding without deleting offline records.
+  // Pending unsynchronized records in 'offline_registrations' and 'offline_events'
+  // are preserved and tagged by actorId. When a different guard signs in, Guard A's
+  // pending records remain safe and become re-accessible when Guard A re-authenticates.
   await setMeta('guard_store_actor_id', actorId);
 }
 
@@ -262,19 +248,19 @@ export async function transitionGuardOfflineStore(nextActorId: string | null): P
 }
 
 /**
- * Atomically clears all Guard-sensitive IndexedDB stores on explicit logout (Requirement 12).
+ * Locks and clears session metadata and cached visitor snapshots on logout (Requirement R3 & ADR-001).
+ * In accordance with non-destructive multi-tenant partitioning, pending unsynchronized
+ * registrations and events are NOT deleted, ensuring offline data remains intact.
  */
 export async function clearAllGuardOfflineData(): Promise<void> {
   const db = await openDatabase();
   return new Promise((resolve, reject) => {
-    const tx = db.transaction(['cached_visitors', 'offline_registrations', 'offline_events', 'meta'], 'readwrite');
+    const tx = db.transaction(['cached_visitors', 'meta'], 'readwrite');
     tx.objectStore('cached_visitors').clear();
-    tx.objectStore('offline_registrations').clear();
-    tx.objectStore('offline_events').clear();
-    tx.objectStore('meta').clear();
+    tx.objectStore('meta').delete('guard_store_actor_id');
     tx.oncomplete = () => resolve();
     tx.onerror = () => reject(tx.error);
-    tx.onabort = () => reject(tx.error || new Error('Clear all data transaction aborted'));
+    tx.onabort = () => reject(tx.error || new Error('Clear session metadata transaction aborted'));
   });
 }
 
@@ -464,8 +450,12 @@ export async function atomicReplaceCachedVisitors(actorId: string, visitors: Cac
         const currentCached = (currentReq.result as CachedVisitorPass[]) || [];
         const preservedLocalVisitors = currentCached.filter((v) => v && v.actorId === actorId && unsyncedRegIds.has(v.id));
 
-        // Clear store and re-populate with preserved local visitors + new server snapshot
-        visitorStore.clear();
+        // Non-destructively remove only this actor's non-preserved cached visitors
+        for (const v of currentCached) {
+          if (v && v.actorId === actorId && !unsyncedRegIds.has(v.id)) {
+            visitorStore.delete(v.id);
+          }
+        }
 
         for (const localV of preservedLocalVisitors) {
           visitorStore.put({ ...localV, actorId });

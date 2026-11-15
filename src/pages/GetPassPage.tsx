@@ -161,9 +161,9 @@ export function createGetPassSchema(schedulingDaysAhead: number = MAX_VISIT_ADVA
         .optional(),
       purpose: z
         .string()
-        .max(300, 'Purpose description is too long')
-        .optional()
-        .or(z.literal('')),
+        .trim()
+        .min(3, 'Please describe the purpose of your visit (minimum 3 characters)')
+        .max(300, 'Purpose description is too long'),
       visitDate: z
         .string()
         .optional()
@@ -1178,18 +1178,30 @@ export function GetPassPage() {
         return;
       }
       if (!specificPurpose || specificPurpose.trim().length < 3) {
+        setError('purpose', {
+          type: 'manual',
+          message: 'Please specify the purpose of your appointment (minimum 3 characters).',
+        });
         toast.error('Please specify the purpose of your appointment (minimum 3 characters).');
         return;
       }
+      clearErrors('purpose');
       if (!emailVerificationToken) {
         toast.error('Email verification is required for specific-person appointments. Please verify your email.');
         return;
       }
     } else {
-      if (!vals.purpose || vals.purpose.trim().length < 3) {
+      const isPurposeValid = await trigger('purpose');
+      if (!isPurposeValid || !vals.purpose || vals.purpose.trim().length < 3) {
+        setError('purpose', {
+          type: 'manual',
+          message: 'Please describe the purpose of your visit (minimum 3 characters).',
+        });
         toast.error('Please describe the purpose of your visit (minimum 3 characters).');
         return;
       }
+      clearErrors('purpose');
+      setValue('purpose', vals.purpose.trim());
     }
 
     if (!vals.visitDate) {

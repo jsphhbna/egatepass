@@ -23,6 +23,10 @@ export function VisitPurposeField({ purposes, value, error, onChange }: VisitPur
   const detailsRequiredError = requiresDetails && details.trim().length < 2
     ? 'Please provide the requested details.'
     : undefined;
+  const customPurposeError = isCustom && (value ? value.trim().length < 3 : true)
+    ? 'Please describe the purpose of your visit (minimum 3 characters).'
+    : undefined;
+  const effectiveError = detailsRequiredError || (isCustom ? customPurposeError : undefined) || error;
 
   function updateDetails(nextDetails: string) {
     setDetails(nextDetails);
@@ -59,14 +63,14 @@ export function VisitPurposeField({ purposes, value, error, onChange }: VisitPur
       label="Purpose of Visit"
       requirement="required"
       hint={!isCustom && !requiresDetails ? 'Choose the closest reason, or select Other.' : undefined}
-      error={detailsRequiredError || error}
+      error={effectiveError}
     >
       <div className="space-y-3">
         <Select
           id="visit-purpose-choice"
           value={choice}
           onChange={(event) => handleChoiceChange(event.target.value)}
-          error={Boolean(detailsRequiredError || error)}
+          error={Boolean(effectiveError)}
           required
           aria-required="true"
         >
@@ -91,7 +95,7 @@ export function VisitPurposeField({ purposes, value, error, onChange }: VisitPur
               rows={3}
               maxLength={detailsMaxLength}
               placeholder={isCustom ? 'Briefly describe your purpose of visit' : 'Enter the requested details'}
-              error={Boolean(detailsRequiredError || error)}
+              error={Boolean(effectiveError)}
               required
               aria-required="true"
             />

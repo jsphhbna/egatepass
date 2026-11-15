@@ -29,6 +29,7 @@
   /* EARIST Brand — Red as Primary */
   --color-brand: #7A0A0A;
   --color-brand-light: #F8EEEE;
+  --color-brand-subtle: #F8EEEE;
   --color-brand-dark: #5F0808;
   --color-action: #E60000;
   --color-action-dark: #B30000;
@@ -69,6 +70,7 @@
   --color-success-dark: #0F6B3F;
   --color-danger: hsl(0, 72%, 51%);
   --color-danger-light: hsl(0, 72%, 95%);
+  --color-danger-subtle: hsl(0, 72%, 95%);
   --color-danger-dark: #B91C1C;
   --color-danger-border: #FECACA;
   --color-warning: hsl(38, 92%, 50%);
@@ -111,6 +113,7 @@
   color-scheme: light;
   --color-brand: #7A0A0A;
   --color-brand-light: #F8EEEE;
+  --color-brand-subtle: #F8EEEE;
   --color-brand-dark: #5F0808;
   --color-action: #E60000;
   --color-action-dark: #B30000;
@@ -141,6 +144,7 @@
   --color-success-dark: #0F6B3F;
   --color-danger: hsl(0, 72%, 51%);
   --color-danger-light: hsl(0, 72%, 95%);
+  --color-danger-subtle: hsl(0, 72%, 95%);
   --color-danger-dark: #B91C1C;
   --color-danger-border: #FECACA;
   --color-warning: hsl(38, 92%, 50%);

@@ -1,12 +1,12 @@
-import { randomInt, createHash, createHmac } from 'node:crypto';
-import { isIP } from 'node:net';
+import { randomInt, createHash, createHmac, randomBytes } from 'node:crypto';
 import { z } from 'zod';
 import { getServerSupabaseClients } from '../../supabase.js';
 import { getVerifiedSessionContext, HttpError } from '../../actors.js';
 import { jsonResponse, readBearerToken } from '../../http.js';
 import { sendResendEmail } from '../../email.js';
 import { renderVerificationCodeEmail } from '../../templates/index.js';
-import { createEmailVerificationProofToken, getOfficeTokenSecret } from '../../lib/office.js';
+import { getOfficeTokenSecret } from '../../lib/office.js';
+import { getTrustedClientIp } from '../../lib/clientIp.js';
 
 const emailRegex = /^[a-zA-Z0-9.!#$%&'*+/=?^_`{|}~-]+@[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?(?:\.[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)+$/;
 
@@ -23,19 +23,6 @@ const verifyCodeSchema = z.object({
 });
 
 const requestSchema = z.discriminatedUnion('action', [requestCodeSchema, verifyCodeSchema]);
-
-function extractTrustedClientIp(request: Request): string | null {
-  const cfIp = request.headers.get('cf-connecting-ip')?.trim();
-  if (cfIp && isIP(cfIp)) return cfIp;
-
-  const vercelIp = request.headers.get('x-vercel-forwarded-for')?.split(',')[0]?.trim();
-  if (vercelIp && isIP(vercelIp)) return vercelIp;
-
-  const realIp = request.headers.get('x-real-ip')?.trim();
-  if (realIp && isIP(realIp)) return realIp;
-
-  return null;
-}
 
 function deriveIpRateLimitHmac(trustedIp: string | null): string | null {
   if (!trustedIp) return null;
@@ -79,7 +66,7 @@ export async function handleRequest(request: Request): Promise<Response> {
     const rawCode = randomInt(100000, 1000000).toString();
     const codeHash = createHash('sha256').update(`${rawCode}:${secret}`).digest('hex');
     const expiresAt = new Date(Date.now() + 15 * 60 * 1000).toISOString();
-    const trustedIp = extractTrustedClientIp(request);
+    const trustedIp = getTrustedClientIp(request);
     const ipHmac = deriveIpRateLimitHmac(trustedIp);
 
     // Atomic rate-limiting check and challenge allocation via database RPC
@@ -153,14 +140,34 @@ export async function handleRequest(request: Request): Promise<Response> {
       });
     }
 
-    // Mint actor-bound proof token signed strictly with OFFICE_VISIT_HMAC_SECRET
-    const proofToken = createEmailVerificationProofToken(normalizedEmail, session.user.id);
+    // Generate an opaque random 32-byte hex token (64 hex characters)
+    const rawProofToken = randomBytes(32).toString('hex');
+    const proofDigest = createHash('sha256').update(rawProofToken).digest('hex');
+    const expiresAt = new Date(Date.now() + 60 * 60 * 1000).toISOString(); // 1 hour TTL
+
+    // Store proof digest in office_visit_verification_proofs
+    const { error: insertProofErr } = await admin
+      .from('office_visit_verification_proofs')
+      .insert({
+        proof_digest: proofDigest,
+        actor_id: session.user.id,
+        email: normalizedEmail,
+        expires_at: expiresAt,
+      });
+
+    if (insertProofErr) {
+      console.error('Failed to persist office visit verification proof digest:', insertProofErr);
+      return jsonResponse(500, {
+        error: 'proof_storage_failed',
+        message: 'Failed to record email verification proof. Please try again.',
+      });
+    }
 
     return jsonResponse(200, {
       ok: true,
       email: normalizedEmail,
-      proofToken,
-      emailVerificationToken: proofToken,
+      proofToken: rawProofToken,
+      emailVerificationToken: rawProofToken,
       message: 'Email verified successfully.',
     });
   }
