@@ -2087,13 +2087,17 @@ runSuite('True PostgreSQL Concurrency, Canonical Approval Integrity & Email Reco
       }
     });
 
-    async function queryOutboxAs(actorClaims: { sub?: string; role?: string; amr?: any[] }): Promise<string[]> {
+    async function queryOutboxAs(actorClaims: { sub?: string; role?: string; amr?: any[]; aal?: string | null }): Promise<string[]> {
       const client = await pool.connect();
       try {
         const role = actorClaims.role || 'authenticated';
+        const claims: Record<string, any> = { aal: 'aal2', ...actorClaims };
+        if (actorClaims.aal === null) {
+          delete claims.aal;
+        }
         await client.query(`set role ${role === 'anon' ? 'anon' : 'authenticated'};`);
-        await client.query(`select set_config('request.jwt.claims', $1, false);`, [JSON.stringify(actorClaims)]);
-        await client.query(`select set_config('request.jwt.claim.sub', $1, false);`, [actorClaims.sub || '']);
+        await client.query(`select set_config('request.jwt.claims', $1, false);`, [JSON.stringify(claims)]);
+        await client.query(`select set_config('request.jwt.claim.sub', $1, false);`, [claims.sub || '']);
         await client.query(`select set_config('request.jwt.claim.role', $1, false);`, [role]);
 
         const res = await client.query(`select id::text from public.office_visit_email_outbox order by id;`);
@@ -2137,6 +2141,16 @@ runSuite('True PostgreSQL Concurrency, Canonical Approval Integrity & Email Reco
         role: 'authenticated',
         amr: [{ method: 'recovery', timestamp: Math.floor(Date.now() / 1000) }],
       });
+      expect(rows).toHaveLength(0);
+    });
+
+    it('6b. Active staff at AAL1 cannot read outbox rows', async () => {
+      const rows = await queryOutboxAs({ sub: assignedStaffId, role: 'authenticated', aal: 'aal1' });
+      expect(rows).toHaveLength(0);
+    });
+
+    it('6c. Active staff with missing AAL claim cannot read outbox rows (fail-closed)', async () => {
+      const rows = await queryOutboxAs({ sub: assignedStaffId, role: 'authenticated', aal: null });
       expect(rows).toHaveLength(0);
     });
 
