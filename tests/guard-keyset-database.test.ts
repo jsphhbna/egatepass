@@ -123,7 +123,7 @@ describe('Guard Keyset Pagination Database Contracts & Mutation Invariants (PGli
   async function asGuard(db: PGlite) {
     await db.exec(`
       set role authenticated;
-      set request.jwt.claims = '{"sub": "${GUARD_UID}", "role": "authenticated", "amr": [{"method": "password"}]}';
+      set request.jwt.claims = '{"sub": "${GUARD_UID}", "role": "authenticated", "aal": "aal2", "amr": [{"method": "password"}]}';
     `);
   }
 
