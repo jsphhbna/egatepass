@@ -144,7 +144,7 @@ describe('Offline Database Integration & Lifecycle Invariants (DB-T01 - DB-T10)'
   async function asGuard() {
     await db.exec(`
       set role authenticated;
-      set request.jwt.claims = '{"sub": "${GUARD_ID}", "role": "authenticated"}';
+      set request.jwt.claims = '{"sub": "${GUARD_ID}", "role": "authenticated", "aal": "aal2"}';
     `);
   }
 

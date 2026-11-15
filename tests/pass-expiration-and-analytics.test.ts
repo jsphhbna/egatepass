@@ -240,7 +240,7 @@ describe('PATCH 2 & 3: Authoritative Pass Expiration and Truthful Metric Event C
     // Switch to Guard actor
     await db.exec(`
       set role authenticated;
-      set request.jwt.claims = '{"sub": "${GUARD_UID}", "role": "authenticated", "amr": [{"method": "password"}]}';
+      set request.jwt.claims = '{"sub": "${GUARD_UID}", "role": "authenticated", "aal": "aal2", "amr": [{"method": "password"}]}';
     `);
 
     const res = await db.query<{ guard_dashboard: any }>('select api.guard_dashboard(10, 0);');

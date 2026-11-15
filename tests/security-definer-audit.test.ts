@@ -411,7 +411,12 @@ describe('SECURITY DEFINER Function Audit & Hardening Contract (14 API Functions
     cb: () => Promise<T>
   ): Promise<T> {
     const role = claims.role || (sub ? 'authenticated' : 'anon');
-    const fullClaims = { sub, role, ...claims };
+    const isStaff = Boolean(sub && (sub === superadminId || sub === adminId || sub === guardId));
+    const aal = claims.aal !== undefined ? claims.aal : (isStaff ? 'aal2' : undefined);
+    const fullClaims: Record<string, any> = { sub, role, ...claims };
+    if (aal !== undefined) {
+      fullClaims.aal = aal;
+    }
     const claimsJson = JSON.stringify(fullClaims).replace(/'/g, "''");
 
     await db.exec(`

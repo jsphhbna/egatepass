@@ -128,23 +128,29 @@ export async function verifyTurnstileToken(
       };
     }
 
-    // Hostname Validation
-    if (data.hostname) {
-      if (!isValidTurnstileHostname(data.hostname)) {
-        return {
-          success: false,
-          hostname: data.hostname,
-          error: `Turnstile hostname rejected: ${data.hostname} is not an authorized hostname`,
-        };
-      }
+    // Hostname Validation (Strict fail-closed: hostname must be non-empty and authorized)
+    const rawHostname = data.hostname?.trim();
+    if (!rawHostname) {
+      return {
+        success: false,
+        error: 'Turnstile verification response missing required hostname',
+      };
+    }
 
-      if (options.expectedHostname && data.hostname.toLowerCase() !== options.expectedHostname.trim().toLowerCase()) {
-        return {
-          success: false,
-          hostname: data.hostname,
-          error: `Turnstile hostname mismatch: expected ${options.expectedHostname}, got ${data.hostname}`,
-        };
-      }
+    if (!isValidTurnstileHostname(rawHostname)) {
+      return {
+        success: false,
+        hostname: rawHostname,
+        error: `Turnstile hostname rejected: ${rawHostname} is not an authorized hostname`,
+      };
+    }
+
+    if (options.expectedHostname && rawHostname.toLowerCase() !== options.expectedHostname.trim().toLowerCase()) {
+      return {
+        success: false,
+        hostname: rawHostname,
+        error: `Turnstile hostname mismatch: expected ${options.expectedHostname}, got ${rawHostname}`,
+      };
     }
 
     // Action Validation

@@ -639,6 +639,17 @@ describe('Mandatory TOTP MFA (AAL2) Across Authorization Boundaries', () => {
       const aal1HasRoleRes = await db.query(`select private.has_staff_role(array['admin', 'superadmin']::public.staff_role[]) as allowed;`);
       expect(aal1HasRoleRes.rows[0].allowed).toBe(false);
 
+      // Case A2: Staff JWT with missing or null AAL claim fails closed (no fail-open)
+      await db.exec(`
+        set request.jwt.claims = '{"sub": "${TEST_ADMIN_ID}", "role": "authenticated"}';
+      `);
+
+      const missingAalRoleRes = await db.query(`select private.current_staff_role() as role;`);
+      expect(missingAalRoleRes.rows[0].role).toBeNull();
+
+      const missingAalHasRoleRes = await db.query(`select private.has_staff_role(array['admin', 'superadmin']::public.staff_role[]) as allowed;`);
+      expect(missingAalHasRoleRes.rows[0].allowed).toBe(false);
+
       // Case B: Staff JWT at AAL2
       await db.exec(`
         set request.jwt.claims = '{"sub": "${TEST_ADMIN_ID}", "role": "authenticated", "aal": "aal2"}';
@@ -658,5 +669,292 @@ describe('Mandatory TOTP MFA (AAL2) Across Authorization Boundaries', () => {
       const portalActorRes = await db.query(`select private.is_portal_actor() as is_portal;`);
       expect(portalActorRes.rows[0].is_portal).toBe(true);
     }, 60000);
+  });
+
+  describe('7. Direct SECURITY DEFINER RPC Fail-Closed AAL2 Enforcement (PGlite)', () => {
+    it('verifies guard_recover_pass_action, guard_search_pending_queue, and guard_sync_offline_event enforce fail-closed AAL2', async () => {
+      const db = new PGlite();
+      const MIGRATIONS_DIR = join(process.cwd(), 'supabase', 'migrations');
+
+      // Setup minimal Supabase emulation
+      await db.exec(`
+        create schema if not exists auth;
+        create schema if not exists storage;
+        create schema if not exists private;
+        create schema if not exists api;
+
+        do $$
+        begin
+          if not exists (select 1 from pg_roles where rolname = 'anon') then create role anon nologin; end if;
+          if not exists (select 1 from pg_roles where rolname = 'authenticated') then create role authenticated nologin; end if;
+          if not exists (select 1 from pg_roles where rolname = 'service_role') then create role service_role nologin; end if;
+        end $$;
+
+        create table if not exists auth.users (
+          id uuid primary key,
+          email text,
+          email_confirmed_at timestamptz,
+          encrypted_password text,
+          is_anonymous boolean default false,
+          raw_app_meta_data jsonb default '{}'::jsonb,
+          raw_user_meta_data jsonb default '{}'::jsonb,
+          created_at timestamptz default now(),
+          updated_at timestamptz default now()
+        );
+
+        create or replace function auth.uid() returns uuid as $$
+          select coalesce(
+            nullif(current_setting('request.jwt.claim.sub', true), '')::uuid,
+            (nullif(current_setting('request.jwt.claims', true), '')::jsonb ->> 'sub')::uuid
+          );
+        $$ language sql stable;
+
+        create or replace function auth.jwt() returns jsonb as $$
+          select case
+            when nullif(current_setting('request.jwt.claims', true), '') is null then '{}'::jsonb
+            else current_setting('request.jwt.claims', true)::jsonb
+          end
+        $$ language sql stable;
+
+        create or replace function auth.role() returns text as $$
+          select coalesce(
+            nullif(current_setting('request.jwt.claim.role', true), ''),
+            (nullif(current_setting('request.jwt.claims', true), '')::jsonb ->> 'role'),
+            'authenticated'::text
+          );
+        $$ language sql stable;
+
+        create table if not exists storage.buckets (
+          id text primary key,
+          name text,
+          owner uuid,
+          owner_id text,
+          created_at timestamptz,
+          updated_at timestamptz,
+          public boolean default false,
+          avif_autodetection boolean default false,
+          file_size_limit bigint,
+          allowed_mime_types text[]
+        );
+
+        create table if not exists storage.objects (
+          id uuid primary key default gen_random_uuid(),
+          bucket_id text,
+          name text,
+          owner uuid,
+          owner_id text,
+          created_at timestamptz,
+          updated_at timestamptz,
+          last_accessed_at timestamptz,
+          metadata jsonb
+        );
+
+        do $$
+        begin
+          if not exists (select 1 from pg_publication where pubname = 'supabase_realtime') then
+            create publication supabase_realtime;
+          end if;
+        end
+        $$;
+      `);
+
+      // Apply all migrations
+      const files = readdirSync(MIGRATIONS_DIR).filter((f) => f.endsWith('.sql')).sort();
+      for (const file of files) {
+        let sql = readFileSync(join(MIGRATIONS_DIR, file), 'utf8');
+        sql = sql.replace(/create extension if not exists pgcrypto[^;]*;/gi, '-- pgcrypto no-op');
+        await db.exec(sql);
+      }
+
+      const TEST_ADMIN_ID = 'aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa';
+      const TEST_VISITOR_ID = 'bbbbbbbb-bbbb-4bbb-bbbb-bbbbbbbbbbbb';
+      const TEST_PASS_ID = 'cccccccc-cccc-4ccc-cccc-cccccccccccc';
+      const TEST_EVENT_ID = 'eeeeeeee-eeee-4eee-eeee-eeeeeeeeeeee';
+
+      // Seed admin and visitor
+      await db.exec(`
+        insert into auth.users (id, email, email_confirmed_at, is_anonymous)
+        values ('${TEST_ADMIN_ID}', 'admin.test@earist.edu.ph', now(), false);
+
+        insert into public.staff_profiles (user_id, display_name, role, active, must_change_password, privacy_accepted_at)
+        values ('${TEST_ADMIN_ID}', 'Test Admin', 'admin', true, false, now());
+
+        insert into auth.users (id, email, email_confirmed_at, is_anonymous)
+        values ('${TEST_VISITOR_ID}', null, null, true);
+
+        insert into public.visitors (id, owner_id, source, full_name, contact_number, purpose, visit_date, consent_accepted_at)
+        values ('${TEST_VISITOR_ID}', '${TEST_VISITOR_ID}', 'portal', 'Test Visitor Maria', '09123456789', 'Campus Query', current_date, now());
+
+        insert into public.passes (id, visitor_id, status, source, valid_from, valid_until, gate, public_reference, token_digest, version)
+        values ('${TEST_PASS_ID}', '${TEST_VISITOR_ID}', 'pending', 'portal', now(), now() + interval '8 hours', 'Gate 1', gen_random_uuid(), sha256('pass-token-123'::bytea), 1);
+      `);
+
+      // 1. api.guard_recover_pass_action
+      // AAL1 -> throws mfa_required
+      await db.exec(`
+        set request.jwt.claims = '{"sub": "${TEST_ADMIN_ID}", "role": "authenticated", "aal": "aal1"}';
+      `);
+      await expect(
+        db.query(`select api.guard_recover_pass_action('${TEST_PASS_ID}'::uuid, 'approve_entry');`)
+      ).rejects.toThrow(/mfa_required/);
+
+      // Missing AAL claim -> throws mfa_required
+      await db.exec(`
+        set request.jwt.claims = '{"sub": "${TEST_ADMIN_ID}", "role": "authenticated"}';
+      `);
+      await expect(
+        db.query(`select api.guard_recover_pass_action('${TEST_PASS_ID}'::uuid, 'approve_entry');`)
+      ).rejects.toThrow(/mfa_required/);
+
+      // AAL2 -> succeeds
+      await db.exec(`
+        set request.jwt.claims = '{"sub": "${TEST_ADMIN_ID}", "role": "authenticated", "aal": "aal2"}';
+      `);
+      const recoverRes = await db.query<{ res: any }>(
+        `select api.guard_recover_pass_action('${TEST_PASS_ID}'::uuid, 'approve_entry') as res;`
+      );
+      expect(recoverRes.rows[0].res.success).toBe(true);
+      expect(recoverRes.rows[0].res.status).toBe('inside');
+
+      // 2. api.guard_search_pending_queue
+      // Reset pass back to pending for queue search
+      await db.exec(`update public.passes set status = 'pending' where id = '${TEST_PASS_ID}';`);
+
+      // AAL1 -> throws mfa_required
+      await db.exec(`
+        set request.jwt.claims = '{"sub": "${TEST_ADMIN_ID}", "role": "authenticated", "aal": "aal1"}';
+      `);
+      await expect(
+        db.query(`select api.guard_search_pending_queue('Test Visitor', 10);`)
+      ).rejects.toThrow(/mfa_required/);
+
+      // Missing AAL claim -> throws mfa_required
+      await db.exec(`
+        set request.jwt.claims = '{"sub": "${TEST_ADMIN_ID}", "role": "authenticated"}';
+      `);
+      await expect(
+        db.query(`select api.guard_search_pending_queue('Test Visitor', 10);`)
+      ).rejects.toThrow(/mfa_required/);
+
+      // AAL2 -> succeeds and returns results
+      await db.exec(`
+        set request.jwt.claims = '{"sub": "${TEST_ADMIN_ID}", "role": "authenticated", "aal": "aal2"}';
+      `);
+      const searchRes = await db.query<{ res: any[] }>(
+        `select api.guard_search_pending_queue('Test Visitor', 10) as res;`
+      );
+      expect(Array.isArray(searchRes.rows[0].res)).toBe(true);
+      expect(searchRes.rows[0].res.length).toBeGreaterThan(0);
+      expect(searchRes.rows[0].res[0].id).toBe(TEST_PASS_ID);
+
+      // service_role -> succeeds without requiring human staff AAL2
+      await db.exec(`
+        set request.jwt.claims = '{"role": "service_role"}';
+      `);
+      const svcSearchRes = await db.query<{ res: any[] }>(
+        `select api.guard_search_pending_queue('Test Visitor', 10) as res;`
+      );
+      expect(Array.isArray(svcSearchRes.rows[0].res)).toBe(true);
+      expect(svcSearchRes.rows[0].res.length).toBeGreaterThan(0);
+
+      // 3. api.guard_sync_offline_event
+      // AAL1 -> throws mfa_required
+      await db.exec(`
+        set request.jwt.claims = '{"sub": "${TEST_ADMIN_ID}", "role": "authenticated", "aal": "aal1"}';
+      `);
+      await expect(
+        db.query(`
+          select api.guard_sync_offline_event(
+            '${TEST_EVENT_ID}'::uuid,
+            '${TEST_PASS_ID}'::uuid,
+            'approve_entry',
+            'pending',
+            2,
+            statement_timestamp(),
+            'Offline sync test'
+          );
+        `)
+      ).rejects.toThrow(/mfa_required/);
+
+      // Missing AAL claim -> throws mfa_required
+      await db.exec(`
+        set request.jwt.claims = '{"sub": "${TEST_ADMIN_ID}", "role": "authenticated"}';
+      `);
+      await expect(
+        db.query(`
+          select api.guard_sync_offline_event(
+            '${TEST_EVENT_ID}'::uuid,
+            '${TEST_PASS_ID}'::uuid,
+            'approve_entry',
+            'pending',
+            2,
+            statement_timestamp(),
+            'Offline sync test'
+          );
+        `)
+      ).rejects.toThrow(/mfa_required/);
+
+      // AAL2 -> succeeds past auth
+      await db.exec(`
+        set request.jwt.claims = '{"sub": "${TEST_ADMIN_ID}", "role": "authenticated", "aal": "aal2"}';
+      `);
+      const syncRes = await db.query<{ res: any }>(`
+        select api.guard_sync_offline_event(
+          '${TEST_EVENT_ID}'::uuid,
+          '${TEST_PASS_ID}'::uuid,
+          'approve_entry',
+          'pending',
+          2,
+          statement_timestamp(),
+          'Offline sync test'
+        ) as res;
+      `);
+      expect(syncRes.rows[0].res.status).toBe('applied');
+
+      // 4. api.claim_office_visit_acknowledgement_for_delivery
+      // Test that 24-hour expired idempotency window marks row reconciliation_required and commits without rollback
+      const OFFICE_ID = '77777777-7777-4000-a000-000000000007';
+      const VISIT_ID = '88888888-8888-4000-a000-000000000008';
+      const OUTBOX_ID = '99999999-9999-4000-a000-000000000009';
+
+      await db.exec(`
+        set request.jwt.claims = '{"role": "service_role"}';
+
+        insert into public.offices (id, name)
+        values ('${OFFICE_ID}', 'Admissions Office')
+        on conflict (name) do nothing;
+
+        insert into public.office_visits (
+          id, visit_type, office_id, visitor_id, visitor_actor_id, visitor_first_name, visitor_last_name,
+          visitor_contact_number, visitor_email, purpose, visit_date, request_id
+        ) values (
+          '${VISIT_ID}', 'general', '${OFFICE_ID}', '${TEST_VISITOR_ID}', '${TEST_VISITOR_ID}', 'Juan', 'Dela Cruz',
+          '09123456789', 'juan@test.local', 'Admissions Inquiries', current_date, gen_random_uuid()
+        );
+
+        insert into public.office_visit_acknowledgement_outbox (
+          id, office_visit_id, recipient_email, encrypted_tracking_token, idempotency_key,
+          delivery_status, attempt_count, created_at, last_attempt_at
+        ) values (
+          '${OUTBOX_ID}', '${VISIT_ID}', 'juan@test.local', 'enc_token_123', 'idemp_key_123',
+          'pending', 1, now() - interval '25 hours', now() - interval '25 hours'
+        );
+      `);
+
+      // Claiming as service_role must return 0 rows (no active claim granted)
+      const claimRes = await db.query(`select * from api.claim_office_visit_acknowledgement_for_delivery('${VISIT_ID}'::uuid);`);
+      expect(claimRes.rows.length).toBe(0);
+
+      // Verify that the table row is committed with reconciliation_required (PROVING NO ROLLBACK)
+      const outboxCheck = await db.query<{ delivery_status: string; last_error: string }>(
+        `select delivery_status, last_error from public.office_visit_acknowledgement_outbox where id = '${OUTBOX_ID}'::uuid;`
+      );
+      expect(outboxCheck.rows[0].delivery_status).toBe('reconciliation_required');
+      expect(outboxCheck.rows[0].last_error).toContain('Resend idempotency window (24h) expired');
+
+      // Subsequent claim call still returns 0 rows safely without exception
+      const subsequentClaim = await db.query(`select * from api.claim_office_visit_acknowledgement_for_delivery('${VISIT_ID}'::uuid);`);
+      expect(subsequentClaim.rows.length).toBe(0);
+    }, 90000);
   });
 });

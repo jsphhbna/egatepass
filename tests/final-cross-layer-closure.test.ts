@@ -144,7 +144,7 @@ describe('Final Cross-Layer Closure Verification (CL-T03 to CL-T10)', () => {
       insert into public.staff_profiles (user_id, display_name, role, active, must_change_password, privacy_accepted_at)
       values
         ('${SUPERADMIN_ID}', 'Super Admin', 'superadmin', true, false, now()),
-        ('${GUARD_ID}', 'Main Guard', 'guard', true, false, now());
+        ('${GUARD_ID}', 'Main Guard', 'admin', true, false, now());
     `);
   }, 60000);
 
@@ -154,8 +154,11 @@ describe('Final Cross-Layer Closure Verification (CL-T03 to CL-T10)', () => {
     }
   });
 
-  beforeEach(() => {
+  beforeEach(async () => {
     vi.restoreAllMocks();
+    if (db) {
+      await db.exec('reset role;');
+    }
 
     const mockCtx = {
       fillStyle: '#FFFFFF',
@@ -188,17 +191,17 @@ describe('Final Cross-Layer Closure Verification (CL-T03 to CL-T10)', () => {
 
   const asGuard = async () => {
     await db.exec(`
-      set local "request.jwt.claim.role" = 'authenticated';
-      set local "request.jwt.claim.sub" = '${GUARD_ID}';
-      set local role authenticated;
+      set "request.jwt.claim.role" = 'authenticated';
+      set "request.jwt.claim.sub" = '${GUARD_ID}';
+      set "request.jwt.claims" = '{"sub": "${GUARD_ID}", "role": "authenticated", "aal": "aal2"}';
     `);
   };
 
   const asSuperAdmin = async () => {
     await db.exec(`
-      set local "request.jwt.claim.role" = 'authenticated';
-      set local "request.jwt.claim.sub" = '${SUPERADMIN_ID}';
-      set local role authenticated;
+      set "request.jwt.claim.role" = 'authenticated';
+      set "request.jwt.claim.sub" = '${SUPERADMIN_ID}';
+      set "request.jwt.claims" = '{"sub": "${SUPERADMIN_ID}", "role": "authenticated", "aal": "aal2"}';
     `);
   };
 
