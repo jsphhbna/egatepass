@@ -12,6 +12,7 @@
 
 import { execSync } from 'node:child_process';
 import path from 'node:path';
+import fs from 'node:fs';
 
 // Clean out unsupported env config that causes npm CLI warnings across all case variations
 for (const key of Object.keys(process.env)) {
@@ -26,6 +27,26 @@ const execOpts = {
   stdio: 'inherit',
   env: { ...process.env },
 };
+
+// On Linux / Vercel build containers, prune unused platform native binaries from onnxruntime-node
+// to prevent @vercel/nft from packing multi-OS binaries into serverless function packages
+if (process.platform === 'linux' || process.env.VERCEL === '1') {
+  try {
+    const onnxNapiDir = path.resolve(rootDir, 'node_modules/onnxruntime-node/bin/napi-v6');
+    if (fs.existsSync(onnxNapiDir)) {
+      const unusedPlatforms = ['darwin', 'win32', 'linux/arm64'];
+      for (const target of unusedPlatforms) {
+        const targetPath = path.resolve(onnxNapiDir, target);
+        if (fs.existsSync(targetPath)) {
+          console.log(`[BUILD-PROD] Pruning non-production onnxruntime binary directory: ${target}`);
+          fs.rmSync(targetPath, { recursive: true, force: true });
+        }
+      }
+    }
+  } catch (err) {
+    console.warn('[BUILD-PROD] Notice: Could not prune onnxruntime-node native binaries:', err);
+  }
+}
 
 console.log('[BUILD-PROD] Starting production prebuild assets...');
 execSync('node scripts/sync-tesseract-assets.mjs', execOpts);
