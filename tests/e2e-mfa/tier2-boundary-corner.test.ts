@@ -850,6 +850,7 @@ describe('Tier 2: Boundary, Corner & Negative Cases (14 Features × 5 Tests = 70
             factorId: TEST_IDENTITIES.ADMIN_ENROLLED.factorId, // Belongs to admin, not office staff!
             password: TEST_IDENTITIES.SUPERADMIN_ENROLLED.password,
             reason: 'Testing factor ownership verification',
+            confirmed: true,
           },
         }
       );
@@ -875,6 +876,7 @@ describe('Tier 2: Boundary, Corner & Negative Cases (14 Features × 5 Tests = 70
             factorId: 'not-a-valid-uuid-string',
             password: TEST_IDENTITIES.SUPERADMIN_ENROLLED.password,
             reason: 'Testing UUID validation defense',
+            confirmed: true,
           },
         }
       );
@@ -900,6 +902,7 @@ describe('Tier 2: Boundary, Corner & Negative Cases (14 Features × 5 Tests = 70
             factorId: TEST_IDENTITIES.ADMIN_ENROLLED.factorId,
             password: 'SomePassword123!',
             reason: 'Illegitimate reset attempt',
+            confirmed: true,
           },
         }
       );
@@ -955,6 +958,7 @@ describe('Tier 2: Boundary, Corner & Negative Cases (14 Features × 5 Tests = 70
             factorId: TEST_IDENTITIES.ADMIN_ENROLLED.factorId,
             password: 'Tr0ub4dor&3✨',
             reason: 'Unicode password re-auth test',
+            confirmed: true,
           },
         }
       );
@@ -1034,6 +1038,7 @@ describe('Tier 2: Boundary, Corner & Negative Cases (14 Features × 5 Tests = 70
             factorId: TEST_IDENTITIES.SUPERADMIN_ENROLLED.factorId,
             password: TEST_IDENTITIES.SUPERADMIN_ENROLLED.password,
             reason: 'Superadmin voluntary self-reset',
+            confirmed: true,
           },
         }
       );
@@ -1082,6 +1087,7 @@ describe('Tier 2: Boundary, Corner & Negative Cases (14 Features × 5 Tests = 70
             factorId: TEST_IDENTITIES.ADMIN_ENROLLED.factorId,
             password: TEST_IDENTITIES.SUPERADMIN_ENROLLED.password,
             reason: 'Multi-device session expiration test',
+            confirmed: true,
           },
         }
       );
@@ -1118,6 +1124,7 @@ describe('Tier 2: Boundary, Corner & Negative Cases (14 Features × 5 Tests = 70
             factorId: TEST_IDENTITIES.ADMIN_ENROLLED.factorId,
             password: TEST_IDENTITIES.SUPERADMIN_ENROLLED.password,
             reason: 'Testing historical session preservation',
+            confirmed: true,
           },
         }
       );
@@ -1151,6 +1158,7 @@ describe('Tier 2: Boundary, Corner & Negative Cases (14 Features × 5 Tests = 70
             factorId: TEST_IDENTITIES.OFFICE_STAFF_ENROLLED.factorId,
             password: TEST_IDENTITIES.SUPERADMIN_ENROLLED.password,
             reason: 'Offline user factor reset',
+            confirmed: true,
           },
         }
       );
@@ -1192,6 +1200,7 @@ describe('Tier 2: Boundary, Corner & Negative Cases (14 Features × 5 Tests = 70
             factorId: TEST_IDENTITIES.ADMIN_ENROLLED.factorId,
             password: TEST_IDENTITIES.SUPERADMIN_ENROLLED.password,
             reason: 'DB failure resilience check',
+            confirmed: true,
           },
         }
       );
@@ -1239,6 +1248,7 @@ describe('Tier 2: Boundary, Corner & Negative Cases (14 Features × 5 Tests = 70
             factorId: TEST_IDENTITIES.ADMIN_ENROLLED.factorId,
             password: 'WrongPassword123!',
             reason: 'Testing secret leak prevention',
+            confirmed: true,
           },
         }
       );

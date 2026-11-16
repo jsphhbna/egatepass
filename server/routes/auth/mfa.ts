@@ -22,6 +22,8 @@ export interface AdminResetMfaParams {
   userId: string;
   factorId: string;
   reason?: string;
+  confirmed?: boolean;
+  confirm?: boolean;
 }
 
 /**
@@ -34,6 +36,10 @@ export async function adminResetMfaFactor(
   params: AdminResetMfaParams,
 ): Promise<{ success: boolean; factorId: string }> {
   const actor = await requireStaffActor(admin, token, ['superadmin']);
+
+  if (params.confirmed !== undefined && !params.confirmed && !params.confirm) {
+    throw new HttpError(400, 'confirmation_required');
+  }
 
   const cleanReason = (params.reason ?? '').trim();
   if (cleanReason.length < 5 || cleanReason.length > 500) {
@@ -83,7 +89,7 @@ export async function adminResetMfaFactor(
   }
 
   // Invalidate active sessions in staff_sessions
-  await admin
+  const { error: sessionError } = await admin
     .from('staff_sessions')
     .update({
       expired_at: new Date().toISOString(),
@@ -92,6 +98,10 @@ export async function adminResetMfaFactor(
     })
     .eq('user_id', params.userId)
     .is('expired_at', null);
+
+  if (sessionError) {
+    console.error('Failed to invalidate staff_sessions:', sessionError);
+  }
 
   // Invalidate in-memory factor cache
   invalidateStaffMfaCache(params.userId);
@@ -159,7 +169,15 @@ export async function handleRequest(request: Request): Promise<Response> {
         console.error('MFA factor listing failed:', error);
         return jsonResponse(400, { error: 'factor_lookup_failed' });
       }
-      return jsonResponse(200, { factors: data?.factors ?? [] });
+      const sanitizedFactors = (data?.factors ?? []).map((f: any) => ({
+        id: f.id,
+        friendly_name: f.friendly_name ?? null,
+        factor_type: f.factor_type,
+        status: f.status,
+        created_at: f.created_at,
+        updated_at: f.updated_at,
+      }));
+      return jsonResponse(200, { factors: sanitizedFactors });
     } catch (err) {
       if (err instanceof HttpError) {
         return jsonResponse(err.status, { error: err.code });
@@ -179,7 +197,7 @@ export async function handleRequest(request: Request): Promise<Response> {
         return jsonResponse(400, { error: 'invalid_request', details: parsed.error.issues });
       }
 
-      if (parsed.data.confirm === false || parsed.data.confirmed === false) {
+      if (parsed.data.confirm !== true && parsed.data.confirmed !== true) {
         return jsonResponse(400, { error: 'confirmation_required' });
       }
 
@@ -238,7 +256,7 @@ export async function handleRequest(request: Request): Promise<Response> {
         }
 
         // 5. Invalidate target user's active sessions in staff_sessions
-        await admin
+        const { error: sessionError } = await admin
           .from('staff_sessions')
           .update({
             expired_at: new Date().toISOString(),
@@ -247,6 +265,10 @@ export async function handleRequest(request: Request): Promise<Response> {
           })
           .eq('user_id', parsed.data.userId)
           .is('expired_at', null);
+
+        if (sessionError) {
+          console.error('Failed to invalidate staff_sessions:', sessionError);
+        }
 
         // Invalidate backend cache
         invalidateStaffMfaCache(parsed.data.userId);

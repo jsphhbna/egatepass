@@ -256,6 +256,7 @@ describe('Tier 4: Real-World End-to-End Application Workload Scenarios (6 Compre
           factorId: lockedOutFactorId,
           password: TEST_IDENTITIES.SUPERADMIN_ENROLLED.password,
           reason: 'Staff member lost mobile phone; in-person verification completed',
+          confirmed: true,
         },
       }
     );
@@ -378,6 +379,7 @@ describe('Tier 4: Real-World End-to-End Application Workload Scenarios (6 Compre
           factorId: TEST_IDENTITIES.ADMIN_ENROLLED.factorId,
           password: 'GuessedPassword999!',
           reason: 'Brute force password test',
+          confirmed: true,
         },
       }
     );
@@ -396,6 +398,7 @@ describe('Tier 4: Real-World End-to-End Application Workload Scenarios (6 Compre
           factorId: TEST_IDENTITIES.ADMIN_ENROLLED.factorId,
           password: TEST_IDENTITIES.SUPERADMIN_ENROLLED.password,
           reason: 'Mismatched factor ID attack',
+          confirmed: true,
         },
       }
     );
@@ -427,6 +430,7 @@ describe('Tier 4: Real-World End-to-End Application Workload Scenarios (6 Compre
             factorId: TEST_IDENTITIES.ADMIN_ENROLLED.factorId,
             password: TEST_IDENTITIES.SUPERADMIN_ENROLLED.password,
             reason: 'Concurrent reset test',
+            confirmed: true,
           },
         }
       ),

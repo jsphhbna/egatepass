@@ -919,6 +919,7 @@ describe('Tier 1: Comprehensive Feature Coverage (14 Features × 5 Tests = 70 Te
             factorId: TEST_IDENTITIES.ADMIN_ENROLLED.factorId,
             password: TEST_IDENTITIES.SUPERADMIN_ENROLLED.password,
             reason: 'Staff member lost authenticator device',
+            confirmed: true,
           },
         }
       );
@@ -945,6 +946,7 @@ describe('Tier 1: Comprehensive Feature Coverage (14 Features × 5 Tests = 70 Te
             factorId: TEST_IDENTITIES.ADMIN_ENROLLED.factorId,
             password: TEST_IDENTITIES.SUPERADMIN_ENROLLED.password,
             reason: 'Staff member device reset verification',
+            confirmed: true,
           },
         }
       );
@@ -970,6 +972,7 @@ describe('Tier 1: Comprehensive Feature Coverage (14 Features × 5 Tests = 70 Te
             factorId: TEST_IDENTITIES.ADMIN_ENROLLED.factorId,
             password: TEST_IDENTITIES.SUPERADMIN_ENROLLED.password,
             reason: 'Hardware token replacement confirmed',
+            confirmed: true,
           },
         }
       );
@@ -998,6 +1001,7 @@ describe('Tier 1: Comprehensive Feature Coverage (14 Features × 5 Tests = 70 Te
             factorId: TEST_IDENTITIES.OFFICE_STAFF_ENROLLED.factorId,
             password: 'AdminPassword123!',
             reason: 'Unauthorized reset attempt',
+            confirmed: true,
           },
         }
       );
@@ -1023,6 +1027,7 @@ describe('Tier 1: Comprehensive Feature Coverage (14 Features × 5 Tests = 70 Te
             factorId: TEST_IDENTITIES.ADMIN_ENROLLED.factorId,
             password: TEST_IDENTITIES.SUPERADMIN_ENROLLED.password,
             reason: 'Audit secret sanitization verification',
+            confirmed: true,
           },
         }
       );
@@ -1031,6 +1036,32 @@ describe('Tier 1: Comprehensive Feature Coverage (14 Features × 5 Tests = 70 Te
       const serialized = JSON.stringify(audit);
       expect(serialized).not.toContain(TEST_IDENTITIES.SUPERADMIN_ENROLLED.password);
       expect(serialized).not.toContain('JBSWY3DPEHPK3PXP');
+    });
+
+    it('T1-F11-06: Factor reset without explicit confirmation returns 400 confirmation_required', async () => {
+      const token = createTestJwt({
+        userId: TEST_IDENTITIES.SUPERADMIN_ENROLLED.userId,
+        aal: 'aal2',
+      });
+
+      const res = await executeApiRoute(
+        handleMfaRequest,
+        {
+          method: 'POST',
+          token,
+          body: {
+            action: 'reset_factor',
+            userId: TEST_IDENTITIES.ADMIN_ENROLLED.userId,
+            factorId: TEST_IDENTITIES.ADMIN_ENROLLED.factorId,
+            password: TEST_IDENTITIES.SUPERADMIN_ENROLLED.password,
+            reason: 'Testing unconfirmed reset rejection',
+            // Notice: confirmed and confirm are both omitted
+          },
+        }
+      );
+
+      expect(res.status).toBe(400);
+      expect(res.body.error).toBe('confirmation_required');
     });
   });
 
@@ -1055,6 +1086,7 @@ describe('Tier 1: Comprehensive Feature Coverage (14 Features × 5 Tests = 70 Te
             factorId: TEST_IDENTITIES.ADMIN_ENROLLED.factorId,
             password: TEST_IDENTITIES.SUPERADMIN_ENROLLED.password,
             reason: 'Valid password verification test',
+            confirmed: true,
           },
         }
       );
@@ -1105,6 +1137,7 @@ describe('Tier 1: Comprehensive Feature Coverage (14 Features × 5 Tests = 70 Te
             factorId: TEST_IDENTITIES.ADMIN_ENROLLED.factorId,
             password: 'WrongPassword123!',
             reason: 'Attempt with wrong password',
+            confirmed: true,
           },
         }
       );
@@ -1130,6 +1163,7 @@ describe('Tier 1: Comprehensive Feature Coverage (14 Features × 5 Tests = 70 Te
             factorId: TEST_IDENTITIES.ADMIN_ENROLLED.factorId,
             password: '',
             reason: 'Missing password payload test',
+            confirmed: true,
           },
         }
       );
@@ -1160,6 +1194,7 @@ describe('Tier 1: Comprehensive Feature Coverage (14 Features × 5 Tests = 70 Te
             factorId: TEST_IDENTITIES.ADMIN_ENROLLED.factorId,
             password: TEST_IDENTITIES.SUPERADMIN_ENROLLED.password,
             reason: 'Testing session invalidation trigger',
+            confirmed: true,
           },
         }
       );
@@ -1209,6 +1244,7 @@ describe('Tier 1: Comprehensive Feature Coverage (14 Features × 5 Tests = 70 Te
             factorId: TEST_IDENTITIES.ADMIN_ENROLLED.factorId,
             password: TEST_IDENTITIES.SUPERADMIN_ENROLLED.password,
             reason: 'Cache invalidation test',
+            confirmed: true,
           },
         }
       );
@@ -1250,6 +1286,7 @@ describe('Tier 1: Comprehensive Feature Coverage (14 Features × 5 Tests = 70 Te
             factorId: TEST_IDENTITIES.ADMIN_ENROLLED.factorId,
             password: TEST_IDENTITIES.SUPERADMIN_ENROLLED.password,
             reason: 'Non-target isolation check',
+            confirmed: true,
           },
         }
       );

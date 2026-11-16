@@ -754,6 +754,7 @@ describe('Mandatory TOTP MFA (AAL2) Across Authorization Boundaries', () => {
           factorId: TOTP_FACTOR_ID,
           password: 'WrongPassword!',
           reason: 'Staff lost phone authenticator',
+          confirmed: true,
         }),
       });
 
@@ -761,6 +762,35 @@ describe('Mandatory TOTP MFA (AAL2) Across Authorization Boundaries', () => {
       expect(res.status).toBe(401);
       const json = await res.json();
       expect(json.error).toBe('invalid_superadmin_password');
+    });
+
+    it('rejects factor reset request without explicit confirmation with HTTP 400', async () => {
+      const superadminAal2 = createMockJwt({
+        sub: SUPERADMIN_ID,
+        role: 'authenticated',
+        aal: 'aal2',
+        session_id: 'session-sa-aal2',
+      });
+
+      const req = new Request('https://egatepass.tech/api/auth/mfa', {
+        method: 'POST',
+        headers: {
+          authorization: `Bearer ${superadminAal2}`,
+          'content-type': 'application/json',
+        },
+        body: JSON.stringify({
+          action: 'reset_factor',
+          userId: OFFICE_STAFF_ID,
+          factorId: TOTP_FACTOR_ID,
+          password: SUPERADMIN_PASSWORD,
+          reason: 'Staff lost phone authenticator',
+        }),
+      });
+
+      const res = await handleMfaRequest(req);
+      expect(res.status).toBe(400);
+      const json = await res.json();
+      expect(json.error).toBe('confirmation_required');
     });
 
     it('rejects factor reset request when target user is not found in staff_profiles with HTTP 404', async () => {
@@ -784,6 +814,7 @@ describe('Mandatory TOTP MFA (AAL2) Across Authorization Boundaries', () => {
           factorId: TOTP_FACTOR_ID,
           password: SUPERADMIN_PASSWORD,
           reason: 'Staff lost phone authenticator',
+          confirmed: true,
         }),
       });
 
@@ -814,6 +845,7 @@ describe('Mandatory TOTP MFA (AAL2) Across Authorization Boundaries', () => {
           factorId: wrongFactorId,
           password: SUPERADMIN_PASSWORD,
           reason: 'Staff lost phone authenticator',
+          confirmed: true,
         }),
       });
 
@@ -843,6 +875,7 @@ describe('Mandatory TOTP MFA (AAL2) Across Authorization Boundaries', () => {
           factorId: TOTP_FACTOR_ID,
           password: SUPERADMIN_PASSWORD,
           reason: 'Staff lost authenticator device',
+          confirmed: true,
         }),
       });
 
@@ -1094,7 +1127,11 @@ describe('Mandatory TOTP MFA (AAL2) Across Authorization Boundaries', () => {
         begin
           if not exists (select 1 from pg_roles where rolname = 'anon') then create role anon nologin; end if;
           if not exists (select 1 from pg_roles where rolname = 'authenticated') then create role authenticated nologin; end if;
-          if not exists (select 1 from pg_roles where rolname = 'service_role') then create role service_role nologin; end if;
+          if not exists (select 1 from pg_roles where rolname = 'service_role') then
+            create role service_role nologin bypassrls;
+          else
+            alter role service_role bypassrls;
+          end if;
         end $$;
 
         create table if not exists auth.users (
@@ -1336,7 +1373,11 @@ describe('Mandatory TOTP MFA (AAL2) Across Authorization Boundaries', () => {
         begin
           if not exists (select 1 from pg_roles where rolname = 'anon') then create role anon nologin; end if;
           if not exists (select 1 from pg_roles where rolname = 'authenticated') then create role authenticated nologin; end if;
-          if not exists (select 1 from pg_roles where rolname = 'service_role') then create role service_role nologin; end if;
+          if not exists (select 1 from pg_roles where rolname = 'service_role') then
+            create role service_role nologin bypassrls;
+          else
+            alter role service_role bypassrls;
+          end if;
         end $$;
 
         create table if not exists auth.users (
@@ -1713,5 +1754,204 @@ describe('Mandatory TOTP MFA (AAL2) Across Authorization Boundaries', () => {
       const subsequentClaim = await db.query(`select * from api.claim_office_visit_acknowledgement_for_delivery('${VISIT_ID}'::uuid);`);
       expect(subsequentClaim.rows.length).toBe(0);
     }, 90000);
+  });
+
+  describe('8. Database-Level Column & Table Privilege Boundary on staff_sessions (PGlite)', () => {
+    it('proves service_role can only update expiration columns and cannot insert/delete or update other columns, while authenticated and anon cannot update at all', async () => {
+      const db = new PGlite();
+      const MIGRATIONS_DIR = join(process.cwd(), 'supabase', 'migrations');
+
+      // Minimal emulation setup
+      await db.exec(`
+        create schema if not exists auth;
+        create schema if not exists storage;
+        create schema if not exists private;
+        create schema if not exists api;
+
+        do $$
+        begin
+          if not exists (select 1 from pg_roles where rolname = 'anon') then create role anon nologin; end if;
+          if not exists (select 1 from pg_roles where rolname = 'authenticated') then create role authenticated nologin; end if;
+          if not exists (select 1 from pg_roles where rolname = 'service_role') then
+            create role service_role nologin bypassrls;
+          else
+            alter role service_role bypassrls;
+          end if;
+        end $$;
+
+        create table if not exists auth.users (
+          id uuid primary key,
+          email text,
+          email_confirmed_at timestamptz,
+          encrypted_password text,
+          is_anonymous boolean default false,
+          raw_app_meta_data jsonb default '{}'::jsonb,
+          raw_user_meta_data jsonb default '{}'::jsonb,
+          created_at timestamptz default now(),
+          updated_at timestamptz default now()
+        );
+
+        create or replace function auth.uid() returns uuid as $$
+          select coalesce(
+            nullif(current_setting('request.jwt.claim.sub', true), '')::uuid,
+            (nullif(current_setting('request.jwt.claims', true), '')::jsonb ->> 'sub')::uuid
+          );
+        $$ language sql stable;
+
+        create or replace function auth.jwt() returns jsonb as $$
+          select case
+            when nullif(current_setting('request.jwt.claims', true), '') is null then '{}'::jsonb
+            else current_setting('request.jwt.claims', true)::jsonb
+          end
+        $$ language sql stable;
+
+        create or replace function auth.role() returns text as $$
+          select coalesce(
+            nullif(current_setting('request.jwt.claim.role', true), ''),
+            (nullif(current_setting('request.jwt.claims', true), '')::jsonb ->> 'role'),
+            'authenticated'::text
+          );
+        $$ language sql stable;
+
+        create table if not exists storage.buckets (
+          id text primary key,
+          name text,
+          owner uuid,
+          owner_id text,
+          created_at timestamptz,
+          updated_at timestamptz,
+          public boolean default false,
+          avif_autodetection boolean default false,
+          file_size_limit bigint,
+          allowed_mime_types text[]
+        );
+
+        create table if not exists storage.objects (
+          id uuid primary key default gen_random_uuid(),
+          bucket_id text,
+          name text,
+          owner uuid,
+          owner_id text,
+          created_at timestamptz,
+          updated_at timestamptz,
+          last_accessed_at timestamptz,
+          metadata jsonb
+        );
+
+        do $$
+        begin
+          if not exists (select 1 from pg_publication where pubname = 'supabase_realtime') then
+            create publication supabase_realtime;
+          end if;
+        end
+        $$;
+      `);
+
+      const files = readdirSync(MIGRATIONS_DIR).filter((f) => f.endsWith('.sql')).sort();
+      for (const file of files) {
+        let sql = readFileSync(join(MIGRATIONS_DIR, file), 'utf8');
+        sql = sql.replace(/create extension if not exists pgcrypto[^;]*;/gi, '-- pgcrypto no-op');
+        await db.exec(sql);
+      }
+
+      const TEST_USER_ID = '11111111-1111-4000-a000-000000000001';
+      const TEST_SESSION_ID = 'session-test-privilege-1';
+
+      // Insert test staff user and session as postgres superuser
+      await db.exec(`
+        insert into auth.users (id, email, email_confirmed_at)
+        values ('${TEST_USER_ID}', 'staff@earist.edu.ph', now())
+        on conflict (id) do nothing;
+
+        insert into public.staff_profiles (user_id, display_name, role, active, must_change_password, privacy_accepted_at)
+        values ('${TEST_USER_ID}', 'Test Staff', 'admin', true, false, now())
+        on conflict (user_id) do nothing;
+
+        insert into public.staff_sessions (session_id, user_id, role, created_at, expires_at)
+        values ('${TEST_SESSION_ID}', '${TEST_USER_ID}', 'admin', now(), now() + interval '1 hour');
+      `);
+
+      // 1. Under service_role:
+      // Allowed columns: expired_at, expired_reason, updated_at
+      await db.exec(`
+        set role service_role;
+        set request.jwt.claims = '{"role": "service_role"}';
+      `);
+
+      await db.exec(`
+        update public.staff_sessions
+        set expired_at = now(), expired_reason = 'mfa_factor_reset', updated_at = now()
+        where user_id = '${TEST_USER_ID}';
+      `);
+
+      const updated = await db.query<{ expired_reason: string }>(
+        `select expired_reason from public.staff_sessions where session_id = '${TEST_SESSION_ID}';`
+      );
+      expect(updated.rows[0].expired_reason).toBe('mfa_factor_reset');
+
+      // Attempting to update non-granted column (e.g., user_id or role) throws permission denied
+      await expect(
+        db.exec(`
+          update public.staff_sessions
+          set role = 'superadmin'
+          where session_id = '${TEST_SESSION_ID}';
+        `)
+      ).rejects.toThrow(/permission denied/);
+
+      await expect(
+        db.exec(`
+          update public.staff_sessions
+          set user_id = '22222222-2222-4000-a000-000000000002'
+          where session_id = '${TEST_SESSION_ID}';
+        `)
+      ).rejects.toThrow(/permission denied/);
+
+      // Attempting to INSERT or DELETE as service_role throws permission denied
+      await expect(
+        db.exec(`
+          insert into public.staff_sessions (session_id, user_id, role, created_at, expires_at)
+          values ('session-illegal', '${TEST_USER_ID}', 'admin', now(), now() + interval '1 hour');
+        `)
+      ).rejects.toThrow(/permission denied/);
+
+      await expect(
+        db.exec(`
+          delete from public.staff_sessions where session_id = '${TEST_SESSION_ID}';
+        `)
+      ).rejects.toThrow(/permission denied/);
+
+      // 2. Under authenticated role:
+      await db.exec(`
+        reset role;
+        set role authenticated;
+        set request.jwt.claims = '{"sub": "${TEST_USER_ID}", "role": "authenticated", "aal": "aal2"}';
+      `);
+
+      // Updating staff_sessions as authenticated throws permission denied
+      await expect(
+        db.exec(`
+          update public.staff_sessions
+          set expired_at = now()
+          where session_id = '${TEST_SESSION_ID}';
+        `)
+      ).rejects.toThrow(/permission denied/);
+
+      // 3. Under anon role:
+      await db.exec(`
+        reset role;
+        set role anon;
+        set request.jwt.claims = '{"role": "anon"}';
+      `);
+
+      await expect(
+        db.exec(`
+          update public.staff_sessions
+          set expired_at = now()
+          where session_id = '${TEST_SESSION_ID}';
+        `)
+      ).rejects.toThrow(/permission denied/);
+
+      await db.exec(`reset role;`);
+    }, 60000);
   });
 });

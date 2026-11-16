@@ -321,6 +321,7 @@ describe('Tier 3: Combinatorial Pairwise Matrix Coverage (25 Interaction Tests)'
           factorId: TEST_IDENTITIES.ADMIN_ENROLLED.factorId,
           password: TEST_IDENTITIES.SUPERADMIN_ENROLLED.password,
           reason: 'Emergency phone replacement authorized',
+          confirmed: true,
         },
       }
     );

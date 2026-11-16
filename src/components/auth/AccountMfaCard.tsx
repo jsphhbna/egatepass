@@ -37,7 +37,9 @@ export function AccountMfaCard({ className = '' }: { className?: string }) {
     try {
       const { data, error } = await supabase.auth.mfa.listFactors();
       if (error) throw error;
-      const verified = data?.all?.find((f) => f.factor_type === 'totp' && f.status === 'verified');
+      const allFactors = data?.all ?? data?.totp ?? [];
+      const verified = allFactors.find((f: any) => f.factor_type === 'totp' && f.status === 'verified') ??
+        data?.totp?.find((f: any) => f.status === 'verified');
       if (verified) {
         setVerifiedFactorId(verified.id);
         setStatus('enabled');
@@ -67,7 +69,8 @@ export function AccountMfaCard({ className = '' }: { className?: string }) {
       // 1. Clean up stale unverified factors
       try {
         const { data: factorsData } = await supabase.auth.mfa.listFactors();
-        const unverified = factorsData?.all?.filter((f) => f.factor_type === 'totp' && f.status === 'unverified') ?? [];
+        const allFactors = factorsData?.all ?? factorsData?.totp ?? [];
+        const unverified = allFactors.filter((f: any) => f.factor_type === 'totp' && f.status === 'unverified');
         for (const f of unverified) {
           await supabase.auth.mfa.unenroll({ factorId: f.id });
         }
@@ -206,8 +209,9 @@ export function AccountMfaCard({ className = '' }: { className?: string }) {
       const { data: factorsData, error: listErr } = await supabase.auth.mfa.listFactors();
       if (listErr) throw listErr;
 
-      const verified = factorsData?.all?.filter((f) => f.factor_type === 'totp' && f.status === 'verified') ?? [];
-      for (const f of verified) {
+      const allFactors = factorsData?.all ?? factorsData?.totp ?? [];
+      const toRemove = allFactors.filter((f: any) => f.factor_type === 'totp');
+      for (const f of toRemove) {
         const { error: unenrollErr } = await supabase.auth.mfa.unenroll({ factorId: f.id });
         if (unenrollErr) throw unenrollErr;
       }
