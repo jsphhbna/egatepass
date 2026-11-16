@@ -556,6 +556,9 @@ export function GetPassPage() {
   const [isDownloaded, setIsDownloaded] = useState(false);
 
   const [submitError, setSubmitError] = useState<string | null>(null);
+  const isSubmittingPassRef = useRef(false);
+  const [isSubmittingPass, setIsSubmittingPass] = useState(false);
+  const isCheckingReturningCandidateRef = useRef(false);
   type RegistrationConfigState = 'loading' | 'ready' | 'error';
   const [configState, setConfigState] = useState<RegistrationConfigState>('loading');
   const [isRetryingConfig, setIsRetryingConfig] = useState(false);
@@ -1018,6 +1021,7 @@ export function GetPassPage() {
   // STEP 1: PERSONAL DETAILS (onFormNext advances to Visit)
   // ============================================================
   async function onFormNext(formData?: any) {
+    if (isCheckingReturningCandidateRef.current || isCheckingReturningCandidate) return;
     const valid = await trigger(['firstName', 'middleName', 'lastName', 'contactNumber', 'consent']);
     if (!valid) return;
 
@@ -1045,6 +1049,7 @@ export function GetPassPage() {
 
     // Automatic returning visitor candidate check (Step 1 -> Next)
     try {
+      isCheckingReturningCandidateRef.current = true;
       setIsCheckingReturningCandidate(true);
       let tx = portalTransactionRef.current;
       if (!tx || !(await validatePortalSession(tx))) {
@@ -1087,6 +1092,7 @@ export function GetPassPage() {
       turnstileRef.current?.resetChallenge();
       // Non-fatal: do NOT block advancing to Visit Details for new visitor
     } finally {
+      isCheckingReturningCandidateRef.current = false;
       setIsCheckingReturningCandidate(false);
     }
 
@@ -1121,15 +1127,26 @@ export function GetPassPage() {
     if (codeCooldown > 0) return;
     setIsSendingVerificationCode(true);
     try {
-      if (!portalTransactionRef.current) {
-        // Initialize portal transaction if needed
-        const token = await createPortalIssueTransaction().then((t) => t.token).catch(() => null);
-        if (!token) {
+      let tx = portalTransactionRef.current;
+      if (!tx || !(await validatePortalSession(tx))) {
+        let freshCaptchaToken: string | undefined;
+        if (turnstileRef.current) {
+          try {
+            freshCaptchaToken = await turnstileRef.current.executeChallenge();
+          } catch (turnstileErr) {
+            console.warn('Turnstile challenge non-fatal error:', turnstileErr);
+          }
+        }
+        tx = await createPortalIssueTransaction(freshCaptchaToken).catch(() => null);
+        if (!tx) {
           toast.error('Please ensure personal details are completed.');
           return;
         }
+        portalTransactionRef.current = tx;
+        setPortalToken(tx.token ?? null);
+        issueRequestId.current = tx.requestId as ReturnType<typeof crypto.randomUUID>;
       }
-      const token = portalTransactionRef.current?.token;
+      const token = tx.token;
       const res = await fetchWithTimeout('/api/office/verify-email', {
         method: 'POST',
         headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
@@ -1160,7 +1177,12 @@ export function GetPassPage() {
     }
     setIsVerifyingCode(true);
     try {
-      const authToken = portalTransactionRef.current?.token;
+      let tx = portalTransactionRef.current;
+      if (!tx) {
+        toast.error('Session expired. Please request a new verification code.');
+        return;
+      }
+      const authToken = tx.token;
       const res = await fetchWithTimeout('/api/office/verify-email', {
         method: 'POST',
         headers: { Authorization: `Bearer ${authToken}`, 'Content-Type': 'application/json' },
@@ -1459,6 +1481,7 @@ export function GetPassPage() {
   }
 
   async function onConfirmReturningVerification() {
+    if (isIdentifyingReturning) return;
     if (!selectedReturningCandidate) {
       toast.error('Please select your profile before capturing your face.');
       return;
@@ -2218,6 +2241,7 @@ export function GetPassPage() {
   // STEP 6: PASS ISSUANCE (onSubmit)
   // ============================================================
   async function onSubmit() {
+    if (isSubmittingPassRef.current) return;
     if (portalTransactionRef.current?.phase === 'submission_uncertain_hold') {
       toast.error('This submission is held for guard verification. Please start over to register a new pass.');
       return;
@@ -2242,6 +2266,8 @@ export function GetPassPage() {
       return;
     }
 
+    isSubmittingPassRef.current = true;
+    setIsSubmittingPass(true);
     setStep('generating');
     setSubmitError(null);
 
@@ -2487,7 +2513,8 @@ export function GetPassPage() {
       setStep(registrationMode === 'returning' ? 'returning_review' : 'review');
       toast.error('Failed to generate pass. Please try again.');
     } finally {
-      // Submission finalized
+      isSubmittingPassRef.current = false;
+      setIsSubmittingPass(false);
     }
   }
 
@@ -4405,7 +4432,8 @@ export function GetPassPage() {
                     </Button>
                     <Button
                       onClick={onSubmit}
-                      disabled={!identityVerified}
+                      disabled={!identityVerified || isSubmittingPass}
+                      loading={isSubmittingPass}
                       className="flex-1"
                       icon={<CheckCircle2 className="h-4 w-4" />}
                     >
@@ -5496,7 +5524,8 @@ export function GetPassPage() {
                     </Button>
                     <Button
                       onClick={onSubmit}
-                      disabled={!identityVerified}
+                      disabled={!identityVerified || isSubmittingPass}
+                      loading={isSubmittingPass}
                       className="flex-1"
                       icon={<CheckCircle2 className="h-4 w-4" />}
                     >
