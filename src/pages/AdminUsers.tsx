@@ -1051,6 +1051,7 @@ export function AdminUsers() {
           factorId,
           password: resetMfaPassword,
           reason: trimmedReason,
+          confirmed: true,
         }),
       });
 
@@ -1058,6 +1059,8 @@ export function AdminUsers() {
       if (!res.ok) {
         if (res.status === 401 || body?.error === 'invalid_superadmin_password') {
           throw new Error('Incorrect Super Admin password. Please check your password and try again.');
+        } else if (body?.error === 'cannot_reset_self') {
+          throw new Error('You cannot reset your own MFA factor via administrative reset. Please use Account Security self-service settings.');
         } else if (body?.error === 'mismatched_factor_id') {
           throw new Error('The specified MFA factor is invalid or no longer exists.');
         } else if (res.status === 404 || body?.error === 'target_user_not_found') {

@@ -40,6 +40,7 @@ describe('Mandatory TOTP MFA (AAL2) Across Authorization Boundaries', () => {
   let mockAuditEvents: any[] = [];
   let deletedFactors: any[] = [];
   let mockUpdatedSessions: any[] = [];
+  let mockAdmin: any;
 
   beforeEach(() => {
     clearStaffMfaCacheForTesting();
@@ -141,7 +142,7 @@ describe('Mandatory TOTP MFA (AAL2) Across Authorization Boundaries', () => {
       },
     ];
 
-    const mockAdmin: any = {
+    mockAdmin = {
       auth: {
         getUser: vi.fn(async (token: string) => {
           // If token contains JWT claims, extract user_id from sub
@@ -949,6 +950,112 @@ describe('Mandatory TOTP MFA (AAL2) Across Authorization Boundaries', () => {
       expect(json.factors).toBeDefined();
       expect(json.factors).toHaveLength(1);
       expect(json.factors[0].id).toBe(TOTP_FACTOR_ID);
+    });
+
+    it('permits superadmin factor reset request with valid credentials and reason', async () => {
+      const superadminAal2 = createMockJwt({
+        sub: SUPERADMIN_ID,
+        role: 'authenticated',
+        aal: 'aal2',
+        session_id: 'session-sa-aal2',
+      });
+
+      const req = new Request('https://egatepass.tech/api/auth/mfa', {
+        method: 'POST',
+        headers: {
+          authorization: `Bearer ${superadminAal2}`,
+          'content-type': 'application/json',
+        },
+        body: JSON.stringify({
+          action: 'reset_factor',
+          userId: SUPERADMIN_ID,
+          factorId: TOTP_FACTOR_ID,
+          password: SUPERADMIN_PASSWORD,
+          reason: 'Superadmin voluntary self-reset under emergency',
+          confirmed: true,
+        }),
+      });
+
+      const res = await handleMfaRequest(req);
+      expect(res.status).toBe(200);
+      const json = await res.json();
+      expect(json.ok).toBe(true);
+    });
+
+    it('rejects factor reset request with explicit confirm: false with HTTP 400 confirmation_required', async () => {
+      const superadminAal2 = createMockJwt({
+        sub: SUPERADMIN_ID,
+        role: 'authenticated',
+        aal: 'aal2',
+        session_id: 'session-sa-aal2',
+      });
+
+      const req = new Request('https://egatepass.tech/api/auth/mfa', {
+        method: 'POST',
+        headers: {
+          authorization: `Bearer ${superadminAal2}`,
+          'content-type': 'application/json',
+        },
+        body: JSON.stringify({
+          action: 'reset_factor',
+          userId: OFFICE_STAFF_ID,
+          factorId: TOTP_FACTOR_ID,
+          password: SUPERADMIN_PASSWORD,
+          reason: 'Staff lost phone authenticator',
+          confirmed: false,
+        }),
+      });
+
+      const res = await handleMfaRequest(req);
+      expect(res.status).toBe(400);
+      const json = await res.json();
+      expect(json.error).toBe('confirmation_required');
+    });
+
+    it('GET /api/auth/mfa rejects request with invalid UUID userId with HTTP 404 target_user_not_found', async () => {
+      const superadminAal2 = createMockJwt({
+        sub: SUPERADMIN_ID,
+        role: 'authenticated',
+        aal: 'aal2',
+        session_id: 'session-sa-aal2',
+      });
+
+      const req = new Request('https://egatepass.tech/api/auth/mfa?userId=not-a-uuid', {
+        method: 'GET',
+        headers: { authorization: `Bearer ${superadminAal2}` },
+      });
+
+      const res = await handleMfaRequest(req);
+      expect(res.status).toBe(404);
+      const json = await res.json();
+      expect(json.error).toBe('target_user_not_found');
+    });
+
+    it('adminResetMfaFactor helper validates reason and target staff profile', async () => {
+      const superadminAal2 = createMockJwt({
+        sub: SUPERADMIN_ID,
+        role: 'authenticated',
+        aal: 'aal2',
+        session_id: 'session-sa-aal2',
+      });
+
+      // Missing/short reason rejected
+      await expect(
+        adminResetMfaFactor(mockAdmin, superadminAal2, {
+          userId: OFFICE_STAFF_ID,
+          factorId: TOTP_FACTOR_ID,
+          reason: 'bad',
+        })
+      ).rejects.toThrow(expect.objectContaining({ status: 400, code: 'invalid_reason' }));
+
+      // Target not found rejected
+      await expect(
+        adminResetMfaFactor(mockAdmin, superadminAal2, {
+          userId: '99999999-9999-4000-a000-000000000099',
+          factorId: TOTP_FACTOR_ID,
+          reason: 'Valid reason here',
+        })
+      ).rejects.toThrow(expect.objectContaining({ status: 404, code: 'target_user_not_found' }));
     });
 
     it('rejects unsupported HTTP methods with HTTP 405', async () => {

@@ -176,7 +176,7 @@ export function TotpEnrollModal({ isOpen, onEnrolled, onCancel }: TotpEnrollModa
       onClose={handleCancel}
       preventClose={true}
       title="Set Up Two-Factor Authentication"
-      description="Protect your staff account with mandatory TOTP authenticator."
+      description="Protect your staff account with two-factor authentication (TOTP)."
       size="md"
     >
       <div className="p-6">

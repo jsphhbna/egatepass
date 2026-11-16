@@ -113,7 +113,7 @@ export const SERVICE_ROLE_TABLE_CONTRACT: Record<string, ServerTablePrivilegeCon
     table: 'staff_sessions',
     allowedPrivileges: ['SELECT', 'UPDATE'],
     forbiddenPrivileges: ['INSERT', 'DELETE'],
-    justification: 'Server inspects session state and invalidates sessions upon emergency MFA factor reset; creation and touching are restricted to api.touch_staff_session.',
+    justification: 'Server inspects session state and invalidates sessions upon emergency MFA factor reset strictly scoped to expired_at, expired_reason, and updated_at; creation and touching are restricted to api.touch_staff_session.',
   },
   upload_intents: {
     table: 'upload_intents',

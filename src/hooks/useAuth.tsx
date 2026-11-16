@@ -108,7 +108,7 @@ async function resolveRole(user: User): Promise<{
         } else {
           const factors = factorsData?.all ?? [];
           hasMfaEnabled = factors.some((f) => f.factor_type === 'totp' && f.status === 'verified') ||
-            (factorsData?.totp?.length ?? 0) > 0;
+            Boolean(factorsData?.totp?.some((f) => f.status === 'verified'));
         }
       } catch (factorErr) {
         console.error('Exception resolving staff MFA factors:', factorErr);

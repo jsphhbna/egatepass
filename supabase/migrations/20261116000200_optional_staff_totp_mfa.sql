@@ -750,3 +750,8 @@ grant execute on function api.guard_sync_offline_event(uuid, uuid, text, text, i
 
 comment on function api.guard_sync_offline_event(uuid, uuid, text, text, integer, timestamptz, text) is
   'Synchronizes offline gate lifecycle events recorded during network outages back to central database under administrator authority with conditional staff TOTP MFA enforcement.';
+
+-- 8. Grant column-level UPDATE on staff_sessions to service_role strictly for emergency session invalidation
+-- Restricts service_role to modifying only expiration timestamps and reason, preserving ownership and revocation safeguards.
+grant update (expired_at, expired_reason, updated_at) on table public.staff_sessions to service_role;
+

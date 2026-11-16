@@ -4,6 +4,8 @@ import { HttpError, invalidateStaffMfaCache, requireStaffActor } from '../../act
 import { jsonResponse, readBearerToken } from '../../http.js';
 import { getServerSupabaseClients } from '../../supabase.js';
 
+const ELIGIBLE_STAFF_ROLES = ['admin', 'superadmin', 'office_staff'] as const;
+
 const resetMfaSchema = z
   .object({
     action: z.enum(['reset_factor', 'delete_factor']),
@@ -11,6 +13,8 @@ const resetMfaSchema = z
     factorId: z.string().uuid(),
     password: z.string().min(1, 'Superadmin password is required'),
     reason: z.string().trim().min(5, 'Reason must be at least 5 characters').max(500),
+    confirmed: z.boolean().optional(),
+    confirm: z.boolean().optional(),
   })
   .strict();
 
@@ -31,6 +35,43 @@ export async function adminResetMfaFactor(
 ): Promise<{ success: boolean; factorId: string }> {
   const actor = await requireStaffActor(admin, token, ['superadmin']);
 
+  const cleanReason = (params.reason ?? '').trim();
+  if (cleanReason.length < 5 || cleanReason.length > 500) {
+    throw new HttpError(400, 'invalid_reason');
+  }
+
+  // Verify target user is eligible human staff
+  const { data: targetProfile, error: targetErr } = await admin
+    .from('staff_profiles')
+    .select('user_id, role, active')
+    .eq('user_id', params.userId)
+    .maybeSingle();
+
+  if (targetErr || !targetProfile) {
+    throw new HttpError(404, 'target_user_not_found');
+  }
+
+  if (!targetProfile.active || !ELIGIBLE_STAFF_ROLES.includes(targetProfile.role as any)) {
+    throw new HttpError(400, 'ineligible_target_role');
+  }
+
+  // Verify factor exists, belongs to target, and is TOTP
+  const { data: factorList, error: listError } = await admin.auth.admin.mfa.listFactors({
+    userId: params.userId,
+  });
+
+  if (listError || !factorList) {
+    throw new HttpError(400, 'factor_lookup_failed');
+  }
+
+  const targetFactor = Array.isArray(factorList.factors)
+    ? factorList.factors.find((f: any) => f.id === params.factorId)
+    : null;
+
+  if (!targetFactor || targetFactor.factor_type !== 'totp') {
+    throw new HttpError(400, 'mismatched_factor_id');
+  }
+
   // Call official Supabase Admin Auth MFA API
   const { data, error } = await admin.auth.admin.mfa.deleteFactor({
     userId: params.userId,
@@ -38,7 +79,7 @@ export async function adminResetMfaFactor(
   });
 
   if (error) {
-    throw new HttpError(400, error.message || 'mfa_factor_deletion_failed');
+    throw new HttpError(400, 'mfa_factor_deletion_failed');
   }
 
   // Invalidate active sessions in staff_sessions
@@ -64,7 +105,7 @@ export async function adminResetMfaFactor(
     target_type: 'staff_mfa_factor',
     target_id: params.userId,
     before_state: { factorId: params.factorId, userId: params.userId },
-    after_state: { factorReset: true, factorId: params.factorId, reason: params.reason ?? null },
+    after_state: { factorReset: true, factorId: params.factorId, reason: cleanReason },
     outcome: 'success',
   });
 
@@ -93,20 +134,30 @@ export async function handleRequest(request: Request): Promise<Response> {
         return jsonResponse(400, { error: 'missing_user_id' });
       }
 
+      const parsedUserId = z.string().uuid().safeParse(userId);
+      if (!parsedUserId.success) {
+        return jsonResponse(404, { error: 'target_user_not_found' });
+      }
+
       // Verify target user is staff
       const { data: staff, error: staffErr } = await admin
         .from('staff_profiles')
         .select('user_id, role, active')
-        .eq('user_id', userId)
+        .eq('user_id', parsedUserId.data)
         .maybeSingle();
 
       if (staffErr || !staff) {
         return jsonResponse(404, { error: 'target_user_not_found' });
       }
 
-      const { data, error } = await admin.auth.admin.mfa.listFactors({ userId });
+      if (!staff.active || !ELIGIBLE_STAFF_ROLES.includes(staff.role as any)) {
+        return jsonResponse(400, { error: 'ineligible_target_role' });
+      }
+
+      const { data, error } = await admin.auth.admin.mfa.listFactors({ userId: parsedUserId.data });
       if (error) {
-        return jsonResponse(400, { error: error.message });
+        console.error('MFA factor listing failed:', error);
+        return jsonResponse(400, { error: 'factor_lookup_failed' });
       }
       return jsonResponse(200, { factors: data?.factors ?? [] });
     } catch (err) {
@@ -126,6 +177,10 @@ export async function handleRequest(request: Request): Promise<Response> {
       const parsed = resetMfaSchema.safeParse(rawBody);
       if (!parsed.success) {
         return jsonResponse(400, { error: 'invalid_request', details: parsed.error.issues });
+      }
+
+      if (parsed.data.confirm === false || parsed.data.confirmed === false) {
+        return jsonResponse(400, { error: 'confirmation_required' });
       }
 
       // 1. Fresh password re-authentication of superadmin
@@ -148,6 +203,10 @@ export async function handleRequest(request: Request): Promise<Response> {
 
         if (targetErr || !targetProfile) {
           return jsonResponse(404, { error: 'target_user_not_found' });
+        }
+
+        if (!targetProfile.active || !ELIGIBLE_STAFF_ROLES.includes(targetProfile.role as any)) {
+          return jsonResponse(400, { error: 'ineligible_target_role' });
         }
 
         // 3. Verify factor exists, belongs to target, and is TOTP
@@ -174,7 +233,8 @@ export async function handleRequest(request: Request): Promise<Response> {
         });
 
         if (deleteError) {
-          return jsonResponse(400, { error: deleteError.message || 'mfa_factor_deletion_failed' });
+          console.error('Supabase deleteFactor error:', deleteError);
+          return jsonResponse(400, { error: 'mfa_factor_deletion_failed' });
         }
 
         // 5. Invalidate target user's active sessions in staff_sessions
@@ -192,7 +252,7 @@ export async function handleRequest(request: Request): Promise<Response> {
         invalidateStaffMfaCache(parsed.data.userId);
 
         // 6. Record immutable audit event
-        await admin.from('audit_events').insert({
+        const { error: auditError } = await admin.from('audit_events').insert({
           action: 'staff.mfa_factor_reset',
           actor_id: actor.id,
           actor_kind: 'staff',
@@ -203,6 +263,10 @@ export async function handleRequest(request: Request): Promise<Response> {
           after_state: { factorReset: true, factorId: parsed.data.factorId, reason: parsed.data.reason },
           outcome: 'success',
         });
+
+        if (auditError) {
+          console.error('Failed to log MFA factor reset audit event:', auditError);
+        }
 
         return jsonResponse(200, { ok: true, factorId: parsed.data.factorId });
       } finally {
