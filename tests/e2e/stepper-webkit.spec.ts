@@ -1,6 +1,38 @@
 import { test, expect } from '@playwright/test';
 
 test.describe('Mobile Stepper Geometry & WebKit Viewport Contract (Sections 47-48)', () => {
+  test.beforeEach(async ({ page }) => {
+    await page.route('**/rest/v1/app_settings*', async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          working_hours_start: '08:00',
+          working_hours_end: '17:00',
+          timezone: 'Asia/Manila',
+          scheduling_days_ahead: 14,
+          visit_purposes: ['Academic Inquiry', 'Official Business'],
+        }),
+      });
+    });
+
+    await page.route('**/api/system/calendar*', async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ closures: [] }),
+      });
+    });
+
+    await page.route('**/api/office/personnel*', async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ offices: [], personnel: [] }),
+      });
+    });
+  });
+
   const mobileViewports = [
     { width: 320, height: 568, name: 'SE 1st Gen' },
     { width: 375, height: 667, name: 'iPhone SE 2nd/3rd' },

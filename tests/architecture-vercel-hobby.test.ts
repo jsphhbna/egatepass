@@ -258,4 +258,26 @@ describe('Vercel Hobby Plan Function Limit Architecture Regressions', () => {
       expect(lastRewrite).toEqual({ source: '/((?!api/).*)', destination: '/index.html' });
     });
   });
+
+  describe('5. Function Bundle Optimization & Architecture Constraints', () => {
+    it('restricts onnxruntime-node binaries to linux/x64 to avoid cross-platform storage bloat', () => {
+      const config = JSON.parse(readFileSync('vercel.json', 'utf8')) as {
+        functions?: Record<string, { includeFiles?: string }>;
+      };
+
+      const passesConfig = config.functions?.['api/passes/[...route].ts'];
+      expect(passesConfig).toBeDefined();
+      expect(passesConfig?.includeFiles).toBeDefined();
+
+      const includeFiles = passesConfig!.includeFiles!;
+      // Must include fonts, models, and ONLY linux/x64 onnxruntime binaries
+      expect(includeFiles).toContain('public/fonts/**');
+      expect(includeFiles).toContain('server/models/**');
+      expect(includeFiles).toContain('node_modules/onnxruntime-node/bin/napi-v6/linux/x64/**');
+
+      // Must NOT include wildcard cross-platform binaries (darwin/arm64, win32/x64, etc.)
+      expect(includeFiles).not.toBe('{public/fonts/**,server/models/**,node_modules/onnxruntime-node/bin/**}');
+      expect(includeFiles).not.toContain('node_modules/onnxruntime-node/bin/**');
+    });
+  });
 });

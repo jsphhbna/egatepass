@@ -18,7 +18,11 @@ export function setVisitorClientFactoryForTest(factory: ((token: string) => Supa
 }
 
 function requireServerValue(name: 'SUPABASE_URL' | 'SUPABASE_SECRET_KEY'): string {
-  const value = process.env[name]?.trim();
+  const value = (
+    process.env[name] ||
+    (name === 'SUPABASE_URL' ? process.env.VITE_SUPABASE_URL : undefined) ||
+    (name === 'SUPABASE_SECRET_KEY' ? process.env.SUPABASE_SERVICE_ROLE_KEY : undefined)
+  )?.trim();
   if (!value) throw new Error(`Missing required server configuration: ${name}`);
   return value;
 }

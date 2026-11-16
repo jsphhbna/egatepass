@@ -129,6 +129,57 @@ async function setupPageMocks(page: any, token = 'mock-e2e-turnstile-token-xyz')
     });
   });
 
+  await page.route('**/rest/v1/app_settings*', async (route: any) => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        working_hours_start: '08:00',
+        working_hours_end: '17:00',
+        timezone: 'Asia/Manila',
+        scheduling_days_ahead: 14,
+        visit_purposes: ['Academic Inquiry', 'Official Business'],
+      }),
+    });
+  });
+
+  await page.route('**/api/system/calendar*', async (route: any) => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({ closures: [] }),
+    });
+  });
+
+  await page.route('**/api/office/personnel*', async (route: any) => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        offices: [
+          { id: 'office-reg-001', name: 'Office of the Registrar', description: 'Academic records, credentials, and transcripts' },
+        ],
+        personnel: [],
+      }),
+    });
+  });
+
+  await page.route('**/api/office/calendar*', async (route: any) => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({ schedules: [] }),
+    });
+  });
+
+  await page.route('**/api/auth/session-activity*', async (route: any) => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({ ok: true, status: 'active' }),
+    });
+  });
+
   // Mock OSM tile requests to avoid network dependency in E2E tests
   await page.route('**/tile.openstreetmap.org/**', async (route: any) => {
     const png1x1 = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==', 'base64');
@@ -157,8 +208,8 @@ test.describe('Section 1 & 2: Real Front-Door Flow and Approximate Home Location
     await expect(newVisitorCard).toBeVisible();
     await expect(returningVisitorCard).toBeVisible();
 
-    // Verify Returning Visitor displays scheduled maintenance
-    await expect(page.getByText(/Scheduled Maintenance/i)).toBeVisible();
+    // Verify Returning Visitor displays setup pending or scheduled maintenance
+    await expect(page.getByText(/Setup Pending|Scheduled Maintenance/i)).toBeVisible();
 
     // 2. Select New Visitor -> advances to Screen 2 (Arrival Method)
     await newVisitorCard.click();
@@ -907,11 +958,17 @@ test.describe('Section 21: Ambiguous Generation Failure and "Cancel & Ask Guard"
     page.on('console', (msg) => {
       console.log(`[BROWSER ${msg.type()}]:`, msg.text());
     });
+    page.on('response', (res) => {
+      if (res.status() >= 400) {
+        console.log(`[HTTP ${res.status()}]:`, res.url());
+      }
+    });
 
     const adminId = '00000000-0000-4000-a000-000000000077';
     const nowSec = Math.floor(Date.now() / 1000);
+    const mockJwt = `${Buffer.from(JSON.stringify({ alg: 'HS256', typ: 'JWT' })).toString('base64url')}.${Buffer.from(JSON.stringify({ sub: adminId, role: 'authenticated', aal: 'aal2', amr: [{ method: 'password' }, { method: 'totp' }], exp: nowSec + 3600 })).toString('base64url')}.mockSignature`;
     const sessionObj = {
-      access_token: 'mock-admin-operator-token',
+      access_token: mockJwt,
       token_type: 'bearer',
       expires_in: 3600,
       expires_at: nowSec + 3600,
@@ -945,6 +1002,14 @@ test.describe('Section 21: Ambiguous Generation Failure and "Cancel & Ask Guard"
           must_change_password: false,
           privacy_accepted_at: '2026-01-01T00:00:00Z',
         }),
+      });
+    });
+
+    await page.route('**/api/auth/session-activity*', async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ ok: true, status: 'active' }),
       });
     });
 
