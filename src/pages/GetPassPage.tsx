@@ -149,7 +149,7 @@ export function createGetPassSchema(schedulingDaysAhead: number = MAX_VISIT_ADVA
         .string()
         .min(7, 'Contact number is too short')
         .max(20, 'Contact number is too long')
-        .refine((val) => validatePhMobile(val), {
+        .refine((val) => validatePhMobile(val).valid, {
           message: 'Please enter a valid Philippine mobile number (e.g. 09171234567 or +639171234567)',
         }),
       homeLocation: z
@@ -213,7 +213,7 @@ export const personalDetailsStepSchema = z.object({
     .string()
     .min(7, 'Contact number is too short')
     .max(20, 'Contact number is too long')
-    .refine((val) => validatePhMobile(val), {
+    .refine((val) => validatePhMobile(val).valid, {
       message: 'Please enter a valid Philippine mobile number (e.g. 09171234567 or +639171234567)',
     }),
   consent: z.literal(true, {

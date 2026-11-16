@@ -72,5 +72,8 @@ jobs:
             echo "Real browser IndexedDB spec pending parallel completion by Workstream A / E2E Track"
           fi
 
+      - name: Run Real Browser Registration Multi-Step Regression Tests
+        run: npx playwright test tests/e2e/visitor-multistep-registration.spec.ts --project=chromium
+
       - name: Build Production Frontend & Bundle
         run: npm run build
