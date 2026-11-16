@@ -237,4 +237,41 @@ describe('R6 Visitor Registration UI & Purpose Validation Suite', () => {
       expect(currentVal).toBe('Official Business — HR');
     });
   });
+
+  describe('Step 1 Personal Details Multi-Step Validation Invariant', () => {
+    it('allows Step 1 personal details to validate independently while purpose is empty (Step 2 field)', () => {
+      // Step 1 only triggers personal details: firstName, middleName, lastName, contactNumber, consent
+      const step1Fields = {
+        firstName: 'Juan',
+        middleName: 'Perez',
+        lastName: 'Dela Cruz',
+        contactNumber: '09171234567',
+        consent: true,
+      };
+
+      // Purpose is unpopulated on Step 1 defaultValues
+      const step1FormState = {
+        ...step1Fields,
+        purpose: '', // Populated later on Step 2 (Visit & Vehicle Details)
+        arrivalMode: 'no_vehicle',
+      };
+
+      // Validating Step 1 fields specifically succeeds
+      expect(step1FormState.firstName.trim().length).toBeGreaterThanOrEqual(2);
+      expect(step1FormState.lastName.trim().length).toBeGreaterThanOrEqual(2);
+      expect(step1FormState.contactNumber).toMatch(/^(09|\+639)\d{9}$/);
+      expect(step1FormState.consent).toBe(true);
+
+      // Verify that full-schema submission should NOT be run on Step 1 form submission
+      // because purpose is empty until Step 2
+      const fullSchema = createGetPassSchema();
+      const fullValidation = fullSchema.safeParse(step1FormState);
+      expect(fullValidation.success).toBe(false);
+      // The failure in full schema is solely due to purpose being empty on Step 1
+      if (!fullValidation.success) {
+        const issues = fullValidation.error.issues;
+        expect(issues.every((i) => i.path.includes('purpose'))).toBe(true);
+      }
+    });
+  });
 });

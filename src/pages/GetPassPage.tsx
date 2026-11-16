@@ -670,7 +670,6 @@ export function GetPassPage() {
 
   const {
     register,
-    handleSubmit,
     trigger,
     getValues,
     setValue,
@@ -1009,47 +1008,42 @@ export function GetPassPage() {
       if (!tx || !(await validatePortalSession(tx))) {
         let freshCaptchaToken: string | undefined;
         if (turnstileRef.current) {
-          freshCaptchaToken = await turnstileRef.current.executeChallenge();
-        } else {
-          throw new Error('Security verification widget is initializing. Please wait a moment and try again.');
+          try {
+            freshCaptchaToken = await turnstileRef.current.executeChallenge();
+          } catch (turnstileErr) {
+            console.warn('Turnstile challenge for auto-lookup non-fatal error:', turnstileErr);
+          }
         }
-        tx = await createPortalIssueTransaction(freshCaptchaToken);
-        portalTransactionRef.current = tx; setPortalToken(tx?.token ?? null);
-        issueRequestId.current = tx.requestId as ReturnType<typeof crypto.randomUUID>;
+        if (freshCaptchaToken) {
+          tx = await createPortalIssueTransaction(freshCaptchaToken);
+          portalTransactionRef.current = tx;
+          setPortalToken(tx?.token ?? null);
+          issueRequestId.current = tx.requestId as ReturnType<typeof crypto.randomUUID>;
+        }
       }
-      const lookupRes = await lookupReturningVisitor(tx, {
-        firstName: data.firstName.trim(),
-        lastName: data.lastName.trim(),
-        middleName: data.middleName?.trim() || undefined,
-        contactNumber: phRes,
-        psgcCityCode: selectedPsgc?.city?.code,
-        psgcBarangayCode: selectedPsgc?.barangay?.code,
-        mode: 'auto',
-      });
-      if (lookupRes.found && lookupRes.candidates && lookupRes.candidates.length > 0 && lookupRes.candidates[0]) {
-        setCandidateMatch(lookupRes.candidates[0]);
-        setShowCandidateMatchModal(true);
-        setIsCheckingReturningCandidate(false);
-        return;
-      }
-      if (lookupRes.portraitExpired) {
-        toast.info('Previous visitor profile found, but registration portrait expired under retention policy. Continuing as New Visitor.');
+      if (tx) {
+        const lookupRes = await lookupReturningVisitor(tx, {
+          firstName: data.firstName.trim(),
+          lastName: data.lastName.trim(),
+          middleName: data.middleName?.trim() || undefined,
+          contactNumber: phRes,
+          psgcCityCode: selectedPsgc?.city?.code,
+          psgcBarangayCode: selectedPsgc?.barangay?.code,
+          mode: 'auto',
+        });
+        if (lookupRes.found && lookupRes.candidates && lookupRes.candidates.length > 0 && lookupRes.candidates[0]) {
+          setCandidateMatch(lookupRes.candidates[0]);
+          setShowCandidateMatchModal(true);
+          return;
+        }
+        if (lookupRes.portraitExpired) {
+          toast.info('Previous visitor profile found, but registration portrait expired under retention policy. Continuing as New Visitor.');
+        }
       }
     } catch (lookupErr: any) {
-      console.warn('Returning visitor auto-lookup error:', lookupErr);
+      console.warn('Returning visitor auto-lookup non-fatal error:', lookupErr);
       turnstileRef.current?.resetChallenge();
-      const msg = lookupErr?.message || '';
-      if (
-        msg.includes('challenge') ||
-        msg.includes('Security verification') ||
-        msg.includes('Turnstile') ||
-        msg.includes('Too many search attempts') ||
-        msg.includes('rate_limit')
-      ) {
-        toast.error(msg || 'Security verification failed. Please try again.');
-        setIsCheckingReturningCandidate(false);
-        return;
-      }
+      // Non-fatal: do NOT block advancing to Visit Details for new visitor
     } finally {
       setIsCheckingReturningCandidate(false);
     }
@@ -2831,7 +2825,13 @@ export function GetPassPage() {
 
           {/* ============================== STEP 1: PERSONAL DETAILS ============================== */}
           {step === 'form' && (
-            <form onSubmit={handleSubmit(onFormNext)} className="space-y-6">
+            <form
+              onSubmit={(e) => {
+                e.preventDefault();
+                void onFormNext();
+              }}
+              className="space-y-6"
+            >
               <div className="text-center">
                 <h2 className="text-lg font-bold text-[var(--color-text-primary)]">Personal Details</h2>
                 <p className="text-sm text-[var(--color-text-secondary)] mt-1">
