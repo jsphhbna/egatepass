@@ -180,6 +180,57 @@ stateDiagram-v2
 
 ---
 
+### 4.4 Optional Staff TOTP Multi-Factor Authentication (MFA) & Reset QA
+
+#### Test 1: Unenrolled Staff Password-Only Login (AAL1) (§R1)
+1. Log in with a staff account that has no verified TOTP factors.
+2. Enter email and password.
+3. **Expected**: Authentication succeeds immediately. The user is redirected directly to their authorized portal (`/admin` or `/office`) at Authenticator Assurance Level 1 (`aal1`) without seeing any TOTP enrollment modal or challenge prompt.
+
+#### Test 2: Self-Service TOTP MFA Enrollment (`/account/security`) (§R2)
+1. As an authenticated staff member, navigate to `/account/security`.
+2. Confirm the security view displays a **Disabled** badge and an **Enable Two-Factor Authentication** button.
+3. Click **Enable Two-Factor Authentication**.
+4. **Expected**: Modal displays a cleanly rendered SVG QR code and a manual secret key.
+5. Scan the QR code or enter the secret key into Google Authenticator or another standard TOTP app.
+6. Enter the 6-digit TOTP code and submit.
+7. **Expected**: Code verifies successfully, active session elevates to `aal2` via `refreshSession()`, modal closes, and status updates immediately to **Enabled**. Zero plaintext secrets are stored in local storage or logged.
+
+#### Test 3: Enrolled Staff Login Challenge & Route Guard (§R1, §R3)
+1. Sign out of the enrolled staff account.
+2. Enter email and password on the login screen.
+3. **Expected**: Login recognizes the verified TOTP factor and presents the 6-digit authenticator challenge prompt. Attempting to bypass the modal by directly navigating to `/admin` or `/office` via URL bar is blocked by `ProtectedRoute.tsx` (redirecting back to login until AAL2 is achieved).
+4. Enter an invalid or expired 6-digit code.
+5. **Expected**: Error message displayed indicating an invalid code without consuming duplicate challenge quotas or crashing.
+6. Enter the correct 6-digit TOTP code.
+7. **Expected**: Session elevates to `aal2`, challenge clears, and user is routed to the authorized portal. Backend endpoints (`requireStaffActor`, `requireOfficeStaffActor`) and database RPCs allow access.
+
+#### Test 4: Self-Service TOTP MFA Disablement (§R2)
+1. While logged in at AAL2, navigate to `/account/security`.
+2. Click **Disable Two-Factor Authentication**.
+3. Confirm the warning dialog.
+4. **Expected**: System unenrolls the TOTP factor, refreshes session to AAL1, and updates status to **Disabled**.
+5. Sign out and log back in.
+6. **Expected**: Account logs in with password only at AAL1, without any MFA challenge.
+
+#### Test 5: Superadmin Staff MFA Inspection & Reset Modal (§R4)
+1. Log in as a Superadmin.
+2. Navigate to **Staff Management** (`/admin/users`).
+3. **Expected**: The staff list displays an MFA status indicator for each user (`Enabled`, `Disabled`, or `Incomplete`).
+4. On an enrolled staff account, click **Reset MFA**.
+5. **Expected**: Modal opens requiring the Superadmin's fresh password and a non-empty reset reason.
+6. Submit with an incorrect password or blank reason -> **Expected**: Action rejected with descriptive validation error.
+7. Enter the correct Superadmin password and a valid reason (e.g., *"Staff member lost authenticator device"*).
+8. Submit reset request.
+9. **Expected**:
+   - Factor deleted from Supabase Auth.
+   - Target staff member's active sessions immediately invalidated via `admin.signOut()`.
+   - Immutable audit event recorded in `public.audit_events` with `action = 'staff.mfa_factor_reset'`.
+   - Staff member status in UI reverts to **Disabled**.
+   - Staff member can now log in using password only.
+
+---
+
 ## 5. Transactional Email Verification
 
 ### 5.1 Supabase Auth Send Email Hook

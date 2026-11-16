@@ -2,7 +2,14 @@ import { describe, it, expect, beforeEach, vi, afterEach } from 'vitest';
 import { readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { PGlite } from '@electric-sql/pglite';
-import { requireStaffActor, requireEmergencyDeviceActor, HttpError } from '../server/actors.js';
+import {
+  requireStaffActor,
+  requireEmergencyDeviceActor,
+  HttpError,
+  assertStaffMfaSatisfied,
+  invalidateStaffMfaCache,
+  clearStaffMfaCacheForTesting,
+} from '../server/actors.js';
 import { requireOfficeStaffActor } from '../server/lib/office.js';
 import { adminResetMfaFactor, handleRequest as handleMfaRequest } from '../server/routes/auth/mfa.js';
 import adminUsersRoute from '../server/routes/admin/users.js';
@@ -23,6 +30,8 @@ describe('Mandatory TOTP MFA (AAL2) Across Authorization Boundaries', () => {
   const DEVICE_ID = '55555555-5555-4000-a000-000000000005';
   const ANONYMOUS_ID = '66666666-6666-4000-a000-000000000006';
   const OFFICE_ID = '77777777-7777-4000-a000-000000000007';
+  const TOTP_FACTOR_ID = '88888888-8888-4000-a000-000000000008';
+  const SUPERADMIN_PASSWORD = 'CorrectSuperadminPassword123!';
 
   let mockUsers: Record<string, any> = {};
   let mockStaffProfiles: Record<string, any> = {};
@@ -30,10 +39,13 @@ describe('Mandatory TOTP MFA (AAL2) Across Authorization Boundaries', () => {
   let mockAssignments: any[] = [];
   let mockAuditEvents: any[] = [];
   let deletedFactors: any[] = [];
+  let mockUpdatedSessions: any[] = [];
 
   beforeEach(() => {
+    clearStaffMfaCacheForTesting();
     mockAuditEvents = [];
     deletedFactors = [];
+    mockUpdatedSessions = [];
 
     mockUsers = {
       [SUPERADMIN_ID]: {
@@ -165,7 +177,7 @@ describe('Mandatory TOTP MFA (AAL2) Across Authorization Boundaries', () => {
               return {
                 data: {
                   factors: [
-                    { id: 'factor-totp-1', factor_type: 'totp', status: 'verified', friendly_name: 'TOTP App' },
+                    { id: TOTP_FACTOR_ID, factor_type: 'totp', status: 'verified', friendly_name: 'TOTP App' },
                   ],
                 },
                 error: null,
@@ -207,6 +219,14 @@ describe('Mandatory TOTP MFA (AAL2) Across Authorization Boundaries', () => {
             })),
             maybeSingle: async () => ({ data: null, error: null }),
           })),
+          update: vi.fn((updateData: any) => ({
+            eq: vi.fn((col: string, val: any) => ({
+              is: vi.fn(async (col2: string, val2: any) => {
+                mockUpdatedSessions.push({ table, updateData, col, val, col2, val2 });
+                return { data: null, error: null };
+              }),
+            })),
+          })),
           insert: vi.fn(async (records: any) => {
             if (table === 'audit_events') {
               mockAuditEvents.push(records);
@@ -220,7 +240,26 @@ describe('Mandatory TOTP MFA (AAL2) Across Authorization Boundaries', () => {
       })),
     };
 
-    setServerSupabaseClientsForTest({ admin: mockAdmin, anon: mockAdmin });
+    const mockPasswordVerifier: any = {
+      auth: {
+        signInWithPassword: vi.fn(async ({ email, password }: { email: string; password: string }) => {
+          if (password === SUPERADMIN_PASSWORD) {
+            const user = Object.values(mockUsers).find((u: any) => u.email === email);
+            if (user) {
+              return { data: { user }, error: null };
+            }
+          }
+          return { data: { user: null }, error: new Error('invalid_credentials') };
+        }),
+        signOut: vi.fn(async () => ({ error: null })),
+      },
+    };
+
+    setServerSupabaseClientsForTest({ admin: mockAdmin, passwordVerifier: mockPasswordVerifier } as any);
+  });
+
+  afterEach(() => {
+    clearStaffMfaCacheForTesting();
   });
 
   describe('1. Server-Side requireStaffActor Boundary Guard', () => {
@@ -234,6 +273,20 @@ describe('Mandatory TOTP MFA (AAL2) Across Authorization Boundaries', () => {
       });
 
       await expect(requireStaffActor(admin, aal1Token, ['admin'])).rejects.toThrow(
+        expect.objectContaining({ status: 403, code: 'mfa_required' })
+      );
+    });
+
+    it('blocks human staff with explicit null AAL claim with HTTP 403 mfa_required', async () => {
+      const { admin } = (await import('../server/supabase.js')).getServerSupabaseClients();
+      const nullAalToken = createMockJwt({
+        sub: ADMIN_ID,
+        role: 'authenticated',
+        aal: null,
+        session_id: 'session-valid-1234',
+      });
+
+      await expect(requireStaffActor(admin, nullAalToken, ['admin'])).rejects.toThrow(
         expect.objectContaining({ status: 403, code: 'mfa_required' })
       );
     });
@@ -299,6 +352,120 @@ describe('Mandatory TOTP MFA (AAL2) Across Authorization Boundaries', () => {
       await expect(requireStaffActor(admin, recoveryToken, ['admin'])).rejects.toThrow(
         expect.objectContaining({ status: 403, code: 'recovery_session_forbidden' })
       );
+    });
+  });
+
+  describe('1b. Conditional Staff MFA Policy & In-Memory Factor Caching', () => {
+    it('bypasses external factor lookup completely when session claims contain aal2', async () => {
+      const { admin } = (await import('../server/supabase.js')).getServerSupabaseClients();
+      const listFactorsSpy = vi.spyOn(admin.auth.admin.mfa, 'listFactors');
+      listFactorsSpy.mockClear();
+
+      await assertStaffMfaSatisfied(admin, ADMIN_ID, { aal: 'aal2' });
+      expect(listFactorsSpy).not.toHaveBeenCalled();
+    });
+
+    it('allows AAL1 staff when user has 0 verified factors', async () => {
+      const { admin } = (await import('../server/supabase.js')).getServerSupabaseClients();
+      vi.spyOn(admin.auth.admin.mfa, 'listFactors').mockResolvedValueOnce({
+        data: { factors: [] },
+        error: null,
+      } as any);
+
+      await expect(assertStaffMfaSatisfied(admin, ADMIN_ID, { aal: 'aal1' })).resolves.toBeUndefined();
+    });
+
+    it('allows AAL1 staff when user has only unverified factors', async () => {
+      const { admin } = (await import('../server/supabase.js')).getServerSupabaseClients();
+      vi.spyOn(admin.auth.admin.mfa, 'listFactors').mockResolvedValueOnce({
+        data: {
+          factors: [
+            { id: 'unverified-factor', factor_type: 'totp', status: 'unverified' },
+          ],
+        },
+        error: null,
+      } as any);
+
+      await expect(assertStaffMfaSatisfied(admin, ADMIN_ID, { aal: 'aal1' })).resolves.toBeUndefined();
+    });
+
+    it('throws HttpError(403, mfa_required) for AAL1 staff when user has verified TOTP factor', async () => {
+      const { admin } = (await import('../server/supabase.js')).getServerSupabaseClients();
+      vi.spyOn(admin.auth.admin.mfa, 'listFactors').mockResolvedValueOnce({
+        data: {
+          factors: [
+            { id: TOTP_FACTOR_ID, factor_type: 'totp', status: 'verified' },
+          ],
+        },
+        error: null,
+      } as any);
+
+      await expect(assertStaffMfaSatisfied(admin, ADMIN_ID, { aal: 'aal1' })).rejects.toThrow(
+        expect.objectContaining({ status: 403, code: 'mfa_required' })
+      );
+    });
+
+    it('fails closed with HttpError(403, mfa_required) on factor lookup error or null data', async () => {
+      const { admin } = (await import('../server/supabase.js')).getServerSupabaseClients();
+      vi.spyOn(admin.auth.admin.mfa, 'listFactors').mockResolvedValueOnce({
+        data: null,
+        error: new Error('network_failure'),
+      } as any);
+
+      await expect(assertStaffMfaSatisfied(admin, ADMIN_ID, { aal: 'aal1' })).rejects.toThrow(
+        expect.objectContaining({ status: 403, code: 'mfa_required' })
+      );
+    });
+
+    it('caches factor verification state and avoids duplicate API calls within 15-second TTL', async () => {
+      const { admin } = (await import('../server/supabase.js')).getServerSupabaseClients();
+      const listFactorsSpy = vi.spyOn(admin.auth.admin.mfa, 'listFactors').mockResolvedValue({
+        data: { factors: [] },
+        error: null,
+      } as any);
+      listFactorsSpy.mockClear();
+
+      // First call -> hits API and caches
+      await assertStaffMfaSatisfied(admin, ADMIN_ID, { aal: 'aal1' });
+      expect(listFactorsSpy).toHaveBeenCalledTimes(1);
+
+      // Second call within TTL -> cache hit, zero API calls
+      await assertStaffMfaSatisfied(admin, ADMIN_ID, { aal: 'aal1' });
+      expect(listFactorsSpy).toHaveBeenCalledTimes(1);
+    });
+
+    it('invalidateStaffMfaCache purges cache entry and forces subsequent API lookup', async () => {
+      const { admin } = (await import('../server/supabase.js')).getServerSupabaseClients();
+      const listFactorsSpy = vi.spyOn(admin.auth.admin.mfa, 'listFactors').mockResolvedValue({
+        data: { factors: [] },
+        error: null,
+      } as any);
+      listFactorsSpy.mockClear();
+
+      await assertStaffMfaSatisfied(admin, ADMIN_ID, { aal: 'aal1' });
+      expect(listFactorsSpy).toHaveBeenCalledTimes(1);
+
+      invalidateStaffMfaCache(ADMIN_ID);
+
+      await assertStaffMfaSatisfied(admin, ADMIN_ID, { aal: 'aal1' });
+      expect(listFactorsSpy).toHaveBeenCalledTimes(2);
+    });
+
+    it('clearStaffMfaCacheForTesting clears all cached entries', async () => {
+      const { admin } = (await import('../server/supabase.js')).getServerSupabaseClients();
+      const listFactorsSpy = vi.spyOn(admin.auth.admin.mfa, 'listFactors').mockResolvedValue({
+        data: { factors: [] },
+        error: null,
+      } as any);
+      listFactorsSpy.mockClear();
+
+      await assertStaffMfaSatisfied(admin, ADMIN_ID, { aal: 'aal1' });
+      expect(listFactorsSpy).toHaveBeenCalledTimes(1);
+
+      clearStaffMfaCacheForTesting();
+
+      await assertStaffMfaSatisfied(admin, ADMIN_ID, { aal: 'aal1' });
+      expect(listFactorsSpy).toHaveBeenCalledTimes(2);
     });
   });
 
@@ -415,6 +582,25 @@ describe('Mandatory TOTP MFA (AAL2) Across Authorization Boundaries', () => {
   });
 
   describe('5. Superadmin MFA Recovery Endpoint & Audit Logging', () => {
+    it('rejects request missing bearer token with HTTP 401', async () => {
+      const req = new Request('https://egatepass.tech/api/auth/mfa', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          action: 'reset_factor',
+          userId: OFFICE_STAFF_ID,
+          factorId: TOTP_FACTOR_ID,
+          password: SUPERADMIN_PASSWORD,
+          reason: 'Valid reset reason',
+        }),
+      });
+
+      const res = await handleMfaRequest(req);
+      expect(res.status).toBe(401);
+      const json = await res.json();
+      expect(json.error).toBe('authentication_required');
+    });
+
     it('rejects factor reset requests from non-superadmin actors with HTTP 403', async () => {
       const adminToken = createMockJwt({
         sub: ADMIN_ID,
@@ -432,7 +618,8 @@ describe('Mandatory TOTP MFA (AAL2) Across Authorization Boundaries', () => {
         body: JSON.stringify({
           action: 'reset_factor',
           userId: OFFICE_STAFF_ID,
-          factorId: 'factor-totp-1',
+          factorId: TOTP_FACTOR_ID,
+          password: SUPERADMIN_PASSWORD,
           reason: 'Staff lost phone authenticator',
         }),
       });
@@ -458,7 +645,9 @@ describe('Mandatory TOTP MFA (AAL2) Across Authorization Boundaries', () => {
         body: JSON.stringify({
           action: 'reset_factor',
           userId: OFFICE_STAFF_ID,
-          factorId: 'factor-totp-1',
+          factorId: TOTP_FACTOR_ID,
+          password: SUPERADMIN_PASSWORD,
+          reason: 'Staff lost phone authenticator',
         }),
       });
 
@@ -466,6 +655,171 @@ describe('Mandatory TOTP MFA (AAL2) Across Authorization Boundaries', () => {
       expect(res.status).toBe(403);
       const json = await res.json();
       expect(json).toEqual({ error: 'mfa_required' });
+    });
+
+    it('rejects factor reset request with invalid UUIDs in factorId or userId with HTTP 400', async () => {
+      const superadminAal2 = createMockJwt({
+        sub: SUPERADMIN_ID,
+        role: 'authenticated',
+        aal: 'aal2',
+        session_id: 'session-sa-aal2',
+      });
+
+      // Invalid factorId
+      const req1 = new Request('https://egatepass.tech/api/auth/mfa', {
+        method: 'POST',
+        headers: {
+          authorization: `Bearer ${superadminAal2}`,
+          'content-type': 'application/json',
+        },
+        body: JSON.stringify({
+          action: 'reset_factor',
+          userId: OFFICE_STAFF_ID,
+          factorId: 'not-a-valid-uuid',
+          password: SUPERADMIN_PASSWORD,
+          reason: 'Staff lost phone authenticator',
+        }),
+      });
+      const res1 = await handleMfaRequest(req1);
+      expect(res1.status).toBe(400);
+      const json1 = await res1.json();
+      expect(json1.error).toBe('invalid_request');
+
+      // Invalid userId
+      const req2 = new Request('https://egatepass.tech/api/auth/mfa', {
+        method: 'POST',
+        headers: {
+          authorization: `Bearer ${superadminAal2}`,
+          'content-type': 'application/json',
+        },
+        body: JSON.stringify({
+          action: 'reset_factor',
+          userId: 'not-a-valid-uuid',
+          factorId: TOTP_FACTOR_ID,
+          password: SUPERADMIN_PASSWORD,
+          reason: 'Staff lost phone authenticator',
+        }),
+      });
+      const res2 = await handleMfaRequest(req2);
+      expect(res2.status).toBe(400);
+    });
+
+    it('rejects factor reset request with short reason (< 5 characters) with HTTP 400', async () => {
+      const superadminAal2 = createMockJwt({
+        sub: SUPERADMIN_ID,
+        role: 'authenticated',
+        aal: 'aal2',
+        session_id: 'session-sa-aal2',
+      });
+
+      const req = new Request('https://egatepass.tech/api/auth/mfa', {
+        method: 'POST',
+        headers: {
+          authorization: `Bearer ${superadminAal2}`,
+          'content-type': 'application/json',
+        },
+        body: JSON.stringify({
+          action: 'reset_factor',
+          userId: OFFICE_STAFF_ID,
+          factorId: TOTP_FACTOR_ID,
+          password: SUPERADMIN_PASSWORD,
+          reason: 'bad',
+        }),
+      });
+
+      const res = await handleMfaRequest(req);
+      expect(res.status).toBe(400);
+      const json = await res.json();
+      expect(json.error).toBe('invalid_request');
+    });
+
+    it('rejects factor reset request with wrong superadmin password with HTTP 401', async () => {
+      const superadminAal2 = createMockJwt({
+        sub: SUPERADMIN_ID,
+        role: 'authenticated',
+        aal: 'aal2',
+        session_id: 'session-sa-aal2',
+      });
+
+      const req = new Request('https://egatepass.tech/api/auth/mfa', {
+        method: 'POST',
+        headers: {
+          authorization: `Bearer ${superadminAal2}`,
+          'content-type': 'application/json',
+        },
+        body: JSON.stringify({
+          action: 'reset_factor',
+          userId: OFFICE_STAFF_ID,
+          factorId: TOTP_FACTOR_ID,
+          password: 'WrongPassword!',
+          reason: 'Staff lost phone authenticator',
+        }),
+      });
+
+      const res = await handleMfaRequest(req);
+      expect(res.status).toBe(401);
+      const json = await res.json();
+      expect(json.error).toBe('invalid_superadmin_password');
+    });
+
+    it('rejects factor reset request when target user is not found in staff_profiles with HTTP 404', async () => {
+      const superadminAal2 = createMockJwt({
+        sub: SUPERADMIN_ID,
+        role: 'authenticated',
+        aal: 'aal2',
+        session_id: 'session-sa-aal2',
+      });
+
+      const nonExistentId = '99999999-9999-4000-a000-000000000099';
+      const req = new Request('https://egatepass.tech/api/auth/mfa', {
+        method: 'POST',
+        headers: {
+          authorization: `Bearer ${superadminAal2}`,
+          'content-type': 'application/json',
+        },
+        body: JSON.stringify({
+          action: 'reset_factor',
+          userId: nonExistentId,
+          factorId: TOTP_FACTOR_ID,
+          password: SUPERADMIN_PASSWORD,
+          reason: 'Staff lost phone authenticator',
+        }),
+      });
+
+      const res = await handleMfaRequest(req);
+      expect(res.status).toBe(404);
+      const json = await res.json();
+      expect(json.error).toBe('target_user_not_found');
+    });
+
+    it('rejects factor reset request when factor does not belong to target user or is not TOTP with HTTP 400', async () => {
+      const superadminAal2 = createMockJwt({
+        sub: SUPERADMIN_ID,
+        role: 'authenticated',
+        aal: 'aal2',
+        session_id: 'session-sa-aal2',
+      });
+
+      const wrongFactorId = '77777777-7777-4000-a000-777777777777';
+      const req = new Request('https://egatepass.tech/api/auth/mfa', {
+        method: 'POST',
+        headers: {
+          authorization: `Bearer ${superadminAal2}`,
+          'content-type': 'application/json',
+        },
+        body: JSON.stringify({
+          action: 'reset_factor',
+          userId: OFFICE_STAFF_ID,
+          factorId: wrongFactorId,
+          password: SUPERADMIN_PASSWORD,
+          reason: 'Staff lost phone authenticator',
+        }),
+      });
+
+      const res = await handleMfaRequest(req);
+      expect(res.status).toBe(400);
+      const json = await res.json();
+      expect(json.error).toBe('mismatched_factor_id');
     });
 
     it('allows superadmin at AAL2 to delete factor and records immutable audit event', async () => {
@@ -485,7 +839,8 @@ describe('Mandatory TOTP MFA (AAL2) Across Authorization Boundaries', () => {
         body: JSON.stringify({
           action: 'reset_factor',
           userId: OFFICE_STAFF_ID,
-          factorId: 'factor-totp-1',
+          factorId: TOTP_FACTOR_ID,
+          password: SUPERADMIN_PASSWORD,
           reason: 'Staff lost authenticator device',
         }),
       });
@@ -499,7 +854,7 @@ describe('Mandatory TOTP MFA (AAL2) Across Authorization Boundaries', () => {
       expect(deletedFactors).toHaveLength(1);
       expect(deletedFactors[0]).toEqual({
         userId: OFFICE_STAFF_ID,
-        id: 'factor-totp-1',
+        id: TOTP_FACTOR_ID,
       });
 
       // Verify audit event was logged
@@ -515,11 +870,109 @@ describe('Mandatory TOTP MFA (AAL2) Across Authorization Boundaries', () => {
           outcome: 'success',
         })
       );
+
+      // Verify staff sessions update was called
+      expect(mockUpdatedSessions.length).toBeGreaterThanOrEqual(1);
+    });
+
+    it('GET /api/auth/mfa rejects non-superadmin actors with HTTP 403', async () => {
+      const adminToken = createMockJwt({
+        sub: ADMIN_ID,
+        role: 'authenticated',
+        aal: 'aal2',
+        session_id: 'session-admin',
+      });
+
+      const req = new Request(`https://egatepass.tech/api/auth/mfa?userId=${OFFICE_STAFF_ID}`, {
+        method: 'GET',
+        headers: { authorization: `Bearer ${adminToken}` },
+      });
+
+      const res = await handleMfaRequest(req);
+      expect(res.status).toBe(403);
+    });
+
+    it('GET /api/auth/mfa rejects request without userId with HTTP 400', async () => {
+      const superadminAal2 = createMockJwt({
+        sub: SUPERADMIN_ID,
+        role: 'authenticated',
+        aal: 'aal2',
+        session_id: 'session-sa-aal2',
+      });
+
+      const req = new Request('https://egatepass.tech/api/auth/mfa', {
+        method: 'GET',
+        headers: { authorization: `Bearer ${superadminAal2}` },
+      });
+
+      const res = await handleMfaRequest(req);
+      expect(res.status).toBe(400);
+      const json = await res.json();
+      expect(json.error).toBe('missing_user_id');
+    });
+
+    it('GET /api/auth/mfa returns 404 if target user not found in staff_profiles', async () => {
+      const superadminAal2 = createMockJwt({
+        sub: SUPERADMIN_ID,
+        role: 'authenticated',
+        aal: 'aal2',
+        session_id: 'session-sa-aal2',
+      });
+
+      const req = new Request('https://egatepass.tech/api/auth/mfa?userId=99999999-9999-4000-a000-000000000099', {
+        method: 'GET',
+        headers: { authorization: `Bearer ${superadminAal2}` },
+      });
+
+      const res = await handleMfaRequest(req);
+      expect(res.status).toBe(404);
+      const json = await res.json();
+      expect(json.error).toBe('target_user_not_found');
+    });
+
+    it('GET /api/auth/mfa returns 200 and factors list for superadmin', async () => {
+      const superadminAal2 = createMockJwt({
+        sub: SUPERADMIN_ID,
+        role: 'authenticated',
+        aal: 'aal2',
+        session_id: 'session-sa-aal2',
+      });
+
+      const req = new Request(`https://egatepass.tech/api/auth/mfa?userId=${OFFICE_STAFF_ID}`, {
+        method: 'GET',
+        headers: { authorization: `Bearer ${superadminAal2}` },
+      });
+
+      const res = await handleMfaRequest(req);
+      expect(res.status).toBe(200);
+      const json = await res.json();
+      expect(json.factors).toBeDefined();
+      expect(json.factors).toHaveLength(1);
+      expect(json.factors[0].id).toBe(TOTP_FACTOR_ID);
+    });
+
+    it('rejects unsupported HTTP methods with HTTP 405', async () => {
+      const superadminAal2 = createMockJwt({
+        sub: SUPERADMIN_ID,
+        role: 'authenticated',
+        aal: 'aal2',
+        session_id: 'session-sa-aal2',
+      });
+
+      const req = new Request('https://egatepass.tech/api/auth/mfa', {
+        method: 'PATCH',
+        headers: { authorization: `Bearer ${superadminAal2}` },
+      });
+
+      const res = await handleMfaRequest(req);
+      expect(res.status).toBe(405);
+      const json = await res.json();
+      expect(json.error).toBe('method_not_allowed');
     });
   });
 
   describe('6. PostgreSQL RLS & Helper Enforcement (PGlite)', () => {
-    it('proves private.current_staff_role() returns NULL for AAL1 staff and valid role for AAL2 staff', async () => {
+    it('proves optional staff TOTP MFA: allows unenrolled/unverified staff at AAL1, strictly enforces AAL2 for enrolled staff, and restores AAL1 on factor deletion', async () => {
       const db = new PGlite();
       const MIGRATIONS_DIR = join(process.cwd(), 'supabase', 'migrations');
 
@@ -628,38 +1081,120 @@ describe('Mandatory TOTP MFA (AAL2) Across Authorization Boundaries', () => {
         values ('${TEST_VISITOR_ID}', null, null, true);
       `);
 
-      // Case A: Staff JWT at AAL1
+      // Case A: Unenrolled staff at AAL1 is allowed (MFA is optional)
       await db.exec(`
         set request.jwt.claims = '{"sub": "${TEST_ADMIN_ID}", "role": "authenticated", "aal": "aal1"}';
       `);
 
       const aal1RoleRes = await db.query(`select private.current_staff_role() as role;`);
-      expect(aal1RoleRes.rows[0].role).toBeNull();
+      expect(aal1RoleRes.rows[0].role).toBe('admin');
 
       const aal1HasRoleRes = await db.query(`select private.has_staff_role(array['admin', 'superadmin']::public.staff_role[]) as allowed;`);
-      expect(aal1HasRoleRes.rows[0].allowed).toBe(false);
+      expect(aal1HasRoleRes.rows[0].allowed).toBe(true);
 
-      // Case A2: Staff JWT with missing or null AAL claim fails closed (no fail-open)
+      const aal1SatisfiedRes = await db.query(`select private.staff_mfa_is_satisfied() as satisfied;`);
+      expect(aal1SatisfiedRes.rows[0].satisfied).toBe(true);
+
+      // Case A2: Unenrolled staff with missing or null AAL claim is allowed (MFA is optional)
       await db.exec(`
         set request.jwt.claims = '{"sub": "${TEST_ADMIN_ID}", "role": "authenticated"}';
       `);
 
       const missingAalRoleRes = await db.query(`select private.current_staff_role() as role;`);
-      expect(missingAalRoleRes.rows[0].role).toBeNull();
+      expect(missingAalRoleRes.rows[0].role).toBe('admin');
 
       const missingAalHasRoleRes = await db.query(`select private.has_staff_role(array['admin', 'superadmin']::public.staff_role[]) as allowed;`);
-      expect(missingAalHasRoleRes.rows[0].allowed).toBe(false);
+      expect(missingAalHasRoleRes.rows[0].allowed).toBe(true);
 
-      // Case B: Staff JWT at AAL2
+      // Case A3: Incomplete / unverified factor (status = 'unverified') does NOT block AAL1 login
+      await db.exec(`
+        insert into auth.mfa_factors (user_id, status, factor_type)
+        values ('${TEST_ADMIN_ID}', 'unverified', 'totp');
+      `);
+
+      await db.exec(`
+        set request.jwt.claims = '{"sub": "${TEST_ADMIN_ID}", "role": "authenticated", "aal": "aal1"}';
+      `);
+      const unverifiedRoleRes = await db.query(`select private.current_staff_role() as role;`);
+      expect(unverifiedRoleRes.rows[0].role).toBe('admin');
+
+      const unverifiedSatisfiedRes = await db.query(`select private.staff_mfa_is_satisfied() as satisfied;`);
+      expect(unverifiedSatisfiedRes.rows[0].satisfied).toBe(true);
+
+      // Case B: Enrolled staff with verified factor (status = 'verified')
+      await db.exec(`
+        update auth.mfa_factors set status = 'verified' where user_id = '${TEST_ADMIN_ID}';
+      `);
+
+      // Case B1: Enrolled staff at AAL1 is blocked
+      await db.exec(`
+        set request.jwt.claims = '{"sub": "${TEST_ADMIN_ID}", "role": "authenticated", "aal": "aal1"}';
+      `);
+      const enrolledAal1Role = await db.query(`select private.current_staff_role() as role;`);
+      expect(enrolledAal1Role.rows[0].role).toBeNull();
+
+      const enrolledAal1HasRole = await db.query(`select private.has_staff_role(array['admin', 'superadmin']::public.staff_role[]) as allowed;`);
+      expect(enrolledAal1HasRole.rows[0].allowed).toBe(false);
+
+      const enrolledAal1Satisfied = await db.query(`select private.staff_mfa_is_satisfied() as satisfied;`);
+      expect(enrolledAal1Satisfied.rows[0].satisfied).toBe(false);
+
+      // Case B2: Enrolled staff with missing AAL claim fails closed
+      await db.exec(`
+        set request.jwt.claims = '{"sub": "${TEST_ADMIN_ID}", "role": "authenticated"}';
+      `);
+      const enrolledMissingAalRole = await db.query(`select private.current_staff_role() as role;`);
+      expect(enrolledMissingAalRole.rows[0].role).toBeNull();
+
+      const enrolledMissingAalHasRole = await db.query(`select private.has_staff_role(array['admin', 'superadmin']::public.staff_role[]) as allowed;`);
+      expect(enrolledMissingAalHasRole.rows[0].allowed).toBe(false);
+
+      const enrolledMissingAalSatisfied = await db.query(`select private.staff_mfa_is_satisfied() as satisfied;`);
+      expect(enrolledMissingAalSatisfied.rows[0].satisfied).toBe(false);
+
+      // Case B2b: Enrolled staff with explicit JSON null AAL claim ("aal": null) strictly fails closed (returns boolean false, not null)
+      await db.exec(`
+        set request.jwt.claims = '{"sub": "${TEST_ADMIN_ID}", "role": "authenticated", "aal": null}';
+      `);
+      const enrolledNullAalSatisfied = await db.query<{ satisfied: any }>(
+        `select private.staff_mfa_is_satisfied() as satisfied;`
+      );
+      expect(enrolledNullAalSatisfied.rows[0].satisfied).toBe(false);
+
+      const enrolledNullAalRole = await db.query(`select private.current_staff_role() as role;`);
+      expect(enrolledNullAalRole.rows[0].role).toBeNull();
+
+      const enrolledNullAalHasRole = await db.query(
+        `select private.has_staff_role(array['admin', 'superadmin']::public.staff_role[]) as allowed;`
+      );
+      expect(enrolledNullAalHasRole.rows[0].allowed).toBe(false);
+
+      // Case B3: Enrolled staff at AAL2 is allowed
       await db.exec(`
         set request.jwt.claims = '{"sub": "${TEST_ADMIN_ID}", "role": "authenticated", "aal": "aal2"}';
       `);
+      const enrolledAal2Role = await db.query(`select private.current_staff_role() as role;`);
+      expect(enrolledAal2Role.rows[0].role).toBe('admin');
 
-      const aal2RoleRes = await db.query(`select private.current_staff_role() as role;`);
-      expect(aal2RoleRes.rows[0].role).toBe('admin');
+      const enrolledAal2HasRole = await db.query(`select private.has_staff_role(array['admin', 'superadmin']::public.staff_role[]) as allowed;`);
+      expect(enrolledAal2HasRole.rows[0].allowed).toBe(true);
 
-      const aal2HasRoleRes = await db.query(`select private.has_staff_role(array['admin', 'superadmin']::public.staff_role[]) as allowed;`);
-      expect(aal2HasRoleRes.rows[0].allowed).toBe(true);
+      const enrolledAal2Satisfied = await db.query(`select private.staff_mfa_is_satisfied() as satisfied;`);
+      expect(enrolledAal2Satisfied.rows[0].satisfied).toBe(true);
+
+      // Case B4: Factor deletion / reset immediately restores password-only access (AAL1 allowed)
+      await db.exec(`
+        delete from auth.mfa_factors where user_id = '${TEST_ADMIN_ID}';
+      `);
+
+      await db.exec(`
+        set request.jwt.claims = '{"sub": "${TEST_ADMIN_ID}", "role": "authenticated", "aal": "aal1"}';
+      `);
+      const postResetRole = await db.query(`select private.current_staff_role() as role;`);
+      expect(postResetRole.rows[0].role).toBe('admin');
+
+      const postResetHasRole = await db.query(`select private.has_staff_role(array['admin', 'superadmin']::public.staff_role[]) as allowed;`);
+      expect(postResetHasRole.rows[0].allowed).toBe(true);
 
       // Case C: Genuine anonymous visitor without AAL2 remains functional
       await db.exec(`
@@ -668,11 +1203,18 @@ describe('Mandatory TOTP MFA (AAL2) Across Authorization Boundaries', () => {
 
       const portalActorRes = await db.query(`select private.is_portal_actor() as is_portal;`);
       expect(portalActorRes.rows[0].is_portal).toBe(true);
+
+      // Case D: Unauthenticated caller fails closed
+      await db.exec(`
+        set request.jwt.claims = '{"role": "anon"}';
+      `);
+      const unauthSatisfied = await db.query(`select private.staff_mfa_is_satisfied() as satisfied;`);
+      expect(unauthSatisfied.rows[0].satisfied).toBe(false);
     }, 60000);
   });
 
-  describe('7. Direct SECURITY DEFINER RPC Fail-Closed AAL2 Enforcement (PGlite)', () => {
-    it('verifies guard_recover_pass_action, guard_search_pending_queue, and guard_sync_offline_event enforce fail-closed AAL2', async () => {
+  describe('7. Direct SECURITY DEFINER RPC Optional Staff TOTP MFA Enforcement (PGlite)', () => {
+    it('verifies guard_recover_pass_action, guard_search_pending_queue, and guard_sync_offline_event enforce optional staff TOTP MFA (AAL1 for unenrolled, AAL2 for enrolled)', async () => {
       const db = new PGlite();
       const MIGRATIONS_DIR = join(process.cwd(), 'supabase', 'migrations');
 
@@ -789,8 +1331,34 @@ describe('Mandatory TOTP MFA (AAL2) Across Authorization Boundaries', () => {
         values ('${TEST_PASS_ID}', '${TEST_VISITOR_ID}', 'pending', 'portal', now(), now() + interval '8 hours', 'Gate 1', gen_random_uuid(), sha256('pass-token-123'::bytea), 1);
       `);
 
+      // 0. Case 0: Unenrolled staff at AAL1 can execute RPCs (MFA is optional)
+      await db.exec(`
+        set request.jwt.claims = '{"sub": "${TEST_ADMIN_ID}", "role": "authenticated", "aal": "aal1"}';
+      `);
+      const unenrolledSearch = await db.query<{ res: any[] }>(
+        `select api.guard_search_pending_queue('Test Visitor', 10) as res;`
+      );
+      expect(Array.isArray(unenrolledSearch.rows[0].res)).toBe(true);
+      expect(unenrolledSearch.rows[0].res.length).toBeGreaterThan(0);
+      expect(unenrolledSearch.rows[0].res[0].id).toBe(TEST_PASS_ID);
+
+      // Incomplete / unverified factor does not block unenrolled staff at AAL1
+      await db.exec(`
+        insert into auth.mfa_factors (user_id, status, factor_type)
+        values ('${TEST_ADMIN_ID}', 'unverified', 'totp');
+      `);
+      const unverifiedSearch = await db.query<{ res: any[] }>(
+        `select api.guard_search_pending_queue('Test Visitor', 10) as res;`
+      );
+      expect(unverifiedSearch.rows[0].res.length).toBeGreaterThan(0);
+
+      // Now enroll staff with a verified factor
+      await db.exec(`
+        update auth.mfa_factors set status = 'verified' where user_id = '${TEST_ADMIN_ID}';
+      `);
+
       // 1. api.guard_recover_pass_action
-      // AAL1 -> throws mfa_required
+      // Enrolled staff at AAL1 -> throws mfa_required
       await db.exec(`
         set request.jwt.claims = '{"sub": "${TEST_ADMIN_ID}", "role": "authenticated", "aal": "aal1"}';
       `);
@@ -806,7 +1374,15 @@ describe('Mandatory TOTP MFA (AAL2) Across Authorization Boundaries', () => {
         db.query(`select api.guard_recover_pass_action('${TEST_PASS_ID}'::uuid, 'approve_entry');`)
       ).rejects.toThrow(/mfa_required/);
 
-      // AAL2 -> succeeds
+      // Explicit null AAL claim ("aal": null) -> throws mfa_required (fail closed, no three-valued logic bypass)
+      await db.exec(`
+        set request.jwt.claims = '{"sub": "${TEST_ADMIN_ID}", "role": "authenticated", "aal": null}';
+      `);
+      await expect(
+        db.query(`select api.guard_recover_pass_action('${TEST_PASS_ID}'::uuid, 'approve_entry');`)
+      ).rejects.toThrow(/mfa_required/);
+
+      // Enrolled staff at AAL2 -> succeeds for approve_entry
       await db.exec(`
         set request.jwt.claims = '{"sub": "${TEST_ADMIN_ID}", "role": "authenticated", "aal": "aal2"}';
       `);
@@ -816,11 +1392,48 @@ describe('Mandatory TOTP MFA (AAL2) Across Authorization Boundaries', () => {
       expect(recoverRes.rows[0].res.success).toBe(true);
       expect(recoverRes.rows[0].res.status).toBe('inside');
 
-      // 2. api.guard_search_pending_queue
-      // Reset pass back to pending for queue search
-      await db.exec(`update public.passes set status = 'pending' where id = '${TEST_PASS_ID}';`);
+      // Enrolled staff at AAL2 -> succeeds for record_exit (verifying no column crash and time_out set)
+      const exitRes = await db.query<{ res: any }>(
+        `select api.guard_recover_pass_action('${TEST_PASS_ID}'::uuid, 'record_exit') as res;`
+      );
+      expect(exitRes.rows[0].res.success).toBe(true);
+      expect(exitRes.rows[0].res.status).toBe('exited');
 
-      // AAL1 -> throws mfa_required
+      // Reset pass back to pending for reject_entry
+      await db.exec(`update public.passes set status = 'pending', time_in = null, time_out = null, rejection_reason = null where id = '${TEST_PASS_ID}';`);
+      const rejectRes = await db.query<{ res: any }>(
+        `select api.guard_recover_pass_action('${TEST_PASS_ID}'::uuid, 'reject_entry', 'Denied by recovery guard') as res;`
+      );
+      expect(rejectRes.rows[0].res.success).toBe(true);
+      expect(rejectRes.rows[0].res.status).toBe('rejected');
+
+      // Assert that public.audit_events rows were written for each recovery action
+      const auditApprove = await db.query<{ action: string; outcome: string; actor_id: string }>(
+        `select action, outcome, actor_id from public.audit_events where action = 'gate.visitor_recovery_approve' and target_id = '${TEST_PASS_ID}';`
+      );
+      expect(auditApprove.rows.length).toBe(1);
+      expect(auditApprove.rows[0].actor_id).toBe(TEST_ADMIN_ID);
+      expect(auditApprove.rows[0].outcome).toBe('success');
+
+      const auditExit = await db.query<{ action: string; outcome: string; actor_id: string }>(
+        `select action, outcome, actor_id from public.audit_events where action = 'gate.visitor_recovery_exit' and target_id = '${TEST_PASS_ID}';`
+      );
+      expect(auditExit.rows.length).toBe(1);
+      expect(auditExit.rows[0].actor_id).toBe(TEST_ADMIN_ID);
+      expect(auditExit.rows[0].outcome).toBe('success');
+
+      const auditReject = await db.query<{ action: string; outcome: string; actor_id: string }>(
+        `select action, outcome, actor_id from public.audit_events where action = 'gate.visitor_recovery_reject' and target_id = '${TEST_PASS_ID}';`
+      );
+      expect(auditReject.rows.length).toBe(1);
+      expect(auditReject.rows[0].actor_id).toBe(TEST_ADMIN_ID);
+      expect(auditReject.rows[0].outcome).toBe('success');
+
+      // 2. api.guard_search_pending_queue
+      // Reset pass back to pending for queue search, clearing rejection_reason and resetting version to 2
+      await db.exec(`update public.passes set status = 'pending', rejection_reason = null, time_in = null, time_out = null, version = 2 where id = '${TEST_PASS_ID}';`);
+
+      // Enrolled staff at AAL1 -> throws mfa_required
       await db.exec(`
         set request.jwt.claims = '{"sub": "${TEST_ADMIN_ID}", "role": "authenticated", "aal": "aal1"}';
       `);
@@ -836,7 +1449,15 @@ describe('Mandatory TOTP MFA (AAL2) Across Authorization Boundaries', () => {
         db.query(`select api.guard_search_pending_queue('Test Visitor', 10);`)
       ).rejects.toThrow(/mfa_required/);
 
-      // AAL2 -> succeeds and returns results
+      // Explicit null AAL claim -> throws mfa_required
+      await db.exec(`
+        set request.jwt.claims = '{"sub": "${TEST_ADMIN_ID}", "role": "authenticated", "aal": null}';
+      `);
+      await expect(
+        db.query(`select api.guard_search_pending_queue('Test Visitor', 10);`)
+      ).rejects.toThrow(/mfa_required/);
+
+      // Enrolled staff at AAL2 -> succeeds and returns results
       await db.exec(`
         set request.jwt.claims = '{"sub": "${TEST_ADMIN_ID}", "role": "authenticated", "aal": "aal2"}';
       `);
@@ -858,7 +1479,7 @@ describe('Mandatory TOTP MFA (AAL2) Across Authorization Boundaries', () => {
       expect(svcSearchRes.rows[0].res.length).toBeGreaterThan(0);
 
       // 3. api.guard_sync_offline_event
-      // AAL1 -> throws mfa_required
+      // Enrolled staff at AAL1 -> throws mfa_required
       await db.exec(`
         set request.jwt.claims = '{"sub": "${TEST_ADMIN_ID}", "role": "authenticated", "aal": "aal1"}';
       `);
@@ -894,7 +1515,25 @@ describe('Mandatory TOTP MFA (AAL2) Across Authorization Boundaries', () => {
         `)
       ).rejects.toThrow(/mfa_required/);
 
-      // AAL2 -> succeeds past auth
+      // Explicit null AAL claim -> throws mfa_required
+      await db.exec(`
+        set request.jwt.claims = '{"sub": "${TEST_ADMIN_ID}", "role": "authenticated", "aal": null}';
+      `);
+      await expect(
+        db.query(`
+          select api.guard_sync_offline_event(
+            '${TEST_EVENT_ID}'::uuid,
+            '${TEST_PASS_ID}'::uuid,
+            'approve_entry',
+            'pending',
+            2,
+            statement_timestamp(),
+            'Offline sync test'
+          );
+        `)
+      ).rejects.toThrow(/mfa_required/);
+
+      // Enrolled staff at AAL2 -> succeeds past auth
       await db.exec(`
         set request.jwt.claims = '{"sub": "${TEST_ADMIN_ID}", "role": "authenticated", "aal": "aal2"}';
       `);
@@ -910,6 +1549,17 @@ describe('Mandatory TOTP MFA (AAL2) Across Authorization Boundaries', () => {
         ) as res;
       `);
       expect(syncRes.rows[0].res.status).toBe('applied');
+
+      // 3b. Factor Reset: deleting verified factor restores AAL1 execution immediately
+      await db.exec(`delete from auth.mfa_factors where user_id = '${TEST_ADMIN_ID}';`);
+      await db.exec(`update public.passes set status = 'pending' where id = '${TEST_PASS_ID}';`);
+      await db.exec(`
+        set request.jwt.claims = '{"sub": "${TEST_ADMIN_ID}", "role": "authenticated", "aal": "aal1"}';
+      `);
+      const postResetSearch = await db.query<{ res: any[] }>(
+        `select api.guard_search_pending_queue('Test Visitor', 10) as res;`
+      );
+      expect(postResetSearch.rows[0].res.length).toBeGreaterThan(0);
 
       // 4. api.claim_office_visit_acknowledgement_for_delivery
       // Test that 24-hour expired idempotency window marks row reconciliation_required and commits without rollback

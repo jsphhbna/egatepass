@@ -82,7 +82,7 @@ flowchart TD
 
 ### Identity Resolution Rules:
 1. **Anonymous Visitors**: Have valid Supabase Auth anonymous UIDs. Confined to requesting upload intents and submitting pass issuance.
-2. **Staff Members**: Identified by a matching row in `public.staff_profiles` where `active = true`. Full operational eligibility also requires a confirmed Auth email (`email_confirmed_at IS NOT NULL`), completed password onboarding (`must_change_password = false`), privacy acceptance (`privacy_accepted_at IS NOT NULL`), an unconfined session (not recovery-confined), and an authorized staff role (`guard`, `admin`, `superadmin`, `office_staff`).
+2. **Staff Members**: Identified by a matching row in `public.staff_profiles` where `active = true`. Full operational eligibility also requires a confirmed Auth email (`email_confirmed_at IS NOT NULL`), completed password onboarding (`must_change_password = false`), privacy acceptance (`privacy_accepted_at IS NOT NULL`), an unconfined session (not recovery-confined), and an authorized staff role (`guard`, `admin`, `superadmin`, `office_staff`). Human staff accounts operate under an optional TOTP Multi-Factor Authentication (MFA) policy: accounts without verified TOTP factors authenticate with password only and operate at Authenticator Assurance Level 1 (`aal1`), while accounts with at least one verified factor must complete a TOTP challenge to achieve Authenticator Assurance Level 2 (`aal2`) before gaining access to staff routes and protected operations.
 3. **Managed Devices**: Identified by a matching row in `public.devices` where `status = 'active'` and `deleted_at IS NULL`. Types: `entry`, `exit`, `kiosk`, `guard_station`, `emergency_device`. All managed devices are strictly exempt from human 15-minute inactivity sign-out (`HumanInactivityGuard.tsx` & `/api/auth/session-activity`).
 4. **Recovery Sessions**: Explicitly flagged when authenticated via recovery magic links. Confined strictly to password reset and blocked from scanner, guard, and admin operations (`recovery_session_forbidden`).
 
@@ -138,6 +138,9 @@ sequenceDiagram
 | **Execute Retention Maintenance** (`/api/admin/retention-maintenance`) | Denied | Denied | Denied | Denied | Denied | Denied | Denied | **Allowed** / Cron |
 | **Review Reconciliation Tasks** (`/api/reconciliation-items`) | Denied | Denied | Denied | Denied | Denied | Denied | Denied | **Allowed** |
 | **Promote Admin to Super Admin** (`POST /api/update-user` -> `api.update_staff_profile`) | Denied | Denied | Denied | Denied | Denied | Denied | Denied | **Allowed** |
+| **Self-Service MFA Settings** (`/account/security`) | Denied | Denied | Denied | Denied | **Allowed** | Denied | **Allowed** | **Allowed** |
+| **Inspect Staff MFA Factors** (`GET /api/auth/mfa`) | Denied | Denied | Denied | Denied | Denied | Denied | Denied | **Allowed** |
+| **Reset Staff MFA Factor** (`POST /api/auth/mfa`) | Denied | Denied | Denied | Denied | Denied | Denied | Denied | **Allowed** (Password Re-auth) |
 
 ---
 
@@ -889,6 +892,66 @@ The shared pure SVG template generator (`src/lib/digitalPassArtifact.ts`) uses s
 - **Atomic Local Vault Transactions**: Local offline intake records allocate their sequence counter and insert record blobs in a single atomic IndexedDB transaction across `[STORE_META, STORE_RECORDS]`. Upon server synchronization confirmation, local record payloads purge all PII while retaining audit receipt metadata (`piiClearedAt`).
 - **Emergency Keyset Pagination & Finalized Decision Integrity**: `/api/admin/emergency-records` implements compound keyset cursor pagination `(server_received_at, id)` and computes summary metrics across the full filtered dataset. Reconciliations require a client-generated `requestId` for idempotency and reject modifications to finalized decisions (`accepted` or `rejected`) with HTTP 409 Conflict.
 - **Stale Pass Expiry Continuity**: Under `global_retention_freeze`, destructive purges are suspended, but pass validity expiration (`api.expire_stale_passes`) continues running to maintain authoritative pass states.
+
+---
+
+## 31. Optional Staff TOTP Multi-Factor Authentication (MFA) Architecture & Reset Governance
+
+### 31.1 Optional Staff MFA Policy & Login Authentication (§R1)
+- **Optional by Default**: TOTP MFA is strictly optional for all human staff roles (`admin`, `superadmin`, `office_staff`). Staff accounts are never forced or mandated to enroll.
+- **Unenrolled Staff Access (AAL1)**: Staff accounts without a verified TOTP factor authenticate via password only and access protected staff routes (`/admin`, `/office`, etc.) at Authenticator Assurance Level 1 (`aal1`) without encountering enrollment modals, onboarding gates, or authenticator challenges.
+- **Enrolled Staff Verification (AAL2)**: When a staff member opts in and verifies at least one TOTP factor, their session begins at `aal1` upon password authentication. The client auth system (`useAuth.tsx`, `LoginPage.tsx`, `ProtectedRoute.tsx`) detects the verified factor and blocks staff routes until the user completes a 6-digit TOTP challenge (`supabase.auth.mfa.challengeAndVerify()`), elevating their session to Authenticator Assurance Level 2 (`aal2`).
+- **Unverified & Incomplete Factors Ignored**: Stale, unverified, or abandoned factor enrollments never trigger an MFA challenge, never elevate account requirements, and never block password login.
+- **Immediate Password-Only Restoration**: When all verified factors are unenrolled or reset, the account immediately returns to password-only `aal1` access on subsequent logins.
+
+### 31.2 Self-Service Account Security Settings (§R2)
+- **Staff Dedicated Security Route (`/account/security`)**: Available to all authenticated human staff roles (`admin`, `superadmin`, `office_staff`) via self-service navigation or direct URL. Strictly forbidden and inaccessible to anonymous visitors, kiosk terminals, and emergency-device hardware.
+- **Status Inspection & Elevation**: When MFA is disabled, the security settings view displays a clear Disabled badge and an "Enable Two-Factor Authentication" button.
+- **Secure Enrollment Flow**:
+  1. Calls `supabase.auth.mfa.enroll({ factorType: 'totp', issuer: 'EARIST E-GatePass' })`.
+  2. Renders the QR code safely with URI-encoded SVG markup (`data:image/svg+xml;utf8,...`) to prevent XML parsing glitches, alongside the manual secret key.
+  3. Prompts for a 6-digit verification code.
+  4. Calls `supabase.auth.mfa.challengeAndVerify({ factorId, code })` and awaits session state elevation.
+  5. Refreshes the active session (`supabase.auth.refreshSession()`) to ensure the JWT reflects `aal: 'aal2'`.
+  6. Zero secrets, recovery codes, or plaintext TOTP seeds are persisted to database tables, local storage, or application logs.
+- **Disable / Unenrollment Flow**:
+  1. Requires explicit confirmation and active AAL2 session verification.
+  2. Calls `supabase.auth.mfa.unenroll({ factorId })` for each verified factor.
+  3. Immediately refreshes the active session via `refreshSession()`, reverting the session to `aal1` and updating the status badge to Disabled.
+
+### 31.3 Conditional Authorization in Backend Middleware & Database RPCs (§R3)
+- **Conditional Backend Middleware (`server/actors.ts`, `server/lib/office.ts`)**:
+  - Replaces unconditional AAL2 enforcement with dynamic, conditional factor checking (`assertStaffMfaSatisfied`).
+  - If the incoming JWT already carries `aal: 'aal2'`, access is immediately authorized.
+  - If the incoming JWT is at `aal: 'aal1'`, the middleware queries the Supabase Admin Auth API (`admin.auth.admin.mfa.listFactors({ userId })`) with an in-memory 15-second cache (`staffMfaFactorCache`).
+  - If no verified TOTP factor exists for the staff user, `aal1` is permitted.
+  - If one or more verified factors exist, access is denied with HTTP 403 Forbidden (`{ error: 'mfa_required' }`).
+  - In the event of an upstream Admin Auth API error during factor lookup, the middleware fails closed with HTTP 403 Forbidden.
+- **Database Helper `private.staff_mfa_is_satisfied()` (Migration 49 / `20261116000200_optional_staff_totp_mfa.sql`)**:
+  - Evaluates `auth.uid()` against `auth.mfa_factors` looking for verified factors (`status = 'verified'`).
+  - If no verified factor exists, returns `true` (AAL1 or AAL2 satisfied).
+  - If a verified factor exists, returns `true` only if `(auth.jwt()->>'aal') = 'aal2'`.
+  - Propagates throughout `private.current_staff_role()`, `private.has_staff_role()`, and operational RPC guards:
+    - `api.guard_recover_pass_action`
+    - `api.guard_search_pending_queue`
+    - `api.guard_sync_offline_event`
+  - Rejects unsatisfied calls with SQLSTATE `42501` and error message `mfa_required`.
+  - Preserves the outbox delivery reconciliation logic in `api.claim_office_visit_acknowledgement_for_delivery` from migration `20261116000100` exactly without regression.
+
+### 31.4 Superadmin Factor Inspection & Reauthenticated Factor Reset (§R4)
+- **Superadmin Console Inspection (`src/pages/AdminUsers.tsx`)**:
+  - Superadmins can inspect the MFA state of all staff accounts in the Staff Management table, displaying badges: `Enabled` (green), `Disabled` (neutral), or `Incomplete` (yellow).
+  - For enrolled accounts, an administrative "Reset MFA" action is available.
+- **Privileged Reset Endpoint (`/api/auth/mfa`)**:
+  - Registered in `api/auth/[...route].ts` and `server/route-map.ts`.
+  - `GET /api/auth/mfa?userId=<UUID>`: Returns factor list for a given staff member; accessible only to Superadmins.
+  - `POST /api/auth/mfa`: Executes an emergency factor reset for locked-out or lost-device staff.
+  - **Superadmin Authorization**: Caller must possess active `role = 'superadmin'`.
+  - **Fresh Password Re-Authentication**: Verifies the acting Superadmin's credentials using an isolated Supabase Auth client with local-only sign-out (`signOut({ scope: 'local' })`), guaranteeing the Superadmin's session is never lost while preventing unauthenticated CSRF/session reuse.
+  - **Audit Logging & Factor Removal**:
+    - Deletes target TOTP factor via `supabase.auth.admin.mfa.deleteFactor`.
+    - Inserts an immutable audit event in `public.audit_events` with `action: 'staff.mfa_factor_reset'`, recording `actor_id`, `target_user_id`, `reason`, and timestamp.
+    - Revokes and invalidates target user's active sessions via `admin.auth.admin.signOut(targetUserId)`, terminating compromised or stale sessions.
 
 
 

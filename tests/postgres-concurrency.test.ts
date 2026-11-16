@@ -2023,12 +2023,13 @@ runSuite('True PostgreSQL Concurrency, Canonical Approval Integrity & Email Reco
           on conflict (id) do nothing;
         `);
 
-        // 2. Identity 1: Assigned, fully onboarded office staff (assigned to Office 1)
+        // 2. Identity 1: Assigned, fully onboarded office staff with verified TOTP factor (assigned to Office 1)
         await client.query(`
           insert into auth.users (id, email, email_confirmed_at) values ('${assignedStaffId}', 'assigned.staff@earist.edu.ph', now()) on conflict (id) do nothing;
           insert into public.staff_profiles (user_id, display_name, role, active, must_change_password, privacy_accepted_at)
           values ('${assignedStaffId}', 'Assigned Staff', 'office_staff', true, false, now()) on conflict (user_id) do nothing;
           insert into public.office_staff_assignments (user_id, office_id) values ('${assignedStaffId}', '${office1Id}') on conflict do nothing;
+          insert into auth.mfa_factors (user_id, status, factor_type) values ('${assignedStaffId}', 'verified', 'totp') on conflict do nothing;
         `);
 
         // 3. Identity 2: Unassigned office staff (assigned only to Office 2)
@@ -2144,14 +2145,20 @@ runSuite('True PostgreSQL Concurrency, Canonical Approval Integrity & Email Reco
       expect(rows).toHaveLength(0);
     });
 
-    it('6b. Active staff at AAL1 cannot read outbox rows', async () => {
+    it('6b. Active enrolled staff at AAL1 cannot read outbox rows', async () => {
       const rows = await queryOutboxAs({ sub: assignedStaffId, role: 'authenticated', aal: 'aal1' });
       expect(rows).toHaveLength(0);
     });
 
-    it('6c. Active staff with missing AAL claim cannot read outbox rows (fail-closed)', async () => {
+    it('6c. Active enrolled staff with missing AAL claim cannot read outbox rows (fail-closed)', async () => {
       const rows = await queryOutboxAs({ sub: assignedStaffId, role: 'authenticated', aal: null });
       expect(rows).toHaveLength(0);
+    });
+
+    it('6d. Unenrolled active staff at AAL1 can read assigned office outbox rows (optional MFA)', async () => {
+      const rows = await queryOutboxAs({ sub: unassignedStaffId, role: 'authenticated', aal: 'aal1' });
+      expect(rows).not.toContain(outbox1Id);
+      expect(rows).toContain(outbox2Id);
     });
 
     it('7. Anonymous visitor sessions without staff authority cannot read outbox rows', async () => {

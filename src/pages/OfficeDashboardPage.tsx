@@ -18,6 +18,7 @@ import {
   Phone,
   CalendarDays,
   Trash2,
+  ShieldCheck,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { BrandMark } from '@/components/BrandMark';
@@ -733,6 +734,15 @@ export function OfficeDashboardPage() {
               icon={<RefreshCw className={`h-3.5 w-3.5 ${isRefreshing ? 'animate-spin' : ''}`} />}
             >
               Refresh
+            </Button>
+
+            <Button
+              variant="secondary"
+              size="sm"
+              onClick={() => navigate('/account/security')}
+              icon={<ShieldCheck className="h-3.5 w-3.5 text-gray-700" />}
+            >
+              Security Settings
             </Button>
 
             <Button

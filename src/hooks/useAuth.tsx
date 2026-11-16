@@ -9,6 +9,7 @@ const unavailableMessage = getSupabaseAvailabilityMessage();
 
 export interface ExtendedAuthState extends AuthState {
   aal: 'aal1' | 'aal2' | null;
+  hasMfaEnabled: boolean;
   requiresMfa: boolean;
 }
 
@@ -18,6 +19,7 @@ const initialState: ExtendedAuthState = {
   role: null,
   userData: null,
   aal: null,
+  hasMfaEnabled: false,
   requiresMfa: false,
   serviceStatus: supabase ? 'available' : 'unavailable',
   serviceMessage: unavailableMessage,
@@ -42,9 +44,14 @@ function parseTokenClaims(token: string): Record<string, unknown> | null {
   }
 }
 
-async function resolveRole(user: User): Promise<{ role: AuthRole; userData: AuthActor | null; aal: 'aal1' | 'aal2' | null }> {
-  if (!supabase) return { role: null, userData: null, aal: null };
-  if (user.is_anonymous === true) return { role: 'visitor', userData: null, aal: null };
+async function resolveRole(user: User): Promise<{
+  role: AuthRole;
+  userData: AuthActor | null;
+  aal: 'aal1' | 'aal2' | null;
+  hasMfaEnabled: boolean;
+}> {
+  if (!supabase) return { role: null, userData: null, aal: null, hasMfaEnabled: false };
+  if (user.is_anonymous === true) return { role: 'visitor', userData: null, aal: null, hasMfaEnabled: false };
 
   let aal: 'aal1' | 'aal2' | null = null;
 
@@ -54,10 +61,21 @@ async function resolveRole(user: User): Promise<{ role: AuthRole; userData: Auth
     const claims = parseTokenClaims(sessionData.session.access_token);
     const isRecovery = Array.isArray(claims?.amr) && claims.amr.some((m: any) => m?.method === 'recovery');
     if (isRecovery) {
-      return { role: null, userData: null, aal: null };
+      return { role: null, userData: null, aal: null, hasMfaEnabled: false };
     }
     if (claims?.aal === 'aal1' || claims?.aal === 'aal2') {
       aal = claims.aal;
+    } else {
+      try {
+        const { data: aalData } = await supabase.auth.mfa.getAuthenticatorAssuranceLevel();
+        if (aalData?.currentLevel === 'aal1') {
+          aal = 'aal1';
+        } else if (aalData?.currentLevel === 'aal2') {
+          aal = 'aal2';
+        }
+      } catch {
+        // Fallback silently if assurance level check is unsupported
+      }
     }
   }
 
@@ -70,11 +88,35 @@ async function resolveRole(user: User): Promise<{ role: AuthRole; userData: Auth
   if (staffResult.error) throw staffResult.error;
   if (staffResult.data) {
     const profile = staffResult.data;
-    if (!profile.active || !isUserRole(profile.role)) return { role: null, userData: null, aal: null };
+    if (!profile.active || !isUserRole(profile.role)) return { role: null, userData: null, aal: null, hasMfaEnabled: false };
     if (profile.role === 'guard') {
       await supabase.auth.signOut();
-      return { role: null, userData: null, aal: null };
+      return { role: null, userData: null, aal: null, hasMfaEnabled: false };
     }
+
+    // Resolve MFA factors for human staff
+    let hasMfaEnabled = false;
+    if (aal === 'aal2') {
+      hasMfaEnabled = true;
+    } else {
+      try {
+        const { data: factorsData, error: factorsError } = await supabase.auth.mfa.listFactors();
+        if (factorsError) {
+          console.error('Failed to list MFA factors for staff:', factorsError);
+          // Fail closed: treat as having MFA enabled to prevent unverified bypass
+          hasMfaEnabled = true;
+        } else {
+          const factors = factorsData?.all ?? [];
+          hasMfaEnabled = factors.some((f) => f.factor_type === 'totp' && f.status === 'verified') ||
+            (factorsData?.totp?.length ?? 0) > 0;
+        }
+      } catch (factorErr) {
+        console.error('Exception resolving staff MFA factors:', factorErr);
+        // Fail closed
+        hasMfaEnabled = true;
+      }
+    }
+
     const userData: StaffAuthActor = {
       kind: 'staff',
       name: profile.display_name,
@@ -84,7 +126,7 @@ async function resolveRole(user: User): Promise<{ role: AuthRole; userData: Auth
       mustChangePassword: profile.must_change_password,
       privacyAcceptedAt: profile.privacy_accepted_at,
     };
-    return { role: profile.role, userData, aal };
+    return { role: profile.role, userData, aal, hasMfaEnabled };
   }
 
   const deviceResult = await supabase
@@ -104,10 +146,10 @@ async function resolveRole(user: User): Promise<{ role: AuthRole; userData: Auth
       gate: device.gate,
       status: device.status,
     };
-    return { role: device.type, userData, aal };
+    return { role: device.type, userData, aal, hasMfaEnabled: false };
   }
 
-  return { role: null, userData: null, aal: null };
+  return { role: null, userData: null, aal: null, hasMfaEnabled: false };
 }
 
 interface AuthProviderProps {
@@ -130,7 +172,7 @@ export function AuthProvider({ children }: AuthProviderProps) {
       }
 
       try {
-        const { role, userData, aal } = await resolveRole(user);
+        const { role, userData, aal, hasMfaEnabled } = await resolveRole(user);
         if (!active || generation !== authGenerationRef.current) return;
 
         if (!role) {
@@ -155,7 +197,7 @@ export function AuthProvider({ children }: AuthProviderProps) {
           userData.mustChangePassword === true;
 
         const isHumanStaff = userData?.kind === 'staff';
-        const requiresMfa = isHumanStaff && aal !== 'aal2';
+        const requiresMfa = isHumanStaff && hasMfaEnabled && aal !== 'aal2';
 
         if (active && generation === authGenerationRef.current) {
           setState({
@@ -164,6 +206,7 @@ export function AuthProvider({ children }: AuthProviderProps) {
             role,
             userData,
             aal,
+            hasMfaEnabled,
             requiresMfa,
             serviceStatus: 'available',
             serviceMessage: null,

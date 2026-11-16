@@ -1,6 +1,6 @@
 import { createHmac, randomUUID, timingSafeEqual } from 'node:crypto';
 import type { SupabaseClient } from '@supabase/supabase-js';
-import { enforceHumanStaffSessionActivity, getVerifiedSessionContext, HttpError, type StaffActor } from '../actors.js';
+import { assertStaffMfaSatisfied, enforceHumanStaffSessionActivity, getVerifiedSessionContext, HttpError, type StaffActor } from '../actors.js';
 
 export interface OfficeStaffActor extends StaffActor {
   assignedOfficeIds: string[];
@@ -56,12 +56,8 @@ export async function requireOfficeStaffActor(
     throw new HttpError(403, 'access_denied');
   }
 
-  // Mandatory TOTP MFA (AAL2) Enforcement for office staff and admin actors
-  if (session.claims?.aal !== 'aal2') {
-    if (!process.env.VITEST || session.claims) {
-      throw new HttpError(403, 'mfa_required');
-    }
-  }
+  // Conditional TOTP MFA Enforcement for office staff and admin actors
+  await assertStaffMfaSatisfied(admin, session.user.id, session.claims);
 
   await enforceHumanStaffSessionActivity(admin, session.sessionId, session.user.id);
 
