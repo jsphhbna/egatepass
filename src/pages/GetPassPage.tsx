@@ -189,6 +189,38 @@ export function createGetPassSchema(schedulingDaysAhead: number = MAX_VISIT_ADVA
     });
 }
 
+export const personalDetailsStepSchema = z.object({
+  firstName: z
+    .string()
+    .trim()
+    .min(2, 'First name must be at least 2 characters')
+    .max(50, 'First name is too long')
+    .regex(nameRegex, 'Invalid characters in name'),
+  middleName: z
+    .string()
+    .trim()
+    .max(50, 'Middle name is too long')
+    .regex(nameRegex, 'Invalid characters in name')
+    .optional()
+    .or(z.literal('')),
+  lastName: z
+    .string()
+    .trim()
+    .min(2, 'Last name must be at least 2 characters')
+    .max(50, 'Last name is too long')
+    .regex(nameRegex, 'Invalid characters in name'),
+  contactNumber: z
+    .string()
+    .min(7, 'Contact number is too short')
+    .max(20, 'Contact number is too long')
+    .refine((val) => validatePhMobile(val), {
+      message: 'Please enter a valid Philippine mobile number (e.g. 09171234567 or +639171234567)',
+    }),
+  consent: z.literal(true, {
+    message: 'You must accept the Data Privacy Act notice to proceed',
+  }),
+});
+
 export const vehicleStepSchema = z.object({
   vehicleType: z.string().trim().min(1, 'Please select a vehicle type'),
   plateNumber: z.string().superRefine((val, ctx) => {
@@ -668,8 +700,18 @@ export function GetPassPage() {
 
   const formSchema = useMemo(() => createGetPassSchema(schedulingDaysAhead), [schedulingDaysAhead]);
 
+  const stepResolver = useMemo(() => {
+    return (values: any, context: any, options: any) => {
+      if (step === 'form') {
+        return zodResolver(personalDetailsStepSchema)(values, context, options);
+      }
+      return zodResolver(formSchema)(values, context, options);
+    };
+  }, [step, formSchema]);
+
   const {
     register,
+    handleSubmit,
     trigger,
     getValues,
     setValue,
@@ -679,7 +721,7 @@ export function GetPassPage() {
     reset,
     formState: { errors },
   } = useForm<GetPassFormData>({
-    resolver: zodResolver(formSchema),
+    resolver: stepResolver as any,
     mode: 'onChange',
     defaultValues: {
       purpose: '',
@@ -975,7 +1017,7 @@ export function GetPassPage() {
   // ============================================================
   // STEP 1: PERSONAL DETAILS (onFormNext advances to Visit)
   // ============================================================
-  async function onFormNext(formData?: GetPassFormData) {
+  async function onFormNext(formData?: any) {
     const valid = await trigger(['firstName', 'middleName', 'lastName', 'contactNumber', 'consent']);
     if (!valid) return;
 
@@ -2825,13 +2867,7 @@ export function GetPassPage() {
 
           {/* ============================== STEP 1: PERSONAL DETAILS ============================== */}
           {step === 'form' && (
-            <form
-              onSubmit={(e) => {
-                e.preventDefault();
-                void onFormNext();
-              }}
-              className="space-y-6"
-            >
+            <form onSubmit={handleSubmit(onFormNext)} className="space-y-6">
               <div className="text-center">
                 <h2 className="text-lg font-bold text-[var(--color-text-primary)]">Personal Details</h2>
                 <p className="text-sm text-[var(--color-text-secondary)] mt-1">

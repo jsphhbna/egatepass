@@ -3,7 +3,7 @@
 import React, { act } from 'react';
 import { createRoot } from 'react-dom/client';
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { createGetPassSchema } from '@/pages/GetPassPage';
+import { createGetPassSchema, personalDetailsStepSchema } from '@/pages/GetPassPage';
 import { createKioskPassSchema } from '@/pages/KioskPage';
 import { VisitPurposeField } from '@/components/VisitPurposeField';
 import { getManilaDateString } from '@/lib/scheduling';
@@ -239,6 +239,31 @@ describe('R6 Visitor Registration UI & Purpose Validation Suite', () => {
   });
 
   describe('Step 1 Personal Details Multi-Step Validation Invariant', () => {
+    it('validates Step 1 fields with personalDetailsStepSchema independently of purpose', () => {
+      const step1Valid = {
+        firstName: 'Juan',
+        middleName: 'Perez',
+        lastName: 'Dela Cruz',
+        contactNumber: '09171234567',
+        consent: true,
+      };
+
+      const res = personalDetailsStepSchema.safeParse(step1Valid);
+      expect(res.success).toBe(true);
+
+      // Rejects missing consent
+      const withoutConsent = personalDetailsStepSchema.safeParse({ ...step1Valid, consent: false });
+      expect(withoutConsent.success).toBe(false);
+
+      // Rejects invalid phone
+      const invalidPhone = personalDetailsStepSchema.safeParse({ ...step1Valid, contactNumber: '12345' });
+      expect(invalidPhone.success).toBe(false);
+
+      // Rejects short name
+      const shortName = personalDetailsStepSchema.safeParse({ ...step1Valid, firstName: 'A' });
+      expect(shortName.success).toBe(false);
+    });
+
     it('allows Step 1 personal details to validate independently while purpose is empty (Step 2 field)', () => {
       // Step 1 only triggers personal details: firstName, middleName, lastName, contactNumber, consent
       const step1Fields = {
