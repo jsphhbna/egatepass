@@ -162,4 +162,13 @@ describe('Service Role Least-Privilege Architecture Contract', () => {
     );
     expect(directOperations).toHaveLength(0);
   });
+
+  it('enforces least-privilege boundary on staff_sessions (strictly SELECT and emergency UPDATE only)', () => {
+    const sessionContract = SERVICE_ROLE_TABLE_CONTRACT['staff_sessions'];
+    expect(sessionContract).toBeDefined();
+    expect(sessionContract.allowedPrivileges).toEqual(['SELECT', 'UPDATE']);
+    expect(sessionContract.forbiddenPrivileges).toContain('INSERT');
+    expect(sessionContract.forbiddenPrivileges).toContain('DELETE');
+    expect(sessionContract.justification).toContain('strictly scoped to expired_at, expired_reason, and updated_at');
+  });
 });

@@ -21,6 +21,7 @@ import { toast } from 'sonner';
 import { Button, Card, Input, Select, ConfirmModal, LoadingState, Modal, FormField } from '@/components/ui';
 import { CampusCalendar } from '@/components/CampusCalendar';
 import { PasswordResetCard } from '@/components/ChangePasswordCard';
+import { AccountMfaCard } from '@/components/auth/AccountMfaCard';
 import { DEFAULT_REJECTION_REASONS, normalizeVisitPurposes } from '@/lib/settingsDefaults';
 import type { VisitPurposeOption } from '@/types';
 import { useAuth } from '@/hooks/useAuth';
@@ -1594,6 +1595,8 @@ export function AdminSettings() {
               </div>
             </div>
           </Card>
+
+          <AccountMfaCard />
 
           <PasswordResetCard />
         </div>

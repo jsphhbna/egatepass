@@ -96,8 +96,8 @@ describe('target repository and Vercel routing contract', () => {
       expect(content.length).toBeGreaterThan(1000);
     }
   });
-  it('enforces canonical 40 API routes contract matrix in server/route-map.ts and vercel.json', () => {
-    expect(ROUTE_CONTRACT_MATRIX.length).toBe(40);
+  it('enforces canonical 41 API routes contract matrix in server/route-map.ts and vercel.json', () => {
+    expect(ROUTE_CONTRACT_MATRIX.length).toBe(41);
 
     const counts: Record<string, number> = {};
     for (const route of ROUTE_CONTRACT_MATRIX) {
@@ -105,7 +105,7 @@ describe('target repository and Vercel routing contract', () => {
     }
 
     expect(counts['admin']).toBe(10);
-    expect(counts['auth']).toBe(5);
+    expect(counts['auth']).toBe(6);
     expect(counts['passes']).toBe(5);
     expect(counts['device']).toBe(6);
     expect(counts['gate']).toBe(6);

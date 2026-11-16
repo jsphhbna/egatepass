@@ -644,6 +644,18 @@ export function AdminUsers() {
   const [isChangingRole, setIsChangingRole] = useState(false);
   const [reactivatingUserId, setReactivatingUserId] = useState<string | null>(null);
 
+  const [mfaStatusMap, setMfaStatusMap] = useState<Record<string, {
+    status: 'Enabled' | 'Disabled' | 'Enrollment incomplete';
+    factorId?: string;
+    loading?: boolean;
+  }>>({});
+  const [resetMfaTargetUser, setResetMfaTargetUser] = useState<AppUserWithId | null>(null);
+  const [resetMfaFactorId, setResetMfaFactorId] = useState<string | null>(null);
+  const [resetMfaPassword, setResetMfaPassword] = useState('');
+  const [resetMfaReason, setResetMfaReason] = useState('');
+  const [isResettingMfa, setIsResettingMfa] = useState(false);
+  const [resetMfaError, setResetMfaError] = useState<string | null>(null);
+
   const usersReadGenerationRef = useRef(0);
   const usersAbortControllerRef = useRef<AbortController | null>(null);
   const usersLoadMoreAbortControllerRef = useRef<AbortController | null>(null);
@@ -658,6 +670,43 @@ export function AdminUsers() {
     resolver: zodResolver(userSchema),
     defaultValues: { role: 'admin' },
   });
+
+  async function loadMfaStatuses(staffUsers: AppUserWithId[]) {
+    if (role !== 'superadmin') return;
+    try {
+      const token = await getAccessToken();
+      const updates: Record<string, { status: 'Enabled' | 'Disabled' | 'Enrollment incomplete'; factorId?: string }> = {};
+      await Promise.all(
+        staffUsers.map(async (u) => {
+          try {
+            const res = await fetch(`/api/auth/mfa?userId=${encodeURIComponent(u.uid)}`, {
+              headers: { Authorization: `Bearer ${token}` },
+            });
+            if (!res.ok) {
+              updates[u.uid] = { status: 'Disabled' };
+              return;
+            }
+            const body = await res.json();
+            const factors = Array.isArray(body?.factors) ? body.factors : [];
+            const verified = factors.find((f: any) => f.factor_type === 'totp' && f.status === 'verified');
+            if (verified) {
+              updates[u.uid] = { status: 'Enabled', factorId: verified.id };
+            } else if (factors.some((f: any) => f.factor_type === 'totp' && f.status === 'unverified')) {
+              const unverified = factors.find((f: any) => f.factor_type === 'totp' && f.status === 'unverified');
+              updates[u.uid] = { status: 'Enrollment incomplete', factorId: unverified?.id };
+            } else {
+              updates[u.uid] = { status: 'Disabled' };
+            }
+          } catch {
+            updates[u.uid] = { status: 'Disabled' };
+          }
+        })
+      );
+      setMfaStatusMap((prev) => ({ ...prev, ...updates }));
+    } catch {
+      // Ignore
+    }
+  }
 
   async function loadUsers() {
     const currentGen = ++usersReadGenerationRef.current;
@@ -685,6 +734,9 @@ export function AdminUsers() {
       setNextCursor(body?.nextCursor ?? null);
       setHasMore(body?.hasMore ?? false);
       setUsersLoadError(null);
+      if (body?.users && body.users.length > 0) {
+        void loadMfaStatuses(body.users);
+      }
     } catch (err: any) {
       if (controller.signal.aborted || currentGen !== usersReadGenerationRef.current) return;
       console.error(err);
@@ -716,9 +768,13 @@ export function AdminUsers() {
       const body = await response.json().catch(() => null) as { users?: AppUserWithId[]; nextCursor?: string | null; hasMore?: boolean; error?: string } | null;
       if (loadMoreController.signal.aborted || currentGen !== usersReadGenerationRef.current) return;
       if (!response.ok) throw new Error(body?.error || 'Failed to load more users');
-      setUsers((prev) => [...prev, ...(body?.users ?? [])]);
+      const newUsers = body?.users ?? [];
+      setUsers((prev) => [...prev, ...newUsers]);
       setNextCursor(body?.nextCursor ?? null);
       setHasMore(body?.hasMore ?? false);
+      if (newUsers.length > 0) {
+        void loadMfaStatuses(newUsers);
+      }
     } catch (err: any) {
       if (loadMoreController.signal.aborted || currentGen !== usersReadGenerationRef.current) return;
       console.error(err);
@@ -921,6 +977,114 @@ export function AdminUsers() {
     }
   }
 
+  async function openResetMfaModal(user: AppUserWithId) {
+    setResetMfaTargetUser(user);
+    setResetMfaPassword('');
+    setResetMfaReason('');
+    setResetMfaError(null);
+    let factorId = mfaStatusMap[user.uid]?.factorId;
+    if (!factorId) {
+      try {
+        const token = await getAccessToken();
+        const res = await fetch(`/api/auth/mfa?userId=${encodeURIComponent(user.uid)}`, {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        if (res.ok) {
+          const body = await res.json();
+          const factors = Array.isArray(body?.factors) ? body.factors : [];
+          const found = factors.find((f: any) => f.factor_type === 'totp' && f.status === 'verified') ??
+            factors.find((f: any) => f.factor_type === 'totp');
+          if (found) factorId = found.id;
+        }
+      } catch {
+        // Fallback
+      }
+    }
+    setResetMfaFactorId(factorId ?? null);
+  }
+
+  async function handleResetMfa(e: React.FormEvent) {
+    e.preventDefault();
+    if (!resetMfaTargetUser || isResettingMfa) return;
+    const trimmedReason = resetMfaReason.trim();
+    if (trimmedReason.length < 5 || trimmedReason.length > 240) {
+      setResetMfaError('Please provide a reason between 5 and 240 characters.');
+      return;
+    }
+    if (!resetMfaPassword) {
+      setResetMfaError('Super Admin password is required.');
+      return;
+    }
+
+    setIsResettingMfa(true);
+    setResetMfaError(null);
+
+    try {
+      let factorId = resetMfaFactorId;
+      const token = await getAccessToken();
+      if (!factorId) {
+        const factorRes = await fetch(`/api/auth/mfa?userId=${encodeURIComponent(resetMfaTargetUser.uid)}`, {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        if (factorRes.ok) {
+          const body = await factorRes.json();
+          const factors = Array.isArray(body?.factors) ? body.factors : [];
+          const found = factors.find((f: any) => f.factor_type === 'totp' && f.status === 'verified') ??
+            factors.find((f: any) => f.factor_type === 'totp');
+          if (found) factorId = found.id;
+        }
+      }
+
+      if (!factorId) {
+        throw new Error('No active TOTP factor found for this user.');
+      }
+
+      const res = await fetch('/api/auth/mfa', {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${token}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          action: 'reset_factor',
+          userId: resetMfaTargetUser.uid,
+          factorId,
+          password: resetMfaPassword,
+          reason: trimmedReason,
+          confirmed: true,
+        }),
+      });
+
+      const body = await res.json().catch(() => null);
+      if (!res.ok) {
+        if (res.status === 401 || body?.error === 'invalid_superadmin_password') {
+          throw new Error('Incorrect Super Admin password. Please check your password and try again.');
+        } else if (body?.error === 'cannot_reset_self') {
+          throw new Error('You cannot reset your own MFA factor via administrative reset. Please use Account Security self-service settings.');
+        } else if (body?.error === 'mismatched_factor_id') {
+          throw new Error('The specified MFA factor is invalid or no longer exists.');
+        } else if (res.status === 404 || body?.error === 'target_user_not_found') {
+          throw new Error('Target staff account could not be found.');
+        } else {
+          throw new Error(body?.error || body?.message || 'Failed to reset staff MFA factor.');
+        }
+      }
+
+      toast.success(`MFA factor reset successfully for ${resetMfaTargetUser.name}. User sessions invalidated.`);
+      setResetMfaTargetUser(null);
+      setResetMfaFactorId(null);
+      setResetMfaPassword('');
+      setResetMfaReason('');
+      await loadUsers();
+    } catch (err: any) {
+      const message = err?.message || 'Failed to reset staff MFA factor';
+      setResetMfaError(message);
+      toast.error(message);
+    } finally {
+      setIsResettingMfa(false);
+    }
+  }
+
   async function toggleStatus(user: AppUserWithId) {
     if (user.active) {
       setDeactivatingUser(user);
@@ -1113,6 +1277,7 @@ export function AdminUsers() {
               <DataTableCell isHeader>Email</DataTableCell>
               <DataTableCell isHeader>Role</DataTableCell>
               <DataTableCell isHeader>Status</DataTableCell>
+              <DataTableCell isHeader>MFA Status</DataTableCell>
               <DataTableCell isHeader className="text-right">Actions</DataTableCell>
             </DataTableRow>
           </DataTableHead>
@@ -1164,6 +1329,17 @@ export function AdminUsers() {
                     />
                   )}
                 </DataTableCell>
+                <DataTableCell>
+                  {role !== 'superadmin' ? (
+                    <span className="text-xs text-[var(--color-text-muted)]">—</span>
+                  ) : mfaStatusMap[user.uid]?.status === 'Enabled' ? (
+                    <StatusBadge status="active" label="Enabled" />
+                  ) : mfaStatusMap[user.uid]?.status === 'Enrollment incomplete' ? (
+                    <StatusBadge status="warning" label="Enrollment incomplete" />
+                  ) : (
+                    <StatusBadge status="inactive" label="Disabled" />
+                  )}
+                </DataTableCell>
                 <DataTableCell className="text-right">
                   <div className="flex flex-wrap items-center justify-end gap-2">
                     {user.decommissionedAt ? (
@@ -1196,6 +1372,17 @@ export function AdminUsers() {
                             {user.active ? 'Deactivate' : reactivatingUserId === user.uid ? 'Reactivating…' : 'Activate'}
                           </Button>
                         )}
+                        {role === 'superadmin' && user.uid !== uid && !user.decommissionedAt && (
+                          <Button
+                            variant="secondary"
+                            size="sm"
+                            onClick={() => void openResetMfaModal(user)}
+                            disabled={isResettingMfa || mfaStatusMap[user.uid]?.status === 'Disabled'}
+                            title={mfaStatusMap[user.uid]?.status === 'Disabled' ? 'User does not have MFA configured' : 'Reset staff MFA factor'}
+                          >
+                            Reset MFA
+                          </Button>
+                        )}
                         {role === 'superadmin' && !user.active && user.uid !== uid && (
                           <Button
                             variant="destructive"
@@ -1220,7 +1407,7 @@ export function AdminUsers() {
             ))}
             {filteredUsers.length === 0 && (
               <tr>
-                <td colSpan={5} className="py-8 text-center text-[var(--color-text-muted)]">
+                <td colSpan={6} className="py-8 text-center text-[var(--color-text-muted)]">
                   No users found.
                 </td>
               </tr>
@@ -1699,6 +1886,116 @@ export function AdminUsers() {
             </Button>
           </div>
         </div>
+      </Modal>
+
+      <Modal
+        isOpen={!!resetMfaTargetUser}
+        onClose={() => {
+          if (!isResettingMfa) {
+            setResetMfaTargetUser(null);
+            setResetMfaFactorId(null);
+            setResetMfaPassword('');
+            setResetMfaReason('');
+            setResetMfaError(null);
+          }
+        }}
+        title="Reset Staff Multi-Factor Authentication"
+        preventClose={isResettingMfa}
+        size="md"
+      >
+        <form onSubmit={handleResetMfa} className="space-y-4">
+          <div className="rounded-lg border border-[var(--color-danger-border)] bg-[var(--color-danger-light)] p-3 text-xs text-[var(--color-danger)] leading-relaxed">
+            <strong>Warning:</strong> Resetting MFA deletes the user's registered authenticator factor, invalidates active sessions, and immediately restores password-only authentication.
+          </div>
+
+          {resetMfaError && (
+            <div className="rounded-lg border border-[var(--color-danger)] bg-[var(--color-danger-light)] p-3 text-xs text-[var(--color-danger-dark)]">
+              {resetMfaError}
+            </div>
+          )}
+
+          {resetMfaTargetUser && (
+            <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface-subtle)] p-3 text-xs space-y-1">
+              <div><span className="font-semibold">Name:</span> {resetMfaTargetUser.name}</div>
+              <div><span className="font-semibold">Email:</span> {resetMfaTargetUser.email}</div>
+              <div><span className="font-semibold">Role:</span> {formatUserRole(resetMfaTargetUser.role)}</div>
+            </div>
+          )}
+
+          <p className="text-xs text-[var(--color-text-secondary)] font-medium">Fields marked * are required.</p>
+
+          <FormField
+            label="Super Admin Password"
+            id="reset-mfa-admin-password"
+            requirement="required"
+          >
+            <Input
+              id="reset-mfa-admin-password"
+              type="password"
+              value={resetMfaPassword}
+              onChange={(e) => {
+                setResetMfaPassword(e.target.value);
+                setResetMfaError(null);
+              }}
+              placeholder="Enter your current password to authorize"
+              disabled={isResettingMfa}
+              required
+              aria-required="true"
+              autoComplete="current-password"
+            />
+          </FormField>
+
+          <FormField
+            label="Reset Reason"
+            id="reset-mfa-reason"
+            requirement="required"
+          >
+            <textarea
+              id="reset-mfa-reason"
+              value={resetMfaReason}
+              onChange={(e) => {
+                setResetMfaReason(e.target.value);
+                setResetMfaError(null);
+              }}
+              placeholder="Provide a reason for resetting this staff MFA factor (5-240 characters)"
+              rows={3}
+              minLength={5}
+              maxLength={240}
+              disabled={isResettingMfa}
+              required
+              aria-required="true"
+              className="w-full rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2 text-xs text-[var(--color-text-primary)] focus:border-[var(--color-brand)] focus:outline-none"
+            />
+            <div className="flex justify-end text-[11px] text-[var(--color-text-muted)]">
+              {resetMfaReason.length} / 240
+            </div>
+          </FormField>
+
+          <div className="flex justify-end gap-2 pt-2">
+            <Button
+              type="button"
+              variant="secondary"
+              onClick={() => {
+                setResetMfaTargetUser(null);
+                setResetMfaFactorId(null);
+                setResetMfaPassword('');
+                setResetMfaReason('');
+                setResetMfaError(null);
+              }}
+              disabled={isResettingMfa}
+            >
+              Cancel
+            </Button>
+            <Button
+              type="submit"
+              variant="destructive"
+              loading={isResettingMfa}
+              disabled={isResettingMfa || !resetMfaPassword || resetMfaReason.trim().length < 5}
+            >
+              Reset MFA
+            </Button>
+          </div>
+        </form>
       </Modal>
 
       <Modal

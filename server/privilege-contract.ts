@@ -111,9 +111,9 @@ export const SERVICE_ROLE_TABLE_CONTRACT: Record<string, ServerTablePrivilegeCon
   },
   staff_sessions: {
     table: 'staff_sessions',
-    allowedPrivileges: ['SELECT'],
-    forbiddenPrivileges: ['INSERT', 'UPDATE', 'DELETE'],
-    justification: 'Server inspects session state; creation/touching/expiration are restricted to api.touch_staff_session and api.expire_staff_session.',
+    allowedPrivileges: ['SELECT', 'UPDATE'],
+    forbiddenPrivileges: ['INSERT', 'DELETE'],
+    justification: 'Server inspects session state and invalidates sessions upon emergency MFA factor reset strictly scoped to expired_at, expired_reason, and updated_at; creation and touching are restricted to api.touch_staff_session.',
   },
   upload_intents: {
     table: 'upload_intents',
@@ -428,4 +428,7 @@ export const SERVER_DIRECT_TABLE_OPERATIONS: DirectServerTableOperation[] = [
   { file: 'server/lib/returningVisitorResolution.ts', table: 'returning_visitor_profiles', operations: ['SELECT'], purpose: 'Fetch profile identity factors for strict unambiguous fallback matching' },
   { file: 'server/lib/returningVisitorResolution.ts', table: 'visitor_evidence', operations: ['SELECT'], purpose: 'Resolve eligible original registration portrait evidence' },
   { file: 'server/routes/system/health.ts', table: 'app_settings', operations: ['SELECT'], purpose: 'Verify database connectivity for runtime liveness/readiness' },
+  { file: 'server/routes/auth/mfa.ts', table: 'staff_profiles', operations: ['SELECT'], purpose: 'Verify target user has human staff profile before MFA inspection or reset' },
+  { file: 'server/routes/auth/mfa.ts', table: 'staff_sessions', operations: ['UPDATE'], purpose: 'Invalidate active sessions on target user upon MFA factor reset' },
+  { file: 'server/routes/auth/mfa.ts', table: 'audit_events', operations: ['INSERT'], purpose: 'Record staff.mfa_factor_reset audit event upon MFA factor reset' },
 ];

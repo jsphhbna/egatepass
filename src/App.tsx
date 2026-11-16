@@ -31,6 +31,7 @@ const EntryScanPage = lazy(() => import('@/pages/EntryScanPage').then((module) =
 const ExitScanPage = lazy(() => import('@/pages/ExitScanPage').then((module) => ({ default: module.ExitScanPage })));
 const EmergencyDevicePage = lazy(() => import('@/pages/EmergencyDevicePage').then((module) => ({ default: module.EmergencyDevicePage })));
 const OfficeDashboardPage = lazy(() => import('@/pages/OfficeDashboardPage').then((module) => ({ default: module.OfficeDashboardPage })));
+const AccountSecurityPage = lazy(() => import('@/pages/AccountSecurityPage').then((module) => ({ default: module.AccountSecurityPage })));
 const TrackVisitPage = lazy(() => import('@/pages/TrackVisitPage').then((module) => ({ default: module.TrackVisitPage })));
 const VerifiedSuccessPage = lazy(() => import('@/pages/VerifiedSuccessPage').then((module) => ({ default: module.VerifiedSuccessPage })));
 const NotFoundPage = lazy(() => import('@/pages/NotFoundPage').then((module) => ({ default: module.NotFoundPage })));
@@ -121,6 +122,11 @@ export function App() {
             {/* Office Portal — requires office_staff, admin, or superadmin role */}
             <Route element={<ProtectedRoute allowedRoles={['office_staff', 'admin', 'superadmin']} />}>
               <Route path="/office" element={<OfficeDashboardPage />} />
+            </Route>
+
+            {/* Account Security (Self-Service MFA) — requires office_staff, admin, or superadmin role */}
+            <Route element={<ProtectedRoute allowedRoles={['admin', 'superadmin', 'office_staff']} />}>
+              <Route path="/account/security" element={<AccountSecurityPage />} />
             </Route>
 
             {/* Admin — requires admin role, uses nested layout */}

@@ -192,7 +192,7 @@ erDiagram
 
 ## 3. Canonical API Route Architecture
 
-The platform's core route contract matrix is declared in `server/route-map.ts` (`40 core contract endpoints`), while additional portal, office, lookup, calendar, and reference endpoints share the exact **6 physical Vercel Serverless Function entrypoints** under `api/*/[...route].ts`:
+The platform's core route contract matrix is declared in `server/route-map.ts` (`41 core contract endpoints`), while additional portal, office, lookup, calendar, and reference endpoints share the exact **6 physical Vercel Serverless Function entrypoints** under `api/*/[...route].ts`:
 
 ### 3.1 Admin Router (10 matrix routes + `/api/admin/offices`: `/api/admin/*`)
 - `GET /api/admin/activity`: Historical audit event query for administrators.
@@ -207,12 +207,13 @@ The platform's core route contract matrix is declared in `server/route-map.ts` (
 - `GET /api/admin/settings`: Institutional configuration (working hours, retention days, `global_retention_freeze`, emergency exception policy, diagnostics).
 - `GET /api/admin/users`: Staff member list and profile state management.
 
-### 3.2 Auth Router (5 routes: `/api/auth/*`)
+### 3.2 Auth Router (6 routes: `/api/auth/*`)
 - `POST /api/auth/complete-password-change`: Password update handler.
 - `POST /api/auth/reset-password`: Trigger password reset email.
 - `POST /api/auth/send-email-hook`: Supabase Auth standard webhook receiver for outbound transactional emails.
 - `POST /api/auth/resend-webhook`: Resend delivery observability webhook receiver (external rewrite path: `POST /api/webhooks/resend`).
 - `GET, POST /api/auth/session-activity`: Human staff 15-minute inactivity sliding window enforcement (`public.staff_sessions`) with strict exemption for managed device sessions.
+- `GET, POST /api/auth/mfa`: Staff TOTP Multi-Factor Authentication factor inspection and Superadmin factor reset with password re-authentication, audit logging (`staff.mfa_factor_reset`), and active session invalidation.
 
 ### 3.3 Passes Router (5 matrix routes + portal & office subpaths: `/api/passes/*`)
 - `POST /api/passes/email`: Two-step verification challenge and dispatch of QR passes via email.
@@ -858,3 +859,28 @@ Outage Architecture & Authority Delegation
   - Queries for `expectedPasses` and `office_visits` pre-filter by `assigned_gate_id` in SQL before applying query limits.
 - **Retention Freeze Stale Pass Expiry Semantics**:
   - Under `global_retention_freeze`, destructive image/record purge operations are halted, but non-destructive `api.expire_stale_passes` continues running to ensure expired passes transition from `active` to `expired` on schedule.
+
+### 12.24 Optional Staff TOTP MFA & Conditional Assurance Authorization Pipeline (Migration 49)
+- **Optional Policy & Dual-Assurance Access Model (§R1)**:
+  - Multi-Factor Authentication (TOTP) is strictly optional for all human staff roles (`admin`, `superadmin`, `office_staff`).
+  - Staff without verified TOTP factors authenticate with password only and access protected staff routes (`/admin`, `/office`) at Authenticator Assurance Level 1 (`aal1`) without encountering enrollment prompts or verification challenges.
+  - Staff who opt into TOTP MFA and verify at least one factor authenticate with password then must complete a 6-digit TOTP challenge (`supabase.auth.mfa.challengeAndVerify()`) to elevate their session to Authenticator Assurance Level 2 (`aal2`) before gaining access to staff routes or backend data.
+  - Incomplete or unverified factors are ignored by login route guards and never block password access or force MFA challenges.
+  - Unenrolling or resetting the last verified factor immediately restores password-only `aal1` login on subsequent authentications.
+- **Self-Service Security Management Route (`/account/security`, §R2)**:
+  - Accessible to all authenticated human staff roles (`admin`, `superadmin`, `office_staff`) via `AccountSecurityPage.tsx` and `AccountMfaCard.tsx`.
+  - Initiates enrollment via `supabase.auth.mfa.enroll({ factorType: 'totp', issuer: 'EARIST E-GatePass' })`, rendering URI-encoded SVG QR code markup and manual secret key.
+  - Validates a 6-digit code via challenge verification, confirms factor enrollment, elevates active session to `aal2`, and refreshes auth state via `refreshSession()` without persisting or leaking secrets.
+  - Disabling MFA prompts for confirmation, verifies an active `aal2` session, unenrolls verified TOTP factors via `supabase.auth.mfa.unenroll()`, refreshes the session back to `aal1`, and reverts status to disabled.
+  - Protected by `ProtectedRoute.tsx` and restricted strictly to human staff accounts, completely blocking anonymous visitors, kiosks, and emergency-device accounts.
+- **Conditional Backend Middleware & Database RPC Enforcement (§R3)**:
+  - Backend middleware in `server/actors.ts` (`requireStaffActor`) and `server/lib/office.ts` (`requireOfficeStaffActor`) executes `assertStaffMfaSatisfied(admin, userId, sessionClaims)`.
+  - Sessions at `aal2` bypass factor lookup. Sessions at `aal1` query the Supabase Admin Auth API (`admin.auth.admin.mfa.listFactors`) backed by an in-memory 15-second cache (`staffMfaFactorCache`). If verified TOTP factors exist, the call fails closed with HTTP 403 (`mfa_required`). Factor lookup network errors also fail closed.
+  - Forward-only database migration `20261116000200_optional_staff_totp_mfa.sql` defines private helper `private.staff_mfa_is_satisfied()`, which queries `auth.mfa_factors` for `status = 'verified'` belonging to `auth.uid()`. It returns `true` if no verified factor exists, or if verified factors exist and `(auth.jwt()->>'aal') = 'aal2'`.
+  - Propagated through `private.current_staff_role()`, `private.has_staff_role()`, and operational RPC guards `api.guard_recover_pass_action`, `api.guard_search_pending_queue`, and `api.guard_sync_offline_event` (throwing SQLSTATE `42501` `mfa_required` on non-compliance).
+  - Outbox delivery reconciliation in `api.claim_office_visit_acknowledgement_for_delivery` from migration `20261116000100` is preserved intact without regressions.
+- **Superadmin Factor Inspection & Reauthenticated Factor Reset (§R4)**:
+  - `AdminUsers.tsx` displays staff MFA status badges (`Enabled`, `Disabled`, `Incomplete`) and provides Superadmins with a factor reset action modal.
+  - Dedicated serverless routes registered in `api/auth/[...route].ts` and `server/route-map.ts` at `/api/auth/mfa`:
+    - `GET /api/auth/mfa?userId=<UUID>`: Returns factor inventory for target staff member.
+    - `POST /api/auth/mfa`: Reauthenticates the acting Superadmin's password via an isolated Supabase Auth client (`signOut({ scope: 'local' })`), validates non-empty reason and matching factor ID, deletes target TOTP factors via `admin.mfa.deleteFactor`, writes an immutable audit record to `public.audit_events` with `action: 'staff.mfa_factor_reset'`, and safely revokes target user sessions via `admin.signOut()`.

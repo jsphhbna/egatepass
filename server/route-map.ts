@@ -117,6 +117,13 @@ export const ROUTE_CONTRACT_MATRIX: readonly RouteContract[] = [
     allowedMethods: ['GET', 'POST'],
     handlerModule: 'server/routes/auth/session-activity.ts',
   },
+  {
+    path: '/api/auth/mfa',
+    group: 'auth',
+    subpath: 'mfa',
+    allowedMethods: ['GET', 'POST'],
+    handlerModule: 'server/routes/auth/mfa.ts',
+  },
 
   // Passes Router (5 routes)
   {

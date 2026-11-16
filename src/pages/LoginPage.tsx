@@ -10,13 +10,12 @@ import { evaluateAuthTurnstilePolicy } from '@/services/auth';
 import { supabase } from '@/lib/supabase';
 import { BrandMark } from '@/components/BrandMark';
 import { Button, Card, FormField, Input } from '@/components/ui';
-import { TotpEnrollModal } from '@/components/auth/TotpEnrollModal';
 import type { AuthRole } from '@/types';
 
 export function LoginPage() {
   const navigate = useNavigate();
   const location = useLocation();
-  const { status, role, requiresMfa, serviceStatus, serviceMessage } = useAuth();
+  const { status, role, requiresMfa, serviceStatus, serviceMessage, refresh } = useAuth();
   const idleTimeoutNotice = new URLSearchParams(location.search).get('reason') === 'idle_timeout';
   const [identity, setIdentity] = useState('');
   const [password, setPassword] = useState('');
@@ -30,7 +29,7 @@ export function LoginPage() {
   const [turnstileKey, setTurnstileKey] = useState(0);
 
   // MFA state
-  const [mfaStep, setMfaStep] = useState<'none' | 'challenge' | 'enroll'>('none');
+  const [mfaStep, setMfaStep] = useState<'none' | 'challenge'>('none');
   const [totpFactorId, setTotpFactorId] = useState<string | null>(null);
   const [totpCode, setTotpCode] = useState('');
   const [isVerifyingTotp, setIsVerifyingTotp] = useState(false);
@@ -65,7 +64,7 @@ export function LoginPage() {
     navigate(getDefaultHomeForRole(role), { replace: true });
   }, [navigate, role, status, requiresMfa]);
 
-  // If already authenticated at aal1, trigger MFA step automatically
+  // If already authenticated at aal1 and requiresMfa is true, trigger MFA challenge
   useEffect(() => {
     if (
       status === 'authenticated' &&
@@ -74,24 +73,33 @@ export function LoginPage() {
       requiresMfa &&
       mfaStep === 'none'
     ) {
+      setPendingRole(role);
       void (async () => {
         if (!supabase) return;
         try {
-          const { data: factorsData } = await supabase.auth.mfa.listFactors();
-          const verifiedTotp = factorsData?.totp?.find((f) => f.status === 'verified');
+          const { data: factorsData, error: factorsError } = await supabase.auth.mfa.listFactors();
+          if (factorsError) {
+            setError(factorsError.message || 'Unable to load authentication factors. Please sign in again.');
+            await supabase.auth.signOut();
+            if (refresh) await refresh();
+            return;
+          }
+          const verifiedTotp = factorsData?.totp?.find((f) => f.status === 'verified') ??
+            factorsData?.all?.find((f) => f.factor_type === 'totp' && f.status === 'verified');
           if (verifiedTotp) {
             setTotpFactorId(verifiedTotp.id);
             setMfaStep('challenge');
           } else {
-            setMfaStep('enroll');
+            setMfaStep('none');
           }
-        } catch {
-          // If factors check fails, default to enrollment
-          setMfaStep('enroll');
+        } catch (err: unknown) {
+          setError(err instanceof Error ? err.message : 'Unable to load authentication factors. Please sign in again.');
+          await supabase.auth.signOut();
+          if (refresh) await refresh();
         }
       })();
     }
-  }, [status, role, requiresMfa, mfaStep]);
+  }, [status, role, requiresMfa, mfaStep, refresh]);
 
   async function handleResendVerification() {
     if (!supabase || resendCooldown > 0 || !unverifiedEmail || isSigningIn || isResendingVerification) return;
@@ -173,18 +181,20 @@ export function LoginPage() {
         // Check MFA for human staff roles
         if (staff && ['admin', 'superadmin', 'office_staff'].includes(staff.role)) {
           setPendingRole(staff.role as AuthRole);
-          const { data: aalData } = await supabase.auth.mfa.getAuthenticatorAssuranceLevel();
+          const { data: aalData, error: aalError } = await supabase.auth.mfa.getAuthenticatorAssuranceLevel();
+          if (aalError) throw aalError;
           if (aalData?.currentLevel !== 'aal2') {
-            const { data: factorsData } = await supabase.auth.mfa.listFactors();
-            const verifiedTotp = factorsData?.totp?.find((f) => f.status === 'verified');
+            const { data: factorsData, error: factorsError } = await supabase.auth.mfa.listFactors();
+            if (factorsError) throw factorsError;
+            const verifiedTotp = factorsData?.totp?.find((f) => f.status === 'verified') ??
+              factorsData?.all?.find((f) => f.factor_type === 'totp' && f.status === 'verified');
             if (verifiedTotp) {
               setTotpFactorId(verifiedTotp.id);
               setMfaStep('challenge');
               return;
-            } else {
-              setMfaStep('enroll');
-              return;
             }
+            // No verified factor exists: proceed directly at AAL1 without challenge or enrollment
+            setMfaStep('none');
           }
         }
       }
@@ -224,17 +234,25 @@ export function LoginPage() {
       });
 
       if (verifyError) {
-        const { data: challengeData, error: challengeError } = await supabase.auth.mfa.challenge({
-          factorId: totpFactorId,
-        });
-        if (challengeError) throw challengeError;
+        const errMsg = verifyError.message?.toLowerCase() || '';
+        if (errMsg.includes('expired')) {
+          setTotpError('The authentication challenge has expired. Please try entering a new code.');
+        } else if (errMsg.includes('invalid') || errMsg.includes('code') || errMsg.includes('mfa')) {
+          setTotpError('Invalid authenticator code. Please check your authenticator app and try again.');
+        } else {
+          setTotpError(verifyError.message || 'Verification failed. Check the code and try again.');
+        }
+        return;
+      }
 
-        const { error: secondVerifyError } = await supabase.auth.mfa.verify({
-          factorId: totpFactorId,
-          challengeId: challengeData.id,
-          code: trimmed,
-        });
-        if (secondVerifyError) throw secondVerifyError;
+      const { data: aalData, error: aalError } = await supabase.auth.mfa.getAuthenticatorAssuranceLevel();
+      if (aalError || aalData?.currentLevel !== 'aal2') {
+        setTotpError('Verification completed but session could not be elevated to AAL2. Please try again.');
+        return;
+      }
+
+      if (refresh) {
+        await refresh();
       }
 
       toast.success('Authentication code verified.');
@@ -252,14 +270,17 @@ export function LoginPage() {
   }
 
   async function handleMfaCancel() {
+    if (supabase) {
+      await supabase.auth.signOut();
+    }
+    if (refresh) {
+      await refresh();
+    }
     setMfaStep('none');
     setTotpCode('');
     setTotpError(null);
     setTotpFactorId(null);
     setPendingRole(null);
-    if (supabase) {
-      await supabase.auth.signOut();
-    }
   }
 
   return (
@@ -347,18 +368,6 @@ export function LoginPage() {
           </form>
         )}
       </Card>
-
-      <TotpEnrollModal
-        isOpen={mfaStep === 'enroll'}
-        onEnrolled={() => {
-          setMfaStep('none');
-          const targetRole = role || pendingRole;
-          if (targetRole) {
-            navigate(getDefaultHomeForRole(targetRole), { replace: true });
-          }
-        }}
-        onCancel={handleMfaCancel}
-      />
     </main>
   );
 }

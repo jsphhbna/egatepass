@@ -149,7 +149,7 @@ export function createGetPassSchema(schedulingDaysAhead: number = MAX_VISIT_ADVA
         .string()
         .min(7, 'Contact number is too short')
         .max(20, 'Contact number is too long')
-        .refine((val) => validatePhMobile(val), {
+        .refine((val) => validatePhMobile(val).valid, {
           message: 'Please enter a valid Philippine mobile number (e.g. 09171234567 or +639171234567)',
         }),
       homeLocation: z
@@ -188,6 +188,38 @@ export function createGetPassSchema(schedulingDaysAhead: number = MAX_VISIT_ADVA
       }),
     });
 }
+
+export const personalDetailsStepSchema = z.object({
+  firstName: z
+    .string()
+    .trim()
+    .min(2, 'First name must be at least 2 characters')
+    .max(50, 'First name is too long')
+    .regex(nameRegex, 'Invalid characters in name'),
+  middleName: z
+    .string()
+    .trim()
+    .max(50, 'Middle name is too long')
+    .regex(nameRegex, 'Invalid characters in name')
+    .optional()
+    .or(z.literal('')),
+  lastName: z
+    .string()
+    .trim()
+    .min(2, 'Last name must be at least 2 characters')
+    .max(50, 'Last name is too long')
+    .regex(nameRegex, 'Invalid characters in name'),
+  contactNumber: z
+    .string()
+    .min(7, 'Contact number is too short')
+    .max(20, 'Contact number is too long')
+    .refine((val) => validatePhMobile(val).valid, {
+      message: 'Please enter a valid Philippine mobile number (e.g. 09171234567 or +639171234567)',
+    }),
+  consent: z.literal(true, {
+    message: 'You must accept the Data Privacy Act notice to proceed',
+  }),
+});
 
 export const vehicleStepSchema = z.object({
   vehicleType: z.string().trim().min(1, 'Please select a vehicle type'),
@@ -668,6 +700,15 @@ export function GetPassPage() {
 
   const formSchema = useMemo(() => createGetPassSchema(schedulingDaysAhead), [schedulingDaysAhead]);
 
+  const stepResolver = useMemo(() => {
+    return (values: any, context: any, options: any) => {
+      if (step === 'form') {
+        return zodResolver(personalDetailsStepSchema)(values, context, options);
+      }
+      return zodResolver(formSchema)(values, context, options);
+    };
+  }, [step, formSchema]);
+
   const {
     register,
     handleSubmit,
@@ -680,7 +721,7 @@ export function GetPassPage() {
     reset,
     formState: { errors },
   } = useForm<GetPassFormData>({
-    resolver: zodResolver(formSchema),
+    resolver: stepResolver as any,
     mode: 'onChange',
     defaultValues: {
       purpose: '',
@@ -976,7 +1017,7 @@ export function GetPassPage() {
   // ============================================================
   // STEP 1: PERSONAL DETAILS (onFormNext advances to Visit)
   // ============================================================
-  async function onFormNext(formData?: GetPassFormData) {
+  async function onFormNext(formData?: any) {
     const valid = await trigger(['firstName', 'middleName', 'lastName', 'contactNumber', 'consent']);
     if (!valid) return;
 
@@ -1009,47 +1050,42 @@ export function GetPassPage() {
       if (!tx || !(await validatePortalSession(tx))) {
         let freshCaptchaToken: string | undefined;
         if (turnstileRef.current) {
-          freshCaptchaToken = await turnstileRef.current.executeChallenge();
-        } else {
-          throw new Error('Security verification widget is initializing. Please wait a moment and try again.');
+          try {
+            freshCaptchaToken = await turnstileRef.current.executeChallenge();
+          } catch (turnstileErr) {
+            console.warn('Turnstile challenge for auto-lookup non-fatal error:', turnstileErr);
+          }
         }
-        tx = await createPortalIssueTransaction(freshCaptchaToken);
-        portalTransactionRef.current = tx; setPortalToken(tx?.token ?? null);
-        issueRequestId.current = tx.requestId as ReturnType<typeof crypto.randomUUID>;
+        if (freshCaptchaToken) {
+          tx = await createPortalIssueTransaction(freshCaptchaToken);
+          portalTransactionRef.current = tx;
+          setPortalToken(tx?.token ?? null);
+          issueRequestId.current = tx.requestId as ReturnType<typeof crypto.randomUUID>;
+        }
       }
-      const lookupRes = await lookupReturningVisitor(tx, {
-        firstName: data.firstName.trim(),
-        lastName: data.lastName.trim(),
-        middleName: data.middleName?.trim() || undefined,
-        contactNumber: phRes,
-        psgcCityCode: selectedPsgc?.city?.code,
-        psgcBarangayCode: selectedPsgc?.barangay?.code,
-        mode: 'auto',
-      });
-      if (lookupRes.found && lookupRes.candidates && lookupRes.candidates.length > 0 && lookupRes.candidates[0]) {
-        setCandidateMatch(lookupRes.candidates[0]);
-        setShowCandidateMatchModal(true);
-        setIsCheckingReturningCandidate(false);
-        return;
-      }
-      if (lookupRes.portraitExpired) {
-        toast.info('Previous visitor profile found, but registration portrait expired under retention policy. Continuing as New Visitor.');
+      if (tx) {
+        const lookupRes = await lookupReturningVisitor(tx, {
+          firstName: data.firstName.trim(),
+          lastName: data.lastName.trim(),
+          middleName: data.middleName?.trim() || undefined,
+          contactNumber: phRes,
+          psgcCityCode: selectedPsgc?.city?.code,
+          psgcBarangayCode: selectedPsgc?.barangay?.code,
+          mode: 'auto',
+        });
+        if (lookupRes.found && lookupRes.candidates && lookupRes.candidates.length > 0 && lookupRes.candidates[0]) {
+          setCandidateMatch(lookupRes.candidates[0]);
+          setShowCandidateMatchModal(true);
+          return;
+        }
+        if (lookupRes.portraitExpired) {
+          toast.info('Previous visitor profile found, but registration portrait expired under retention policy. Continuing as New Visitor.');
+        }
       }
     } catch (lookupErr: any) {
-      console.warn('Returning visitor auto-lookup error:', lookupErr);
+      console.warn('Returning visitor auto-lookup non-fatal error:', lookupErr);
       turnstileRef.current?.resetChallenge();
-      const msg = lookupErr?.message || '';
-      if (
-        msg.includes('challenge') ||
-        msg.includes('Security verification') ||
-        msg.includes('Turnstile') ||
-        msg.includes('Too many search attempts') ||
-        msg.includes('rate_limit')
-      ) {
-        toast.error(msg || 'Security verification failed. Please try again.');
-        setIsCheckingReturningCandidate(false);
-        return;
-      }
+      // Non-fatal: do NOT block advancing to Visit Details for new visitor
     } finally {
       setIsCheckingReturningCandidate(false);
     }

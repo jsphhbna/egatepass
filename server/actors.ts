@@ -122,6 +122,84 @@ export async function enforceHumanStaffSessionActivity(
   }
 }
 
+interface FactorCacheEntry {
+  hasVerifiedTotp: boolean;
+  cachedAt: number;
+}
+
+const FACTOR_CACHE_TTL_MS = 15_000;
+const staffFactorCache = new Map<string, FactorCacheEntry>();
+
+export function clearStaffMfaCacheForTesting(): void {
+  staffFactorCache.clear();
+}
+
+export function invalidateStaffMfaCache(userId: string): void {
+  staffFactorCache.delete(userId);
+}
+
+/**
+ * Asserts that the staff actor satisfies conditional TOTP MFA:
+ * - AAL2 sessions are always satisfied (0 external calls).
+ * - Vitest fallback allows uncredentialed legacy unit tests when no session claims are passed.
+ * - For AAL1 sessions:
+ *   - Checks 15-second TTL in-memory factor cache.
+ *   - If not cached or stale, queries admin.auth.admin.mfa.listFactors({ userId }).
+ *   - If user has >=1 verified TOTP factor, throws HttpError(403, 'mfa_required').
+ *   - If user has 0 verified TOTP factors, allows AAL1 access.
+ *   - Fails closed on any API error or lookup failure.
+ */
+export async function assertStaffMfaSatisfied(
+  admin: SupabaseClient,
+  userId: string,
+  sessionClaims: Record<string, unknown> | null,
+): Promise<void> {
+  const currentAal = typeof sessionClaims?.aal === 'string' ? sessionClaims.aal : null;
+
+  // 1. AAL2 tokens are already elevated and verified
+  if (currentAal === 'aal2') {
+    return;
+  }
+
+  // Vitest legacy fallback when session claims are not provided
+  if (process.env.VITEST && !sessionClaims) {
+    return;
+  }
+
+  // 2. Check in-memory cache for AAL1 sessions
+  const now = Date.now();
+  const cached = staffFactorCache.get(userId);
+  if (cached && now - cached.cachedAt < FACTOR_CACHE_TTL_MS) {
+    if (cached.hasVerifiedTotp) {
+      throw new HttpError(403, 'mfa_required');
+    }
+    return;
+  }
+
+  // 3. Query Supabase Admin Auth API
+  try {
+    const { data, error } = await admin.auth.admin.mfa.listFactors({ userId });
+    if (error || !data) {
+      console.error(`Staff MFA factor lookup failed for ${userId}:`, error?.message);
+      throw new HttpError(403, 'mfa_required');
+    }
+
+    const factors = (data as any)?.factors;
+    const hasVerifiedTotp = Array.isArray(factors) &&
+      factors.some((f: any) => f.factor_type === 'totp' && f.status === 'verified');
+
+    staffFactorCache.set(userId, { hasVerifiedTotp, cachedAt: now });
+
+    if (hasVerifiedTotp) {
+      throw new HttpError(403, 'mfa_required');
+    }
+  } catch (err) {
+    if (err instanceof HttpError) throw err;
+    console.error(`Exception during MFA factor lookup for ${userId}:`, err);
+    throw new HttpError(403, 'mfa_required');
+  }
+}
+
 export async function requireStaffActor(
   admin: SupabaseClient,
   token: string,
@@ -156,12 +234,8 @@ export async function requireStaffActor(
     throw new HttpError(403, 'access_denied');
   }
 
-  // Mandatory TOTP MFA (AAL2) Enforcement for human staff roles (guard, admin, superadmin, office_staff)
-  if (session.claims?.aal !== 'aal2') {
-    if (!process.env.VITEST || session.claims) {
-      throw new HttpError(403, 'mfa_required');
-    }
-  }
+  // Conditional TOTP MFA Enforcement for human staff roles (guard, admin, superadmin, office_staff)
+  await assertStaffMfaSatisfied(admin, session.user.id, session.claims);
 
   await enforceHumanStaffSessionActivity(admin, session.sessionId, session.user.id);
   return { id: session.user.id, email: session.user.email, role: profile.role };

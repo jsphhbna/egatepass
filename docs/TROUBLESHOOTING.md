@@ -489,4 +489,31 @@ flowchart TD
   The user has role `office_staff` but a Superadmin has not yet assigned them to one or more departments in `office_staff_assignments`.
 - **Safe Resolution**:
   A Superadmin must navigate to `/admin/users?tab=assignments`, select the staff member, check the authorized office(s), and save the assignment.
+---
+
+### 2.29 Staff Access Blocked by MFA Requirement (`mfa_required` / HTTP 403)
+
+- **Symptom**:
+  An authenticated staff member attempts to open `/admin` or `/office` or call staff API routes and receives HTTP 403 Forbidden with code `mfa_required`.
+- **Root Cause**:
+  The staff account has configured and verified a TOTP MFA factor, but authenticated only with password (current session is at Authenticator Assurance Level 1, `aal1`).
+- **Safe Resolution**:
+  1. Complete the 6-digit TOTP challenge prompt on the login screen to elevate the session to `aal2`.
+  2. If the prompt was dismissed, sign out and sign in again, entering the authenticator code when prompted.
+  3. If the authenticator device is unavailable, contact a Superadmin to perform an authorized factor reset via Staff Management.
+
+---
+
+### 2.30 Locked-Out Staff Member with Lost Authenticator Device
+
+- **Symptom**:
+  A staff member with active TOTP MFA has lost, damaged, or wiped their authenticator phone/device and cannot provide the required 6-digit code to sign in.
+- **Root Cause**:
+  The account possesses a verified TOTP factor in Supabase Auth, preventing access at `aal1`.
+- **Safe Resolution**:
+  1. A Superadmin navigates to **Staff Management** (`/admin/users`).
+  2. Locate the locked-out staff member row and click **Reset MFA**.
+  3. Re-authenticate using the Superadmin's personal password and supply a mandatory justification reason.
+  4. The system deletes the factor, invalidates active sessions, and logs an audit record to `public.audit_events`.
+  5. The staff member immediately logs in with their password only at `aal1`, and can re-enroll a new device at `/account/security`.
 

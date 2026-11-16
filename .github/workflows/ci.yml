@@ -72,5 +72,11 @@ jobs:
             echo "Real browser IndexedDB spec pending parallel completion by Workstream A / E2E Track"
           fi
 
+      - name: Run Real Browser Registration Multi-Step Regression Tests
+        env:
+          VITE_SUPABASE_URL: 'http://127.0.0.1:54321'
+          VITE_SUPABASE_PUBLISHABLE_KEY: 'mock-anon-publishable-key-for-e2e'
+        run: npx playwright test tests/e2e/visitor-multistep-registration.spec.ts --project=chromium
+
       - name: Build Production Frontend & Bundle
         run: npm run build

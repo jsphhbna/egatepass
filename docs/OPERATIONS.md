@@ -65,6 +65,18 @@ flowchart TD
 
 ---
 
+#### Staff Multi-Factor Authentication (TOTP MFA) & Reset Operations
+- **Optional MFA Policy**: Staff accounts (`admin`, `superadmin`, `office_staff`) are not required to configure TOTP MFA by default.
+- **Self-Service Configuration**: Authenticated staff manage their own authenticator settings at `/account/security`. Enabling initiates TOTP enrollment, prompts for 6-digit confirmation, and elevates active sessions to Authenticator Assurance Level 2 (`aal2`). Disabling unenrolls factors and reverts sessions to `aal1`.
+- **Super Admin Factor Reset (Lost Authenticator Device)**:
+  1. In **Staff Management** (`/admin/users`), Super Admins inspect the staff MFA state.
+  2. If a staff member loses their authenticator device or is locked out, click **Reset MFA**.
+  3. Enter the acting Super Admin's password for fresh re-authentication and provide an institutional justification reason (e.g. *"Staff phone replaced; verified identity in person"*).
+  4. The serverless route `POST /api/auth/mfa` unenrolls the factor via Supabase Admin Auth API, writes an audit record to `public.audit_events` with `action: 'staff.mfa_factor_reset'`, and invalidates all active sessions for the target account via `admin.signOut()`.
+  5. The staff member can immediately sign in with their password only and optionally enroll a new authenticator device.
+
+---
+
 ### 1.2 Device Account Management
 
 Dedicated gate hardware (Kiosks, Entry Scanners, Exit Scanners) run authenticated device sessions bound to physical gates.

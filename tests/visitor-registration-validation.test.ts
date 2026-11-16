@@ -3,7 +3,7 @@
 import React, { act } from 'react';
 import { createRoot } from 'react-dom/client';
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { createGetPassSchema } from '@/pages/GetPassPage';
+import { createGetPassSchema, personalDetailsStepSchema } from '@/pages/GetPassPage';
 import { createKioskPassSchema } from '@/pages/KioskPage';
 import { VisitPurposeField } from '@/components/VisitPurposeField';
 import { getManilaDateString } from '@/lib/scheduling';
@@ -235,6 +235,68 @@ describe('R6 Visitor Registration UI & Purpose Validation Suite', () => {
 
       // Value emitted should be composed with details
       expect(currentVal).toBe('Official Business — HR');
+    });
+  });
+
+  describe('Step 1 Personal Details Multi-Step Validation Invariant', () => {
+    it('validates Step 1 fields with personalDetailsStepSchema independently of purpose', () => {
+      const step1Valid = {
+        firstName: 'Juan',
+        middleName: 'Perez',
+        lastName: 'Dela Cruz',
+        contactNumber: '09171234567',
+        consent: true,
+      };
+
+      const res = personalDetailsStepSchema.safeParse(step1Valid);
+      expect(res.success).toBe(true);
+
+      // Rejects missing consent
+      const withoutConsent = personalDetailsStepSchema.safeParse({ ...step1Valid, consent: false });
+      expect(withoutConsent.success).toBe(false);
+
+      // Rejects invalid phone
+      const invalidPhone = personalDetailsStepSchema.safeParse({ ...step1Valid, contactNumber: '12345' });
+      expect(invalidPhone.success).toBe(false);
+
+      // Rejects short name
+      const shortName = personalDetailsStepSchema.safeParse({ ...step1Valid, firstName: 'A' });
+      expect(shortName.success).toBe(false);
+    });
+
+    it('allows Step 1 personal details to validate independently while purpose is empty (Step 2 field)', () => {
+      // Step 1 only triggers personal details: firstName, middleName, lastName, contactNumber, consent
+      const step1Fields = {
+        firstName: 'Juan',
+        middleName: 'Perez',
+        lastName: 'Dela Cruz',
+        contactNumber: '09171234567',
+        consent: true,
+      };
+
+      // Purpose is unpopulated on Step 1 defaultValues
+      const step1FormState = {
+        ...step1Fields,
+        purpose: '', // Populated later on Step 2 (Visit & Vehicle Details)
+        arrivalMode: 'no_vehicle',
+      };
+
+      // Validating Step 1 fields specifically succeeds
+      expect(step1FormState.firstName.trim().length).toBeGreaterThanOrEqual(2);
+      expect(step1FormState.lastName.trim().length).toBeGreaterThanOrEqual(2);
+      expect(step1FormState.contactNumber).toMatch(/^(09|\+639)\d{9}$/);
+      expect(step1FormState.consent).toBe(true);
+
+      // Verify that full-schema submission should NOT be run on Step 1 form submission
+      // because purpose is empty until Step 2
+      const fullSchema = createGetPassSchema();
+      const fullValidation = fullSchema.safeParse(step1FormState);
+      expect(fullValidation.success).toBe(false);
+      // The failure in full schema is solely due to purpose being empty on Step 1
+      if (!fullValidation.success) {
+        const issues = fullValidation.error.issues;
+        expect(issues.every((i) => i.path.includes('purpose'))).toBe(true);
+      }
     });
   });
 });
