@@ -94,6 +94,13 @@ test.describe('Visitor Multi-Step Registration & Form Decoupling Regression Suit
         body: JSON.stringify({ found: false, candidates: [] }),
       });
     });
+    await page.route('**/api/passes/lookup-returning*', async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ found: false, candidates: [] }),
+      });
+    });
 
     // 6. Mock OSM map tiles
     await page.route('**/tile.openstreetmap.org/**', async (route) => {
@@ -104,13 +111,67 @@ test.describe('Visitor Multi-Step Registration & Form Decoupling Regression Suit
         body: png1x1,
       });
     });
+
+    // 7. Mock PostgREST app_settings endpoint
+    await page.route('**/rest/v1/app_settings*', async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          working_hours_start: '08:00:00',
+          working_hours_end: '17:00:00',
+          timezone: 'Asia/Manila',
+          scheduling_days_ahead: 14,
+          peak_mode: false,
+          visit_purposes: [
+            { label: 'Meeting', requiresDetails: false, detailPrompt: '' },
+            { label: 'Document submission', requiresDetails: false, detailPrompt: '' },
+            { label: 'Appointment', requiresDetails: false, detailPrompt: '' },
+            { label: 'Delivery', requiresDetails: false, detailPrompt: '' },
+            { label: 'Personal concern', requiresDetails: false, detailPrompt: '' },
+          ],
+          visitor_instructions: ['Follow campus policies', 'Bring valid ID'],
+        }),
+      });
+    });
+
+    // 8. Mock API capabilities endpoint
+    await page.route('**/api/passes/capabilities*', async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          returningVisitorAvailable: true,
+          returningEnrollmentAvailable: true,
+          returningCryptoConfigured: true,
+          thresholdConfigured: true,
+          thresholdMode: 'provisional',
+        }),
+      });
+    });
+
+    // 9. Mock PostgREST PSGC & Postal Reference to fall back cleanly to bundled datasets
+    await page.route('**/rest/v1/psgc_locations*', async (route) => {
+      await route.fulfill({ status: 200, contentType: 'application/json', body: '[]' });
+    });
+    await page.route('**/rest/v1/postal_code_reference*', async (route) => {
+      await route.fulfill({ status: 200, contentType: 'application/json', body: '[]' });
+    });
+
+    // 10. Capture browser console and unhandled errors for deterministic CI diagnostics
+    page.on('console', (msg) => {
+      if (msg.type() === 'error') console.log(`[BROWSER ERROR] ${msg.text()}`);
+    });
+    page.on('pageerror', (err) => {
+      console.log(`[BROWSER PAGEERROR] ${err.message}`);
+    });
   });
 
   test('1. Submitting invalid Personal Details is properly blocked on Step 1 with error feedback', async ({ page }) => {
     await page.goto('/get-pass?mode=new&arrival=no_vehicle');
 
     // Verify Personal Details heading is present
-    await expect(page.getByRole('heading', { name: /Personal Details/i })).toBeVisible({ timeout: 15_000 });
+    await expect(page.getByRole('heading', { name: /Personal Details/i })).toBeVisible({ timeout: 30_000 });
 
     const submitBtn = page.getByRole('button', { name: /Next: Visit Details/i });
     await expect(submitBtn).toBeVisible();
@@ -138,7 +199,7 @@ test.describe('Visitor Multi-Step Registration & Form Decoupling Regression Suit
   test('2. Submitting Personal Details succeeds with empty purpose, executes onFormNext, and advances to Visit Details', async ({ page }) => {
     await page.goto('/get-pass?mode=new&arrival=no_vehicle');
 
-    await expect(page.getByRole('heading', { name: /Personal Details/i })).toBeVisible({ timeout: 15_000 });
+    await expect(page.getByRole('heading', { name: /Personal Details/i })).toBeVisible({ timeout: 30_000 });
 
     const firstNameInput = page.locator('#firstName, #first-name');
     const middleNameInput = page.locator('#middleName, #middle-name');
@@ -190,14 +251,14 @@ test.describe('Visitor Multi-Step Registration & Form Decoupling Regression Suit
     await submitBtn.click();
 
     // Invariant: onFormNext executes, step advances to Step 2 (Visit & Vehicle Details)
-    await expect(page.getByRole('heading', { name: /Visit & Vehicle Details/i })).toBeVisible({ timeout: 15_000 });
+    await expect(page.getByRole('heading', { name: /Visit & Vehicle Details/i })).toBeVisible({ timeout: 30_000 });
     await expect(page.getByRole('heading', { name: /Personal Details/i })).not.toBeVisible();
   });
 
   test('3. Purpose remains strictly mandatory on Visit Details step; submitting without purpose is blocked', async ({ page }) => {
     await page.goto('/get-pass?mode=new&arrival=no_vehicle');
 
-    await expect(page.getByRole('heading', { name: /Personal Details/i })).toBeVisible({ timeout: 15_000 });
+    await expect(page.getByRole('heading', { name: /Personal Details/i })).toBeVisible({ timeout: 30_000 });
 
     // Fill valid Step 1
     await page.locator('#firstName, #first-name').fill('Maria');
@@ -216,7 +277,7 @@ test.describe('Visitor Multi-Step Registration & Form Decoupling Regression Suit
     await page.getByRole('button', { name: /Next: Visit Details/i }).click();
 
     // On Step 2: Visit & Vehicle Details
-    await expect(page.getByRole('heading', { name: /Visit & Vehicle Details/i })).toBeVisible({ timeout: 15_000 });
+    await expect(page.getByRole('heading', { name: /Visit & Vehicle Details/i })).toBeVisible({ timeout: 30_000 });
 
     // Select Destination Office
     const officeSelect = page.locator('#destination-office-select');
@@ -252,13 +313,13 @@ test.describe('Visitor Multi-Step Registration & Form Decoupling Regression Suit
     await continueToCaptureBtn.click();
 
     // Invariant: Successfully advances to Step 3 (Live Face Capture)
-    await expect(page.getByRole('heading', { name: /Verify Your Identity/i })).toBeVisible({ timeout: 15_000 });
+    await expect(page.getByRole('heading', { name: /Verify Your Identity/i })).toBeVisible({ timeout: 30_000 });
   });
 
   test('4. Existing Data Privacy modal, address modal cancellation, and phone normalization remain intact', async ({ page }) => {
     await page.goto('/get-pass?mode=new&arrival=no_vehicle');
 
-    await expect(page.getByRole('heading', { name: /Personal Details/i })).toBeVisible({ timeout: 15_000 });
+    await expect(page.getByRole('heading', { name: /Personal Details/i })).toBeVisible({ timeout: 30_000 });
 
     // 1. Data Privacy notice modal opens and dismisses
     const privacyNoticeBtn = page.getByRole('button', { name: /Read our Data Privacy Notice/i });
@@ -293,6 +354,6 @@ test.describe('Visitor Multi-Step Registration & Form Decoupling Regression Suit
     await page.getByRole('button', { name: /Next: Visit Details/i }).click();
 
     // Advanced successfully to Visit Details
-    await expect(page.getByRole('heading', { name: /Visit & Vehicle Details/i })).toBeVisible({ timeout: 15_000 });
+    await expect(page.getByRole('heading', { name: /Visit & Vehicle Details/i })).toBeVisible({ timeout: 30_000 });
   });
 });

@@ -31,6 +31,8 @@ jobs:
           --health-retries 5
     env:
       VITE_TURNSTILE_SITE_KEY: '0x4AAAAAAFeETebgPENH6hgH'
+      VITE_SUPABASE_URL: 'http://127.0.0.1:54321'
+      VITE_SUPABASE_PUBLISHABLE_KEY: 'mock-anon-publishable-key-for-e2e'
       TEST_DATABASE_URL: 'postgres://postgres:postgrespassword@localhost:5432/egatepass_test'
 
     steps:
