@@ -54,6 +54,9 @@ export default defineConfig({
     timeout: 60_000,
     env: {
       ...process.env,
+      SUPABASE_URL: process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL || 'http://127.0.0.1:54321',
+      SUPABASE_ANON_KEY: process.env.SUPABASE_ANON_KEY || process.env.VITE_SUPABASE_PUBLISHABLE_KEY || 'mock-anon-publishable-key-for-e2e',
+      SUPABASE_SECRET_KEY: process.env.SUPABASE_SECRET_KEY || 'mock-service-role-secret-key-for-e2e',
       VITE_SUPABASE_URL: process.env.VITE_SUPABASE_URL || 'http://127.0.0.1:54321',
       VITE_SUPABASE_PUBLISHABLE_KEY: process.env.VITE_SUPABASE_PUBLISHABLE_KEY || 'mock-anon-publishable-key-for-e2e',
     },

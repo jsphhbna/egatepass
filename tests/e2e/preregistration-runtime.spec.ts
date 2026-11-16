@@ -2,6 +2,62 @@ import { test, expect } from '@playwright/test';
 import path from 'node:path';
 
 test.describe('Workstream H: Real Online Pre-Registration Runtime & Turnstile JIT Flow', () => {
+  test.beforeEach(async ({ page }) => {
+    // Mock institutional settings and office calendar routes so visitor registration loads deterministically
+    await page.route('**/api/office/personnel*', async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          offices: [
+            { id: 'office-reg-001', name: 'Office of the Registrar', description: 'Academic records, credentials, and transcripts' },
+          ],
+          personnel: [],
+        }),
+      });
+    });
+
+    await page.route('**/api/office/calendar*', async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ schedules: [] }),
+      });
+    });
+
+    await page.route('**/api/system/calendar*', async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ closures: [] }),
+      });
+    });
+
+    await page.route('**/rest/v1/app_settings*', async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ visitor_registration_enabled: true }),
+      });
+    });
+
+    await page.route('**/api/passes/candidate-lookup*', async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ found: false, candidates: [] }),
+      });
+    });
+
+    await page.route('**/api/passes/lookup-returning*', async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ found: false, candidates: [] }),
+      });
+    });
+  });
+
   test('executes Turnstile just-in-time on Step 1 Continue, establishes session, and transitions to Live Face', async ({
     page,
   }) => {
@@ -82,36 +138,46 @@ test.describe('Workstream H: Real Online Pre-Registration Runtime & Turnstile JI
     const firstNameInput = page.locator('#first-name, #firstName');
     const lastNameInput = page.locator('#last-name, #lastName');
     const contactInput = page.locator('#contact-number, #contactNumber');
-    const selectLocationBtn = page.getByRole('button', { name: /Select approximate location/i });
+    const selectAddressBtn = page.getByRole('button', { name: /Select your barangay and city/i });
     const consentCheckbox = page.locator('input[type="checkbox"]#consent, input[name="consent"]');
 
     await expect(firstNameInput).toBeVisible({ timeout: 15_000 });
     await firstNameInput.fill('Maria');
     await lastNameInput.fill('Santos');
     await contactInput.fill('09171234567');
-    await expect(selectLocationBtn).toBeVisible();
-    await selectLocationBtn.click();
-    const confirmLocationBtn = page.getByRole('button', { name: /Confirm Location/i });
-    await expect(confirmLocationBtn).toBeVisible();
-    await confirmLocationBtn.click();
-    await expect(page.getByText(/Approximate location selected/i)).toBeVisible();
+    await expect(selectAddressBtn).toBeVisible();
+    await selectAddressBtn.click();
+    await expect(page.locator('#cascading-address-title')).toBeVisible();
+    await page.locator('.divide-y button', { hasText: /National Capital Region/i }).first().click();
+    await page.locator('.divide-y button', { hasText: /City of Manila/i }).first().click();
+    await page.locator('.divide-y button').first().click();
+    const confirmAddrBtn = page.getByRole('button', { name: /Confirm Address/i });
+    await expect(confirmAddrBtn).toBeVisible();
+    await confirmAddrBtn.click();
     await expect(consentCheckbox).toBeVisible();
     await consentCheckbox.check();
 
     // Continue to Step 2: Visit & Arrival Details
-    const continueToVisitBtn = page.getByRole('button', { name: /Next: Visit Details|Continue/i });
+    const continueToVisitBtn = page.getByRole('button', { name: /Next: Visit Details|Continue to Visit Details|Continue/i });
     await expect(continueToVisitBtn).toBeEnabled({ timeout: 5_000 });
     await continueToVisitBtn.click();
 
     // 6. Fill required Step 2 (Visit Details) fields
-    const purposeSelect = page.locator('#visit-purpose-choice');
-    const visitDateInput = page.locator('#visit-date');
+    const officeSelect = page.locator('#destination-office-select');
+    await expect(officeSelect).toBeVisible();
+    await officeSelect.selectOption('office-reg-001');
 
+    const generalVisitBtn = page.getByRole('button', { name: /The Office Itself/i });
+    await expect(generalVisitBtn).toBeVisible();
+    await generalVisitBtn.click();
+
+    const purposeSelect = page.locator('#visit-purpose-choice');
     await expect(purposeSelect).toBeVisible({ timeout: 10_000 });
     await purposeSelect.selectOption({ index: 1 });
 
-    const today = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Manila' }).format(new Date());
-    await visitDateInput.fill(today);
+    const openDateBtn = page.locator('button', { hasText: /Open/i }).first();
+    await expect(openDateBtn).toBeVisible({ timeout: 10_000 });
+    await openDateBtn.click();
 
     // 6. Click "Continue to Live Face Capture" (triggers Turnstile execute)
     const continueBtn = page.getByRole('button', { name: /Continue to Live Face Capture|Continue/i });
@@ -317,23 +383,37 @@ test.describe('Workstream H: Real Online Pre-Registration Runtime & Turnstile JI
     await page.locator('#first-name, #firstName').fill('Juan');
     await page.locator('#last-name, #lastName').fill('Dela Cruz');
     await page.locator('#contact-number, #contactNumber').fill('09181234567');
-    const selectLocationBtn = page.getByRole('button', { name: /Select approximate location/i });
-    await expect(selectLocationBtn).toBeVisible();
-    await selectLocationBtn.click();
-    const confirmLocationBtn = page.getByRole('button', { name: /Confirm Location/i });
-    await expect(confirmLocationBtn).toBeVisible();
-    await confirmLocationBtn.click();
-    await expect(page.getByText(/Approximate location selected/i)).toBeVisible();
+    const selectAddressBtn = page.getByRole('button', { name: /Select your barangay and city/i });
+    await expect(selectAddressBtn).toBeVisible();
+    await selectAddressBtn.click();
+    await expect(page.locator('#cascading-address-title')).toBeVisible();
+    await page.locator('.divide-y button', { hasText: /National Capital Region/i }).first().click();
+    await page.locator('.divide-y button', { hasText: /City of Manila/i }).first().click();
+    await page.locator('.divide-y button').first().click();
+    const confirmAddrBtn = page.getByRole('button', { name: /Confirm Address/i });
+    await expect(confirmAddrBtn).toBeVisible();
+    await confirmAddrBtn.click();
     await page.locator('input[type="checkbox"]#consent, input[name="consent"]').check();
 
     const continueToVisitBtn = page.getByRole('button', { name: /Next: Visit Details|Continue to Visit Details|Continue/i });
     await continueToVisitBtn.click();
 
     // Step 2: Visit Details
-    await expect(page.locator('#visit-purpose-choice')).toBeVisible({ timeout: 10_000 });
-    await page.locator('#visit-purpose-choice').selectOption({ index: 1 });
-    const today = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Manila' }).format(new Date());
-    await page.locator('#visit-date').fill(today);
+    const officeSelect = page.locator('#destination-office-select');
+    await expect(officeSelect).toBeVisible();
+    await officeSelect.selectOption('office-reg-001');
+
+    const generalVisitBtn = page.getByRole('button', { name: /The Office Itself/i });
+    await expect(generalVisitBtn).toBeVisible();
+    await generalVisitBtn.click();
+
+    const purposeSelect = page.locator('#visit-purpose-choice');
+    await expect(purposeSelect).toBeVisible({ timeout: 10_000 });
+    await purposeSelect.selectOption({ index: 1 });
+
+    const openDateBtn = page.locator('button', { hasText: /Open/i }).first();
+    await expect(openDateBtn).toBeVisible({ timeout: 10_000 });
+    await openDateBtn.click();
 
     const continueBtn = page.getByRole('button', { name: /Continue to Live Face Capture|Continue/i });
     await continueBtn.click();

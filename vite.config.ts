@@ -142,6 +142,7 @@ export default defineConfig({
   resolve: {
     alias: {
       '@': resolve(import.meta.dirname, 'src'),
+      '@techstark/opencv-js/dist/opencv.js': resolve(import.meta.dirname, 'src/lib/opencvLoader.ts'),
       '@techstark/opencv-js': resolve(import.meta.dirname, 'src/lib/opencvLoader.ts'),
     },
   },
