@@ -1,5 +1,6 @@
 import { useEffect, useState, useCallback, useRef } from 'react';
 import { getAccessToken, signOutCurrentActor } from '@/services/auth';
+import { requireSupabase, supabase } from '@/lib/supabase';
 import { AuthenticatedImage } from '@/components/AuthenticatedImage';
 import { formatManilaTime } from '@/lib/manilaTime';
 import { BrandMark } from '@/components/BrandMark';
@@ -17,6 +18,8 @@ import {
   CheckCircle2,
   FileText,
   Car,
+  Building2,
+  User,
 } from 'lucide-react';
 
 interface StationInfo {
@@ -32,10 +35,21 @@ export interface StationEntry {
   status: 'inside' | 'exited' | string;
   source: 'portal' | 'kiosk';
   enteredAt: string;
+  timeIn?: string | null;
+  timeOut?: string | null;
   visitorName: string;
   purpose: string;
   photoEvidenceId: string | null;
   gate: string;
+  officeVisit?: {
+    officeName: string | null;
+    hostPersonName: string | null;
+    hostPersonTitle?: string | null;
+    visitType: string;
+    attendanceStatus: string;
+    approvalStatus: string;
+    purpose: string;
+  } | null;
   vehicle?: {
     plateNumber: string;
     vehicleType: string;
@@ -227,15 +241,57 @@ export function GuardPage() {
         if (pollTimeoutRef.current) clearTimeout(pollTimeoutRef.current);
         pollTimeoutRef.current = setTimeout(() => {
           if (isMountedRef.current && navigator.onLine) {
-            if (typeof document !== 'undefined' && document.hidden) {
-              return; // Paused while tab is backgrounded
-            }
             void fetchFeed(true);
           }
-        }, 4000);
+        }, 3000);
       }
     }
   }, []);
+
+  // Realtime CDC subscription on passes and visit_events for instantaneous push updates
+  useEffect(() => {
+    let channel: any = null;
+    let client: any = null;
+    try {
+      client = typeof requireSupabase === 'function' ? requireSupabase() : supabase;
+    } catch {
+      client = supabase;
+    }
+
+    if (client && typeof client.channel === 'function') {
+      try {
+        channel = client
+          .channel('guard-station-feed-live')
+          .on(
+            'postgres_changes',
+            { event: '*', schema: 'public', table: 'passes' },
+            () => {
+              void fetchFeed(true);
+            }
+          )
+          .on(
+            'postgres_changes',
+            { event: 'INSERT', schema: 'public', table: 'visit_events' },
+            () => {
+              void fetchFeed(true);
+            }
+          )
+          .subscribe();
+      } catch (err) {
+        console.warn('Realtime subscription not active on guard station, relying on interval polling.', err);
+      }
+    }
+
+    return () => {
+      if (channel && client && typeof client.removeChannel === 'function') {
+        try {
+          void client.removeChannel(channel);
+        } catch {
+          // ignore cleanup error
+        }
+      }
+    };
+  }, [fetchFeed]);
 
   useEffect(() => {
     void fetchFeed();
@@ -455,6 +511,81 @@ export function GuardPage() {
                         </p>
                       </div>
 
+                      {/* Prominent Time In Display */}
+                      <div className="flex items-center justify-between rounded-xl bg-emerald-50 border border-emerald-200 px-3.5 py-2.5 text-emerald-950">
+                        <div className="flex items-center gap-2">
+                          <Clock className="h-4 w-4 text-emerald-700 flex-shrink-0" />
+                          <div>
+                            <span className="text-[11px] font-bold uppercase tracking-wider text-emerald-800 block">
+                              Time In
+                            </span>
+                            <span className="text-sm font-extrabold text-emerald-950">
+                              {latestEntry?.timeIn || latestEntry?.enteredAt
+                                ? formatManilaTime(latestEntry.timeIn || latestEntry.enteredAt)
+                                : 'Recorded'}
+                            </span>
+                          </div>
+                        </div>
+                        {latestEntry?.timeOut && (
+                          <div className="text-right border-l border-emerald-200 pl-3">
+                            <span className="text-[11px] font-semibold uppercase tracking-wider text-slate-600 block">
+                              Time Out
+                            </span>
+                            <span className="text-xs font-bold text-slate-800">
+                              {formatManilaTime(latestEntry.timeOut)}
+                            </span>
+                          </div>
+                        )}
+                      </div>
+
+                      {/* Official Meeting & Office Details */}
+                      {latestEntry?.officeVisit ? (
+                        <div className="rounded-xl border border-indigo-200 bg-indigo-50/70 p-3.5 text-indigo-950 space-y-2">
+                          <div className="flex items-center justify-between">
+                            <div className="flex items-center gap-1.5 font-bold text-xs uppercase tracking-wider text-indigo-900">
+                              <Building2 className="h-4 w-4 text-indigo-600 flex-shrink-0" />
+                              <span>Meeting / Office Details</span>
+                            </div>
+                            <span className="inline-flex items-center rounded-full bg-indigo-100 px-2 py-0.5 text-[10px] font-semibold text-indigo-800 border border-indigo-200 capitalize">
+                              {latestEntry.officeVisit.visitType === 'specific_person' ? 'Person to Meet' : 'General Office'}
+                            </span>
+                          </div>
+
+                          <div className="space-y-1.5 text-xs">
+                            <div>
+                              <span className="text-indigo-700 block text-[11px] font-medium">Designated Office:</span>
+                              <span className="font-bold text-sm text-indigo-950">
+                                {latestEntry.officeVisit.officeName || 'Academic / Administrative Office'}
+                              </span>
+                            </div>
+
+                            {latestEntry.officeVisit.hostPersonName && (
+                              <div className="flex items-start gap-1.5 pt-1 border-t border-indigo-200/60">
+                                <User className="h-3.5 w-3.5 text-indigo-600 mt-0.5 flex-shrink-0" />
+                                <div>
+                                  <span className="text-indigo-700 block text-[11px] font-medium">Person to Meet:</span>
+                                  <span className="font-bold text-xs text-indigo-950">
+                                    {latestEntry.officeVisit.hostPersonName}
+                                  </span>
+                                  {latestEntry.officeVisit.hostPersonTitle && (
+                                    <span className="text-[11px] text-indigo-700 block">
+                                      ({latestEntry.officeVisit.hostPersonTitle})
+                                    </span>
+                                  )}
+                                </div>
+                              </div>
+                            )}
+
+                            <div className="flex items-center justify-between pt-1 border-t border-indigo-200/60 text-[11px]">
+                              <span className="text-indigo-700 font-medium">Attendance Status:</span>
+                              <span className="font-bold capitalize text-indigo-900 bg-white/80 px-2 py-0.5 rounded border border-indigo-200">
+                                {latestEntry.officeVisit.attendanceStatus.replace(/_/g, ' ')}
+                              </span>
+                            </div>
+                          </div>
+                        </div>
+                      ) : null}
+
                       <div className="space-y-2 border-t border-[var(--color-border)] pt-3 text-sm">
                         <div className="flex items-start gap-2">
                           <FileText className="h-4 w-4 text-[var(--color-brand)] flex-shrink-0 mt-0.5" />
@@ -580,10 +711,15 @@ export function GuardPage() {
                           {entry.visitorName}
                         </h4>
                         <p className="text-xs text-[var(--color-text-secondary)] truncate">
+                          {entry.officeVisit?.officeName ? (
+                            <span className="font-semibold text-indigo-700">{entry.officeVisit.officeName}: </span>
+                          ) : null}
                           {entry.purpose}
                         </p>
                         <div className="flex items-center gap-2 mt-1 text-[11px] text-[var(--color-text-muted)]">
-                          <span>{entry.enteredAt ? formatManilaTime(entry.enteredAt) : ''}</span>
+                          <span className="font-semibold text-emerald-700">
+                            Time In: {entry.timeIn || entry.enteredAt ? formatManilaTime(entry.timeIn || entry.enteredAt) : ''}
+                          </span>
                           <span>•</span>
                           <span className="font-mono">{entry.publicReference}</span>
                         </div>
