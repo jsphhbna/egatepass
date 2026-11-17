@@ -68,8 +68,8 @@ async function handleRequest(request: Request): Promise<Response> {
           if (typeof eqQuery?.lte === 'function') eqQuery = eqQuery.lte('local_recorded_at', snapshotAt);
           if (typeof eqQuery?.is === 'function') eqQuery = eqQuery.is('anonymized_at', null);
           if (typeof eqQuery?.not === 'function') eqQuery = eqQuery.not('reconciliation_status', 'in', '(rejected,duplicate)');
-          if (gateParam && typeof eqQuery?.or === 'function') {
-            eqQuery = eqQuery.or(`gate.eq.${gateParam},normalized_gate.eq.${gateParam.toLowerCase().trim()}`);
+          if (gateParam && typeof eqQuery?.eq === 'function') {
+            eqQuery = eqQuery.eq('normalized_gate', gateParam.toLowerCase().trim());
           }
           const { count, error: eqErr } = await eqQuery;
           if (!eqErr && typeof count === 'number') {
@@ -164,8 +164,8 @@ async function handleRequest(request: Request): Promise<Response> {
           if (typeof eqQuery?.not === 'function') eqQuery = eqQuery.not('reconciliation_status', 'in', '(rejected,duplicate)');
           if (typeof eqQuery?.order === 'function') eqQuery = eqQuery.order('local_recorded_at', { ascending: false });
           if (typeof eqQuery?.limit === 'function') eqQuery = eqQuery.limit(PAGE_SIZE);
-          if (gateParam && typeof eqQuery?.or === 'function') {
-            eqQuery = eqQuery.or(`gate.eq.${gateParam},normalized_gate.eq.${gateParam.toLowerCase().trim()}`);
+          if (gateParam && typeof eqQuery?.eq === 'function') {
+            eqQuery = eqQuery.eq('normalized_gate', gateParam.toLowerCase().trim());
           }
           const { data, error: eqDataErr } = await eqQuery;
           if (!eqDataErr && Array.isArray(data)) {

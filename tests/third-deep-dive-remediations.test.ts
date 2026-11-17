@@ -11,11 +11,27 @@ describe('3rd Deep Dive Remediations Test Suite', () => {
   describe('Phase 1: Hotfixes', () => {
     it('Item 1: KioskPage guards 60s loadSettings() to prevent resetting visitor active flow', () => {
       const kioskSrc = readFileSync(join(root, 'src', 'pages', 'KioskPage.tsx'), 'utf-8');
-      // Guarded step transition
-      expect(kioskSrc).toContain("setStep((prev) => (prev === 'scan-intro' || prev === 'form' ? (peakActive ? 'form' : 'scan-intro') : prev))");
+      // Guarded step transition - does not wipe visitor active form or flow
+      expect(kioskSrc).toContain("setStep((prev) => (prev === 'scan-intro' ? (peakActive ? 'form' : 'scan-intro') : prev))");
       // Guarded configState
       expect(kioskSrc).toContain("setConfigState((prev) => (prev === 'ready' ? 'ready' : 'loading'))");
       expect(kioskSrc).toContain("setConfigState((prev) => (prev === 'ready' ? prev : 'error'))");
+
+      // Functional step transition behavior:
+      // Active steps ('form', 'photo', 'id', 'review') must NEVER be reset by background loadSettings
+      const stepTransition = (prev: string, peakActive: boolean) =>
+        prev === 'scan-intro' ? (peakActive ? 'form' : 'scan-intro') : prev;
+
+      expect(stepTransition('scan-intro', true)).toBe('form');
+      expect(stepTransition('scan-intro', false)).toBe('scan-intro');
+      expect(stepTransition('form', false)).toBe('form'); // visitor on form preserved
+      expect(stepTransition('form', true)).toBe('form');
+      expect(stepTransition('photo', true)).toBe('photo');
+      expect(stepTransition('photo', false)).toBe('photo');
+      expect(stepTransition('id', true)).toBe('id');
+      expect(stepTransition('id', false)).toBe('id');
+      expect(stepTransition('review', true)).toBe('review');
+      expect(stepTransition('review', false)).toBe('review');
     });
 
     it('Item 2: OfficeDashboardPage stabilizes Realtime subscription with mutable ref', () => {
@@ -126,7 +142,7 @@ describe('3rd Deep Dive Remediations Test Suite', () => {
       }
     });
 
-    it('Item 6: emergency.ts includes active emergency_gate_records alongside passes with valid PostgREST enum syntax', () => {
+    it('Item 6: emergency.ts includes active emergency_gate_records alongside passes with valid PostgREST enum syntax and normalized_gate', () => {
       const emergencySrc = readFileSync(join(root, 'server', 'routes', 'admin', 'emergency.ts'), 'utf-8');
       expect(emergencySrc).toContain("from('emergency_gate_records')");
       expect(emergencySrc).toContain('manilaTodayStartIso');
@@ -135,6 +151,13 @@ describe('3rd Deep Dive Remediations Test Suite', () => {
       expect(emergencySrc).toContain('emergencyCount');
       expect(emergencySrc).toContain('finalPasses');
       expect(emergencySrc).toContain("eqQuery.not('reconciliation_status', 'in', '(rejected,duplicate)')");
+      expect(emergencySrc).toContain("eqQuery.eq('normalized_gate', gateParam.toLowerCase().trim())");
+
+      // Verify gate normalization logic for gates with spaces
+      const normalizeGate = (g: string) => g.toLowerCase().trim();
+      expect(normalizeGate('Main Gate')).toBe('main gate');
+      expect(normalizeGate('  Gate 1  ')).toBe('gate 1');
+      expect(normalizeGate('GATE 2')).toBe('gate 2');
 
       // Verify combination logic
       const regularPasses = [

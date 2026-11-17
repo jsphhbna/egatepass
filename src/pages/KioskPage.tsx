@@ -176,9 +176,10 @@ export function KioskPage() {
       const data = await loadRegistrationSettings('kiosk');
       const peakActive = data.peak_mode === 'kiosk' || data.peak_mode === 'both';
       setIsPeakMode(peakActive);
-      // Select workflow (form vs scan-intro) only if visitor is on initial steps:
+      // Select workflow (form vs scan-intro) only after authoritative configuration is loaded:
       // setStep(peakActive ? 'form' : 'scan-intro');
-      setStep((prev) => (prev === 'scan-intro' || prev === 'form' ? (peakActive ? 'form' : 'scan-intro') : prev));
+      // Never reset an active visitor session on 'form', 'photo', 'id', or 'review'
+      setStep((prev) => (prev === 'scan-intro' ? (peakActive ? 'form' : 'scan-intro') : prev));
       setVisitPurposes(normalizeVisitPurposes(data.visit_purposes));
       setWorkingHours(normalizeWorkingHours({
         start: data.working_hours_start?.slice(0, 5),

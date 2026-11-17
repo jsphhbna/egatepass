@@ -209,6 +209,8 @@ export function OfficeDashboardPage() {
             pending: data.counts.pending ?? 0,
             approved: data.counts.approved ?? 0,
             awaiting_confirmation: data.counts.awaiting_confirmation ?? 0,
+            confirmed: data.counts.confirmed ?? prev.confirmed,
+            history: data.counts.history ?? prev.history,
           }));
         }
       } else if (activeQueueTab === 'confirmed') {
@@ -468,6 +470,17 @@ export function OfficeDashboardPage() {
       }
 
       toast.success(`Arrival confirmed for ${confirmArrivalVisit.visitorDisplayName || confirmArrivalVisit.visitorFullName}! Attendance recorded.`);
+      const confirmedVisitRecord: OfficeVisitRecord = {
+        ...confirmArrivalVisit,
+        attendanceStatus: 'confirmed',
+        confirmedAt: new Date().toISOString(),
+      };
+      setConfirmedVisits((prev) => [confirmedVisitRecord, ...prev.filter((v) => v.id !== confirmArrivalVisit.id)]);
+      setQueueCounts((prev) => ({
+        ...prev,
+        confirmed: prev.confirmed + 1,
+        awaiting_confirmation: Math.max(0, prev.awaiting_confirmation - 1),
+      }));
       setConfirmArrivalVisit(null);
       loadVisits(true);
     } catch (err: unknown) {
