@@ -330,7 +330,7 @@ export const SERVER_DIRECT_TABLE_OPERATIONS: DirectServerTableOperation[] = [
   { file: 'server/routes/gate/evidence.ts', table: 'visit_vehicle_declarations', operations: ['SELECT'], purpose: 'Verify vehicle photo authorization for guard station' },
   { file: 'server/routes/gate/evidence.ts', table: 'visitors', operations: ['SELECT'], purpose: 'Lookup returning profile ID for linked visitor evidence' },
   { file: 'server/routes/gate/evidence.ts', table: 'audit_events', operations: ['INSERT'], purpose: 'Log evidence access audit event' },
-  { file: 'server/routes/gate/guard-station-feed.ts', table: 'devices', operations: ['SELECT'], purpose: 'Authorize guard station device' },
+  { file: 'server/routes/gate/guard-station-feed.ts', table: 'devices', operations: ['SELECT', 'UPDATE'], purpose: 'Authorize guard station device and update last_seen_at heartbeat' },
   { file: 'server/routes/gate/guard-station-feed.ts', table: 'staff_profiles', operations: ['SELECT'], purpose: 'Authorize admin monitor' },
   { file: 'server/routes/gate/guard-station-feed.ts', table: 'passes', operations: ['SELECT'], purpose: 'Query gate entries for today' },
   { file: 'server/routes/gate/guard-station-feed.ts', table: 'visitors', operations: ['SELECT'], purpose: 'Fetch visitor names and purpose' },

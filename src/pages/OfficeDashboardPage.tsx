@@ -260,10 +260,15 @@ export function OfficeDashboardPage() {
   useEffect(() => {
     if (selectedOfficeId) {
       loadPersonnelForOffice(selectedOfficeId);
-      loadVisits();
       loadOfficeSchedules();
     }
-  }, [selectedOfficeId, loadPersonnelForOffice, loadVisits, loadOfficeSchedules]);
+  }, [selectedOfficeId, loadPersonnelForOffice, loadOfficeSchedules]);
+
+  useEffect(() => {
+    if (selectedOfficeId) {
+      void loadVisits();
+    }
+  }, [loadVisits, selectedOfficeId]);
 
   // Realtime push subscriptions on office_visits and office_visit_events + auto-refresh
   useEffect(() => {

@@ -7,3 +7,6 @@ alter table public.office_visit_events replica identity full;
 alter table public.passes replica identity full;
 alter table public.visit_events replica identity full;
 alter table public.emergency_gate_records replica identity full;
+
+-- Grant service_role update on devices.last_seen_at for throttled hardware heartbeats
+grant update (last_seen_at) on public.devices to service_role;

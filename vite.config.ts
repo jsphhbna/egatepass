@@ -59,13 +59,14 @@ const vercelApiDevPlugin = (): Plugin => {
 
         const parsedUrl = new URL(req.url, `http://${req.headers.host || 'localhost:5173'}`);
         const relativePath = parsedUrl.pathname.replace(/^\/api\//, '');
+        const normalizedRelativePath = relativePath.replace(/\/+$/, '');
 
         const devRewrites: Record<string, string> = {
           'track-visit': 'server/routes/passes/track.ts',
           'webhooks/resend': 'server/routes/auth/resend-webhook.ts',
         };
 
-        const targetOverride = devRewrites[relativePath];
+        const targetOverride = devRewrites[normalizedRelativePath] || devRewrites[relativePath];
 
         const candidatePaths = targetOverride
           ? [resolve(import.meta.dirname, targetOverride)]

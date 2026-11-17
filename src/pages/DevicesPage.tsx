@@ -58,7 +58,9 @@ function isDeviceOnline(lastSeen: Timestamp | string | number | null | undefined
     return false;
   }
   if (Number.isNaN(time)) return false;
-  return Date.now() - time <= 5 * 60 * 1000;
+  const diff = Date.now() - time;
+  // Online if seen within 5 minutes (allowing up to 60s of forward clock skew)
+  return diff >= -60_000 && diff <= 5 * 60 * 1000;
 }
 
 export function DevicesPage() {

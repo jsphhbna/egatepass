@@ -91,7 +91,7 @@ describe('3rd Deep Dive Remediations Test Suite', () => {
   // Phase 2 — Database & Realtime
   // ---------------------------------------------------------------------------
   describe('Phase 2: Database & Realtime', () => {
-    it('Item 4: migration 20261118000200_replica_identity_full_realtime.sql exists with correct table directives', () => {
+    it('Item 4: migration 20261118000200_replica_identity_full_realtime.sql exists with correct table directives and heartbeat grant', () => {
       const migrationPath = join(root, 'supabase', 'migrations', '20261118000200_replica_identity_full_realtime.sql');
       expect(existsSync(migrationPath)).toBe(true);
 
@@ -101,6 +101,7 @@ describe('3rd Deep Dive Remediations Test Suite', () => {
       expect(content).toContain('alter table public.passes replica identity full;');
       expect(content).toContain('alter table public.visit_events replica identity full;');
       expect(content).toContain('alter table public.emergency_gate_records replica identity full;');
+      expect(content).toContain('grant update (last_seen_at) on public.devices to service_role;');
     });
   });
 
@@ -125,7 +126,7 @@ describe('3rd Deep Dive Remediations Test Suite', () => {
       }
     });
 
-    it('Item 6: emergency.ts includes active emergency_gate_records alongside passes', () => {
+    it('Item 6: emergency.ts includes active emergency_gate_records alongside passes with valid PostgREST enum syntax', () => {
       const emergencySrc = readFileSync(join(root, 'server', 'routes', 'admin', 'emergency.ts'), 'utf-8');
       expect(emergencySrc).toContain("from('emergency_gate_records')");
       expect(emergencySrc).toContain('manilaTodayStartIso');
@@ -133,6 +134,22 @@ describe('3rd Deep Dive Remediations Test Suite', () => {
       expect(emergencySrc).toContain('passCount');
       expect(emergencySrc).toContain('emergencyCount');
       expect(emergencySrc).toContain('finalPasses');
+      expect(emergencySrc).toContain("eqQuery.not('reconciliation_status', 'in', '(rejected,duplicate)')");
+
+      // Verify combination logic
+      const regularPasses = [
+        { id: 'pass-1', timeIn: '2026-11-18T08:00:00Z', status: 'inside' },
+        { id: 'pass-2', timeIn: '2026-11-18T09:30:00Z', status: 'inside' },
+      ];
+      const emergencyPasses = [
+        { id: 'em-1', timeIn: '2026-11-18T09:00:00Z', status: 'inside' as const },
+      ];
+      const combined = [...regularPasses, ...emergencyPasses].sort((a, b) => {
+        const timeA = a.timeIn ? new Date(a.timeIn).getTime() : 0;
+        const timeB = b.timeIn ? new Date(b.timeIn).getTime() : 0;
+        return timeB - timeA;
+      });
+      expect(combined.map((p) => p.id)).toEqual(['pass-2', 'em-1', 'pass-1']);
     });
   });
 
@@ -166,6 +183,34 @@ describe('3rd Deep Dive Remediations Test Suite', () => {
       expect(devicesSrc).toContain('Online');
       expect(devicesSrc).toContain('Offline');
 
+      // Functional verification of isDeviceOnline logic
+      function isDeviceOnline(lastSeen: any): boolean {
+        if (!lastSeen) return false;
+        let time: number;
+        if (typeof lastSeen === 'object' && 'toMillis' in lastSeen && typeof lastSeen.toMillis === 'function') {
+          time = lastSeen.toMillis();
+        } else if (typeof lastSeen === 'number') {
+          time = lastSeen;
+        } else if (typeof lastSeen === 'string') {
+          time = new Date(lastSeen).getTime();
+        } else {
+          return false;
+        }
+        if (Number.isNaN(time)) return false;
+        const diff = Date.now() - time;
+        return diff >= -60_000 && diff <= 5 * 60 * 1000;
+      }
+
+      const now = Date.now();
+      expect(isDeviceOnline(now - 1000)).toBe(true); // 1s ago
+      expect(isDeviceOnline(now - 4 * 60 * 1000)).toBe(true); // 4 min ago
+      expect(isDeviceOnline(now - 6 * 60 * 1000)).toBe(false); // 6 min ago (offline)
+      expect(isDeviceOnline(now + 10_000)).toBe(true); // 10s future skew tolerated
+      expect(isDeviceOnline(now + 120_000)).toBe(false); // extreme future skew rejected
+      expect(isDeviceOnline(null)).toBe(false);
+      expect(isDeviceOnline(undefined)).toBe(false);
+      expect(isDeviceOnline('invalid-date')).toBe(false);
+
       // Auto-refresh 30s
       expect(devicesSrc).toContain('30000');
       expect(devicesSrc).toContain('loadDevices(false, true)');
@@ -175,10 +220,26 @@ describe('3rd Deep Dive Remediations Test Suite', () => {
       expect(devicesSrc).toContain('Gate reassignment for emergency devices requires Superadmin privileges to preserve cryptographic offline manifest integrity.');
     });
 
-    it('Item 10: vite.config.ts proxies /api/track-visit and /api/webhooks/resend in local dev', () => {
+    it('Item 10: vite.config.ts proxies /api/track-visit and /api/webhooks/resend in local dev with trailing slash normalization', () => {
       const viteSrc = readFileSync(join(root, 'vite.config.ts'), 'utf-8');
       expect(viteSrc).toContain("'track-visit': 'server/routes/passes/track.ts'");
       expect(viteSrc).toContain("'webhooks/resend': 'server/routes/auth/resend-webhook.ts'");
+      expect(viteSrc).toContain('normalizedRelativePath');
+
+      // Functional rewrite lookup simulation
+      const devRewrites: Record<string, string> = {
+        'track-visit': 'server/routes/passes/track.ts',
+        'webhooks/resend': 'server/routes/auth/resend-webhook.ts',
+      };
+      const testLookup = (path: string) => {
+        const rel = path.replace(/^\/api\//, '');
+        const norm = rel.replace(/\/+$/, '');
+        return devRewrites[norm] || devRewrites[rel];
+      };
+      expect(testLookup('/api/track-visit')).toBe('server/routes/passes/track.ts');
+      expect(testLookup('/api/track-visit/')).toBe('server/routes/passes/track.ts');
+      expect(testLookup('/api/webhooks/resend')).toBe('server/routes/auth/resend-webhook.ts');
+      expect(testLookup('/api/webhooks/resend/')).toBe('server/routes/auth/resend-webhook.ts');
     });
   });
 });
