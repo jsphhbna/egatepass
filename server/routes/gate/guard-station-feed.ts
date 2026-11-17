@@ -200,6 +200,16 @@ async function handleRequest(request: Request): Promise<Response> {
       vehicle_photo_evidence_id?: string | null;
       plate_conflict_flag?: boolean | null;
     }> = [];
+    let officeVisits: Array<{
+      pass_id: string;
+      office_id: string;
+      personnel_id: string | null;
+      visit_type: string;
+      purpose: string;
+      requested_person_name: string | null;
+      attendance_status: string;
+      approval_status: string;
+    }> = [];
 
     const fetchPromises: Promise<void>[] = [];
 
@@ -231,6 +241,14 @@ async function handleRequest(request: Request): Promise<Response> {
           const { data, error } = await admin.from('visit_vehicle_declarations').select('pass_id, vehicle_type, plate_number, color, make_model, vehicle_photo_evidence_id, plate_conflict_flag').in('pass_id', passIds);
           if (error) throw error;
           vehicles = data || [];
+        })(),
+        (async () => {
+          const { data, error } = await admin
+            .from('office_visits')
+            .select('pass_id, office_id, personnel_id, visit_type, purpose, requested_person_name, attendance_status, approval_status')
+            .in('pass_id', passIds);
+          if (error) throw error;
+          officeVisits = data || [];
         })()
       );
     }
@@ -277,19 +295,66 @@ async function handleRequest(request: Request): Promise<Response> {
     }
     const vehicleMap = new Map(vehicles.map((v) => [v.pass_id, v]));
 
+    // Resolve Office and Personnel details
+    const officeIds = Array.from(new Set(officeVisits.map((ov) => ov.office_id).filter(Boolean)));
+    const personnelIds = Array.from(new Set(officeVisits.map((ov) => ov.personnel_id).filter(Boolean))) as string[];
+
+    let offices: Array<{ id: string; name: string }> = [];
+    let personnel: Array<{ id: string; name: string; title: string | null }> = [];
+
+    const detailsPromises: Promise<void>[] = [];
+    if (officeIds.length > 0) {
+      detailsPromises.push((async () => {
+        const { data } = await admin.from('offices').select('id, name').in('id', officeIds);
+        offices = data || [];
+      })());
+    }
+    if (personnelIds.length > 0) {
+      detailsPromises.push((async () => {
+        const { data } = await admin.from('office_personnel').select('id, name, title').in('id', personnelIds);
+        personnel = data || [];
+      })());
+    }
+    if (detailsPromises.length > 0) {
+      await Promise.all(detailsPromises);
+    }
+
+    const officeMap = new Map(offices.map((o) => [o.id, o.name]));
+    const personnelMap = new Map(personnel.map((p) => [p.id, p]));
+    const officeVisitMap = new Map(officeVisits.map((ov) => [ov.pass_id, ov]));
+
     const entries = passList.map((p) => {
       const v = visitorMap.get(p.visitor_id);
       const veh = vehicleMap.get(p.id);
+      const ov = officeVisitMap.get(p.id);
+      const staffMember = ov?.personnel_id ? personnelMap.get(ov.personnel_id) : null;
+      const hostPersonName = staffMember?.name || ov?.requested_person_name || null;
+      const hostPersonTitle = staffMember?.title || null;
+      const officeName = ov ? officeMap.get(ov.office_id) || 'Campus Office' : null;
+
       return {
         passId: p.id,
         publicReference: p.public_reference,
-        status: p.status, // 'inside' | 'exited'
+        status: p.status, // 'inside' | 'exited' | 'pending'
         source: p.source,
         enteredAt: p.time_in || p.entry_scanned_at,
+        timeIn: p.time_in || p.entry_scanned_at,
+        timeOut: p.time_out || null,
         visitorName: v?.full_name || 'Visitor',
-        purpose: v?.purpose || '',
+        purpose: ov?.purpose || v?.purpose || '',
         photoEvidenceId: photoMap.get(p.visitor_id) || null,
         gate: p.gate,
+        officeVisit: ov
+          ? {
+              officeName,
+              hostPersonName,
+              hostPersonTitle,
+              visitType: ov.visit_type,
+              attendanceStatus: ov.attendance_status,
+              approvalStatus: ov.approval_status,
+              purpose: ov.purpose,
+            }
+          : null,
         vehicle: veh
           ? {
               plateNumber: veh.plate_number,
