@@ -1,5 +1,5 @@
 import { lazy, Suspense } from 'react';
-import { BrowserRouter, Routes, Route } from 'react-router-dom';
+import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { Toaster } from 'sonner';
 import { AuthProvider, useAuth } from '@/hooks/useAuth';
 import { ProtectedRoute } from '@/components/ProtectedRoute';
@@ -91,6 +91,10 @@ export function App() {
             />
             <Route path="/login" element={<LoginPage />} />
             <Route path="/track" element={<TrackVisitPage />} />
+            <Route path="/pass" element={<Navigate to="/get-pass" replace />} />
+            <Route path="/track-visit" element={<Navigate to="/track" replace />} />
+            <Route path="/scan" element={<Navigate to="/scan/entry" replace />} />
+            <Route path="/emergency" element={<Navigate to="/emergency-device" replace />} />
             <Route path="/auth/verified" element={<VerifiedSuccessPage />} />
             <Route path="/verified" element={<VerifiedSuccessPage />} />
             <Route path="/forgot-password" element={<ForgotPasswordPage />} />

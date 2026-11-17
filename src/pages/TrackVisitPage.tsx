@@ -159,22 +159,32 @@ export function TrackVisitPage() {
     }
   }, [activeToken, fetchStatus]);
 
-  // Setup auto-refresh for pending visits
+  // Setup adaptive real-time auto-refresh across all active visit phases
   useEffect(() => {
     if (autoRefreshTimerRef.current) {
       clearInterval(autoRefreshTimerRef.current);
       autoRefreshTimerRef.current = null;
     }
 
-    if (!activeToken || !data || data.approvalStatus !== 'pending') {
+    const isTerminal =
+      data?.approvalStatus === 'rejected' ||
+      data?.attendanceStatus === 'departed' ||
+      data?.attendanceStatus === 'cancelled';
+
+    if (!activeToken || !data || isTerminal) {
       return;
     }
+
+    const pollInterval =
+      data.approvalStatus === 'pending' || data.attendanceStatus === 'expected'
+        ? 8000
+        : 20000;
 
     autoRefreshTimerRef.current = setInterval(() => {
       if (typeof document !== 'undefined' && document.visibilityState === 'visible') {
         fetchStatus(activeToken);
       }
-    }, 30000);
+    }, pollInterval);
 
     const handleVisibilityChange = () => {
       if (document.visibilityState === 'visible' && activeToken) {
