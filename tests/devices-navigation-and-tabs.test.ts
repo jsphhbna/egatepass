@@ -41,4 +41,14 @@ describe('Phase D — Devices Expandable Sidebar Navigation & Tab Filtering', ()
     expect(devicesPageSrc).toContain("d.type === 'entry' || d.type === 'exit'");
     expect(devicesPageSrc).toContain("d.type === 'kiosk' || d.type === 'guard_station'");
   });
+
+  it('proves DevicesPage provides canonical gate options and admin device profile editing', () => {
+    expect(devicesPageSrc).toContain('canonical-gate-options');
+    expect(devicesPageSrc).toContain('Main Gate');
+    expect(devicesPageSrc).toContain('Back Gate');
+    expect(devicesPageSrc).toContain('Nagtahan Gate');
+    expect(devicesPageSrc).toContain('handleUpdateDetails');
+    expect(devicesPageSrc).toContain('Edit Device Details');
+    expect(devicesPageSrc).toContain('/api/update-device');
+  });
 });

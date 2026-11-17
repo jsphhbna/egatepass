@@ -2,7 +2,7 @@ import { useState, useEffect, useRef } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { useAuth } from '@/hooks/useAuth';
 import type { Device, DeviceType } from '@/types';
-import { Tablet, Plus, X, Lock, Unlock, Key, AtSign, Trash2, Eye, EyeOff } from 'lucide-react';
+import { Tablet, Plus, X, Lock, Unlock, Key, AtSign, Trash2, Eye, EyeOff, Edit2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { useForm } from 'react-hook-form';
 import { z } from 'zod';
@@ -61,6 +61,10 @@ export function DevicesPage() {
   const [editPassword, setEditPassword] = useState('');
   const [showEditPassword, setShowEditPassword] = useState(false);
   const [isUpdatingAuth, setIsUpdatingAuth] = useState(false);
+  const [editingDetailsDevice, setEditingDetailsDevice] = useState<DeviceWithId | null>(null);
+  const [editName, setEditName] = useState('');
+  const [editGate, setEditGate] = useState('');
+  const [isUpdatingDetails, setIsUpdatingDetails] = useState(false);
   const [deletingDevice, setDeletingDevice] = useState<DeviceWithId | null>(null);
   const [isDeleting, setIsDeleting] = useState(false);
   const [reactivatingDeviceId, setReactivatingDeviceId] = useState<string | null>(null);
@@ -311,6 +315,63 @@ export function DevicesPage() {
     }
   }
 
+  async function handleUpdateDetails(e: React.FormEvent) {
+    e.preventDefault();
+    if (!editingDetailsDevice) return;
+
+    const trimmedName = editName.trim();
+    const trimmedGate = editGate.trim();
+
+    if (trimmedName.length < 2) {
+      toast.error('Device name must be at least 2 characters.');
+      return;
+    }
+    if (trimmedGate.length < 1) {
+      toast.error('Gate or location is required.');
+      return;
+    }
+
+    const nameChanged = trimmedName !== editingDetailsDevice.name;
+    const gateChanged = trimmedGate !== editingDetailsDevice.gate;
+
+    if (!nameChanged && !gateChanged) {
+      toast.info('No changes were made.');
+      setEditingDetailsDevice(null);
+      return;
+    }
+
+    setIsUpdatingDetails(true);
+    try {
+      const token = await getAccessToken();
+      const res = await fetch('/api/update-device', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({
+          targetUid: editingDetailsDevice.id,
+          name: nameChanged ? trimmedName : undefined,
+          gate: gateChanged ? trimmedGate : undefined,
+        }),
+      });
+
+      const result = await res.json().catch(() => null) as { error?: string; ok?: boolean } | null;
+      if (!res.ok) {
+        throw new Error(result?.error || 'Failed to update device details');
+      }
+
+      toast.success('Device details updated successfully');
+      setEditingDetailsDevice(null);
+      await loadDevices();
+    } catch (err) {
+      console.error('Update device details error:', err);
+      toast.error(err instanceof Error ? err.message : 'Failed to update device details');
+    } finally {
+      setIsUpdatingDetails(false);
+    }
+  }
+
   async function handleDeleteDevice(device: DeviceWithId) {
     setIsDeleting(true);
     try {
@@ -475,9 +536,15 @@ export function DevicesPage() {
               id="device-gate"
               {...register('gate')}
               aria-required="true"
+              list="canonical-gate-options"
               placeholder="Main Gate"
               error={!!errors.gate}
             />
+            <datalist id="canonical-gate-options">
+              <option value="Main Gate" />
+              <option value="Back Gate" />
+              <option value="Nagtahan Gate" />
+            </datalist>
           </FormField>
 
           <div className="sm:col-span-2">
@@ -600,10 +667,24 @@ export function DevicesPage() {
                 </div>
               </div>
 
-              <div className="flex gap-2">
+              <div className="flex flex-wrap gap-2">
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  onClick={() => {
+                    setEditingDetailsDevice(device);
+                    setEditName(device.name);
+                    setEditGate(device.gate || '');
+                  }}
+                  className="flex-1"
+                  icon={<Edit2 className="h-3.5 w-3.5" />}
+                >
+                  Edit
+                </Button>
                 {canManageCredentials && (
                   <Button
                     variant="secondary"
+                    size="sm"
                     onClick={() => {
                       setEditingDevice(device);
                       const cleanAlias = (device.email || '').replace(/@devices\.egatepass\.invalid$/i, '');
@@ -612,18 +693,19 @@ export function DevicesPage() {
                       setShowEditPassword(false);
                     }}
                     className="flex-1"
-                    icon={<Key className="h-4 w-4" />}
+                    icon={<Key className="h-3.5 w-3.5" />}
                   >
-                    Edit
+                    Credentials
                   </Button>
                 )}
                 <Button
                   variant={device.status === 'active' ? 'destructive' : 'primary'}
+                  size="sm"
                   onClick={() => toggleDeviceStatus(device)}
                   disabled={reactivatingDeviceId === device.id}
                   loading={reactivatingDeviceId === device.id}
-                  className={canManageCredentials ? 'flex-[2]' : 'flex-1'}
-                  icon={device.status === 'active' ? <Lock className="h-4 w-4" /> : <Unlock className="h-4 w-4" />}
+                  className="flex-1"
+                  icon={device.status === 'active' ? <Lock className="h-3.5 w-3.5" /> : <Unlock className="h-3.5 w-3.5" />}
                 >
                   {device.status === 'active' ? 'Revoke' : reactivatingDeviceId === device.id ? 'Reactivating…' : 'Reactivate'}
                 </Button>
@@ -663,6 +745,63 @@ export function DevicesPage() {
         isDestructive
         loading={isRevoking}
       />
+
+      {/* Edit Device Details Modal */}
+      <Modal
+        isOpen={!!editingDetailsDevice}
+        onClose={() => {
+          setEditingDetailsDevice(null);
+          setEditName('');
+          setEditGate('');
+        }}
+        title="Edit Device Details"
+        description="Update the name and assigned gate for this device."
+        size="sm"
+        preventClose={isUpdatingDetails}
+      >
+        <form onSubmit={handleUpdateDetails} className="space-y-5">
+          <FormField label="Device Name" id="edit-device-name" requirement="required">
+            <Input
+              id="edit-device-name"
+              type="text"
+              value={editName}
+              onChange={(e) => setEditName(e.target.value)}
+              placeholder="Main Gate Entry Tablet"
+              required
+            />
+          </FormField>
+
+          <FormField label="Assigned Gate / Location" id="edit-device-gate" requirement="required">
+            <Input
+              id="edit-device-gate"
+              type="text"
+              list="canonical-gate-options"
+              value={editGate}
+              onChange={(e) => setEditGate(e.target.value)}
+              placeholder="Main Gate"
+              required
+            />
+          </FormField>
+
+          <div className="flex justify-end gap-3">
+            <Button
+              type="button"
+              variant="secondary"
+              disabled={isUpdatingDetails}
+              onClick={() => setEditingDetailsDevice(null)}
+            >
+              Cancel
+            </Button>
+            <Button
+              type="submit"
+              disabled={isUpdatingDetails}
+              loading={isUpdatingDetails}
+            >
+              {isUpdatingDetails ? 'Saving...' : 'Save Changes'}
+            </Button>
+          </div>
+        </form>
+      </Modal>
 
       {/* Edit Credentials Modal */}
       <Modal
