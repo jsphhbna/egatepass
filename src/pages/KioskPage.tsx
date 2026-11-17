@@ -218,6 +218,23 @@ export function KioskPage() {
 
   useEffect(() => {
     void loadSettings();
+    const interval = setInterval(() => {
+      if (typeof document !== 'undefined' && !document.hidden && navigator.onLine) {
+        void loadSettings();
+      }
+    }, 60000);
+
+    const handleVisibilityChange = () => {
+      if (typeof document !== 'undefined' && !document.hidden && navigator.onLine) {
+        void loadSettings();
+      }
+    };
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+
+    return () => {
+      clearInterval(interval);
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+    };
   }, [loadSettings]);
 
   const faceWebcam = useWebcam({ facingMode: 'user', width: 640, height: 480, allowCaptureMirroring: false });
@@ -608,6 +625,7 @@ export function KioskPage() {
     setIssuedValidity(null);
     setOcrSuccessNotice(false);
     setStep(isPeakMode ? 'form' : 'scan-intro');
+    void loadSettings();
   }
 
   function handleAmbiguousCancelAndAskGuard() {

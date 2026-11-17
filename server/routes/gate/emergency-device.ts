@@ -41,6 +41,7 @@ const syncItemSchema = z.object({
 }).strict();
 
 const syncBatchSchema = z.object({
+  action: z.enum(['recovery_sync']).optional(),
   items: z.array(syncItemSchema).min(1).max(100),
 }).strict();
 

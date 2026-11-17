@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { getAccessToken, signOutCurrentActor } from '@/services/auth';
+import { requireSupabase, supabase } from '@/lib/supabase';
 import {
   Building2,
   CheckCircle2,
@@ -243,6 +244,90 @@ export function OfficeDashboardPage() {
       loadOfficeSchedules();
     }
   }, [selectedOfficeId, loadPersonnelForOffice, loadVisits, loadOfficeSchedules]);
+
+  // Realtime push subscriptions on office_visits and office_visit_events + auto-refresh
+  useEffect(() => {
+    if (!selectedOfficeId) return;
+
+    let channel: any = null;
+    let client: any = null;
+    try {
+      client = typeof requireSupabase === 'function' ? requireSupabase() : supabase;
+    } catch {
+      client = supabase;
+    }
+
+    if (client && typeof client.channel === 'function') {
+      try {
+        channel = client
+          .channel(`office-visits-${selectedOfficeId}`)
+          .on(
+            'postgres_changes',
+            {
+              event: '*',
+              schema: 'public',
+              table: 'office_visits',
+              filter: `office_id=eq.${selectedOfficeId}`,
+            },
+            (payload: any) => {
+              void loadVisits(true);
+              if (
+                payload.eventType === 'UPDATE' &&
+                payload.new?.attendance_status === 'awaiting_office_confirmation' &&
+                payload.old?.attendance_status !== 'awaiting_office_confirmation'
+              ) {
+                toast.info(`Visitor ${payload.new.visitor_display_name || ''} has arrived at the campus gate!`);
+              }
+            }
+          )
+          .on(
+            'postgres_changes',
+            {
+              event: 'INSERT',
+              schema: 'public',
+              table: 'office_visit_events',
+            },
+            () => {
+              void loadVisits(true);
+            }
+          )
+          .subscribe();
+      } catch (err) {
+        console.warn('Realtime subscription not active on office dashboard, relying on interval polling.', err);
+      }
+    }
+
+    // Defensive fallback: 15-second polling interval
+    const interval = setInterval(() => {
+      if (typeof document !== 'undefined' && !document.hidden && navigator.onLine) {
+        void loadVisits(true);
+      }
+    }, 15000);
+
+    const handleVisibilityChange = () => {
+      if (typeof document !== 'undefined' && !document.hidden && navigator.onLine) {
+        void loadVisits(true);
+      }
+    };
+
+    if (typeof document !== 'undefined') {
+      document.addEventListener('visibilitychange', handleVisibilityChange);
+    }
+
+    return () => {
+      clearInterval(interval);
+      if (typeof document !== 'undefined') {
+        document.removeEventListener('visibilitychange', handleVisibilityChange);
+      }
+      if (channel && client && typeof client.removeChannel === 'function') {
+        try {
+          void client.removeChannel(channel);
+        } catch {
+          // ignore cleanup error
+        }
+      }
+    };
+  }, [selectedOfficeId, loadVisits]);
 
   // Handle Approve Specific-Person Visit
   async function handleApproveVisit() {
