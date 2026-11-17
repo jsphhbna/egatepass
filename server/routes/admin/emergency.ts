@@ -38,7 +38,12 @@ async function handleRequest(request: Request): Promise<Response> {
     const allRows: RawEmergencyPassRow[] = [];
     let truncated = false;
 
+    // Calculate start of today in Manila time (UTC+8) for emergency gate entries
+    const manilaDateStr = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Manila' }).format(new Date(snapshotAt));
+    const manilaTodayStartIso = new Date(`${manilaDateStr}T00:00:00+08:00`).toISOString();
+
     // Authoritative snapshot total of visitors physically inside at snapshotAt
+    // 1. Regular issued/entered passes
     let countQuery = admin
       .from('passes')
       .select('id', { count: 'exact', head: true })
@@ -49,9 +54,33 @@ async function handleRequest(request: Request): Promise<Response> {
       countQuery = countQuery.eq('gate', gateParam);
     }
 
-    const { count, error: countError } = await countQuery;
+    const { count: passCount, error: countError } = await countQuery;
     if (countError) throw countError;
-    const snapshotTotal = count ?? 0;
+
+    // 2. Offline emergency device records logged today that have not departed/anonymized
+    let emergencyCount = 0;
+    try {
+      const eqTable: any = admin.from('emergency_gate_records');
+      if (typeof eqTable?.select === 'function') {
+        let eqQuery = eqTable.select('id', { count: 'exact', head: true });
+        if (typeof eqQuery?.gte === 'function') {
+          eqQuery = eqQuery.gte('local_recorded_at', manilaTodayStartIso);
+          if (typeof eqQuery?.lte === 'function') eqQuery = eqQuery.lte('local_recorded_at', snapshotAt);
+          if (typeof eqQuery?.is === 'function') eqQuery = eqQuery.is('anonymized_at', null);
+          if (typeof eqQuery?.not === 'function') eqQuery = eqQuery.not('reconciliation_status', 'in', '(rejected,duplicate)');
+          if (gateParam && typeof eqQuery?.or === 'function') {
+            eqQuery = eqQuery.or(`gate.eq.${gateParam},normalized_gate.eq.${gateParam.toLowerCase().trim()}`);
+          }
+          const { count, error: eqErr } = await eqQuery;
+          if (!eqErr && typeof count === 'number') {
+            emergencyCount = count;
+          }
+        }
+      }
+    } catch {
+      // Mock or schema compatibility fallback
+    }
+    const snapshotTotal = (passCount ?? 0) + (emergencyCount ?? 0);
 
     let cursorTimeIn: string | null = null;
     let cursorId: string | null = null;
@@ -122,9 +151,44 @@ async function handleRequest(request: Request): Promise<Response> {
       }
     }
 
-    if (snapshotTotal > allRows.length) {
-      truncated = true;
+    // Query active emergency gate records
+    let emergencyRows: any[] = [];
+    try {
+      const eqTable: any = admin.from('emergency_gate_records');
+      if (typeof eqTable?.select === 'function') {
+        let eqQuery = eqTable.select('id, visitor_full_name, purpose, gate, local_recorded_at, server_received_at');
+        if (typeof eqQuery?.gte === 'function') {
+          eqQuery = eqQuery.gte('local_recorded_at', manilaTodayStartIso);
+          if (typeof eqQuery?.lte === 'function') eqQuery = eqQuery.lte('local_recorded_at', snapshotAt);
+          if (typeof eqQuery?.is === 'function') eqQuery = eqQuery.is('anonymized_at', null);
+          if (typeof eqQuery?.not === 'function') eqQuery = eqQuery.not('reconciliation_status', 'in', '(rejected,duplicate)');
+          if (typeof eqQuery?.order === 'function') eqQuery = eqQuery.order('local_recorded_at', { ascending: false });
+          if (typeof eqQuery?.limit === 'function') eqQuery = eqQuery.limit(PAGE_SIZE);
+          if (gateParam && typeof eqQuery?.or === 'function') {
+            eqQuery = eqQuery.or(`gate.eq.${gateParam},normalized_gate.eq.${gateParam.toLowerCase().trim()}`);
+          }
+          const { data, error: eqDataErr } = await eqQuery;
+          if (!eqDataErr && Array.isArray(data)) {
+            emergencyRows = data;
+          }
+        }
+      }
+    } catch {
+      // Mock or schema compatibility fallback
     }
+
+    const mappedEmergencyPasses = (emergencyRows ?? []).map((row: any) => ({
+      id: row.id,
+      visitorId: row.id,
+      visitorName: row.visitor_full_name ?? '',
+      purpose: row.purpose ?? '',
+      gate: row.gate ?? null,
+      timeIn: row.local_recorded_at ?? null,
+      issuedAt: row.server_received_at ?? null,
+      validFrom: row.local_recorded_at ?? null,
+      validUntil: null,
+      status: 'inside' as const,
+    }));
 
     const passes = allRows.map((row) => ({
       id: row.id,
@@ -139,9 +203,20 @@ async function handleRequest(request: Request): Promise<Response> {
       status: row.status,
     }));
 
+    const combinedPasses = [...passes, ...mappedEmergencyPasses].sort((a, b) => {
+      const timeA = a.timeIn ? new Date(a.timeIn).getTime() : 0;
+      const timeB = b.timeIn ? new Date(b.timeIn).getTime() : 0;
+      return timeB - timeA;
+    });
+
+    const finalPasses = combinedPasses.slice(0, MAX_EMERGENCY_RECORDS);
+    if (snapshotTotal > finalPasses.length) {
+      truncated = true;
+    }
+
     return jsonResponse(200, {
-      passes,
-      total: passes.length,
+      passes: finalPasses,
+      total: finalPasses.length,
       snapshotTotal,
       snapshotAt,
       truncated,

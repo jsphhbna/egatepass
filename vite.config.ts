@@ -59,18 +59,28 @@ const vercelApiDevPlugin = (): Plugin => {
 
         const parsedUrl = new URL(req.url, `http://${req.headers.host || 'localhost:5173'}`);
         const relativePath = parsedUrl.pathname.replace(/^\/api\//, '');
+        const normalizedRelativePath = relativePath.replace(/\/+$/, '');
 
-        const candidatePaths = [
-          resolve(import.meta.dirname, 'server', 'routes', `${relativePath}.ts`),
-          resolve(import.meta.dirname, 'server', 'routes', relativePath, 'index.ts'),
-          resolve(import.meta.dirname, 'server', 'routes', 'admin', `${relativePath}.ts`),
-          resolve(import.meta.dirname, 'server', 'routes', 'auth', `${relativePath}.ts`),
-          resolve(import.meta.dirname, 'server', 'routes', 'passes', `${relativePath}.ts`),
-          resolve(import.meta.dirname, 'server', 'routes', 'device', `${relativePath}.ts`),
-          resolve(import.meta.dirname, 'server', 'routes', 'gate', `${relativePath}.ts`),
-          resolve(import.meta.dirname, 'server', 'routes', 'system', `${relativePath}.ts`),
-          resolve(import.meta.dirname, 'api', `${relativePath}.ts`),
-        ];
+        const devRewrites: Record<string, string> = {
+          'track-visit': 'server/routes/passes/track.ts',
+          'webhooks/resend': 'server/routes/auth/resend-webhook.ts',
+        };
+
+        const targetOverride = devRewrites[normalizedRelativePath] || devRewrites[relativePath];
+
+        const candidatePaths = targetOverride
+          ? [resolve(import.meta.dirname, targetOverride)]
+          : [
+              resolve(import.meta.dirname, 'server', 'routes', `${relativePath}.ts`),
+              resolve(import.meta.dirname, 'server', 'routes', relativePath, 'index.ts'),
+              resolve(import.meta.dirname, 'server', 'routes', 'admin', `${relativePath}.ts`),
+              resolve(import.meta.dirname, 'server', 'routes', 'auth', `${relativePath}.ts`),
+              resolve(import.meta.dirname, 'server', 'routes', 'passes', `${relativePath}.ts`),
+              resolve(import.meta.dirname, 'server', 'routes', 'device', `${relativePath}.ts`),
+              resolve(import.meta.dirname, 'server', 'routes', 'gate', `${relativePath}.ts`),
+              resolve(import.meta.dirname, 'server', 'routes', 'system', `${relativePath}.ts`),
+              resolve(import.meta.dirname, 'api', `${relativePath}.ts`),
+            ];
 
         const handlerFile = candidatePaths.find((p) => existsSync(p));
         if (!handlerFile) {

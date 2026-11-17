@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useState, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { getAccessToken, signOutCurrentActor } from '@/services/auth';
 import { requireSupabase, supabase } from '@/lib/supabase';
@@ -20,6 +20,7 @@ import {
   CalendarDays,
   Trash2,
   ShieldCheck,
+  History,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { BrandMark } from '@/components/BrandMark';
@@ -34,6 +35,9 @@ export function OfficeDashboardPage() {
   const [selectedOfficeId, setSelectedOfficeId] = useState<string>('');
   const [pendingVisits, setPendingVisits] = useState<OfficeVisitRecord[]>([]);
   const [confirmationVisits, setConfirmationVisits] = useState<OfficeVisitRecord[]>([]);
+  const [activeQueueTab, setActiveQueueTab] = useState<'split' | 'confirmed' | 'history'>('split');
+  const [confirmedVisits, setConfirmedVisits] = useState<OfficeVisitRecord[]>([]);
+  const [historyVisits, setHistoryVisits] = useState<OfficeVisitRecord[]>([]);
   const [personnelList, setPersonnelList] = useState<OfficePersonnel[]>([]);
   const [searchQuery, setSearchQuery] = useState('');
   const [dateFilter, setDateFilter] = useState('');
@@ -170,7 +174,7 @@ export function OfficeDashboardPage() {
       const token = await getAccessToken();
       const params = new URLSearchParams({
         officeId: selectedOfficeId,
-        queue: 'split',
+        queue: activeQueueTab,
       });
       if (searchQuery.trim()) params.set('search', searchQuery.trim());
       if (dateFilter) params.set('date', dateFilter);
@@ -184,28 +188,41 @@ export function OfficeDashboardPage() {
       }
 
       const data = await res.json();
-      const allVisits = data.visits || [];
+      const allVisits: OfficeVisitRecord[] = data.visits || [];
 
-      // Separate into two authoritative queues
-      const pending = data.pendingVisits || allVisits.filter(
-        (v: OfficeVisitRecord) => v.approvalStatus === 'pending' && v.visitType === 'specific_person'
-      );
-      const confirmation = data.confirmationVisits || allVisits.filter(
-        (v: OfficeVisitRecord) => v.attendanceStatus === 'awaiting_office_confirmation'
-      );
+      if (activeQueueTab === 'split') {
+        // Separate into two authoritative queues
+        const pending = data.pendingVisits || allVisits.filter(
+          (v: OfficeVisitRecord) => v.approvalStatus === 'pending' && v.visitType === 'specific_person'
+        );
+        const confirmation = data.confirmationVisits || allVisits.filter(
+          (v: OfficeVisitRecord) => v.attendanceStatus === 'awaiting_office_confirmation'
+        );
 
-      setPendingVisits(pending);
-      setConfirmationVisits(confirmation);
+        setPendingVisits(pending);
+        setConfirmationVisits(confirmation);
 
-      // Update Counts
-      if (data.counts) {
-        setQueueCounts({
-          pending: data.counts.pending ?? 0,
-          approved: data.counts.approved ?? 0,
-          awaiting_confirmation: data.counts.awaiting_confirmation ?? 0,
-          confirmed: data.counts.confirmed ?? 0,
-          history: data.counts.history ?? 0,
-        });
+        // Update Counts
+        if (data.counts) {
+          setQueueCounts((prev) => ({
+            ...prev,
+            pending: data.counts.pending ?? 0,
+            approved: data.counts.approved ?? 0,
+            awaiting_confirmation: data.counts.awaiting_confirmation ?? 0,
+          }));
+        }
+      } else if (activeQueueTab === 'confirmed') {
+        setConfirmedVisits(allVisits);
+        setQueueCounts((prev) => ({
+          ...prev,
+          confirmed: data.total ?? allVisits.length,
+        }));
+      } else if (activeQueueTab === 'history') {
+        setHistoryVisits(allVisits);
+        setQueueCounts((prev) => ({
+          ...prev,
+          history: data.total ?? allVisits.length,
+        }));
       }
     } catch (err) {
       console.error('Error loading visits:', err);
@@ -214,7 +231,10 @@ export function OfficeDashboardPage() {
       setIsLoading(false);
       setIsRefreshing(false);
     }
-  }, [dateFilter, searchQuery, selectedOfficeId]);
+  }, [activeQueueTab, dateFilter, searchQuery, selectedOfficeId]);
+
+  const loadVisitsRef = useRef(loadVisits);
+  loadVisitsRef.current = loadVisits;
 
   // Load Office Calendar Schedules
   const loadOfficeSchedules = useCallback(async () => {
@@ -240,10 +260,15 @@ export function OfficeDashboardPage() {
   useEffect(() => {
     if (selectedOfficeId) {
       loadPersonnelForOffice(selectedOfficeId);
-      loadVisits();
       loadOfficeSchedules();
     }
-  }, [selectedOfficeId, loadPersonnelForOffice, loadVisits, loadOfficeSchedules]);
+  }, [selectedOfficeId, loadPersonnelForOffice, loadOfficeSchedules]);
+
+  useEffect(() => {
+    if (selectedOfficeId) {
+      void loadVisits();
+    }
+  }, [loadVisits, selectedOfficeId]);
 
   // Realtime push subscriptions on office_visits and office_visit_events + auto-refresh
   useEffect(() => {
@@ -270,7 +295,7 @@ export function OfficeDashboardPage() {
               filter: `office_id=eq.${selectedOfficeId}`,
             },
             (payload: any) => {
-              void loadVisits(true);
+              void loadVisitsRef.current(true);
               if (
                 payload.eventType === 'UPDATE' &&
                 payload.new?.attendance_status === 'awaiting_office_confirmation' &&
@@ -288,7 +313,7 @@ export function OfficeDashboardPage() {
               table: 'office_visit_events',
             },
             () => {
-              void loadVisits(true);
+              void loadVisitsRef.current(true);
             }
           )
           .subscribe();
@@ -300,13 +325,13 @@ export function OfficeDashboardPage() {
     // Defensive fallback: 15-second polling interval
     const interval = setInterval(() => {
       if (typeof document !== 'undefined' && !document.hidden && navigator.onLine) {
-        void loadVisits(true);
+        void loadVisitsRef.current(true);
       }
     }, 15000);
 
     const handleVisibilityChange = () => {
       if (typeof document !== 'undefined' && !document.hidden && navigator.onLine) {
-        void loadVisits(true);
+        void loadVisitsRef.current(true);
       }
     };
 
@@ -327,7 +352,7 @@ export function OfficeDashboardPage() {
         }
       }
     };
-  }, [selectedOfficeId, loadVisits]);
+  }, [selectedOfficeId]);
 
   // Handle Approve Specific-Person Visit
   async function handleApproveVisit() {
@@ -595,7 +620,7 @@ export function OfficeDashboardPage() {
   const selectedOffice = offices.find((o) => o.id === selectedOfficeId);
 
   // Helper to render visitor cards
-  const renderVisitorCard = (visit: OfficeVisitRecord, queueType: 'pending' | 'confirmation') => {
+  const renderVisitorCard = (visit: OfficeVisitRecord, queueType: 'pending' | 'confirmation' | 'confirmed' | 'history') => {
     const isSpecificPerson = visit.visitType === 'specific_person';
 
     return (
@@ -669,7 +694,11 @@ export function OfficeDashboardPage() {
         <div className={`rounded-xl p-3 text-xs ${
           queueType === 'pending'
             ? 'border border-[#7A0A0A]/20 bg-[#F8EEEE]/50 text-[#7A0A0A]'
-            : 'border border-amber-200 bg-amber-50/70 text-amber-950'
+            : queueType === 'confirmation'
+            ? 'border border-amber-200 bg-amber-50/70 text-amber-950'
+            : queueType === 'confirmed'
+            ? 'border border-emerald-200 bg-emerald-50/70 text-emerald-950'
+            : 'border border-slate-200 bg-slate-50 text-slate-800'
         }`}>
           <span className="text-[10px] font-black uppercase tracking-wider block opacity-75">
             {queueType === 'pending' ? 'Appointment Purpose' : 'Visit Purpose'}
@@ -721,7 +750,7 @@ export function OfficeDashboardPage() {
 
         {/* Actions */}
         <div className="pt-1 flex items-center justify-end gap-2">
-          {queueType === 'pending' ? (
+          {queueType === 'pending' && (
             <>
               <Button
                 variant="destructive"
@@ -745,7 +774,8 @@ export function OfficeDashboardPage() {
                 Approve & Issue Pass
               </Button>
             </>
-          ) : (
+          )}
+          {queueType === 'confirmation' && (
             <Button
               variant="primary"
               size="sm"
@@ -755,6 +785,17 @@ export function OfficeDashboardPage() {
             >
               Confirm Office Arrival
             </Button>
+          )}
+          {queueType === 'confirmed' && (
+            <div className="flex items-center gap-1.5 text-xs font-bold text-emerald-700 bg-emerald-50 px-3 py-1.5 rounded-lg border border-emerald-200">
+              <CheckCircle2 className="h-4 w-4 text-emerald-600" />
+              <span>Arrival Confirmed {visit.confirmedAt ? `at ${formatManilaTime(visit.confirmedAt)}` : ''}</span>
+            </div>
+          )}
+          {queueType === 'history' && (
+            <div className="flex items-center gap-1.5 text-xs font-semibold text-slate-600 bg-slate-100 px-3 py-1.5 rounded-lg">
+              <span className="capitalize">{visit.attendanceStatus?.replace(/_/g, ' ') || visit.approvalStatus}</span>
+            </div>
           )}
         </div>
       </div>
@@ -883,10 +924,56 @@ export function OfficeDashboardPage() {
                   <span className="text-[10px] font-bold uppercase tracking-wider text-amber-800 block">At Gate / Campus</span>
                   <span className="text-sm font-black text-amber-700">{queueCounts.awaiting_confirmation}</span>
                 </div>
+                <div className="rounded-xl border border-emerald-300 bg-white px-3 py-1.5 text-center shadow-xs">
+                  <span className="text-[10px] font-bold uppercase tracking-wider text-emerald-800 block">Confirmed Today</span>
+                  <span className="text-sm font-black text-emerald-700">{queueCounts.confirmed}</span>
+                </div>
               </div>
             </div>
           </div>
         )}
+
+        {/* Primary Queue Tabs */}
+        <div className="mb-6 flex flex-wrap items-center gap-2 border-b border-[var(--color-border)] pb-3">
+          <button
+            type="button"
+            onClick={() => setActiveQueueTab('split')}
+            className={`flex items-center gap-2 rounded-xl py-2 px-3.5 text-xs font-bold transition-all ${
+              activeQueueTab === 'split'
+                ? 'bg-[#7A0A0A] text-white shadow-xs'
+                : 'bg-white text-[var(--color-text-secondary)] border border-[var(--color-border)] hover:bg-gray-50'
+            }`}
+          >
+            <Clock3 className="h-4 w-4" />
+            <span>Active Queues ({pendingVisits.length + confirmationVisits.length})</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => setActiveQueueTab('confirmed')}
+            className={`flex items-center gap-2 rounded-xl py-2 px-3.5 text-xs font-bold transition-all ${
+              activeQueueTab === 'confirmed'
+                ? 'bg-emerald-700 text-white shadow-xs'
+                : 'bg-white text-[var(--color-text-secondary)] border border-[var(--color-border)] hover:bg-gray-50'
+            }`}
+          >
+            <CheckCircle2 className="h-4 w-4" />
+            <span>Confirmed Today ({queueCounts.confirmed})</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => setActiveQueueTab('history')}
+            className={`flex items-center gap-2 rounded-xl py-2 px-3.5 text-xs font-bold transition-all ${
+              activeQueueTab === 'history'
+                ? 'bg-slate-700 text-white shadow-xs'
+                : 'bg-white text-[var(--color-text-secondary)] border border-[var(--color-border)] hover:bg-gray-50'
+            }`}
+          >
+            <History className="h-4 w-4" />
+            <span>Visit History ({queueCounts.history})</span>
+          </button>
+        </div>
 
         {/* Search & Filter Bar */}
         <div className="mb-6 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
@@ -917,41 +1004,105 @@ export function OfficeDashboardPage() {
           </div>
         </div>
 
-        {/* Mobile Tab Switcher */}
-        <div className="lg:hidden mb-4 grid grid-cols-2 gap-2">
-          <button
-            type="button"
-            onClick={() => setMobileTab('pending')}
-            className={`flex items-center justify-center gap-2 rounded-xl py-2.5 px-3 text-xs font-bold transition-all ${
-              mobileTab === 'pending'
-                ? 'bg-[#7A0A0A] text-white shadow-xs'
-                : 'bg-white text-[var(--color-text-secondary)] border border-[var(--color-border)]'
-            }`}
-          >
-            <Clock3 className="h-4 w-4" />
-            <span>Pending Approval ({pendingVisits.length})</span>
-          </button>
-          <button
-            type="button"
-            onClick={() => setMobileTab('confirmation')}
-            className={`flex items-center justify-center gap-2 rounded-xl py-2.5 px-3 text-xs font-bold transition-all ${
-              mobileTab === 'confirmation'
-                ? 'bg-amber-600 text-white shadow-xs'
-                : 'bg-white text-[var(--color-text-secondary)] border border-[var(--color-border)]'
-            }`}
-          >
-            <CheckCircle2 className="h-4 w-4" />
-            <span>Arrivals ({confirmationVisits.length})</span>
-          </button>
-        </div>
+        {/* Mobile Tab Switcher (Only visible for active split view on mobile) */}
+        {activeQueueTab === 'split' && (
+          <div className="lg:hidden mb-4 grid grid-cols-2 gap-2">
+            <button
+              type="button"
+              onClick={() => setMobileTab('pending')}
+              className={`flex items-center justify-center gap-2 rounded-xl py-2.5 px-3 text-xs font-bold transition-all ${
+                mobileTab === 'pending'
+                  ? 'bg-[#7A0A0A] text-white shadow-xs'
+                  : 'bg-white text-[var(--color-text-secondary)] border border-[var(--color-border)]'
+              }`}
+            >
+              <Clock3 className="h-4 w-4" />
+              <span>Pending Approval ({pendingVisits.length})</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => setMobileTab('confirmation')}
+              className={`flex items-center justify-center gap-2 rounded-xl py-2.5 px-3 text-xs font-bold transition-all ${
+                mobileTab === 'confirmation'
+                  ? 'bg-amber-600 text-white shadow-xs'
+                  : 'bg-white text-[var(--color-text-secondary)] border border-[var(--color-border)]'
+              }`}
+            >
+              <CheckCircle2 className="h-4 w-4" />
+              <span>Arrivals ({confirmationVisits.length})</span>
+            </button>
+          </div>
+        )}
 
         {/* ============================================================ */}
-        {/* TWO-QUEUE SPLIT VIEW (Side-by-side on desktop, stacked/tab on mobile) */}
+        {/* QUEUE PANELS (Split, Confirmed Today, or Visit History) */}
         {/* ============================================================ */}
         {isLoading ? (
           <div className="flex min-h-[300px] flex-col items-center justify-center rounded-2xl border border-[var(--color-border)] bg-white p-8">
             <div className="h-8 w-8 animate-spin rounded-full border-2 border-[#7A0A0A] border-t-transparent" />
             <p className="mt-3 text-xs font-semibold text-[var(--color-text-secondary)]">Loading visit records…</p>
+          </div>
+        ) : activeQueueTab === 'confirmed' ? (
+          <div className="space-y-4">
+            <div className="flex items-center justify-between pb-3 border-b-2 border-emerald-600">
+              <div>
+                <h2 className="text-base font-black text-emerald-900 flex items-center gap-2">
+                  <CheckCircle2 className="h-5 w-5 text-emerald-600" />
+                  <span>Confirmed Today</span>
+                  <span className="rounded-full bg-emerald-600 px-2.5 py-0.5 text-xs font-bold text-white">
+                    {confirmedVisits.length}
+                  </span>
+                </h2>
+                <p className="text-xs text-[var(--color-text-secondary)] mt-0.5">
+                  Visitors whose presence at this office has been verified and confirmed today.
+                </p>
+              </div>
+            </div>
+
+            {confirmedVisits.length === 0 ? (
+              <div className="flex min-h-[220px] flex-col items-center justify-center rounded-2xl border border-dashed border-[var(--color-border)] bg-white p-6 text-center">
+                <CheckCircle2 className="h-8 w-8 text-[var(--color-text-muted)] mb-2" />
+                <p className="text-xs font-bold text-[var(--color-text-primary)]">No Confirmed Visits Yet</p>
+                <p className="text-[11px] text-[var(--color-text-secondary)] mt-0.5 max-w-xs">
+                  Visitors will appear here after their office arrival is confirmed.
+                </p>
+              </div>
+            ) : (
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                {confirmedVisits.map((v) => renderVisitorCard(v, 'confirmed'))}
+              </div>
+            )}
+          </div>
+        ) : activeQueueTab === 'history' ? (
+          <div className="space-y-4">
+            <div className="flex items-center justify-between pb-3 border-b-2 border-slate-600">
+              <div>
+                <h2 className="text-base font-black text-slate-900 flex items-center gap-2">
+                  <History className="h-5 w-5 text-slate-600" />
+                  <span>Visit History</span>
+                  <span className="rounded-full bg-slate-600 px-2.5 py-0.5 text-xs font-bold text-white">
+                    {historyVisits.length}
+                  </span>
+                </h2>
+                <p className="text-xs text-[var(--color-text-secondary)] mt-0.5">
+                  Completed, rejected, expired, or past visits for this office.
+                </p>
+              </div>
+            </div>
+
+            {historyVisits.length === 0 ? (
+              <div className="flex min-h-[220px] flex-col items-center justify-center rounded-2xl border border-dashed border-[var(--color-border)] bg-white p-6 text-center">
+                <History className="h-8 w-8 text-[var(--color-text-muted)] mb-2" />
+                <p className="text-xs font-bold text-[var(--color-text-primary)]">No Historical Records</p>
+                <p className="text-[11px] text-[var(--color-text-secondary)] mt-0.5 max-w-xs">
+                  Past and completed visits will be archived here.
+                </p>
+              </div>
+            ) : (
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                {historyVisits.map((v) => renderVisitorCard(v, 'history'))}
+              </div>
+            )}
           </div>
         ) : (
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 items-start">
