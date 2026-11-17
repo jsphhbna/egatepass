@@ -286,6 +286,7 @@ export const SERVER_DIRECT_TABLE_OPERATIONS: DirectServerTableOperation[] = [
   { file: 'server/routes/admin/dashboard.ts', table: 'passes', operations: ['SELECT'], purpose: 'Dashboard statistics and active pass counts' },
   { file: 'server/routes/admin/devices.ts', table: 'devices', operations: ['SELECT'], purpose: 'List active devices' },
   { file: 'server/routes/admin/emergency.ts', table: 'passes', operations: ['SELECT'], purpose: 'Emergency evacuation pass roster' },
+  { file: 'server/routes/admin/emergency.ts', table: 'emergency_gate_records', operations: ['SELECT'], purpose: 'Emergency evacuation offline gate records roster' },
   { file: 'server/routes/admin/holds.ts', table: 'incident_holds', operations: ['SELECT'], purpose: 'List incident holds' },
   { file: 'server/routes/admin/holds.ts', table: 'passes', operations: ['SELECT'], purpose: 'Lookup visitor_id for hold target' },
   { file: 'server/routes/admin/records.ts', table: 'passes', operations: ['SELECT'], purpose: 'Search and paginate pass history' },

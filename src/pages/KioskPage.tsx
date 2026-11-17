@@ -170,13 +170,15 @@ export function KioskPage() {
 
   const loadSettings = useCallback(async (isRetry = false) => {
     if (isRetry) setRetryingConfig(true);
-    else setConfigState('loading');
+    else setConfigState((prev) => (prev === 'ready' ? 'ready' : 'loading'));
 
     try {
       const data = await loadRegistrationSettings('kiosk');
       const peakActive = data.peak_mode === 'kiosk' || data.peak_mode === 'both';
       setIsPeakMode(peakActive);
-      setStep(peakActive ? 'form' : 'scan-intro');
+      // Select workflow (form vs scan-intro) only if visitor is on initial steps:
+      // setStep(peakActive ? 'form' : 'scan-intro');
+      setStep((prev) => (prev === 'scan-intro' || prev === 'form' ? (peakActive ? 'form' : 'scan-intro') : prev));
       setVisitPurposes(normalizeVisitPurposes(data.visit_purposes));
       setWorkingHours(normalizeWorkingHours({
         start: data.working_hours_start?.slice(0, 5),
@@ -210,7 +212,7 @@ export function KioskPage() {
         });
       setConfigState('ready');
     } catch {
-      setConfigState('error');
+      setConfigState((prev) => (prev === 'ready' ? prev : 'error'));
     } finally {
       setRetryingConfig(false);
     }

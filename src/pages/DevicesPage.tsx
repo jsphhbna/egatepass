@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { useAuth } from '@/hooks/useAuth';
-import type { Device, DeviceType } from '@/types';
+import type { Device, DeviceType, Timestamp } from '@/types';
 import { Tablet, Plus, X, Lock, Unlock, Key, AtSign, Trash2, Eye, EyeOff, Edit2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { useForm } from 'react-hook-form';
@@ -45,6 +45,22 @@ type DeviceFormData = z.infer<typeof deviceSchema>;
 // ============================================================
 // COMPONENT
 // ============================================================
+function isDeviceOnline(lastSeen: Timestamp | string | number | null | undefined): boolean {
+  if (!lastSeen) return false;
+  let time: number;
+  if (typeof lastSeen === 'object' && 'toMillis' in lastSeen && typeof lastSeen.toMillis === 'function') {
+    time = lastSeen.toMillis();
+  } else if (typeof lastSeen === 'number') {
+    time = lastSeen;
+  } else if (typeof lastSeen === 'string') {
+    time = new Date(lastSeen).getTime();
+  } else {
+    return false;
+  }
+  if (Number.isNaN(time)) return false;
+  return Date.now() - time <= 5 * 60 * 1000;
+}
+
 export function DevicesPage() {
   const { role } = useAuth();
   const canManageCredentials = isSuperAdmin(role);
@@ -88,7 +104,7 @@ export function DevicesPage() {
   const [hasMore, setHasMore] = useState(false);
   const [loadingMore, setLoadingMore] = useState(false);
 
-  async function loadDevices(append = false) {
+  async function loadDevices(append = false, isBackground = false) {
     if (append) {
       if (devicesLoadMoreInFlightRef.current || !nextCursor) return;
       devicesLoadMoreInFlightRef.current = true;
@@ -107,7 +123,9 @@ export function DevicesPage() {
       devicesLoadMoreInFlightRef.current = false;
       setLoadingMore(false);
 
-      setLoading(true);
+      if (!isBackground) {
+        setLoading(true);
+      }
     }
 
     const currentGen = append ? devicesReadGenerationRef.current : ++devicesReadGenerationRef.current;
@@ -156,7 +174,27 @@ export function DevicesPage() {
 
   useEffect(() => {
     void loadDevices(false);
+    const interval = setInterval(() => {
+      if (typeof document !== 'undefined' && !document.hidden && navigator.onLine) {
+        void loadDevices(false, true);
+      }
+    }, 30000);
+
+    const handleVisibilityChange = () => {
+      if (typeof document !== 'undefined' && !document.hidden && navigator.onLine) {
+        void loadDevices(false, true);
+      }
+    };
+
+    if (typeof document !== 'undefined') {
+      document.addEventListener('visibilitychange', handleVisibilityChange);
+    }
+
     return () => {
+      clearInterval(interval);
+      if (typeof document !== 'undefined') {
+        document.removeEventListener('visibilitychange', handleVisibilityChange);
+      }
       devicesAbortControllerRef.current?.abort();
       devicesLoadMoreAbortControllerRef.current?.abort();
     };
@@ -320,19 +358,21 @@ export function DevicesPage() {
     if (!editingDetailsDevice) return;
 
     const trimmedName = editName.trim();
-    const trimmedGate = editGate.trim();
+    const isEmergencyDevice = editingDetailsDevice.type === 'emergency_device';
+    const isGateDisabled = isEmergencyDevice && !canManageCredentials;
+    const trimmedGate = isGateDisabled ? editingDetailsDevice.gate : editGate.trim();
 
     if (trimmedName.length < 2) {
       toast.error('Device name must be at least 2 characters.');
       return;
     }
-    if (trimmedGate.length < 1) {
+    if (!isGateDisabled && trimmedGate.length < 1) {
       toast.error('Gate or location is required.');
       return;
     }
 
     const nameChanged = trimmedName !== editingDetailsDevice.name;
-    const gateChanged = trimmedGate !== editingDetailsDevice.gate;
+    const gateChanged = !isGateDisabled && trimmedGate !== editingDetailsDevice.gate;
 
     if (!nameChanged && !gateChanged) {
       toast.info('No changes were made.');
@@ -647,7 +687,19 @@ export function DevicesPage() {
                       {device.gate}
                     </p>
                   </div>
-                  <StatusBadge status={device.status} label={device.status} />
+                  <div className="flex items-center gap-1.5">
+                    <span
+                      className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-bold ${
+                        isDeviceOnline(device.lastSeen)
+                          ? 'bg-emerald-100 text-emerald-800 border border-emerald-200'
+                          : 'bg-slate-100 text-slate-600 border border-slate-200'
+                      }`}
+                    >
+                      <span className={`h-1.5 w-1.5 rounded-full ${isDeviceOnline(device.lastSeen) ? 'bg-emerald-500' : 'bg-slate-400'}`} />
+                      {isDeviceOnline(device.lastSeen) ? 'Online' : 'Offline'}
+                    </span>
+                    <StatusBadge status={device.status} label={device.status} />
+                  </div>
                 </div>
 
                 <div className="mb-6 space-y-3">
@@ -771,7 +823,16 @@ export function DevicesPage() {
             />
           </FormField>
 
-          <FormField label="Assigned Gate / Location" id="edit-device-gate" requirement="required">
+          <FormField
+            label="Assigned Gate / Location"
+            id="edit-device-gate"
+            requirement={editingDetailsDevice?.type === 'emergency_device' && !canManageCredentials ? undefined : 'required'}
+            hint={
+              editingDetailsDevice?.type === 'emergency_device' && !canManageCredentials
+                ? 'Gate reassignment for emergency devices requires Superadmin privileges to preserve cryptographic offline manifest integrity.'
+                : undefined
+            }
+          >
             <Input
               id="edit-device-gate"
               type="text"
@@ -779,7 +840,8 @@ export function DevicesPage() {
               value={editGate}
               onChange={(e) => setEditGate(e.target.value)}
               placeholder="Main Gate"
-              required
+              disabled={editingDetailsDevice?.type === 'emergency_device' && !canManageCredentials}
+              required={!(editingDetailsDevice?.type === 'emergency_device' && !canManageCredentials)}
             />
           </FormField>
 

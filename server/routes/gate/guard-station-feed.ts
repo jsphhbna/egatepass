@@ -65,7 +65,7 @@ async function handleRequest(request: Request): Promise<Response> {
 
     const { data: device, error: deviceError } = await admin
       .from('devices')
-      .select('user_id, name, alias, type, gate, status')
+      .select('user_id, name, alias, type, gate, status, last_seen_at')
       .eq('user_id', session.user.id)
       .maybeSingle();
 
@@ -79,6 +79,22 @@ async function handleRequest(request: Request): Promise<Response> {
         alias: device.alias,
         gate: device.gate,
       };
+
+      // Guard Station Heartbeat: update last_seen_at throttled to once per 30s
+      const nowMs = Date.now();
+      const lastSeenMs = device.last_seen_at ? new Date(device.last_seen_at).getTime() : 0;
+      if (nowMs - lastSeenMs >= 30_000) {
+        try {
+          const deviceQuery: any = admin.from('devices');
+          if (typeof deviceQuery?.update === 'function') {
+            await deviceQuery
+              .update({ last_seen_at: new Date(nowMs).toISOString() })
+              .eq('user_id', device.user_id);
+          }
+        } catch (hbErr) {
+          console.warn('Failed to update guard station device heartbeat:', hbErr);
+        }
+      }
     } else {
       // Check if admin / superadmin
       const { data: staff, error: staffError } = await admin
