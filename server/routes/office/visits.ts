@@ -262,9 +262,39 @@ export async function handleRequest(request: Request): Promise<Response> {
     const pendingVisits = visits.filter((v: any) => v.approvalStatus === 'pending' && v.visitType === 'specific_person');
     const confirmationVisits = visits.filter((v: any) => v.attendanceStatus === 'awaiting_office_confirmation');
 
+    let confirmedCount: number | null = null;
+    let historyCount: number | null = null;
+
+    if (statusFilter === 'split') {
+      try {
+        const [confRes, histRes] = await Promise.all([
+          admin
+            .from('office_visits')
+            .select('id', { count: 'exact', head: true })
+            .eq('office_id', effectiveOfficeId)
+            .eq('attendance_status', 'confirmed'),
+          admin
+            .from('office_visits')
+            .select('id', { count: 'exact', head: true })
+            .eq('office_id', effectiveOfficeId)
+            .or('approval_status.eq.rejected,attendance_status.in.(completed,exited_unconfirmed,cancelled,expired)'),
+        ]);
+        if (!confRes.error && typeof confRes.count === 'number') confirmedCount = confRes.count;
+        if (!histRes.error && typeof histRes.count === 'number') historyCount = histRes.count;
+      } catch {
+        // Fallback for mock environments
+      }
+    } else if (statusFilter === 'confirmed') {
+      confirmedCount = count || visits.length;
+    } else if (statusFilter === 'history') {
+      historyCount = count || visits.length;
+    }
+
     const queueCounts = {
       pending: pendingVisits.length,
       awaiting_confirmation: confirmationVisits.length,
+      confirmed: confirmedCount ?? 0,
+      history: historyCount ?? 0,
     };
 
     return jsonResponse(200, {
