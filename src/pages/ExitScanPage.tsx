@@ -4,7 +4,7 @@ import { getAccessToken, signOutCurrentActor } from '@/services/auth';
 import { Html5Qrcode } from 'html5-qrcode';
 import { toast } from 'sonner';
 import { LogOut as LogOutIcon, CheckCircle2, XCircle, AlertTriangle, Volume2, VolumeX, FlipHorizontal, Camera, Zap, ZapOff } from 'lucide-react';
-import { createOptimizedQrScanner, enableContinuousFocus, QR_SCAN_CONFIG } from '@/lib/qrScanner';
+import { createOptimizedQrScanner, enableContinuousFocus, getQrScanConfig } from '@/lib/qrScanner';
 import { RefreshCw, AlertCircle } from 'lucide-react';
 import { Modal, Button } from '@/components/ui';
 import { fetchWithTimeout, RequestTimeoutError } from '@/lib/fetchWithTimeout';
@@ -196,7 +196,7 @@ export function ExitScanPage() {
         try {
           await scanner.start(
             { facingMode },
-            QR_SCAN_CONFIG,
+            getQrScanConfig(facingMode),
             (decodedText) => {
               if (!debounceRef.current) processQR(decodedText);
             },
@@ -206,7 +206,7 @@ export function ExitScanPage() {
           if (facingMode === 'user') {
             await scanner.start(
               { facingMode: 'environment' },
-              QR_SCAN_CONFIG,
+              getQrScanConfig('environment'),
               (decodedText) => {
                 if (!debounceRef.current) processQR(decodedText);
               },

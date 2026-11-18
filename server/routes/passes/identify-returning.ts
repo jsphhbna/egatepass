@@ -405,7 +405,7 @@ async function handleRequest(request: Request): Promise<Response> {
       if (profQuery && typeof profQuery.select === 'function') {
         const res = await profQuery
           .select(`
-            id, first_name, middle_name, last_name, contact_number_e164, home_address,
+            id, first_name, middle_name, last_name, contact_number_e164, home_address, gender,
             home_location_lat, home_location_lon,
             psgc_version, psgc_region_code, psgc_province_code, psgc_city_code, psgc_barangay_code,
             psgc_region_name, psgc_province_name, psgc_city_municipality_name, psgc_barangay_name,
@@ -633,6 +633,7 @@ async function handleRequest(request: Request): Promise<Response> {
           lastName: profile.last_name,
           fullName: [profile.first_name, profile.middle_name, profile.last_name].filter(Boolean).join(' '),
           contactNumber: profile.contact_number_e164,
+          gender: (profile as any).gender ?? null,
           homeAddress: profile.home_address,
           psgc: profile.psgc_region_code && profile.psgc_city_code && profile.psgc_barangay_code ? {
             version: profile.psgc_version || '2026-q3',

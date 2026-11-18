@@ -376,21 +376,37 @@ button:active,
 /* Scanner previews scale with the available tablet, phone, or desktop viewport. */
 .scanner-viewport {
   width: min(94vw, 40rem);
-  height: auto;
+  min-height: 280px;
   aspect-ratio: 4 / 3;
 }
 
 @media (min-width: 640px) {
   .scanner-viewport {
     width: min(94vw, clamp(20rem, calc(133.333dvh - 10.667rem), 64rem));
+    min-height: 360px;
   }
 }
 
 .scanner-viewport video {
   width: 100% !important;
   height: 100% !important;
-  object-fit: cover;
+  min-height: 280px;
+  object-fit: cover !important;
   transform: scaleX(-1);
+}
+
+.scanner-viewport #entry-qr-reader,
+.scanner-viewport #exit-qr-reader {
+  width: 100% !important;
+  height: 100% !important;
+  min-height: 280px;
+}
+
+.scanner-viewport #entry-qr-reader > div,
+.scanner-viewport #exit-qr-reader > div {
+  width: 100% !important;
+  height: 100% !important;
+  min-height: 280px;
 }
 
 @media (prefers-reduced-motion: reduce) {

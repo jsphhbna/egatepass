@@ -58,6 +58,7 @@ interface RawRecordPassRow {
   visitors: {
     full_name: string;
     purpose: string;
+    gender?: string | null;
     visit_date?: string | null;
     contact_number?: string | null;
     home_address?: string | null;
@@ -123,6 +124,7 @@ function mapPass(row: RawRecordPassRow) {
     visitorId: row.visitor_id,
     visitorName: visitor?.full_name ?? '',
     purpose: visitor?.purpose ?? '',
+    gender: visitor?.gender ?? null,
     visitDate: visitor?.visit_date ?? null,
     contactNumber: visitor?.contact_number ?? null,
     homeAddress: visitor?.home_address ?? null,
@@ -258,6 +260,7 @@ async function handleGet(request: Request): Promise<Response> {
           visitors!inner (
             full_name,
             purpose,
+            gender,
             visit_date,
             contact_number,
             home_address,

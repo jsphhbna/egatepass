@@ -24,6 +24,7 @@ const requestSchema = z.object({
     firstName: namePart,
     middleName: z.string().trim().max(50).optional(),
     lastName: namePart,
+    gender: z.enum(['male', 'female', 'Male', 'Female']).optional(),
     contactNumber: z.string().min(7).max(32),
     email: z.string().trim().email().max(255).optional(),
     purpose: z.string().trim().min(3).max(300),

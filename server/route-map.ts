@@ -63,7 +63,7 @@ export const ROUTE_CONTRACT_MATRIX: readonly RouteContract[] = [
     path: '/api/admin/settings',
     group: 'admin',
     subpath: 'settings',
-    allowedMethods: ['GET'],
+    allowedMethods: ['GET', 'POST'],
     handlerModule: 'server/routes/admin/settings.ts',
   },
   {

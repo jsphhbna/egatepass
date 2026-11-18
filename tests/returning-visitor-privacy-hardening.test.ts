@@ -21,6 +21,8 @@ describe('Returning Visitor Privacy Hardening, Profile Linkage & Verification Bo
   beforeEach(() => {
     process.env = {
       ...originalEnv,
+      SUPABASE_URL: 'http://localhost:54321',
+      SUPABASE_SECRET_KEY: 'test-supabase-secret-key-at-least-32-chars!',
       PASS_TOKEN_SECRET: mockTokenSecret,
       RETURNING_MATCH_TOKEN_SECRET: mockTokenSecret,
       RATE_LIMIT_HMAC_SECRET: mockTokenSecret,
@@ -141,7 +143,7 @@ describe('Returning Visitor Privacy Hardening, Profile Linkage & Verification Bo
       }
     });
 
-    it('rejects candidate lookup when both contactNumber and psgcCityCode are missing', async () => {
+    it('allows candidate lookup with name only when contactNumber and psgcCityCode are omitted', async () => {
       vi.spyOn(actorsModule, 'getVerifiedSessionContext').mockResolvedValue({
         actorId: mockActorId,
         role: 'visitor',
@@ -150,6 +152,76 @@ describe('Returning Visitor Privacy Hardening, Profile Linkage & Verification Bo
         user: { id: mockActorId },
         identity: 'test-user',
       } as any);
+
+      const mockAdmin = {
+        schema: vi.fn().mockReturnValue({
+          rpc: vi.fn().mockResolvedValue({ data: true, error: null }),
+        }),
+        from: vi.fn((table: string) => {
+          if (table === 'returning_visitor_profiles') {
+            return {
+              select: vi.fn().mockReturnThis(),
+              ilike: vi.fn().mockReturnThis(),
+              gt: vi.fn().mockReturnThis(),
+              is: vi.fn().mockReturnThis(),
+              limit: vi.fn().mockResolvedValue({
+                data: [{
+                  id: mockProfileId,
+                  first_name: 'Maria',
+                  middle_name: 'Clara',
+                  last_name: 'Santos',
+                  contact_number_e164: '+639171234567',
+                  psgc_barangay_name: 'Barangay 408',
+                  psgc_city_municipality_name: 'City of Manila',
+                }],
+                error: null,
+              }),
+            };
+          }
+          if (table === 'visitors') {
+            return {
+              select: vi.fn().mockReturnThis(),
+              eq: vi.fn().mockReturnThis(),
+              order: vi.fn().mockResolvedValue({
+                data: [{ id: 'v2222222-2222-4222-8222-222222222222', full_name: 'Maria Clara Santos', contact_number: '+639171234567', created_at: new Date().toISOString() }],
+                error: null,
+              }),
+            };
+          }
+          if (table === 'visitor_evidence') {
+            return {
+              select: vi.fn().mockReturnThis(),
+              in: vi.fn().mockReturnThis(),
+              eq: vi.fn().mockReturnThis(),
+              is: vi.fn().mockReturnThis(),
+              gt: vi.fn().mockReturnThis(),
+              order: vi.fn().mockReturnThis(),
+              limit: vi.fn().mockReturnThis(),
+              maybeSingle: vi.fn().mockResolvedValue({
+                data: {
+                  id: 'e2222222-2222-4222-8222-222222222222',
+                  visitor_id: 'v2222222-2222-4222-8222-222222222222',
+                  bucket_id: 'visitor-photos',
+                  object_path: 'photo.jpg',
+                  content_type: 'image/jpeg',
+                  byte_size: 1024,
+                  sha256_hex: 'a'.repeat(64),
+                  expires_at: new Date(Date.now() + 86400000).toISOString(),
+                  purged_at: null,
+                  created_at: new Date().toISOString(),
+                },
+                error: null,
+              }),
+            };
+          }
+          return {};
+        }),
+      };
+
+      vi.spyOn(supabaseModule, 'getServerSupabaseClients').mockReturnValue({
+        admin: mockAdmin as any,
+        client: {} as any,
+      });
 
       const req = new Request('http://localhost/api/passes/lookup-returning', {
         method: 'POST',
@@ -164,9 +236,10 @@ describe('Returning Visitor Privacy Hardening, Profile Linkage & Verification Bo
       });
 
       const res = await lookupReturningHandler.fetch(req);
-      expect(res.status).toBe(400);
+      expect(res.status).toBe(200);
       const json = await res.json();
-      expect(json.error).toBe('invalid_request');
+      expect(json.found).toBe(true);
+      expect(json.candidates).toHaveLength(1);
     });
 
     it('caps candidate results at 3 records and provides v2 photo-bound preview tokens', async () => {

@@ -197,6 +197,7 @@ interface RawPassRow {
   visitors: {
     full_name: string;
     purpose: string;
+    gender?: string | null;
     visitor_evidence: Array<{ id: string; kind: 'photo' | 'id' }>;
   } | null;
 }
@@ -233,6 +234,7 @@ function mapPass(row: RawPassRow) {
     visitorId: row.visitor_id,
     visitorName: visitor?.full_name ?? '',
     purpose: visitor?.purpose ?? '',
+    gender: visitor?.gender ?? null,
     photoPublicId: photoId,
     idImagePublicId: idImageId,
     source: row.source,
@@ -296,6 +298,7 @@ const PASS_SELECT = `
   visitors (
     full_name,
     purpose,
+    gender,
     visitor_evidence (
       id,
       kind
@@ -369,6 +372,10 @@ async function handleRequest(request: Request): Promise<Response> {
       periodExpiredRes,
       offlineResult,
       reportPassesResult,
+      maleCountRes,
+      femaleCountRes,
+      periodMaleCountRes,
+      periodFemaleCountRes,
     ] = await Promise.all([
       admin
         .from('passes')
@@ -413,6 +420,10 @@ async function handleRequest(request: Request): Promise<Response> {
             .order('id', { ascending: false })
             .limit(REPORT_MAX_ROWS)
         : Promise.resolve({ data: null, count: null, error: null }),
+      admin.from('visitors').select('id', { count: 'exact', head: true }).eq('gender', 'Male'),
+      admin.from('visitors').select('id', { count: 'exact', head: true }).eq('gender', 'Female'),
+      admin.from('visitors').select('id', { count: 'exact', head: true }).eq('gender', 'Male').gte('created_at', window.periodStart).lte('created_at', window.periodEnd),
+      admin.from('visitors').select('id', { count: 'exact', head: true }).eq('gender', 'Female').gte('created_at', window.periodStart).lte('created_at', window.periodEnd),
     ]);
 
     if (expectedTodayRes.error) throw expectedTodayRes.error;
@@ -436,6 +447,10 @@ async function handleRequest(request: Request): Promise<Response> {
     if (periodExpiredRes.error) throw periodExpiredRes.error;
     if (offlineResult.error) throw offlineResult.error;
     if (reportPassesResult.error) throw reportPassesResult.error;
+    if (maleCountRes.error) throw maleCountRes.error;
+    if (femaleCountRes.error) throw femaleCountRes.error;
+    if (periodMaleCountRes.error) throw periodMaleCountRes.error;
+    if (periodFemaleCountRes.error) throw periodFemaleCountRes.error;
 
     // Query authoritative database-complete aggregate RPCs without raw-row fallback (Root Cause Class E)
     const [
@@ -512,6 +527,13 @@ async function handleRequest(request: Request): Promise<Response> {
         pending: periodPendingRes.count ?? 0,
         rejected: periodRejectedRes.count ?? 0,
         expired: periodExpiredRes.count ?? 0,
+      },
+      genderDistribution: {
+        male: url.searchParams.has('period') ? (periodMaleCountRes.count ?? 0) : (maleCountRes.count ?? 0),
+        female: url.searchParams.has('period') ? (periodFemaleCountRes.count ?? 0) : (femaleCountRes.count ?? 0),
+        total: url.searchParams.has('period')
+          ? ((periodMaleCountRes.count ?? 0) + (periodFemaleCountRes.count ?? 0))
+          : ((maleCountRes.count ?? 0) + (femaleCountRes.count ?? 0)),
       },
       offlineModeMetrics,
       insights,

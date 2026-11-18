@@ -229,8 +229,6 @@ async function handleRequest(request: Request): Promise<Response> {
 
     const fetchPromises: Promise<void>[] = [];
 
-    const nowIso = new Date().toISOString();
-
     if (visitorIds.length > 0) {
       fetchPromises.push(
         (async () => {
@@ -243,8 +241,7 @@ async function handleRequest(request: Request): Promise<Response> {
             .select('id, visitor_id')
             .in('visitor_id', visitorIds)
             .eq('kind', 'photo')
-            .is('purged_at', null)
-            .gt('expires_at', nowIso);
+            .is('purged_at', null);
           if (error) throw error;
           photoEvidence = data || [];
         })()
@@ -287,7 +284,6 @@ async function handleRequest(request: Request): Promise<Response> {
           .in('visitor_id', linkedIds)
           .eq('kind', 'photo')
           .is('purged_at', null)
-          .gt('expires_at', nowIso)
           .order('created_at', { ascending: true });
 
         if (origEv && origEv.length > 0) {

@@ -22,6 +22,7 @@ const requestSchema = z.object({
     firstName: namePart,
     middleName: z.string().trim().max(50).optional(),
     lastName: namePart,
+    gender: z.enum(['male', 'female', 'Male', 'Female']).optional(),
     contactNumber: z.string().min(7).max(32),
     email: z.string().trim().email().max(255).optional(),
     homeAddress: z.string().trim().max(300).optional(),
@@ -843,6 +844,7 @@ async function handleRequest(request: Request): Promise<Response> {
         requested_save_profile_updates: parsed.data.registrationMode === 'returning' ? Boolean(parsed.data.returning?.saveUpdates) : false,
         requested_office_id: parsed.data.officeId ?? null,
         requested_expected_gate: parsed.data.expectedGate ?? null,
+        requested_gender: visitor.gender ? (visitor.gender.toLowerCase() === 'male' ? 'Male' : 'Female') : null,
       }).single<IssueResult>();
 
       if (rpcRes.error || !rpcRes.data) throw rpcRes.error ?? new Error('issue_failed');

@@ -15,6 +15,7 @@
     "preview": "vite preview",
     "test": "vitest run",
     "test:unit": "vitest run",
+    "test:e2e:remediation": "vitest run tests/e2e/tier1-feature-coverage.test.ts tests/e2e/tier2-boundary-corner.test.ts tests/e2e/tier3-pairwise-combinations.test.ts tests/e2e/tier4-application-scenarios.test.ts",
     "test:migrations": "vitest run tests/migration-chain-pglite.test.ts",
     "test:integration:postgres": "vitest run tests/postgres-concurrency.test.ts",
     "test:contracts": "vitest run tests/architecture-contract.test.ts tests/supabase-migration-static.test.ts",
