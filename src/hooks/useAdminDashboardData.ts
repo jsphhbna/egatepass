@@ -120,10 +120,19 @@ export interface DashboardInsights {
   avgApprovalTime: string;
 }
 
+export interface DashboardGenderDistribution {
+  male: number;
+  female: number;
+  total: number;
+  allTime?: { male: number; female: number; total: number };
+  period?: { male: number; female: number; total: number };
+}
+
 interface DashboardApiResponse {
   counts?: DashboardCounts;
   periodMeta?: DashboardPeriodMeta;
   periodCounts?: DashboardPeriodCounts;
+  genderDistribution?: DashboardGenderDistribution;
   offlineModeMetrics?: DashboardOfflineMetrics;
   insights?: DashboardInsights;
   calendarCounts?: Record<string, number>;
@@ -147,6 +156,7 @@ export interface DashboardDataSnapshot {
   counts?: DashboardCounts;
   periodMeta?: DashboardPeriodMeta;
   periodCounts?: DashboardPeriodCounts;
+  genderDistribution?: DashboardGenderDistribution;
   offlineModeMetrics?: DashboardOfflineMetrics;
   insights?: DashboardInsights;
   calendarCounts?: Record<string, number>;
@@ -343,6 +353,7 @@ function fetchDashboardData(isManualRetry = false): Promise<void> {
         counts: data?.counts,
         periodMeta: data?.periodMeta,
         periodCounts: data?.periodCounts,
+        genderDistribution: data?.genderDistribution,
         offlineModeMetrics: data?.offlineModeMetrics,
         insights: data?.insights,
         calendarCounts: data?.calendarCounts,

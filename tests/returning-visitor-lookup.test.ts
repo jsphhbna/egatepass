@@ -314,7 +314,7 @@ describe('Returning Visitor 1:1 Profile Discovery & Masking Contract (lookup-ret
     expect(json.error).toBe('invalid_request');
   });
 
-  it('rejects lookup without contactNumber or psgcCityCode with 400', async () => {
+  it('allows lookup with just firstName and lastName without contactNumber or psgcCityCode', async () => {
     vi.spyOn(actorsModule, 'getVerifiedSessionContext').mockResolvedValue({
       actorId,
       role: 'visitor',
@@ -323,6 +323,37 @@ describe('Returning Visitor 1:1 Profile Discovery & Masking Contract (lookup-ret
       user: { id: actorId },
       identity: 'test-user',
     } as any);
+
+    const mockAdmin = {
+      schema: vi.fn().mockReturnValue({
+        rpc: vi.fn().mockResolvedValue({ data: true, error: null }),
+      }),
+      from: vi.fn((table: string) => {
+        if (table === 'returning_visitor_profiles') {
+          return {
+            select: vi.fn().mockReturnThis(),
+            ilike: vi.fn().mockReturnThis(),
+            gt: vi.fn().mockReturnThis(),
+            is: vi.fn().mockReturnThis(),
+            limit: vi.fn().mockResolvedValue({
+              data: [],
+              error: null,
+            }),
+          };
+        }
+        return {
+          select: vi.fn().mockReturnThis(),
+          eq: vi.fn().mockReturnThis(),
+          in: vi.fn().mockReturnThis(),
+          limit: vi.fn().mockReturnThis(),
+          order: vi.fn().mockResolvedValue({ data: [], error: null }),
+        };
+      }),
+    };
+    supabaseModule.setServerSupabaseClientsForTest({
+      admin: mockAdmin as any,
+      portal: {} as any,
+    });
 
     const req = new Request('http://localhost/api/passes/lookup-returning', {
       method: 'POST',
@@ -337,9 +368,10 @@ describe('Returning Visitor 1:1 Profile Discovery & Masking Contract (lookup-ret
     });
 
     const res = await lookupReturningHandler.fetch(req);
-    expect(res.status).toBe(400);
+    expect(res.status).toBe(200);
     const json = await res.json();
-    expect(json.error).toBe('invalid_request');
+    expect(json.found).toBe(false);
+    expect(Array.isArray(json.candidates)).toBe(true);
   });
 
   it('returns empty candidates array when no profiles match', async () => {

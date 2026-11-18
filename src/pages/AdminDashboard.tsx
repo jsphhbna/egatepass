@@ -356,6 +356,8 @@ export function AdminDashboard() {
             </div>
           </section>
 
+          <GenderDistributionCard distribution={dashboard.genderDistribution} />
+
           <OfflineModeMetricsPanel metrics={dashboard.offlineModeMetrics} periodLabel={dashboard.periodMeta?.label} />
         </div>
       )}
@@ -385,6 +387,8 @@ export function AdminDashboard() {
               </div>
             </Card>
           )}
+
+          <GenderDistributionCard distribution={dashboard.genderDistribution} />
 
           <section aria-labelledby="insights-heading">
             <div className="mb-3">
@@ -577,6 +581,66 @@ export function IssuedPassesCalendar({
             </div>
           );
         })}
+      </div>
+    </Card>
+  );
+}
+
+function GenderDistributionCard({ distribution }: { distribution?: import('@/hooks/useAdminDashboardData').DashboardGenderDistribution }) {
+  if (!distribution) return null;
+  const male = distribution.male ?? 0;
+  const female = distribution.female ?? 0;
+  const total = distribution.total ?? (male + female);
+  const malePct = total > 0 ? Math.round((male / total) * 100) : 0;
+  const femalePct = total > 0 ? Math.round((female / total) * 100) : 0;
+
+  return (
+    <Card className="p-5">
+      <div className="flex items-center justify-between mb-4">
+        <div>
+          <h2 className="text-base font-bold text-[var(--color-text-primary)]">
+            Gender Distribution
+          </h2>
+          <p className="text-xs text-[var(--color-text-secondary)]">
+            Visitor demographic breakdown recorded across registrations.
+          </p>
+        </div>
+        <div className="flex items-center gap-1.5 text-xs font-semibold px-2.5 py-1 rounded-full bg-slate-100 text-slate-700">
+          <Users className="h-3.5 w-3.5 text-[var(--color-brand)]" />
+          <span>Total: {total.toLocaleString()}</span>
+        </div>
+      </div>
+
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+        <div className="rounded-xl border border-blue-200 bg-blue-50/60 p-4 flex items-center justify-between">
+          <div>
+            <span className="text-xs font-bold uppercase tracking-wider text-blue-800">Male Visitors</span>
+            <p className="text-2xl font-extrabold text-blue-950 mt-1">
+              {male.toLocaleString()}
+            </p>
+            <p className="text-[11px] text-blue-700 font-medium mt-0.5">
+              {malePct}% of total
+            </p>
+          </div>
+          <div className="h-10 w-10 rounded-full bg-blue-100 flex items-center justify-center text-blue-700 font-black text-sm">
+            M
+          </div>
+        </div>
+
+        <div className="rounded-xl border border-pink-200 bg-pink-50/60 p-4 flex items-center justify-between">
+          <div>
+            <span className="text-xs font-bold uppercase tracking-wider text-pink-800">Female Visitors</span>
+            <p className="text-2xl font-extrabold text-pink-950 mt-1">
+              {female.toLocaleString()}
+            </p>
+            <p className="text-[11px] text-pink-700 font-medium mt-0.5">
+              {femalePct}% of total
+            </p>
+          </div>
+          <div className="h-10 w-10 rounded-full bg-pink-100 flex items-center justify-center text-pink-700 font-black text-sm">
+            F
+          </div>
+        </div>
       </div>
     </Card>
   );

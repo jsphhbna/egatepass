@@ -110,6 +110,45 @@ export function AdminSettings() {
   const [overrideCategories, setOverrideCategories] = useState<string[]>(['photo', 'id', 'vehicle_photo']);
   const [isExecutingOverride, setIsExecutingOverride] = useState(false);
 
+  const [showResetModal, setShowResetModal] = useState(false);
+  const [resetConfirmationInput, setResetConfirmationInput] = useState('');
+  const [isResetting, setIsResetting] = useState(false);
+
+  async function handleReturnToZero() {
+    if (resetConfirmationInput !== 'DELETE ALL OPERATIONAL DATA') {
+      toast.error('Confirmation phrase does not match.');
+      return;
+    }
+    setIsResetting(true);
+    try {
+      const token = await getAccessToken();
+      const res = await fetch('/api/admin/settings', {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${token}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          action: 'return_to_zero',
+          confirmationPhrase: 'DELETE ALL OPERATIONAL DATA',
+        }),
+      });
+      const data = await res.json().catch(() => null);
+      if (!res.ok) {
+        throw new Error(data?.message || data?.error || 'Failed to execute system reset.');
+      }
+      toast.success('System has been reset to zero. All operational data has been purged.');
+      setShowResetModal(false);
+      setResetConfirmationInput('');
+      window.location.reload();
+    } catch (err: any) {
+      console.error('System reset error:', err);
+      toast.error(err.message || 'System reset failed.');
+    } finally {
+      setIsResetting(false);
+    }
+  }
+
   async function loadSettings(options?: { background?: boolean }): Promise<{ ok: boolean; error?: string }> {
     const isBackground = Boolean(options?.background);
     if (!isBackground) {
@@ -1194,6 +1233,40 @@ export function AdminSettings() {
               />
             </FormField>
           </Card>
+
+          {/* Danger Zone: Return to Zero / Full Operational Data Reset */}
+          {canManageSecuritySettings && (
+            <Card className="p-6 border-2 border-red-300 bg-red-50/30 space-y-4">
+              <div className="flex items-center gap-3 border-b border-red-200 pb-4">
+                <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-red-100 text-red-700">
+                  <ShieldAlert className="h-5 w-5" />
+                </div>
+                <div>
+                  <h3 className="text-lg font-bold text-red-950">
+                    Danger Zone: Return to Zero / System Reset
+                  </h3>
+                  <p className="text-xs text-red-800 mt-0.5">
+                    Irreversibly purge all operational data across all 37 database tables and storage buckets while preserving Superadmin accounts.
+                  </p>
+                </div>
+              </div>
+
+              <p className="text-xs text-slate-700 leading-relaxed">
+                This operation permanently wipes all visitor registrations, gate passes, vehicle declarations, office visits, returning visitor profiles, face templates, upload intents, emergency device records, and removes all photo and ID blobs from storage buckets. Institutional configurations (university offices, schedules, settings) and your Superadmin account credentials remain safe.
+              </p>
+
+              <div className="pt-2 flex justify-end">
+                <Button
+                  variant="destructive"
+                  onClick={() => setShowResetModal(true)}
+                  disabled={settingsBusy}
+                  icon={<Trash2 className="h-4 w-4" />}
+                >
+                  Return to Zero (Purge All Operational Data)
+                </Button>
+              </div>
+            </Card>
+          )}
         </div>
       )}
 
@@ -1754,6 +1827,75 @@ export function AdminSettings() {
           </div>
         </div>
       </Modal>
+
+      {/* Return to Zero Reset Modal */}
+      {showResetModal && (
+        <Modal
+          isOpen={showResetModal}
+          onClose={() => {
+            if (!isResetting) {
+              setShowResetModal(false);
+              setResetConfirmationInput('');
+            }
+          }}
+          title="DANGER: Return to Zero / System Reset"
+        >
+          <div className="space-y-4 text-xs">
+            <div className="rounded-xl border border-red-300 bg-red-50 p-4 text-red-950 flex items-start gap-3">
+              <ShieldAlert className="h-5 w-5 text-red-700 shrink-0 mt-0.5" />
+              <div className="space-y-1">
+                <p className="font-bold text-sm text-red-900">Irreversible Destructive Action</p>
+                <p className="leading-relaxed">
+                  This action wipes <strong>all operational database tables</strong>: visitors, gate passes, visit events, office visits, incident holds, vehicle declarations, devices, face templates, returning visitor profiles, and upload intents.
+                </p>
+                <p className="leading-relaxed font-semibold">
+                  All stored visitor photos and ID evidence blobs in storage buckets will be permanently deleted.
+                </p>
+                <p className="leading-relaxed text-[11px] text-red-800">
+                  Institutional configurations (offices, schedules, settings) and active Superadmin accounts will be preserved.
+                </p>
+              </div>
+            </div>
+
+            <div>
+              <label className="block font-bold text-slate-800 uppercase tracking-wider text-[11px] mb-1.5">
+                Type <span className="font-mono text-red-700 font-black">DELETE ALL OPERATIONAL DATA</span> to confirm:
+              </label>
+              <Input
+                value={resetConfirmationInput}
+                onChange={(e) => setResetConfirmationInput(e.target.value)}
+                placeholder="DELETE ALL OPERATIONAL DATA"
+                disabled={isResetting}
+                className="font-mono text-xs"
+              />
+            </div>
+
+            <div className="flex gap-3 pt-2">
+              <Button
+                variant="secondary"
+                disabled={isResetting}
+                onClick={() => {
+                  setShowResetModal(false);
+                  setResetConfirmationInput('');
+                }}
+                className="flex-1"
+              >
+                Cancel
+              </Button>
+              <Button
+                variant="destructive"
+                loading={isResetting}
+                disabled={resetConfirmationInput !== 'DELETE ALL OPERATIONAL DATA' || isResetting}
+                onClick={handleReturnToZero}
+                className="flex-1"
+                icon={<Trash2 className="h-4 w-4" />}
+              >
+                Confirm Full System Reset
+              </Button>
+            </div>
+          </div>
+        </Modal>
+      )}
 
       {/* Peak Mode Modal */}
       <ConfirmModal

@@ -19,9 +19,22 @@ export const QR_CAMERA_CONSTRAINTS: MediaTrackConstraints = {
   frameRate: { ideal: 30, max: 30 },
 };
 
+export function getQrScanConfig(facingMode: 'user' | 'environment' = 'environment'): Html5QrcodeCameraScanConfig {
+  return {
+    fps: 15,
+    disableFlip: true,
+    aspectRatio: 1.333333,
+    videoConstraints: {
+      ...QR_CAMERA_CONSTRAINTS,
+      facingMode: { ideal: facingMode },
+    },
+  };
+}
+
 export const QR_SCAN_CONFIG: Html5QrcodeCameraScanConfig = {
   fps: 15,
-  disableFlip: false,
+  disableFlip: true,
+  aspectRatio: 1.333333,
   videoConstraints: QR_CAMERA_CONSTRAINTS,
 };
 

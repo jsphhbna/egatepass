@@ -3,8 +3,8 @@ import { jsonResponse, readBearerToken } from '../../http.js';
 import { getServerSupabaseClients } from '../../supabase.js';
 
 async function handleRequest(request: Request): Promise<Response> {
-  if (request.method !== 'GET') {
-    return jsonResponse(405, { error: 'method_not_allowed' }, { Allow: 'GET' });
+  if (request.method !== 'GET' && request.method !== 'POST') {
+    return jsonResponse(405, { error: 'method_not_allowed' }, { Allow: 'GET, POST' });
   }
 
   const token = readBearerToken(request);
@@ -12,6 +12,60 @@ async function handleRequest(request: Request): Promise<Response> {
 
   try {
     const { admin } = getServerSupabaseClients();
+
+    if (request.method === 'POST') {
+      const actor = await requireStaffActor(admin, token, ['superadmin']);
+      let body: any;
+      try {
+        body = await request.json();
+      } catch {
+        return jsonResponse(400, { error: 'invalid_json', message: 'Malformed JSON payload.' });
+      }
+
+      if (body?.action === 'return_to_zero') {
+        if (body?.confirmationPhrase !== 'DELETE ALL OPERATIONAL DATA') {
+          return jsonResponse(400, {
+            error: 'invalid_confirmation_phrase',
+            message: 'You must provide the exact confirmation phrase: DELETE ALL OPERATIONAL DATA',
+          });
+        }
+
+        const { data: rpcData, error: rpcError } = await admin.schema('api').rpc('return_to_zero_reset', {
+          requested_actor_id: actor.id,
+        });
+
+        if (rpcError) {
+          console.error('return_to_zero_reset RPC error:', rpcError);
+          return jsonResponse(500, { error: 'reset_failed', message: rpcError.message });
+        }
+
+        const purgeBucket = async (bucketName: string) => {
+          try {
+            const { data: files } = await admin.storage.from(bucketName).list('', { limit: 1000 });
+            if (files && files.length > 0) {
+              const paths = files.map((f: { name: string }) => f.name);
+              await admin.storage.from(bucketName).remove(paths);
+            }
+          } catch (storageErr) {
+            console.warn(`Failed to clean storage bucket ${bucketName}:`, storageErr);
+          }
+        };
+
+        await Promise.allSettled([
+          purgeBucket('visitor-photos'),
+          purgeBucket('visitor-ids'),
+        ]);
+
+        return jsonResponse(200, {
+          success: true,
+          message: 'System has been successfully reset to zero. All operational data purged.',
+          result: rpcData,
+        });
+      }
+
+      return jsonResponse(400, { error: 'unsupported_action' });
+    }
+
     await requireStaffActor(admin, token, ['admin', 'superadmin']);
 
     const { data, error } = await admin
@@ -122,4 +176,4 @@ async function handleRequest(request: Request): Promise<Response> {
 }
 
 export default handleRequest;
-export { handleRequest as GET };
+export { handleRequest as GET, handleRequest as POST };

@@ -28,6 +28,7 @@ export interface ReturningIdentifyProfile {
   firstName: string;
   middleName?: string | null;
   lastName: string;
+  gender?: 'Male' | 'Female' | null;
   contactNumber: string;
   homeAddress?: string | null;
   homeLocation?: HomeLocation | null;
@@ -69,6 +70,7 @@ export interface VisitorRegistration {
   firstName: string;
   middleName?: string;
   lastName: string;
+  gender?: 'Male' | 'Female' | 'male' | 'female' | null;
   contactNumber: string;
   homeAddress?: string;
   purpose: string;
@@ -1387,6 +1389,7 @@ export interface ReturningLookupCandidate {
   profileId: string;
   maskedName: string;
   maskedContact: string;
+  gender?: 'Male' | 'Female' | null;
   partialLocality: string;
   registeredAt?: string;
   previewUrl?: string;
@@ -1598,6 +1601,7 @@ export async function issueVisitorPass(
           firstName: effectiveVisitor.firstName,
           middleName: effectiveVisitor.middleName,
           lastName: effectiveVisitor.lastName,
+          gender: effectiveVisitor.gender || undefined,
           contactNumber: effectiveVisitor.contactNumber,
           email: effectiveVisitor.email?.trim() || undefined,
           purpose: effectiveVisitor.purpose,

@@ -6,7 +6,7 @@ import { LogOut as LogOutIcon, Volume2, VolumeX, FlipHorizontal, Camera, Zap, Za
 import { toast } from 'sonner';
 import { Clock3, QrCode, XCircle, AlertTriangle, CheckCircle2 } from 'lucide-react';
 import { BrandMark } from '@/components/BrandMark';
-import { createOptimizedQrScanner, enableContinuousFocus, QR_SCAN_CONFIG } from '@/lib/qrScanner';
+import { createOptimizedQrScanner, enableContinuousFocus, getQrScanConfig } from '@/lib/qrScanner';
 import { RefreshCw, AlertCircle } from 'lucide-react';
 import { Modal, Button } from '@/components/ui';
 import { fetchWithTimeout, RequestTimeoutError } from '@/lib/fetchWithTimeout';
@@ -195,7 +195,7 @@ export function EntryScanPage() {
         try {
           await scanner.start(
             { facingMode },
-            QR_SCAN_CONFIG,
+            getQrScanConfig(facingMode),
             (decodedText) => {
               if (!debounceRef.current) processQR(decodedText);
             },
@@ -205,7 +205,7 @@ export function EntryScanPage() {
           if (facingMode === 'user') {
             await scanner.start(
               { facingMode: 'environment' },
-              QR_SCAN_CONFIG,
+              getQrScanConfig('environment'),
               (decodedText) => {
                 if (!debounceRef.current) processQR(decodedText);
               },

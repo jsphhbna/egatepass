@@ -145,6 +145,7 @@ export function createGetPassSchema(schedulingDaysAhead: number = MAX_VISIT_ADVA
         .min(2, 'Last name must be at least 2 characters')
         .max(50, 'Last name is too long')
         .regex(nameRegex, 'Invalid characters in name'),
+      gender: z.enum(['Male', 'Female']).optional(),
       contactNumber: z
         .string()
         .min(7, 'Contact number is too short')
@@ -209,6 +210,7 @@ export const personalDetailsStepSchema = z.object({
     .min(2, 'Last name must be at least 2 characters')
     .max(50, 'Last name is too long')
     .regex(nameRegex, 'Invalid characters in name'),
+  gender: z.enum(['Male', 'Female']).optional(),
   contactNumber: z
     .string()
     .min(7, 'Contact number is too short')
@@ -301,6 +303,7 @@ export function GetPassPage() {
     firstName: string;
     middleName?: string;
     lastName: string;
+    gender?: 'Male' | 'Female' | null;
     contactNumber: string;
     homeAddress?: string | null;
     homeLocation?: { lat: number; lon: number } | null;
@@ -1366,9 +1369,10 @@ export function GetPassPage() {
       setReturningSearchError('Please enter both your First Name and Last Name.');
       return;
     }
-    const normPhone = normalizePhMobile(returningLookupContact);
-    if (!normPhone) {
-      setReturningSearchError('Please enter a valid Philippine mobile number (e.g. 09171234567 or +639171234567) registered with your profile.');
+    const hasPhone = Boolean(returningLookupContact.trim());
+    const normPhone = hasPhone ? normalizePhMobile(returningLookupContact) : null;
+    if (hasPhone && !normPhone) {
+      setReturningSearchError('Please enter a valid Philippine mobile number (e.g. 09171234567 or +639171234567).');
       return;
     }
     setReturningSearchError(null);
@@ -1394,7 +1398,7 @@ export function GetPassPage() {
         firstName: returningLookupFirst.trim(),
         lastName: returningLookupLast.trim(),
         middleName: returningLookupMiddle.trim() || undefined,
-        contactNumber: normPhone,
+        contactNumber: normPhone || undefined,
         mode: 'manual',
       });
 
@@ -1569,6 +1573,7 @@ export function GetPassPage() {
         firstName: p.firstName,
         middleName: p.middleName || '',
         lastName: p.lastName,
+        gender: (p.gender === 'Male' || p.gender === 'Female') ? p.gender : null,
         contactNumber: p.contactNumber,
         homeAddress: p.homeAddress || null,
         homeLocation: p.homeLocation || null,
@@ -1588,6 +1593,9 @@ export function GetPassPage() {
       setValue('firstName', p.firstName, { shouldValidate: true });
       setValue('middleName', p.middleName || '');
       setValue('lastName', p.lastName, { shouldValidate: true });
+      if (p.gender === 'Male' || p.gender === 'Female') {
+        setValue('gender', p.gender, { shouldValidate: true });
+      }
       setValue('contactNumber', p.contactNumber, { shouldValidate: true });
       // Address hydration: unconditional explicit assignments prevent stale session values
       // from leaking into a new visitor's Welcome Back screen.
@@ -1664,9 +1672,34 @@ export function GetPassPage() {
       return;
     }
     setAddressError(null);
-    if (!vals.purpose || vals.purpose.trim().length < 3) {
-      toast.error('Please describe the purpose of your visit.');
+    if (!selectedOfficeId) {
+      toast.error('Please select the university office you are visiting.');
       return;
+    }
+    if (!visitType) {
+      toast.error('Please choose whether you are visiting a specific person or making a general office visit.');
+      return;
+    }
+    if (visitType === 'specific_person') {
+      const personName = requestedPersonName.trim() || (selectedPersonnelId ? personnelList.find((p) => p.id === selectedPersonnelId)?.name : '');
+      if (!personName || personName.length < 2) {
+        toast.error('Please specify the person or faculty you would like to visit (minimum 2 characters).');
+        return;
+      }
+      if (personName.length > 150) {
+        toast.error('Person name cannot exceed 150 characters.');
+        return;
+      }
+      if (!specificPurpose || specificPurpose.trim().length < 3) {
+        toast.error('Please specify the purpose of your appointment (minimum 3 characters).');
+        return;
+      }
+      setValue('purpose', specificPurpose.trim());
+    } else {
+      if (!vals.purpose || vals.purpose.trim().length < 3) {
+        toast.error('Please describe the purpose of your visit.');
+        return;
+      }
     }
     if (!vals.visitDate) {
       toast.error('Please select a visit date.');
@@ -2290,6 +2323,7 @@ export function GetPassPage() {
 
       const formData: any = {
         ...rawFormData,
+        gender: rawFormData.gender || returningProfile?.gender || undefined,
         contactNumber: phNormalized,
         arrivalMode: rawFormData.arrivalMode,
         homeLocation: loc || undefined,
@@ -2433,6 +2467,7 @@ export function GetPassPage() {
             firstName: rawFormData.firstName,
             middleName: rawFormData.middleName || undefined,
             lastName: rawFormData.lastName,
+            gender: rawFormData.gender || returningProfile?.gender || undefined,
             contactNumber: phNormalized,
             email: visitorEmail.toLowerCase().trim(),
             purpose: effectiveSpecificPurpose,
@@ -3021,6 +3056,46 @@ export function GetPassPage() {
                   />
                 </FormField>
               </div>
+
+              {/* Gender Selection */}
+              <FormField
+                label="Gender"
+                requirement="required"
+                error={errors.gender?.message}
+              >
+                <div className="grid grid-cols-2 gap-3 pt-1">
+                  <label
+                    className={`flex items-center justify-center gap-2 p-3 rounded-xl border-2 cursor-pointer transition-all ${
+                      watch('gender') === 'Male'
+                        ? 'border-[#7A0A0A] bg-[#F8EEEE]/50 text-[#7A0A0A] font-bold shadow-xs'
+                        : 'border-[var(--color-border)] bg-white text-[var(--color-text-primary)] hover:border-slate-300'
+                    }`}
+                  >
+                    <input
+                      type="radio"
+                      value="Male"
+                      {...register('gender')}
+                      className="sr-only"
+                    />
+                    <span>Male</span>
+                  </label>
+                  <label
+                    className={`flex items-center justify-center gap-2 p-3 rounded-xl border-2 cursor-pointer transition-all ${
+                      watch('gender') === 'Female'
+                        ? 'border-[#7A0A0A] bg-[#F8EEEE]/50 text-[#7A0A0A] font-bold shadow-xs'
+                        : 'border-[var(--color-border)] bg-white text-[var(--color-text-primary)] hover:border-slate-300'
+                    }`}
+                  >
+                    <input
+                      type="radio"
+                      value="Female"
+                      {...register('gender')}
+                      className="sr-only"
+                    />
+                    <span>Female</span>
+                  </label>
+                </div>
+              </FormField>
 
               {/* Optional Address Detected from ID Suggestion Card */}
               {showOcrAddressCard && detectedOcrAddress && (
@@ -4187,6 +4262,12 @@ export function GetPassPage() {
                     </p>
                   </div>
                   <div>
+                    <span className="text-[var(--color-text-secondary)] block">Gender:</span>
+                    <p className="font-semibold text-sm text-[var(--color-text-primary)] mt-0.5">
+                      {getValues('gender') || 'Not specified'}
+                    </p>
+                  </div>
+                  <div className="sm:col-span-2">
                     <span className="text-[var(--color-text-secondary)] block">Contact Number:</span>
                     <p className="font-semibold text-sm text-[var(--color-text-primary)] mt-0.5">
                       {normalizePhMobile(getValues('contactNumber')) || getValues('contactNumber')}
@@ -4529,10 +4610,10 @@ export function GetPassPage() {
                   />
                 </FormField>
 
-                <FormField label="Registered Mobile Number" requirement="required">
+                <FormField label="Registered Mobile Number" requirement="optional">
                   <Input
                     type="tel"
-                    placeholder="e.g. 09171234567"
+                    placeholder="e.g. 09171234567 (optional filter)"
                     value={returningLookupContact}
                     onChange={(e) => setReturningLookupContact(e.target.value)}
                     disabled={isSearchingReturning}
@@ -4541,7 +4622,7 @@ export function GetPassPage() {
 
                 <Button
                   onClick={onSearchReturningProfile}
-                  disabled={!returningLookupFirst.trim() || !returningLookupLast.trim() || !returningLookupContact.trim() || isSearchingReturning}
+                  disabled={!returningLookupFirst.trim() || !returningLookupLast.trim() || isSearchingReturning}
                   loading={isSearchingReturning}
                   className="w-full"
                   icon={<Search className="h-4 w-4" />}
@@ -4973,19 +5054,11 @@ export function GetPassPage() {
                 <span>Update my profile with these contact details for future visits</span>
               </label>
 
-              {/* Visit Purpose & Date */}
-              <VisitPurposeField
-                value={purpose || ''}
-                onChange={(val) => setValue('purpose', val, { shouldValidate: true })}
-                purposes={visitPurposes}
-                error={errors.purpose?.message}
-              />
-
-              {/* Destination Office & Visit Date */}
-              <div className="space-y-4">
+              {/* Destination Office & Visit Type Section */}
+              <div className="rounded-2xl border border-[var(--color-border)] bg-white p-4 sm:p-5 space-y-5">
                 <div>
                   <label htmlFor="returning-destination-office-select" className="block text-xs font-bold uppercase tracking-wider text-[var(--color-text-primary)] mb-1">
-                    Destination University Office
+                    Destination University Office <span className="text-[var(--color-danger)]">*</span>
                   </label>
                   <div className="relative">
                     <Building2 className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[var(--color-text-muted)]" />
@@ -4995,7 +5068,7 @@ export function GetPassPage() {
                       onChange={(e) => setSelectedOfficeId(e.target.value)}
                       className="w-full rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] py-2.5 pl-9 pr-8 text-sm font-semibold text-[var(--color-text-primary)] focus:border-[#7A0A0A] focus:outline-none focus:ring-1 focus:ring-[#7A0A0A]"
                     >
-                      <option value="">Campus General Visit (or select specific office)</option>
+                      <option value="">Select destination office</option>
                       {offices.map((o) => (
                         <option key={o.id} value={o.id}>
                           {o.name}
@@ -5003,8 +5076,159 @@ export function GetPassPage() {
                       ))}
                     </select>
                   </div>
+                  {selectedOfficeId && (
+                    <p className="mt-1 text-xs text-[var(--color-text-secondary)]">
+                      {offices.find((o) => o.id === selectedOfficeId)?.description}
+                    </p>
+                  )}
+                  {selectedOfficeId && officeSchedules.length > 0 && (
+                    <div className="mt-2 rounded-xl border border-amber-200 bg-amber-50/70 p-3 text-xs text-amber-900 space-y-1">
+                      <div className="font-bold flex items-center gap-1.5">
+                        <AlertTriangle className="h-3.5 w-3.5 text-amber-700" />
+                        <span>Office Schedule Notice</span>
+                      </div>
+                      <p className="text-[11px] leading-relaxed">
+                        This office has custom schedule dates this month:
+                      </p>
+                      <ul className="list-disc pl-4 text-[11px] space-y-0.5">
+                        {officeSchedules.map((s) => (
+                          <li key={s.id || s.schedule_date}>
+                            <strong>{s.schedule_date}</strong>: <span className="capitalize font-semibold">{s.status}</span>{s.reason ? ` — ${s.reason}` : ''}
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
                 </div>
 
+                {/* Visit Type Cards — Mandatory Selection */}
+                <div>
+                  <span className="block text-xs font-bold uppercase tracking-wider text-[var(--color-text-primary)] mb-2">
+                    Who or what are you visiting? <span className="text-[var(--color-danger)]">*</span>
+                  </span>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    {/* Specific Person Option */}
+                    <button
+                      type="button"
+                      onClick={() => setVisitType('specific_person')}
+                      className={`flex flex-col text-left p-4 rounded-xl border-2 transition-all ${
+                        visitType === 'specific_person'
+                          ? 'border-[#7A0A0A] bg-[#F8EEEE]/50 shadow-xs'
+                          : 'border-[var(--color-border)] bg-white hover:border-[#7A0A0A]/40'
+                      }`}
+                    >
+                      <div className="flex items-center justify-between mb-2">
+                        <div className={`p-2 rounded-lg ${visitType === 'specific_person' ? 'bg-[#7A0A0A] text-white' : 'bg-gray-100 text-gray-700'}`}>
+                          <UserCheck className="h-5 w-5" />
+                        </div>
+                        <span className="text-[10px] font-bold uppercase tracking-wider rounded-md bg-[#F8EEEE] text-[#7A0A0A] border border-[#7A0A0A]/30 px-2 py-0.5">
+                          Office Approval Required
+                        </span>
+                      </div>
+                      <span className="text-sm font-bold text-[var(--color-text-primary)]">A Specific Person</span>
+                      <p className="text-xs text-[var(--color-text-secondary)] mt-1 leading-relaxed">
+                        Appointment with a specific faculty member, professor, dean, or university employee.
+                      </p>
+                    </button>
+
+                    {/* General Office Option */}
+                    <button
+                      type="button"
+                      onClick={() => setVisitType('general')}
+                      className={`flex flex-col text-left p-4 rounded-xl border-2 transition-all ${
+                        visitType === 'general'
+                          ? 'border-[#7A0A0A] bg-[#F8EEEE]/50 shadow-xs'
+                          : 'border-[var(--color-border)] bg-white hover:border-[#7A0A0A]/40'
+                      }`}
+                    >
+                      <div className="flex items-center justify-between mb-2">
+                        <div className={`p-2 rounded-lg ${visitType === 'general' ? 'bg-[#7A0A0A] text-white' : 'bg-gray-100 text-gray-700'}`}>
+                          <Building2 className="h-5 w-5" />
+                        </div>
+                        <span className="text-[10px] font-bold uppercase tracking-wider rounded-md bg-emerald-50 text-emerald-900 border border-emerald-300 px-2 py-0.5">
+                          Issued After Registration
+                        </span>
+                      </div>
+                      <span className="text-sm font-bold text-[var(--color-text-primary)]">The Office Itself</span>
+                      <p className="text-xs text-[var(--color-text-secondary)] mt-1 leading-relaxed">
+                        Inquiries, student document requests, certifications, cashier payments, or general processing.
+                      </p>
+                    </button>
+                  </div>
+                </div>
+
+                {/* Specific Person Appointment Details */}
+                {visitType === 'specific_person' && (
+                  <div className="space-y-4 rounded-xl border border-[#7A0A0A]/20 bg-[#F8EEEE]/30 p-4">
+                    <div>
+                      <label htmlFor="returning-target-personnel-name" className="block text-xs font-bold uppercase tracking-wider text-[#7A0A0A] mb-1">
+                        Who would you like to visit? <span className="text-[var(--color-danger)]">*</span>
+                      </label>
+                      <Input
+                        id="returning-target-personnel-name"
+                        placeholder="e.g. Dr. Juan Dela Cruz, Dean's Office Staff, Prof. Santos"
+                        value={requestedPersonName}
+                        onChange={(e) => setRequestedPersonName(e.target.value)}
+                      />
+                      {personnelList.length > 0 && (
+                        <div className="mt-2">
+                          <label htmlFor="returning-target-personnel-select" className="block text-[11px] font-medium text-[var(--color-text-secondary)] mb-1">
+                            Or select from verified office personnel (optional):
+                          </label>
+                          <select
+                            id="returning-target-personnel-select"
+                            value={selectedPersonnelId}
+                            onChange={(e) => {
+                              const val = e.target.value;
+                              setSelectedPersonnelId(val);
+                              const p = personnelList.find((item) => item.id === val);
+                              if (p) setRequestedPersonName(p.name);
+                            }}
+                            className="w-full rounded-xl border border-[var(--color-border)] bg-white py-1.5 px-3 text-xs font-semibold text-[var(--color-text-primary)] focus:border-[#7A0A0A] focus:outline-none focus:ring-1 focus:ring-[#7A0A0A]"
+                          >
+                            <option value="">-- Quick select directory personnel (optional) --</option>
+                            {personnelList.map((p) => (
+                              <option key={p.id} value={p.id}>
+                                {p.name} {p.title ? `(${p.title})` : ''}
+                              </option>
+                            ))}
+                          </select>
+                        </div>
+                      )}
+                    </div>
+
+                    <div>
+                      <label htmlFor="returning-specific-purpose" className="block text-xs font-bold uppercase tracking-wider text-[#7A0A0A] mb-1">
+                        Appointment Purpose / Reason <span className="text-[var(--color-danger)]">*</span>
+                      </label>
+                      <Input
+                        id="returning-specific-purpose"
+                        placeholder="e.g. Thesis advising, departmental interview, consultation"
+                        value={specificPurpose}
+                        onChange={(e) => {
+                          setSpecificPurpose(e.target.value);
+                          setValue('purpose', e.target.value);
+                        }}
+                      />
+                    </div>
+                  </div>
+                )}
+
+                {/* General Office Visit Details */}
+                {visitType === 'general' && (
+                  <div>
+                    <VisitPurposeField
+                      value={purpose || ''}
+                      onChange={(val) => setValue('purpose', val, { shouldValidate: true })}
+                      purposes={visitPurposes}
+                      error={errors.purpose?.message}
+                    />
+                  </div>
+                )}
+              </div>
+
+              {/* Destination Office & Visit Date */}
+              <div className="space-y-4">
                 <div className="space-y-2">
                   <label className="block text-xs font-bold uppercase tracking-wider text-[var(--color-text-primary)]">
                     Visit Date & Availability Calendar <span className="text-[var(--color-danger)]">*</span>
@@ -5361,6 +5585,12 @@ export function GetPassPage() {
                     </p>
                   </div>
                   <div>
+                    <span className="text-[var(--color-text-secondary)] block">Gender:</span>
+                    <p className="font-semibold text-sm text-[var(--color-text-primary)] mt-0.5">
+                      {getValues('gender') || returningProfile.gender || 'Not specified'}
+                    </p>
+                  </div>
+                  <div className="sm:col-span-2">
                     <span className="text-[var(--color-text-secondary)] block">Contact Number:</span>
                     <p className="font-semibold text-sm text-[var(--color-text-primary)] mt-0.5">
                       {getValues('contactNumber') || returningProfile.contactNumber}
@@ -5407,6 +5637,26 @@ export function GetPassPage() {
                   </button>
                 </div>
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
+                  <div>
+                    <span className="text-[var(--color-text-secondary)] block">Destination Office:</span>
+                    <p className="font-semibold text-sm text-[var(--color-text-primary)] mt-0.5">
+                      {offices.find((o) => o.id === selectedOfficeId)?.name || 'Designated Office'}
+                    </p>
+                  </div>
+                  <div>
+                    <span className="text-[var(--color-text-secondary)] block">Visit Type:</span>
+                    <p className="font-semibold text-sm text-[var(--color-text-primary)] mt-0.5">
+                      {visitType === 'specific_person' ? 'Specific Person Appointment' : 'General Office Visit'}
+                    </p>
+                  </div>
+                  {visitType === 'specific_person' && (
+                    <div className="sm:col-span-2">
+                      <span className="text-[var(--color-text-secondary)] block">Faculty / Staff Member:</span>
+                      <p className="font-semibold text-sm text-[#7A0A0A] mt-0.5">
+                        {requestedPersonName.trim() || personnelList.find((p) => p.id === selectedPersonnelId)?.name || 'Designated Personnel'}
+                      </p>
+                    </div>
+                  )}
                   <div className="sm:col-span-2">
                     <span className="text-[var(--color-text-secondary)] block">Purpose of Visit:</span>
                     <p className="font-semibold text-sm text-[var(--color-text-primary)] mt-0.5">

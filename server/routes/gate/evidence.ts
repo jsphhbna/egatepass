@@ -76,14 +76,24 @@ async function handleRequest(request: Request): Promise<Response> {
           return jsonResponse(403, { error: 'Guard station cannot access ID evidence' });
         }
       }
-      if (isExpired) {
-        return jsonResponse(410, { error: 'Evidence expired' });
-      }
 
       if (evidence.kind === 'photo') {
-        // Station operational confinement: portal-originated pass at this gate that has scanned entry
-        // (Legacy human guard operational verification previously checked: .eq('status', 'pending'))
         const { data: evVisitor } = await admin.from('visitors').select('returning_profile_id').eq('id', evidence.visitor_id).maybeSingle();
+        let isProfileActive = false;
+        if (evVisitor?.returning_profile_id) {
+          const { data: prof } = await admin.from('returning_visitor_profiles')
+            .select('id, expires_at, revoked_at')
+            .eq('id', evVisitor.returning_profile_id)
+            .maybeSingle();
+          if (prof && !prof.revoked_at && new Date(prof.expires_at).getTime() > Date.now()) {
+            isProfileActive = true;
+          }
+        }
+
+        if (isExpired && !isProfileActive) {
+          return jsonResponse(410, { error: 'Evidence expired' });
+        }
+
         let targetVisitorIds = [evidence.visitor_id];
         if (evVisitor?.returning_profile_id) {
           const { data: allLinked } = await admin.from('visitors').select('id').eq('returning_profile_id', evVisitor.returning_profile_id);
@@ -98,9 +108,14 @@ async function handleRequest(request: Request): Promise<Response> {
           .eq('source', 'portal')
           .not('entry_scanned_at', 'is', null)
           .in('status', ['inside', 'exited']);
+        // (Legacy human guard operational verification previously checked: .eq('status', 'pending'))
         if (passError) throw passError;
         if (!count) return jsonResponse(403, { error: 'Evidence is not operationally accessible at this station' });
       } else if (evidence.kind === 'vehicle_photo') {
+        if (isExpired) {
+          return jsonResponse(410, { error: 'Evidence expired' });
+        }
+
         // Exact-pass authorization check for vehicle photo (Section 6)
         // Must find the exact declaration linking this vehicle photo evidence to an exact pass
         const { data: decl, error: declError } = await admin

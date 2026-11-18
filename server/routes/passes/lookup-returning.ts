@@ -65,33 +65,22 @@ const lookupSchema = z.object({
     });
   }
 
-  // Require additional matching factor in both auto and manual modes to prevent enumeration
-  const hasPhone = Boolean(val.contactNumber && val.contactNumber.trim().length > 0);
-  const hasLocation = Boolean(val.psgcCityCode && val.psgcCityCode.trim().length > 0);
-  if (!hasPhone && !hasLocation) {
-    ctx.addIssue({
-      code: z.ZodIssueCode.custom,
-      message: 'Additional verification factor required (registered mobile number or locality).',
-      path: ['contactNumber'],
-    });
-  }
+
 });
 
 function maskContact(contact: string): string {
   const cleaned = contact.replace(/\s+/g, '');
-  if (cleaned.length >= 10) {
-    return cleaned.slice(0, 4) + '***' + cleaned.slice(-4);
-  }
-  return '***' + cleaned.slice(-4);
+  if (cleaned.length < 8) return '****';
+  return cleaned.slice(0, 4) + '****' + cleaned.slice(-3);
 }
 
-function maskName(first: string, middle: string | null | undefined, last: string): string {
-  const mInitial = middle && middle.trim().length > 0 ? ` ${middle.trim().charAt(0).toUpperCase()}.` : '';
-  const lastTrimmed = last.trim();
-  const lastMasked = lastTrimmed.length > 1
-    ? `${lastTrimmed.charAt(0).toUpperCase()}${'*'.repeat(Math.min(lastTrimmed.length - 1, 4))}`
-    : lastTrimmed;
-  return `${first.trim()}${mInitial} ${lastMasked}`;
+function maskName(first: string, _middle: string | null | undefined, last: string): string {
+  const maskPart = (str: string) => {
+    const trimmed = str.trim();
+    if (trimmed.length <= 2) return trimmed;
+    return trimmed[0] + '*'.repeat(trimmed.length - 2) + trimmed[trimmed.length - 1];
+  };
+  return `${maskPart(first)} ${maskPart(last)}`;
 }
 
 async function handleRequest(request: Request): Promise<Response> {
@@ -123,13 +112,13 @@ async function handleRequest(request: Request): Promise<Response> {
 
     const actorId = session.user.id;
 
-    // 1. Rate limiting - Actor Bucket (15 lookups per 5 minutes)
+    // 1. Rate limiting - Actor Bucket (10 lookups per 1 minute)
     const actorKeyHex = createHash('sha256').update(`actor:${actorId}`).digest('hex');
     const { data: actorAllowed, error: actorRlError } = await admin.schema('api').rpc('consume_rate_limit', {
       requested_key_hex: actorKeyHex,
       requested_action: 'portal.lookup_returning',
-      requested_max_requests: 15,
-      requested_window_seconds: 300,
+      requested_max_requests: 10,
+      requested_window_seconds: 60,
     });
 
     if (actorRlError) {
@@ -192,7 +181,7 @@ async function handleRequest(request: Request): Promise<Response> {
     let query = admin
       .from('returning_visitor_profiles')
       .select(`
-        id, first_name, middle_name, last_name, contact_number_e164,
+        id, first_name, middle_name, last_name, contact_number_e164, gender,
         psgc_city_code, psgc_barangay_code,
         psgc_city_municipality_name, psgc_barangay_name, psgc_province_name, psgc_region_name,
         created_at
@@ -234,15 +223,22 @@ async function handleRequest(request: Request): Promise<Response> {
 
     let filtered = matches || [];
 
-    // Filter by additional factor (phone match OR locality match)
-    filtered = filtered.filter((m) => {
-      const phoneMatch = Boolean(normalizedPhone && m.contact_number_e164 === normalizedPhone);
-      const addressMatch = Boolean(
-        cityCode && m.psgc_city_code === cityCode &&
-        (!brgyCode || m.psgc_barangay_code === brgyCode)
-      );
-      return phoneMatch || addressMatch;
-    });
+    // Filter by additional factor (phone match OR locality match) if provided
+    if (normalizedPhone || cityCode) {
+      filtered = filtered.filter((m) => {
+        const phoneMatch = Boolean(normalizedPhone && m.contact_number_e164 === normalizedPhone);
+        const addressMatch = Boolean(
+          cityCode && m.psgc_city_code === cityCode &&
+          (!brgyCode || m.psgc_barangay_code === brgyCode)
+        );
+        return (normalizedPhone ? phoneMatch : true) && (cityCode ? addressMatch : true);
+      });
+    }
+
+    if (parsed.data.middleName && parsed.data.middleName.trim()) {
+      const targetMid = parsed.data.middleName.trim().toLowerCase();
+      filtered = filtered.filter((m) => !m.middle_name || m.middle_name.trim().toLowerCase() === targetMid);
+    }
 
     // Filter candidates by portrait retention eligibility:
     // A profile MUST NOT be offered as a Returning Visitor candidate unless an eligible original portrait
@@ -289,6 +285,7 @@ async function handleRequest(request: Request): Promise<Response> {
         profileId: m.id,
         maskedName: maskName(m.first_name, m.middle_name, m.last_name),
         maskedContact: maskContact(m.contact_number_e164),
+        gender: (m as any).gender ?? null,
         partialLocality: localityParts.length > 0 ? localityParts.join(', ') : 'Philippines',
         registeredAt: m.created_at,
         previewUrl: `/api/passes/returning-photo-preview?profileId=${m.id}&token=${previewToken}&kind=photo`,
@@ -298,6 +295,7 @@ async function handleRequest(request: Request): Promise<Response> {
     return jsonResponse(200, {
       found: candidates.length > 0,
       count: candidates.length,
+      totalMatches: eligibleProfiles.length,
       candidates,
       portraitExpired: candidates.length === 0 && hasExpiredPortraitCandidates,
       message: candidates.length === 0 && hasExpiredPortraitCandidates
