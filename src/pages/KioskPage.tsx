@@ -151,6 +151,7 @@ export function KioskPage() {
   });
   const issueRequestId = useRef(kioskTransactionRef.current.requestId as ReturnType<typeof crypto.randomUUID>);
   const isSubmittingRef = useRef(false);
+  const [issuancePhase, setIssuancePhase] = useState('Securing visitor record…');
 
   type KioskConfigState = 'loading' | 'ready' | 'error';
   const [configState, setConfigState] = useState<KioskConfigState>('loading');
@@ -447,6 +448,7 @@ export function KioskPage() {
     }
 
     isSubmittingRef.current = true;
+    setIssuancePhase('Securing visitor record & tokens…');
     setStep('generating');
     setSubmitError(null);
 
@@ -510,6 +512,7 @@ export function KioskPage() {
     setIssuedValidity(validity);
 
     // Phase B — presentation generation
+    setIssuancePhase('Generating secure QR pass…');
     let qrUrl: string | null = null;
     try {
       qrUrl = await generateBrandedQrDataUrl(result.qrToken, {
@@ -1407,7 +1410,7 @@ export function KioskPage() {
                 <p className="text-xs text-[var(--color-text-secondary)]">Securing visitor record and issuing badge</p>
               </div>
               <div className="w-full max-w-xs">
-                <ProgressBar indeterminate variant="brand" size="md" phase="Issuing Security Token…" />
+                <ProgressBar indeterminate variant="brand" size="md" phase={issuancePhase} />
               </div>
             </div>
           )}

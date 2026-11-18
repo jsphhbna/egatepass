@@ -1098,11 +1098,7 @@ export function AdminRecords() {
             </DataTableHead>
             <tbody className="divide-y divide-[var(--color-border)] bg-[var(--color-surface)]">
               {offlineLoading ? (
-                <tr>
-                  <td colSpan={6} className="py-8 text-center text-[var(--color-text-muted)]">
-                    Loading offline gate records...
-                  </td>
-                </tr>
+                <TableSkeletonRows columns={6} rows={6} columnWidths={['30%', '15%', '15%', '20%', '10%', '10%']} ariaLabel="Loading offline gate records…" />
               ) : offlineError ? (
                 <tr>
                   <td colSpan={6} className="py-8 text-center">
@@ -1208,7 +1204,7 @@ export function AdminRecords() {
           </DataTableHead>
           <tbody className="divide-y border-[var(--color-border)] print:divide-black/20">
             {loading ? (
-              <TableSkeletonRows columns={6} rows={8} columnWidths={['30%', '15%', '15%', '15%', '15%', '10%']} />
+              <TableSkeletonRows columns={6} rows={8} columnWidths={['30%', '15%', '15%', '15%', '15%', '10%']} ariaLabel="Loading visitor records…" />
             ) : recordsError ? (
               <tr>
                 <td colSpan={6} className="py-8 text-center">
@@ -1825,9 +1821,23 @@ function VisitorReportsView({ onSelectPass }: VisitorReportsViewProps) {
       </div>
 
       {loading ? (
-        <div className="flex h-40 items-center justify-center">
-          <div className="h-8 w-8 animate-spin rounded-full border-4 border-[var(--color-border)] border-t-[var(--color-brand)]" role="status" aria-label="Loading report" />
-        </div>
+        <DataTable>
+          <DataTableHead>
+            <DataTableRow>
+              <DataTableCell isHeader>Visitor Name</DataTableCell>
+              <DataTableCell isHeader>Contact Number</DataTableCell>
+              <DataTableCell isHeader>Office</DataTableCell>
+              <DataTableCell isHeader>Time In</DataTableCell>
+              <DataTableCell isHeader>Time Out</DataTableCell>
+              <DataTableCell isHeader>Attendance</DataTableCell>
+              <DataTableCell isHeader>Status</DataTableCell>
+              <DataTableCell isHeader className="text-right">Actions</DataTableCell>
+            </DataTableRow>
+          </DataTableHead>
+          <tbody>
+            <TableSkeletonRows columns={8} rows={8} columnWidths={['20%', '15%', '15%', '12%', '12%', '10%', '8%', '8%']} ariaLabel="Loading report records…" />
+          </tbody>
+        </DataTable>
       ) : reportPasses.length === 0 ? (
         <Card className="p-8 text-center text-sm text-[var(--color-text-muted)]">
           No records matched the selected report criteria for this date range.

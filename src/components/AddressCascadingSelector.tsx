@@ -8,6 +8,7 @@ import {
   type PsgcLocation,
 } from '@/lib/psgc';
 import { MapPin, Search, ChevronRight, X, ArrowLeft, Check, AlertCircle } from 'lucide-react';
+import { Skeleton } from '@/components/ui';
 
 export interface SelectedPsgcAddress {
   version: string;
@@ -419,9 +420,16 @@ export function AddressCascadingSelector({
             {/* Scrollable Location List */}
             <div className="flex-1 overflow-y-auto divide-y divide-[var(--color-border,#E2E8F0)] px-2 py-1">
               {loading ? (
-                <div className="py-12 flex flex-col items-center justify-center text-center text-[var(--color-text-secondary,#5F6B7F)]">
-                  <div className="w-6 h-6 border-2 border-[#7A0A0A] border-t-transparent rounded-full animate-spin mb-3" />
-                  <p className="text-sm font-medium">Loading official geographic records...</p>
+                <div className="space-y-2 py-3 px-1" role="status" aria-label="Loading official geographic records…">
+                  {Array.from({ length: 5 }).map((_, i) => (
+                    <div key={i} className="flex items-center justify-between p-3 rounded-lg border border-[var(--color-border,#E2E8F0)]/60 bg-[var(--color-canvas,#F7F8FA)]/40">
+                      <div className="space-y-1.5 flex-1">
+                        <Skeleton className="h-4 w-3/4" />
+                        <Skeleton className="h-3 w-1/3" />
+                      </div>
+                      <Skeleton className="h-3 w-12" />
+                    </div>
+                  ))}
                 </div>
               ) : filteredItems.length === 0 ? (
                 <div className="py-12 flex flex-col items-center justify-center text-center px-4">

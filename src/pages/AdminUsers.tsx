@@ -1278,7 +1278,7 @@ export function AdminUsers() {
           </DataTableHead>
           <tbody>
             {loading ? (
-              <TableSkeletonRows columns={6} rows={6} columnWidths={['20%', '30%', '15%', '15%', '10%', '10%']} />
+              <TableSkeletonRows columns={6} rows={6} columnWidths={['20%', '30%', '15%', '15%', '10%', '10%']} ariaLabel="Loading staff users…" />
             ) : filteredUsers.map((user) => (
               <DataTableRow key={user.uid}>
                 <DataTableCell className="font-semibold">{user.name}</DataTableCell>
@@ -1488,7 +1488,7 @@ export function AdminUsers() {
               </DataTableHead>
               <tbody>
                 {loadingAdminOffices ? (
-                  <TableSkeletonRows columns={6} rows={5} columnWidths={['25%', '25%', '15%', '15%', '10%', '10%']} />
+                  <TableSkeletonRows columns={6} rows={5} columnWidths={['25%', '25%', '15%', '15%', '10%', '10%']} ariaLabel="Loading offices directory…" />
                 ) : adminOffices.map((office) => {
                   const statusMeta = getOfficeDirectoryStatusMeta(office);
                   return (

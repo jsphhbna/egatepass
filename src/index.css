@@ -398,6 +398,30 @@ button:active,
   .animate-spin {
     animation-duration: 2s !important;
   }
+  .animate-shimmer {
+    animation: none !important;
+    background-position: 0 0 !important;
+  }
+  .animate-progress-indeterminate {
+    animation: none !important;
+    left: 20% !important;
+    width: 60% !important;
+  }
+  .animate-pulse-dot {
+    animation: none !important;
+    opacity: 0.8 !important;
+    transform: none !important;
+  }
+  .animate-scan-line {
+    animation: none !important;
+    opacity: 0.5 !important;
+    top: 50% !important;
+  }
+  .animate-radar-ping {
+    animation: none !important;
+    opacity: 0.4 !important;
+    transform: none !important;
+  }
 }
 
 /* Suppress Edge/IE native password reveal controls only for inputs with custom eye toggles */

@@ -326,12 +326,7 @@ export function AdminEmergency() {
           </DataTableHead>
           <tbody className="divide-y border-[var(--color-border)]">
             {initialLoading && passes === null ? (
-              <>
-                <tr className="sr-only">
-                  <td colSpan={5} role="status" aria-live="polite">Loading evacuation list…</td>
-                </tr>
-                <TableSkeletonRows columns={5} rows={8} columnWidths={['35%', '20%', '20%', '15%', '10%']} />
-              </>
+              <TableSkeletonRows columns={5} rows={8} columnWidths={['35%', '20%', '20%', '15%', '10%']} ariaLabel="Loading evacuation list…" />
             ) : filteredPasses.length === 0 ? (
               <tr>
                 <td colSpan={5} className="py-8 text-center text-[var(--color-text-muted)]">

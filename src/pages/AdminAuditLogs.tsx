@@ -20,8 +20,8 @@ import {
 
 type AuditTab = 'visitor' | 'administrative' | 'reconciliation';
 
-function LoadingRow({ columns, rows = 8 }: { label?: string; columns: number; rows?: number }) {
-  return <TableSkeletonRows columns={columns} rows={rows} />;
+function LoadingRow({ label, columns, rows = 8 }: { label?: string; columns: number; rows?: number }) {
+  return <TableSkeletonRows columns={columns} rows={rows} ariaLabel={label || 'Loading audit logs…'} />;
 }
 
 function EmptyRow({ message, columns }: { message: string; columns: number }) {

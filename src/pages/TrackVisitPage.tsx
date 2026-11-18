@@ -17,7 +17,7 @@ import {
   Shield,
   Search,
 } from 'lucide-react';
-import { Button, Card, Input } from '@/components/ui';
+import { Button, Card, Input, ProgressBar } from '@/components/ui';
 
 interface TrackingData {
   approvalStatus: 'pending' | 'approved' | 'rejected';
@@ -290,11 +290,19 @@ export function TrackVisitPage() {
 
         {/* Loading State */}
         {loading && !data && (
-          <div className="py-16 text-center space-y-3" role="status" aria-live="polite">
-            <div className="mx-auto h-10 w-10 animate-spin rounded-full border-3 border-amber-200 border-t-[#700f14]" />
-            <p className="text-sm font-semibold text-slate-700">Looking up visit request…</p>
-            <p className="text-xs text-slate-500">Checking campus office registry</p>
-          </div>
+          <Card className="p-8 shadow-sm border-[var(--color-border)] mb-6" role="status" aria-live="polite">
+            <div className="space-y-4 max-w-sm mx-auto text-center">
+              <div className="relative mx-auto flex h-14 w-14 items-center justify-center">
+                <span className="absolute -inset-1.5 rounded-full bg-[var(--color-brand)]/10 animate-pulse" aria-hidden="true" />
+                <img src="/earist-logo.png" alt="EARIST seal" className="relative h-12 w-12 object-contain" />
+              </div>
+              <div className="space-y-1">
+                <p className="text-base font-bold text-[var(--color-text-primary)]">Looking up visit request…</p>
+                <p className="text-xs text-[var(--color-text-secondary)]">Checking campus office registry</p>
+              </div>
+              <ProgressBar indeterminate variant="brand" size="sm" />
+            </div>
+          </Card>
         )}
 
         {/* Error State */}

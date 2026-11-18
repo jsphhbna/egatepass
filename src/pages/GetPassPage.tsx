@@ -558,6 +558,7 @@ export function GetPassPage() {
   const [submitError, setSubmitError] = useState<string | null>(null);
   const isSubmittingPassRef = useRef(false);
   const [isSubmittingPass, setIsSubmittingPass] = useState(false);
+  const [passGeneratingPhase, setPassGeneratingPhase] = useState('Securing visitor registration…');
   const isCheckingReturningCandidateRef = useRef(false);
   type RegistrationConfigState = 'loading' | 'ready' | 'error';
   const [configState, setConfigState] = useState<RegistrationConfigState>('loading');
@@ -2268,6 +2269,7 @@ export function GetPassPage() {
 
     isSubmittingPassRef.current = true;
     setIsSubmittingPass(true);
+    setPassGeneratingPhase('Securing visitor registration…');
     setStep('generating');
     setSubmitError(null);
 
@@ -2368,6 +2370,7 @@ export function GetPassPage() {
           ? formatValidityWindow(issued.validFrom, issued.validUntil)
           : formatWorkingHours(workingHours);
 
+        setPassGeneratingPhase('Generating secure QR presentation…');
         let qrUrl: string | null = null;
         try {
           qrUrl = await generateBrandedQrDataUrl(issued.qrToken, { size: 360 });
@@ -2487,6 +2490,7 @@ export function GetPassPage() {
         formData.emailVerificationToken = emailVerificationToken;
       }
 
+      setPassGeneratingPhase('Verifying pass details & issuing credentials…');
       const result = await issueVisitorPass('portal', formData, photoBlob, idBlob, issueRequestId.current, undefined, portalTransactionRef.current, vehiclePhotoBlob);
 
       if (result.approvalRequired) {
@@ -5606,7 +5610,7 @@ export function GetPassPage() {
                     <h3 className="text-lg font-bold text-[var(--color-text-primary)]">Issuing Official E-GatePass…</h3>
                     <p className="text-xs text-[var(--color-text-secondary)]">Securing your pass record and generating QR token.</p>
                   </div>
-                  <ProgressBar indeterminate variant="brand" size="md" phase="Generating Cryptographic Token…" />
+                  <ProgressBar indeterminate variant="brand" size="md" phase={passGeneratingPhase} />
                 </div>
               )}
             </div>

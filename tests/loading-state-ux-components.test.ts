@@ -12,6 +12,7 @@ import {
   SyncDots,
   FullPageLoadingScreen,
   TerminalBootLoader,
+  LoadingState,
 } from '../src/components/ui';
 
 describe('Loading State UX Component Suite & Design Token Invariants', () => {
@@ -120,6 +121,31 @@ describe('Loading State UX Component Suite & Design Token Invariants', () => {
       expect((firstRowSkeletons[1] as HTMLElement).style.width).toBe('30%');
       expect((firstRowSkeletons[2] as HTMLElement).style.width).toBe('20%');
     });
+
+    it('renders accessible screen-reader announcement row when ariaLabel is provided', async () => {
+      await act(async () => {
+        root!.render(
+          createElement(
+            'table',
+            null,
+            createElement(
+              'tbody',
+              null,
+              createElement(TableSkeletonRows, {
+                columns: 4,
+                rows: 2,
+                ariaLabel: 'Loading evacuation list…',
+              })
+            )
+          )
+        );
+      });
+      const announcementCell = container!.querySelector('tr.sr-only td[role="status"]');
+      expect(announcementCell).not.toBeNull();
+      expect(announcementCell!.getAttribute('aria-live')).toBe('polite');
+      expect(announcementCell!.getAttribute('colspan')).toBe('4');
+      expect(announcementCell!.textContent).toBe('Loading evacuation list…');
+    });
   });
 
   // --------------------------------------------------------------------------
@@ -186,6 +212,20 @@ describe('Loading State UX Component Suite & Design Token Invariants', () => {
       const animatedIndicator = container!.querySelector('.animate-progress-indeterminate');
       expect(animatedIndicator).not.toBeNull();
     });
+
+    it('safely handles NaN and non-finite value props without crashing or emitting NaN attributes', async () => {
+      await act(async () => {
+        root!.render(
+          createElement(ProgressBar, {
+            value: Number.NaN,
+            label: 'Calculating',
+          })
+        );
+      });
+      const bar = container!.querySelector('[role="progressbar"]');
+      expect(bar).not.toBeNull();
+      expect(bar!.getAttribute('aria-valuenow')).toBe('0');
+    });
   });
 
   // --------------------------------------------------------------------------
@@ -206,6 +246,15 @@ describe('Loading State UX Component Suite & Design Token Invariants', () => {
       expect((dots[0] as HTMLElement).style.animationDelay).toBe('0ms');
       expect((dots[1] as HTMLElement).style.animationDelay).toBe('200ms');
       expect((dots[2] as HTMLElement).style.animationDelay).toBe('400ms');
+    });
+
+    it('provides accessible aria-label="Syncing…" fallback when text label is omitted', async () => {
+      await act(async () => {
+        root!.render(createElement(SyncDots, { size: 'xs', color: 'brand' }));
+      });
+      const statusContainer = container!.querySelector('[role="status"]');
+      expect(statusContainer).not.toBeNull();
+      expect(statusContainer!.getAttribute('aria-label')).toBe('Syncing…');
     });
   });
 
@@ -241,6 +290,22 @@ describe('Loading State UX Component Suite & Design Token Invariants', () => {
       expect(container!.textContent).toContain('OCR Engine');
       expect(container!.textContent).toContain('Checking');
     });
+
+    it('renders unified LoadingState with EARIST seal, ProgressBar, and status role', async () => {
+      await act(async () => {
+        root!.render(createElement(LoadingState, { label: 'Checking reset link...' }));
+      });
+      const el = container!.querySelector('[role="status"]');
+      expect(el).not.toBeNull();
+      expect(el!.getAttribute('aria-live')).toBe('polite');
+      expect(container!.textContent).toContain('Checking reset link...');
+
+      const logo = container!.querySelector('img[src="/earist-logo.png"]');
+      expect(logo).not.toBeNull();
+
+      const bar = container!.querySelector('[role="progressbar"]');
+      expect(bar).not.toBeNull();
+    });
   });
 
   // --------------------------------------------------------------------------
@@ -273,6 +338,15 @@ describe('Loading State UX Component Suite & Design Token Invariants', () => {
     it('defines @keyframes radar-ping and .animate-radar-ping', () => {
       expect(css).toContain('@keyframes radar-ping');
       expect(css).toContain('.animate-radar-ping');
+    });
+
+    it('enforces graceful motion reduction rules for all animation utilities under prefers-reduced-motion', () => {
+      expect(css).toContain('@media (prefers-reduced-motion: reduce)');
+      expect(css).toMatch(/\.animate-shimmer\s*\{[^}]*animation:\s*none\s*!important/);
+      expect(css).toMatch(/\.animate-progress-indeterminate\s*\{[^}]*animation:\s*none\s*!important/);
+      expect(css).toMatch(/\.animate-pulse-dot\s*\{[^}]*animation:\s*none\s*!important/);
+      expect(css).toMatch(/\.animate-scan-line\s*\{[^}]*animation:\s*none\s*!important/);
+      expect(css).toMatch(/\.animate-radar-ping\s*\{[^}]*animation:\s*none\s*!important/);
     });
   });
 });

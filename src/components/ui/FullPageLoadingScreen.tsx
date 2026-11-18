@@ -1,3 +1,4 @@
+import type { HTMLAttributes } from 'react';
 import { ProgressBar } from './ProgressBar';
 import { SyncDots } from './SyncDots';
 
@@ -6,7 +7,8 @@ export interface BootChecklistItem {
   status: 'pending' | 'loading' | 'ready' | 'error';
 }
 
-export interface FullPageLoadingScreenProps {
+export interface FullPageLoadingScreenProps extends HTMLAttributes<HTMLElement> {
+  id?: string;
   title?: string;
   subtitle?: string;
   terminalName?: string;
@@ -17,6 +19,7 @@ export interface FullPageLoadingScreenProps {
 }
 
 export function FullPageLoadingScreen({
+  id,
   title = 'EARIST E-GatePass',
   subtitle = 'Smart QR Code-Based Visitor Management System',
   terminalName,
@@ -24,13 +27,16 @@ export function FullPageLoadingScreen({
   version = 'Institutional Build',
   checklist,
   className = '',
+  ...props
 }: FullPageLoadingScreenProps) {
   return (
     <main
+      id={id}
       role="status"
       aria-live="polite"
       aria-label={`${title} - ${terminalName ? `${terminalName} - ` : ''}${statusText}`}
       className={`flex min-h-dvh flex-col items-center justify-center bg-[var(--color-canvas)] px-4 py-12 select-none ${className}`.trim()}
+      {...props}
     >
       <div className="w-full max-w-md flex flex-col items-center text-center">
         {/* Institutional Branding */}

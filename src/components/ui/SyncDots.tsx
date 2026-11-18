@@ -2,6 +2,7 @@ import type { HTMLAttributes } from 'react';
 
 export interface SyncDotsProps extends HTMLAttributes<HTMLDivElement> {
   label?: string;
+  ariaLabel?: string;
   size?: 'xs' | 'sm' | 'md';
   color?: 'brand' | 'emerald' | 'amber' | 'neutral' | 'white';
   className?: string;
@@ -9,6 +10,7 @@ export interface SyncDotsProps extends HTMLAttributes<HTMLDivElement> {
 
 export function SyncDots({
   label,
+  ariaLabel,
   size = 'sm',
   color = 'brand',
   className = '',
@@ -32,6 +34,7 @@ export function SyncDots({
     <div
       role="status"
       aria-live="polite"
+      aria-label={label ? undefined : ariaLabel || 'Syncing…'}
       className={`inline-flex items-center gap-2 ${className}`.trim()}
       {...props}
     >

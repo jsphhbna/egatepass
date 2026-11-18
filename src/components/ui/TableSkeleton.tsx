@@ -14,13 +14,22 @@ export function TableSkeletonRows({
   columns = 6,
   rows = 8,
   columnWidths,
+  ariaLabel,
 }: {
   columns?: number;
   rows?: number;
   columnWidths?: (string | number)[];
+  ariaLabel?: string;
 }) {
   return (
     <>
+      {ariaLabel && (
+        <tr className="sr-only">
+          <td colSpan={columns} role="status" aria-live="polite">
+            {ariaLabel}
+          </td>
+        </tr>
+      )}
       {Array.from({ length: rows }).map((_, rowIndex) => (
         <tr
           key={rowIndex}

@@ -22,7 +22,8 @@ export function ProgressBar({
   className = '',
   ...props
 }: ProgressBarProps) {
-  const clampedValue = Math.min(100, Math.max(0, Math.round(value)));
+  const numericValue = Number.isFinite(value) ? value : 0;
+  const clampedValue = Math.min(100, Math.max(0, Math.round(numericValue)));
 
   const sizeClasses = {
     xs: 'h-1',
