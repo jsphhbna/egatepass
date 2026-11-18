@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { AlertTriangle } from 'lucide-react';
-import { Modal, Button } from './ui';
+import { Modal, Button, ProgressBar } from './ui';
 
 interface TimedSkipWarningModalProps {
   isOpen: boolean;
@@ -66,6 +66,17 @@ export function TimedSkipWarningModal({
             If you lose this page, you may need to register again.
           </p>
         </div>
+
+        {countdown > 0 && (
+          <div className="w-full mb-4">
+            <ProgressBar
+              value={((5 - countdown) / 5) * 100}
+              variant="warning"
+              size="xs"
+              label="Safety pause"
+            />
+          </div>
+        )}
 
         <div className="sr-only" aria-live="polite">
           {countdown > 0 ? `Please wait ${countdown} seconds before continuing without an email.` : 'You can now choose to continue without an email.'}

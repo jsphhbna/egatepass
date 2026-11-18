@@ -18,7 +18,7 @@ import {
   ShieldAlert,
 } from 'lucide-react';
 import { toast } from 'sonner';
-import { Button, Card, Input, Select, ConfirmModal, LoadingState, Modal, FormField } from '@/components/ui';
+import { Button, Card, Input, Select, ConfirmModal, Modal, FormField, Skeleton } from '@/components/ui';
 import { CampusCalendar } from '@/components/CampusCalendar';
 import { PasswordResetCard } from '@/components/ChangePasswordCard';
 import { AccountMfaCard } from '@/components/auth/AccountMfaCard';
@@ -688,7 +688,43 @@ export function AdminSettings() {
   }
 
   if (loading) {
-    return <LoadingState label="Loading system settings" className="h-32" />;
+    return (
+      <div className="mx-auto max-w-6xl space-y-6" role="status" aria-label="Loading system settings" aria-busy="true">
+        <div className="space-y-2">
+          <Skeleton className="h-8 w-48" />
+          <Skeleton className="h-4 w-96 max-w-full" />
+        </div>
+        <div className="flex gap-2 border-b border-[var(--color-border)] pb-2">
+          <Skeleton className="h-9 w-28 rounded-lg" />
+          <Skeleton className="h-9 w-32 rounded-lg" />
+          <Skeleton className="h-9 w-28 rounded-lg" />
+          <Skeleton className="h-9 w-36 rounded-lg" />
+        </div>
+        <div className="grid gap-6">
+          <Card className="p-6 space-y-6">
+            <div className="space-y-2">
+              <Skeleton className="h-5 w-44" />
+              <Skeleton className="h-3.5 w-72 max-w-full" />
+            </div>
+            <div className="grid gap-4 sm:grid-cols-2">
+              <div className="space-y-2">
+                <Skeleton className="h-3 w-28" />
+                <Skeleton className="h-10 w-full rounded-md" />
+              </div>
+              <div className="space-y-2">
+                <Skeleton className="h-3 w-32" />
+                <Skeleton className="h-10 w-full rounded-md" />
+              </div>
+            </div>
+            <div className="space-y-3 pt-2">
+              <Skeleton className="h-4 w-40" />
+              <Skeleton className="h-12 w-full rounded-md" />
+              <Skeleton className="h-12 w-full rounded-md" />
+            </div>
+          </Card>
+        </div>
+      </div>
+    );
   }
 
   if (loadError) {

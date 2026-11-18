@@ -5,7 +5,6 @@ import { AuthProvider, useAuth } from '@/hooks/useAuth';
 import { ProtectedRoute } from '@/components/ProtectedRoute';
 import { LandingPage } from '@/pages/LandingPage';
 import { OfflineBanner } from '@/components/OfflineBanner';
-import { LoadingState } from '@/components/ui';
 import { PrivacyModal } from '@/components/PrivacyModal';
 import { HumanInactivityGuard } from '@/components/HumanInactivityGuard';
 
@@ -39,12 +38,20 @@ const NotFoundPage = lazy(() => import('@/pages/NotFoundPage').then((module) => 
 function GetPassLoadingFallback() {
   return (
     <main id="main-content" className="flex min-h-[60vh] flex-col items-center justify-center bg-[var(--color-canvas)] px-4 py-16" role="status" aria-live="polite">
-      <div className="flex flex-col items-center text-center">
-        <img src="/earist-logo.png" alt="EARIST seal" className="h-12 w-12 object-contain" />
-        <span className="mt-3 text-lg font-black tracking-tight text-[#700f14]">E-GatePass</span>
-        <div className="mt-6 flex items-center gap-2.5 text-sm font-semibold text-[var(--color-text-secondary)]">
-          <div className="h-4 w-4 animate-spin rounded-full border-2 border-[var(--color-border)] border-t-[var(--color-brand)]" aria-hidden="true" />
-          <span>Opening visitor registration…</span>
+      <div className="flex flex-col items-center text-center max-w-sm w-full">
+        <div className="relative mb-2 flex items-center justify-center">
+          <div className="absolute -inset-1.5 rounded-full bg-[var(--color-brand)]/10 animate-pulse" aria-hidden="true" />
+          <img src="/earist-logo.png" alt="EARIST seal" className="relative h-14 w-14 object-contain" />
+        </div>
+        <span className="mt-2 text-xl font-black tracking-tight text-[#700f14]">E-GatePass</span>
+        <div className="mt-5 w-44 space-y-2">
+          <div className="relative h-1 w-full overflow-hidden rounded-full bg-[var(--color-border)]/60">
+            <div className="absolute inset-y-0 w-1/2 rounded-full bg-[var(--color-brand)] animate-progress-indeterminate" />
+          </div>
+          <div className="flex items-center justify-center gap-2 text-xs font-semibold text-[var(--color-text-secondary)]">
+            <div className="h-3 w-3 animate-spin rounded-full border-2 border-[var(--color-border)] border-t-[var(--color-brand)]" aria-hidden="true" />
+            <span>Opening visitor registration…</span>
+          </div>
         </div>
       </div>
     </main>
@@ -53,8 +60,17 @@ function GetPassLoadingFallback() {
 
 function RouteLoadingFallback() {
   return (
-    <main id="main-content" className="min-h-[40vh] bg-[var(--color-canvas)]">
-      <LoadingState label="Loading page..." className="min-h-[40vh]" />
+    <main id="main-content" className="flex min-h-[50vh] flex-col items-center justify-center bg-[var(--color-canvas)] px-4" role="status" aria-live="polite">
+      <div className="w-full max-w-xs space-y-3 text-center">
+        <div className="relative mx-auto flex h-12 w-12 items-center justify-center">
+          <span className="absolute -inset-1.5 rounded-full bg-[var(--color-brand)]/10 animate-pulse" aria-hidden="true" />
+          <img src="/earist-logo.png" alt="EARIST seal" className="relative h-10 w-10 object-contain" />
+        </div>
+        <div className="relative h-1 w-full overflow-hidden rounded-full bg-[var(--color-border)]">
+          <div className="absolute inset-y-0 w-1/2 rounded-full bg-[var(--color-brand)] animate-progress-indeterminate" />
+        </div>
+        <p className="text-xs font-semibold text-[var(--color-text-secondary)]">Loading page…</p>
+      </div>
     </main>
   );
 }

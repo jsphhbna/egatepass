@@ -2,7 +2,7 @@ import { formatManilaDateTime, formatManilaIso, formatManilaFileTimestamp } from
 import { useState, useEffect } from 'react';
 import { ClipboardList, Download, ShieldCheck } from 'lucide-react';
 import { toast } from 'sonner';
-import { Button, DataTable, DataTableHead, DataTableRow, DataTableCell, Input, Select, Modal, Textarea, FormField } from '@/components/ui';
+import { Button, DataTable, DataTableHead, DataTableRow, DataTableCell, Input, Select, Modal, Textarea, FormField, TableSkeletonRows } from '@/components/ui';
 import { useAuth } from '@/hooks/useAuth';
 import { isSuperAdmin } from '@/lib/permissions';
 import { getAccessToken } from '@/services/auth';
@@ -20,14 +20,8 @@ import {
 
 type AuditTab = 'visitor' | 'administrative' | 'reconciliation';
 
-function LoadingRow({ label, columns }: { label: string; columns: number }) {
-  return (
-    <tr>
-      <td colSpan={columns} className="py-12 text-center">
-        <div className="mx-auto h-8 w-8 animate-spin rounded-full border-4 border-[var(--color-border)] border-t-[var(--color-brand)]" role="status" aria-label={label} />
-      </td>
-    </tr>
-  );
+function LoadingRow({ columns, rows = 8 }: { label?: string; columns: number; rows?: number }) {
+  return <TableSkeletonRows columns={columns} rows={rows} />;
 }
 
 function EmptyRow({ message, columns }: { message: string; columns: number }) {

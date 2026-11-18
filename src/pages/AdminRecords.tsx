@@ -4,7 +4,7 @@ import { getActiveIncidentHoldsForRecord, createIncidentHold, releaseIncidentHol
 import { AlertTriangle, ClipboardCheck, Download, Eye, MapPin, Printer, ShieldAlert, ShieldCheck, RefreshCw } from 'lucide-react';
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { useSearchParams } from 'react-router-dom';
-import { Card, Input, Select, Button, DataTable, DataTableHead, DataTableRow, DataTableCell, Modal, StatusBadge } from '@/components/ui';
+import { Card, Input, Select, Button, DataTable, DataTableHead, DataTableRow, DataTableCell, Modal, StatusBadge, TableSkeletonRows } from '@/components/ui';
 import { AuthenticatedImage } from '@/components/AuthenticatedImage';
 import type { GatePass, PassSource, PassStatus } from '@/types';
 import { toast } from 'sonner';
@@ -1208,11 +1208,7 @@ export function AdminRecords() {
           </DataTableHead>
           <tbody className="divide-y border-[var(--color-border)] print:divide-black/20">
             {loading ? (
-              <tr className="print:hidden">
-                <td colSpan={6} className="py-12 text-center">
-                  <div className="mx-auto h-8 w-8 animate-spin rounded-full border-4 border-[var(--color-border)] border-t-[var(--color-brand)]" role="status" aria-label="Loading visitor records" />
-                </td>
-              </tr>
+              <TableSkeletonRows columns={6} rows={8} columnWidths={['30%', '15%', '15%', '15%', '15%', '10%']} />
             ) : recordsError ? (
               <tr>
                 <td colSpan={6} className="py-8 text-center">

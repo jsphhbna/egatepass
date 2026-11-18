@@ -266,7 +266,12 @@ export function EntryScanPage() {
     ready: { bg: 'var(--color-brand-dark)', icon: <QrCode className="h-8 w-8 text-white" /> },
     processing: {
       bg: 'var(--color-warning)',
-      icon: <div className="h-8 w-8 animate-spin rounded-full border-3 border-white border-t-transparent" />,
+      icon: (
+        <div className="relative flex items-center justify-center h-8 w-8" role="status" aria-label="Verifying Pass">
+          <span className="absolute h-8 w-8 rounded-full bg-white/40 animate-radar-ping" />
+          <span className="relative h-4 w-4 rounded-full bg-white" />
+        </div>
+      ),
     },
     granted: { bg: 'var(--color-success)', icon: <CheckCircle2 className="h-8 w-8 text-white" /> },
     pending: { bg: 'var(--color-warning-dark)', icon: <Clock3 className="h-8 w-8 text-white" /> },
@@ -366,10 +371,19 @@ export function EntryScanPage() {
         {cameraState !== 'active' && (
           <div className="absolute inset-0 z-20 flex flex-col items-center justify-center bg-black/90 p-4 text-center text-white space-y-3">
             {cameraState === 'starting' ? (
-              <>
-                <div className="h-8 w-8 animate-spin rounded-full border-2 border-white/20 border-t-white" />
-                <p className="text-sm font-medium">Starting camera...</p>
-              </>
+              <div className="flex flex-col items-center justify-center space-y-3">
+                <div className="relative h-20 w-20 rounded-lg border-2 border-dashed border-white/40 flex items-center justify-center">
+                  <div className="absolute top-0 left-0 h-3 w-3 border-t-2 border-l-2 border-amber-400" />
+                  <div className="absolute top-0 right-0 h-3 w-3 border-t-2 border-r-2 border-amber-400" />
+                  <div className="absolute bottom-0 left-0 h-3 w-3 border-b-2 border-l-2 border-amber-400" />
+                  <div className="absolute bottom-0 right-0 h-3 w-3 border-b-2 border-r-2 border-amber-400" />
+                  <span className="h-3 w-3 rounded-full bg-amber-400 animate-ping" />
+                </div>
+                <div className="flex items-center gap-2">
+                  <div className="h-4 w-4 animate-spin rounded-full border-2 border-white/20 border-t-white" />
+                  <p className="text-sm font-medium">Starting camera...</p>
+                </div>
+              </div>
             ) : (
               <>
                 <AlertCircle className="h-8 w-8 text-amber-400" />

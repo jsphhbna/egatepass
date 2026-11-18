@@ -1,11 +1,10 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { getAccessToken } from '@/services/auth';
 import { formatManilaDateTime, formatManilaTime } from '@/lib/manilaTime';
-import { Button, Card, Input, Select, DataTable, DataTableHead, DataTableRow, DataTableCell, StatusBadge } from '@/components/ui';
+import { Button, Card, Input, Select, DataTable, DataTableHead, DataTableRow, DataTableCell, StatusBadge, TableSkeletonRows, SyncDots } from '@/components/ui';
 import {
   AlertTriangle,
   Printer,
-  Loader2,
   RefreshCw,
   AlertCircle,
 } from 'lucide-react';
@@ -177,10 +176,7 @@ export function AdminEmergency() {
               Currently Inside: {currentPasses.length} Visitors
             </p>
             {refreshing ? (
-              <span className="inline-flex items-center gap-1.5 text-[var(--color-brand)] font-medium" role="status" aria-live="polite">
-                <Loader2 className="h-3.5 w-3.5 animate-spin shrink-0" aria-hidden="true" />
-                Refreshing live list…
-              </span>
+              <SyncDots size="xs" color="brand" label="Refreshing live list…" />
             ) : refreshError && lastUpdatedAt ? (
               <span className="text-[var(--color-warning-dark)] font-medium" role="status">
                 Refresh delayed — showing data from {formatManilaTime(lastUpdatedAt)}.
@@ -330,12 +326,12 @@ export function AdminEmergency() {
           </DataTableHead>
           <tbody className="divide-y border-[var(--color-border)]">
             {initialLoading && passes === null ? (
-              <tr>
-                <td colSpan={5} className="py-12 text-center" role="status" aria-live="polite">
-                  <Loader2 className="mx-auto h-8 w-8 animate-spin text-[var(--color-brand)] mb-2" aria-hidden="true" />
-                  <span className="text-sm font-medium text-[var(--color-text-secondary)]">Loading evacuation list…</span>
-                </td>
-              </tr>
+              <>
+                <tr className="sr-only">
+                  <td colSpan={5} role="status" aria-live="polite">Loading evacuation list…</td>
+                </tr>
+                <TableSkeletonRows columns={5} rows={8} columnWidths={['35%', '20%', '20%', '15%', '10%']} />
+              </>
             ) : filteredPasses.length === 0 ? (
               <tr>
                 <td colSpan={5} className="py-8 text-center text-[var(--color-text-muted)]">

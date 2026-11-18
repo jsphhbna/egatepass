@@ -77,7 +77,7 @@ import {
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { VisitorMonthlyCalendar } from '@/components/VisitorMonthlyCalendar';
-import { Button, Card, Input, FormField, Stepper, PageShell } from '@/components/ui';
+import { Button, Card, Input, FormField, Stepper, PageShell, Skeleton, ProgressBar } from '@/components/ui';
 const EmailPassModal = lazy(() => import('@/components/EmailPassModal').then((m) => ({ default: m.EmailPassModal })));
 import { TimedSkipWarningModal } from '@/components/TimedSkipWarningModal';
 import { VisitPurposeField } from '@/components/VisitPurposeField';
@@ -2588,10 +2588,29 @@ export function GetPassPage() {
       )}
 
       {configState === 'loading' && (
-        <div className="py-24 text-center">
-          <Loader2 className="mx-auto h-10 w-10 animate-spin text-[var(--color-brand)]" />
-          <p className="mt-4 text-base font-semibold text-[var(--color-text-primary)]">Preparing visitor registration…</p>
-          <p className="mt-1 text-sm text-[var(--color-text-secondary)]">Loading visit options and campus schedule.</p>
+        <div className="py-16 text-center max-w-2xl mx-auto space-y-6" role="status" aria-live="polite">
+          <div className="flex items-center justify-between gap-2 px-4" aria-hidden="true">
+            {Array.from({ length: 5 }).map((_, i) => (
+              <div key={i} className="flex-1 flex items-center gap-2">
+                <Skeleton variant="circular" className="h-7 w-7 shrink-0" />
+                <Skeleton className="h-2 w-full hidden sm:block" />
+              </div>
+            ))}
+          </div>
+
+          <Card className="p-8 space-y-5">
+            <div className="relative mx-auto flex h-16 w-16 items-center justify-center">
+              <span className="absolute -inset-2 rounded-full bg-[var(--color-brand)]/10 animate-pulse" aria-hidden="true" />
+              <img src="/earist-logo.png" alt="EARIST seal" className="relative h-14 w-14 object-contain" />
+            </div>
+            <div className="space-y-1">
+              <p className="text-base font-semibold text-[var(--color-text-primary)]">Preparing visitor registration…</p>
+              <p className="text-sm text-[var(--color-text-secondary)]">Loading visit options and campus schedule.</p>
+            </div>
+            <div className="mx-auto max-w-xs">
+              <ProgressBar indeterminate variant="brand" size="sm" />
+            </div>
+          </Card>
         </div>
       )}
 
@@ -3966,14 +3985,22 @@ export function GetPassPage() {
               </div>
 
               {isVerifyingIdentity ? (
-                <div className="py-12 text-center space-y-4">
-                  <Loader2 className="mx-auto h-12 w-12 animate-spin text-[var(--color-brand)]" />
-                  <h3 className="font-bold text-base text-[var(--color-text-primary)]">
-                    Verifying Your Identity…
-                  </h3>
-                  <p className="text-xs text-[var(--color-text-secondary)] max-w-xs mx-auto">
-                    Extracting ID portrait and performing biometric comparison. This takes a few seconds.
-                  </p>
+                <div className="py-12 text-center space-y-5" role="status" aria-live="polite">
+                  <div className="relative mx-auto h-28 w-24 rounded-full border-2 border-dashed border-[var(--color-brand)] bg-[var(--color-canvas)] overflow-hidden flex items-center justify-center">
+                    <User className="h-12 w-12 text-[var(--color-text-muted)] opacity-40" />
+                    <div className="absolute inset-x-0 h-0.5 bg-gradient-to-r from-transparent via-red-500 to-transparent shadow-[0_0_8px_rgba(239,68,68,0.8)] animate-scan-line" />
+                  </div>
+                  <div className="space-y-1">
+                    <h3 className="font-bold text-base text-[var(--color-text-primary)]">
+                      Verifying Your Identity…
+                    </h3>
+                    <p className="text-xs text-[var(--color-text-secondary)] max-w-xs mx-auto">
+                      Extracting ID portrait and performing biometric comparison. This takes a few seconds.
+                    </p>
+                  </div>
+                  <div className="max-w-xs mx-auto">
+                    <ProgressBar indeterminate variant="brand" size="sm" />
+                  </div>
                 </div>
               ) : identityVerified ? (
                 <div className="space-y-6 text-center">
@@ -4825,10 +4852,18 @@ export function GetPassPage() {
                 <div className="space-y-4">
                   <div className="mx-auto w-full max-w-sm overflow-hidden rounded-2xl border-2 border-[var(--color-border-strong)] bg-black aspect-[3/4] relative flex items-center justify-center shadow-inner">
                     {isIdentifyingReturning && (
-                      <div className="absolute inset-0 z-20 flex flex-col items-center justify-center bg-black/60 text-white text-xs p-4 text-center">
-                        <Loader2 className="h-7 w-7 animate-spin mb-2 text-[var(--color-brand)]" />
+                      <div className="absolute inset-0 z-20 flex flex-col items-center justify-center bg-black/75 text-white text-xs p-4 text-center">
+                        <div className="relative mb-3 flex items-center justify-center">
+                          <span className="absolute h-14 w-14 rounded-full bg-red-500/30 animate-radar-ping" />
+                          <div className="relative flex h-10 w-10 items-center justify-center rounded-full border border-white/40 bg-black/50">
+                            <span className="h-2.5 w-2.5 rounded-full bg-red-400 animate-ping" />
+                          </div>
+                        </div>
                         <span className="font-semibold text-sm">Verifying facial identity…</span>
-                        <span className="text-xs text-white/80 mt-1">Comparing your selfie with your original registration portrait</span>
+                        <span className="text-xs text-white/80 mt-1 max-w-[220px]">Comparing your selfie with your original registration portrait</span>
+                        <div className="mt-3 w-40">
+                          <ProgressBar indeterminate variant="brand" size="xs" />
+                        </div>
                       </div>
                     )}
                     {returningSelfieUrl && (
@@ -5452,9 +5487,13 @@ export function GetPassPage() {
                       )}
                     </div>
                     {loadingHistoricalId ? (
-                      <div className="rounded-lg border border-[var(--color-border)] aspect-[3/4] max-h-48 bg-slate-50 flex flex-col items-center justify-center text-center p-3 text-xs text-[var(--color-text-secondary)]">
-                        <Loader2 className="w-5 h-5 animate-spin text-[#7A0A0A] mb-2" />
-                        <span>Loading previously submitted ID…</span>
+                      <div className="rounded-lg border border-[var(--color-border)] aspect-[3/4] max-h-48 bg-slate-50 flex flex-col items-center justify-center text-center p-3 text-xs text-[var(--color-text-secondary)] space-y-2">
+                        <Skeleton className="h-14 w-20 rounded-md" />
+                        <div className="space-y-1 w-full max-w-[110px]">
+                          <Skeleton className="h-2 w-full" />
+                          <Skeleton className="h-2 w-2/3 mx-auto" />
+                        </div>
+                        <span className="text-[11px] font-medium text-[var(--color-text-muted)]">Loading previously submitted ID…</span>
                       </div>
                     ) : historicalIdPreview ? (
                       <div className="rounded-lg overflow-hidden border border-[var(--color-border)] aspect-[3/4] max-h-48 bg-slate-100 flex items-center justify-center">
@@ -5558,11 +5597,17 @@ export function GetPassPage() {
                   </Button>
                 </div>
               ) : (
-                <>
-                  <Loader2 className="mx-auto h-12 w-12 animate-spin text-[var(--color-brand)]" />
-                  <h3 className="text-lg font-bold text-[var(--color-text-primary)]">Issuing Official E-GatePass…</h3>
-                  <p className="text-sm text-[var(--color-text-secondary)]">Securing your pass record and generating QR token.</p>
-                </>
+                <div className="space-y-4 max-w-sm mx-auto" role="status" aria-live="polite" aria-label="Generating gate pass">
+                  <div className="relative mx-auto flex h-16 w-16 items-center justify-center">
+                    <span className="absolute -inset-2 rounded-full bg-[var(--color-brand)]/10 animate-pulse" aria-hidden="true" />
+                    <img src="/earist-logo.png" alt="EARIST seal" className="relative h-14 w-14 object-contain" />
+                  </div>
+                  <div className="space-y-1">
+                    <h3 className="text-lg font-bold text-[var(--color-text-primary)]">Issuing Official E-GatePass…</h3>
+                    <p className="text-xs text-[var(--color-text-secondary)]">Securing your pass record and generating QR token.</p>
+                  </div>
+                  <ProgressBar indeterminate variant="brand" size="md" phase="Generating Cryptographic Token…" />
+                </div>
               )}
             </div>
           )}
