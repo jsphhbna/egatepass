@@ -611,17 +611,21 @@ export function computeGenderDistribution(visitors: Record<string, { gender?: st
   return { male, female, total: totalWithGender };
 }
 
-export function maskName(first: string, last: string): string {
-  const maskPart = (str: string) => {
-    if (str.length <= 2) return str;
-    return str[0] + '*'.repeat(str.length - 2) + str[str.length - 1];
-  };
-  return `${maskPart(first)} ${maskPart(last)}`;
+export function maskName(first: string, last: string, middle?: string | null): string {
+  const mInitial = middle && middle.trim().length > 0 ? ` ${middle.trim().charAt(0).toUpperCase()}.` : '';
+  const lastTrimmed = last.trim();
+  const lastMasked = lastTrimmed.length > 1
+    ? `${lastTrimmed.charAt(0).toUpperCase()}${'*'.repeat(Math.min(lastTrimmed.length - 1, 4))}`
+    : lastTrimmed;
+  return `${first.trim()}${mInitial} ${lastMasked}`;
 }
 
 export function maskContact(contact: string): string {
-  if (contact.length < 8) return '****';
-  return contact.slice(0, 4) + '****' + contact.slice(-3);
+  const cleaned = contact.replace(/\s+/g, '');
+  if (cleaned.length >= 10) {
+    return cleaned.slice(0, 4) + '***' + cleaned.slice(-4);
+  }
+  return '***' + cleaned.slice(-4);
 }
 
 export function normalizeSearchTerm(term: string): string {
@@ -1118,7 +1122,7 @@ export async function dispatchRoute(
             if (normMiddle && pMiddle && normMiddle !== pMiddle) continue;
             matches.push({
               profileId: profile.id,
-              maskedName: maskName(profile.first_name, profile.last_name),
+              maskedName: maskName(profile.first_name, profile.last_name, profile.middle_name),
               maskedContact: maskContact(profile.contact_number),
               partialLocality: profile.locality ?? 'Metro Manila',
               gender: profile.gender ?? null,

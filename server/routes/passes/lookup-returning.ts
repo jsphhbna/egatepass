@@ -70,17 +70,19 @@ const lookupSchema = z.object({
 
 function maskContact(contact: string): string {
   const cleaned = contact.replace(/\s+/g, '');
-  if (cleaned.length < 8) return '****';
-  return cleaned.slice(0, 4) + '****' + cleaned.slice(-3);
+  if (cleaned.length >= 10) {
+    return cleaned.slice(0, 4) + '***' + cleaned.slice(-4);
+  }
+  return '***' + cleaned.slice(-4);
 }
 
-function maskName(first: string, _middle: string | null | undefined, last: string): string {
-  const maskPart = (str: string) => {
-    const trimmed = str.trim();
-    if (trimmed.length <= 2) return trimmed;
-    return trimmed[0] + '*'.repeat(trimmed.length - 2) + trimmed[trimmed.length - 1];
-  };
-  return `${maskPart(first)} ${maskPart(last)}`;
+function maskName(first: string, middle: string | null | undefined, last: string): string {
+  const mInitial = middle && middle.trim().length > 0 ? ` ${middle.trim().charAt(0).toUpperCase()}.` : '';
+  const lastTrimmed = last.trim();
+  const lastMasked = lastTrimmed.length > 1
+    ? `${lastTrimmed.charAt(0).toUpperCase()}${'*'.repeat(Math.min(lastTrimmed.length - 1, 4))}`
+    : lastTrimmed;
+  return `${first.trim()}${mInitial} ${lastMasked}`;
 }
 
 async function handleRequest(request: Request): Promise<Response> {

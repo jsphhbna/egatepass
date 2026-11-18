@@ -156,8 +156,8 @@ describe('Tier 4: Real-World Application Scenarios (5 Comprehensive Workflows)',
 
     // 2. Candidate cards display disambiguation information with masked PII
     for (const card of searchRes.body.candidates) {
-      expect(card.maskedName).toBe(maskName('Maria', 'Santos'));
-      expect(card.maskedContact).toContain('****');
+      expect(card.maskedName).toMatch(/^Maria [A-Z]\. S\*{4}$/);
+      expect(card.maskedContact).toContain('***');
       expect(card.partialLocality).toBeDefined();
       expect(card.previewUrl).toContain('/api/passes/returning-photo-preview');
       expect(card.gender).toBe('Female');

@@ -182,8 +182,8 @@ describe('Tier 1: Comprehensive Feature Coverage (30 Tests)', () => {
 
       expect(res.status).toBe(200);
       const candidate = res.body.candidates[0];
-      expect(candidate.maskedName).toBe(maskName('Juan', 'Dela Cruz'));
-      expect(candidate.maskedContact).toContain('****');
+      expect(candidate.maskedName).toBe(maskName('Juan', 'Dela Cruz', 'Santos'));
+      expect(candidate.maskedContact).toContain('***');
     });
 
     it('T1-F2-04: Returning visitor registration flow accepts destination selection for Department visit without phone', async () => {
