@@ -3,7 +3,7 @@ import { useAuth } from '@/hooks/useAuth';
 import { isSuperAdmin } from '@/lib/permissions';
 import { requireSupabase } from '@/lib/supabase';
 import { toast } from 'sonner';
-import { Button, Card } from '@/components/ui';
+import { Button, Card, Skeleton, SyncDots } from '@/components/ui';
 import {
   Printer,
   Save,
@@ -18,7 +18,6 @@ import {
   Sliders,
   Type,
   Maximize2,
-  Loader2,
 } from 'lucide-react';
 import type {
   ThermalTemplateLayout,
@@ -370,9 +369,22 @@ export function AdminPrintTemplatesPage() {
       </div>
 
       {loading ? (
-        <Card className="p-12 text-center text-sm text-[var(--color-text-secondary)] flex flex-col items-center justify-center gap-2">
-          <Loader2 className="h-6 w-6 animate-spin text-[#800000]" />
-          <span>Loading thermal print templates…</span>
+        <Card className="p-8 border border-[var(--color-border)] shadow-sm" role="status" aria-label="Loading thermal print templates…" aria-busy="true">
+          <div className="max-w-md mx-auto space-y-4">
+            <div className="flex items-center justify-between border-b border-[var(--color-border)] pb-3">
+              <Skeleton className="h-6 w-48" />
+              <Skeleton className="h-6 w-20 rounded-full" />
+            </div>
+            <div className="space-y-3 pt-2">
+              <Skeleton className="h-4 w-3/4" />
+              <Skeleton className="h-4 w-5/6" />
+              <Skeleton className="h-28 w-full rounded-lg" />
+            </div>
+            <div className="flex items-center justify-center gap-2 pt-2 text-xs text-[var(--color-text-secondary)] font-medium">
+              <SyncDots size="xs" color="brand" />
+              <span>Loading thermal print templates…</span>
+            </div>
+          </div>
         </Card>
       ) : !hasLoadedCanonical && loadError ? (
         <Card className="p-12 text-center text-sm text-[var(--color-text-secondary)] flex flex-col items-center justify-center gap-4">

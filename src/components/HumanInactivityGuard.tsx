@@ -5,7 +5,7 @@ import { toast } from 'sonner';
 import { useAuth } from '@/hooks/useAuth';
 import { supabase } from '@/lib/supabase';
 import type { AuthActor, AuthRole, AuthState } from '@/types';
-import { Button, Modal } from '@/components/ui';
+import { Button, Modal, ProgressBar } from '@/components/ui';
 
 export const HUMAN_IDLE_TIMEOUT_MS = 15 * 60 * 1000; // 15 minutes
 export const HUMAN_IDLE_WARNING_MS = 60 * 1000; // Final 60s countdown
@@ -302,7 +302,7 @@ export function HumanInactivityGuard() {
       <div className="space-y-5">
         <div className="flex items-start gap-3 rounded-xl border border-[var(--color-warning)] bg-[var(--color-warning-light)] p-4">
           <ShieldAlert className="mt-0.5 h-5 w-5 shrink-0 text-[var(--color-warning-dark)]" />
-          <div className="space-y-1 text-sm text-[var(--color-text-primary)]">
+          <div className="space-y-1 text-sm text-[var(--color-text-primary)] w-full">
             <p className="font-semibold">Are you still working?</p>
             <p className="text-[var(--color-text-secondary)]">
               For campus workstation security, your human staff session will automatically sign out in{' '}
@@ -312,6 +312,13 @@ export function HumanInactivityGuard() {
               </span>
               .
             </p>
+            <div className="pt-2">
+              <ProgressBar
+                value={Math.max(0, Math.min(100, (remainingSeconds / 60) * 100))}
+                variant={remainingSeconds <= 15 ? 'danger' : 'warning'}
+                size="sm"
+              />
+            </div>
           </div>
         </div>
 

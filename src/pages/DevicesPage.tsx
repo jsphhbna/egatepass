@@ -7,7 +7,7 @@ import { toast } from 'sonner';
 import { useForm } from 'react-hook-form';
 import { z } from 'zod';
 import { zodResolver } from '@hookform/resolvers/zod';
-import { Button, Card, FormField, Input, Select, StatusBadge, Modal, ConfirmModal, LoadingState } from '@/components/ui';
+import { Button, Card, FormField, Input, Select, StatusBadge, Modal, ConfirmModal, CardGridSkeleton } from '@/components/ui';
 import { isSuperAdmin } from '@/lib/permissions';
 import { getPasswordPolicyError, PASSWORD_MIN_LENGTH, PASSWORD_POLICY_HELPER_TEXT, passwordSchema } from '@/lib/passwordPolicy';
 import { getAccessToken } from '@/services/auth';
@@ -664,7 +664,7 @@ export function DevicesPage() {
 
       {/* Device List */}
       {loading ? (
-        <LoadingState label="Loading devices..." className="py-16" />
+        <CardGridSkeleton count={6} columnsClassName="sm:grid-cols-2 lg:grid-cols-3" variant="device" ariaLabel="Loading devices..." />
       ) : filteredDevices.length === 0 ? (
         <div className="flex flex-col items-center justify-center rounded-xl border-2 border-dashed border-[var(--color-border)] py-16">
           <Tablet className="mb-3 h-10 w-10 text-[var(--color-text-muted)]" />

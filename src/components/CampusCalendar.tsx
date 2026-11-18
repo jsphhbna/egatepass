@@ -17,7 +17,7 @@ import {
   format,
   startOfWeek,
 } from 'date-fns';
-import { Button, Card, ConfirmModal, FormField, Input, LoadingState, Modal, Select } from '@/components/ui';
+import { Button, Card, ConfirmModal, FormField, Input, Modal, Select, Skeleton } from '@/components/ui';
 import { getAccessToken } from '@/services/auth';
 import { getManilaDateParts } from '@/lib/manilaTime';
 import { isDateInClosure, type CalendarClosureType, type CampusCalendarClosure } from '@/types';
@@ -471,7 +471,32 @@ export function CampusCalendar({ canEdit }: CampusCalendarProps) {
         </div>
 
         {loading ? (
-          <LoadingState label="Loading campus calendar..." className="py-12" />
+          <div
+            className="mt-4 grid grid-cols-7 gap-1"
+            role="status"
+            aria-label="Loading campus calendar..."
+            aria-busy="true"
+          >
+            {['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].map((d) => (
+              <div
+                key={d}
+                className="py-1 text-center text-[11px] font-bold uppercase tracking-wide text-[var(--color-text-muted)]"
+              >
+                {d}
+              </div>
+            ))}
+            {Array.from({ length: 35 }).map((_, i) => (
+              <div
+                key={i}
+                className="flex min-h-24 flex-col rounded-lg border border-[var(--color-border)]/50 bg-[var(--color-canvas)]/40 p-2 space-y-2"
+                aria-hidden="true"
+              >
+                <Skeleton className="h-4 w-6 rounded-sm" />
+                {i % 4 === 1 && <Skeleton className="h-4 w-full rounded-sm" />}
+                {i % 7 === 3 && <Skeleton className="h-4 w-3/4 rounded-sm" />}
+              </div>
+            ))}
+          </div>
         ) : loadError ? (
           <div className="mt-4 rounded-xl border border-[var(--color-danger)] bg-[var(--color-danger-light)] p-4 text-xs text-[var(--color-danger-dark)]">
             {loadError}

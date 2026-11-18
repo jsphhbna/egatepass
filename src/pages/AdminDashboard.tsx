@@ -17,7 +17,6 @@ import {
 import {
   AlertCircle,
   AlertTriangle,
-  Loader2,
   ArrowLeftCircle,
   ArrowRightCircle,
   Calendar,
@@ -28,7 +27,7 @@ import {
   Sparkles,
   Users,
 } from 'lucide-react';
-import { Button, Card, Input, Select, Skeleton, StatCard, StatusBadge } from '@/components/ui';
+import { Button, Card, Input, Select, Skeleton, StatCard, StatusBadge, SyncDots } from '@/components/ui';
 import {
   DashboardExportActions,
   type DashboardExportTruncationInfo,
@@ -214,10 +213,7 @@ export function AdminDashboard() {
         <div className="flex flex-wrap items-center gap-3">
           <div className="flex items-center gap-2 text-xs font-medium" role="status" aria-live="polite">
             {dashboard.refreshing ? (
-              <span className="flex items-center gap-1.5 text-[var(--color-text-secondary)]">
-                <Loader2 className="h-3.5 w-3.5 animate-spin text-[var(--color-brand)] shrink-0" aria-hidden="true" />
-                Updating…
-              </span>
+              <SyncDots size="xs" color="brand" label="Updating…" />
             ) : dashboard.refreshError && dashboard.updatedAt ? (
               <span className="flex items-center gap-1.5 text-amber-700 font-semibold bg-amber-50 border border-amber-200 rounded px-2 py-0.5">
                 <AlertCircle className="h-3.5 w-3.5 text-amber-600 shrink-0" aria-hidden="true" />

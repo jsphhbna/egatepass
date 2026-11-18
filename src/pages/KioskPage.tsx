@@ -29,7 +29,7 @@ import {
   RefreshCw,
 } from 'lucide-react';
 import { toast } from 'sonner';
-import { Button, Card, Input, FormField, Stepper, Modal } from '@/components/ui';
+import { Button, Card, Input, FormField, Stepper, Modal, ProgressBar } from '@/components/ui';
 import { EmailPassModal } from '@/components/EmailPassModal';
 import { BrandMark } from '@/components/BrandMark';
 import { VisitPurposeField } from '@/components/VisitPurposeField';
@@ -151,6 +151,7 @@ export function KioskPage() {
   });
   const issueRequestId = useRef(kioskTransactionRef.current.requestId as ReturnType<typeof crypto.randomUUID>);
   const isSubmittingRef = useRef(false);
+  const [issuancePhase, setIssuancePhase] = useState('Securing visitor record…');
 
   type KioskConfigState = 'loading' | 'ready' | 'error';
   const [configState, setConfigState] = useState<KioskConfigState>('loading');
@@ -447,6 +448,7 @@ export function KioskPage() {
     }
 
     isSubmittingRef.current = true;
+    setIssuancePhase('Securing visitor record & tokens…');
     setStep('generating');
     setSubmitError(null);
 
@@ -510,6 +512,7 @@ export function KioskPage() {
     setIssuedValidity(validity);
 
     // Phase B — presentation generation
+    setIssuancePhase('Generating secure QR pass…');
     let qrUrl: string | null = null;
     try {
       qrUrl = await generateBrandedQrDataUrl(result.qrToken, {
@@ -748,10 +751,18 @@ export function KioskPage() {
       <div className="w-full max-w-lg print:max-w-none print:w-full">
         <Card className="border-t-4 border-t-[var(--color-brand)] print:border-0 print:shadow-none print:p-0">
           {configState === 'loading' && (
-            <div className="py-16 text-center" role="status" aria-live="polite">
-              <Loader2 className="mx-auto h-10 w-10 animate-spin text-[var(--color-brand)] mb-4" aria-hidden="true" />
-              <h2 className="text-lg font-bold text-[var(--color-text-primary)]">Preparing kiosk registration…</h2>
-              <p className="mt-1 text-sm text-[var(--color-text-secondary)]">Loading campus visit settings.</p>
+            <div className="py-16 px-6 text-center space-y-5" role="status" aria-live="polite">
+              <div className="relative mx-auto flex h-16 w-16 items-center justify-center">
+                <span className="absolute -inset-2 rounded-full bg-[var(--color-brand)]/10 animate-pulse" aria-hidden="true" />
+                <img src="/earist-logo.png" alt="EARIST seal" className="relative h-14 w-14 object-contain" />
+              </div>
+              <div className="space-y-1">
+                <h2 className="text-lg font-bold text-[var(--color-text-primary)]">Preparing kiosk registration…</h2>
+                <p className="text-sm text-[var(--color-text-secondary)]">Loading campus visit settings.</p>
+              </div>
+              <div className="mx-auto max-w-xs">
+                <ProgressBar indeterminate variant="brand" size="sm" />
+              </div>
             </div>
           )}
 
@@ -916,11 +927,20 @@ export function KioskPage() {
 
           {/* STEP 3: Local Offline OCR Processing */}
           {step === 'scan-processing' && (
-            <div className="flex flex-col items-center justify-center py-12 text-center space-y-4">
-              <div className="h-12 w-12 animate-spin rounded-full border-4 border-[var(--color-border)] border-t-[var(--color-brand)]" role="status" aria-label="Reading ID text" />
-              <div>
+            <div className="flex flex-col items-center justify-center py-12 px-4 text-center space-y-5" role="status" aria-live="polite">
+              <div className="relative h-28 w-44 overflow-hidden rounded-xl border-2 border-[var(--color-brand)] bg-slate-900 shadow-md flex items-center justify-center">
+                {idPreview ? (
+                  <img src={idPreview} alt="Captured ID preview" className="h-full w-full object-cover opacity-60" />
+                ) : (
+                  <div className="h-10 w-16 rounded border border-white/30 bg-white/10" />
+                )}
+                <div className="absolute inset-x-0 h-0.5 bg-gradient-to-r from-transparent via-red-400 to-transparent shadow-[0_0_8px_rgba(239,68,68,0.8)] animate-scan-line" />
+              </div>
+
+              <div className="w-full max-w-sm space-y-2">
                 <h3 className="text-lg font-bold text-[var(--color-text-primary)]">Reading ID Details…</h3>
-                <p className="text-sm text-[var(--color-text-secondary)] mt-1">
+                <ProgressBar indeterminate variant="brand" size="sm" phase="Extracting text & fields…" />
+                <p className="text-xs text-[var(--color-text-secondary)] mt-1">
                   Using local on-device recognition. The ID image is uploaded only to private campus storage upon your review and submission.
                 </p>
               </div>
@@ -1380,9 +1400,18 @@ export function KioskPage() {
 
           {/* STEP 8: Generating Spinner */}
           {step === 'generating' && (
-            <div className="flex flex-col items-center justify-center py-12 text-center">
-              <div className="mb-6 h-12 w-12 animate-spin rounded-full border-4 border-[var(--color-border)] border-t-[var(--color-brand)]" role="status" aria-label="Generating gate pass" />
-              <p className="text-xl font-bold text-[var(--color-text-primary)]">Generating gate pass…</p>
+            <div className="flex flex-col items-center justify-center py-12 px-4 text-center space-y-5" role="status" aria-live="polite" aria-label="Generating gate pass">
+              <div className="relative mx-auto flex h-16 w-16 items-center justify-center">
+                <span className="absolute -inset-2 rounded-full bg-[var(--color-brand)]/10 animate-pulse" aria-hidden="true" />
+                <img src="/earist-logo.png" alt="EARIST seal" className="relative h-14 w-14 object-contain" />
+              </div>
+              <div className="space-y-1">
+                <p className="text-xl font-bold text-[var(--color-text-primary)]">Generating gate pass…</p>
+                <p className="text-xs text-[var(--color-text-secondary)]">Securing visitor record and issuing badge</p>
+              </div>
+              <div className="w-full max-w-xs">
+                <ProgressBar indeterminate variant="brand" size="md" phase={issuancePhase} />
+              </div>
             </div>
           )}
 

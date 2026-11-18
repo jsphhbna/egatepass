@@ -5,7 +5,7 @@ import { AuthProvider, useAuth } from '@/hooks/useAuth';
 import { ProtectedRoute } from '@/components/ProtectedRoute';
 import { LandingPage } from '@/pages/LandingPage';
 import { OfflineBanner } from '@/components/OfflineBanner';
-import { LoadingState } from '@/components/ui';
+import { FullPageLoadingScreen } from '@/components/ui';
 import { PrivacyModal } from '@/components/PrivacyModal';
 import { HumanInactivityGuard } from '@/components/HumanInactivityGuard';
 
@@ -38,24 +38,29 @@ const NotFoundPage = lazy(() => import('@/pages/NotFoundPage').then((module) => 
 
 function GetPassLoadingFallback() {
   return (
-    <main id="main-content" className="flex min-h-[60vh] flex-col items-center justify-center bg-[var(--color-canvas)] px-4 py-16" role="status" aria-live="polite">
-      <div className="flex flex-col items-center text-center">
-        <img src="/earist-logo.png" alt="EARIST seal" className="h-12 w-12 object-contain" />
-        <span className="mt-3 text-lg font-black tracking-tight text-[#700f14]">E-GatePass</span>
-        <div className="mt-6 flex items-center gap-2.5 text-sm font-semibold text-[var(--color-text-secondary)]">
-          <div className="h-4 w-4 animate-spin rounded-full border-2 border-[var(--color-border)] border-t-[var(--color-brand)]" aria-hidden="true" />
-          <span>Opening visitor registration…</span>
-        </div>
-      </div>
-    </main>
+    <FullPageLoadingScreen
+      id="main-content"
+      title="E-GatePass"
+      subtitle="Online Visitor Registration"
+      statusText="Opening visitor registration…"
+      className="min-h-[60vh] py-16"
+      role="status"
+      aria-live="polite"
+    />
   );
 }
 
 function RouteLoadingFallback() {
   return (
-    <main id="main-content" className="min-h-[40vh] bg-[var(--color-canvas)]">
-      <LoadingState label="Loading page..." className="min-h-[40vh]" />
-    </main>
+    <FullPageLoadingScreen
+      id="main-content"
+      title="EARIST E-GatePass"
+      subtitle="Visitor Management System"
+      statusText="Loading page…"
+      className="min-h-[50vh] py-12"
+      role="status"
+      aria-live="polite"
+    />
   );
 }
 

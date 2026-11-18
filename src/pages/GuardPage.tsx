@@ -4,7 +4,7 @@ import { requireSupabase, supabase } from '@/lib/supabase';
 import { AuthenticatedImage } from '@/components/AuthenticatedImage';
 import { formatManilaTime } from '@/lib/manilaTime';
 import { BrandMark } from '@/components/BrandMark';
-import { Card, Button, ConfirmModal } from '@/components/ui';
+import { Card, Button, ConfirmModal, Skeleton, SyncDots } from '@/components/ui';
 import {
   ShieldCheck,
   MapPin,
@@ -413,9 +413,9 @@ export function GuardPage() {
               variant="secondary"
               onClick={handleManualRefresh}
               disabled={refreshing}
-              icon={<RefreshCw className={`h-3.5 w-3.5 ${refreshing ? 'animate-spin' : ''}`} />}
+              icon={refreshing ? <SyncDots size="xs" color="brand" /> : <RefreshCw className="h-3.5 w-3.5" />}
             >
-              Refresh
+              {refreshing ? 'Syncing…' : 'Refresh'}
             </Button>
 
             <Button
@@ -446,9 +446,62 @@ export function GuardPage() {
         )}
 
         {loading ? (
-          <div className="py-20 text-center">
-            <RefreshCw className="mx-auto h-8 w-8 animate-spin text-[var(--color-brand)]" />
-            <p className="mt-3 text-sm font-medium text-[var(--color-text-secondary)]">Connecting to station feed…</p>
+          <div className="grid gap-6 lg:grid-cols-12" role="status" aria-label="Loading security station feed" aria-busy="true">
+            {/* Left: Hero Photo Skeleton */}
+            <div className="lg:col-span-7">
+              <Card className="overflow-hidden border border-[var(--color-border)] shadow-md">
+                <div className="bg-[var(--color-overlay)] px-5 py-3 flex items-center justify-between border-b border-[var(--color-border)]">
+                  <div className="flex items-center gap-2">
+                    <Skeleton className="h-5 w-40" />
+                  </div>
+                  <Skeleton className="h-4 w-28" />
+                </div>
+                <div className="p-6 space-y-6">
+                  <div className="flex flex-col sm:flex-row gap-6 items-center sm:items-start">
+                    <Skeleton className="h-48 w-48 rounded-xl shrink-0" />
+                    <div className="flex-1 w-full space-y-3">
+                      <Skeleton className="h-7 w-3/4" />
+                      <Skeleton className="h-4 w-1/2" />
+                      <div className="pt-2 space-y-2">
+                        <Skeleton className="h-4 w-5/6" />
+                        <Skeleton className="h-4 w-2/3" />
+                        <Skeleton className="h-4 w-4/5" />
+                      </div>
+                    </div>
+                  </div>
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 pt-4 border-t border-[var(--color-border)]">
+                    {Array.from({ length: 4 }).map((_, i) => (
+                      <div key={i} className="space-y-1">
+                        <Skeleton className="h-3 w-16" />
+                        <Skeleton className="h-4 w-24" />
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </Card>
+            </div>
+
+            {/* Right: Timeline Feed Skeleton */}
+            <div className="lg:col-span-5">
+              <Card className="p-5 border border-[var(--color-border)] space-y-4">
+                <div className="flex items-center justify-between border-b border-[var(--color-border)] pb-3">
+                  <Skeleton className="h-5 w-32" />
+                  <Skeleton className="h-5 w-12 rounded-full" />
+                </div>
+                <div className="space-y-3">
+                  {Array.from({ length: 4 }).map((_, i) => (
+                    <div key={i} className="flex items-center gap-3 p-3 rounded-lg border border-[var(--color-border)]/60 bg-[var(--color-canvas)]/30">
+                      <Skeleton variant="circular" className="h-10 w-10 shrink-0" />
+                      <div className="flex-1 space-y-1.5">
+                        <Skeleton className="h-4 w-3/4" />
+                        <Skeleton className="h-3 w-1/2" />
+                      </div>
+                      <Skeleton className="h-6 w-16 rounded-full" />
+                    </div>
+                  ))}
+                </div>
+              </Card>
+            </div>
           </div>
         ) : entries.length === 0 ? (
           <Card className="p-12 text-center max-w-lg mx-auto">

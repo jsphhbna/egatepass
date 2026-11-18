@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { Download, FileSpreadsheet, FileText, Printer, ShieldAlert } from 'lucide-react';
 import { toast } from 'sonner';
-import { Button } from '@/components/ui';
+import { Button, ProgressBar } from '@/components/ui';
 import { escapeCsvCell } from '@/lib/completeExport';
 import {
   formatManilaDateTime,
@@ -353,7 +353,17 @@ export function DashboardExportActions({
   }
 
   return (
-    <div className="flex flex-wrap gap-2" aria-label="Export dashboard data">
+    <div className="flex flex-wrap items-center gap-2" aria-label="Export dashboard data">
+      {exportingFormat !== null && (
+        <div className="w-full sm:w-56 pb-1">
+          <ProgressBar
+            indeterminate
+            variant="brand"
+            size="xs"
+            label={`Generating ${exportingFormat.toUpperCase()}…`}
+          />
+        </div>
+      )}
       <Button
         type="button"
         variant="secondary"

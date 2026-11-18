@@ -29,13 +29,24 @@ function renderBootstrapFailure() {
 }
 
 root.render(
-  <main className="flex min-h-dvh flex-col items-center justify-center bg-[var(--color-canvas)] px-4" role="status" aria-live="polite">
-    <div className="flex flex-col items-center text-center">
-      <img src="/earist-logo.png" alt="EARIST seal" className="h-16 w-16 object-contain" />
-      <span className="mt-4 text-xl font-black tracking-tight text-[#700f14]">E-GatePass</span>
-      <div className="mt-6 flex items-center gap-2.5 text-sm font-semibold text-[var(--color-text-secondary)]">
-        <div className="h-4 w-4 animate-spin rounded-full border-2 border-[var(--color-border)] border-t-[var(--color-brand)]" aria-hidden="true" />
-        <span>Loading E-GatePass…</span>
+  <main className="flex min-h-dvh flex-col items-center justify-center bg-[var(--color-canvas)] px-4 select-none" role="status" aria-live="polite">
+    <div className="flex flex-col items-center text-center max-w-sm w-full">
+      <div className="relative mb-2 flex items-center justify-center">
+        <div className="absolute -inset-2 rounded-full bg-[var(--color-brand)]/10 animate-pulse" aria-hidden="true" />
+        <img src="/earist-logo.png" alt="EARIST seal" className="relative h-20 w-20 object-contain drop-shadow-sm" />
+      </div>
+      <span className="mt-3 text-2xl font-black tracking-tight text-[#700f14]">E-GatePass</span>
+      <p className="mt-1 text-xs font-semibold uppercase tracking-wider text-[var(--color-text-muted)]">
+        Visitor Management System
+      </p>
+      <div className="mt-6 w-48 space-y-2">
+        <div className="relative h-1.5 w-full overflow-hidden rounded-full bg-[var(--color-border)]/60">
+          <div className="absolute inset-y-0 w-1/2 rounded-full bg-[var(--color-brand)] animate-progress-indeterminate" />
+        </div>
+        <div className="flex items-center justify-center gap-2 text-xs font-semibold text-[var(--color-text-secondary)]">
+          <div className="h-3 w-3 animate-spin rounded-full border-2 border-[var(--color-border)] border-t-[var(--color-brand)]" aria-hidden="true" />
+          <span>Loading E-GatePass…</span>
+        </div>
       </div>
     </div>
   </main>,

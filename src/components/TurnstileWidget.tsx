@@ -1,5 +1,5 @@
 import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from 'react';
-import { Loader2, RefreshCw } from 'lucide-react';
+import { RefreshCw, Shield } from 'lucide-react';
 import { Button } from '@/components/ui';
 
 declare global {
@@ -313,10 +313,11 @@ export const TurnstileWidget = forwardRef<TurnstileWidgetRef, TurnstileWidgetPro
       {status === 'loading' && appearance !== 'interaction-only' && (
         <div
           aria-live="polite"
-          className="flex min-h-[65px] w-full max-w-sm items-center justify-center gap-2 rounded-lg border border-[var(--color-border)] bg-[var(--color-canvas)] px-4 py-3 text-xs text-[var(--color-text-secondary)]"
+          className="relative flex min-h-[65px] w-full max-w-sm items-center justify-center gap-2.5 rounded-lg border border-[var(--color-border)] bg-[var(--color-canvas)] px-4 py-3 text-xs text-[var(--color-text-secondary)] overflow-hidden"
         >
-          <Loader2 className="h-4 w-4 animate-spin text-[var(--color-brand)] shrink-0" aria-hidden="true" />
-          <span>Loading security check…</span>
+          <div className="absolute inset-0 animate-shimmer opacity-30" aria-hidden="true" />
+          <Shield className="h-4 w-4 text-[var(--color-brand)] animate-pulse shrink-0 relative z-10" aria-hidden="true" />
+          <span className="font-medium relative z-10">Loading security check…</span>
         </div>
       )}
 

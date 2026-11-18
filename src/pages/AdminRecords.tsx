@@ -4,7 +4,7 @@ import { getActiveIncidentHoldsForRecord, createIncidentHold, releaseIncidentHol
 import { AlertTriangle, ClipboardCheck, Download, Eye, MapPin, Printer, ShieldAlert, ShieldCheck, RefreshCw } from 'lucide-react';
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { useSearchParams } from 'react-router-dom';
-import { Card, Input, Select, Button, DataTable, DataTableHead, DataTableRow, DataTableCell, Modal, StatusBadge } from '@/components/ui';
+import { Card, Input, Select, Button, DataTable, DataTableHead, DataTableRow, DataTableCell, Modal, StatusBadge, TableSkeletonRows } from '@/components/ui';
 import { AuthenticatedImage } from '@/components/AuthenticatedImage';
 import type { GatePass, PassSource, PassStatus } from '@/types';
 import { toast } from 'sonner';
@@ -1098,11 +1098,7 @@ export function AdminRecords() {
             </DataTableHead>
             <tbody className="divide-y divide-[var(--color-border)] bg-[var(--color-surface)]">
               {offlineLoading ? (
-                <tr>
-                  <td colSpan={6} className="py-8 text-center text-[var(--color-text-muted)]">
-                    Loading offline gate records...
-                  </td>
-                </tr>
+                <TableSkeletonRows columns={6} rows={6} columnWidths={['30%', '15%', '15%', '20%', '10%', '10%']} ariaLabel="Loading offline gate records…" />
               ) : offlineError ? (
                 <tr>
                   <td colSpan={6} className="py-8 text-center">
@@ -1208,11 +1204,7 @@ export function AdminRecords() {
           </DataTableHead>
           <tbody className="divide-y border-[var(--color-border)] print:divide-black/20">
             {loading ? (
-              <tr className="print:hidden">
-                <td colSpan={6} className="py-12 text-center">
-                  <div className="mx-auto h-8 w-8 animate-spin rounded-full border-4 border-[var(--color-border)] border-t-[var(--color-brand)]" role="status" aria-label="Loading visitor records" />
-                </td>
-              </tr>
+              <TableSkeletonRows columns={6} rows={8} columnWidths={['30%', '15%', '15%', '15%', '15%', '10%']} ariaLabel="Loading visitor records…" />
             ) : recordsError ? (
               <tr>
                 <td colSpan={6} className="py-8 text-center">
@@ -1829,9 +1821,23 @@ function VisitorReportsView({ onSelectPass }: VisitorReportsViewProps) {
       </div>
 
       {loading ? (
-        <div className="flex h-40 items-center justify-center">
-          <div className="h-8 w-8 animate-spin rounded-full border-4 border-[var(--color-border)] border-t-[var(--color-brand)]" role="status" aria-label="Loading report" />
-        </div>
+        <DataTable>
+          <DataTableHead>
+            <DataTableRow>
+              <DataTableCell isHeader>Visitor Name</DataTableCell>
+              <DataTableCell isHeader>Contact Number</DataTableCell>
+              <DataTableCell isHeader>Office</DataTableCell>
+              <DataTableCell isHeader>Time In</DataTableCell>
+              <DataTableCell isHeader>Time Out</DataTableCell>
+              <DataTableCell isHeader>Attendance</DataTableCell>
+              <DataTableCell isHeader>Status</DataTableCell>
+              <DataTableCell isHeader className="text-right">Actions</DataTableCell>
+            </DataTableRow>
+          </DataTableHead>
+          <tbody>
+            <TableSkeletonRows columns={8} rows={8} columnWidths={['20%', '15%', '15%', '12%', '12%', '10%', '8%', '8%']} ariaLabel="Loading report records…" />
+          </tbody>
+        </DataTable>
       ) : reportPasses.length === 0 ? (
         <Card className="p-8 text-center text-sm text-[var(--color-text-muted)]">
           No records matched the selected report criteria for this date range.

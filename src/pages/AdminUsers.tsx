@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { Archive, Plus, CheckCircle2, AlertCircle, KeyRound, Copy, Check, Eye, EyeOff, ShieldAlert, RefreshCw, Trash2, MoreVertical } from 'lucide-react';
-import { Button, FormField, Input, Select, StatusBadge, DataTable, DataTableHead, DataTableRow, DataTableCell, Modal, ConfirmModal } from '@/components/ui';
+import { Button, FormField, Input, Select, StatusBadge, DataTable, DataTableHead, DataTableRow, DataTableCell, Modal, ConfirmModal, TableSkeletonRows } from '@/components/ui';
 import { toast } from 'sonner';
 import { z } from 'zod';
 import { useForm } from 'react-hook-form';
@@ -1265,11 +1265,6 @@ export function AdminUsers() {
         </div>
       )}
 
-      {loading ? (
-        <div className="flex h-32 items-center justify-center">
-          <div className="h-8 w-8 animate-spin rounded-full border-4 border-[var(--color-border)] border-t-[var(--color-brand)]" role="status" aria-label="Loading users" />
-        </div>
-      ) : (
         <DataTable>
           <DataTableHead>
             <DataTableRow>
@@ -1282,7 +1277,9 @@ export function AdminUsers() {
             </DataTableRow>
           </DataTableHead>
           <tbody>
-            {filteredUsers.map((user) => (
+            {loading ? (
+              <TableSkeletonRows columns={6} rows={6} columnWidths={['20%', '30%', '15%', '15%', '10%', '10%']} ariaLabel="Loading staff users…" />
+            ) : filteredUsers.map((user) => (
               <DataTableRow key={user.uid}>
                 <DataTableCell className="font-semibold">{user.name}</DataTableCell>
                 <DataTableCell className="text-[var(--color-text-secondary)]">{user.email}</DataTableCell>
@@ -1405,7 +1402,7 @@ export function AdminUsers() {
                 </DataTableCell>
               </DataTableRow>
             ))}
-            {filteredUsers.length === 0 && (
+            {!loading && filteredUsers.length === 0 && (
               <tr>
                 <td colSpan={6} className="py-8 text-center text-[var(--color-text-muted)]">
                   No users found.
@@ -1414,7 +1411,6 @@ export function AdminUsers() {
             )}
           </tbody>
         </DataTable>
-      )}
 
       {hasMore && (
         <div className="flex justify-center pt-2">
@@ -1479,11 +1475,6 @@ export function AdminUsers() {
             </div>
           )}
 
-          {loadingAdminOffices ? (
-            <div className="flex h-32 items-center justify-center">
-              <div className="h-8 w-8 animate-spin rounded-full border-4 border-[var(--color-border)] border-t-[var(--color-brand)]" role="status" aria-label="Loading offices" />
-            </div>
-          ) : (
             <DataTable>
               <DataTableHead>
                 <DataTableRow>
@@ -1496,7 +1487,9 @@ export function AdminUsers() {
                 </DataTableRow>
               </DataTableHead>
               <tbody>
-                {adminOffices.map((office) => {
+                {loadingAdminOffices ? (
+                  <TableSkeletonRows columns={6} rows={5} columnWidths={['25%', '25%', '15%', '15%', '10%', '10%']} ariaLabel="Loading offices directory…" />
+                ) : adminOffices.map((office) => {
                   const statusMeta = getOfficeDirectoryStatusMeta(office);
                   return (
                   <DataTableRow key={office.id}>
@@ -1750,7 +1743,7 @@ export function AdminUsers() {
                   </DataTableRow>
                   );
                 })}
-                {adminOffices.length === 0 && (
+                {!loadingAdminOffices && adminOffices.length === 0 && (
                   <tr>
                     <td colSpan={6} className="py-8 text-center text-[var(--color-text-muted)]">
                       {officeDirectoryError ? 'Unable to load offices.' : 'No offices recorded.'}
@@ -1759,7 +1752,6 @@ export function AdminUsers() {
                 )}
               </tbody>
             </DataTable>
-          )}
         </div>
       )}
 

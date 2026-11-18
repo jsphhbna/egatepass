@@ -24,7 +24,7 @@ import {
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { BrandMark } from '@/components/BrandMark';
-import { Button, Modal, Input } from '@/components/ui';
+import { Button, Modal, Input, Skeleton, SyncDots } from '@/components/ui';
 import { AuthenticatedImage } from '@/components/AuthenticatedImage';
 import type { Office, OfficePersonnel, OfficeVisitRecord } from '@/types/office';
 
@@ -870,9 +870,15 @@ export function OfficeDashboardPage() {
               size="sm"
               onClick={() => loadVisits(true)}
               disabled={isRefreshing}
-              icon={<RefreshCw className={`h-3.5 w-3.5 ${isRefreshing ? 'animate-spin' : ''}`} />}
+              icon={
+                isRefreshing ? (
+                  <SyncDots size="xs" color="brand" />
+                ) : (
+                  <RefreshCw className="h-3.5 w-3.5" />
+                )
+              }
             >
-              Refresh
+              {isRefreshing ? 'Refreshing…' : 'Refresh'}
             </Button>
 
             <Button
@@ -1051,9 +1057,77 @@ export function OfficeDashboardPage() {
         {/* QUEUE PANELS (Split, Confirmed Today, or Visit History) */}
         {/* ============================================================ */}
         {isLoading ? (
-          <div className="flex min-h-[300px] flex-col items-center justify-center rounded-2xl border border-[var(--color-border)] bg-white p-8">
-            <div className="h-8 w-8 animate-spin rounded-full border-2 border-[#7A0A0A] border-t-transparent" />
-            <p className="mt-3 text-xs font-semibold text-[var(--color-text-secondary)]">Loading visit records…</p>
+          <div className="space-y-6" role="status" aria-label="Loading queue records" aria-busy="true">
+            <div className="grid gap-6 lg:grid-cols-2">
+              {/* Left Column: Office Review */}
+              <div className="space-y-4 rounded-2xl border border-[var(--color-border)] bg-[var(--color-canvas)]/40 p-5">
+                <div className="flex items-center justify-between pb-3 border-b border-[var(--color-border)]">
+                  <div className="flex items-center gap-2">
+                    <Skeleton className="h-5 w-40" />
+                    <Skeleton className="h-5 w-8 rounded-full" />
+                  </div>
+                  <Skeleton className="h-4 w-24" />
+                </div>
+                <div className="space-y-3">
+                  {Array.from({ length: 3 }).map((_, i) => (
+                    <div key={i} className="rounded-xl border border-[var(--color-border)] bg-white p-4 space-y-3 shadow-xs">
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-3">
+                          <Skeleton variant="circular" className="h-10 w-10 shrink-0" />
+                          <div className="space-y-1.5">
+                            <Skeleton className="h-4 w-32" />
+                            <Skeleton className="h-3 w-20" />
+                          </div>
+                        </div>
+                        <Skeleton className="h-6 w-20 rounded-full" />
+                      </div>
+                      <div className="space-y-1.5 pt-1">
+                        <Skeleton className="h-3 w-3/4" />
+                        <Skeleton className="h-3 w-1/2" />
+                      </div>
+                      <div className="flex justify-end gap-2 pt-2 border-t border-[var(--color-border)]/50">
+                        <Skeleton className="h-8 w-20 rounded-lg" />
+                        <Skeleton className="h-8 w-20 rounded-lg" />
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              {/* Right Column: Gate Arrivals */}
+              <div className="space-y-4 rounded-2xl border border-[var(--color-border)] bg-[var(--color-canvas)]/40 p-5">
+                <div className="flex items-center justify-between pb-3 border-b border-[var(--color-border)]">
+                  <div className="flex items-center gap-2">
+                    <Skeleton className="h-5 w-40" />
+                    <Skeleton className="h-5 w-8 rounded-full" />
+                  </div>
+                  <Skeleton className="h-4 w-24" />
+                </div>
+                <div className="space-y-3">
+                  {Array.from({ length: 3 }).map((_, i) => (
+                    <div key={i} className="rounded-xl border border-[var(--color-border)] bg-white p-4 space-y-3 shadow-xs">
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-3">
+                          <Skeleton variant="circular" className="h-10 w-10 shrink-0" />
+                          <div className="space-y-1.5">
+                            <Skeleton className="h-4 w-32" />
+                            <Skeleton className="h-3 w-20" />
+                          </div>
+                        </div>
+                        <Skeleton className="h-6 w-20 rounded-full" />
+                      </div>
+                      <div className="space-y-1.5 pt-1">
+                        <Skeleton className="h-3 w-3/4" />
+                        <Skeleton className="h-3 w-1/2" />
+                      </div>
+                      <div className="flex justify-end gap-2 pt-2 border-t border-[var(--color-border)]/50">
+                        <Skeleton className="h-8 w-24 rounded-lg" />
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
           </div>
         ) : activeQueueTab === 'confirmed' ? (
           <div className="space-y-4">
