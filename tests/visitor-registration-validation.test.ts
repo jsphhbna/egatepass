@@ -251,6 +251,13 @@ describe('R6 Visitor Registration UI & Purpose Validation Suite', () => {
       const res = personalDetailsStepSchema.safeParse(step1Valid);
       expect(res.success).toBe(true);
 
+      // Accepts gender as undefined, empty string, null, Male, or Female
+      expect(personalDetailsStepSchema.safeParse({ ...step1Valid, gender: undefined }).success).toBe(true);
+      expect(personalDetailsStepSchema.safeParse({ ...step1Valid, gender: '' }).success).toBe(true);
+      expect(personalDetailsStepSchema.safeParse({ ...step1Valid, gender: null }).success).toBe(true);
+      expect(personalDetailsStepSchema.safeParse({ ...step1Valid, gender: 'Male' }).success).toBe(true);
+      expect(personalDetailsStepSchema.safeParse({ ...step1Valid, gender: 'Female' }).success).toBe(true);
+
       // Rejects missing consent
       const withoutConsent = personalDetailsStepSchema.safeParse({ ...step1Valid, consent: false });
       expect(withoutConsent.success).toBe(false);
