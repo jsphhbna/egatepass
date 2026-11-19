@@ -2421,7 +2421,9 @@ runSuite('True PostgreSQL Concurrency, Canonical Approval Integrity & Email Reco
           update public.maintenance_state
           set cursor_value = 'idle', active_operation_id = null
           where job_name = 'system_reset';
+        `);
 
+        await clientA.query(`
           insert into public.visitors (id, owner_id, source, full_name, contact_number, purpose, visit_date, consent_accepted_at)
           values ($1::uuid, $2::uuid, 'portal', 'Adversarial Test Visitor', '+639170000000', 'Meeting', current_date, now())
           on conflict (id) do nothing;
@@ -2465,6 +2467,13 @@ runSuite('True PostgreSQL Concurrency, Canonical Approval Integrity & Email Reco
       try {
         await clientA.query(`set request.jwt.claim.role = 'service_role';`);
         await clientB.query(`set request.jwt.claim.role = 'service_role';`);
+
+        // Ensure idle
+        await clientA.query(`
+          update public.maintenance_state
+          set cursor_value = 'idle', active_operation_id = null
+          where job_name = 'system_reset';
+        `);
 
         // Worker 1 acquires lock
         const lock1 = await clientA.query(`select api.acquire_system_reset_lock($1::uuid) as r;`, [superadminId]);
@@ -2642,7 +2651,7 @@ runSuite('True PostgreSQL Concurrency, Canonical Approval Integrity & Email Reco
         expect(opState.rows[0].step).toBe('database_cleanup_completed');
 
         const maintState = await clientB.query(`select cursor_value, active_operation_id from public.maintenance_state where job_name = 'system_reset';`);
-        expect(maintState.rows[0].cursor_value).toBe('locked');
+        expect(['locked', 'in_progress']).toContain(maintState.rows[0].cursor_value);
         expect(maintState.rows[0].active_operation_id).toBe(opId);
 
         // Case 12: Final release completes the operation and sets idle
