@@ -47,19 +47,22 @@ declare
   v_state text;
   v_active_op uuid;
   v_worker_gen integer;
+  v_active_worker uuid;
   v_sess_op text;
   v_sess_gen text;
+  v_sess_worker text;
   v_in_reset text;
 begin
   v_sess_op := pg_catalog.current_setting('egatepass.active_reset_op_id', true);
   v_sess_gen := pg_catalog.current_setting('egatepass.active_reset_worker_gen', true);
+  v_sess_worker := pg_catalog.current_setting('egatepass.active_reset_worker_id', true);
   v_in_reset := pg_catalog.current_setting('egatepass.in_system_reset', true);
 
   -- 1. Check if the current session is an authorized active return_to_zero worker.
   -- Only permits bypass when transaction-local session settings match authoritative maintenance_state.
   if v_sess_op is not null and v_sess_op <> '' then
-    select cursor_value, active_operation_id, worker_generation
-    into v_state, v_active_op, v_worker_gen
+    select cursor_value, active_operation_id, worker_generation, active_worker_id
+    into v_state, v_active_op, v_worker_gen, v_active_worker
     from public.maintenance_state
     where job_name = 'system_reset';
 
@@ -67,6 +70,7 @@ begin
        and v_active_op is not null
        and v_active_op::text = v_sess_op
        and (v_sess_gen is not null and v_sess_gen <> '' and v_worker_gen::text = v_sess_gen)
+       and (v_sess_worker is not null and v_sess_worker <> '' and v_active_worker::text = v_sess_worker)
        and (v_in_reset = 'true')
     then
       return new;
@@ -181,9 +185,9 @@ begin
     end if;
 
     -- 4. Prevent competing workers:
-    -- If lock is active ('locked' or 'in_progress') and lease has NOT expired yet according to DB clock,
+    -- If lock is active ('locked', 'in_progress', 'recovery_required') and lease has NOT expired yet according to DB clock,
     -- another worker is currently actively executing within its valid lease window.
-    if v_maint.cursor_value in ('locked', 'in_progress')
+    if v_maint.cursor_value in ('locked', 'in_progress', 'recovery_required')
        and v_maint.lease_expires_at is not null
        and v_maint.lease_expires_at >= clock_timestamp()
     then
@@ -305,9 +309,42 @@ drop function if exists api.assert_system_reset_worker_active(uuid, integer);
 drop function if exists api.assert_system_reset_worker_active(uuid, integer, uuid);
 
 create or replace function api.assert_system_reset_worker_active(
+  requested_op_id uuid
+)
+returns boolean
+language plpgsql
+security definer
+set search_path = ''
+as $$
+begin
+  if auth.role() <> 'service_role' then
+    raise exception using errcode = '42501', message = 'service role required';
+  end if;
+  raise exception using errcode = '55000', message = 'fencing_token_revoked: worker generation required';
+end;
+$$;
+
+create or replace function api.assert_system_reset_worker_active(
   requested_op_id uuid,
-  requested_worker_generation integer default null,
-  requested_worker_id uuid default null
+  requested_worker_generation integer
+)
+returns boolean
+language plpgsql
+security definer
+set search_path = ''
+as $$
+begin
+  if auth.role() <> 'service_role' then
+    raise exception using errcode = '42501', message = 'service role required';
+  end if;
+  raise exception using errcode = '55000', message = 'fencing_token_revoked: worker ID required';
+end;
+$$;
+
+create or replace function api.assert_system_reset_worker_active(
+  requested_op_id uuid,
+  requested_worker_generation integer,
+  requested_worker_id uuid
 )
 returns boolean
 language plpgsql
@@ -357,6 +394,12 @@ begin
 end;
 $$;
 
+revoke all on function api.assert_system_reset_worker_active(uuid) from public, anon, authenticated;
+grant execute on function api.assert_system_reset_worker_active(uuid) to service_role;
+
+revoke all on function api.assert_system_reset_worker_active(uuid, integer) from public, anon, authenticated;
+grant execute on function api.assert_system_reset_worker_active(uuid, integer) to service_role;
+
 revoke all on function api.assert_system_reset_worker_active(uuid, integer, uuid) from public, anon, authenticated;
 grant execute on function api.assert_system_reset_worker_active(uuid, integer, uuid) to service_role;
 
@@ -383,6 +426,7 @@ set search_path = ''
 as $$
 declare
   v_maint record;
+  v_op record;
   v_updated_rows integer;
 begin
   if auth.role() <> 'service_role' then
@@ -432,6 +476,25 @@ begin
 
   if v_maint.lease_expires_at is not null and v_maint.lease_expires_at < clock_timestamp() then
     raise exception using errcode = '55000', message = 'fencing_token_revoked: worker lease expired';
+  end if;
+
+  -- Lock and validate operation record before changing state
+  select * into v_op
+  from public.system_reset_operations
+  where id = requested_op_id
+  for update;
+
+  if not found then
+    raise exception using errcode = 'P0002', message = 'operation_not_found';
+  end if;
+
+  if v_op.worker_generation is distinct from requested_worker_generation
+     or v_op.worker_id is distinct from requested_worker_id then
+    raise exception using errcode = '55000', message = 'fencing_token_revoked: operation record worker token mismatch';
+  end if;
+
+  if v_op.status in ('completed', 'failed', 'recovery_required') then
+    raise exception using errcode = '55000', message = 'fencing_token_revoked: operation not in eligible state';
   end if;
 
   -- Update system_reset_operations matching operation ID and worker tokens
@@ -492,10 +555,97 @@ drop function if exists api.return_to_zero_reset(uuid, uuid, integer);
 drop function if exists api.return_to_zero_reset(uuid, uuid, integer, uuid);
 
 create or replace function api.return_to_zero_reset(
+  requested_actor_id uuid
+)
+returns jsonb
+language plpgsql
+volatile
+security definer
+set search_path = ''
+as $$
+declare
+  v_actor_role public.staff_role;
+begin
+  if auth.role() <> 'service_role' then
+    raise exception using errcode = '42501', message = 'service role required';
+  end if;
+
+  select sp.role into v_actor_role
+  from public.staff_profiles sp
+  where sp.user_id = requested_actor_id and sp.active = true;
+
+  if v_actor_role is null or v_actor_role <> 'superadmin'::public.staff_role then
+    raise exception using errcode = '42501', message = 'superadmin_required';
+  end if;
+
+  raise exception using errcode = '55000', message = 'fencing_token_revoked: operation ID required';
+end;
+$$;
+
+create or replace function api.return_to_zero_reset(
   requested_actor_id uuid,
-  requested_op_id uuid default null,
-  requested_worker_generation integer default null,
-  requested_worker_id uuid default null
+  requested_op_id uuid
+)
+returns jsonb
+language plpgsql
+volatile
+security definer
+set search_path = ''
+as $$
+declare
+  v_actor_role public.staff_role;
+begin
+  if auth.role() <> 'service_role' then
+    raise exception using errcode = '42501', message = 'service role required';
+  end if;
+
+  select sp.role into v_actor_role
+  from public.staff_profiles sp
+  where sp.user_id = requested_actor_id and sp.active = true;
+
+  if v_actor_role is null or v_actor_role <> 'superadmin'::public.staff_role then
+    raise exception using errcode = '42501', message = 'superadmin_required';
+  end if;
+
+  raise exception using errcode = '55000', message = 'fencing_token_revoked: worker generation required';
+end;
+$$;
+
+create or replace function api.return_to_zero_reset(
+  requested_actor_id uuid,
+  requested_op_id uuid,
+  requested_worker_generation integer
+)
+returns jsonb
+language plpgsql
+volatile
+security definer
+set search_path = ''
+as $$
+declare
+  v_actor_role public.staff_role;
+begin
+  if auth.role() <> 'service_role' then
+    raise exception using errcode = '42501', message = 'service role required';
+  end if;
+
+  select sp.role into v_actor_role
+  from public.staff_profiles sp
+  where sp.user_id = requested_actor_id and sp.active = true;
+
+  if v_actor_role is null or v_actor_role <> 'superadmin'::public.staff_role then
+    raise exception using errcode = '42501', message = 'superadmin_required';
+  end if;
+
+  raise exception using errcode = '55000', message = 'fencing_token_revoked: worker ID required';
+end;
+$$;
+
+create or replace function api.return_to_zero_reset(
+  requested_actor_id uuid,
+  requested_op_id uuid,
+  requested_worker_generation integer,
+  requested_worker_id uuid
 )
 returns jsonb
 language plpgsql
@@ -596,6 +746,7 @@ begin
   -- 8. Set session variables for transaction-local reset bypass in triggers
   perform pg_catalog.set_config('egatepass.active_reset_op_id', requested_op_id::text, true);
   perform pg_catalog.set_config('egatepass.active_reset_worker_gen', requested_worker_generation::text, true);
+  perform pg_catalog.set_config('egatepass.active_reset_worker_id', requested_worker_id::text, true);
   perform pg_catalog.set_config('egatepass.in_system_reset', 'true', true);
 
   -- Snapshot preserved active superadmin user IDs
@@ -837,6 +988,15 @@ begin
 end;
 $$;
 
+revoke all on function api.return_to_zero_reset(uuid) from public, anon, authenticated;
+grant execute on function api.return_to_zero_reset(uuid) to service_role;
+
+revoke all on function api.return_to_zero_reset(uuid, uuid) from public, anon, authenticated;
+grant execute on function api.return_to_zero_reset(uuid, uuid) to service_role;
+
+revoke all on function api.return_to_zero_reset(uuid, uuid, integer) from public, anon, authenticated;
+grant execute on function api.return_to_zero_reset(uuid, uuid, integer) to service_role;
+
 revoke all on function api.return_to_zero_reset(uuid, uuid, integer, uuid) from public, anon, authenticated;
 grant execute on function api.return_to_zero_reset(uuid, uuid, integer, uuid) to service_role;
 
@@ -850,9 +1010,66 @@ drop function if exists api.release_system_reset_lock(uuid, uuid, integer, uuid)
 
 create or replace function api.release_system_reset_lock(
   requested_actor_id uuid,
-  requested_op_id uuid default null,
-  requested_worker_generation integer default null,
-  requested_worker_id uuid default null
+  requested_op_id uuid
+)
+returns void
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  v_actor_role public.staff_role;
+begin
+  if auth.role() <> 'service_role' then
+    raise exception using errcode = '42501', message = 'service role required';
+  end if;
+
+  select sp.role into v_actor_role
+  from public.staff_profiles sp
+  where sp.user_id = requested_actor_id and sp.active = true;
+
+  if v_actor_role is null or v_actor_role <> 'superadmin'::public.staff_role then
+    raise exception using errcode = '42501', message = 'superadmin_required';
+  end if;
+
+  raise exception using errcode = '55000', message = 'fencing_token_revoked: worker generation required';
+end;
+$$;
+
+create or replace function api.release_system_reset_lock(
+  requested_actor_id uuid,
+  requested_op_id uuid,
+  requested_worker_generation integer
+)
+returns void
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  v_actor_role public.staff_role;
+begin
+  if auth.role() <> 'service_role' then
+    raise exception using errcode = '42501', message = 'service role required';
+  end if;
+
+  select sp.role into v_actor_role
+  from public.staff_profiles sp
+  where sp.user_id = requested_actor_id and sp.active = true;
+
+  if v_actor_role is null or v_actor_role <> 'superadmin'::public.staff_role then
+    raise exception using errcode = '42501', message = 'superadmin_required';
+  end if;
+
+  raise exception using errcode = '55000', message = 'fencing_token_revoked: worker ID required';
+end;
+$$;
+
+create or replace function api.release_system_reset_lock(
+  requested_actor_id uuid,
+  requested_op_id uuid,
+  requested_worker_generation integer,
+  requested_worker_id uuid
 )
 returns void
 language plpgsql
@@ -912,6 +1129,10 @@ begin
     raise exception using errcode = '55000', message = 'fencing_token_revoked: worker ID revoked';
   end if;
 
+  if v_maint.lease_expires_at is not null and v_maint.lease_expires_at < clock_timestamp() then
+    raise exception using errcode = '55000', message = 'fencing_token_revoked: worker lease expired';
+  end if;
+
   -- Row lock on system_reset_operations
   select * into v_op
   from public.system_reset_operations
@@ -954,6 +1175,12 @@ begin
   where job_name = 'system_reset';
 end;
 $$;
+
+revoke all on function api.release_system_reset_lock(uuid, uuid) from public, anon, authenticated;
+grant execute on function api.release_system_reset_lock(uuid, uuid) to service_role;
+
+revoke all on function api.release_system_reset_lock(uuid, uuid, integer) from public, anon, authenticated;
+grant execute on function api.release_system_reset_lock(uuid, uuid, integer) to service_role;
 
 revoke all on function api.release_system_reset_lock(uuid, uuid, integer, uuid) from public, anon, authenticated;
 grant execute on function api.release_system_reset_lock(uuid, uuid, integer, uuid) to service_role;
