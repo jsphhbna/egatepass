@@ -10,6 +10,7 @@ import * as supabaseModule from '../server/supabase.js';
 import * as verifyIdentityModule from '../server/routes/passes/verify-identity.js';
 import * as actorsModule from '../server/actors.js';
 import identifyReturningHandler from '../server/routes/passes/identify-returning.js';
+import { createCandidateToken } from '../server/lib/candidate-token.js';
 
 describe('Returning Visitor Fail-Closed Gallery & Descriptor Validation (Priority 1 & 6)', () => {
   const originalEnv = { ...process.env };
@@ -229,7 +230,12 @@ describe('Returning Visitor Fail-Closed Gallery & Descriptor Validation (Priorit
           authorization: 'Bearer dummy-token',
           'content-type': 'application/json',
         },
-        body: JSON.stringify({ requestId, profileId: badProfileId, photoBase64 }),
+        body: JSON.stringify({
+          requestId,
+          profileId: badProfileId,
+          candidateToken: createCandidateToken(badProfileId, actorId, testSecret, 300),
+          photoBase64,
+        }),
       });
 
       const res = await identifyReturningHandler.fetch(req);
@@ -354,7 +360,12 @@ describe('Returning Visitor Fail-Closed Gallery & Descriptor Validation (Priorit
           authorization: 'Bearer dummy-token',
           'content-type': 'application/json',
         },
-        body: JSON.stringify({ requestId, profileId: goodProfileId, photoBase64 }),
+        body: JSON.stringify({
+          requestId,
+          profileId: goodProfileId,
+          candidateToken: createCandidateToken(goodProfileId, actorId, testSecret, 300),
+          photoBase64,
+        }),
       });
 
       const res = await identifyReturningHandler.fetch(req);

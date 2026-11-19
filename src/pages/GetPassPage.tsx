@@ -1532,12 +1532,10 @@ export function GetPassPage() {
       }
 
       // 3. Identify returning visitor via ephemeral 1:1 endpoint (in-memory comparison against original portrait)
-      const data = await identifyReturningVisitor(
-        tx,
-        returningSelfieBlob,
-        selectedReturningCandidate.profileId,
-        selectedReturningCandidate.candidateToken
-      );
+      if (selectedReturningCandidate?.candidateToken && portalTransactionRef.current) {
+        (portalTransactionRef.current as any).candidateToken = selectedReturningCandidate.candidateToken;
+      }
+      const data = await identifyReturningVisitor(tx, returningSelfieBlob, selectedReturningCandidate.profileId);
 
       if (!data?.matched || !data.profile || !data.matchToken) {
         const reasonCode = (data as any)?.reasonCode || '';

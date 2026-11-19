@@ -292,7 +292,6 @@ async function handleRequest(request: Request): Promise<Response> {
         maskedContact: maskContact(m.contact_number_e164),
         gender: (m as any).gender ?? null,
         partialLocality: localityParts.length > 0 ? localityParts.join(', ') : 'Philippines',
-        registeredAt: m.created_at,
       };
     });
 

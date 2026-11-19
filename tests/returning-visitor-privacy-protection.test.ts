@@ -255,13 +255,14 @@ describe('Returning Visitor Portrait Privacy & Verification Hardening (Section 1
     const data = await res.json();
     const candidate = data.candidates[0];
 
-    // Assert strictly bounded fields
+    // Assert strictly bounded fields (no raw phone, no address, no ID numbers, no unnecessary historical metadata)
     expect(candidate.contact_number_e164).toBeUndefined();
     expect(candidate.phone).toBeUndefined();
     expect(candidate.home_address).toBeUndefined();
     expect(candidate.address).toBeUndefined();
     expect(candidate.id_number).toBeUndefined();
     expect(candidate.embedding).toBeUndefined();
+    expect(candidate.registeredAt).toBeUndefined();
   });
 
   // --------------------------------------------------------------------------
@@ -297,26 +298,100 @@ describe('Returning Visitor Portrait Privacy & Verification Hardening (Section 1
     expect(v3Body.error).toBe('discovery_token_cannot_authorize_preview');
   });
 
-  it('Requirement 5: Candidate token cannot be replayed under different anonymous actor (actor_mismatch)', () => {
+  it('Requirement 5: Candidate token cannot be replayed under different anonymous actor (actor_mismatch)', async () => {
+    // 1. Cryptographic token verification unit check
     const token = createCandidateToken(mockProfileId, mockActorId, mockTokenSecret, 300);
     const result = verifyCandidateToken(token, otherActorId, mockTokenSecret);
     expect(result.valid).toBe(false);
     expect(result.error).toBe('actor_mismatch');
+
+    // 2. HTTP route boundary check against identify-returning
+    vi.spyOn(supabaseModule, 'getServerSupabaseClients').mockReturnValue({
+      admin: {} as any,
+      client: {} as any,
+    });
+
+    const identifyReq = makeRequest('http://localhost/api/passes/identify-returning', 'POST', {
+      requestId: '22222222-2222-4222-8222-222222222222',
+      profileId: mockProfileId,
+      candidateToken: token, // token was minted for mockActorId, but request session is otherActorId
+      photoBase64: '/9j/4AAQSkZJRg==',
+    });
+
+    // Mock session actor as otherActorId
+    vi.spyOn(actorsModule, 'getVerifiedSessionContext').mockResolvedValueOnce({
+      actorId: otherActorId,
+      role: 'visitor',
+      isAnonymous: true,
+      isRecoverySession: false,
+      user: { id: otherActorId },
+      identity: 'test-user',
+    } as any);
+
+    const res = await identifyReturningHandler.fetch(identifyReq);
+    expect(res.status).toBe(403);
+    const body = await res.json();
+    expect(body.error).toBe('actor_mismatch');
   });
 
-  it('Requirement 6: Expired candidate tokens are rejected', () => {
+  it('Requirement 6: Expired candidate tokens are rejected by server and token verifier', async () => {
+    // 1. Token verification unit check
     const expiredToken = createCandidateToken(mockProfileId, mockActorId, mockTokenSecret, -10);
     const result = verifyCandidateToken(expiredToken, mockActorId, mockTokenSecret);
     expect(result.valid).toBe(false);
     expect(result.error).toBe('candidate_token_expired');
+
+    // 2. HTTP route boundary check against identify-returning
+    vi.spyOn(supabaseModule, 'getServerSupabaseClients').mockReturnValue({
+      admin: {} as any,
+      client: {} as any,
+    });
+
+    const identifyReq = makeRequest('http://localhost/api/passes/identify-returning', 'POST', {
+      requestId: '22222222-2222-4222-8222-222222222222',
+      profileId: mockProfileId,
+      candidateToken: expiredToken,
+      photoBase64: '/9j/4AAQSkZJRg==',
+    });
+
+    const res = await identifyReturningHandler.fetch(identifyReq);
+    expect(res.status).toBe(403);
+    const body = await res.json();
+    expect(body.error).toBe('candidate_token_expired');
   });
 
-  it('Requirement 7: Mismatched profile ID in candidate token is rejected', () => {
+  it('Requirement 7: Mismatched profile ID or missing candidate token is rejected by identify-returning', async () => {
+    vi.spyOn(supabaseModule, 'getServerSupabaseClients').mockReturnValue({
+      admin: {} as any,
+      client: {} as any,
+    });
+
+    // 1. Token minted for mockProfileId, but client attempts to identify against otherProfileId
     const token = createCandidateToken(mockProfileId, mockActorId, mockTokenSecret, 300);
-    const result = verifyCandidateToken(token, mockActorId, mockTokenSecret);
-    expect(result.valid).toBe(true);
-    expect(result.profileId).toBe(mockProfileId);
-    expect(result.profileId === otherProfileId).toBe(false);
+    const mismatchReq = makeRequest('http://localhost/api/passes/identify-returning', 'POST', {
+      requestId: '22222222-2222-4222-8222-222222222222',
+      profileId: otherProfileId, // Mismatched target profile
+      candidateToken: token,
+      photoBase64: '/9j/4AAQSkZJRg==',
+    });
+
+    const mismatchRes = await identifyReturningHandler.fetch(mismatchReq);
+    expect(mismatchRes.status).toBe(403);
+    const mismatchBody = await mismatchRes.json();
+    expect(mismatchBody.error).toBe('profile_id_mismatch');
+
+    // 2. Client passes raw profileId with NO candidateToken -> rejected (not treated as valid proof of selection)
+    const missingTokenReq = makeRequest('http://localhost/api/passes/identify-returning', 'POST', {
+      requestId: '22222222-2222-4222-8222-222222222222',
+      profileId: mockProfileId,
+      // candidateToken omitted!
+      photoBase64: '/9j/4AAQSkZJRg==',
+    });
+
+    const missingTokenRes = await identifyReturningHandler.fetch(missingTokenReq);
+    expect(missingTokenRes.status).toBe(403);
+    const missingTokenBody = await missingTokenRes.json();
+    expect(missingTokenBody.error).toBe('candidate_token_required');
   });
 
   // --------------------------------------------------------------------------
@@ -460,17 +535,252 @@ describe('Returning Visitor Portrait Privacy & Verification Hardening (Section 1
   // Matrix Items 11 - 14: Storage & Data Ephemerality for Returning Selfies
   // --------------------------------------------------------------------------
 
-  it('Requirement 11 & 12 & 13: Candidate token validation enforces strict actor & profile match before biometrics', () => {
-    const validToken = createCandidateToken(mockProfileId, mockActorId, mockTokenSecret, 300);
-    const parsed = verifyCandidateToken(validToken, mockActorId, mockTokenSecret);
-    expect(parsed.valid).toBe(true);
-    expect(parsed.profileId).toBe(mockProfileId);
-    expect(parsed.actorId).toBe(mockActorId);
+  it('Requirement 11: Returning selfies create no persistent Storage objects', async () => {
+    const uploadSpy = vi.fn();
+    const mockAdmin = {
+      storage: {
+        from: vi.fn().mockReturnValue({
+          upload: uploadSpy,
+          download: vi.fn().mockResolvedValue({
+            data: new Blob([Buffer.from([0xff, 0xd8, 0xff, 0xe0])], { type: 'image/jpeg' }),
+            error: null,
+          }),
+        }),
+      },
+      schema: vi.fn().mockReturnValue({
+        rpc: vi.fn().mockResolvedValue({ data: true, error: null }),
+      }),
+      from: vi.fn((table: string) => {
+        if (table === 'returning_visitor_profiles') {
+          return {
+            select: vi.fn().mockReturnThis(),
+            eq: vi.fn().mockReturnThis(),
+            maybeSingle: vi.fn().mockResolvedValue({
+              data: {
+                id: mockProfileId,
+                first_name: 'Juan',
+                last_name: 'Cruz',
+                expires_at: new Date(Date.now() + 86400000).toISOString(),
+                revoked_at: null,
+              },
+              error: null,
+            }),
+          };
+        }
+        if (table === 'visitors') {
+          return {
+            select: vi.fn().mockReturnThis(),
+            eq: vi.fn().mockResolvedValue({
+              data: [{ id: 'vis-123' }],
+              error: null,
+            }),
+          };
+        }
+        if (table === 'visitor_evidence') {
+          return {
+            select: vi.fn().mockReturnThis(),
+            in: vi.fn().mockReturnThis(),
+            eq: vi.fn().mockReturnThis(),
+            order: vi.fn().mockReturnThis(),
+            limit: vi.fn().mockReturnThis(),
+            maybeSingle: vi.fn().mockResolvedValue({
+              data: {
+                bucket_id: 'visitor-photos',
+                object_path: 'portraits/vis-123.jpg',
+                content_type: 'image/jpeg',
+                purged_at: null,
+                expires_at: null,
+              },
+              error: null,
+            }),
+          };
+        }
+        return {
+          insert: vi.fn().mockResolvedValue({ data: null, error: null }),
+          select: vi.fn().mockReturnThis(),
+          eq: vi.fn().mockReturnThis(),
+        };
+      }),
+    };
 
-    // Mismatched actor rejected
-    const badActor = verifyCandidateToken(validToken, otherActorId, mockTokenSecret);
-    expect(badActor.valid).toBe(false);
-    expect(badActor.error).toBe('actor_mismatch');
+    vi.spyOn(supabaseModule, 'getServerSupabaseClients').mockReturnValue({
+      admin: mockAdmin as any,
+      client: {} as any,
+    });
+
+    const token = createCandidateToken(mockProfileId, mockActorId, mockTokenSecret, 300);
+    const req = makeRequest('http://localhost/api/passes/identify-returning', 'POST', {
+      requestId: '22222222-2222-4222-8222-222222222222',
+      profileId: mockProfileId,
+      candidateToken: token,
+      photoBase64: '/9j/2wBDAAYEBQYFBAYGBQYHBwYIChAKCgkJChQODwwQFxQYGBcUFhYaHSUfGhsjHBYWICwgIyYnKSopGR8tMC0oMCUoKSj/2wBDAQcHBwoIChMKChMoGhYaKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCj/wAARCABkAGQDASIAAhEBAxEB/8QAFAABAAAAAAAAAAAAAAAAAAAAAP/EABQQAQAAAAAAAAAAAAAAAAAAAAD/xAAUAQEAAAAAAAAAAAAAAAAAAAAA/8QAFBEBAAAAAAAAAAAAAAAAAAAAAP/aAAwDAQACEQMRAD8AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA//2Q==',
+    });
+
+    await identifyReturningHandler.fetch(req);
+    // Crucial ephemerality assertion: storage upload is NEVER invoked for returning selfie
+    expect(uploadSpy).not.toHaveBeenCalled();
+  });
+
+  it('Requirement 12: Returning selfies create no new visitor_evidence rows', async () => {
+    const evidenceInsertSpy = vi.fn();
+    const mockAdmin = {
+      schema: vi.fn().mockReturnValue({
+        rpc: vi.fn().mockResolvedValue({ data: true, error: null }),
+      }),
+      from: vi.fn((table: string) => {
+        if (table === 'visitor_evidence') {
+          return {
+            insert: evidenceInsertSpy,
+            select: vi.fn().mockReturnThis(),
+            in: vi.fn().mockReturnThis(),
+            eq: vi.fn().mockReturnThis(),
+            order: vi.fn().mockReturnThis(),
+            limit: vi.fn().mockReturnThis(),
+            maybeSingle: vi.fn().mockResolvedValue({
+              data: {
+                bucket_id: 'visitor-photos',
+                object_path: 'portraits/vis-123.jpg',
+                content_type: 'image/jpeg',
+                purged_at: null,
+                expires_at: null,
+              },
+              error: null,
+            }),
+          };
+        }
+        if (table === 'returning_visitor_profiles') {
+          return {
+            select: vi.fn().mockReturnThis(),
+            eq: vi.fn().mockReturnThis(),
+            maybeSingle: vi.fn().mockResolvedValue({
+              data: {
+                id: mockProfileId,
+                first_name: 'Juan',
+                last_name: 'Cruz',
+                expires_at: new Date(Date.now() + 86400000).toISOString(),
+                revoked_at: null,
+              },
+              error: null,
+            }),
+          };
+        }
+        if (table === 'visitors') {
+          return {
+            select: vi.fn().mockReturnThis(),
+            eq: vi.fn().mockResolvedValue({
+              data: [{ id: 'vis-123' }],
+              error: null,
+            }),
+          };
+        }
+        return {
+          insert: vi.fn().mockResolvedValue({ data: null, error: null }),
+          select: vi.fn().mockReturnThis(),
+          eq: vi.fn().mockReturnThis(),
+        };
+      }),
+    };
+
+    vi.spyOn(supabaseModule, 'getServerSupabaseClients').mockReturnValue({
+      admin: mockAdmin as any,
+      client: {} as any,
+    });
+
+    const token = createCandidateToken(mockProfileId, mockActorId, mockTokenSecret, 300);
+    const req = makeRequest('http://localhost/api/passes/identify-returning', 'POST', {
+      requestId: '22222222-2222-4222-8222-222222222222',
+      profileId: mockProfileId,
+      candidateToken: token,
+      photoBase64: '/9j/2wBDAAYEBQYFBAYGBQYHBwYIChAKCgkJChQODwwQFxQYGBcUFhYaHSUfGhsjHBYWICwgIyYnKSopGR8tMC0oMCUoKSj/2wBDAQcHBwoIChMKChMoGhYaKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCj/wAARCABkAGQDASIAAhEBAxEB/8QAFAABAAAAAAAAAAAAAAAAAAAAAP/EABQQAQAAAAAAAAAAAAAAAAAAAAD/xAAUAQEAAAAAAAAAAAAAAAAAAAAA/8QAFBEBAAAAAAAAAAAAAAAAAAAAAP/aAAwDAQACEQMRAD8AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA//2Q==',
+    });
+
+    await identifyReturningHandler.fetch(req);
+    // Crucial ephemerality assertion: visitor_evidence insert is NEVER called
+    expect(evidenceInsertSpy).not.toHaveBeenCalled();
+  });
+
+  it('Requirement 13: No returning selfie biometric template is persisted in returning_face_templates', async () => {
+    const templateInsertSpy = vi.fn();
+    const mockAdmin = {
+      schema: vi.fn().mockReturnValue({
+        rpc: vi.fn().mockResolvedValue({ data: true, error: null }),
+      }),
+      from: vi.fn((table: string) => {
+        if (table === 'returning_face_templates') {
+          return {
+            insert: templateInsertSpy,
+            select: vi.fn().mockReturnThis(),
+            eq: vi.fn().mockReturnThis(),
+          };
+        }
+        if (table === 'returning_visitor_profiles') {
+          return {
+            select: vi.fn().mockReturnThis(),
+            eq: vi.fn().mockReturnThis(),
+            maybeSingle: vi.fn().mockResolvedValue({
+              data: {
+                id: mockProfileId,
+                first_name: 'Juan',
+                last_name: 'Cruz',
+                expires_at: new Date(Date.now() + 86400000).toISOString(),
+                revoked_at: null,
+              },
+              error: null,
+            }),
+          };
+        }
+        if (table === 'visitors') {
+          return {
+            select: vi.fn().mockReturnThis(),
+            eq: vi.fn().mockResolvedValue({
+              data: [{ id: 'vis-123' }],
+              error: null,
+            }),
+          };
+        }
+        if (table === 'visitor_evidence') {
+          return {
+            select: vi.fn().mockReturnThis(),
+            in: vi.fn().mockReturnThis(),
+            eq: vi.fn().mockReturnThis(),
+            order: vi.fn().mockReturnThis(),
+            limit: vi.fn().mockReturnThis(),
+            maybeSingle: vi.fn().mockResolvedValue({
+              data: {
+                bucket_id: 'visitor-photos',
+                object_path: 'portraits/vis-123.jpg',
+                content_type: 'image/jpeg',
+                purged_at: null,
+                expires_at: null,
+              },
+              error: null,
+            }),
+          };
+        }
+        return {
+          insert: vi.fn().mockResolvedValue({ data: null, error: null }),
+          select: vi.fn().mockReturnThis(),
+          eq: vi.fn().mockReturnThis(),
+        };
+      }),
+    };
+
+    vi.spyOn(supabaseModule, 'getServerSupabaseClients').mockReturnValue({
+      admin: mockAdmin as any,
+      client: {} as any,
+    });
+
+    const token = createCandidateToken(mockProfileId, mockActorId, mockTokenSecret, 300);
+    const req = makeRequest('http://localhost/api/passes/identify-returning', 'POST', {
+      requestId: '22222222-2222-4222-8222-222222222222',
+      profileId: mockProfileId,
+      candidateToken: token,
+      photoBase64: '/9j/2wBDAAYEBQYFBAYGBQYHBwYIChAKCgkJChQODwwQFxQYGBcUFhYaHSUfGhsjHBYWICwgIyYnKSopGR8tMC0oMCUoKSj/2wBDAQcHBwoIChMKChMoGhYaKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCj/wAARCABkAGQDASIAAhEBAxEB/8QAFAABAAAAAAAAAAAAAAAAAAAAAP/EABQQAQAAAAAAAAAAAAAAAAAAAAD/xAAUAQEAAAAAAAAAAAAAAAAAAAAA/8QAFBEBAAAAAAAAAAAAAAAAAAAAAP/aAAwDAQACEQMRAD8AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA//2Q==',
+    });
+
+    await identifyReturningHandler.fetch(req);
+    // Crucial ephemerality assertion: returning_face_templates insert is NEVER called
+    expect(templateInsertSpy).not.toHaveBeenCalled();
   });
 
   it('Requirement 14: Photo retention and deletion boundaries are enforced (tokens expire in 300s)', () => {

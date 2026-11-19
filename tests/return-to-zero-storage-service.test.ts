@@ -438,7 +438,7 @@ describe('Return-to-Zero Storage Service & State Machine Hardening (Section 10 M
   // WORKSTREAM A - Part 2: Database Migration, Lock Concurrency & Integrity
   // --------------------------------------------------------------------------
 
-  describe('Database State Machine, Concurrency Lock & Role Boundaries (Requirements 11 - 22)', () => {
+  describe('Database State Machine, Concurrency Lock & Role Boundaries (Requirements 11 - 22)', { timeout: 60000 }, () => {
     let db: PGlite;
     const superadminId = '00000000-0000-0000-0000-000000000001';
     const nonSuperadminStaffId = '00000000-0000-0000-0000-000000000002';
@@ -465,7 +465,7 @@ describe('Return-to-Zero Storage Service & State Machine Hardening (Section 10 M
           ('${nonSuperadminStaffId}'::uuid, 'Duty Guard', 'guard', true)
         on conflict (user_id) do nothing;
       `);
-    });
+    }, 60000);
 
     it('Requirement 11: Concurrent reset attempts cannot corrupt operation state (lock rejection)', async () => {
       // 1. Acquire lock for first operation

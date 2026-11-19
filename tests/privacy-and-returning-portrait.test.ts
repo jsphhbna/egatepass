@@ -44,21 +44,17 @@ describe('Phase B: Privacy Notice and Returning Visitor Portrait Invariants', ()
     expect(authImageSource).toContain('token && isSameOriginUrl(targetUrl)');
   });
 
-  it('Feature A: renders original registration portrait thumbnail for all manual returning candidates', () => {
-    // Each returning visitor candidate profile card must display an original portrait thumbnail
-    expect(getPassSource).toContain('Original Registration Portrait Thumbnail');
-    expect(getPassSource).toContain('srcUrl={cand.previewUrl}');
-    expect(getPassSource).toContain('alt={`Registration portrait for ${cand.maskedName}`}');
-    expect(getPassSource).toContain('fallbackText="Portrait unavailable"');
+  it('Feature A: renders privacy-safe avatar placeholder without premature portrait preview for all manual returning candidates', () => {
+    // Each returning visitor candidate profile card must protect portraits until verified
+    expect(getPassSource).toContain('Privacy-Safe Candidate Avatar Placeholder (portrait protected until verified)');
+    expect(getPassSource).not.toContain('srcUrl={cand.previewUrl}');
     expect(getPassSource).toContain('h-14 w-14 sm:h-15 sm:w-15 rounded-xl');
   });
 
-  it('Feature B: renders prominent original portrait in automatic candidate match modal', () => {
-    // The automatic existing profile detection modal must visibly display the matching profile portrait
-    expect(getPassSource).toContain('srcUrl={candidateMatch.previewUrl}');
-    expect(getPassSource).toContain('alt="Previous visit photo preview"');
+  it('Feature B: renders privacy-safe placeholder without premature portrait in automatic candidate match modal', () => {
+    // The automatic existing profile detection modal protects portrait until verification
+    expect(getPassSource).not.toContain('srcUrl={candidateMatch.previewUrl}');
     expect(getPassSource).toContain('h-16 w-16 sm:h-18 sm:w-18 rounded-xl');
-    expect(getPassSource).toContain('fallbackText="Portrait unavailable"');
   });
 
   it('AuthenticatedImage supports compact thumbnail mode without layout overflow', () => {

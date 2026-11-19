@@ -1461,6 +1461,7 @@ export async function identifyReturningVisitor(
   candidateToken?: string
 ): Promise<ReturningIdentifyResult> {
   const { token } = await getVerifiedPortalSession(transaction);
+  const effectiveCandidateToken = candidateToken || (transaction as any)?.candidateToken;
 
   let res: Response;
   try {
@@ -1475,7 +1476,7 @@ export async function identifyReturningVisitor(
           body: JSON.stringify({
             requestId: transaction.requestId,
             profileId,
-            ...(candidateToken ? { candidateToken } : {}),
+            ...(effectiveCandidateToken ? { candidateToken: effectiveCandidateToken } : {}),
             photoBase64: photoBlobOrBase64,
           }),
         }),
@@ -1487,8 +1488,8 @@ export async function identifyReturningVisitor(
       formData.append('photo', photoBlobOrBase64, 'selfie.jpg');
       formData.append('profileId', profileId);
       formData.append('requestId', transaction.requestId);
-      if (candidateToken) {
-        formData.append('candidateToken', candidateToken);
+      if (effectiveCandidateToken) {
+        formData.append('candidateToken', effectiveCandidateToken);
       }
 
       res = await withTimeout(

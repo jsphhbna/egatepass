@@ -272,34 +272,40 @@ async function handleRequest(request: Request): Promise<Response> {
     const minCosine = getResolvedCosineThreshold()!;
     const matchSecret = process.env.RETURNING_MATCH_TOKEN_SECRET!;
 
-    // Validate candidate authorization token when provided:
-    // Ensures candidate token is cryptographically bound to current actor, target profile, and unexpired.
-    if (candidateToken) {
-      const candCheck = verifyCandidateToken(candidateToken, actorId, matchSecret);
-      if (!candCheck.valid) {
-        if (candCheck.reason === 'actor_mismatch') {
-          return jsonResponse(403, {
-            error: 'actor_mismatch',
-            message: 'Candidate authorization token does not belong to the current authenticated session.',
-          });
-        }
-        if (candCheck.expired) {
-          return jsonResponse(403, {
-            error: 'candidate_token_expired',
-            message: 'Candidate selection authorization has expired. Please perform returning visitor search again.',
-          });
-        }
+    // Validate candidate authorization token:
+    // Strictly enforces actor binding, profile binding, and expiry.
+    // Client-supplied raw profileId is NEVER accepted as proof of valid candidate selection.
+    if (!candidateToken) {
+      return jsonResponse(403, {
+        error: 'candidate_token_required',
+        message: 'A valid candidate authorization token is required for returning visitor identification.',
+      });
+    }
+
+    const candCheck = verifyCandidateToken(candidateToken, actorId, matchSecret);
+    if (!candCheck.valid) {
+      if (candCheck.reason === 'actor_mismatch') {
         return jsonResponse(403, {
-          error: 'invalid_candidate_token',
-          message: 'Candidate selection authorization is invalid.',
+          error: 'actor_mismatch',
+          message: 'Candidate authorization token does not belong to the current authenticated session.',
         });
       }
-      if (candCheck.profileId !== profileId) {
+      if (candCheck.expired) {
         return jsonResponse(403, {
-          error: 'profile_id_mismatch',
-          message: 'Candidate authorization token does not match the requested profile.',
+          error: 'candidate_token_expired',
+          message: 'Candidate selection authorization has expired. Please perform returning visitor search again.',
         });
       }
+      return jsonResponse(403, {
+        error: 'invalid_candidate_token',
+        message: 'Candidate selection authorization is invalid.',
+      });
+    }
+    if (candCheck.profileId !== profileId) {
+      return jsonResponse(403, {
+        error: 'profile_id_mismatch',
+        message: 'Candidate authorization token does not match the requested profile.',
+      });
     }
 
     // 1. Rate limiting - Actor Bucket (5 verification attempts per 10 minutes)
