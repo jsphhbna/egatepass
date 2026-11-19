@@ -11,6 +11,7 @@ import identifyReturningHandler, {
   getResolvedCosineThreshold,
   SFACE_PROVISIONAL_COSINE_THRESHOLD,
 } from '../server/routes/passes/identify-returning.js';
+import { createCandidateToken } from '../server/lib/candidate-token.js';
 import returningPhotoPreviewHandler from '../server/routes/passes/returning-photo-preview.js';
 import returningIdPreviewHandler from '../server/routes/passes/returning-id-preview.js';
 import * as supabaseModule from '../server/supabase.js';
@@ -197,7 +198,7 @@ describe('Calibration Artifact Cryptographic Verifier & Provisional Mode Boundar
         },
         body: JSON.stringify({
           requestId: mockRequestId,
-          profileId: mockProfileId,
+          candidateToken: createCandidateToken(mockProfileId, mockActorId, mockSecret, 300),
           photoBase64: '/9j/2wBDAAYEBQYFBAYGBQYHBwYIChAKCgkJChQODwwQFxQYGBcUFhYaHSUfGhsjHBYWICwgIyYnKSopGR8tMC0oMCUoKSj/2wBDAQcHBwoIChMKChMoGhYaKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCj/wAARCABkAGQDASIAAhEBAxEB/8QAFAABAAAAAAAAAAAAAAAAAAAAAP/EABQQAQAAAAAAAAAAAAAAAAAAAAD/xAAUAQEAAAAAAAAAAAAAAAAAAAAA/8QAFBEBAAAAAAAAAAAAAAAAAAAAAP/aAAwDAQACEQMRAD8AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA//2Q==',
         }),
       });

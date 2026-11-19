@@ -248,7 +248,7 @@ describe('Returning Visitor Turnstile Lifecycle & Session Security (Regression S
       return new Response('Not found', { status: 404 });
     });
 
-    const identifyRes = await identifyReturningVisitor(tx, 'photo-intent-123', 'prof-1111');
+    const identifyRes = await identifyReturningVisitor(tx, 'photo-intent-123', 'cand.v2.opaque-test-candidate-token');
     expect(identifyRes.matched).toBe(true);
     expect(identifyRes.matchToken).toBe('match-token-xyz');
     expect(widgetExecuteCount).toBe(1); // Still exactly 1!

@@ -27,6 +27,7 @@ import {
 } from '../../lib/face-engine.js';
 import { normalizePsgcLevel } from '../../lib/psgc-reference.js';
 import { verifyCalibrationArtifact, CalibrationArtifactData } from '../../lib/calibration-verifier.js';
+import { verifyCandidateToken } from '../../lib/candidate-token.js';
 import {
   resolveAuthoritativeVisitorForProfile,
   resolveEligibleRegistrationPortrait,
@@ -199,8 +200,8 @@ async function handleRequest(request: Request): Promise<Response> {
   const token = readBearerToken(request);
   if (!token) return jsonResponse(401, { error: 'authentication_required' });
 
-  let profileId = '';
   let requestId = '';
+  let candidateToken: string | null = null;
   let selfieBuffer: Buffer | null = null;
 
   const contentType = request.headers.get('content-type') || '';
@@ -208,8 +209,14 @@ async function handleRequest(request: Request): Promise<Response> {
   if (contentType.includes('multipart/form-data')) {
     try {
       const formData = await request.formData();
-      profileId = (formData.get('profileId') as string)?.trim() || '';
+      if (formData.has('profileId')) {
+        return jsonResponse(400, {
+          error: 'raw_profile_id_forbidden',
+          message: 'Raw profile identifiers are forbidden in candidate verification. Use opaque candidateToken.',
+        });
+      }
       requestId = (formData.get('requestId') as string)?.trim() || '';
+      candidateToken = (formData.get('candidateToken') as string)?.trim() || null;
       const photoEntry = formData.get('photo');
       if (photoEntry && typeof photoEntry === 'object' && 'arrayBuffer' in photoEntry) {
         const ab = await (photoEntry as Blob).arrayBuffer();
@@ -223,8 +230,14 @@ async function handleRequest(request: Request): Promise<Response> {
     if (!body || typeof body !== 'object') {
       return jsonResponse(400, { error: 'invalid_request_body' });
     }
-    profileId = (body.profileId || '').trim();
+    if ('profileId' in body) {
+      return jsonResponse(400, {
+        error: 'raw_profile_id_forbidden',
+        message: 'Raw profile identifiers are forbidden in candidate verification. Use opaque candidateToken.',
+      });
+    }
     requestId = (body.requestId || '').trim();
+    candidateToken = typeof body.candidateToken === 'string' ? body.candidateToken.trim() : null;
     if (body.photoBase64 && typeof body.photoBase64 === 'string') {
       const cleanB64 = body.photoBase64.replace(/^data:image\/\w+;base64,/, '');
       selfieBuffer = Buffer.from(cleanB64, 'base64');
@@ -232,8 +245,8 @@ async function handleRequest(request: Request): Promise<Response> {
   }
 
   const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-  if (!uuidRegex.test(profileId) || !uuidRegex.test(requestId)) {
-    return jsonResponse(400, { error: 'invalid_request', message: 'Valid UUID profileId and requestId are required.' });
+  if (!uuidRegex.test(requestId)) {
+    return jsonResponse(400, { error: 'invalid_request', message: 'Valid UUID requestId is required.' });
   }
 
   if (!selfieBuffer) {
@@ -256,6 +269,47 @@ async function handleRequest(request: Request): Promise<Response> {
 
     const actorId = session.user.id;
 
+    const matchSecret = process.env.RETURNING_MATCH_TOKEN_SECRET || '';
+
+    // Validate candidate authorization token:
+    // Strictly enforces actor binding, profile binding, and expiry.
+    // Client-supplied raw profileId is NEVER accepted as proof of valid candidate selection.
+    if (!candidateToken) {
+      return jsonResponse(403, {
+        error: 'candidate_token_required',
+        message: 'A valid candidate authorization token is required for returning visitor identification.',
+      });
+    }
+
+    const candCheck = verifyCandidateToken(candidateToken, actorId, matchSecret);
+    if (!candCheck.valid) {
+      if (candCheck.reason === 'actor_mismatch') {
+        return jsonResponse(403, {
+          error: 'actor_mismatch',
+          message: 'Candidate authorization token does not belong to the current authenticated session.',
+        });
+      }
+      if (candCheck.expired) {
+        return jsonResponse(403, {
+          error: 'candidate_token_expired',
+          message: 'Candidate selection authorization has expired. Please perform returning visitor search again.',
+        });
+      }
+      if (candCheck.reason === 'unsupported_legacy_token') {
+        return jsonResponse(403, {
+          error: 'unsupported_candidate_token_version',
+          message: 'Legacy cand.v1 candidate tokens are not supported. Please search again to receive an opaque cand.v2 token.',
+        });
+      }
+      return jsonResponse(403, {
+        error: 'invalid_candidate_token',
+        message: 'Candidate selection authorization is invalid.',
+      });
+    }
+
+    // Server securely obtains selected profileId EXCLUSIVELY from validated candidate authorization handle
+    const profileId = candCheck.profileId!;
+
     // Safety Gate Check: fail-closed if biometric parameters or secrets are uncalibrated/missing
     if (!isReturningVisitorAvailable()) {
       return jsonResponse(200, {
@@ -266,7 +320,6 @@ async function handleRequest(request: Request): Promise<Response> {
     }
 
     const minCosine = getResolvedCosineThreshold()!;
-    const matchSecret = process.env.RETURNING_MATCH_TOKEN_SECRET!;
 
     // 1. Rate limiting - Actor Bucket (5 verification attempts per 10 minutes)
     const actorKeyHex = createHash('sha256').update(`actor:${actorId}`).digest('hex');

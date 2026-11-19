@@ -2203,4 +2203,738 @@ runSuite('True PostgreSQL Concurrency, Canonical Approval Integrity & Email Reco
       }
     });
   });
+
+  describe('Finding G: Return-to-Zero Concurrency Drain, Row Fencing & In-Flight Write Race Protection', () => {
+    const superadminId = '00000000-0000-0000-0000-000000000001';
+    const testVisitorId = '0b111111-1111-4111-8111-111111111111';
+
+    beforeAll(async () => {
+      const client = await pool.connect();
+      try {
+        await client.query(`set request.jwt.claim.role = 'service_role';`);
+        await client.query(`
+          insert into auth.users (id, email)
+          values ('${superadminId}', 'superadmin.reset@earist.edu.ph')
+          on conflict (id) do nothing;
+
+          insert into public.staff_profiles (user_id, display_name, role, active)
+          values ('${superadminId}', 'Reset Superadmin', 'superadmin', true)
+          on conflict (user_id) do update set active = true, role = 'superadmin';
+
+          insert into auth.users (id, email, is_anonymous)
+          values ('${testVisitorId}', 'visitor.concurrency@earist.edu.ph', true)
+          on conflict (id) do nothing;
+        `);
+      } finally {
+        client.release();
+      }
+    });
+
+    async function advancePgResetToDatabaseCleanup(client: pg.PoolClient | pg.Client, opId: string, gen: number, workerId: string) {
+      const verification = JSON.stringify({
+        verifiedAt: new Date().toISOString(),
+        buckets: {
+          'visitor-photos': { bucket: 'visitor-photos', remainingCount: 0, verifiedEmpty: true },
+          'visitor-ids': { bucket: 'visitor-ids', remainingCount: 0, verifiedEmpty: true },
+        },
+        verifiedEmpty: true,
+      });
+
+      await client.query(`
+        select api.record_system_reset_step(
+          $1::uuid, 'storage_deletion_in_progress', 'storage_deletion_in_progress',
+          '{}'::jsonb, '{}'::jsonb, null, $2, $3::uuid
+        );
+      `, [opId, gen, workerId]);
+
+      await client.query(`
+        select api.record_system_reset_step(
+          $1::uuid, 'storage_deletion_verified', 'storage_deletion_verified',
+          '{}'::jsonb, '{}'::jsonb, null, $2, $3::uuid, $4::jsonb
+        );
+      `, [opId, gen, workerId, verification]);
+
+      await client.query(`
+        select api.record_system_reset_step(
+          $1::uuid, 'database_cleanup_in_progress', 'database_cleanup_in_progress',
+          '{}'::jsonb, '{}'::jsonb, null, $2, $3::uuid
+        );
+      `, [opId, gen, workerId]);
+    }
+
+    it('1. Database operational writes: Transaction A holds in-flight write -> reset acquisition in Transaction B is blocked until Transaction A finishes', async () => {
+      const clientA = await pool.connect();
+      const clientB = await pool.connect();
+      const clientC = await pool.connect();
+
+      let opId: string | null = null;
+      let workerGen: number | null = null;
+      let workerId: string | null = null;
+
+      try {
+        await clientA.query(`set request.jwt.claim.role = 'service_role';`);
+        await clientB.query(`set request.jwt.claim.role = 'service_role';`);
+        await clientC.query(`set request.jwt.claim.role = 'service_role';`);
+
+        // Ensure reset lock is idle
+        await clientA.query(`
+          insert into public.maintenance_state (job_name, cursor_value, last_started_at, worker_generation)
+          values ('system_reset', 'idle', null, 0)
+          on conflict (job_name) do update set cursor_value = 'idle', active_operation_id = null;
+        `);
+
+        // 1. Transaction A begins and performs an operational write (holding FOR SHARE on maintenance_state)
+        await clientA.query('BEGIN');
+        const insertVisitorId = '0b222222-2222-4222-8222-222222222222';
+        await clientA.query(`
+          insert into public.visitors (id, owner_id, source, full_name, contact_number, purpose, visit_date, consent_accepted_at)
+          values ('${insertVisitorId}', '${testVisitorId}', 'portal', 'In-Flight Visitor', '+639170000001', 'Meeting', current_date, now());
+        `);
+
+        // 2. Transaction B attempts to acquire reset lock (requires FOR UPDATE on maintenance_state)
+        let acquiredResult: any = null;
+        let acquisitionCompleted = false;
+
+        const acquisitionPromise = clientB.query(
+          `select api.acquire_system_reset_lock($1::uuid) as result;`,
+          [superadminId]
+        ).then((res) => {
+          acquisitionCompleted = true;
+          acquiredResult = res.rows[0].result;
+          return res;
+        });
+
+        // 3. Prove that acquisition in B waits for earlier write in A to finish
+        // Wait 250ms and assert acquisition is still blocked
+        await new Promise((r) => setTimeout(r, 250));
+        expect(acquisitionCompleted).toBe(false);
+        expect(acquiredResult).toBeNull();
+
+        // 4. Transaction A commits
+        await clientA.query('COMMIT');
+
+        // 5. Transaction B unblocks and completes acquisition
+        await acquisitionPromise;
+        expect(acquisitionCompleted).toBe(true);
+        expect(acquiredResult.acquired).toBe(true);
+        opId = acquiredResult.operation_id;
+        workerGen = acquiredResult.worker_generation;
+        workerId = acquiredResult.worker_id;
+
+        // 6. Prove that subsequent operational writes from Transaction C are immediately rejected after acquisition
+        const subsequentVisitorId = '0b333333-3333-4333-8333-333333333333';
+        await expect(
+          clientC.query(`
+            insert into public.visitors (id, owner_id, source, full_name, contact_number, purpose, visit_date, consent_accepted_at)
+            values ('${subsequentVisitorId}', '${testVisitorId}', 'portal', 'Subsequent Blocked Visitor', '+639170000002', 'Meeting', current_date, now());
+          `)
+        ).rejects.toThrow(/system_reset_in_progress/);
+
+        // 7. Prove that earlier in-flight write was committed before lock acquisition was confirmed
+        const checkA = await clientC.query(
+          `select id from public.visitors where id = $1;`,
+          [insertVisitorId]
+        );
+        expect(checkA.rows).toHaveLength(1);
+
+      } finally {
+        if (opId && workerGen && workerId) {
+          try {
+            await advancePgResetToDatabaseCleanup(clientB, opId, workerGen, workerId);
+            await clientB.query(`select api.return_to_zero_reset($1::uuid, $2::uuid, $3, $4::uuid);`, [superadminId, opId, workerGen, workerId]);
+            await clientB.query(`select api.release_system_reset_lock($1::uuid, $2::uuid, $3, $4::uuid);`, [superadminId, opId, workerGen, workerId]);
+          } catch {}
+        }
+        clientA.release();
+        clientB.release();
+        clientC.release();
+      }
+    });
+
+    it('2. Storage objects: Transaction A holds in-flight storage upload -> reset acquisition in Transaction B is blocked until upload finishes', async () => {
+      const clientA = await pool.connect();
+      const clientB = await pool.connect();
+      const clientC = await pool.connect();
+
+      let opId: string | null = null;
+      let workerGen: number | null = null;
+      let workerId: string | null = null;
+
+      try {
+        await clientA.query(`set request.jwt.claim.role = 'service_role';`);
+        await clientB.query(`set request.jwt.claim.role = 'service_role';`);
+        await clientC.query(`set request.jwt.claim.role = 'service_role';`);
+
+        // Ensure storage bucket exists
+        await clientA.query(`
+          insert into storage.buckets (id, name, public)
+          values ('visitor-photos', 'visitor-photos', false)
+          on conflict (id) do nothing;
+        `);
+
+        // Ensure reset lock is idle
+        await clientA.query(`
+          update public.maintenance_state
+          set cursor_value = 'idle', active_operation_id = null
+          where job_name = 'system_reset';
+        `);
+
+        // 1. Transaction A begins and inserts an object into storage.objects (holds FOR SHARE)
+        await clientA.query('BEGIN');
+        const objectAId = '0b444444-4444-4444-8444-444444444444';
+        await clientA.query(`
+          insert into storage.objects (id, bucket_id, name, owner)
+          values ('${objectAId}', 'visitor-photos', 'in-flight-upload.jpg', '${testVisitorId}');
+        `);
+
+        // 2. Transaction B attempts to acquire reset lock (requires FOR UPDATE)
+        let acquiredResult: any = null;
+        let acquisitionCompleted = false;
+
+        const acquisitionPromise = clientB.query(
+          `select api.acquire_system_reset_lock($1::uuid) as result;`,
+          [superadminId]
+        ).then((res) => {
+          acquisitionCompleted = true;
+          acquiredResult = res.rows[0].result;
+          return res;
+        });
+
+        // 3. Prove that acquisition in B waits for earlier storage upload in A to finish
+        await new Promise((r) => setTimeout(r, 250));
+        expect(acquisitionCompleted).toBe(false);
+        expect(acquiredResult).toBeNull();
+
+        // 4. Transaction A commits
+        await clientA.query('COMMIT');
+
+        // 5. Transaction B completes acquisition
+        await acquisitionPromise;
+        expect(acquisitionCompleted).toBe(true);
+        expect(acquiredResult.acquired).toBe(true);
+        opId = acquiredResult.operation_id;
+        workerGen = acquiredResult.worker_generation;
+        workerId = acquiredResult.worker_id;
+
+        // 6. Subsequent storage upload from Transaction C is rejected
+        const objectCId = '0b555555-5555-4555-8555-555555555555';
+        await expect(
+          clientC.query(`
+            insert into storage.objects (id, bucket_id, name, owner)
+            values ('${objectCId}', 'visitor-photos', 'blocked-upload.jpg', '${testVisitorId}');
+          `)
+        ).rejects.toThrow(/system_reset_in_progress/);
+
+      } finally {
+        if (opId && workerGen && workerId) {
+          try {
+            await advancePgResetToDatabaseCleanup(clientB, opId, workerGen, workerId);
+            await clientB.query(`select api.return_to_zero_reset($1::uuid, $2::uuid, $3, $4::uuid);`, [superadminId, opId, workerGen, workerId]);
+            await clientB.query(`select api.release_system_reset_lock($1::uuid, $2::uuid, $3, $4::uuid);`, [superadminId, opId, workerGen, workerId]);
+          } catch {}
+        }
+        clientA.release();
+        clientB.release();
+        clientC.release();
+      }
+    });
+
+    it('3. Section F Adversarial Cases 1-3: Standalone reset without op ID, gen, or worker ID is rejected and deletes nothing', async () => {
+      const clientA = await pool.connect();
+      const clientB = await pool.connect();
+      try {
+        await clientA.query(`set request.jwt.claim.role = 'service_role';`);
+        await clientB.query(`set request.jwt.claim.role = 'service_role';`);
+
+        // Ensure idle and insert a test visitor to verify zero deletion occurs
+        await clientA.query(`
+          update public.maintenance_state
+          set cursor_value = 'idle', active_operation_id = null
+          where job_name = 'system_reset';
+        `);
+
+        await clientA.query(`
+          insert into public.visitors (id, owner_id, source, full_name, contact_number, purpose, visit_date, consent_accepted_at)
+          values ($1::uuid, $2::uuid, 'portal', 'Adversarial Test Visitor', '+639170000000', 'Meeting', current_date, now())
+          on conflict (id) do nothing;
+        `, [testVisitorId, superadminId]);
+
+        // Case 1: Standalone call without op ID is rejected while idle
+        await expect(
+          clientA.query(`select api.return_to_zero_reset($1::uuid, null, null, null);`, [superadminId])
+        ).rejects.toThrow(/fencing_token_revoked/);
+
+        // Also test 1-parameter direct invocation
+        await expect(
+          clientA.query(`select api.return_to_zero_reset($1::uuid);`, [superadminId])
+        ).rejects.toThrow(/fencing_token_revoked: operation ID required/);
+
+        // Prove zero deletion occurred
+        const visCheck = await clientA.query(`select count(*) as c from public.visitors where id = $1;`, [testVisitorId]);
+        expect(Number(visCheck.rows[0].c)).toBeGreaterThanOrEqual(1);
+
+        // Verify database state: maintenance_state remains idle and no active operation exists
+        const maintCheck1 = await clientA.query(`select cursor_value, active_operation_id from public.maintenance_state where job_name = 'system_reset';`);
+        expect(maintCheck1.rows[0].cursor_value).toBe('idle');
+        expect(maintCheck1.rows[0].active_operation_id).toBeNull();
+
+        // Acquire lock
+        const lockRes = await clientA.query(`select api.acquire_system_reset_lock($1::uuid) as r;`, [superadminId]);
+        const { operation_id: opId, worker_generation: gen, worker_id: workerId } = lockRes.rows[0].r;
+
+        // Case 2: Calling with op ID but no generation is rejected
+        await expect(
+          clientB.query(`select api.return_to_zero_reset($1::uuid, $2::uuid, null, null);`, [superadminId, opId])
+        ).rejects.toThrow(/fencing_token_revoked/);
+
+        // Also test 2-arg invocation
+        await expect(
+          clientB.query(`select api.return_to_zero_reset($1::uuid, $2::uuid);`, [superadminId, opId])
+        ).rejects.toThrow(/fencing_token_revoked: worker generation required/);
+
+        // Verify database state & operation records after Case 2 rejection
+        const maintCheck2 = await clientA.query(`select cursor_value, active_operation_id, worker_generation, active_worker_id from public.maintenance_state where job_name = 'system_reset';`);
+        expect(maintCheck2.rows[0].cursor_value).toBe('locked');
+        expect(maintCheck2.rows[0].active_operation_id).toBe(opId);
+        expect(maintCheck2.rows[0].worker_generation).toBe(gen);
+        expect(maintCheck2.rows[0].active_worker_id).toBe(workerId);
+
+        const opCheck2 = await clientA.query(`select status, step from public.system_reset_operations where id = $1;`, [opId]);
+        expect(opCheck2.rows[0].status).toBe('lock_acquired');
+        expect(opCheck2.rows[0].step).toBe('lock_acquired');
+
+        // Case 3: Calling with op ID and generation but no worker ID is rejected
+        await expect(
+          clientB.query(`select api.return_to_zero_reset($1::uuid, $2::uuid, $3, null);`, [superadminId, opId, gen])
+        ).rejects.toThrow(/fencing_token_revoked/);
+
+        // Also test 3-arg invocation
+        await expect(
+          clientB.query(`select api.return_to_zero_reset($1::uuid, $2::uuid, $3);`, [superadminId, opId, gen])
+        ).rejects.toThrow(/fencing_token_revoked: worker ID required/);
+
+        // Verify database state & operation records after Case 3 rejection
+        const maintCheck3 = await clientA.query(`select cursor_value, active_operation_id, worker_generation, active_worker_id from public.maintenance_state where job_name = 'system_reset';`);
+        expect(maintCheck3.rows[0].cursor_value).toBe('locked');
+        expect(maintCheck3.rows[0].active_operation_id).toBe(opId);
+
+        const opCheck3 = await clientA.query(`select status, step from public.system_reset_operations where id = $1;`, [opId]);
+        expect(opCheck3.rows[0].status).toBe('lock_acquired');
+
+        // Zero deletions occurred
+        const visCheck3 = await clientA.query(`select count(*) as c from public.visitors where id = $1;`, [testVisitorId]);
+        expect(Number(visCheck3.rows[0].c)).toBeGreaterThanOrEqual(1);
+
+        // Clean up
+        await advancePgResetToDatabaseCleanup(clientA, opId, gen, workerId);
+        await clientA.query(`select api.return_to_zero_reset($1::uuid, $2::uuid, $3, $4::uuid);`, [superadminId, opId, gen, workerId]);
+        await clientA.query(`select api.release_system_reset_lock($1::uuid, $2::uuid, $3, $4::uuid);`, [superadminId, opId, gen, workerId]);
+      } finally {
+        clientA.release();
+        clientB.release();
+      }
+    });
+
+    it('4. Section F Adversarial Cases 4-7: Expired lease renewal rejected, racing recovery advances generation, stale assertion & steps blocked', async () => {
+      const clientA = await pool.connect();
+      const clientB = await pool.connect();
+      try {
+        await clientA.query(`set request.jwt.claim.role = 'service_role';`);
+        await clientB.query(`set request.jwt.claim.role = 'service_role';`);
+
+        // Ensure idle
+        await clientA.query(`
+          update public.maintenance_state
+          set cursor_value = 'idle', active_operation_id = null
+          where job_name = 'system_reset';
+        `);
+
+        // Worker 1 acquires lock
+        const lock1 = await clientA.query(`select api.acquire_system_reset_lock($1::uuid) as r;`, [superadminId]);
+        const { operation_id: opId, worker_generation: gen1, worker_id: w1 } = lock1.rows[0].r;
+
+        // Expire lease
+        await clientB.query(`
+          update public.maintenance_state
+          set lease_expires_at = clock_timestamp() - interval '5 seconds'
+          where job_name = 'system_reset';
+        `);
+
+        // Case 4: Expired worker cannot renew its lease after expiry
+        await expect(
+          clientA.query(`select api.assert_system_reset_worker_active($1::uuid, $2, $3::uuid);`, [opId, gen1, w1])
+        ).rejects.toThrow(/fencing_token_revoked/);
+
+        // Verify database state after Case 4: lease was NOT renewed
+        const maintExpCheck = await clientB.query(`select lease_expires_at from public.maintenance_state where job_name = 'system_reset';`);
+        expect(new Date(maintExpCheck.rows[0].lease_expires_at).getTime()).toBeLessThan(Date.now());
+
+        // Concurrently race recovery acquisition with stale assertion
+        const [resumeResSettled, staleAssertSettled] = await Promise.allSettled([
+          clientB.query(`select api.acquire_system_reset_lock($1::uuid, $2::uuid) as r;`, [superadminId, opId]),
+          clientA.query(`select api.assert_system_reset_worker_active($1::uuid, $2, $3::uuid);`, [opId, gen1, w1]),
+        ]);
+
+        expect(resumeResSettled.status).toBe('fulfilled');
+        const resumeRes = (resumeResSettled as PromiseFulfilledResult<any>).value;
+        expect(resumeRes.rows[0].r.acquired).toBe(true);
+        const gen2 = resumeRes.rows[0].r.worker_generation;
+        const w2 = resumeRes.rows[0].r.worker_id;
+        expect(gen2).toBeGreaterThan(gen1);
+        expect(w2).not.toBe(w1);
+
+        // Case 5: Stale assertion racing with recovery acquisition cannot return success after new generation wins
+        expect(staleAssertSettled.status).toBe('rejected');
+
+        // Case 5 & 6: Stale Worker 1 assertion cannot succeed or alter Worker 2 heartbeat/lease
+        const maintBefore = await clientB.query(`select lease_expires_at, heartbeat_at, worker_generation, active_worker_id from public.maintenance_state where job_name = 'system_reset';`);
+        await expect(
+          clientA.query(`select api.assert_system_reset_worker_active($1::uuid, $2, $3::uuid);`, [opId, gen1, w1])
+        ).rejects.toThrow(/fencing_token_revoked/);
+
+        const maintAfter = await clientB.query(`select lease_expires_at, heartbeat_at, worker_generation, active_worker_id from public.maintenance_state where job_name = 'system_reset';`);
+        expect(maintAfter.rows[0].lease_expires_at).toEqual(maintBefore.rows[0].lease_expires_at);
+        expect(maintAfter.rows[0].heartbeat_at).toEqual(maintBefore.rows[0].heartbeat_at);
+        expect(maintAfter.rows[0].worker_generation).toBe(gen2);
+        expect(maintAfter.rows[0].active_worker_id).toBe(w2);
+
+        // Case 7: Stale record_system_reset_step cannot modify active operation
+        await expect(
+          clientA.query(`
+            select api.record_system_reset_step(
+              $1::uuid, 'storage_deletion_in_progress', 'storage_deletion_in_progress',
+              '{}'::jsonb, '{}'::jsonb, null, $2, $3::uuid
+            );
+          `, [opId, gen1, w1])
+        ).rejects.toThrow(/fencing_token_revoked/);
+
+        // Verify operation records after Case 7 rejection: status was NOT modified by stale worker
+        const opCheck7 = await clientB.query(`select status, step, worker_generation, worker_id from public.system_reset_operations where id = $1;`, [opId]);
+        expect(opCheck7.rows[0].status).toBe('lock_acquired');
+        expect(opCheck7.rows[0].step).toBe('resumed');
+        expect(opCheck7.rows[0].worker_generation).toBe(gen2);
+        expect(opCheck7.rows[0].worker_id).toBe(w2);
+
+        // Clean up with valid Worker 2
+        await advancePgResetToDatabaseCleanup(clientB, opId, gen2, w2);
+        await clientB.query(`select api.return_to_zero_reset($1::uuid, $2::uuid, $3, $4::uuid);`, [superadminId, opId, gen2, w2]);
+        await clientB.query(`select api.release_system_reset_lock($1::uuid, $2::uuid, $3, $4::uuid);`, [superadminId, opId, gen2, w2]);
+      } finally {
+        try {
+          await clientA.query(`
+            update public.maintenance_state
+            set cursor_value = 'idle', active_operation_id = null
+            where job_name = 'system_reset';
+          `);
+        } catch {}
+        clientA.release();
+        clientB.release();
+      }
+    });
+
+    it('5. Section F Adversarial Cases 8-11: Step recording cannot complete, release requires full tokens, stale release rejected', async () => {
+      const clientA = await pool.connect();
+      const clientB = await pool.connect();
+      try {
+        await clientA.query(`set request.jwt.claim.role = 'service_role';`);
+        await clientB.query(`set request.jwt.claim.role = 'service_role';`);
+
+        // Ensure idle
+        await clientA.query(`
+          update public.maintenance_state
+          set cursor_value = 'idle', active_operation_id = null
+          where job_name = 'system_reset';
+        `);
+
+        // Worker 1 acquires lock
+        const lock1 = await clientA.query(`select api.acquire_system_reset_lock($1::uuid) as r;`, [superadminId]);
+        const { operation_id: opId, worker_generation: gen1, worker_id: w1 } = lock1.rows[0].r;
+
+        // Case 8: record_system_reset_step cannot transition to 'completed'
+        await expect(
+          clientA.query(`
+            select api.record_system_reset_step(
+              $1::uuid, 'completed', 'completed',
+              '{}'::jsonb, '{}'::jsonb, null, $2, $3::uuid
+            );
+          `, [opId, gen1, w1])
+        ).rejects.toThrow(/invalid_(state|step)_transition/);
+
+        // Verify operation records and maintenance state after Case 8 rejection
+        const opCheck8 = await clientA.query(`select status, step from public.system_reset_operations where id = $1;`, [opId]);
+        expect(opCheck8.rows[0].status).not.toBe('completed');
+        const maintCheck8 = await clientA.query(`select cursor_value, active_operation_id from public.maintenance_state where job_name = 'system_reset';`);
+        expect(maintCheck8.rows[0].cursor_value).toBe('locked');
+        expect(maintCheck8.rows[0].active_operation_id).toBe(opId);
+
+        // Advance to Worker 2
+        await clientB.query(`
+          update public.maintenance_state
+          set lease_expires_at = clock_timestamp() - interval '5 seconds'
+          where job_name = 'system_reset';
+        `);
+        const lock2 = await clientB.query(`select api.acquire_system_reset_lock($1::uuid, $2::uuid) as r;`, [superadminId, opId]);
+        const { worker_generation: gen2, worker_id: w2 } = lock2.rows[0].r;
+
+        // Case 9: Release without generation is rejected (both null argument and omitted argument)
+        await expect(
+          clientB.query(`select api.release_system_reset_lock($1::uuid, $2::uuid, null, $3::uuid);`, [superadminId, opId, w2])
+        ).rejects.toThrow(/fencing_token_revoked/);
+
+        await expect(
+          clientB.query(`select api.release_system_reset_lock($1::uuid, $2::uuid);`, [superadminId, opId])
+        ).rejects.toThrow(/fencing_token_revoked: worker generation required/);
+
+        // Verify state after Case 9 rejection
+        const maintCheck9 = await clientB.query(`select cursor_value, active_operation_id from public.maintenance_state where job_name = 'system_reset';`);
+        expect(maintCheck9.rows[0].cursor_value).toBe('locked');
+
+        // Case 10: Release without worker ID is rejected (both null argument and omitted argument)
+        await expect(
+          clientB.query(`select api.release_system_reset_lock($1::uuid, $2::uuid, $3, null);`, [superadminId, opId, gen2])
+        ).rejects.toThrow(/fencing_token_revoked/);
+
+        await expect(
+          clientB.query(`select api.release_system_reset_lock($1::uuid, $2::uuid, $3);`, [superadminId, opId, gen2])
+        ).rejects.toThrow(/fencing_token_revoked: worker ID required/);
+
+        // Verify state after Case 10 rejection
+        const maintCheck10 = await clientB.query(`select cursor_value, active_operation_id from public.maintenance_state where job_name = 'system_reset';`);
+        expect(maintCheck10.rows[0].cursor_value).toBe('locked');
+
+        // Case 11: Stale Worker 1 cannot release lock even for same operation ID
+        await expect(
+          clientA.query(`select api.release_system_reset_lock($1::uuid, $2::uuid, $3, $4::uuid);`, [superadminId, opId, gen1, w1])
+        ).rejects.toThrow(/fencing_token_revoked/);
+
+        // Verify state after Case 11 rejection: still locked by Worker 2
+        const maintCheck11 = await clientB.query(`select cursor_value, active_worker_id from public.maintenance_state where job_name = 'system_reset';`);
+        expect(maintCheck11.rows[0].cursor_value).toBe('locked');
+        expect(maintCheck11.rows[0].active_worker_id).toBe(w2);
+        const opCheck11 = await clientB.query(`select status from public.system_reset_operations where id = $1;`, [opId]);
+        expect(opCheck11.rows[0].status).not.toBe('completed');
+
+        // Clean up with valid Worker 2
+        await advancePgResetToDatabaseCleanup(clientB, opId, gen2, w2);
+        await clientB.query(`select api.return_to_zero_reset($1::uuid, $2::uuid, $3, $4::uuid);`, [superadminId, opId, gen2, w2]);
+        await clientB.query(`select api.release_system_reset_lock($1::uuid, $2::uuid, $3, $4::uuid);`, [superadminId, opId, gen2, w2]);
+      } finally {
+        try {
+          await clientA.query(`
+            update public.maintenance_state
+            set cursor_value = 'idle', active_operation_id = null
+            where job_name = 'system_reset';
+          `);
+        } catch {}
+        clientA.release();
+        clientB.release();
+      }
+    });
+
+    it('6. Section F Adversarial Cases 12-14: Full lifecycle, recovery manifest durability, and direct DB reset cannot self-complete', async () => {
+      const clientA = await pool.connect();
+      const clientB = await pool.connect();
+      try {
+        await clientA.query(`set request.jwt.claim.role = 'service_role';`);
+        await clientB.query(`set request.jwt.claim.role = 'service_role';`);
+
+        // Ensure idle
+        await clientA.query(`
+          update public.maintenance_state
+          set cursor_value = 'idle', active_operation_id = null
+          where job_name = 'system_reset';
+        `);
+
+        // Case 13: Acquire lock, record manifest, simulate recovery
+        const lock1 = await clientA.query(`select api.acquire_system_reset_lock($1::uuid) as r;`, [superadminId]);
+        const { operation_id: opId, worker_generation: gen1, worker_id: w1 } = lock1.rows[0].r;
+
+        const manifest = { "visitor-photos": ["img1.jpg", "img2.jpg"] };
+        await clientA.query(`
+          select api.record_system_reset_step(
+            $1::uuid, 'recovery_required', 'storage_purge_failed',
+            $2::jsonb, '{"totalDiscovered": 2, "totalDeleted": 0}'::jsonb,
+            'Simulated Storage timeout', $3, $4::uuid
+          );
+        `, [opId, JSON.stringify(manifest), gen1, w1]);
+
+        // Worker 2 resumes
+        await clientB.query(`
+          update public.maintenance_state
+          set lease_expires_at = clock_timestamp() - interval '5 seconds'
+          where job_name = 'system_reset';
+        `);
+        const lock2 = await clientB.query(`select api.acquire_system_reset_lock($1::uuid, $2::uuid) as r;`, [superadminId, opId]);
+        expect(lock2.rows[0].r.acquired).toBe(true);
+        expect(lock2.rows[0].r.storage_manifest).toEqual(manifest);
+        const { worker_generation: gen2, worker_id: w2 } = lock2.rows[0].r;
+
+        // Case 14: Direct return_to_zero_reset only sets database_cleanup_completed, never reports completion or releases lock
+        await advancePgResetToDatabaseCleanup(clientB, opId, gen2, w2);
+        const resetRes = await clientB.query(`select api.return_to_zero_reset($1::uuid, $2::uuid, $3, $4::uuid) as r;`, [superadminId, opId, gen2, w2]);
+        expect(resetRes.rows[0].r.success).toBe(true);
+
+        const opState = await clientB.query(`select status, step from public.system_reset_operations where id = $1;`, [opId]);
+        expect(opState.rows[0].status).toBe('database_cleanup_completed');
+        expect(opState.rows[0].step).toBe('database_cleanup_completed');
+
+        const maintState = await clientB.query(`select cursor_value, active_operation_id from public.maintenance_state where job_name = 'system_reset';`);
+        expect(['locked', 'in_progress']).toContain(maintState.rows[0].cursor_value);
+        expect(maintState.rows[0].active_operation_id).toBe(opId);
+
+        // Case 12: Final release completes the operation and sets idle
+        await clientB.query(`select api.release_system_reset_lock($1::uuid, $2::uuid, $3, $4::uuid);`, [superadminId, opId, gen2, w2]);
+
+        const finalOp = await clientB.query(`select status, step, completed_at from public.system_reset_operations where id = $1;`, [opId]);
+        expect(finalOp.rows[0].status).toBe('completed');
+        expect(finalOp.rows[0].step).toBe('completed');
+        expect(finalOp.rows[0].completed_at).not.toBeNull();
+
+        const finalMaint = await clientB.query(`select cursor_value, active_operation_id from public.maintenance_state where job_name = 'system_reset';`);
+        expect(finalMaint.rows[0].cursor_value).toBe('idle');
+        expect(finalMaint.rows[0].active_operation_id).toBeNull();
+      } finally {
+        try {
+          await clientA.query(`
+            update public.maintenance_state
+            set cursor_value = 'idle', active_operation_id = null
+            where job_name = 'system_reset';
+          `);
+        } catch {}
+        clientA.release();
+        clientB.release();
+      }
+    });
+
+    it('7. Section F Adversarial Cases 15-18: Reset phase gates, completion forgery prevention, and fail-closed NULL leases', async () => {
+      const client = await pool.connect();
+      try {
+        await client.query(`set request.jwt.claim.role = 'service_role';`);
+
+        // Ensure idle
+        await client.query(`
+          update public.maintenance_state
+          set cursor_value = 'idle', active_operation_id = null
+          where job_name = 'system_reset';
+        `);
+
+        // 1. Fresh lock_acquired cannot execute return_to_zero_reset
+        const lockRes = await client.query(`select api.acquire_system_reset_lock($1::uuid) as r;`, [superadminId]);
+        const { operation_id: opId, worker_generation: gen, worker_id: wId } = lockRes.rows[0].r;
+
+        await expect(
+          client.query(`select api.return_to_zero_reset($1::uuid, $2::uuid, $3, $4::uuid);`, [superadminId, opId, gen, wId])
+        ).rejects.toThrow(/invalid_state_transition: operation must be in database_cleanup_in_progress phase/);
+
+        // 2. record_system_reset_step cannot forge database_cleanup_completed or completed
+        await expect(
+          client.query(`
+            select api.record_system_reset_step(
+              $1::uuid, 'database_cleanup_completed', 'storage_deletion_in_progress',
+              '{}'::jsonb, '{}'::jsonb, null, $2, $3::uuid
+            );
+          `, [opId, gen, wId])
+        ).rejects.toThrow(/invalid_state_transition: database cleanup completion must be performed via return_to_zero_reset/);
+
+        await expect(
+          client.query(`
+            select api.record_system_reset_step(
+              $1::uuid, 'completed', 'completed',
+              '{}'::jsonb, '{}'::jsonb, null, $2, $3::uuid
+            );
+          `, [opId, gen, wId])
+        ).rejects.toThrow(/invalid_state_transition: operation completion must be performed via release_system_reset_lock/);
+
+        // 3. Caller cannot release lock after forgery attempt
+        await expect(
+          client.query(`select api.release_system_reset_lock($1::uuid, $2::uuid, $3, $4::uuid);`, [superadminId, opId, gen, wId])
+        ).rejects.toThrow(/database_cleanup_incomplete/);
+
+        // 4. NULL lease fails closed across cleanup, progress, ownership renewal, and release
+        await advancePgResetToDatabaseCleanup(client, opId, gen, wId);
+        await client.query(`update public.maintenance_state set lease_expires_at = null where job_name = 'system_reset';`);
+
+        await expect(
+          client.query(`select api.assert_system_reset_worker_active($1::uuid, $2, $3::uuid);`, [opId, gen, wId])
+        ).rejects.toThrow(/fencing_token_revoked/);
+
+        await expect(
+          client.query(`select api.return_to_zero_reset($1::uuid, $2::uuid, $3, $4::uuid);`, [superadminId, opId, gen, wId])
+        ).rejects.toThrow(/fencing_token_revoked: worker lease expired/);
+
+        await expect(
+          client.query(`
+            select api.record_system_reset_step(
+              $1::uuid, 'database_cleanup_in_progress', 'database_cleanup_in_progress',
+              '{}'::jsonb, '{}'::jsonb, null, $2, $3::uuid
+            );
+          `, [opId, gen, wId])
+        ).rejects.toThrow(/fencing_token_revoked: worker lease expired/);
+
+        await expect(
+          client.query(`select api.release_system_reset_lock($1::uuid, $2::uuid, $3, $4::uuid);`, [superadminId, opId, gen, wId])
+        ).rejects.toThrow(/fencing_token_revoked: worker lease expired/);
+
+        // 5. Expired lease fails closed across cleanup, progress, renewal, and release
+        await client.query(`update public.maintenance_state set lease_expires_at = clock_timestamp() - interval '10 seconds' where job_name = 'system_reset';`);
+
+        await expect(
+          client.query(`select api.assert_system_reset_worker_active($1::uuid, $2, $3::uuid);`, [opId, gen, wId])
+        ).rejects.toThrow(/fencing_token_revoked/);
+
+        await expect(
+          client.query(`select api.return_to_zero_reset($1::uuid, $2::uuid, $3, $4::uuid);`, [superadminId, opId, gen, wId])
+        ).rejects.toThrow(/fencing_token_revoked: worker lease expired/);
+
+        await expect(
+          client.query(`
+            select api.record_system_reset_step(
+              $1::uuid, 'database_cleanup_in_progress', 'database_cleanup_in_progress',
+              '{}'::jsonb, '{}'::jsonb, null, $2, $3::uuid
+            );
+          `, [opId, gen, wId])
+        ).rejects.toThrow(/fencing_token_revoked: worker lease expired/);
+
+        await expect(
+          client.query(`select api.release_system_reset_lock($1::uuid, $2::uuid, $3, $4::uuid);`, [superadminId, opId, gen, wId])
+        ).rejects.toThrow(/fencing_token_revoked: worker lease expired/);
+
+        // 6. Stale generation and stale worker ID fail closed
+        await client.query(`update public.maintenance_state set lease_expires_at = clock_timestamp() + interval '60 seconds' where job_name = 'system_reset';`);
+
+        await expect(
+          client.query(`select api.return_to_zero_reset($1::uuid, $2::uuid, $3, $4::uuid);`, [superadminId, opId, gen + 999, wId])
+        ).rejects.toThrow(/fencing_token_revoked: worker generation/);
+
+        await expect(
+          client.query(`select api.return_to_zero_reset($1::uuid, $2::uuid, $3, '99999999-9999-4999-8999-999999999999'::uuid);`, [superadminId, opId, gen])
+        ).rejects.toThrow(/fencing_token_revoked: worker ID/);
+
+        await expect(
+          client.query(`select api.release_system_reset_lock($1::uuid, $2::uuid, $3, $4::uuid);`, [superadminId, opId, gen + 999, wId])
+        ).rejects.toThrow(/fencing_token_revoked: worker generation/);
+
+        await expect(
+          client.query(`select api.release_system_reset_lock($1::uuid, $2::uuid, $3, '99999999-9999-4999-8999-999999999999'::uuid);`, [superadminId, opId, gen])
+        ).rejects.toThrow(/fencing_token_revoked: worker ID/);
+
+        // Restore lease and complete cleanly
+        await client.query(`update public.maintenance_state set lease_expires_at = clock_timestamp() + interval '60 seconds' where job_name = 'system_reset';`);
+        await client.query(`select api.return_to_zero_reset($1::uuid, $2::uuid, $3, $4::uuid);`, [superadminId, opId, gen, wId]);
+        await client.query(`select api.release_system_reset_lock($1::uuid, $2::uuid, $3, $4::uuid);`, [superadminId, opId, gen, wId]);
+
+        const checkFinal = await client.query(`select cursor_value from public.maintenance_state where job_name = 'system_reset';`);
+        expect(checkFinal.rows[0].cursor_value).toBe('idle');
+      } finally {
+        try {
+          await client.query(`
+            update public.maintenance_state
+            set cursor_value = 'idle', active_operation_id = null
+            where job_name = 'system_reset';
+          `);
+        } catch {}
+        client.release();
+      }
+    });
+  });
 });

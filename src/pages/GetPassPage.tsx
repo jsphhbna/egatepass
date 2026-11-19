@@ -1532,7 +1532,12 @@ export function GetPassPage() {
       }
 
       // 3. Identify returning visitor via ephemeral 1:1 endpoint (in-memory comparison against original portrait)
-      const data = await identifyReturningVisitor(tx, returningSelfieBlob, selectedReturningCandidate.profileId);
+      // Note: identifyReturningVisitor(tx, returningSelfieBlob, selectedReturningCandidate.profileId) is superseded
+      // by candidateToken handle to enforce candidate data minimization.
+      if (selectedReturningCandidate?.candidateToken && portalTransactionRef.current) {
+        (portalTransactionRef.current as any).candidateToken = selectedReturningCandidate.candidateToken;
+      }
+      const data = await identifyReturningVisitor(tx, returningSelfieBlob, selectedReturningCandidate.candidateToken);
 
       if (!data?.matched || !data.profile || !data.matchToken) {
         const reasonCode = (data as any)?.reasonCode || '';
@@ -4712,10 +4717,10 @@ export function GetPassPage() {
 
                   <div className="max-h-[360px] overflow-y-auto space-y-2.5 pr-1">
                     {returningCandidates.map((cand) => {
-                      const isSelected = selectedReturningCandidate?.profileId === cand.profileId;
+                      const isSelected = selectedReturningCandidate?.candidateToken === cand.candidateToken;
                       return (
                         <div
-                          key={cand.profileId}
+                          key={cand.candidateToken}
                           onClick={() => setSelectedReturningCandidate(cand)}
                           onKeyDown={(e) => {
                             if (e.key === 'Enter' || e.key === ' ') {
@@ -4732,22 +4737,9 @@ export function GetPassPage() {
                               : 'border-[var(--color-border)] bg-white hover:border-slate-300'
                           }`}
                         >
-                          {/* Original Registration Portrait Thumbnail (approx. 56-60px) */}
-                          <div className="h-14 w-14 sm:h-15 sm:w-15 rounded-xl overflow-hidden border border-slate-200 bg-slate-100 shrink-0 shadow-2xs">
-                            {cand.previewUrl ? (
-                              <AuthenticatedImage
-                                srcUrl={cand.previewUrl}
-                                authToken={portalToken || portalTransactionRef.current?.token}
-                                alt={`Registration portrait for ${cand.maskedName}`}
-                                fallbackText="Portrait unavailable"
-                                compact
-                                className="h-full w-full object-cover"
-                              />
-                            ) : (
-                              <div className="h-full w-full flex items-center justify-center bg-slate-100 text-slate-400">
-                                <User className="h-6 w-6 text-slate-400" />
-                              </div>
-                            )}
+                          {/* Privacy-Safe Candidate Avatar Placeholder (portrait protected until verified) */}
+                          <div className="h-14 w-14 sm:h-15 sm:w-15 rounded-xl overflow-hidden border border-slate-200 bg-slate-100 shrink-0 shadow-2xs flex items-center justify-center text-slate-400">
+                            <User className="h-6 w-6 text-slate-400" />
                           </div>
 
                           {/* Masked Visitor Details */}
@@ -6307,22 +6299,9 @@ export function GetPassPage() {
 
             <div className="rounded-xl border border-amber-200/80 bg-amber-50/50 p-4 space-y-3">
               <div className="flex items-center gap-4">
-                {candidateMatch.previewUrl ? (
-                  <div className="h-16 w-16 sm:h-18 sm:w-18 rounded-xl overflow-hidden border border-amber-300 bg-slate-100 shrink-0 shadow-2xs">
-                    <AuthenticatedImage
-                      srcUrl={candidateMatch.previewUrl}
-                      authToken={portalToken || portalTransactionRef.current?.token}
-                      alt="Previous visit photo preview"
-                      fallbackText="Portrait unavailable"
-                      compact
-                      className="h-full w-full object-cover"
-                    />
-                  </div>
-                ) : (
-                  <div className="h-16 w-16 sm:h-18 sm:w-18 rounded-xl border border-dashed border-amber-300 bg-amber-100/50 flex items-center justify-center shrink-0">
-                    <User className="h-7 w-7 text-amber-800" />
-                  </div>
-                )}
+                <div className="h-16 w-16 sm:h-18 sm:w-18 rounded-xl border border-dashed border-amber-300 bg-amber-100/50 flex items-center justify-center shrink-0">
+                  <User className="h-7 w-7 text-amber-800" />
+                </div>
                 <div className="min-w-0 flex-1 space-y-1 text-xs">
                   <div>
                     <span className="text-[var(--color-text-muted)] block text-[10px] uppercase font-semibold">Matched Name</span>

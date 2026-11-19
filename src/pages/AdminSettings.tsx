@@ -134,8 +134,8 @@ export function AdminSettings() {
         }),
       });
       const data = await res.json().catch(() => null);
-      if (!res.ok) {
-        throw new Error(data?.message || data?.error || 'Failed to execute system reset.');
+      if (!res.ok || !data?.success || !data?.storage?.verifiedEmpty) {
+        throw new Error(data?.message || data?.error || 'System reset failed completion verification.');
       }
       toast.success('System has been reset to zero. All operational data has been purged.');
       setShowResetModal(false);

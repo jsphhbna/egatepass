@@ -150,7 +150,8 @@ describe('Tier 1: Comprehensive Feature Coverage (30 Tests)', () => {
 
       expect(res.status).toBe(200);
       expect(res.body.candidates).toHaveLength(1);
-      expect(res.body.candidates[0].profileId).toBe(TEST_IDENTITIES.VISITOR_MALE.profileId);
+      expect(res.body.candidates[0].candidateToken).toBeDefined();
+      expect(res.body.candidates[0].profileId).toBeUndefined();
     });
 
     it('T1-F2-02: Lookup returning visitor returns candidate list when multiple visitors share same name', async () => {
@@ -166,7 +167,6 @@ describe('Tier 1: Comprehensive Feature Coverage (30 Tests)', () => {
 
       expect(res.status).toBe(200);
       expect(res.body.candidates.length).toBeGreaterThanOrEqual(2);
-      expect(res.body.totalMatches).toBeGreaterThanOrEqual(2);
     });
 
     it('T1-F2-03: Candidate list properly masks PII (first name, truncated last name, masked middle digits of contact)', async () => {
@@ -316,7 +316,15 @@ describe('Tier 1: Comprehensive Feature Coverage (30 Tests)', () => {
       expect(visitorRecord.gender).toBe('Male');
     });
 
-    it('T1-F3-03: Returning visitor lookup preserves and displays previously registered gender', async () => {
+    it('T1-F3-03: Returning visitor profile preserves registered gender while candidate lookup response minimizes attributes', async () => {
+      // 1. Database profile record retains registered gender
+      const profile = Object.values(store.returningVisitorProfiles).find(
+        (p: any) => p.user_id === TEST_IDENTITIES.VISITOR_FEMALE_1.visitorId || p.id === TEST_IDENTITIES.VISITOR_FEMALE_1.profileId
+      );
+      expect(profile).toBeDefined();
+      expect(profile?.gender).toBe('Female');
+
+      // 2. Candidate lookup response minimizes attributes: no raw profileId or gender exposed to anonymous visitor
       const req = createApiRequest('/api/passes/lookup-returning', {
         method: 'POST',
         token: createTestJwt({ userId: TEST_IDENTITIES.VISITOR_FEMALE_1.visitorId, role: 'visitor' }),
@@ -328,11 +336,12 @@ describe('Tier 1: Comprehensive Feature Coverage (30 Tests)', () => {
       const res = await dispatchRoute(lookupReturningHandler, req);
 
       expect(res.status).toBe(200);
-      const maria1 = res.body.candidates.find(
-        (c: any) => c.profileId === TEST_IDENTITIES.VISITOR_FEMALE_1.profileId
-      );
-      expect(maria1).toBeDefined();
-      expect(maria1.gender).toBe('Female');
+      expect(res.body.candidates.length).toBeGreaterThan(0);
+      for (const c of res.body.candidates) {
+        expect(c.candidateToken).toBeDefined();
+        expect(c.profileId).toBeUndefined();
+        expect(c.gender).toBeUndefined();
+      }
     });
 
     it('T1-F3-04: Dashboard metrics computes and returns genderDistribution breakdown', async () => {

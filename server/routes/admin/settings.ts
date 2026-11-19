@@ -1,6 +1,16 @@
 import { HttpError, requireStaffActor } from '../../actors.js';
 import { jsonResponse, readBearerToken } from '../../http.js';
 import { getServerSupabaseClients } from '../../supabase.js';
+import { purgeAndVerifyStorageBuckets } from '../../lib/storagePurgeService.js';
+
+async function recordResetStep(admin: any, args: Record<string, any>): Promise<void> {
+  const { error } = await admin.schema('api').rpc('record_system_reset_step', args);
+  if (error) {
+    throw new Error(
+      `Failed to record reset step (${args.requested_step || 'unknown'}): ${error.message || JSON.stringify(error)}`
+    );
+  }
+}
 
 async function handleRequest(request: Request): Promise<Response> {
   if (request.method !== 'GET' && request.method !== 'POST') {
@@ -30,36 +40,303 @@ async function handleRequest(request: Request): Promise<Response> {
           });
         }
 
-        const { data: rpcData, error: rpcError } = await admin.schema('api').rpc('return_to_zero_reset', {
-          requested_actor_id: actor.id,
-        });
-
-        if (rpcError) {
-          console.error('return_to_zero_reset RPC error:', rpcError);
-          return jsonResponse(500, { error: 'reset_failed', message: rpcError.message });
+        // Phase 1: Concurrency Protection — Mandatory exclusive reset lock acquisition
+        let lockRes: any;
+        try {
+          lockRes = await admin
+            .schema('api')
+            .rpc('acquire_system_reset_lock', {
+              requested_actor_id: actor.id,
+              ...(body.resumeOperationId ? { requested_resume_op_id: body.resumeOperationId } : {}),
+            });
+        } catch (lockErr: any) {
+          console.error('Lock acquisition RPC threw exception:', lockErr);
+          return jsonResponse(500, {
+            error: 'lock_acquisition_failed',
+            message: `Failed to acquire system reset lock: ${lockErr?.message || 'Unexpected exception'}`,
+          });
         }
 
-        const purgeBucket = async (bucketName: string) => {
-          try {
-            const { data: files } = await admin.storage.from(bucketName).list('', { limit: 1000 });
-            if (files && files.length > 0) {
-              const paths = files.map((f: { name: string }) => f.name);
-              await admin.storage.from(bucketName).remove(paths);
-            }
-          } catch (storageErr) {
-            console.warn(`Failed to clean storage bucket ${bucketName}:`, storageErr);
+        const { data: lockData, error: lockError } = lockRes ?? {};
+        if (lockError) {
+          console.error('acquire_system_reset_lock returned error:', lockError);
+          return jsonResponse(500, {
+            error: 'lock_acquisition_failed',
+            message: `Failed to acquire system reset lock: ${lockError.message || JSON.stringify(lockError)}`,
+          });
+        }
+
+        if (!lockData || typeof lockData !== 'object') {
+          return jsonResponse(500, {
+            error: 'lock_acquisition_failed',
+            message: 'Invalid or null response from lock acquisition RPC.',
+          });
+        }
+
+        if (lockData.acquired !== true) {
+          return jsonResponse(409, {
+            error: lockData.reason === 'recovery_required' ? 'recovery_required' : 'reset_in_progress',
+            message:
+              lockData.reason === 'recovery_required'
+                ? 'A previous system reset failed or requires manual recovery before a new reset can run.'
+                : 'A system reset is currently in progress.',
+            details: lockData,
+          });
+        }
+
+        const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+        if (
+          !lockData.operation_id ||
+          typeof lockData.operation_id !== 'string' ||
+          !UUID_REGEX.test(lockData.operation_id.trim())
+        ) {
+          return jsonResponse(500, {
+            error: 'lock_acquisition_failed',
+            message: 'Lock acquisition succeeded but operation ID was missing, malformed, or invalid.',
+          });
+        }
+
+        if (
+          typeof lockData.worker_generation !== 'number' ||
+          !Number.isInteger(lockData.worker_generation) ||
+          lockData.worker_generation < 1
+        ) {
+          return jsonResponse(500, {
+            error: 'lock_acquisition_failed',
+            message: 'Lock acquisition succeeded but worker generation was missing, malformed, or invalid.',
+          });
+        }
+
+        if (
+          !lockData.worker_id ||
+          typeof lockData.worker_id !== 'string' ||
+          !UUID_REGEX.test(lockData.worker_id.trim())
+        ) {
+          return jsonResponse(500, {
+            error: 'lock_acquisition_failed',
+            message: 'Lock acquisition succeeded but worker ID was missing, malformed, or invalid.',
+          });
+        }
+
+        const operationId: string = lockData.operation_id.trim();
+        const workerGeneration: number = lockData.worker_generation;
+        const workerId: string = lockData.worker_id.trim();
+
+        const checkWorkerOwnership = async () => {
+          const { error: ownErr } = await admin.schema('api').rpc('assert_system_reset_worker_active', {
+            requested_op_id: operationId,
+            requested_worker_generation: workerGeneration,
+            requested_worker_id: workerId,
+          });
+          if (ownErr) {
+            throw new Error(`Worker fencing revoked: ${ownErr.message || JSON.stringify(ownErr)}`);
           }
         };
 
-        await Promise.allSettled([
-          purgeBucket('visitor-photos'),
-          purgeBucket('visitor-ids'),
-        ]);
+        // Phase 2: Supabase Storage Purge via official Storage API
+        // Removes nested objects from visitor-photos and visitor-ids before deleting Auth accounts
+        let storageResult;
+        try {
+          await recordResetStep(admin, {
+            requested_op_id: operationId,
+            requested_status: 'storage_deletion_in_progress',
+            requested_step: 'storage_deletion_in_progress',
+            requested_worker_generation: workerGeneration,
+            requested_worker_id: workerId,
+          });
+
+          storageResult = await purgeAndVerifyStorageBuckets(admin, checkWorkerOwnership);
+
+          const effectiveCounts = (storageResult.totalFilesDeleted > 0 || !lockData.purged_counts)
+            ? {
+                totalDiscovered: storageResult.totalFilesDiscovered,
+                totalDeleted: storageResult.totalFilesDeleted,
+              }
+            : lockData.purged_counts;
+
+          await recordResetStep(admin, {
+            requested_op_id: operationId,
+            requested_status: 'storage_deletion_verified',
+            requested_step: 'storage_deletion_verified',
+            requested_manifest: {
+              ...storageResult.inventories,
+              verification: storageResult.verification,
+            },
+            requested_counts: effectiveCounts,
+            requested_verification: storageResult.verification,
+            requested_worker_generation: workerGeneration,
+            requested_worker_id: workerId,
+          });
+        } catch (storageErr: any) {
+          console.error('Storage purge or verification failed during return_to_zero:', storageErr);
+          try {
+            await recordResetStep(admin, {
+              requested_op_id: operationId,
+              requested_status: 'recovery_required',
+              requested_step: 'storage_purge_failed',
+              requested_error: storageErr?.message || String(storageErr),
+              requested_worker_generation: workerGeneration,
+              requested_worker_id: workerId,
+            });
+          } catch (recErr) {
+            console.error('Failed to record recovery_required status:', recErr);
+          }
+          return jsonResponse(500, {
+            error: 'storage_purge_failed',
+            message: `Storage purge failed: ${storageErr?.message || 'Storage verification failed.'}`,
+            operationId,
+            recoveryRequired: true,
+          });
+        }
+
+        // Phase 3: Database Cleanup RPC
+        // Topologically wipes operational records, preserves active superadmins and configuration,
+        // and durably appends authoritative reset audit event.
+        try {
+          await recordResetStep(admin, {
+            requested_op_id: operationId,
+            requested_status: 'database_cleanup_in_progress',
+            requested_step: 'database_cleanup_in_progress',
+            requested_worker_generation: workerGeneration,
+            requested_worker_id: workerId,
+          });
+        } catch (recErr: any) {
+          console.error('Failed to record database_cleanup_in_progress:', recErr);
+          return jsonResponse(500, {
+            error: 'reset_step_recording_failed',
+            message: recErr.message,
+            operationId,
+            recoveryRequired: true,
+          });
+        }
+
+        let rpcData: any;
+        try {
+          const { data, error: rpcError } = await admin.schema('api').rpc('return_to_zero_reset', {
+            requested_actor_id: actor.id,
+            requested_op_id: operationId,
+            requested_worker_generation: workerGeneration,
+            requested_worker_id: workerId,
+          });
+
+          if (rpcError) {
+            throw new Error(rpcError.message || JSON.stringify(rpcError));
+          }
+          rpcData = data;
+        } catch (rpcErr: any) {
+          console.error('return_to_zero_reset RPC failed:', rpcErr);
+          try {
+            await recordResetStep(admin, {
+              requested_op_id: operationId,
+              requested_status: 'recovery_required',
+              requested_step: 'database_cleanup_failed',
+              requested_error: rpcErr?.message || String(rpcErr),
+              requested_worker_generation: workerGeneration,
+              requested_worker_id: workerId,
+            });
+          } catch (recErr) {
+            console.error('Failed to record database_cleanup_failed status:', recErr);
+          }
+          return jsonResponse(500, {
+            error: 'database_reset_failed',
+            message: rpcErr?.message || 'Database reset RPC execution failed.',
+            operationId,
+            recoveryRequired: true,
+          });
+        }
+
+        // Phase 4: Release Reset Lock & Mark Completed
+        let releaseRes: any;
+        try {
+          releaseRes = await admin.schema('api').rpc('release_system_reset_lock', {
+            requested_actor_id: actor.id,
+            requested_op_id: operationId,
+            requested_worker_generation: workerGeneration,
+            requested_worker_id: workerId,
+          });
+        } catch (relEx: any) {
+          console.error('release_system_reset_lock threw exception:', relEx);
+          try {
+            await recordResetStep(admin, {
+              requested_op_id: operationId,
+              requested_status: 'recovery_required',
+              requested_step: 'lock_release_failed',
+              requested_error: relEx?.message || String(relEx),
+              requested_worker_generation: workerGeneration,
+              requested_worker_id: workerId,
+            });
+          } catch {}
+          return jsonResponse(500, {
+            error: 'lock_release_failed',
+            message: `Reset completed database cleanup but lock release threw exception: ${relEx?.message || 'Unknown error'}`,
+            operationId,
+            recoveryRequired: true,
+          });
+        }
+
+        const { error: releaseError } = releaseRes ?? {};
+        if (releaseError) {
+          console.error('release_system_reset_lock returned error:', releaseError);
+          try {
+            await recordResetStep(admin, {
+              requested_op_id: operationId,
+              requested_status: 'recovery_required',
+              requested_step: 'lock_release_failed',
+              requested_error: releaseError.message,
+              requested_worker_generation: workerGeneration,
+              requested_worker_id: workerId,
+            });
+          } catch {}
+          return jsonResponse(500, {
+            error: 'lock_release_failed',
+            message: `Reset completed database cleanup but lock release failed: ${releaseError.message}`,
+            operationId,
+            recoveryRequired: true,
+          });
+        }
 
         return jsonResponse(200, {
           success: true,
           message: 'System has been successfully reset to zero. All operational data purged.',
+          operationId,
           result: rpcData,
+          storage: {
+            filesPurged: storageResult.totalFilesDeleted,
+            verifiedEmpty: storageResult.verifiedEmpty,
+          },
+        });
+      }
+
+      if (body?.action === 'reconcile_system_reset' || body?.action === 'reconcile_reset') {
+        const opId = typeof body.operationId === 'string' ? body.operationId.trim() : null;
+        if (!opId) {
+          return jsonResponse(400, {
+            error: 'invalid_request',
+            message: 'Valid UUID operationId is required for reset reconciliation.',
+          });
+        }
+
+        const reconcileAction = body.reconcileAction || 'mark_failed';
+        const { data: recData, error: recError } = await admin
+          .schema('api')
+          .rpc('reconcile_system_reset_operation', {
+            requested_actor_id: actor.id,
+            requested_op_id: opId,
+            requested_action: reconcileAction,
+            requested_note: body.note || null,
+          });
+
+        if (recError) {
+          return jsonResponse(500, {
+            error: 'reconciliation_failed',
+            message: recError.message || 'System reset reconciliation RPC failed.',
+          });
+        }
+
+        return jsonResponse(200, {
+          success: true,
+          result: recData,
         });
       }
 
@@ -121,7 +398,21 @@ async function handleRequest(request: Request): Promise<Response> {
     const turnstileSiteKeyConfigured = Boolean(process.env.VITE_TURNSTILE_SITE_KEY?.trim());
     const turnstileVerifierConfigured = Boolean(process.env.TURNSTILE_SECRET_KEY?.trim());
 
+    let systemResetStatus: any = { isLocked: false, status: 'idle', activeOperation: null };
+    try {
+      const { data: statusData, error: statusErr } = await admin
+        .schema('api')
+        .rpc('get_system_reset_status');
+
+      if (!statusErr && statusData) {
+        systemResetStatus = statusData;
+      }
+    } catch (maintErr) {
+      console.warn('Could not query get_system_reset_status for reset status:', maintErr);
+    }
+
     return jsonResponse(200, {
+      systemReset: systemResetStatus,
       workingHours: {
         start: startTime,
         end: endTime,

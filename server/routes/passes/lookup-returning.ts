@@ -2,18 +2,19 @@
  * server/routes/passes/lookup-returning.ts
  *
  * Frontdoor for Returning Visitor 1:1 Verification:
- * Accepts registered name (first, last, optional middle) and an additional matching factor
+ * Accepts registered name (first, last, optional middle) with optional secondary factor
  * (contact number or residential locality) to discover matching active returning profiles.
  *
- * Anti-Abuse & Anti-Enumeration Protections:
+ * Anti-Abuse, Anti-Enumeration & Privacy Protections:
  * 1. Rejects SQL wildcard characters ('%', '_', '*', '\') to prevent pattern enumeration.
  * 2. Normalizes input without damaging valid Filipino names, hyphens, spaces, apostrophes, and Unicode.
- * 3. Requires an additional matching factor (Philippine mobile number or PSGC locality) in BOTH
- *    'auto' and 'manual' lookup modes.
+ * 3. Supports name-only lookup while pushing optional secondary factors (phone/locality) into query when present.
  * 4. Limits discovered candidates to at most 3 records.
  * 5. Returns privacy-masked attributes (maskedName, maskedContact, partialLocality).
- * 6. Generates HMAC-signed portrait preview tokens strictly bound to kind='photo' and 300s TTL.
- * 7. Enforces dual-bucket rate limiting (actor bucket and client network bucket).
+ * 6. Generates short-lived, actor-bound candidate authorization tokens ('candidateToken') for 1:1 verification.
+ * 7. Candidate discovery NEVER emits original portrait preview URLs or preview tokens; historical evidence
+ *    remains completely inaccessible until server-side biometric verification succeeds.
+ * 8. Enforces dual-bucket rate limiting (actor bucket and client network bucket).
  */
 
 import { createHash } from 'node:crypto';
@@ -23,7 +24,7 @@ import { jsonResponse, readBearerToken } from '../../http.js';
 import { getServerSupabaseClients } from '../../supabase.js';
 import { normalizePhMobile } from '../../../src/lib/phPhone.js';
 import { getClientNetworkIdentifier } from './issue.js';
-import { createPreviewToken } from './returning-photo-preview.js';
+import { createCandidateToken } from '../../lib/candidate-token.js';
 import {
   resolveAuthoritativeVisitorForProfile,
   resolveEligibleRegistrationPortrait,
@@ -280,24 +281,21 @@ async function handleRequest(request: Request): Promise<Response> {
         m.psgc_city_municipality_name || m.psgc_province_name,
       ].filter(Boolean);
 
-      // Create v3 preview token bound strictly to profileId, actorId, kind='photo', and 300s TTL
-      const previewToken = createPreviewToken(m.id, actorId, tokenSecret, 300, 'photo');
+      // Create opaque candidate authorization token bound strictly to profileId, actorId, and 300s TTL.
+      // Candidate discovery MUST NEVER emit raw profileId, gender, portrait URLs or preview tokens prior to successful biometric match.
+      const candidateToken = createCandidateToken(m.id, actorId, tokenSecret, 300);
 
       return {
-        profileId: m.id,
+        candidateToken,
         maskedName: maskName(m.first_name, m.middle_name, m.last_name),
         maskedContact: maskContact(m.contact_number_e164),
-        gender: (m as any).gender ?? null,
         partialLocality: localityParts.length > 0 ? localityParts.join(', ') : 'Philippines',
-        registeredAt: m.created_at,
-        previewUrl: `/api/passes/returning-photo-preview?profileId=${m.id}&token=${previewToken}&kind=photo`,
       };
     });
 
     return jsonResponse(200, {
       found: candidates.length > 0,
       count: candidates.length,
-      totalMatches: eligibleProfiles.length,
       candidates,
       portraitExpired: candidates.length === 0 && hasExpiredPortraitCandidates,
       message: candidates.length === 0 && hasExpiredPortraitCandidates

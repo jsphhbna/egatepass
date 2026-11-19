@@ -253,7 +253,8 @@ describe('Tier 3: Cross-Feature Pairwise Combinations (10 Tests)', () => {
     expect(res.body.candidates).toBeDefined();
     expect(res.body.candidates.length).toBeLessThanOrEqual(3);
     for (const c of res.body.candidates) {
-      expect(c.profileId).toBeDefined();
+      expect(c.candidateToken).toBeDefined();
+      expect(c.profileId).toBeUndefined();
       expect(c.maskedName).toBeDefined();
     }
   });

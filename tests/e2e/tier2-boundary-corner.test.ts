@@ -179,7 +179,7 @@ describe('Tier 2: Boundary & Corner Cases (25 Tests)', () => {
 
       expect(res.status).toBe(200);
       expect(res.body.candidates).toHaveLength(0);
-      expect(res.body.totalMatches).toBe(0);
+      expect(res.body.totalMatches).toBeUndefined();
     });
 
     it('T2-F2-02: Lookup candidate list is strictly capped at maximum 3 records to prevent enumeration', async () => {
@@ -195,7 +195,8 @@ describe('Tier 2: Boundary & Corner Cases (25 Tests)', () => {
 
       expect(res.status).toBe(200);
       expect(res.body.candidates.length).toBeLessThanOrEqual(3);
-      expect(res.body.totalMatches).toBeGreaterThan(3);
+      expect(res.body.candidates.length).toBeGreaterThan(0);
+      expect(res.body.totalMatches).toBeUndefined();
     });
 
     it('T2-F2-03: Name search handles leading, trailing whitespace and mixed case gracefully', async () => {
@@ -211,7 +212,8 @@ describe('Tier 2: Boundary & Corner Cases (25 Tests)', () => {
 
       expect(res.status).toBe(200);
       expect(res.body.candidates).toHaveLength(1);
-      expect(res.body.candidates[0].profileId).toBe(TEST_IDENTITIES.VISITOR_MALE.profileId);
+      expect(res.body.candidates[0].candidateToken).toBeDefined();
+      expect(res.body.candidates[0].profileId).toBeUndefined();
     });
 
     it('T2-F2-04: Rate limiting on name search returns 429 when client exceeds threshold in 1 minute window', async () => {
