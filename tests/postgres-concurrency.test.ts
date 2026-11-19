@@ -2850,9 +2850,13 @@ runSuite('True PostgreSQL Concurrency, Canonical Approval Integrity & Email Reco
           client.query(`select api.release_system_reset_lock($1::uuid, $2::uuid, $3, $4::uuid);`, [superadminId, opId, gen, wId])
         ).rejects.toThrow(/database_cleanup_incomplete/);
 
-        // 4. NULL lease fails closed
+        // 4. NULL lease fails closed across cleanup, progress, ownership renewal, and release
         await advancePgResetToDatabaseCleanup(client, opId, gen, wId);
         await client.query(`update public.maintenance_state set lease_expires_at = null where job_name = 'system_reset';`);
+
+        await expect(
+          client.query(`select api.assert_system_reset_worker_active($1::uuid, $2, $3::uuid);`, [opId, gen, wId])
+        ).rejects.toThrow(/fencing_token_revoked/);
 
         await expect(
           client.query(`select api.return_to_zero_reset($1::uuid, $2::uuid, $3, $4::uuid);`, [superadminId, opId, gen, wId])
@@ -2870,6 +2874,49 @@ runSuite('True PostgreSQL Concurrency, Canonical Approval Integrity & Email Reco
         await expect(
           client.query(`select api.release_system_reset_lock($1::uuid, $2::uuid, $3, $4::uuid);`, [superadminId, opId, gen, wId])
         ).rejects.toThrow(/fencing_token_revoked: worker lease expired/);
+
+        // 5. Expired lease fails closed across cleanup, progress, renewal, and release
+        await client.query(`update public.maintenance_state set lease_expires_at = clock_timestamp() - interval '10 seconds' where job_name = 'system_reset';`);
+
+        await expect(
+          client.query(`select api.assert_system_reset_worker_active($1::uuid, $2, $3::uuid);`, [opId, gen, wId])
+        ).rejects.toThrow(/fencing_token_revoked/);
+
+        await expect(
+          client.query(`select api.return_to_zero_reset($1::uuid, $2::uuid, $3, $4::uuid);`, [superadminId, opId, gen, wId])
+        ).rejects.toThrow(/fencing_token_revoked: worker lease expired/);
+
+        await expect(
+          client.query(`
+            select api.record_system_reset_step(
+              $1::uuid, 'database_cleanup_in_progress', 'database_cleanup_in_progress',
+              '{}'::jsonb, '{}'::jsonb, null, $2, $3::uuid
+            );
+          `, [opId, gen, wId])
+        ).rejects.toThrow(/fencing_token_revoked: worker lease expired/);
+
+        await expect(
+          client.query(`select api.release_system_reset_lock($1::uuid, $2::uuid, $3, $4::uuid);`, [superadminId, opId, gen, wId])
+        ).rejects.toThrow(/fencing_token_revoked: worker lease expired/);
+
+        // 6. Stale generation and stale worker ID fail closed
+        await client.query(`update public.maintenance_state set lease_expires_at = clock_timestamp() + interval '60 seconds' where job_name = 'system_reset';`);
+
+        await expect(
+          client.query(`select api.return_to_zero_reset($1::uuid, $2::uuid, $3, $4::uuid);`, [superadminId, opId, gen + 999, wId])
+        ).rejects.toThrow(/fencing_token_revoked: worker generation/);
+
+        await expect(
+          client.query(`select api.return_to_zero_reset($1::uuid, $2::uuid, $3, '99999999-9999-4999-8999-999999999999'::uuid);`, [superadminId, opId, gen])
+        ).rejects.toThrow(/fencing_token_revoked: worker ID/);
+
+        await expect(
+          client.query(`select api.release_system_reset_lock($1::uuid, $2::uuid, $3, $4::uuid);`, [superadminId, opId, gen + 999, wId])
+        ).rejects.toThrow(/fencing_token_revoked: worker generation/);
+
+        await expect(
+          client.query(`select api.release_system_reset_lock($1::uuid, $2::uuid, $3, '99999999-9999-4999-8999-999999999999'::uuid);`, [superadminId, opId, gen])
+        ).rejects.toThrow(/fencing_token_revoked: worker ID/);
 
         // Restore lease and complete cleanly
         await client.query(`update public.maintenance_state set lease_expires_at = clock_timestamp() + interval '60 seconds' where job_name = 'system_reset';`);

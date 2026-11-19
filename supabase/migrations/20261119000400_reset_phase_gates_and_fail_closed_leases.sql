@@ -45,6 +45,7 @@ declare
   v_op record;
   v_updated_rows integer;
   v_verification jsonb;
+  v_op_verification jsonb;
 begin
   if auth.role() <> 'service_role' then
     raise exception using errcode = '42501', message = 'service role required';
@@ -131,6 +132,15 @@ begin
     raise exception using errcode = '55000', message = 'invalid_state_transition: illegitimate status requested';
   end if;
 
+  -- Extract storage verification record from parameter or manifest
+  v_verification := coalesce(
+    requested_verification,
+    case
+      when requested_manifest is not null and requested_manifest ? 'verification' then requested_manifest->'verification'
+      else null
+    end
+  );
+
   -- 6. Enforce strictly valid transition sequence:
   -- storage_deletion_in_progress: must originate from lock_acquired (or idempotent re-recording)
   if requested_status = 'storage_deletion_in_progress' then
@@ -149,16 +159,45 @@ begin
     if v_op.status not in ('storage_deletion_verified', 'database_cleanup_in_progress') then
       raise exception using errcode = '55000', message = 'invalid_state_transition: database_cleanup_in_progress requires storage_deletion_verified state';
     end if;
-  end if;
 
-  -- Extract storage verification record from parameter or manifest
-  v_verification := coalesce(
-    requested_verification,
-    case
-      when requested_manifest is not null and requested_manifest ? 'verification' then requested_manifest->'verification'
-      else null
-    end
-  );
+    -- Extract effective verification from parameter, manifest, or previously verified op record
+    v_op_verification := coalesce(
+      v_verification,
+      v_op.storage_verification,
+      case
+        when requested_manifest is not null and requested_manifest ? 'verification' then requested_manifest->'verification'
+        else null
+      end,
+      case
+        when v_op.storage_manifest is not null and v_op.storage_manifest ? 'verification' then v_op.storage_manifest->'verification'
+        else null
+      end
+    );
+
+    if v_op_verification is null or v_op_verification = 'null'::jsonb or v_op_verification = '{}'::jsonb then
+      raise exception using errcode = '55000', message = 'storage_verification_required: storage purge verification record missing or empty';
+    end if;
+
+    if not (v_op_verification ? 'buckets') or
+       not (v_op_verification->'buckets' ? 'visitor-photos') or
+       not (v_op_verification->'buckets' ? 'visitor-ids') then
+      raise exception using errcode = '55000', message = 'storage_verification_malformed: verification must include visitor-photos and visitor-ids buckets';
+    end if;
+
+    if nullif(v_op_verification->>'verifiedAt', '') is null then
+      raise exception using errcode = '55000', message = 'storage_verification_malformed: missing verifiedAt timestamp';
+    end if;
+
+    if (v_op_verification->'buckets'->'visitor-photos'->>'remainingCount') is null or
+       (v_op_verification->'buckets'->'visitor-ids'->>'remainingCount') is null or
+       (v_op_verification->'buckets'->'visitor-photos'->>'remainingCount') <> '0' or
+       (v_op_verification->'buckets'->'visitor-ids'->>'remainingCount') <> '0' or
+       (v_op_verification->'buckets'->'visitor-photos'->>'verifiedEmpty') <> 'true' or
+       (v_op_verification->'buckets'->'visitor-ids'->>'verifiedEmpty') <> 'true' or
+       (v_op_verification->>'verifiedEmpty') <> 'true' then
+      raise exception using errcode = '55000', message = 'storage_verification_failed: storage buckets not verified empty';
+    end if;
+  end if;
 
   -- 7. Update system_reset_operations matching operation ID and worker tokens
   update public.system_reset_operations
@@ -173,6 +212,7 @@ begin
         else purged_counts
       end,
       storage_verification = case
+        when requested_status = 'storage_deletion_in_progress' then null
         when v_verification is not null and v_verification <> '{}'::jsonb and v_verification <> 'null'::jsonb then v_verification
         else storage_verification
       end,

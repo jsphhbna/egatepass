@@ -134,6 +134,12 @@ export async function executeWithStorageTimeout<T>(
       abortPromise,
     ]);
 
+    if (timedOut || controller.signal.aborted) {
+      throw new StorageTimeoutError(
+        `Storage ${operationName} operation timed out after ${timeoutMs}ms in bucket "${bucket}".`
+      );
+    }
+
     return result;
   } catch (err: any) {
     if (timedOut || isTimeoutError(err)) {
@@ -265,12 +271,20 @@ export async function enumerateBucketRecursive(
         data = res.data;
         error = res.error;
       } catch (err: any) {
+        if (isTimeoutError(err)) {
+          throw (err instanceof StorageTimeoutError ? err : new StorageTimeoutError(err?.message || String(err)));
+        }
         throw new Error(
           `Storage list operation threw exception in bucket "${bucket}" at prefix "${currentPrefix}": ${err?.message || err}`
         );
       }
 
       if (error) {
+        if (isTimeoutError(error)) {
+          throw new StorageTimeoutError(
+            `Storage list operation failed in bucket "${bucket}" at prefix "${currentPrefix}": ${error.message || JSON.stringify(error)}`
+          );
+        }
         throw new Error(
           `Storage list operation failed in bucket "${bucket}" at prefix "${currentPrefix}": ${error.message || JSON.stringify(error)}`
         );

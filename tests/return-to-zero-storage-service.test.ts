@@ -2509,18 +2509,29 @@ describe('Return-to-Zero Storage Service & State Machine Hardening (Section 10 M
         `)
       ).rejects.toThrow(/invalid_state_transition: database_cleanup_in_progress requires storage_deletion_verified state/);
 
-      // 2. Missing or malformed verification metadata blocks return_to_zero_reset
+      // 2. Missing or malformed verification metadata blocks reaching database_cleanup_in_progress
       await db.query(`
         select api.record_system_reset_step(
           '${opId}'::uuid, 'storage_deletion_verified', 'storage_deletion_verified',
           '{}'::jsonb, '{}'::jsonb, null, ${gen}, '${wId}'::uuid, null
         );
       `);
-      await db.query(`
-        select api.record_system_reset_step(
-          '${opId}'::uuid, 'database_cleanup_in_progress', 'database_cleanup_in_progress',
-          '{}'::jsonb, '{}'::jsonb, null, ${gen}, '${wId}'::uuid
-        );
+
+      // Prove database_cleanup_in_progress is unreachable without valid verification:
+      await expect(
+        db.query(`
+          select api.record_system_reset_step(
+            '${opId}'::uuid, 'database_cleanup_in_progress', 'database_cleanup_in_progress',
+            '{}'::jsonb, '{}'::jsonb, null, ${gen}, '${wId}'::uuid
+          );
+        `)
+      ).rejects.toThrow(/storage_verification_required/);
+
+      // And even if database_cleanup_in_progress were directly forced in the table, return_to_zero_reset blocks:
+      await db.exec(`
+        update public.system_reset_operations
+        set status = 'database_cleanup_in_progress', step = 'database_cleanup_in_progress', storage_verification = null
+        where id = '${opId}';
       `);
       await expect(
         db.query(`select api.return_to_zero_reset('${superadminId}'::uuid, '${opId}'::uuid, ${gen}, '${wId}'::uuid);`)
@@ -2595,6 +2606,10 @@ describe('Return-to-Zero Storage Service & State Machine Hardening (Section 10 M
 
       // 1. NULL lease fails closed
       await db.exec(`update public.maintenance_state set lease_expires_at = null where job_name = 'system_reset';`);
+
+      await expect(
+        db.query(`select api.assert_system_reset_worker_active('${opId}'::uuid, ${gen}, '${wId}'::uuid);`)
+      ).rejects.toThrow(/fencing_token_revoked/);
 
       await expect(
         db.query(`select api.return_to_zero_reset('${superadminId}'::uuid, '${opId}'::uuid, ${gen}, '${wId}'::uuid);`)
@@ -2687,6 +2702,27 @@ describe('Return-to-Zero Storage Service & State Machine Hardening (Section 10 M
 
       // Crucial: exactly 1 attempt must have run, ZERO overlapping retries!
       expect(attemptCount).toBe(1);
+
+      // 3. executeWithStorageTimeout never produces false success if deadline triggers
+      const mockStorageFastAbort = {
+        storage: {
+          from: () => ({}),
+        },
+      } as unknown as SupabaseClient;
+
+      await expect(
+        executeWithStorageTimeout(
+          mockStorageFastAbort,
+          'visitor-photos',
+          'list',
+          async (storage, signal) => {
+            // Wait for signal to abort, then attempt to resolve a success value
+            await new Promise((resolve) => setTimeout(resolve, 80));
+            return { data: [{ name: 'file.jpg' }], error: null };
+          },
+          { timeoutMs: 30 }
+        )
+      ).rejects.toThrow(StorageTimeoutError);
     });
 
     it('Case 39: Recovery waits for safety window, acquires new generation, re-verifies storage, and proceeds', async () => {
