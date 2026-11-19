@@ -2203,4 +2203,208 @@ runSuite('True PostgreSQL Concurrency, Canonical Approval Integrity & Email Reco
       }
     });
   });
+
+  describe('Finding G: Return-to-Zero Concurrency Drain, Row Fencing & In-Flight Write Race Protection', () => {
+    const superadminId = '00000000-0000-0000-0000-000000000001';
+    const testVisitorId = '0b111111-1111-4111-8111-111111111111';
+
+    beforeAll(async () => {
+      const client = await pool.connect();
+      try {
+        await client.query(`set request.jwt.claim.role = 'service_role';`);
+        await client.query(`
+          insert into auth.users (id, email)
+          values ('${superadminId}', 'superadmin.reset@earist.edu.ph')
+          on conflict (id) do nothing;
+
+          insert into public.staff_profiles (user_id, display_name, role, active)
+          values ('${superadminId}', 'Reset Superadmin', 'superadmin', true)
+          on conflict (user_id) do update set active = true, role = 'superadmin';
+
+          insert into auth.users (id, email, is_anonymous)
+          values ('${testVisitorId}', 'visitor.concurrency@earist.edu.ph', true)
+          on conflict (id) do nothing;
+        `);
+      } finally {
+        client.release();
+      }
+    });
+
+    it('1. Database operational writes: Transaction A holds in-flight write -> reset acquisition in Transaction B is blocked until Transaction A finishes', async () => {
+      const clientA = await pool.connect();
+      const clientB = await pool.connect();
+      const clientC = await pool.connect();
+
+      let opId: string | null = null;
+      let workerGen: number | null = null;
+      let workerId: string | null = null;
+
+      try {
+        await clientA.query(`set request.jwt.claim.role = 'service_role';`);
+        await clientB.query(`set request.jwt.claim.role = 'service_role';`);
+        await clientC.query(`set request.jwt.claim.role = 'service_role';`);
+
+        // Ensure reset lock is idle
+        await clientA.query(`
+          insert into public.maintenance_state (job_name, cursor_value, last_started_at, worker_generation)
+          values ('system_reset', 'idle', null, 0)
+          on conflict (job_name) do update set cursor_value = 'idle', active_operation_id = null;
+        `);
+
+        // 1. Transaction A begins and performs an operational write (holding FOR SHARE on maintenance_state)
+        await clientA.query('BEGIN');
+        const insertVisitorId = '0b222222-2222-4222-8222-222222222222';
+        await clientA.query(`
+          insert into public.visitors (id, owner_id, source, full_name, contact_number, purpose, visit_date, consent_accepted_at)
+          values ('${insertVisitorId}', '${testVisitorId}', 'portal', 'In-Flight Visitor', '+639170000001', 'Meeting', current_date, now());
+        `);
+
+        // 2. Transaction B attempts to acquire reset lock (requires FOR UPDATE on maintenance_state)
+        let acquiredResult: any = null;
+        let acquisitionCompleted = false;
+
+        const acquisitionPromise = clientB.query(
+          `select api.acquire_system_reset_lock($1::uuid) as result;`,
+          [superadminId]
+        ).then((res) => {
+          acquisitionCompleted = true;
+          acquiredResult = res.rows[0].result;
+          return res;
+        });
+
+        // 3. Prove that acquisition in B waits for earlier write in A to finish
+        // Wait 250ms and assert acquisition is still blocked
+        await new Promise((r) => setTimeout(r, 250));
+        expect(acquisitionCompleted).toBe(false);
+        expect(acquiredResult).toBeNull();
+
+        // 4. Transaction A commits
+        await clientA.query('COMMIT');
+
+        // 5. Transaction B unblocks and completes acquisition
+        await acquisitionPromise;
+        expect(acquisitionCompleted).toBe(true);
+        expect(acquiredResult.acquired).toBe(true);
+        opId = acquiredResult.operation_id;
+        workerGen = acquiredResult.worker_generation;
+        workerId = acquiredResult.worker_id;
+
+        // 6. Prove that subsequent operational writes from Transaction C are immediately rejected after acquisition
+        const subsequentVisitorId = '0b333333-3333-4333-8333-333333333333';
+        await expect(
+          clientC.query(`
+            insert into public.visitors (id, owner_id, source, full_name, contact_number, purpose, visit_date, consent_accepted_at)
+            values ('${subsequentVisitorId}', '${testVisitorId}', 'portal', 'Subsequent Blocked Visitor', '+639170000002', 'Meeting', current_date, now());
+          `)
+        ).rejects.toThrow(/system_reset_in_progress/);
+
+        // 7. Prove that earlier in-flight write was committed before lock acquisition was confirmed
+        const checkA = await clientC.query(
+          `select id from public.visitors where id = $1;`,
+          [insertVisitorId]
+        );
+        expect(checkA.rows).toHaveLength(1);
+
+      } finally {
+        if (opId && workerGen && workerId) {
+          try {
+            await clientB.query(`
+              select api.release_system_reset_lock($1::uuid, $2::uuid, $3, $4::uuid);
+            `, [superadminId, opId, workerGen, workerId]);
+          } catch {}
+        }
+        clientA.release();
+        clientB.release();
+        clientC.release();
+      }
+    });
+
+    it('2. Storage objects: Transaction A holds in-flight storage upload -> reset acquisition in Transaction B is blocked until upload finishes', async () => {
+      const clientA = await pool.connect();
+      const clientB = await pool.connect();
+      const clientC = await pool.connect();
+
+      let opId: string | null = null;
+      let workerGen: number | null = null;
+      let workerId: string | null = null;
+
+      try {
+        await clientA.query(`set request.jwt.claim.role = 'service_role';`);
+        await clientB.query(`set request.jwt.claim.role = 'service_role';`);
+        await clientC.query(`set request.jwt.claim.role = 'service_role';`);
+
+        // Ensure storage bucket exists
+        await clientA.query(`
+          insert into storage.buckets (id, name, public)
+          values ('visitor-photos', 'visitor-photos', false)
+          on conflict (id) do nothing;
+        `);
+
+        // Ensure reset lock is idle
+        await clientA.query(`
+          update public.maintenance_state
+          set cursor_value = 'idle', active_operation_id = null
+          where job_name = 'system_reset';
+        `);
+
+        // 1. Transaction A begins and inserts an object into storage.objects (holds FOR SHARE)
+        await clientA.query('BEGIN');
+        const objectAId = '0b444444-4444-4444-8444-444444444444';
+        await clientA.query(`
+          insert into storage.objects (id, bucket_id, name, owner)
+          values ('${objectAId}', 'visitor-photos', 'in-flight-upload.jpg', '${testVisitorId}');
+        `);
+
+        // 2. Transaction B attempts to acquire reset lock (requires FOR UPDATE)
+        let acquiredResult: any = null;
+        let acquisitionCompleted = false;
+
+        const acquisitionPromise = clientB.query(
+          `select api.acquire_system_reset_lock($1::uuid) as result;`,
+          [superadminId]
+        ).then((res) => {
+          acquisitionCompleted = true;
+          acquiredResult = res.rows[0].result;
+          return res;
+        });
+
+        // 3. Prove that acquisition in B waits for earlier storage upload in A to finish
+        await new Promise((r) => setTimeout(r, 250));
+        expect(acquisitionCompleted).toBe(false);
+        expect(acquiredResult).toBeNull();
+
+        // 4. Transaction A commits
+        await clientA.query('COMMIT');
+
+        // 5. Transaction B completes acquisition
+        await acquisitionPromise;
+        expect(acquisitionCompleted).toBe(true);
+        expect(acquiredResult.acquired).toBe(true);
+        opId = acquiredResult.operation_id;
+        workerGen = acquiredResult.worker_generation;
+        workerId = acquiredResult.worker_id;
+
+        // 6. Subsequent storage upload from Transaction C is rejected
+        const objectCId = '0b555555-5555-4555-8555-555555555555';
+        await expect(
+          clientC.query(`
+            insert into storage.objects (id, bucket_id, name, owner)
+            values ('${objectCId}', 'visitor-photos', 'blocked-upload.jpg', '${testVisitorId}');
+          `)
+        ).rejects.toThrow(/system_reset_in_progress/);
+
+      } finally {
+        if (opId && workerGen && workerId) {
+          try {
+            await clientB.query(`
+              select api.release_system_reset_lock($1::uuid, $2::uuid, $3, $4::uuid);
+            `, [superadminId, opId, workerGen, workerId]);
+          } catch {}
+        }
+        clientA.release();
+        clientB.release();
+        clientC.release();
+      }
+    });
+  });
 });

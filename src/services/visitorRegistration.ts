@@ -1457,21 +1457,15 @@ export async function lookupReturningVisitor(
 export async function identifyReturningVisitor(
   transaction: PortalIssueTransaction,
   photoBlobOrBase64: Blob | string,
-  candidateTokenOrProfileId?: string,
   candidateToken?: string
 ): Promise<ReturningIdentifyResult> {
   const { token } = await getVerifiedPortalSession(transaction);
   const effectiveCandidateToken =
-    candidateToken ||
-    (candidateTokenOrProfileId && candidateTokenOrProfileId.startsWith('cand.')
-      ? candidateTokenOrProfileId
-      : undefined) ||
-    (transaction as any)?.candidateToken;
+    candidateToken || (transaction as any)?.candidateToken;
 
-  const rawProfileId =
-    candidateTokenOrProfileId && !candidateTokenOrProfileId.startsWith('cand.')
-      ? candidateTokenOrProfileId
-      : undefined;
+  if (!effectiveCandidateToken) {
+    throw new Error('A candidate authorization token is required for returning visitor verification.');
+  }
 
   let res: Response;
   try {
@@ -1485,8 +1479,7 @@ export async function identifyReturningVisitor(
           },
           body: JSON.stringify({
             requestId: transaction.requestId,
-            ...(rawProfileId ? { profileId: rawProfileId } : {}),
-            ...(effectiveCandidateToken ? { candidateToken: effectiveCandidateToken } : {}),
+            candidateToken: effectiveCandidateToken,
             photoBase64: photoBlobOrBase64,
           }),
         }),
@@ -1496,13 +1489,8 @@ export async function identifyReturningVisitor(
     } else {
       const formData = new FormData();
       formData.append('photo', photoBlobOrBase64, 'selfie.jpg');
-      if (rawProfileId) {
-        formData.append('profileId', rawProfileId);
-      }
       formData.append('requestId', transaction.requestId);
-      if (effectiveCandidateToken) {
-        formData.append('candidateToken', effectiveCandidateToken);
-      }
+      formData.append('candidateToken', effectiveCandidateToken);
 
       res = await withTimeout(
         fetch('/api/passes/identify-returning', {

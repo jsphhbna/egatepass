@@ -96,6 +96,19 @@ async function handleRequest(request: Request): Promise<Response> {
         }
 
         const operationId: string = lockData.operation_id;
+        const workerGeneration: number = typeof lockData.worker_generation === 'number' ? lockData.worker_generation : 1;
+        const workerId: string | null = typeof lockData.worker_id === 'string' ? lockData.worker_id : null;
+
+        const checkWorkerOwnership = async () => {
+          const { error: ownErr } = await admin.schema('api').rpc('assert_system_reset_worker_active', {
+            requested_op_id: operationId,
+            requested_worker_generation: workerGeneration,
+            ...(workerId ? { requested_worker_id: workerId } : {}),
+          });
+          if (ownErr) {
+            throw new Error(`Worker fencing revoked: ${ownErr.message || JSON.stringify(ownErr)}`);
+          }
+        };
 
         // Phase 2: Supabase Storage Purge via official Storage API
         // Removes nested objects from visitor-photos and visitor-ids before deleting Auth accounts
@@ -105,9 +118,11 @@ async function handleRequest(request: Request): Promise<Response> {
             requested_op_id: operationId,
             requested_status: 'storage_deletion_in_progress',
             requested_step: 'storage_deletion_in_progress',
+            requested_worker_generation: workerGeneration,
+            ...(workerId ? { requested_worker_id: workerId } : {}),
           });
 
-          storageResult = await purgeAndVerifyStorageBuckets(admin);
+          storageResult = await purgeAndVerifyStorageBuckets(admin, checkWorkerOwnership);
 
           const effectiveCounts = (storageResult.totalFilesDeleted > 0 || !lockData.purged_counts)
             ? {
@@ -122,6 +137,8 @@ async function handleRequest(request: Request): Promise<Response> {
             requested_step: 'storage_deletion_verified',
             requested_manifest: storageResult.inventories,
             requested_counts: effectiveCounts,
+            requested_worker_generation: workerGeneration,
+            ...(workerId ? { requested_worker_id: workerId } : {}),
           });
         } catch (storageErr: any) {
           console.error('Storage purge or verification failed during return_to_zero:', storageErr);
@@ -131,6 +148,8 @@ async function handleRequest(request: Request): Promise<Response> {
               requested_status: 'recovery_required',
               requested_step: 'storage_purge_failed',
               requested_error: storageErr?.message || String(storageErr),
+              requested_worker_generation: workerGeneration,
+              ...(workerId ? { requested_worker_id: workerId } : {}),
             });
           } catch (recErr) {
             console.error('Failed to record recovery_required status:', recErr);
@@ -151,6 +170,8 @@ async function handleRequest(request: Request): Promise<Response> {
             requested_op_id: operationId,
             requested_status: 'database_cleanup_in_progress',
             requested_step: 'database_cleanup_in_progress',
+            requested_worker_generation: workerGeneration,
+            ...(workerId ? { requested_worker_id: workerId } : {}),
           });
         } catch (recErr: any) {
           console.error('Failed to record database_cleanup_in_progress:', recErr);
@@ -167,6 +188,8 @@ async function handleRequest(request: Request): Promise<Response> {
           const { data, error: rpcError } = await admin.schema('api').rpc('return_to_zero_reset', {
             requested_actor_id: actor.id,
             requested_op_id: operationId,
+            requested_worker_generation: workerGeneration,
+            ...(workerId ? { requested_worker_id: workerId } : {}),
           });
 
           if (rpcError) {
@@ -181,6 +204,8 @@ async function handleRequest(request: Request): Promise<Response> {
               requested_status: 'recovery_required',
               requested_step: 'database_cleanup_failed',
               requested_error: rpcErr?.message || String(rpcErr),
+              requested_worker_generation: workerGeneration,
+              ...(workerId ? { requested_worker_id: workerId } : {}),
             });
           } catch (recErr) {
             console.error('Failed to record database_cleanup_failed status:', recErr);
@@ -199,6 +224,8 @@ async function handleRequest(request: Request): Promise<Response> {
           releaseRes = await admin.schema('api').rpc('release_system_reset_lock', {
             requested_actor_id: actor.id,
             requested_op_id: operationId,
+            requested_worker_generation: workerGeneration,
+            ...(workerId ? { requested_worker_id: workerId } : {}),
           });
         } catch (relEx: any) {
           console.error('release_system_reset_lock threw exception:', relEx);
@@ -208,6 +235,8 @@ async function handleRequest(request: Request): Promise<Response> {
               requested_status: 'recovery_required',
               requested_step: 'lock_release_failed',
               requested_error: relEx?.message || String(relEx),
+              requested_worker_generation: workerGeneration,
+              ...(workerId ? { requested_worker_id: workerId } : {}),
             });
           } catch {}
           return jsonResponse(500, {
@@ -227,6 +256,8 @@ async function handleRequest(request: Request): Promise<Response> {
               requested_status: 'recovery_required',
               requested_step: 'lock_release_failed',
               requested_error: releaseError.message,
+              requested_worker_generation: workerGeneration,
+              ...(workerId ? { requested_worker_id: workerId } : {}),
             });
           } catch {}
           return jsonResponse(500, {

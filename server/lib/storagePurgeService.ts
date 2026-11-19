@@ -198,7 +198,8 @@ export async function enumerateBucketRecursive(
 export async function deleteStorageObjectsInBatches(
   client: SupabaseClient,
   bucket: AllowedResetBucket,
-  paths: string[]
+  paths: string[],
+  checkWorkerOwnership?: () => Promise<void>
 ): Promise<{ deletedCount: number; errors: string[] }> {
   assertAllowedBucket(bucket);
 
@@ -211,6 +212,9 @@ export async function deleteStorageObjectsInBatches(
   const errors: string[] = [];
 
   for (let i = 0; i < paths.length; i += STORAGE_REMOVAL_BATCH_SIZE) {
+    if (checkWorkerOwnership) {
+      await checkWorkerOwnership();
+    }
     const batch = paths.slice(i, i + STORAGE_REMOVAL_BATCH_SIZE);
     let success = false;
     let lastErrorMsg = '';
@@ -252,12 +256,13 @@ export async function deleteStorageObjectsInBatches(
 /**
  * Executes a complete, verified purge across all allowlisted buckets:
  * 1. Enumerates all nested files across visitor-photos and visitor-ids, enforcing combined 20k limit.
- * 2. Deletes files in batches of <= 1,000 objects.
+ * 2. Deletes files in batches of <= 1,000 objects with worker fencing validation.
  * 3. Re-enumerates both buckets to verify 0 files remain (fails closed if depth exceeded or files persist).
  * 4. Fails closed if any file persists or if verification enumeration fails.
  */
 export async function purgeAndVerifyStorageBuckets(
-  client: SupabaseClient
+  client: SupabaseClient,
+  checkWorkerOwnership?: () => Promise<void>
 ): Promise<StoragePurgeResult> {
   const inventories: Record<AllowedResetBucket, BucketInventoryManifest> = {
     'visitor-photos': { bucket: 'visitor-photos', files: [], folderCount: 0 },
@@ -268,6 +273,9 @@ export async function purgeAndVerifyStorageBuckets(
 
   // Step 1: Enumerate both buckets with combined 20k threshold enforcement
   for (const bucket of ALLOWED_RESET_BUCKETS) {
+    if (checkWorkerOwnership) {
+      await checkWorkerOwnership();
+    }
     const inv = await enumerateBucketRecursive(client, bucket, totalDiscovered);
     inventories[bucket] = inv;
     totalDiscovered += inv.files.length;
@@ -283,13 +291,16 @@ export async function purgeAndVerifyStorageBuckets(
   for (const bucket of ALLOWED_RESET_BUCKETS) {
     const inv = inventories[bucket];
     if (inv.files.length > 0) {
-      const delRes = await deleteStorageObjectsInBatches(client, bucket, inv.files);
+      const delRes = await deleteStorageObjectsInBatches(client, bucket, inv.files, checkWorkerOwnership);
       totalDeleted += delRes.deletedCount;
     }
   }
 
   // Step 3: Verify post-deletion state by enumerating again
   for (const bucket of ALLOWED_RESET_BUCKETS) {
+    if (checkWorkerOwnership) {
+      await checkWorkerOwnership();
+    }
     const postInv = await enumerateBucketRecursive(client, bucket, 0);
     if (postInv.files.length > 0) {
       throw new Error(

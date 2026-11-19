@@ -200,7 +200,6 @@ async function handleRequest(request: Request): Promise<Response> {
   const token = readBearerToken(request);
   if (!token) return jsonResponse(401, { error: 'authentication_required' });
 
-  let profileId = '';
   let requestId = '';
   let candidateToken: string | null = null;
   let selfieBuffer: Buffer | null = null;
@@ -210,7 +209,12 @@ async function handleRequest(request: Request): Promise<Response> {
   if (contentType.includes('multipart/form-data')) {
     try {
       const formData = await request.formData();
-      profileId = (formData.get('profileId') as string)?.trim() || '';
+      if (formData.has('profileId')) {
+        return jsonResponse(400, {
+          error: 'raw_profile_id_forbidden',
+          message: 'Raw profile identifiers are forbidden in candidate verification. Use opaque candidateToken.',
+        });
+      }
       requestId = (formData.get('requestId') as string)?.trim() || '';
       candidateToken = (formData.get('candidateToken') as string)?.trim() || null;
       const photoEntry = formData.get('photo');
@@ -226,7 +230,12 @@ async function handleRequest(request: Request): Promise<Response> {
     if (!body || typeof body !== 'object') {
       return jsonResponse(400, { error: 'invalid_request_body' });
     }
-    profileId = (body.profileId || '').trim();
+    if ('profileId' in body && body.profileId !== undefined && body.profileId !== null) {
+      return jsonResponse(400, {
+        error: 'raw_profile_id_forbidden',
+        message: 'Raw profile identifiers are forbidden in candidate verification. Use opaque candidateToken.',
+      });
+    }
     requestId = (body.requestId || '').trim();
     candidateToken = typeof body.candidateToken === 'string' ? body.candidateToken.trim() : null;
     if (body.photoBase64 && typeof body.photoBase64 === 'string') {
@@ -238,9 +247,6 @@ async function handleRequest(request: Request): Promise<Response> {
   const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
   if (!uuidRegex.test(requestId)) {
     return jsonResponse(400, { error: 'invalid_request', message: 'Valid UUID requestId is required.' });
-  }
-  if (profileId && !uuidRegex.test(profileId)) {
-    return jsonResponse(400, { error: 'invalid_request', message: 'Invalid profileId format.' });
   }
 
   if (!selfieBuffer) {
@@ -289,21 +295,20 @@ async function handleRequest(request: Request): Promise<Response> {
           message: 'Candidate selection authorization has expired. Please perform returning visitor search again.',
         });
       }
+      if (candCheck.reason === 'unsupported_legacy_token') {
+        return jsonResponse(403, {
+          error: 'unsupported_candidate_token_version',
+          message: 'Legacy cand.v1 candidate tokens are not supported. Please search again to receive an opaque cand.v2 token.',
+        });
+      }
       return jsonResponse(403, {
         error: 'invalid_candidate_token',
         message: 'Candidate selection authorization is invalid.',
       });
     }
 
-    // Server securely obtains selected profileId from validated candidate authorization handle
-    const authorizedProfileId = candCheck.profileId!;
-    if (profileId && profileId !== authorizedProfileId) {
-      return jsonResponse(403, {
-        error: 'profile_id_mismatch',
-        message: 'Candidate authorization token does not match the requested profile.',
-      });
-    }
-    profileId = authorizedProfileId;
+    // Server securely obtains selected profileId EXCLUSIVELY from validated candidate authorization handle
+    const profileId = candCheck.profileId!;
 
     // Safety Gate Check: fail-closed if biometric parameters or secrets are uncalibrated/missing
     if (!isReturningVisitorAvailable()) {

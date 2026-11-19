@@ -16,9 +16,7 @@ import {
   createCipheriv,
   createDecipheriv,
   createHash,
-  createHmac,
   randomBytes,
-  timingSafeEqual,
 } from 'node:crypto';
 import { z } from 'zod';
 
@@ -84,7 +82,8 @@ export function createCandidateToken(
 
 /**
  * Verifies a candidate token against expected authenticated actor and secret.
- * Supports both opaque cand.v2 (AES-256-GCM) and legacy cand.v1 (HMAC-SHA256).
+ * Strictly accepts ONLY opaque, authenticated encrypted cand.v2 tokens (AES-256-GCM).
+ * Legacy cand.v1 tokens and any unencrypted or invalid tokens are rejected.
  */
 export function verifyCandidateToken(
   token: string,
@@ -99,6 +98,15 @@ export function verifyCandidateToken(
   }
   if (!expectedActorId || !uuidSchema.safeParse(expectedActorId).success) {
     return { valid: false, reason: 'invalid_expected_actor', error: 'invalid_expected_actor' };
+  }
+
+  // Reject legacy cand.v1 tokens
+  if (token.startsWith('cand.v1.')) {
+    return {
+      valid: false,
+      reason: 'unsupported_legacy_token',
+      error: 'unsupported_candidate_token_version',
+    };
   }
 
   // Handle cand.v2 (AES-256-GCM authenticated encrypted token)
@@ -162,57 +170,6 @@ export function verifyCandidateToken(
     } catch {
       return { valid: false, reason: 'verification_failed', error: 'signature_mismatch' };
     }
-  }
-
-  // Handle legacy cand.v1 (HMAC-SHA256)
-  if (token.startsWith('cand.v1.')) {
-    const parts = token.split('.');
-    if (parts.length !== 7) {
-      return { valid: false, reason: 'malformed_candidate_token', error: 'malformed_candidate_token' };
-    }
-
-    const [, , profileId, actorId, expStr, nonce, sig] = parts;
-    if (!profileId || !actorId || !expStr || !nonce || !sig) {
-      return { valid: false, reason: 'incomplete_candidate_token', error: 'incomplete_candidate_token' };
-    }
-
-    if (!uuidSchema.safeParse(profileId).success || !uuidSchema.safeParse(actorId).success) {
-      return { valid: false, reason: 'invalid_token_uuids', error: 'invalid_token_uuids' };
-    }
-
-    // Strict actor binding check
-    if (actorId !== expectedActorId) {
-      return { valid: false, reason: 'actor_mismatch', error: 'actor_mismatch' };
-    }
-
-    const exp = parseInt(expStr, 10);
-    if (!Number.isFinite(exp)) {
-      return { valid: false, reason: 'invalid_expiration', error: 'invalid_expiration' };
-    }
-
-    if (exp < Math.floor(Date.now() / 1000)) {
-      return { valid: false, expired: true, reason: 'token_expired', error: 'candidate_token_expired' };
-    }
-
-    const payloadToSign = `candidate:v1:${profileId}:${actorId}:${expStr}:${nonce}`;
-    const expectedSig = createHmac('sha256', secret.trim()).update(payloadToSign).digest('base64url');
-
-    try {
-      const a = Buffer.from(sig);
-      const b = Buffer.from(expectedSig);
-      if (a.length !== b.length || !timingSafeEqual(a, b)) {
-        return { valid: false, reason: 'signature_mismatch', error: 'signature_mismatch' };
-      }
-    } catch {
-      return { valid: false, reason: 'verification_failed', error: 'verification_failed' };
-    }
-
-    return {
-      valid: true,
-      profileId,
-      actorId,
-      expiresAt: exp,
-    };
   }
 
   return { valid: false, reason: 'unsupported_candidate_token_version', error: 'unsupported_candidate_token_version' };

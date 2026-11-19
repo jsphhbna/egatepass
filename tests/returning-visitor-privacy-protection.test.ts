@@ -320,7 +320,6 @@ describe('Returning Visitor Portrait Privacy & Verification Hardening (Section 1
 
     const identifyReq = makeRequest('http://localhost/api/passes/identify-returning', 'POST', {
       requestId: '22222222-2222-4222-8222-222222222222',
-      profileId: mockProfileId,
       candidateToken: token, // token was minted for mockActorId, but request session is otherActorId
       photoBase64: '/9j/4AAQSkZJRg==',
     });
@@ -356,7 +355,6 @@ describe('Returning Visitor Portrait Privacy & Verification Hardening (Section 1
 
     const identifyReq = makeRequest('http://localhost/api/passes/identify-returning', 'POST', {
       requestId: '22222222-2222-4222-8222-222222222222',
-      profileId: mockProfileId,
       candidateToken: expiredToken,
       photoBase64: '/9j/4AAQSkZJRg==',
     });
@@ -367,38 +365,68 @@ describe('Returning Visitor Portrait Privacy & Verification Hardening (Section 1
     expect(body.error).toBe('candidate_token_expired');
   });
 
-  it('Requirement 7: Mismatched profile ID or missing candidate token is rejected by identify-returning', async () => {
+  it('Requirement 7: Raw profileId request fields and legacy cand.v1 tokens are strictly rejected by identify-returning', async () => {
     vi.spyOn(supabaseModule, 'getServerSupabaseClients').mockReturnValue({
       admin: {} as any,
       client: {} as any,
     });
 
-    // 1. Token minted for mockProfileId, but client attempts to identify against otherProfileId
     const token = createCandidateToken(mockProfileId, mockActorId, mockTokenSecret, 300);
-    const mismatchReq = makeRequest('http://localhost/api/passes/identify-returning', 'POST', {
+
+    // 1. Raw profileId present in request body alongside candidateToken -> rejected (HTTP 400 raw_profile_id_forbidden)
+    const rawProfileReq = makeRequest('http://localhost/api/passes/identify-returning', 'POST', {
       requestId: '22222222-2222-4222-8222-222222222222',
-      profileId: otherProfileId, // Mismatched target profile
+      profileId: otherProfileId,
       candidateToken: token,
       photoBase64: '/9j/4AAQSkZJRg==',
     });
 
-    const mismatchRes = await identifyReturningHandler.fetch(mismatchReq);
-    expect(mismatchRes.status).toBe(403);
-    const mismatchBody = await mismatchRes.json();
-    expect(mismatchBody.error).toBe('profile_id_mismatch');
+    const rawProfileRes = await identifyReturningHandler.fetch(rawProfileReq);
+    expect(rawProfileRes.status).toBe(400);
+    const rawProfileBody = await rawProfileRes.json();
+    expect(rawProfileBody.error).toBe('raw_profile_id_forbidden');
 
-    // 2. Client passes raw profileId with NO candidateToken -> rejected (not treated as valid proof of selection)
+    // 2. Client passes raw profileId with NO candidateToken -> rejected (HTTP 400 raw_profile_id_forbidden)
     const missingTokenReq = makeRequest('http://localhost/api/passes/identify-returning', 'POST', {
       requestId: '22222222-2222-4222-8222-222222222222',
       profileId: mockProfileId,
-      // candidateToken omitted!
       photoBase64: '/9j/4AAQSkZJRg==',
     });
 
     const missingTokenRes = await identifyReturningHandler.fetch(missingTokenReq);
-    expect(missingTokenRes.status).toBe(403);
+    expect(missingTokenRes.status).toBe(400);
     const missingTokenBody = await missingTokenRes.json();
-    expect(missingTokenBody.error).toBe('candidate_token_required');
+    expect(missingTokenBody.error).toBe('raw_profile_id_forbidden');
+
+    // 3. Client provides no candidateToken and no profileId -> rejected (HTTP 403 candidate_token_required)
+    const noCandReq = makeRequest('http://localhost/api/passes/identify-returning', 'POST', {
+      requestId: '22222222-2222-4222-8222-222222222222',
+      photoBase64: '/9j/4AAQSkZJRg==',
+    });
+
+    const noCandRes = await identifyReturningHandler.fetch(noCandReq);
+    expect(noCandRes.status).toBe(403);
+    const noCandBody = await noCandRes.json();
+    expect(noCandBody.error).toBe('candidate_token_required');
+
+    // 4. Legacy cand.v1 token format is rejected by identify-returning (HTTP 403 unsupported_candidate_token_version)
+    const legacyV1Token = `cand.v1.${mockProfileId}.${mockActorId}.${Math.floor(Date.now() / 1000) + 300}.nonce123456.mock_signature`;
+    const legacyReq = makeRequest('http://localhost/api/passes/identify-returning', 'POST', {
+      requestId: '22222222-2222-4222-8222-222222222222',
+      candidateToken: legacyV1Token,
+      photoBase64: '/9j/4AAQSkZJRg==',
+    });
+
+    const legacyRes = await identifyReturningHandler.fetch(legacyReq);
+    expect(legacyRes.status).toBe(403);
+    const legacyBody = await legacyRes.json();
+    expect(legacyBody.error).toBe('unsupported_candidate_token_version');
+
+    // 5. verifyCandidateToken unit check confirms cand.v1 rejection
+    const v1Check = verifyCandidateToken(legacyV1Token, mockActorId, mockTokenSecret);
+    expect(v1Check.valid).toBe(false);
+    expect(v1Check.reason).toBe('unsupported_legacy_token');
+    expect(v1Check.error).toBe('unsupported_candidate_token_version');
   });
 
   // --------------------------------------------------------------------------
@@ -618,7 +646,6 @@ describe('Returning Visitor Portrait Privacy & Verification Hardening (Section 1
     const token = createCandidateToken(mockProfileId, mockActorId, mockTokenSecret, 300);
     const req = makeRequest('http://localhost/api/passes/identify-returning', 'POST', {
       requestId: '22222222-2222-4222-8222-222222222222',
-      profileId: mockProfileId,
       candidateToken: token,
       photoBase64: '/9j/2wBDAAYEBQYFBAYGBQYHBwYIChAKCgkJChQODwwQFxQYGBcUFhYaHSUfGhsjHBYWICwgIyYnKSopGR8tMC0oMCUoKSj/2wBDAQcHBwoIChMKChMoGhYaKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCj/wAARCABkAGQDASIAAhEBAxEB/8QAFAABAAAAAAAAAAAAAAAAAAAAAP/EABQQAQAAAAAAAAAAAAAAAAAAAAD/xAAUAQEAAAAAAAAAAAAAAAAAAAAA/8QAFBEBAAAAAAAAAAAAAAAAAAAAAP/aAAwDAQACEQMRAD8AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA//2Q==',
     });
@@ -696,7 +723,6 @@ describe('Returning Visitor Portrait Privacy & Verification Hardening (Section 1
     const token = createCandidateToken(mockProfileId, mockActorId, mockTokenSecret, 300);
     const req = makeRequest('http://localhost/api/passes/identify-returning', 'POST', {
       requestId: '22222222-2222-4222-8222-222222222222',
-      profileId: mockProfileId,
       candidateToken: token,
       photoBase64: '/9j/2wBDAAYEBQYFBAYGBQYHBwYIChAKCgkJChQODwwQFxQYGBcUFhYaHSUfGhsjHBYWICwgIyYnKSopGR8tMC0oMCUoKSj/2wBDAQcHBwoIChMKChMoGhYaKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCj/wAARCABkAGQDASIAAhEBAxEB/8QAFAABAAAAAAAAAAAAAAAAAAAAAP/EABQQAQAAAAAAAAAAAAAAAAAAAAD/xAAUAQEAAAAAAAAAAAAAAAAAAAAA/8QAFBEBAAAAAAAAAAAAAAAAAAAAAP/aAAwDAQACEQMRAD8AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA//2Q==',
     });
@@ -780,7 +806,6 @@ describe('Returning Visitor Portrait Privacy & Verification Hardening (Section 1
     const token = createCandidateToken(mockProfileId, mockActorId, mockTokenSecret, 300);
     const req = makeRequest('http://localhost/api/passes/identify-returning', 'POST', {
       requestId: '22222222-2222-4222-8222-222222222222',
-      profileId: mockProfileId,
       candidateToken: token,
       photoBase64: '/9j/2wBDAAYEBQYFBAYGBQYHBwYIChAKCgkJChQODwwQFxQYGBcUFhYaHSUfGhsjHBYWICwgIyYnKSopGR8tMC0oMCUoKSj/2wBDAQcHBwoIChMKChMoGhYaKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCj/wAARCABkAGQDASIAAhEBAxEB/8QAFAABAAAAAAAAAAAAAAAAAAAAAP/EABQQAQAAAAAAAAAAAAAAAAAAAAD/xAAUAQEAAAAAAAAAAAAAAAAAAAAA/8QAFBEBAAAAAAAAAAAAAAAAAAAAAP/aAAwDAQACEQMRAD8AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA//2Q==',
     });

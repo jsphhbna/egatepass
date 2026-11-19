@@ -1000,7 +1000,20 @@ describe('Return-to-Zero Storage Service & State Machine Hardening (Section 10 M
         );
       `);
 
-      // 3. Process interruption / serverless timeout occurs here.
+      // 3a. While worker is still active (fresh heartbeat), a concurrent resume request cannot obtain authority
+      const concurrentRes = await db.query<{ acquire_system_reset_lock: { acquired: boolean; reason: string } }>(`
+        select api.acquire_system_reset_lock('${superadminId}'::uuid, '${opId}'::uuid);
+      `);
+      expect(concurrentRes.rows[0].acquire_system_reset_lock.acquired).toBe(false);
+      expect(concurrentRes.rows[0].acquire_system_reset_lock.reason).toBe('reset_already_in_progress');
+
+      // 3b. Process interruption / serverless timeout occurs here (worker heartbeat expires > 30s)
+      await db.exec(`
+        update public.maintenance_state
+        set heartbeat_at = now() - interval '35 seconds'
+        where job_name = 'system_reset';
+      `);
+
       // Next admin resumes explicitly via acquire_system_reset_lock with requested_resume_op_id
       const resumeRes = await db.query<{ acquire_system_reset_lock: { acquired: boolean; resumed: boolean; operation_id: string; previous_status: string } }>(`
         select api.acquire_system_reset_lock('${superadminId}'::uuid, '${opId}'::uuid);
@@ -1381,7 +1394,6 @@ describe('Return-to-Zero Storage Service & State Machine Hardening (Section 10 M
         headers: { 'Content-Type': 'application/json', Authorization: 'Bearer token' },
         body: JSON.stringify({
           requestId: '22222222-2222-4222-8222-222222222222',
-          profileId,
           photoBase64: '/9j/4AAQSkZJRg==',
         }),
       });
@@ -1406,6 +1418,22 @@ describe('Return-to-Zero Storage Service & State Machine Hardening (Section 10 M
       expect(res2.status).toBe(403);
       const body2 = await res2.json();
       expect(body2.error).toBe('invalid_candidate_token');
+
+      // Attempt 3: Supplying raw profileId is strictly rejected (400 raw_profile_id_forbidden)
+      const rawProfileReq = new Request('http://localhost/api/passes/identify-returning', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: 'Bearer token' },
+        body: JSON.stringify({
+          requestId: '22222222-2222-4222-8222-222222222222',
+          profileId,
+          photoBase64: '/9j/4AAQSkZJRg==',
+        }),
+      });
+
+      const res3 = await identifyReturningHandler.fetch(rawProfileReq);
+      expect(res3.status).toBe(400);
+      const body3 = await res3.json();
+      expect(body3.error).toBe('raw_profile_id_forbidden');
     });
 
     it('Case 18: A discovery token cannot retrieve a portrait or ID', async () => {
@@ -1746,6 +1774,264 @@ describe('Return-to-Zero Storage Service & State Machine Hardening (Section 10 M
 
       // Clean up / release
       await db.query(`select api.release_system_reset_lock('${superadminId}'::uuid, '${opId}'::uuid);`);
+    });
+
+    it('Case 25: Resuming an old completed or unrelated operation cannot replace a newer active operation', async () => {
+      await db.exec(`set request.jwt.claim.role = 'service_role';`);
+
+      // 1. Acquire first operation op1
+      const lock1 = await db.query<{ acquire_system_reset_lock: any }>(
+        `select api.acquire_system_reset_lock('${superadminId}'::uuid);`
+      );
+      const op1 = lock1.rows[0].acquire_system_reset_lock.operation_id;
+      const gen1 = lock1.rows[0].acquire_system_reset_lock.worker_generation;
+      const w1 = lock1.rows[0].acquire_system_reset_lock.worker_id;
+
+      // Complete and release op1
+      await db.query(`
+        select api.release_system_reset_lock('${superadminId}'::uuid, '${op1}'::uuid, ${gen1}, '${w1}'::uuid);
+      `);
+
+      // 2. Acquire second operation op2
+      const lock2 = await db.query<{ acquire_system_reset_lock: any }>(
+        `select api.acquire_system_reset_lock('${superadminId}'::uuid);`
+      );
+      const op2 = lock2.rows[0].acquire_system_reset_lock.operation_id;
+      const gen2 = lock2.rows[0].acquire_system_reset_lock.worker_generation;
+      const w2 = lock2.rows[0].acquire_system_reset_lock.worker_id;
+      expect(op2).not.toBe(op1);
+
+      // 3. Attempt to resume old completed op1 while op2 is active
+      const resumeOld = await db.query<{ acquire_system_reset_lock: any }>(
+        `select api.acquire_system_reset_lock('${superadminId}'::uuid, '${op1}'::uuid);`
+      );
+      expect(resumeOld.rows[0].acquire_system_reset_lock.acquired).toBe(false);
+      expect(resumeOld.rows[0].acquire_system_reset_lock.reason).toBe('cannot_resume_completed_operation');
+
+      // 4. Attempt to resume non-existent / arbitrary operation
+      const nonExistent = '99999999-9999-4999-8999-999999999999';
+      const resumeFake = await db.query<{ acquire_system_reset_lock: any }>(
+        `select api.acquire_system_reset_lock('${superadminId}'::uuid, '${nonExistent}'::uuid);`
+      );
+      expect(resumeFake.rows[0].acquire_system_reset_lock.acquired).toBe(false);
+      expect(resumeFake.rows[0].acquire_system_reset_lock.reason).toBe('operation_not_found');
+
+      // Clean up op2
+      await db.query(`
+        select api.release_system_reset_lock('${superadminId}'::uuid, '${op2}'::uuid, ${gen2}, '${w2}'::uuid);
+      `);
+    });
+
+    it('Case 26: A stale worker cannot record steps, execute DB cleanup RPC, or release lock', async () => {
+      await db.exec(`set request.jwt.claim.role = 'service_role';`);
+
+      // 1. Worker 1 acquires lock
+      const lock1 = await db.query<{ acquire_system_reset_lock: any }>(
+        `select api.acquire_system_reset_lock('${superadminId}'::uuid);`
+      );
+      const opId = lock1.rows[0].acquire_system_reset_lock.operation_id;
+      const gen1 = lock1.rows[0].acquire_system_reset_lock.worker_generation;
+      const w1 = lock1.rows[0].acquire_system_reset_lock.worker_id;
+
+      // 2. Worker 1 times out (simulate lease expiration)
+      await db.exec(`
+        update public.maintenance_state
+        set heartbeat_at = now() - interval '40 seconds'
+        where job_name = 'system_reset';
+      `);
+
+      // 3. Worker 2 resumes the operation
+      const lock2 = await db.query<{ acquire_system_reset_lock: any }>(
+        `select api.acquire_system_reset_lock('${superadminId}'::uuid, '${opId}'::uuid);`
+      );
+      expect(lock2.rows[0].acquire_system_reset_lock.acquired).toBe(true);
+      const gen2 = lock2.rows[0].acquire_system_reset_lock.worker_generation;
+      const w2 = lock2.rows[0].acquire_system_reset_lock.worker_id;
+      expect(gen2).toBeGreaterThan(gen1);
+      expect(w2).not.toBe(w1);
+
+      // 4. Stale Worker 1 attempts worker active assertion -> rejected with fencing_token_revoked
+      await expect(
+        db.query(`select api.assert_system_reset_worker_active('${opId}'::uuid, ${gen1}, '${w1}'::uuid);`)
+      ).rejects.toThrow(/fencing_token_revoked/);
+
+      // 5. Stale Worker 1 attempts record_system_reset_step -> rejected
+      await expect(
+        db.query(`
+          select api.record_system_reset_step(
+            '${opId}'::uuid, 'storage_deletion_in_progress', 'storage_deletion_in_progress',
+            '{}'::jsonb, '{}'::jsonb, null, ${gen1}, '${w1}'::uuid
+          );
+        `)
+      ).rejects.toThrow(/fencing_token_revoked/);
+
+      // 6. Stale Worker 1 attempts return_to_zero_reset -> rejected
+      await expect(
+        db.query(`
+          select api.return_to_zero_reset(
+            '${superadminId}'::uuid, '${opId}'::uuid, ${gen1}, '${w1}'::uuid
+          );
+        `)
+      ).rejects.toThrow(/fencing_token_revoked/);
+
+      // 7. Stale Worker 1 attempts release_system_reset_lock -> rejected
+      await expect(
+        db.query(`
+          select api.release_system_reset_lock('${superadminId}'::uuid, '${opId}'::uuid, ${gen1}, '${w1}'::uuid);
+        `)
+      ).rejects.toThrow(/fencing_token_revoked/);
+
+      // 8. Active Worker 2 can successfully assert ownership and release
+      const assertRes = await db.query<{ assert_system_reset_worker_active: boolean }>(
+        `select api.assert_system_reset_worker_active('${opId}'::uuid, ${gen2}, '${w2}'::uuid);`
+      );
+      expect(assertRes.rows[0].assert_system_reset_worker_active).toBe(true);
+
+      await db.query(`
+        select api.release_system_reset_lock('${superadminId}'::uuid, '${opId}'::uuid, ${gen2}, '${w2}'::uuid);
+      `);
+    });
+
+    it('Case 27: Force-unlock/reconciliation revokes old worker authority immediately', async () => {
+      await db.exec(`set request.jwt.claim.role = 'service_role';`);
+
+      // 1. Worker acquires lock
+      const lockRes = await db.query<{ acquire_system_reset_lock: any }>(
+        `select api.acquire_system_reset_lock('${superadminId}'::uuid);`
+      );
+      const opId = lockRes.rows[0].acquire_system_reset_lock.operation_id;
+      const gen = lockRes.rows[0].acquire_system_reset_lock.worker_generation;
+      const workerId = lockRes.rows[0].acquire_system_reset_lock.worker_id;
+
+      // 2. Admin performs force-unlock reconciliation
+      const recRes = await db.query<{ reconcile_system_reset_operation: any }>(`
+        select api.reconcile_system_reset_operation(
+          '${superadminId}'::uuid, '${opId}'::uuid, 'force_unlock', 'Emergency operator override'
+        );
+      `);
+      expect(recRes.rows[0].reconcile_system_reset_operation.success).toBe(true);
+
+      // 3. Old worker tries to execute DB cleanup RPC -> rejected (fencing token revoked)
+      await expect(
+        db.query(`
+          select api.return_to_zero_reset(
+            '${superadminId}'::uuid, '${opId}'::uuid, ${gen}, '${workerId}'::uuid
+          );
+        `)
+      ).rejects.toThrow(/fencing_token_revoked/);
+
+      // 4. Old worker tries to record step -> rejected
+      await expect(
+        db.query(`
+          select api.record_system_reset_step(
+            '${opId}'::uuid, 'db_cleanup_in_progress', 'db_cleanup_in_progress',
+            '{}'::jsonb, '{}'::jsonb, null, ${gen}, '${workerId}'::uuid
+          );
+        `)
+      ).rejects.toThrow(/fencing_token_revoked/);
+    });
+
+    it('Case 28: Four operational tables (resend_webhook_events, rate_limit_buckets, nominatim_rate_limiter, location_search_cache) are frozen during reset lock', async () => {
+      await db.exec(`set request.jwt.claim.role = 'service_role';`);
+
+      // Acquire reset lock
+      const lockRes = await db.query<{ acquire_system_reset_lock: any }>(
+        `select api.acquire_system_reset_lock('${superadminId}'::uuid);`
+      );
+      const opId = lockRes.rows[0].acquire_system_reset_lock.operation_id;
+      const gen = lockRes.rows[0].acquire_system_reset_lock.worker_generation;
+      const wId = lockRes.rows[0].acquire_system_reset_lock.worker_id;
+
+      // 1. resend_webhook_events insert rejected
+      await expect(
+        db.exec(`
+          insert into public.resend_webhook_events (provider_event_id, event_type, email_id)
+          values ('evt-frozen-123', 'email.delivered', 'email-frozen-123');
+        `)
+      ).rejects.toThrow(/system_reset_in_progress/);
+
+      // 2. rate_limit_buckets insert rejected
+      await expect(
+        db.exec(`
+          insert into public.rate_limit_buckets (key_digest, action, window_started_at, expires_at)
+          values ('\\x0102'::bytea, 'login', now(), now() + interval '1 hour');
+        `)
+      ).rejects.toThrow(/system_reset_in_progress/);
+
+      // 3. nominatim_rate_limiter update rejected
+      await expect(
+        db.exec(`
+          update public.nominatim_rate_limiter set last_request_at = now() where id = 1;
+        `)
+      ).rejects.toThrow(/system_reset_in_progress/);
+
+      // 4. location_search_cache insert rejected
+      await expect(
+        db.exec(`
+          insert into public.location_search_cache (query_hash, query, results, expires_at)
+          values ('hash-1', 'City Hall', '[]'::jsonb, now() + interval '1 day');
+        `)
+      ).rejects.toThrow(/system_reset_in_progress/);
+
+      // Release lock
+      await db.query(`
+        select api.release_system_reset_lock('${superadminId}'::uuid, '${opId}'::uuid, ${gen}, '${wId}'::uuid);
+      `);
+
+      // Now verify writes succeed after lock release
+      await db.exec(`
+        insert into public.resend_webhook_events (provider_event_id, event_type, email_id)
+        values ('evt-unfrozen-123', 'email.delivered', 'email-unfrozen-123');
+        insert into public.rate_limit_buckets (key_digest, action, window_started_at, expires_at)
+        values ('\\x0304'::bytea, 'login', now(), now() + interval '1 hour');
+        update public.nominatim_rate_limiter set last_request_at = now() where id = 1;
+        insert into public.location_search_cache (query_hash, query, results, expires_at)
+        values ('hash-2', 'City Hall', '[]'::jsonb, now() + interval '1 day');
+      `);
+    });
+
+    it('Case 29: Two concurrent resumes cannot both obtain worker authority', async () => {
+      await db.exec(`set request.jwt.claim.role = 'service_role';`);
+
+      // 1. Initial lock acquired
+      const lockRes = await db.query<{ acquire_system_reset_lock: any }>(
+        `select api.acquire_system_reset_lock('${superadminId}'::uuid);`
+      );
+      const opId = lockRes.rows[0].acquire_system_reset_lock.operation_id;
+
+      // 2. Simulate worker crash / lease timeout
+      await db.exec(`
+        update public.maintenance_state
+        set heartbeat_at = now() - interval '45 seconds'
+        where job_name = 'system_reset';
+      `);
+
+      // 3. Launch two simultaneous resume requests
+      const [res1, res2] = await Promise.all([
+        db.query<{ acquire_system_reset_lock: any }>(
+          `select api.acquire_system_reset_lock('${superadminId}'::uuid, '${opId}'::uuid);`
+        ),
+        db.query<{ acquire_system_reset_lock: any }>(
+          `select api.acquire_system_reset_lock('${superadminId}'::uuid, '${opId}'::uuid);`
+        ),
+      ]);
+
+      const r1 = res1.rows[0].acquire_system_reset_lock;
+      const r2 = res2.rows[0].acquire_system_reset_lock;
+
+      // Exactly one must acquire, and the other must be rejected
+      const acquiredCount = (r1.acquired ? 1 : 0) + (r2.acquired ? 1 : 0);
+      expect(acquiredCount).toBe(1);
+
+      const rejected = r1.acquired ? r2 : r1;
+      expect(rejected.acquired).toBe(false);
+      expect(rejected.reason).toBe('reset_already_in_progress');
+
+      const winner = r1.acquired ? r1 : r2;
+      // Clean up winner
+      await db.query(`
+        select api.release_system_reset_lock('${superadminId}'::uuid, '${opId}'::uuid, ${winner.worker_generation}, '${winner.worker_id}'::uuid);
+      `);
     });
 
     it('Case 20: Historical migration 20261118000300 is byte-for-byte identical to main, and 20261119000100 upgrades cleanly from baseline', async () => {

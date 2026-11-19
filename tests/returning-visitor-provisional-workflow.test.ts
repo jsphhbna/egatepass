@@ -357,7 +357,6 @@ describe('Returning Visitor Provisional 1:1 Biometric & Enrollment Architecture 
         },
         body: JSON.stringify({
           requestId,
-          profileId,
           candidateToken: createCandidateToken(profileId, actorId, testSecret, 300),
           photoBase64,
         }),
@@ -431,7 +430,6 @@ describe('Returning Visitor Provisional 1:1 Biometric & Enrollment Architecture 
         },
         body: JSON.stringify({
           requestId,
-          profileId,
           candidateToken: createCandidateToken(profileId, actorId, testSecret, 300),
           photoBase64,
         }),
@@ -492,7 +490,6 @@ describe('Returning Visitor Provisional 1:1 Biometric & Enrollment Architecture 
         },
         body: JSON.stringify({
           requestId,
-          profileId,
           candidateToken: createCandidateToken(profileId, actorId, testSecret, 300),
           photoBase64,
         }),
@@ -549,7 +546,6 @@ describe('Returning Visitor Provisional 1:1 Biometric & Enrollment Architecture 
         },
         body: JSON.stringify({
           requestId,
-          profileId,
           candidateToken: createCandidateToken(profileId, actorId, testSecret, 300),
           photoBase64,
         }),

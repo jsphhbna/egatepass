@@ -232,7 +232,6 @@ describe('Returning Visitor Fail-Closed Gallery & Descriptor Validation (Priorit
         },
         body: JSON.stringify({
           requestId,
-          profileId: badProfileId,
           candidateToken: createCandidateToken(badProfileId, actorId, testSecret, 300),
           photoBase64,
         }),
@@ -362,7 +361,6 @@ describe('Returning Visitor Fail-Closed Gallery & Descriptor Validation (Priorit
         },
         body: JSON.stringify({
           requestId,
-          profileId: goodProfileId,
           candidateToken: createCandidateToken(goodProfileId, actorId, testSecret, 300),
           photoBase64,
         }),
