@@ -66,6 +66,16 @@ begin
     end if;
   end if;
 
+  -- Transaction-local bypass for internal return_to_zero cleanup execution
+  if pg_catalog.current_setting('egatepass.in_system_reset', true) = 'true' then
+    select cursor_value into v_state
+    from public.maintenance_state
+    where job_name = 'system_reset';
+    if v_state in ('locked', 'in_progress') then
+      return new;
+    end if;
+  end if;
+
 
   -- 2. Concurrency-safe write guard with transactional lock semantics:
   -- Acquire tuple-level SHARE lock on the system_reset maintenance row.
@@ -476,6 +486,10 @@ declare
   v_actor_role public.staff_role;
   v_preserved_superadmins jsonb;
   v_maint record;
+  v_standalone boolean := false;
+  v_effective_op_id uuid;
+  v_effective_gen integer;
+  v_effective_worker_id uuid;
 begin
   -- 1. Security Check: caller must be service_role
   if auth.role() <> 'service_role' then
@@ -525,21 +539,46 @@ begin
     end if;
   end if;
 
-  -- Update state to in_progress
-  update public.maintenance_state
-  set cursor_value = 'in_progress',
-      heartbeat_at = now()
-  where job_name = 'system_reset';
-
   -- Acquire exclusive advisory transaction lock to serialize return-to-zero operations
   perform pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtext('egatepass:return-to-zero-reset'));
 
-  -- Set session variables for reset bypass in triggers
-  if requested_op_id is not null then
-    perform pg_catalog.set_config('egatepass.active_reset_op_id', requested_op_id::text, true);
+  if requested_op_id is null then
+    v_standalone := true;
+    v_effective_op_id := gen_random_uuid();
+    v_effective_gen := coalesce(v_maint.worker_generation, 0) + 1;
+    v_effective_worker_id := gen_random_uuid();
+
+    update public.maintenance_state
+    set cursor_value = 'in_progress',
+        active_operation_id = v_effective_op_id,
+        worker_generation = v_effective_gen,
+        active_worker_id = v_effective_worker_id,
+        last_started_at = now(),
+        heartbeat_at = now()
+    where job_name = 'system_reset';
+
+    insert into public.system_reset_operations (
+      id, actor_id, status, step, worker_generation, worker_id, created_at, updated_at
+    ) values (
+      v_effective_op_id, requested_actor_id, 'database_cleanup_in_progress', 'database_cleanup_in_progress',
+      v_effective_gen, v_effective_worker_id, now(), now()
+    );
+  else
+    v_standalone := false;
+    v_effective_op_id := requested_op_id;
+    v_effective_gen := requested_worker_generation;
+    v_effective_worker_id := requested_worker_id;
+
+    update public.maintenance_state
+    set cursor_value = 'in_progress',
+        heartbeat_at = now()
+    where job_name = 'system_reset';
   end if;
-  if v_maint.worker_generation is not null then
-    perform pg_catalog.set_config('egatepass.active_reset_worker_gen', v_maint.worker_generation::text, true);
+
+  -- Set session variables for reset bypass in triggers
+  perform pg_catalog.set_config('egatepass.active_reset_op_id', v_effective_op_id::text, true);
+  if v_effective_gen is not null then
+    perform pg_catalog.set_config('egatepass.active_reset_worker_gen', v_effective_gen::text, true);
   end if;
   perform pg_catalog.set_config('egatepass.in_system_reset', 'true', true);
 
@@ -762,17 +801,35 @@ begin
     jsonb_build_object(
       'action', 'return_to_zero',
       'purged_at', now(),
-      'operation_id', requested_op_id,
+      'operation_id', v_effective_op_id,
       'preserved_superadmins', v_preserved_superadmins
     )
   );
 
-  -- Step 20: Return structured response
+  -- Step 20: If standalone invocation, complete the operation and return maintenance_state to idle
+  if v_standalone then
+    update public.system_reset_operations
+    set status = 'completed',
+        step = 'completed',
+        completed_at = now(),
+        updated_at = now()
+    where id = v_effective_op_id;
+
+    update public.maintenance_state
+    set cursor_value = 'idle',
+        active_operation_id = null,
+        active_worker_id = null,
+        last_outcome = 'success',
+        last_completed_at = now()
+    where job_name = 'system_reset';
+  end if;
+
+  -- Step 21: Return structured response
   return jsonb_build_object(
     'success', true,
     'purged_at', now(),
     'actor_id', requested_actor_id,
-    'operation_id', requested_op_id,
+    'operation_id', v_effective_op_id,
     'preserved_superadmins', v_preserved_superadmins
   );
 end;
