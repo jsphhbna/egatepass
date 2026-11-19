@@ -159,8 +159,12 @@ async function handleRequest(request: Request): Promise<Response> {
             requested_op_id: operationId,
             requested_status: 'storage_deletion_verified',
             requested_step: 'storage_deletion_verified',
-            requested_manifest: storageResult.inventories,
+            requested_manifest: {
+              ...storageResult.inventories,
+              verification: storageResult.verification,
+            },
             requested_counts: effectiveCounts,
+            requested_verification: storageResult.verification,
             requested_worker_generation: workerGeneration,
             requested_worker_id: workerId,
           });

@@ -359,11 +359,36 @@ describe('Milestone 1: Gender Tracking and Return-to-Zero Reset Migration Tests'
       db.query(`select api.return_to_zero_reset('${superadmin1Id}'::uuid);`)
     ).rejects.toThrow(/fencing_token_revoked: operation ID required/);
 
-    // 2. Positive test: Active superadmin acquires reset lock and executes return to zero reset with valid fencing tokens
+    // 2. Positive test: Active superadmin acquires reset lock, passes storage phase gates, and executes return to zero reset with valid fencing tokens
     const lockRes = await db.query<{ acquire_system_reset_lock: any }>(`
       select api.acquire_system_reset_lock('${superadmin1Id}'::uuid);
     `);
     const { operation_id: opId, worker_generation: workerGen, worker_id: workerId } = lockRes.rows[0].acquire_system_reset_lock;
+
+    const sampleVerification = JSON.stringify({
+      verifiedAt: new Date().toISOString(),
+      buckets: {
+        'visitor-photos': { bucket: 'visitor-photos', remainingCount: 0, verifiedEmpty: true },
+        'visitor-ids': { bucket: 'visitor-ids', remainingCount: 0, verifiedEmpty: true },
+      },
+      verifiedEmpty: true,
+    });
+
+    await db.exec(`
+      select api.record_system_reset_step(
+        '${opId}'::uuid, 'storage_deletion_in_progress', 'storage_deletion_in_progress',
+        '{}'::jsonb, '{}'::jsonb, null, ${workerGen}, '${workerId}'::uuid
+      );
+      select api.record_system_reset_step(
+        '${opId}'::uuid, 'storage_deletion_verified', 'storage_deletion_verified',
+        '{}'::jsonb, '{}'::jsonb, null, ${workerGen}, '${workerId}'::uuid,
+        '${sampleVerification}'::jsonb
+      );
+      select api.record_system_reset_step(
+        '${opId}'::uuid, 'database_cleanup_in_progress', 'database_cleanup_in_progress',
+        '{}'::jsonb, '{}'::jsonb, null, ${workerGen}, '${workerId}'::uuid
+      );
+    `);
 
     const resetRes = await db.query<{ return_to_zero_reset: { success: boolean; actor_id: string; preserved_superadmins: string[] } }>(`
       select api.return_to_zero_reset('${superadmin1Id}'::uuid, '${opId}'::uuid, ${workerGen}, '${workerId}'::uuid);
@@ -431,6 +456,21 @@ describe('Milestone 1: Gender Tracking and Return-to-Zero Reset Migration Tests'
       select api.acquire_system_reset_lock('${superadmin1Id}'::uuid);
     `);
     const { operation_id: rerunOpId, worker_generation: rerunGen, worker_id: rerunWorkerId } = rerunLock.rows[0].acquire_system_reset_lock;
+    await db.exec(`
+      select api.record_system_reset_step(
+        '${rerunOpId}'::uuid, 'storage_deletion_in_progress', 'storage_deletion_in_progress',
+        '{}'::jsonb, '{}'::jsonb, null, ${rerunGen}, '${rerunWorkerId}'::uuid
+      );
+      select api.record_system_reset_step(
+        '${rerunOpId}'::uuid, 'storage_deletion_verified', 'storage_deletion_verified',
+        '{}'::jsonb, '{}'::jsonb, null, ${rerunGen}, '${rerunWorkerId}'::uuid,
+        '${sampleVerification}'::jsonb
+      );
+      select api.record_system_reset_step(
+        '${rerunOpId}'::uuid, 'database_cleanup_in_progress', 'database_cleanup_in_progress',
+        '{}'::jsonb, '{}'::jsonb, null, ${rerunGen}, '${rerunWorkerId}'::uuid
+      );
+    `);
     const rerunRes = await db.query<{ return_to_zero_reset: { success: boolean } }>(`
       select api.return_to_zero_reset('${superadmin1Id}'::uuid, '${rerunOpId}'::uuid, ${rerunGen}, '${rerunWorkerId}'::uuid);
     `);

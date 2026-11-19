@@ -11,13 +11,15 @@
  * 4. Correctly distinguishes folder entries (id: null / metadata: null) from actual file objects.
  * 5. Paginated traversal: never assumes the first page contains the complete inventory.
  * 6. Respects Supabase Storage maximum batch size of 1,000 objects per removal request.
- * 7. Checks every response for errors; retries transient errors with bounded backoff.
+ * 7. Checks every response for errors; retries transient non-timeout errors with bounded backoff.
  * 8. Enforces post-deletion re-enumeration verification: fails closed if any file persists or if depth exceeded.
  * 9. Zero leakage of file contents, biometric metadata, or visitor PII in logs or manifests.
  * 10. Enforces 20,000-object safety ceiling across COMBINED inventory of both buckets.
- * 11. Bounded external Storage request execution: each batch removal request is bounded by STORAGE_REQUEST_TIMEOUT_MS (15,000ms).
- * 12. Worker lease / safety window alignment: Database reset worker lease (RESET_WORKER_LEASE_SECONDS = 60s) strictly exceeds maximum worst-case in-flight Storage execution (~46s total across 3 attempts).
- * 13. Unavoidable External Storage Limitation: An external HTTP/S3 Storage request already accepted by the storage backend before worker revocation cannot be retroactively cancelled over the network. Therefore, recovery lock acquisition strictly rejects resume attempts while lease_expires_at >= clock_timestamp(), guaranteeing that recovery cannot spawn a competing destructive worker while a previous worker may still have an active Storage request in flight.
+ * 11. Bounded external Storage request execution: each batch removal and list request is bounded by STORAGE_REQUEST_TIMEOUT_MS (15,000ms).
+ *     Real AbortSignal cancellation aborts the underlying client-side fetch without mutating process-global fetch.
+ * 12. Deletion request timeout is treated as an ambiguous recovery condition: no overlapping retries are started, fails immediately into recovery_required.
+ * 13. Worker lease / safety window alignment: Database reset worker lease (RESET_WORKER_LEASE_SECONDS = 60s) strictly exceeds maximum worst-case in-flight Storage execution (~46s total across 3 attempts).
+ * 14. Unavoidable External Storage Limitation: An external HTTP/S3 Storage request already accepted by the storage backend before worker revocation cannot be retroactively cancelled over the network. Therefore, recovery lock acquisition strictly rejects resume attempts while lease_expires_at >= clock_timestamp(), guaranteeing that recovery cannot spawn a competing destructive worker while a previous worker may still have an active Storage request in flight.
  */
 
 import type { SupabaseClient } from '@supabase/supabase-js';
@@ -32,11 +34,136 @@ export const STORAGE_REQUEST_TIMEOUT_MS = 15_000;
 export const RESET_WORKER_LEASE_SECONDS = 60;
 const MAX_REMOVAL_RETRIES = 3;
 
+export class StorageTimeoutError extends Error {
+  readonly isTimeout = true;
+  constructor(message: string) {
+    super(message);
+    this.name = 'StorageTimeoutError';
+  }
+}
+
+export function isTimeoutError(err: any): boolean {
+  if (!err) return false;
+  if (err instanceof StorageTimeoutError || err?.isTimeout === true) return true;
+  const msg = (err?.message || (typeof err === 'string' ? err : '')).toLowerCase();
+  const name = (err?.name || '').toLowerCase();
+  return (
+    name === 'aborterror' ||
+    name === 'storagetimeouterror' ||
+    name === 'timeouterror' ||
+    msg.includes('timed out') ||
+    msg.includes('timeout') ||
+    msg.includes('aborted')
+  );
+}
+
+function composeSignals(sig1?: AbortSignal, sig2?: AbortSignal): AbortSignal | undefined {
+  if (!sig1) return sig2;
+  if (!sig2) return sig1;
+  if (typeof (AbortSignal as any).any === 'function') {
+    return (AbortSignal as any).any([sig1, sig2]);
+  }
+  const controller = new AbortController();
+  const onAbort = (sig: AbortSignal) => {
+    if (!controller.signal.aborted) {
+      controller.abort(sig.reason);
+    }
+  };
+  if (sig1.aborted) return sig1;
+  if (sig2.aborted) return sig2;
+  sig1.addEventListener('abort', () => onAbort(sig1), { once: true });
+  sig2.addEventListener('abort', () => onAbort(sig2), { once: true });
+  return controller.signal;
+}
+
+export async function executeWithStorageTimeout<T>(
+  client: SupabaseClient,
+  bucket: AllowedResetBucket,
+  operationName: 'list' | 'remove',
+  execute: (storage: any, signal: AbortSignal) => Promise<T>,
+  options?: {
+    timeoutMs?: number;
+    parentSignal?: AbortSignal;
+  }
+): Promise<T> {
+  const timeoutMs = options?.timeoutMs ?? STORAGE_REQUEST_TIMEOUT_MS;
+  const controller = new AbortController();
+  let timedOut = false;
+
+  const parentSignal = options?.parentSignal;
+  if (parentSignal) {
+    if (parentSignal.aborted) {
+      controller.abort(parentSignal.reason);
+    } else {
+      parentSignal.addEventListener('abort', () => controller.abort(parentSignal.reason), { once: true });
+    }
+  }
+
+  const timer = setTimeout(() => {
+    timedOut = true;
+    controller.abort(new StorageTimeoutError(`Storage ${operationName} operation timed out after ${timeoutMs}ms in bucket "${bucket}".`));
+  }, timeoutMs);
+
+  try {
+    const rawStorage = client.storage.from(bucket);
+    let scopedStorage = rawStorage;
+
+    if (rawStorage && typeof rawStorage === 'object') {
+      const origFetch = (rawStorage as any).fetch || (client.storage as any)?.fetch;
+      if (typeof origFetch === 'function') {
+        scopedStorage = Object.create(rawStorage);
+        (scopedStorage as any).fetch = (input: RequestInfo | URL, init?: RequestInit) => {
+          const composedSignal = composeSignals(init?.signal ?? undefined, controller.signal);
+          return origFetch(input, { ...init, signal: composedSignal });
+        };
+      }
+    }
+
+    const abortPromise = new Promise<never>((_, reject) => {
+      if (controller.signal.aborted) {
+        reject(controller.signal.reason || new StorageTimeoutError(`Storage ${operationName} operation aborted.`));
+      } else {
+        controller.signal.addEventListener('abort', () => {
+          reject(controller.signal.reason || new StorageTimeoutError(`Storage ${operationName} operation timed out after ${timeoutMs}ms in bucket "${bucket}".`));
+        }, { once: true });
+      }
+    });
+
+    const result = await Promise.race([
+      execute(scopedStorage, controller.signal),
+      abortPromise,
+    ]);
+
+    return result;
+  } catch (err: any) {
+    if (timedOut || isTimeoutError(err)) {
+      throw new StorageTimeoutError(
+        `Storage ${operationName} operation timed out after ${timeoutMs}ms in bucket "${bucket}": ${err?.message || String(err)}`
+      );
+    }
+    throw err;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 export interface BucketInventoryManifest {
   bucket: AllowedResetBucket;
   files: string[];
   folderCount: number;
   totalBytes?: number;
+}
+
+export interface BucketVerificationManifest {
+  bucket: AllowedResetBucket;
+  remainingCount: number;
+  verifiedEmpty: boolean;
+}
+
+export interface StorageVerificationRecord {
+  verifiedAt: string;
+  buckets: Record<AllowedResetBucket, BucketVerificationManifest>;
+  verifiedEmpty: boolean;
 }
 
 export interface StoragePurgeResult {
@@ -45,6 +172,7 @@ export interface StoragePurgeResult {
   totalFilesDiscovered: number;
   totalFilesDeleted: number;
   verifiedEmpty: boolean;
+  verification: StorageVerificationRecord;
   purgedAt: string;
 }
 
@@ -90,11 +218,11 @@ export function isFolderEntry(item: any): boolean {
 export async function enumerateBucketRecursive(
   client: SupabaseClient,
   bucket: AllowedResetBucket,
-  currentCombinedCount = 0
+  currentCombinedCount = 0,
+  options?: { timeoutMs?: number; signal?: AbortSignal }
 ): Promise<BucketInventoryManifest> {
   assertAllowedBucket(bucket);
 
-  const storage = client.storage.from(bucket);
   const discoveredFiles = new Set<string>();
   const visitedPrefixes = new Set<string>();
   let folderCount = 0;
@@ -123,11 +251,17 @@ export async function enumerateBucketRecursive(
       let error: any = null;
 
       try {
-        const res = await storage.list(currentPrefix, {
-          limit: PAGE_LIMIT,
-          offset,
-          sortBy: { column: 'name', order: 'asc' },
-        });
+        const res = await executeWithStorageTimeout<{ data: any[] | null; error: any }>(
+          client,
+          bucket,
+          'list',
+          (storage) => storage.list(currentPrefix, {
+            limit: PAGE_LIMIT,
+            offset,
+            sortBy: { column: 'name', order: 'asc' },
+          }),
+          { parentSignal: options?.signal, timeoutMs: options?.timeoutMs }
+        );
         data = res.data;
         error = res.error;
       } catch (err: any) {
@@ -199,12 +333,14 @@ export async function enumerateBucketRecursive(
 /**
  * Removes an array of object paths in batches of at most 1,000 objects.
  * Retries failed batches up to MAX_REMOVAL_RETRIES times with exponential backoff.
+ * Ambiguous deletion timeouts fail fast into recovery without overlapping retries.
  */
 export async function deleteStorageObjectsInBatches(
   client: SupabaseClient,
   bucket: AllowedResetBucket,
   paths: string[],
-  checkWorkerOwnership?: () => Promise<void>
+  checkWorkerOwnership?: () => Promise<void>,
+  options?: { timeoutMs?: number; signal?: AbortSignal }
 ): Promise<{ deletedCount: number; errors: string[] }> {
   assertAllowedBucket(bucket);
 
@@ -212,7 +348,6 @@ export async function deleteStorageObjectsInBatches(
     return { deletedCount: 0, errors: [] };
   }
 
-  const storage = client.storage.from(bucket);
   let totalDeleted = 0;
   const errors: string[] = [];
 
@@ -225,10 +360,21 @@ export async function deleteStorageObjectsInBatches(
     let lastErrorMsg = '';
 
     for (let attempt = 1; attempt <= MAX_REMOVAL_RETRIES; attempt++) {
+      let isTimeout = false;
       try {
-        const { data, error } = await storage.remove(batch);
+        const { data, error } = await executeWithStorageTimeout<{ data: any[] | null; error: any }>(
+          client,
+          bucket,
+          'remove',
+          (storage) => storage.remove(batch),
+          { parentSignal: options?.signal, timeoutMs: options?.timeoutMs }
+        );
+
         if (error) {
           lastErrorMsg = error.message || JSON.stringify(error);
+          if (isTimeoutError(error)) {
+            isTimeout = true;
+          }
         } else if (data && Array.isArray(data)) {
           totalDeleted += data.length;
           success = true;
@@ -241,6 +387,18 @@ export async function deleteStorageObjectsInBatches(
         }
       } catch (err: any) {
         lastErrorMsg = err?.message || String(err);
+        if (isTimeoutError(err)) {
+          isTimeout = true;
+        }
+      }
+
+      // Requirement 4: Treat ambiguous timeout on deletion request as a recovery condition.
+      // Do NOT start overlapping retries while an earlier request may already have been accepted by Storage.
+      // Throw/abort into recovery_required.
+      if (isTimeout) {
+        const timeoutMsg = `Storage deletion request timed out after ${options?.timeoutMs ?? STORAGE_REQUEST_TIMEOUT_MS}ms for batch of ${batch.length} files in bucket "${bucket}". Ambiguous deletion state requires recovery without overlapping retries: ${lastErrorMsg}`;
+        errors.push(timeoutMsg);
+        throw new StorageTimeoutError(timeoutMsg);
       }
 
       if (attempt < MAX_REMOVAL_RETRIES) {
@@ -264,10 +422,12 @@ export async function deleteStorageObjectsInBatches(
  * 2. Deletes files in batches of <= 1,000 objects with worker fencing validation.
  * 3. Re-enumerates both buckets to verify 0 files remain (fails closed if depth exceeded or files persist).
  * 4. Fails closed if any file persists or if verification enumeration fails.
+ * 5. Returns structured StorageVerificationRecord capturing verified empty state for both buckets.
  */
 export async function purgeAndVerifyStorageBuckets(
   client: SupabaseClient,
-  checkWorkerOwnership?: () => Promise<void>
+  checkWorkerOwnership?: () => Promise<void>,
+  options?: { timeoutMs?: number; signal?: AbortSignal }
 ): Promise<StoragePurgeResult> {
   const inventories: Record<AllowedResetBucket, BucketInventoryManifest> = {
     'visitor-photos': { bucket: 'visitor-photos', files: [], folderCount: 0 },
@@ -281,7 +441,7 @@ export async function purgeAndVerifyStorageBuckets(
     if (checkWorkerOwnership) {
       await checkWorkerOwnership();
     }
-    const inv = await enumerateBucketRecursive(client, bucket, totalDiscovered);
+    const inv = await enumerateBucketRecursive(client, bucket, totalDiscovered, options);
     inventories[bucket] = inv;
     totalDiscovered += inv.files.length;
     if (totalDiscovered > MAX_SAFE_STORAGE_INVENTORY) {
@@ -296,17 +456,23 @@ export async function purgeAndVerifyStorageBuckets(
   for (const bucket of ALLOWED_RESET_BUCKETS) {
     const inv = inventories[bucket];
     if (inv.files.length > 0) {
-      const delRes = await deleteStorageObjectsInBatches(client, bucket, inv.files, checkWorkerOwnership);
+      const delRes = await deleteStorageObjectsInBatches(client, bucket, inv.files, checkWorkerOwnership, options);
       totalDeleted += delRes.deletedCount;
     }
   }
 
   // Step 3: Verify post-deletion state by enumerating again
+  const postVerificationBuckets: Record<AllowedResetBucket, { remainingCount: number; verifiedEmpty: boolean }> = {} as any;
+
   for (const bucket of ALLOWED_RESET_BUCKETS) {
     if (checkWorkerOwnership) {
       await checkWorkerOwnership();
     }
-    const postInv = await enumerateBucketRecursive(client, bucket, 0);
+    const postInv = await enumerateBucketRecursive(client, bucket, 0, options);
+    postVerificationBuckets[bucket] = {
+      remainingCount: postInv.files.length,
+      verifiedEmpty: postInv.files.length === 0,
+    };
     if (postInv.files.length > 0) {
       throw new Error(
         `Storage verification failed: ${postInv.files.length} file(s) still remain in bucket "${bucket}" after deletion.`
@@ -314,12 +480,30 @@ export async function purgeAndVerifyStorageBuckets(
     }
   }
 
+  const verification: StorageVerificationRecord = {
+    verifiedAt: new Date().toISOString(),
+    buckets: {
+      'visitor-photos': {
+        bucket: 'visitor-photos',
+        remainingCount: postVerificationBuckets['visitor-photos']?.remainingCount ?? 0,
+        verifiedEmpty: (postVerificationBuckets['visitor-photos']?.remainingCount ?? 0) === 0,
+      },
+      'visitor-ids': {
+        bucket: 'visitor-ids',
+        remainingCount: postVerificationBuckets['visitor-ids']?.remainingCount ?? 0,
+        verifiedEmpty: (postVerificationBuckets['visitor-ids']?.remainingCount ?? 0) === 0,
+      },
+    },
+    verifiedEmpty: true,
+  };
+
   return {
     success: true,
     inventories,
     totalFilesDiscovered: totalDiscovered,
     totalFilesDeleted: totalDeleted,
     verifiedEmpty: true,
-    purgedAt: new Date().toISOString(),
+    verification,
+    purgedAt: verification.verifiedAt,
   };
 }
