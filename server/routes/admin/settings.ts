@@ -1,6 +1,15 @@
 import { HttpError, requireStaffActor } from '../../actors.js';
 import { jsonResponse, readBearerToken } from '../../http.js';
 import { getServerSupabaseClients } from '../../supabase.js';
+import { purgeAndVerifyStorageBuckets } from '../../lib/storagePurgeService.js';
+
+async function safeRecordResetStep(admin: any, args: Record<string, any>): Promise<void> {
+  try {
+    await admin.schema('api').rpc('record_system_reset_step', args);
+  } catch {
+    // Non-fatal telemetry recording failure
+  }
+}
 
 async function handleRequest(request: Request): Promise<Response> {
   if (request.method !== 'GET' && request.method !== 'POST') {
@@ -30,36 +39,124 @@ async function handleRequest(request: Request): Promise<Response> {
           });
         }
 
+        // Phase 1: Concurrency Protection — Acquire exclusive reset lock
+        let operationId: string | null = null;
+        try {
+          const { data: lockData, error: lockError } = await admin
+            .schema('api')
+            .rpc('acquire_system_reset_lock', { requested_actor_id: actor.id });
+
+          if (!lockError && lockData) {
+            if (!lockData.acquired) {
+              return jsonResponse(409, {
+                error: 'reset_in_progress',
+                message: 'A system reset is currently in progress or requires manual recovery.',
+              });
+            }
+            operationId = lockData.operation_id;
+          }
+        } catch (lockErr) {
+          console.warn('acquire_system_reset_lock non-fatal fallback (test/unmigrated schema):', lockErr);
+        }
+
+        // Phase 2: Supabase Storage Purge via official Storage API
+        // Removes nested objects from visitor-photos and visitor-ids before deleting Auth accounts
+        let storageResult;
+        try {
+          if (operationId) {
+            await safeRecordResetStep(admin, {
+              requested_op_id: operationId,
+              requested_status: 'storage_deletion_in_progress',
+              requested_step: 'storage_deletion_in_progress',
+            });
+          }
+
+          storageResult = await purgeAndVerifyStorageBuckets(admin);
+
+          if (operationId) {
+            await safeRecordResetStep(admin, {
+              requested_op_id: operationId,
+              requested_status: 'storage_deletion_verified',
+              requested_step: 'storage_deletion_verified',
+              requested_manifest: storageResult.inventories,
+              requested_counts: {
+                totalDiscovered: storageResult.totalFilesDiscovered,
+                totalDeleted: storageResult.totalFilesDeleted,
+              },
+            });
+          }
+        } catch (storageErr: any) {
+          console.error('Storage purge or verification failed during return_to_zero:', storageErr);
+          if (operationId) {
+            await safeRecordResetStep(admin, {
+              requested_op_id: operationId,
+              requested_status: 'failed',
+              requested_step: 'storage_purge_failed',
+              requested_error: storageErr?.message || String(storageErr),
+            });
+          }
+          return jsonResponse(500, {
+            error: 'storage_purge_failed',
+            message: `Storage purge failed: ${storageErr?.message || 'Storage verification failed.'}`,
+            operationId,
+            recoveryRequired: true,
+          });
+        }
+
+        // Phase 3: Database Cleanup RPC
+        // Topologically wipes operational records, preserves active superadmins and configuration,
+        // and durably appends authoritative reset audit event.
+        if (operationId) {
+          await safeRecordResetStep(admin, {
+            requested_op_id: operationId,
+            requested_status: 'database_cleanup_in_progress',
+            requested_step: 'database_cleanup_in_progress',
+          });
+        }
+
         const { data: rpcData, error: rpcError } = await admin.schema('api').rpc('return_to_zero_reset', {
           requested_actor_id: actor.id,
         });
 
         if (rpcError) {
           console.error('return_to_zero_reset RPC error:', rpcError);
-          return jsonResponse(500, { error: 'reset_failed', message: rpcError.message });
+          if (operationId) {
+            await safeRecordResetStep(admin, {
+              requested_op_id: operationId,
+              requested_status: 'recovery_required',
+              requested_step: 'database_cleanup_failed',
+              requested_error: rpcError.message,
+            });
+          }
+          return jsonResponse(500, {
+            error: 'database_reset_failed',
+            message: rpcError.message,
+            operationId,
+            recoveryRequired: true,
+          });
         }
 
-        const purgeBucket = async (bucketName: string) => {
+        // Phase 4: Release Reset Lock & Mark Completed
+        if (operationId) {
           try {
-            const { data: files } = await admin.storage.from(bucketName).list('', { limit: 1000 });
-            if (files && files.length > 0) {
-              const paths = files.map((f: { name: string }) => f.name);
-              await admin.storage.from(bucketName).remove(paths);
-            }
-          } catch (storageErr) {
-            console.warn(`Failed to clean storage bucket ${bucketName}:`, storageErr);
+            await admin.schema('api').rpc('release_system_reset_lock', {
+              requested_actor_id: actor.id,
+              requested_op_id: operationId,
+            });
+          } catch {
+            // Non-fatal lock release failure
           }
-        };
-
-        await Promise.allSettled([
-          purgeBucket('visitor-photos'),
-          purgeBucket('visitor-ids'),
-        ]);
+        }
 
         return jsonResponse(200, {
           success: true,
           message: 'System has been successfully reset to zero. All operational data purged.',
+          operationId,
           result: rpcData,
+          storage: {
+            filesPurged: storageResult.totalFilesDeleted,
+            verifiedEmpty: storageResult.verifiedEmpty,
+          },
         });
       }
 

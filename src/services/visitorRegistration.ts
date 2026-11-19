@@ -1387,6 +1387,7 @@ export async function preflightLiveFace(
 
 export interface ReturningLookupCandidate {
   profileId: string;
+  candidateToken?: string;
   maskedName: string;
   maskedContact: string;
   gender?: 'Male' | 'Female' | null;
@@ -1456,7 +1457,8 @@ export async function lookupReturningVisitor(
 export async function identifyReturningVisitor(
   transaction: PortalIssueTransaction,
   photoBlobOrBase64: Blob | string,
-  profileId: string
+  profileId: string,
+  candidateToken?: string
 ): Promise<ReturningIdentifyResult> {
   const { token } = await getVerifiedPortalSession(transaction);
 
@@ -1473,6 +1475,7 @@ export async function identifyReturningVisitor(
           body: JSON.stringify({
             requestId: transaction.requestId,
             profileId,
+            ...(candidateToken ? { candidateToken } : {}),
             photoBase64: photoBlobOrBase64,
           }),
         }),
@@ -1484,6 +1487,9 @@ export async function identifyReturningVisitor(
       formData.append('photo', photoBlobOrBase64, 'selfie.jpg');
       formData.append('profileId', profileId);
       formData.append('requestId', transaction.requestId);
+      if (candidateToken) {
+        formData.append('candidateToken', candidateToken);
+      }
 
       res = await withTimeout(
         fetch('/api/passes/identify-returning', {

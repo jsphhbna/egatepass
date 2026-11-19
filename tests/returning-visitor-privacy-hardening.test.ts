@@ -334,20 +334,15 @@ describe('Returning Visitor Privacy Hardening, Profile Linkage & Verification Bo
       expect(json.candidates.length).toBeLessThanOrEqual(3);
 
       for (const cand of json.candidates) {
-        expect(cand.previewUrl).toContain('&kind=photo');
-        const tokenMatch = cand.previewUrl.match(/token=([^&]+)/);
-        expect(tokenMatch).not.toBeNull();
-        const extractedToken = tokenMatch![1];
-        expect(extractedToken).toMatch(/^v3\./);
-        const tokenCheck = verifyPreviewToken(extractedToken, mockActorId, mockTokenSecret);
-        expect(tokenCheck.valid).toBe(true);
-        expect(tokenCheck.kind).toBe('photo');
+        // Privacy invariant: Portrait preview URLs and preview tokens are NEVER emitted during discovery
+        expect(cand.previewUrl).toBeUndefined();
+        expect(cand.candidateToken).toMatch(/^cand\.v1\./);
       }
     });
   });
 
   describe('3. Returning Photo Preview Endpoint Boundaries (Issue C & E)', () => {
-    it('returns 403 forbidden_evidence_kind if client calls endpoint with kind=id using a photo token', async () => {
+    it('strictly denies portrait and ID preview when discovery or candidate token is presented', async () => {
       vi.spyOn(actorsModule, 'getVerifiedSessionContext').mockResolvedValue({
         actorId: mockActorId,
         role: 'visitor',
@@ -365,7 +360,7 @@ describe('Returning Visitor Privacy Hardening, Profile Linkage & Verification Bo
       const photoToken = createPreviewToken(mockProfileId, mockActorId, mockTokenSecret, 300, 'photo');
 
       const req = new Request(
-        `http://localhost/api/passes/returning-photo-preview?profileId=${mockProfileId}&token=${photoToken}&kind=id`,
+        `http://localhost/api/passes/returning-photo-preview?profileId=${mockProfileId}&token=${photoToken}&kind=photo`,
         {
           method: 'GET',
           headers: {
@@ -377,10 +372,10 @@ describe('Returning Visitor Privacy Hardening, Profile Linkage & Verification Bo
       const res = await returningPhotoPreviewHandler.fetch(req);
       expect(res.status).toBe(403);
       const json = await res.json();
-      expect(json.error).toBe('forbidden_evidence_kind');
+      expect(json.error).toBe('discovery_token_cannot_authorize_preview');
     });
 
-    it('serves original registration portrait when valid v3 photo preview token is presented', async () => {
+    it('serves original registration portrait when valid post-match authorization token is presented', async () => {
       vi.spyOn(actorsModule, 'getVerifiedSessionContext').mockResolvedValue({
         actorId: mockActorId,
         role: 'visitor',
@@ -390,8 +385,31 @@ describe('Returning Visitor Privacy Hardening, Profile Linkage & Verification Bo
         identity: 'test-user',
       } as any);
 
+      const rawMatchToken = 'test-match-token-64-bytes-sample-for-biometric-verification-test123';
+      const digest = computeMatchTokenDigest(rawMatchToken, mockTokenSecret);
+
       const mockAdmin = {
         from: vi.fn().mockImplementation((table: string) => {
+          if (table === 'returning_identity_attempts') {
+            return {
+              select: vi.fn().mockReturnThis(),
+              eq: vi.fn().mockReturnThis(),
+              gt: vi.fn().mockReturnThis(),
+              limit: vi.fn().mockReturnThis(),
+              maybeSingle: vi.fn().mockResolvedValue({
+                data: {
+                  id: 'attempt-123',
+                  owner_id: mockActorId,
+                  matched_profile_id: mockProfileId,
+                  outcome: 'matched',
+                  threshold_mode: 'provisional',
+                  expires_at: new Date(Date.now() + 300_000).toISOString(),
+                  id_preview_consumed_at: null,
+                },
+                error: null,
+              }),
+            };
+          }
           if (table === 'visitors') {
             return {
               select: vi.fn().mockReturnThis(),
@@ -438,9 +456,8 @@ describe('Returning Visitor Privacy Hardening, Profile Linkage & Verification Bo
         client: {} as any,
       });
 
-      const photoToken = createPreviewToken(mockProfileId, mockActorId, mockTokenSecret, 300, 'photo');
       const req = new Request(
-        `http://localhost/api/passes/returning-photo-preview?profileId=${mockProfileId}&token=${photoToken}&kind=photo`,
+        `http://localhost/api/passes/returning-photo-preview?profileId=${mockProfileId}&token=${rawMatchToken}&kind=photo`,
         {
           method: 'GET',
           headers: {
@@ -467,8 +484,31 @@ describe('Returning Visitor Privacy Hardening, Profile Linkage & Verification Bo
         identity: 'test-user',
       } as any);
 
+      const rawMatchToken = 'test-match-token-retention-test-123456789012345678901234567890';
+      const digest = computeMatchTokenDigest(rawMatchToken, mockTokenSecret);
+
       const mockAdmin = {
         from: vi.fn().mockImplementation((table: string) => {
+          if (table === 'returning_identity_attempts') {
+            return {
+              select: vi.fn().mockReturnThis(),
+              eq: vi.fn().mockReturnThis(),
+              gt: vi.fn().mockReturnThis(),
+              limit: vi.fn().mockReturnThis(),
+              maybeSingle: vi.fn().mockResolvedValue({
+                data: {
+                  id: 'attempt-retention-123',
+                  owner_id: mockActorId,
+                  matched_profile_id: mockProfileId,
+                  outcome: 'matched',
+                  threshold_mode: 'provisional',
+                  expires_at: new Date(Date.now() + 300_000).toISOString(),
+                  id_preview_consumed_at: null,
+                },
+                error: null,
+              }),
+            };
+          }
           if (table === 'visitors') {
             return {
               select: vi.fn().mockReturnThis(),
@@ -507,9 +547,8 @@ describe('Returning Visitor Privacy Hardening, Profile Linkage & Verification Bo
         client: {} as any,
       });
 
-      const photoToken = createPreviewToken(mockProfileId, mockActorId, mockTokenSecret, 300, 'photo');
       const req = new Request(
-        `http://localhost/api/passes/returning-photo-preview?profileId=${mockProfileId}&token=${photoToken}&kind=photo`,
+        `http://localhost/api/passes/returning-photo-preview?profileId=${mockProfileId}&token=${rawMatchToken}&kind=photo`,
         {
           method: 'GET',
           headers: {
@@ -566,6 +605,26 @@ describe('Returning Visitor Privacy Hardening, Profile Linkage & Verification Bo
               }),
             };
           }
+          if (table === 'returning_identity_attempts') {
+            return {
+              select: vi.fn().mockReturnThis(),
+              eq: vi.fn().mockReturnThis(),
+              gt: vi.fn().mockReturnThis(),
+              limit: vi.fn().mockReturnThis(),
+              maybeSingle: vi.fn().mockResolvedValue({
+                data: {
+                  id: 'attempt-fallback-123',
+                  owner_id: mockActorId,
+                  matched_profile_id: mockProfileId,
+                  outcome: 'matched',
+                  threshold_mode: 'provisional',
+                  expires_at: new Date(Date.now() + 300_000).toISOString(),
+                  id_preview_consumed_at: null,
+                },
+                error: null,
+              }),
+            };
+          }
           if (table === 'returning_visitor_profiles') {
             return {
               select: vi.fn().mockReturnThis(),
@@ -618,9 +677,9 @@ describe('Returning Visitor Privacy Hardening, Profile Linkage & Verification Bo
         client: {} as any,
       });
 
-      const photoToken = createPreviewToken(mockProfileId, mockActorId, mockTokenSecret, 300, 'photo');
+      const rawMatchToken = 'test-match-token-fallback-test-123456789012345678901234567890';
       const req = new Request(
-        `http://localhost/api/passes/returning-photo-preview?profileId=${mockProfileId}&token=${photoToken}&kind=photo`,
+        `http://localhost/api/passes/returning-photo-preview?profileId=${mockProfileId}&token=${rawMatchToken}&kind=photo`,
         {
           method: 'GET',
           headers: {

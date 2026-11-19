@@ -903,10 +903,38 @@ export function setupSupabaseTestHarness(store: RemediationTestStateStore) {
     storage: {
       from: vi.fn((bucketId: string) => ({
         download: vi.fn(async (_path: string) => ({ data: new Blob(['fake-image']), error: null })),
-        list: vi.fn(async () => ({ data: Object.values(store.storageBuckets[bucketId] || {}), error: null })),
+        list: vi.fn(async (prefix?: string) => {
+          const bucketMap = store.storageBuckets[bucketId] || {};
+          const keys = Object.keys(bucketMap);
+          const cleanPrefix = prefix ? prefix.replace(/^\/+|\/+$/g, '') : '';
+          const items: Array<{ name: string; id: string | null; metadata: any }> = [];
+          const seenSubfolders = new Set<string>();
+
+          for (const k of keys) {
+            const rel = cleanPrefix ? (k.startsWith(cleanPrefix + '/') ? k.slice(cleanPrefix.length + 1) : null) : k;
+            if (rel === null) continue;
+            const parts = rel.split('/');
+            if (parts.length > 1) {
+              const folderName = parts[0];
+              if (!seenSubfolders.has(folderName)) {
+                seenSubfolders.add(folderName);
+                items.push({ name: folderName, id: null, metadata: null });
+              }
+            } else {
+              items.push({ name: parts[0], id: `uuid-${k}`, metadata: bucketMap[k] });
+            }
+          }
+          return { data: items, error: null };
+        }),
         remove: vi.fn(async (paths: string[]) => {
-          for (const p of paths) delete store.storageBuckets[bucketId]?.[p];
-          return { data: paths, error: null };
+          const removed: any[] = [];
+          for (const p of paths) {
+            if (store.storageBuckets[bucketId]?.[p]) {
+              delete store.storageBuckets[bucketId][p];
+              removed.push({ name: p });
+            }
+          }
+          return { data: removed, error: null };
         }),
       })),
     },

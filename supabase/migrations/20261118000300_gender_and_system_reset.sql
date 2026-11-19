@@ -790,8 +790,8 @@ declare
   v_actor_role public.staff_role;
   v_preserved_superadmins jsonb;
 begin
-  -- 1. Security Check: caller must be service_role, authenticated, or postgres/supabase_admin
-  if auth.role() <> 'service_role' and auth.role() <> 'authenticated' and current_user not in ('postgres', 'supabase_admin') then
+  -- 1. Security Check: caller must be service_role, or postgres/supabase_admin
+  if auth.role() <> 'service_role' and current_user not in ('postgres', 'supabase_admin') then
     raise exception using errcode = '42501', message = 'unauthorized_role';
   end if;
 
@@ -1004,15 +1004,10 @@ begin
     select sp.user_id from public.staff_profiles sp where sp.role = 'superadmin' and sp.active = true
   );
 
-  -- Step 18: Storage objects (if table exists)
-  if exists (
-    select 1 from information_schema.tables where table_schema = 'storage' and table_name = 'objects'
-  ) then
-    delete from storage.objects where bucket_id in ('visitor-photos', 'visitor-ids');
-  end if;
+  -- Step 18: Storage objects: direct SQL deletion removed.
+  -- All actual object deletion is performed exclusively via Supabase Storage API.
 
-  -- Step 19: Wipe operational audit events and insert single authoritative return_to_zero event
-  delete from public.audit_events;
+  -- Step 19: Append single authoritative return_to_zero event without wiping historical audit logs
 
   insert into public.audit_events (
     actor_id,

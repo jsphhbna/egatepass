@@ -27,6 +27,7 @@ import {
 } from '../../lib/face-engine.js';
 import { normalizePsgcLevel } from '../../lib/psgc-reference.js';
 import { verifyCalibrationArtifact, CalibrationArtifactData } from '../../lib/calibration-verifier.js';
+import { verifyCandidateToken } from '../../lib/candidate-token.js';
 import {
   resolveAuthoritativeVisitorForProfile,
   resolveEligibleRegistrationPortrait,
@@ -201,6 +202,7 @@ async function handleRequest(request: Request): Promise<Response> {
 
   let profileId = '';
   let requestId = '';
+  let candidateToken: string | null = null;
   let selfieBuffer: Buffer | null = null;
 
   const contentType = request.headers.get('content-type') || '';
@@ -210,6 +212,7 @@ async function handleRequest(request: Request): Promise<Response> {
       const formData = await request.formData();
       profileId = (formData.get('profileId') as string)?.trim() || '';
       requestId = (formData.get('requestId') as string)?.trim() || '';
+      candidateToken = (formData.get('candidateToken') as string)?.trim() || null;
       const photoEntry = formData.get('photo');
       if (photoEntry && typeof photoEntry === 'object' && 'arrayBuffer' in photoEntry) {
         const ab = await (photoEntry as Blob).arrayBuffer();
@@ -225,6 +228,7 @@ async function handleRequest(request: Request): Promise<Response> {
     }
     profileId = (body.profileId || '').trim();
     requestId = (body.requestId || '').trim();
+    candidateToken = typeof body.candidateToken === 'string' ? body.candidateToken.trim() : null;
     if (body.photoBase64 && typeof body.photoBase64 === 'string') {
       const cleanB64 = body.photoBase64.replace(/^data:image\/\w+;base64,/, '');
       selfieBuffer = Buffer.from(cleanB64, 'base64');
@@ -267,6 +271,36 @@ async function handleRequest(request: Request): Promise<Response> {
 
     const minCosine = getResolvedCosineThreshold()!;
     const matchSecret = process.env.RETURNING_MATCH_TOKEN_SECRET!;
+
+    // Validate candidate authorization token when provided:
+    // Ensures candidate token is cryptographically bound to current actor, target profile, and unexpired.
+    if (candidateToken) {
+      const candCheck = verifyCandidateToken(candidateToken, actorId, matchSecret);
+      if (!candCheck.valid) {
+        if (candCheck.reason === 'actor_mismatch') {
+          return jsonResponse(403, {
+            error: 'actor_mismatch',
+            message: 'Candidate authorization token does not belong to the current authenticated session.',
+          });
+        }
+        if (candCheck.expired) {
+          return jsonResponse(403, {
+            error: 'candidate_token_expired',
+            message: 'Candidate selection authorization has expired. Please perform returning visitor search again.',
+          });
+        }
+        return jsonResponse(403, {
+          error: 'invalid_candidate_token',
+          message: 'Candidate selection authorization is invalid.',
+        });
+      }
+      if (candCheck.profileId !== profileId) {
+        return jsonResponse(403, {
+          error: 'profile_id_mismatch',
+          message: 'Candidate authorization token does not match the requested profile.',
+        });
+      }
+    }
 
     // 1. Rate limiting - Actor Bucket (5 verification attempts per 10 minutes)
     const actorKeyHex = createHash('sha256').update(`actor:${actorId}`).digest('hex');

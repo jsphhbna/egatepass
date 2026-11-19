@@ -170,33 +170,13 @@ async function handleRequest(request: Request): Promise<Response> {
   let authorized = false;
   let resolvedProfileId: string | null = null;
 
-  // 1. Verify candidate lookup previewToken (v3 format with actor binding)
-  if (tokenParam && tokenParam.startsWith('v3.')) {
-    const previewRes = verifyPreviewToken(tokenParam, currentActorId, dedicatedSecret);
-    if (previewRes.valid && previewRes.profileId) {
-      if (profileIdParam && profileIdParam !== previewRes.profileId) {
-        return jsonResponse(403, { error: 'profile_id_mismatch' });
-      }
-      // Critical check: previewToken must match requested kind
-      if (previewRes.kind !== requestedKind) {
-        return jsonResponse(403, { error: 'forbidden_evidence_kind' });
-      }
-      // Candidate lookup preview tokens CANNOT retrieve ID evidence under any circumstance
-      if (requestedKind === 'id') {
-        return jsonResponse(403, { error: 'id_preview_requires_calibrated_match' });
-      }
-      authorized = true;
-      resolvedProfileId = previewRes.profileId;
-    } else if (previewRes.reason === 'actor_mismatch') {
-      return jsonResponse(403, {
-        error: 'actor_mismatch',
-        message: 'Preview token does not belong to the current authenticated session.',
-      });
-    } else if (previewRes.expired) {
-      return jsonResponse(403, { error: 'preview_token_expired' });
-    } else {
-      return jsonResponse(403, { error: 'invalid_preview_token' });
-    }
+  // 1. Candidate discovery tokens MUST NOT authorize historical evidence preview.
+  // Fails closed if a candidate selection token or legacy discovery token is presented directly to this endpoint.
+  if (tokenParam && (tokenParam.startsWith('cand.') || tokenParam.startsWith('v3.'))) {
+    return jsonResponse(403, {
+      error: 'discovery_token_cannot_authorize_preview',
+      message: 'Candidate discovery tokens cannot authorize historical evidence preview. Successful server-side biometric verification is required.',
+    });
   }
 
   // 2. Check if token is a matchToken (issued by identify-returning)

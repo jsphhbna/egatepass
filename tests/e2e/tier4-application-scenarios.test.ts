@@ -154,12 +154,14 @@ describe('Tier 4: Real-World Application Scenarios (5 Comprehensive Workflows)',
     expect(searchRes.body.candidates.length).toBeGreaterThanOrEqual(2);
     expect(searchRes.body.totalMatches).toBeGreaterThanOrEqual(2);
 
-    // 2. Candidate cards display disambiguation information with masked PII
+    // 2. Candidate cards display disambiguation information with masked PII and candidate authorization token
+    // (portrait preview URLs must NEVER be returned during candidate discovery)
     for (const card of searchRes.body.candidates) {
       expect(card.maskedName).toMatch(/^Maria [A-Z]\. S\*{4}$/);
       expect(card.maskedContact).toContain('***');
       expect(card.partialLocality).toBeDefined();
-      expect(card.previewUrl).toContain('/api/passes/returning-photo-preview');
+      expect(card.previewUrl).toBeUndefined();
+      expect(card.candidateToken).toMatch(/^cand\.v1\./);
       expect(card.gender).toBe('Female');
     }
 
