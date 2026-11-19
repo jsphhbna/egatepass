@@ -2963,6 +2963,16 @@ runSuite('True PostgreSQL Concurrency, Canonical Approval Integrity & Email Reco
           `, [opId, gen, wId])
         ).rejects.toThrow(/invalid_state_transition: invalid or mismatched status and step pair requested/);
 
+        // Prohibit unconstrained ('failed', 'failed') in live PostgreSQL
+        await expect(
+          client.query(`
+            select api.record_system_reset_step(
+              $1::uuid, 'failed', 'failed',
+              '{}'::jsonb, '{}'::jsonb, null, $2, $3::uuid
+            );
+          `, [opId, gen, wId])
+        ).rejects.toThrow(/invalid_state_transition: invalid or mismatched status and step pair requested/);
+
         // 2. NULL status or step rejected
         await expect(
           client.query(`
@@ -3000,6 +3010,25 @@ runSuite('True PostgreSQL Concurrency, Canonical Approval Integrity & Email Reco
           );
         `, [opId, gen, wId]);
 
+        // While in storage_deletion_in_progress, database cleanup failure and lock release failure are prohibited:
+        await expect(
+          client.query(`
+            select api.record_system_reset_step(
+              $1::uuid, 'recovery_required', 'database_cleanup_failed',
+              '{}'::jsonb, '{}'::jsonb, null, $2, $3::uuid
+            );
+          `, [opId, gen, wId])
+        ).rejects.toThrow(/invalid_state_transition: database cleanup failure step invalid from current state/);
+
+        await expect(
+          client.query(`
+            select api.record_system_reset_step(
+              $1::uuid, 'recovery_required', 'lock_release_failed',
+              '{}'::jsonb, '{}'::jsonb, null, $2, $3::uuid
+            );
+          `, [opId, gen, wId])
+        ).rejects.toThrow(/invalid_state_transition: lock release failure step invalid from current state/);
+
         // 5. Previous status correct but previous step tampered rejected
         await client.query(`
           update public.system_reset_operations
@@ -3024,6 +3053,10 @@ runSuite('True PostgreSQL Concurrency, Canonical Approval Integrity & Email Reco
         `, [opId]);
 
         // 6. Unauthorized role rejected
+        // Note: As documented in the architecture, this test uses a synthetic verification record
+        // under the trusted service_role to verify the PostgreSQL schema/validator contract.
+        // The real runtime verification is produced exclusively by purgeAndVerifyStorageBuckets()
+        // against actual Supabase Storage.
         const sampleVerification = JSON.stringify({
           verifiedAt: new Date().toISOString(),
           buckets: {
@@ -3052,6 +3085,34 @@ runSuite('True PostgreSQL Concurrency, Canonical Approval Integrity & Email Reco
             '{}'::jsonb, '{}'::jsonb, null, $2, $3::uuid, $4::jsonb
           );
         `, [opId, gen, wId, sampleVerification]);
+
+        // While in storage_deletion_verified, storage purge failures and lock release failures are prohibited:
+        await expect(
+          client.query(`
+            select api.record_system_reset_step(
+              $1::uuid, 'recovery_required', 'storage_purge_failed',
+              '{}'::jsonb, '{}'::jsonb, null, $2, $3::uuid
+            );
+          `, [opId, gen, wId])
+        ).rejects.toThrow(/invalid_state_transition: storage failure step invalid from current state/);
+
+        await expect(
+          client.query(`
+            select api.record_system_reset_step(
+              $1::uuid, 'recovery_required', 'storage_purge_timeout',
+              '{}'::jsonb, '{}'::jsonb, null, $2, $3::uuid
+            );
+          `, [opId, gen, wId])
+        ).rejects.toThrow(/invalid_state_transition: storage failure step invalid from current state/);
+
+        await expect(
+          client.query(`
+            select api.record_system_reset_step(
+              $1::uuid, 'recovery_required', 'lock_release_failed',
+              '{}'::jsonb, '{}'::jsonb, null, $2, $3::uuid
+            );
+          `, [opId, gen, wId])
+        ).rejects.toThrow(/invalid_state_transition: lock release failure step invalid from current state/);
 
         // 8. Previous status correct but step tampered for database_cleanup_in_progress rejected
         await client.query(`

@@ -1,7 +1,7 @@
 import { HttpError, requireStaffActor } from '../../actors.js';
 import { jsonResponse, readBearerToken } from '../../http.js';
 import { getServerSupabaseClients } from '../../supabase.js';
-import { purgeAndVerifyStorageBuckets } from '../../lib/storagePurgeService.js';
+import { purgeAndVerifyStorageBuckets, StorageTimeoutError } from '../../lib/storagePurgeService.js';
 
 async function recordResetStep(admin: any, args: Record<string, any>): Promise<void> {
   const { error } = await admin.schema('api').rpc('record_system_reset_step', args);
@@ -170,11 +170,17 @@ async function handleRequest(request: Request): Promise<Response> {
           });
         } catch (storageErr: any) {
           console.error('Storage purge or verification failed during return_to_zero:', storageErr);
+          const isTimeout =
+            storageErr instanceof StorageTimeoutError ||
+            storageErr?.name === 'StorageTimeoutError' ||
+            storageErr?.isTimeout === true;
+          const failureStep = isTimeout ? 'storage_purge_timeout' : 'storage_purge_failed';
+          const errorCode = isTimeout ? 'storage_purge_timeout' : 'storage_purge_failed';
           try {
             await recordResetStep(admin, {
               requested_op_id: operationId,
               requested_status: 'recovery_required',
-              requested_step: 'storage_purge_failed',
+              requested_step: failureStep,
               requested_error: storageErr?.message || String(storageErr),
               requested_worker_generation: workerGeneration,
               requested_worker_id: workerId,
@@ -183,7 +189,7 @@ async function handleRequest(request: Request): Promise<Response> {
             console.error('Failed to record recovery_required status:', recErr);
           }
           return jsonResponse(500, {
-            error: 'storage_purge_failed',
+            error: errorCode,
             message: `Storage purge failed: ${storageErr?.message || 'Storage verification failed.'}`,
             operationId,
             recoveryRequired: true,

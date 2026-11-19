@@ -423,6 +423,14 @@ describe('Supabase migration static safety contract', () => {
     expect(migration).toContain("requested_status = 'storage_deletion_verified' and requested_step = 'storage_deletion_verified'");
     expect(migration).toContain("requested_status = 'database_cleanup_in_progress' and requested_step = 'database_cleanup_in_progress'");
     expect(migration).toContain("requested_status = 'recovery_required' and requested_step in ('storage_purge_failed', 'storage_purge_timeout', 'database_cleanup_failed', 'lock_release_failed')");
+    expect(migration).toContain("requested_status = 'failed' and requested_step in ('storage_purge_failed', 'storage_purge_timeout', 'database_cleanup_failed', 'lock_release_failed')");
+
+    // Unconstrained ('failed', 'failed') pair is strictly prohibited
+    expect(migration).not.toContain("'failed', 'failed'");
+    expect(migration).toContain("invalid_state_transition: unhandled failure step");
+
+    // Documentation on attestation and verification provenance
+    expect(migration).toContain("PostgreSQL does not independently prove remote Storage contents");
 
     // Previous status AND step validation
     expect(migration).toContain("v_op.status = 'storage_deletion_verified' and v_op.step = 'storage_deletion_verified'");

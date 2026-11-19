@@ -13,13 +13,25 @@
 --    ('recovery_required', 'database_cleanup_failed'),
 --    ('recovery_required', 'lock_release_failed'),
 --    ('failed', 'storage_purge_failed'),
+--    ('failed', 'storage_purge_timeout'),
 --    ('failed', 'database_cleanup_failed'),
---    ('failed', 'lock_release_failed'),
---    ('failed', 'failed').
+--    ('failed', 'lock_release_failed').
+--    Arbitrary or unconstrained (failed / failed) status-and-step pairs are strictly disallowed; workers
+--    record recovery_required upon error, and terminal failure transitions require audited failure
+--    step identifiers with explicit predecessor status-and-step validation.
 -- 3. Transition order requires BOTH previous status and previous step to match expected phase prerequisites.
 -- 4. Rejection of unknown, null, or mismatched status and step values.
 -- 5. Anti-forgery protections preserved: database_cleanup_completed and completed cannot be written via record_system_reset_step.
 -- 6. Executable strictly by service_role; revoked from public, anon, and authenticated.
+--
+-- Storage Attestation & Verification Provenance Note:
+-- PostgreSQL validates the schema, required bucket keys ('visitor-photos', 'visitor-ids'),
+-- timestamps, and zero remaining object counts ('remainingCount' = '0', 'verifiedEmpty' = 'true')
+-- of the server-provided storage_verification record before allowing database cleanup.
+-- PostgreSQL does not independently prove remote Storage contents, query external Storage APIs,
+-- or verify cryptographic signatures. The runtime server route is solely responsible for
+-- executing purgeAndVerifyStorageBuckets() against the actual Storage service, verifying the buckets
+-- are empty, and supplying the verified attestation payload to the database under the trusted service_role.
 
 -- =============================================================================
 -- 1. HARDENED STEP RECORDING RPC: STRICT PAIR ALLOWLIST & PAIR TRANSITION GATES
@@ -132,12 +144,13 @@ begin
   -- 5. Strict allowlist of valid (status, step) pairs:
   -- Ordinary progress pairs require exact matching status and step.
   -- Recovery and failure pairs require audited failure step identifiers.
+  -- Unconstrained (failed / failed) status-and-step pairs are strictly disallowed.
   if not (
     (requested_status = 'storage_deletion_in_progress' and requested_step = 'storage_deletion_in_progress') or
     (requested_status = 'storage_deletion_verified' and requested_step = 'storage_deletion_verified') or
     (requested_status = 'database_cleanup_in_progress' and requested_step = 'database_cleanup_in_progress') or
     (requested_status = 'recovery_required' and requested_step in ('storage_purge_failed', 'storage_purge_timeout', 'database_cleanup_failed', 'lock_release_failed')) or
-    (requested_status = 'failed' and requested_step in ('storage_purge_failed', 'database_cleanup_failed', 'lock_release_failed', 'failed'))
+    (requested_status = 'failed' and requested_step in ('storage_purge_failed', 'storage_purge_timeout', 'database_cleanup_failed', 'lock_release_failed'))
   ) then
     raise exception using errcode = '55000', message = 'invalid_state_transition: invalid or mismatched status and step pair requested';
   end if;
@@ -240,6 +253,8 @@ begin
       ) then
         raise exception using errcode = '55000', message = 'invalid_state_transition: lock release failure step invalid from current state';
       end if;
+    else
+      raise exception using errcode = '55000', message = 'invalid_state_transition: unhandled failure step';
     end if;
   end if;
 
