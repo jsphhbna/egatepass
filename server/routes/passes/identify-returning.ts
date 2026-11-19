@@ -230,7 +230,7 @@ async function handleRequest(request: Request): Promise<Response> {
     if (!body || typeof body !== 'object') {
       return jsonResponse(400, { error: 'invalid_request_body' });
     }
-    if ('profileId' in body && body.profileId !== undefined && body.profileId !== null) {
+    if ('profileId' in body) {
       return jsonResponse(400, {
         error: 'raw_profile_id_forbidden',
         message: 'Raw profile identifiers are forbidden in candidate verification. Use opaque candidateToken.',

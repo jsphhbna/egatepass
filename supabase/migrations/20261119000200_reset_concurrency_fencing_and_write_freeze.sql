@@ -66,15 +66,6 @@ begin
     end if;
   end if;
 
-  -- Backwards-compatibility session variable check
-  if pg_catalog.current_setting('egatepass.in_system_reset', true) = 'true' then
-    select cursor_value into v_state
-    from public.maintenance_state
-    where job_name = 'system_reset';
-    if v_state in ('locked', 'in_progress') then
-      return new;
-    end if;
-  end if;
 
   -- 2. Concurrency-safe write guard with transactional lock semantics:
   -- Acquire tuple-level SHARE lock on the system_reset maintenance row.
@@ -216,8 +207,6 @@ begin
     if v_maint.cursor_value in ('locked', 'in_progress')
        and v_maint.heartbeat_at is not null
        and v_maint.heartbeat_at >= (now() - interval '30 seconds')
-       and v_maint.cursor_value <> 'recovery_required'
-       and v_op.status <> 'recovery_required'
     then
       return jsonb_build_object(
         'acquired', false,
@@ -227,8 +216,8 @@ begin
       );
     end if;
 
-    -- 5. Reject if active_operation_id is set to a different operation (cannot replace newer/different active operation)
-    if v_maint.active_operation_id is not null and v_maint.active_operation_id <> requested_resume_op_id then
+    -- 5. Reject if active_operation_id is set to a different operation or is null (cannot replace newer/different active operation or resume unrelated historical operations)
+    if v_maint.active_operation_id is distinct from requested_resume_op_id then
       return jsonb_build_object(
         'acquired', false,
         'reason', 'operation_not_active_or_eligible',
@@ -237,9 +226,7 @@ begin
     end if;
 
     -- 6. Operation must be eligible for recovery (locked/in_progress with expired heartbeat, or recovery_required)
-    if v_maint.cursor_value not in ('locked', 'in_progress', 'recovery_required')
-       and v_op.status <> 'recovery_required'
-    then
+    if v_maint.cursor_value not in ('locked', 'in_progress', 'recovery_required') then
       return jsonb_build_object(
         'acquired', false,
         'reason', 'operation_not_eligible_for_recovery',
@@ -263,7 +250,8 @@ begin
     where job_name = 'system_reset';
 
     update public.system_reset_operations
-    set step = 'resumed',
+    set status = 'lock_acquired',
+        step = 'resumed',
         worker_generation = v_new_gen,
         worker_id = v_new_worker_id,
         updated_at = now()
@@ -511,22 +499,20 @@ begin
   where job_name = 'system_reset'
   for update;
 
-  if requested_op_id is not null or v_maint.cursor_value in ('locked', 'in_progress') then
-    if v_maint.cursor_value not in ('locked', 'in_progress') then
-      raise exception using errcode = '55000', message = 'fencing_token_revoked: reset lock not active';
-    end if;
-
-    if requested_op_id is not null and v_maint.active_operation_id is distinct from requested_op_id then
+  if v_maint.cursor_value in ('locked', 'in_progress') then
+    if requested_op_id is null or v_maint.active_operation_id is distinct from requested_op_id then
       raise exception using errcode = '55000', message = 'fencing_token_revoked: operation mismatch';
     end if;
 
-    if requested_worker_generation is not null and v_maint.worker_generation is distinct from requested_worker_generation then
+    if requested_worker_generation is null or v_maint.worker_generation is distinct from requested_worker_generation then
       raise exception using errcode = '55000', message = 'fencing_token_revoked: worker generation expired or revoked';
     end if;
 
     if requested_worker_id is not null and v_maint.active_worker_id is distinct from requested_worker_id then
       raise exception using errcode = '55000', message = 'fencing_token_revoked: worker ID revoked';
     end if;
+  elsif requested_op_id is not null then
+    raise exception using errcode = '55000', message = 'fencing_token_revoked: reset lock not active';
   end if;
 
   -- Validate requested_op_id if provided
@@ -1035,13 +1021,6 @@ begin
       into v_op
       from public.system_reset_operations
       where id = v_maint.active_operation_id;
-    else
-      select id, status, step, error_details, created_at, updated_at, worker_generation
-      into v_op
-      from public.system_reset_operations
-      where status <> 'completed'
-      order by created_at desc
-      limit 1;
     end if;
 
     return jsonb_build_object(

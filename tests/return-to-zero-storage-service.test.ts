@@ -2034,6 +2034,133 @@ describe('Return-to-Zero Storage Service & State Machine Hardening (Section 10 M
       `);
     });
 
+    it('Case 30: Two concurrent resumes for an operation in recovery_required state cannot both obtain worker authority', async () => {
+      await db.exec(`set request.jwt.claim.role = 'service_role';`);
+
+      // 1. Initial lock acquired and marked recovery_required via reconciliation
+      const lockRes = await db.query<{ acquire_system_reset_lock: any }>(
+        `select api.acquire_system_reset_lock('${superadminId}'::uuid);`
+      );
+      const opId = lockRes.rows[0].acquire_system_reset_lock.operation_id;
+
+      await db.query(`
+        select api.reconcile_system_reset_operation('${superadminId}'::uuid, '${opId}'::uuid, 'resume', 'Prepare for recovery');
+      `);
+
+      // Verify status is recovery_required
+      const statusRes = await db.query<{ get_system_reset_status: any }>(`select api.get_system_reset_status();`);
+      expect(statusRes.rows[0].get_system_reset_status.status).toBe('recovery_required');
+
+      // 2. Launch two simultaneous resume requests for the recovery_required operation
+      const [res1, res2] = await Promise.all([
+        db.query<{ acquire_system_reset_lock: any }>(
+          `select api.acquire_system_reset_lock('${superadminId}'::uuid, '${opId}'::uuid);`
+        ),
+        db.query<{ acquire_system_reset_lock: any }>(
+          `select api.acquire_system_reset_lock('${superadminId}'::uuid, '${opId}'::uuid);`
+        ),
+      ]);
+
+      const r1 = res1.rows[0].acquire_system_reset_lock;
+      const r2 = res2.rows[0].acquire_system_reset_lock;
+
+      // Exactly one must acquire, and the other must be rejected with reset_already_in_progress
+      const acquiredCount = (r1.acquired ? 1 : 0) + (r2.acquired ? 1 : 0);
+      expect(acquiredCount).toBe(1);
+
+      const rejected = r1.acquired ? r2 : r1;
+      expect(rejected.acquired).toBe(false);
+      expect(rejected.reason).toBe('reset_already_in_progress');
+
+      const winner = r1.acquired ? r1 : r2;
+      // Clean up winner
+      await db.query(`
+        select api.release_system_reset_lock('${superadminId}'::uuid, '${opId}'::uuid, ${winner.worker_generation}, '${winner.worker_id}'::uuid);
+      `);
+    });
+
+    it('Case 31: api.get_system_reset_status returns activeOperation: null when active_operation_id is null without inferring from history', async () => {
+      await db.exec(`set request.jwt.claim.role = 'service_role';`);
+
+      // Ensure historical unfinished operation exists but maintenance_state has active_operation_id = null
+      const dummyOpId = '00000000-0000-0000-0000-000000000099';
+      await db.exec(`
+        insert into public.system_reset_operations (id, actor_id, status, step, created_at, updated_at)
+        values ('${dummyOpId}'::uuid, '${superadminId}'::uuid, 'lock_acquired', 'test_hanging_step', now() - interval '1 day', now() - interval '1 day')
+        on conflict (id) do update set status = 'lock_acquired';
+
+        update public.maintenance_state
+        set cursor_value = 'idle', active_operation_id = null
+        where job_name = 'system_reset';
+      `);
+
+      const statusRes = await db.query<{ get_system_reset_status: any }>(`select api.get_system_reset_status();`);
+      const status = statusRes.rows[0].get_system_reset_status;
+      expect(status.isLocked).toBe(false);
+      expect(status.activeOperation).toBeNull();
+    });
+
+    it('Case 32: Calling api.return_to_zero_reset with null operation ID or null worker generation while lock is active fails with fencing_token_revoked', async () => {
+      await db.exec(`set request.jwt.claim.role = 'service_role';`);
+
+      // 1. Acquire lock
+      const lockRes = await db.query<{ acquire_system_reset_lock: any }>(
+        `select api.acquire_system_reset_lock('${superadminId}'::uuid);`
+      );
+      const opId = lockRes.rows[0].acquire_system_reset_lock.operation_id;
+      const gen = lockRes.rows[0].acquire_system_reset_lock.worker_generation;
+      const wId = lockRes.rows[0].acquire_system_reset_lock.worker_id;
+
+      // 2. Attempt return_to_zero_reset with omitted/null opId while lock is active -> rejected
+      await expect(
+        db.query(`select api.return_to_zero_reset('${superadminId}'::uuid, null, null, null);`)
+      ).rejects.toThrow(/fencing_token_revoked/);
+
+      // 3. Attempt return_to_zero_reset with valid opId but null worker generation -> rejected
+      await expect(
+        db.query(`select api.return_to_zero_reset('${superadminId}'::uuid, '${opId}'::uuid, null, null);`)
+      ).rejects.toThrow(/fencing_token_revoked/);
+
+      // Clean up lock
+      await db.query(`
+        select api.release_system_reset_lock('${superadminId}'::uuid, '${opId}'::uuid, ${gen}, '${wId}'::uuid);
+      `);
+    });
+
+    it('Case 33: identify-returning strictly rejects request containing profileId: null', async () => {
+      const visitorActorId = '11111111-1111-4111-8111-111111111111';
+
+      vi.spyOn(await import('../server/supabase.js'), 'getServerSupabaseClients').mockReturnValue({
+        admin: {} as any,
+        client: {} as any,
+      });
+
+      vi.spyOn(await import('../server/actors.js'), 'getVerifiedSessionContext').mockResolvedValue({
+        actorId: visitorActorId,
+        role: 'visitor',
+        isAnonymous: true,
+        isRecoverySession: false,
+        user: { id: visitorActorId },
+        identity: 'test-user',
+      } as any);
+
+      const nullProfileReq = new Request('http://localhost/api/passes/identify-returning', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: 'Bearer token' },
+        body: JSON.stringify({
+          requestId: '22222222-2222-4222-8222-222222222222',
+          profileId: null,
+          candidateToken: 'cand.v2.abc.def.ghi',
+          photoBase64: '/9j/4AAQSkZJRg==',
+        }),
+      });
+
+      const res = await identifyReturningHandler.fetch(nullProfileReq);
+      expect(res.status).toBe(400);
+      const body = await res.json();
+      expect(body.error).toBe('raw_profile_id_forbidden');
+    });
+
     it('Case 20: Historical migration 20261118000300 is byte-for-byte identical to main, and 20261119000100 upgrades cleanly from baseline', async () => {
       const histMigrationPath = join(MIGRATIONS_DIR, '20261118000300_gender_and_system_reset.sql');
       const histContent = readFileSync(histMigrationPath, 'utf8');
