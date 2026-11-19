@@ -2936,5 +2936,179 @@ runSuite('True PostgreSQL Concurrency, Canonical Approval Integrity & Email Reco
         client.release();
       }
     });
+
+    it('8. Section F Adversarial Cases 19-21: Strict status/step pair allowlist, previous pair gating, and unauthorized role rejection in live PostgreSQL', async () => {
+      const client = await pool.connect();
+      try {
+        await client.query(`set request.jwt.claim.role = 'service_role';`);
+
+        // Ensure idle
+        await client.query(`
+          update public.maintenance_state
+          set cursor_value = 'idle', active_operation_id = null
+          where job_name = 'system_reset';
+        `);
+
+        // Acquire lock
+        const lockRes = await client.query(`select api.acquire_system_reset_lock($1::uuid) as r;`, [superadminId]);
+        const { operation_id: opId, worker_generation: gen, worker_id: wId } = lockRes.rows[0].r;
+
+        // 1. Mismatched status and step pair rejected
+        await expect(
+          client.query(`
+            select api.record_system_reset_step(
+              $1::uuid, 'storage_deletion_in_progress', 'storage_deletion_verified',
+              '{}'::jsonb, '{}'::jsonb, null, $2, $3::uuid
+            );
+          `, [opId, gen, wId])
+        ).rejects.toThrow(/invalid_state_transition: invalid or mismatched status and step pair requested/);
+
+        // 2. NULL status or step rejected
+        await expect(
+          client.query(`
+            select api.record_system_reset_step(
+              $1::uuid, null, 'storage_deletion_in_progress',
+              '{}'::jsonb, '{}'::jsonb, null, $2, $3::uuid
+            );
+          `, [opId, gen, wId])
+        ).rejects.toThrow(/invalid_state_transition: status and step are required/);
+
+        await expect(
+          client.query(`
+            select api.record_system_reset_step(
+              $1::uuid, 'storage_deletion_in_progress', null,
+              '{}'::jsonb, '{}'::jsonb, null, $2, $3::uuid
+            );
+          `, [opId, gen, wId])
+        ).rejects.toThrow(/invalid_state_transition: status and step are required/);
+
+        // 3. Skipping phase rejected
+        await expect(
+          client.query(`
+            select api.record_system_reset_step(
+              $1::uuid, 'database_cleanup_in_progress', 'database_cleanup_in_progress',
+              '{}'::jsonb, '{}'::jsonb, null, $2, $3::uuid
+            );
+          `, [opId, gen, wId])
+        ).rejects.toThrow(/invalid_state_transition: database_cleanup_in_progress requires storage_deletion_verified state/);
+
+        // 4. Advance to storage_deletion_in_progress
+        await client.query(`
+          select api.record_system_reset_step(
+            $1::uuid, 'storage_deletion_in_progress', 'storage_deletion_in_progress',
+            '{}'::jsonb, '{}'::jsonb, null, $2, $3::uuid
+          );
+        `, [opId, gen, wId]);
+
+        // 5. Previous status correct but previous step tampered rejected
+        await client.query(`
+          update public.system_reset_operations
+          set step = 'corrupted_step'
+          where id = $1;
+        `, [opId]);
+
+        await expect(
+          client.query(`
+            select api.record_system_reset_step(
+              $1::uuid, 'storage_deletion_verified', 'storage_deletion_verified',
+              '{}'::jsonb, '{}'::jsonb, null, $2, $3::uuid
+            );
+          `, [opId, gen, wId])
+        ).rejects.toThrow(/invalid_state_transition: storage_deletion_verified requires storage_deletion_in_progress state/);
+
+        // Restore step
+        await client.query(`
+          update public.system_reset_operations
+          set step = 'storage_deletion_in_progress'
+          where id = $1;
+        `, [opId]);
+
+        // 6. Unauthorized role rejected
+        const sampleVerification = JSON.stringify({
+          verifiedAt: new Date().toISOString(),
+          buckets: {
+            'visitor-photos': { bucket: 'visitor-photos', remainingCount: 0, verifiedEmpty: true },
+            'visitor-ids': { bucket: 'visitor-ids', remainingCount: 0, verifiedEmpty: true },
+          },
+          verifiedEmpty: true,
+        });
+
+        await client.query(`set request.jwt.claim.role = 'authenticated';`);
+        await expect(
+          client.query(`
+            select api.record_system_reset_step(
+              $1::uuid, 'storage_deletion_verified', 'storage_deletion_verified',
+              '{}'::jsonb, '{}'::jsonb, null, $2, $3::uuid, $4::jsonb
+            );
+          `, [opId, gen, wId, sampleVerification])
+        ).rejects.toThrow(/service role required/);
+
+        await client.query(`set request.jwt.claim.role = 'service_role';`);
+
+        // 7. Legitimate verification recorded
+        await client.query(`
+          select api.record_system_reset_step(
+            $1::uuid, 'storage_deletion_verified', 'storage_deletion_verified',
+            '{}'::jsonb, '{}'::jsonb, null, $2, $3::uuid, $4::jsonb
+          );
+        `, [opId, gen, wId, sampleVerification]);
+
+        // 8. Previous status correct but step tampered for database_cleanup_in_progress rejected
+        await client.query(`
+          update public.system_reset_operations
+          set step = 'corrupted_step'
+          where id = $1;
+        `, [opId]);
+
+        await expect(
+          client.query(`
+            select api.record_system_reset_step(
+              $1::uuid, 'database_cleanup_in_progress', 'database_cleanup_in_progress',
+              '{}'::jsonb, '{}'::jsonb, null, $2, $3::uuid
+            );
+          `, [opId, gen, wId])
+        ).rejects.toThrow(/invalid_state_transition: database_cleanup_in_progress requires storage_deletion_verified state/);
+
+        // Restore step
+        await client.query(`
+          update public.system_reset_operations
+          set step = 'storage_deletion_verified'
+          where id = $1;
+        `, [opId]);
+
+        // 9. Advance to database_cleanup_in_progress, execute cleanup, and release lock
+        await client.query(`
+          select api.record_system_reset_step(
+            $1::uuid, 'database_cleanup_in_progress', 'database_cleanup_in_progress',
+            '{}'::jsonb, '{}'::jsonb, null, $2, $3::uuid
+          );
+        `, [opId, gen, wId]);
+
+        const dbResetRes = await client.query(`
+          select api.return_to_zero_reset($1::uuid, $2::uuid, $3, $4::uuid) as r;
+        `, [superadminId, opId, gen, wId]);
+        expect(dbResetRes.rows[0].r.success).toBe(true);
+
+        await client.query(`
+          select api.release_system_reset_lock($1::uuid, $2::uuid, $3, $4::uuid);
+        `, [superadminId, opId, gen, wId]);
+
+        const finalCheck = await client.query(`select status, step from public.system_reset_operations where id = $1;`, [opId]);
+        expect(finalCheck.rows[0].status).toBe('completed');
+        expect(finalCheck.rows[0].step).toBe('completed');
+
+        const finalMaint = await client.query(`select cursor_value from public.maintenance_state where job_name = 'system_reset';`);
+        expect(finalMaint.rows[0].cursor_value).toBe('idle');
+      } finally {
+        try {
+          await client.query(`
+            update public.maintenance_state
+            set cursor_value = 'idle', active_operation_id = null
+            where job_name = 'system_reset';
+          `);
+        } catch {}
+        client.release();
+      }
+    });
   });
 });

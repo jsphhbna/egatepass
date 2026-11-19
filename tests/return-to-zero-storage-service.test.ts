@@ -2782,5 +2782,272 @@ describe('Return-to-Zero Storage Service & State Machine Hardening (Section 10 M
       const maintFinal = await db.query<{ cursor_value: string }>(`select cursor_value from public.maintenance_state where job_name = 'system_reset';`);
       expect(maintFinal.rows[0].cursor_value).toBe('idle');
     });
+
+    it('Case 40: Strict status/step pair allowlist, previous status-and-step ordering, and unauthorized role rejection', async () => {
+      await db.exec(`set request.jwt.claim.role = 'service_role';`);
+      const lockRes = await db.query<{ acquire_system_reset_lock: any }>(
+        `select api.acquire_system_reset_lock('${superadminId}'::uuid);`
+      );
+      const { operation_id: opId, worker_generation: gen, worker_id: wId } = lockRes.rows[0].acquire_system_reset_lock;
+
+      // 1. Unknown and NULL status/step combinations are strictly rejected
+      await expect(
+        db.query(`
+          select api.record_system_reset_step(
+            '${opId}'::uuid, null, 'storage_deletion_in_progress',
+            '{}'::jsonb, '{}'::jsonb, null, ${gen}, '${wId}'::uuid
+          );
+        `)
+      ).rejects.toThrow(/invalid_state_transition: status and step are required/);
+
+      await expect(
+        db.query(`
+          select api.record_system_reset_step(
+            '${opId}'::uuid, 'storage_deletion_in_progress', null,
+            '{}'::jsonb, '{}'::jsonb, null, ${gen}, '${wId}'::uuid
+          );
+        `)
+      ).rejects.toThrow(/invalid_state_transition: status and step are required/);
+
+      await expect(
+        db.query(`
+          select api.record_system_reset_step(
+            '${opId}'::uuid, 'storage_deletion_in_progress', 'arbitrary_step_123',
+            '{}'::jsonb, '{}'::jsonb, null, ${gen}, '${wId}'::uuid
+          );
+        `)
+      ).rejects.toThrow(/invalid_state_transition: invalid or mismatched status and step pair requested/);
+
+      await expect(
+        db.query(`
+          select api.record_system_reset_step(
+            '${opId}'::uuid, 'unknown_status', 'unknown_status',
+            '{}'::jsonb, '{}'::jsonb, null, ${gen}, '${wId}'::uuid
+          );
+        `)
+      ).rejects.toThrow(/invalid_state_transition: invalid or mismatched status and step pair requested/);
+
+      // 2. Mismatched status and step pairs are strictly rejected
+      await expect(
+        db.query(`
+          select api.record_system_reset_step(
+            '${opId}'::uuid, 'storage_deletion_in_progress', 'storage_deletion_verified',
+            '{}'::jsonb, '{}'::jsonb, null, ${gen}, '${wId}'::uuid
+          );
+        `)
+      ).rejects.toThrow(/invalid_state_transition: invalid or mismatched status and step pair requested/);
+
+      await expect(
+        db.query(`
+          select api.record_system_reset_step(
+            '${opId}'::uuid, 'storage_deletion_in_progress', 'database_cleanup_in_progress',
+            '{}'::jsonb, '{}'::jsonb, null, ${gen}, '${wId}'::uuid
+          );
+        `)
+      ).rejects.toThrow(/invalid_state_transition: invalid or mismatched status and step pair requested/);
+
+      await expect(
+        db.query(`
+          select api.record_system_reset_step(
+            '${opId}'::uuid, 'storage_deletion_verified', 'storage_deletion_in_progress',
+            '{}'::jsonb, '{}'::jsonb, null, ${gen}, '${wId}'::uuid
+          );
+        `)
+      ).rejects.toThrow(/invalid_state_transition: invalid or mismatched status and step pair requested/);
+
+      await expect(
+        db.query(`
+          select api.record_system_reset_step(
+            '${opId}'::uuid, 'database_cleanup_in_progress', 'storage_deletion_verified',
+            '{}'::jsonb, '{}'::jsonb, null, ${gen}, '${wId}'::uuid
+          );
+        `)
+      ).rejects.toThrow(/invalid_state_transition: invalid or mismatched status and step pair requested/);
+
+      await expect(
+        db.query(`
+          select api.record_system_reset_step(
+            '${opId}'::uuid, 'recovery_required', 'storage_deletion_in_progress',
+            '{}'::jsonb, '{}'::jsonb, null, ${gen}, '${wId}'::uuid
+          );
+        `)
+      ).rejects.toThrow(/invalid_state_transition: invalid or mismatched status and step pair requested/);
+
+      await expect(
+        db.query(`
+          select api.record_system_reset_step(
+            '${opId}'::uuid, 'failed', 'arbitrary_failure_step',
+            '{}'::jsonb, '{}'::jsonb, null, ${gen}, '${wId}'::uuid
+          );
+        `)
+      ).rejects.toThrow(/invalid_state_transition: invalid or mismatched status and step pair requested/);
+
+      // 3. Skipping a required phase is strictly rejected
+      await expect(
+        db.query(`
+          select api.record_system_reset_step(
+            '${opId}'::uuid, 'database_cleanup_in_progress', 'database_cleanup_in_progress',
+            '{}'::jsonb, '{}'::jsonb, null, ${gen}, '${wId}'::uuid
+          );
+        `)
+      ).rejects.toThrow(/invalid_state_transition: database_cleanup_in_progress requires storage_deletion_verified state/);
+
+      await expect(
+        db.query(`
+          select api.record_system_reset_step(
+            '${opId}'::uuid, 'storage_deletion_verified', 'storage_deletion_verified',
+            '{}'::jsonb, '{}'::jsonb, null, ${gen}, '${wId}'::uuid
+          );
+        `)
+      ).rejects.toThrow(/invalid_state_transition: storage_deletion_verified requires storage_deletion_in_progress state/);
+
+      // 4. Advance properly to storage_deletion_in_progress
+      await db.query(`
+        select api.record_system_reset_step(
+          '${opId}'::uuid, 'storage_deletion_in_progress', 'storage_deletion_in_progress',
+          '{}'::jsonb, '{}'::jsonb, null, ${gen}, '${wId}'::uuid
+        );
+      `);
+
+      // 5. Previous status correct but previous step incorrect:
+      // Tamper step to an invalid string while status is storage_deletion_in_progress
+      await db.exec(`
+        update public.system_reset_operations
+        set step = 'corrupted_step'
+        where id = '${opId}';
+      `);
+      await expect(
+        db.query(`
+          select api.record_system_reset_step(
+            '${opId}'::uuid, 'storage_deletion_verified', 'storage_deletion_verified',
+            '{}'::jsonb, '{}'::jsonb, null, ${gen}, '${wId}'::uuid
+          );
+        `)
+      ).rejects.toThrow(/invalid_state_transition: storage_deletion_verified requires storage_deletion_in_progress state/);
+
+      // Restore correct step
+      await db.exec(`
+        update public.system_reset_operations
+        set step = 'storage_deletion_in_progress'
+        where id = '${opId}';
+      `);
+
+      // 6. Unauthorized role attempting step recording is rejected
+      const sampleVerification = {
+        verifiedAt: new Date().toISOString(),
+        buckets: {
+          'visitor-photos': { bucket: 'visitor-photos', remainingCount: 0, verifiedEmpty: true },
+          'visitor-ids': { bucket: 'visitor-ids', remainingCount: 0, verifiedEmpty: true },
+        },
+        verifiedEmpty: true,
+      };
+
+      await db.exec(`set request.jwt.claim.role = 'authenticated';`);
+      await expect(
+        db.query(`
+          select api.record_system_reset_step(
+            '${opId}'::uuid, 'storage_deletion_verified', 'storage_deletion_verified',
+            '{}'::jsonb, '{}'::jsonb, null, ${gen}, '${wId}'::uuid, '${JSON.stringify(sampleVerification)}'::jsonb
+          );
+        `)
+      ).rejects.toThrow(/service role required/);
+
+      await db.exec(`set request.jwt.claim.role = 'anon';`);
+      await expect(
+        db.query(`
+          select api.record_system_reset_step(
+            '${opId}'::uuid, 'storage_deletion_verified', 'storage_deletion_verified',
+            '{}'::jsonb, '{}'::jsonb, null, ${gen}, '${wId}'::uuid, '${JSON.stringify(sampleVerification)}'::jsonb
+          );
+        `)
+      ).rejects.toThrow(/service role required/);
+
+      // Restore service_role
+      await db.exec(`set request.jwt.claim.role = 'service_role';`);
+
+      // 7. Legitimate transition to storage_deletion_verified
+      await db.query(`
+        select api.record_system_reset_step(
+          '${opId}'::uuid, 'storage_deletion_verified', 'storage_deletion_verified',
+          '{}'::jsonb, '{}'::jsonb, null, ${gen}, '${wId}'::uuid, '${JSON.stringify(sampleVerification)}'::jsonb
+        );
+      `);
+
+      // 8. Previous status correct but previous step incorrect for database_cleanup_in_progress:
+      await db.exec(`
+        update public.system_reset_operations
+        set step = 'corrupted_step'
+        where id = '${opId}';
+      `);
+      await expect(
+        db.query(`
+          select api.record_system_reset_step(
+            '${opId}'::uuid, 'database_cleanup_in_progress', 'database_cleanup_in_progress',
+            '{}'::jsonb, '{}'::jsonb, null, ${gen}, '${wId}'::uuid
+          );
+        `)
+      ).rejects.toThrow(/invalid_state_transition: database_cleanup_in_progress requires storage_deletion_verified state/);
+
+      // Restore correct step
+      await db.exec(`
+        update public.system_reset_operations
+        set step = 'storage_deletion_verified'
+        where id = '${opId}';
+      `);
+
+      // 9. Stale worker generation, worker ID, and expired lease fail closed
+      await expect(
+        db.query(`
+          select api.record_system_reset_step(
+            '${opId}'::uuid, 'database_cleanup_in_progress', 'database_cleanup_in_progress',
+            '{}'::jsonb, '{}'::jsonb, null, ${gen + 99}, '${wId}'::uuid
+          );
+        `)
+      ).rejects.toThrow(/fencing_token_revoked: worker generation/);
+
+      await expect(
+        db.query(`
+          select api.record_system_reset_step(
+            '${opId}'::uuid, 'database_cleanup_in_progress', 'database_cleanup_in_progress',
+            '{}'::jsonb, '{}'::jsonb, null, ${gen}, '11111111-2222-3333-4444-555555555555'::uuid
+          );
+        `)
+      ).rejects.toThrow(/fencing_token_revoked: worker ID/);
+
+      // Expire lease
+      await db.exec(`update public.maintenance_state set lease_expires_at = clock_timestamp() - interval '1 second' where job_name = 'system_reset';`);
+      await expect(
+        db.query(`
+          select api.record_system_reset_step(
+            '${opId}'::uuid, 'database_cleanup_in_progress', 'database_cleanup_in_progress',
+            '{}'::jsonb, '{}'::jsonb, null, ${gen}, '${wId}'::uuid
+          );
+        `)
+      ).rejects.toThrow(/fencing_token_revoked: worker lease expired/);
+
+      // Restore lease
+      await db.exec(`update public.maintenance_state set lease_expires_at = clock_timestamp() + interval '60 seconds' where job_name = 'system_reset';`);
+
+      // 10. Complete legitimate workflow
+      await db.query(`
+        select api.record_system_reset_step(
+          '${opId}'::uuid, 'database_cleanup_in_progress', 'database_cleanup_in_progress',
+          '{}'::jsonb, '{}'::jsonb, null, ${gen}, '${wId}'::uuid
+        );
+      `);
+
+      const resetRes = await db.query<{ return_to_zero_reset: any }>(
+        `select api.return_to_zero_reset('${superadminId}'::uuid, '${opId}'::uuid, ${gen}, '${wId}'::uuid);`
+      );
+      expect(resetRes.rows[0].return_to_zero_reset.success).toBe(true);
+
+      await db.query(`select api.release_system_reset_lock('${superadminId}'::uuid, '${opId}'::uuid, ${gen}, '${wId}'::uuid);`);
+
+      const opCheck = await db.query<{ status: string; step: string }>(
+        `select status, step from public.system_reset_operations where id = '${opId}';`
+      );
+      expect(opCheck.rows[0].status).toBe('completed');
+      expect(opCheck.rows[0].step).toBe('completed');
+    });
   });
 });
