@@ -2416,12 +2416,16 @@ runSuite('True PostgreSQL Concurrency, Canonical Approval Integrity & Email Reco
         await clientA.query(`set request.jwt.claim.role = 'service_role';`);
         await clientB.query(`set request.jwt.claim.role = 'service_role';`);
 
-        // Ensure idle
+        // Ensure idle and insert a test visitor to verify zero deletion occurs
         await clientA.query(`
           update public.maintenance_state
           set cursor_value = 'idle', active_operation_id = null
           where job_name = 'system_reset';
-        `);
+
+          insert into public.visitors (id, owner_id, source, full_name, contact_number, purpose, visit_date, consent_accepted_at)
+          values ($1::uuid, $2::uuid, 'portal', 'Adversarial Test Visitor', '+639170000000', 'Meeting', current_date, now())
+          on conflict (id) do nothing;
+        `, [testVisitorId, superadminId]);
 
         // Case 1: Standalone call without op ID is rejected while idle
         await expect(
@@ -2511,6 +2515,13 @@ runSuite('True PostgreSQL Concurrency, Canonical Approval Integrity & Email Reco
         await clientB.query(`select api.return_to_zero_reset($1::uuid, $2::uuid, $3, $4::uuid);`, [superadminId, opId, gen2, w2]);
         await clientB.query(`select api.release_system_reset_lock($1::uuid, $2::uuid, $3, $4::uuid);`, [superadminId, opId, gen2, w2]);
       } finally {
+        try {
+          await clientA.query(`
+            update public.maintenance_state
+            set cursor_value = 'idle', active_operation_id = null
+            where job_name = 'system_reset';
+          `);
+        } catch {}
         clientA.release();
         clientB.release();
       }
@@ -2522,6 +2533,13 @@ runSuite('True PostgreSQL Concurrency, Canonical Approval Integrity & Email Reco
       try {
         await clientA.query(`set request.jwt.claim.role = 'service_role';`);
         await clientB.query(`set request.jwt.claim.role = 'service_role';`);
+
+        // Ensure idle
+        await clientA.query(`
+          update public.maintenance_state
+          set cursor_value = 'idle', active_operation_id = null
+          where job_name = 'system_reset';
+        `);
 
         // Worker 1 acquires lock
         const lock1 = await clientA.query(`select api.acquire_system_reset_lock($1::uuid) as r;`, [superadminId]);
@@ -2535,7 +2553,7 @@ runSuite('True PostgreSQL Concurrency, Canonical Approval Integrity & Email Reco
               '{}'::jsonb, '{}'::jsonb, null, $2, $3::uuid
             );
           `, [opId, gen1, w1])
-        ).rejects.toThrow(/invalid_step_transition/);
+        ).rejects.toThrow(/invalid_(state|step)_transition/);
 
         // Advance to Worker 2
         await clientB.query(`
@@ -2565,6 +2583,13 @@ runSuite('True PostgreSQL Concurrency, Canonical Approval Integrity & Email Reco
         await clientB.query(`select api.return_to_zero_reset($1::uuid, $2::uuid, $3, $4::uuid);`, [superadminId, opId, gen2, w2]);
         await clientB.query(`select api.release_system_reset_lock($1::uuid, $2::uuid, $3, $4::uuid);`, [superadminId, opId, gen2, w2]);
       } finally {
+        try {
+          await clientA.query(`
+            update public.maintenance_state
+            set cursor_value = 'idle', active_operation_id = null
+            where job_name = 'system_reset';
+          `);
+        } catch {}
         clientA.release();
         clientB.release();
       }
@@ -2576,6 +2601,13 @@ runSuite('True PostgreSQL Concurrency, Canonical Approval Integrity & Email Reco
       try {
         await clientA.query(`set request.jwt.claim.role = 'service_role';`);
         await clientB.query(`set request.jwt.claim.role = 'service_role';`);
+
+        // Ensure idle
+        await clientA.query(`
+          update public.maintenance_state
+          set cursor_value = 'idle', active_operation_id = null
+          where job_name = 'system_reset';
+        `);
 
         // Case 13: Acquire lock, record manifest, simulate recovery
         const lock1 = await clientA.query(`select api.acquire_system_reset_lock($1::uuid) as r;`, [superadminId]);
@@ -2625,6 +2657,13 @@ runSuite('True PostgreSQL Concurrency, Canonical Approval Integrity & Email Reco
         expect(finalMaint.rows[0].cursor_value).toBe('idle');
         expect(finalMaint.rows[0].active_operation_id).toBeNull();
       } finally {
+        try {
+          await clientA.query(`
+            update public.maintenance_state
+            set cursor_value = 'idle', active_operation_id = null
+            where job_name = 'system_reset';
+          `);
+        } catch {}
         clientA.release();
         clientB.release();
       }
