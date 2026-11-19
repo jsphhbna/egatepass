@@ -15,6 +15,9 @@
  * 8. Enforces post-deletion re-enumeration verification: fails closed if any file persists or if depth exceeded.
  * 9. Zero leakage of file contents, biometric metadata, or visitor PII in logs or manifests.
  * 10. Enforces 20,000-object safety ceiling across COMBINED inventory of both buckets.
+ * 11. Bounded external Storage request execution: each batch removal request is bounded by STORAGE_REQUEST_TIMEOUT_MS (15,000ms).
+ * 12. Worker lease / safety window alignment: Database reset worker lease (RESET_WORKER_LEASE_SECONDS = 60s) strictly exceeds maximum worst-case in-flight Storage execution (~46s total across 3 attempts).
+ * 13. Unavoidable External Storage Limitation: An external HTTP/S3 Storage request already accepted by the storage backend before worker revocation cannot be retroactively cancelled over the network. Therefore, recovery lock acquisition strictly rejects resume attempts while lease_expires_at >= clock_timestamp(), guaranteeing that recovery cannot spawn a competing destructive worker while a previous worker may still have an active Storage request in flight.
  */
 
 import type { SupabaseClient } from '@supabase/supabase-js';
@@ -25,6 +28,8 @@ export type AllowedResetBucket = (typeof ALLOWED_RESET_BUCKETS)[number];
 export const MAX_SAFE_STORAGE_INVENTORY = 20_000;
 export const STORAGE_REMOVAL_BATCH_SIZE = 1_000;
 export const MAX_DIRECTORY_DEPTH = 10;
+export const STORAGE_REQUEST_TIMEOUT_MS = 15_000;
+export const RESET_WORKER_LEASE_SECONDS = 60;
 const MAX_REMOVAL_RETRIES = 3;
 
 export interface BucketInventoryManifest {

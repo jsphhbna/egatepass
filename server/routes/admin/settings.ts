@@ -84,26 +84,50 @@ async function handleRequest(request: Request): Promise<Response> {
           });
         }
 
+        const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
         if (
           !lockData.operation_id ||
           typeof lockData.operation_id !== 'string' ||
-          lockData.operation_id.trim().length === 0
+          !UUID_REGEX.test(lockData.operation_id.trim())
         ) {
           return jsonResponse(500, {
             error: 'lock_acquisition_failed',
-            message: 'Lock acquisition succeeded but operation ID was missing or invalid.',
+            message: 'Lock acquisition succeeded but operation ID was missing, malformed, or invalid.',
           });
         }
 
-        const operationId: string = lockData.operation_id;
-        const workerGeneration: number = typeof lockData.worker_generation === 'number' ? lockData.worker_generation : 1;
-        const workerId: string | null = typeof lockData.worker_id === 'string' ? lockData.worker_id : null;
+        if (
+          typeof lockData.worker_generation !== 'number' ||
+          !Number.isInteger(lockData.worker_generation) ||
+          lockData.worker_generation < 1
+        ) {
+          return jsonResponse(500, {
+            error: 'lock_acquisition_failed',
+            message: 'Lock acquisition succeeded but worker generation was missing, malformed, or invalid.',
+          });
+        }
+
+        if (
+          !lockData.worker_id ||
+          typeof lockData.worker_id !== 'string' ||
+          !UUID_REGEX.test(lockData.worker_id.trim())
+        ) {
+          return jsonResponse(500, {
+            error: 'lock_acquisition_failed',
+            message: 'Lock acquisition succeeded but worker ID was missing, malformed, or invalid.',
+          });
+        }
+
+        const operationId: string = lockData.operation_id.trim();
+        const workerGeneration: number = lockData.worker_generation;
+        const workerId: string = lockData.worker_id.trim();
 
         const checkWorkerOwnership = async () => {
           const { error: ownErr } = await admin.schema('api').rpc('assert_system_reset_worker_active', {
             requested_op_id: operationId,
             requested_worker_generation: workerGeneration,
-            ...(workerId ? { requested_worker_id: workerId } : {}),
+            requested_worker_id: workerId,
           });
           if (ownErr) {
             throw new Error(`Worker fencing revoked: ${ownErr.message || JSON.stringify(ownErr)}`);
@@ -119,7 +143,7 @@ async function handleRequest(request: Request): Promise<Response> {
             requested_status: 'storage_deletion_in_progress',
             requested_step: 'storage_deletion_in_progress',
             requested_worker_generation: workerGeneration,
-            ...(workerId ? { requested_worker_id: workerId } : {}),
+            requested_worker_id: workerId,
           });
 
           storageResult = await purgeAndVerifyStorageBuckets(admin, checkWorkerOwnership);
@@ -138,7 +162,7 @@ async function handleRequest(request: Request): Promise<Response> {
             requested_manifest: storageResult.inventories,
             requested_counts: effectiveCounts,
             requested_worker_generation: workerGeneration,
-            ...(workerId ? { requested_worker_id: workerId } : {}),
+            requested_worker_id: workerId,
           });
         } catch (storageErr: any) {
           console.error('Storage purge or verification failed during return_to_zero:', storageErr);
@@ -149,7 +173,7 @@ async function handleRequest(request: Request): Promise<Response> {
               requested_step: 'storage_purge_failed',
               requested_error: storageErr?.message || String(storageErr),
               requested_worker_generation: workerGeneration,
-              ...(workerId ? { requested_worker_id: workerId } : {}),
+              requested_worker_id: workerId,
             });
           } catch (recErr) {
             console.error('Failed to record recovery_required status:', recErr);
@@ -171,7 +195,7 @@ async function handleRequest(request: Request): Promise<Response> {
             requested_status: 'database_cleanup_in_progress',
             requested_step: 'database_cleanup_in_progress',
             requested_worker_generation: workerGeneration,
-            ...(workerId ? { requested_worker_id: workerId } : {}),
+            requested_worker_id: workerId,
           });
         } catch (recErr: any) {
           console.error('Failed to record database_cleanup_in_progress:', recErr);
@@ -189,7 +213,7 @@ async function handleRequest(request: Request): Promise<Response> {
             requested_actor_id: actor.id,
             requested_op_id: operationId,
             requested_worker_generation: workerGeneration,
-            ...(workerId ? { requested_worker_id: workerId } : {}),
+            requested_worker_id: workerId,
           });
 
           if (rpcError) {
@@ -205,7 +229,7 @@ async function handleRequest(request: Request): Promise<Response> {
               requested_step: 'database_cleanup_failed',
               requested_error: rpcErr?.message || String(rpcErr),
               requested_worker_generation: workerGeneration,
-              ...(workerId ? { requested_worker_id: workerId } : {}),
+              requested_worker_id: workerId,
             });
           } catch (recErr) {
             console.error('Failed to record database_cleanup_failed status:', recErr);
@@ -225,7 +249,7 @@ async function handleRequest(request: Request): Promise<Response> {
             requested_actor_id: actor.id,
             requested_op_id: operationId,
             requested_worker_generation: workerGeneration,
-            ...(workerId ? { requested_worker_id: workerId } : {}),
+            requested_worker_id: workerId,
           });
         } catch (relEx: any) {
           console.error('release_system_reset_lock threw exception:', relEx);
@@ -236,7 +260,7 @@ async function handleRequest(request: Request): Promise<Response> {
               requested_step: 'lock_release_failed',
               requested_error: relEx?.message || String(relEx),
               requested_worker_generation: workerGeneration,
-              ...(workerId ? { requested_worker_id: workerId } : {}),
+              requested_worker_id: workerId,
             });
           } catch {}
           return jsonResponse(500, {
@@ -257,7 +281,7 @@ async function handleRequest(request: Request): Promise<Response> {
               requested_step: 'lock_release_failed',
               requested_error: releaseError.message,
               requested_worker_generation: workerGeneration,
-              ...(workerId ? { requested_worker_id: workerId } : {}),
+              requested_worker_id: workerId,
             });
           } catch {}
           return jsonResponse(500, {

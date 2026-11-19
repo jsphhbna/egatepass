@@ -354,9 +354,19 @@ describe('Milestone 1: Gender Tracking and Return-to-Zero Reset Migration Tests'
       db.query(`select api.return_to_zero_reset('${guardId}'::uuid);`)
     ).rejects.toThrow(/superadmin_required/);
 
-    // 2. Positive test: Active superadmin executes return to zero reset
+    // 1b. Direct reset invocation without an active operation ID / idle system is rejected
+    await expect(
+      db.query(`select api.return_to_zero_reset('${superadmin1Id}'::uuid);`)
+    ).rejects.toThrow(/fencing_token_revoked: operation ID required/);
+
+    // 2. Positive test: Active superadmin acquires reset lock and executes return to zero reset with valid fencing tokens
+    const lockRes = await db.query<{ acquire_system_reset_lock: any }>(`
+      select api.acquire_system_reset_lock('${superadmin1Id}'::uuid);
+    `);
+    const { operation_id: opId, worker_generation: workerGen, worker_id: workerId } = lockRes.rows[0].acquire_system_reset_lock;
+
     const resetRes = await db.query<{ return_to_zero_reset: { success: boolean; actor_id: string; preserved_superadmins: string[] } }>(`
-      select api.return_to_zero_reset('${superadmin1Id}'::uuid);
+      select api.return_to_zero_reset('${superadmin1Id}'::uuid, '${opId}'::uuid, ${workerGen}, '${workerId}'::uuid);
     `);
     expect(resetRes.rows.length).toBe(1);
     expect(resetRes.rows[0].return_to_zero_reset.success).toBe(true);
@@ -413,10 +423,20 @@ describe('Milestone 1: Gender Tracking and Return-to-Zero Reset Migration Tests'
     expect(auditRes.rows[0].actor_id).toBe(superadmin1Id);
     expect(auditRes.rows[0].after_state).toBeDefined();
 
-    // 7. Invariant assertions: Idempotent re-run on empty database succeeds
+    // 7. Invariant assertions: Lock release and idempotent re-run on empty database succeeds
+    await db.query(`
+      select api.release_system_reset_lock('${superadmin1Id}'::uuid, '${opId}'::uuid, ${workerGen}, '${workerId}'::uuid);
+    `);
+    const rerunLock = await db.query<{ acquire_system_reset_lock: any }>(`
+      select api.acquire_system_reset_lock('${superadmin1Id}'::uuid);
+    `);
+    const { operation_id: rerunOpId, worker_generation: rerunGen, worker_id: rerunWorkerId } = rerunLock.rows[0].acquire_system_reset_lock;
     const rerunRes = await db.query<{ return_to_zero_reset: { success: boolean } }>(`
-      select api.return_to_zero_reset('${superadmin1Id}'::uuid);
+      select api.return_to_zero_reset('${superadmin1Id}'::uuid, '${rerunOpId}'::uuid, ${rerunGen}, '${rerunWorkerId}'::uuid);
     `);
     expect(rerunRes.rows[0].return_to_zero_reset.success).toBe(true);
+    await db.query(`
+      select api.release_system_reset_lock('${superadmin1Id}'::uuid, '${rerunOpId}'::uuid, ${rerunGen}, '${rerunWorkerId}'::uuid);
+    `);
   }, 120_000);
 });

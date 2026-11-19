@@ -473,11 +473,11 @@ describe('Return-to-Zero Storage Service & State Machine Hardening (Section 10 M
 
     it('Requirement 11: Concurrent reset attempts cannot corrupt operation state (lock rejection)', async () => {
       // 1. Acquire lock for first operation
-      const lock1 = await db.query<{ acquire_system_reset_lock: { acquired: boolean; operation_id: string } }>(`
+      const lock1 = await db.query<{ acquire_system_reset_lock: { acquired: boolean; operation_id: string; worker_generation: number; worker_id: string } }>(`
         select api.acquire_system_reset_lock('${superadminId}'::uuid);
       `);
       expect(lock1.rows[0].acquire_system_reset_lock.acquired).toBe(true);
-      const opId = lock1.rows[0].acquire_system_reset_lock.operation_id;
+      const { operation_id: opId, worker_generation: gen, worker_id: wId } = lock1.rows[0].acquire_system_reset_lock;
       expect(opId).toBeDefined();
 
       // 2. Second concurrent acquire attempt must fail or report already locked
@@ -487,16 +487,17 @@ describe('Return-to-Zero Storage Service & State Machine Hardening (Section 10 M
       expect(lock2.rows[0].acquire_system_reset_lock.acquired).toBe(false);
       expect(lock2.rows[0].acquire_system_reset_lock.reason).toBe('reset_already_in_progress');
 
-      // 3. Release lock
-      await db.query(`select api.release_system_reset_lock('${superadminId}'::uuid, '${opId}'::uuid);`);
+      // 3. Fenced database cleanup and release lock
+      await db.query(`select api.return_to_zero_reset('${superadminId}'::uuid, '${opId}'::uuid, ${gen}, '${wId}'::uuid);`);
+      await db.query(`select api.release_system_reset_lock('${superadminId}'::uuid, '${opId}'::uuid, ${gen}, '${wId}'::uuid);`);
     });
 
     it('Requirement 12: New uploads and operational writes rejected by lock triggers during reset', async () => {
       // 1. Acquire lock
-      const lockRes = await db.query<{ acquire_system_reset_lock: { operation_id: string } }>(`
+      const lockRes = await db.query<{ acquire_system_reset_lock: { operation_id: string; worker_generation: number; worker_id: string } }>(`
         select api.acquire_system_reset_lock('${superadminId}'::uuid);
       `);
-      const opId = lockRes.rows[0].acquire_system_reset_lock.operation_id;
+      const { operation_id: opId, worker_generation: gen, worker_id: wId } = lockRes.rows[0].acquire_system_reset_lock;
 
       // 2. Attempt insert into visitors -> must throw system_reset_in_progress
       await expect(
@@ -514,10 +515,16 @@ describe('Return-to-Zero Storage Service & State Machine Hardening (Section 10 M
         `)
       ).rejects.toThrow(/system_reset_in_progress/);
 
-      // 4. Release lock
-      await db.query(`select api.release_system_reset_lock('${superadminId}'::uuid, '${opId}'::uuid);`);
+      // 4. Fenced database cleanup and release lock
+      await db.query(`select api.return_to_zero_reset('${superadminId}'::uuid, '${opId}'::uuid, ${gen}, '${wId}'::uuid);`);
+      await db.query(`select api.release_system_reset_lock('${superadminId}'::uuid, '${opId}'::uuid, ${gen}, '${wId}'::uuid);`);
 
-      // 5. Subsequent insert succeeds now that lock is released
+      // 5. Subsequent insert succeeds now that lock is released (re-create visitor owner since non-admin users were purged by reset)
+      await db.exec(`
+        insert into auth.users (id, email)
+        values ('${visitorOwnerId}'::uuid, 'visitor-owner@domain.test')
+        on conflict (id) do nothing;
+      `);
       await expect(
         db.exec(`
           insert into public.visitors (owner_id, source, full_name, contact_number, purpose, visit_date, consent_accepted_at)
@@ -552,20 +559,35 @@ describe('Return-to-Zero Storage Service & State Machine Hardening (Section 10 M
         db.query(`select api.return_to_zero_reset('${superadminId}'::uuid);`)
       ).rejects.toThrow(/service role required/);
 
-      // 3. Service role call permitted
+      // 3. Standalone service_role call without lock rejected with fencing_token_revoked
       await db.exec(`set request.jwt.claim.role = 'service_role';`);
+      await expect(
+        db.query(`select api.return_to_zero_reset('${superadminId}'::uuid);`)
+      ).rejects.toThrow(/fencing_token_revoked/);
+
+      // 4. Authorized fenced worker under service role call permitted
+      const lockRes = await db.query<{ acquire_system_reset_lock: any }>(
+        `select api.acquire_system_reset_lock('${superadminId}'::uuid);`
+      );
+      const { operation_id: opId, worker_generation: gen, worker_id: wId } = lockRes.rows[0].acquire_system_reset_lock;
+
       const res = await db.query<{ return_to_zero_reset: { success: boolean } }>(`
-        select api.return_to_zero_reset('${superadminId}'::uuid);
+        select api.return_to_zero_reset('${superadminId}'::uuid, '${opId}'::uuid, ${gen}, '${wId}'::uuid);
       `);
       expect(res.rows[0].return_to_zero_reset.success).toBe(true);
+
+      // Clean up lock
+      await db.query(`
+        select api.release_system_reset_lock('${superadminId}'::uuid, '${opId}'::uuid, ${gen}, '${wId}'::uuid);
+      `);
     });
 
     it('Requirement 16 & 17: Non-Superadmin or inactive superadmin callers rejected', async () => {
       await db.exec(`set request.jwt.claim.role = 'service_role';`);
 
-      // Guard role cannot execute
+      // Guard role cannot acquire lock or execute
       await expect(
-        db.query(`select api.return_to_zero_reset('${nonSuperadminStaffId}'::uuid);`)
+        db.query(`select api.acquire_system_reset_lock('${nonSuperadminStaffId}'::uuid);`)
       ).rejects.toThrow(/superadmin_required/);
 
       // Inactive superadmin cannot execute
@@ -575,13 +597,37 @@ describe('Return-to-Zero Storage Service & State Machine Hardening (Section 10 M
         insert into public.staff_profiles (user_id, display_name, role, active) values ('${inactiveAdminId}'::uuid, 'Ex Admin', 'superadmin', false) on conflict do nothing;
       `);
       await expect(
-        db.query(`select api.return_to_zero_reset('${inactiveAdminId}'::uuid);`)
+        db.query(`select api.acquire_system_reset_lock('${inactiveAdminId}'::uuid);`)
       ).rejects.toThrow(/superadmin_required/);
+
+      // Fenced return_to_zero_reset rejects non-superadmin even with active lock
+      const lockRes = await db.query<{ acquire_system_reset_lock: any }>(
+        `select api.acquire_system_reset_lock('${superadminId}'::uuid);`
+      );
+      const { operation_id: opId, worker_generation: gen, worker_id: wId } = lockRes.rows[0].acquire_system_reset_lock;
+
+      await expect(
+        db.query(`select api.return_to_zero_reset('${nonSuperadminStaffId}'::uuid, '${opId}'::uuid, ${gen}, '${wId}'::uuid);`)
+      ).rejects.toThrow(/superadmin_required/);
+
+      await expect(
+        db.query(`select api.return_to_zero_reset('${inactiveAdminId}'::uuid, '${opId}'::uuid, ${gen}, '${wId}'::uuid);`)
+      ).rejects.toThrow(/superadmin_required/);
+
+      // Complete cleanup and release lock
+      await db.query(`select api.return_to_zero_reset('${superadminId}'::uuid, '${opId}'::uuid, ${gen}, '${wId}'::uuid);`);
+      await db.query(`select api.release_system_reset_lock('${superadminId}'::uuid, '${opId}'::uuid, ${gen}, '${wId}'::uuid);`);
     });
 
     it('Requirement 18: Intended active Superadmins and verified MFA factors remain intact', async () => {
       await db.exec(`set request.jwt.claim.role = 'service_role';`);
-      await db.query(`select api.return_to_zero_reset('${superadminId}'::uuid);`);
+      const lockRes = await db.query<{ acquire_system_reset_lock: any }>(
+        `select api.acquire_system_reset_lock('${superadminId}'::uuid);`
+      );
+      const { operation_id: opId, worker_generation: gen, worker_id: wId } = lockRes.rows[0].acquire_system_reset_lock;
+
+      await db.query(`select api.return_to_zero_reset('${superadminId}'::uuid, '${opId}'::uuid, ${gen}, '${wId}'::uuid);`);
+      await db.query(`select api.release_system_reset_lock('${superadminId}'::uuid, '${opId}'::uuid, ${gen}, '${wId}'::uuid);`);
 
       // Verify active superadmin user still exists in auth.users
       const superUser = await db.query(`select id, email from auth.users where id = '${superadminId}';`);
@@ -601,7 +647,13 @@ describe('Return-to-Zero Storage Service & State Machine Hardening (Section 10 M
 
     it('Requirement 19: Institutional configuration tables preserved intact', async () => {
       await db.exec(`set request.jwt.claim.role = 'service_role';`);
-      await db.query(`select api.return_to_zero_reset('${superadminId}'::uuid);`);
+      const lockRes = await db.query<{ acquire_system_reset_lock: any }>(
+        `select api.acquire_system_reset_lock('${superadminId}'::uuid);`
+      );
+      const { operation_id: opId, worker_generation: gen, worker_id: wId } = lockRes.rows[0].acquire_system_reset_lock;
+
+      await db.query(`select api.return_to_zero_reset('${superadminId}'::uuid, '${opId}'::uuid, ${gen}, '${wId}'::uuid);`);
+      await db.query(`select api.release_system_reset_lock('${superadminId}'::uuid, '${opId}'::uuid, ${gen}, '${wId}'::uuid);`);
 
       const settings = await db.query(`select count(*) as c from public.app_settings;`);
       expect(Number(settings.rows[0].c)).toBeGreaterThanOrEqual(1);
@@ -621,7 +673,13 @@ describe('Return-to-Zero Storage Service & State Machine Hardening (Section 10 M
       `);
 
       await db.exec(`set request.jwt.claim.role = 'service_role';`);
-      await db.query(`select api.return_to_zero_reset('${superadminId}'::uuid);`);
+      const lockRes = await db.query<{ acquire_system_reset_lock: any }>(
+        `select api.acquire_system_reset_lock('${superadminId}'::uuid);`
+      );
+      const { operation_id: opId, worker_generation: gen, worker_id: wId } = lockRes.rows[0].acquire_system_reset_lock;
+
+      await db.query(`select api.return_to_zero_reset('${superadminId}'::uuid, '${opId}'::uuid, ${gen}, '${wId}'::uuid);`);
+      await db.query(`select api.release_system_reset_lock('${superadminId}'::uuid, '${opId}'::uuid, ${gen}, '${wId}'::uuid);`);
 
       // Verify pre-existing audit record was NOT deleted
       const loginAudit = await db.query(`select action, outcome from public.audit_events where action = 'staff.login';`);
@@ -664,7 +722,15 @@ describe('Return-to-Zero Storage Service & State Machine Hardening (Section 10 M
       // Mock supabase client to track RPC calls
       const mockRpc = vi.fn().mockImplementation((name: string) => {
         if (name === 'acquire_system_reset_lock') {
-          return Promise.resolve({ data: { acquired: true, operation_id: 'op-fail-test-123' }, error: null });
+          return Promise.resolve({
+            data: {
+              acquired: true,
+              operation_id: 'a0000000-0000-4000-8000-000000000001',
+              worker_generation: 1,
+              worker_id: 'b0000000-0000-4000-8000-000000000002',
+            },
+            error: null,
+          });
         }
         if (name === 'record_system_reset_step' || name === 'release_system_reset_lock') {
           return Promise.resolve({ data: { success: true }, error: null });
@@ -848,10 +914,10 @@ describe('Return-to-Zero Storage Service & State Machine Hardening (Section 10 M
       await db.exec(`set request.jwt.claim.role = 'service_role';`);
 
       // 1. Initial lock
-      const lockRes = await db.query<{ acquire_system_reset_lock: { operation_id: string } }>(`
+      const lockRes = await db.query<{ acquire_system_reset_lock: { operation_id: string; worker_generation: number; worker_id: string } }>(`
         select api.acquire_system_reset_lock('${superadminId}'::uuid);
       `);
-      const opId = lockRes.rows[0].acquire_system_reset_lock.operation_id;
+      const { operation_id: opId, worker_generation: gen, worker_id: wId } = lockRes.rows[0].acquire_system_reset_lock;
 
       // 2. Mark operation recovery_required
       await db.query(`
@@ -861,7 +927,9 @@ describe('Return-to-Zero Storage Service & State Machine Hardening (Section 10 M
           'storage_purge_failed',
           '{"photos": ["failed.jpg"]}'::jsonb,
           '{"totalDiscovered": 1, "totalDeleted": 0}'::jsonb,
-          'S3 batch deletion timed out'
+          'S3 batch deletion timed out',
+          ${gen},
+          '${wId}'::uuid
         );
       `);
 
@@ -905,7 +973,15 @@ describe('Return-to-Zero Storage Service & State Machine Hardening (Section 10 M
 
       const mockRpc = vi.fn().mockImplementation((name: string, args: any) => {
         if (name === 'acquire_system_reset_lock') {
-          return Promise.resolve({ data: { acquired: true, operation_id: 'op-status-err-1' }, error: null });
+          return Promise.resolve({
+            data: {
+              acquired: true,
+              operation_id: 'a0000000-0000-4000-8000-000000000006',
+              worker_generation: 1,
+              worker_id: 'b0000000-0000-4000-8000-000000000006',
+            },
+            error: null,
+          });
         }
         if (name === 'record_system_reset_step') {
           if (args?.requested_status === 'storage_deletion_in_progress') {
@@ -952,7 +1028,15 @@ describe('Return-to-Zero Storage Service & State Machine Hardening (Section 10 M
       const recordedSteps: string[] = [];
       const mockRpc = vi.fn().mockImplementation((name: string, args: any) => {
         if (name === 'acquire_system_reset_lock') {
-          return Promise.resolve({ data: { acquired: true, operation_id: 'op-rel-fail-1' }, error: null });
+          return Promise.resolve({
+            data: {
+              acquired: true,
+              operation_id: 'a0000000-0000-4000-8000-000000000007',
+              worker_generation: 1,
+              worker_id: 'b0000000-0000-4000-8000-000000000007',
+            },
+            error: null,
+          });
         }
         if (name === 'record_system_reset_step') {
           recordedSteps.push(args?.requested_step);
@@ -984,10 +1068,10 @@ describe('Return-to-Zero Storage Service & State Machine Hardening (Section 10 M
       await db.exec(`set request.jwt.claim.role = 'service_role';`);
 
       // 1. Lock acquired
-      const lockRes = await db.query<{ acquire_system_reset_lock: { operation_id: string } }>(`
+      const lockRes = await db.query<{ acquire_system_reset_lock: { operation_id: string; worker_generation: number; worker_id: string } }>(`
         select api.acquire_system_reset_lock('${superadminId}'::uuid);
       `);
-      const opId = lockRes.rows[0].acquire_system_reset_lock.operation_id;
+      const { operation_id: opId, worker_generation: gen, worker_id: wId } = lockRes.rows[0].acquire_system_reset_lock;
 
       // 2. Storage verified step recorded
       await db.query(`
@@ -996,21 +1080,25 @@ describe('Return-to-Zero Storage Service & State Machine Hardening (Section 10 M
           'storage_deletion_verified',
           'storage_deletion_verified',
           '{"visitor-photos": {"files": []}, "visitor-ids": {"files": []}}'::jsonb,
-          '{"totalDiscovered": 5, "totalDeleted": 5}'::jsonb
+          '{"totalDiscovered": 5, "totalDeleted": 5}'::jsonb,
+          null,
+          ${gen},
+          '${wId}'::uuid
         );
       `);
 
-      // 3a. While worker is still active (fresh heartbeat), a concurrent resume request cannot obtain authority
+      // 3a. While worker is still active (fresh heartbeat and unexpired lease), a concurrent resume request cannot obtain authority
       const concurrentRes = await db.query<{ acquire_system_reset_lock: { acquired: boolean; reason: string } }>(`
         select api.acquire_system_reset_lock('${superadminId}'::uuid, '${opId}'::uuid);
       `);
       expect(concurrentRes.rows[0].acquire_system_reset_lock.acquired).toBe(false);
-      expect(concurrentRes.rows[0].acquire_system_reset_lock.reason).toBe('reset_already_in_progress');
+      expect(['previous_worker_lease_active', 'reset_already_in_progress']).toContain(concurrentRes.rows[0].acquire_system_reset_lock.reason);
 
-      // 3b. Process interruption / serverless timeout occurs here (worker heartbeat expires > 30s)
+      // 3b. Process interruption / serverless timeout occurs here (worker lease expires)
       await db.exec(`
         update public.maintenance_state
-        set heartbeat_at = now() - interval '35 seconds'
+        set lease_expires_at = now() - interval '5 seconds',
+            heartbeat_at = now() - interval '35 seconds'
         where job_name = 'system_reset';
       `);
 
@@ -1174,7 +1262,15 @@ describe('Return-to-Zero Storage Service & State Machine Hardening (Section 10 M
 
       const mockRpc = vi.fn().mockImplementation((name: string) => {
         if (name === 'acquire_system_reset_lock') {
-          return Promise.resolve({ data: { acquired: true, operation_id: 'op-partial-fail' }, error: null });
+          return Promise.resolve({
+            data: {
+              acquired: true,
+              operation_id: 'a0000000-0000-4000-8000-000000000013',
+              worker_generation: 1,
+              worker_id: 'b0000000-0000-4000-8000-000000000013',
+            },
+            error: null,
+          });
         }
         return Promise.resolve({ data: { success: true }, error: null });
       });
@@ -1654,7 +1750,15 @@ describe('Return-to-Zero Storage Service & State Machine Hardening (Section 10 M
       const recordedSteps: string[] = [];
       const mockRpc = vi.fn().mockImplementation((name: string, args: any) => {
         if (name === 'acquire_system_reset_lock') {
-          return Promise.resolve({ data: { acquired: true, operation_id: 'op-db-crash-1' }, error: null });
+          return Promise.resolve({
+            data: {
+              acquired: true,
+              operation_id: 'a0000000-0000-4000-8000-000000000021',
+              worker_generation: 1,
+              worker_id: 'b0000000-0000-4000-8000-000000000021',
+            },
+            error: null,
+          });
         }
         if (name === 'record_system_reset_step') {
           recordedSteps.push(args?.requested_step);
@@ -1676,7 +1780,7 @@ describe('Return-to-Zero Storage Service & State Machine Hardening (Section 10 M
       const body = await res.json();
       expect(body.error).toBe('database_reset_failed');
       expect(body.recoveryRequired).toBe(true);
-      expect(body.operationId).toBe('op-db-crash-1');
+      expect(body.operationId).toBe('a0000000-0000-4000-8000-000000000021');
       expect(recordedSteps).toContain('database_cleanup_failed');
     });
 
@@ -1765,15 +1869,16 @@ describe('Return-to-Zero Storage Service & State Machine Hardening (Section 10 M
       const lockRes = await db.query<{ acquire_system_reset_lock: any }>(
         `select api.acquire_system_reset_lock('${superadminId}'::uuid);`
       );
-      const opId = lockRes.rows[0].acquire_system_reset_lock.operation_id;
+      const { operation_id: opId, worker_generation: gen, worker_id: wId } = lockRes.rows[0].acquire_system_reset_lock;
 
       const lockedRes = await db.query<{ get_system_reset_status: any }>(`select api.get_system_reset_status();`);
       expect(lockedRes.rows[0].get_system_reset_status.isLocked).toBe(true);
       expect(lockedRes.rows[0].get_system_reset_status.status).toBe('locked');
       expect(lockedRes.rows[0].get_system_reset_status.activeOperation.id).toBe(opId);
 
-      // Clean up / release
-      await db.query(`select api.release_system_reset_lock('${superadminId}'::uuid, '${opId}'::uuid);`);
+      // Clean up / release (DB cleanup then release)
+      await db.query(`select api.return_to_zero_reset('${superadminId}'::uuid, '${opId}'::uuid, ${gen}, '${wId}'::uuid);`);
+      await db.query(`select api.release_system_reset_lock('${superadminId}'::uuid, '${opId}'::uuid, ${gen}, '${wId}'::uuid);`);
     });
 
     it('Case 25: Resuming an old completed or unrelated operation cannot replace a newer active operation', async () => {
@@ -1787,7 +1892,10 @@ describe('Return-to-Zero Storage Service & State Machine Hardening (Section 10 M
       const gen1 = lock1.rows[0].acquire_system_reset_lock.worker_generation;
       const w1 = lock1.rows[0].acquire_system_reset_lock.worker_id;
 
-      // Complete and release op1
+      // Complete DB cleanup and release op1
+      await db.query(`
+        select api.return_to_zero_reset('${superadminId}'::uuid, '${op1}'::uuid, ${gen1}, '${w1}'::uuid);
+      `);
       await db.query(`
         select api.release_system_reset_lock('${superadminId}'::uuid, '${op1}'::uuid, ${gen1}, '${w1}'::uuid);
       `);
@@ -1816,7 +1924,10 @@ describe('Return-to-Zero Storage Service & State Machine Hardening (Section 10 M
       expect(resumeFake.rows[0].acquire_system_reset_lock.acquired).toBe(false);
       expect(resumeFake.rows[0].acquire_system_reset_lock.reason).toBe('operation_not_found');
 
-      // Clean up op2
+      // Clean up op2 (DB cleanup then release)
+      await db.query(`
+        select api.return_to_zero_reset('${superadminId}'::uuid, '${op2}'::uuid, ${gen2}, '${w2}'::uuid);
+      `);
       await db.query(`
         select api.release_system_reset_lock('${superadminId}'::uuid, '${op2}'::uuid, ${gen2}, '${w2}'::uuid);
       `);
@@ -1833,10 +1944,11 @@ describe('Return-to-Zero Storage Service & State Machine Hardening (Section 10 M
       const gen1 = lock1.rows[0].acquire_system_reset_lock.worker_generation;
       const w1 = lock1.rows[0].acquire_system_reset_lock.worker_id;
 
-      // 2. Worker 1 times out (simulate lease expiration)
+      // 2. Worker 1 times out (simulate lease expiration via lease_expires_at)
       await db.exec(`
         update public.maintenance_state
-        set heartbeat_at = now() - interval '40 seconds'
+        set lease_expires_at = now() - interval '5 seconds',
+            heartbeat_at = now() - interval '40 seconds'
         where job_name = 'system_reset';
       `);
 
@@ -1881,12 +1993,15 @@ describe('Return-to-Zero Storage Service & State Machine Hardening (Section 10 M
         `)
       ).rejects.toThrow(/fencing_token_revoked/);
 
-      // 8. Active Worker 2 can successfully assert ownership and release
+      // 8. Active Worker 2 can successfully assert ownership, cleanup DB, and release
       const assertRes = await db.query<{ assert_system_reset_worker_active: boolean }>(
         `select api.assert_system_reset_worker_active('${opId}'::uuid, ${gen2}, '${w2}'::uuid);`
       );
       expect(assertRes.rows[0].assert_system_reset_worker_active).toBe(true);
 
+      await db.query(`
+        select api.return_to_zero_reset('${superadminId}'::uuid, '${opId}'::uuid, ${gen2}, '${w2}'::uuid);
+      `);
       await db.query(`
         select api.release_system_reset_lock('${superadminId}'::uuid, '${opId}'::uuid, ${gen2}, '${w2}'::uuid);
       `);
@@ -1973,7 +2088,10 @@ describe('Return-to-Zero Storage Service & State Machine Hardening (Section 10 M
         `)
       ).rejects.toThrow(/system_reset_in_progress/);
 
-      // Release lock
+      // DB cleanup and release lock
+      await db.query(`
+        select api.return_to_zero_reset('${superadminId}'::uuid, '${opId}'::uuid, ${gen}, '${wId}'::uuid);
+      `);
       await db.query(`
         select api.release_system_reset_lock('${superadminId}'::uuid, '${opId}'::uuid, ${gen}, '${wId}'::uuid);
       `);
@@ -1999,10 +2117,11 @@ describe('Return-to-Zero Storage Service & State Machine Hardening (Section 10 M
       );
       const opId = lockRes.rows[0].acquire_system_reset_lock.operation_id;
 
-      // 2. Simulate worker crash / lease timeout
+      // 2. Simulate worker crash / lease timeout (lease_expires_at expired)
       await db.exec(`
         update public.maintenance_state
-        set heartbeat_at = now() - interval '45 seconds'
+        set lease_expires_at = now() - interval '5 seconds',
+            heartbeat_at = now() - interval '45 seconds'
         where job_name = 'system_reset';
       `);
 
@@ -2028,7 +2147,10 @@ describe('Return-to-Zero Storage Service & State Machine Hardening (Section 10 M
       expect(rejected.reason).toBe('reset_already_in_progress');
 
       const winner = r1.acquired ? r1 : r2;
-      // Clean up winner
+      // Clean up winner (cleanup DB then release lock)
+      await db.query(`
+        select api.return_to_zero_reset('${superadminId}'::uuid, '${opId}'::uuid, ${winner.worker_generation}, '${winner.worker_id}'::uuid);
+      `);
       await db.query(`
         select api.release_system_reset_lock('${superadminId}'::uuid, '${opId}'::uuid, ${winner.worker_generation}, '${winner.worker_id}'::uuid);
       `);
@@ -2073,7 +2195,10 @@ describe('Return-to-Zero Storage Service & State Machine Hardening (Section 10 M
       expect(rejected.reason).toBe('reset_already_in_progress');
 
       const winner = r1.acquired ? r1 : r2;
-      // Clean up winner
+      // Clean up winner (cleanup DB then release lock)
+      await db.query(`
+        select api.return_to_zero_reset('${superadminId}'::uuid, '${opId}'::uuid, ${winner.worker_generation}, '${winner.worker_id}'::uuid);
+      `);
       await db.query(`
         select api.release_system_reset_lock('${superadminId}'::uuid, '${opId}'::uuid, ${winner.worker_generation}, '${winner.worker_id}'::uuid);
       `);
@@ -2121,7 +2246,35 @@ describe('Return-to-Zero Storage Service & State Machine Hardening (Section 10 M
         db.query(`select api.return_to_zero_reset('${superadminId}'::uuid, '${opId}'::uuid, null, null);`)
       ).rejects.toThrow(/fencing_token_revoked/);
 
-      // Clean up lock
+      // 4. Attempt return_to_zero_reset with valid opId and generation but null worker ID -> rejected
+      await expect(
+        db.query(`select api.return_to_zero_reset('${superadminId}'::uuid, '${opId}'::uuid, ${gen}, null);`)
+      ).rejects.toThrow(/fencing_token_revoked/);
+
+      // 5. Attempt record_system_reset_step with status = 'completed' -> rejected
+      await expect(
+        db.query(`
+          select api.record_system_reset_step(
+            '${opId}'::uuid, 'completed', 'completed',
+            '{}'::jsonb, '{}'::jsonb, null, ${gen}, '${wId}'::uuid
+          );
+        `)
+      ).rejects.toThrow(/invalid_(state|step)_transition/);
+
+      // 6. Attempt release_system_reset_lock with null generation -> rejected
+      await expect(
+        db.query(`select api.release_system_reset_lock('${superadminId}'::uuid, '${opId}'::uuid, null, '${wId}'::uuid);`)
+      ).rejects.toThrow(/fencing_token_revoked/);
+
+      // 7. Attempt release_system_reset_lock with null worker ID -> rejected
+      await expect(
+        db.query(`select api.release_system_reset_lock('${superadminId}'::uuid, '${opId}'::uuid, ${gen}, null);`)
+      ).rejects.toThrow(/fencing_token_revoked/);
+
+      // Clean up lock (cleanup DB then release lock)
+      await db.query(`
+        select api.return_to_zero_reset('${superadminId}'::uuid, '${opId}'::uuid, ${gen}, '${wId}'::uuid);
+      `);
       await db.query(`
         select api.release_system_reset_lock('${superadminId}'::uuid, '${opId}'::uuid, ${gen}, '${wId}'::uuid);
       `);

@@ -2309,6 +2309,7 @@ runSuite('True PostgreSQL Concurrency, Canonical Approval Integrity & Email Reco
         if (opId && workerGen && workerId) {
           try {
             await clientB.query(`
+              select api.return_to_zero_reset($1::uuid, $2::uuid, $3, $4::uuid);
               select api.release_system_reset_lock($1::uuid, $2::uuid, $3, $4::uuid);
             `, [superadminId, opId, workerGen, workerId]);
           } catch {}
@@ -2397,6 +2398,7 @@ runSuite('True PostgreSQL Concurrency, Canonical Approval Integrity & Email Reco
         if (opId && workerGen && workerId) {
           try {
             await clientB.query(`
+              select api.return_to_zero_reset($1::uuid, $2::uuid, $3, $4::uuid);
               select api.release_system_reset_lock($1::uuid, $2::uuid, $3, $4::uuid);
             `, [superadminId, opId, workerGen, workerId]);
           } catch {}
@@ -2404,6 +2406,227 @@ runSuite('True PostgreSQL Concurrency, Canonical Approval Integrity & Email Reco
         clientA.release();
         clientB.release();
         clientC.release();
+      }
+    });
+
+    it('3. Section F Adversarial Cases 1-3: Standalone reset without op ID, gen, or worker ID is rejected and deletes nothing', async () => {
+      const clientA = await pool.connect();
+      const clientB = await pool.connect();
+      try {
+        await clientA.query(`set request.jwt.claim.role = 'service_role';`);
+        await clientB.query(`set request.jwt.claim.role = 'service_role';`);
+
+        // Ensure idle
+        await clientA.query(`
+          update public.maintenance_state
+          set cursor_value = 'idle', active_operation_id = null
+          where job_name = 'system_reset';
+        `);
+
+        // Case 1: Standalone call without op ID is rejected while idle
+        await expect(
+          clientA.query(`select api.return_to_zero_reset($1::uuid, null, null, null);`, [superadminId])
+        ).rejects.toThrow(/fencing_token_revoked/);
+
+        // Prove zero deletion occurred
+        const visCheck = await clientA.query(`select count(*) as c from public.visitors where id = $1;`, [testVisitorId]);
+        expect(Number(visCheck.rows[0].c)).toBeGreaterThanOrEqual(1);
+
+        // Acquire lock
+        const lockRes = await clientA.query(`select api.acquire_system_reset_lock($1::uuid) as r;`, [superadminId]);
+        const { operation_id: opId, worker_generation: gen, worker_id: workerId } = lockRes.rows[0].r;
+
+        // Case 2: Calling with op ID but no generation is rejected
+        await expect(
+          clientB.query(`select api.return_to_zero_reset($1::uuid, $2::uuid, null, null);`, [superadminId, opId])
+        ).rejects.toThrow(/fencing_token_revoked/);
+
+        // Case 3: Calling with op ID and generation but no worker ID is rejected
+        await expect(
+          clientB.query(`select api.return_to_zero_reset($1::uuid, $2::uuid, $3, null);`, [superadminId, opId, gen])
+        ).rejects.toThrow(/fencing_token_revoked/);
+
+        // Clean up
+        await clientA.query(`select api.return_to_zero_reset($1::uuid, $2::uuid, $3, $4::uuid);`, [superadminId, opId, gen, workerId]);
+        await clientA.query(`select api.release_system_reset_lock($1::uuid, $2::uuid, $3, $4::uuid);`, [superadminId, opId, gen, workerId]);
+      } finally {
+        clientA.release();
+        clientB.release();
+      }
+    });
+
+    it('4. Section F Adversarial Cases 4-7: Expired lease renewal rejected, racing recovery advances generation, stale assertion & steps blocked', async () => {
+      const clientA = await pool.connect();
+      const clientB = await pool.connect();
+      try {
+        await clientA.query(`set request.jwt.claim.role = 'service_role';`);
+        await clientB.query(`set request.jwt.claim.role = 'service_role';`);
+
+        // Worker 1 acquires lock
+        const lock1 = await clientA.query(`select api.acquire_system_reset_lock($1::uuid) as r;`, [superadminId]);
+        const { operation_id: opId, worker_generation: gen1, worker_id: w1 } = lock1.rows[0].r;
+
+        // Expire lease
+        await clientB.query(`
+          update public.maintenance_state
+          set lease_expires_at = clock_timestamp() - interval '5 seconds'
+          where job_name = 'system_reset';
+        `);
+
+        // Case 4: Expired worker cannot renew its lease after expiry
+        await expect(
+          clientA.query(`select api.assert_system_reset_worker_active($1::uuid, $2, $3::uuid);`, [opId, gen1, w1])
+        ).rejects.toThrow(/fencing_token_revoked/);
+
+        // Concurrently race recovery acquisition with stale assertion
+        const resumePromise = clientB.query(`select api.acquire_system_reset_lock($1::uuid, $2::uuid) as r;`, [superadminId, opId]);
+        const resumeRes = await resumePromise;
+        expect(resumeRes.rows[0].r.acquired).toBe(true);
+        const gen2 = resumeRes.rows[0].r.worker_generation;
+        const w2 = resumeRes.rows[0].r.worker_id;
+        expect(gen2).toBeGreaterThan(gen1);
+        expect(w2).not.toBe(w1);
+
+        // Case 5 & 6: Stale Worker 1 assertion cannot succeed or alter Worker 2 heartbeat/lease
+        const maintBefore = await clientB.query(`select lease_expires_at, heartbeat_at from public.maintenance_state where job_name = 'system_reset';`);
+        await expect(
+          clientA.query(`select api.assert_system_reset_worker_active($1::uuid, $2, $3::uuid);`, [opId, gen1, w1])
+        ).rejects.toThrow(/fencing_token_revoked/);
+
+        const maintAfter = await clientB.query(`select lease_expires_at, heartbeat_at from public.maintenance_state where job_name = 'system_reset';`);
+        expect(maintAfter.rows[0].lease_expires_at).toEqual(maintBefore.rows[0].lease_expires_at);
+        expect(maintAfter.rows[0].heartbeat_at).toEqual(maintBefore.rows[0].heartbeat_at);
+
+        // Case 7: Stale record_system_reset_step cannot modify active operation
+        await expect(
+          clientA.query(`
+            select api.record_system_reset_step(
+              $1::uuid, 'storage_deletion_in_progress', 'storage_deletion_in_progress',
+              '{}'::jsonb, '{}'::jsonb, null, $2, $3::uuid
+            );
+          `, [opId, gen1, w1])
+        ).rejects.toThrow(/fencing_token_revoked/);
+
+        // Clean up with valid Worker 2
+        await clientB.query(`select api.return_to_zero_reset($1::uuid, $2::uuid, $3, $4::uuid);`, [superadminId, opId, gen2, w2]);
+        await clientB.query(`select api.release_system_reset_lock($1::uuid, $2::uuid, $3, $4::uuid);`, [superadminId, opId, gen2, w2]);
+      } finally {
+        clientA.release();
+        clientB.release();
+      }
+    });
+
+    it('5. Section F Adversarial Cases 8-11: Step recording cannot complete, release requires full tokens, stale release rejected', async () => {
+      const clientA = await pool.connect();
+      const clientB = await pool.connect();
+      try {
+        await clientA.query(`set request.jwt.claim.role = 'service_role';`);
+        await clientB.query(`set request.jwt.claim.role = 'service_role';`);
+
+        // Worker 1 acquires lock
+        const lock1 = await clientA.query(`select api.acquire_system_reset_lock($1::uuid) as r;`, [superadminId]);
+        const { operation_id: opId, worker_generation: gen1, worker_id: w1 } = lock1.rows[0].r;
+
+        // Case 8: record_system_reset_step cannot transition to 'completed'
+        await expect(
+          clientA.query(`
+            select api.record_system_reset_step(
+              $1::uuid, 'completed', 'completed',
+              '{}'::jsonb, '{}'::jsonb, null, $2, $3::uuid
+            );
+          `, [opId, gen1, w1])
+        ).rejects.toThrow(/invalid_step_transition/);
+
+        // Advance to Worker 2
+        await clientB.query(`
+          update public.maintenance_state
+          set lease_expires_at = clock_timestamp() - interval '5 seconds'
+          where job_name = 'system_reset';
+        `);
+        const lock2 = await clientB.query(`select api.acquire_system_reset_lock($1::uuid, $2::uuid) as r;`, [superadminId, opId]);
+        const { worker_generation: gen2, worker_id: w2 } = lock2.rows[0].r;
+
+        // Case 9: Release without generation is rejected
+        await expect(
+          clientB.query(`select api.release_system_reset_lock($1::uuid, $2::uuid, null, $3::uuid);`, [superadminId, opId, w2])
+        ).rejects.toThrow(/fencing_token_revoked/);
+
+        // Case 10: Release without worker ID is rejected
+        await expect(
+          clientB.query(`select api.release_system_reset_lock($1::uuid, $2::uuid, $3, null);`, [superadminId, opId, gen2])
+        ).rejects.toThrow(/fencing_token_revoked/);
+
+        // Case 11: Stale Worker 1 cannot release lock even for same operation ID
+        await expect(
+          clientA.query(`select api.release_system_reset_lock($1::uuid, $2::uuid, $3, $4::uuid);`, [superadminId, opId, gen1, w1])
+        ).rejects.toThrow(/fencing_token_revoked/);
+
+        // Clean up with valid Worker 2
+        await clientB.query(`select api.return_to_zero_reset($1::uuid, $2::uuid, $3, $4::uuid);`, [superadminId, opId, gen2, w2]);
+        await clientB.query(`select api.release_system_reset_lock($1::uuid, $2::uuid, $3, $4::uuid);`, [superadminId, opId, gen2, w2]);
+      } finally {
+        clientA.release();
+        clientB.release();
+      }
+    });
+
+    it('6. Section F Adversarial Cases 12-14: Full lifecycle, recovery manifest durability, and direct DB reset cannot self-complete', async () => {
+      const clientA = await pool.connect();
+      const clientB = await pool.connect();
+      try {
+        await clientA.query(`set request.jwt.claim.role = 'service_role';`);
+        await clientB.query(`set request.jwt.claim.role = 'service_role';`);
+
+        // Case 13: Acquire lock, record manifest, simulate recovery
+        const lock1 = await clientA.query(`select api.acquire_system_reset_lock($1::uuid) as r;`, [superadminId]);
+        const { operation_id: opId, worker_generation: gen1, worker_id: w1 } = lock1.rows[0].r;
+
+        const manifest = { "visitor-photos": ["img1.jpg", "img2.jpg"] };
+        await clientA.query(`
+          select api.record_system_reset_step(
+            $1::uuid, 'recovery_required', 'storage_purge_failed',
+            $2::jsonb, '{"totalDiscovered": 2, "totalDeleted": 0}'::jsonb,
+            'Simulated Storage timeout', $3, $4::uuid
+          );
+        `, [opId, JSON.stringify(manifest), gen1, w1]);
+
+        // Worker 2 resumes
+        await clientB.query(`
+          update public.maintenance_state
+          set lease_expires_at = clock_timestamp() - interval '5 seconds'
+          where job_name = 'system_reset';
+        `);
+        const lock2 = await clientB.query(`select api.acquire_system_reset_lock($1::uuid, $2::uuid) as r;`, [superadminId, opId]);
+        expect(lock2.rows[0].r.acquired).toBe(true);
+        expect(lock2.rows[0].r.storage_manifest).toEqual(manifest);
+        const { worker_generation: gen2, worker_id: w2 } = lock2.rows[0].r;
+
+        // Case 14: Direct return_to_zero_reset only sets database_cleanup_completed, never reports completion or releases lock
+        const resetRes = await clientB.query(`select api.return_to_zero_reset($1::uuid, $2::uuid, $3, $4::uuid) as r;`, [superadminId, opId, gen2, w2]);
+        expect(resetRes.rows[0].r.success).toBe(true);
+
+        const opState = await clientB.query(`select status, step from public.system_reset_operations where id = $1;`, [opId]);
+        expect(opState.rows[0].status).toBe('database_cleanup_completed');
+        expect(opState.rows[0].step).toBe('database_cleanup_completed');
+
+        const maintState = await clientB.query(`select cursor_value, active_operation_id from public.maintenance_state where job_name = 'system_reset';`);
+        expect(maintState.rows[0].cursor_value).toBe('locked');
+        expect(maintState.rows[0].active_operation_id).toBe(opId);
+
+        // Case 12: Final release completes the operation and sets idle
+        await clientB.query(`select api.release_system_reset_lock($1::uuid, $2::uuid, $3, $4::uuid);`, [superadminId, opId, gen2, w2]);
+
+        const finalOp = await clientB.query(`select status, step, completed_at from public.system_reset_operations where id = $1;`, [opId]);
+        expect(finalOp.rows[0].status).toBe('completed');
+        expect(finalOp.rows[0].step).toBe('completed');
+        expect(finalOp.rows[0].completed_at).not.toBeNull();
+
+        const finalMaint = await clientB.query(`select cursor_value, active_operation_id from public.maintenance_state where job_name = 'system_reset';`);
+        expect(finalMaint.rows[0].cursor_value).toBe('idle');
+        expect(finalMaint.rows[0].active_operation_id).toBeNull();
+      } finally {
+        clientA.release();
+        clientB.release();
       }
     });
   });
