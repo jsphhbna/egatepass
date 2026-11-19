@@ -276,7 +276,12 @@ describe('Returning Visitor 1:1 Profile Discovery & Masking Contract (lookup-ret
     expect(json.candidates).toHaveLength(1);
 
     const candidate = json.candidates[0];
-    expect(candidate.profileId).toBe('55555555-5555-4555-8555-555555555555');
+    // Raw profileId, gender, and totalMatches are strictly omitted from discovery responses
+    expect(candidate.profileId).toBeUndefined();
+    expect(candidate.gender).toBeUndefined();
+    expect(json.totalMatches).toBeUndefined();
+    expect(candidate.candidateToken).toBeDefined();
+    expect(candidate.candidateToken.includes('55555555-5555-4555-8555-555555555555')).toBe(false);
     // Name is masked
     expect(candidate.maskedName).toBe('Juan D. C***');
     // Contact is masked
@@ -572,6 +577,9 @@ describe('Returning Visitor 1:1 Profile Discovery & Masking Contract (lookup-ret
     const json = await res.json();
     expect(json.found).toBe(true);
     expect(json.candidates.length).toBe(1);
-    expect(json.candidates[0].profileId).toBe('a1111111-1111-4111-8111-111111111111');
+    expect(json.candidates[0].profileId).toBeUndefined();
+    expect(json.candidates[0].gender).toBeUndefined();
+    expect(json.candidates[0].candidateToken).toBeDefined();
+    expect(json.candidates[0].candidateToken.includes('a1111111-1111-4111-8111-111111111111')).toBe(false);
   });
 });

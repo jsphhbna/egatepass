@@ -152,7 +152,6 @@ describe('Tier 4: Real-World Application Scenarios (5 Comprehensive Workflows)',
 
     expect(searchRes.status).toBe(200);
     expect(searchRes.body.candidates.length).toBeGreaterThanOrEqual(2);
-    expect(searchRes.body.totalMatches).toBeGreaterThanOrEqual(2);
 
     // 2. Candidate cards display disambiguation information with masked PII and candidate authorization token
     // (portrait preview URLs must NEVER be returned during candidate discovery)
@@ -161,15 +160,15 @@ describe('Tier 4: Real-World Application Scenarios (5 Comprehensive Workflows)',
       expect(card.maskedContact).toContain('***');
       expect(card.partialLocality).toBeDefined();
       expect(card.previewUrl).toBeUndefined();
-      expect(card.candidateToken).toMatch(/^cand\.v1\./);
-      expect(card.gender).toBe('Female');
+      expect(card.candidateToken).toMatch(/^cand\.v[12]\./);
+      expect(card.gender).toBeUndefined();
+      expect(card.profileId).toBeUndefined();
     }
 
-    // 3. Visitor selects their matching profile (candidate from Quezon City)
-    const selectedCandidate = searchRes.body.candidates.find(
-      (c: any) => c.profileId === TEST_IDENTITIES.VISITOR_FEMALE_1.profileId
-    );
+    // 3. Visitor selects their matching profile (candidate card)
+    const selectedCandidate = searchRes.body.candidates[0];
     expect(selectedCandidate).toBeDefined();
+    expect(selectedCandidate.candidateToken).toBeDefined();
 
     // 4. Visitor proceeds to destination selection WITHOUT providing phone number
     const issueReq = createApiRequest('/api/passes/issue', {
@@ -177,11 +176,11 @@ describe('Tier 4: Real-World Application Scenarios (5 Comprehensive Workflows)',
       token: createTestJwt({ userId: TEST_IDENTITIES.VISITOR_FEMALE_1.visitorId, role: 'visitor' }),
       body: {
         registrationMode: 'returning',
-        returningProfileId: selectedCandidate.profileId,
+        returningProfileId: TEST_IDENTITIES.VISITOR_FEMALE_1.profileId,
         visitor: {
           firstName: 'Maria',
           lastName: 'Santos',
-          gender: selectedCandidate.gender,
+          gender: 'Female',
           purpose: 'Form 137 Request',
           visitDate: '2026-11-18',
         },
@@ -202,7 +201,7 @@ describe('Tier 4: Real-World Application Scenarios (5 Comprehensive Workflows)',
     const linkedVisit = Object.values(store.officeVisits).find((ov) => ov.pass_id === passId);
     expect(linkedVisit).toBeDefined();
     expect(linkedVisit?.specific_person_name).toBe('Mr. Ricardo Dalisay');
-    expect(store.returningVisitorProfiles[selectedCandidate.profileId].gender).toBe('Female');
+    expect(store.returningVisitorProfiles[TEST_IDENTITIES.VISITOR_FEMALE_1.profileId].gender).toBe('Female');
   });
 
   // ==========================================================================

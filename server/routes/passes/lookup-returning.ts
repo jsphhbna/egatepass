@@ -281,16 +281,14 @@ async function handleRequest(request: Request): Promise<Response> {
         m.psgc_city_municipality_name || m.psgc_province_name,
       ].filter(Boolean);
 
-      // Create v1 candidate authorization token bound strictly to profileId, actorId, and 300s TTL.
-      // Candidate discovery MUST NEVER emit portrait URLs or preview tokens prior to successful biometric match.
+      // Create opaque candidate authorization token bound strictly to profileId, actorId, and 300s TTL.
+      // Candidate discovery MUST NEVER emit raw profileId, gender, portrait URLs or preview tokens prior to successful biometric match.
       const candidateToken = createCandidateToken(m.id, actorId, tokenSecret, 300);
 
       return {
         candidateToken,
-        profileId: m.id,
         maskedName: maskName(m.first_name, m.middle_name, m.last_name),
         maskedContact: maskContact(m.contact_number_e164),
-        gender: (m as any).gender ?? null,
         partialLocality: localityParts.length > 0 ? localityParts.join(', ') : 'Philippines',
       };
     });
@@ -298,7 +296,6 @@ async function handleRequest(request: Request): Promise<Response> {
     return jsonResponse(200, {
       found: candidates.length > 0,
       count: candidates.length,
-      totalMatches: eligibleProfiles.length,
       candidates,
       portraitExpired: candidates.length === 0 && hasExpiredPortraitCandidates,
       message: candidates.length === 0 && hasExpiredPortraitCandidates

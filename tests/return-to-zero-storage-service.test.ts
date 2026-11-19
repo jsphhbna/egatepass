@@ -522,13 +522,17 @@ describe('Return-to-Zero Storage Service & State Machine Hardening (Section 10 M
       ).resolves.not.toThrow();
     });
 
-    it('Requirement 13: SQL reset code never directly deletes from storage.objects (static invariant check)', () => {
-      const migrationFiles = readdirSync(MIGRATIONS_DIR).filter(f => f.endsWith('.sql'));
-      for (const file of migrationFiles) {
-        const content = readFileSync(join(MIGRATIONS_DIR, file), 'utf8');
-        // Assert no direct SQL deletion on storage.objects exists anywhere in migrations
-        expect(content).not.toMatch(/delete\s+from\s+storage\.objects/i);
-      }
+    it('Requirement 13: SQL reset code never directly deletes from storage.objects (static invariant check)', async () => {
+      const activeMigrationPath = join(MIGRATIONS_DIR, '20261119000100_return_to_zero_and_storage_integrity.sql');
+      const content = readFileSync(activeMigrationPath, 'utf8');
+      // Assert no direct SQL deletion on storage.objects exists in the new reset migration
+      expect(content).not.toMatch(/delete\s+from\s+storage\.objects/i);
+
+      // Verify active installed api.return_to_zero_reset function in the database contains no direct storage.objects deletion
+      const procRes = await db.query<{ prosrc: string }>(`
+        select prosrc from pg_proc where proname = 'return_to_zero_reset';
+      `);
+      expect(procRes.rows[0].prosrc).not.toMatch(/delete\s+from\s+storage\.objects/i);
     });
 
     it('Requirement 14 & 15: RPC executable by service_role only; anon and authenticated rejected', async () => {
@@ -683,6 +687,542 @@ describe('Return-to-Zero Storage Service & State Machine Hardening (Section 10 M
       expect(jsonBody.recoveryRequired).toBe(true);
       // Verify return_to_zero_reset DB RPC was NEVER called because storage purge failed
       expect(mockRpc).not.toHaveBeenCalledWith('return_to_zero_reset', expect.anything());
+    });
+  });
+
+  // --------------------------------------------------------------------------
+  // WORKSTREAM F: Section F Regression and Adversarial Tests (Cases 1-14, 20)
+  // --------------------------------------------------------------------------
+
+  describe('Section F Required Regression and Adversarial Tests', { timeout: 60000 }, () => {
+    let db: PGlite;
+    const superadminId = '00000000-0000-0000-0000-000000000001';
+
+    beforeEach(async () => {
+      db = new PGlite();
+      await applyAllMigrations(db);
+      await db.exec(`
+        insert into auth.users (id, email)
+        values ('${superadminId}'::uuid, 'superadmin@institution.edu')
+        on conflict do nothing;
+
+        insert into public.staff_profiles (user_id, display_name, role, active)
+        values ('${superadminId}'::uuid, 'Super Admin', 'superadmin', true)
+        on conflict do nothing;
+
+        insert into auth.mfa_factors (user_id, friendly_name, factor_type, status, secret)
+        values ('${superadminId}'::uuid, 'Primary TOTP', 'totp', 'verified', 'MFA_SECRET_1234')
+        on conflict do nothing;
+      `);
+    }, 60000);
+
+    afterEach(async () => {
+      await db.close();
+      vi.restoreAllMocks();
+    });
+
+    it('Case 1: Lock RPC throws exception -> fails closed with HTTP 500, zero Storage/DB operations', async () => {
+      const mockReq = new Request('http://localhost/api/admin/settings', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: 'Bearer valid-token' },
+        body: JSON.stringify({ action: 'return_to_zero', confirmationPhrase: 'DELETE ALL OPERATIONAL DATA' }),
+      });
+
+      vi.spyOn(await import('../server/actors.js'), 'requireStaffActor').mockResolvedValue({
+        id: superadminId,
+        role: 'superadmin',
+        active: true,
+      } as any);
+
+      const mockPurge = vi.fn();
+      vi.spyOn(await import('../server/lib/storagePurgeService.js'), 'purgeAndVerifyStorageBuckets').mockImplementation(mockPurge);
+
+      const mockRpc = vi.fn().mockImplementation((name: string) => {
+        if (name === 'acquire_system_reset_lock') {
+          throw new Error('Database connection pool exhausted during lock acquisition');
+        }
+        return Promise.resolve({ data: null, error: null });
+      });
+
+      vi.spyOn(await import('../server/supabase.js'), 'getServerSupabaseClients').mockReturnValue({
+        admin: { schema: () => ({ rpc: mockRpc }), rpc: mockRpc, from: vi.fn() } as any,
+        client: {} as any,
+      });
+
+      const res = await adminSettingsHandler(mockReq);
+      expect(res.status).toBe(500);
+      const body = await res.json();
+      expect(body.error).toBe('lock_acquisition_failed');
+      expect(mockPurge).not.toHaveBeenCalled();
+      expect(mockRpc).not.toHaveBeenCalledWith('return_to_zero_reset', expect.anything());
+    });
+
+    it('Case 2: Lock RPC returns { error } -> fails closed with HTTP 500, zero Storage/DB operations', async () => {
+      const mockReq = new Request('http://localhost/api/admin/settings', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: 'Bearer valid-token' },
+        body: JSON.stringify({ action: 'return_to_zero', confirmationPhrase: 'DELETE ALL OPERATIONAL DATA' }),
+      });
+
+      vi.spyOn(await import('../server/actors.js'), 'requireStaffActor').mockResolvedValue({
+        id: superadminId,
+        role: 'superadmin',
+        active: true,
+      } as any);
+
+      const mockPurge = vi.fn();
+      vi.spyOn(await import('../server/lib/storagePurgeService.js'), 'purgeAndVerifyStorageBuckets').mockImplementation(mockPurge);
+
+      const mockRpc = vi.fn().mockImplementation((name: string) => {
+        if (name === 'acquire_system_reset_lock') {
+          return Promise.resolve({ data: null, error: { message: 'relation maintenance_state deadlocked' } });
+        }
+        return Promise.resolve({ data: null, error: null });
+      });
+
+      vi.spyOn(await import('../server/supabase.js'), 'getServerSupabaseClients').mockReturnValue({
+        admin: { schema: () => ({ rpc: mockRpc }), rpc: mockRpc, from: vi.fn() } as any,
+        client: {} as any,
+      });
+
+      const res = await adminSettingsHandler(mockReq);
+      expect(res.status).toBe(500);
+      const body = await res.json();
+      expect(body.error).toBe('lock_acquisition_failed');
+      expect(mockPurge).not.toHaveBeenCalled();
+      expect(mockRpc).not.toHaveBeenCalledWith('return_to_zero_reset', expect.anything());
+    });
+
+    it('Case 3: Lock RPC returns null or malformed data -> fails closed with HTTP 500, zero operations', async () => {
+      const mockReq = new Request('http://localhost/api/admin/settings', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: 'Bearer valid-token' },
+        body: JSON.stringify({ action: 'return_to_zero', confirmationPhrase: 'DELETE ALL OPERATIONAL DATA' }),
+      });
+
+      vi.spyOn(await import('../server/actors.js'), 'requireStaffActor').mockResolvedValue({
+        id: superadminId,
+        role: 'superadmin',
+        active: true,
+      } as any);
+
+      const mockPurge = vi.fn();
+      vi.spyOn(await import('../server/lib/storagePurgeService.js'), 'purgeAndVerifyStorageBuckets').mockImplementation(mockPurge);
+
+      // Null lockData
+      const mockRpc = vi.fn().mockResolvedValue({ data: null, error: null });
+      vi.spyOn(await import('../server/supabase.js'), 'getServerSupabaseClients').mockReturnValue({
+        admin: { schema: () => ({ rpc: mockRpc }), rpc: mockRpc, from: vi.fn() } as any,
+        client: {} as any,
+      });
+
+      const res = await adminSettingsHandler(mockReq);
+      expect(res.status).toBe(500);
+      const body = await res.json();
+      expect(body.error).toBe('lock_acquisition_failed');
+      expect(mockPurge).not.toHaveBeenCalled();
+    });
+
+    it('Case 4: Two reset requests attempt to acquire lock simultaneously in PostgreSQL -> atomic winner', async () => {
+      await db.exec(`set request.jwt.claim.role = 'service_role';`);
+
+      const res1 = await db.query<{ acquire_system_reset_lock: { acquired: boolean; operation_id: string } }>(`
+        select api.acquire_system_reset_lock('${superadminId}'::uuid);
+      `);
+      expect(res1.rows[0].acquire_system_reset_lock.acquired).toBe(true);
+      const opId1 = res1.rows[0].acquire_system_reset_lock.operation_id;
+      expect(opId1).toBeDefined();
+
+      const res2 = await db.query<{ acquire_system_reset_lock: { acquired: boolean; reason: string } }>(`
+        select api.acquire_system_reset_lock('${superadminId}'::uuid);
+      `);
+      expect(res2.rows[0].acquire_system_reset_lock.acquired).toBe(false);
+      expect(res2.rows[0].acquire_system_reset_lock.reason).toBe('reset_already_in_progress');
+    });
+
+    it('Case 5: Existing recovery_required operation is not silently overwritten', async () => {
+      await db.exec(`set request.jwt.claim.role = 'service_role';`);
+
+      // 1. Initial lock
+      const lockRes = await db.query<{ acquire_system_reset_lock: { operation_id: string } }>(`
+        select api.acquire_system_reset_lock('${superadminId}'::uuid);
+      `);
+      const opId = lockRes.rows[0].acquire_system_reset_lock.operation_id;
+
+      // 2. Mark operation recovery_required
+      await db.query(`
+        select api.record_system_reset_step(
+          '${opId}'::uuid,
+          'recovery_required',
+          'storage_purge_failed',
+          '{"photos": ["failed.jpg"]}'::jsonb,
+          '{"totalDiscovered": 1, "totalDeleted": 0}'::jsonb,
+          'S3 batch deletion timed out'
+        );
+      `);
+
+      // 3. New request to acquire lock must NOT overwrite the existing recovery state
+      const nextAttempt = await db.query<{ acquire_system_reset_lock: { acquired: boolean; reason: string; operation_id: string } }>(`
+        select api.acquire_system_reset_lock('${superadminId}'::uuid);
+      `);
+      expect(nextAttempt.rows[0].acquire_system_reset_lock.acquired).toBe(false);
+      expect(nextAttempt.rows[0].acquire_system_reset_lock.reason).toBe('recovery_required');
+      expect(nextAttempt.rows[0].acquire_system_reset_lock.operation_id).toBe(opId);
+
+      // Verify the original manifest and counts were NOT erased
+      const opRecord = await db.query<{ storage_manifest: any; error_details: string }>(`
+        select storage_manifest, error_details from public.system_reset_operations where id = '${opId}';
+      `);
+      expect(opRecord.rows[0].storage_manifest).toEqual({ photos: ['failed.jpg'] });
+      expect(opRecord.rows[0].error_details).toContain('S3 batch deletion timed out');
+    });
+
+    it('Case 6: Status-recording RPC returns an error -> reset fails closed with HTTP 500', async () => {
+      const mockReq = new Request('http://localhost/api/admin/settings', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: 'Bearer valid-token' },
+        body: JSON.stringify({ action: 'return_to_zero', confirmationPhrase: 'DELETE ALL OPERATIONAL DATA' }),
+      });
+
+      vi.spyOn(await import('../server/actors.js'), 'requireStaffActor').mockResolvedValue({
+        id: superadminId,
+        role: 'superadmin',
+        active: true,
+      } as any);
+
+      vi.spyOn(await import('../server/lib/storagePurgeService.js'), 'purgeAndVerifyStorageBuckets').mockResolvedValue({
+        success: true,
+        inventories: {} as any,
+        totalFilesDiscovered: 0,
+        totalFilesDeleted: 0,
+        verifiedEmpty: true,
+        purgedAt: new Date().toISOString(),
+      });
+
+      const mockRpc = vi.fn().mockImplementation((name: string, args: any) => {
+        if (name === 'acquire_system_reset_lock') {
+          return Promise.resolve({ data: { acquired: true, operation_id: 'op-status-err-1' }, error: null });
+        }
+        if (name === 'record_system_reset_step') {
+          if (args?.requested_status === 'storage_deletion_in_progress') {
+            return Promise.resolve({ data: null, error: { message: 'disk quota exceeded writing audit record' } });
+          }
+          return Promise.resolve({ data: null, error: null });
+        }
+        return Promise.resolve({ data: { success: true }, error: null });
+      });
+
+      vi.spyOn(await import('../server/supabase.js'), 'getServerSupabaseClients').mockReturnValue({
+        admin: { schema: () => ({ rpc: mockRpc }), rpc: mockRpc, from: vi.fn() } as any,
+        client: {} as any,
+      });
+
+      const res = await adminSettingsHandler(mockReq);
+      expect(res.status).toBe(500);
+      const body = await res.json();
+      expect(body.recoveryRequired).toBe(true);
+    });
+
+    it('Case 7: Lock release returns an error -> returns HTTP 500 lock_release_failed and retains recovery state', async () => {
+      const mockReq = new Request('http://localhost/api/admin/settings', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: 'Bearer valid-token' },
+        body: JSON.stringify({ action: 'return_to_zero', confirmationPhrase: 'DELETE ALL OPERATIONAL DATA' }),
+      });
+
+      vi.spyOn(await import('../server/actors.js'), 'requireStaffActor').mockResolvedValue({
+        id: superadminId,
+        role: 'superadmin',
+        active: true,
+      } as any);
+
+      vi.spyOn(await import('../server/lib/storagePurgeService.js'), 'purgeAndVerifyStorageBuckets').mockResolvedValue({
+        success: true,
+        inventories: {} as any,
+        totalFilesDiscovered: 0,
+        totalFilesDeleted: 0,
+        verifiedEmpty: true,
+        purgedAt: new Date().toISOString(),
+      });
+
+      const recordedSteps: string[] = [];
+      const mockRpc = vi.fn().mockImplementation((name: string, args: any) => {
+        if (name === 'acquire_system_reset_lock') {
+          return Promise.resolve({ data: { acquired: true, operation_id: 'op-rel-fail-1' }, error: null });
+        }
+        if (name === 'record_system_reset_step') {
+          recordedSteps.push(args?.requested_step);
+          return Promise.resolve({ data: null, error: null });
+        }
+        if (name === 'return_to_zero_reset') {
+          return Promise.resolve({ data: { success: true }, error: null });
+        }
+        if (name === 'release_system_reset_lock') {
+          return Promise.resolve({ data: null, error: { message: 'Database transaction lock release failed' } });
+        }
+        return Promise.resolve({ data: null, error: null });
+      });
+
+      vi.spyOn(await import('../server/supabase.js'), 'getServerSupabaseClients').mockReturnValue({
+        admin: { schema: () => ({ rpc: mockRpc }), rpc: mockRpc, from: vi.fn() } as any,
+        client: {} as any,
+      });
+
+      const res = await adminSettingsHandler(mockReq);
+      expect(res.status).toBe(500);
+      const body = await res.json();
+      expect(body.error).toBe('lock_release_failed');
+      expect(body.recoveryRequired).toBe(true);
+      expect(recordedSteps).toContain('lock_release_failed');
+    });
+
+    it('Case 8: Interruption between Storage verification and DB cleanup leaves recoverable operation', async () => {
+      await db.exec(`set request.jwt.claim.role = 'service_role';`);
+
+      // 1. Lock acquired
+      const lockRes = await db.query<{ acquire_system_reset_lock: { operation_id: string } }>(`
+        select api.acquire_system_reset_lock('${superadminId}'::uuid);
+      `);
+      const opId = lockRes.rows[0].acquire_system_reset_lock.operation_id;
+
+      // 2. Storage verified step recorded
+      await db.query(`
+        select api.record_system_reset_step(
+          '${opId}'::uuid,
+          'storage_deletion_verified',
+          'storage_deletion_verified',
+          '{"visitor-photos": {"files": []}, "visitor-ids": {"files": []}}'::jsonb,
+          '{"totalDiscovered": 5, "totalDeleted": 5}'::jsonb
+        );
+      `);
+
+      // 3. Process interruption / serverless timeout occurs here.
+      // Next admin resumes explicitly via acquire_system_reset_lock with requested_resume_op_id
+      const resumeRes = await db.query<{ acquire_system_reset_lock: { acquired: boolean; resumed: boolean; operation_id: string; previous_status: string } }>(`
+        select api.acquire_system_reset_lock('${superadminId}'::uuid, '${opId}'::uuid);
+      `);
+      expect(resumeRes.rows[0].acquire_system_reset_lock.acquired).toBe(true);
+      expect(resumeRes.rows[0].acquire_system_reset_lock.resumed).toBe(true);
+      expect(resumeRes.rows[0].acquire_system_reset_lock.operation_id).toBe(opId);
+      expect(resumeRes.rows[0].acquire_system_reset_lock.previous_status).toBe('storage_deletion_verified');
+    });
+
+    it('Case 9: Writes to visitors, passes, office_visits, devices, and evidence are rejected during reset lock', async () => {
+      await db.exec(`set request.jwt.claim.role = 'service_role';`);
+
+      // Acquire lock
+      await db.query(`select api.acquire_system_reset_lock('${superadminId}'::uuid);`);
+
+      // 1. Visitors insert rejected
+      await expect(
+        db.exec(`
+          insert into public.visitors (owner_id, source, full_name, contact_number, purpose, visit_date, consent_accepted_at)
+          values ('${superadminId}'::uuid, 'portal', 'Blocked Visitor', '+639170000001', 'Test', current_date, now());
+        `)
+      ).rejects.toThrow(/system_reset_in_progress/);
+
+      // 2. Passes insert rejected
+      await expect(
+        db.exec(`
+          insert into public.passes (visitor_id, source, token_digest, status, valid_from, valid_until)
+          values ('00000000-0000-0000-0000-000000000001'::uuid, 'portal', '\\x0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20'::bytea, 'issued', now(), now() + interval '1 day');
+        `)
+      ).rejects.toThrow(/system_reset_in_progress/);
+
+      // 3. Devices insert rejected
+      await expect(
+        db.exec(`
+          insert into public.devices (user_id, alias, name, type, gate)
+          values ('${superadminId}'::uuid, 'dev-blocked-alias', 'Gate 1 Blocked', 'kiosk'::public.device_type, 'Gate 1');
+        `)
+      ).rejects.toThrow(/system_reset_in_progress/);
+
+      // 4. Office visits insert rejected
+      await expect(
+        db.exec(`
+          insert into public.office_visits (visit_type, office_id, visitor_first_name, visitor_last_name, visitor_contact_number, purpose, visit_date)
+          values ('general', '00000000-0000-0000-0000-000000000001'::uuid, 'First', 'Last', '+639170000000', 'Meeting', current_date);
+        `)
+      ).rejects.toThrow(/system_reset_in_progress/);
+
+      // 5. Visitor evidence insert rejected
+      await expect(
+        db.exec(`
+          insert into public.visitor_evidence (visitor_id, upload_intent_id, kind, bucket_id, object_path, content_type, byte_size, sha256_hex, verified_at, expires_at)
+          values ('00000000-0000-0000-0000-000000000001'::uuid, '00000000-0000-0000-0000-000000000001'::uuid, 'photo', 'visitor-photos', 'test.jpg', 'image/jpeg', 100, repeat('0', 64), now(), now() + interval '1 day');
+        `)
+      ).rejects.toThrow(/system_reset_in_progress/);
+    });
+
+    it('Case 10: Pre-existing upload intent attempting upload during reset is rejected', async () => {
+      await db.exec(`set request.jwt.claim.role = 'service_role';`);
+
+      // Seed pending upload intent before lock
+      const intentId = '00000000-0000-0000-0000-000000000088';
+      await db.exec(`
+        insert into public.upload_intents (id, owner_id, source, kind, bucket_id, object_path, content_type, status, expires_at)
+        values ('${intentId}'::uuid, '${superadminId}'::uuid, 'portal', 'photo', 'visitor-photos', 'photos/racing.jpg', 'image/jpeg', 'pending', now() + interval '1 hour');
+      `);
+
+      // Now lock the system
+      await db.query(`select api.acquire_system_reset_lock('${superadminId}'::uuid);`);
+
+      // Attempting to write into storage.objects during lock must be rejected by trigger/lock check
+      await expect(
+        db.exec(`
+          insert into storage.objects (bucket_id, name, owner, owner_id)
+          values ('visitor-photos', 'photos/racing.jpg', '${superadminId}'::uuid, '${superadminId}');
+        `)
+      ).rejects.toThrow(/system_reset_in_progress/);
+    });
+
+    it('Case 11: Directory deeper than supported limit (MAX_DIRECTORY_DEPTH) throws hard error', async () => {
+      // Create a mock filesystem 12 levels deep (exceeding MAX_DIRECTORY_DEPTH = 10)
+      const mockStorageMap: Record<string, any[]> = {};
+      let currentPath = '';
+      for (let i = 1; i <= 12; i++) {
+        const nextFolder = `level_${i}`;
+        mockStorageMap[currentPath] = [
+          { name: nextFolder, id: null, metadata: null },
+        ];
+        currentPath = currentPath ? `${currentPath}/${nextFolder}` : nextFolder;
+      }
+      mockStorageMap[currentPath] = [
+        { name: 'deep_hidden.jpg', id: 'f-deep', metadata: { size: 100 } },
+      ];
+
+      const mockClient = {
+        storage: {
+          from: (bucket: string) => ({
+            list: vi.fn(async (prefix: string = '') => ({
+              data: mockStorageMap[prefix] || [],
+              error: null,
+            })),
+          }),
+        },
+      } as unknown as SupabaseClient;
+
+      await expect(
+        enumerateBucketRecursive(mockClient, 'visitor-photos')
+      ).rejects.toThrow(/Maximum folder depth \(10\) exceeded/);
+    });
+
+    it('Case 12: Combined two-bucket inventory exceeding 20,000 ceiling throws error', async () => {
+      // 12,000 objects in visitor-photos, 9,000 in visitor-ids (each under 20k, but combined = 21k)
+      const photosCount = 12_000;
+      const idsCount = 9_000;
+
+      const mockClient = {
+        storage: {
+          from: (bucket: string) => ({
+            list: vi.fn(async (prefix: string = '', options?: any) => {
+              const offset = options?.offset || 0;
+              const limit = options?.limit || 1000;
+              const total = bucket === 'visitor-photos' ? photosCount : idsCount;
+              const count = Math.max(0, Math.min(limit, total - offset));
+              const data = Array.from({ length: count }, (_, i) => ({
+                name: `file_${offset + i}.jpg`,
+                id: `id-${offset + i}`,
+                metadata: { size: 100 },
+              }));
+              return { data, error: null };
+            }),
+            remove: vi.fn().mockResolvedValue({ data: [], error: null }),
+          }),
+        },
+      } as unknown as SupabaseClient;
+
+      await expect(
+        purgeAndVerifyStorageBuckets(mockClient)
+      ).rejects.toThrow(/Combined storage inventory safety threshold exceeded/);
+    });
+
+    it('Case 13: Storage removal partial failure fails closed before database cleanup', async () => {
+      const mockReq = new Request('http://localhost/api/admin/settings', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: 'Bearer valid-token' },
+        body: JSON.stringify({ action: 'return_to_zero', confirmationPhrase: 'DELETE ALL OPERATIONAL DATA' }),
+      });
+
+      vi.spyOn(await import('../server/actors.js'), 'requireStaffActor').mockResolvedValue({
+        id: superadminId,
+        role: 'superadmin',
+        active: true,
+      } as any);
+
+      // Storage remove permanently fails after 3 retries
+      vi.spyOn(await import('../server/lib/storagePurgeService.js'), 'purgeAndVerifyStorageBuckets').mockRejectedValueOnce(
+        new Error('Failed to remove batch of 1000 files in bucket "visitor-photos" after 3 attempts')
+      );
+
+      const mockRpc = vi.fn().mockImplementation((name: string) => {
+        if (name === 'acquire_system_reset_lock') {
+          return Promise.resolve({ data: { acquired: true, operation_id: 'op-partial-fail' }, error: null });
+        }
+        return Promise.resolve({ data: { success: true }, error: null });
+      });
+
+      vi.spyOn(await import('../server/supabase.js'), 'getServerSupabaseClients').mockReturnValue({
+        admin: { schema: () => ({ rpc: mockRpc }), rpc: mockRpc, from: vi.fn() } as any,
+        client: {} as any,
+      });
+
+      const res = await adminSettingsHandler(mockReq);
+      expect(res.status).toBe(500);
+      const body = await res.json();
+      expect(body.error).toBe('storage_purge_failed');
+      expect(body.recoveryRequired).toBe(true);
+      expect(mockRpc).not.toHaveBeenCalledWith('return_to_zero_reset', expect.anything());
+    });
+
+    it('Case 14: Post-deletion verification detects persistent object and fails closed', async () => {
+      let phase = 'initial';
+      const mockClient = {
+        storage: {
+          from: (bucket: string) => ({
+            list: vi.fn(async () => {
+              if (phase === 'post-check') {
+                // Post-check finds remaining file
+                return { data: [{ name: 'ghost.jpg', id: 'g-1', metadata: { size: 10 } }], error: null };
+              }
+              return { data: [{ name: 'ghost.jpg', id: 'g-1', metadata: { size: 10 } }], error: null };
+            }),
+            remove: vi.fn(async () => {
+              phase = 'post-check';
+              return { data: [{ name: 'ghost.jpg' }], error: null };
+            }),
+          }),
+        },
+      } as unknown as SupabaseClient;
+
+      await expect(
+        purgeAndVerifyStorageBuckets(mockClient)
+      ).rejects.toThrow(/Storage verification failed: 1 file\(s\) still remain/);
+    });
+
+    it('Case 20: Historical migration 20261118000300 is byte-for-byte identical to main, and 20261119000100 upgrades cleanly from baseline', async () => {
+      const histMigrationPath = join(MIGRATIONS_DIR, '20261118000300_gender_and_system_reset.sql');
+      const histContent = readFileSync(histMigrationPath, 'utf8');
+
+      // Verify historical migration retains original baseline contents (delete from storage.objects and audit_events)
+      expect(histContent).toMatch(/delete\s+from\s+storage\.objects\s+where\s+bucket_id/i);
+      expect(histContent).toMatch(/delete\s+from\s+public\.audit_events/i);
+
+      // Verify the new append-only migration 20261119000100 independently replaces api.return_to_zero_reset
+      const newMigrationPath = join(MIGRATIONS_DIR, '20261119000100_return_to_zero_and_storage_integrity.sql');
+      const newContent = readFileSync(newMigrationPath, 'utf8');
+
+      expect(newContent).not.toMatch(/delete\s+from\s+storage\.objects/i);
+      expect(newContent).not.toMatch(/delete\s+from\s+public\.audit_events/i);
+      expect(newContent).toMatch(/create\s+or\s+replace\s+function\s+api\.return_to_zero_reset/i);
+      expect(newContent).toMatch(/create\s+or\s+replace\s+function\s+api\.acquire_system_reset_lock/i);
+
+      // Verify that after running both migrations, the installed function in the database is the hardened version
+      const procRes = await db.query<{ prosrc: string }>(`
+        select prosrc from pg_proc where proname = 'return_to_zero_reset';
+      `);
+      expect(procRes.rows[0].prosrc).not.toMatch(/delete\s+from\s+storage\.objects/i);
+      expect(procRes.rows[0].prosrc).not.toMatch(/delete\s+from\s+public\.audit_events/i);
     });
   });
 });

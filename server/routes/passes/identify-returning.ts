@@ -236,8 +236,11 @@ async function handleRequest(request: Request): Promise<Response> {
   }
 
   const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-  if (!uuidRegex.test(profileId) || !uuidRegex.test(requestId)) {
-    return jsonResponse(400, { error: 'invalid_request', message: 'Valid UUID profileId and requestId are required.' });
+  if (!uuidRegex.test(requestId)) {
+    return jsonResponse(400, { error: 'invalid_request', message: 'Valid UUID requestId is required.' });
+  }
+  if (profileId && !uuidRegex.test(profileId)) {
+    return jsonResponse(400, { error: 'invalid_request', message: 'Invalid profileId format.' });
   }
 
   if (!selfieBuffer) {
@@ -301,12 +304,16 @@ async function handleRequest(request: Request): Promise<Response> {
         message: 'Candidate selection authorization is invalid.',
       });
     }
-    if (candCheck.profileId !== profileId) {
+
+    // Server securely obtains selected profileId from validated candidate authorization handle
+    const authorizedProfileId = candCheck.profileId!;
+    if (profileId && profileId !== authorizedProfileId) {
       return jsonResponse(403, {
         error: 'profile_id_mismatch',
         message: 'Candidate authorization token does not match the requested profile.',
       });
     }
+    profileId = authorizedProfileId;
 
     // 1. Rate limiting - Actor Bucket (5 verification attempts per 10 minutes)
     const actorKeyHex = createHash('sha256').update(`actor:${actorId}`).digest('hex');

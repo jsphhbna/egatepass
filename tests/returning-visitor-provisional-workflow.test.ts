@@ -216,8 +216,11 @@ describe('Returning Visitor Provisional 1:1 Biometric & Enrollment Architecture 
       expect(json.candidates).toHaveLength(1);
       const candidate = json.candidates[0];
 
-      // Profile ID is exposed for 1:1 selection
-      expect(candidate.profileId).toBe(profileId);
+      // Profile ID and gender are NEVER exposed in discovery responses
+      expect(candidate.profileId).toBeUndefined();
+      expect(candidate.gender).toBeUndefined();
+      expect(candidate.candidateToken).toBeDefined();
+      expect(candidate.candidateToken.includes(profileId)).toBe(false);
       // PII is masked (last name and phone number)
       expect(candidate.maskedName).toBe('Juan S. D****');
       expect(candidate.maskedContact).toBe('+639***4567');

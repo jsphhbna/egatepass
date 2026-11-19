@@ -6,14 +6,15 @@
  *
  * Security & Integrity Invariants:
  * 1. Strictly allowlists only operational buckets: 'visitor-photos' and 'visitor-ids'.
- * 2. Recursively enumerates all nested folder hierarchies (supports arbitrary folder nesting).
- * 3. Correctly distinguishes folder entries (id: null / metadata: null) from actual file objects.
- * 4. Paginated traversal: never assumes the first page contains the complete inventory.
- * 5. Respects Supabase Storage maximum batch size of 1,000 objects per removal request.
- * 6. Checks every response for errors; retries transient errors with bounded backoff.
- * 7. Enforces post-deletion re-enumeration verification: fails closed if any file remains.
- * 8. Zero leakage of file contents, biometric metadata, or visitor PII in logs or manifests.
- * 9. Fails closed if total inventory exceeds safe processing threshold (e.g. 20,000 objects).
+ * 2. Recursively enumerates all nested folder hierarchies up to MAX_DIRECTORY_DEPTH (10 levels).
+ * 3. Fails closed with hard error if MAX_DIRECTORY_DEPTH is exceeded (never skips nested files).
+ * 4. Correctly distinguishes folder entries (id: null / metadata: null) from actual file objects.
+ * 5. Paginated traversal: never assumes the first page contains the complete inventory.
+ * 6. Respects Supabase Storage maximum batch size of 1,000 objects per removal request.
+ * 7. Checks every response for errors; retries transient errors with bounded backoff.
+ * 8. Enforces post-deletion re-enumeration verification: fails closed if any file persists or if depth exceeded.
+ * 9. Zero leakage of file contents, biometric metadata, or visitor PII in logs or manifests.
+ * 10. Enforces 20,000-object safety ceiling across COMBINED inventory of both buckets.
  */
 
 import type { SupabaseClient } from '@supabase/supabase-js';
@@ -23,7 +24,7 @@ export type AllowedResetBucket = (typeof ALLOWED_RESET_BUCKETS)[number];
 
 export const MAX_SAFE_STORAGE_INVENTORY = 20_000;
 export const STORAGE_REMOVAL_BATCH_SIZE = 1_000;
-const MAX_DIRECTORY_DEPTH = 10;
+export const MAX_DIRECTORY_DEPTH = 10;
 const MAX_REMOVAL_RETRIES = 3;
 
 export interface BucketInventoryManifest {
@@ -79,10 +80,12 @@ export function isFolderEntry(item: any): boolean {
 /**
  * Recursively enumerates all files and nested folders in an allowlisted bucket.
  * Handles pagination and nested folder hierarchies up to MAX_DIRECTORY_DEPTH levels.
+ * Fails closed with a hard error if maximum directory depth is exceeded or if combined inventory exceeds threshold.
  */
 export async function enumerateBucketRecursive(
   client: SupabaseClient,
-  bucket: AllowedResetBucket
+  bucket: AllowedResetBucket,
+  currentCombinedCount = 0
 ): Promise<BucketInventoryManifest> {
   assertAllowedBucket(bucket);
 
@@ -100,8 +103,9 @@ export async function enumerateBucketRecursive(
     visitedPrefixes.add(currentPrefix);
 
     if (depth > MAX_DIRECTORY_DEPTH) {
-      console.warn(`Maximum folder depth reached at prefix "${currentPrefix}" in bucket "${bucket}"`);
-      continue;
+      throw new Error(
+        `Maximum folder depth (${MAX_DIRECTORY_DEPTH}) exceeded at prefix "${currentPrefix}" in bucket "${bucket}". Aborting purge to prevent incomplete data deletion.`
+      );
     }
 
     let offset = 0;
@@ -164,9 +168,9 @@ export async function enumerateBucketRecursive(
           }
         } else {
           discoveredFiles.add(fullPath);
-          if (discoveredFiles.size > MAX_SAFE_STORAGE_INVENTORY) {
+          if (currentCombinedCount + discoveredFiles.size > MAX_SAFE_STORAGE_INVENTORY) {
             throw new Error(
-              `Storage inventory safety threshold exceeded: bucket "${bucket}" contains more than ${MAX_SAFE_STORAGE_INVENTORY} objects.`
+              `Combined storage inventory safety threshold exceeded: total discovered objects across allowlisted buckets exceeds ${MAX_SAFE_STORAGE_INVENTORY}.`
             );
           }
         }
@@ -247,9 +251,9 @@ export async function deleteStorageObjectsInBatches(
 
 /**
  * Executes a complete, verified purge across all allowlisted buckets:
- * 1. Enumerates all nested files across visitor-photos and visitor-ids.
+ * 1. Enumerates all nested files across visitor-photos and visitor-ids, enforcing combined 20k limit.
  * 2. Deletes files in batches of <= 1,000 objects.
- * 3. Re-enumerates both buckets to verify 0 files remain.
+ * 3. Re-enumerates both buckets to verify 0 files remain (fails closed if depth exceeded or files persist).
  * 4. Fails closed if any file persists or if verification enumeration fails.
  */
 export async function purgeAndVerifyStorageBuckets(
@@ -262,11 +266,16 @@ export async function purgeAndVerifyStorageBuckets(
 
   let totalDiscovered = 0;
 
-  // Step 1: Enumerate both buckets
+  // Step 1: Enumerate both buckets with combined 20k threshold enforcement
   for (const bucket of ALLOWED_RESET_BUCKETS) {
-    const inv = await enumerateBucketRecursive(client, bucket);
+    const inv = await enumerateBucketRecursive(client, bucket, totalDiscovered);
     inventories[bucket] = inv;
     totalDiscovered += inv.files.length;
+    if (totalDiscovered > MAX_SAFE_STORAGE_INVENTORY) {
+      throw new Error(
+        `Combined storage inventory safety threshold exceeded: total discovered objects (${totalDiscovered}) exceeds ${MAX_SAFE_STORAGE_INVENTORY}.`
+      );
+    }
   }
 
   // Step 2: Delete discovered objects
@@ -281,7 +290,7 @@ export async function purgeAndVerifyStorageBuckets(
 
   // Step 3: Verify post-deletion state by enumerating again
   for (const bucket of ALLOWED_RESET_BUCKETS) {
-    const postInv = await enumerateBucketRecursive(client, bucket);
+    const postInv = await enumerateBucketRecursive(client, bucket, 0);
     if (postInv.files.length > 0) {
       throw new Error(
         `Storage verification failed: ${postInv.files.length} file(s) still remain in bucket "${bucket}" after deletion.`

@@ -183,8 +183,12 @@ describe('Returning Visitor Portrait Privacy & Verification Hardening (Section 1
     expect(data.candidates).toBeDefined();
     expect(data.candidates.length).toBe(1);
     expect(data.candidates[0].maskedName).toBeDefined();
-    expect(data.candidates[0].profileId).toBe(mockProfileId);
-    expect(data.candidates[0].candidateToken).toMatch(/^cand\.v1\./);
+    // Profile ID, gender, and totalMatches must NOT be exposed in candidate lookup responses
+    expect(data.candidates[0].profileId).toBeUndefined();
+    expect(data.candidates[0].gender).toBeUndefined();
+    expect(data.totalMatches).toBeUndefined();
+    expect(data.candidates[0].candidateToken).toMatch(/^cand\.v2\./);
+    expect(data.candidates[0].candidateToken.includes(mockProfileId)).toBe(false);
   });
 
   it('Requirement 2: Candidate results do not include portrait URLs or preview tokens', async () => {
@@ -223,7 +227,10 @@ describe('Returning Visitor Portrait Privacy & Verification Hardening (Section 1
 
     // Instead, a scoped candidateToken is issued for biometric verification only
     expect(candidate.candidateToken).toBeDefined();
-    expect(candidate.candidateToken).toMatch(/^cand\.v1\./);
+    expect(candidate.candidateToken).toMatch(/^cand\.v2\./);
+    expect(candidate.candidateToken.includes(mockProfileId)).toBe(false);
+    expect(candidate.profileId).toBeUndefined();
+    expect(candidate.gender).toBeUndefined();
   });
 
   it('Requirement 3: Candidate results do not expose unnecessary PII (phone, address, ID numbers)', async () => {
@@ -798,7 +805,8 @@ describe('Returning Visitor Portrait Privacy & Verification Hardening (Section 1
     // Assert candidate token and preview token formats remain distinguishable and distinct
     const cand = createCandidateToken(mockProfileId, mockActorId, mockTokenSecret, 300);
     const prev = createPreviewToken(mockProfileId, mockActorId, mockTokenSecret, 300, 'id');
-    expect(cand.startsWith('cand.v1.')).toBe(true);
+    expect(cand.startsWith('cand.v2.')).toBe(true);
+    expect(cand.includes(mockProfileId)).toBe(false);
     expect(prev.startsWith('v3.')).toBe(true);
     expect(cand).not.toEqual(prev);
   });

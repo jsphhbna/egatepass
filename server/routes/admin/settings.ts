@@ -3,11 +3,12 @@ import { jsonResponse, readBearerToken } from '../../http.js';
 import { getServerSupabaseClients } from '../../supabase.js';
 import { purgeAndVerifyStorageBuckets } from '../../lib/storagePurgeService.js';
 
-async function safeRecordResetStep(admin: any, args: Record<string, any>): Promise<void> {
-  try {
-    await admin.schema('api').rpc('record_system_reset_step', args);
-  } catch {
-    // Non-fatal telemetry recording failure
+async function recordResetStep(admin: any, args: Record<string, any>): Promise<void> {
+  const { error } = await admin.schema('api').rpc('record_system_reset_step', args);
+  if (error) {
+    throw new Error(
+      `Failed to record reset step (${args.requested_step || 'unknown'}): ${error.message || JSON.stringify(error)}`
+    );
   }
 }
 
@@ -39,61 +40,96 @@ async function handleRequest(request: Request): Promise<Response> {
           });
         }
 
-        // Phase 1: Concurrency Protection — Acquire exclusive reset lock
-        let operationId: string | null = null;
+        // Phase 1: Concurrency Protection — Mandatory exclusive reset lock acquisition
+        let lockRes: any;
         try {
-          const { data: lockData, error: lockError } = await admin
+          lockRes = await admin
             .schema('api')
-            .rpc('acquire_system_reset_lock', { requested_actor_id: actor.id });
-
-          if (!lockError && lockData) {
-            if (!lockData.acquired) {
-              return jsonResponse(409, {
-                error: 'reset_in_progress',
-                message: 'A system reset is currently in progress or requires manual recovery.',
-              });
-            }
-            operationId = lockData.operation_id;
-          }
-        } catch (lockErr) {
-          console.warn('acquire_system_reset_lock non-fatal fallback (test/unmigrated schema):', lockErr);
+            .rpc('acquire_system_reset_lock', {
+              requested_actor_id: actor.id,
+              ...(body.resumeOperationId ? { requested_resume_op_id: body.resumeOperationId } : {}),
+            });
+        } catch (lockErr: any) {
+          console.error('Lock acquisition RPC threw exception:', lockErr);
+          return jsonResponse(500, {
+            error: 'lock_acquisition_failed',
+            message: `Failed to acquire system reset lock: ${lockErr?.message || 'Unexpected exception'}`,
+          });
         }
+
+        const { data: lockData, error: lockError } = lockRes ?? {};
+        if (lockError) {
+          console.error('acquire_system_reset_lock returned error:', lockError);
+          return jsonResponse(500, {
+            error: 'lock_acquisition_failed',
+            message: `Failed to acquire system reset lock: ${lockError.message || JSON.stringify(lockError)}`,
+          });
+        }
+
+        if (!lockData || typeof lockData !== 'object') {
+          return jsonResponse(500, {
+            error: 'lock_acquisition_failed',
+            message: 'Invalid or null response from lock acquisition RPC.',
+          });
+        }
+
+        if (lockData.acquired !== true) {
+          return jsonResponse(409, {
+            error: lockData.reason === 'recovery_required' ? 'recovery_required' : 'reset_in_progress',
+            message:
+              lockData.reason === 'recovery_required'
+                ? 'A previous system reset failed or requires manual recovery before a new reset can run.'
+                : 'A system reset is currently in progress.',
+            details: lockData,
+          });
+        }
+
+        if (
+          !lockData.operation_id ||
+          typeof lockData.operation_id !== 'string' ||
+          lockData.operation_id.trim().length === 0
+        ) {
+          return jsonResponse(500, {
+            error: 'lock_acquisition_failed',
+            message: 'Lock acquisition succeeded but operation ID was missing or invalid.',
+          });
+        }
+
+        const operationId: string = lockData.operation_id;
 
         // Phase 2: Supabase Storage Purge via official Storage API
         // Removes nested objects from visitor-photos and visitor-ids before deleting Auth accounts
         let storageResult;
         try {
-          if (operationId) {
-            await safeRecordResetStep(admin, {
-              requested_op_id: operationId,
-              requested_status: 'storage_deletion_in_progress',
-              requested_step: 'storage_deletion_in_progress',
-            });
-          }
+          await recordResetStep(admin, {
+            requested_op_id: operationId,
+            requested_status: 'storage_deletion_in_progress',
+            requested_step: 'storage_deletion_in_progress',
+          });
 
           storageResult = await purgeAndVerifyStorageBuckets(admin);
 
-          if (operationId) {
-            await safeRecordResetStep(admin, {
-              requested_op_id: operationId,
-              requested_status: 'storage_deletion_verified',
-              requested_step: 'storage_deletion_verified',
-              requested_manifest: storageResult.inventories,
-              requested_counts: {
-                totalDiscovered: storageResult.totalFilesDiscovered,
-                totalDeleted: storageResult.totalFilesDeleted,
-              },
-            });
-          }
+          await recordResetStep(admin, {
+            requested_op_id: operationId,
+            requested_status: 'storage_deletion_verified',
+            requested_step: 'storage_deletion_verified',
+            requested_manifest: storageResult.inventories,
+            requested_counts: {
+              totalDiscovered: storageResult.totalFilesDiscovered,
+              totalDeleted: storageResult.totalFilesDeleted,
+            },
+          });
         } catch (storageErr: any) {
           console.error('Storage purge or verification failed during return_to_zero:', storageErr);
-          if (operationId) {
-            await safeRecordResetStep(admin, {
+          try {
+            await recordResetStep(admin, {
               requested_op_id: operationId,
-              requested_status: 'failed',
+              requested_status: 'recovery_required',
               requested_step: 'storage_purge_failed',
               requested_error: storageErr?.message || String(storageErr),
             });
+          } catch (recErr) {
+            console.error('Failed to record recovery_required status:', recErr);
           }
           return jsonResponse(500, {
             error: 'storage_purge_failed',
@@ -106,27 +142,38 @@ async function handleRequest(request: Request): Promise<Response> {
         // Phase 3: Database Cleanup RPC
         // Topologically wipes operational records, preserves active superadmins and configuration,
         // and durably appends authoritative reset audit event.
-        if (operationId) {
-          await safeRecordResetStep(admin, {
+        try {
+          await recordResetStep(admin, {
             requested_op_id: operationId,
             requested_status: 'database_cleanup_in_progress',
             requested_step: 'database_cleanup_in_progress',
+          });
+        } catch (recErr: any) {
+          console.error('Failed to record database_cleanup_in_progress:', recErr);
+          return jsonResponse(500, {
+            error: 'reset_step_recording_failed',
+            message: recErr.message,
+            operationId,
+            recoveryRequired: true,
           });
         }
 
         const { data: rpcData, error: rpcError } = await admin.schema('api').rpc('return_to_zero_reset', {
           requested_actor_id: actor.id,
+          requested_op_id: operationId,
         });
 
         if (rpcError) {
           console.error('return_to_zero_reset RPC error:', rpcError);
-          if (operationId) {
-            await safeRecordResetStep(admin, {
+          try {
+            await recordResetStep(admin, {
               requested_op_id: operationId,
               requested_status: 'recovery_required',
               requested_step: 'database_cleanup_failed',
               requested_error: rpcError.message,
             });
+          } catch (recErr) {
+            console.error('Failed to record database_cleanup_failed status:', recErr);
           }
           return jsonResponse(500, {
             error: 'database_reset_failed',
@@ -137,15 +184,47 @@ async function handleRequest(request: Request): Promise<Response> {
         }
 
         // Phase 4: Release Reset Lock & Mark Completed
-        if (operationId) {
+        let releaseRes: any;
+        try {
+          releaseRes = await admin.schema('api').rpc('release_system_reset_lock', {
+            requested_actor_id: actor.id,
+            requested_op_id: operationId,
+          });
+        } catch (relEx: any) {
+          console.error('release_system_reset_lock threw exception:', relEx);
           try {
-            await admin.schema('api').rpc('release_system_reset_lock', {
-              requested_actor_id: actor.id,
+            await recordResetStep(admin, {
               requested_op_id: operationId,
+              requested_status: 'recovery_required',
+              requested_step: 'lock_release_failed',
+              requested_error: relEx?.message || String(relEx),
             });
-          } catch {
-            // Non-fatal lock release failure
-          }
+          } catch {}
+          return jsonResponse(500, {
+            error: 'lock_release_failed',
+            message: `Reset completed database cleanup but lock release threw exception: ${relEx?.message || 'Unknown error'}`,
+            operationId,
+            recoveryRequired: true,
+          });
+        }
+
+        const { error: releaseError } = releaseRes ?? {};
+        if (releaseError) {
+          console.error('release_system_reset_lock returned error:', releaseError);
+          try {
+            await recordResetStep(admin, {
+              requested_op_id: operationId,
+              requested_status: 'recovery_required',
+              requested_step: 'lock_release_failed',
+              requested_error: releaseError.message,
+            });
+          } catch {}
+          return jsonResponse(500, {
+            error: 'lock_release_failed',
+            message: `Reset completed database cleanup but lock release failed: ${releaseError.message}`,
+            operationId,
+            recoveryRequired: true,
+          });
         }
 
         return jsonResponse(200, {

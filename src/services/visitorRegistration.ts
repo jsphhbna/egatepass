@@ -1386,12 +1386,12 @@ export async function preflightLiveFace(
 }
 
 export interface ReturningLookupCandidate {
-  profileId: string;
-  candidateToken?: string;
+  candidateToken: string;
   maskedName: string;
   maskedContact: string;
-  gender?: 'Male' | 'Female' | null;
   partialLocality: string;
+  profileId?: string;
+  gender?: 'Male' | 'Female' | null;
   registeredAt?: string;
   previewUrl?: string;
 }
@@ -1457,11 +1457,21 @@ export async function lookupReturningVisitor(
 export async function identifyReturningVisitor(
   transaction: PortalIssueTransaction,
   photoBlobOrBase64: Blob | string,
-  profileId: string,
+  candidateTokenOrProfileId?: string,
   candidateToken?: string
 ): Promise<ReturningIdentifyResult> {
   const { token } = await getVerifiedPortalSession(transaction);
-  const effectiveCandidateToken = candidateToken || (transaction as any)?.candidateToken;
+  const effectiveCandidateToken =
+    candidateToken ||
+    (candidateTokenOrProfileId && candidateTokenOrProfileId.startsWith('cand.')
+      ? candidateTokenOrProfileId
+      : undefined) ||
+    (transaction as any)?.candidateToken;
+
+  const rawProfileId =
+    candidateTokenOrProfileId && !candidateTokenOrProfileId.startsWith('cand.')
+      ? candidateTokenOrProfileId
+      : undefined;
 
   let res: Response;
   try {
@@ -1475,7 +1485,7 @@ export async function identifyReturningVisitor(
           },
           body: JSON.stringify({
             requestId: transaction.requestId,
-            profileId,
+            ...(rawProfileId ? { profileId: rawProfileId } : {}),
             ...(effectiveCandidateToken ? { candidateToken: effectiveCandidateToken } : {}),
             photoBase64: photoBlobOrBase64,
           }),
@@ -1486,7 +1496,9 @@ export async function identifyReturningVisitor(
     } else {
       const formData = new FormData();
       formData.append('photo', photoBlobOrBase64, 'selfie.jpg');
-      formData.append('profileId', profileId);
+      if (rawProfileId) {
+        formData.append('profileId', rawProfileId);
+      }
       formData.append('requestId', transaction.requestId);
       if (effectiveCandidateToken) {
         formData.append('candidateToken', effectiveCandidateToken);

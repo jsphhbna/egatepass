@@ -1532,10 +1532,12 @@ export function GetPassPage() {
       }
 
       // 3. Identify returning visitor via ephemeral 1:1 endpoint (in-memory comparison against original portrait)
+      // Note: identifyReturningVisitor(tx, returningSelfieBlob, selectedReturningCandidate.profileId) is superseded
+      // by candidateToken handle to enforce candidate data minimization.
       if (selectedReturningCandidate?.candidateToken && portalTransactionRef.current) {
         (portalTransactionRef.current as any).candidateToken = selectedReturningCandidate.candidateToken;
       }
-      const data = await identifyReturningVisitor(tx, returningSelfieBlob, selectedReturningCandidate.profileId);
+      const data = await identifyReturningVisitor(tx, returningSelfieBlob, selectedReturningCandidate.candidateToken);
 
       if (!data?.matched || !data.profile || !data.matchToken) {
         const reasonCode = (data as any)?.reasonCode || '';
@@ -4715,10 +4717,10 @@ export function GetPassPage() {
 
                   <div className="max-h-[360px] overflow-y-auto space-y-2.5 pr-1">
                     {returningCandidates.map((cand) => {
-                      const isSelected = selectedReturningCandidate?.profileId === cand.profileId;
+                      const isSelected = selectedReturningCandidate?.candidateToken === cand.candidateToken;
                       return (
                         <div
-                          key={cand.profileId}
+                          key={cand.candidateToken}
                           onClick={() => setSelectedReturningCandidate(cand)}
                           onKeyDown={(e) => {
                             if (e.key === 'Enter' || e.key === ' ') {
