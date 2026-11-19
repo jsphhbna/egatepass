@@ -13,6 +13,10 @@ import {
   MAX_SAFE_STORAGE_INVENTORY,
 } from '../server/lib/storagePurgeService.js';
 import adminSettingsHandler from '../server/routes/admin/settings.js';
+import lookupReturningHandler from '../server/routes/passes/lookup-returning.js';
+import identifyReturningHandler from '../server/routes/passes/identify-returning.js';
+import returningPhotoPreviewHandler from '../server/routes/passes/returning-photo-preview.js';
+import { createCandidateToken, verifyCandidateToken } from '../server/lib/candidate-token.js';
 
 const MIGRATIONS_DIR = join(process.cwd(), 'supabase', 'migrations');
 
@@ -1198,6 +1202,550 @@ describe('Return-to-Zero Storage Service & State Machine Hardening (Section 10 M
       await expect(
         purgeAndVerifyStorageBuckets(mockClient)
       ).rejects.toThrow(/Storage verification failed: 1 file\(s\) still remain/);
+    });
+
+    it('Case 15: Anonymous lookup response contains no raw profile ID, gender, exact total-match count, or portrait token', async () => {
+      const origSecret = process.env.RETURNING_MATCH_TOKEN_SECRET;
+      process.env.RETURNING_MATCH_TOKEN_SECRET = 'test-token-secret-must-be-at-least-32-chars-long!';
+
+      const visitorActorId = '22222222-2222-4222-8222-222222222222';
+      const mockProfile = {
+        id: '33333333-3333-4333-8333-333333333333',
+        first_name: 'Juan',
+        middle_name: 'Santos',
+        last_name: 'Dela Cruz',
+        contact_number_e164: '+639171234567',
+        gender: 'Male',
+        psgc_barangay_name: 'Batasan Hills',
+        psgc_city_municipality_name: 'Quezon City',
+        psgc_province_name: 'Metro Manila',
+      };
+
+      const chainable: any = {
+        select: vi.fn().mockReturnThis(),
+        ilike: vi.fn().mockReturnThis(),
+        gt: vi.fn().mockReturnThis(),
+        is: vi.fn().mockReturnThis(),
+        or: vi.fn().mockReturnThis(),
+        eq: vi.fn().mockReturnThis(),
+        limit: vi.fn().mockResolvedValue({
+          data: [mockProfile],
+          error: null,
+        }),
+      };
+
+      vi.spyOn(await import('../server/supabase.js'), 'getServerSupabaseClients').mockReturnValue({
+        admin: {
+          schema: vi.fn().mockReturnValue({
+            rpc: vi.fn().mockResolvedValue({ data: true, error: null }),
+          }),
+          from: vi.fn((table: string) => {
+            if (table === 'returning_visitor_profiles') return chainable;
+            if (table === 'visitors') {
+              return {
+                select: vi.fn().mockReturnThis(),
+                eq: vi.fn().mockReturnThis(),
+                order: vi.fn().mockResolvedValue({ data: [{ id: 'v-1' }], error: null }),
+              };
+            }
+            if (table === 'visitor_evidence') {
+              return {
+                select: vi.fn().mockReturnThis(),
+                in: vi.fn().mockReturnThis(),
+                eq: vi.fn().mockReturnThis(),
+                is: vi.fn().mockReturnThis(),
+                gt: vi.fn().mockReturnThis(),
+                order: vi.fn().mockReturnThis(),
+                limit: vi.fn().mockReturnThis(),
+                maybeSingle: vi.fn().mockResolvedValue({
+                  data: { id: 'e-1', expires_at: new Date(Date.now() + 86400000).toISOString(), purged_at: null },
+                  error: null,
+                }),
+              };
+            }
+            return {};
+          }),
+        } as any,
+        client: {} as any,
+      });
+
+      vi.spyOn(await import('../server/actors.js'), 'getVerifiedSessionContext').mockResolvedValue({
+        actorId: visitorActorId,
+        role: 'visitor',
+        isAnonymous: true,
+        isRecoverySession: false,
+        user: { id: visitorActorId },
+        identity: 'test-user',
+      } as any);
+
+      vi.spyOn(globalThis, 'fetch').mockImplementation(async () =>
+        new Response(JSON.stringify({ success: true, hostname: 'localhost' }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        })
+      );
+
+      const req = new Request('http://localhost/api/passes/lookup-returning', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: 'Bearer visitor-token',
+        },
+        body: JSON.stringify({
+          firstName: 'Juan',
+          lastName: 'Dela Cruz',
+          contactNumber: '09171234567',
+          captchaToken: 'test-turnstile',
+        }),
+      });
+
+      const res = await lookupReturningHandler.fetch(req);
+      if (origSecret !== undefined) process.env.RETURNING_MATCH_TOKEN_SECRET = origSecret;
+      else delete process.env.RETURNING_MATCH_TOKEN_SECRET;
+
+      expect(res.status).toBe(200);
+      const body = await res.json();
+
+      expect(body.found).toBe(true);
+      expect(body.candidates).toHaveLength(1);
+      const cand = body.candidates[0];
+
+      // Assert complete attribute minimization
+      expect(cand.profileId).toBeUndefined();
+      expect(cand.gender).toBeUndefined();
+      expect(body.totalMatches).toBeUndefined();
+      expect(cand.previewUrl).toBeUndefined();
+      expect(cand.previewToken).toBeUndefined();
+      expect(cand.registeredAt).toBeUndefined();
+      expect(cand.storagePath).toBeUndefined();
+
+      // Assert candidate token is opaque cand.v2 and does NOT contain raw profile UUID in plaintext
+      expect(cand.candidateToken).toMatch(/^cand\.v2\./);
+      expect(cand.candidateToken.includes(mockProfile.id)).toBe(false);
+      expect(cand.maskedName).toBe('Juan S. D****');
+      expect(cand.maskedContact).toBe('+639***4567');
+    });
+
+    it('Case 16: Candidate authorization is tampered with, expired, replayed, or used by a different actor', async () => {
+      const actorId = '11111111-1111-4111-8111-111111111111';
+      const otherActorId = '99999999-9999-4999-8999-999999999999';
+      const profileId = '33333333-3333-4333-8333-333333333333';
+      const secret = 'test-token-secret-must-be-at-least-32-chars-long!';
+
+      // 1. Tampered candidate token:
+      const validToken = createCandidateToken(profileId, actorId, secret, 300);
+      const parts = validToken.split('.');
+      const tamperedParts = [...parts];
+      const origCipher = tamperedParts[3];
+      tamperedParts[3] = origCipher.slice(0, -2) + (origCipher.endsWith('AA') ? 'BB' : 'AA');
+      const tamperedToken = tamperedParts.join('.');
+
+      const tamperResult = verifyCandidateToken(tamperedToken, actorId, secret);
+      expect(tamperResult.valid).toBe(false);
+      expect(tamperResult.error).toBe('signature_mismatch');
+
+      // 2. Expired candidate token:
+      const expiredToken = createCandidateToken(profileId, actorId, secret, -10);
+      const expireResult = verifyCandidateToken(expiredToken, actorId, secret);
+      expect(expireResult.valid).toBe(false);
+      expect(expireResult.expired).toBe(true);
+      expect(expireResult.error).toBe('candidate_token_expired');
+
+      // 3. Different actor (cross-actor replay):
+      const actorMismatchResult = verifyCandidateToken(validToken, otherActorId, secret);
+      expect(actorMismatchResult.valid).toBe(false);
+      expect(actorMismatchResult.error).toBe('actor_mismatch');
+    });
+
+    it('Case 17: Identification without a valid candidate authorization is rejected', async () => {
+      const visitorActorId = '11111111-1111-4111-8111-111111111111';
+      const profileId = '33333333-3333-4333-8333-333333333333';
+
+      vi.spyOn(await import('../server/supabase.js'), 'getServerSupabaseClients').mockReturnValue({
+        admin: {} as any,
+        client: {} as any,
+      });
+
+      vi.spyOn(await import('../server/actors.js'), 'getVerifiedSessionContext').mockResolvedValue({
+        actorId: visitorActorId,
+        role: 'visitor',
+        isAnonymous: true,
+        isRecoverySession: false,
+        user: { id: visitorActorId },
+        identity: 'test-user',
+      } as any);
+
+      // Attempt 1: Omission of candidateToken
+      const noTokenReq = new Request('http://localhost/api/passes/identify-returning', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: 'Bearer token' },
+        body: JSON.stringify({
+          requestId: '22222222-2222-4222-8222-222222222222',
+          profileId,
+          photoBase64: '/9j/4AAQSkZJRg==',
+        }),
+      });
+
+      const res1 = await identifyReturningHandler.fetch(noTokenReq);
+      expect(res1.status).toBe(403);
+      const body1 = await res1.json();
+      expect(body1.error).toBe('candidate_token_required');
+
+      // Attempt 2: Malformed candidateToken
+      const badTokenReq = new Request('http://localhost/api/passes/identify-returning', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: 'Bearer token' },
+        body: JSON.stringify({
+          requestId: '22222222-2222-4222-8222-222222222222',
+          candidateToken: 'cand.v2.invalid.not.enough.parts',
+          photoBase64: '/9j/4AAQSkZJRg==',
+        }),
+      });
+
+      const res2 = await identifyReturningHandler.fetch(badTokenReq);
+      expect(res2.status).toBe(403);
+      const body2 = await res2.json();
+      expect(body2.error).toBe('invalid_candidate_token');
+    });
+
+    it('Case 18: A discovery token cannot retrieve a portrait or ID', async () => {
+      const visitorActorId = '11111111-1111-4111-8111-111111111111';
+      const profileId = '33333333-3333-4333-8333-333333333333';
+      const secret = 'test-token-secret-must-be-at-least-32-chars-long!';
+
+      const candToken = createCandidateToken(profileId, visitorActorId, secret, 300);
+
+      vi.spyOn(await import('../server/supabase.js'), 'getServerSupabaseClients').mockReturnValue({
+        admin: {} as any,
+        client: {} as any,
+      });
+
+      vi.spyOn(await import('../server/actors.js'), 'getVerifiedSessionContext').mockResolvedValue({
+        actorId: visitorActorId,
+        role: 'visitor',
+        isAnonymous: true,
+        isRecoverySession: false,
+        user: { id: visitorActorId },
+        identity: 'test-user',
+      } as any);
+
+      // Attempt to retrieve photo using candidate discovery token
+      const photoReq = new Request(
+        `http://localhost/api/passes/returning-photo-preview?profileId=${profileId}&token=${candToken}&kind=photo`,
+        { method: 'GET', headers: { Authorization: 'Bearer token' } }
+      );
+      const photoRes = await returningPhotoPreviewHandler.fetch(photoReq);
+      expect(photoRes.status).toBe(403);
+      const photoBody = await photoRes.json();
+      expect(photoBody.error).toBe('discovery_token_cannot_authorize_preview');
+
+      // Attempt to retrieve ID using candidate discovery token
+      const idReq = new Request(
+        `http://localhost/api/passes/returning-photo-preview?profileId=${profileId}&token=${candToken}&kind=id`,
+        { method: 'GET', headers: { Authorization: 'Bearer token' } }
+      );
+      const idRes = await returningPhotoPreviewHandler.fetch(idReq);
+      expect(idRes.status).toBe(403);
+      const idBody = await idRes.json();
+      expect(idBody.error).toBe('discovery_token_cannot_authorize_preview');
+    });
+
+    it('Case 19: A returning selfie causes zero Storage uploads, zero evidence inserts, and zero persistent template writes', async () => {
+      const origSecret = process.env.RETURNING_MATCH_TOKEN_SECRET;
+      const origMode = process.env.RETURNING_FACE_THRESHOLD_MODE;
+      const origCosine = process.env.RETURNING_FACE_MIN_COSINE;
+
+      const visitorActorId = '11111111-1111-4111-8111-111111111111';
+      const profileId = '33333333-3333-4333-8333-333333333333';
+      const secret = 'test-token-secret-must-be-at-least-32-chars-long!';
+
+      process.env.RETURNING_MATCH_TOKEN_SECRET = secret;
+      process.env.RETURNING_FACE_THRESHOLD_MODE = 'provisional';
+      process.env.RETURNING_FACE_MIN_COSINE = '0.363';
+
+      const candToken = createCandidateToken(profileId, visitorActorId, secret, 300);
+
+      const uploadSpy = vi.fn();
+      const evidenceInsertSpy = vi.fn();
+      const faceTemplateInsertSpy = vi.fn();
+      const identityAttemptInsertSpy = vi.fn().mockResolvedValue({ error: null });
+
+      const mockAdmin: any = {
+        schema: vi.fn().mockReturnValue({
+          rpc: vi.fn().mockResolvedValue({ data: true, error: null }),
+        }),
+        storage: {
+          from: vi.fn(() => ({
+            upload: uploadSpy,
+            download: vi.fn().mockResolvedValue({
+              data: { arrayBuffer: async () => new Uint8Array(100).buffer },
+              error: null,
+            }),
+          })),
+        },
+        from: vi.fn((table: string) => {
+          if (table === 'visitor_evidence') {
+            return {
+              insert: evidenceInsertSpy,
+              select: vi.fn().mockReturnThis(),
+              in: vi.fn().mockReturnThis(),
+              eq: vi.fn().mockReturnThis(),
+              is: vi.fn().mockReturnThis(),
+              gt: vi.fn().mockReturnThis(),
+              order: vi.fn().mockReturnThis(),
+              limit: vi.fn().mockReturnThis(),
+              maybeSingle: vi.fn().mockResolvedValue({ data: null, error: null }),
+            };
+          }
+          if (table === 'returning_face_templates') {
+            return { insert: faceTemplateInsertSpy };
+          }
+          if (table === 'returning_identity_attempts') {
+            return { insert: identityAttemptInsertSpy };
+          }
+          if (table === 'returning_visitor_profiles') {
+            return {
+              select: vi.fn().mockReturnThis(),
+              eq: vi.fn().mockReturnThis(),
+              maybeSingle: vi.fn().mockResolvedValue({
+                data: {
+                  id: profileId,
+                  first_name: 'Juan',
+                  last_name: 'Dela Cruz',
+                  contact_number_e164: '+639171234567',
+                  expires_at: new Date(Date.now() + 86400000).toISOString(),
+                  revoked_at: null,
+                },
+                error: null,
+              }),
+            };
+          }
+          if (table === 'returning_visitor_vehicles') {
+            return {
+              select: vi.fn().mockReturnThis(),
+              eq: vi.fn().mockReturnThis(),
+              is: vi.fn().mockResolvedValue({ data: [], error: null }),
+            };
+          }
+          return {};
+        }),
+      };
+
+      vi.spyOn(await import('../server/supabase.js'), 'getServerSupabaseClients').mockReturnValue({
+        admin: mockAdmin,
+        client: {} as any,
+      });
+
+      vi.spyOn(await import('../server/actors.js'), 'getVerifiedSessionContext').mockResolvedValue({
+        actorId: visitorActorId,
+        role: 'visitor',
+        isAnonymous: true,
+        isRecoverySession: false,
+        user: { id: visitorActorId },
+        identity: 'test-user',
+      } as any);
+
+      const fakeDescriptor = new Float32Array(128).fill(0.1);
+      vi.spyOn(await import('../server/lib/face-engine.js'), 'analyzeFaceImage').mockResolvedValue({
+        quality: { passed: true, code: 'good', message: 'Passed' },
+        descriptor: fakeDescriptor,
+        modelName: 'sface',
+        modelVersion: '1.0',
+      } as any);
+
+      vi.spyOn(await import('../server/lib/returningVisitorResolution.js'), 'resolveAuthoritativeVisitorForProfile').mockResolvedValue({
+        match: { profileId, visitorIds: ['v-1'] },
+      } as any);
+
+      vi.spyOn(await import('../server/lib/returningVisitorResolution.js'), 'resolveEligibleRegistrationPortrait').mockResolvedValue({
+        id: 'e-1',
+        bucket_id: 'visitor-photos',
+        object_path: 'portraits/juan.jpg',
+        created_at: new Date().toISOString(),
+      } as any);
+
+      const testJpeg = Buffer.from([0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10, 0x4a, 0x46, 0x49, 0x46, 0x00, 0x01]);
+      const req = new Request('http://localhost/api/passes/identify-returning', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: 'Bearer token' },
+        body: JSON.stringify({
+          requestId: '22222222-2222-4222-8222-222222222222',
+          candidateToken: candToken,
+          photoBase64: testJpeg.toString('base64'),
+        }),
+      });
+
+      const res = await identifyReturningHandler.fetch(req);
+      expect(res.status).toBe(200);
+
+      // Invariants:
+      // Zero Storage uploads
+      expect(uploadSpy).not.toHaveBeenCalled();
+      // Zero visitor_evidence records
+      expect(evidenceInsertSpy).not.toHaveBeenCalled();
+      // Zero permanent facial templates persisted
+      expect(faceTemplateInsertSpy).not.toHaveBeenCalled();
+
+      // Identity attempt record must be ephemeral (null photo_intent_id and null numeric score)
+      expect(identityAttemptInsertSpy).toHaveBeenCalledTimes(1);
+      const insertedAttempt = identityAttemptInsertSpy.mock.calls[0][0];
+      expect(insertedAttempt.photo_intent_id).toBeNull();
+      expect(insertedAttempt.best_score).toBeNull();
+      expect(insertedAttempt.second_score).toBeNull();
+
+      if (origSecret !== undefined) process.env.RETURNING_MATCH_TOKEN_SECRET = origSecret;
+      else delete process.env.RETURNING_MATCH_TOKEN_SECRET;
+      if (origMode !== undefined) process.env.RETURNING_FACE_THRESHOLD_MODE = origMode;
+      else delete process.env.RETURNING_FACE_THRESHOLD_MODE;
+      if (origCosine !== undefined) process.env.RETURNING_FACE_MIN_COSINE = origCosine;
+      else delete process.env.RETURNING_FACE_MIN_COSINE;
+    });
+
+    it('Case 21: Database cleanup RPC throws exception -> fails closed with HTTP 500 database_reset_failed and records recovery state', async () => {
+      const mockReq = new Request('http://localhost/api/admin/settings', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: 'Bearer valid-token' },
+        body: JSON.stringify({ action: 'return_to_zero', confirmationPhrase: 'DELETE ALL OPERATIONAL DATA' }),
+      });
+
+      vi.spyOn(await import('../server/actors.js'), 'requireStaffActor').mockResolvedValue({
+        id: superadminId,
+        role: 'superadmin',
+        active: true,
+      } as any);
+
+      vi.spyOn(await import('../server/lib/storagePurgeService.js'), 'purgeAndVerifyStorageBuckets').mockResolvedValue({
+        success: true,
+        inventories: {} as any,
+        totalFilesDiscovered: 0,
+        totalFilesDeleted: 0,
+        verifiedEmpty: true,
+        purgedAt: new Date().toISOString(),
+      });
+
+      const recordedSteps: string[] = [];
+      const mockRpc = vi.fn().mockImplementation((name: string, args: any) => {
+        if (name === 'acquire_system_reset_lock') {
+          return Promise.resolve({ data: { acquired: true, operation_id: 'op-db-crash-1' }, error: null });
+        }
+        if (name === 'record_system_reset_step') {
+          recordedSteps.push(args?.requested_step);
+          return Promise.resolve({ data: null, error: null });
+        }
+        if (name === 'return_to_zero_reset') {
+          throw new Error('Database server terminated abnormally during reset');
+        }
+        return Promise.resolve({ data: null, error: null });
+      });
+
+      vi.spyOn(await import('../server/supabase.js'), 'getServerSupabaseClients').mockReturnValue({
+        admin: { schema: () => ({ rpc: mockRpc }), rpc: mockRpc, from: vi.fn() } as any,
+        client: {} as any,
+      });
+
+      const res = await adminSettingsHandler(mockReq);
+      expect(res.status).toBe(500);
+      const body = await res.json();
+      expect(body.error).toBe('database_reset_failed');
+      expect(body.recoveryRequired).toBe(true);
+      expect(body.operationId).toBe('op-db-crash-1');
+      expect(recordedSteps).toContain('database_cleanup_failed');
+    });
+
+    it('Case 22: Superadmin can reconcile interrupted reset operation via reconcile_system_reset API action', async () => {
+      const mockReq = new Request('http://localhost/api/admin/settings', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: 'Bearer valid-token' },
+        body: JSON.stringify({
+          action: 'reconcile_system_reset',
+          operationId: 'op-rec-1234',
+          reconcileAction: 'force_unlock',
+          note: 'Operator recovery inspection completed',
+        }),
+      });
+
+      vi.spyOn(await import('../server/actors.js'), 'requireStaffActor').mockResolvedValue({
+        id: superadminId,
+        role: 'superadmin',
+        active: true,
+      } as any);
+
+      const mockRpc = vi.fn().mockResolvedValue({
+        data: { success: true, action: 'force_unlocked', operation_id: 'op-rec-1234' },
+        error: null,
+      });
+
+      vi.spyOn(await import('../server/supabase.js'), 'getServerSupabaseClients').mockReturnValue({
+        admin: { schema: () => ({ rpc: mockRpc }), rpc: mockRpc, from: vi.fn() } as any,
+        client: {} as any,
+      });
+
+      const res = await adminSettingsHandler(mockReq);
+      expect(res.status).toBe(200);
+      const body = await res.json();
+      expect(body.success).toBe(true);
+      expect(body.result.action).toBe('force_unlocked');
+      expect(mockRpc).toHaveBeenCalledWith('reconcile_system_reset_operation', {
+        requested_actor_id: superadminId,
+        requested_op_id: 'op-rec-1234',
+        requested_action: 'force_unlock',
+        requested_note: 'Operator recovery inspection completed',
+      });
+    });
+
+    it('Case 23: Complete write freeze rejects writes across outbox, reconciliation, and staff session tables', async () => {
+      await db.exec(`set request.jwt.claim.role = 'service_role';`);
+
+      // Acquire lock
+      await db.query(`select api.acquire_system_reset_lock('${superadminId}'::uuid);`);
+
+      // 1. Office visit email outbox insert rejected
+      await expect(
+        db.exec(`
+          insert into public.office_visit_email_outbox (office_visit_id, recipient_email, email_type)
+          values ('00000000-0000-0000-0000-000000000001'::uuid, 'test@example.com', 'approval');
+        `)
+      ).rejects.toThrow(/system_reset_in_progress/);
+
+      // 2. Reconciliation tasks insert rejected
+      await expect(
+        db.exec(`
+          insert into public.reconciliation_tasks (operation, reference_type)
+          values ('storage_cleanup', 'storage');
+        `)
+      ).rejects.toThrow(/system_reset_in_progress/);
+
+      // 3. Staff sessions insert rejected
+      await expect(
+        db.exec(`
+          insert into public.staff_sessions (session_id, user_id, role)
+          values ('session-12345678', '${superadminId}'::uuid, 'superadmin'::public.staff_role);
+        `)
+      ).rejects.toThrow(/system_reset_in_progress/);
+    });
+
+    it('Case 24: api.get_system_reset_status reflects accurate locked/unlocked state and operation details', async () => {
+      await db.exec(`set request.jwt.claim.role = 'service_role';`);
+
+      // 1. When idle
+      await db.exec(`update public.maintenance_state set cursor_value = 'idle' where job_name = 'system_reset';`);
+      const idleRes = await db.query<{ get_system_reset_status: any }>(`select api.get_system_reset_status();`);
+      expect(idleRes.rows[0].get_system_reset_status.isLocked).toBe(false);
+      expect(idleRes.rows[0].get_system_reset_status.status).toBe('idle');
+
+      // 2. Acquired lock
+      const lockRes = await db.query<{ acquire_system_reset_lock: any }>(
+        `select api.acquire_system_reset_lock('${superadminId}'::uuid);`
+      );
+      const opId = lockRes.rows[0].acquire_system_reset_lock.operation_id;
+
+      const lockedRes = await db.query<{ get_system_reset_status: any }>(`select api.get_system_reset_status();`);
+      expect(lockedRes.rows[0].get_system_reset_status.isLocked).toBe(true);
+      expect(lockedRes.rows[0].get_system_reset_status.status).toBe('locked');
+      expect(lockedRes.rows[0].get_system_reset_status.activeOperation.id).toBe(opId);
+
+      // Clean up / release
+      await db.query(`select api.release_system_reset_lock('${superadminId}'::uuid, '${opId}'::uuid);`);
     });
 
     it('Case 20: Historical migration 20261118000300 is byte-for-byte identical to main, and 20261119000100 upgrades cleanly from baseline', async () => {

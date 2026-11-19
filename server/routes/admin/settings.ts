@@ -109,15 +109,19 @@ async function handleRequest(request: Request): Promise<Response> {
 
           storageResult = await purgeAndVerifyStorageBuckets(admin);
 
+          const effectiveCounts = (storageResult.totalFilesDeleted > 0 || !lockData.purged_counts)
+            ? {
+                totalDiscovered: storageResult.totalFilesDiscovered,
+                totalDeleted: storageResult.totalFilesDeleted,
+              }
+            : lockData.purged_counts;
+
           await recordResetStep(admin, {
             requested_op_id: operationId,
             requested_status: 'storage_deletion_verified',
             requested_step: 'storage_deletion_verified',
             requested_manifest: storageResult.inventories,
-            requested_counts: {
-              totalDiscovered: storageResult.totalFilesDiscovered,
-              totalDeleted: storageResult.totalFilesDeleted,
-            },
+            requested_counts: effectiveCounts,
           });
         } catch (storageErr: any) {
           console.error('Storage purge or verification failed during return_to_zero:', storageErr);
@@ -158,26 +162,32 @@ async function handleRequest(request: Request): Promise<Response> {
           });
         }
 
-        const { data: rpcData, error: rpcError } = await admin.schema('api').rpc('return_to_zero_reset', {
-          requested_actor_id: actor.id,
-          requested_op_id: operationId,
-        });
+        let rpcData: any;
+        try {
+          const { data, error: rpcError } = await admin.schema('api').rpc('return_to_zero_reset', {
+            requested_actor_id: actor.id,
+            requested_op_id: operationId,
+          });
 
-        if (rpcError) {
-          console.error('return_to_zero_reset RPC error:', rpcError);
+          if (rpcError) {
+            throw new Error(rpcError.message || JSON.stringify(rpcError));
+          }
+          rpcData = data;
+        } catch (rpcErr: any) {
+          console.error('return_to_zero_reset RPC failed:', rpcErr);
           try {
             await recordResetStep(admin, {
               requested_op_id: operationId,
               requested_status: 'recovery_required',
               requested_step: 'database_cleanup_failed',
-              requested_error: rpcError.message,
+              requested_error: rpcErr?.message || String(rpcErr),
             });
           } catch (recErr) {
             console.error('Failed to record database_cleanup_failed status:', recErr);
           }
           return jsonResponse(500, {
             error: 'database_reset_failed',
-            message: rpcError.message,
+            message: rpcErr?.message || 'Database reset RPC execution failed.',
             operationId,
             recoveryRequired: true,
           });
@@ -239,6 +249,38 @@ async function handleRequest(request: Request): Promise<Response> {
         });
       }
 
+      if (body?.action === 'reconcile_system_reset' || body?.action === 'reconcile_reset') {
+        const opId = typeof body.operationId === 'string' ? body.operationId.trim() : null;
+        if (!opId) {
+          return jsonResponse(400, {
+            error: 'invalid_request',
+            message: 'Valid UUID operationId is required for reset reconciliation.',
+          });
+        }
+
+        const reconcileAction = body.reconcileAction || 'mark_failed';
+        const { data: recData, error: recError } = await admin
+          .schema('api')
+          .rpc('reconcile_system_reset_operation', {
+            requested_actor_id: actor.id,
+            requested_op_id: opId,
+            requested_action: reconcileAction,
+            requested_note: body.note || null,
+          });
+
+        if (recError) {
+          return jsonResponse(500, {
+            error: 'reconciliation_failed',
+            message: recError.message || 'System reset reconciliation RPC failed.',
+          });
+        }
+
+        return jsonResponse(200, {
+          success: true,
+          result: recData,
+        });
+      }
+
       return jsonResponse(400, { error: 'unsupported_action' });
     }
 
@@ -297,7 +339,21 @@ async function handleRequest(request: Request): Promise<Response> {
     const turnstileSiteKeyConfigured = Boolean(process.env.VITE_TURNSTILE_SITE_KEY?.trim());
     const turnstileVerifierConfigured = Boolean(process.env.TURNSTILE_SECRET_KEY?.trim());
 
+    let systemResetStatus: any = { isLocked: false, status: 'idle', activeOperation: null };
+    try {
+      const { data: statusData, error: statusErr } = await admin
+        .schema('api')
+        .rpc('get_system_reset_status');
+
+      if (!statusErr && statusData) {
+        systemResetStatus = statusData;
+      }
+    } catch (maintErr) {
+      console.warn('Could not query get_system_reset_status for reset status:', maintErr);
+    }
+
     return jsonResponse(200, {
+      systemReset: systemResetStatus,
       workingHours: {
         start: startTime,
         end: endTime,

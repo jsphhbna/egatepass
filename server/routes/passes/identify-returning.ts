@@ -263,17 +263,7 @@ async function handleRequest(request: Request): Promise<Response> {
 
     const actorId = session.user.id;
 
-    // Safety Gate Check: fail-closed if biometric parameters or secrets are uncalibrated/missing
-    if (!isReturningVisitorAvailable()) {
-      return jsonResponse(200, {
-        available: false,
-        matched: false,
-        message: 'Returning visitor biometrics are currently unavailable pending configuration.',
-      });
-    }
-
-    const minCosine = getResolvedCosineThreshold()!;
-    const matchSecret = process.env.RETURNING_MATCH_TOKEN_SECRET!;
+    const matchSecret = process.env.RETURNING_MATCH_TOKEN_SECRET || '';
 
     // Validate candidate authorization token:
     // Strictly enforces actor binding, profile binding, and expiry.
@@ -314,6 +304,17 @@ async function handleRequest(request: Request): Promise<Response> {
       });
     }
     profileId = authorizedProfileId;
+
+    // Safety Gate Check: fail-closed if biometric parameters or secrets are uncalibrated/missing
+    if (!isReturningVisitorAvailable()) {
+      return jsonResponse(200, {
+        available: false,
+        matched: false,
+        message: 'Returning visitor biometrics are currently unavailable pending configuration.',
+      });
+    }
+
+    const minCosine = getResolvedCosineThreshold()!;
 
     // 1. Rate limiting - Actor Bucket (5 verification attempts per 10 minutes)
     const actorKeyHex = createHash('sha256').update(`actor:${actorId}`).digest('hex');

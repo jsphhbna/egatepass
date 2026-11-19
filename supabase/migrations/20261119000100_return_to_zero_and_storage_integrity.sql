@@ -65,6 +65,19 @@ $$;
 revoke all on function private.is_system_reset_locked() from public, anon, authenticated;
 grant execute on function private.is_system_reset_locked() to service_role;
 
+create or replace function api.is_system_reset_locked()
+returns boolean
+language sql
+security definer
+stable
+set search_path = ''
+as $$
+  select private.is_system_reset_locked();
+$$;
+
+revoke all on function api.is_system_reset_locked() from public, anon, authenticated;
+grant execute on function api.is_system_reset_locked() to service_role;
+
 create or replace function private.check_system_reset_lock()
 returns trigger
 language plpgsql
@@ -245,6 +258,41 @@ create trigger a_00_pass_email_verifications_reset_lock
   before insert or update on public.pass_email_verifications
   for each row execute function private.check_system_reset_lock();
 
+drop trigger if exists a_00_office_visit_email_outbox_reset_lock on public.office_visit_email_outbox;
+create trigger a_00_office_visit_email_outbox_reset_lock
+  before insert or update on public.office_visit_email_outbox
+  for each row execute function private.check_system_reset_lock();
+
+drop trigger if exists a_00_office_visit_ack_outbox_reset_lock on public.office_visit_acknowledgement_outbox;
+create trigger a_00_office_visit_ack_outbox_reset_lock
+  before insert or update on public.office_visit_acknowledgement_outbox
+  for each row execute function private.check_system_reset_lock();
+
+drop trigger if exists a_00_office_provisioning_ops_reset_lock on public.office_provisioning_operations;
+create trigger a_00_office_provisioning_ops_reset_lock
+  before insert or update on public.office_provisioning_operations
+  for each row execute function private.check_system_reset_lock();
+
+drop trigger if exists a_00_reconciliation_tasks_reset_lock on public.reconciliation_tasks;
+create trigger a_00_reconciliation_tasks_reset_lock
+  before insert or update on public.reconciliation_tasks
+  for each row execute function private.check_system_reset_lock();
+
+drop trigger if exists a_00_staff_sessions_reset_lock on public.staff_sessions;
+create trigger a_00_staff_sessions_reset_lock
+  before insert or update on public.staff_sessions
+  for each row execute function private.check_system_reset_lock();
+
+drop trigger if exists a_00_office_staff_assignments_reset_lock on public.office_staff_assignments;
+create trigger a_00_office_staff_assignments_reset_lock
+  before insert or update on public.office_staff_assignments
+  for each row execute function private.check_system_reset_lock();
+
+drop trigger if exists a_00_staff_profiles_reset_lock on public.staff_profiles;
+create trigger a_00_staff_profiles_reset_lock
+  before insert or update on public.staff_profiles
+  for each row execute function private.check_system_reset_lock();
+
 -- Storage protection: update RLS policy and trigger on storage.objects if present
 do $$
 begin
@@ -312,6 +360,16 @@ begin
 
   if v_actor_role is null or v_actor_role <> 'superadmin'::public.staff_role then
     raise exception using errcode = '42501', message = 'superadmin_required';
+  end if;
+
+  -- Validate requested_op_id if provided
+  if requested_op_id is not null then
+    if not exists (
+      select 1 from public.system_reset_operations
+      where id = requested_op_id
+    ) then
+      raise exception using errcode = 'P0002', message = 'operation_not_found';
+    end if;
   end if;
 
   -- 3. Acquire exclusive advisory transaction lock to serialize return-to-zero operations
@@ -606,51 +664,51 @@ begin
   where job_name = 'system_reset'
   for update;
 
-  if v_current_lock in ('locked', 'in_progress', 'recovery_required') then
-    -- If a specific interrupted operation is being explicitly resumed
-    if requested_resume_op_id is not null then
-      select * into v_op
-      from public.system_reset_operations
-      where id = requested_resume_op_id
-      for update;
+  -- If a specific interrupted operation is being explicitly resumed
+  if requested_resume_op_id is not null then
+    select * into v_op
+    from public.system_reset_operations
+    where id = requested_resume_op_id
+    for update;
 
-      if not found then
-        return jsonb_build_object(
-          'acquired', false,
-          'reason', 'operation_not_found',
-          'operation_id', requested_resume_op_id
-        );
-      end if;
-
-      if v_op.status = 'completed' then
-        return jsonb_build_object(
-          'acquired', false,
-          'reason', 'cannot_resume_completed_operation',
-          'operation_id', requested_resume_op_id
-        );
-      end if;
-
-      update public.system_reset_operations
-      set status = 'storage_deletion_in_progress',
-          step = 'resumed',
-          updated_at = now()
-      where id = requested_resume_op_id;
-
-      update public.maintenance_state
-      set cursor_value = 'locked',
-          last_started_at = now()
-      where job_name = 'system_reset';
-
+    if not found then
       return jsonb_build_object(
-        'acquired', true,
-        'operation_id', requested_resume_op_id,
-        'resumed', true,
-        'previous_status', v_op.status,
-        'storage_manifest', v_op.storage_manifest,
-        'purged_counts', v_op.purged_counts
+        'acquired', false,
+        'reason', 'operation_not_found',
+        'operation_id', requested_resume_op_id
       );
     end if;
 
+    if v_op.status = 'completed' then
+      return jsonb_build_object(
+        'acquired', false,
+        'reason', 'cannot_resume_completed_operation',
+        'operation_id', requested_resume_op_id
+      );
+    end if;
+
+    update public.system_reset_operations
+    set step = 'resumed',
+        updated_at = now()
+    where id = requested_resume_op_id;
+
+    update public.maintenance_state
+    set cursor_value = 'locked',
+        last_started_at = now()
+    where job_name = 'system_reset';
+
+    return jsonb_build_object(
+      'acquired', true,
+      'operation_id', requested_resume_op_id,
+      'resumed', true,
+      'previous_status', v_op.status,
+      'storage_manifest', v_op.storage_manifest,
+      'purged_counts', v_op.purged_counts
+    );
+  end if;
+
+  -- Fresh acquisition request: reject if already locked or recovery required
+  if v_current_lock in ('locked', 'in_progress', 'recovery_required') then
     -- Look up active/uncompleted operation to prevent silent overwrite
     select id, status into v_existing_op_id, v_existing_op_status
     from public.system_reset_operations
@@ -666,8 +724,8 @@ begin
     );
   end if;
 
-  -- Idle state: generate fresh operation ID or use explicit ID
-  v_op_id := coalesce(requested_resume_op_id, gen_random_uuid());
+  -- Idle state: generate fresh operation ID
+  v_op_id := gen_random_uuid();
 
   -- Acquire maintenance lock
   update public.maintenance_state
@@ -888,3 +946,62 @@ $$;
 
 revoke all on function api.reconcile_system_reset_operation(uuid, uuid, text, text) from public, anon, authenticated;
 grant execute on function api.reconcile_system_reset_operation(uuid, uuid, text, text) to service_role;
+
+-- =============================================================================
+-- 6. SYSTEM RESET STATUS RPC
+-- =============================================================================
+
+create or replace function api.get_system_reset_status()
+returns jsonb
+language plpgsql
+security definer
+stable
+set search_path = ''
+as $$
+declare
+  v_maint record;
+  v_op record;
+begin
+  if auth.role() <> 'service_role' then
+    raise exception using errcode = '42501', message = 'service role required';
+  end if;
+
+  select cursor_value, last_started_at, last_completed_at, last_outcome
+  into v_maint
+  from public.maintenance_state
+  where job_name = 'system_reset';
+
+  if v_maint.cursor_value in ('locked', 'in_progress', 'recovery_required') then
+    select id, status, step, error_details, created_at, updated_at
+    into v_op
+    from public.system_reset_operations
+    order by created_at desc
+    limit 1;
+
+    return jsonb_build_object(
+      'isLocked', true,
+      'status', coalesce(v_maint.cursor_value, 'idle'),
+      'lastStartedAt', v_maint.last_started_at,
+      'activeOperation', case when v_op.id is not null then
+        jsonb_build_object(
+          'id', v_op.id,
+          'status', v_op.status,
+          'step', v_op.step,
+          'error_details', v_op.error_details,
+          'created_at', v_op.created_at,
+          'updated_at', v_op.updated_at
+        ) else null end
+    );
+  else
+    return jsonb_build_object(
+      'isLocked', false,
+      'status', coalesce(v_maint.cursor_value, 'idle'),
+      'activeOperation', null
+    );
+  end if;
+end;
+$$;
+
+revoke all on function api.get_system_reset_status() from public, anon, authenticated;
+grant execute on function api.get_system_reset_status() to service_role;
+
