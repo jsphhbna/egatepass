@@ -2245,15 +2245,21 @@ runSuite('True PostgreSQL Concurrency, Canonical Approval Integrity & Email Reco
           $1::uuid, 'storage_deletion_in_progress', 'storage_deletion_in_progress',
           '{}'::jsonb, '{}'::jsonb, null, $2, $3::uuid
         );
+      `, [opId, gen, workerId]);
+
+      await client.query(`
         select api.record_system_reset_step(
           $1::uuid, 'storage_deletion_verified', 'storage_deletion_verified',
           '{}'::jsonb, '{}'::jsonb, null, $2, $3::uuid, $4::jsonb
         );
+      `, [opId, gen, workerId, verification]);
+
+      await client.query(`
         select api.record_system_reset_step(
           $1::uuid, 'database_cleanup_in_progress', 'database_cleanup_in_progress',
           '{}'::jsonb, '{}'::jsonb, null, $2, $3::uuid
         );
-      `, [opId, gen, workerId, verification]);
+      `, [opId, gen, workerId]);
     }
 
     it('1. Database operational writes: Transaction A holds in-flight write -> reset acquisition in Transaction B is blocked until Transaction A finishes', async () => {
@@ -2335,10 +2341,8 @@ runSuite('True PostgreSQL Concurrency, Canonical Approval Integrity & Email Reco
         if (opId && workerGen && workerId) {
           try {
             await advancePgResetToDatabaseCleanup(clientB, opId, workerGen, workerId);
-            await clientB.query(`
-              select api.return_to_zero_reset($1::uuid, $2::uuid, $3, $4::uuid);
-              select api.release_system_reset_lock($1::uuid, $2::uuid, $3, $4::uuid);
-            `, [superadminId, opId, workerGen, workerId]);
+            await clientB.query(`select api.return_to_zero_reset($1::uuid, $2::uuid, $3, $4::uuid);`, [superadminId, opId, workerGen, workerId]);
+            await clientB.query(`select api.release_system_reset_lock($1::uuid, $2::uuid, $3, $4::uuid);`, [superadminId, opId, workerGen, workerId]);
           } catch {}
         }
         clientA.release();
@@ -2425,10 +2429,8 @@ runSuite('True PostgreSQL Concurrency, Canonical Approval Integrity & Email Reco
         if (opId && workerGen && workerId) {
           try {
             await advancePgResetToDatabaseCleanup(clientB, opId, workerGen, workerId);
-            await clientB.query(`
-              select api.return_to_zero_reset($1::uuid, $2::uuid, $3, $4::uuid);
-              select api.release_system_reset_lock($1::uuid, $2::uuid, $3, $4::uuid);
-            `, [superadminId, opId, workerGen, workerId]);
+            await clientB.query(`select api.return_to_zero_reset($1::uuid, $2::uuid, $3, $4::uuid);`, [superadminId, opId, workerGen, workerId]);
+            await clientB.query(`select api.release_system_reset_lock($1::uuid, $2::uuid, $3, $4::uuid);`, [superadminId, opId, workerGen, workerId]);
           } catch {}
         }
         clientA.release();
