@@ -77,10 +77,11 @@ import {
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { VisitorMonthlyCalendar } from '@/components/VisitorMonthlyCalendar';
-import { Button, Card, Input, FormField, Stepper, PageShell, Skeleton, ProgressBar } from '@/components/ui';
+import { Button, Card, Input, FormField, Stepper, PageShell, Skeleton, ProgressBar, Modal } from '@/components/ui';
 const EmailPassModal = lazy(() => import('@/components/EmailPassModal').then((m) => ({ default: m.EmailPassModal })));
 import { TimedSkipWarningModal } from '@/components/TimedSkipWarningModal';
 import { VisitPurposeField } from '@/components/VisitPurposeField';
+import { CameraControls } from '@/components/CameraControls';
 import { DEFAULT_VISIT_PURPOSES, normalizeVisitPurposes } from '@/lib/settingsDefaults';
 import type { VisitPurposeOption } from '@/types';
 import { DEFAULT_WORKING_HOURS, formatValidityWindow, formatWorkingHours, MAX_VISIT_ADVANCE_DAYS, normalizeWorkingHours } from '@/lib/workingHours';
@@ -746,6 +747,51 @@ export function GetPassPage() {
       makeModel: '',
     },
   });
+
+  const [showCancelModal, setShowCancelModal] = useState(false);
+
+  const handleCancelRegistration = useCallback(() => {
+    const tx = portalTransactionRef.current;
+    if (tx) {
+      void abandonPortalEvidence(tx, 'photo');
+      void abandonPortalEvidence(tx, 'id');
+      void abandonPortalEvidence(tx, 'vehicle');
+      invalidatePortalEvidenceCheckpoint(tx, 'photo');
+      invalidatePortalEvidenceCheckpoint(tx, 'id');
+      invalidatePortalEvidenceCheckpoint(tx, 'vehicle');
+    }
+    livePhotoIntentIdRef.current = null;
+    setPhotoBlob(null);
+    setIdBlob(null);
+    setVehiclePhotoBlob(null);
+    photoUrl.clear();
+    idUrl.clear();
+    vehiclePhotoUrl.clear();
+    setIdentityVerified(false);
+    setVerificationError(null);
+    setLiveFaceError(null);
+    setIdQualityError(null);
+    setVehiclePhotoError(null);
+    setIdReusedFromOcr(false);
+    setOcrSuccessNotice(null);
+    faceWebcam.stop();
+    reset();
+    setStep('form');
+    setShowCancelModal(false);
+    toast.info('Registration cancelled. No personal information or images were saved.');
+  }, [reset, faceWebcam, photoUrl, idUrl, vehiclePhotoUrl]);
+
+  // Cleanup on unmount: if visitor closes or abandons registration before pass is issued, purge uncommitted evidence
+  useEffect(() => {
+    return () => {
+      if (!passId && portalTransactionRef.current) {
+        const tx = portalTransactionRef.current;
+        void abandonPortalEvidence(tx, 'photo');
+        void abandonPortalEvidence(tx, 'id');
+        void abandonPortalEvidence(tx, 'vehicle');
+      }
+    };
+  }, [passId]);
 
   const purpose = watch('purpose');
   const arrivalMode = watch('arrivalMode');
@@ -3819,6 +3865,16 @@ export function GetPassPage() {
                   Continue to Live Face Capture
                 </Button>
               </div>
+
+              <div className="text-center pt-1">
+                <button
+                  type="button"
+                  onClick={() => setShowCancelModal(true)}
+                  className="text-xs text-[var(--color-text-secondary)] hover:text-[var(--color-danger)] underline transition-colors cursor-pointer"
+                >
+                  Cancel Registration
+                </button>
+              </div>
             </div>
           )}
 
@@ -3865,6 +3921,16 @@ export function GetPassPage() {
                       Use This Photo
                     </Button>
                   </div>
+
+                  <div className="text-center pt-1">
+                    <button
+                      type="button"
+                      onClick={() => setShowCancelModal(true)}
+                      className="text-xs text-[var(--color-text-secondary)] hover:text-[var(--color-danger)] underline transition-colors cursor-pointer"
+                    >
+                      Cancel Registration
+                    </button>
+                  </div>
                 </div>
               ) : (
                 <div className="space-y-4">
@@ -3907,7 +3973,7 @@ export function GetPassPage() {
                         playsInline
                         muted
                         style={{ transform: faceWebcam.mirrorPreview ? 'scaleX(-1)' : 'none' }}
-                        className="h-full w-full object-cover"
+                        className="absolute inset-0 h-full w-full object-cover block shrink-0"
                       />
                     )}
 
@@ -3917,6 +3983,16 @@ export function GetPassPage() {
                         <span className="sr-only">Center face in oval</span>
                       </div>
                     </div>
+                  </div>
+
+                  <div className="mx-auto w-full max-w-sm">
+                    <CameraControls
+                      activeFacingMode={faceWebcam.activeFacingMode}
+                      mirrorPreview={faceWebcam.mirrorPreview}
+                      canSwitchCamera={faceWebcam.canSwitchCamera}
+                      onSwitchCamera={faceWebcam.switchCamera}
+                      onToggleMirror={faceWebcam.toggleMirrorPreview}
+                    />
                   </div>
 
                   <div className="flex gap-3">
@@ -3939,6 +4015,16 @@ export function GetPassPage() {
                     >
                       Take Live Photo
                     </Button>
+                  </div>
+
+                  <div className="text-center pt-1">
+                    <button
+                      type="button"
+                      onClick={() => setShowCancelModal(true)}
+                      className="text-xs text-[var(--color-text-secondary)] hover:text-[var(--color-danger)] underline transition-colors cursor-pointer"
+                    >
+                      Cancel Registration
+                    </button>
                   </div>
                 </div>
               )}
@@ -4016,6 +4102,16 @@ export function GetPassPage() {
                       Verify Identity
                     </Button>
                   </div>
+
+                  <div className="text-center pt-1">
+                    <button
+                      type="button"
+                      onClick={() => setShowCancelModal(true)}
+                      className="text-xs text-[var(--color-text-secondary)] hover:text-[var(--color-danger)] underline transition-colors cursor-pointer"
+                    >
+                      Cancel Registration
+                    </button>
+                  </div>
                 </div>
               ) : (
                 <div className="space-y-4 text-center">
@@ -4058,6 +4154,16 @@ export function GetPassPage() {
                     >
                       Choose Photo
                     </Button>
+                  </div>
+
+                  <div className="text-center pt-1">
+                    <button
+                      type="button"
+                      onClick={() => setShowCancelModal(true)}
+                      className="text-xs text-[var(--color-text-secondary)] hover:text-[var(--color-danger)] underline transition-colors cursor-pointer"
+                    >
+                      Cancel Registration
+                    </button>
                   </div>
                 </div>
               )}
@@ -4107,6 +4213,16 @@ export function GetPassPage() {
                       Continue to Review
                     </Button>
                   </div>
+
+                  <div className="text-center pt-1">
+                    <button
+                      type="button"
+                      onClick={() => setShowCancelModal(true)}
+                      className="text-xs text-[var(--color-text-secondary)] hover:text-[var(--color-danger)] underline transition-colors cursor-pointer"
+                    >
+                      Cancel Registration
+                    </button>
+                  </div>
                 </div>
               ) : (
                 <div className="space-y-6">
@@ -4144,6 +4260,16 @@ export function GetPassPage() {
                     >
                       Retry Verification
                     </Button>
+                  </div>
+
+                  <div className="text-center pt-1">
+                    <button
+                      type="button"
+                      onClick={() => setShowCancelModal(true)}
+                      className="text-xs text-[var(--color-text-secondary)] hover:text-[var(--color-danger)] underline transition-colors cursor-pointer"
+                    >
+                      Cancel Registration
+                    </button>
                   </div>
                 </div>
               )}
@@ -4567,6 +4693,16 @@ export function GetPassPage() {
                   </>
                 )}
               </div>
+
+              <div className="text-center pt-2">
+                <button
+                  type="button"
+                  onClick={() => setShowCancelModal(true)}
+                  className="text-xs text-[var(--color-text-secondary)] hover:text-[var(--color-danger)] underline transition-colors cursor-pointer"
+                >
+                  Cancel Registration
+                </button>
+              </div>
             </div>
           )}
 
@@ -4887,7 +5023,7 @@ export function GetPassPage() {
                         playsInline
                         muted
                         style={{ transform: 'none' }}
-                        className="h-full w-full object-cover"
+                        className="absolute inset-0 h-full w-full object-cover block shrink-0"
                       />
                     )}
                     <div className="absolute inset-0 pointer-events-none flex items-center justify-center">
@@ -5827,6 +5963,16 @@ export function GetPassPage() {
                   </>
                 )}
               </div>
+
+              <div className="text-center pt-2">
+                <button
+                  type="button"
+                  onClick={() => setShowCancelModal(true)}
+                  className="text-xs text-[var(--color-text-secondary)] hover:text-[var(--color-danger)] underline transition-colors cursor-pointer"
+                >
+                  Cancel Registration
+                </button>
+              </div>
             </div>
           )}
 
@@ -6284,6 +6430,38 @@ export function GetPassPage() {
           setStep('done');
         }}
       />
+
+      {/* Cancel Registration Confirmation Modal */}
+      <Modal
+        isOpen={showCancelModal}
+        onClose={() => setShowCancelModal(false)}
+        title="Cancel Registration?"
+        size="sm"
+      >
+        <div className="space-y-4">
+          <p className="text-sm text-[var(--color-text-secondary)] leading-relaxed">
+            Are you sure you want to cancel your visitor registration? Any uploaded photos, ID documents, and entered details will be deleted immediately and will <strong>not</strong> be saved in the database.
+          </p>
+          <div className="flex gap-3 justify-end pt-2">
+            <Button
+              type="button"
+              variant="secondary"
+              onClick={() => setShowCancelModal(false)}
+              className="flex-1"
+            >
+              Keep Registering
+            </Button>
+            <Button
+              type="button"
+              variant="destructive"
+              onClick={handleCancelRegistration}
+              className="flex-1"
+            >
+              Yes, Cancel & Delete
+            </Button>
+          </div>
+        </div>
+      </Modal>
 
       {/* Automatic Returning Visitor Candidate Match Modal */}
       {showCandidateMatchModal && candidateMatch && (

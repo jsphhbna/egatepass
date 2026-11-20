@@ -27,6 +27,7 @@ import {
   Loader2,
   LogOut,
   RefreshCw,
+  Upload,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { Button, Card, Input, FormField, Stepper, Modal, ProgressBar } from '@/components/ui';
@@ -242,8 +243,9 @@ export function KioskPage() {
   }, [loadSettings]);
 
   const faceWebcam = useWebcam({ facingMode: 'user', width: 640, height: 480, allowCaptureMirroring: false });
-  const idWebcam = useWebcam({ facingMode: 'environment', width: 1280, height: 720, allowCaptureMirroring: false });
+  const idWebcam = useWebcam({ facingMode: 'environment', width: 1920, height: 1080, allowCaptureMirroring: false, focusMode: 'continuous' });
   const ocrGenerationRef = useRef(0);
+  const kioskIdFileInputRef = useRef<HTMLInputElement>(null);
 
   // Cleanup on unmount
   useEffect(() => {
@@ -343,6 +345,16 @@ export function KioskPage() {
     } else {
       toast.error('Failed to capture ID image.');
     }
+  }
+
+  function handleKioskIdFileUpload(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    if (file.size > 10 * 1024 * 1024) {
+      toast.error('Image exceeds 10MB limit.');
+      return;
+    }
+    void processIdImageAndOcr(file);
   }
 
   function onFormNext(data: KioskPassFormData) {
@@ -853,7 +865,11 @@ export function KioskPage() {
                 </p>
               </div>
 
-              <div className="mx-auto w-full max-w-md overflow-hidden rounded-xl border-2 border-dashed border-[var(--color-brand)] shadow-sm bg-black aspect-[3/2] relative flex items-center justify-center">
+              <div
+                className="mx-auto w-full max-w-md overflow-hidden rounded-xl border-2 border-dashed border-[var(--color-brand)] shadow-sm bg-black aspect-[3/2] relative flex items-center justify-center cursor-pointer"
+                onClick={() => void idWebcam.refocus?.()}
+                title="Tap camera to refocus"
+              >
                 {idWebcam.error ? (
                   <div className="p-6 text-center text-white space-y-3">
                     <AlertCircle className="mx-auto h-8 w-8 text-[var(--color-danger)]" />
@@ -882,21 +898,48 @@ export function KioskPage() {
                       autoPlay
                       playsInline
                       muted
-                      className="h-full w-full object-cover"
+                      className="absolute inset-0 h-full w-full object-cover block shrink-0"
                       style={{ transform: idWebcam.mirrorPreview ? 'scaleX(-1)' : 'none' }}
                     />
+                    {/* ID Document Framing Guidelines */}
+                    <div className="absolute inset-0 pointer-events-none flex items-center justify-center p-3">
+                      <div className="w-full max-w-[280px] aspect-[85.6/53.98] border-2 border-dashed border-white/70 rounded-xl flex items-end justify-center pb-2 shadow-[0_0_0_9999px_rgba(0,0,0,0.35)]">
+                        <span className="text-[10px] text-white/95 bg-black/60 px-2 py-0.5 rounded backdrop-blur-xs font-medium">
+                          Align ID inside frame (~15–20 cm) • Tap to focus
+                        </span>
+                      </div>
+                    </div>
                   </>
                 )}
               </div>
 
-              <div className="mx-auto w-full max-w-md">
+              <div className="mx-auto w-full max-w-md space-y-2">
                 <CameraControls
                   activeFacingMode={idWebcam.activeFacingMode}
                   mirrorPreview={idWebcam.mirrorPreview}
                   canSwitchCamera={idWebcam.canSwitchCamera}
                   onSwitchCamera={idWebcam.switchCamera}
                   onToggleMirror={idWebcam.toggleMirrorPreview}
+                  onRefocus={idWebcam.refocus}
                 />
+
+                <input
+                  ref={kioskIdFileInputRef}
+                  type="file"
+                  accept="image/jpeg,image/png,image/webp"
+                  onChange={handleKioskIdFileUpload}
+                  className="hidden"
+                />
+                <div className="text-center">
+                  <button
+                    type="button"
+                    onClick={() => kioskIdFileInputRef.current?.click()}
+                    className="text-xs text-[var(--color-brand)] hover:underline inline-flex items-center gap-1.5 font-medium cursor-pointer"
+                  >
+                    <Upload className="h-3.5 w-3.5" />
+                    <span>Having trouble focusing? Upload ID image instead</span>
+                  </button>
+                </div>
               </div>
 
               <div className="flex flex-col gap-3 sm:flex-row">
