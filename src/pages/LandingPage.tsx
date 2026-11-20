@@ -904,9 +904,7 @@ function InstitutionalFooter() {
       </div>
 
       <div className="mx-auto mt-8 max-w-7xl 2xl:max-w-[1600px] border-t border-[var(--color-border)] pt-6 text-xs leading-relaxed text-[var(--color-text-muted)]">
-        <p>{footer.project}</p>
-        <p className="mt-1">{footer.adviser}</p>
-        <p className="mt-3 font-semibold text-[var(--color-text-primary)]">© 2026 EARIST E-GatePass. All rights reserved.</p>
+        <p className="font-semibold text-[var(--color-text-primary)]">© 2026 EARIST E-GatePass. All rights reserved.</p>
       </div>
     </footer>
   );
