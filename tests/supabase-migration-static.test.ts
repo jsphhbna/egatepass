@@ -405,5 +405,40 @@ describe('Supabase migration static safety contract', () => {
     expect(migration44).toMatch(/revoke all on function api\.issue_online_pass_v3[^;]+from public, anon, authenticated;/i);
     expect(migration44).toMatch(/grant execute on function api\.issue_online_pass_v3[^;]+to service_role;/i);
   });
+
+  it('applies Migration 20261119000500: strict status/step pair allowlist, previous pair gating, and service_role boundaries', () => {
+    const migration = readFileSync('supabase/migrations/20261119000500_reset_state_machine_strict_pair_closure.sql', 'utf8');
+
+    // Function definition
+    expect(migration).toContain('create or replace function api.record_system_reset_step');
+    expect(migration).toContain("set search_path = ''");
+    expect(migration).toContain('security definer');
+
+    // Strict permissions: revoked from public, anon, authenticated; granted to service_role
+    expect(migration).toMatch(/revoke all on function api\.record_system_reset_step[^;]+from public, anon, authenticated;/i);
+    expect(migration).toMatch(/grant execute on function api\.record_system_reset_step[^;]+to service_role;/i);
+
+    // Strict status/step pair allowlist
+    expect(migration).toContain("requested_status = 'storage_deletion_in_progress' and requested_step = 'storage_deletion_in_progress'");
+    expect(migration).toContain("requested_status = 'storage_deletion_verified' and requested_step = 'storage_deletion_verified'");
+    expect(migration).toContain("requested_status = 'database_cleanup_in_progress' and requested_step = 'database_cleanup_in_progress'");
+    expect(migration).toContain("requested_status = 'recovery_required' and requested_step in ('storage_purge_failed', 'storage_purge_timeout', 'database_cleanup_failed', 'lock_release_failed')");
+    expect(migration).toContain("requested_status = 'failed' and requested_step in ('storage_purge_failed', 'storage_purge_timeout', 'database_cleanup_failed', 'lock_release_failed')");
+
+    // Unconstrained ('failed', 'failed') pair is strictly prohibited
+    expect(migration).not.toContain("'failed', 'failed'");
+    expect(migration).toContain("invalid_state_transition: unhandled failure step");
+
+    // Documentation on attestation and verification provenance
+    expect(migration).toContain("PostgreSQL does not independently prove remote Storage contents");
+
+    // Previous status AND step validation
+    expect(migration).toContain("v_op.status = 'storage_deletion_verified' and v_op.step = 'storage_deletion_verified'");
+    expect(migration).toContain("v_op.status = 'storage_deletion_in_progress' and v_op.step = 'storage_deletion_in_progress'");
+
+    // Terminal forgery protections
+    expect(migration).toContain("requested_status = 'completed' or requested_step = 'completed'");
+    expect(migration).toContain("requested_status = 'database_cleanup_completed' or requested_step = 'database_cleanup_completed'");
+  });
 });
 
