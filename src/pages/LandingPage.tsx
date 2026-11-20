@@ -73,9 +73,8 @@ export function LandingPage() {
           FIX GROUP 2: REFINED INSTITUTIONAL HEADER (WHITE CANVAS)
           ============================================================ */}
       <header
-        className={`sticky top-0 z-50 border-b bg-white/95 backdrop-blur-md transition-shadow ${
-          isScrolled ? 'border-gray-200 shadow-sm' : 'border-gray-100'
-        }`}
+        className={`sticky top-0 z-50 border-b bg-white/95 backdrop-blur-md transition-shadow ${isScrolled ? 'border-gray-200 shadow-sm' : 'border-gray-100'
+          }`}
       >
         <div className="mx-auto flex min-h-16 max-w-7xl 2xl:max-w-[1600px] items-center justify-between gap-4 px-4 sm:px-6 lg:px-8 xl:px-12 2xl:px-16">
           <Link
@@ -111,9 +110,8 @@ export function LandingPage() {
               onClick={(e) => handleGetPassClick(e, 'header')}
               aria-busy={openingGatePassFrom === 'header'}
               aria-disabled={openingGatePassFrom !== null}
-              className={`inline-flex min-h-10 items-center justify-center rounded-full bg-[#a31d1d] px-5 sm:px-6 text-xs sm:text-sm font-bold text-white shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#a31d1d] focus-visible:ring-offset-2 ${
-                openingGatePassFrom !== null ? 'opacity-80 cursor-not-allowed' : 'hover:bg-[#850e12]'
-              }`}
+              className={`inline-flex min-h-10 items-center justify-center rounded-full bg-[#a31d1d] px-5 sm:px-6 text-xs sm:text-sm font-bold text-white shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#a31d1d] focus-visible:ring-offset-2 ${openingGatePassFrom !== null ? 'opacity-80 cursor-not-allowed' : 'hover:bg-[#850e12]'
+                }`}
             >
               {openingGatePassFrom === 'header' ? (
                 <span className="inline-flex items-center">
@@ -178,9 +176,8 @@ export function LandingPage() {
                   onClick={(e) => handleGetPassClick(e, 'hero')}
                   aria-busy={openingGatePassFrom === 'hero'}
                   aria-disabled={openingGatePassFrom !== null}
-                  className={`inline-flex min-h-12 items-center justify-center rounded-xl bg-[#a31d1d] px-7 text-sm sm:text-base font-bold text-white shadow-md transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#a31d1d] focus-visible:ring-offset-2 ${
-                    openingGatePassFrom !== null ? 'opacity-80 cursor-not-allowed' : 'hover:bg-[#850e12]'
-                  }`}
+                  className={`inline-flex min-h-12 items-center justify-center rounded-xl bg-[#a31d1d] px-7 text-sm sm:text-base font-bold text-white shadow-md transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#a31d1d] focus-visible:ring-offset-2 ${openingGatePassFrom !== null ? 'opacity-80 cursor-not-allowed' : 'hover:bg-[#850e12]'
+                    }`}
                 >
                   {openingGatePassFrom === 'hero' ? (
                     <span className="inline-flex items-center">
@@ -473,11 +470,10 @@ export function LandingPage() {
                 return (
                   <div
                     key={idx}
-                    className={`rounded-xl border transition-colors ${
-                      isOpen
-                        ? 'border-[var(--color-brand)]/40 bg-[var(--color-canvas-subtle)]'
-                        : 'border-[var(--color-border)] bg-white hover:border-gray-300'
-                    }`}
+                    className={`rounded-xl border transition-colors ${isOpen
+                      ? 'border-[var(--color-brand)]/40 bg-[var(--color-canvas-subtle)]'
+                      : 'border-[var(--color-border)] bg-white hover:border-gray-300'
+                      }`}
                   >
                     <button
                       type="button"
@@ -492,9 +488,8 @@ export function LandingPage() {
                         <span>{item.q}</span>
                       </span>
                       <span
-                        className={`ml-4 shrink-0 text-[var(--color-text-muted)] transition-transform duration-200 ${
-                          isOpen ? 'rotate-180' : ''
-                        }`}
+                        className={`ml-4 shrink-0 text-[var(--color-text-muted)] transition-transform duration-200 ${isOpen ? 'rotate-180' : ''
+                          }`}
                         aria-hidden="true"
                       >
                         ▼
@@ -538,9 +533,8 @@ export function LandingPage() {
                 onClick={(e) => handleGetPassClick(e, 'final')}
                 aria-busy={openingGatePassFrom === 'final'}
                 aria-disabled={openingGatePassFrom !== null}
-                className={`inline-flex min-h-12 items-center justify-center rounded-xl bg-[var(--color-action)] px-8 text-base font-bold text-white shadow-lg transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--color-institutional)] ${
-                  openingGatePassFrom !== null ? 'opacity-80 cursor-not-allowed' : 'hover:bg-[var(--color-action-dark)]'
-                }`}
+                className={`inline-flex min-h-12 items-center justify-center rounded-xl bg-[var(--color-action)] px-8 text-base font-bold text-white shadow-lg transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--color-institutional)] ${openingGatePassFrom !== null ? 'opacity-80 cursor-not-allowed' : 'hover:bg-[var(--color-action-dark)]'
+                  }`}
               >
                 {openingGatePassFrom === 'final' ? (
                   <span className="inline-flex items-center">
@@ -708,7 +702,7 @@ function HeroArtwork() {
   );
 }
 
-{/* Vector QR Code SVG component for crisp resolution */}
+{/* Vector QR Code SVG component for crisp resolution */ }
 function VectorQrCode({ className = 'h-32 w-32' }: { className?: string }) {
   return (
     <svg
@@ -775,7 +769,7 @@ function VectorQrCode({ className = 'h-32 w-32' }: { className?: string }) {
   );
 }
 
-{/* Classical EARIST Neoclassical Campus Facade Graphic */}
+{/* Classical EARIST Neoclassical Campus Facade Graphic */ }
 function BuildingFacadeGraphic() {
   return (
     <svg viewBox="0 0 200 65" className="w-full h-12 object-cover text-gray-400 opacity-80" fill="currentColor">
@@ -817,7 +811,7 @@ function BuildingFacadeGraphic() {
   );
 }
 
-{/* Subtle EARIST Campus Entrance Building Watermark (derived directly from attached EARIST photo reference) */}
+{/* Subtle EARIST Campus Entrance Building Watermark (derived directly from attached EARIST photo reference) */ }
 function EaristBuildingWatermark() {
   return (
     <div
@@ -904,9 +898,7 @@ function InstitutionalFooter() {
       </div>
 
       <div className="mx-auto mt-8 max-w-7xl 2xl:max-w-[1600px] border-t border-[var(--color-border)] pt-6 text-xs leading-relaxed text-[var(--color-text-muted)]">
-        <p>{footer.project}</p>
-        <p className="mt-1">{footer.adviser}</p>
-        <p className="mt-3 font-semibold text-[var(--color-text-primary)]">© 2026 EARIST E-GatePass. All rights reserved.</p>
+        <p className="font-semibold text-[var(--color-text-primary)]">© 2026 EARIST E-GatePass. All rights reserved.</p>
       </div>
     </footer>
   );

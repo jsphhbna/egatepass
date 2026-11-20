@@ -109,7 +109,5 @@ export const LANDING_CONTENT = {
     location: 'Nagtahan Street, Sampaloc, Manila, 1008 Metro Manila',
     website: { text: 'Official EARIST Website', href: 'https://earist.edu.ph/' },
     privacy: 'Visitor information is handled in line with the Data Privacy Act of 2012 (RA 10173).',
-    project: 'Capstone Project — Mary Joy Cagande, Joseph Habana, Mon Gerald Lanon, and Jeferson Tambis',
-    adviser: 'Adviser: Dhani San Jose',
   },
 };
