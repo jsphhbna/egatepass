@@ -21,6 +21,7 @@ describe('R6 Visitor Registration UI & Purpose Validation Suite', () => {
       visitDate: todayManila,
       arrivalMode: 'no_vehicle' as const,
       consent: true as const,
+      gender: 'Male' as const,
     };
 
     it('rejects missing or empty purpose', () => {
@@ -245,16 +246,20 @@ describe('R6 Visitor Registration UI & Purpose Validation Suite', () => {
         middleName: 'Perez',
         lastName: 'Dela Cruz',
         contactNumber: '09171234567',
+        gender: 'Male' as const,
         consent: true,
       };
 
       const res = personalDetailsStepSchema.safeParse(step1Valid);
       expect(res.success).toBe(true);
 
-      // Accepts gender as undefined, empty string, null, Male, or Female
-      expect(personalDetailsStepSchema.safeParse({ ...step1Valid, gender: undefined }).success).toBe(true);
-      expect(personalDetailsStepSchema.safeParse({ ...step1Valid, gender: '' }).success).toBe(true);
-      expect(personalDetailsStepSchema.safeParse({ ...step1Valid, gender: null }).success).toBe(true);
+      // Rejects missing/empty sex
+      expect(personalDetailsStepSchema.safeParse({ ...step1Valid, gender: undefined }).success).toBe(false);
+      expect(personalDetailsStepSchema.safeParse({ ...step1Valid, gender: '' }).success).toBe(false);
+      expect(personalDetailsStepSchema.safeParse({ ...step1Valid, gender: null }).success).toBe(false);
+      expect(personalDetailsStepSchema.safeParse({ ...step1Valid, gender: 'Invalid' }).success).toBe(false);
+
+      // Accepts Male and Female
       expect(personalDetailsStepSchema.safeParse({ ...step1Valid, gender: 'Male' }).success).toBe(true);
       expect(personalDetailsStepSchema.safeParse({ ...step1Valid, gender: 'Female' }).success).toBe(true);
 
@@ -272,12 +277,13 @@ describe('R6 Visitor Registration UI & Purpose Validation Suite', () => {
     });
 
     it('allows Step 1 personal details to validate independently while purpose is empty (Step 2 field)', () => {
-      // Step 1 only triggers personal details: firstName, middleName, lastName, contactNumber, consent
+      // Step 1 only triggers personal details: firstName, middleName, lastName, contactNumber, gender, consent
       const step1Fields = {
         firstName: 'Juan',
         middleName: 'Perez',
         lastName: 'Dela Cruz',
         contactNumber: '09171234567',
+        gender: 'Male' as const,
         consent: true,
       };
 

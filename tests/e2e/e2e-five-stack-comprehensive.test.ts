@@ -821,6 +821,7 @@ describe('Tier 1: Feature Coverage Across Remediated Five-Stack Architecture', (
       visitDate: todayManila,
       arrivalMode: 'no_vehicle' as const,
       consent: true as const,
+      gender: 'Male' as const,
     };
 
     it('accepts valid trimmed purpose description between 3 and 300 characters', () => {
@@ -1458,6 +1459,7 @@ describe('Tier 2: Boundary & Corner Cases Across System Boundaries', () => {
       visitDate: todayManila,
       arrivalMode: 'no_vehicle' as const,
       consent: true as const,
+      gender: 'Male' as const,
     };
 
     it('boundary check: 2 characters fails, exactly 3 characters passes', () => {
@@ -1670,6 +1672,7 @@ describe('Tier 4: Real-World End-to-End Application Scenarios', () => {
       visitDate: todayManila,
       arrivalMode: 'no_vehicle' as const,
       consent: true as const,
+      gender: 'Female' as const,
     };
 
     const validationResult = schema.safeParse(formInput);

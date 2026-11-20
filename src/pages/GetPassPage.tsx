@@ -145,7 +145,10 @@ export function createGetPassSchema(schedulingDaysAhead: number = MAX_VISIT_ADVA
         .min(2, 'Last name must be at least 2 characters')
         .max(50, 'Last name is too long')
         .regex(nameRegex, 'Invalid characters in name'),
-      gender: z.preprocess((val) => (val === '' || val === null ? undefined : val), z.enum(['Male', 'Female']).optional()),
+      gender: z.preprocess(
+        (val) => (val === '' || val === null ? undefined : val),
+        z.enum(['Male', 'Female'], { message: 'Please select your sex' })
+      ),
       contactNumber: z
         .string()
         .min(7, 'Contact number is too short')
@@ -210,7 +213,10 @@ export const personalDetailsStepSchema = z.object({
     .min(2, 'Last name must be at least 2 characters')
     .max(50, 'Last name is too long')
     .regex(nameRegex, 'Invalid characters in name'),
-  gender: z.preprocess((val) => (val === '' || val === null ? undefined : val), z.enum(['Male', 'Female']).optional()),
+  gender: z.preprocess(
+    (val) => (val === '' || val === null ? undefined : val),
+    z.enum(['Male', 'Female'], { message: 'Please select your sex' })
+  ),
   contactNumber: z
     .string()
     .min(7, 'Contact number is too short')
@@ -3062,10 +3068,10 @@ export function GetPassPage() {
                 </FormField>
               </div>
 
-              {/* Gender Selection */}
+              {/* Sex Selection */}
               <FormField
-                label="Gender"
-                requirement="optional"
+                label="Sex"
+                requirement="required"
                 error={errors.gender?.message}
               >
                 <div className="grid grid-cols-2 gap-3 pt-1">
@@ -4267,7 +4273,7 @@ export function GetPassPage() {
                     </p>
                   </div>
                   <div>
-                    <span className="text-[var(--color-text-secondary)] block">Gender:</span>
+                    <span className="text-[var(--color-text-secondary)] block">Sex:</span>
                     <p className="font-semibold text-sm text-[var(--color-text-primary)] mt-0.5">
                       {getValues('gender') || 'Not specified'}
                     </p>
@@ -5577,7 +5583,7 @@ export function GetPassPage() {
                     </p>
                   </div>
                   <div>
-                    <span className="text-[var(--color-text-secondary)] block">Gender:</span>
+                    <span className="text-[var(--color-text-secondary)] block">Sex:</span>
                     <p className="font-semibold text-sm text-[var(--color-text-primary)] mt-0.5">
                       {getValues('gender') || returningProfile.gender || 'Not specified'}
                     </p>

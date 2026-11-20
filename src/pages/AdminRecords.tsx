@@ -739,7 +739,7 @@ export function AdminRecords() {
       const exportPasses = exportResult.items;
       const columns = [
         { header: 'Visitor Name', key: 'visitorName' },
-        { header: 'Gender', key: 'gender' },
+        { header: 'Sex', key: 'gender' },
         { header: 'Purpose', key: 'purpose' },
         { header: 'Status', key: 'status' },
         { header: 'Issued At', key: 'issuedAt' },
@@ -1298,7 +1298,7 @@ export function AdminRecords() {
             </div>
 
             <dl className="grid gap-4 rounded-xl border border-[var(--color-border)] bg-[var(--color-canvas)] p-4 sm:grid-cols-2">
-              <PassDetail label="Gender" value={(selectedPass as any).gender || 'Not recorded'} />
+              <PassDetail label="Sex" value={(selectedPass as any).gender || 'Not recorded'} />
               <PassDetail label="Contact Number" value={selectedPass.contactNumber || 'Not recorded'} />
               <PassDetail label="Purpose of Visit" value={selectedPass.purpose || 'Not recorded'} />
               <PassDetail label="Destination Office" value={selectedPass.destinationOffice || 'General Campus'} />
