@@ -193,6 +193,7 @@ test.describe('Visitor Multi-Step Registration & Form Decoupling Regression Suit
     // Invariant: Validation errors must be displayed for invalid fields
     await expect(page.getByText(/First name must be at least 2 characters|minimum 2 characters/i).first()).toBeVisible();
     await expect(page.getByText(/valid Philippine mobile number/i).first()).toBeVisible();
+    await expect(page.getByText(/Please select your sex/i).first()).toBeVisible();
     await expect(page.getByText(/You must accept the Data Privacy Act notice/i).first()).toBeVisible();
   });
 
@@ -212,6 +213,7 @@ test.describe('Visitor Multi-Step Registration & Form Decoupling Regression Suit
     await middleNameInput.fill('Mercado');
     await lastNameInput.fill('Dela Cruz');
     await contactInput.fill('09171234567');
+    await page.getByText('Male', { exact: true }).click();
 
     // Select PSGC Residential Address via Modal
     const selectAddressBtn = page.getByRole('button', { name: /Select your barangay and city/i });
@@ -264,6 +266,7 @@ test.describe('Visitor Multi-Step Registration & Form Decoupling Regression Suit
     await page.locator('#firstName, #first-name').fill('Maria');
     await page.locator('#lastName, #last-name').fill('Santos');
     await page.locator('#contactNumber, #contact-number').fill('09181234567');
+    await page.getByText('Female', { exact: true }).click();
 
     // Select Address
     await page.getByRole('button', { name: /Select your barangay and city/i }).click();
@@ -342,6 +345,7 @@ test.describe('Visitor Multi-Step Registration & Form Decoupling Regression Suit
     await contactInput.fill('+63 917 123 4567');
     await page.locator('#firstName, #first-name').fill('Clara');
     await page.locator('#lastName, #last-name').fill('Reyes');
+    await page.getByText('Female', { exact: true }).click();
 
     // Select Address
     await selectAddressBtn.click();
