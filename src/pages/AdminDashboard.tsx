@@ -599,7 +599,7 @@ function GenderDistributionCard({ distribution }: { distribution?: import('@/hoo
       <div className="flex items-center justify-between mb-4">
         <div>
           <h2 className="text-base font-bold text-[var(--color-text-primary)]">
-            Gender Distribution
+            Sex Distribution
           </h2>
           <p className="text-xs text-[var(--color-text-secondary)]">
             Visitor demographic breakdown recorded across registrations.
