@@ -310,14 +310,24 @@ export function GuardOfflineRegistrationTab({
               {captureMode === 'photo' ? 'Capture Visitor Selfie' : 'Capture Presented Physical ID'}
             </h3>
             <div className="relative mx-auto aspect-[4/3] max-w-md overflow-hidden rounded-xl border border-white/20">
-              <video
-                ref={webcam.videoRef}
-                autoPlay
-                playsInline
-                muted
-                className="absolute inset-0 h-full w-full object-cover block shrink-0"
-                style={{ transform: webcam.mirrorPreview ? 'scaleX(-1)' : 'none' }}
-              />
+              <div
+                className="absolute inset-0 h-full w-full overflow-hidden"
+                style={{
+                  transform: webcam.mirrorPreview ? 'rotateY(180deg) translateZ(0)' : 'none',
+                  WebkitTransform: webcam.mirrorPreview ? 'rotateY(180deg) translateZ(0)' : 'none',
+                  backfaceVisibility: 'visible',
+                  WebkitBackfaceVisibility: 'visible',
+                }}
+              >
+                <video
+                  ref={webcam.videoRef}
+                  autoPlay
+                  playsInline
+                  muted
+                  style={{ transform: 'none' }}
+                  className="h-full w-full object-cover block shrink-0"
+                />
+              </div>
               <CameraControls
                 activeFacingMode={webcam.activeFacingMode}
                 mirrorPreview={webcam.mirrorPreview}

@@ -3905,7 +3905,7 @@ export function GetPassPage() {
               {photoPreview ? (
                 <div className="space-y-4">
                   <div className="relative mx-auto max-w-sm overflow-hidden rounded-2xl border-2 border-[var(--color-border)] shadow-sm aspect-[3/4] bg-black">
-                    <img src={photoPreview} alt="Captured face" className="w-full h-full object-cover" style={{ transform: 'scaleX(-1)' }} />
+                    <img src={photoPreview} alt="Captured face" className="w-full h-full object-cover" style={{ transform: 'rotateY(180deg) translateZ(0)' }} />
                   </div>
 
                   <div className="flex gap-3">
@@ -3967,14 +3967,24 @@ export function GetPassPage() {
                       </div>
                     )}
                     {faceWebcam.videoRef && (
-                      <video
-                        ref={faceWebcam.videoRef}
-                        autoPlay
-                        playsInline
-                        muted
-                        style={{ transform: faceWebcam.mirrorPreview ? 'scaleX(-1)' : 'none' }}
-                        className="absolute inset-0 h-full w-full object-cover block shrink-0"
-                      />
+                      <div
+                        className="absolute inset-0 h-full w-full overflow-hidden"
+                        style={{
+                          transform: faceWebcam.mirrorPreview ? 'rotateY(180deg) translateZ(0)' : 'none',
+                          WebkitTransform: faceWebcam.mirrorPreview ? 'rotateY(180deg) translateZ(0)' : 'none',
+                          backfaceVisibility: 'visible',
+                          WebkitBackfaceVisibility: 'visible',
+                        }}
+                      >
+                        <video
+                          ref={faceWebcam.videoRef}
+                          autoPlay
+                          playsInline
+                          muted
+                          style={{ transform: 'none' }}
+                          className="h-full w-full object-cover block shrink-0"
+                        />
+                      </div>
                     )}
 
                     {/* Face Guide Oval */}
@@ -4588,7 +4598,7 @@ export function GetPassPage() {
                         src={photoPreview}
                         alt="Your live face photo"
                         className="h-24 w-20 object-cover rounded-lg border border-[var(--color-border)] shadow-sm mx-auto"
-                        style={{ transform: 'scaleX(-1)' }}
+                        style={{ transform: 'rotateY(180deg) translateZ(0)' }}
                       />
                       {currentPhase !== 'ambiguous' &&
                         currentPhase !== 'submission_uncertain_hold' && (
@@ -5017,14 +5027,24 @@ export function GetPassPage() {
                       </div>
                     )}
                     {faceWebcam.videoRef && (
-                      <video
-                        ref={faceWebcam.videoRef}
-                        autoPlay
-                        playsInline
-                        muted
-                        style={{ transform: 'none' }}
-                        className="absolute inset-0 h-full w-full object-cover block shrink-0"
-                      />
+                      <div
+                        className="absolute inset-0 h-full w-full overflow-hidden"
+                        style={{
+                          transform: faceWebcam.mirrorPreview ? 'rotateY(180deg) translateZ(0)' : 'none',
+                          WebkitTransform: faceWebcam.mirrorPreview ? 'rotateY(180deg) translateZ(0)' : 'none',
+                          backfaceVisibility: 'visible',
+                          WebkitBackfaceVisibility: 'visible',
+                        }}
+                      >
+                        <video
+                          ref={faceWebcam.videoRef}
+                          autoPlay
+                          playsInline
+                          muted
+                          style={{ transform: 'none' }}
+                          className="h-full w-full object-cover block shrink-0"
+                        />
+                      </div>
                     )}
                     <div className="absolute inset-0 pointer-events-none flex items-center justify-center">
                       <div style={{ width: `${SELFIE_OVAL_WIDTH_PERCENT}%`, height: `${SELFIE_OVAL_HEIGHT_PERCENT}%` }} className="border-2 border-dashed border-white/80 rounded-[50%] shadow-[0_0_0_9999px_rgba(0,0,0,0.45)] flex items-center justify-center">
