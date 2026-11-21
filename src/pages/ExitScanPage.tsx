@@ -326,8 +326,8 @@ export function ExitScanPage() {
         <p className="mt-1 text-sm text-white/60">Scan the visitor pass to record departure</p>
       </div>
 
-      <div className="scanner-viewport relative mb-5 overflow-hidden rounded-2xl border border-[var(--color-accent)]/30 bg-black shadow-lg">
-        <div id="exit-qr-reader" className={`h-full w-full ${isMirrored ? '[&_video]:scale-x-[-1]' : '[&_video]:scale-x-1'}`} />
+      <div className={`scanner-viewport relative mb-5 overflow-hidden rounded-2xl border border-[var(--color-accent)]/30 bg-black shadow-lg ${isMirrored ? 'is-mirrored' : 'is-unmirrored'}`}>
+        <div id="exit-qr-reader" className="h-full w-full" />
 
         {/* Camera Controls Overlay */}
         {cameraState === 'active' && (

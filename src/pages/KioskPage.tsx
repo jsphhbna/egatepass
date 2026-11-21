@@ -27,6 +27,8 @@ import {
   Loader2,
   LogOut,
   RefreshCw,
+  Upload,
+  Sparkles,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { Button, Card, Input, FormField, Stepper, Modal, ProgressBar } from '@/components/ui';
@@ -46,6 +48,11 @@ import { createPassPresentation, type PassPresentation } from '@/lib/passPresent
 import { recognizeIdImage, terminateLocalOcrWorker } from '@/lib/ocr';
 import { generateBrandedQrDataUrl } from '@/lib/brandedQr';
 import { CameraControls } from '@/components/CameraControls';
+import {
+  SELFIE_TARGET_ASPECT_RATIO,
+  SELFIE_OVAL_WIDTH_PERCENT,
+  SELFIE_OVAL_HEIGHT_PERCENT,
+} from '@/lib/selfieFramingContract';
 
 // ============================================================
 // FORM SCHEMA (Zod)
@@ -241,9 +248,10 @@ export function KioskPage() {
     };
   }, [loadSettings]);
 
-  const faceWebcam = useWebcam({ facingMode: 'user', width: 640, height: 480, allowCaptureMirroring: false });
-  const idWebcam = useWebcam({ facingMode: 'environment', width: 1280, height: 720, allowCaptureMirroring: false });
+  const faceWebcam = useWebcam({ facingMode: 'user', width: 720, height: 960, targetAspectRatio: SELFIE_TARGET_ASPECT_RATIO, allowCaptureMirroring: false });
+  const idWebcam = useWebcam({ facingMode: 'environment', width: 1920, height: 1080, allowCaptureMirroring: false, focusMode: 'continuous' });
   const ocrGenerationRef = useRef(0);
+  const kioskIdFileInputRef = useRef<HTMLInputElement>(null);
 
   // Cleanup on unmount
   useEffect(() => {
@@ -343,6 +351,16 @@ export function KioskPage() {
     } else {
       toast.error('Failed to capture ID image.');
     }
+  }
+
+  function handleKioskIdFileUpload(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    if (file.size > 10 * 1024 * 1024) {
+      toast.error('Image exceeds 10MB limit.');
+      return;
+    }
+    void processIdImageAndOcr(file);
   }
 
   function onFormNext(data: KioskPassFormData) {
@@ -853,7 +871,11 @@ export function KioskPage() {
                 </p>
               </div>
 
-              <div className="mx-auto w-full max-w-md overflow-hidden rounded-xl border-2 border-dashed border-[var(--color-brand)] shadow-sm bg-black aspect-[3/2] relative flex items-center justify-center">
+              <div
+                className="mx-auto w-full max-w-md overflow-hidden rounded-2xl border-2 border-[var(--color-brand)] shadow-inner bg-black aspect-[3/2] relative flex items-center justify-center cursor-pointer"
+                onClick={() => void idWebcam.refocus?.()}
+                title="Tap camera to refocus"
+              >
                 {idWebcam.error ? (
                   <div className="p-6 text-center text-white space-y-3">
                     <AlertCircle className="mx-auto h-8 w-8 text-[var(--color-danger)]" />
@@ -877,26 +899,63 @@ export function KioskPage() {
                         <span className="text-sm font-medium">Starting ID camera…</span>
                       </div>
                     )}
-                    <video
-                      ref={idWebcam.videoRef}
-                      autoPlay
-                      playsInline
-                      muted
-                      className="h-full w-full object-cover"
-                      style={{ transform: idWebcam.mirrorPreview ? 'scaleX(-1)' : 'none' }}
-                    />
+                    <div
+                      className="absolute inset-0 h-full w-full overflow-hidden"
+                      style={{
+                        transform: idWebcam.mirrorPreview ? 'rotateY(180deg) translateZ(0)' : 'none',
+                        WebkitTransform: idWebcam.mirrorPreview ? 'rotateY(180deg) translateZ(0)' : 'none',
+                        backfaceVisibility: 'visible',
+                        WebkitBackfaceVisibility: 'visible',
+                      }}
+                    >
+                      <video
+                        ref={idWebcam.videoRef}
+                        autoPlay
+                        playsInline
+                        muted
+                        style={{ transform: 'none' }}
+                        className="h-full w-full object-cover block shrink-0"
+                      />
+                    </div>
+                    {/* ID Document Framing Guidelines */}
+                    <div className="absolute inset-0 pointer-events-none flex items-center justify-center p-3">
+                      <div className="w-full max-w-[280px] aspect-[85.6/53.98] border-2 border-dashed border-white/70 rounded-xl flex items-end justify-center pb-2 shadow-[0_0_0_9999px_rgba(0,0,0,0.35)]">
+                        <span className="text-[10px] text-white/95 bg-black/60 px-2 py-0.5 rounded backdrop-blur-xs font-medium">
+                          Align ID inside frame (~15–20 cm) • Tap to focus
+                        </span>
+                      </div>
+                    </div>
+
+                    {idWebcam.isActive && (
+                      <CameraControls
+                        activeFacingMode={idWebcam.activeFacingMode}
+                        mirrorPreview={idWebcam.mirrorPreview}
+                        canSwitchCamera={idWebcam.canSwitchCamera}
+                        onSwitchCamera={idWebcam.switchCamera}
+                        onToggleMirror={idWebcam.toggleMirrorPreview}
+                        onRefocus={idWebcam.refocus}
+                      />
+                    )}
                   </>
                 )}
               </div>
 
-              <div className="mx-auto w-full max-w-md">
-                <CameraControls
-                  activeFacingMode={idWebcam.activeFacingMode}
-                  mirrorPreview={idWebcam.mirrorPreview}
-                  canSwitchCamera={idWebcam.canSwitchCamera}
-                  onSwitchCamera={idWebcam.switchCamera}
-                  onToggleMirror={idWebcam.toggleMirrorPreview}
+              <div className="mx-auto w-full max-w-md text-center">
+                <input
+                  ref={kioskIdFileInputRef}
+                  type="file"
+                  accept="image/jpeg,image/png,image/webp"
+                  onChange={handleKioskIdFileUpload}
+                  className="hidden"
                 />
+                <button
+                  type="button"
+                  onClick={() => kioskIdFileInputRef.current?.click()}
+                  className="text-xs text-[var(--color-brand)] hover:underline inline-flex items-center gap-1.5 font-medium cursor-pointer"
+                >
+                  <Upload className="h-3.5 w-3.5" />
+                  <span>Having trouble focusing? Upload ID image instead</span>
+                </button>
               </div>
 
               <div className="flex flex-col gap-3 sm:flex-row">
@@ -1070,35 +1129,68 @@ export function KioskPage() {
                 </div>
               )}
 
-              <div className="mx-auto w-full max-w-xs overflow-hidden rounded-xl border border-[var(--color-border)] shadow-sm bg-black aspect-[3/4] relative">
+              {/* Visitor framing instructions checklist */}
+              <div className="rounded-xl border border-blue-200 bg-blue-50/60 p-3 text-xs text-blue-950 space-y-1.5 mb-4 max-w-sm mx-auto">
+                <p className="font-semibold text-[11px] text-blue-900 uppercase tracking-wider flex items-center gap-1.5">
+                  <Sparkles className="h-3.5 w-3.5 text-blue-600" />
+                  Selfie Framing Guidelines
+                </p>
+                <ul className="grid grid-cols-1 sm:grid-cols-2 gap-1 text-[11px] text-blue-900/90 list-disc list-inside">
+                  <li>Keep entire head & hair inside oval</li>
+                  <li>Center face and look forward</li>
+                  <li>Keep forehead and chin visible</li>
+                  <li>Use clear, even lighting</li>
+                </ul>
+              </div>
+
+              {/* Single camera viewport with oval guide */}
+              <div className="mx-auto w-full max-w-sm overflow-hidden rounded-2xl border-2 border-[var(--color-brand)] bg-black aspect-[3/4] relative flex items-center justify-center shadow-inner">
+                {faceWebcam.isStarting && (
+                  <div className="absolute inset-0 z-20 flex flex-col items-center justify-center bg-black/60 text-white text-xs">
+                    <Loader2 className="h-6 w-6 animate-spin mb-1 text-[var(--color-brand)]" />
+                    <span>Starting camera…</span>
+                  </div>
+                )}
                 {faceWebcam.videoRef && (
-                  <>
-                    {faceWebcam.isStarting && (
-                      <div className="absolute inset-0 z-10 flex flex-col items-center justify-center bg-black/80 text-white" role="status" aria-live="polite">
-                        <Loader2 className="h-8 w-8 animate-spin text-[var(--color-brand)] mb-2" aria-hidden="true" />
-                        <span className="text-sm font-medium">Starting camera…</span>
-                      </div>
-                    )}
+                  <div
+                    className="absolute inset-0 h-full w-full overflow-hidden"
+                    style={{
+                      transform: faceWebcam.mirrorPreview ? 'rotateY(180deg) translateZ(0)' : 'none',
+                      WebkitTransform: faceWebcam.mirrorPreview ? 'rotateY(180deg) translateZ(0)' : 'none',
+                      backfaceVisibility: 'visible',
+                      WebkitBackfaceVisibility: 'visible',
+                    }}
+                  >
                     <video
                       ref={faceWebcam.videoRef}
                       autoPlay
                       playsInline
                       muted
-                      className="h-full w-full object-cover"
-                      style={{ transform: faceWebcam.mirrorPreview ? 'scaleX(-1)' : 'none' }}
+                      style={{ transform: 'none' }}
+                      className="h-full w-full object-cover block shrink-0"
                     />
-                  </>
+                  </div>
                 )}
-              </div>
 
-              <div className="mx-auto w-full max-w-xs">
-                <CameraControls
-                  activeFacingMode={faceWebcam.activeFacingMode}
-                  mirrorPreview={faceWebcam.mirrorPreview}
-                  canSwitchCamera={faceWebcam.canSwitchCamera}
-                  onSwitchCamera={faceWebcam.switchCamera}
-                  onToggleMirror={faceWebcam.toggleMirrorPreview}
-                />
+                {/* Face Guide Oval */}
+                <div className="absolute inset-0 pointer-events-none flex items-center justify-center">
+                  <div
+                    style={{ width: `${SELFIE_OVAL_WIDTH_PERCENT}%`, height: `${SELFIE_OVAL_HEIGHT_PERCENT}%` }}
+                    className="border-2 border-dashed border-white/80 rounded-[50%] shadow-[0_0_0_9999px_rgba(0,0,0,0.45)] flex items-center justify-center"
+                  >
+                    <span className="sr-only">Center face in oval</span>
+                  </div>
+                </div>
+
+                {faceWebcam.isActive && (
+                  <CameraControls
+                    activeFacingMode={faceWebcam.activeFacingMode}
+                    mirrorPreview={faceWebcam.mirrorPreview}
+                    canSwitchCamera={faceWebcam.canSwitchCamera}
+                    onSwitchCamera={faceWebcam.switchCamera}
+                    onToggleMirror={faceWebcam.toggleMirrorPreview}
+                  />
+                )}
               </div>
 
               <div className="flex gap-3">
@@ -1168,7 +1260,7 @@ export function KioskPage() {
                     </div>
                   )}
 
-                  <div className="mx-auto w-full max-w-md overflow-hidden rounded-xl border-2 border-dashed border-[var(--color-brand)] shadow-sm bg-black aspect-[3/2] relative flex items-center justify-center">
+                  <div className="mx-auto w-full max-w-md overflow-hidden rounded-2xl border-2 border-[var(--color-brand)] shadow-inner bg-black aspect-[3/2] relative flex items-center justify-center">
                     {idWebcam.isStarting && (
                       <div className="absolute inset-0 z-10 flex flex-col items-center justify-center bg-black/80 text-white" role="status" aria-live="polite">
                         <Loader2 className="h-8 w-8 animate-spin text-[var(--color-brand)] mb-2" aria-hidden="true" />
@@ -1176,25 +1268,35 @@ export function KioskPage() {
                       </div>
                     )}
                     {idWebcam.videoRef && (
-                      <video
-                        ref={idWebcam.videoRef}
-                        autoPlay
-                        playsInline
-                        muted
-                        className="h-full w-full object-cover"
-                        style={{ transform: idWebcam.mirrorPreview ? 'scaleX(-1)' : 'none' }}
+                      <div
+                        className="absolute inset-0 h-full w-full overflow-hidden"
+                        style={{
+                          transform: idWebcam.mirrorPreview ? 'rotateY(180deg) translateZ(0)' : 'none',
+                          WebkitTransform: idWebcam.mirrorPreview ? 'rotateY(180deg) translateZ(0)' : 'none',
+                          backfaceVisibility: 'visible',
+                          WebkitBackfaceVisibility: 'visible',
+                        }}
+                      >
+                        <video
+                          ref={idWebcam.videoRef}
+                          autoPlay
+                          playsInline
+                          muted
+                          style={{ transform: 'none' }}
+                          className="h-full w-full object-cover block shrink-0"
+                        />
+                      </div>
+                    )}
+                    {idWebcam.isActive && (
+                      <CameraControls
+                        activeFacingMode={idWebcam.activeFacingMode}
+                        mirrorPreview={idWebcam.mirrorPreview}
+                        canSwitchCamera={idWebcam.canSwitchCamera}
+                        onSwitchCamera={idWebcam.switchCamera}
+                        onToggleMirror={idWebcam.toggleMirrorPreview}
+                        onRefocus={idWebcam.refocus}
                       />
                     )}
-                  </div>
-
-                  <div className="mx-auto w-full max-w-md">
-                    <CameraControls
-                      activeFacingMode={idWebcam.activeFacingMode}
-                      mirrorPreview={idWebcam.mirrorPreview}
-                      canSwitchCamera={idWebcam.canSwitchCamera}
-                      onSwitchCamera={idWebcam.switchCamera}
-                      onToggleMirror={idWebcam.toggleMirrorPreview}
-                    />
                   </div>
 
                   <div className="flex gap-3">
@@ -1271,7 +1373,7 @@ export function KioskPage() {
                   {photoPreview && (
                     <div className="text-center">
                       <p className="text-xs text-[var(--color-text-secondary)] mb-1">Face Photo</p>
-                      <img src={photoPreview} alt="Face photo" className="h-24 w-20 object-cover rounded-lg border border-[var(--color-border)] shadow-sm mx-auto" style={{ transform: 'scaleX(-1)' }} />
+                      <img src={photoPreview} alt="Face photo" className="h-24 w-20 object-cover rounded-lg border border-[var(--color-border)] shadow-sm mx-auto" style={{ transform: 'rotateY(180deg) translateZ(0)' }} />
                       {kioskTransactionRef.current?.phase !== 'ambiguous' && kioskTransactionRef.current?.phase !== 'existing_pass_conflict' && (
                         <button
                           type="button"

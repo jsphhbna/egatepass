@@ -1,0 +1,29 @@
+<mxfile host="app.diagrams.net" modified="2026-11-21T13:00:00.000Z" agent="Mozilla/5.0" version="21.0.0" type="device">
+  <diagram id="egatepass-block" name="E-GatePass Block Diagram">
+    <mxGraphModel dx="2300" dy="1600" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="2300" pageHeight="1600" background="#FFFFFF">
+      <root>
+        <mxCell id="0"/>
+        <mxCell id="1" parent="0"/>
+        <mxCell id="title" value="EULOGIO &quot;AMANG&quot; RODRIGUEZ INSTITUTE OF SCIENCE AND TECHNOLOGY&#xa;EARIST E-GATEPASS VISITOR ACCESS MANAGEMENT SYSTEM&#xa;System Block Diagram" style="text;html=1;strokeColor=#000000;fillColor=#FFFFFF;align=center;verticalAlign=middle;whiteSpace=wrap;fontStyle=1;fontSize=14;fontColor=#000000;" vertex="1" parent="1">
+          <mxGeometry x="50" y="30" width="2200" height="90" as="geometry"/>
+        </mxCell>
+        <!-- Block 1 -->
+        <mxCell id="b1" value="BLOCK 1: USER INTERACTION &amp; HARDWARE TERMINALS" style="shape=rect;html=1;verticalAlign=top;fontStyle=1;whiteSpace=wrap;align=left;spacingLeft=15;spacingTop=10;fillColor=#FFFFFF;strokeColor=#000000;strokeWidth=2;" vertex="1" parent="1">
+          <mxGeometry x="70" y="160" width="1050" height="420" as="geometry"/>
+        </mxCell>
+        <!-- Block 2 -->
+        <mxCell id="b2" value="BLOCK 2: EDGE SECURITY &amp; PERIMETER DEFENSE" style="shape=rect;html=1;verticalAlign=top;fontStyle=1;whiteSpace=wrap;align=left;spacingLeft=15;spacingTop=10;fillColor=#FFFFFF;strokeColor=#000000;strokeWidth=2;" vertex="1" parent="1">
+          <mxGeometry x="1180" y="160" width="1050" height="420" as="geometry"/>
+        </mxCell>
+        <!-- Block 3 -->
+        <mxCell id="b3" value="BLOCK 3: OPTICAL CAPTURE &amp; BIOMETRIC VERIFICATION" style="shape=rect;html=1;verticalAlign=top;fontStyle=1;whiteSpace=wrap;align=left;spacingLeft=15;spacingTop=10;fillColor=#FFFFFF;strokeColor=#000000;strokeWidth=2;" vertex="1" parent="1">
+          <mxGeometry x="70" y="620" width="1050" height="420" as="geometry"/>
+        </mxCell>
+        <!-- Block 4 -->
+        <mxCell id="b4" value="BLOCK 4: PASS MANAGEMENT &amp; CRYPTOGRAPHIC ENGINE" style="shape=rect;html=1;verticalAlign=top;fontStyle=1;whiteSpace=wrap;align=left;spacingLeft=15;spacingTop=10;fillColor=#FFFFFF;strokeColor=#000000;strokeWidth=2;" vertex="1" parent="1">
+          <mxGeometry x="1180" y="620" width="1050" height="420" as="geometry"/>
+        </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>

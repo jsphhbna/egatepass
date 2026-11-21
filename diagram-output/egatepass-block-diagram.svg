@@ -1,0 +1,440 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 2600 2000" width="2600" height="2000">
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M 0 1 L 10 5 L 0 9 z" fill="#000000"/>
+    </marker>
+  </defs>
+
+  <rect width="2600" height="2000" fill="#FFFFFF"/>
+  
+    <!-- Academic Title Block -->
+    <rect x="50" y="30" width="2500" height="110" fill="#FFFFFF" stroke="#000000" stroke-width="2.8"/>
+    <text x="1300" y="65" font-family="Arial, sans-serif" font-size="20" font-weight="bold" text-anchor="middle" fill="#000000" letter-spacing="1">EULOGIO "AMANG" RODRIGUEZ INSTITUTE OF SCIENCE AND TECHNOLOGY</text>
+    <text x="1300" y="95" font-family="Arial, sans-serif" font-size="17" font-weight="bold" text-anchor="middle" fill="#000000">EARIST E-GATEPASS VISITOR ACCESS MANAGEMENT SYSTEM</text>
+    <text x="1300" y="122" font-family="Arial, sans-serif" font-size="14" text-anchor="middle" fill="#000000">System Block Diagram (Subsystem Interconnection Model) | Proponents: Mary Joy Cagande, Joseph Habana, Mon Gerald Lanon, Jeferson Tambis | Adviser: Dhani San Jose</text>
+  
+
+  <!-- Block 1 -->
+  
+      <g>
+        <rect x="70" y="160" width="1180" height="520" fill="#FFFFFF" stroke="#000000" stroke-width="3" rx="8"/>
+        <rect x="70" y="160" width="1180" height="46" fill="#FFFFFF" stroke="#000000" stroke-width="2" rx="8"/>
+        <text x="95" y="190" font-family="Arial, sans-serif" font-size="16" font-weight="bold" fill="#000000">BLOCK 1: USER INTERACTION & HARDWARE TERMINALS</text>
+        
+          <g>
+            <rect x="90" y="225" width="270" height="210" fill="#FFFFFF" stroke="#000000" stroke-width="1.8" rx="6"/>
+            <text x="225" y="249" font-family="Arial, sans-serif" font-size="14.5" font-weight="bold" text-anchor="middle" fill="#000000">Visitor Mobile Portal</text>
+            
+              <text x="104" y="275" font-family="Arial, sans-serif" font-size="12.5" fill="#000000">• Responsive Web GUI</text>
+            
+              <text x="104" y="295" font-family="Arial, sans-serif" font-size="12.5" fill="#000000">• PSGC Locality Selector</text>
+            
+              <text x="104" y="315" font-family="Arial, sans-serif" font-size="12.5" fill="#000000">• Required Sex Field</text>
+            
+              <text x="104" y="335" font-family="Arial, sans-serif" font-size="12.5" fill="#000000">• Interactive Dynamic QR</text>
+            
+              <text x="104" y="355" font-family="Arial, sans-serif" font-size="12.5" fill="#000000">• Reference Tracker</text>
+            
+          </g>
+        
+          <g>
+            <rect x="380" y="225" width="270" height="210" fill="#FFFFFF" stroke="#000000" stroke-width="1.8" rx="6"/>
+            <text x="515" y="249" font-family="Arial, sans-serif" font-size="14.5" font-weight="bold" text-anchor="middle" fill="#000000">Kiosk Touch Terminal</text>
+            
+              <text x="394" y="275" font-family="Arial, sans-serif" font-size="12.5" fill="#000000">• Guided Multi-Step Touch UI</text>
+            
+              <text x="394" y="295" font-family="Arial, sans-serif" font-size="12.5" fill="#000000">• Direct Thermal Printer</text>
+            
+              <text x="394" y="315" font-family="Arial, sans-serif" font-size="12.5" fill="#000000">• Live Face/ID Camera</text>
+            
+              <text x="394" y="335" font-family="Arial, sans-serif" font-size="12.5" fill="#000000">• Discreet Controls Overlay</text>
+            
+              <text x="394" y="355" font-family="Arial, sans-serif" font-size="12.5" fill="#000000">• Inactivity Auto-Reset</text>
+            
+          </g>
+        
+          <g>
+            <rect x="670" y="225" width="270" height="210" fill="#FFFFFF" stroke="#000000" stroke-width="1.8" rx="6"/>
+            <text x="805" y="249" font-family="Arial, sans-serif" font-size="14.5" font-weight="bold" text-anchor="middle" fill="#000000">Security Scanner Unit</text>
+            
+              <text x="684" y="275" font-family="Arial, sans-serif" font-size="12.5" fill="#000000">• Dual Front/Back Camera</text>
+            
+              <text x="684" y="295" font-family="Arial, sans-serif" font-size="12.5" fill="#000000">• Ultra-Fast QR Decoder</text>
+            
+              <text x="684" y="315" font-family="Arial, sans-serif" font-size="12.5" fill="#000000">• Unmirrored Viewport</text>
+            
+              <text x="684" y="335" font-family="Arial, sans-serif" font-size="12.5" fill="#000000">• Entry/Exit Gate Toggle</text>
+            
+              <text x="684" y="355" font-family="Arial, sans-serif" font-size="12.5" fill="#000000">• Local Audio/Visual Signal</text>
+            
+          </g>
+        
+          <g>
+            <rect x="960" y="225" width="270" height="210" fill="#FFFFFF" stroke="#000000" stroke-width="1.8" rx="6"/>
+            <text x="1095" y="249" font-family="Arial, sans-serif" font-size="14.5" font-weight="bold" text-anchor="middle" fill="#000000">Staff & Admin Consoles</text>
+            
+              <text x="974" y="275" font-family="Arial, sans-serif" font-size="12.5" fill="#000000">• Guard Inspection Dossier</text>
+            
+              <text x="974" y="295" font-family="Arial, sans-serif" font-size="12.5" fill="#000000">• Host Office Review Queue</text>
+            
+              <text x="974" y="315" font-family="Arial, sans-serif" font-size="12.5" fill="#000000">• Admin Governance Portal</text>
+            
+              <text x="974" y="335" font-family="Arial, sans-serif" font-size="12.5" fill="#000000">• TOTP Multi-Factor Auth</text>
+            
+              <text x="974" y="355" font-family="Arial, sans-serif" font-size="12.5" fill="#000000">• Real-Time Occupancy Gauge</text>
+            
+          </g>
+        
+          <g>
+            <rect x="90" y="460" width="1140" height="190" fill="#FFFFFF" stroke="#000000" stroke-width="1.8" rx="6"/>
+            <text x="660" y="484" font-family="Arial, sans-serif" font-size="14.5" font-weight="bold" text-anchor="middle" fill="#000000">Hardware Peripheral Interfaces</text>
+            
+              <text x="104" y="510" font-family="Arial, sans-serif" font-size="12.5" fill="#000000">• High-Definition Optical Webcams (Front/Back) • Thermal Receipt / Badge Esc/POS Printers</text>
+            
+              <text x="104" y="530" font-family="Arial, sans-serif" font-size="12.5" fill="#000000">• Touchscreen Digitizers (Kiosk Station) • Turnstile Electronic Relay Gates & Status Indicators</text>
+            
+              <text x="104" y="550" font-family="Arial, sans-serif" font-size="12.5" fill="#000000">• Sub-Second Video Frame Capture (<500ms Latency) • Secure Terminal Device Fingerprint Binding</text>
+            
+          </g>
+        
+      </g>
+    
+
+  <!-- Block 2 -->
+  
+      <g>
+        <rect x="1350" y="160" width="1180" height="520" fill="#FFFFFF" stroke="#000000" stroke-width="3" rx="8"/>
+        <rect x="1350" y="160" width="1180" height="46" fill="#FFFFFF" stroke="#000000" stroke-width="2" rx="8"/>
+        <text x="1375" y="190" font-family="Arial, sans-serif" font-size="16" font-weight="bold" fill="#000000">BLOCK 2: EDGE SECURITY & PERIMETER DEFENSE</text>
+        
+          <g>
+            <rect x="1370" y="225" width="370" height="210" fill="#FFFFFF" stroke="#000000" stroke-width="1.8" rx="6"/>
+            <text x="1555" y="249" font-family="Arial, sans-serif" font-size="14.5" font-weight="bold" text-anchor="middle" fill="#000000">Cloudflare Perimeter Network</text>
+            
+              <text x="1384" y="275" font-family="Arial, sans-serif" font-size="12.5" fill="#000000">• Global Anycast DNS Routing</text>
+            
+              <text x="1384" y="295" font-family="Arial, sans-serif" font-size="12.5" fill="#000000">• Automated Layer 3/4/7 DDoS Scrubbing</text>
+            
+              <text x="1384" y="315" font-family="Arial, sans-serif" font-size="12.5" fill="#000000">• Strict Content-Security-Policy (CSP)</text>
+            
+              <text x="1384" y="335" font-family="Arial, sans-serif" font-size="12.5" fill="#000000">• HTTP Strict Transport Security (HSTS)</text>
+            
+          </g>
+        
+          <g>
+            <rect x="1760" y="225" width="370" height="210" fill="#FFFFFF" stroke="#000000" stroke-width="1.8" rx="6"/>
+            <text x="1945" y="249" font-family="Arial, sans-serif" font-size="14.5" font-weight="bold" text-anchor="middle" fill="#000000">Turnstile Bot Defense Engine</text>
+            
+              <text x="1774" y="275" font-family="Arial, sans-serif" font-size="12.5" fill="#000000">• Invisible Cryptographic Challenges</text>
+            
+              <text x="1774" y="295" font-family="Arial, sans-serif" font-size="12.5" fill="#000000">• Client-Side Token Generation</text>
+            
+              <text x="1774" y="315" font-family="Arial, sans-serif" font-size="12.5" fill="#000000">• Zero-PII Human Verification</text>
+            
+              <text x="1774" y="335" font-family="Arial, sans-serif" font-size="12.5" fill="#000000">• Automated Script & Bot Mitigation</text>
+            
+          </g>
+        
+          <g>
+            <rect x="2150" y="225" width="360" height="210" fill="#FFFFFF" stroke="#000000" stroke-width="1.8" rx="6"/>
+            <text x="2330" y="249" font-family="Arial, sans-serif" font-size="14.5" font-weight="bold" text-anchor="middle" fill="#000000">Vercel Edge Routing Gateway</text>
+            
+              <text x="2164" y="275" font-family="Arial, sans-serif" font-size="12.5" fill="#000000">• Global Serverless Routing</text>
+            
+              <text x="2164" y="295" font-family="Arial, sans-serif" font-size="12.5" fill="#000000">• Path-Based Route Protection</text>
+            
+              <text x="2164" y="315" font-family="Arial, sans-serif" font-size="12.5" fill="#000000">• Edge Header & Cookie Sanitation</text>
+            
+              <text x="2164" y="335" font-family="Arial, sans-serif" font-size="12.5" fill="#000000">• Client Device Fingerprint Binding</text>
+            
+          </g>
+        
+          <g>
+            <rect x="1370" y="460" width="1140" height="190" fill="#FFFFFF" stroke="#000000" stroke-width="1.8" rx="6"/>
+            <text x="1940" y="484" font-family="Arial, sans-serif" font-size="14.5" font-weight="bold" text-anchor="middle" fill="#000000">Session Security & Transient Memory Governance</text>
+            
+              <text x="1384" y="510" font-family="Arial, sans-serif" font-size="12.5" fill="#000000">• Client In-Memory FormData Buffering • Automatic Blob URL Revocation on Registration Cancellation</text>
+            
+              <text x="1384" y="530" font-family="Arial, sans-serif" font-size="12.5" fill="#000000">• Zero LocalStorage Token Leakage • Stateless Edge Worker Verification & Anti-Replay Protection</text>
+            
+          </g>
+        
+      </g>
+    
+
+  <!-- Block 3 -->
+  
+      <g>
+        <rect x="70" y="720" width="1180" height="540" fill="#FFFFFF" stroke="#000000" stroke-width="3" rx="8"/>
+        <rect x="70" y="720" width="1180" height="46" fill="#FFFFFF" stroke="#000000" stroke-width="2" rx="8"/>
+        <text x="95" y="750" font-family="Arial, sans-serif" font-size="16" font-weight="bold" fill="#000000">BLOCK 3: OPTICAL CAPTURE & BIOMETRIC VERIFICATION</text>
+        
+          <g>
+            <rect x="90" y="785" width="370" height="220" fill="#FFFFFF" stroke="#000000" stroke-width="1.8" rx="6"/>
+            <text x="275" y="809" font-family="Arial, sans-serif" font-size="14.5" font-weight="bold" text-anchor="middle" fill="#000000">Camera Stream Handler</text>
+            
+              <text x="104" y="835" font-family="Arial, sans-serif" font-size="12.5" fill="#000000">• MediaStream Track Controller</text>
+            
+              <text x="104" y="855" font-family="Arial, sans-serif" font-size="12.5" fill="#000000">• Resolution & Aspect Ratio Normalizer</text>
+            
+              <text x="104" y="875" font-family="Arial, sans-serif" font-size="12.5" fill="#000000">• Dynamic Unmirror/Mirror Switch</text>
+            
+              <text x="104" y="895" font-family="Arial, sans-serif" font-size="12.5" fill="#000000">• Focus & Lighting Level Validator</text>
+            
+          </g>
+        
+          <g>
+            <rect x="480" y="785" width="370" height="220" fill="#FFFFFF" stroke="#000000" stroke-width="1.8" rx="6"/>
+            <text x="665" y="809" font-family="Arial, sans-serif" font-size="14.5" font-weight="bold" text-anchor="middle" fill="#000000">Tesseract.js OCR Worker</text>
+            
+              <text x="494" y="835" font-family="Arial, sans-serif" font-size="12.5" fill="#000000">• WebAssembly Worker Pipeline</text>
+            
+              <text x="494" y="855" font-family="Arial, sans-serif" font-size="12.5" fill="#000000">• ID Card Boundary Segmentation</text>
+            
+              <text x="494" y="875" font-family="Arial, sans-serif" font-size="12.5" fill="#000000">• Automated Text Extraction (Name, Bday)</text>
+            
+              <text x="494" y="895" font-family="Arial, sans-serif" font-size="12.5" fill="#000000">• Fuzzy String Similarity Scoring</text>
+            
+          </g>
+        
+          <g>
+            <rect x="870" y="785" width="360" height="220" fill="#FFFFFF" stroke="#000000" stroke-width="1.8" rx="6"/>
+            <text x="1050" y="809" font-family="Arial, sans-serif" font-size="14.5" font-weight="bold" text-anchor="middle" fill="#000000">Facial Verification Engine</text>
+            
+              <text x="884" y="835" font-family="Arial, sans-serif" font-size="12.5" fill="#000000">• Face Detection & Alignment</text>
+            
+              <text x="884" y="855" font-family="Arial, sans-serif" font-size="12.5" fill="#000000">• Transient Facial Landmark Embedding</text>
+            
+              <text x="884" y="875" font-family="Arial, sans-serif" font-size="12.5" fill="#000000">• Cosine Similarity Re-identification</text>
+            
+              <text x="884" y="895" font-family="Arial, sans-serif" font-size="12.5" fill="#000000">• Zero-Persistence Biometric Policy</text>
+            
+          </g>
+        
+          <g>
+            <rect x="90" y="1030" width="1140" height="200" fill="#FFFFFF" stroke="#000000" stroke-width="1.8" rx="6"/>
+            <text x="660" y="1054" font-family="Arial, sans-serif" font-size="14.5" font-weight="bold" text-anchor="middle" fill="#000000">Identity Evidence Validation Logic</text>
+            
+              <text x="104" y="1080" font-family="Arial, sans-serif" font-size="12.5" fill="#000000">• Cross-Verification of OCR Extracted Name against Entered Demographics</text>
+            
+              <text x="104" y="1100" font-family="Arial, sans-serif" font-size="12.5" fill="#000000">• Real-Time Image Blur & Lighting Analysis • Immediate Discard of Images on Registration Abort</text>
+            
+          </g>
+        
+      </g>
+    
+
+  <!-- Block 4 -->
+  
+      <g>
+        <rect x="1350" y="720" width="1180" height="540" fill="#FFFFFF" stroke="#000000" stroke-width="3" rx="8"/>
+        <rect x="1350" y="720" width="1180" height="46" fill="#FFFFFF" stroke="#000000" stroke-width="2" rx="8"/>
+        <text x="1375" y="750" font-family="Arial, sans-serif" font-size="16" font-weight="bold" fill="#000000">BLOCK 4: PASS MANAGEMENT & CRYPTOGRAPHIC ENGINE</text>
+        
+          <g>
+            <rect x="1370" y="785" width="370" height="220" fill="#FFFFFF" stroke="#000000" stroke-width="1.8" rx="6"/>
+            <text x="1555" y="809" font-family="Arial, sans-serif" font-size="14.5" font-weight="bold" text-anchor="middle" fill="#000000">Pass Issuance Controller</text>
+            
+              <text x="1384" y="835" font-family="Arial, sans-serif" font-size="12.5" fill="#000000">• Atomic api.issue_pass RPC</text>
+            
+              <text x="1384" y="855" font-family="Arial, sans-serif" font-size="12.5" fill="#000000">• Visitor Demographic Validation</text>
+            
+              <text x="1384" y="875" font-family="Arial, sans-serif" font-size="12.5" fill="#000000">• Purpose & Destination Office Binding</text>
+            
+              <text x="1384" y="895" font-family="Arial, sans-serif" font-size="12.5" fill="#000000">• Vehicle Plate Normalizer (vPIC)</text>
+            
+          </g>
+        
+          <g>
+            <rect x="1760" y="785" width="370" height="220" fill="#FFFFFF" stroke="#000000" stroke-width="1.8" rx="6"/>
+            <text x="1945" y="809" font-family="Arial, sans-serif" font-size="14.5" font-weight="bold" text-anchor="middle" fill="#000000">QR Cryptographic Engine</text>
+            
+              <text x="1774" y="835" font-family="Arial, sans-serif" font-size="12.5" fill="#000000">• SHA-256 HMAC Token Hashing</text>
+            
+              <text x="1774" y="855" font-family="Arial, sans-serif" font-size="12.5" fill="#000000">• Cryptographic Salt & Digest String</text>
+            
+              <text x="1774" y="875" font-family="Arial, sans-serif" font-size="12.5" fill="#000000">• Anti-Tamper Digital Signatures</text>
+            
+              <text x="1774" y="895" font-family="Arial, sans-serif" font-size="12.5" fill="#000000">• Dynamic Matrix Code Generation</text>
+            
+          </g>
+        
+          <g>
+            <rect x="2150" y="785" width="360" height="220" fill="#FFFFFF" stroke="#000000" stroke-width="1.8" rx="6"/>
+            <text x="2330" y="809" font-family="Arial, sans-serif" font-size="14.5" font-weight="bold" text-anchor="middle" fill="#000000">Pass State Machine Evaluator</text>
+            
+              <text x="2164" y="835" font-family="Arial, sans-serif" font-size="12.5" fill="#000000">• Status: issued -> approved -> in -> out</text>
+            
+              <text x="2164" y="855" font-family="Arial, sans-serif" font-size="12.5" fill="#000000">• Validity Period & Expiration Check</text>
+            
+              <text x="2164" y="875" font-family="Arial, sans-serif" font-size="12.5" fill="#000000">• Campus Holiday & Closure Gating</text>
+            
+              <text x="2164" y="895" font-family="Arial, sans-serif" font-size="12.5" fill="#000000">• Concurrent Scan Lease Locking</text>
+            
+          </g>
+        
+          <g>
+            <rect x="1370" y="1030" width="1140" height="200" fill="#FFFFFF" stroke="#000000" stroke-width="1.8" rx="6"/>
+            <text x="1940" y="1054" font-family="Arial, sans-serif" font-size="14.5" font-weight="bold" text-anchor="middle" fill="#000000">Office Routing & Adjudication Subsystem</text>
+            
+              <text x="1384" y="1080" font-family="Arial, sans-serif" font-size="12.5" fill="#000000">• Host Department Visit Request Routing • Staff Real-Time Decision Queue (Approve / Reject)</text>
+            
+              <text x="1384" y="1100" font-family="Arial, sans-serif" font-size="12.5" fill="#000000">• Automated Reschedule Notifications • Real-Time Web Push Alerts to Host Office</text>
+            
+          </g>
+        
+      </g>
+    
+
+  <!-- Block 5 -->
+  
+      <g>
+        <rect x="70" y="1300" width="1180" height="580" fill="#FFFFFF" stroke="#000000" stroke-width="3" rx="8"/>
+        <rect x="70" y="1300" width="1180" height="46" fill="#FFFFFF" stroke="#000000" stroke-width="2" rx="8"/>
+        <text x="95" y="1330" font-family="Arial, sans-serif" font-size="16" font-weight="bold" fill="#000000">BLOCK 5: PHYSICAL GATE CONTROL & AUDIT SUBSYSTEM</text>
+        
+          <g>
+            <rect x="90" y="1365" width="370" height="230" fill="#FFFFFF" stroke="#000000" stroke-width="1.8" rx="6"/>
+            <text x="275" y="1389" font-family="Arial, sans-serif" font-size="14.5" font-weight="bold" text-anchor="middle" fill="#000000">Optical QR Gate Scanner</text>
+            
+              <text x="104" y="1415" font-family="Arial, sans-serif" font-size="12.5" fill="#000000">• High-Speed 2D Video Frame Grabbing</text>
+            
+              <text x="104" y="1435" font-family="Arial, sans-serif" font-size="12.5" fill="#000000">• ZXing Barcode / QR Decoding Engine</text>
+            
+              <text x="104" y="1455" font-family="Arial, sans-serif" font-size="12.5" fill="#000000">• Real-Time Token Payload Parsing</text>
+            
+              <text x="104" y="1475" font-family="Arial, sans-serif" font-size="12.5" fill="#000000">• Sub-Second Ingress Latency (<500ms)</text>
+            
+          </g>
+        
+          <g>
+            <rect x="480" y="1365" width="370" height="230" fill="#FFFFFF" stroke="#000000" stroke-width="1.8" rx="6"/>
+            <text x="665" y="1389" font-family="Arial, sans-serif" font-size="14.5" font-weight="bold" text-anchor="middle" fill="#000000">Guard Station Visual Dossier</text>
+            
+              <text x="494" y="1415" font-family="Arial, sans-serif" font-size="12.5" fill="#000000">• Side-by-Side Face Photo & ID Snapshot</text>
+            
+              <text x="494" y="1435" font-family="Arial, sans-serif" font-size="12.5" fill="#000000">• Destination Office & Declared Vehicle</text>
+            
+              <text x="494" y="1455" font-family="Arial, sans-serif" font-size="12.5" fill="#000000">• Live In-Campus Headcount Monitor</text>
+            
+              <text x="494" y="1475" font-family="Arial, sans-serif" font-size="12.5" fill="#000000">• Manual Security Verification Override</text>
+            
+          </g>
+        
+          <g>
+            <rect x="870" y="1365" width="360" height="230" fill="#FFFFFF" stroke="#000000" stroke-width="1.8" rx="6"/>
+            <text x="1050" y="1389" font-family="Arial, sans-serif" font-size="14.5" font-weight="bold" text-anchor="middle" fill="#000000">Emergency Lockdown Module</text>
+            
+              <text x="884" y="1415" font-family="Arial, sans-serif" font-size="12.5" fill="#000000">• Instant Master Gate Access Freeze</text>
+            
+              <text x="884" y="1435" font-family="Arial, sans-serif" font-size="12.5" fill="#000000">• Simultaneous WebSocket Lock Broadcast</text>
+            
+              <text x="884" y="1455" font-family="Arial, sans-serif" font-size="12.5" fill="#000000">• Audit Flagged Incident Quarantine</text>
+            
+              <text x="884" y="1475" font-family="Arial, sans-serif" font-size="12.5" fill="#000000">• Manual Guard Override Key</text>
+            
+          </g>
+        
+          <g>
+            <rect x="90" y="1620" width="1140" height="230" fill="#FFFFFF" stroke="#000000" stroke-width="1.8" rx="6"/>
+            <text x="660" y="1644" font-family="Arial, sans-serif" font-size="14.5" font-weight="bold" text-anchor="middle" fill="#000000">Security Audit Ledger & Event Recorder</text>
+            
+              <text x="104" y="1670" font-family="Arial, sans-serif" font-size="12.5" fill="#000000">• Append-Only visit_events (Entry/Exit Timestamps, Gate Name, Guard ID)</text>
+            
+              <text x="104" y="1690" font-family="Arial, sans-serif" font-size="12.5" fill="#000000">• System audit_events (Staff Logins, MFA Verification, Admin Config Changes)</text>
+            
+              <text x="104" y="1710" font-family="Arial, sans-serif" font-size="12.5" fill="#000000">• Daily Campus Occupancy Analytics & Ingress/Egress Volume Summaries</text>
+            
+          </g>
+        
+      </g>
+    
+
+  <!-- Block 6 -->
+  
+      <g>
+        <rect x="1350" y="1300" width="1180" height="580" fill="#FFFFFF" stroke="#000000" stroke-width="3" rx="8"/>
+        <rect x="1350" y="1300" width="1180" height="46" fill="#FFFFFF" stroke="#000000" stroke-width="2" rx="8"/>
+        <text x="1375" y="1330" font-family="Arial, sans-serif" font-size="16" font-weight="bold" fill="#000000">BLOCK 6: CLOUD DATA PERSISTENCE & EXTERNAL APIS</text>
+        
+          <g>
+            <rect x="1370" y="1365" width="370" height="230" fill="#FFFFFF" stroke="#000000" stroke-width="1.8" rx="6"/>
+            <text x="1555" y="1389" font-family="Arial, sans-serif" font-size="14.5" font-weight="bold" text-anchor="middle" fill="#000000">Supabase PostgreSQL 15 DB</text>
+            
+              <text x="1384" y="1415" font-family="Arial, sans-serif" font-size="12.5" fill="#000000">• Transactional Tables (visitors, passes)</text>
+            
+              <text x="1384" y="1435" font-family="Arial, sans-serif" font-size="12.5" fill="#000000">• Row Level Security (RLS) Engine</text>
+            
+              <text x="1384" y="1455" font-family="Arial, sans-serif" font-size="12.5" fill="#000000">• SECURITY DEFINER Stored Procedures</text>
+            
+              <text x="1384" y="1475" font-family="Arial, sans-serif" font-size="12.5" fill="#000000">• PgBouncer Connection Pooler (Port 6543)</text>
+            
+          </g>
+        
+          <g>
+            <rect x="1760" y="1365" width="370" height="230" fill="#FFFFFF" stroke="#000000" stroke-width="1.8" rx="6"/>
+            <text x="1945" y="1389" font-family="Arial, sans-serif" font-size="14.5" font-weight="bold" text-anchor="middle" fill="#000000">Encrypted Object Storage</text>
+            
+              <text x="1774" y="1415" font-family="Arial, sans-serif" font-size="12.5" fill="#000000">• S3-Compatible Secure Buckets</text>
+            
+              <text x="1774" y="1435" font-family="Arial, sans-serif" font-size="12.5" fill="#000000">• Time-Limited Signed Access URLs</text>
+            
+              <text x="1774" y="1455" font-family="Arial, sans-serif" font-size="12.5" fill="#000000">• Zero Local Disk Staging</text>
+            
+              <text x="1774" y="1475" font-family="Arial, sans-serif" font-size="12.5" fill="#000000">• Strict Private Storage Isolation</text>
+            
+          </g>
+        
+          <g>
+            <rect x="2150" y="1365" width="360" height="230" fill="#FFFFFF" stroke="#000000" stroke-width="1.8" rx="6"/>
+            <text x="2330" y="1389" font-family="Arial, sans-serif" font-size="14.5" font-weight="bold" text-anchor="middle" fill="#000000">External Services Gateway</text>
+            
+              <text x="2164" y="1415" font-family="Arial, sans-serif" font-size="12.5" fill="#000000">• Resend Email REST Delivery API</text>
+            
+              <text x="2164" y="1435" font-family="Arial, sans-serif" font-size="12.5" fill="#000000">• NHTSA vPIC Automotive Database</text>
+            
+              <text x="2164" y="1455" font-family="Arial, sans-serif" font-size="12.5" fill="#000000">• PSGC Nationwide Geographic Dataset</text>
+            
+              <text x="2164" y="1475" font-family="Arial, sans-serif" font-size="12.5" fill="#000000">• Cloudflare Turnstile Siteverify</text>
+            
+          </g>
+        
+          <g>
+            <rect x="1370" y="1620" width="1140" height="230" fill="#FFFFFF" stroke="#000000" stroke-width="1.8" rx="6"/>
+            <text x="1940" y="1644" font-family="Arial, sans-serif" font-size="14.5" font-weight="bold" text-anchor="middle" fill="#000000">Realtime WebSocket & Synchronization Broker</text>
+            
+              <text x="1384" y="1670" font-family="Arial, sans-serif" font-size="12.5" fill="#000000">• Supabase Realtime Engine (PostgreSQL WAL Logical Replication Streaming)</text>
+            
+              <text x="1384" y="1690" font-family="Arial, sans-serif" font-size="12.5" fill="#000000">• Live Presence & Occupancy Count Broadcasting to Guard Consoles</text>
+            
+              <text x="1384" y="1710" font-family="Arial, sans-serif" font-size="12.5" fill="#000000">• Instant Office Approval Event Push • Automatic Reconnection & State Recovery</text>
+            
+          </g>
+        
+      </g>
+    
+
+  <!-- Major Buses -->
+  
+      <g>
+        <polyline points="1250,420 1350,420" fill="none" stroke="#000000" stroke-width="2.8" marker-end="url(#arrow)"/>
+        <rect x="1160" y="384" width="280" height="32" fill="#FFFFFF" stroke="#000000" stroke-width="1.4" rx="4"/>
+        <text x="1300" y="406" font-family="Arial, sans-serif" font-size="13" font-weight="bold" text-anchor="middle" fill="#000000">HTTPS / WSS Communication Bus</text>
+      </g>
+    
+  
+      <g>
+        <polyline points="1250,990 1350,990" fill="none" stroke="#000000" stroke-width="2.8" marker-end="url(#arrow)"/>
+        <rect x="1160" y="954" width="280" height="32" fill="#FFFFFF" stroke="#000000" stroke-width="1.4" rx="4"/>
+        <text x="1300" y="976" font-family="Arial, sans-serif" font-size="13" font-weight="bold" text-anchor="middle" fill="#000000">Verified Identity Dossier Bus</text>
+      </g>
+    
+  
+      <g>
+        <polyline points="1250,1590 1350,1590" fill="none" stroke="#000000" stroke-width="2.8" marker-end="url(#arrow)"/>
+        <rect x="1160" y="1554" width="280" height="32" fill="#FFFFFF" stroke="#000000" stroke-width="1.4" rx="4"/>
+        <text x="1300" y="1576" font-family="Arial, sans-serif" font-size="13" font-weight="bold" text-anchor="middle" fill="#000000">Real-Time Audit & Event Bus</text>
+      </g>
+    
+</svg>

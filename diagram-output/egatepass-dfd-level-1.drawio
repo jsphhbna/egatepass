@@ -1,0 +1,33 @@
+<mxfile host="app.diagrams.net" modified="2026-11-21T13:00:00.000Z" agent="Mozilla/5.0" version="21.0.0" type="device">
+  <diagram id="egatepass-dfd1" name="E-GatePass DFD Level 1">
+    <mxGraphModel dx="2400" dy="1700" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="2400" pageHeight="1700" background="#FFFFFF">
+      <root>
+        <mxCell id="0"/>
+        <mxCell id="1" parent="0"/>
+        <mxCell id="title" value="EULOGIO &quot;AMANG&quot; RODRIGUEZ INSTITUTE OF SCIENCE AND TECHNOLOGY&#xa;EARIST E-GATEPASS VISITOR ACCESS MANAGEMENT SYSTEM&#xa;Data Flow Diagram (DFD) — Level 1 Decomposition" style="text;html=1;strokeColor=#000000;fillColor=#FFFFFF;align=center;verticalAlign=middle;whiteSpace=wrap;fontStyle=1;fontSize=14;fontColor=#000000;" vertex="1" parent="1">
+          <mxGeometry x="50" y="30" width="2300" height="90" as="geometry"/>
+        </mxCell>
+        <!-- Entities -->
+        <mxCell id="e_visitor" value="VISITOR" style="shape=rect;html=1;whiteSpace=wrap;fillColor=#FFFFFF;strokeColor=#000000;strokeWidth=2;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="200" y="160" width="260" height="60" as="geometry"/>
+        </mxCell>
+        <mxCell id="e_turnstile" value="CLOUDFLARE TURNSTILE" style="shape=rect;html=1;whiteSpace=wrap;fillColor=#FFFFFF;strokeColor=#000000;strokeWidth=2;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="850" y="160" width="260" height="60" as="geometry"/>
+        </mxCell>
+        <mxCell id="e_office" value="CAMPUS OFFICE PERSONNEL" style="shape=rect;html=1;whiteSpace=wrap;fillColor=#FFFFFF;strokeColor=#000000;strokeWidth=2;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="1500" y="160" width="260" height="60" as="geometry"/>
+        </mxCell>
+        <!-- Processes -->
+        <mxCell id="p1" value="1.0&#xa;Visitor Registration &amp; Biometrics" style="shape=rect;rounded=1;html=1;whiteSpace=wrap;fillColor=#FFFFFF;strokeColor=#000000;strokeWidth=2;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="200" y="350" width="320" height="110" as="geometry"/>
+        </mxCell>
+        <mxCell id="p2" value="2.0&#xa;Office Visit Governance" style="shape=rect;rounded=1;html=1;whiteSpace=wrap;fillColor=#FFFFFF;strokeColor=#000000;strokeWidth=2;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="1470" y="350" width="320" height="110" as="geometry"/>
+        </mxCell>
+        <mxCell id="p3" value="3.0&#xa;Pass Issuance &amp; Cryptography" style="shape=rect;rounded=1;html=1;whiteSpace=wrap;fillColor=#FFFFFF;strokeColor=#000000;strokeWidth=2;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="820" y="700" width="320" height="110" as="geometry"/>
+        </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>
