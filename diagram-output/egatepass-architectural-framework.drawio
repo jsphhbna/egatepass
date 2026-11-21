@@ -1,0 +1,33 @@
+<mxfile host="app.diagrams.net" modified="2026-11-21T13:00:00.000Z" agent="Mozilla/5.0" version="21.0.0" type="device">
+  <diagram id="egatepass-arch" name="E-GatePass Architectural Framework">
+    <mxGraphModel dx="2200" dy="1600" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="2200" pageHeight="1600" background="#FFFFFF">
+      <root>
+        <mxCell id="0"/>
+        <mxCell id="1" parent="0"/>
+        <mxCell id="title" value="EULOGIO &quot;AMANG&quot; RODRIGUEZ INSTITUTE OF SCIENCE AND TECHNOLOGY&#xa;EARIST E-GATEPASS VISITOR ACCESS MANAGEMENT SYSTEM&#xa;Multi-Tier Architectural Framework" style="text;html=1;strokeColor=#000000;fillColor=#FFFFFF;align=center;verticalAlign=middle;whiteSpace=wrap;fontStyle=1;fontSize=14;fontColor=#000000;" vertex="1" parent="1">
+          <mxGeometry x="50" y="30" width="2100" height="90" as="geometry"/>
+        </mxCell>
+        <!-- Tier 1 -->
+        <mxCell id="t1" value="TIER 1: PRESENTATION &amp; CLIENT INTERFACES" style="shape=rect;html=1;verticalAlign=top;fontStyle=1;whiteSpace=wrap;align=left;spacingLeft=15;spacingTop=10;fillColor=#FFFFFF;strokeColor=#000000;strokeWidth=2;" vertex="1" parent="1">
+          <mxGeometry x="60" y="150" width="2080" height="240" as="geometry"/>
+        </mxCell>
+        <!-- Tier 2 -->
+        <mxCell id="t2" value="TIER 2: NETWORK, EDGE SECURITY &amp; BOT MITIGATION" style="shape=rect;html=1;verticalAlign=top;fontStyle=1;whiteSpace=wrap;align=left;spacingLeft=15;spacingTop=10;fillColor=#FFFFFF;strokeColor=#000000;strokeWidth=2;" vertex="1" parent="1">
+          <mxGeometry x="60" y="430" width="2080" height="200" as="geometry"/>
+        </mxCell>
+        <!-- Tier 3 -->
+        <mxCell id="t3" value="TIER 3: APPLICATION SERVICES &amp; BUSINESS LOGIC" style="shape=rect;html=1;verticalAlign=top;fontStyle=1;whiteSpace=wrap;align=left;spacingLeft=15;spacingTop=10;fillColor=#FFFFFF;strokeColor=#000000;strokeWidth=2;" vertex="1" parent="1">
+          <mxGeometry x="60" y="670" width="2080" height="260" as="geometry"/>
+        </mxCell>
+        <!-- Tier 4 -->
+        <mxCell id="t4" value="TIER 4: DATA PERSISTENCE, STORAGE &amp; RLS SECURITY" style="shape=rect;html=1;verticalAlign=top;fontStyle=1;whiteSpace=wrap;align=left;spacingLeft=15;spacingTop=10;fillColor=#FFFFFF;strokeColor=#000000;strokeWidth=2;" vertex="1" parent="1">
+          <mxGeometry x="60" y="970" width="2080" height="270" as="geometry"/>
+        </mxCell>
+        <!-- Tier 5 -->
+        <mxCell id="t5" value="TIER 5: EXTERNAL ENTERPRISE INTEGRATION SERVICES" style="shape=rect;html=1;verticalAlign=top;fontStyle=1;whiteSpace=wrap;align=left;spacingLeft=15;spacingTop=10;fillColor=#FFFFFF;strokeColor=#000000;strokeWidth=2;" vertex="1" parent="1">
+          <mxGeometry x="60" y="1280" width="2080" height="230" as="geometry"/>
+        </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>

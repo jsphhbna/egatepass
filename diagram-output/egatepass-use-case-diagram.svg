@@ -1,0 +1,359 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 2400 1650" width="2400" height="1650">
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M 0 1 L 10 5 L 0 9 z" fill="#000000"/>
+    </marker>
+  </defs>
+
+  <rect width="2400" height="1650" fill="#FFFFFF"/>
+  
+    <!-- Academic Title Block -->
+    <rect x="50" y="30" width="2300" height="110" fill="#FFFFFF" stroke="#000000" stroke-width="2.8"/>
+    <text x="1200" y="65" font-family="Arial, sans-serif" font-size="20" font-weight="bold" text-anchor="middle" fill="#000000" letter-spacing="1">EULOGIO "AMANG" RODRIGUEZ INSTITUTE OF SCIENCE AND TECHNOLOGY</text>
+    <text x="1200" y="95" font-family="Arial, sans-serif" font-size="17" font-weight="bold" text-anchor="middle" fill="#000000">EARIST E-GATEPASS VISITOR ACCESS MANAGEMENT SYSTEM</text>
+    <text x="1200" y="122" font-family="Arial, sans-serif" font-size="14" text-anchor="middle" fill="#000000">System Use Case Diagram (UML 2.5) | Proponents: Mary Joy Cagande, Joseph Habana, Mon Gerald Lanon, Jeferson Tambis | Adviser: Dhani San Jose</text>
+  
+
+  <!-- System Boundary -->
+  <rect x="440" y="160" width="1520" height="1420" fill="#FFFFFF" stroke="#000000" stroke-width="3" rx="10"/>
+  <rect x="440" y="160" width="480" height="42" fill="#FFFFFF" stroke="#000000" stroke-width="2"/>
+  <text x="465" y="188" font-family="Arial, sans-serif" font-size="16" font-weight="bold" fill="#000000">SYSTEM BOUNDARY: EARIST E-GATEPASS</text>
+
+  <!-- Actors Left -->
+  
+      <g transform="translate(220, 380)">
+        <circle cx="0" cy="-45" r="22" fill="#FFFFFF" stroke="#000000" stroke-width="2.8"/>
+        <line x1="0" y1="-23" x2="0" y2="25" stroke="#000000" stroke-width="2.8"/>
+        <line x1="-35" y1="-8" x2="35" y2="-8" stroke="#000000" stroke-width="2.8"/>
+        <line x1="0" y1="25" x2="-28" y2="70" stroke="#000000" stroke-width="2.8"/>
+        <line x1="0" y1="25" x2="28" y2="70" stroke="#000000" stroke-width="2.8"/>
+        <text x="0" y="98" font-family="Arial, sans-serif" font-size="16" font-weight="bold" text-anchor="middle" fill="#000000">VISITOR</text>
+        <text x="0" y="118" font-family="Arial, sans-serif" font-size="13" text-anchor="middle" fill="#000000">General Public / Client</text>
+      </g>
+    
+  
+      <g transform="translate(220, 780)">
+        <circle cx="0" cy="-45" r="22" fill="#FFFFFF" stroke="#000000" stroke-width="2.8"/>
+        <line x1="0" y1="-23" x2="0" y2="25" stroke="#000000" stroke-width="2.8"/>
+        <line x1="-35" y1="-8" x2="35" y2="-8" stroke="#000000" stroke-width="2.8"/>
+        <line x1="0" y1="25" x2="-28" y2="70" stroke="#000000" stroke-width="2.8"/>
+        <line x1="0" y1="25" x2="28" y2="70" stroke="#000000" stroke-width="2.8"/>
+        <text x="0" y="98" font-family="Arial, sans-serif" font-size="16" font-weight="bold" text-anchor="middle" fill="#000000">RETURNING VISITOR</text>
+        <text x="0" y="118" font-family="Arial, sans-serif" font-size="13" text-anchor="middle" fill="#000000">Frequent Visitor Profile</text>
+      </g>
+    
+  
+      <g transform="translate(220, 1180)">
+        <rect x="-110" y="-40" width="220" height="80" fill="#FFFFFF" stroke="#000000" stroke-width="2.5" rx="6"/>
+        <text x="0" y="-16" font-family="Arial, sans-serif" font-size="12" font-weight="bold" text-anchor="middle" fill="#000000">&lt;&lt;external system&gt;&gt;</text>
+        <text x="0" y="8" font-family="Arial, sans-serif" font-size="14.5" font-weight="bold" text-anchor="middle" fill="#000000">CLOUDFLARE TURNSTILE</text>
+        <text x="0" y="26" font-family="Arial, sans-serif" font-size="12" text-anchor="middle" fill="#000000">Bot Challenge Engine</text>
+      </g>
+    
+  
+      <g transform="translate(220, 1400)">
+        <rect x="-110" y="-40" width="220" height="80" fill="#FFFFFF" stroke="#000000" stroke-width="2.5" rx="6"/>
+        <text x="0" y="-16" font-family="Arial, sans-serif" font-size="12" font-weight="bold" text-anchor="middle" fill="#000000">&lt;&lt;external system&gt;&gt;</text>
+        <text x="0" y="8" font-family="Arial, sans-serif" font-size="14.5" font-weight="bold" text-anchor="middle" fill="#000000">NHTSA vPIC API</text>
+        <text x="0" y="26" font-family="Arial, sans-serif" font-size="12" text-anchor="middle" fill="#000000">Vehicle Database Service</text>
+      </g>
+    
+
+  <!-- Actors Right -->
+  
+      <g transform="translate(2180, 340)">
+        <circle cx="0" cy="-45" r="22" fill="#FFFFFF" stroke="#000000" stroke-width="2.8"/>
+        <line x1="0" y1="-23" x2="0" y2="25" stroke="#000000" stroke-width="2.8"/>
+        <line x1="-35" y1="-8" x2="35" y2="-8" stroke="#000000" stroke-width="2.8"/>
+        <line x1="0" y1="25" x2="-28" y2="70" stroke="#000000" stroke-width="2.8"/>
+        <line x1="0" y1="25" x2="28" y2="70" stroke="#000000" stroke-width="2.8"/>
+        <text x="0" y="98" font-family="Arial, sans-serif" font-size="16" font-weight="bold" text-anchor="middle" fill="#000000">SECURITY GUARD</text>
+        <text x="0" y="118" font-family="Arial, sans-serif" font-size="13" text-anchor="middle" fill="#000000">Gate Security Personnel</text>
+      </g>
+    
+  
+      <g transform="translate(2180, 720)">
+        <circle cx="0" cy="-45" r="22" fill="#FFFFFF" stroke="#000000" stroke-width="2.8"/>
+        <line x1="0" y1="-23" x2="0" y2="25" stroke="#000000" stroke-width="2.8"/>
+        <line x1="-35" y1="-8" x2="35" y2="-8" stroke="#000000" stroke-width="2.8"/>
+        <line x1="0" y1="25" x2="-28" y2="70" stroke="#000000" stroke-width="2.8"/>
+        <line x1="0" y1="25" x2="28" y2="70" stroke="#000000" stroke-width="2.8"/>
+        <text x="0" y="98" font-family="Arial, sans-serif" font-size="16" font-weight="bold" text-anchor="middle" fill="#000000">CAMPUS OFFICE STAFF</text>
+        <text x="0" y="118" font-family="Arial, sans-serif" font-size="13" text-anchor="middle" fill="#000000">Host / Department Approver</text>
+      </g>
+    
+  
+      <g transform="translate(2180, 1120)">
+        <circle cx="0" cy="-45" r="22" fill="#FFFFFF" stroke="#000000" stroke-width="2.8"/>
+        <line x1="0" y1="-23" x2="0" y2="25" stroke="#000000" stroke-width="2.8"/>
+        <line x1="-35" y1="-8" x2="35" y2="-8" stroke="#000000" stroke-width="2.8"/>
+        <line x1="0" y1="25" x2="-28" y2="70" stroke="#000000" stroke-width="2.8"/>
+        <line x1="0" y1="25" x2="28" y2="70" stroke="#000000" stroke-width="2.8"/>
+        <text x="0" y="98" font-family="Arial, sans-serif" font-size="16" font-weight="bold" text-anchor="middle" fill="#000000">SYSTEM ADMINISTRATOR</text>
+        <text x="0" y="118" font-family="Arial, sans-serif" font-size="13" text-anchor="middle" fill="#000000">Security & System Admin</text>
+      </g>
+    
+  
+      <g transform="translate(2180, 1420)">
+        <rect x="-110" y="-40" width="220" height="80" fill="#FFFFFF" stroke="#000000" stroke-width="2.5" rx="6"/>
+        <text x="0" y="-16" font-family="Arial, sans-serif" font-size="12" font-weight="bold" text-anchor="middle" fill="#000000">&lt;&lt;external system&gt;&gt;</text>
+        <text x="0" y="8" font-family="Arial, sans-serif" font-size="14.5" font-weight="bold" text-anchor="middle" fill="#000000">RESEND EMAIL SERVICE</text>
+        <text x="0" y="26" font-family="Arial, sans-serif" font-size="12" text-anchor="middle" fill="#000000">SMTP / Notification Engine</text>
+      </g>
+    
+
+  <!-- Use Cases Inside Boundary -->
+  <!-- Col 1: Registration (Left) -->
+  
+      <g id="uc1">
+        <ellipse cx="680" cy="260" rx="160" ry="52" fill="#FFFFFF" stroke="#000000" stroke-width="2.2"/>
+        
+          <text x="680" y="254" font-family="Arial, sans-serif" font-size="14.5" font-weight="bold" text-anchor="middle" fill="#000000">UC1: Online Visit</text>
+          <text x="680" y="276" font-family="Arial, sans-serif" font-size="13.5" text-anchor="middle" fill="#000000">Pre-Registration</text>
+        
+      </g>
+    
+  
+      <g id="uc2">
+        <ellipse cx="680" cy="410" rx="160" ry="52" fill="#FFFFFF" stroke="#000000" stroke-width="2.2"/>
+        
+          <text x="680" y="404" font-family="Arial, sans-serif" font-size="14.5" font-weight="bold" text-anchor="middle" fill="#000000">UC2: Self-Service Kiosk</text>
+          <text x="680" y="426" font-family="Arial, sans-serif" font-size="13.5" text-anchor="middle" fill="#000000">Walk-In Registration</text>
+        
+      </g>
+    
+  
+      <g id="uc3">
+        <ellipse cx="680" cy="580" rx="165" ry="55" fill="#FFFFFF" stroke="#000000" stroke-width="2.2"/>
+        
+          <text x="680" y="574" font-family="Arial, sans-serif" font-size="14.5" font-weight="bold" text-anchor="middle" fill="#000000">UC3: Re-Identify Visitor</text>
+          <text x="680" y="596" font-family="Arial, sans-serif" font-size="13.5" text-anchor="middle" fill="#000000">via Facial Vector / Phone</text>
+        
+      </g>
+    
+  
+      <g id="uc4">
+        <ellipse cx="680" cy="740" rx="155" ry="48" fill="#FFFFFF" stroke="#000000" stroke-width="2.2"/>
+        
+          <text x="680" y="734" font-family="Arial, sans-serif" font-size="14.5" font-weight="bold" text-anchor="middle" fill="#000000">UC4: Track Visit Status</text>
+          <text x="680" y="756" font-family="Arial, sans-serif" font-size="13.5" text-anchor="middle" fill="#000000">via Reference Code</text>
+        
+      </g>
+    
+
+  <!-- Col 2: Identity & Evidence (Center-Left) -->
+  
+      <g id="uc5">
+        <ellipse cx="1120" cy="260" rx="165" ry="52" fill="#FFFFFF" stroke="#000000" stroke-width="2.2"/>
+        
+          <text x="1120" y="244" font-family="Arial, sans-serif" font-size="14" font-weight="bold" text-anchor="middle" fill="#000000">UC5: Capture & Verify</text>
+          <text x="1120" y="264" font-family="Arial, sans-serif" font-size="13" text-anchor="middle" fill="#000000">ID Document (OCR)</text>
+          <text x="1120" y="282" font-family="Arial, sans-serif" font-size="12" text-anchor="middle" fill="#000000">Name / Birthday / ID Match</text>
+        
+      </g>
+    
+  
+      <g id="uc6">
+        <ellipse cx="1120" cy="410" rx="165" ry="52" fill="#FFFFFF" stroke="#000000" stroke-width="2.2"/>
+        
+          <text x="1120" y="394" font-family="Arial, sans-serif" font-size="14" font-weight="bold" text-anchor="middle" fill="#000000">UC6: Capture Live Biometric</text>
+          <text x="1120" y="414" font-family="Arial, sans-serif" font-size="13" text-anchor="middle" fill="#000000">Facial Portrait</text>
+          <text x="1120" y="432" font-family="Arial, sans-serif" font-size="12" text-anchor="middle" fill="#000000">Quality & Liveness Check</text>
+        
+      </g>
+    
+  
+      <g id="uc7">
+        <ellipse cx="1120" cy="560" rx="155" ry="48" fill="#FFFFFF" stroke="#000000" stroke-width="2.2"/>
+        
+          <text x="1120" y="554" font-family="Arial, sans-serif" font-size="14.5" font-weight="bold" text-anchor="middle" fill="#000000">UC7: Verify Humanity</text>
+          <text x="1120" y="576" font-family="Arial, sans-serif" font-size="13.5" text-anchor="middle" fill="#000000">Bot Mitigation Challenge</text>
+        
+      </g>
+    
+  
+      <g id="uc8">
+        <ellipse cx="1120" cy="710" rx="160" ry="50" fill="#FFFFFF" stroke="#000000" stroke-width="2.2"/>
+        
+          <text x="1120" y="704" font-family="Arial, sans-serif" font-size="14.5" font-weight="bold" text-anchor="middle" fill="#000000">UC8: Declare Vehicle</text>
+          <text x="1120" y="726" font-family="Arial, sans-serif" font-size="13.5" text-anchor="middle" fill="#000000">Plate & Make / Model</text>
+        
+      </g>
+    
+
+  <!-- Col 3: Pass Management & Adjudication (Center) -->
+  
+      <g id="uc9">
+        <ellipse cx="1200" cy="900" rx="175" ry="58" fill="#FFFFFF" stroke="#000000" stroke-width="2.2"/>
+        
+          <text x="1200" y="884" font-family="Arial, sans-serif" font-size="14" font-weight="bold" text-anchor="middle" fill="#000000">UC9: Issue Digital Gate Pass</text>
+          <text x="1200" y="904" font-family="Arial, sans-serif" font-size="13" text-anchor="middle" fill="#000000">Cryptographic QR Code</text>
+          <text x="1200" y="922" font-family="Arial, sans-serif" font-size="12" text-anchor="middle" fill="#000000">Signed Token Digest</text>
+        
+      </g>
+    
+  
+      <g id="uc10">
+        <ellipse cx="1200" cy="1080" rx="165" ry="52" fill="#FFFFFF" stroke="#000000" stroke-width="2.2"/>
+        
+          <text x="1200" y="1074" font-family="Arial, sans-serif" font-size="14.5" font-weight="bold" text-anchor="middle" fill="#000000">UC10: Dispatch Pass Email</text>
+          <text x="1200" y="1096" font-family="Arial, sans-serif" font-size="13.5" text-anchor="middle" fill="#000000">HTML Pass Confirmation</text>
+        
+      </g>
+    
+  
+      <g id="uc11">
+        <ellipse cx="1200" cy="1260" rx="170" ry="55" fill="#FFFFFF" stroke="#000000" stroke-width="2.2"/>
+        
+          <text x="1200" y="1254" font-family="Arial, sans-serif" font-size="14.5" font-weight="bold" text-anchor="middle" fill="#000000">UC11: Adjudicate Visit Request</text>
+          <text x="1200" y="1276" font-family="Arial, sans-serif" font-size="13.5" text-anchor="middle" fill="#000000">Approve / Reject / Reschedule</text>
+        
+      </g>
+    
+
+  <!-- Col 4: Gate Operations & Administration (Right) -->
+  
+      <g id="uc12">
+        <ellipse cx="1680" cy="280" rx="175" ry="56" fill="#FFFFFF" stroke="#000000" stroke-width="2.2"/>
+        
+          <text x="1680" y="274" font-family="Arial, sans-serif" font-size="14.5" font-weight="bold" text-anchor="middle" fill="#000000">UC12: Optical Scan Gate Pass</text>
+          <text x="1680" y="296" font-family="Arial, sans-serif" font-size="13.5" text-anchor="middle" fill="#000000">Entry / Exit QR Validation</text>
+        
+      </g>
+    
+  
+      <g id="uc13">
+        <ellipse cx="1680" cy="440" rx="175" ry="54" fill="#FFFFFF" stroke="#000000" stroke-width="2.2"/>
+        
+          <text x="1680" y="434" font-family="Arial, sans-serif" font-size="14.5" font-weight="bold" text-anchor="middle" fill="#000000">UC13: Inspect Visitor Details</text>
+          <text x="1680" y="456" font-family="Arial, sans-serif" font-size="13.5" text-anchor="middle" fill="#000000">Photo & Credential Match</text>
+        
+      </g>
+    
+  
+      <g id="uc14">
+        <ellipse cx="1680" cy="600" rx="170" ry="52" fill="#FFFFFF" stroke="#000000" stroke-width="2.2"/>
+        
+          <text x="1680" y="594" font-family="Arial, sans-serif" font-size="14.5" font-weight="bold" text-anchor="middle" fill="#000000">UC14: Authorize / Deny</text>
+          <text x="1680" y="616" font-family="Arial, sans-serif" font-size="13.5" text-anchor="middle" fill="#000000">Physical Campus Access</text>
+        
+      </g>
+    
+  
+      <g id="uc15">
+        <ellipse cx="1680" cy="760" rx="170" ry="52" fill="#FFFFFF" stroke="#000000" stroke-width="2.2"/>
+        
+          <text x="1680" y="754" font-family="Arial, sans-serif" font-size="14.5" font-weight="bold" text-anchor="middle" fill="#000000">UC15: Monitor Real-Time</text>
+          <text x="1680" y="776" font-family="Arial, sans-serif" font-size="13.5" text-anchor="middle" fill="#000000">Campus Occupancy</text>
+        
+      </g>
+    
+  
+      <g id="uc16">
+        <ellipse cx="1680" cy="960" rx="175" ry="52" fill="#FFFFFF" stroke="#000000" stroke-width="2.2"/>
+        
+          <text x="1680" y="954" font-family="Arial, sans-serif" font-size="14.5" font-weight="bold" text-anchor="middle" fill="#000000">UC16: Manage Campus Closures</text>
+          <text x="1680" y="976" font-family="Arial, sans-serif" font-size="13.5" text-anchor="middle" fill="#000000">Holidays & Event Gates</text>
+        
+      </g>
+    
+  
+      <g id="uc17">
+        <ellipse cx="1680" cy="1120" rx="170" ry="52" fill="#FFFFFF" stroke="#000000" stroke-width="2.2"/>
+        
+          <text x="1680" y="1114" font-family="Arial, sans-serif" font-size="14.5" font-weight="bold" text-anchor="middle" fill="#000000">UC17: Manage Staff Accounts</text>
+          <text x="1680" y="1136" font-family="Arial, sans-serif" font-size="13.5" text-anchor="middle" fill="#000000">Roles, Terminals & MFA</text>
+        
+      </g>
+    
+  
+      <g id="uc18">
+        <ellipse cx="1680" cy="1280" rx="170" ry="52" fill="#FFFFFF" stroke="#000000" stroke-width="2.2"/>
+        
+          <text x="1680" y="1274" font-family="Arial, sans-serif" font-size="14.5" font-weight="bold" text-anchor="middle" fill="#000000">UC18: Audit Security Logs</text>
+          <text x="1680" y="1296" font-family="Arial, sans-serif" font-size="13.5" text-anchor="middle" fill="#000000">Entry History & System Trail</text>
+        
+      </g>
+    
+  
+      <g id="uc19">
+        <ellipse cx="1680" cy="1440" rx="170" ry="52" fill="#FFFFFF" stroke="#000000" stroke-width="2.2"/>
+        
+          <text x="1680" y="1434" font-family="Arial, sans-serif" font-size="14.5" font-weight="bold" text-anchor="middle" fill="#000000">UC19: Emergency Lockdown</text>
+          <text x="1680" y="1456" font-family="Arial, sans-serif" font-size="13.5" text-anchor="middle" fill="#000000">Instant Gate Access Freeze</text>
+        
+      </g>
+    
+
+  <!-- Associations -->
+  <line x1="260" y1="360" x2="520" y2="260" stroke="#000000" stroke-width="1.8"/>
+  <line x1="260" y1="380" x2="520" y2="410" stroke="#000000" stroke-width="1.8"/>
+  <line x1="260" y1="400" x2="525" y2="740" stroke="#000000" stroke-width="1.8"/>
+  <line x1="260" y1="780" x2="515" y2="580" stroke="#000000" stroke-width="1.8"/>
+
+  <!-- Guard Lines -->
+  <line x1="2140" y1="320" x2="1855" y2="280" stroke="#000000" stroke-width="1.8"/>
+  <line x1="2140" y1="340" x2="1855" y2="440" stroke="#000000" stroke-width="1.8"/>
+  <line x1="2140" y1="360" x2="1850" y2="600" stroke="#000000" stroke-width="1.8"/>
+  <line x1="2140" y1="380" x2="1850" y2="760" stroke="#000000" stroke-width="1.8"/>
+
+  <!-- Office Staff Lines -->
+  <line x1="2140" y1="720" x2="1370" y2="1260" stroke="#000000" stroke-width="1.8"/>
+  <line x1="2140" y1="740" x2="1850" y2="760" stroke="#000000" stroke-width="1.8"/>
+
+  <!-- Admin Lines -->
+  <line x1="2140" y1="1080" x2="1855" y2="960" stroke="#000000" stroke-width="1.8"/>
+  <line x1="2140" y1="1100" x2="1850" y2="1120" stroke="#000000" stroke-width="1.8"/>
+  <line x1="2140" y1="1120" x2="1850" y2="1280" stroke="#000000" stroke-width="1.8"/>
+  <line x1="2140" y1="1140" x2="1850" y2="1440" stroke="#000000" stroke-width="1.8"/>
+
+  <!-- External Lines -->
+  <line x1="330" y1="1180" x2="965" y2="560" stroke="#000000" stroke-width="1.8"/>
+  <line x1="330" y1="1400" x2="960" y2="710" stroke="#000000" stroke-width="1.8"/>
+  <line x1="2070" y1="1420" x2="1365" y2="1080" stroke="#000000" stroke-width="1.8"/>
+
+  <!-- <<include>> and <<extend>> dashed lines with labels -->
+  <!-- UC1/2 -> UC5 -->
+  <line x1="840" y1="260" x2="955" y2="260" stroke="#000000" stroke-width="1.6" stroke-dasharray="6,4" marker-end="url(#arrow)"/>
+  <text x="895" y="248" font-family="Arial, sans-serif" font-size="12" font-style="italic" text-anchor="middle" fill="#000000">&lt;&lt;include&gt;&gt;</text>
+
+  <!-- UC1/2 -> UC6 -->
+  <line x1="840" y1="410" x2="955" y2="410" stroke="#000000" stroke-width="1.6" stroke-dasharray="6,4" marker-end="url(#arrow)"/>
+  <text x="895" y="398" font-family="Arial, sans-serif" font-size="12" font-style="italic" text-anchor="middle" fill="#000000">&lt;&lt;include&gt;&gt;</text>
+
+  <!-- UC1 -> UC7 -->
+  <line x1="820" y1="290" x2="975" y2="540" stroke="#000000" stroke-width="1.6" stroke-dasharray="6,4" marker-end="url(#arrow)"/>
+  <text x="910" y="430" font-family="Arial, sans-serif" font-size="12" font-style="italic" text-anchor="middle" fill="#000000">&lt;&lt;include&gt;&gt;</text>
+
+  <!-- UC1/2 -> UC9 -->
+  <line x1="800" y1="440" x2="1040" y2="860" stroke="#000000" stroke-width="1.6" stroke-dasharray="6,4" marker-end="url(#arrow)"/>
+  <text x="940" y="660" font-family="Arial, sans-serif" font-size="12" font-style="italic" text-anchor="middle" fill="#000000">&lt;&lt;include&gt;&gt;</text>
+
+  <!-- UC9 -> UC10 -->
+  <line x1="1200" y1="958" x2="1200" y2="1028" stroke="#000000" stroke-width="1.6" stroke-dasharray="6,4" marker-end="url(#arrow)"/>
+  <text x="1255" y="996" font-family="Arial, sans-serif" font-size="12" font-style="italic" text-anchor="middle" fill="#000000">&lt;&lt;include&gt;&gt;</text>
+
+  <!-- UC12 -> UC13 -> UC14 -->
+  <line x1="1680" y1="336" x2="1680" y2="386" stroke="#000000" stroke-width="1.6" stroke-dasharray="6,4" marker-end="url(#arrow)"/>
+  <text x="1735" y="364" font-family="Arial, sans-serif" font-size="12" font-style="italic" text-anchor="middle" fill="#000000">&lt;&lt;include&gt;&gt;</text>
+  <line x1="1680" y1="494" x2="1680" y2="548" stroke="#000000" stroke-width="1.6" stroke-dasharray="6,4" marker-end="url(#arrow)"/>
+  <text x="1735" y="524" font-family="Arial, sans-serif" font-size="12" font-style="italic" text-anchor="middle" fill="#000000">&lt;&lt;include&gt;&gt;</text>
+
+  <!-- Extends -->
+  <line x1="680" y1="525" x2="680" y2="462" stroke="#000000" stroke-width="1.6" stroke-dasharray="6,4" marker-end="url(#arrow)"/>
+  <text x="735" y="495" font-family="Arial, sans-serif" font-size="12" font-style="italic" text-anchor="middle" fill="#000000">&lt;&lt;extend&gt;&gt;</text>
+
+  <line x1="960" y1="710" x2="820" y2="440" stroke="#000000" stroke-width="1.6" stroke-dasharray="6,4" marker-end="url(#arrow)"/>
+  <text x="870" y="560" font-family="Arial, sans-serif" font-size="12" font-style="italic" text-anchor="middle" fill="#000000">&lt;&lt;extend&gt;&gt;</text>
+
+  <!-- Legend -->
+  <rect x="50" y="1520" width="360" height="95" fill="#FFFFFF" stroke="#000000" stroke-width="1.8"/>
+  <text x="65" y="1545" font-family="Arial, sans-serif" font-size="13" font-weight="bold" fill="#000000">DIAGRAM CONVENTIONS (UML 2.5)</text>
+  <line x1="65" y1="1560" x2="125" y2="1560" stroke="#000000" stroke-width="1.8"/>
+  <text x="135" y="1564" font-family="Arial, sans-serif" font-size="12" fill="#000000">Solid Line: Actor Association</text>
+  <line x1="65" y1="1585" x2="125" y2="1585" stroke="#000000" stroke-width="1.6" stroke-dasharray="5,4"/>
+  <text x="135" y="1589" font-family="Arial, sans-serif" font-size="12" fill="#000000">Dashed Line: &lt;&lt;include&gt;&gt; / &lt;&lt;extend&gt;&gt;</text>
+  <ellipse cx="95" cy="1605" rx="20" ry="8" fill="#FFFFFF" stroke="#000000" stroke-width="1.4"/>
+  <text x="135" y="1609" font-family="Arial, sans-serif" font-size="12" fill="#000000">Ellipse: Functional Use Case</text>
+</svg>
