@@ -392,7 +392,15 @@ button:active,
   height: 100% !important;
   min-height: 280px;
   object-fit: cover !important;
-  transform: scaleX(-1);
+  display: block !important;
+}
+
+.scanner-viewport.is-mirrored video {
+  transform: scaleX(-1) !important;
+}
+
+.scanner-viewport.is-unmirrored video {
+  transform: none !important;
 }
 
 .scanner-viewport #entry-qr-reader,

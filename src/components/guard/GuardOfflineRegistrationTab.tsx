@@ -315,11 +315,9 @@ export function GuardOfflineRegistrationTab({
                 autoPlay
                 playsInline
                 muted
-                className="h-full w-full object-cover"
+                className="absolute inset-0 h-full w-full object-cover block shrink-0"
                 style={{ transform: webcam.mirrorPreview ? 'scaleX(-1)' : 'none' }}
               />
-            </div>
-            <div className="mt-2 max-w-md mx-auto">
               <CameraControls
                 activeFacingMode={webcam.activeFacingMode}
                 mirrorPreview={webcam.mirrorPreview}

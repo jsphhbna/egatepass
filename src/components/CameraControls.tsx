@@ -1,6 +1,5 @@
 import React from 'react';
-import { Button } from './ui/Button';
-import { SwitchCamera, FlipHorizontal, Focus } from 'lucide-react';
+import { Camera, FlipHorizontal, Focus } from 'lucide-react';
 
 export interface CameraControlsProps {
   activeFacingMode: 'user' | 'environment';
@@ -26,72 +25,65 @@ export const CameraControls: React.FC<CameraControlsProps> = ({
   mirrorLabel,
 }) => {
   const switchTargetLabel =
-    activeFacingMode === 'user' ? 'Switch to rear camera' : 'Switch to front camera';
+    activeFacingMode === 'user' ? 'Switch to back camera' : 'Switch to front camera';
   const mirrorActionLabel = mirrorPreview
-    ? 'Disable mirrored preview'
-    : 'Mirror preview';
+    ? 'Disable preview mirror'
+    : 'Enable preview mirror';
 
   return (
     <div
-      className={`flex flex-wrap items-center justify-between gap-2 px-3 py-1.5 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-text-secondary)] text-xs shadow-xs transition-colors ${className}`.trim()}
+      className={`absolute top-3 right-3 z-30 flex items-center gap-1.5 bg-black/60 backdrop-blur-xs p-1.5 rounded-xl border border-white/10 text-white shadow-md ${className}`.trim()}
       role="region"
       aria-label="Camera controls"
     >
-      <div className="flex items-center gap-1.5 font-medium text-[var(--color-text-secondary)]">
-        <span
-          className="inline-block h-1.5 w-1.5 rounded-full bg-slate-400"
-          aria-hidden="true"
-        />
-        <span>
-          {activeFacingMode === 'user' ? 'Front camera' : 'Rear camera'}
-          {mirrorPreview ? ' • Mirrored' : ''}
-        </span>
-      </div>
-
-      <div className="flex items-center gap-1.5">
-        {onRefocus && (
-          <Button
-            type="button"
-            variant="secondary"
-            size="sm"
-            onClick={onRefocus}
-            disabled={disabled}
-            aria-label="Refocus camera"
-            className="!min-h-[36px] text-xs font-medium text-[var(--color-text-primary)] hover:bg-[var(--color-canvas)] border border-[var(--color-border)] shadow-none"
-            icon={<Focus className="h-3.5 w-3.5" aria-hidden="true" />}
-          >
-            <span>Focus</span>
-          </Button>
-        )}
-
-        {canSwitchCamera && (
-          <Button
-            type="button"
-            variant="secondary"
-            size="sm"
-            onClick={onSwitchCamera}
-            disabled={disabled}
-            aria-label={switchTargetLabel}
-            className="!min-h-[36px] text-xs font-medium text-[var(--color-text-primary)] hover:bg-[var(--color-canvas)] border border-[var(--color-border)] shadow-none"
-            icon={<SwitchCamera className="h-3.5 w-3.5" aria-hidden="true" />}
-          >
-            <span>{activeFacingMode === 'user' ? 'Rear' : 'Front'}</span>
-          </Button>
-        )}
-
-        <Button
+      {onRefocus && (
+        <button
           type="button"
-          variant="secondary"
-          size="sm"
-          onClick={onToggleMirror}
+          onClick={(e) => {
+            e.stopPropagation();
+            onRefocus();
+          }}
           disabled={disabled}
-          aria-label={mirrorActionLabel}
-          className="!min-h-[36px] text-xs font-medium text-[var(--color-text-primary)] hover:bg-[var(--color-canvas)] border border-[var(--color-border)] shadow-none"
-          icon={<FlipHorizontal className="h-3.5 w-3.5" aria-hidden="true" />}
+          title="Refocus camera"
+          aria-label="Refocus camera"
+          className="p-1.5 rounded-lg text-white/70 hover:bg-white/20 hover:text-white transition-colors cursor-pointer"
         >
-          <span>{mirrorLabel || (mirrorPreview ? 'Unmirror' : 'Mirror')}</span>
-        </Button>
-      </div>
+          <Focus className="h-4 w-4" aria-hidden="true" />
+        </button>
+      )}
+
+      <button
+        type="button"
+        onClick={(e) => {
+          e.stopPropagation();
+          onToggleMirror();
+        }}
+        disabled={disabled}
+        title={mirrorLabel || (mirrorPreview ? 'Disable preview mirror' : 'Enable preview mirror')}
+        aria-label={mirrorActionLabel}
+        className={`p-1.5 rounded-lg transition-colors cursor-pointer ${
+          mirrorPreview ? 'bg-white/20 text-white' : 'text-white/70 hover:bg-white/20 hover:text-white'
+        }`}
+      >
+        <FlipHorizontal className="h-4 w-4" aria-hidden="true" />
+      </button>
+
+      {canSwitchCamera && (
+        <button
+          type="button"
+          onClick={(e) => {
+            e.stopPropagation();
+            onSwitchCamera();
+          }}
+          disabled={disabled}
+          title={switchTargetLabel}
+          aria-label={switchTargetLabel}
+          className="p-1.5 rounded-lg text-white/80 hover:bg-white/20 hover:text-white transition-colors flex items-center gap-1 text-[11px] font-semibold cursor-pointer"
+        >
+          <Camera className="h-4 w-4" aria-hidden="true" />
+          <span>{activeFacingMode === 'user' ? 'Front' : 'Back'}</span>
+        </button>
+      )}
     </div>
   );
 };

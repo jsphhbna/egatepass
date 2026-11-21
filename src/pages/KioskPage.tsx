@@ -909,20 +909,22 @@ export function KioskPage() {
                         </span>
                       </div>
                     </div>
+
+                    {idWebcam.isActive && (
+                      <CameraControls
+                        activeFacingMode={idWebcam.activeFacingMode}
+                        mirrorPreview={idWebcam.mirrorPreview}
+                        canSwitchCamera={idWebcam.canSwitchCamera}
+                        onSwitchCamera={idWebcam.switchCamera}
+                        onToggleMirror={idWebcam.toggleMirrorPreview}
+                        onRefocus={idWebcam.refocus}
+                      />
+                    )}
                   </>
                 )}
               </div>
 
-              <div className="mx-auto w-full max-w-md space-y-2">
-                <CameraControls
-                  activeFacingMode={idWebcam.activeFacingMode}
-                  mirrorPreview={idWebcam.mirrorPreview}
-                  canSwitchCamera={idWebcam.canSwitchCamera}
-                  onSwitchCamera={idWebcam.switchCamera}
-                  onToggleMirror={idWebcam.toggleMirrorPreview}
-                  onRefocus={idWebcam.refocus}
-                />
-
+              <div className="mx-auto w-full max-w-md text-center">
                 <input
                   ref={kioskIdFileInputRef}
                   type="file"
@@ -930,16 +932,14 @@ export function KioskPage() {
                   onChange={handleKioskIdFileUpload}
                   className="hidden"
                 />
-                <div className="text-center">
-                  <button
-                    type="button"
-                    onClick={() => kioskIdFileInputRef.current?.click()}
-                    className="text-xs text-[var(--color-brand)] hover:underline inline-flex items-center gap-1.5 font-medium cursor-pointer"
-                  >
-                    <Upload className="h-3.5 w-3.5" />
-                    <span>Having trouble focusing? Upload ID image instead</span>
-                  </button>
-                </div>
+                <button
+                  type="button"
+                  onClick={() => kioskIdFileInputRef.current?.click()}
+                  className="text-xs text-[var(--color-brand)] hover:underline inline-flex items-center gap-1.5 font-medium cursor-pointer"
+                >
+                  <Upload className="h-3.5 w-3.5" />
+                  <span>Having trouble focusing? Upload ID image instead</span>
+                </button>
               </div>
 
               <div className="flex flex-col gap-3 sm:flex-row">
@@ -1127,21 +1127,20 @@ export function KioskPage() {
                       autoPlay
                       playsInline
                       muted
-                      className="h-full w-full object-cover"
+                      className="absolute inset-0 h-full w-full object-cover block shrink-0"
                       style={{ transform: faceWebcam.mirrorPreview ? 'scaleX(-1)' : 'none' }}
                     />
+                    {faceWebcam.isActive && (
+                      <CameraControls
+                        activeFacingMode={faceWebcam.activeFacingMode}
+                        mirrorPreview={faceWebcam.mirrorPreview}
+                        canSwitchCamera={faceWebcam.canSwitchCamera}
+                        onSwitchCamera={faceWebcam.switchCamera}
+                        onToggleMirror={faceWebcam.toggleMirrorPreview}
+                      />
+                    )}
                   </>
                 )}
-              </div>
-
-              <div className="mx-auto w-full max-w-xs">
-                <CameraControls
-                  activeFacingMode={faceWebcam.activeFacingMode}
-                  mirrorPreview={faceWebcam.mirrorPreview}
-                  canSwitchCamera={faceWebcam.canSwitchCamera}
-                  onSwitchCamera={faceWebcam.switchCamera}
-                  onToggleMirror={faceWebcam.toggleMirrorPreview}
-                />
               </div>
 
               <div className="flex gap-3">
@@ -1224,20 +1223,20 @@ export function KioskPage() {
                         autoPlay
                         playsInline
                         muted
-                        className="h-full w-full object-cover"
+                        className="absolute inset-0 h-full w-full object-cover block shrink-0"
                         style={{ transform: idWebcam.mirrorPreview ? 'scaleX(-1)' : 'none' }}
                       />
                     )}
-                  </div>
-
-                  <div className="mx-auto w-full max-w-md">
-                    <CameraControls
-                      activeFacingMode={idWebcam.activeFacingMode}
-                      mirrorPreview={idWebcam.mirrorPreview}
-                      canSwitchCamera={idWebcam.canSwitchCamera}
-                      onSwitchCamera={idWebcam.switchCamera}
-                      onToggleMirror={idWebcam.toggleMirrorPreview}
-                    />
+                    {idWebcam.isActive && (
+                      <CameraControls
+                        activeFacingMode={idWebcam.activeFacingMode}
+                        mirrorPreview={idWebcam.mirrorPreview}
+                        canSwitchCamera={idWebcam.canSwitchCamera}
+                        onSwitchCamera={idWebcam.switchCamera}
+                        onToggleMirror={idWebcam.toggleMirrorPreview}
+                        onRefocus={idWebcam.refocus}
+                      />
+                    )}
                   </div>
 
                   <div className="flex gap-3">

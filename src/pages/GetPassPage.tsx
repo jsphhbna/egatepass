@@ -3983,16 +3983,16 @@ export function GetPassPage() {
                         <span className="sr-only">Center face in oval</span>
                       </div>
                     </div>
-                  </div>
 
-                  <div className="mx-auto w-full max-w-sm">
-                    <CameraControls
-                      activeFacingMode={faceWebcam.activeFacingMode}
-                      mirrorPreview={faceWebcam.mirrorPreview}
-                      canSwitchCamera={faceWebcam.canSwitchCamera}
-                      onSwitchCamera={faceWebcam.switchCamera}
-                      onToggleMirror={faceWebcam.toggleMirrorPreview}
-                    />
+                    {faceWebcam.isActive && (
+                      <CameraControls
+                        activeFacingMode={faceWebcam.activeFacingMode}
+                        mirrorPreview={faceWebcam.mirrorPreview}
+                        canSwitchCamera={faceWebcam.canSwitchCamera}
+                        onSwitchCamera={faceWebcam.switchCamera}
+                        onToggleMirror={faceWebcam.toggleMirrorPreview}
+                      />
+                    )}
                   </div>
 
                   <div className="flex gap-3">
@@ -5031,6 +5031,15 @@ export function GetPassPage() {
                         <span className="sr-only">Center face in oval</span>
                       </div>
                     </div>
+                    {faceWebcam.isActive && (
+                      <CameraControls
+                        activeFacingMode={faceWebcam.activeFacingMode}
+                        mirrorPreview={faceWebcam.mirrorPreview}
+                        canSwitchCamera={faceWebcam.canSwitchCamera}
+                        onSwitchCamera={faceWebcam.switchCamera}
+                        onToggleMirror={faceWebcam.toggleMirrorPreview}
+                      />
+                    )}
                   </div>
 
                   <div className="flex flex-col-reverse sm:flex-row gap-3 pt-2">
