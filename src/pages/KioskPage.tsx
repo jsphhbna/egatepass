@@ -1029,7 +1029,7 @@ export function KioskPage() {
 
               <div className="space-y-2">
                 <h2 className="text-2xl font-bold text-[var(--color-text-primary)]">
-                  Scan Your Valid ID
+                  Scan ID — Scan Your Valid ID
                 </h2>
                 <p className="mx-auto max-w-md text-sm text-[var(--color-text-secondary)] leading-relaxed">
                   Hold your government, school, or company ID up to the camera. We will automatically read your name to speed up registration.
@@ -1044,7 +1044,7 @@ export function KioskPage() {
                   className="w-full text-base font-semibold min-h-[48px] shadow-sm"
                   icon={<Camera className="h-5 w-5" />}
                 >
-                  Scan ID
+                  Scan My ID
                 </Button>
 
                 <div>
