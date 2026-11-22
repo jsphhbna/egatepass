@@ -46,21 +46,49 @@ serve(async (req: Request) => {
       });
     }
 
+    // Helper: decode hook secret whether whsec_ (base64), raw 64-char hex, base64, or utf8
+    function parseHookSecretBytes(s: string): Uint8Array {
+      const clean = s.trim();
+      if (clean.startsWith('whsec_')) {
+        return Uint8Array.from(atob(clean.slice(6)), (c) => c.charCodeAt(0));
+      }
+      if (/^[0-9a-fA-F]{64}$/.test(clean)) {
+        const bytes = new Uint8Array(32);
+        for (let i = 0; i < 32; i++) {
+          bytes[i] = parseInt(clean.substring(i * 2, i * 2 + 2), 16);
+        }
+        return bytes;
+      }
+      try {
+        return Uint8Array.from(atob(clean), (c) => c.charCodeAt(0));
+      } catch {
+        return new TextEncoder().encode(clean);
+      }
+    }
+
     // Verify HMAC
-    const key = hookSecret.startsWith('whsec_') ? hookSecret.slice(6) : hookSecret;
+    const rawKeyBytes = parseHookSecretBytes(hookSecret);
     const encoder = new TextEncoder();
     const cryptoKey = await crypto.subtle.importKey(
       'raw',
-      Uint8Array.from(atob(key), (c) => c.charCodeAt(0)),
+      rawKeyBytes,
       { name: 'HMAC', hash: 'SHA-256' },
       false,
       ['sign']
     );
     const toSign = encoder.encode(`${id}.${timestampStr}.${rawBody}`);
     const sigBuf = await crypto.subtle.sign('HMAC', cryptoKey, toSign);
-    const expectedSig = btoa(String.fromCharCode(...new Uint8Array(sigBuf)));
+    const expectedSigB64 = btoa(String.fromCharCode(...new Uint8Array(sigBuf)));
+    const expectedSigHex = Array.from(new Uint8Array(sigBuf))
+      .map((b) => b.toString(16).padStart(2, '0'))
+      .join('');
 
-    if (!signature.includes(expectedSig)) {
+    const sigParts = signature.split(/\s+/).flatMap((p) => p.split(','));
+    const isValid = sigParts.some(
+      (part) => part === expectedSigB64 || part === expectedSigHex || part === `v1,${expectedSigB64}` || part === `v1,${expectedSigHex}`
+    );
+
+    if (!isValid && !signature.includes(expectedSigB64) && !signature.includes(expectedSigHex)) {
       return new Response(JSON.stringify({ error: 'invalid_signature' }), {
         status: 401,
         headers: { 'Content-Type': 'application/json' },

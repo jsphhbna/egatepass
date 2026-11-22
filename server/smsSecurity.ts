@@ -38,33 +38,39 @@ export function verifyStandardWebhook(opts: VerifyStandardWebhookOptions): { val
     return { valid: false, error: 'timestamp_outside_tolerance' };
   }
 
-  // Extract base64 secret if prefixed with whsec_
-  let keyBytes: Buffer;
-  if (secret.startsWith('whsec_')) {
-    keyBytes = Buffer.from(secret.slice(6), 'base64');
-  } else {
-    keyBytes = Buffer.from(secret, 'utf8');
-  }
-
   const toSign = `${id}.${timestampStr}.${rawBody}`;
-  const expectedHmac = crypto.createHmac('sha256', keyBytes).update(toSign).digest('base64');
 
-  // Signature format in header: "v1,base64..." or space/comma separated list of signatures
+  // Candidate key buffers: handle whsec_ (base64), any even-length hex string, raw base64, and utf8
+  const candidateKeys: Buffer[] = [];
+  const cleanSecret = secret.trim();
+  if (cleanSecret.startsWith('whsec_')) {
+    candidateKeys.push(Buffer.from(cleanSecret.slice(6), 'base64'));
+  }
+  if (/^[0-9a-fA-F]+$/.test(cleanSecret) && cleanSecret.length % 2 === 0 && cleanSecret.length >= 16) {
+    candidateKeys.push(Buffer.from(cleanSecret, 'hex'));
+  }
+  try {
+    const b64Buf = Buffer.from(cleanSecret, 'base64');
+    if (b64Buf.length > 0) candidateKeys.push(b64Buf);
+  } catch {}
+  candidateKeys.push(Buffer.from(cleanSecret, 'utf8'));
+
   const passedSignatures = signature.split(/\s+/).flatMap((s) => s.split(','));
-  const hasMatch = passedSignatures.some((sig) => {
-    const cleanSig = sig.startsWith('v1,') ? sig.slice(3) : sig;
-    try {
-      return crypto.timingSafeEqual(Buffer.from(cleanSig, 'utf8'), Buffer.from(expectedHmac, 'utf8'));
-    } catch {
-      return false;
-    }
-  });
 
-  if (!hasMatch) {
-    return { valid: false, error: 'signature_mismatch' };
+  for (const key of candidateKeys) {
+    if (!key || key.length === 0) continue;
+    const expectedB64 = crypto.createHmac('sha256', key).update(toSign).digest('base64');
+    const expectedHex = crypto.createHmac('sha256', key).update(toSign).digest('hex');
+
+    for (const sig of passedSignatures) {
+      const cleanSig = sig.startsWith('v1,') ? sig.slice(3) : sig;
+      if (cleanSig === expectedB64 || cleanSig === expectedHex) {
+        return { valid: true };
+      }
+    }
   }
 
-  return { valid: true };
+  return { valid: false, error: 'signature_mismatch' };
 }
 
 /**

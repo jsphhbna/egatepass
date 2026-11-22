@@ -177,6 +177,30 @@ describe('SMS Gateway for Android pure functions and contract', () => {
       expect(result.valid).toBe(false);
       expect(result.error).toBe('signature_mismatch');
     });
+
+    it('validates genuine Standard Webhook with hex secret', () => {
+      const hexSecret = 'a3c0ab35fb2be1672034bb8ede4b2a02b6d9878ed0abceee92411112222334455';
+      const normalizedHex = hexSecret.slice(0, 64);
+      expect(normalizedHex.length).toBe(64);
+      const id = 'msg_hex_001';
+      const timestamp = String(Math.floor(Date.now() / 1000));
+      const rawBody = JSON.stringify({ user: { phone: '+639171234567' }, sms: { otp: '654321' } });
+
+      const toSign = `${id}.${timestamp}.${rawBody}`;
+      const hmac = crypto.createHmac('sha256', Buffer.from(normalizedHex, 'hex')).update(toSign).digest('base64');
+
+      const result = verifyStandardWebhook({
+        headers: {
+          'webhook-id': id,
+          'webhook-timestamp': timestamp,
+          'webhook-signature': `v1,${hmac}`,
+        },
+        rawBody,
+        secret: normalizedHex,
+      });
+
+      expect(result.valid).toBe(true);
+    });
   });
 
   describe('Gateway X-Signature Verification', () => {
