@@ -61,6 +61,7 @@ interface RawRecordPassRow {
     gender?: string | null;
     visit_date?: string | null;
     contact_number?: string | null;
+    email?: string | null;
     home_address?: string | null;
     home_street?: string | null;
     home_building?: string | null;
@@ -68,6 +69,7 @@ interface RawRecordPassRow {
     psgc_city_municipality_name?: string | null;
     psgc_province_name?: string | null;
     psgc_region_name?: string | null;
+    arrival_mode?: string | null;
     visitor_evidence: Array<{ id: string; kind: 'photo' | 'id' }>;
   } | null;
   office_visits?: Array<{
@@ -127,6 +129,7 @@ function mapPass(row: RawRecordPassRow) {
     gender: visitor?.gender ?? null,
     visitDate: visitor?.visit_date ?? null,
     contactNumber: visitor?.contact_number ?? null,
+    email: visitor?.email ?? null,
     homeAddress: visitor?.home_address ?? null,
     homeStreet: visitor?.home_street ?? null,
     homeBuilding: visitor?.home_building ?? null,
@@ -134,6 +137,7 @@ function mapPass(row: RawRecordPassRow) {
     cityName: visitor?.psgc_city_municipality_name ?? null,
     provinceName: visitor?.psgc_province_name ?? null,
     regionName: visitor?.psgc_region_name ?? null,
+    arrivalMode: visitor?.arrival_mode ?? null,
     destinationOffice,
     attendanceStatus,
     visitType,
@@ -263,6 +267,7 @@ async function handleGet(request: Request): Promise<Response> {
             gender,
             visit_date,
             contact_number,
+            email,
             home_address,
             home_street,
             home_building,
@@ -270,6 +275,7 @@ async function handleGet(request: Request): Promise<Response> {
             psgc_city_municipality_name,
             psgc_province_name,
             psgc_region_name,
+            arrival_mode,
             visitor_evidence (
               id,
               kind
