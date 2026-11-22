@@ -64,7 +64,10 @@ export function verifyStandardWebhook(opts: VerifyStandardWebhookOptions): { val
 
     for (const sig of passedSignatures) {
       const cleanSig = sig.startsWith('v1,') ? sig.slice(3) : sig;
-      if (cleanSig === expectedB64 || cleanSig === expectedHex) {
+      if (cleanSig.length === expectedB64.length && crypto.timingSafeEqual(Buffer.from(cleanSig), Buffer.from(expectedB64))) {
+        return { valid: true };
+      }
+      if (cleanSig.length === expectedHex.length && crypto.timingSafeEqual(Buffer.from(cleanSig.toLowerCase()), Buffer.from(expectedHex.toLowerCase()))) {
         return { valid: true };
       }
     }

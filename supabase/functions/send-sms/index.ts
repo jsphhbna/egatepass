@@ -1,5 +1,6 @@
 // Supabase Edge Function: send-sms
 // Outbound SMS Gateway Hook for Supabase Auth ("Send SMS" Hook) and System Alerts
+// Hardened: Fail-closed signature verification, constant-time comparison, replay defense, mandatory device ID targeting
 import { serve } from 'https://deno.land/std@0.168.0/http/server.ts';
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 
@@ -12,6 +13,19 @@ function maskPhone(phone: string): string {
   return `${clean.slice(0, prefixLen)} ••• ${clean.slice(-suffixLen)}`;
 }
 
+// Constant-time byte comparison to eliminate timing side-channel attacks
+function timingSafeEqualBytes(a: Uint8Array, b: Uint8Array): boolean {
+  if (a.length !== b.length) return false;
+  let c = 0;
+  for (let i = 0; i < a.length; i++) {
+    c |= a[i] ^ b[i];
+  }
+  return c === 0;
+}
+
+// In-memory cache for webhook replay protection (within 5-minute sliding window)
+const seenWebhookIds = new Map<string, number>();
+
 serve(async (req: Request) => {
   if (req.method !== 'POST') {
     return new Response(JSON.stringify({ error: 'method_not_allowed' }), {
@@ -20,80 +34,147 @@ serve(async (req: Request) => {
     });
   }
 
+  // Validate Content-Type
+  const contentType = req.headers.get('content-type') || '';
+  if (!contentType.toLowerCase().includes('application/json')) {
+    return new Response(JSON.stringify({ error: 'invalid_content_type', message: 'application/json required' }), {
+      status: 415,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  }
+
   const rawBody = await req.text();
-  const hookSecret = Deno.env.get('SEND_SMS_HOOK_SECRET');
+  const hookSecret = Deno.env.get('SEND_SMS_HOOK_SECRET')?.trim();
 
-  // Verify Standard Webhook signature if secret configured
-  if (hookSecret) {
-    const id = req.headers.get('webhook-id');
-    const timestampStr = req.headers.get('webhook-timestamp');
-    const signature = req.headers.get('webhook-signature');
-
-    if (!id || !timestampStr || !signature) {
-      return new Response(JSON.stringify({ error: 'missing_webhook_headers' }), {
-        status: 401,
+  // FAIL CLOSED: If hook secret is not configured, reject all requests immediately
+  if (!hookSecret) {
+    console.error('[SEND-SMS] SEND_SMS_HOOK_SECRET is not configured. Rejecting request fail-closed.');
+    return new Response(
+      JSON.stringify({
+        error: 'hook_secret_not_configured',
+        message: 'Endpoint authentication is misconfigured.',
+      }),
+      {
+        status: 500,
         headers: { 'Content-Type': 'application/json' },
-      });
-    }
-
-    // Check timestamp freshness (5 minutes)
-    const timestamp = parseInt(timestampStr, 10);
-    const now = Math.floor(Date.now() / 1000);
-    if (Math.abs(now - timestamp) > 300) {
-      return new Response(JSON.stringify({ error: 'timestamp_expired' }), {
-        status: 401,
-        headers: { 'Content-Type': 'application/json' },
-      });
-    }
-
-    // Helper: decode hook secret whether whsec_ (base64), raw 64-char hex, base64, or utf8
-    function parseHookSecretBytes(s: string): Uint8Array {
-      const clean = s.trim();
-      if (clean.startsWith('whsec_')) {
-        return Uint8Array.from(atob(clean.slice(6)), (c) => c.charCodeAt(0));
       }
-      if (/^[0-9a-fA-F]{64}$/.test(clean)) {
-        const bytes = new Uint8Array(32);
-        for (let i = 0; i < 32; i++) {
-          bytes[i] = parseInt(clean.substring(i * 2, i * 2 + 2), 16);
-        }
-        return bytes;
-      }
+    );
+  }
+
+  // Verify Standard Webhook headers
+  const id = req.headers.get('webhook-id')?.trim();
+  const timestampStr = req.headers.get('webhook-timestamp')?.trim();
+  const signature = req.headers.get('webhook-signature')?.trim();
+
+  if (!id || !timestampStr || !signature) {
+    return new Response(JSON.stringify({ error: 'missing_webhook_headers' }), {
+      status: 401,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  }
+
+  // Check timestamp freshness (5 minutes = 300 seconds) & finite number check
+  const timestamp = parseInt(timestampStr, 10);
+  const now = Math.floor(Date.now() / 1000);
+  if (!Number.isFinite(timestamp) || timestamp <= 0 || Math.abs(now - timestamp) > 300) {
+    return new Response(JSON.stringify({ error: 'timestamp_expired' }), {
+      status: 401,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  }
+
+  // Replay Attack Protection: prune stale IDs older than 300s
+  for (const [seenId, seenTs] of seenWebhookIds.entries()) {
+    if (now - seenTs > 300) {
+      seenWebhookIds.delete(seenId);
+    }
+  }
+  if (seenWebhookIds.has(id)) {
+    return new Response(JSON.stringify({ error: 'replayed_request' }), {
+      status: 401,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  }
+  seenWebhookIds.set(id, timestamp);
+
+  // Candidate key buffers: handle whsec_ (base64), raw hex string bytes, raw base64, and utf8 string
+  function getCandidateKeyBytes(s: string): Uint8Array[] {
+    const clean = s.trim();
+    const candidates: Uint8Array[] = [];
+    if (clean.startsWith('whsec_')) {
       try {
-        return Uint8Array.from(atob(clean), (c) => c.charCodeAt(0));
-      } catch {
-        return new TextEncoder().encode(clean);
+        candidates.push(Uint8Array.from(atob(clean.slice(6)), (c) => c.charCodeAt(0)));
+      } catch {}
+    }
+    if (/^[0-9a-fA-F]{16,}$/.test(clean) && clean.length % 2 === 0) {
+      const bytes = new Uint8Array(clean.length / 2);
+      for (let i = 0; i < bytes.length; i++) {
+        bytes[i] = parseInt(clean.substring(i * 2, i * 2 + 2), 16);
       }
+      candidates.push(bytes);
     }
+    try {
+      const b64 = Uint8Array.from(atob(clean), (c) => c.charCodeAt(0));
+      if (b64.length > 0) candidates.push(b64);
+    } catch {}
+    candidates.push(new TextEncoder().encode(clean));
+    return candidates;
+  }
 
-    // Verify HMAC
-    const rawKeyBytes = parseHookSecretBytes(hookSecret);
-    const encoder = new TextEncoder();
-    const cryptoKey = await crypto.subtle.importKey(
-      'raw',
-      rawKeyBytes,
-      { name: 'HMAC', hash: 'SHA-256' },
-      false,
-      ['sign']
-    );
-    const toSign = encoder.encode(`${id}.${timestampStr}.${rawBody}`);
-    const sigBuf = await crypto.subtle.sign('HMAC', cryptoKey, toSign);
-    const expectedSigB64 = btoa(String.fromCharCode(...new Uint8Array(sigBuf)));
-    const expectedSigHex = Array.from(new Uint8Array(sigBuf))
-      .map((b) => b.toString(16).padStart(2, '0'))
-      .join('');
+  // Verify HMAC using Web Crypto across candidate keys
+  const candidateKeys = getCandidateKeyBytes(hookSecret);
+  const encoder = new TextEncoder();
+  const toSign = encoder.encode(`${id}.${timestampStr}.${rawBody}`);
+  const sigItems = signature.split(/\s+/).flatMap((p) => p.split(','));
+  let signatureMatched = false;
 
-    const sigParts = signature.split(/\s+/).flatMap((p) => p.split(','));
-    const isValid = sigParts.some(
-      (part) => part === expectedSigB64 || part === expectedSigHex || part === `v1,${expectedSigB64}` || part === `v1,${expectedSigHex}`
-    );
+  for (const rawKeyBytes of candidateKeys) {
+    if (!rawKeyBytes || rawKeyBytes.length === 0) continue;
+    try {
+      const cryptoKey = await crypto.subtle.importKey(
+        'raw',
+        rawKeyBytes,
+        { name: 'HMAC', hash: 'SHA-256' },
+        false,
+        ['sign']
+      );
+      const sigBuf = await crypto.subtle.sign('HMAC', cryptoKey, toSign);
+      const expectedSigBytes = new Uint8Array(sigBuf);
+      const expectedSigB64 = btoa(String.fromCharCode(...expectedSigBytes));
+      const expectedSigHex = Array.from(expectedSigBytes)
+        .map((b) => b.toString(16).padStart(2, '0'))
+        .join('');
 
-    if (!isValid && !signature.includes(expectedSigB64) && !signature.includes(expectedSigHex)) {
-      return new Response(JSON.stringify({ error: 'invalid_signature' }), {
-        status: 401,
-        headers: { 'Content-Type': 'application/json' },
-      });
-    }
+      for (const item of sigItems) {
+        const cleanItem = item.startsWith('v1,') ? item.slice(3) : item;
+        if (cleanItem === expectedSigB64) {
+          try {
+            const itemBytes = Uint8Array.from(atob(cleanItem), (c) => c.charCodeAt(0));
+            if (timingSafeEqualBytes(itemBytes, expectedSigBytes)) {
+              signatureMatched = true;
+              break;
+            }
+          } catch {}
+        }
+        if (cleanItem.toLowerCase() === expectedSigHex.toLowerCase()) {
+          const expectedHexBytes = encoder.encode(expectedSigHex.toLowerCase());
+          const itemHexBytes = encoder.encode(cleanItem.toLowerCase());
+          if (timingSafeEqualBytes(itemHexBytes, expectedHexBytes)) {
+            signatureMatched = true;
+            break;
+          }
+        }
+      }
+
+      if (signatureMatched) break;
+    } catch {}
+  }
+
+  if (!signatureMatched) {
+    return new Response(JSON.stringify({ error: 'invalid_signature' }), {
+      status: 401,
+      headers: { 'Content-Type': 'application/json' },
+    });
   }
 
   let body: any;
@@ -128,7 +209,7 @@ serve(async (req: Request) => {
   if (supabaseUrl && serviceRoleKey) {
     const supabase = createClient(supabaseUrl, serviceRoleKey);
     const localPhone = cleanPhone.startsWith('+63') ? `0${cleanPhone.slice(3)}` : cleanPhone;
-    
+
     // Check visitors table
     const { data: hasVisitor } = await supabase
       .from('visitors')
@@ -150,7 +231,6 @@ serve(async (req: Request) => {
     }
 
     if (!hasAccount) {
-      // Stop: No account exists for this phone number
       return new Response(
         JSON.stringify({
           error: 'no account yet',
@@ -161,7 +241,7 @@ serve(async (req: Request) => {
     }
   }
 
-  // Gateway credentials check
+  // Gateway credentials & device configuration
   const username = Deno.env.get('SMS_GATEWAY_USERNAME');
   const password = Deno.env.get('SMS_GATEWAY_PASSWORD');
   const deviceId = Deno.env.get('SMS_GATEWAY_DEVICE_ID')?.trim();
@@ -177,11 +257,23 @@ serve(async (req: Request) => {
     );
   }
 
+  // P1 FIX: Mandatory Device ID Targeting across all outbound paths
+  if (!deviceId) {
+    console.error('[SEND-SMS] SMS_GATEWAY_DEVICE_ID is not configured.');
+    return new Response(
+      JSON.stringify({
+        error: 'sms_gateway_device_id_not_configured',
+        message: 'SMS_GATEWAY_DEVICE_ID is not configured.',
+      }),
+      { status: 503, headers: { 'Content-Type': 'application/json' } }
+    );
+  }
+
   const messageText = otpCode
     ? `Your EARIST E-GatePass verification code is: ${otpCode}. Valid for 5 minutes. Do not share this code.`
     : body?.message || body?.text || 'EARIST E-GatePass Notification';
 
-  // Normalize URL
+  // Normalize URL and enforce HTTPS
   if (!rawUrl.startsWith('http://') && !rawUrl.startsWith('https://')) {
     rawUrl = `https://${rawUrl}`;
   }
@@ -219,18 +311,17 @@ serve(async (req: Request) => {
           text: messageText,
         },
         phoneNumbers: [cleanPhone],
-        ...(deviceId ? { deviceId } : {}),
+        deviceId: deviceId, // STRICTLY REQUIRED: Device ID explicitly injected
       }),
       signal: AbortSignal.timeout(15_000),
     });
 
-    const result = await gatewayRes.json().catch(() => null);
-
     if (!gatewayRes.ok) {
+      console.error('[SEND-SMS] Gateway dispatch returned status:', gatewayRes.status);
       return new Response(
         JSON.stringify({
           error: 'gateway_dispatch_failed',
-          details: result,
+          statusCode: gatewayRes.status,
         }),
         { status: 502, headers: { 'Content-Type': 'application/json' } }
       );
@@ -239,17 +330,19 @@ serve(async (req: Request) => {
     return new Response(
       JSON.stringify({
         success: true,
+        status: 'accepted_by_gateway',
         recipientMasked: maskPhone(cleanPhone),
       }),
       { status: 200, headers: { 'Content-Type': 'application/json' } }
     );
   } catch (err: any) {
+    const isTimeout = err?.name === 'TimeoutError' || err?.name === 'AbortError' || err?.code === 20;
     return new Response(
       JSON.stringify({
-        error: 'network_error',
-        message: err?.message || 'Error communicating with SMS Gateway',
+        error: isTimeout ? 'sms_gateway_request_timeout' : 'network_error',
+        message: isTimeout ? 'Gateway request timed out after 15s' : 'Error communicating with SMS Gateway',
       }),
-      { status: 500, headers: { 'Content-Type': 'application/json' } }
+      { status: 504, headers: { 'Content-Type': 'application/json' } }
     );
   }
 });

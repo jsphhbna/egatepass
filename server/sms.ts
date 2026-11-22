@@ -108,6 +108,19 @@ export function resolveGatewayUrl(rawUrl?: string): string {
 }
 
 /**
+ * Sanitize error messages to eliminate Basic Auth tokens, passwords, or raw internal URLs.
+ */
+export function sanitizeErrorMessage(detail?: string | null): string | null {
+  if (!detail) return null;
+  let clean = String(detail);
+  clean = clean.replace(/Basic\s+[a-zA-Z0-9+/=]+/gi, 'Basic [REDACTED]');
+  clean = clean.replace(/bearer\s+[a-zA-Z0-9._-]+/gi, 'Bearer [REDACTED]');
+  clean = clean.replace(/password=[^&\s]+/gi, 'password=[REDACTED]');
+  clean = clean.replace(/https?:\/\/[^\s]+/gi, '[GATEWAY_ENDPOINT]');
+  return clean.slice(0, 500);
+}
+
+/**
  * Send an SMS message to one or more recipients via SMS Gateway for Android Cloud API.
  * Explicitly targets the configured Android Device ID, enforces timeout via AbortSignal,
  * normalizes phone numbers, and truthfully logs gateway acceptance state.
@@ -118,9 +131,10 @@ export async function sendGatewaySms(options: {
   purpose: 'emergency_roll_call' | 'overdue_exit_warning' | 'auth_code' | 'inbound_message' | 'manual_test' | 'status_update';
   actorId?: string | null;
   batchId?: string | null;
+  campaignId?: string | null;
   transactionId?: string;
 }): Promise<SendSmsResult> {
-  const { phoneNumbers, message, purpose, actorId, batchId } = options;
+  const { phoneNumbers, message, purpose, actorId, batchId, campaignId } = options;
   const transactionId = options.transactionId || `sms_tx_${Date.now()}_${crypto.randomBytes(4).toString('hex')}`;
 
   if (!phoneNumbers || phoneNumbers.length === 0) {
@@ -262,19 +276,22 @@ export async function sendGatewaySms(options: {
     const data = await response.json().catch(() => null) as any;
 
     if (!response.ok) {
-      const errorMsg = data?.message || data?.error || `HTTP ${response.status} from SMS Gateway`;
+      const rawError = data?.message || data?.error || `HTTP ${response.status} from SMS Gateway`;
+      const errorMsg = sanitizeErrorMessage(rawError) || 'sms_gateway_error';
       console.error('[SMS-GATEWAY] Send failure:', errorMsg);
       await logSmsActivity({
         transactionId,
         deviceId: maskDeviceId(deviceId),
         direction: 'outbound',
         recipientMasked: normalizedPhones.map(maskPhoneNumber).join(', '),
-        messageBody: message,
+        messageBody: null,
         purpose,
         status: 'failed',
         errorDetail: errorMsg,
         actorId,
         batchId,
+        campaignId,
+        recipientCount: normalizedPhones.length,
       });
       return {
         success: false,
@@ -293,12 +310,14 @@ export async function sendGatewaySms(options: {
       deviceId: maskDeviceId(deviceId),
       direction: 'outbound',
       recipientMasked: normalizedPhones.map(maskPhoneNumber).join(', '),
-      messageBody: message,
+      messageBody: null,
       purpose,
       status: 'accepted',
       externalId,
       actorId,
       batchId,
+      campaignId,
+      recipientCount: normalizedPhones.length,
     });
 
     return {
@@ -310,7 +329,7 @@ export async function sendGatewaySms(options: {
     };
   } catch (err: any) {
     const isTimeout = err?.name === 'TimeoutError' || err?.name === 'AbortError' || err?.code === 20;
-    const errorMsg = isTimeout ? 'sms_gateway_request_timeout' : (err?.message || 'network_error_connecting_to_sms_gateway');
+    const errorMsg = isTimeout ? 'sms_gateway_request_timeout' : sanitizeErrorMessage(err?.message || 'network_error_connecting_to_sms_gateway');
     console.error('[SMS-GATEWAY] Network/dispatch error:', errorMsg);
 
     // Timeout leaves status ambiguous; record as 'unknown' rather than resending naively
@@ -319,18 +338,20 @@ export async function sendGatewaySms(options: {
       deviceId: maskDeviceId(deviceId),
       direction: 'outbound',
       recipientMasked: normalizedPhones.map(maskPhoneNumber).join(', '),
-      messageBody: message,
+      messageBody: null,
       purpose,
       status: isTimeout ? 'unknown' : 'failed',
       errorDetail: errorMsg,
       actorId,
       batchId,
+      campaignId,
+      recipientCount: normalizedPhones.length,
     });
 
     return {
       success: false,
       status: isTimeout ? 'unknown' : 'failed',
-      error: errorMsg,
+      error: errorMsg || 'sms_gateway_error',
       recipientCount: normalizedPhones.length,
       transactionId,
     };
@@ -340,13 +361,14 @@ export async function sendGatewaySms(options: {
 /**
  * Log an SMS transaction to public.sms_logs table.
  * Fully sanitized: passwords and authorization tokens are strictly excluded.
+ * Privacy-first: message_body is omitted/redacted to protect sensitive visitor info.
  */
 export async function logSmsActivity(record: {
   transactionId?: string;
   direction: 'inbound' | 'outbound';
   recipientMasked: string;
   senderMasked?: string;
-  messageBody: string;
+  messageBody?: string | null;
   purpose: 'emergency_roll_call' | 'overdue_exit_warning' | 'auth_code' | 'inbound_message' | 'manual_test' | 'status_update';
   status: 'queued' | 'accepted' | 'sent' | 'delivered' | 'failed' | 'received' | 'unknown';
   externalId?: string | null;
@@ -354,6 +376,8 @@ export async function logSmsActivity(record: {
   actorId?: string | null;
   deviceId?: string | null;
   batchId?: string | null;
+  campaignId?: string | null;
+  recipientCount?: number;
 }) {
   try {
     const { admin } = getServerSupabaseClients();
@@ -361,14 +385,16 @@ export async function logSmsActivity(record: {
       transaction_id: record.transactionId || null,
       device_id: record.deviceId || null,
       batch_id: record.batchId || null,
+      campaign_id: record.campaignId || record.batchId || null,
+      recipient_count: record.recipientCount || 1,
       direction: record.direction,
       recipient_masked: record.recipientMasked,
       sender_masked: record.senderMasked || null,
-      message_body: record.messageBody,
+      message_body: null, // Privacy-first: raw message content omitted from audit logs
       purpose: record.purpose,
       status: record.status,
       external_id: record.externalId || null,
-      error_detail: record.errorDetail || null,
+      error_detail: sanitizeErrorMessage(record.errorDetail),
       actor_id: record.actorId || null,
     });
   } catch (logErr) {

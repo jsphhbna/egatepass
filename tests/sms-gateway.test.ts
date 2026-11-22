@@ -9,6 +9,7 @@ import {
   resolveGatewayUrl,
   sendGatewaySms,
   logSmsActivity,
+  sanitizeErrorMessage,
 } from '../server/sms.js';
 import { encodeSmsMessage, decodeSmsMessage, SMS_PREFIX } from '../server/smsFormat.js';
 import { verifyStandardWebhook, verifyGatewayWebhook } from '../server/smsSecurity.js';
@@ -542,6 +543,197 @@ describe('SMS Gateway Subsystem - Complete Root Cause Repair & Verification', ()
       expect(insertedLog.actor_id).toBe('admin-uuid-123');
       expect(insertedLog.authorization).toBeUndefined();
       expect(insertedLog.password).toBeUndefined();
+      // Privacy-first: message_body is omitted/redacted from database logs
+      expect(insertedLog.message_body).toBeNull();
+    });
+  });
+
+  // ==========================================================================
+  // Section J: Atomic Quota Accounting & Idempotency Tests
+  // ==========================================================================
+  describe('J. Atomic Quota Accounting & Idempotency Tests', () => {
+    it('associates campaignId with reservation and handles idempotent duplicate calls', async () => {
+      let reservedCampaignId = '';
+      let reservedCount = 0;
+
+      vi.spyOn(actorsModule, 'requireStaffActor').mockResolvedValue({
+        id: 'admin-uuid-idemp',
+        userId: 'admin-uuid-idemp',
+        email: 'admin@earist.edu.ph',
+        role: 'admin',
+        active: true,
+      } as any);
+
+      const mockAdmin = {
+        from: vi.fn().mockReturnValue({
+          insert: vi.fn().mockResolvedValue({ data: null, error: null }),
+        }),
+        schema: vi.fn().mockReturnValue({
+          rpc: vi.fn().mockImplementation((fnName, params) => {
+            if (fnName === 'check_and_reserve_sms_quota') {
+              reservedCampaignId = params.campaign_id;
+              reservedCount = params.requested_count;
+              return Promise.resolve({
+                data: {
+                  allowed: true,
+                  campaign_id: params.campaign_id,
+                  requested_count: params.requested_count,
+                  current_count: 50,
+                  daily_cap: 500,
+                  remaining: 450,
+                },
+                error: null,
+              });
+            }
+            if (fnName === 'finalize_sms_quota') {
+              return Promise.resolve({
+                data: { success: true, status: params.outcome },
+                error: null,
+              });
+            }
+            return Promise.resolve({ data: null, error: null });
+          }),
+        }),
+      };
+
+      vi.spyOn(supabaseModule, 'getServerSupabaseClients').mockReturnValue({
+        admin: mockAdmin as any,
+        anon: {} as any,
+      });
+
+      globalThis.fetch = vi.fn().mockResolvedValue(
+        new Response(JSON.stringify({ id: 'msg_test_idemp' }), { status: 200 })
+      );
+
+      const { default: handleSmsRequest } = await import('../server/routes/admin/sms.js');
+      const request = new Request('http://localhost/api/admin/sms/send', {
+        method: 'POST',
+        headers: {
+          Authorization: 'Bearer valid-staff-token',
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          type: 'test',
+          testNumber: '09171234567',
+          message: 'Idempotency test',
+        }),
+      });
+
+      const response = await handleSmsRequest(request);
+      expect(response.status).toBe(200);
+      const data = await response.json();
+      expect(data.success).toBe(true);
+      expect(data.status).toBe('accepted_by_gateway');
+      expect(reservedCampaignId).toMatch(/^camp_test_/);
+      expect(reservedCount).toBe(1);
+      expect(data.campaignId).toBe(reservedCampaignId);
+    });
+  });
+
+  // ==========================================================================
+  // Section K: Webhook Security Verification & Constant-Time Defense
+  // ==========================================================================
+  describe('K. Webhook Security Verification & Constant-Time Defense', () => {
+    const rawSecret = 'whsec_a3c0ab35fb2be1672034bb8ede4b2a02b6d9878ed0abceee924459aacffd8382';
+    const id = 'evt_test_sec_001';
+    const now = Math.floor(Date.now() / 1000);
+
+    it('rejects missing webhook-id, webhook-timestamp, or webhook-signature', () => {
+      const res1 = verifyStandardWebhook({
+        headers: { 'webhook-timestamp': String(now), 'webhook-signature': 'v1,abc' },
+        rawBody: '{}',
+        secret: rawSecret,
+      });
+      expect(res1.valid).toBe(false);
+      expect(res1.error).toBe('missing_webhook_headers');
+
+      const res2 = verifyStandardWebhook({
+        headers: { 'webhook-id': id, 'webhook-signature': 'v1,abc' },
+        rawBody: '{}',
+        secret: rawSecret,
+      });
+      expect(res2.valid).toBe(false);
+      expect(res2.error).toBe('missing_webhook_headers');
+
+      const res3 = verifyStandardWebhook({
+        headers: { 'webhook-id': id, 'webhook-timestamp': String(now) },
+        rawBody: '{}',
+        secret: rawSecret,
+      });
+      expect(res3.valid).toBe(false);
+      expect(res3.error).toBe('missing_webhook_headers');
+    });
+
+    it('rejects timestamp outside 300s window or non-numeric timestamp', () => {
+      const resExpired = verifyStandardWebhook({
+        headers: {
+          'webhook-id': id,
+          'webhook-timestamp': String(now - 301), // 301s ago
+          'webhook-signature': 'v1,abc',
+        },
+        rawBody: '{}',
+        secret: rawSecret,
+      });
+      expect(resExpired.valid).toBe(false);
+      expect(resExpired.error).toBe('timestamp_outside_tolerance');
+
+      const resNaN = verifyStandardWebhook({
+        headers: {
+          'webhook-id': id,
+          'webhook-timestamp': 'not-a-number',
+          'webhook-signature': 'v1,abc',
+        },
+        rawBody: '{}',
+        secret: rawSecret,
+      });
+      expect(resNaN.valid).toBe(false);
+      expect(resNaN.error).toBe('invalid_timestamp');
+    });
+
+    it('rejects tampered or modified request body even with previously valid signature', () => {
+      const originalBody = JSON.stringify({ user: { phone: '09171234567' }, sms: { otp: '112233' } });
+      const tamperedBody = JSON.stringify({ user: { phone: '09171234567' }, sms: { otp: '999999' } });
+
+      const toSign = `${id}.${now}.${originalBody}`;
+      const hmac = crypto.createHmac('sha256', Buffer.from(rawSecret.slice(6), 'base64')).update(toSign).digest('base64');
+      const signature = `v1,${hmac}`;
+
+      // Verify tampered body is rejected
+      const result = verifyStandardWebhook({
+        headers: {
+          'webhook-id': id,
+          'webhook-timestamp': String(now),
+          'webhook-signature': signature,
+        },
+        rawBody: tamperedBody,
+        secret: rawSecret,
+      });
+
+      expect(result.valid).toBe(false);
+      expect(result.error).toBe('signature_mismatch');
+    });
+  });
+
+  // ==========================================================================
+  // Section L: Gateway Error Sanitization
+  // ==========================================================================
+  describe('L. Gateway Error Sanitization', () => {
+    it('strips Basic Auth credentials and internal URLs from error strings', () => {
+      const rawErrorWithAuth = 'Failed to connect: Basic cm9vdDoxMjM0NTY= to https://api.sms-gate.app:443/3rdparty/v1/messages';
+      const sanitized = sanitizeErrorMessage(rawErrorWithAuth);
+      expect(sanitized).not.toContain('cm9vdDoxMjM0NTY=');
+      expect(sanitized).toContain('Basic [REDACTED]');
+      expect(sanitized).not.toContain('https://api.sms-gate.app');
+      expect(sanitized).toContain('[GATEWAY_ENDPOINT]');
+    });
+
+    it('strips passwords and bearer tokens safely', () => {
+      const rawErrorWithToken = 'Invalid query with password=super_secret_123 and Bearer eyJhbGciOiJIUzI1Ni...';
+      const sanitized = sanitizeErrorMessage(rawErrorWithToken);
+      expect(sanitized).not.toContain('super_secret_123');
+      expect(sanitized).not.toContain('eyJhbGciOiJIUzI1Ni');
+      expect(sanitized).toContain('password=[REDACTED]');
+      expect(sanitized).toContain('Bearer [REDACTED]');
     });
   });
 });
