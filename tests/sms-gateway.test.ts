@@ -306,6 +306,18 @@ describe('SMS Gateway Subsystem - Complete Root Cause Repair & Verification', ()
       expect(data.error).toBe('authentication_required');
     });
 
+    it('supports rewritten action query parameter from Vercel rewrite (e.g. /api/admin/sms?action=recipients)', async () => {
+      const { default: handleSmsRequest } = await import('../server/routes/admin/sms.js');
+      const request = new Request('http://localhost/api/admin/sms?action=recipients', {
+        method: 'GET',
+      });
+
+      const response = await handleSmsRequest(request);
+      expect(response.status).toBe(401);
+      const data = await response.json();
+      expect(data.error).toBe('authentication_required');
+    });
+
     it('enforces daily SMS safety cap: rejects when quota is exceeded with 429', async () => {
       vi.spyOn(actorsModule, 'requireStaffActor').mockResolvedValue({
         id: 'admin-uuid-123',

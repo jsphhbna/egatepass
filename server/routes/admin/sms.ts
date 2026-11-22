@@ -11,7 +11,8 @@ export default async function handleSmsRequest(request: Request): Promise<Respon
   const actor = await requireStaffActor(admin, token, ['admin', 'superadmin']);
 
   const url = new URL(request.url);
-  const path = url.pathname.replace(/^\/api\/admin\/sms\/?/, '');
+  const actionParam = url.searchParams.get('action');
+  const path = (actionParam || url.pathname.replace(/^\/api\/admin\/sms\/?/, '')).replace(/\/+$/, '');
 
   if (request.method === 'GET') {
     // ------------------------------------------------------------------------
