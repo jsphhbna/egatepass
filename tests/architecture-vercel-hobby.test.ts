@@ -192,6 +192,26 @@ describe('Vercel Hobby Plan Function Limit Architecture Regressions', () => {
       expect(new URL(receivedReq!.url).searchParams.get('param')).toBe('test123');
     });
 
+    it('resolves nested subpaths to top-level module handler (e.g. /api/admin/sms/recipients -> sms)', async () => {
+      let dispatchedSubpath = '';
+      const testRouter = createGroupedRouter('admin', {
+        sms: async (req: Request) => {
+          const url = new URL(req.url);
+          dispatchedSubpath = url.pathname.replace(/^\/api\/admin\/sms\/?/, '');
+          return new Response(JSON.stringify({ routed: true, subpath: dispatchedSubpath }), {
+            status: 200,
+            headers: { 'Content-Type': 'application/json' },
+          });
+        },
+      });
+
+      const req = new Request('http://localhost/api/admin/sms/recipients?type=emergency', { method: 'GET' });
+      const res = await testRouter.fetch(req);
+      expect(res.status).toBe(200);
+      const json = await res.json();
+      expect(json).toEqual({ routed: true, subpath: 'recipients' });
+    });
+
     it('returns a controlled 404 for unknown route without leaking internals', async () => {
       const testRouter = createGroupedRouter('admin', {
         dashboard: async () => new Response('dashboard'),
