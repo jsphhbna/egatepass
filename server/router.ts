@@ -81,7 +81,11 @@ export function createGroupedRouter(
         return jsonResponse(404, { error: 'not_found' });
       }
 
-      const handler = handlerMap.get(routeKey);
+      let handler = handlerMap.get(routeKey);
+      if (!handler && routeKey.includes('/')) {
+        const topKey = routeKey.split('/')[0] || '';
+        handler = handlerMap.get(topKey);
+      }
       if (!handler) {
         return jsonResponse(404, { error: 'not_found' });
       }
