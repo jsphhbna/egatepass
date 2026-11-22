@@ -19,6 +19,7 @@ import officePortraitPreview from '../../server/routes/office/portrait-preview.j
 import officeVerifyEmail from '../../server/routes/office/verify-email.js';
 import officeRetryEmail from '../../server/routes/office/retry-email.js';
 import officeCalendar from '../../server/routes/office/calendar.js';
+import officeClosure from '../../server/routes/office/closure.js';
 import requestOfficeVisit from '../../server/routes/passes/request-office-visit.js';
 import track from '../../server/routes/passes/track.js';
 
@@ -59,6 +60,8 @@ const router = createGroupedRouter('passes', {
   'office-retry-email': officeRetryEmail,
   'office/calendar': officeCalendar,
   'office-calendar': officeCalendar,
+  'office/closure': officeClosure,
+  'office-closure': officeClosure,
   'request-office-visit': requestOfficeVisit,
   track,
   'track-visit': track,

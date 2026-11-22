@@ -4,13 +4,14 @@ import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
 import { useWebcam } from '@/hooks/useWebcam';
 import { useObjectUrl } from '@/hooks/useObjectUrl';
-import { compressImageToWebP } from '@/lib/imageProcessing';
+import { compressImageToWebP, normalizeIdentityDocumentImage } from '@/lib/imageProcessing';
 import {
   issueVisitorPass,
   loadRegistrationSettings,
   PassIssuanceError,
   type IssueTransaction,
   type IssuedPass,
+  type VisitorRegistration,
 } from '@/services/visitorRegistration';
 import QRCode from 'qrcode';
 import {
@@ -19,6 +20,10 @@ import {
   ArrowLeft,
   ArrowRight,
   AlertCircle,
+  AlertTriangle,
+  Building2,
+  Car,
+  User,
   X,
   RotateCcw,
   Printer,
@@ -26,14 +31,17 @@ import {
   Scan,
   Loader2,
   LogOut,
-  RefreshCw,
   Sparkles,
+  ShieldCheck,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { Button, Card, Input, FormField, Stepper, Modal, ProgressBar } from '@/components/ui';
 import { EmailPassModal } from '@/components/EmailPassModal';
 import { BrandMark } from '@/components/BrandMark';
 import { VisitPurposeField } from '@/components/VisitPurposeField';
+import { StructuredAddressField } from '@/components/StructuredAddressField';
+import type { SelectedPsgcAddress } from '@/components/AddressCascadingSelector';
+import { InstitutionalPrivacyNoticeModal } from '@/components/InstitutionalPrivacyNoticeModal';
 import { DEFAULT_VISIT_PURPOSES, normalizeVisitPurposes } from '@/lib/settingsDefaults';
 import type { VisitPurposeOption } from '@/types';
 import { DEFAULT_WORKING_HOURS, formatWorkingHours, MAX_VISIT_ADVANCE_DAYS, normalizeWorkingHours } from '@/lib/workingHours';
@@ -44,7 +52,8 @@ import { useThermalPrinter } from '@/printer/hooks/useThermalPrinter';
 import { KioskPrinterSettingsModal } from '@/components/KioskPrinterSettingsModal';
 import { InstitutionalPassCard } from '@/components/InstitutionalPassCard';
 import { createPassPresentation, type PassPresentation } from '@/lib/passPresentation';
-import { recognizeIdImage, terminateLocalOcrWorker } from '@/lib/ocr';
+import { recognizeIdImage, terminateLocalOcrWorker, getNextOcrJobId } from '@/lib/ocr';
+import { parseAddressFromOcr } from '@/lib/addressOcr';
 import { generateBrandedQrDataUrl } from '@/lib/brandedQr';
 import { CameraControls } from '@/components/CameraControls';
 import {
@@ -109,7 +118,28 @@ export function createKioskPassSchema(schedulingDaysAhead: number = MAX_VISIT_AD
 
 type KioskPassFormData = z.infer<ReturnType<typeof createKioskPassSchema>>;
 
-type Step = 'scan-intro' | 'scan-camera' | 'scan-processing' | 'form' | 'photo' | 'id' | 'review' | 'generating' | 'done';
+type Step =
+  | 'scan-intro'
+  | 'scan-camera'
+  | 'scan-processing'
+  | 'form'
+  | 'visit'
+  | 'photo'
+  | 'id'
+  | 'verify'
+  | 'review'
+  | 'generating'
+  | 'done';
+
+export interface KioskOffice {
+  id: string;
+  name: string;
+  description?: string;
+  closure_status?: 'open' | 'closed';
+  closure_reason?: string | null;
+  closed_at?: string | null;
+  personnel?: Array<{ id: string; name: string; position?: string }>;
+}
 
 export function KioskPage() {
   const [step, setStep] = useState<Step>('scan-intro');
@@ -135,6 +165,32 @@ export function KioskPage() {
   const [currentPassPresentation, setCurrentPassPresentation] = useState<PassPresentation | null>(null);
   const [showPrinterSettings, setShowPrinterSettings] = useState(false);
   const [printFailed, setPrintFailed] = useState(false);
+
+  // Step 1: Personal Details (Gender & Structured Address)
+  const [gender, setGender] = useState<'Male' | 'Female' | 'Other'>('Male');
+  const [selectedPsgc, setSelectedPsgc] = useState<SelectedPsgcAddress | null>(null);
+  const [houseBuilding, setHouseBuilding] = useState('');
+  const [street, setStreet] = useState('');
+  const [localityError, setLocalityError] = useState<string | null>(null);
+
+  // Step 2: Visit & Destination Office
+  const [offices, setOffices] = useState<KioskOffice[]>([]);
+  const [selectedOfficeId, setSelectedOfficeId] = useState<string>('');
+  const [personnelList, setPersonnelList] = useState<Array<{ id: string; name: string; position?: string }>>([]);
+  const [selectedPersonnel, setSelectedPersonnel] = useState<string>('');
+  const [visitType, setVisitType] = useState<'general' | 'personnel'>('general');
+  const [arrivalMode, setArrivalMode] = useState<'walk_in' | 'vehicle'>('walk_in');
+  const [vehicleType, setVehicleType] = useState<string>('car');
+  const [plateNumber, setPlateNumber] = useState<string>('');
+
+  // Step 4 & 5: Dual OCR & Verification
+  const [idType, setIdType] = useState<string>('National ID');
+  const [ocrProgress, setOcrProgress] = useState<{ percent: number; status: string }>({ percent: 0, status: '' });
+  const [detectedOcrAddress, setDetectedOcrAddress] = useState<any>(null);
+  const ocrJobIdRef = useRef(0);
+
+  // Step 6: Review & Institutional Privacy Notice
+  const [showPrivacyModal, setShowPrivacyModal] = useState(false);
 
   const printer = useThermalPrinter();
   const {
@@ -218,6 +274,14 @@ export function KioskPage() {
         .catch(() => {
           // non-fatal
         });
+      void fetch('/api/office/personnel')
+        .then((res) => (res.ok ? res.json() : null))
+        .then((officeData) => {
+          if (officeData?.offices && Array.isArray(officeData.offices)) {
+            setOffices(officeData.offices);
+          }
+        })
+        .catch(() => {});
       setConfigState('ready');
     } catch {
       setConfigState((prev) => (prev === 'ready' ? prev : 'error'));
@@ -261,6 +325,22 @@ export function KioskPage() {
     };
   }, []);
 
+  // Synchronize office personnel list when selected office changes
+  useEffect(() => {
+    if (!selectedOfficeId) {
+      setPersonnelList([]);
+      setSelectedPersonnel('');
+      return;
+    }
+    const found = offices.find((o) => o.id === selectedOfficeId);
+    if (found?.personnel) {
+      setPersonnelList(found.personnel);
+    } else {
+      setPersonnelList([]);
+      setSelectedPersonnel('');
+    }
+  }, [selectedOfficeId, offices]);
+
   const formSchema = useMemo(() => createKioskPassSchema(schedulingDaysAhead), [schedulingDaysAhead]);
 
   // Manila-aware calendar date limits
@@ -269,12 +349,11 @@ export function KioskPage() {
 
   const {
     register,
-    handleSubmit,
     getValues,
     reset,
     setValue,
     watch,
-    formState: { errors, isValid },
+    formState: { errors },
   } = useForm<KioskPassFormData>({
     resolver: zodResolver(formSchema),
     mode: 'onChange',
@@ -297,7 +376,8 @@ export function KioskPage() {
     idWebcam.stop();
     setStep('scan-processing');
     try {
-      const compressed = await compressImageToWebP(blob);
+      const normalized = await normalizeIdentityDocumentImage(blob);
+      const compressed = await compressImageToWebP(normalized);
       if (generation !== ocrGenerationRef.current) return;
       kioskTransactionRef.current.idIntentId = null;
       kioskTransactionRef.current.idCheckpoint = null;
@@ -305,27 +385,68 @@ export function KioskPage() {
       setIdBlob(compressed);
       idUrl.setFromBlob(compressed);
 
-      // Offline OCR via self-hosted worker using original high-quality captured blob
-      const parsed = await recognizeIdImage(blob);
-      if (generation !== ocrGenerationRef.current) return;
+      // Offline OCR via self-hosted worker with cancellation check and threshold 60
+      const currentJobId = getNextOcrJobId();
+      ocrJobIdRef.current = currentJobId;
+
+      const parsed = await recognizeIdImage(
+        blob,
+        (percent, status) => {
+          if (generation === ocrGenerationRef.current && ocrJobIdRef.current === currentJobId) {
+            setOcrProgress({ percent, status: status || 'Reading ID details…' });
+          }
+        },
+        currentJobId
+      );
+      if (generation !== ocrGenerationRef.current || ocrJobIdRef.current !== currentJobId) return;
 
       let filledCount = 0;
+      let weakCount = 0;
+      const CONFIDENCE_THRESHOLD = 60;
+      const isFieldConfident = (fieldName: 'firstName' | 'middleName' | 'lastName'): boolean => {
+        const candidate = parsed.fieldCandidates?.[fieldName];
+        if (candidate) return candidate.confidence >= CONFIDENCE_THRESHOLD;
+        return (parsed.confidence ?? 0) >= CONFIDENCE_THRESHOLD;
+      };
 
       if (parsed.firstName) {
-        setValue('firstName', parsed.firstName, { shouldDirty: true, shouldValidate: true });
-        filledCount++;
+        if (isFieldConfident('firstName')) {
+          setValue('firstName', parsed.firstName, { shouldDirty: true, shouldValidate: true });
+          filledCount++;
+        } else {
+          weakCount++;
+        }
       }
       if (parsed.middleName) {
-        setValue('middleName', parsed.middleName, { shouldDirty: true, shouldValidate: true });
+        if (isFieldConfident('middleName')) {
+          setValue('middleName', parsed.middleName, { shouldDirty: true, shouldValidate: true });
+          filledCount++;
+        } else {
+          weakCount++;
+        }
       }
       if (parsed.lastName) {
-        setValue('lastName', parsed.lastName, { shouldDirty: true, shouldValidate: true });
-        filledCount++;
+        if (isFieldConfident('lastName')) {
+          setValue('lastName', parsed.lastName, { shouldDirty: true, shouldValidate: true });
+          filledCount++;
+        } else {
+          weakCount++;
+        }
+      }
+
+      if (parsed.address) {
+        const detected = parseAddressFromOcr(parsed.address);
+        if (detected) {
+          setDetectedOcrAddress(detected);
+        }
       }
 
       if (filledCount >= 1) {
         setOcrSuccessNotice(true);
         toast.success('Details read from ID! Please review and complete your information.');
+      } else if (weakCount > 0) {
+        setOcrSuccessNotice(false);
+        toast.info("Some text was found on the ID, but confidence was low. Please verify your details.");
       } else {
         setOcrSuccessNotice(false);
         toast.info("We couldn't clearly read the name from this ID. Please enter or correct your details manually.");
@@ -337,7 +458,11 @@ export function KioskPage() {
       toast.info('Automatic ID reading is unavailable right now. Your ID photo was kept. Please enter your name manually.');
     } finally {
       if (generation === ocrGenerationRef.current) {
-        setStep('form');
+        if (photoBlob) {
+          setStep('verify');
+        } else {
+          setStep('form');
+        }
       }
     }
   }
@@ -351,12 +476,58 @@ export function KioskPage() {
     }
   }
 
-  function onFormNext(data: KioskPassFormData) {
-    const matchedClosure = calendarClosures.find((c) => c.active !== false && data.visitDate >= c.startDate && data.visitDate <= c.endDate);
-    if (matchedClosure) {
-      toast.error(`Campus is closed on ${data.visitDate}: ${matchedClosure.title}${matchedClosure.description ? ` (${matchedClosure.description})` : ''}. Please select an open date.`);
+  function onFormNext() {
+    const fName = getValues('firstName')?.trim();
+    const lName = getValues('lastName')?.trim();
+    const contact = getValues('contactNumber')?.trim();
+
+    if (!fName || fName.length < 2) {
+      toast.error('First name must be at least 2 characters');
       return;
     }
+    if (!lName || lName.length < 2) {
+      toast.error('Last name must be at least 2 characters');
+      return;
+    }
+    if (!contact || contact.length < 7) {
+      toast.error('Please enter a valid Philippine mobile contact number');
+      return;
+    }
+    if (!selectedPsgc) {
+      setLocalityError('Please select your residential locality (City/Municipality and Barangay).');
+      toast.error('Please select your residential locality');
+      return;
+    }
+    setLocalityError(null);
+    setStep('visit');
+  }
+
+  function onVisitNext() {
+    if (!selectedOfficeId) {
+      toast.error('Please select a destination university office');
+      return;
+    }
+    const chosenOffice = offices.find((o) => o.id === selectedOfficeId);
+    if (chosenOffice?.closure_status === 'closed') {
+      toast.error(`The ${chosenOffice.name} is temporarily closed: ${chosenOffice.closure_reason || 'Emergency closure'}. Please choose an open office.`);
+      return;
+    }
+    const purp = getValues('purpose')?.trim();
+    if (!purp || purp.length < 3) {
+      toast.error('Please specify your purpose of visit');
+      return;
+    }
+    const visitDateVal = getValues('visitDate');
+    const matchedClosure = calendarClosures.find((c) => c.active !== false && visitDateVal >= c.startDate && visitDateVal <= c.endDate);
+    if (matchedClosure) {
+      toast.error(`Campus is closed on ${visitDateVal}: ${matchedClosure.title}${matchedClosure.description ? ` (${matchedClosure.description})` : ''}. Please select an open date.`);
+      return;
+    }
+    if (arrivalMode === 'vehicle' && !plateNumber.trim()) {
+      toast.error('Please enter your vehicle plate number');
+      return;
+    }
+
     setStep('photo');
     faceWebcam.start();
   }
@@ -371,7 +542,7 @@ export function KioskPage() {
       photoUrl.setFromBlob(blob);
       faceWebcam.stop();
       if (idBlob || isPeakMode) {
-        setStep('review');
+        setStep('verify');
       } else {
         setStep('id');
         idWebcam.start();
@@ -399,12 +570,14 @@ export function KioskPage() {
       setIsProcessingId(true);
       idWebcam.stop();
       try {
-        const compressed = await compressImageToWebP(blob);
+        const normalized = await normalizeIdentityDocumentImage(blob);
+        const compressed = await compressImageToWebP(normalized);
         kioskTransactionRef.current.idIntentId = null;
         kioskTransactionRef.current.idCheckpoint = null;
         kioskTransactionRef.current.phase = 'editable';
         setIdBlob(compressed);
         idUrl.setFromBlob(compressed);
+        void processIdImageAndOcr(blob);
       } catch {
         toast.error('Failed to process ID image.');
         idWebcam.start();
@@ -460,10 +633,39 @@ export function KioskPage() {
 
     let result: IssuedPass;
     const formData = getValues();
+    const effectiveVisitor: VisitorRegistration = {
+      firstName: formData.firstName.trim(),
+      middleName: formData.middleName?.trim() || undefined,
+      lastName: formData.lastName.trim(),
+      gender: gender as any,
+      contactNumber: formData.contactNumber.trim(),
+      purpose: formData.purpose.trim(),
+      visitDate: formData.visitDate,
+      consent: true,
+      officeId: selectedOfficeId || undefined,
+      arrivalMode: arrivalMode === 'vehicle' ? 'vehicle' : 'no_vehicle',
+      vehicle: arrivalMode === 'vehicle' && plateNumber.trim() ? {
+        vehicleType: vehicleType || 'car',
+        plateNumber: plateNumber.trim().toUpperCase(),
+      } : null,
+      homeAddress: selectedPsgc
+        ? [houseBuilding, street, selectedPsgc.barangay.name, selectedPsgc.city.name, selectedPsgc.province?.name, selectedPsgc.region.name].filter(Boolean).join(', ')
+        : undefined,
+      psgc: selectedPsgc ? {
+        version: selectedPsgc.version,
+        regionCode: selectedPsgc.region.code,
+        provinceCode: selectedPsgc.province?.code ?? null,
+        cityCode: selectedPsgc.city.code,
+        barangayCode: selectedPsgc.barangay.code,
+        houseBuilding: houseBuilding.trim() || undefined,
+        street: street.trim() || undefined,
+      } : null,
+    };
+
     try {
       result = await issueVisitorPass(
         'kiosk',
-        formData,
+        effectiveVisitor,
         photoBlob,
         idBlob,
         kioskTransactionRef.current.requestId,
@@ -533,14 +735,14 @@ export function KioskPage() {
       }
     }
 
-    const effectiveVisitor = kioskTransactionRef.current?.submittedPayload?.visitor ?? formData;
+    const finalVisitor = kioskTransactionRef.current?.submittedPayload?.visitor ?? effectiveVisitor;
 
     const presentation = createPassPresentation({
-      visitorName: [effectiveVisitor.firstName, effectiveVisitor.middleName, effectiveVisitor.lastName].filter(Boolean).join(' '),
-      visitDate: effectiveVisitor.visitDate,
+      visitorName: [finalVisitor.firstName, finalVisitor.middleName, finalVisitor.lastName].filter(Boolean).join(' '),
+      visitDate: finalVisitor.visitDate,
       passReference: result.publicReference || result.passId,
       qrToken: result.qrToken,
-      purpose: effectiveVisitor.purpose,
+      purpose: finalVisitor.purpose,
       validityWindow: validity ?? undefined,
     });
 
@@ -620,6 +822,19 @@ export function KioskPage() {
       lastName: '',
       contactNumber: '',
     });
+    setSelectedPsgc(null);
+    setHouseBuilding('');
+    setStreet('');
+    setGender('Male');
+    setSelectedOfficeId('');
+    setSelectedPersonnel('');
+    setVisitType('general');
+    setArrivalMode('walk_in');
+    setVehicleType('car');
+    setPlateNumber('');
+    setLocalityError(null);
+    setDetectedOcrAddress(null);
+    setShowPrivacyModal(false);
     faceWebcam.stop();
     idWebcam.stop();
     void terminateLocalOcrWorker();
@@ -676,17 +891,20 @@ export function KioskPage() {
   }, [step, isPeakMode]);
 
   const steps = [
-    ...(!isPeakMode ? [{ id: 'scan-intro', title: 'Scan ID' }] : []),
-    { id: 'form', title: 'Details' },
-    { id: 'photo', title: 'Photo' },
-    ...(!isPeakMode && !idBlob ? [{ id: 'id', title: 'Capture ID' }] : []),
-    { id: 'review', title: 'Review' },
+    { id: 'form', title: '1. Personal' },
+    { id: 'visit', title: '2. Visit' },
+    { id: 'photo', title: '3. Live Face' },
+    { id: 'id', title: '4. Valid ID' },
+    { id: 'verify', title: '5. Verify' },
+    { id: 'review', title: '6. Review' },
   ];
 
   const currentStepIndex =
-    step === 'done' || step === 'generating' ? steps.length :
-    step === 'scan-camera' || step === 'scan-processing' ? 0 :
-    steps.findIndex((s) => s.id === step);
+    step === 'done' || step === 'generating'
+      ? steps.length
+      : step === 'scan-intro' || step === 'scan-camera' || step === 'scan-processing'
+      ? 0
+      : steps.findIndex((s) => s.id === step);
 
   return (
     <main id="main-content" className="mx-auto flex min-h-dvh w-full max-w-7xl flex-col items-center justify-center gap-8 bg-[var(--color-canvas)] px-4 py-8 lg:flex-row lg:items-start lg:py-10">
@@ -811,7 +1029,7 @@ export function KioskPage() {
 
               <div className="space-y-2">
                 <h2 className="text-2xl font-bold text-[var(--color-text-primary)]">
-                  Scan Your Valid ID
+                  Scan ID — Scan Your Valid ID
                 </h2>
                 <p className="mx-auto max-w-md text-sm text-[var(--color-text-secondary)] leading-relaxed">
                   Hold your government, school, or company ID up to the camera. We will automatically read your name to speed up registration.
@@ -968,7 +1186,7 @@ export function KioskPage() {
 
               <div className="w-full max-w-sm space-y-2">
                 <h3 className="text-lg font-bold text-[var(--color-text-primary)]">Reading ID Details…</h3>
-                <ProgressBar indeterminate variant="brand" size="sm" phase="Extracting text & fields…" />
+                <ProgressBar indeterminate variant="brand" size="sm" phase={ocrProgress.status || 'Extracting text & fields…'} />
                 <p className="text-xs text-[var(--color-text-secondary)] mt-1">
                   Using local on-device recognition. The ID image is uploaded only to private campus storage upon your review and submission.
                 </p>
@@ -976,111 +1194,386 @@ export function KioskPage() {
             </div>
           )}
 
-          {/* STEP 4: Form Details (Prefilled if OCR or Blank if Manual) */}
+          {/* STEP 1: Personal Details */}
           {step === 'form' && (
-            <form onSubmit={handleSubmit(onFormNext)} className="space-y-5" noValidate>
-              <div className="rounded-xl border border-sky-200 bg-sky-50 p-3.5 text-xs">
-                <p className="font-semibold text-sky-950">No account required</p>
-                <p className="mt-0.5 text-slate-700">This registration creates a visitor pass only. No reusable visitor account is being created.</p>
+            <div className="space-y-5">
+              <div className="text-center">
+                <h2 className="text-xl font-bold text-[var(--color-text-primary)]">1. Personal Details</h2>
+                <p className="text-xs text-[var(--color-text-secondary)] mt-0.5">
+                  Enter your name, contact number, and residential locality.
+                </p>
               </div>
 
-              <p className="text-xs text-[var(--color-text-secondary)] font-medium">Fields marked * are required.</p>
+              <div className="rounded-xl border border-sky-200 bg-sky-50 p-3 text-xs">
+                <p className="font-semibold text-sky-950">Walk-in Visitor Registration</p>
+                <p className="mt-0.5 text-slate-700">This registration issues a single-visit campus pass. Fields marked * are required.</p>
+              </div>
 
               {ocrSuccessNotice && (
                 <div className="rounded-xl border border-[var(--color-brand)]/20 bg-[var(--color-brand-light)] p-3 text-xs text-[var(--color-brand)] flex items-center gap-2">
                   <CheckCircle2 className="h-4 w-4 shrink-0" />
-                  <span>ID information detected! Please double-check for accuracy before continuing.</span>
+                  <span>Information autofilled from your ID! Please check and complete your locality.</span>
                 </div>
               )}
 
-              <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
-                <FormField label="First Name" requirement="required" id="kiosk-first-name" error={errors.firstName?.message}>
-                  <Input id="kiosk-first-name" {...register('firstName')} error={!!errors.firstName} required aria-required="true" />
-                </FormField>
-                <FormField label="Middle Name" requirement="optional" id="kiosk-middle-name" error={errors.middleName?.message}>
-                  <Input id="kiosk-middle-name" {...register('middleName')} error={!!errors.middleName} />
-                </FormField>
-                <FormField label="Last Name" requirement="required" id="kiosk-last-name" error={errors.lastName?.message}>
-                  <Input id="kiosk-last-name" {...register('lastName')} error={!!errors.lastName} required aria-required="true" />
-                </FormField>
+              <div className="space-y-4">
+                <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+                  <FormField label="First Name" requirement="required" id="kiosk-first-name" error={errors.firstName?.message}>
+                    <Input id="kiosk-first-name" {...register('firstName')} error={!!errors.firstName} required aria-required="true" placeholder="Juan" />
+                  </FormField>
+                  <FormField label="Middle Name" requirement="optional" id="kiosk-middle-name" error={errors.middleName?.message}>
+                    <Input id="kiosk-middle-name" {...register('middleName')} error={!!errors.middleName} placeholder="Santos" />
+                  </FormField>
+                  <FormField label="Last Name" requirement="required" id="kiosk-last-name" error={errors.lastName?.message}>
+                    <Input id="kiosk-last-name" {...register('lastName')} error={!!errors.lastName} required aria-required="true" placeholder="Dela Cruz" />
+                  </FormField>
+                </div>
+
+                <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                  <FormField label="Contact Number" requirement="required" id="kiosk-phone" hint="Philippine mobile number" error={errors.contactNumber?.message}>
+                    <Input id="kiosk-phone" type="tel" placeholder="0917 123 4567" {...register('contactNumber')} error={!!errors.contactNumber} required aria-required="true" />
+                  </FormField>
+
+                  <div>
+                    <label className="block text-xs font-semibold text-[var(--color-text-primary)] mb-1">
+                      Gender <span className="text-red-500">*</span>
+                    </label>
+                    <div className="grid grid-cols-3 gap-2">
+                      {(['Male', 'Female', 'Other'] as const).map((g) => (
+                        <button
+                          key={g}
+                          type="button"
+                          onClick={() => setGender(g)}
+                          className={`min-h-[44px] rounded-xl border text-xs font-semibold transition-all ${
+                            gender === g
+                              ? 'border-[#7A0A0A] bg-[#F8EEEE] text-[#7A0A0A] shadow-xs'
+                              : 'border-[var(--color-border)] bg-white text-[var(--color-text-primary)] hover:border-slate-300'
+                          }`}
+                        >
+                          {g}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+
+                {/* Structured Address (Municipality first, then Barangay) */}
+                <div className="pt-2">
+                  <StructuredAddressField
+                    value={selectedPsgc}
+                    onChange={(addr) => {
+                      setSelectedPsgc(addr);
+                      if (addr) setLocalityError(null);
+                    }}
+                    houseBuilding={houseBuilding}
+                    onHouseBuildingChange={setHouseBuilding}
+                    street={street}
+                    onStreetChange={setStreet}
+                    error={localityError || undefined}
+                  />
+                  {detectedOcrAddress && !selectedPsgc && (
+                    <div className="mt-2 rounded-lg border border-amber-300 bg-amber-50 p-2 text-xs text-amber-900 flex items-center justify-between">
+                      <span>Address found on ID: {detectedOcrAddress.matchedCity || detectedOcrAddress.matchedProvince || detectedOcrAddress.raw}</span>
+                    </div>
+                  )}
+                </div>
               </div>
 
-              <FormField label="Contact Number" requirement="required" id="kiosk-phone" hint="Philippine mobile number" error={errors.contactNumber?.message}>
-                <Input id="kiosk-phone" type="tel" placeholder="0917 123 4567" {...register('contactNumber')} error={!!errors.contactNumber} required aria-required="true" />
-              </FormField>
-
-              <VisitPurposeField
-                purposes={visitPurposes}
-                value={purpose}
-                error={errors.purpose?.message}
-                onChange={(value) => setValue('purpose', value, { shouldDirty: true, shouldValidate: true })}
-              />
-
-              <FormField label="Visit Date" requirement="required" id="kiosk-date" error={errors.visitDate?.message}>
-                <Input id="kiosk-date" type="date" {...register('visitDate')} min={today} max={latestVisitDate} error={!!errors.visitDate} required aria-required="true" />
-                {(() => {
-                  const currDate = getValues('visitDate');
-                  const match = currDate ? calendarClosures.find((c) => c.active !== false && currDate >= c.startDate && currDate <= c.endDate) : undefined;
-                  if (match) {
-                    return (
-                      <p className="mt-1 text-xs font-semibold text-rose-700 flex items-center gap-1">
-                        <AlertCircle className="h-3.5 w-3.5" />
-                        Campus is closed on this date: {match.title}{match.description ? ` (${match.description})` : ''}
-                      </p>
-                    );
-                  }
-                  return null;
-                })()}
-              </FormField>
-
-              {/* Data Privacy Agreement */}
-              <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-canvas)] p-4 text-xs text-[var(--color-text-secondary)] space-y-2">
-                <p className="font-semibold text-[var(--color-text-primary)]">Data Privacy Notice</p>
-                <p>
-                  Visitor information is processed under EARIST institutional privacy procedures and applicable privacy requirements.{' '}
-                  {typeof photoRetentionDays === 'number'
-                    ? `Face photos are normally retained for ${photoRetentionDays} days.`
-                    : 'Face photos are normally retained under institutional policy.'}{' '}
-                  {typeof idRetentionDays === 'number'
-                    ? `Valid ID images, when collected, are normally retained for ${idRetentionDays} days.`
-                    : 'Valid ID images, when collected, are normally retained under institutional policy.'}{' '}
-                  {typeof visitorRetentionDays === 'number'
-                    ? `Visitor records are retained for ${visitorRetentionDays} days under institutional policy.`
-                    : 'Visitor records are retained under institutional policy.'}{' '}
-                  Evidence is retained at least through the scheduled visit, and authorized incident holds may extend retention when required.
-                </p>
-                <label className="flex items-center gap-2 pt-2 border-t border-[var(--color-border)] cursor-pointer">
-                  <input type="checkbox" {...register('consent')} required aria-required="true" className="rounded border-[var(--color-border-strong)] text-[var(--color-brand)] focus:ring-[var(--color-brand)]" />
-                  <span className="font-medium text-[var(--color-text-primary)]">I agree to the collection and processing of my data. *</span>
-                </label>
-                {errors.consent && <p className="text-[var(--color-danger)] font-medium">{errors.consent.message}</p>}
-              </div>
-
-              <div className="flex gap-3">
+              <div className="flex gap-3 pt-3">
                 <Button
                   variant="secondary"
                   type="button"
                   onClick={() => {
                     resetCurrentVisitor();
                   }}
-                  className="flex-1 min-h-[44px]"
+                  className="flex-1 min-h-[48px]"
                   icon={<ArrowLeft className="h-4 w-4" />}
                 >
-                  Back
+                  Start Over
                 </Button>
-                <Button type="submit" disabled={!isValid} className="flex-1 min-h-[44px]" icon={<ArrowRight className="h-4 w-4" />}>
-                  Next
+                <Button
+                  type="button"
+                  onClick={onFormNext}
+                  className="flex-1 min-h-[48px]"
+                  icon={<ArrowRight className="h-4 w-4" />}
+                >
+                  Next: Visit Details
                 </Button>
               </div>
-            </form>
+            </div>
           )}
 
-          {/* STEP 5: Face Photo Capture */}
+          {/* STEP 2: Visit & Destination Office */}
+          {step === 'visit' && (
+            <div className="space-y-6">
+              <div className="text-center">
+                <h2 className="text-xl font-bold text-[var(--color-text-primary)]">2. Visit & Destination Office</h2>
+                <p className="text-xs text-[var(--color-text-secondary)] mt-0.5">
+                  Select the campus office you are visiting, purpose, and arrival mode.
+                </p>
+              </div>
+
+              {/* Arrival Mode Selection */}
+              <div className="space-y-2">
+                <label className="block text-xs font-bold uppercase tracking-wider text-[var(--color-text-primary)]">
+                  Mode of Arrival <span className="text-[var(--color-brand)]">*</span>
+                </label>
+                <div className="grid grid-cols-2 gap-3">
+                  <button
+                    type="button"
+                    onClick={() => setArrivalMode('walk_in')}
+                    className={`flex items-center gap-3 p-3.5 rounded-2xl border text-left transition-all min-h-[48px] ${
+                      arrivalMode === 'walk_in'
+                        ? 'border-[#7A0A0A] bg-[#F8EEEE] text-[#7A0A0A] shadow-xs'
+                        : 'border-[var(--color-border)] bg-white text-[var(--color-text-primary)] hover:border-slate-300'
+                    }`}
+                  >
+                    <User className="h-5 w-5 shrink-0" />
+                    <div>
+                      <p className="font-bold text-xs">On Foot / Commute</p>
+                      <p className="text-[10px] text-[var(--color-text-secondary)]">No vehicle brought</p>
+                    </div>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => setArrivalMode('vehicle')}
+                    className={`flex items-center gap-3 p-3.5 rounded-2xl border text-left transition-all min-h-[48px] ${
+                      arrivalMode === 'vehicle'
+                        ? 'border-[#7A0A0A] bg-[#F8EEEE] text-[#7A0A0A] shadow-xs'
+                        : 'border-[var(--color-border)] bg-white text-[var(--color-text-primary)] hover:border-slate-300'
+                    }`}
+                  >
+                    <Car className="h-5 w-5 shrink-0" />
+                    <div>
+                      <p className="font-bold text-xs">With Vehicle</p>
+                      <p className="text-[10px] text-[var(--color-text-secondary)]">Car, motor, bike, etc.</p>
+                    </div>
+                  </button>
+                </div>
+              </div>
+
+              {/* Vehicle Details if Arrival with Vehicle */}
+              {arrivalMode === 'vehicle' && (
+                <div className="p-4 rounded-xl border border-amber-300 bg-amber-50/50 space-y-3">
+                  <p className="text-xs font-bold text-amber-950 flex items-center gap-1.5">
+                    <Car className="h-4 w-4 text-amber-700" />
+                    Vehicle Information
+                  </p>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <div>
+                      <label htmlFor="kiosk-vehicle-type" className="block text-[11px] font-semibold text-[var(--color-text-primary)] mb-1">
+                        Vehicle Type <span className="text-red-500">*</span>
+                      </label>
+                      <select
+                        id="kiosk-vehicle-type"
+                        value={vehicleType}
+                        onChange={(e) => setVehicleType(e.target.value)}
+                        className="w-full rounded-xl border border-[var(--color-border)] bg-white py-2 px-3 text-xs font-semibold text-[var(--color-text-primary)] focus:border-[#7A0A0A] focus:outline-none"
+                      >
+                        <option value="car">Car / Sedan</option>
+                        <option value="motorcycle">Motorcycle</option>
+                        <option value="van">Van / MPV</option>
+                        <option value="suv">SUV</option>
+                        <option value="pickup">Pickup</option>
+                        <option value="bicycle">Bicycle</option>
+                        <option value="other">Other Vehicle</option>
+                      </select>
+                    </div>
+                    <div>
+                      <label htmlFor="kiosk-plate-number" className="block text-[11px] font-semibold text-[var(--color-text-primary)] mb-1">
+                        Plate / MV File Number <span className="text-red-500">*</span>
+                      </label>
+                      <Input
+                        id="kiosk-plate-number"
+                        type="text"
+                        placeholder="ABC 1234"
+                        value={plateNumber}
+                        onChange={(e) => setPlateNumber(e.target.value.toUpperCase())}
+                        maxLength={15}
+                        required
+                      />
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* Destination University Office Picker with Emergency Closure Warning */}
+              <div className="rounded-2xl border border-[var(--color-border)] bg-white p-4 space-y-4">
+                <div>
+                  <label htmlFor="kiosk-destination-office" className="block text-xs font-bold uppercase tracking-wider text-[var(--color-text-primary)] mb-1">
+                    Destination University Office <span className="text-red-500">*</span>
+                  </label>
+                  <div className="relative">
+                    <Building2 className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[var(--color-text-muted)]" />
+                    <select
+                      id="kiosk-destination-office"
+                      value={selectedOfficeId}
+                      onChange={(e) => setSelectedOfficeId(e.target.value)}
+                      className="w-full rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] py-3 pl-9 pr-8 text-sm font-semibold text-[var(--color-text-primary)] focus:border-[#7A0A0A] focus:outline-none focus:ring-1 focus:ring-[#7A0A0A]"
+                    >
+                      <option value="">Select destination office</option>
+                      {offices.map((o) => (
+                        <option key={o.id} value={o.id}>
+                          {o.name}{o.closure_status === 'closed' ? ' [Temporarily Closed]' : ''}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  {selectedOfficeId && (
+                    <p className="mt-1 text-xs text-[var(--color-text-secondary)]">
+                      {offices.find((o) => o.id === selectedOfficeId)?.description}
+                    </p>
+                  )}
+
+                  {/* Office Emergency Closure Alert Box */}
+                  {(() => {
+                    const selectedOffice = offices.find((o) => o.id === selectedOfficeId);
+                    if (selectedOffice?.closure_status === 'closed') {
+                      return (
+                        <div className="mt-3 rounded-xl border border-red-300 bg-red-50 p-4 text-red-950 space-y-2" role="alert">
+                          <div className="flex items-center gap-2 font-bold text-red-900 text-sm">
+                            <AlertTriangle className="h-5 w-5 text-red-700 shrink-0" />
+                            <span>Office Temporarily Closed</span>
+                          </div>
+                          <p className="text-xs leading-relaxed">
+                            The <strong>{selectedOffice.name}</strong> is temporarily closed:
+                          </p>
+                          <div className="rounded-lg border border-red-200 bg-white/95 p-3 text-xs font-medium text-red-900 italic">
+                            &ldquo;{selectedOffice.closure_reason || 'This office is temporarily unavailable due to an unexpected emergency.'}&rdquo;
+                          </div>
+                          <p className="text-[11px] text-red-800 font-semibold">
+                            Visitors cannot register visits to this office while closed. Please select an alternate office.
+                          </p>
+                        </div>
+                      );
+                    }
+                    return null;
+                  })()}
+                </div>
+
+                {/* Visit Type: General vs Personnel */}
+                {selectedOfficeId && (
+                  <div className="pt-2 border-t border-[var(--color-border)] space-y-3">
+                    <label className="block text-xs font-semibold text-[var(--color-text-primary)]">
+                      Transaction Type
+                    </label>
+                    <div className="grid grid-cols-2 gap-2">
+                      <button
+                        type="button"
+                        onClick={() => { setVisitType('general'); setSelectedPersonnel(''); }}
+                        className={`min-h-[44px] rounded-xl border text-xs font-semibold transition-all ${
+                          visitType === 'general'
+                            ? 'border-[#7A0A0A] bg-[#F8EEEE] text-[#7A0A0A]'
+                            : 'border-[var(--color-border)] bg-white text-[var(--color-text-primary)]'
+                        }`}
+                      >
+                        General Office Transaction
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setVisitType('personnel')}
+                        className={`min-h-[44px] rounded-xl border text-xs font-semibold transition-all ${
+                          visitType === 'personnel'
+                            ? 'border-[#7A0A0A] bg-[#F8EEEE] text-[#7A0A0A]'
+                            : 'border-[var(--color-border)] bg-white text-[var(--color-text-primary)]'
+                        }`}
+                      >
+                        Visiting Specific Personnel
+                      </button>
+                    </div>
+
+                    {visitType === 'personnel' && (
+                      <div>
+                        <label htmlFor="kiosk-personnel-select" className="block text-[11px] font-semibold text-[var(--color-text-primary)] mb-1">
+                          Personnel to Visit
+                        </label>
+                        {personnelList.length > 0 ? (
+                          <select
+                            id="kiosk-personnel-select"
+                            value={selectedPersonnel}
+                            onChange={(e) => setSelectedPersonnel(e.target.value)}
+                            className="w-full rounded-xl border border-[var(--color-border)] bg-white py-2 px-3 text-xs font-semibold text-[var(--color-text-primary)] focus:border-[#7A0A0A] focus:outline-none"
+                          >
+                            <option value="">Select personnel</option>
+                            {personnelList.map((p) => (
+                              <option key={p.id} value={p.name}>
+                                {p.name} {p.position ? `(${p.position})` : ''}
+                              </option>
+                            ))}
+                          </select>
+                        ) : (
+                          <Input
+                            placeholder="Enter personnel name"
+                            value={selectedPersonnel}
+                            onChange={(e) => setSelectedPersonnel(e.target.value)}
+                          />
+                        )}
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {/* Purpose of Visit */}
+                <div className="pt-2 border-t border-[var(--color-border)]">
+                  <VisitPurposeField
+                    purposes={visitPurposes}
+                    value={purpose}
+                    error={errors.purpose?.message}
+                    onChange={(value) => setValue('purpose', value, { shouldDirty: true, shouldValidate: true })}
+                  />
+                </div>
+
+                {/* Scheduled Visit Date */}
+                <div className="pt-2 border-t border-[var(--color-border)]">
+                  <FormField label="Visit Date" requirement="required" id="kiosk-date" error={errors.visitDate?.message}>
+                    <Input id="kiosk-date" type="date" {...register('visitDate')} min={today} max={latestVisitDate} error={!!errors.visitDate} required aria-required="true" />
+                    {(() => {
+                      const currDate = getValues('visitDate');
+                      const match = currDate ? calendarClosures.find((c) => c.active !== false && currDate >= c.startDate && currDate <= c.endDate) : undefined;
+                      if (match) {
+                        return (
+                          <p className="mt-1 text-xs font-semibold text-rose-700 flex items-center gap-1">
+                            <AlertCircle className="h-3.5 w-3.5" />
+                            Campus is closed on this date: {match.title}{match.description ? ` (${match.description})` : ''}
+                          </p>
+                        );
+                      }
+                      return null;
+                    })()}
+                  </FormField>
+                </div>
+              </div>
+
+              <div className="flex gap-3 pt-2">
+                <Button
+                  variant="secondary"
+                  type="button"
+                  onClick={() => setStep('form')}
+                  className="flex-1 min-h-[48px]"
+                  icon={<ArrowLeft className="h-4 w-4" />}
+                >
+                  Back: Personal
+                </Button>
+                <Button
+                  type="button"
+                  onClick={onVisitNext}
+                  disabled={!selectedOfficeId || offices.find((o) => o.id === selectedOfficeId)?.closure_status === 'closed'}
+                  className="flex-1 min-h-[48px]"
+                  icon={<ArrowRight className="h-4 w-4" />}
+                >
+                  Next: Live Photo
+                </Button>
+              </div>
+            </div>
+          )}
+
+          {/* STEP 3: Live Face Photo Capture */}
           {step === 'photo' && (
             <div className="space-y-6">
               <div className="text-center">
-                <h2 className="text-lg font-bold text-[var(--color-text-primary)]">Take Visitor Photo</h2>
-                <p className="text-xs text-[var(--color-text-secondary)] mt-1">Look directly into the camera.</p>
+                <h2 className="text-xl font-bold text-[var(--color-text-primary)]">3. Live Face Portrait</h2>
+                <p className="text-xs text-[var(--color-text-secondary)] mt-0.5">Look directly into the camera. Center your face inside the oval.</p>
               </div>
 
               {faceWebcam.error && (
@@ -1099,92 +1592,120 @@ export function KioskPage() {
                 </div>
               )}
 
-              {/* Visitor framing instructions checklist */}
-              <div className="rounded-xl border border-blue-200 bg-blue-50/60 p-3 text-xs text-blue-950 space-y-1.5 mb-4 max-w-sm mx-auto">
-                <p className="font-semibold text-[11px] text-blue-900 uppercase tracking-wider flex items-center gap-1.5">
-                  <Sparkles className="h-3.5 w-3.5 text-blue-600" />
-                  Selfie Framing Guidelines
-                </p>
-                <ul className="grid grid-cols-1 sm:grid-cols-2 gap-1 text-[11px] text-blue-900/90 list-disc list-inside">
-                  <li>Keep entire head & hair inside oval</li>
-                  <li>Center face and look forward</li>
-                  <li>Keep forehead and chin visible</li>
-                  <li>Use clear, even lighting</li>
-                </ul>
-              </div>
-
-              {/* Single camera viewport with oval guide */}
-              <div className="mx-auto w-full max-w-sm overflow-hidden rounded-2xl border-2 border-[var(--color-brand)] bg-black aspect-[3/4] relative flex items-center justify-center shadow-inner">
-                {faceWebcam.isStarting && (
-                  <div className="absolute inset-0 z-20 flex flex-col items-center justify-center bg-black/60 text-white text-xs">
-                    <Loader2 className="h-6 w-6 animate-spin mb-1 text-[var(--color-brand)]" />
-                    <span>Starting camera…</span>
+              {photoPreview ? (
+                <div className="space-y-4">
+                  <div className="relative mx-auto w-full max-w-sm overflow-hidden rounded-2xl border-2 border-[var(--color-brand)] shadow-sm bg-black aspect-[3/4]">
+                    <img src={photoPreview} alt="Live face preview" className="h-full w-full object-cover" style={{ transform: 'rotateY(180deg) translateZ(0)' }} />
                   </div>
-                )}
-                {faceWebcam.videoRef && (
-                  <div
-                    className="absolute inset-0 h-full w-full overflow-hidden"
-                    style={{
-                      transform: faceWebcam.mirrorPreview ? 'rotateY(180deg) translateZ(0)' : 'none',
-                      WebkitTransform: faceWebcam.mirrorPreview ? 'rotateY(180deg) translateZ(0)' : 'none',
-                      backfaceVisibility: 'visible',
-                      WebkitBackfaceVisibility: 'visible',
-                    }}
-                  >
-                    <video
-                      ref={faceWebcam.videoRef}
-                      autoPlay
-                      playsInline
-                      muted
-                      style={{ transform: 'none' }}
-                      className="h-full w-full object-cover block shrink-0"
-                    />
-                  </div>
-                )}
-
-                {/* Face Guide Oval */}
-                <div className="absolute inset-0 pointer-events-none flex items-center justify-center">
-                  <div
-                    style={{ width: `${SELFIE_OVAL_WIDTH_PERCENT}%`, height: `${SELFIE_OVAL_HEIGHT_PERCENT}%` }}
-                    className="border-2 border-dashed border-white/80 rounded-[50%] shadow-[0_0_0_9999px_rgba(0,0,0,0.45)] flex items-center justify-center"
-                  >
-                    <span className="sr-only">Center face in oval</span>
+                  <div className="flex gap-3">
+                    <Button variant="secondary" type="button" onClick={onRetakePhoto} className="flex-1 min-h-[48px]" icon={<RotateCcw className="h-4 w-4" />}>
+                      Retake Photo
+                    </Button>
+                    <Button
+                      type="button"
+                      onClick={() => {
+                        if (idBlob || isPeakMode) {
+                          setStep('verify');
+                        } else {
+                          setStep('id');
+                          idWebcam.start();
+                        }
+                      }}
+                      className="flex-1 min-h-[48px]"
+                      icon={<ArrowRight className="h-4 w-4" />}
+                    >
+                      {idBlob ? 'Next: Verify' : 'Next: Valid ID'}
+                    </Button>
                   </div>
                 </div>
+              ) : (
+                <div className="space-y-4">
+                  {/* Visitor framing instructions */}
+                  <div className="rounded-xl border border-blue-200 bg-blue-50/60 p-3 text-xs text-blue-950 space-y-1 mb-2 max-w-sm mx-auto">
+                    <p className="font-semibold text-[11px] text-blue-900 uppercase tracking-wider flex items-center gap-1.5">
+                      <Sparkles className="h-3.5 w-3.5 text-blue-600" />
+                      Portrait Framing Guidelines
+                    </p>
+                    <p className="text-[11px] text-blue-900/90">
+                      Center your face inside the oval guide and keep forehead and chin visible.
+                    </p>
+                  </div>
 
-                {faceWebcam.isActive && (
-                  <CameraControls
-                    activeFacingMode={faceWebcam.activeFacingMode}
-                    mirrorPreview={faceWebcam.mirrorPreview}
-                    canSwitchCamera={faceWebcam.canSwitchCamera}
-                    onSwitchCamera={faceWebcam.switchCamera}
-                    onToggleMirror={faceWebcam.toggleMirrorPreview}
-                  />
-                )}
-              </div>
+                  {/* Camera viewport with oval guide */}
+                  <div className="mx-auto w-full max-w-sm overflow-hidden rounded-2xl border-2 border-[var(--color-brand)] bg-black aspect-[3/4] relative flex items-center justify-center shadow-inner">
+                    {faceWebcam.isStarting && (
+                      <div className="absolute inset-0 z-20 flex flex-col items-center justify-center bg-black/60 text-white text-xs">
+                        <Loader2 className="h-6 w-6 animate-spin mb-1 text-[var(--color-brand)]" />
+                        <span>Starting camera…</span>
+                      </div>
+                    )}
+                    {faceWebcam.videoRef && (
+                      <div
+                        className="absolute inset-0 h-full w-full overflow-hidden"
+                        style={{
+                          transform: faceWebcam.mirrorPreview ? 'rotateY(180deg) translateZ(0)' : 'none',
+                          WebkitTransform: faceWebcam.mirrorPreview ? 'rotateY(180deg) translateZ(0)' : 'none',
+                          backfaceVisibility: 'visible',
+                          WebkitBackfaceVisibility: 'visible',
+                        }}
+                      >
+                        <video
+                          ref={faceWebcam.videoRef}
+                          autoPlay
+                          playsInline
+                          muted
+                          style={{ transform: 'none' }}
+                          className="h-full w-full object-cover block shrink-0"
+                        />
+                      </div>
+                    )}
 
-              <div className="flex gap-3">
-                <Button variant="secondary" type="button" onClick={() => { faceWebcam.stop(); setStep('form'); }} className="flex-1 min-h-[44px]" icon={<ArrowLeft className="h-4 w-4" />}>
-                  Back
-                </Button>
-                <Button type="button" onClick={onCapturePhoto} disabled={!faceWebcam.isActive} className="flex-1 min-h-[44px]" icon={<Camera className="h-4 w-4" />} aria-label="Capture Photo">
-                  Capture Photo
-                </Button>
-              </div>
+                    {/* Face Guide Oval */}
+                    <div className="absolute inset-0 pointer-events-none flex items-center justify-center">
+                      <div
+                        style={{ width: `${SELFIE_OVAL_WIDTH_PERCENT}%`, height: `${SELFIE_OVAL_HEIGHT_PERCENT}%` }}
+                        className="border-2 border-dashed border-white/80 rounded-[50%] shadow-[0_0_0_9999px_rgba(0,0,0,0.45)] flex items-center justify-center"
+                      >
+                        <span className="sr-only">Center face in oval</span>
+                      </div>
+                    </div>
+
+                    {faceWebcam.isActive && (
+                      <CameraControls
+                        activeFacingMode={faceWebcam.activeFacingMode}
+                        mirrorPreview={faceWebcam.mirrorPreview}
+                        canSwitchCamera={faceWebcam.canSwitchCamera}
+                        onSwitchCamera={faceWebcam.switchCamera}
+                        onToggleMirror={faceWebcam.toggleMirrorPreview}
+                      />
+                    )}
+                  </div>
+
+                  <div className="flex gap-3">
+                    <Button variant="secondary" type="button" onClick={() => { faceWebcam.stop(); setStep('visit'); }} className="flex-1 min-h-[48px]" icon={<ArrowLeft className="h-4 w-4" />}>
+                      Back: Visit
+                    </Button>
+                    <Button type="button" onClick={onCapturePhoto} disabled={!faceWebcam.isActive} className="flex-1 min-h-[48px]" icon={<Camera className="h-4 w-4" />} aria-label="Capture Photo">
+                      Capture Photo
+                    </Button>
+                  </div>
+                </div>
+              )}
             </div>
           )}
 
-          {/* STEP 6: Camera ID Capture (Only shown when Peak Mode is OFF and ID not yet captured) */}
+          {/* STEP 4: Valid ID Capture & Dual OCR */}
           {step === 'id' && (
             <div className="space-y-6">
               <div className="text-center">
-                <h2 className="text-lg font-bold text-[var(--color-text-primary)]">Capture Valid ID</h2>
-                <p className="text-xs text-[var(--color-text-secondary)] mt-1">Position your valid ID clearly in the camera frame.</p>
+                <h2 className="text-xl font-bold text-[var(--color-text-primary)]">4. Valid ID Document</h2>
+                <p className="text-xs text-[var(--color-text-secondary)] mt-0.5">Position your valid ID clearly in the camera frame.</p>
               </div>
+
               {idPreview ? (
                 <div className="space-y-4">
-                  <div className="relative mx-auto max-w-xs overflow-hidden rounded-xl border border-[var(--color-border)] shadow-sm">
-                    <img src={idPreview} alt="ID preview" className="w-full object-cover" />
+                  <div className="relative mx-auto max-w-sm overflow-hidden rounded-xl border border-[var(--color-border)] shadow-sm">
+                    <img src={idPreview} alt="ID preview" className="w-full object-cover aspect-[3/2]" />
                     <button
                       type="button"
                       onClick={() => {
@@ -1199,11 +1720,11 @@ export function KioskPage() {
                     </button>
                   </div>
                   <div className="flex gap-3">
-                    <Button variant="secondary" type="button" onClick={onRetakeId} className="flex-1 min-h-[44px]" icon={<RotateCcw className="h-4 w-4" />}>
+                    <Button variant="secondary" type="button" onClick={onRetakeId} className="flex-1 min-h-[48px]" icon={<RotateCcw className="h-4 w-4" />}>
                       Retake ID
                     </Button>
-                    <Button type="button" onClick={() => setStep('review')} className="flex-1 min-h-[44px]" icon={<ArrowRight className="h-4 w-4" />}>
-                      Review
+                    <Button type="button" onClick={() => setStep('verify')} className="flex-1 min-h-[48px]" icon={<ArrowRight className="h-4 w-4" />}>
+                      Next: Verify
                     </Button>
                   </div>
                 </div>
@@ -1230,7 +1751,33 @@ export function KioskPage() {
                     </div>
                   )}
 
-                  <div className="mx-auto w-full max-w-md overflow-hidden rounded-2xl border-2 border-[var(--color-brand)] shadow-inner bg-black aspect-[3/2] relative flex items-center justify-center">
+                  <div className="flex items-center gap-2">
+                    <label htmlFor="kiosk-id-type" className="text-xs font-semibold text-[var(--color-text-primary)] shrink-0">
+                      ID Type:
+                    </label>
+                    <select
+                      id="kiosk-id-type"
+                      value={idType}
+                      onChange={(e) => setIdType(e.target.value)}
+                      className="w-full rounded-xl border border-[var(--color-border)] bg-white py-1.5 px-3 text-xs font-semibold text-[var(--color-text-primary)] focus:border-[#7A0A0A] focus:outline-none"
+                    >
+                      <option value="National ID">PhilSys National ID</option>
+                      <option value="Driver's License">Driver's License</option>
+                      <option value="Passport">Philippine Passport</option>
+                      <option value="UMID">UMID / SSS ID</option>
+                      <option value="Postal ID">Postal ID</option>
+                      <option value="Voter's ID">Voter's ID</option>
+                      <option value="PRC ID">PRC License</option>
+                      <option value="Student/Employee ID">Student / Employee ID</option>
+                      <option value="Company ID">Company / Government ID</option>
+                    </select>
+                  </div>
+
+                  <div
+                    className="mx-auto w-full max-w-md overflow-hidden rounded-2xl border-2 border-[var(--color-brand)] shadow-inner bg-black aspect-[3/2] relative flex items-center justify-center cursor-pointer"
+                    onClick={() => void idWebcam.refocus?.()}
+                    title="Tap camera to refocus"
+                  >
                     {idWebcam.isStarting && (
                       <div className="absolute inset-0 z-10 flex flex-col items-center justify-center bg-black/80 text-white" role="status" aria-live="polite">
                         <Loader2 className="h-8 w-8 animate-spin text-[var(--color-brand)] mb-2" aria-hidden="true" />
@@ -1257,6 +1804,15 @@ export function KioskPage() {
                         />
                       </div>
                     )}
+                    {/* ID Document Framing Guidelines */}
+                    <div className="absolute inset-0 pointer-events-none flex items-center justify-center p-3">
+                      <div className="w-full max-w-[280px] aspect-[85.6/53.98] border-2 border-dashed border-white/70 rounded-xl flex items-end justify-center pb-2 shadow-[0_0_0_9999px_rgba(0,0,0,0.35)]">
+                        <span className="text-[10px] text-white/95 bg-black/60 px-2 py-0.5 rounded backdrop-blur-xs font-medium">
+                          Align ID inside frame • Tap to focus
+                        </span>
+                      </div>
+                    </div>
+
                     {idWebcam.isActive && (
                       <CameraControls
                         activeFacingMode={idWebcam.activeFacingMode}
@@ -1279,61 +1835,158 @@ export function KioskPage() {
                         faceWebcam.start();
                       }}
                       disabled={isProcessingId}
-                      className="flex-1 min-h-[44px]"
+                      className="flex-1 min-h-[48px]"
                       icon={<ArrowLeft className="h-4 w-4" />}
                     >
-                      Back
+                      Back: Photo
                     </Button>
                     <Button
                       type="button"
                       onClick={onCaptureManualId}
                       disabled={!idWebcam.isActive || isProcessingId}
-                      className="flex-1 min-h-[44px]"
+                      className="flex-1 min-h-[48px]"
                       icon={<Camera className="h-4 w-4" />}
                     >
                       Capture ID
                     </Button>
                   </div>
-                  <Button variant="ghost" type="button" onClick={onRetakePhoto} disabled={isProcessingId} className="w-full min-h-[44px]" icon={<RotateCcw className="h-4 w-4" />}>
-                    Retake Photo
-                  </Button>
                 </div>
               )}
             </div>
           )}
 
-          {/* STEP 7: Review Step */}
+          {/* STEP 5: Identity & Document Verification */}
+          {step === 'verify' && (
+            <div className="space-y-6">
+              <div className="text-center">
+                <h2 className="text-xl font-bold text-[var(--color-text-primary)]">5. Identity Verification</h2>
+                <p className="text-xs text-[var(--color-text-secondary)] mt-0.5">
+                  Review your live portrait against your captured ID before continuing.
+                </p>
+              </div>
+
+              {/* Side-by-side / Stacked Visual Comparison */}
+              <div className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-4 space-y-4">
+                <div className="grid grid-cols-2 gap-4 items-center">
+                  <div className="text-center space-y-1.5">
+                    <p className="text-xs font-semibold text-[var(--color-text-secondary)]">Live Face</p>
+                    <div className="relative mx-auto h-32 w-24 overflow-hidden rounded-xl border border-[var(--color-border)] bg-black shadow-xs">
+                      {photoPreview ? (
+                        <img src={photoPreview} alt="Live face" className="h-full w-full object-cover" style={{ transform: 'rotateY(180deg) translateZ(0)' }} />
+                      ) : (
+                        <div className="h-full w-full flex items-center justify-center text-white/50 text-xs">No photo</div>
+                      )}
+                    </div>
+                  </div>
+
+                  <div className="text-center space-y-1.5">
+                    <p className="text-xs font-semibold text-[var(--color-text-secondary)]">Valid ID ({idType})</p>
+                    <div className="relative mx-auto h-32 w-44 overflow-hidden rounded-xl border border-[var(--color-border)] bg-black shadow-xs">
+                      {idPreview ? (
+                        <img src={idPreview} alt="Valid ID" className="h-full w-full object-cover" />
+                      ) : (
+                        <div className="h-full w-full flex items-center justify-center text-white/50 text-xs">
+                          {isPeakMode ? 'Peak Mode (No ID)' : 'No ID'}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                </div>
+
+                <div className="rounded-xl border border-emerald-300 bg-emerald-50 p-3 text-xs text-emerald-950 flex items-center gap-2">
+                  <CheckCircle2 className="h-4 w-4 text-emerald-600 shrink-0" />
+                  <span>Document and portrait successfully captured for gate pass verification.</span>
+                </div>
+              </div>
+
+              <div className="flex gap-3">
+                <Button
+                  variant="secondary"
+                  type="button"
+                  onClick={() => {
+                    if (idBlob) {
+                      onRetakeId();
+                    } else {
+                      onRetakePhoto();
+                    }
+                  }}
+                  className="flex-1 min-h-[48px]"
+                  icon={<RotateCcw className="h-4 w-4" />}
+                >
+                  Retake ID / Photo
+                </Button>
+                <Button
+                  type="button"
+                  onClick={() => setStep('review')}
+                  className="flex-1 min-h-[48px]"
+                  icon={<ArrowRight className="h-4 w-4" />}
+                >
+                  Next: Review & Agree
+                </Button>
+              </div>
+            </div>
+          )}
+
+          {/* STEP 6: Review & Institutional Data Privacy Agreement */}
           {step === 'review' && (
             <div className="space-y-6">
               <div className="text-center">
-                <h2 className="text-lg font-bold text-[var(--color-text-primary)]">Review Your Information</h2>
-                <p className="text-xs text-[var(--color-text-secondary)] mt-1">Please verify your information before generating your E-GatePass.</p>
+                <h2 className="text-xl font-bold text-[var(--color-text-primary)]">6. Review & Data Privacy Agreement</h2>
+                <p className="text-xs text-[var(--color-text-secondary)] mt-0.5">Please verify your details and agree to the Data Privacy Notice to generate your pass.</p>
               </div>
+
               {kioskTransactionRef.current?.phase === 'existing_pass_conflict' ? (
-                <div className="rounded-lg border border-amber-300 bg-amber-50 dark:border-amber-700/60 dark:bg-amber-950/40 p-4 space-y-2 text-sm text-amber-900 dark:text-amber-200" role="alert">
-                  <div className="flex items-center gap-2 font-semibold text-amber-950 dark:text-amber-100">
-                    <AlertCircle className="h-5 w-5 text-amber-600 dark:text-amber-400 shrink-0" />
+                <div className="rounded-lg border border-amber-300 bg-amber-50 p-4 space-y-2 text-sm text-amber-900" role="alert">
+                  <div className="flex items-center gap-2 font-semibold text-amber-950">
+                    <AlertCircle className="h-5 w-5 text-amber-600 shrink-0" />
                     <span>Existing Pass Detected</span>
                   </div>
                   <p>
                     An existing pass was already created for this request, but the local retry no longer matches it. Do not create another pass. Please ask the Guard for assistance.
                   </p>
+                  <Button
+                    variant="secondary"
+                    type="button"
+                    onClick={handleAmbiguousCancelAndAskGuard}
+                    className="w-full min-h-[44px] text-amber-800 border-amber-400 hover:bg-amber-50 mt-2"
+                    icon={<AlertCircle className="h-4 w-4" />}
+                  >
+                    Cancel & Ask Guard
+                  </Button>
                 </div>
               ) : kioskTransactionRef.current?.phase === 'ambiguous' ? (
-                <div className="rounded-lg border border-amber-300 bg-amber-50 dark:border-amber-700/60 dark:bg-amber-950/40 p-4 space-y-2 text-sm text-amber-900 dark:text-amber-200" role="alert">
-                  <div className="flex items-center gap-2 font-semibold text-amber-950 dark:text-amber-100">
-                    <AlertCircle className="h-5 w-5 text-amber-600 dark:text-amber-400 shrink-0" />
+                <div className="rounded-lg border border-amber-300 bg-amber-50 p-4 space-y-2 text-sm text-amber-900" role="alert">
+                  <div className="flex items-center gap-2 font-semibold text-amber-950">
+                    <AlertCircle className="h-5 w-5 text-amber-600 shrink-0" />
                     <span>Generation result could not be confirmed</span>
                   </div>
                   <p>
                     The previous submission may already have created a pass. To prevent duplicates, the exact previous submission must be retried before any details can be changed.
                   </p>
-                  <p className="text-xs text-amber-800 dark:text-amber-300">
-                    Retry Exact Submission resubmits the exact previous attempt without altering your identity or evidence.
-                  </p>
+                  <div className="flex gap-2">
+                    <Button
+                      variant="secondary"
+                      type="button"
+                      onClick={handleAmbiguousCancelAndAskGuard}
+                      className="flex-1 min-h-[44px] text-amber-800 border-amber-400 hover:bg-amber-50"
+                      icon={<AlertCircle className="h-4 w-4" />}
+                    >
+                      Cancel & Ask Guard
+                    </Button>
+                    <Button
+                      type="button"
+                      onClick={onSubmit}
+                      className="flex-1 min-h-[44px]"
+                      icon={<RotateCcw className="h-4 w-4" />}
+                    >
+                      Retry Exact Submission
+                    </Button>
+                  </div>
                 </div>
               ) : submitError ? (
-                <div className="rounded-md border border-[var(--color-danger)] bg-[var(--color-danger-light)] p-3 text-sm text-[var(--color-danger-dark)]" role="alert">{submitError}</div>
+                <div className="rounded-md border border-[var(--color-danger)] bg-[var(--color-danger-light)] p-3 text-sm text-[var(--color-danger-dark)]" role="alert">
+                  {submitError}
+                </div>
               ) : null}
 
               {/* Grouped: Photo / Valid ID */}
@@ -1358,7 +2011,7 @@ export function KioskPage() {
                   )}
                   {idPreview && !isPeakMode ? (
                     <div className="text-center">
-                      <p className="text-xs text-[var(--color-text-secondary)] mb-1">Valid ID</p>
+                      <p className="text-xs text-[var(--color-text-secondary)] mb-1">Valid ID ({idType})</p>
                       <img src={idPreview} alt="ID preview" className="h-24 w-36 object-cover rounded-lg border border-[var(--color-border)] shadow-sm mx-auto" />
                       {kioskTransactionRef.current?.phase !== 'ambiguous' && kioskTransactionRef.current?.phase !== 'existing_pass_conflict' && (
                         <button
@@ -1390,11 +2043,7 @@ export function KioskPage() {
                     {kioskTransactionRef.current?.phase !== 'ambiguous' && kioskTransactionRef.current?.phase !== 'existing_pass_conflict' && (
                       <button
                         type="button"
-                        onClick={() => {
-                          faceWebcam.stop();
-                          idWebcam.stop();
-                          setStep('form');
-                        }}
+                        onClick={() => setStep('form')}
                         className="text-xs font-semibold text-[var(--color-brand)] hover:underline"
                       >
                         Edit Details
@@ -1403,70 +2052,96 @@ export function KioskPage() {
                   </div>
                   <p><strong className="text-[var(--color-text-secondary)]">Full Name:</strong> {[getValues('firstName'), getValues('middleName'), getValues('lastName')].filter(Boolean).join(' ')}</p>
                   <p className="mt-1"><strong className="text-[var(--color-text-secondary)]">Contact Number:</strong> {getValues('contactNumber')}</p>
+                  <p className="mt-1"><strong className="text-[var(--color-text-secondary)]">Gender:</strong> {gender}</p>
+                  {selectedPsgc && (
+                    <p className="mt-1"><strong className="text-[var(--color-text-secondary)]">Locality:</strong> {[houseBuilding, street, selectedPsgc.barangay.name, selectedPsgc.city.name, selectedPsgc.province?.name].filter(Boolean).join(', ')}</p>
+                  )}
                 </div>
+
                 <div className="pt-3">
-                  <p className="font-semibold text-xs text-[var(--color-text-secondary)] uppercase tracking-wider mb-2">Visit Information</p>
+                  <div className="flex items-center justify-between mb-2">
+                    <p className="font-semibold text-xs text-[var(--color-text-secondary)] uppercase tracking-wider">Visit Information</p>
+                    {kioskTransactionRef.current?.phase !== 'ambiguous' && kioskTransactionRef.current?.phase !== 'existing_pass_conflict' && (
+                      <button
+                        type="button"
+                        onClick={() => setStep('visit')}
+                        className="text-xs font-semibold text-[var(--color-brand)] hover:underline"
+                      >
+                        Edit Visit
+                      </button>
+                    )}
+                  </div>
+                  <p className="mb-1"><strong className="text-[var(--color-text-secondary)]">Office:</strong> {offices.find((o) => o.id === selectedOfficeId)?.name || 'Campus Visit'}</p>
+                  {selectedPersonnel && (
+                    <p className="mb-1"><strong className="text-[var(--color-text-secondary)]">Personnel:</strong> {selectedPersonnel}</p>
+                  )}
                   <p className="mb-1"><strong className="text-[var(--color-text-secondary)]">Visit Date:</strong> {getValues('visitDate')}</p>
-                  <p><strong className="text-[var(--color-text-secondary)]">Purpose of Visit:</strong> {getValues('purpose')}</p>
+                  <p className="mb-1"><strong className="text-[var(--color-text-secondary)]">Purpose:</strong> {getValues('purpose')}</p>
+                  <p><strong className="text-[var(--color-text-secondary)]">Arrival Mode:</strong> {arrivalMode === 'vehicle' ? `With Vehicle (${vehicleType.toUpperCase()} - ${plateNumber})` : 'On Foot / Commute'}</p>
                 </div>
-                <div className="pt-3">
-                  <p className="font-semibold text-xs text-[var(--color-text-secondary)] uppercase tracking-wider mb-1">Privacy Confirmation</p>
-                  <p className="text-xs text-[var(--color-text-secondary)]">✓ Data Privacy Consent granted for campus security.</p>
+
+                {/* Data Privacy Notice & Consent Agreement */}
+                <div className="pt-3 space-y-3">
+                  <div className="flex items-center justify-between">
+                    <p className="font-semibold text-xs text-[var(--color-text-secondary)] uppercase tracking-wider">Republic Act No. 10173 Agreement</p>
+                    <button
+                      type="button"
+                      onClick={() => setShowPrivacyModal(true)}
+                      className="text-xs font-bold text-[#7A0A0A] hover:underline flex items-center gap-1"
+                    >
+                      <ShieldCheck className="h-3.5 w-3.5" />
+                      View Institutional Notice
+                    </button>
+                  </div>
+                  <p className="text-xs text-[var(--color-text-secondary)] leading-relaxed">
+                    Visitor information is processed under EARIST institutional privacy procedures and applicable privacy requirements.{' '}
+                    {typeof photoRetentionDays === 'number'
+                      ? `Face photos are normally retained for ${photoRetentionDays} days.`
+                      : 'Face photos are normally retained under institutional policy.'}{' '}
+                    {typeof idRetentionDays === 'number'
+                      ? `Valid ID images, when collected, are normally retained for ${idRetentionDays} days.`
+                      : 'Valid ID images, when collected, are normally retained under institutional policy.'}{' '}
+                    {typeof visitorRetentionDays === 'number'
+                      ? `Visitor records are retained for ${visitorRetentionDays} days under institutional policy.`
+                      : 'Visitor records are retained under institutional policy.'}{' '}
+                    Evidence is retained at least through the scheduled visit, and authorized incident holds may extend retention when required.
+                  </p>
+                  <label className="flex items-center gap-2 pt-2 border-t border-[var(--color-border)] cursor-pointer">
+                    <input
+                      type="checkbox"
+                      {...register('consent')}
+                      required
+                      aria-required="true"
+                      className="h-5 w-5 rounded border-[var(--color-border-strong)] text-[var(--color-brand)] focus:ring-[var(--color-brand)]"
+                    />
+                    <span className="font-semibold text-xs text-[var(--color-text-primary)]">
+                      I agree to the institutional collection and processing of my personal data under Republic Act No. 10173. *
+                    </span>
+                  </label>
+                  {errors.consent && <p className="text-[var(--color-danger)] font-medium text-xs">{errors.consent.message}</p>}
                 </div>
               </div>
 
-              {kioskTransactionRef.current?.phase === 'existing_pass_conflict' ? (
-                <div className="flex flex-col gap-3">
-                  <Button
-                    variant="secondary"
-                    type="button"
-                    onClick={handleAmbiguousCancelAndAskGuard}
-                    className="w-full min-h-[44px] text-amber-800 border-amber-400 hover:bg-amber-50"
-                    icon={<AlertCircle className="h-4 w-4" />}
-                  >
-                    Cancel & Ask Guard
-                  </Button>
-                </div>
-              ) : kioskTransactionRef.current?.phase === 'ambiguous' ? (
-                <div className="flex flex-col sm:flex-row gap-3">
-                  <Button
-                    variant="secondary"
-                    type="button"
-                    onClick={handleAmbiguousCancelAndAskGuard}
-                    className="flex-1 min-h-[44px] text-amber-800 border-amber-400 hover:bg-amber-50"
-                    icon={<AlertCircle className="h-4 w-4" />}
-                  >
-                    Cancel & Ask Guard
-                  </Button>
-                  <Button
-                    type="button"
-                    onClick={onSubmit}
-                    className="flex-1 min-h-[44px]"
-                    icon={<RefreshCw className="h-4 w-4" />}
-                  >
-                    Retry Exact Submission
-                  </Button>
-                </div>
-              ) : (
-                <div className="flex flex-col sm:flex-row gap-3">
-                  <Button
-                    variant="secondary"
-                    type="button"
-                    onClick={() => {
-                      faceWebcam.stop();
-                      idWebcam.stop();
-                      setStep('form');
-                    }}
-                    className="flex-1 min-h-[44px]"
-                    icon={<ArrowLeft className="h-4 w-4" />}
-                  >
-                    Edit Details
-                  </Button>
-                  <Button type="button" onClick={onSubmit} className="flex-1 min-h-[44px]" icon={<CheckCircle2 className="h-4 w-4" />}>
-                    Generate E-GatePass
-                  </Button>
-                </div>
-              )}
+              <div className="flex flex-col sm:flex-row gap-3">
+                <Button
+                  variant="secondary"
+                  type="button"
+                  onClick={() => setStep('form')}
+                  className="flex-1 min-h-[48px]"
+                  icon={<ArrowLeft className="h-4 w-4" />}
+                >
+                  Edit Details
+                </Button>
+                <Button
+                  type="button"
+                  onClick={onSubmit}
+                  disabled={!watch('consent')}
+                  className="flex-1 min-h-[48px] text-base font-bold"
+                  icon={<CheckCircle2 className="h-5 w-5" />}
+                >
+                  Issue E-GatePass
+                </Button>
+              </div>
             </div>
           )}
 
@@ -1624,6 +2299,14 @@ export function KioskPage() {
           isOpen={showPrinterSettings}
           onClose={() => setShowPrinterSettings(false)}
           printer={printer}
+        />
+
+        <InstitutionalPrivacyNoticeModal
+          isOpen={showPrivacyModal}
+          onClose={() => setShowPrivacyModal(false)}
+          photoRetentionDays={photoRetentionDays}
+          idRetentionDays={idRetentionDays}
+          visitorRetentionDays={visitorRetentionDays}
         />
       </div>
     </main>

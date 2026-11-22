@@ -11,6 +11,7 @@ import {
   MessageSquare,
   Send,
   ShieldAlert,
+  Radio,
 } from 'lucide-react';
 
 interface EmergencyEvacuationPass {
@@ -284,10 +285,37 @@ export function AdminEmergency() {
             onClick={() => setShowSmsModal(true)}
             variant="primary"
             icon={<MessageSquare className="h-4 w-4" />}
+            className="bg-[#7A0A0A] hover:bg-[#600808] text-white font-bold"
           >
-            Emergency Mass SMS
+            Text Everyone (Emergency Mass SMS)
           </Button>
         </div>
+      </div>
+
+      {/* Active Incident SMS Dispatch Banner */}
+      <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between p-4 rounded-xl border border-red-300 bg-red-50 text-red-950 gap-4 print:hidden shadow-xs">
+        <div className="flex items-center gap-3">
+          <div className="h-10 w-10 rounded-lg bg-[#7A0A0A] text-white flex items-center justify-center shrink-0 shadow-xs">
+            <Radio className="h-5 w-5 animate-pulse" />
+          </div>
+          <div>
+            <h2 className="font-bold text-sm text-red-950 flex items-center gap-1.5">
+              <span>Emergency Mass SMS Broadcast</span>
+              <span className="px-2 py-0.5 rounded-full text-[10px] font-extrabold uppercase bg-red-200 text-red-900">SMS Gateway</span>
+            </h2>
+            <p className="text-xs text-red-800 mt-0.5">
+              Instantly broadcast an SMS alert to all <strong>{currentPasses.length} visitors currently logged inside campus</strong> via your connected Android SMS Gateway SIM.
+            </p>
+          </div>
+        </div>
+        <Button
+          onClick={() => setShowSmsModal(true)}
+          variant="destructive"
+          icon={<Send className="h-4 w-4" />}
+          className="w-full sm:w-auto shrink-0 font-bold bg-[#7A0A0A] hover:bg-[#600808]"
+        >
+          Text Everyone Inside ({currentPasses.length})
+        </Button>
       </div>
 
       {/* Screen Incompleteness Alert Banner (C-02) */}

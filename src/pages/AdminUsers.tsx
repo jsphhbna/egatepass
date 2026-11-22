@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { useSearchParams } from 'react-router-dom';
-import { Archive, Plus, CheckCircle2, AlertCircle, KeyRound, Copy, Check, Eye, EyeOff, ShieldAlert, RefreshCw, Trash2, MoreVertical } from 'lucide-react';
+import { Archive, Plus, CheckCircle2, AlertCircle, AlertTriangle, KeyRound, Copy, Check, Eye, EyeOff, ShieldAlert, RefreshCw, Trash2, MoreVertical } from 'lucide-react';
 import { Button, FormField, Input, Select, StatusBadge, DataTable, DataTableHead, DataTableRow, DataTableCell, Modal, ConfirmModal, TableSkeletonRows } from '@/components/ui';
 import { toast } from 'sonner';
 import { z } from 'zod';
@@ -104,6 +104,10 @@ export function AdminUsers() {
   const [deletingDraftOffice, setDeletingDraftOffice] = useState<AdminOfficeRecord | null>(null);
   const [isDeletingDraftOffice, setIsDeletingDraftOffice] = useState(false);
   const [republishingOfficeId, setRepublishingOfficeId] = useState<string | null>(null);
+  const [closingOffice, setClosingOffice] = useState<AdminOfficeRecord | null>(null);
+  const [closureReasonInput, setClosureReasonInput] = useState('');
+  const [notifyVisitorsClosure, setNotifyVisitorsClosure] = useState(true);
+  const [isSubmittingClosure, setIsSubmittingClosure] = useState(false);
   const isCreatingOfficeRef = useRef(false);
   const officeDirectoryReadGenRef = useRef(0);
 
@@ -561,6 +565,60 @@ export function AdminUsers() {
       toast.error(err?.message || 'Failed to republish office');
     } finally {
       setRepublishingOfficeId(null);
+    }
+  }
+
+  function openOfficeClosureModal(office: AdminOfficeRecord) {
+    setClosingOffice(office);
+    setClosureReasonInput(office.closure_reason || '');
+    setNotifyVisitorsClosure(true);
+  }
+
+  async function handleSaveOfficeClosure(newStatus: 'open' | 'closed') {
+    if (!closingOffice) return;
+    if (newStatus === 'closed' && !closureReasonInput.trim()) {
+      toast.error('Please enter a reason for the emergency office closure.');
+      return;
+    }
+    setIsSubmittingClosure(true);
+    try {
+      const token = await getAccessToken();
+      const res = await fetch('/api/office/closure', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({
+          officeId: closingOffice.id,
+          status: newStatus,
+          reason: newStatus === 'closed' ? closureReasonInput.trim() : null,
+          notifyVisitors: newStatus === 'closed' ? notifyVisitorsClosure : false,
+        }),
+      });
+      const data = await res.json().catch(() => null);
+      if (!res.ok) {
+        throw new Error(data?.error || data?.message || 'Failed to update office closure');
+      }
+
+      toast.success(
+        newStatus === 'closed'
+          ? `Office "${closingOffice.name}" closed. ${data.smsDispatchedCount ? `Sent SMS to ${data.smsDispatchedCount} visitors.` : ''}`
+          : `Office "${closingOffice.name}" reopened.`
+      );
+
+      setAdminOffices((prev) =>
+        prev.map((o) =>
+          o.id === closingOffice.id
+            ? { ...o, closure_status: newStatus, closure_reason: newStatus === 'closed' ? closureReasonInput.trim() : null }
+            : o
+        )
+      );
+      setClosingOffice(null);
+    } catch (err: any) {
+      toast.error(err.message || 'Error updating office closure');
+    } finally {
+      setIsSubmittingClosure(false);
     }
   }
 
@@ -1524,7 +1582,17 @@ export function AdminUsers() {
                           }`}>
                             {statusMeta.lifecycleLabel}
                           </span>
+                          {office.closure_status === 'closed' && (
+                            <span className="inline-flex items-center gap-1 rounded bg-red-100 px-1.5 py-0.5 text-[10px] font-bold text-red-900 border border-red-200">
+                              <AlertTriangle className="h-2.5 w-2.5 text-red-700" /> Closed
+                            </span>
+                          )}
                         </div>
+                        {office.closure_status === 'closed' && office.closure_reason && (
+                          <p className="text-[11px] font-medium text-red-800 italic">
+                            &ldquo;{office.closure_reason}&rdquo;
+                          </p>
+                        )}
                         <p className="text-[11px] text-[var(--color-text-muted)]">
                           {statusMeta.visitorHint}
                         </p>
@@ -1572,6 +1640,16 @@ export function AdminUsers() {
                               Provision Account
                             </Button>
                           )}
+                          <Button
+                            size="sm"
+                            variant={office.closure_status === 'closed' ? 'destructive' : 'secondary'}
+                            onClick={() => openOfficeClosureModal(office)}
+                            icon={<AlertTriangle className="h-3.5 w-3.5" />}
+                            className={office.closure_status === 'closed' ? 'bg-red-700 text-white font-bold' : ''}
+                            title={office.closure_status === 'closed' ? 'Manage Closure / Reopen' : 'Emergency Closure'}
+                          >
+                            {office.closure_status === 'closed' ? 'Closed' : 'Closure'}
+                          </Button>
                           <div className="relative inline-block text-left">
                             <button
                               type="button"
@@ -2314,6 +2392,109 @@ export function AdminUsers() {
               <Button onClick={() => void handleConfirmArchiveOffice()} loading={isArchivingOffice} disabled={isArchivingOffice}>
                 Archive Office
               </Button>
+            </div>
+          </div>
+        )}
+      </Modal>
+
+      {/* Office Emergency Closure Modal */}
+      <Modal
+        isOpen={!!closingOffice}
+        onClose={() => {
+          if (!isSubmittingClosure) {
+            setClosingOffice(null);
+          }
+        }}
+        title={closingOffice?.closure_status === 'closed' ? `Manage Office Closure: ${closingOffice?.name}` : `Emergency Close Office: ${closingOffice?.name}`}
+        preventClose={isSubmittingClosure}
+        size="md"
+      >
+        {closingOffice && (
+          <div className="space-y-4">
+            <div className="rounded-lg border border-amber-500/20 bg-amber-500/10 p-3 text-xs text-amber-200">
+              <p className="font-semibold text-amber-100 flex items-center gap-1.5">
+                <AlertTriangle className="h-4 w-4 text-amber-400 shrink-0" />
+                Emergency Office Availability Control
+              </p>
+              <p className="mt-1 text-[var(--color-text-secondary)]">
+                Marking this office as closed prevents visitors from selecting it during pre-registration and kiosk walk-in registration. If notified, currently registered visitors with visits to this office will receive an emergency SMS notification.
+              </p>
+            </div>
+
+            {closingOffice.closure_status === 'closed' && (
+              <div className="rounded-lg border border-red-500/30 bg-red-500/10 p-3 text-xs">
+                <span className="font-semibold text-red-400">Current Status: TEMPORARILY CLOSED</span>
+                {closingOffice.closure_reason && (
+                  <p className="mt-1 text-slate-300">
+                    <strong>Reason on file:</strong> {closingOffice.closure_reason}
+                  </p>
+                )}
+                {closingOffice.closed_at && (
+                  <p className="mt-0.5 text-slate-400 text-[10px]">
+                    Closed on: {new Date(closingOffice.closed_at).toLocaleString()}
+                  </p>
+                )}
+              </div>
+            )}
+
+            <div>
+              <label htmlFor="closure-reason-input" className="mb-1 block text-xs font-semibold text-[var(--color-text-primary)]">
+                Closure Reason / Public Notice <span className="text-red-400">*</span>
+              </label>
+              <textarea
+                id="closure-reason-input"
+                rows={3}
+                value={closureReasonInput}
+                onChange={(e) => setClosureReasonInput(e.target.value)}
+                placeholder="e.g. Office sanitized due to water maintenance, staff attending university emergency assembly."
+                className="w-full rounded-lg border border-white/10 bg-black/30 p-2.5 text-xs text-white placeholder-slate-500 focus:border-red-500 focus:outline-none"
+                maxLength={300}
+              />
+              <p className="mt-1 text-[11px] text-[var(--color-text-muted)]">
+                This reason is displayed to visitors attempting to select this office.
+              </p>
+            </div>
+
+            {closingOffice.closure_status !== 'closed' && (
+              <div className="flex items-center gap-2 rounded-lg border border-white/5 bg-white/[0.02] p-3">
+                <input
+                  type="checkbox"
+                  id="notify-visitors-closure"
+                  checked={notifyVisitorsClosure}
+                  onChange={(e) => setNotifyVisitorsClosure(e.target.checked)}
+                  className="rounded border-slate-700 bg-black/40 text-red-500 focus:ring-0"
+                />
+                <label htmlFor="notify-visitors-closure" className="text-xs text-slate-300 cursor-pointer">
+                  Send immediate SMS notification to currently registered visitors scheduled for this office
+                </label>
+              </div>
+            )}
+
+            <div className="flex justify-end gap-2 pt-2">
+              <Button
+                variant="secondary"
+                onClick={() => setClosingOffice(null)}
+                disabled={isSubmittingClosure}
+              >
+                Cancel
+              </Button>
+              {closingOffice.closure_status === 'closed' ? (
+                <Button
+                  onClick={() => void handleSaveOfficeClosure('open')}
+                  loading={isSubmittingClosure}
+                  className="bg-emerald-600 hover:bg-emerald-500 text-white"
+                >
+                  Reopen Office
+                </Button>
+              ) : (
+                <Button
+                  onClick={() => void handleSaveOfficeClosure('closed')}
+                  loading={isSubmittingClosure}
+                  className="bg-red-600 hover:bg-red-500 text-white"
+                >
+                  Confirm Emergency Closure
+                </Button>
+              )}
             </div>
           </div>
         )}

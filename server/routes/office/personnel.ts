@@ -48,7 +48,7 @@ export async function handleRequest(request: Request): Promise<Response> {
             }
             const { data: assignedOffices, error: aErr } = await admin
               .from('offices')
-              .select('id, name, description, active, verified, publication_status, requires_approval_before_pass, archived_at')
+              .select('id, name, description, active, verified, publication_status, requires_approval_before_pass, archived_at, closure_status, closure_reason, closed_at')
               .in('id', actor.assignedOfficeIds)
               .eq('active', true)
               .is('archived_at', null)
@@ -64,7 +64,7 @@ export async function handleRequest(request: Request): Promise<Response> {
 
       const { data: offices, error: offErr } = await admin
         .from('offices')
-        .select('id, name, description, active, verified, publication_status, requires_approval_before_pass, archived_at')
+        .select('id, name, description, active, verified, publication_status, requires_approval_before_pass, archived_at, closure_status, closure_reason, closed_at')
         .eq('active', true)
         .eq('publication_status', 'published')
         .is('archived_at', null)

@@ -21,6 +21,7 @@ import {
   Trash2,
   ShieldCheck,
   History,
+  AlertTriangle,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { BrandMark } from '@/components/BrandMark';
@@ -92,6 +93,67 @@ export function OfficeDashboardPage() {
   const [isSigningOut, setIsSigningOut] = useState(false);
   const [retryingEmailVisitId, setRetryingEmailVisitId] = useState<string | null>(null);
   const [noOfficeAssigned, setNoOfficeAssigned] = useState<boolean>(false);
+
+  // Office Emergency Closure State
+  const [isClosureModalOpen, setIsClosureModalOpen] = useState(false);
+  const [closureReasonInput, setClosureReasonInput] = useState('');
+  const [notifyVisitorsClosure, setNotifyVisitorsClosure] = useState(true);
+  const [isSubmittingClosure, setIsSubmittingClosure] = useState(false);
+
+  function openClosureModal() {
+    setClosureReasonInput(selectedOffice?.closure_reason || '');
+    setNotifyVisitorsClosure(true);
+    setIsClosureModalOpen(true);
+  }
+
+  async function handleToggleClosure(newStatus: 'open' | 'closed') {
+    if (!selectedOfficeId) return;
+    if (newStatus === 'closed' && !closureReasonInput.trim()) {
+      toast.error('Please enter a reason for the emergency office closure.');
+      return;
+    }
+    setIsSubmittingClosure(true);
+    try {
+      const token = await getAccessToken();
+      const res = await fetch('/api/office/closure', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({
+          officeId: selectedOfficeId,
+          status: newStatus,
+          reason: newStatus === 'closed' ? closureReasonInput.trim() : null,
+          notifyVisitors: newStatus === 'closed' ? notifyVisitorsClosure : false,
+        }),
+      });
+      const data = await res.json().catch(() => null);
+      if (!res.ok) {
+        throw new Error(data?.error || data?.message || 'Failed to update office closure');
+      }
+
+      toast.success(
+        newStatus === 'closed'
+          ? `Office closed. ${data.smsDispatchedCount ? `Sent SMS to ${data.smsDispatchedCount} visitors.` : ''}`
+          : 'Office reopened successfully.'
+      );
+
+      // Update local office state
+      setOffices((prev) =>
+        prev.map((o) =>
+          o.id === selectedOfficeId
+            ? { ...o, closure_status: newStatus, closure_reason: newStatus === 'closed' ? closureReasonInput.trim() : null }
+            : o
+        )
+      );
+      setIsClosureModalOpen(false);
+    } catch (err: any) {
+      toast.error(err.message || 'Error updating office closure status');
+    } finally {
+      setIsSubmittingClosure(false);
+    }
+  }
 
   async function handleSignOut() {
     setIsSigningOut(true);
@@ -856,6 +918,17 @@ export function OfficeDashboardPage() {
             </Button>
 
             <Button
+              variant={selectedOffice?.closure_status === 'closed' ? 'destructive' : 'secondary'}
+              size="sm"
+              onClick={openClosureModal}
+              disabled={!selectedOfficeId}
+              icon={<AlertTriangle className="h-3.5 w-3.5" />}
+              className={selectedOffice?.closure_status === 'closed' ? 'bg-red-700 text-white font-bold' : 'border-red-300 text-red-900 hover:bg-red-50'}
+            >
+              {selectedOffice?.closure_status === 'closed' ? 'Closed (Change)' : 'Emergency Closure'}
+            </Button>
+
+            <Button
               variant="secondary"
               size="sm"
               onClick={() => setIsPersonnelModalOpen(true)}
@@ -914,6 +987,33 @@ export function OfficeDashboardPage() {
             <p className="text-xs text-amber-800 max-w-md mx-auto leading-relaxed">
               Your staff account is currently not assigned to any university office. Please contact the University Administrator to assign you to an office.
             </p>
+          </div>
+        )}
+
+        {/* Office Emergency Closure Active Banner */}
+        {selectedOffice?.closure_status === 'closed' && (
+          <div className="mb-6 rounded-2xl border-2 border-red-500 bg-red-50 p-4 text-red-950 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 shadow-xs">
+            <div className="flex items-start gap-3">
+              <AlertTriangle className="h-5 w-5 text-red-700 mt-0.5 shrink-0" />
+              <div>
+                <p className="font-bold text-sm text-red-900">Emergency Closure Active</p>
+                <p className="text-xs text-red-800 mt-0.5">
+                  Closure Reason: <strong className="font-semibold">&ldquo;{selectedOffice.closure_reason || 'Temporary closure active'}&rdquo;</strong>
+                </p>
+                <p className="text-[11px] text-red-700 mt-0.5">
+                  Online registrations and Kiosk walk-ins for this office are currently paused.
+                </p>
+              </div>
+            </div>
+            <Button
+              size="sm"
+              variant="primary"
+              onClick={() => handleToggleClosure('open')}
+              loading={isSubmittingClosure}
+              className="bg-emerald-700 hover:bg-emerald-800 text-white whitespace-nowrap shrink-0 font-bold"
+            >
+              Reopen Office Now
+            </Button>
           </div>
         )}
 
@@ -1681,6 +1781,90 @@ export function OfficeDashboardPage() {
             <Button variant="secondary" onClick={() => setIsPersonnelModalOpen(false)}>
               Close Directory
             </Button>
+          </div>
+        </div>
+      </Modal>
+
+      {/* Office Emergency Closure Modal */}
+      <Modal
+        isOpen={isClosureModalOpen}
+        onClose={() => setIsClosureModalOpen(false)}
+        title={`Emergency Office Closure — ${selectedOffice?.name || 'Office'}`}
+      >
+        <div className="space-y-4 text-xs">
+          <div className="rounded-xl border border-amber-300 bg-amber-50 p-3.5 text-amber-950 flex items-start gap-2.5">
+            <AlertTriangle className="h-5 w-5 text-amber-700 shrink-0 mt-0.5" />
+            <div className="space-y-1">
+              <p className="font-bold text-xs text-amber-900">Immediate Availability Control</p>
+              <p className="leading-relaxed">
+                Use this option when an unforeseen emergency or urgent situation requires the office to close immediately.
+                Visitors attempting to register will see your closure explanation.
+              </p>
+            </div>
+          </div>
+
+          <div>
+            <label htmlFor="office-closure-reason" className="block text-xs font-bold text-[var(--color-text-primary)] mb-1">
+              Explanation / Reason for Visitors <span className="text-red-600">*</span>
+            </label>
+            <Input
+              id="office-closure-reason"
+              placeholder="e.g. Sudden air conditioning leak, resumes tomorrow at 8:00 AM"
+              value={closureReasonInput}
+              onChange={(e) => setClosureReasonInput(e.target.value)}
+              className="text-xs"
+              maxLength={250}
+            />
+            <p className="text-[11px] text-[var(--color-text-muted)] mt-1">
+              This message will be shown to visitors who select this office during online registration or at the walk-in kiosk.
+            </p>
+          </div>
+
+          <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] p-3">
+            <label className="flex items-start gap-2.5 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={notifyVisitorsClosure}
+                onChange={(e) => setNotifyVisitorsClosure(e.target.checked)}
+                className="mt-0.5 rounded border-gray-300 text-[#7A0A0A] focus:ring-[#7A0A0A]"
+              />
+              <div className="text-[11px] text-[var(--color-text-secondary)]">
+                <span className="font-bold text-[var(--color-text-primary)] block">
+                  Notify registered visitors via SMS text and Email
+                </span>
+                Automatically dispatches an urgent alert to visitors who have an active or approved visit scheduled for this office today.
+              </div>
+            </label>
+          </div>
+
+          <div className="flex justify-end gap-2.5 pt-2">
+            <Button
+              variant="secondary"
+              onClick={() => setIsClosureModalOpen(false)}
+              disabled={isSubmittingClosure}
+            >
+              Cancel
+            </Button>
+            {selectedOffice?.closure_status === 'closed' ? (
+              <Button
+                variant="primary"
+                onClick={() => handleToggleClosure('open')}
+                loading={isSubmittingClosure}
+                className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold"
+              >
+                Reopen Office
+              </Button>
+            ) : (
+              <Button
+                variant="destructive"
+                onClick={() => handleToggleClosure('closed')}
+                loading={isSubmittingClosure}
+                disabled={!closureReasonInput.trim()}
+                className="bg-red-700 hover:bg-red-800 text-white font-bold"
+              >
+                Confirm Emergency Closure
+              </Button>
+            )}
           </div>
         </div>
       </Modal>

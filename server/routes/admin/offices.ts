@@ -5,7 +5,7 @@ import { jsonResponse, readBearerToken, pgUuidSchema } from '../../http.js';
 import { getServerSupabaseClients } from '../../supabase.js';
 
 const OFFICE_SELECT_COLUMNS =
-  'id, name, description, active, verified, verified_at, verified_by, publication_status, requires_approval_before_pass, published_at, published_by, archived_at, archived_by, created_at, updated_at';
+  'id, name, description, active, verified, verified_at, verified_by, publication_status, requires_approval_before_pass, published_at, published_by, archived_at, archived_by, created_at, updated_at, closure_status, closure_reason, closed_at, closed_by';
 
 const createOfficeSchema = z.object({
   action: z.literal('create_office').optional(),

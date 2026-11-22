@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
-import { useSearchParams } from 'react-router-dom';
+import { useSearchParams, Link } from 'react-router-dom';
 import {
   Save,
   Trash2,
@@ -19,6 +19,7 @@ import {
   Send,
   Smartphone,
   Radio,
+  ArrowRight,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { Button, Card, Input, Select, ConfirmModal, Modal, FormField, Skeleton } from '@/components/ui';
@@ -883,9 +884,55 @@ export function AdminSettings() {
         </div>
       )}
 
+      {/* Settings Categories Navigation Bar */}
+      <nav aria-label="Settings categories" className="flex flex-wrap gap-2 pb-2 border-b border-[var(--color-border)]">
+        {[
+          { id: 'general', label: 'General', to: '/admin/settings?tab=general' },
+          { id: 'calendar', label: 'Campus Calendar', to: '/admin/settings?tab=calendar' },
+          { id: 'visitor_ux', label: 'Visitor Experience', to: '/admin/settings?tab=visitor_ux' },
+          { id: 'sms_alerts', label: 'SMS & Alerts', to: '/admin/settings?tab=sms_alerts' },
+          { id: 'security', label: 'Security & Privacy', to: '/admin/settings?tab=security' },
+          { id: 'retention', label: 'Data Retention', to: '/admin/settings?tab=retention' },
+          { id: 'personal', label: 'Personal Profile', to: '/admin/settings?tab=personal' },
+        ].map((tab) => {
+          const isActive = currentTab === tab.id;
+          return (
+            <Link
+              key={tab.id}
+              to={tab.to}
+              className={`flex items-center gap-2 px-3.5 py-2 rounded-lg text-xs font-semibold whitespace-nowrap transition-colors no-underline ${
+                isActive
+                  ? 'bg-[#7A0A0A] text-white shadow-xs'
+                  : 'bg-[var(--color-surface-subtle)] text-[var(--color-text-secondary)] hover:bg-[var(--color-surface-hover)] hover:text-[var(--color-text-primary)]'
+              }`}
+            >
+              <span>{tab.label}</span>
+            </Link>
+          );
+        })}
+      </nav>
+
       {/* ===================== TAB: GENERAL SYSTEM ===================== */}
       {currentTab === 'general' && (
         <div className="space-y-6">
+          <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between p-4 rounded-xl border border-blue-200 bg-blue-50 text-blue-950 gap-4 shadow-xs">
+            <div className="flex items-center gap-3">
+              <div className="h-9 w-9 rounded-lg bg-[#7A0A0A] text-white flex items-center justify-center shrink-0">
+                <Smartphone className="h-5 w-5" />
+              </div>
+              <div>
+                <p className="font-bold text-sm text-slate-900">SMS Gateway & Automated Visitor Alerts</p>
+                <p className="text-xs text-slate-700">Configure your spare Android phone gateway, overdue visitor exit texts, and emergency roll call broadcast settings.</p>
+              </div>
+            </div>
+            <Link
+              to="/admin/settings?tab=sms_alerts"
+              className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg bg-[#7A0A0A] text-white text-xs font-bold hover:bg-[#600808] transition-colors whitespace-nowrap no-underline shadow-xs shrink-0"
+            >
+              <span>Open SMS & Alerts Settings</span>
+              <ArrowRight className="h-3.5 w-3.5" />
+            </Link>
+          </div>
           <Card className="p-6">
             <h2 className="text-xl font-bold text-[var(--color-text-primary)]">Campus Access Hours</h2>
             <p className="mb-5 mt-2 text-sm leading-relaxed text-[var(--color-text-secondary)]">
