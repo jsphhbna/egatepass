@@ -4,6 +4,7 @@ import {
   Save,
   Trash2,
   AlertTriangle,
+  AlertCircle,
   Plus,
   Shield,
   Clock,
@@ -128,9 +129,23 @@ export function AdminSettings() {
   const [resetConfirmationInput, setResetConfirmationInput] = useState('');
   const [isResetting, setIsResetting] = useState(false);
 
-  // SMS Gateway Test State
+  // SMS Gateway Test State & Overdue Dispatch State
   const [testPhone, setTestPhone] = useState('');
   const [testSmsSending, setTestSmsSending] = useState(false);
+  const [testSmsStatus, setTestSmsStatus] = useState<{
+    state: 'idle' | 'accepted' | 'failed' | 'unknown';
+    message: string;
+    details?: string;
+  }>({ state: 'idle', message: '' });
+
+  const [overdueRecipientsLoading, setOverdueRecipientsLoading] = useState(false);
+  const [overdueRecipients, setOverdueRecipients] = useState<any[] | null>(null);
+  const [overdueUniqueCount, setOverdueUniqueCount] = useState<number>(0);
+  const [overdueDispatching, setOverdueDispatching] = useState(false);
+  const [overdueDispatchStatus, setOverdueDispatchStatus] = useState<{
+    state: 'idle' | 'accepted' | 'failed';
+    message: string;
+  }>({ state: 'idle', message: '' });
 
   async function handleSendTestSms() {
     if (!testPhone.trim()) {
@@ -138,6 +153,7 @@ export function AdminSettings() {
       return;
     }
     setTestSmsSending(true);
+    setTestSmsStatus({ state: 'idle', message: '' });
     try {
       const token = await getAccessToken();
       const res = await fetch('/api/admin/sms/send', {
@@ -153,15 +169,101 @@ export function AdminSettings() {
         }),
       });
       const data = await res.json().catch(() => null);
-      if (res.ok) {
-        toast.success(`Test SMS successfully dispatched to ${testPhone.trim()}! Check your phone.`);
+      if (res.ok && data?.success) {
+        toast.success('Test SMS accepted by Gateway and queued for dispatch! Physical delivery depends on SIM and network.');
+        setTestSmsStatus({
+          state: 'accepted',
+          message: 'Accepted by Gateway (Queued for Android SIM Dispatch)',
+          details: data?.transactionId ? `Tx ID: ${data.transactionId}` : undefined,
+        });
       } else {
-        toast.error(data?.error || data?.message || 'Failed to dispatch test SMS. Verify your Android app is running.');
+        const errMsg = data?.message || data?.error || 'Failed to dispatch test SMS. Verify your Android app is running.';
+        toast.error(errMsg);
+        setTestSmsStatus({
+          state: data?.status === 'unknown' ? 'unknown' : 'failed',
+          message: data?.status === 'unknown' ? 'Gateway Request Timed Out (Status Unknown)' : 'Gateway Dispatch Failed',
+          details: errMsg,
+        });
       }
     } catch (err: any) {
-      toast.error(err?.message || 'Error communicating with SMS backend.');
+      const errMsg = err?.message || 'Error communicating with SMS backend.';
+      toast.error(errMsg);
+      setTestSmsStatus({
+        state: 'failed',
+        message: 'Network Communication Error',
+        details: errMsg,
+      });
     } finally {
       setTestSmsSending(false);
+    }
+  }
+
+  async function handleFetchOverdueRecipients() {
+    setOverdueRecipientsLoading(true);
+    try {
+      const token = await getAccessToken();
+      const res = await fetch('/api/admin/sms/recipients?type=overdue', {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      const data = await res.json().catch(() => null);
+      if (res.ok) {
+        setOverdueRecipients(data?.recipients || []);
+        setOverdueUniqueCount(data?.uniqueRecipientCount ?? data?.count ?? 0);
+        toast.info(`Found ${data?.count || 0} overdue visitors (${data?.uniqueRecipientCount || 0} unique phone numbers).`);
+      } else {
+        toast.error(data?.message || data?.error || 'Failed to fetch overdue recipients.');
+      }
+    } catch (err: any) {
+      toast.error(err?.message || 'Error fetching overdue recipients.');
+    } finally {
+      setOverdueRecipientsLoading(false);
+    }
+  }
+
+  async function handleDispatchOverdueWarnings() {
+    if (!settings.smsOverdueWarningTemplate.trim()) {
+      toast.error('Overdue warning SMS message template cannot be empty.');
+      return;
+    }
+    setOverdueDispatching(true);
+    setOverdueDispatchStatus({ state: 'idle', message: '' });
+    try {
+      const token = await getAccessToken();
+      const res = await fetch('/api/admin/sms/send', {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${token}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          type: 'overdue',
+          message: settings.smsOverdueWarningTemplate.trim(),
+        }),
+      });
+      const data = await res.json().catch(() => null);
+      if (res.ok && data?.success) {
+        toast.success(`Overdue notices accepted: ${data.acceptedCount} queued by gateway for SIM dispatch (${data.failedCount || 0} failed).`);
+        setOverdueDispatchStatus({
+          state: 'accepted',
+          message: `Accepted by Gateway: ${data.acceptedCount} queued for Android SIM dispatch (${data.failedCount || 0} failed). Note: Confirms gateway queueing, not physical SIM delivery.`,
+        });
+        handleFetchOverdueRecipients();
+      } else {
+        const errMsg = data?.message || data?.error || 'Failed to dispatch overdue notices.';
+        toast.error(errMsg);
+        setOverdueDispatchStatus({
+          state: 'failed',
+          message: errMsg,
+        });
+      }
+    } catch (err: any) {
+      toast.error(err?.message || 'Network error dispatching overdue warnings.');
+      setOverdueDispatchStatus({
+        state: 'failed',
+        message: err?.message || 'Network error dispatching overdue warnings.',
+      });
+    } finally {
+      setOverdueDispatching(false);
     }
   }
 
@@ -1274,6 +1376,29 @@ export function AdminSettings() {
                 <p className="text-xs text-[var(--color-text-secondary)] mt-1.5">
                   Dispatches a single real SMS to test connection from your Supabase backend to the Android phone.
                 </p>
+
+                {testSmsStatus.state !== 'idle' && (
+                  <div className={`mt-3 p-3 rounded-xl border text-xs leading-relaxed ${
+                    testSmsStatus.state === 'accepted'
+                      ? 'border-emerald-200 bg-emerald-50 text-emerald-900'
+                      : testSmsStatus.state === 'unknown'
+                      ? 'border-amber-200 bg-amber-50 text-amber-900'
+                      : 'border-red-200 bg-red-50 text-red-900'
+                  }`}>
+                    <p className="font-bold flex items-center gap-1.5">
+                      {testSmsStatus.state === 'accepted' && <CheckCircle className="h-4 w-4 text-emerald-600 shrink-0" />}
+                      {testSmsStatus.state === 'unknown' && <AlertTriangle className="h-4 w-4 text-amber-600 shrink-0" />}
+                      {testSmsStatus.state === 'failed' && <AlertCircle className="h-4 w-4 text-red-600 shrink-0" />}
+                      {testSmsStatus.message}
+                    </p>
+                    {testSmsStatus.details && <p className="mt-1 opacity-90">{testSmsStatus.details}</p>}
+                    {testSmsStatus.state === 'accepted' && (
+                      <p className="mt-1.5 text-[11px] text-emerald-800">
+                        * Note: This confirms gateway queueing on your Android phone, not confirmed handset arrival. Real carrier delivery depends on your Android phone SIM card and cellular signal.
+                      </p>
+                    )}
+                  </div>
+                )}
               </div>
             </div>
           </Card>
@@ -1433,6 +1558,85 @@ export function AdminSettings() {
                 <p className="text-xs text-[var(--color-text-secondary)] mt-1">
                   Protects your Android phone SIM card from exceeding network carrier bulk texting limits.
                 </p>
+              </div>
+
+              {/* Overdue Visitors Recipient Preview & Manual Dispatch */}
+              <div className="pt-4 border-t border-[var(--color-border)] space-y-3">
+                <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
+                  <div>
+                    <h3 className="text-sm font-bold text-[var(--color-text-primary)]">
+                      Overdue Campus Visitors Roll Call & Alert
+                    </h3>
+                    <p className="text-xs text-[var(--color-text-secondary)]">
+                      Audit visitors who entered earlier today and have exceeded their pass validity without exiting.
+                    </p>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <Button
+                      type="button"
+                      variant="secondary"
+                      size="sm"
+                      onClick={handleFetchOverdueRecipients}
+                      loading={overdueRecipientsLoading}
+                      disabled={overdueRecipientsLoading}
+                    >
+                      Audit Overdue List
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="primary"
+                      size="sm"
+                      onClick={handleDispatchOverdueWarnings}
+                      loading={overdueDispatching}
+                      disabled={overdueDispatching || (overdueRecipients !== null && overdueRecipients.length === 0)}
+                      icon={<Send className="h-3.5 w-3.5" />}
+                    >
+                      Dispatch Overdue Alert
+                    </Button>
+                  </div>
+                </div>
+
+                {overdueDispatchStatus.state !== 'idle' && (
+                  <div className={`p-3 rounded-xl border text-xs leading-relaxed ${
+                    overdueDispatchStatus.state === 'accepted'
+                      ? 'border-emerald-200 bg-emerald-50 text-emerald-900'
+                      : 'border-red-200 bg-red-50 text-red-900'
+                  }`}>
+                    <p className="font-bold">{overdueDispatchStatus.message}</p>
+                  </div>
+                )}
+
+                {overdueRecipients !== null && (
+                  <div className="p-3.5 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface-subtle)] space-y-2">
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs font-bold text-[var(--color-text-primary)]">
+                        Eligible Overdue Visitors: {overdueRecipients.length} ({overdueUniqueCount} unique phone numbers)
+                      </span>
+                      <span className="text-xs font-semibold px-2 py-0.5 rounded-full bg-slate-200 text-slate-700">
+                        Daily Cap Safe
+                      </span>
+                    </div>
+                    {overdueRecipients.length === 0 ? (
+                      <p className="text-xs text-[var(--color-text-secondary)] italic">
+                        No overdue visitors currently inside campus. All active passes are within valid visiting hours.
+                      </p>
+                    ) : (
+                      <div className="max-h-36 overflow-y-auto space-y-1 text-xs text-[var(--color-text-secondary)]">
+                        {overdueRecipients.slice(0, 10).map((r, i) => (
+                          <div key={r.passId || i} className="flex items-center justify-between py-1 border-b border-[var(--color-border)]/50 last:border-0">
+                            <span className="font-medium text-[var(--color-text-primary)]">{r.visitorName}</span>
+                            <span className="font-mono text-[11px]">{r.maskedContact}</span>
+                          </div>
+                        ))}
+                        {overdueRecipients.length > 10 && (
+                          <p className="text-[11px] text-center pt-1 font-semibold text-[var(--color-text-muted)]">
+                            + {overdueRecipients.length - 10} more overdue visitors
+                          </p>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                )}
               </div>
             </div>
           </Card>

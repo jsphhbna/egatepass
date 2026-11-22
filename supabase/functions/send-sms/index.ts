@@ -164,6 +164,7 @@ serve(async (req: Request) => {
   // Gateway credentials check
   const username = Deno.env.get('SMS_GATEWAY_USERNAME');
   const password = Deno.env.get('SMS_GATEWAY_PASSWORD');
+  const deviceId = Deno.env.get('SMS_GATEWAY_DEVICE_ID')?.trim();
   let rawUrl = Deno.env.get('SMS_GATEWAY_URL') || 'https://api.sms-gate.app/3rdparty/v1/messages';
 
   if (!username || !password) {
@@ -186,6 +187,17 @@ serve(async (req: Request) => {
   }
   rawUrl = rawUrl.replace(':443', '');
   const parsed = new URL(rawUrl);
+
+  if (parsed.protocol !== 'https:' && parsed.hostname !== 'localhost' && parsed.hostname !== '127.0.0.1') {
+    return new Response(
+      JSON.stringify({
+        error: 'sms_gateway_https_required',
+        message: 'HTTPS is required for external SMS Gateway endpoint.',
+      }),
+      { status: 500, headers: { 'Content-Type': 'application/json' } }
+    );
+  }
+
   if (parsed.pathname === '/' || parsed.pathname === '') {
     parsed.pathname = '/3rdparty/v1/messages';
   } else if (!parsed.pathname.endsWith('/messages')) {
@@ -207,7 +219,9 @@ serve(async (req: Request) => {
           text: messageText,
         },
         phoneNumbers: [cleanPhone],
+        ...(deviceId ? { deviceId } : {}),
       }),
+      signal: AbortSignal.timeout(15_000),
     });
 
     const result = await gatewayRes.json().catch(() => null);

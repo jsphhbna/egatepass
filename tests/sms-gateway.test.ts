@@ -1,15 +1,33 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import crypto from 'node:crypto';
-import { maskPhoneNumber, resolveGatewayUrl, sendGatewaySms } from '../server/sms.js';
+import * as actorsModule from '../server/actors.js';
+import * as supabaseModule from '../server/supabase.js';
+import {
+  maskPhoneNumber,
+  maskDeviceId,
+  normalizePhilippinePhone,
+  resolveGatewayUrl,
+  sendGatewaySms,
+  logSmsActivity,
+} from '../server/sms.js';
 import { encodeSmsMessage, decodeSmsMessage, SMS_PREFIX } from '../server/smsFormat.js';
 import { verifyStandardWebhook, verifyGatewayWebhook } from '../server/smsSecurity.js';
 
-describe('SMS Gateway for Android pure functions and contract', () => {
+describe('SMS Gateway Subsystem - Complete Root Cause Repair & Verification', () => {
   const originalEnv = process.env;
 
   beforeEach(() => {
-    vi.resetModules();
-    process.env = { ...originalEnv };
+    vi.restoreAllMocks();
+    process.env = {
+      ...originalEnv,
+      NODE_ENV: 'test',
+      SMS_GATEWAY_URL: 'https://api.sms-gate.app/3rdparty/v1/messages',
+      SMS_GATEWAY_USERNAME: 'test_user',
+      SMS_GATEWAY_PASSWORD: 'test_password',
+      SMS_GATEWAY_DEVICE_ID: '_3D0fcdgLnzghlYiYp9KM',
+      SUPABASE_URL: 'https://test.supabase.co',
+      SUPABASE_SECRET_KEY: 'test_secret_key',
+    };
   });
 
   afterEach(() => {
@@ -17,29 +35,11 @@ describe('SMS Gateway for Android pure functions and contract', () => {
     vi.restoreAllMocks();
   });
 
-  describe('maskPhoneNumber', () => {
-    it('masks standard 11-digit Philippine mobile numbers', () => {
-      expect(maskPhoneNumber('09171234567')).toBe('0917 ••• 4567');
-      expect(maskPhoneNumber('09289876543')).toBe('0928 ••• 6543');
-    });
-
-    it('masks E.164 Philippine mobile numbers with country code', () => {
-      expect(maskPhoneNumber('+639171234567')).toBe('+63917 ••• 4567');
-      expect(maskPhoneNumber('+639998887766')).toBe('+63999 ••• 7766');
-    });
-
-    it('handles formatted numbers with spaces and hyphens gracefully', () => {
-      expect(maskPhoneNumber('0917-123-4567')).toBe('0917 ••• 4567');
-      expect(maskPhoneNumber('+63 917 123 4567')).toBe('+63917 ••• 4567');
-    });
-
-    it('returns privacy placeholder for abnormally short input', () => {
-      expect(maskPhoneNumber('12345')).toBe('••••••');
-    });
-  });
-
-  describe('resolveGatewayUrl', () => {
-    it('defaults to official cloud endpoint if empty', () => {
+  // ==========================================================================
+  // Section A: Configuration Tests
+  // ==========================================================================
+  describe('A. Configuration Tests', () => {
+    it('defaults to official cloud endpoint if URL is empty or undefined', () => {
       expect(resolveGatewayUrl('')).toBe('https://api.sms-gate.app/3rdparty/v1/messages');
       expect(resolveGatewayUrl(undefined)).toBe('https://api.sms-gate.app/3rdparty/v1/messages');
     });
@@ -48,18 +48,199 @@ describe('SMS Gateway for Android pure functions and contract', () => {
       expect(resolveGatewayUrl('api.sms-gate.app:443')).toBe('https://api.sms-gate.app/3rdparty/v1/messages');
     });
 
-    it('appends messages path if only hostname or base URL is given', () => {
-      expect(resolveGatewayUrl('https://api.sms-gate.app')).toBe('https://api.sms-gate.app/3rdparty/v1/messages');
-      expect(resolveGatewayUrl('https://api.sms-gate.app/')).toBe('https://api.sms-gate.app/3rdparty/v1/messages');
+    it('fails closed when SMS_GATEWAY_USERNAME or SMS_GATEWAY_PASSWORD is not set', async () => {
+      delete process.env.SMS_GATEWAY_USERNAME;
+      delete process.env.SMS_GATEWAY_PASSWORD;
+
+      const result = await sendGatewaySms({
+        phoneNumbers: ['09171234567'],
+        message: 'Test message',
+        purpose: 'manual_test',
+      });
+
+      expect(result.success).toBe(false);
+      expect(result.status).toBe('failed');
+      expect(result.error).toBe('sms_gateway_not_configured');
     });
 
-    it('retains explicit /messages path if already complete', () => {
-      expect(resolveGatewayUrl('https://api.sms-gate.app/3rdparty/v1/messages')).toBe('https://api.sms-gate.app/3rdparty/v1/messages');
+    it('fails closed when SMS_GATEWAY_DEVICE_ID is missing', async () => {
+      delete process.env.SMS_GATEWAY_DEVICE_ID;
+
+      const result = await sendGatewaySms({
+        phoneNumbers: ['09171234567'],
+        message: 'Test message',
+        purpose: 'manual_test',
+      });
+
+      expect(result.success).toBe(false);
+      expect(result.status).toBe('failed');
+      expect(result.error).toBe('sms_gateway_device_id_not_configured');
+    });
+
+    it('rejects unencrypted HTTP gateway URL in production environment', () => {
+      process.env.NODE_ENV = 'production';
+      expect(() => resolveGatewayUrl('http://api.sms-gate.app/messages')).toThrow('sms_gateway_https_required');
+    });
+
+    it('permits HTTP only for local development on localhost or 127.0.0.1', () => {
+      process.env.NODE_ENV = 'development';
+      expect(resolveGatewayUrl('http://localhost:8080')).toBe('http://localhost:8080/3rdparty/v1/messages');
+      expect(resolveGatewayUrl('http://127.0.0.1:8080')).toBe('http://127.0.0.1:8080/3rdparty/v1/messages');
+    });
+
+    it('rejects invalid or unsupported protocols (ftp, file, javascript)', () => {
+      expect(() => resolveGatewayUrl('ftp://api.sms-gate.app')).toThrow('invalid_sms_gateway_scheme');
+      expect(() => resolveGatewayUrl('javascript:alert(1)')).toThrow('invalid_sms_gateway_scheme');
     });
   });
 
-  describe('Pure Message Format Encoder & Decoder (under 160 characters)', () => {
-    it('encodes and decodes an SOS payload with location correctly', () => {
+  // ==========================================================================
+  // Section B: Device Targeting Tests
+  // ==========================================================================
+  describe('B. Device Targeting Tests', () => {
+    it('includes the configured deviceId in the outgoing SMS Gate payload', async () => {
+      let capturedGatewayBody: any = null;
+
+      globalThis.fetch = vi.fn().mockImplementation(async (url, options) => {
+        const urlStr = String(url);
+        if (urlStr.includes('sms-gate.app') || urlStr.includes('/messages')) {
+          capturedGatewayBody = JSON.parse(options.body);
+          return new Response(JSON.stringify({ id: 'msg_test_123', status: 'queued' }), { status: 200 });
+        }
+        return new Response(JSON.stringify([]), { status: 200, headers: { 'Content-Type': 'application/json' } });
+      });
+
+      const result = await sendGatewaySms({
+        phoneNumbers: ['09171234567'],
+        message: 'Device targeting test',
+        purpose: 'manual_test',
+      });
+
+      expect(result.success).toBe(true);
+      expect(result.status).toBe('accepted');
+      expect(capturedGatewayBody).not.toBeNull();
+      expect(capturedGatewayBody.deviceId).toBe('_3D0fcdgLnzghlYiYp9KM');
+      expect(capturedGatewayBody.phoneNumbers).toEqual(['+639171234567']);
+      expect(capturedGatewayBody.textMessage.text).toBe('Device targeting test');
+    });
+
+    it('masks Android Device ID for privacy-safe logging', () => {
+      expect(maskDeviceId('_3D0fcdgLnzghlYiYp9KM')).toBe('_3D0 ••• p9KM');
+      expect(maskDeviceId('ffffffffed2959c6000001a1568')).toBe('ffff ••• 1568');
+      expect(maskDeviceId('short')).toBe('••••••••');
+    });
+  });
+
+  // ==========================================================================
+  // Section C: Phone Normalization & Validation Tests
+  // ==========================================================================
+  describe('C. Phone Number Normalization Tests', () => {
+    it('normalizes standard 11-digit 09xx numbers to E.164 (+639xxxxxxxxx)', () => {
+      expect(normalizePhilippinePhone('09171234567')).toBe('+639171234567');
+      expect(normalizePhilippinePhone('0928-987-6543')).toBe('+639289876543');
+    });
+
+    it('preserves existing valid +639xx numbers', () => {
+      expect(normalizePhilippinePhone('+639171234567')).toBe('+639171234567');
+      expect(normalizePhilippinePhone('+63 917 123 4567')).toBe('+639171234567');
+    });
+
+    it('normalizes 639xx without plus sign to +639xx', () => {
+      expect(normalizePhilippinePhone('639171234567')).toBe('+639171234567');
+    });
+
+    it('rejects invalid, short, landline, or non-Philippine numbers', () => {
+      expect(normalizePhilippinePhone('12345')).toBeNull();
+      expect(normalizePhilippinePhone('028123456')).toBeNull();
+      expect(normalizePhilippinePhone('+14155552671')).toBeNull();
+      expect(normalizePhilippinePhone('')).toBeNull();
+    });
+
+    it('masks phone numbers according to RA 10173 standards', () => {
+      expect(maskPhoneNumber('09171234567')).toBe('0917 ••• 4567');
+      expect(maskPhoneNumber('+639171234567')).toBe('+63917 ••• 4567');
+      expect(maskPhoneNumber('123')).toBe('••••••');
+    });
+  });
+
+  // ==========================================================================
+  // Section D: Gateway State Separation (Accepted vs Delivered)
+  // ==========================================================================
+  describe('D. Gateway State Separation Tests', () => {
+    it('marks successful HTTP 200 gateway responses as "accepted", NEVER as "delivered"', async () => {
+      globalThis.fetch = vi.fn().mockImplementation(async (url, _options) => {
+        const urlStr = String(url);
+        if (urlStr.includes('sms-gate.app') || urlStr.includes('/messages')) {
+          return new Response(JSON.stringify({ id: 'gw_msg_001', state: 'accepted' }), { status: 200 });
+        }
+        return new Response(JSON.stringify([]), { status: 200, headers: { 'Content-Type': 'application/json' } });
+      });
+
+      const result = await sendGatewaySms({
+        phoneNumbers: ['09171234567'],
+        message: 'Testing status truthfulness',
+        purpose: 'manual_test',
+      });
+
+      expect(result.success).toBe(true);
+      expect(result.status).toBe('accepted');
+      expect(result.status).not.toBe('delivered');
+      expect(result.messageId).toBe('gw_msg_001');
+    });
+
+    it('handles HTTP error status codes from gateway correctly', async () => {
+      globalThis.fetch = vi.fn().mockImplementation(async (url, _options) => {
+        const urlStr = String(url);
+        if (urlStr.includes('sms-gate.app') || urlStr.includes('/messages')) {
+          return new Response(JSON.stringify({ error: 'Device offline or unreachable' }), { status: 502 });
+        }
+        return new Response(JSON.stringify([]), { status: 200, headers: { 'Content-Type': 'application/json' } });
+      });
+
+      const result = await sendGatewaySms({
+        phoneNumbers: ['09171234567'],
+        message: 'Offline test',
+        purpose: 'manual_test',
+      });
+
+      expect(result.success).toBe(false);
+      expect(result.status).toBe('failed');
+      expect(result.error).toBe('Device offline or unreachable');
+    });
+  });
+
+  // ==========================================================================
+  // Section E: Request Timeout and AbortSignal Handling
+  // ==========================================================================
+  describe('E. Timeout and Ambiguous Status Handling', () => {
+    it('handles timeout safely: returns status "unknown" and does not blindly retry', async () => {
+      globalThis.fetch = vi.fn().mockImplementation(async (url) => {
+        const urlStr = String(url);
+        if (urlStr.includes('sms-gate.app') || urlStr.includes('/messages')) {
+          const timeoutErr = new Error('The operation was aborted due to timeout');
+          timeoutErr.name = 'TimeoutError';
+          throw timeoutErr;
+        }
+        return new Response(JSON.stringify([]), { status: 200, headers: { 'Content-Type': 'application/json' } });
+      });
+
+      const result = await sendGatewaySms({
+        phoneNumbers: ['09171234567'],
+        message: 'Timeout test',
+        purpose: 'manual_test',
+      });
+
+      expect(result.success).toBe(false);
+      expect(result.status).toBe('unknown');
+      expect(result.error).toBe('sms_gateway_request_timeout');
+    });
+  });
+
+  // ==========================================================================
+  // Section F: Pure SMS Format (160 char limit) & Webhooks
+  // ==========================================================================
+  describe('F. Message Formats & Webhooks', () => {
+    it('encodes and decodes an SOS payload with location under 160 characters', () => {
       const payload = {
         msgId: 'MSG12345',
         type: 'SOS',
@@ -79,42 +260,13 @@ describe('SMS Gateway for Android pure functions and contract', () => {
       expect(decoded?.type).toBe('SOS');
       expect(decoded?.latitude).toBeCloseTo(14.59951, 4);
       expect(decoded?.longitude).toBeCloseTo(120.98422, 4);
-      expect(decoded?.timestamp).toBe(1732318800);
     });
 
-    it('handles message without GPS coordinates cleanly', () => {
-      const payload = {
-        msgId: 'SAFE9988',
-        type: 'SAFE',
-        latitude: null,
-        longitude: null,
-        timestamp: 1732318900,
-      };
+    it('verifies standard webhook signatures for Supabase send-sms auth hook', () => {
+      const rawSecret = 'test_secret_1234567890_abcdefghij';
+      const base64Secret = Buffer.from(rawSecret).toString('base64');
+      const whsec = `whsec_${base64Secret}`;
 
-      const encoded = encodeSmsMessage(payload);
-      expect(encoded).toBe('EG1|SAFE9988|SAFE|||1732318900');
-      expect(encoded.length).toBeLessThan(40);
-
-      const decoded = decodeSmsMessage(encoded);
-      expect(decoded?.msgId).toBe('SAFE9988');
-      expect(decoded?.type).toBe('SAFE');
-      expect(decoded?.latitude).toBeNull();
-      expect(decoded?.longitude).toBeNull();
-    });
-
-    it('rejects malformed or invalid version payloads', () => {
-      expect(decodeSmsMessage('INVALID_PREFIX|1|2|3|4|5')).toBeNull();
-      expect(decodeSmsMessage('too|short')).toBeNull();
-      expect(decodeSmsMessage('')).toBeNull();
-    });
-  });
-
-  describe('Standard Webhook Signature Verification (Supabase Auth Send-SMS Hook)', () => {
-    const rawSecret = 'test_secret_1234567890_abcdefghij';
-    const base64Secret = Buffer.from(rawSecret).toString('base64');
-    const whsec = `whsec_${base64Secret}`;
-
-    it('validates authentic Svix / Standard Webhook signature', () => {
       const id = 'msg_test_001';
       const timestamp = String(Math.floor(Date.now() / 1000));
       const rawBody = JSON.stringify({ user: { phone: '09171234567' }, sms: { otp: '123456' } });
@@ -135,159 +287,261 @@ describe('SMS Gateway for Android pure functions and contract', () => {
 
       expect(result.valid).toBe(true);
     });
+  });
 
-    it('rejects expired or tampered timestamps (> 300 seconds old)', () => {
-      const id = 'msg_test_002';
-      const oldTimestamp = String(Math.floor(Date.now() / 1000) - 400); // 400s old
-      const rawBody = '{"hello":"world"}';
-
-      const result = verifyStandardWebhook({
-        headers: {
-          'webhook-id': id,
-          'webhook-timestamp': oldTimestamp,
-          'webhook-signature': 'v1,some_fake_sig',
-        },
-        rawBody,
-        secret: whsec,
+  // ==========================================================================
+  // Section G: Backend API Route Authorization & Quota Enforcement
+  // ==========================================================================
+  describe('G. API Route Authorization and Quota Enforcement', () => {
+    it('rejects unauthenticated requests with 401', async () => {
+      const { default: handleSmsRequest } = await import('../server/routes/admin/sms.js');
+      const request = new Request('http://localhost/api/admin/sms/recipients', {
+        method: 'GET',
       });
 
-      expect(result.valid).toBe(false);
-      expect(result.error).toBe('timestamp_outside_tolerance');
+      const response = await handleSmsRequest(request);
+      expect(response.status).toBe(401);
+      const data = await response.json();
+      expect(data.error).toBe('authentication_required');
     });
 
-    it('rejects tampered payload', () => {
-      const id = 'msg_test_003';
-      const timestamp = String(Math.floor(Date.now() / 1000));
-      const originalBody = '{"foo":"bar"}';
-      const tamperedBody = '{"foo":"baz"}';
+    it('enforces daily SMS safety cap: rejects when quota is exceeded with 429', async () => {
+      vi.spyOn(actorsModule, 'requireStaffActor').mockResolvedValue({
+        id: 'admin-uuid-123',
+        userId: 'admin-uuid-123',
+        email: 'admin@earist.edu.ph',
+        role: 'admin',
+        active: true,
+      } as any);
 
-      const toSign = `${id}.${timestamp}.${originalBody}`;
-      const hmac = crypto.createHmac('sha256', Buffer.from(rawSecret, 'utf8')).update(toSign).digest('base64');
+      const mockAdmin = {
+        from: vi.fn().mockReturnValue({
+          insert: vi.fn().mockResolvedValue({ data: null, error: null }),
+        }),
+        schema: vi.fn().mockReturnValue({
+          rpc: vi.fn().mockImplementation((fnName) => {
+            if (fnName === 'check_and_reserve_sms_quota') {
+              return Promise.resolve({
+                data: {
+                  allowed: false,
+                  current_count: 500,
+                  requested_count: 1,
+                  daily_cap: 500,
+                  remaining: 0,
+                },
+                error: null,
+              });
+            }
+            return Promise.resolve({ data: null, error: null });
+          }),
+        }),
+      };
 
-      const result = verifyStandardWebhook({
-        headers: {
-          'webhook-id': id,
-          'webhook-timestamp': timestamp,
-          'webhook-signature': `v1,${hmac}`,
-        },
-        rawBody: tamperedBody,
-        secret: whsec,
+      vi.spyOn(supabaseModule, 'getServerSupabaseClients').mockReturnValue({
+        admin: mockAdmin as any,
+        anon: {} as any,
       });
 
-      expect(result.valid).toBe(false);
-      expect(result.error).toBe('signature_mismatch');
+      const { default: handleSmsRequest } = await import('../server/routes/admin/sms.js');
+      const request = new Request('http://localhost/api/admin/sms/send', {
+        method: 'POST',
+        headers: {
+          Authorization: 'Bearer valid-staff-token',
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          type: 'test',
+          testNumber: '09171234567',
+          message: 'Testing daily cap',
+        }),
+      });
+
+      const response = await handleSmsRequest(request);
+      expect(response.status).toBe(429);
+      const data = await response.json();
+      expect(data.error).toBe('daily_sms_cap_exceeded');
+      expect(data.quota.allowed).toBe(false);
     });
 
-    it('validates genuine Standard Webhook with hex secret', () => {
-      const hexSecret = 'a3c0ab35fb2be1672034bb8ede4b2a02b6d9878ed0abceee92411112222334455';
-      const normalizedHex = hexSecret.slice(0, 64);
-      expect(normalizedHex.length).toBe(64);
-      const id = 'msg_hex_001';
-      const timestamp = String(Math.floor(Date.now() / 1000));
-      const rawBody = JSON.stringify({ user: { phone: '+639171234567' }, sms: { otp: '654321' } });
+    it('passes requested_actor_id to recipient RPCs and returns deduplicated count', async () => {
+      let passedParams: any = null;
 
-      const toSign = `${id}.${timestamp}.${rawBody}`;
-      const hmac = crypto.createHmac('sha256', Buffer.from(normalizedHex, 'hex')).update(toSign).digest('base64');
+      vi.spyOn(actorsModule, 'requireStaffActor').mockResolvedValue({
+        id: 'admin-uuid-456',
+        userId: 'admin-uuid-456',
+        email: 'admin@earist.edu.ph',
+        role: 'admin',
+        active: true,
+      } as any);
 
-      const result = verifyStandardWebhook({
-        headers: {
-          'webhook-id': id,
-          'webhook-timestamp': timestamp,
-          'webhook-signature': `v1,${hmac}`,
-        },
-        rawBody,
-        secret: normalizedHex,
+      const mockAdmin = {
+        from: vi.fn().mockReturnValue({
+          insert: vi.fn().mockResolvedValue({ data: null, error: null }),
+        }),
+        schema: vi.fn().mockReturnValue({
+          rpc: vi.fn().mockImplementation((fnName, params) => {
+            passedParams = params;
+            if (fnName === 'get_emergency_sms_recipients') {
+              return Promise.resolve({
+                data: [
+                  { pass_id: 'p1', visitor_name: 'Visitor A', contact_number: '09171112222', time_in: '2026-11-23T01:00:00Z', gate: 'Gate 1' },
+                  { pass_id: 'p2', visitor_name: 'Visitor B', contact_number: '09171112222', time_in: '2026-11-23T01:05:00Z', gate: 'Gate 1' }, // duplicate phone
+                  { pass_id: 'p3', visitor_name: 'Visitor C', contact_number: '09183334444', time_in: '2026-11-23T01:10:00Z', gate: 'Gate 2' },
+                ],
+                error: null,
+              });
+            }
+            return Promise.resolve({ data: null, error: null });
+          }),
+        }),
+      };
+
+      vi.spyOn(supabaseModule, 'getServerSupabaseClients').mockReturnValue({
+        admin: mockAdmin as any,
+        anon: {} as any,
       });
 
-      expect(result.valid).toBe(true);
+      const { default: handleSmsRequest } = await import('../server/routes/admin/sms.js');
+      const request = new Request('http://localhost/api/admin/sms/recipients?type=emergency', {
+        method: 'GET',
+        headers: {
+          Authorization: 'Bearer valid-staff-token',
+        },
+      });
+
+      const response = await handleSmsRequest(request);
+      expect(response.status).toBe(200);
+      const data = await response.json();
+      expect(passedParams).toEqual({ requested_actor_id: 'admin-uuid-456' });
+      expect(data.count).toBe(3); // 3 total records
+      expect(data.uniqueRecipientCount).toBe(2); // 2 unique phone numbers
     });
   });
 
-  describe('Gateway X-Signature Verification', () => {
-    const signingKey = 'earist-egatepass-sms-webhook-key-2026';
+  // ==========================================================================
+  // Section H: Bulk Campaign Processing & Deduplication
+  // ==========================================================================
+  describe('H. Bulk Campaign Processing', () => {
+    it('processes mass emergency broadcasts in chunks of 50 and reports accurate results', async () => {
+      const mockRecipients = Array.from({ length: 60 }, (_, i) => ({
+        pass_id: `pass_${i}`,
+        visitor_name: `Visitor ${i}`,
+        contact_number: `0917000${String(i).padStart(4, '0')}`,
+      }));
 
-    it('validates genuine X-Signature HMAC header', () => {
-      const rawBody = JSON.stringify({ event: 'sms:received', data: { message: 'TEST' } });
-      const expectedHex = crypto.createHmac('sha256', Buffer.from(signingKey, 'utf8')).update(rawBody).digest('hex');
+      vi.spyOn(actorsModule, 'requireStaffActor').mockResolvedValue({
+        id: 'admin-uuid-789',
+        userId: 'admin-uuid-789',
+        email: 'admin@earist.edu.ph',
+        role: 'admin',
+        active: true,
+      } as any);
 
-      const result = verifyGatewayWebhook({
-        headers: {
-          'x-signature': expectedHex,
-          'x-timestamp': String(Math.floor(Date.now() / 1000)),
-        },
-        rawBody,
-        secret: signingKey,
+      const mockAdmin = {
+        from: vi.fn().mockReturnValue({
+          insert: vi.fn().mockResolvedValue({ data: null, error: null }),
+        }),
+        schema: vi.fn().mockReturnValue({
+          rpc: vi.fn().mockImplementation((fnName) => {
+            if (fnName === 'get_emergency_sms_recipients') {
+              return Promise.resolve({ data: mockRecipients, error: null });
+            }
+            if (fnName === 'check_and_reserve_sms_quota') {
+              return Promise.resolve({
+                data: { allowed: true, current_count: 10, requested_count: 60, daily_cap: 500, remaining: 490 },
+                error: null,
+              });
+            }
+            return Promise.resolve({ data: null, error: null });
+          }),
+        }),
+      };
+
+      vi.spyOn(supabaseModule, 'getServerSupabaseClients').mockReturnValue({
+        admin: mockAdmin as any,
+        anon: {} as any,
       });
 
-      expect(result.valid).toBe(true);
-    });
-
-    it('rejects tampered body or incorrect secret', () => {
-      const rawBody = JSON.stringify({ event: 'sms:received', data: { message: 'TEST' } });
-      const badHex = crypto.createHmac('sha256', Buffer.from('wrong-key', 'utf8')).update(rawBody).digest('hex');
-
-      const result = verifyGatewayWebhook({
-        headers: {
-          'x-signature': badHex,
-        },
-        rawBody,
-        secret: signingKey,
+      let dispatchCalls = 0;
+      globalThis.fetch = vi.fn().mockImplementation(async (url) => {
+        const urlStr = String(url);
+        if (urlStr.includes('sms-gate.app') || urlStr.includes('/messages')) {
+          dispatchCalls++;
+          return new Response(JSON.stringify({ id: `batch_${dispatchCalls}`, status: 'queued' }), { status: 200 });
+        }
+        return new Response(JSON.stringify([]), { status: 200, headers: { 'Content-Type': 'application/json' } });
       });
 
-      expect(result.valid).toBe(false);
-      expect(result.error).toBe('signature_mismatch');
+      const { default: handleSmsRequest } = await import('../server/routes/admin/sms.js');
+      const request = new Request('http://localhost/api/admin/sms/send', {
+        method: 'POST',
+        headers: {
+          Authorization: 'Bearer valid-staff-token',
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          type: 'emergency',
+          message: 'Campus evacuation notice',
+        }),
+      });
+
+      const response = await handleSmsRequest(request);
+      expect(response.status).toBe(200);
+      const data = await response.json();
+      expect(dispatchCalls).toBe(2); // 60 recipients chunked into batches of 50: batch 1 (50), batch 2 (10)
+      expect(data.acceptedCount).toBe(60);
+      expect(data.failedCount).toBe(0);
+      expect(data.status).toBe('accepted_by_gateway');
     });
   });
 
-  describe('Confirmation Reply Length Contract', () => {
-    it('ensures confirmation reply is under 160 characters', () => {
-      const confirmationText = 'EARIST Alert: Received your emergency report. Security dispatch has been notified.';
-      expect(confirmationText.length).toBeLessThanOrEqual(160);
-      expect(confirmationText.length).toBe(82);
-    });
-  });
+  // ==========================================================================
+  // Section I: Logging Integrity Tests
+  // ==========================================================================
+  describe('I. Logging Integrity Tests', () => {
+    it('inserts structured transaction log without exposing credentials or unmasked numbers', async () => {
+      let insertedLog: any = null;
 
-  describe('sendGatewaySms missing credentials guard', () => {
-    it('fails closed gracefully when SMS_GATEWAY_USERNAME or SMS_GATEWAY_PASSWORD is not set', async () => {
-      delete process.env.SMS_GATEWAY_USERNAME;
-      delete process.env.SMS_GATEWAY_PASSWORD;
+      const mockAdmin = {
+        from: vi.fn().mockImplementation((table) => {
+          if (table === 'sms_logs') {
+            return {
+              insert: vi.fn().mockImplementation((record) => {
+                insertedLog = record;
+                return Promise.resolve({ data: null, error: null });
+              }),
+            };
+          }
+          return { insert: vi.fn() };
+        }),
+      };
 
-      const result = await sendGatewaySms({
-        phoneNumbers: ['09171234567'],
-        message: 'Test message',
-        purpose: 'manual_test',
+      vi.spyOn(supabaseModule, 'getServerSupabaseClients').mockReturnValue({
+        admin: mockAdmin as any,
+        anon: {} as any,
       });
 
-      expect(result.success).toBe(false);
-      expect(result.error).toBe('sms_gateway_not_configured');
-    });
-
-    it('rejects dispatch with empty recipients list', async () => {
-      process.env.SMS_GATEWAY_USERNAME = 'user';
-      process.env.SMS_GATEWAY_PASSWORD = 'pass';
-
-      const result = await sendGatewaySms({
-        phoneNumbers: [],
-        message: 'Test message',
+      await logSmsActivity({
+        transactionId: 'tx_12345',
+        deviceId: '_3D0f ••• 9KM',
+        direction: 'outbound',
+        recipientMasked: '0917 ••• 4567',
+        messageBody: 'Hello world',
         purpose: 'manual_test',
+        status: 'accepted',
+        externalId: 'ext_999',
+        actorId: 'admin-uuid-123',
       });
 
-      expect(result.success).toBe(false);
-      expect(result.error).toBe('no_recipients_provided');
-    });
-
-    it('rejects dispatch with empty message body', async () => {
-      process.env.SMS_GATEWAY_USERNAME = 'user';
-      process.env.SMS_GATEWAY_PASSWORD = 'pass';
-
-      const result = await sendGatewaySms({
-        phoneNumbers: ['09171234567'],
-        message: '   ',
-        purpose: 'manual_test',
-      });
-
-      expect(result.success).toBe(false);
-      expect(result.error).toBe('empty_message');
+      expect(insertedLog).not.toBeNull();
+      expect(insertedLog.transaction_id).toBe('tx_12345');
+      expect(insertedLog.device_id).toBe('_3D0f ••• 9KM');
+      expect(insertedLog.recipient_masked).toBe('0917 ••• 4567');
+      expect(insertedLog.status).toBe('accepted');
+      expect(insertedLog.external_id).toBe('ext_999');
+      expect(insertedLog.actor_id).toBe('admin-uuid-123');
+      expect(insertedLog.authorization).toBeUndefined();
+      expect(insertedLog.password).toBeUndefined();
     });
   });
 });

@@ -12,6 +12,7 @@ import {
   Send,
   ShieldAlert,
   Radio,
+  CheckCircle,
 } from 'lucide-react';
 
 interface EmergencyEvacuationPass {
@@ -50,10 +51,20 @@ export function AdminEmergency() {
     'EMERGENCY: EARIST campus evacuation in progress. Please exit calmly via the nearest gate.'
   );
   const [isSendingSms, setIsSendingSms] = useState(false);
+  const [verifiedRecipientCount, setVerifiedRecipientCount] = useState<number | null>(null);
+  const [verifiedUniquePhones, setVerifiedUniquePhones] = useState<number | null>(null);
+  const [recipientQueryLoading, setRecipientQueryLoading] = useState(false);
+  const [broadcastResult, setBroadcastResult] = useState<{
+    acceptedCount: number;
+    failedCount: number;
+    total: number;
+  } | null>(null);
 
-  // Load configured templates from settings when opening modal
+  // Load configured templates and verified recipients from settings & RPC when opening modal
   useEffect(() => {
     if (showSmsModal) {
+      setRecipientQueryLoading(true);
+      setBroadcastResult(null);
       getAccessToken().then(async (token) => {
         if (!token) return;
         try {
@@ -66,7 +77,19 @@ export function AdminEmergency() {
               setSmsTemplates(data.smsEmergencyTemplates);
             }
           }
-        } catch {}
+
+          const recRes = await fetch('/api/admin/sms/recipients?type=emergency', {
+            headers: { Authorization: `Bearer ${token}` },
+          });
+          if (recRes.ok) {
+            const recData = await recRes.json();
+            setVerifiedRecipientCount(recData?.count ?? 0);
+            setVerifiedUniquePhones(recData?.uniqueRecipientCount ?? recData?.count ?? 0);
+          }
+        } catch {
+        } finally {
+          setRecipientQueryLoading(false);
+        }
       });
     }
   }, [showSmsModal]);
@@ -92,8 +115,12 @@ export function AdminEmergency() {
       });
       const data = await res.json().catch(() => null);
       if (res.ok && data?.success) {
-        toast.success(`Emergency SMS dispatched to ${data.count} visitors inside campus!`);
-        setShowSmsModal(false);
+        toast.success(`Emergency broadcast accepted: ${data.acceptedCount} queued by gateway for SIM dispatch (${data.failedCount || 0} failed).`);
+        setBroadcastResult({
+          acceptedCount: data.acceptedCount,
+          failedCount: data.failedCount || 0,
+          total: data.total || data.acceptedCount,
+        });
       } else {
         toast.error(data?.message || data?.error || 'Failed to dispatch mass emergency SMS.');
       }
@@ -512,7 +539,13 @@ export function AdminEmergency() {
               <div>
                 <p className="text-xs font-bold text-red-950 uppercase tracking-wide">Recipients Ready</p>
                 <p className="text-sm font-extrabold text-red-700">
-                  {currentPasses.length} Visitors Currently Inside Campus
+                  {recipientQueryLoading ? (
+                    'Auditing active visitors inside campus...'
+                  ) : verifiedRecipientCount !== null ? (
+                    `${verifiedUniquePhones} Unique Mobile Numbers (${verifiedRecipientCount} Visitors Inside)`
+                  ) : (
+                    `${currentPasses.length} Visitors Currently Inside Campus`
+                  )}
                 </p>
               </div>
             </div>
@@ -520,6 +553,18 @@ export function AdminEmergency() {
               Live Gate Roll Call
             </span>
           </div>
+
+          {broadcastResult && (
+            <div className="p-3.5 rounded-xl border border-emerald-300 bg-emerald-50 text-xs text-emerald-950 space-y-1">
+              <p className="font-bold flex items-center gap-1.5">
+                <CheckCircle className="h-4 w-4 text-emerald-700 shrink-0" />
+                Broadcast Accepted by Gateway: {broadcastResult.acceptedCount} queued for Android SIM dispatch ({broadcastResult.failedCount} failed)
+              </p>
+              <p className="text-[11px] text-emerald-800">
+                * Note: This confirms gateway queueing on your Android device, not physical delivery to each handset. Real carrier delivery depends on your Android phone's cellular connection and carrier balance.
+              </p>
+            </div>
+          )}
 
           <div>
             <label className="block text-xs font-bold uppercase tracking-wider text-[var(--color-text-secondary)] mb-1.5">
@@ -588,10 +633,10 @@ export function AdminEmergency() {
               variant="primary"
               onClick={handleSendEmergencyMassSms}
               loading={isSendingSms}
-              disabled={isSendingSms || !customSmsMessage.trim() || currentPasses.length === 0}
+              disabled={isSendingSms || !customSmsMessage.trim() || currentPasses.length === 0 || verifiedRecipientCount === 0}
               icon={<Send className="h-4 w-4" />}
             >
-              {isSendingSms ? 'Broadcasting...' : `Send to ${currentPasses.length} Visitors`}
+              {isSendingSms ? 'Broadcasting via Gateway...' : (verifiedUniquePhones !== null ? `Send to ${verifiedUniquePhones} Unique Numbers` : `Send to ${currentPasses.length} Visitors`)}
             </Button>
           </div>
         </div>
