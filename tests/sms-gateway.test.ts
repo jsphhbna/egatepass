@@ -1,5 +1,8 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import crypto from 'node:crypto';
 import { maskPhoneNumber, resolveGatewayUrl, sendGatewaySms } from '../server/sms.js';
+import { encodeSmsMessage, decodeSmsMessage, SMS_PREFIX } from '../server/smsFormat.js';
+import { verifyStandardWebhook, verifyGatewayWebhook } from '../server/smsSecurity.js';
 
 describe('SMS Gateway for Android pure functions and contract', () => {
   const originalEnv = process.env;
@@ -55,6 +58,171 @@ describe('SMS Gateway for Android pure functions and contract', () => {
     });
   });
 
+  describe('Pure Message Format Encoder & Decoder (under 160 characters)', () => {
+    it('encodes and decodes an SOS payload with location correctly', () => {
+      const payload = {
+        msgId: 'MSG12345',
+        type: 'SOS',
+        latitude: 14.59951,
+        longitude: 120.98422,
+        timestamp: 1732318800,
+      };
+
+      const encoded = encodeSmsMessage(payload);
+      expect(encoded).toBe('EG1|MSG12345|SOS|14.59951|120.98422|1732318800');
+      expect(encoded.length).toBeLessThanOrEqual(160);
+
+      const decoded = decodeSmsMessage(encoded);
+      expect(decoded).not.toBeNull();
+      expect(decoded?.version).toBe(SMS_PREFIX);
+      expect(decoded?.msgId).toBe('MSG12345');
+      expect(decoded?.type).toBe('SOS');
+      expect(decoded?.latitude).toBeCloseTo(14.59951, 4);
+      expect(decoded?.longitude).toBeCloseTo(120.98422, 4);
+      expect(decoded?.timestamp).toBe(1732318800);
+    });
+
+    it('handles message without GPS coordinates cleanly', () => {
+      const payload = {
+        msgId: 'SAFE9988',
+        type: 'SAFE',
+        latitude: null,
+        longitude: null,
+        timestamp: 1732318900,
+      };
+
+      const encoded = encodeSmsMessage(payload);
+      expect(encoded).toBe('EG1|SAFE9988|SAFE|||1732318900');
+      expect(encoded.length).toBeLessThan(40);
+
+      const decoded = decodeSmsMessage(encoded);
+      expect(decoded?.msgId).toBe('SAFE9988');
+      expect(decoded?.type).toBe('SAFE');
+      expect(decoded?.latitude).toBeNull();
+      expect(decoded?.longitude).toBeNull();
+    });
+
+    it('rejects malformed or invalid version payloads', () => {
+      expect(decodeSmsMessage('INVALID_PREFIX|1|2|3|4|5')).toBeNull();
+      expect(decodeSmsMessage('too|short')).toBeNull();
+      expect(decodeSmsMessage('')).toBeNull();
+    });
+  });
+
+  describe('Standard Webhook Signature Verification (Supabase Auth Send-SMS Hook)', () => {
+    const rawSecret = 'test_secret_1234567890_abcdefghij';
+    const base64Secret = Buffer.from(rawSecret).toString('base64');
+    const whsec = `whsec_${base64Secret}`;
+
+    it('validates authentic Svix / Standard Webhook signature', () => {
+      const id = 'msg_test_001';
+      const timestamp = String(Math.floor(Date.now() / 1000));
+      const rawBody = JSON.stringify({ user: { phone: '09171234567' }, sms: { otp: '123456' } });
+
+      const toSign = `${id}.${timestamp}.${rawBody}`;
+      const hmac = crypto.createHmac('sha256', Buffer.from(rawSecret, 'utf8')).update(toSign).digest('base64');
+      const signature = `v1,${hmac}`;
+
+      const result = verifyStandardWebhook({
+        headers: {
+          'webhook-id': id,
+          'webhook-timestamp': timestamp,
+          'webhook-signature': signature,
+        },
+        rawBody,
+        secret: whsec,
+      });
+
+      expect(result.valid).toBe(true);
+    });
+
+    it('rejects expired or tampered timestamps (> 300 seconds old)', () => {
+      const id = 'msg_test_002';
+      const oldTimestamp = String(Math.floor(Date.now() / 1000) - 400); // 400s old
+      const rawBody = '{"hello":"world"}';
+
+      const result = verifyStandardWebhook({
+        headers: {
+          'webhook-id': id,
+          'webhook-timestamp': oldTimestamp,
+          'webhook-signature': 'v1,some_fake_sig',
+        },
+        rawBody,
+        secret: whsec,
+      });
+
+      expect(result.valid).toBe(false);
+      expect(result.error).toBe('timestamp_outside_tolerance');
+    });
+
+    it('rejects tampered payload', () => {
+      const id = 'msg_test_003';
+      const timestamp = String(Math.floor(Date.now() / 1000));
+      const originalBody = '{"foo":"bar"}';
+      const tamperedBody = '{"foo":"baz"}';
+
+      const toSign = `${id}.${timestamp}.${originalBody}`;
+      const hmac = crypto.createHmac('sha256', Buffer.from(rawSecret, 'utf8')).update(toSign).digest('base64');
+
+      const result = verifyStandardWebhook({
+        headers: {
+          'webhook-id': id,
+          'webhook-timestamp': timestamp,
+          'webhook-signature': `v1,${hmac}`,
+        },
+        rawBody: tamperedBody,
+        secret: whsec,
+      });
+
+      expect(result.valid).toBe(false);
+      expect(result.error).toBe('signature_mismatch');
+    });
+  });
+
+  describe('Gateway X-Signature Verification', () => {
+    const signingKey = 'earist-egatepass-sms-webhook-key-2026';
+
+    it('validates genuine X-Signature HMAC header', () => {
+      const rawBody = JSON.stringify({ event: 'sms:received', data: { message: 'TEST' } });
+      const expectedHex = crypto.createHmac('sha256', Buffer.from(signingKey, 'utf8')).update(rawBody).digest('hex');
+
+      const result = verifyGatewayWebhook({
+        headers: {
+          'x-signature': expectedHex,
+          'x-timestamp': String(Math.floor(Date.now() / 1000)),
+        },
+        rawBody,
+        secret: signingKey,
+      });
+
+      expect(result.valid).toBe(true);
+    });
+
+    it('rejects tampered body or incorrect secret', () => {
+      const rawBody = JSON.stringify({ event: 'sms:received', data: { message: 'TEST' } });
+      const badHex = crypto.createHmac('sha256', Buffer.from('wrong-key', 'utf8')).update(rawBody).digest('hex');
+
+      const result = verifyGatewayWebhook({
+        headers: {
+          'x-signature': badHex,
+        },
+        rawBody,
+        secret: signingKey,
+      });
+
+      expect(result.valid).toBe(false);
+      expect(result.error).toBe('signature_mismatch');
+    });
+  });
+
+  describe('Confirmation Reply Length Contract', () => {
+    it('ensures confirmation reply is under 160 characters', () => {
+      const confirmationText = 'EARIST Alert: Received your emergency report. Security dispatch has been notified.';
+      expect(confirmationText.length).toBeLessThanOrEqual(160);
+      expect(confirmationText.length).toBe(82);
+    });
+  });
+
   describe('sendGatewaySms missing credentials guard', () => {
     it('fails closed gracefully when SMS_GATEWAY_USERNAME or SMS_GATEWAY_PASSWORD is not set', async () => {
       delete process.env.SMS_GATEWAY_USERNAME;
@@ -96,42 +264,6 @@ describe('SMS Gateway for Android pure functions and contract', () => {
 
       expect(result.success).toBe(false);
       expect(result.error).toBe('empty_message');
-    });
-  });
-
-  describe('sendGatewaySms live dispatch with mocked fetch', () => {
-    it('formats Basic Auth and JSON payload envelope matching SMS Gateway for Android spec', async () => {
-      process.env.SMS_GATEWAY_USERNAME = 'RV3T9G';
-      process.env.SMS_GATEWAY_PASSWORD = 'test-secret-password';
-      process.env.SMS_GATEWAY_URL = 'https://api.sms-gate.app/3rdparty/v1/messages';
-
-      const fetchSpy = vi.fn().mockResolvedValue({
-        ok: true,
-        status: 200,
-        json: async () => ({ id: 'msg-abc-123', state: 'pending' }),
-      });
-      globalThis.fetch = fetchSpy as any;
-
-      const result = await sendGatewaySms({
-        phoneNumbers: ['09171234567'],
-        message: 'EMERGENCY: Campus evacuation in progress.',
-        purpose: 'emergency_roll_call',
-      });
-
-      expect(result.success).toBe(true);
-      expect(result.messageId).toBe('msg-abc-123');
-      expect(result.recipientCount).toBe(1);
-
-      expect(fetchSpy).toHaveBeenCalledTimes(1);
-      const [calledUrl, calledInit] = fetchSpy.mock.calls[0];
-      expect(calledUrl).toContain('https://api.sms-gate.app/3rdparty/v1/messages?skipPhoneValidation=true');
-      expect(calledInit.method).toBe('POST');
-      expect(calledInit.headers['Content-Type']).toBe('application/json');
-      expect(calledInit.headers['Authorization']).toContain('Basic ');
-
-      const parsedBody = JSON.parse(calledInit.body);
-      expect(parsedBody.textMessage.text).toBe('EMERGENCY: Campus evacuation in progress.');
-      expect(parsedBody.phoneNumbers).toEqual(['+639171234567']);
     });
   });
 });

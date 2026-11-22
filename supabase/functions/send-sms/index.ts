@@ -1,11 +1,12 @@
 // Supabase Edge Function: send-sms
-// Outbound SMS Gateway Hook for Supabase Auth and System Alerts
+// Outbound SMS Gateway Hook for Supabase Auth ("Send SMS" Hook) and System Alerts
 import { serve } from 'https://deno.land/std@0.168.0/http/server.ts';
+import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 
 function maskPhone(phone: string): string {
   const clean = phone.trim().replace(/[\s-]/g, '');
   if (clean.length < 8) return '••••••';
-  const prefixLen = clean.startsWith('+63') ? 5 : 4;
+  const prefixLen = clean.startsWith('+63') ? 6 : 4;
   const suffixLen = 4;
   if (clean.length <= prefixLen + suffixLen) return `${clean.slice(0, 3)} ••• ${clean.slice(-2)}`;
   return `${clean.slice(0, prefixLen)} ••• ${clean.slice(-suffixLen)}`;
@@ -19,6 +20,120 @@ serve(async (req: Request) => {
     });
   }
 
+  const rawBody = await req.text();
+  const hookSecret = Deno.env.get('SEND_SMS_HOOK_SECRET');
+
+  // Verify Standard Webhook signature if secret configured
+  if (hookSecret) {
+    const id = req.headers.get('webhook-id');
+    const timestampStr = req.headers.get('webhook-timestamp');
+    const signature = req.headers.get('webhook-signature');
+
+    if (!id || !timestampStr || !signature) {
+      return new Response(JSON.stringify({ error: 'missing_webhook_headers' }), {
+        status: 401,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
+
+    // Check timestamp freshness (5 minutes)
+    const timestamp = parseInt(timestampStr, 10);
+    const now = Math.floor(Date.now() / 1000);
+    if (Math.abs(now - timestamp) > 300) {
+      return new Response(JSON.stringify({ error: 'timestamp_expired' }), {
+        status: 401,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
+
+    // Verify HMAC
+    const key = hookSecret.startsWith('whsec_') ? hookSecret.slice(6) : hookSecret;
+    const encoder = new TextEncoder();
+    const cryptoKey = await crypto.subtle.importKey(
+      'raw',
+      Uint8Array.from(atob(key), (c) => c.charCodeAt(0)),
+      { name: 'HMAC', hash: 'SHA-256' },
+      false,
+      ['sign']
+    );
+    const toSign = encoder.encode(`${id}.${timestampStr}.${rawBody}`);
+    const sigBuf = await crypto.subtle.sign('HMAC', cryptoKey, toSign);
+    const expectedSig = btoa(String.fromCharCode(...new Uint8Array(sigBuf)));
+
+    if (!signature.includes(expectedSig)) {
+      return new Response(JSON.stringify({ error: 'invalid_signature' }), {
+        status: 401,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
+  }
+
+  let body: any;
+  try {
+    body = JSON.parse(rawBody);
+  } catch {
+    return new Response(JSON.stringify({ error: 'invalid_json' }), {
+      status: 400,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  }
+
+  const phoneNumber = body?.user?.phone || body?.phone || body?.phoneNumber;
+  const otpCode = body?.sms?.otp;
+
+  if (!phoneNumber) {
+    return new Response(JSON.stringify({ error: 'phone_required' }), {
+      status: 400,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  }
+
+  let cleanPhone = String(phoneNumber).trim().replace(/[\s-]/g, '');
+  if (cleanPhone.startsWith('09') && cleanPhone.length === 11) {
+    cleanPhone = `+63${cleanPhone.slice(1)}`;
+  }
+
+  // Account Existence Check: Only text a code to a number that already has an account
+  const supabaseUrl = Deno.env.get('SUPABASE_URL');
+  const serviceRoleKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY');
+
+  if (supabaseUrl && serviceRoleKey) {
+    const supabase = createClient(supabaseUrl, serviceRoleKey);
+    const localPhone = cleanPhone.startsWith('+63') ? `0${cleanPhone.slice(3)}` : cleanPhone;
+    
+    // Check visitors table
+    const { data: hasVisitor } = await supabase
+      .from('visitors')
+      .select('id')
+      .or(`contact_number.eq.${cleanPhone},contact_number.eq.${localPhone}`)
+      .limit(1);
+
+    let hasAccount = Boolean(hasVisitor && hasVisitor.length > 0);
+
+    if (!hasAccount) {
+      try {
+        const { data: authUsers } = await supabase.auth.admin.listUsers();
+        if (authUsers?.users?.some((u) => u.phone === cleanPhone || u.phone === localPhone)) {
+          hasAccount = true;
+        }
+      } catch (authErr) {
+        console.warn('[SEND-SMS] Auth admin listUsers fallback error:', authErr);
+      }
+    }
+
+    if (!hasAccount) {
+      // Stop: No account exists for this phone number
+      return new Response(
+        JSON.stringify({
+          error: 'no account yet',
+          message: 'Phone number is not associated with an existing account.',
+        }),
+        { status: 404, headers: { 'Content-Type': 'application/json' } }
+      );
+    }
+  }
+
+  // Gateway credentials check
   const username = Deno.env.get('SMS_GATEWAY_USERNAME');
   const password = Deno.env.get('SMS_GATEWAY_PASSWORD');
   let rawUrl = Deno.env.get('SMS_GATEWAY_URL') || 'https://api.sms-gate.app/3rdparty/v1/messages';
@@ -27,34 +142,15 @@ serve(async (req: Request) => {
     return new Response(
       JSON.stringify({
         error: 'sms_gateway_not_configured',
-        message: 'SMS_GATEWAY_USERNAME or SMS_GATEWAY_PASSWORD secret is missing.',
+        message: 'SMS_GATEWAY_USERNAME or SMS_GATEWAY_PASSWORD is not configured.',
       }),
       { status: 503, headers: { 'Content-Type': 'application/json' } }
     );
   }
 
-  let body: any;
-  try {
-    body = await req.json();
-  } catch {
-    return new Response(JSON.stringify({ error: 'invalid_json' }), {
-      status: 400,
-      headers: { 'Content-Type': 'application/json' },
-    });
-  }
-
-  // Handle Supabase Auth Send SMS Hook format or direct call
-  const phoneNumber = body?.user?.phone || body?.phone || body?.phoneNumber;
-  const messageText = body?.sms?.otp
-    ? `Your EARIST E-GatePass security code is: ${body.sms.otp}. Valid for 5 minutes.`
-    : body?.message || body?.text;
-
-  if (!phoneNumber || !messageText) {
-    return new Response(JSON.stringify({ error: 'phone_and_message_required' }), {
-      status: 400,
-      headers: { 'Content-Type': 'application/json' },
-    });
-  }
+  const messageText = otpCode
+    ? `Your EARIST E-GatePass verification code is: ${otpCode}. Valid for 5 minutes. Do not share this code.`
+    : body?.message || body?.text || 'EARIST E-GatePass Notification';
 
   // Normalize URL
   if (!rawUrl.startsWith('http://') && !rawUrl.startsWith('https://')) {
@@ -68,12 +164,6 @@ serve(async (req: Request) => {
     parsed.pathname = `${parsed.pathname.replace(/\/+$/, '')}/messages`;
   }
   const endpoint = `${parsed.toString()}?skipPhoneValidation=true`;
-
-  // Format clean E.164 phone
-  let cleanPhone = String(phoneNumber).trim().replace(/[\s-]/g, '');
-  if (cleanPhone.startsWith('09') && cleanPhone.length === 11) {
-    cleanPhone = `+63${cleanPhone.slice(1)}`;
-  }
 
   const basicAuth = btoa(`${username}:${password}`);
 
@@ -108,7 +198,6 @@ serve(async (req: Request) => {
       JSON.stringify({
         success: true,
         recipientMasked: maskPhone(cleanPhone),
-        result,
       }),
       { status: 200, headers: { 'Content-Type': 'application/json' } }
     );
