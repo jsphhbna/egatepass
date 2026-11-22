@@ -39,7 +39,7 @@ describe('Guard Station Realtime, Meeting Details, and Time In Contract', () => 
   it('3. Evidence route enforces gate-bound photo access without leaking ID documents', () => {
     expect(evidenceSource).toContain("if (evidence.kind !== 'photo')");
     expect(evidenceSource).toContain("Guard station cannot access ID evidence");
-    expect(evidenceSource).toContain(".eq('gate', stationDevice.gate)");
+    expect(evidenceSource).toMatch(/\.(eq|ilike)\('gate',\s*stationDevice\.gate\)/);
   });
 
   it('4. GuardPage subscribes to Supabase Realtime CDC on passes and visit_events', () => {

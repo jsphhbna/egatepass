@@ -77,17 +77,28 @@ export function ExitScanPage() {
     setScannerKey((k) => k + 1);
   }
 
-  const [facingMode, setFacingMode] = useState<'user' | 'environment'>('user');
-  const [isMirrored, setIsMirrored] = useState(true);
+  const [facingMode, setFacingMode] = useState<'user' | 'environment'>('environment');
+  const [isMirrored, setIsMirrored] = useState(false);
   const [hasTorch, setHasTorch] = useState(false);
   const [isTorchOn, setIsTorchOn] = useState(false);
 
-  const toggleFacingMode = () => {
-    const nextMode = facingMode === 'user' ? 'environment' : 'user';
+  const toggleFacingMode = async () => {
+    const nextMode = facingMode === 'environment' ? 'user' : 'environment';
     setFacingMode(nextMode);
     setIsMirrored(nextMode === 'user');
     setIsTorchOn(false);
-    retryCamera();
+    setHasTorch(false);
+    if (scannerRef.current) {
+      try {
+        await scannerRef.current.stop();
+      } catch {
+        // ignore cleanup error
+      }
+      scannerRef.current = null;
+    }
+    setCameraState('starting');
+    setCameraError(null);
+    setScannerKey((k) => k + 1);
   };
 
   const toggleMirror = () => {
@@ -112,6 +123,8 @@ export function ExitScanPage() {
 
   const processQR = useCallback(async (passId: string) => {
     if (debounceRef.current) return;
+    const cleanToken = (passId || '').trim();
+    if (!cleanToken) return;
     debounceRef.current = true;
     if ('vibrate' in navigator) navigator.vibrate(50);
     setStatus('processing');
@@ -127,7 +140,7 @@ export function ExitScanPage() {
         response = await fetchWithTimeout('/api/scan-pass', {
           method: 'POST',
           headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
-          body: JSON.stringify({ passId, mode: 'exit' }),
+          body: JSON.stringify({ passId: cleanToken, mode: 'exit' }),
         }, 8000);
       } catch (netErr) {
         if (netErr instanceof RequestTimeoutError) {
@@ -203,20 +216,17 @@ export function ExitScanPage() {
             () => {},
           );
         } catch (initialErr) {
-          if (facingMode === 'user') {
-            await scanner.start(
-              { facingMode: 'environment' },
-              getQrScanConfig('environment'),
-              (decodedText) => {
-                if (!debounceRef.current) processQR(decodedText);
-              },
-              () => {},
-            );
-            setFacingMode('environment');
-            setIsMirrored(false);
-          } else {
-            throw initialErr;
-          }
+          const fallbackMode = facingMode === 'environment' ? 'user' : 'environment';
+          await scanner.start(
+            { facingMode: fallbackMode },
+            getQrScanConfig(fallbackMode),
+            (decodedText) => {
+              if (!debounceRef.current) processQR(decodedText);
+            },
+            () => {},
+          );
+          setFacingMode(fallbackMode);
+          setIsMirrored(fallbackMode === 'user');
         }
         if (cancelled) {
           await scanner.stop().catch(() => undefined);

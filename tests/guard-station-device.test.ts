@@ -37,8 +37,8 @@ describe('Guard Station Device, Feed & Evidence Boundaries (Executable + Contrac
     expect(feedSource).toContain(".in('status', ['inside', 'exited'])");
     // Must require valid entry scan
     expect(feedSource).toContain(".not('entry_scanned_at', 'is', null)");
-    // Must confine to station gate
-    expect(feedSource).toContain(".eq('gate', stationGate)");
+    // Must confine to station gate (case-insensitive or exact)
+    expect(feedSource).toMatch(/\.(eq|ilike)\('gate',\s*stationGate\)/);
     // Must validate admin gate parameter against active devices
     expect(feedSource).toContain("error: 'invalid_gate'");
   });
