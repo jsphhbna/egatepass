@@ -154,21 +154,24 @@ export default async function handleSmsRequest(request: Request): Promise<Respon
           });
         }
 
-        // Check daily SMS cap (1 message)
+        const campaignId = `camp_test_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+
+        // Atomic daily SMS cap reservation (1 recipient)
         const { data: quota, error: quotaErr } = await admin.schema('api').rpc('check_and_reserve_sms_quota', {
           requested_actor_id: actor.id,
           requested_count: 1,
+          campaign_id: campaignId,
         });
 
         if (quotaErr) {
-          console.error('[SMS-API] Quota check error:', quotaErr);
+          console.error('[SMS-API] Quota reservation error:', quotaErr);
           return jsonResponse(500, { error: 'quota_check_failed' });
         }
 
         if (quota && quota.allowed === false) {
           return jsonResponse(429, {
             error: 'daily_sms_cap_exceeded',
-            message: `Daily SMS cap of ${quota.daily_cap} reached (${quota.current_count} messages sent today).`,
+            message: `Daily SMS cap of ${quota.daily_cap} reached (${quota.current_count} messages sent/reserved today).`,
             quota,
           });
         }
@@ -178,7 +181,20 @@ export default async function handleSmsRequest(request: Request): Promise<Respon
           message,
           purpose: 'manual_test',
           actorId: actor.id,
+          campaignId,
         });
+
+        // Finalize quota state: release only if pre-send or gateway failed without timeout
+        const outcome = result.success ? 'consumed' : (result.status === 'unknown' ? 'timeout' : 'released');
+        try {
+          await admin.schema('api').rpc('finalize_sms_quota', {
+            campaign_id: campaignId,
+            outcome,
+            requested_actor_id: actor.id,
+          });
+        } catch (err: any) {
+          console.error('[SMS-API] Quota finalization error:', err);
+        }
 
         if (!result.success) {
           return jsonResponse(502, {
@@ -195,6 +211,7 @@ export default async function handleSmsRequest(request: Request): Promise<Respon
           message: 'Test SMS accepted by gateway and queued for Android device dispatch.',
           messageId: result.messageId,
           transactionId: result.transactionId,
+          campaignId,
         });
       }
 
@@ -210,7 +227,7 @@ export default async function handleSmsRequest(request: Request): Promise<Respon
           return jsonResponse(500, { error: 'failed_to_fetch_emergency_recipients', details: error.message });
         }
 
-        // Deduplicate and normalize recipient phone numbers
+        // Deduplicate and normalize recipient phone numbers (exclude invalid before reservation)
         const phoneSet = new Set<string>();
         for (const r of (recipients || [])) {
           const norm = normalizePhilippinePhone(r.contact_number);
@@ -226,14 +243,17 @@ export default async function handleSmsRequest(request: Request): Promise<Respon
           });
         }
 
-        // Server-side daily cap quota check
+        const campaignId = `camp_em_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+
+        // Atomic reservation for the full recipient count
         const { data: quota, error: quotaErr } = await admin.schema('api').rpc('check_and_reserve_sms_quota', {
           requested_actor_id: actor.id,
           requested_count: phoneNumbers.length,
+          campaign_id: campaignId,
         });
 
         if (quotaErr) {
-          console.error('[SMS-API] Quota check error:', quotaErr);
+          console.error('[SMS-API] Quota reservation error:', quotaErr);
           return jsonResponse(500, { error: 'quota_check_failed' });
         }
 
@@ -247,9 +267,9 @@ export default async function handleSmsRequest(request: Request): Promise<Respon
 
         // Chunk into safe batches of 50
         const BATCH_SIZE = 50;
-        const batchCampaignId = `camp_em_${Date.now()}`;
         let acceptedCount = 0;
         let failCount = 0;
+        let unknownCount = 0;
 
         for (let i = 0; i < phoneNumbers.length; i += BATCH_SIZE) {
           const batch = phoneNumbers.slice(i, i + BATCH_SIZE);
@@ -258,23 +278,40 @@ export default async function handleSmsRequest(request: Request): Promise<Respon
             message,
             purpose: 'emergency_roll_call',
             actorId: actor.id,
-            batchId: `${batchCampaignId}_batch_${Math.floor(i / BATCH_SIZE) + 1}`,
+            campaignId,
+            batchId: `${campaignId}_batch_${Math.floor(i / BATCH_SIZE) + 1}`,
           });
 
           if (result.success) {
             acceptedCount += batch.length;
+          } else if (result.status === 'unknown') {
+            unknownCount += batch.length;
           } else {
             failCount += batch.length;
           }
+        }
+
+        // Finalize quota: if any were accepted or ambiguous timeout, consume; release only if zero accepted & zero unknown
+        const outcome = (acceptedCount > 0 || unknownCount > 0) ? 'consumed' : 'released';
+        try {
+          await admin.schema('api').rpc('finalize_sms_quota', {
+            campaign_id: campaignId,
+            outcome,
+            requested_actor_id: actor.id,
+          });
+        } catch (err: any) {
+          console.error('[SMS-API] Quota finalization error:', err);
         }
 
         return jsonResponse(200, {
           success: acceptedCount > 0,
           acceptedCount,
           failedCount: failCount,
+          unknownCount,
           total: phoneNumbers.length,
           status: 'accepted_by_gateway',
-          message: `Emergency SMS broadcast: ${acceptedCount} accepted by gateway for SIM dispatch, ${failCount} failed.`,
+          campaignId,
+          message: `Emergency SMS broadcast: ${acceptedCount} accepted by gateway for SIM dispatch, ${failCount} failed${unknownCount > 0 ? `, ${unknownCount} timed out` : ''}.`,
         });
       }
 
@@ -305,14 +342,17 @@ export default async function handleSmsRequest(request: Request): Promise<Respon
           });
         }
 
-        // Quota check
+        const campaignId = `camp_od_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+
+        // Atomic reservation for full overdue count
         const { data: quota, error: quotaErr } = await admin.schema('api').rpc('check_and_reserve_sms_quota', {
           requested_actor_id: actor.id,
           requested_count: phoneNumbers.length,
+          campaign_id: campaignId,
         });
 
         if (quotaErr) {
-          console.error('[SMS-API] Quota check error:', quotaErr);
+          console.error('[SMS-API] Quota reservation error:', quotaErr);
           return jsonResponse(500, { error: 'quota_check_failed' });
         }
 
@@ -325,9 +365,9 @@ export default async function handleSmsRequest(request: Request): Promise<Respon
         }
 
         const BATCH_SIZE = 50;
-        const batchCampaignId = `camp_od_${Date.now()}`;
         let acceptedCount = 0;
         let failCount = 0;
+        let unknownCount = 0;
 
         for (let i = 0; i < phoneNumbers.length; i += BATCH_SIZE) {
           const batch = phoneNumbers.slice(i, i + BATCH_SIZE);
@@ -336,23 +376,39 @@ export default async function handleSmsRequest(request: Request): Promise<Respon
             message,
             purpose: 'overdue_exit_warning',
             actorId: actor.id,
-            batchId: `${batchCampaignId}_batch_${Math.floor(i / BATCH_SIZE) + 1}`,
+            campaignId,
+            batchId: `${campaignId}_batch_${Math.floor(i / BATCH_SIZE) + 1}`,
           });
 
           if (result.success) {
             acceptedCount += batch.length;
+          } else if (result.status === 'unknown') {
+            unknownCount += batch.length;
           } else {
             failCount += batch.length;
           }
+        }
+
+        const outcome = (acceptedCount > 0 || unknownCount > 0) ? 'consumed' : 'released';
+        try {
+          await admin.schema('api').rpc('finalize_sms_quota', {
+            campaign_id: campaignId,
+            outcome,
+            requested_actor_id: actor.id,
+          });
+        } catch (err: any) {
+          console.error('[SMS-API] Quota finalization error:', err);
         }
 
         return jsonResponse(200, {
           success: acceptedCount > 0,
           acceptedCount,
           failedCount: failCount,
+          unknownCount,
           total: phoneNumbers.length,
           status: 'accepted_by_gateway',
-          message: `Overdue visitor notices: ${acceptedCount} accepted by gateway for SIM dispatch, ${failCount} failed.`,
+          campaignId,
+          message: `Overdue visitor notices: ${acceptedCount} accepted by gateway for SIM dispatch, ${failCount} failed${unknownCount > 0 ? `, ${unknownCount} timed out` : ''}.`,
         });
       }
 
