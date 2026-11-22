@@ -138,7 +138,7 @@ export function App() {
               <Route path="/account/security" element={<AccountSecurityPage />} />
             </Route>
 
-            {/* Admin — requires admin role, uses nested layout */}
+            {/* Admin & Superadmin — uses nested layout */}
             <Route element={<ProtectedRoute allowedRoles={['admin', 'superadmin']} />}>
               <Route path="/admin" element={<AdminPage />}>
                 <Route index element={<AdminDashboard />} />
@@ -152,6 +152,10 @@ export function App() {
                 <Route path="settings" element={<AdminSettings />} />
               </Route>
             </Route>
+
+            {/* Superadmin path compatibility redirects */}
+            <Route path="/superadmin" element={<Navigate to="/admin" replace />} />
+            <Route path="/superadmin/*" element={<Navigate to="/admin" replace />} />
 
             {/* Catch-all 404 */}
             <Route path="*" element={<NotFoundPage />} />

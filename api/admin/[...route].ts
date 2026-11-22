@@ -11,6 +11,7 @@ import users from '../../server/routes/admin/users.js';
 import offices from '../../server/routes/admin/offices.js';
 import calendar from '../../server/routes/admin/calendar.js';
 import emergencyRecords from '../../server/routes/admin/emergency-records.js';
+import sms from '../../server/routes/admin/sms.js';
 
 const router = createGroupedRouter('admin', {
   activity,
@@ -25,6 +26,7 @@ const router = createGroupedRouter('admin', {
   users,
   offices,
   calendar,
+  sms,
 });
 
 export const { fetch, handleRequest, GET, POST, PUT, PATCH, DELETE, HEAD, OPTIONS } = router;

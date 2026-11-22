@@ -216,7 +216,7 @@ test.describe('Visitor Multi-Step Registration & Form Decoupling Regression Suit
     await page.getByText('Male', { exact: true }).click();
 
     // Select PSGC Residential Address via Modal
-    const selectAddressBtn = page.getByRole('button', { name: /Select your barangay and city/i });
+    const selectAddressBtn = page.getByRole('button', { name: /Select your (?:municipality(?:\/city)? and barangay|barangay and city)/i });
     await expect(selectAddressBtn).toBeVisible();
     await selectAddressBtn.click();
 
@@ -269,7 +269,7 @@ test.describe('Visitor Multi-Step Registration & Form Decoupling Regression Suit
     await page.getByText('Female', { exact: true }).click();
 
     // Select Address
-    await page.getByRole('button', { name: /Select your barangay and city/i }).click();
+    await page.getByRole('button', { name: /Select your (?:municipality(?:\/city)? and barangay|barangay and city)/i }).click();
     await page.locator('.divide-y button', { hasText: /National Capital Region/i }).first().click();
     await page.locator('.divide-y button', { hasText: /City of Manila/i }).first().click();
     await page.locator('.divide-y button').first().click();
@@ -334,7 +334,7 @@ test.describe('Visitor Multi-Step Registration & Form Decoupling Regression Suit
     await expect(page.getByRole('heading', { name: /Data Privacy Notice/i })).not.toBeVisible();
 
     // 2. Address selector modal cancellation with Escape
-    const selectAddressBtn = page.getByRole('button', { name: /Select your barangay and city/i });
+    const selectAddressBtn = page.getByRole('button', { name: /Select your (?:municipality(?:\/city)? and barangay|barangay and city)/i });
     await selectAddressBtn.click();
     await expect(page.locator('#cascading-address-title')).toBeVisible();
     await page.keyboard.press('Escape');

@@ -259,6 +259,12 @@ export const SERVICE_ROLE_TABLE_CONTRACT: Record<string, ServerTablePrivilegeCon
     forbiddenPrivileges: [],
     justification: 'Server reads, upserts, and deletes office-specific calendar schedules on behalf of authorized staff.',
   },
+  sms_logs: {
+    table: 'sms_logs',
+    allowedPrivileges: ['SELECT', 'INSERT'],
+    forbiddenPrivileges: ['UPDATE', 'DELETE'],
+    justification: 'Server logs inbound/outbound SMS activity and queries SMS logs for admin audit feed and daily rate cap calculations. UPDATE/DELETE are forbidden to preserve audit trail.',
+  },
 };
 
 /**
@@ -437,4 +443,6 @@ export const SERVER_DIRECT_TABLE_OPERATIONS: DirectServerTableOperation[] = [
   { file: 'server/routes/auth/mfa.ts', table: 'staff_profiles', operations: ['SELECT'], purpose: 'Verify target user has human staff profile before MFA inspection or reset' },
   { file: 'server/routes/auth/mfa.ts', table: 'staff_sessions', operations: ['UPDATE'], purpose: 'Invalidate active sessions on target user upon MFA factor reset' },
   { file: 'server/routes/auth/mfa.ts', table: 'audit_events', operations: ['INSERT'], purpose: 'Record staff.mfa_factor_reset audit event upon MFA factor reset' },
+  { file: 'server/sms.ts', table: 'sms_logs', operations: ['SELECT', 'INSERT'], purpose: 'Log outbound SMS activity and count daily sent SMS' },
+  { file: 'server/routes/admin/sms.ts', table: 'sms_logs', operations: ['SELECT'], purpose: 'Query SMS logs for admin audit feed' },
 ];

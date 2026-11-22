@@ -50,6 +50,14 @@ const settingsSchema = z.object({
   emergencyRecordRetentionEnabled: z.boolean().optional(),
   emergencyRecordRetentionDays: z.number().int().min(7).max(3650).optional(),
   defaultExpectedGate: z.string().trim().max(80).nullable().optional(),
+  smsEmergencyTemplates: z.array(z.object({
+    id: z.string(),
+    title: z.string(),
+    body: z.string(),
+  })).optional(),
+  smsOverdueWarningTemplate: z.string().trim().max(320).optional(),
+  smsOverdueWarningEnabled: z.boolean().optional(),
+  smsDailyCap: z.number().int().min(1).max(5000).optional(),
 }).strict();
 
 async function handleRequest(request: Request): Promise<Response> {
@@ -255,6 +263,33 @@ async function handleRequest(request: Request): Promise<Response> {
         throw new HttpError(503, 'service_unavailable_migration_required');
       }
       throw new HttpError(503, errMsg);
+    }
+
+    const hasSmsUpdates =
+      parsed.data.smsEmergencyTemplates !== undefined ||
+      parsed.data.smsOverdueWarningTemplate !== undefined ||
+      parsed.data.smsOverdueWarningEnabled !== undefined ||
+      parsed.data.smsDailyCap !== undefined;
+
+    if (hasSmsUpdates) {
+      const smsPayload: Record<string, unknown> = {};
+      if (parsed.data.smsEmergencyTemplates !== undefined) {
+        smsPayload.sms_emergency_templates = parsed.data.smsEmergencyTemplates;
+      }
+      if (parsed.data.smsOverdueWarningTemplate !== undefined) {
+        smsPayload.sms_overdue_warning_template = parsed.data.smsOverdueWarningTemplate;
+      }
+      if (parsed.data.smsOverdueWarningEnabled !== undefined) {
+        smsPayload.sms_overdue_warning_enabled = parsed.data.smsOverdueWarningEnabled;
+      }
+      if (parsed.data.smsDailyCap !== undefined) {
+        smsPayload.sms_daily_cap = parsed.data.smsDailyCap;
+      }
+      try {
+        await admin.from('app_settings').update(smsPayload).eq('singleton', true);
+      } catch (smsErr) {
+        console.warn('Failed to update app_settings SMS columns:', smsErr);
+      }
     }
 
     const saved = (rpcResult.data && typeof rpcResult.data === 'object' ? rpcResult.data : {}) as Record<string, unknown>;

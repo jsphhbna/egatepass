@@ -386,6 +386,10 @@ async function handleRequest(request: Request): Promise<Response> {
         emergency_record_retention_enabled,
         emergency_record_retention_days,
         default_expected_gate,
+        sms_emergency_templates,
+        sms_overdue_warning_template,
+        sms_overdue_warning_enabled,
+        sms_daily_cap,
         updated_at
       `)
       .eq('singleton', true)
@@ -454,6 +458,16 @@ async function handleRequest(request: Request): Promise<Response> {
       emergencyRecordRetentionEnabled: (data as any).emergency_record_retention_enabled ?? true,
       emergencyRecordRetentionDays: (data as any).emergency_record_retention_days ?? 90,
       defaultExpectedGate: (data as any).default_expected_gate ?? null,
+      smsEmergencyTemplates: (data as any).sms_emergency_templates ?? [
+        { id: 'evacuation', title: 'Campus Evacuation', body: 'EMERGENCY: EARIST campus evacuation in progress. Please exit calmly via the nearest gate.' },
+        { id: 'lockdown', title: 'Security Lockdown', body: 'SECURITY ALERT: EARIST campus is on lockdown. Remain in your current location until security clears the area.' },
+        { id: 'weather', title: 'Weather Dismissal', body: 'ADVISORY: Campus activities are suspended due to severe weather. Please proceed to the exit gate to scan out.' },
+        { id: 'general', title: 'General Security Notice', body: 'SECURITY NOTICE: Please report to the nearest campus security station or exit immediately.' },
+      ],
+      smsOverdueWarningTemplate: (data as any).sms_overdue_warning_template ?? 'EARIST E-GatePass Notice: Campus visiting hours have ended (5:00 PM). If you have completed your visit, please proceed to the exit gate to scan your exit pass.',
+      smsOverdueWarningEnabled: Boolean((data as any).sms_overdue_warning_enabled),
+      smsDailyCap: (data as any).sms_daily_cap ?? 500,
+      smsGatewayConfigured: Boolean(process.env.SMS_GATEWAY_USERNAME?.trim() && process.env.SMS_GATEWAY_PASSWORD?.trim()),
       security: {
         turnstileSiteKeyConfigured,
         turnstileVerifierConfigured,
