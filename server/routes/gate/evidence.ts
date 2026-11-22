@@ -104,10 +104,11 @@ async function handleRequest(request: Request): Promise<Response> {
 
         const { count, error: passError } = await admin.from('passes').select('id', { count: 'exact', head: true })
           .in('visitor_id', targetVisitorIds)
-          .ilike('gate', stationDevice.gate)
+          .eq('gate', stationDevice.gate)
           .eq('source', 'portal')
           .not('entry_scanned_at', 'is', null)
           .in('status', ['inside', 'exited']);
+        // (Legacy human guard operational verification previously checked: .eq('status', 'pending'))
         if (passError) throw passError;
         if (!count) return jsonResponse(403, { error: 'Evidence is not operationally accessible at this station', code: 'station_gate_unauthorized' });
       } else if (evidence.kind === 'vehicle_photo') {
@@ -139,7 +140,7 @@ async function handleRequest(request: Request): Promise<Response> {
         if (
           !exactPass ||
           exactPass.visitor_id !== evidence.visitor_id ||
-          exactPass.gate.toLowerCase() !== stationDevice.gate.toLowerCase() ||
+          exactPass.gate !== stationDevice.gate ||
           exactPass.source !== 'portal' ||
           !exactPass.entry_scanned_at ||
           !['inside', 'exited'].includes(exactPass.status)

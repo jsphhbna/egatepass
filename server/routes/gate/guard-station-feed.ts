@@ -160,11 +160,11 @@ async function handleRequest(request: Request): Promise<Response> {
     // administrator review via /admin/legacy-guard and api.decide_visit before admission.
     const { startUtc, endUtc } = getManilaDayBounds();
 
-    // Query authoritative total count for today (case-insensitive gate matching)
+    // Query authoritative total count for today
     const { count: totalCount, error: countErr } = await admin
       .from('passes')
       .select('id', { count: 'exact', head: true })
-      .ilike('gate', stationGate)
+      .eq('gate', stationGate)
       .eq('source', 'portal')
       .in('status', ['inside', 'exited'])
       .not('entry_scanned_at', 'is', null)
@@ -177,7 +177,7 @@ async function handleRequest(request: Request): Promise<Response> {
     let query = admin
       .from('passes')
       .select('id, public_reference, status, source, entry_scanned_at, time_in, time_out, visitor_id, gate')
-      .ilike('gate', stationGate)
+      .eq('gate', stationGate)
       .eq('source', 'portal')
       .in('status', ['inside', 'exited'])
       .not('entry_scanned_at', 'is', null)
