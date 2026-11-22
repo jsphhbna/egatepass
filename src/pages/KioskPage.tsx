@@ -27,7 +27,6 @@ import {
   Loader2,
   LogOut,
   RefreshCw,
-  Upload,
   Sparkles,
 } from 'lucide-react';
 import { toast } from 'sonner';
@@ -251,7 +250,6 @@ export function KioskPage() {
   const faceWebcam = useWebcam({ facingMode: 'user', width: 720, height: 960, targetAspectRatio: SELFIE_TARGET_ASPECT_RATIO, allowCaptureMirroring: false });
   const idWebcam = useWebcam({ facingMode: 'environment', width: 1920, height: 1080, allowCaptureMirroring: false, focusMode: 'continuous' });
   const ocrGenerationRef = useRef(0);
-  const kioskIdFileInputRef = useRef<HTMLInputElement>(null);
 
   // Cleanup on unmount
   useEffect(() => {
@@ -351,16 +349,6 @@ export function KioskPage() {
     } else {
       toast.error('Failed to capture ID image.');
     }
-  }
-
-  function handleKioskIdFileUpload(e: React.ChangeEvent<HTMLInputElement>) {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    if (file.size > 10 * 1024 * 1024) {
-      toast.error('Image exceeds 10MB limit.');
-      return;
-    }
-    void processIdImageAndOcr(file);
   }
 
   function onFormNext(data: KioskPassFormData) {
@@ -938,24 +926,6 @@ export function KioskPage() {
                     )}
                   </>
                 )}
-              </div>
-
-              <div className="mx-auto w-full max-w-md text-center">
-                <input
-                  ref={kioskIdFileInputRef}
-                  type="file"
-                  accept="image/jpeg,image/png,image/webp"
-                  onChange={handleKioskIdFileUpload}
-                  className="hidden"
-                />
-                <button
-                  type="button"
-                  onClick={() => kioskIdFileInputRef.current?.click()}
-                  className="text-xs text-[var(--color-brand)] hover:underline inline-flex items-center gap-1.5 font-medium cursor-pointer"
-                >
-                  <Upload className="h-3.5 w-3.5" />
-                  <span>Having trouble focusing? Upload ID image instead</span>
-                </button>
               </div>
 
               <div className="flex flex-col gap-3 sm:flex-row">

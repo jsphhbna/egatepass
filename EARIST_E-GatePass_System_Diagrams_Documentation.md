@@ -20,7 +20,7 @@
 7. [Diagram 7: Zero-Trust Network & Infrastructure Topology](#7-zero-trust-network--infrastructure-topology)
 8. [Diagram 8: Conceptual Framework (Input-Process-Output Model)](#8-conceptual-framework-input-process-output-model)
 9. [Diagram 9: Crow's Foot Entity Relationship Diagram (ERD)](#9-crows-foot-entity-relationship-diagram-erd)
-10. [Diagram 10: Physical Database Schema (PostgreSQL 15 RLS Tables)](#10-physical-database-schema-postgresql-15-rls-tables)
+10. [Diagram 10: Physical Database Schema (PostgreSQL 17 RLS Tables)](#10-physical-database-schema-postgresql-17-rls-tables)
 
 ---
 
@@ -107,7 +107,7 @@ Visualizes the multi-tier enterprise architecture of the EARIST E-GatePass platf
 - **Tier 1: Presentation Tier (Client Applications)**: React 19 SPA running Vite, Tailwind CSS, Lucide icons, HTML5-QRCode, and Web Audio API. Comprises Public Visitor Portal, Walk-In Touch Kiosk, Security Guard Scanner View, and Administrator Control Center.
 - **Tier 2: Edge & Security Ingress Tier**: Cloudflare DNS, CDN edge caching, Turnstile CAPTCHA validation, and Vercel Edge Middleware handling request routing and security headers (CSP, HSTS, X-Content-Type-Options).
 - **Tier 3: Application & Backend API Services Tier**: Node.js/Vite serverless functions and SSR API routes handling session verification, visitor registration workflows, pass issuance, thermal print formatting, and transactional email triggers.
-- **Tier 4: Enterprise Data & Cloud Persistence Tier**: Supabase PostgreSQL 15 database engine with strict Row-Level Security (RLS), Supabase S3 Object Storage buckets (`id-documents`, `visitor-portraits`, `vehicle-evidence`), and local IndexedDB offline storage caches.
+- **Tier 4: Enterprise Data & Cloud Persistence Tier**: Supabase PostgreSQL 17 database engine with strict Row-Level Security (RLS), Supabase S3 Object Storage buckets (`id-documents`, `visitor-portraits`, `vehicle-evidence`), and local IndexedDB offline storage caches.
 
 ---
 
@@ -160,11 +160,11 @@ Defines the conceptual and logical relational data model governing the database:
 - **PASSES (1) ───< (M) ENTRY_EXIT_LOGS**: Each pass is linked to one or more physical gate ingress/egress checkpoint scans.
 - **PASSES (1) ─── 0..1 VISIT_VEHICLE_DECLARATIONS**: A pass may optionally be associated with exactly one vehicular declaration.
 - **VISITORS (1) ───< (M) UPLOAD_INTENTS**: Staged document uploads are tracked under visitor ownership for audit and lifecycle management.
-- **USERS (1) ───< (M) AUDIT_LOGS**: System security guards and administrators generate audit trail records for all privileged operations.
+- **USERS (1) ───< (M) AUDIT_EVENTS**: System security guards and administrators generate audit trail records for all privileged operations.
 
 ---
 
-### 10. Physical Database Schema (PostgreSQL 15 RLS Tables)
+### 10. Physical Database Schema (PostgreSQL 17 RLS Tables)
 ![Database Schema](../diagram-output/egatepass-database-schema.png)
 
 #### Detailed Description
@@ -175,7 +175,7 @@ Details the physical relational table structures, column definitions, data types
 - **`entry_exit_logs`**: `id` (UUID PK), `pass_id` (UUID FK), `scan_type` (VARCHAR: `entry` | `exit`), `scanned_by` (UUID FK), `gate_number` (VARCHAR), `timestamp` (TIMESTAMPTZ), `offline_synced` (BOOLEAN).
 - **`visit_vehicle_declarations`**: `id` (UUID PK), `pass_id` (UUID FK UNIQUE), `vehicle_type` (VARCHAR), `plate_number` (VARCHAR), `make_model` (VARCHAR), `color` (VARCHAR).
 - **`upload_intents`**: `id` (UUID PK), `owner_id` (UUID), `kind` (VARCHAR), `status` (VARCHAR: `pending` | `claimed` | `expired`), `bucket_id` (VARCHAR), `object_path` (TEXT), `created_at` (TIMESTAMPTZ).
-- **`audit_logs`**: `id` (UUID PK), `actor_id` (UUID FK), `action` (VARCHAR), `target_entity` (VARCHAR), `target_id` (UUID), `ip_address` (INET), `created_at` (TIMESTAMPTZ).
+- **`audit_events`**: `id` (UUID PK), `actor_id` (UUID FK), `action` (VARCHAR), `target_entity` (VARCHAR), `target_id` (UUID), `ip_address` (INET), `created_at` (TIMESTAMPTZ).
 
 ---
 *Generated for the EARIST E-GatePass Capstone Project, November 2026.*

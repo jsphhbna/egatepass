@@ -29,7 +29,7 @@ All 10 system diagrams are rendered strictly according to the **Academic Black a
 7. **Figure 7: Physical & Logical Network Topology Diagram** — Campus Network & Cloud Infrastructure
 8. **Figure 8: Conceptual Framework (IPO Model)** — Input-Process-Output Research Paradigm
 9. **Figure 9: Entity Relationship Diagram (ERD)** — Crow's Foot Relational Data Model
-10. **Figure 10: Physical Database Schema Diagram** — PostgreSQL 15 Physical Schema
+10. **Figure 10: Physical Database Schema Diagram** — PostgreSQL 17 Physical Schema
 
 ---
 
@@ -122,7 +122,7 @@ All 10 system diagrams are rendered strictly according to the **Academic Black a
   - **Tier 1 (Presentation Layer):** Responsive visitor web portal (`/get-pass`, `/track`), self-service kiosk PWA (`/kiosk`), dual-camera scanner terminal (`/guard`, `/scan/*`), office portal (`/office`), and admin dashboard (`/admin/*`).
   - **Tier 2 (Edge Security Layer):** Cloudflare Anycast CDN, DDoS scrubbing, Turnstile bot challenges, strict Content Security Policy (CSP), HSTS preload, and Vercel edge routing middleware with client-side transient memory sandboxing.
   - **Tier 3 (Application & Business Logic Layer):** Vercel Node.js 20 serverless API execution runtime, client Tesseract.js OCR worker, facial quality and transient vector comparator, QR matrix generator, and Resend email dispatcher.
-  - **Tier 4 (Data Persistence Layer):** Supabase PostgreSQL 15 database, Row Level Security (RLS) policies, PgBouncer transaction connection pooler (Port 6543), append-only audit ledgers, and encrypted S3 object storage buckets.
+  - **Tier 4 (Data Persistence Layer):** Supabase PostgreSQL 17 database, Row Level Security (RLS) policies, PgBouncer transaction connection pooler (Port 6543), append-only audit ledgers, and encrypted S3 object storage buckets.
   - **Tier 5 (External Services Layer):** Resend transactional email infrastructure, NHTSA vPIC automotive API, and PSA Philippine Standard Geographic Code (PSGC) reference dataset.
 
 ---
@@ -139,7 +139,7 @@ All 10 system diagrams are rendered strictly according to the **Academic Black a
   - `Block 3: Optical Capture & Biometrics`: Webcam MediaStream controllers, dynamic unmirroring viewports, Tesseract.js OCR engine, and facial liveness/vector comparison.
   - `Block 4: Pass Management & Cryptography`: Atomic pass issuance controllers, SHA-256 HMAC cryptographic token generation, finite state machine evaluators, and office review queues.
   - `Block 5: Physical Gate Control & Audit`: ZXing optical QR decoders, guard visual dossiers, turnstile barrier unlock triggers, append-only visit ledgers, and emergency lockdown relays.
-  - `Block 6: Cloud Data & External Services`: Supabase PostgreSQL 15, Row Level Security, PgBouncer pooler, S3 storage buckets, Supabase Realtime WebSocket engine, Resend, and NHTSA APIs.
+  - `Block 6: Cloud Data & External Services`: Supabase PostgreSQL 17, Row Level Security, PgBouncer pooler, S3 storage buckets, Supabase Realtime WebSocket engine, Resend, and NHTSA APIs.
 
 ---
 
@@ -200,7 +200,7 @@ All 10 system diagrams are rendered strictly according to the **Academic Black a
 ![Figure 10: Database Schema Diagram](file:///C:/Users/Administrator/Downloads/egatepass/diagram-output/egatepass-database-schema.png)
 
 - **Deliverables:** [PNG](file:///C:/Users/Administrator/Downloads/egatepass/diagram-output/egatepass-database-schema.png) | [SVG](file:///C:/Users/Administrator/Downloads/egatepass/diagram-output/egatepass-database-schema.svg) | [Draw.io](file:///C:/Users/Administrator/Downloads/egatepass/diagram-output/egatepass-database-schema.drawio)
-- **Standard / Model Notation:** PostgreSQL 15 Physical Schema Specification
+- **Standard / Model Notation:** PostgreSQL 17 Physical Schema Specification
 - **Physical Relational Tables & Invariants:**
   - `public.visitors`: Governs identity, contact, required biological sex (`'male'`, `'female'`), hierarchical PSGC address attributes, purpose, and timestamp tracking. Protected by Row Level Security (RLS).
   - `public.passes`: Stores digital pass state (`pass_status` ENUM), 32-byte binary token digest (`token_digest bytea UNIQUE`), unique public reference UUID, temporal validity bounds (`valid_from`, `valid_until`), and ingress/egress timestamps (`time_in`, `time_out`).
