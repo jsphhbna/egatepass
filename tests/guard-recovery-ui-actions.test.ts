@@ -37,8 +37,9 @@ describe('GuardVisitorRecoveryTab UI Actions Actor-Binding (P0 Invariant)', () =
     root = createRoot(container);
   });
 
-  afterEach(() => {
-    act(() => {
+  afterEach(async () => {
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 20));
       root.unmount();
     });
     container.remove();

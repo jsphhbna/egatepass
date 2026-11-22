@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { requireSupabase } from '@/lib/supabase';
 import { AuthenticatedImage } from '@/components/AuthenticatedImage';
 import { Button, Card } from '@/components/ui';
@@ -44,6 +44,14 @@ export function GuardVisitorRecoveryTab({
   const [rejectingPass, setRejectingPass] = useState<any | null>(null);
   const [rejectReason, setRejectReason] = useState('');
   const [zoomImage, setZoomImage] = useState<{ publicId?: string | null; blob?: Blob | null } | null>(null);
+
+  const isMountedRef = useRef(true);
+  useEffect(() => {
+    isMountedRef.current = true;
+    return () => {
+      isMountedRef.current = false;
+    };
+  }, []);
 
   const performSearch = useCallback(
     async (queryText: string) => {
@@ -149,11 +157,15 @@ export function GuardVisitorRecoveryTab({
           toast.error(err.message || 'Server refused pass action');
         }
       } finally {
-        setProcessingId(null);
+        if (isMountedRef.current && typeof window !== 'undefined') {
+          setProcessingId(null);
+        }
       }
     } else {
       await queueOfflineApproval(pass, occurredAt);
-      setProcessingId(null);
+      if (isMountedRef.current && typeof window !== 'undefined') {
+        setProcessingId(null);
+      }
     }
   }
 
@@ -206,11 +218,15 @@ export function GuardVisitorRecoveryTab({
           toast.error(err.message || 'Server refused pass rejection');
         }
       } finally {
-        setProcessingId(null);
+        if (isMountedRef.current && typeof window !== 'undefined') {
+          setProcessingId(null);
+        }
       }
     } else {
       await queueOfflineRejection(pass, reason, occurredAt);
-      setProcessingId(null);
+      if (isMountedRef.current && typeof window !== 'undefined') {
+        setProcessingId(null);
+      }
     }
   }
 
@@ -260,11 +276,15 @@ export function GuardVisitorRecoveryTab({
           toast.error(err.message || 'Server refused pass exit');
         }
       } finally {
-        setProcessingId(null);
+        if (isMountedRef.current && typeof window !== 'undefined') {
+          setProcessingId(null);
+        }
       }
     } else {
       await queueOfflineExit(pass, occurredAt);
-      setProcessingId(null);
+      if (isMountedRef.current && typeof window !== 'undefined') {
+        setProcessingId(null);
+      }
     }
   }
 
