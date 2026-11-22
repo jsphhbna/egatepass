@@ -22,6 +22,7 @@ export type HoldLookupState =
 interface GatePassWithId extends GatePass {
   id: string;
   contactNumber?: string | null;
+  email?: string | null;
   homeAddress?: string | null;
   homeStreet?: string | null;
   homeBuilding?: string | null;
@@ -33,6 +34,9 @@ interface GatePassWithId extends GatePass {
   attendanceStatus?: string | null;
   visitType?: string | null;
   approvalStatus?: string | null;
+  gender?: string | null;
+  visitDate?: string | null;
+  arrivalMode?: string | null;
 }
 
 interface SerializedRecordPass {
@@ -40,7 +44,10 @@ interface SerializedRecordPass {
   visitorId: string;
   visitorName: string;
   purpose: string;
+  gender?: string | null;
+  visitDate?: string | null;
   contactNumber?: string | null;
+  email?: string | null;
   homeAddress?: string | null;
   homeStreet?: string | null;
   homeBuilding?: string | null;
@@ -48,6 +55,7 @@ interface SerializedRecordPass {
   cityName?: string | null;
   provinceName?: string | null;
   regionName?: string | null;
+  arrivalMode?: string | null;
   destinationOffice?: string | null;
   attendanceStatus?: string | null;
   visitType?: string | null;
@@ -118,7 +126,10 @@ export function deserializeRecordPass(p: SerializedRecordPass): GatePassWithId {
     visitorId: p.visitorId,
     visitorName: p.visitorName,
     purpose: p.purpose,
+    gender: p.gender ?? null,
+    visitDate: p.visitDate ?? null,
     contactNumber: p.contactNumber ?? null,
+    email: p.email ?? null,
     homeAddress: p.homeAddress ?? null,
     homeStreet: p.homeStreet ?? null,
     homeBuilding: p.homeBuilding ?? null,
@@ -126,6 +137,7 @@ export function deserializeRecordPass(p: SerializedRecordPass): GatePassWithId {
     cityName: p.cityName ?? null,
     provinceName: p.provinceName ?? null,
     regionName: p.regionName ?? null,
+    arrivalMode: p.arrivalMode ?? null,
     destinationOffice: p.destinationOffice ?? null,
     attendanceStatus: p.attendanceStatus ?? null,
     visitType: p.visitType ?? null,
@@ -738,25 +750,54 @@ export function AdminRecords() {
       );
       const exportPasses = exportResult.items;
       const columns = [
-        { header: 'Visitor Name', key: 'visitorName' },
-        { header: 'Sex', key: 'gender' },
-        { header: 'Purpose', key: 'purpose' },
-        { header: 'Status', key: 'status' },
-        { header: 'Issued At', key: 'issuedAt' },
-        { header: 'Time In', key: 'timeIn' },
-        { header: 'Time Out', key: 'timeOut' },
-        { header: 'Gate', key: 'gate' },
+        { header: 'Visitor Name', key: 'visitorName', width: 22 },
+        { header: 'Sex', key: 'gender', width: 10 },
+        { header: 'Contact Number', key: 'contactNumber', width: 16 },
+        { header: 'Email', key: 'email', width: 24 },
+        { header: 'Residential Address', key: 'address', width: 32 },
+        { header: 'Destination Office', key: 'destinationOffice', width: 22 },
+        { header: 'Purpose of Visit', key: 'purpose', width: 26 },
+        { header: 'Visit Type', key: 'visitType', width: 16 },
+        { header: 'Scheduled Date', key: 'visitDate', width: 14 },
+        { header: 'Arrival Mode', key: 'arrivalMode', width: 14 },
+        { header: 'Pass Status', key: 'status', width: 14 },
+        { header: 'Office Attendance', key: 'attendanceStatus', width: 18 },
+        { header: 'Registration Source', key: 'source', width: 14 },
+        { header: 'Issued At', key: 'issuedAt', width: 20 },
+        { header: 'Time In', key: 'timeIn', width: 20 },
+        { header: 'Time Out', key: 'timeOut', width: 20 },
+        { header: 'Gate', key: 'gate', width: 14 },
       ];
-      const rows = exportPasses.map((p) => ({
-        visitorName: p.visitorName,
-        gender: (p as any).gender || '—',
-        purpose: p.purpose,
-        status: p.status,
-        issuedAt: p.issuedAt ? formatManilaIso(p.issuedAt.toMillis()) : '',
-        timeIn: p.timeIn ? formatManilaIso(p.timeIn.toMillis()) : '',
-        timeOut: p.timeOut ? formatManilaIso(p.timeOut.toMillis()) : '',
-        gate: p.gate || '',
-      }));
+      const rows = exportPasses.map((p) => {
+        const fullAddress = [
+          p.homeBuilding,
+          p.homeStreet,
+          p.barangayName,
+          p.cityName,
+          p.provinceName,
+          p.regionName,
+        ].filter(Boolean).join(', ') || p.homeAddress || '—';
+
+        return {
+          visitorName: p.visitorName,
+          gender: p.gender ? p.gender.charAt(0).toUpperCase() + p.gender.slice(1) : '—',
+          contactNumber: p.contactNumber || '—',
+          email: p.email || '—',
+          address: fullAddress,
+          destinationOffice: p.destinationOffice || 'General Campus',
+          purpose: p.purpose,
+          visitType: p.visitType ? p.visitType.replace(/_/g, ' ') : 'General',
+          visitDate: p.visitDate || '—',
+          arrivalMode: p.arrivalMode === 'vehicle' ? 'Vehicle' : 'No Vehicle (Walk-in)',
+          status: p.status,
+          attendanceStatus: p.attendanceStatus ? p.attendanceStatus.replace(/_/g, ' ') : '—',
+          source: p.source ? p.source.toUpperCase() : '—',
+          issuedAt: p.issuedAt ? formatManilaIso(p.issuedAt.toMillis()) : '',
+          timeIn: p.timeIn ? formatManilaIso(p.timeIn.toMillis()) : '',
+          timeOut: p.timeOut ? formatManilaIso(p.timeOut.toMillis()) : '',
+          gate: p.gate || '',
+        };
+      });
 
       const filterMetadata: Record<string, string> = {};
       if (exportSearch) filterMetadata['Search'] = exportSearch;
@@ -1603,6 +1644,7 @@ function VerificationImage({ title, publicId, emptyText = 'Image unavailable' }:
 }
 
 type ReportCategory =
+  | 'all'
   | 'missing_timeout'
   | 'currently_inside'
   | 'exited_unconfirmed'
@@ -1614,14 +1656,19 @@ interface VisitorReportsViewProps {
 }
 
 function VisitorReportsView({ onSelectPass }: VisitorReportsViewProps) {
-  const [reportCategory, setReportCategory] = useState<ReportCategory>('missing_timeout');
+  const [reportCategory, setReportCategory] = useState<ReportCategory>('all');
   const [reportDateFrom, setReportDateFrom] = useState<string>(() => getManilaDateString());
   const [reportDateTo, setReportDateTo] = useState<string>(() => getManilaDateString());
   const [loading, setLoading] = useState(false);
   const [reportPasses, setReportPasses] = useState<GatePassWithId[]>([]);
   const [exporting, setExporting] = useState(false);
+  const [exportFormat, setExportFormat] = useState<'csv' | 'xlsx' | 'pdf' | null>(null);
 
   const reportDescriptions: Record<ReportCategory, { title: string; desc: string }> = {
+    all: {
+      title: 'All Visitor Records Report',
+      desc: 'All visitor passes and registration records within the selected date range.',
+    },
     missing_timeout: {
       title: 'Missing Time-Out Report',
       desc: 'Visitors who entered campus (time-in recorded) but have no time-out exit recorded.',
@@ -1661,7 +1708,9 @@ function VisitorReportsView({ onSelectPass }: VisitorReportsViewProps) {
       const items: GatePassWithId[] = (data?.passes || []).map(deserializeRecordPass);
 
       let filtered = items;
-      if (reportCategory === 'missing_timeout') {
+      if (reportCategory === 'all') {
+        filtered = items;
+      } else if (reportCategory === 'missing_timeout') {
         filtered = items.filter((p) => p.timeIn != null && p.timeOut == null);
       } else if (reportCategory === 'currently_inside') {
         filtered = items.filter((p) => p.status === 'inside' || (p.timeIn != null && p.timeOut == null));
@@ -1691,51 +1740,83 @@ function VisitorReportsView({ onSelectPass }: VisitorReportsViewProps) {
     void loadReportData();
   }, [loadReportData]);
 
-  async function handleExportCsv() {
+  async function handleExportReport(format: 'csv' | 'xlsx' | 'pdf') {
     if (reportPasses.length === 0) {
       toast.error('No matching records to export.');
       return;
     }
     setExporting(true);
+    setExportFormat(format);
     try {
       const info = reportDescriptions[reportCategory];
       const filename = `visitor_report_${reportCategory}_${formatManilaFileTimestamp(new Date())}`;
-      await exportReportToCsv({
+      const columns = [
+        { header: 'Visitor Name', key: 'visitorName', width: 22 },
+        { header: 'Sex', key: 'gender', width: 10 },
+        { header: 'Contact Number', key: 'contactNumber', width: 16 },
+        { header: 'Email', key: 'email', width: 24 },
+        { header: 'Residential Address', key: 'address', width: 32 },
+        { header: 'Destination Office', key: 'destinationOffice', width: 22 },
+        { header: 'Purpose of Visit', key: 'purpose', width: 26 },
+        { header: 'Visit Type', key: 'visitType', width: 16 },
+        { header: 'Scheduled Date', key: 'visitDate', width: 14 },
+        { header: 'Arrival Mode', key: 'arrivalMode', width: 14 },
+        { header: 'Pass Status', key: 'status', width: 14 },
+        { header: 'Office Attendance', key: 'attendanceStatus', width: 18 },
+        { header: 'Registration Source', key: 'source', width: 14 },
+        { header: 'Time In', key: 'timeIn', width: 20 },
+        { header: 'Time Out', key: 'timeOut', width: 20 },
+        { header: 'Gate', key: 'gate', width: 14 },
+      ];
+      const rows = reportPasses.map((r) => ({
+        visitorName: r.visitorName,
+        gender: r.gender ? r.gender.charAt(0).toUpperCase() + r.gender.slice(1) : '—',
+        contactNumber: r.contactNumber || '—',
+        email: r.email || '—',
+        address:
+          [r.homeBuilding, r.homeStreet, r.barangayName, r.cityName, r.provinceName, r.regionName]
+            .filter(Boolean)
+            .join(', ') ||
+          r.homeAddress ||
+          '—',
+        destinationOffice: r.destinationOffice || 'General Campus',
+        purpose: r.purpose,
+        visitType: r.visitType ? r.visitType.replace(/_/g, ' ') : 'General',
+        visitDate: r.visitDate || '—',
+        arrivalMode: r.arrivalMode === 'vehicle' ? 'Vehicle' : 'No Vehicle (Walk-in)',
+        status: r.status,
+        attendanceStatus: r.attendanceStatus ? r.attendanceStatus.replace(/_/g, ' ') : '—',
+        source: r.source ? r.source.toUpperCase() : '—',
+        timeIn: r.timeIn ? formatManilaDateTime(r.timeIn.toMillis()) : '—',
+        timeOut: r.timeOut ? formatManilaDateTime(r.timeOut.toMillis()) : '—',
+        gate: r.gate || '—',
+      }));
+
+      const reportOpts = {
         title: info.title,
         reportTitle: info.title,
-        columns: [
-          { header: 'Visitor Name', key: 'visitorName' },
-          { header: 'Contact Number', key: 'contactNumber', format: (v) => v || '—' },
-          { header: 'Destination Office', key: 'destinationOffice', format: (v) => v || 'General Campus' },
-          {
-            header: 'Residential Address',
-            key: 'homeAddress',
-            format: (_v, r) =>
-              [r.homeBuilding, r.homeStreet, r.barangayName, r.cityName, r.provinceName, r.regionName]
-                .filter(Boolean)
-                .join(', ') ||
-              r.homeAddress ||
-              '—',
-          },
-          { header: 'Purpose', key: 'purpose' },
-          { header: 'Pass Status', key: 'status' },
-          { header: 'Time In', key: 'timeIn', format: (v) => (v ? formatManilaDateTime(v.toMillis()) : '—') },
-          { header: 'Time Out', key: 'timeOut', format: (v) => (v ? formatManilaDateTime(v.toMillis()) : '—') },
-          { header: 'Office Attendance', key: 'attendanceStatus', format: (v) => (v ? v.replace(/_/g, ' ') : '—') },
-          { header: 'Gate', key: 'gate', format: (v) => v || '—' },
-        ],
-        rows: reportPasses,
+        columns,
+        rows,
         filterMetadata: {
           'Report Category': info.title,
           'Date Range': `${reportDateFrom} to ${reportDateTo}`,
         },
-        filename: `${filename}.csv`,
-      });
-      toast.success(`Exported ${reportPasses.length} records to CSV.`);
+        filename: `${filename}.${format}`,
+      };
+
+      if (format === 'csv') {
+        await exportReportToCsv(reportOpts);
+      } else if (format === 'xlsx') {
+        await exportReportToExcel({ ...reportOpts, sheetName: 'Visitor Report' });
+      } else {
+        await exportReportToPdf(reportOpts);
+      }
+      toast.success(`Exported ${reportPasses.length} records to ${format.toUpperCase()}.`);
     } catch (err: any) {
-      toast.error(err?.message || 'Failed to export CSV report.');
+      toast.error(err?.message || `Failed to export ${format.toUpperCase()} report.`);
     } finally {
       setExporting(false);
+      setExportFormat(null);
     }
   }
 
@@ -1754,6 +1835,7 @@ function VisitorReportsView({ onSelectPass }: VisitorReportsViewProps) {
               value={reportCategory}
               onChange={(e) => setReportCategory(e.target.value as ReportCategory)}
             >
+              <option value="all">All Records (Everything)</option>
               <option value="missing_timeout">Missing Time-Out</option>
               <option value="currently_inside">Currently Inside Campus</option>
               <option value="exited_unconfirmed">Exited Without Office Confirmation</option>
@@ -1796,17 +1878,38 @@ function VisitorReportsView({ onSelectPass }: VisitorReportsViewProps) {
             >
               Refresh
             </Button>
-            <Button
-              type="button"
-              variant="primary"
-              className="bg-[#7A0A0A] hover:bg-[#600808] text-white"
-              onClick={() => void handleExportCsv()}
-              loading={exporting}
-              disabled={reportPasses.length === 0}
-              icon={<Download className="h-4 w-4" />}
-            >
-              Export CSV
-            </Button>
+            <div className="flex items-center gap-1.5">
+              <Button
+                type="button"
+                variant="secondary"
+                onClick={() => void handleExportReport('csv')}
+                loading={exporting && exportFormat === 'csv'}
+                disabled={exporting || reportPasses.length === 0}
+                icon={<Download className="h-4 w-4" />}
+              >
+                CSV
+              </Button>
+              <Button
+                type="button"
+                variant="secondary"
+                onClick={() => void handleExportReport('xlsx')}
+                loading={exporting && exportFormat === 'xlsx'}
+                disabled={exporting || reportPasses.length === 0}
+                icon={<Download className="h-4 w-4" />}
+              >
+                Excel
+              </Button>
+              <Button
+                type="button"
+                variant="secondary"
+                onClick={() => void handleExportReport('pdf')}
+                loading={exporting && exportFormat === 'pdf'}
+                disabled={exporting || reportPasses.length === 0}
+                icon={<Download className="h-4 w-4" />}
+              >
+                PDF
+              </Button>
+            </div>
           </div>
         </div>
       </Card>
