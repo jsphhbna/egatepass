@@ -86,8 +86,8 @@ begin
 end;
 $$;
 
-revoke all on function api.get_emergency_sms_recipients(uuid) from public, anon;
-grant execute on function api.get_emergency_sms_recipients(uuid) to authenticated, service_role;
+revoke all on function api.get_emergency_sms_recipients(uuid) from public, anon, authenticated;
+grant execute on function api.get_emergency_sms_recipients(uuid) to service_role;
 
 -- 4. Secure RPC: api.get_overdue_campus_visitors
 create or replace function api.get_overdue_campus_visitors(
@@ -141,8 +141,8 @@ begin
 end;
 $$;
 
-revoke all on function api.get_overdue_campus_visitors(uuid) from public, anon;
-grant execute on function api.get_overdue_campus_visitors(uuid) to authenticated, service_role;
+revoke all on function api.get_overdue_campus_visitors(uuid) from public, anon, authenticated;
+grant execute on function api.get_overdue_campus_visitors(uuid) to service_role;
 
 -- 5. Secure RPC: api.check_and_reserve_sms_quota
 create or replace function api.check_and_reserve_sms_quota(
@@ -209,5 +209,5 @@ begin
 end;
 $$;
 
-revoke all on function api.check_and_reserve_sms_quota(uuid, integer) from public, anon;
-grant execute on function api.check_and_reserve_sms_quota(uuid, integer) to authenticated, service_role;
+revoke all on function api.check_and_reserve_sms_quota(uuid, integer) from public, anon, authenticated;
+grant execute on function api.check_and_reserve_sms_quota(uuid, integer) to service_role;
