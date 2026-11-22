@@ -154,6 +154,10 @@ async function handleRequest(request: Request): Promise<Response> {
     }
 
     // 2. Fetch passes scanned at this gate today (Asia/Manila calendar day)
+    // Security Boundary: Guard Station is a passive monitor showing verified online portal passes
+    // that have been admitted ('inside') or exited ('exited') at this specific gate.
+    // Walk-in kiosk passes enter in 'pending' status and require explicit human security officer /
+    // administrator review via /admin/legacy-guard and api.decide_visit before admission.
     const { startUtc, endUtc } = getManilaDayBounds();
 
     // Query authoritative total count for today

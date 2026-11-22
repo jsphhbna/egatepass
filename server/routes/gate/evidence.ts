@@ -63,8 +63,8 @@ async function handleRequest(request: Request): Promise<Response> {
       .select('visitor_id, bucket_id, object_path, content_type, expires_at, purged_at, kind')
       .eq('id', evidenceId.data).maybeSingle();
     if (evidenceError) throw evidenceError;
-    if (!evidence) return jsonResponse(404, { error: 'Evidence not found' });
-    if (evidence.purged_at) return jsonResponse(410, { error: 'Evidence expired' });
+    if (!evidence) return jsonResponse(404, { error: 'Evidence not found', code: 'evidence_record_not_found' });
+    if (evidence.purged_at) return jsonResponse(410, { error: 'Evidence expired', code: 'evidence_purged' });
 
     const isExpired = new Date(evidence.expires_at).getTime() <= Date.now();
     let isHeld = false;
@@ -73,7 +73,7 @@ async function handleRequest(request: Request): Promise<Response> {
       // Guard station privacy boundary: only photo evidence permitted, never ID document
       if (evidence.kind !== 'photo') {
         if (evidence.kind !== 'vehicle_photo') {
-          return jsonResponse(403, { error: 'Guard station cannot access ID evidence' });
+          return jsonResponse(403, { error: 'Guard station cannot access ID evidence', code: 'guard_station_id_evidence_prohibited' });
         }
       }
 
@@ -91,7 +91,7 @@ async function handleRequest(request: Request): Promise<Response> {
         }
 
         if (isExpired && !isProfileActive) {
-          return jsonResponse(410, { error: 'Evidence expired' });
+          return jsonResponse(410, { error: 'Evidence expired', code: 'evidence_retention_expired' });
         }
 
         let targetVisitorIds = [evidence.visitor_id];
@@ -110,10 +110,10 @@ async function handleRequest(request: Request): Promise<Response> {
           .in('status', ['inside', 'exited']);
         // (Legacy human guard operational verification previously checked: .eq('status', 'pending'))
         if (passError) throw passError;
-        if (!count) return jsonResponse(403, { error: 'Evidence is not operationally accessible at this station' });
+        if (!count) return jsonResponse(403, { error: 'Evidence is not operationally accessible at this station', code: 'station_gate_unauthorized' });
       } else if (evidence.kind === 'vehicle_photo') {
         if (isExpired) {
-          return jsonResponse(410, { error: 'Evidence expired' });
+          return jsonResponse(410, { error: 'Evidence expired', code: 'evidence_retention_expired' });
         }
 
         // Exact-pass authorization check for vehicle photo (Section 6)
@@ -126,7 +126,7 @@ async function handleRequest(request: Request): Promise<Response> {
 
         if (declError) throw declError;
         if (!decl || decl.visitor_id !== evidence.visitor_id || !decl.pass_id) {
-          return jsonResponse(403, { error: 'Vehicle photo is not associated with an authorized visit' });
+          return jsonResponse(403, { error: 'Vehicle photo is not associated with an authorized visit', code: 'vehicle_evidence_unassociated' });
         }
 
         // Verify that exact pass is operationally accessible at this station device's gate
@@ -145,7 +145,7 @@ async function handleRequest(request: Request): Promise<Response> {
           !exactPass.entry_scanned_at ||
           !['inside', 'exited'].includes(exactPass.status)
         ) {
-          return jsonResponse(403, { error: 'Vehicle photo is not operationally accessible at this station' });
+          return jsonResponse(403, { error: 'Vehicle photo is not operationally accessible at this station', code: 'vehicle_gate_unauthorized' });
         }
       }
     } else if (staffActor) {
@@ -183,7 +183,7 @@ async function handleRequest(request: Request): Promise<Response> {
         }
 
         if (!activeHold) {
-          return jsonResponse(410, { error: 'Evidence expired' });
+          return jsonResponse(410, { error: 'Evidence expired', code: 'evidence_retention_expired' });
         }
 
         isHeld = true;
@@ -209,13 +209,13 @@ async function handleRequest(request: Request): Promise<Response> {
             auditError.message || 'audit_insert_failed',
             { actorId: staffActor.id, actorRole: staffActor.role }
           ).catch(() => undefined);
-          return jsonResponse(503, { error: 'Audit recording unavailable' });
+          return jsonResponse(503, { error: 'Audit recording unavailable', code: 'audit_unavailable' });
         }
       }
     }
 
     const file = await admin.storage.from(evidence.bucket_id).download(evidence.object_path);
-    if (file.error) return jsonResponse(404, { error: 'Evidence object not found' });
+    if (file.error) return jsonResponse(404, { error: 'Evidence object not found', code: 'storage_object_missing' });
     return new Response(file.data, {
       status: 200,
       headers: {
@@ -228,7 +228,7 @@ async function handleRequest(request: Request): Promise<Response> {
     });
   } catch (error) {
     console.error('Evidence retrieval failed.', error instanceof Error ? error.message : 'unknown_error');
-    return jsonResponse(503, { error: 'Evidence temporarily unavailable' });
+    return jsonResponse(503, { error: 'Evidence temporarily unavailable', code: 'service_unavailable' });
   }
 }
 

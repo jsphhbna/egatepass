@@ -535,6 +535,7 @@ export function GuardPage() {
                       <div className="relative aspect-square w-full max-w-[280px] overflow-hidden rounded-2xl border-2 border-[var(--color-border)] bg-slate-100 shadow-inner">
                         {latestEntry?.photoEvidenceId ? (
                           <AuthenticatedImage
+                            key={latestEntry.photoEvidenceId || latestEntry.passId}
                             publicId={latestEntry.photoEvidenceId}
                             alt={latestEntry.visitorName}
                             className="h-full w-full object-cover"
@@ -748,8 +749,10 @@ export function GuardPage() {
                       <div className="h-14 w-14 flex-shrink-0 overflow-hidden rounded-xl border border-[var(--color-border)] bg-slate-100">
                         {entry.photoEvidenceId ? (
                           <AuthenticatedImage
+                            key={entry.photoEvidenceId || entry.passId}
                             publicId={entry.photoEvidenceId}
                             alt={entry.visitorName}
+                            compact
                             className="h-full w-full object-cover"
                           />
                         ) : (

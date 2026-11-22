@@ -32,6 +32,15 @@ function isSafeFetchUrl(url: string): boolean {
   return true;
 }
 
+export type AuthenticatedImageState =
+  | 'loading'
+  | 'ready'
+  | 'expired'
+  | 'missing'
+  | 'missing_object'
+  | 'unauthorized'
+  | 'temporary';
+
 export function AuthenticatedImage({
   publicId,
   srcUrl,
@@ -44,7 +53,7 @@ export function AuthenticatedImage({
 }: AuthenticatedImageProps) {
   const [objectUrl, setObjectUrl] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
-  const [state, setState] = useState<'loading' | 'ready' | 'expired' | 'missing' | 'temporary'>('loading');
+  const [state, setState] = useState<AuthenticatedImageState>('loading');
   const [retryCount, setRetryCount] = useState(0);
 
   useEffect(() => {
@@ -123,8 +132,16 @@ export function AuthenticatedImage({
           return;
         }
         if (response.status === 404) {
+          const body = await response.json().catch(() => null);
           if (active) {
-            setState('missing');
+            setState(body?.code === 'storage_object_missing' ? 'missing_object' : 'missing');
+            setLoading(false);
+          }
+          return;
+        }
+        if (response.status === 401 || response.status === 403) {
+          if (active) {
+            setState('unauthorized');
             setLoading(false);
           }
           return;
@@ -183,6 +200,10 @@ export function AuthenticatedImage({
     const isTemporary = state === 'temporary';
     const message = state === 'expired'
       ? 'Image expired'
+      : state === 'missing_object'
+      ? 'Storage file missing'
+      : state === 'unauthorized'
+      ? 'Restricted access'
       : state === 'missing'
       ? (fallbackText || 'Image unavailable')
       : isTemporary
@@ -190,6 +211,14 @@ export function AuthenticatedImage({
       : fallbackText;
 
     if (compact) {
+      const compactBadge = state === 'expired'
+        ? 'Expired'
+        : state === 'missing_object'
+        ? 'Missing'
+        : state === 'unauthorized'
+        ? 'Restricted'
+        : (fallbackText || 'Unavailable');
+
       return (
         <div
           className={`flex flex-col items-center justify-center rounded-xl border border-dashed border-slate-300 bg-slate-100/80 p-1 text-center text-slate-400 select-none ${className}`}
@@ -199,7 +228,7 @@ export function AuthenticatedImage({
         >
           <ImageOff className="h-4 w-4 shrink-0 text-slate-400" />
           <span className="text-[9px] font-semibold text-slate-500 leading-tight mt-0.5 line-clamp-1 max-w-full px-0.5">
-            {state === 'expired' ? 'Expired' : (fallbackText || 'Unavailable')}
+            {compactBadge}
           </span>
         </div>
       );
@@ -215,6 +244,12 @@ export function AuthenticatedImage({
         <span className="text-xs font-semibold">{message}</span>
         {state === 'expired' && (
           <span className="mt-1 text-xs">Removed under the configured image retention policy.</span>
+        )}
+        {state === 'missing_object' && (
+          <span className="mt-1 text-xs">Evidence record exists but storage file could not be found.</span>
+        )}
+        {state === 'unauthorized' && (
+          <span className="mt-1 text-xs">This photo is not operationally accessible at this terminal or gate.</span>
         )}
         {isTemporary && (
           <button
