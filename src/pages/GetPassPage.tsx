@@ -46,6 +46,7 @@ import { hydrateReturningAddress } from '@/lib/returningAddressHydration';
 import { normalizePhMobile, validatePhMobile } from '@/lib/phPhone';
 import { normalizeVehiclePlate } from '@/lib/vehiclePlate';
 import { fetchWithTimeout } from '@/lib/fetchWithTimeout';
+import { InstitutionalPrivacyNoticeModal } from '@/components/InstitutionalPrivacyNoticeModal';
 import {
   Camera,
   CheckCircle2,
@@ -365,7 +366,7 @@ export function GetPassPage() {
   const [returningSearchError, setReturningSearchError] = useState<string | null>(null);
 
   // Office & Visit Type State
-  const [offices, setOffices] = useState<Array<{ id: string; name: string; description: string | null }>>([]);
+  const [offices, setOffices] = useState<Array<{ id: string; name: string; description: string | null; closure_status?: string; closure_reason?: string | null }>>([]);
   const [selectedOfficeId, setSelectedOfficeId] = useState<string>('');
   const [visitType, setVisitType] = useState<'general' | 'specific_person' | null>(null);
   const [personnelList, setPersonnelList] = useState<Array<{ id: string; name: string; title: string | null }>>([]);
@@ -1320,6 +1321,12 @@ export function GetPassPage() {
 
     if (!vals.visitDate) {
       toast.error('Please select a visit date.');
+      return;
+    }
+
+    const targetOffice = offices.find((o) => o.id === selectedOfficeId);
+    if (targetOffice?.closure_status === 'closed') {
+      toast.error(`The ${targetOffice.name} is currently closed${targetOffice.closure_reason ? `: ${targetOffice.closure_reason}` : ''}. Please choose another office or visit date.`);
       return;
     }
 
@@ -3229,20 +3236,30 @@ export function GetPassPage() {
                   </span>
                 </label>
 
-                <div className="flex flex-wrap items-center justify-between gap-2 pt-2 border-t border-[var(--color-border)] text-xs text-[var(--color-text-secondary)]">
-                  <span>By proceeding, you acknowledge our campus visitor privacy guidelines.</span>
-                  <button
-                    type="button"
-                    onClick={(e) => {
-                      e.preventDefault();
-                      e.stopPropagation();
-                      setShowPrivacyModal(true);
-                    }}
-                    className="font-bold text-[#7A0A0A] hover:underline inline-flex items-center gap-1.5 shrink-0 focus:outline-none focus:ring-1 focus:ring-[#7A0A0A] rounded px-1 py-0.5"
-                  >
-                    <ShieldCheck className="h-4 w-4 text-[#7A0A0A]" />
-                    Read our Data Privacy Notice
-                  </button>
+                <div className="pt-2 border-t border-[var(--color-border)] text-xs text-[var(--color-text-secondary)] space-y-1">
+                  <p className="leading-relaxed">
+                    Face photos are normally retained for {photoRetentionDays ?? 30} days under institutional policy.{' '}
+                    Valid ID images, when collected, are normally retained for {idRetentionDays ?? 30} days under institutional policy.{' '}
+                    Visitor records are retained for {visitorRetentionDays ?? 90} days under institutional policy.
+                  </p>
+                  <p className="leading-relaxed">
+                    Evidence is retained at least through the scheduled visit, and authorized incident holds may extend retention when required.
+                  </p>
+                  <div className="flex flex-wrap items-center justify-between gap-2 pt-1">
+                    <span>By proceeding, you acknowledge our campus visitor privacy guidelines.</span>
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        setShowPrivacyModal(true);
+                      }}
+                      className="font-bold text-[#7A0A0A] hover:underline inline-flex items-center gap-1.5 shrink-0 focus:outline-none focus:ring-1 focus:ring-[#7A0A0A] rounded px-1 py-0.5"
+                    >
+                      <ShieldCheck className="h-4 w-4 text-[#7A0A0A]" />
+                      Read our Data Privacy Notice
+                    </button>
+                  </div>
                 </div>
 
                 {errors.consent && (
@@ -3316,7 +3333,7 @@ export function GetPassPage() {
                       <option value="">Select destination office</option>
                       {offices.map((o) => (
                         <option key={o.id} value={o.id}>
-                          {o.name}
+                          {o.name}{o.closure_status === 'closed' ? ' [Temporarily Closed]' : ''}
                         </option>
                       ))}
                     </select>
@@ -3326,6 +3343,29 @@ export function GetPassPage() {
                       {offices.find((o) => o.id === selectedOfficeId)?.description}
                     </p>
                   )}
+                  {(() => {
+                    const selectedOffice = offices.find((o) => o.id === selectedOfficeId);
+                    if (selectedOffice?.closure_status === 'closed') {
+                      return (
+                        <div className="mt-3 rounded-xl border border-red-300 bg-red-50 p-4 text-red-950 space-y-2" role="alert">
+                          <div className="flex items-center gap-2 font-bold text-red-900 text-sm">
+                            <AlertTriangle className="h-5 w-5 text-red-700 shrink-0" />
+                            <span>Office Temporarily Closed</span>
+                          </div>
+                          <p className="text-xs leading-relaxed">
+                            The <strong>{selectedOffice.name}</strong> is temporarily closed:
+                          </p>
+                          <div className="rounded-lg border border-red-200 bg-white/95 p-3 text-xs font-medium text-red-900 italic">
+                            &ldquo;{selectedOffice.closure_reason || 'This office is temporarily unavailable due to an unexpected emergency.'}&rdquo;
+                          </div>
+                          <p className="text-[11px] text-red-800 font-semibold">
+                            Visits to this office are temporarily paused. Please choose another office or check back later.
+                          </p>
+                        </div>
+                      );
+                    }
+                    return null;
+                  })()}
                   {selectedOfficeId && officeSchedules.length > 0 && (
                     <div className="mt-2 rounded-xl border border-amber-200 bg-amber-50/70 p-3 text-xs text-amber-900 space-y-1">
                       <div className="font-bold flex items-center gap-1.5">
@@ -5234,7 +5274,7 @@ export function GetPassPage() {
                       <option value="">Select destination office</option>
                       {offices.map((o) => (
                         <option key={o.id} value={o.id}>
-                          {o.name}
+                          {o.name}{o.closure_status === 'closed' ? ' [Temporarily Closed]' : ''}
                         </option>
                       ))}
                     </select>
@@ -5244,6 +5284,29 @@ export function GetPassPage() {
                       {offices.find((o) => o.id === selectedOfficeId)?.description}
                     </p>
                   )}
+                  {(() => {
+                    const selectedOffice = offices.find((o) => o.id === selectedOfficeId);
+                    if (selectedOffice?.closure_status === 'closed') {
+                      return (
+                        <div className="mt-3 rounded-xl border border-red-300 bg-red-50 p-4 text-red-950 space-y-2" role="alert">
+                          <div className="flex items-center gap-2 font-bold text-red-900 text-sm">
+                            <AlertTriangle className="h-5 w-5 text-red-700 shrink-0" />
+                            <span>Office Temporarily Closed</span>
+                          </div>
+                          <p className="text-xs leading-relaxed">
+                            The <strong>{selectedOffice.name}</strong> is temporarily closed:
+                          </p>
+                          <div className="rounded-lg border border-red-200 bg-white/95 p-3 text-xs font-medium text-red-900 italic">
+                            &ldquo;{selectedOffice.closure_reason || 'This office is temporarily unavailable due to an unexpected emergency.'}&rdquo;
+                          </div>
+                          <p className="text-[11px] text-red-800 font-semibold">
+                            Visits to this office are temporarily paused. Please choose another office or check back later.
+                          </p>
+                        </div>
+                      );
+                    }
+                    return null;
+                  })()}
                   {selectedOfficeId && officeSchedules.length > 0 && (
                     <div className="mt-2 rounded-xl border border-amber-200 bg-amber-50/70 p-3 text-xs text-amber-900 space-y-1">
                       <div className="font-bold flex items-center gap-1.5">
@@ -6605,106 +6668,13 @@ export function GetPassPage() {
       )}
 
       {/* Institutional Data Privacy Notice Modal */}
-      {showPrivacyModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-xs animate-in fade-in duration-200">
-          <div className="w-full max-w-lg max-h-[85vh] rounded-2xl bg-white p-6 shadow-2xl border border-[var(--color-border)] flex flex-col space-y-4">
-            <div className="flex items-center justify-between border-b border-[var(--color-border)] pb-3">
-              <div className="flex items-center gap-2.5">
-                <div className="h-9 w-9 rounded-xl bg-[#7A0A0A]/10 text-[#7A0A0A] flex items-center justify-center shrink-0">
-                  <ShieldCheck className="h-5 w-5" />
-                </div>
-                <div>
-                  <h3 className="font-bold text-base text-[var(--color-text-primary)]">
-                    Institutional Data Privacy Notice
-                  </h3>
-                  <p className="text-[11px] text-[var(--color-text-secondary)]">
-                    Eulogio "Amang" Rodriguez Institute of Science and Technology (EARIST)
-                  </p>
-                </div>
-              </div>
-              <button
-                type="button"
-                onClick={() => setShowPrivacyModal(false)}
-                className="text-[var(--color-text-muted)] hover:text-[var(--color-text-primary)] p-1 rounded-lg hover:bg-slate-100"
-                aria-label="Close"
-              >
-                <X className="h-5 w-5" />
-              </button>
-            </div>
-
-            <div className="overflow-y-auto pr-2 space-y-3 text-xs text-[var(--color-text-secondary)] leading-relaxed">
-              <p>
-                In compliance with <strong>Republic Act No. 10173</strong> (Data Privacy Act of 2012) and its Implementing Rules and Regulations, EARIST is committed to protecting your personal data, privacy, and institutional security.
-              </p>
-
-              <div>
-                <h4 className="font-bold text-[var(--color-text-primary)] text-xs mb-1">1. Purpose of Data Collection</h4>
-                <p>
-                  We collect your full name, Philippine mobile number, residential locality, visit purpose, vehicle information (if applicable), live portrait photo, and government/valid ID image strictly for campus security, visitor verification, authorized emergency tracing, and gate pass issuance.
-                </p>
-              </div>
-
-              <div>
-                <h4 className="font-bold text-[var(--color-text-primary)] text-xs mb-1">2. Data Retention & Automatic Purging</h4>
-                <p>
-                  Your information is maintained under established institutional retention policies:
-                </p>
-                <ul className="list-disc pl-5 mt-1 space-y-1">
-                  <li>
-                    Face photos are normally retained for{' '}
-                    {typeof photoRetentionDays === 'number' ? `${photoRetentionDays} days` : '30 days'}{' '}
-                    under institutional policy.
-                  </li>
-                  <li>
-                    Valid ID images, when collected, are normally retained for{' '}
-                    {typeof idRetentionDays === 'number' ? `${idRetentionDays} days` : '30 days'}{' '}
-                    under institutional policy.
-                  </li>
-                  <li>
-                    Visitor records are retained for{' '}
-                    {typeof visitorRetentionDays === 'number' ? `${visitorRetentionDays} days` : '90 days'}{' '}
-                    under institutional policy.
-                  </li>
-                </ul>
-                <p className="mt-1">
-                  Evidence is retained at least through the scheduled visit, and authorized incident holds may extend retention when required.
-                </p>
-              </div>
-
-              <div>
-                <h4 className="font-bold text-[var(--color-text-primary)] text-xs mb-1">3. Ephemeral Biometric Verification</h4>
-                <p>
-                  Biometric vector storage is disabled by default; when returning visitor 1:1 verification is enabled and calibrated, live selfies are compared ephemerally in bounded memory against your encrypted registration portrait and are never persisted as raw selfies or vector databases.
-                </p>
-              </div>
-
-              <div>
-                <h4 className="font-bold text-[var(--color-text-primary)] text-xs mb-1">4. Rights of the Data Subject</h4>
-                <p>
-                  Under the Data Privacy Act, you have the right to be informed, to access, to object, to rectify, and to request reasonable erasure of your personal data, subject to legitimate institutional security and statutory retention requirements.
-                </p>
-              </div>
-
-              <div>
-                <h4 className="font-bold text-[var(--color-text-primary)] text-xs mb-1">5. Data Protection Officer</h4>
-                <p>
-                  For privacy inquiries, clarifications, or requests concerning your visitor records, please contact the EARIST Data Protection Office at <em>privacy@earist.edu.ph</em>.
-                </p>
-              </div>
-            </div>
-
-            <div className="pt-3 border-t border-[var(--color-border)] flex justify-end">
-              <Button
-                variant="primary"
-                onClick={() => setShowPrivacyModal(false)}
-                className="w-full sm:w-auto"
-              >
-                I Understand
-              </Button>
-            </div>
-          </div>
-        </div>
-      )}
+      <InstitutionalPrivacyNoticeModal
+        isOpen={showPrivacyModal}
+        onClose={() => setShowPrivacyModal(false)}
+        photoRetentionDays={photoRetentionDays}
+        idRetentionDays={idRetentionDays}
+        visitorRetentionDays={visitorRetentionDays}
+      />
     </PageShell>
   );
 }

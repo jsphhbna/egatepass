@@ -418,6 +418,7 @@ export const SERVER_DIRECT_TABLE_OPERATIONS: DirectServerTableOperation[] = [
   { file: 'server/routes/office/portrait-preview.ts', table: 'visitors', operations: ['SELECT'], purpose: 'Lookup returning visitor profile for historical photo resolution' },
   { file: 'server/routes/office/portrait-preview.ts', table: 'visitor_evidence', operations: ['SELECT'], purpose: 'Lookup historical registration portrait for returning visitor' },
   { file: 'server/routes/office/portrait-preview.ts', table: 'upload_intents', operations: ['SELECT'], purpose: 'Lookup original upload intent for active portrait resolution' },
+  { file: 'server/routes/office/closure.ts', table: 'offices', operations: ['SELECT'], purpose: 'Read office closure status and reason' },
   { file: 'server/routes/office/verify-email.ts', table: 'office_visit_email_verifications', operations: ['SELECT', 'INSERT', 'UPDATE'], purpose: 'Record and verify visitor email verification challenges' },
   { file: 'server/routes/office/verify-email.ts', table: 'office_visit_verification_proofs', operations: ['INSERT'], purpose: 'Store single-use verification proof digest' },
   { file: 'server/routes/office/visits.ts', table: 'offices', operations: ['SELECT'], purpose: 'Lookup office metadata for dashboard' },

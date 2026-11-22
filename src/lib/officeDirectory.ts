@@ -21,6 +21,9 @@ export interface AdminOfficeRecord {
   requires_approval_before_pass?: boolean;
   published_at?: string | null;
   archived_at?: string | null;
+  closure_status?: 'open' | 'closed';
+  closure_reason?: string | null;
+  closed_at?: string | null;
   hasDependencies?: boolean;
   created_at?: string;
   updated_at?: string;

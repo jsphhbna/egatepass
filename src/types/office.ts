@@ -20,6 +20,9 @@ export interface Office {
   active: boolean;
   publicationStatus?: OfficePublicationStatus;
   requiresApprovalBeforePass?: boolean;
+  closure_status?: 'open' | 'closed';
+  closure_reason?: string | null;
+  closed_at?: string | null;
   archivedAt?: string | null;
   createdAt?: string;
   updatedAt?: string;
