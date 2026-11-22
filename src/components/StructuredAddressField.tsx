@@ -49,7 +49,7 @@ export function StructuredAddressField({
               <MapPin className="w-5 h-5 text-[#7A0A0A] flex-shrink-0 mt-0.5" />
               <div className="min-w-0">
                 <p className="text-sm font-bold text-[var(--color-text-primary,#172033)] truncate">
-                  {value.barangay.name}, {value.city.name}
+                  {value.city.name}, {value.barangay.name}
                 </p>
                 <p className="text-xs text-[var(--color-text-secondary,#5F6B7F)] truncate mt-0.5">
                   {isCityOfManila(value.city?.code, value.city?.name) ? (
@@ -83,7 +83,7 @@ export function StructuredAddressField({
           >
             <div className="flex items-center space-x-2.5">
               <MapPin className="w-4 h-4 text-[#7A0A0A] group-hover:scale-110 transition-transform" />
-              <span className="font-medium text-[var(--color-text-primary,#172033)]">Select your barangay and city</span>
+              <span className="font-medium text-[var(--color-text-primary,#172033)]">Select your municipality/city and barangay</span>
             </div>
             <ChevronRight className="w-4 h-4 text-[var(--color-text-muted,#687386)] group-hover:text-[#7A0A0A] transition-colors" />
           </button>

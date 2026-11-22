@@ -91,6 +91,7 @@ const navGroups: NavGroupItem[] = [
       { to: '/admin/settings?tab=general', label: 'General' },
       { to: '/admin/settings?tab=calendar', label: 'Campus Calendar' },
       { to: '/admin/settings?tab=visitor_ux', label: 'Visitor Experience' },
+      { to: '/admin/settings?tab=sms_alerts', label: 'SMS & Alerts' },
       { to: '/admin/settings?tab=security', label: 'Security & Privacy' },
       { to: '/admin/settings?tab=retention', label: 'Data Retention' },
       { to: '/admin/settings?tab=personal', label: 'Personal Profile' },

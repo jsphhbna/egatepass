@@ -1093,8 +1093,8 @@ export function GetPassPage() {
     }
     setValue('contactNumber', phRes, { shouldValidate: true });
     if (!selectedPsgc) {
-      setAddressError('Please select your residential barangay and city.');
-      toast.error('Please select your residential barangay and city.');
+      setAddressError('Please select your residential municipality and barangay.');
+      toast.error('Please select your residential municipality and barangay.');
       return;
     }
     setAddressError(null);
@@ -1724,8 +1724,8 @@ export function GetPassPage() {
       return;
     }
     if (!selectedPsgc) {
-      setAddressError('Please select your residential barangay and city.');
-      toast.error('Please select your residential barangay and city.');
+      setAddressError('Please select your residential municipality and barangay.');
+      toast.error('Please select your residential municipality and barangay.');
       return;
     }
     setAddressError(null);

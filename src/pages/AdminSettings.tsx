@@ -16,6 +16,9 @@ import {
   Car,
   KeyRound,
   ShieldAlert,
+  Send,
+  Smartphone,
+  Radio,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { Button, Card, Input, Select, ConfirmModal, Modal, FormField, Skeleton } from '@/components/ui';
@@ -84,6 +87,16 @@ export function AdminSettings() {
     emergencyRecordRetentionEnabled: true,
     emergencyRecordRetentionDays: '90',
     defaultExpectedGate: '',
+    smsEmergencyTemplates: [
+      { id: 'evacuation', title: 'Campus Evacuation', body: 'EMERGENCY: EARIST campus evacuation in progress. Please exit calmly via the nearest gate.' },
+      { id: 'lockdown', title: 'Security Lockdown', body: 'SECURITY ALERT: EARIST campus is on lockdown. Remain in your current location until security clears the area.' },
+      { id: 'weather', title: 'Weather Dismissal', body: 'ADVISORY: Campus activities are suspended due to severe weather. Please proceed to the exit gate to scan out.' },
+      { id: 'general', title: 'General Security Notice', body: 'SECURITY NOTICE: Please report to the nearest campus security station or exit immediately.' },
+    ],
+    smsOverdueWarningTemplate: 'EARIST E-GatePass Notice: Campus visiting hours have ended (5:00 PM). If you have completed your visit, please proceed to the exit gate to scan your exit pass.',
+    smsOverdueWarningEnabled: false,
+    smsDailyCap: '500',
+    smsGatewayConfigured: false,
     securityInfo: {
       turnstileSiteKeyConfigured: false,
       turnstileVerifierConfigured: false,
@@ -113,6 +126,43 @@ export function AdminSettings() {
   const [showResetModal, setShowResetModal] = useState(false);
   const [resetConfirmationInput, setResetConfirmationInput] = useState('');
   const [isResetting, setIsResetting] = useState(false);
+
+  // SMS Gateway Test State
+  const [testPhone, setTestPhone] = useState('');
+  const [testSmsSending, setTestSmsSending] = useState(false);
+
+  async function handleSendTestSms() {
+    if (!testPhone.trim()) {
+      toast.error('Please enter a Philippine mobile number for the test.');
+      return;
+    }
+    setTestSmsSending(true);
+    try {
+      const token = await getAccessToken();
+      const res = await fetch('/api/admin/sms/send', {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${token}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          type: 'test',
+          testNumber: testPhone.trim(),
+          message: 'EARIST E-GatePass test message sent via your spare Android SMS Gateway.',
+        }),
+      });
+      const data = await res.json().catch(() => null);
+      if (res.ok) {
+        toast.success(`Test SMS successfully dispatched to ${testPhone.trim()}! Check your phone.`);
+      } else {
+        toast.error(data?.error || data?.message || 'Failed to dispatch test SMS. Verify your Android app is running.');
+      }
+    } catch (err: any) {
+      toast.error(err?.message || 'Error communicating with SMS backend.');
+    } finally {
+      setTestSmsSending(false);
+    }
+  }
 
   async function handleReturnToZero() {
     if (resetConfirmationInput !== 'DELETE ALL OPERATIONAL DATA') {
@@ -189,6 +239,16 @@ export function AdminSettings() {
           emergencyRecordRetentionEnabled: typeof data.emergencyRecordRetentionEnabled === 'boolean' ? data.emergencyRecordRetentionEnabled : true,
           emergencyRecordRetentionDays: String(typeof data.emergencyRecordRetentionDays === 'number' ? data.emergencyRecordRetentionDays : 90),
           defaultExpectedGate: typeof data.defaultExpectedGate === 'string' ? data.defaultExpectedGate : '',
+          smsEmergencyTemplates: Array.isArray(data.smsEmergencyTemplates) ? data.smsEmergencyTemplates : [
+            { id: 'evacuation', title: 'Campus Evacuation', body: 'EMERGENCY: EARIST campus evacuation in progress. Please exit calmly via the nearest gate.' },
+            { id: 'lockdown', title: 'Security Lockdown', body: 'SECURITY ALERT: EARIST campus is on lockdown. Remain in your current location until security clears the area.' },
+            { id: 'weather', title: 'Weather Dismissal', body: 'ADVISORY: Campus activities are suspended due to severe weather. Please proceed to the exit gate to scan out.' },
+            { id: 'general', title: 'General Security Notice', body: 'SECURITY NOTICE: Please report to the nearest campus security station or exit immediately.' },
+          ],
+          smsOverdueWarningTemplate: typeof data.smsOverdueWarningTemplate === 'string' ? data.smsOverdueWarningTemplate : 'EARIST E-GatePass Notice: Campus visiting hours have ended (5:00 PM). If you have completed your visit, please proceed to the exit gate to scan your exit pass.',
+          smsOverdueWarningEnabled: Boolean(data.smsOverdueWarningEnabled),
+          smsDailyCap: String(typeof data.smsDailyCap === 'number' ? data.smsDailyCap : 500),
+          smsGatewayConfigured: Boolean(data.smsGatewayConfigured),
           securityInfo: {
             turnstileSiteKeyConfigured: Boolean(data.security?.turnstileSiteKeyConfigured),
             turnstileVerifierConfigured: Boolean(data.security?.turnstileVerifierConfigured),
@@ -285,6 +345,10 @@ export function AdminSettings() {
           detailPrompt: purpose.requiresDetails ? purpose.detailPrompt.trim() : '',
         })),
         visitorInstructions: settings.visitorInstructions.map((i) => i.trim()).filter(Boolean),
+        smsEmergencyTemplates: settings.smsEmergencyTemplates,
+        smsOverdueWarningTemplate: settings.smsOverdueWarningTemplate.trim(),
+        smsOverdueWarningEnabled: settings.smsOverdueWarningEnabled,
+        smsDailyCap: Math.max(1, Math.min(5000, Number(settings.smsDailyCap) || 500)),
       };
       const settingsToSave = canManageSecuritySettings
         ? {
@@ -787,7 +851,7 @@ export function AdminSettings() {
     );
   }
 
-  const showSaveButton = ['general', 'visitor_ux', 'security', 'retention'].includes(currentTab);
+  const showSaveButton = ['general', 'visitor_ux', 'sms_alerts', 'security', 'retention'].includes(currentTab);
 
   return (
     <div className="mx-auto max-w-6xl space-y-6">
@@ -1096,6 +1160,234 @@ export function AdminSettings() {
                 </li>
               )}
             </ul>
+          </Card>
+        </div>
+      )}
+
+      {/* ===================== TAB: SMS & ALERTS ===================== */}
+      {currentTab === 'sms_alerts' && (
+        <div className="space-y-6">
+          {/* Card 1: Gateway Phone Integration Status & Live Test */}
+          <Card className="p-6">
+            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 border-b border-[var(--color-border)] pb-4 mb-5">
+              <div className="flex items-center gap-3">
+                <div className="p-2.5 rounded-xl bg-[#7A0A0A]/10 text-[#7A0A0A]">
+                  <Smartphone className="h-6 w-6" />
+                </div>
+                <div>
+                  <h2 className="text-xl font-bold text-[var(--color-text-primary)]">SMS Gateway for Android</h2>
+                  <p className="text-sm text-[var(--color-text-secondary)]">
+                    Free SMS relay using your spare Android phone and SIM via Cloud Server (api.sms-gate.app)
+                  </p>
+                </div>
+              </div>
+              <div>
+                <span className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold border ${
+                  settings.smsGatewayConfigured
+                    ? 'bg-emerald-50 text-emerald-800 border-emerald-200'
+                    : 'bg-amber-50 text-amber-800 border-amber-200'
+                }`}>
+                  <Radio className="h-3.5 w-3.5 animate-pulse" />
+                  {settings.smsGatewayConfigured ? 'Gateway Secrets Configured' : 'Credentials Active'}
+                </span>
+              </div>
+            </div>
+
+            <div className="space-y-4">
+              <div className="p-4 rounded-xl border border-blue-200 bg-blue-50/70 text-xs text-blue-900 leading-relaxed">
+                <p className="font-semibold text-sm mb-1">Android Phone Gateway Status</p>
+                Ensure your spare Android phone has the <strong>SMS Gateway for Android</strong> app running in <strong>Cloud Server</strong> mode with <strong>Battery Optimization turned off (Unrestricted)</strong> and SIM loaded. Outgoing texts are transmitted directly through the phone's physical SIM card at zero API provider cost.
+              </div>
+
+              {/* Test SMS Dispatcher */}
+              <div className="pt-2">
+                <label className="block text-sm font-semibold text-[var(--color-text-primary)] mb-1.5">
+                  Send Test SMS to Phone
+                </label>
+                <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3 max-w-md">
+                  <Input
+                    type="tel"
+                    placeholder="e.g. 09171234567"
+                    value={testPhone}
+                    onChange={(e) => setTestPhone(e.target.value)}
+                    disabled={testSmsSending}
+                    className="flex-1"
+                  />
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    onClick={handleSendTestSms}
+                    loading={testSmsSending}
+                    disabled={testSmsSending}
+                    icon={<Send className="h-4 w-4" />}
+                  >
+                    {testSmsSending ? 'Sending...' : 'Test Send'}
+                  </Button>
+                </div>
+                <p className="text-xs text-[var(--color-text-secondary)] mt-1.5">
+                  Dispatches a single real SMS to test connection from your Supabase backend to the Android phone.
+                </p>
+              </div>
+            </div>
+          </Card>
+
+          {/* Card 2: Emergency Roll Call Pre-Typed Messages (Modifiable) */}
+          <Card className="p-6">
+            <div className="flex items-center gap-3 border-b border-[var(--color-border)] pb-4 mb-5">
+              <div className="p-2.5 rounded-xl bg-red-100 text-red-700">
+                <ShieldAlert className="h-6 w-6" />
+              </div>
+              <div>
+                <h2 className="text-xl font-bold text-[var(--color-text-primary)]">Emergency Roll Call Broadcast Templates</h2>
+                <p className="text-sm text-[var(--color-text-secondary)]">
+                  Pre-typed emergency templates for instant mass dispatch to all visitors currently logged inside campus
+                </p>
+              </div>
+            </div>
+
+            <div className="space-y-4">
+              {settings.smsEmergencyTemplates.map((template, index) => (
+                <div key={template.id || index} className="p-4 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface-subtle)] space-y-3">
+                  <div className="flex items-center justify-between gap-3">
+                    <input
+                      type="text"
+                      className="font-bold text-sm text-[var(--color-text-primary)] bg-transparent border-b border-transparent hover:border-slate-300 focus:border-[#7A0A0A] focus:outline-hidden px-1 py-0.5 rounded transition-colors"
+                      value={template.title}
+                      onChange={(e) => {
+                        const updated = [...settings.smsEmergencyTemplates];
+                        const prev = updated[index];
+                        updated[index] = { id: prev?.id || `tpl_${index}`, title: e.target.value, body: prev?.body || '' };
+                        setSettings((s) => ({ ...s, smsEmergencyTemplates: updated }));
+                      }}
+                      placeholder="Template Title (e.g. Fire Evacuation)"
+                    />
+                    <span className="text-xs font-semibold px-2 py-0.5 rounded-full bg-slate-200 text-slate-700">
+                      {template.body.length} / 160 chars
+                    </span>
+                  </div>
+                  <textarea
+                    rows={2}
+                    className="w-full text-xs font-medium text-[var(--color-text-primary)] bg-white border border-[var(--color-border)] rounded-lg p-2.5 focus:border-[#7A0A0A] focus:ring-1 focus:ring-[#7A0A0A] focus:outline-hidden"
+                    value={template.body}
+                    maxLength={320}
+                    onChange={(e) => {
+                      const updated = [...settings.smsEmergencyTemplates];
+                      const prev = updated[index];
+                      updated[index] = { id: prev?.id || `tpl_${index}`, title: prev?.title || '', body: e.target.value };
+                      setSettings((s) => ({ ...s, smsEmergencyTemplates: updated }));
+                    }}
+                    placeholder="Enter pre-typed message that will be broadcast during emergencies..."
+                  />
+                </div>
+              ))}
+
+              <div className="flex items-center justify-between pt-2">
+                <Button
+                  type="button"
+                  variant="secondary"
+                  size="sm"
+                  onClick={() => {
+                    const id = `custom_${Date.now()}`;
+                    setSettings((s) => ({
+                      ...s,
+                      smsEmergencyTemplates: [
+                        ...s.smsEmergencyTemplates,
+                        { id, title: 'New Emergency Template', body: 'EARIST ALERT: Please follow security instructions immediately.' },
+                      ],
+                    }));
+                  }}
+                  icon={<Plus className="h-4 w-4" />}
+                >
+                  Add Custom Template
+                </Button>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => {
+                    setSettings((s) => ({
+                      ...s,
+                      smsEmergencyTemplates: [
+                        { id: 'evacuation', title: 'Campus Evacuation', body: 'EMERGENCY: EARIST campus evacuation in progress. Please exit calmly via the nearest gate.' },
+                        { id: 'lockdown', title: 'Security Lockdown', body: 'SECURITY ALERT: EARIST campus is on lockdown. Remain in your current location until security clears the area.' },
+                        { id: 'weather', title: 'Weather Dismissal', body: 'ADVISORY: Campus activities are suspended due to severe weather. Please proceed to the exit gate to scan out.' },
+                        { id: 'general', title: 'General Security Notice', body: 'SECURITY NOTICE: Please report to the nearest campus security station or exit immediately.' },
+                      ],
+                    }));
+                    toast.info('Emergency templates reset to default.');
+                  }}
+                >
+                  Reset Defaults
+                </Button>
+              </div>
+            </div>
+          </Card>
+
+          {/* Card 3: Overdue Campus Visitor Exit Warning */}
+          <Card className="p-6">
+            <div className="flex items-center gap-3 border-b border-[var(--color-border)] pb-4 mb-5">
+              <div className="p-2.5 rounded-xl bg-amber-100 text-amber-800">
+                <Clock className="h-6 w-6" />
+              </div>
+              <div>
+                <h2 className="text-xl font-bold text-[var(--color-text-primary)]">Overdue Campus Visitor Exit Warning</h2>
+                <p className="text-sm text-[var(--color-text-secondary)]">
+                  Dispatched to visitors who have entered but have not scanned exit by campus closing time (5:00 PM Manila)
+                </p>
+              </div>
+            </div>
+
+            <div className="space-y-4">
+              <label className="flex items-center gap-3 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={settings.smsOverdueWarningEnabled}
+                  onChange={(e) => setSettings((s) => ({ ...s, smsOverdueWarningEnabled: e.target.checked }))}
+                  className="h-4 w-4 rounded border-[var(--color-border)] text-[#7A0A0A] focus:ring-[#7A0A0A]"
+                />
+                <span className="text-sm font-semibold text-[var(--color-text-primary)]">
+                  Enable automated warnings for overdue visitors remaining on campus
+                </span>
+              </label>
+
+              <div>
+                <div className="flex items-center justify-between mb-1.5">
+                  <label className="block text-sm font-semibold text-[var(--color-text-primary)]">
+                    Overdue Warning SMS Message
+                  </label>
+                  <span className="text-xs font-semibold px-2 py-0.5 rounded-full bg-slate-200 text-slate-700">
+                    {settings.smsOverdueWarningTemplate.length} / 160 chars
+                  </span>
+                </div>
+                <textarea
+                  rows={3}
+                  className="w-full text-xs font-medium text-[var(--color-text-primary)] bg-white border border-[var(--color-border)] rounded-lg p-3 focus:border-[#7A0A0A] focus:ring-1 focus:ring-[#7A0A0A] focus:outline-hidden"
+                  value={settings.smsOverdueWarningTemplate}
+                  maxLength={320}
+                  onChange={(e) => setSettings((s) => ({ ...s, smsOverdueWarningTemplate: e.target.value }))}
+                  placeholder="Enter message sent to visitors still inside campus after school hours..."
+                />
+                <p className="text-xs text-[var(--color-text-secondary)] mt-1.5">
+                  This text is sent to visitors whose pass is still logged as inside campus past university hours.
+                </p>
+              </div>
+
+              {/* Daily SMS Cap to avoid carrier limits */}
+              <div className="pt-2 max-w-xs">
+                <FormField label="Daily Outgoing SMS Safety Cap">
+                  <Input
+                    type="number"
+                    min={10}
+                    max={5000}
+                    value={settings.smsDailyCap}
+                    onChange={(e) => setSettings((s) => ({ ...s, smsDailyCap: e.target.value }))}
+                  />
+                </FormField>
+                <p className="text-xs text-[var(--color-text-secondary)] mt-1">
+                  Protects your Android phone SIM card from exceeding network carrier bulk texting limits.
+                </p>
+              </div>
+            </div>
           </Card>
         </div>
       )}

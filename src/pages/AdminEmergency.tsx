@@ -1,12 +1,16 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { getAccessToken } from '@/services/auth';
 import { formatManilaDateTime, formatManilaTime } from '@/lib/manilaTime';
-import { Button, Card, Input, Select, DataTable, DataTableHead, DataTableRow, DataTableCell, StatusBadge, TableSkeletonRows, SyncDots } from '@/components/ui';
+import { Button, Card, Input, Select, DataTable, DataTableHead, DataTableRow, DataTableCell, StatusBadge, TableSkeletonRows, SyncDots, Modal } from '@/components/ui';
+import { toast } from 'sonner';
 import {
   AlertTriangle,
   Printer,
   RefreshCw,
   AlertCircle,
+  MessageSquare,
+  Send,
+  ShieldAlert,
 } from 'lucide-react';
 
 interface EmergencyEvacuationPass {
@@ -31,6 +35,73 @@ export function AdminEmergency() {
   const [snapshotTotal, setSnapshotTotal] = useState(0);
   const [snapshotAt, setSnapshotAt] = useState<string | null>(null);
   const [printMode, setPrintMode] = useState<'full' | 'filtered'>('full');
+
+  // Emergency Mass SMS modal state
+  const [showSmsModal, setShowSmsModal] = useState(false);
+  const [smsTemplates, setSmsTemplates] = useState<Array<{ id: string; title: string; body: string }>>([
+    { id: 'evacuation', title: 'Campus Evacuation', body: 'EMERGENCY: EARIST campus evacuation in progress. Please exit calmly via the nearest gate.' },
+    { id: 'lockdown', title: 'Security Lockdown', body: 'SECURITY ALERT: EARIST campus is on lockdown. Remain in your current location until security clears the area.' },
+    { id: 'weather', title: 'Weather Dismissal', body: 'ADVISORY: Campus activities are suspended due to severe weather. Please proceed to the exit gate to scan out.' },
+    { id: 'general', title: 'General Security Notice', body: 'SECURITY NOTICE: Please report to the nearest campus security station or exit immediately.' },
+  ]);
+  const [selectedTemplateId, setSelectedTemplateId] = useState('evacuation');
+  const [customSmsMessage, setCustomSmsMessage] = useState(
+    'EMERGENCY: EARIST campus evacuation in progress. Please exit calmly via the nearest gate.'
+  );
+  const [isSendingSms, setIsSendingSms] = useState(false);
+
+  // Load configured templates from settings when opening modal
+  useEffect(() => {
+    if (showSmsModal) {
+      getAccessToken().then(async (token) => {
+        if (!token) return;
+        try {
+          const res = await fetch('/api/admin/settings', {
+            headers: { Authorization: `Bearer ${token}` },
+          });
+          if (res.ok) {
+            const data = await res.json();
+            if (Array.isArray(data.smsEmergencyTemplates) && data.smsEmergencyTemplates.length > 0) {
+              setSmsTemplates(data.smsEmergencyTemplates);
+            }
+          }
+        } catch {}
+      });
+    }
+  }, [showSmsModal]);
+
+  async function handleSendEmergencyMassSms() {
+    if (!customSmsMessage.trim()) {
+      toast.error('Please enter an emergency message before broadcasting.');
+      return;
+    }
+    setIsSendingSms(true);
+    try {
+      const token = await getAccessToken();
+      const res = await fetch('/api/admin/sms/send', {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${token}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          type: 'emergency',
+          message: customSmsMessage.trim(),
+        }),
+      });
+      const data = await res.json().catch(() => null);
+      if (res.ok && data?.success) {
+        toast.success(`Emergency SMS dispatched to ${data.count} visitors inside campus!`);
+        setShowSmsModal(false);
+      } else {
+        toast.error(data?.message || data?.error || 'Failed to dispatch mass emergency SMS.');
+      }
+    } catch (err: any) {
+      toast.error(err?.message || 'Network error broadcasting emergency SMS.');
+    } finally {
+      setIsSendingSms(false);
+    }
+  }
 
   // Serialization and lifecycle fencing refs
   const hasLoadedOnceRef = useRef(false);
@@ -208,6 +279,13 @@ export function AdminEmergency() {
             icon={<Printer className="h-4 w-4" />}
           >
             Print Roll Call
+          </Button>
+          <Button
+            onClick={() => setShowSmsModal(true)}
+            variant="primary"
+            icon={<MessageSquare className="h-4 w-4" />}
+          >
+            Emergency Mass SMS
           </Button>
         </div>
       </div>
@@ -389,6 +467,107 @@ export function AdminEmergency() {
           </tbody>
         </DataTable>
       </div>
+
+      {/* Emergency Mass SMS Modal */}
+      <Modal
+        isOpen={showSmsModal}
+        onClose={() => !isSendingSms && setShowSmsModal(false)}
+        title="Emergency Mass SMS Broadcast"
+        description="Broadcast an instant SMS alert to all visitors currently logged inside the campus."
+        size="md"
+        preventClose={isSendingSms}
+      >
+        <div className="space-y-4">
+          <div className="flex items-center justify-between p-3 rounded-xl bg-red-50 border border-red-200">
+            <div className="flex items-center gap-2.5">
+              <ShieldAlert className="h-5 w-5 text-red-600 flex-shrink-0" />
+              <div>
+                <p className="text-xs font-bold text-red-950 uppercase tracking-wide">Recipients Ready</p>
+                <p className="text-sm font-extrabold text-red-700">
+                  {currentPasses.length} Visitors Currently Inside Campus
+                </p>
+              </div>
+            </div>
+            <span className="text-xs font-bold px-2.5 py-1 rounded-full bg-red-100 text-red-800">
+              Live Gate Roll Call
+            </span>
+          </div>
+
+          <div>
+            <label className="block text-xs font-bold uppercase tracking-wider text-[var(--color-text-secondary)] mb-1.5">
+              Select Pre-Typed Template
+            </label>
+            <select
+              value={selectedTemplateId}
+              onChange={(e) => {
+                const id = e.target.value;
+                setSelectedTemplateId(id);
+                const found = smsTemplates.find((t) => t.id === id);
+                if (found) setCustomSmsMessage(found.body);
+              }}
+              className="w-full text-xs font-semibold p-2.5 rounded-lg border border-[var(--color-border)] bg-white text-[var(--color-text-primary)] focus:border-[#7A0A0A] focus:outline-hidden"
+            >
+              {smsTemplates.map((t) => (
+                <option key={t.id} value={t.id}>
+                  {t.title}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          <div>
+            <div className="flex items-center justify-between mb-1.5">
+              <label className="block text-xs font-bold uppercase tracking-wider text-[var(--color-text-secondary)]">
+                Modifiable Alert Message
+              </label>
+              <span className={`text-xs font-bold px-2 py-0.5 rounded-full ${
+                customSmsMessage.length <= 160 ? 'bg-emerald-100 text-emerald-800' : 'bg-amber-100 text-amber-800'
+              }`}>
+                {customSmsMessage.length} / 160 chars ({customSmsMessage.length <= 160 ? '1 SMS' : '2 SMS segments'})
+              </span>
+            </div>
+            <textarea
+              rows={4}
+              value={customSmsMessage}
+              onChange={(e) => setCustomSmsMessage(e.target.value)}
+              maxLength={320}
+              placeholder="Type or modify your emergency text message..."
+              className="w-full text-xs font-medium p-3 rounded-lg border border-[var(--color-border)] bg-white text-[var(--color-text-primary)] focus:border-[#7A0A0A] focus:ring-1 focus:ring-[#7A0A0A] focus:outline-hidden leading-relaxed"
+            />
+            <p className="text-xs text-[var(--color-text-secondary)] mt-1">
+              You can edit this message freely before broadcasting. It will be sent through your connected Android phone SIM.
+            </p>
+          </div>
+
+          <div className="p-3 rounded-xl border border-amber-200 bg-amber-50 text-xs text-amber-900 flex items-start gap-2">
+            <AlertTriangle className="h-4 w-4 text-amber-700 flex-shrink-0 mt-0.5" />
+            <span>
+              This will send real text messages to all {currentPasses.length} visitors. Ensure message instructions are clear and accurate.
+            </span>
+          </div>
+
+          <div className="flex items-center justify-end gap-3 pt-2">
+            <Button
+              type="button"
+              variant="secondary"
+              onClick={() => setShowSmsModal(false)}
+              disabled={isSendingSms}
+            >
+              Cancel
+            </Button>
+            <Button
+              type="button"
+              variant="primary"
+              onClick={handleSendEmergencyMassSms}
+              loading={isSendingSms}
+              disabled={isSendingSms || !customSmsMessage.trim() || currentPasses.length === 0}
+              icon={<Send className="h-4 w-4" />}
+            >
+              {isSendingSms ? 'Broadcasting...' : `Send to ${currentPasses.length} Visitors`}
+            </Button>
+          </div>
+        </div>
+      </Modal>
     </div>
   );
 }

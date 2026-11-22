@@ -138,7 +138,7 @@ test.describe('Workstream H: Real Online Pre-Registration Runtime & Turnstile JI
     const firstNameInput = page.locator('#first-name, #firstName');
     const lastNameInput = page.locator('#last-name, #lastName');
     const contactInput = page.locator('#contact-number, #contactNumber');
-    const selectAddressBtn = page.getByRole('button', { name: /Select your barangay and city/i });
+    const selectAddressBtn = page.getByRole('button', { name: /Select your (?:municipality(?:\/city)? and barangay|barangay and city)/i });
     const consentCheckbox = page.locator('input[type="checkbox"]#consent, input[name="consent"]');
 
     await expect(firstNameInput).toBeVisible({ timeout: 15_000 });
@@ -383,7 +383,7 @@ test.describe('Workstream H: Real Online Pre-Registration Runtime & Turnstile JI
     await page.locator('#first-name, #firstName').fill('Juan');
     await page.locator('#last-name, #lastName').fill('Dela Cruz');
     await page.locator('#contact-number, #contactNumber').fill('09181234567');
-    const selectAddressBtn = page.getByRole('button', { name: /Select your barangay and city/i });
+    const selectAddressBtn = page.getByRole('button', { name: /Select your (?:municipality(?:\/city)? and barangay|barangay and city)/i });
     await expect(selectAddressBtn).toBeVisible();
     await selectAddressBtn.click();
     await expect(page.locator('#cascading-address-title')).toBeVisible();
