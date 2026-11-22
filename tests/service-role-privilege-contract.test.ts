@@ -60,6 +60,7 @@ describe('Service Role Least-Privilege Architecture Contract', () => {
       'returning_identity_attempts',
       'returning_visitor_profiles',
       'returning_visitor_vehicles',
+      'sms_logs',
       'staff_profiles',
       'staff_sessions',
       'upload_intents',

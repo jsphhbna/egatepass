@@ -119,7 +119,6 @@ returns table (
   gate text
 )
 language plpgsql
-security definer
 set search_path = public, pg_catalog
 as $$
 declare
@@ -151,6 +150,7 @@ begin
 end;
 $$;
 
+revoke all on function api.get_emergency_sms_recipients() from public, anon;
 grant execute on function api.get_emergency_sms_recipients() to authenticated, service_role;
 
 -- 5. Secure RPC: api.get_overdue_campus_visitors
@@ -165,7 +165,6 @@ returns table (
   gate text
 )
 language plpgsql
-security definer
 set search_path = public, pg_catalog
 as $$
 declare
@@ -198,6 +197,7 @@ begin
 end;
 $$;
 
+revoke all on function api.get_overdue_campus_visitors() from public, anon;
 grant execute on function api.get_overdue_campus_visitors() to authenticated, service_role;
 
 -- 6. Secure RPC: api.record_inbound_sms
@@ -308,32 +308,5 @@ begin
 end;
 $$;
 
+revoke all on function api.record_inbound_sms(text, text, text, double precision, double precision, timestamptz, text) from public, anon, authenticated;
 grant execute on function api.record_inbound_sms(text, text, text, double precision, double precision, timestamptz, text) to service_role;
-
--- Public schema wrapper for direct RPC access
-create or replace function public.record_inbound_sms(
-  requested_msg_id text,
-  requested_sender_phone text,
-  requested_report_type text,
-  requested_lat double precision default null,
-  requested_lon double precision default null,
-  requested_reported_at timestamptz default now(),
-  requested_raw_message text default ''
-)
-returns jsonb
-language sql
-security definer
-set search_path = public, pg_catalog
-as $$
-  select api.record_inbound_sms(
-    requested_msg_id,
-    requested_sender_phone,
-    requested_report_type,
-    requested_lat,
-    requested_lon,
-    requested_reported_at,
-    requested_raw_message
-  );
-$$;
-
-grant execute on function public.record_inbound_sms(text, text, text, double precision, double precision, timestamptz, text) to service_role;
