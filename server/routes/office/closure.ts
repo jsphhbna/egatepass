@@ -104,16 +104,40 @@ export async function handleRequest(request: Request): Promise<Response> {
           if (validPhoneNumbers.length > 0) {
             const officeName = visitors[0]?.office_name || 'EARIST Office';
             const smsMessage = `EARIST Notice: ${officeName} is temporarily closed due to: ${reason}. Please contact the office or reschedule your visit.`;
+            const campaignId = `closure_${officeId}_${Date.now()}`;
 
-            const smsRes = await sendGatewaySms({
-              phoneNumbers: validPhoneNumbers,
-              message: smsMessage,
-              purpose: 'status_update',
-              actorId: actor.id,
+            // 1. Quota reservation
+            const { data: quota, error: quotaErr } = await admin.schema('api').rpc('check_and_reserve_sms_quota', {
+              requested_actor_id: actor.id,
+              requested_count: validPhoneNumbers.length,
+              campaign_id: campaignId,
             });
 
-            if (smsRes.success) {
-              smsDispatched = smsRes.recipientCount;
+            if (quotaErr || quota?.allowed !== true) {
+              console.warn('[OFFICE-CLOSURE] SMS dispatch skipped: daily quota exceeded or reservation failed.');
+            } else {
+              const smsRes = await sendGatewaySms({
+                phoneNumbers: validPhoneNumbers,
+                message: smsMessage,
+                purpose: 'status_update',
+                actorId: actor.id,
+                campaignId,
+              });
+
+              if (smsRes.success) {
+                smsDispatched = smsRes.recipientCount;
+              }
+
+              // 2. Quota finalization
+              const outcome = smsRes.success ? 'consumed' : (smsRes.status === 'unknown' ? 'timeout' : 'released');
+              const { error: finErr } = await admin.schema('api').rpc('finalize_sms_quota', {
+                p_campaign_id: campaignId,
+                p_outcome: outcome,
+                requested_actor_id: actor.id,
+              });
+              if (finErr) {
+                console.error('[OFFICE-CLOSURE] Quota finalization error:', finErr.message);
+              }
             }
           }
         }

@@ -1,7 +1,7 @@
 import { requireStaffActor } from '../../actors.js';
 import { jsonResponse, readBearerToken } from '../../http.js';
 import { getServerSupabaseClients } from '../../supabase.js';
-import { sendGatewaySms, maskPhoneNumber, normalizePhilippinePhone } from '../../sms.js';
+import { sendGatewaySms, maskPhoneNumber, normalizePhilippinePhone, sanitizeErrorMessage } from '../../sms.js';
 
 export default async function handleSmsRequest(request: Request): Promise<Response> {
   const token = readBearerToken(request);
@@ -169,9 +169,10 @@ export default async function handleSmsRequest(request: Request): Promise<Respon
         }
 
         if (quota && quota.allowed === false) {
-          return jsonResponse(429, {
-            error: 'daily_sms_cap_exceeded',
-            message: `Daily SMS cap of ${quota.daily_cap} reached (${quota.current_count} messages sent/reserved today).`,
+          const isFinalized = quota.error === 'campaign_already_finalized';
+          return jsonResponse(isFinalized ? 409 : 429, {
+            error: isFinalized ? 'campaign_already_finalized' : 'daily_sms_cap_exceeded',
+            message: quota.message || `Daily SMS cap of ${quota.daily_cap} reached (${quota.current_count} messages sent/reserved today).`,
             quota,
           });
         }
@@ -186,21 +187,25 @@ export default async function handleSmsRequest(request: Request): Promise<Respon
 
         // Finalize quota state: release only if pre-send or gateway failed without timeout
         const outcome = result.success ? 'consumed' : (result.status === 'unknown' ? 'timeout' : 'released');
-        try {
-          await admin.schema('api').rpc('finalize_sms_quota', {
-            campaign_id: campaignId,
-            outcome,
-            requested_actor_id: actor.id,
-          });
-        } catch (err: any) {
-          console.error('[SMS-API] Quota finalization error:', err);
+        const { data: finalizeData, error: finalizeErr } = await admin.schema('api').rpc('finalize_sms_quota', {
+          p_campaign_id: campaignId,
+          p_outcome: outcome,
+          requested_actor_id: actor.id,
+        });
+
+        if (finalizeErr || !finalizeData?.success) {
+          const finalErrStr = sanitizeErrorMessage(finalizeErr?.message || finalizeData?.error || 'quota_finalization_unconfirmed');
+          console.error('[SMS-API] Test SMS quota finalization error:', finalErrStr);
         }
+
+        const isQuotaFinalized = !finalizeErr && Boolean(finalizeData?.success);
 
         if (!result.success) {
           return jsonResponse(502, {
             error: result.error || 'sms_gateway_error',
             status: result.status || 'failed',
             transactionId: result.transactionId,
+            quotaFinalized: isQuotaFinalized,
           });
         }
 
@@ -212,6 +217,7 @@ export default async function handleSmsRequest(request: Request): Promise<Respon
           messageId: result.messageId,
           transactionId: result.transactionId,
           campaignId,
+          quotaFinalized: isQuotaFinalized,
         });
       }
 
@@ -258,9 +264,10 @@ export default async function handleSmsRequest(request: Request): Promise<Respon
         }
 
         if (quota && quota.allowed === false) {
-          return jsonResponse(429, {
-            error: 'daily_sms_cap_exceeded',
-            message: `Emergency broadcast of ${phoneNumbers.length} messages exceeds remaining daily safety cap of ${quota.remaining} (${quota.current_count}/${quota.daily_cap} used today).`,
+          const isFinalized = quota.error === 'campaign_already_finalized';
+          return jsonResponse(isFinalized ? 409 : 429, {
+            error: isFinalized ? 'campaign_already_finalized' : 'daily_sms_cap_exceeded',
+            message: quota.message || `Emergency broadcast of ${phoneNumbers.length} messages exceeds remaining daily safety cap of ${quota.remaining} (${quota.current_count}/${quota.daily_cap} used today).`,
             quota,
           });
         }
@@ -293,15 +300,18 @@ export default async function handleSmsRequest(request: Request): Promise<Respon
 
         // Finalize quota: if any were accepted or ambiguous timeout, consume; release only if zero accepted & zero unknown
         const outcome = (acceptedCount > 0 || unknownCount > 0) ? 'consumed' : 'released';
-        try {
-          await admin.schema('api').rpc('finalize_sms_quota', {
-            campaign_id: campaignId,
-            outcome,
-            requested_actor_id: actor.id,
-          });
-        } catch (err: any) {
-          console.error('[SMS-API] Quota finalization error:', err);
+        const { data: finalizeData, error: finalizeErr } = await admin.schema('api').rpc('finalize_sms_quota', {
+          p_campaign_id: campaignId,
+          p_outcome: outcome,
+          requested_actor_id: actor.id,
+        });
+
+        if (finalizeErr || !finalizeData?.success) {
+          const finalErrStr = sanitizeErrorMessage(finalizeErr?.message || finalizeData?.error || 'quota_finalization_unconfirmed');
+          console.error('[SMS-API] Emergency SMS quota finalization error:', finalErrStr);
         }
+
+        const isQuotaFinalized = !finalizeErr && Boolean(finalizeData?.success);
 
         return jsonResponse(200, {
           success: acceptedCount > 0,
@@ -311,6 +321,7 @@ export default async function handleSmsRequest(request: Request): Promise<Respon
           total: phoneNumbers.length,
           status: 'accepted_by_gateway',
           campaignId,
+          quotaFinalized: isQuotaFinalized,
           message: `Emergency SMS broadcast: ${acceptedCount} accepted by gateway for SIM dispatch, ${failCount} failed${unknownCount > 0 ? `, ${unknownCount} timed out` : ''}.`,
         });
       }
@@ -357,9 +368,10 @@ export default async function handleSmsRequest(request: Request): Promise<Respon
         }
 
         if (quota && quota.allowed === false) {
-          return jsonResponse(429, {
-            error: 'daily_sms_cap_exceeded',
-            message: `Overdue warning batch of ${phoneNumbers.length} messages exceeds remaining daily safety cap of ${quota.remaining} (${quota.current_count}/${quota.daily_cap} used today).`,
+          const isFinalized = quota.error === 'campaign_already_finalized';
+          return jsonResponse(isFinalized ? 409 : 429, {
+            error: isFinalized ? 'campaign_already_finalized' : 'daily_sms_cap_exceeded',
+            message: quota.message || `Overdue warning batch of ${phoneNumbers.length} messages exceeds remaining daily safety cap of ${quota.remaining} (${quota.current_count}/${quota.daily_cap} used today).`,
             quota,
           });
         }
@@ -390,15 +402,18 @@ export default async function handleSmsRequest(request: Request): Promise<Respon
         }
 
         const outcome = (acceptedCount > 0 || unknownCount > 0) ? 'consumed' : 'released';
-        try {
-          await admin.schema('api').rpc('finalize_sms_quota', {
-            campaign_id: campaignId,
-            outcome,
-            requested_actor_id: actor.id,
-          });
-        } catch (err: any) {
-          console.error('[SMS-API] Quota finalization error:', err);
+        const { data: finalizeData, error: finalizeErr } = await admin.schema('api').rpc('finalize_sms_quota', {
+          p_campaign_id: campaignId,
+          p_outcome: outcome,
+          requested_actor_id: actor.id,
+        });
+
+        if (finalizeErr || !finalizeData?.success) {
+          const finalErrStr = sanitizeErrorMessage(finalizeErr?.message || finalizeData?.error || 'quota_finalization_unconfirmed');
+          console.error('[SMS-API] Overdue notice quota finalization error:', finalErrStr);
         }
+
+        const isQuotaFinalized = !finalizeErr && Boolean(finalizeData?.success);
 
         return jsonResponse(200, {
           success: acceptedCount > 0,
@@ -408,6 +423,7 @@ export default async function handleSmsRequest(request: Request): Promise<Respon
           total: phoneNumbers.length,
           status: 'accepted_by_gateway',
           campaignId,
+          quotaFinalized: isQuotaFinalized,
           message: `Overdue visitor notices: ${acceptedCount} accepted by gateway for SIM dispatch, ${failCount} failed${unknownCount > 0 ? `, ${unknownCount} timed out` : ''}.`,
         });
       }

@@ -86,6 +86,8 @@ describe('P0: Atomic SMS Daily Quota Concurrency & Accounting Contract', () => {
       '20261123000300_sms_subsystem_reconciliation_and_authorization.sql',
       '20261123000400_sms_subsystem_service_role_grants.sql',
       '20261123000500_atomic_sms_quota_and_privacy_logging.sql',
+      '20261123000600_sms_quota_param_disambiguation.sql',
+      '20261123000700_sms_quota_lifecycle_and_intake_hardening.sql',
     ];
 
     for (const fileName of smsMigrationFiles) {
@@ -288,5 +290,208 @@ describe('P0: Atomic SMS Daily Quota Concurrency & Accounting Contract', () => {
     expect(totalUsed).toBe(480); // 450 consumed + 30 reserved = 480 (Strictly <= 500)
     expect(totalUsed).toBeLessThanOrEqual(500);
     expect(totalUsed).not.toBe(510);
+  });
+
+  it('rejects reuse of already consumed or released campaign IDs', async () => {
+    // 1. Create and consume a campaign
+    await db.query(`
+      select api.check_and_reserve_sms_quota(
+        '00000000-0000-0000-0000-000000000001'::uuid,
+        5,
+        'camp_reuse_consumed'
+      );
+    `);
+    await db.query(`
+      select api.finalize_sms_quota(
+        'camp_reuse_consumed',
+        'consumed',
+        '00000000-0000-0000-0000-000000000001'::uuid
+      );
+    `);
+
+    // Attempt to re-reserve with the same campaign_id that was consumed
+    const resConsumed = await db.query<{ res: any }>(`
+      select api.check_and_reserve_sms_quota(
+        '00000000-0000-0000-0000-000000000001'::uuid,
+        5,
+        'camp_reuse_consumed'
+      ) as res;
+    `);
+    expect(resConsumed.rows[0].res.allowed).toBe(false);
+    expect(resConsumed.rows[0].res.error).toBe('campaign_already_finalized');
+    expect(resConsumed.rows[0].res.status).toBe('consumed');
+
+    // 2. Create and release a campaign
+    await db.query(`
+      select api.check_and_reserve_sms_quota(
+        '00000000-0000-0000-0000-000000000001'::uuid,
+        5,
+        'camp_reuse_released'
+      );
+    `);
+    await db.query(`
+      select api.finalize_sms_quota(
+        'camp_reuse_released',
+        'released',
+        '00000000-0000-0000-0000-000000000001'::uuid
+      );
+    `);
+
+    // Attempt to re-reserve with the released campaign_id
+    const resReleased = await db.query<{ res: any }>(`
+      select api.check_and_reserve_sms_quota(
+        '00000000-0000-0000-0000-000000000001'::uuid,
+        5,
+        'camp_reuse_released'
+      ) as res;
+    `);
+    expect(resReleased.rows[0].res.allowed).toBe(false);
+    expect(resReleased.rows[0].res.error).toBe('campaign_already_finalized');
+    expect(resReleased.rows[0].res.status).toBe('released');
+  });
+
+  it('proves finalization idempotency: duplicate finalizations return already_finalized without altering quota', async () => {
+    await db.query(`
+      select api.check_and_reserve_sms_quota(
+        '00000000-0000-0000-0000-000000000001'::uuid,
+        10,
+        'camp_double_fin'
+      );
+    `);
+
+    // 1st finalization
+    const fin1 = await db.query<{ fin: any }>(`
+      select api.finalize_sms_quota('camp_double_fin', 'consumed', '00000000-0000-0000-0000-000000000001'::uuid) as fin;
+    `);
+    expect(fin1.rows[0].fin.success).toBe(true);
+    expect(fin1.rows[0].fin.status).toBe('consumed');
+    expect(fin1.rows[0].fin.consumed_count).toBe(10);
+
+    // Snapshot quota
+    const today = (await db.query<{ d: string }>("select (timezone('Asia/Manila', now()))::date::text as d")).rows[0].d;
+    const snap1 = (await db.query<{ consumed: number; reserved: number }>(`
+      select consumed_count as consumed, reserved_count as reserved
+      from public.sms_daily_quotas where calendar_date = '${today}';
+    `)).rows[0];
+
+    // 2nd finalization (duplicate)
+    const fin2 = await db.query<{ fin: any }>(`
+      select api.finalize_sms_quota('camp_double_fin', 'consumed', '00000000-0000-0000-0000-000000000001'::uuid) as fin;
+    `);
+    expect(fin2.rows[0].fin.success).toBe(true);
+    expect(fin2.rows[0].fin.already_finalized).toBe(true);
+
+    // Verify quota did not change
+    const snap2 = (await db.query<{ consumed: number; reserved: number }>(`
+      select consumed_count as consumed, reserved_count as reserved
+      from public.sms_daily_quotas where calendar_date = '${today}';
+    `)).rows[0];
+    expect(snap2.consumed).toBe(snap1.consumed);
+    expect(snap2.reserved).toBe(snap1.reserved);
+  });
+
+  it('proves durable webhook replay protection with verify_and_record_inbound_replay', async () => {
+    const replayId = 'req_unique_sig_abc_123';
+
+    // 1st attempt: allowed
+    const firstAttempt = await db.query<{ res: any }>(`
+      select api.verify_and_record_inbound_replay('${replayId}') as res;
+    `);
+    expect(firstAttempt.rows[0].res.allowed).toBe(true);
+
+    // 2nd attempt with same ID: rejected
+    const secondAttempt = await db.query<{ res: any }>(`
+      select api.verify_and_record_inbound_replay('${replayId}') as res;
+    `);
+    expect(secondAttempt.rows[0].res.allowed).toBe(false);
+    expect(secondAttempt.rows[0].res.error).toBe('replayed_request');
+  });
+
+  it('proves safe, auditable recovery of stranded reservations without blind refunds', async () => {
+    // Reset daily quota to allow test reservations
+    const today = (await db.query<{ d: string }>("select (timezone('Asia/Manila', now()))::date::text as d")).rows[0].d;
+    await db.query(`
+      update public.sms_daily_quotas
+      set reserved_count = 0,
+          consumed_count = 100
+      where calendar_date = '${today}';
+    `);
+
+    // 1. Create a stranded reservation
+    const strandedId = 'camp_stranded_test_01';
+    await db.query(`
+      select api.check_and_reserve_sms_quota(
+        '00000000-0000-0000-0000-000000000001'::uuid,
+        8,
+        '${strandedId}'
+      );
+    `);
+
+    // Backdate reservation by 20 minutes to simulate crash
+    await db.query(`
+      update public.sms_quota_reservations
+      set created_at = now() - interval '20 minutes'
+      where campaign_id = '${strandedId}';
+    `);
+
+    // Run reconciliation: No log exists, so it must release reservation safely
+    const rec1 = await db.query<{ res: any }>(`
+      select api.reconcile_stranded_sms_reservations(15, '00000000-0000-0000-0000-000000000001'::uuid) as res;
+    `);
+    expect(rec1.rows[0].res.success).toBe(true);
+    expect(rec1.rows[0].res.released_reconciled).toBeGreaterThanOrEqual(1);
+
+    // Check reservation status
+    const status1 = (await db.query<{ status: string }>(`
+      select status from public.sms_quota_reservations where campaign_id = '${strandedId}';
+    `)).rows[0].status;
+    expect(status1).toBe('released');
+
+    // 2. Create another stranded reservation where dispatch log DID occur
+    const strandedWithLog = 'camp_stranded_with_log_02';
+    await db.query(`
+      select api.check_and_reserve_sms_quota(
+        '00000000-0000-0000-0000-000000000001'::uuid,
+        12,
+        '${strandedWithLog}'
+      );
+    `);
+
+    await db.query(`
+      update public.sms_quota_reservations
+      set created_at = now() - interval '20 minutes'
+      where campaign_id = '${strandedWithLog}';
+    `);
+
+    // Insert dispatch log (proving gateway dispatch was attempted)
+    await db.query(`
+      insert into public.sms_logs (
+        direction,
+        recipient_masked,
+        status,
+        purpose,
+        recipient_count,
+        campaign_id
+      ) values (
+        'outbound',
+        '0917 ••• 1234',
+        'sent',
+        'manual_test',
+        12,
+        '${strandedWithLog}'
+      );
+    `);
+
+    // Run reconciliation: Log exists, so it must mark CONSUMED, never refund!
+    const rec2 = await db.query<{ res: any }>(`
+      select api.reconcile_stranded_sms_reservations(15, '00000000-0000-0000-0000-000000000001'::uuid) as res;
+    `);
+    expect(rec2.rows[0].res.success).toBe(true);
+    expect(rec2.rows[0].res.consumed_reconciled).toBeGreaterThanOrEqual(1);
+
+    const status2 = (await db.query<{ status: string }>(`
+      select status from public.sms_quota_reservations where campaign_id = '${strandedWithLog}';
+    `)).rows[0].status;
+    expect(status2).toBe('consumed');
   });
 });
