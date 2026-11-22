@@ -453,6 +453,12 @@ describe('SMS Gateway Subsystem - Complete Root Cause Repair & Verification', ()
                 error: null,
               });
             }
+            if (fnName === 'finalize_sms_quota') {
+              return Promise.resolve({
+                data: { success: true, status: 'consumed' },
+                error: null,
+              });
+            }
             return Promise.resolve({ data: null, error: null });
           }),
         }),
@@ -564,6 +570,8 @@ describe('SMS Gateway Subsystem - Complete Root Cause Repair & Verification', ()
         active: true,
       } as any);
 
+      let finalizedParams: any = null;
+
       const mockAdmin = {
         from: vi.fn().mockReturnValue({
           insert: vi.fn().mockResolvedValue({ data: null, error: null }),
@@ -586,8 +594,9 @@ describe('SMS Gateway Subsystem - Complete Root Cause Repair & Verification', ()
               });
             }
             if (fnName === 'finalize_sms_quota') {
+              finalizedParams = params;
               return Promise.resolve({
-                data: { success: true, status: params.outcome },
+                data: { success: true, status: params.p_outcome },
                 error: null,
               });
             }
@@ -627,6 +636,11 @@ describe('SMS Gateway Subsystem - Complete Root Cause Repair & Verification', ()
       expect(reservedCampaignId).toMatch(/^camp_test_/);
       expect(reservedCount).toBe(1);
       expect(data.campaignId).toBe(reservedCampaignId);
+      expect(data.quotaFinalized).toBe(true);
+      expect(finalizedParams).not.toBeNull();
+      expect(finalizedParams.p_campaign_id).toBe(reservedCampaignId);
+      expect(finalizedParams.p_outcome).toBe('consumed');
+      expect(finalizedParams.requested_actor_id).toBe('admin-uuid-idemp');
     });
   });
 
@@ -734,6 +748,123 @@ describe('SMS Gateway Subsystem - Complete Root Cause Repair & Verification', ()
       expect(sanitized).not.toContain('eyJhbGciOiJIUzI1Ni');
       expect(sanitized).toContain('password=[REDACTED]');
       expect(sanitized).toContain('Bearer [REDACTED]');
+    });
+  });
+
+  // ==========================================================================
+  // Section M: Inbound Gateway Webhook (sms-intake) & Strict Security Tests
+  // ==========================================================================
+  describe('M. Inbound Gateway Webhook (sms-intake) & Strict Security Tests', () => {
+    const intakeSecret = 'test_inbound_signing_key_secret_123';
+    const now = Math.floor(Date.now() / 1000);
+    const validBody = JSON.stringify({
+      phoneNumber: '09171234567',
+      message: 'EG1|inbound_001|FIRE|14.5995|120.9842|1732320000',
+    });
+
+    it('rejects when SMS_INTAKE_SIGNING_KEY / secret is missing or empty', () => {
+      const res = verifyGatewayWebhook({
+        headers: { 'x-signature': 'sig', 'x-timestamp': String(now) },
+        rawBody: validBody,
+        secret: '',
+      });
+      expect(res.valid).toBe(false);
+      expect(res.error).toBe('signing_key_not_configured');
+    });
+
+    it('rejects when x-signature is missing', () => {
+      const res = verifyGatewayWebhook({
+        headers: { 'x-timestamp': String(now) },
+        rawBody: validBody,
+        secret: intakeSecret,
+      });
+      expect(res.valid).toBe(false);
+      expect(res.error).toBe('missing_x_signature');
+    });
+
+    it('rejects when x-timestamp is missing', () => {
+      const res = verifyGatewayWebhook({
+        headers: { 'x-signature': 'some_sig' },
+        rawBody: validBody,
+        secret: intakeSecret,
+      });
+      expect(res.valid).toBe(false);
+      expect(res.error).toBe('missing_x_timestamp');
+    });
+
+    it('rejects non-numeric, zero, or negative timestamps strictly', () => {
+      const resNaN = verifyGatewayWebhook({
+        headers: { 'x-signature': 'some_sig', 'x-timestamp': 'not-numeric' },
+        rawBody: validBody,
+        secret: intakeSecret,
+      });
+      expect(resNaN.valid).toBe(false);
+      expect(resNaN.error).toBe('invalid_timestamp');
+
+      const resZero = verifyGatewayWebhook({
+        headers: { 'x-signature': 'some_sig', 'x-timestamp': '0' },
+        rawBody: validBody,
+        secret: intakeSecret,
+      });
+      expect(resZero.valid).toBe(false);
+      expect(resZero.error).toBe('invalid_timestamp');
+
+      const resNeg = verifyGatewayWebhook({
+        headers: { 'x-signature': 'some_sig', 'x-timestamp': '-500' },
+        rawBody: validBody,
+        secret: intakeSecret,
+      });
+      expect(resNeg.valid).toBe(false);
+      expect(resNeg.error).toBe('invalid_timestamp');
+    });
+
+    it('rejects expired timestamps (>300s)', () => {
+      const resExpired = verifyGatewayWebhook({
+        headers: { 'x-signature': 'some_sig', 'x-timestamp': String(now - 301) },
+        rawBody: validBody,
+        secret: intakeSecret,
+      });
+      expect(resExpired.valid).toBe(false);
+      expect(resExpired.error).toBe('timestamp_outside_tolerance');
+    });
+
+    it('authenticates valid HMAC-SHA256 of rawBody', () => {
+      const expectedHmac = crypto.createHmac('sha256', Buffer.from(intakeSecret, 'utf8')).update(validBody).digest('hex');
+      const res = verifyGatewayWebhook({
+        headers: { 'x-signature': expectedHmac, 'x-timestamp': String(now) },
+        rawBody: validBody,
+        secret: intakeSecret,
+      });
+      expect(res.valid).toBe(true);
+    });
+
+    it('authenticates valid HMAC-SHA256 of ${timestamp}.${rawBody}', () => {
+      const expectedHmac = crypto.createHmac('sha256', Buffer.from(intakeSecret, 'utf8')).update(`${now}.${validBody}`).digest('hex');
+      const res = verifyGatewayWebhook({
+        headers: { 'x-signature': expectedHmac, 'x-timestamp': String(now) },
+        rawBody: validBody,
+        secret: intakeSecret,
+      });
+      expect(res.valid).toBe(true);
+    });
+
+    it('authenticates valid direct secret token via constant-time comparison', () => {
+      const res = verifyGatewayWebhook({
+        headers: { 'x-signature': intakeSecret, 'x-timestamp': String(now) },
+        rawBody: validBody,
+        secret: intakeSecret,
+      });
+      expect(res.valid).toBe(true);
+    });
+
+    it('rejects tampered or forged signature', () => {
+      const res = verifyGatewayWebhook({
+        headers: { 'x-signature': 'a'.repeat(64), 'x-timestamp': String(now) },
+        rawBody: validBody,
+        secret: intakeSecret,
+      });
+      expect(res.valid).toBe(false);
+      expect(res.error).toBe('signature_mismatch');
     });
   });
 });

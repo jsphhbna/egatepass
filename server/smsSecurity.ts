@@ -79,9 +79,14 @@ export function verifyStandardWebhook(opts: VerifyStandardWebhookOptions): { val
 /**
  * Verify SMS Gateway for Android webhook signature.
  * Headers: X-Signature, X-Timestamp
+ * Hardened: Strict timestamp validation (finite, positive, <= tolerance), constant-time signature comparison across candidate formats
  */
 export function verifyGatewayWebhook(opts: VerifyGatewayWebhookOptions): { valid: boolean; error?: string } {
   const { headers, rawBody, secret, toleranceSeconds = 300 } = opts;
+  if (!secret || secret.trim() === '') {
+    return { valid: false, error: 'signing_key_not_configured' };
+  }
+
   const signature = headers['x-signature'] || headers['X-Signature'];
   const timestampStr = headers['x-timestamp'] || headers['X-Timestamp'];
 
@@ -89,31 +94,42 @@ export function verifyGatewayWebhook(opts: VerifyGatewayWebhookOptions): { valid
     return { valid: false, error: 'missing_x_signature' };
   }
 
-  if (timestampStr) {
-    const timestamp = parseInt(timestampStr, 10);
-    if (!Number.isNaN(timestamp)) {
-      const now = Math.floor(Date.now() / 1000);
-      if (Math.abs(now - timestamp) > toleranceSeconds) {
-        return { valid: false, error: 'timestamp_outside_tolerance' };
-      }
+  if (!timestampStr) {
+    return { valid: false, error: 'missing_x_timestamp' };
+  }
+
+  const timestamp = parseInt(timestampStr.trim(), 10);
+  if (!Number.isFinite(timestamp) || timestamp <= 0) {
+    return { valid: false, error: 'invalid_timestamp' };
+  }
+
+  const now = Math.floor(Date.now() / 1000);
+  if (Math.abs(now - timestamp) > toleranceSeconds) {
+    return { valid: false, error: 'timestamp_outside_tolerance' };
+  }
+
+  // Candidate HMACs:
+  // 1) HMAC of rawBody
+  // 2) HMAC of `${timestampStr}.${rawBody}`
+  const expectedHexBody = crypto.createHmac('sha256', Buffer.from(secret, 'utf8')).update(rawBody).digest('hex');
+  const expectedHexTsBody = crypto.createHmac('sha256', Buffer.from(secret, 'utf8')).update(`${timestampStr}.${rawBody}`).digest('hex');
+
+  const cleanPassed = signature.trim().toLowerCase();
+  const passedBuf = Buffer.from(cleanPassed, 'utf8');
+
+  for (const expectedHex of [expectedHexBody, expectedHexTsBody]) {
+    const expectedBuf = Buffer.from(expectedHex.toLowerCase(), 'utf8');
+    if (passedBuf.length === expectedBuf.length && crypto.timingSafeEqual(passedBuf, expectedBuf)) {
+      return { valid: true };
     }
   }
 
-  // Gateway generates HMAC-SHA256 of the raw body using the shared signing secret
-  const expectedHex = crypto.createHmac('sha256', Buffer.from(secret, 'utf8')).update(rawBody).digest('hex');
-
-  const cleanPassed = signature.trim().toLowerCase();
-  try {
-    const isMatch = crypto.timingSafeEqual(
-      Buffer.from(cleanPassed, 'utf8'),
-      Buffer.from(expectedHex.toLowerCase(), 'utf8')
-    );
-    if (!isMatch) return { valid: false, error: 'signature_mismatch' };
-  } catch {
-    // If passed signature was raw token string instead of hex hmac, allow token comparison
-    if (signature === secret) return { valid: true };
-    return { valid: false, error: 'signature_mismatch' };
+  // Direct secret token match using timing-safe comparison
+  const secretBuf = Buffer.from(secret.trim(), 'utf8');
+  const rawSigBuf = Buffer.from(signature.trim(), 'utf8');
+  if (rawSigBuf.length === secretBuf.length && crypto.timingSafeEqual(rawSigBuf, secretBuf)) {
+    return { valid: true };
   }
 
-  return { valid: true };
+  return { valid: false, error: 'signature_mismatch' };
 }
