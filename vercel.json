@@ -322,6 +322,10 @@
       "destination": "/api/passes/track-visit"
     },
     {
+      "source": "/api/admin/sms/:action*",
+      "destination": "/api/admin/sms?action=:action*"
+    },
+    {
       "source": "/((?!api/).*)",
       "destination": "/index.html"
     }
