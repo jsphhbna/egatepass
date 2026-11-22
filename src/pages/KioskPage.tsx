@@ -1044,7 +1044,7 @@ export function KioskPage() {
                   className="w-full text-base font-semibold min-h-[48px] shadow-sm"
                   icon={<Camera className="h-5 w-5" />}
                 >
-                  Scan My ID
+                  Scan ID
                 </Button>
 
                 <div>
@@ -1942,7 +1942,7 @@ export function KioskPage() {
                     <span>Existing Pass Detected</span>
                   </div>
                   <p>
-                    An existing pass was already created for this request. Do not create another pass. Please ask the Guard for assistance.
+                    An existing pass was already created for this request, but the local retry no longer matches it. Do not create another pass. Please ask the Guard for assistance.
                   </p>
                   <Button
                     variant="secondary"
@@ -1961,7 +1961,7 @@ export function KioskPage() {
                     <span>Generation result could not be confirmed</span>
                   </div>
                   <p>
-                    The previous submission may already have created a pass. Please ask the Guard or retry.
+                    The previous submission may already have created a pass. To prevent duplicates, the exact previous submission must be retried before any details can be changed.
                   </p>
                   <div className="flex gap-2">
                     <Button
@@ -1979,7 +1979,7 @@ export function KioskPage() {
                       className="flex-1 min-h-[44px]"
                       icon={<RotateCcw className="h-4 w-4" />}
                     >
-                      Retry Submission
+                      Retry Exact Submission
                     </Button>
                   </div>
                 </div>
@@ -1997,28 +1997,32 @@ export function KioskPage() {
                     <div className="text-center">
                       <p className="text-xs text-[var(--color-text-secondary)] mb-1">Face Photo</p>
                       <img src={photoPreview} alt="Face photo" className="h-24 w-20 object-cover rounded-lg border border-[var(--color-border)] shadow-sm mx-auto" style={{ transform: 'rotateY(180deg) translateZ(0)' }} />
-                      <button
-                        type="button"
-                        onClick={onRetakePhoto}
-                        className="mt-1.5 text-xs font-semibold text-[var(--color-brand)] hover:underline inline-flex items-center gap-1"
-                      >
-                        <RotateCcw className="h-3 w-3" />
-                        Retake Photo
-                      </button>
+                      {kioskTransactionRef.current?.phase !== 'ambiguous' && kioskTransactionRef.current?.phase !== 'existing_pass_conflict' && (
+                        <button
+                          type="button"
+                          onClick={onRetakePhoto}
+                          className="mt-1.5 text-xs font-semibold text-[var(--color-brand)] hover:underline inline-flex items-center gap-1"
+                        >
+                          <RotateCcw className="h-3 w-3" />
+                          Retake Photo
+                        </button>
+                      )}
                     </div>
                   )}
                   {idPreview && !isPeakMode ? (
                     <div className="text-center">
                       <p className="text-xs text-[var(--color-text-secondary)] mb-1">Valid ID ({idType})</p>
                       <img src={idPreview} alt="ID preview" className="h-24 w-36 object-cover rounded-lg border border-[var(--color-border)] shadow-sm mx-auto" />
-                      <button
-                        type="button"
-                        onClick={onRetakeId}
-                        className="mt-1.5 text-xs font-semibold text-[var(--color-brand)] hover:underline inline-flex items-center gap-1"
-                      >
-                        <RotateCcw className="h-3 w-3" />
-                        Retake ID
-                      </button>
+                      {kioskTransactionRef.current?.phase !== 'ambiguous' && kioskTransactionRef.current?.phase !== 'existing_pass_conflict' && (
+                        <button
+                          type="button"
+                          onClick={onRetakeId}
+                          className="mt-1.5 text-xs font-semibold text-[var(--color-brand)] hover:underline inline-flex items-center gap-1"
+                        >
+                          <RotateCcw className="h-3 w-3" />
+                          Retake ID
+                        </button>
+                      )}
                     </div>
                   ) : isPeakMode ? (
                     <div className="text-center">
@@ -2036,13 +2040,15 @@ export function KioskPage() {
                 <div className="pb-3">
                   <div className="flex items-center justify-between mb-2">
                     <p className="font-semibold text-xs text-[var(--color-text-secondary)] uppercase tracking-wider">Visitor Information</p>
-                    <button
-                      type="button"
-                      onClick={() => setStep('form')}
-                      className="text-xs font-semibold text-[var(--color-brand)] hover:underline"
-                    >
-                      Edit Details
-                    </button>
+                    {kioskTransactionRef.current?.phase !== 'ambiguous' && kioskTransactionRef.current?.phase !== 'existing_pass_conflict' && (
+                      <button
+                        type="button"
+                        onClick={() => setStep('form')}
+                        className="text-xs font-semibold text-[var(--color-brand)] hover:underline"
+                      >
+                        Edit Details
+                      </button>
+                    )}
                   </div>
                   <p><strong className="text-[var(--color-text-secondary)]">Full Name:</strong> {[getValues('firstName'), getValues('middleName'), getValues('lastName')].filter(Boolean).join(' ')}</p>
                   <p className="mt-1"><strong className="text-[var(--color-text-secondary)]">Contact Number:</strong> {getValues('contactNumber')}</p>
@@ -2055,13 +2061,15 @@ export function KioskPage() {
                 <div className="pt-3">
                   <div className="flex items-center justify-between mb-2">
                     <p className="font-semibold text-xs text-[var(--color-text-secondary)] uppercase tracking-wider">Visit Information</p>
-                    <button
-                      type="button"
-                      onClick={() => setStep('visit')}
-                      className="text-xs font-semibold text-[var(--color-brand)] hover:underline"
-                    >
-                      Edit Visit
-                    </button>
+                    {kioskTransactionRef.current?.phase !== 'ambiguous' && kioskTransactionRef.current?.phase !== 'existing_pass_conflict' && (
+                      <button
+                        type="button"
+                        onClick={() => setStep('visit')}
+                        className="text-xs font-semibold text-[var(--color-brand)] hover:underline"
+                      >
+                        Edit Visit
+                      </button>
+                    )}
                   </div>
                   <p className="mb-1"><strong className="text-[var(--color-text-secondary)]">Office:</strong> {offices.find((o) => o.id === selectedOfficeId)?.name || 'Campus Visit'}</p>
                   {selectedPersonnel && (
