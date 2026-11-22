@@ -1,0 +1,190 @@
+<mxfile host="app.diagrams.net" modified="2026-11-21T12:45:00.000Z" agent="Mozilla/5.0" version="21.0.0" type="device">
+  <diagram id="egatepass-context-dfd" name="E-GatePass DFD Context Diagram Level 0">
+    <mxGraphModel dx="1800" dy="1150" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1800" pageHeight="1150" background="#FFFFFF">
+      <root>
+        <mxCell id="0"/>
+        <mxCell id="1" parent="0"/>
+
+        <!-- Header -->
+        <mxCell id="title" value="EARIST E-GATEPASS VISITOR ACCESS MANAGEMENT SYSTEM&#xa;Data Flow Diagram (DFD) — Context Diagram (Level 0)" style="text;html=1;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;whiteSpace=wrap;rounded=0;fontStyle=1;fontSize=18;fontColor=#000000;" vertex="1" parent="1">
+          <mxGeometry x="400" y="30" width="1000" height="40" as="geometry"/>
+        </mxCell>
+
+        <!-- Process 0: Central E-GatePass Process -->
+        <mxCell id="process0" value="&lt;b&gt;PROCESS 0&lt;/b&gt;&lt;hr/&gt;&lt;b style=&quot;font-size:15px;&quot;&gt;EARIST E-GATEPASS SYSTEM&lt;/b&gt;&lt;br/&gt;&lt;i style=&quot;font-size:11px;&quot;&gt;Visitor Access Management, Identity Verification,&lt;br/&gt;Digital Pass Issuance &amp; Gate Security Monitoring&lt;/i&gt;&lt;br/&gt;&lt;br/&gt;&lt;span style=&quot;font-size:10px;color:#555555;&quot;&gt;[Core System Boundary: Web App, API Runtime &amp; Internal Datastores]&lt;/span&gt;" style="rounded=1;whiteSpace=wrap;html=1;arcSize=12;fillColor=#FFFFFF;strokeColor=#000000;strokeWidth=2.5;fontColor=#000000;align=center;verticalAlign=middle;" vertex="1" parent="1">
+          <mxGeometry x="710" y="470" width="380" height="200" as="geometry"/>
+        </mxCell>
+
+        <!-- External Entity: Visitor -->
+        <mxCell id="entity_visitor" value="&lt;b style=&quot;font-size:14px;&quot;&gt;VISITOR&lt;/b&gt;&lt;br/&gt;&lt;i style=&quot;font-size:11px;color:#555555;&quot;&gt;External User (Web Portal / Kiosk)&lt;/i&gt;" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;strokeWidth=2;fontColor=#000000;" vertex="1" parent="1">
+          <mxGeometry x="80" y="140" width="260" height="85" as="geometry"/>
+        </mxCell>
+
+        <!-- External Entity: Security Personnel / Guard -->
+        <mxCell id="entity_guard" value="&lt;b style=&quot;font-size:14px;&quot;&gt;SECURITY PERSONNEL / GUARD&lt;/b&gt;&lt;br/&gt;&lt;i style=&quot;font-size:11px;color:#555555;&quot;&gt;Campus Security &amp; Gate Operations&lt;/i&gt;" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;strokeWidth=2;fontColor=#000000;" vertex="1" parent="1">
+          <mxGeometry x="80" y="480" width="260" height="85" as="geometry"/>
+        </mxCell>
+
+        <!-- External Entity: Campus Office Personnel -->
+        <mxCell id="entity_office" value="&lt;b style=&quot;font-size:14px;&quot;&gt;CAMPUS OFFICE PERSONNEL&lt;/b&gt;&lt;br/&gt;&lt;i style=&quot;font-size:11px;color:#555555;&quot;&gt;Department Staff &amp; Authorized Host&lt;/i&gt;" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;strokeWidth=2;fontColor=#000000;" vertex="1" parent="1">
+          <mxGeometry x="80" y="810" width="260" height="85" as="geometry"/>
+        </mxCell>
+
+        <!-- External Entity: System Administrator -->
+        <mxCell id="entity_admin" value="&lt;b style=&quot;font-size:14px;&quot;&gt;SYSTEM ADMINISTRATOR&lt;/b&gt;&lt;br/&gt;&lt;i style=&quot;font-size:11px;color:#555555;&quot;&gt;IT Administrator &amp; System Auditor&lt;/i&gt;" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;strokeWidth=2;fontColor=#000000;" vertex="1" parent="1">
+          <mxGeometry x="760" y="970" width="280" height="85" as="geometry"/>
+        </mxCell>
+
+        <!-- External Entity: Cloudflare Turnstile -->
+        <mxCell id="entity_turnstile" value="&lt;b style=&quot;font-size:14px;&quot;&gt;CLOUDFLARE TURNSTILE&lt;/b&gt;&lt;br/&gt;&lt;i style=&quot;font-size:11px;color:#555555;&quot;&gt;External Bot &amp; Abuse Verification&lt;/i&gt;" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;strokeWidth=2;fontColor=#000000;" vertex="1" parent="1">
+          <mxGeometry x="1460" y="140" width="260" height="85" as="geometry"/>
+        </mxCell>
+
+        <!-- External Entity: Resend Email Service -->
+        <mxCell id="entity_resend" value="&lt;b style=&quot;font-size:14px;&quot;&gt;RESEND EMAIL SERVICE&lt;/b&gt;&lt;br/&gt;&lt;i style=&quot;font-size:11px;color:#555555;&quot;&gt;External Transactional Email Provider&lt;/i&gt;" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;strokeWidth=2;fontColor=#000000;" vertex="1" parent="1">
+          <mxGeometry x="1460" y="480" width="260" height="85" as="geometry"/>
+        </mxCell>
+
+        <!-- External Entity: NHTSA vPIC Vehicle API -->
+        <mxCell id="entity_vpic" value="&lt;b style=&quot;font-size:14px;&quot;&gt;NHTSA vPIC VEHICLE API&lt;/b&gt;&lt;br/&gt;&lt;i style=&quot;font-size:11px;color:#555555;&quot;&gt;External Vehicle Catalog Service&lt;/i&gt;" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;strokeWidth=2;fontColor=#000000;" vertex="1" parent="1">
+          <mxGeometry x="1460" y="810" width="260" height="85" as="geometry"/>
+        </mxCell>
+
+        <!-- Connectors: Visitor -> Process 0 -->
+        <mxCell id="flow_visitor_in" value="Personal Details, Visit Purpose, ID Document &amp; Live Selfie&#xa;[Optional Vehicle Details &amp; Registration Cancellation Request]" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#000000;strokeWidth=1.5;fontColor=#000000;fontSize=10;labelBackgroundColor=#FFFFFF;labelBorderColor=#000000;endArrow=block;endFill=1;" edge="1" parent="1" source="entity_visitor" target="process0">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="750" y="165"/>
+              <mxPoint x="750" y="470"/>
+            </Array>
+          </mxGeometry>
+        </mxCell>
+
+        <!-- Connectors: Process 0 -> Visitor -->
+        <mxCell id="flow_visitor_out" value="Digital Gate Pass, Branded QR Code Token &amp; Validity Window&#xa;[Visit Request Status, Tracking URL &amp; Identity Verification Prompts]" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#000000;strokeWidth=1.5;fontColor=#000000;fontSize=10;labelBackgroundColor=#FFFFFF;labelBorderColor=#000000;endArrow=block;endFill=1;" edge="1" parent="1" source="process0" target="entity_visitor">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="780" y="470"/>
+              <mxPoint x="780" y="205"/>
+            </Array>
+          </mxGeometry>
+        </mxCell>
+
+        <!-- Connectors: Guard -> Process 0 -->
+        <mxCell id="flow_guard_in" value="Gate QR Code Scan &amp; Verification Query&#xa;[Manual Gate Clearance &amp; Offline Visitor Registration]" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#000000;strokeWidth=1.5;fontColor=#000000;fontSize=10;labelBackgroundColor=#FFFFFF;labelBorderColor=#000000;endArrow=block;endFill=1;" edge="1" parent="1" source="entity_guard" target="process0">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="525" y="505"/>
+            </Array>
+          </mxGeometry>
+        </mxCell>
+
+        <!-- Connectors: Process 0 -> Guard -->
+        <mxCell id="flow_guard_out" value="Pass Validation Result (Granted / Rejected / Expired)&#xa;[Visitor Photo, ID Inspection Feed &amp; Inside Occupancy Count]" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#000000;strokeWidth=1.5;fontColor=#000000;fontSize=10;labelBackgroundColor=#FFFFFF;labelBorderColor=#000000;endArrow=block;endFill=1;" edge="1" parent="1" source="process0" target="entity_guard">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="525" y="545"/>
+            </Array>
+          </mxGeometry>
+        </mxCell>
+
+        <!-- Connectors: Office -> Process 0 -->
+        <mxCell id="flow_office_in" value="Visit Request Decision (Approve / Reject / Reschedule)&#xa;[Office Schedule, Working Hours &amp; Direct Pre-Approval]" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#000000;strokeWidth=1.5;fontColor=#000000;fontSize=10;labelBackgroundColor=#FFFFFF;labelBorderColor=#000000;endArrow=block;endFill=1;" edge="1" parent="1" source="entity_office" target="process0">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="750" y="835"/>
+              <mxPoint x="750" y="670"/>
+            </Array>
+          </mxGeometry>
+        </mxCell>
+
+        <!-- Connectors: Process 0 -> Office -->
+        <mxCell id="flow_office_out" value="Pending Visit Request Notifications &amp; Visitor Information&#xa;[Host Verification Requests &amp; Visitor Campus Arrival Alerts]" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#000000;strokeWidth=1.5;fontColor=#000000;fontSize=10;labelBackgroundColor=#FFFFFF;labelBorderColor=#000000;endArrow=block;endFill=1;" edge="1" parent="1" source="process0" target="entity_office">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="780" y="670"/>
+              <mxPoint x="780" y="875"/>
+            </Array>
+          </mxGeometry>
+        </mxCell>
+
+        <!-- Connectors: Admin -> Process 0 -->
+        <mxCell id="flow_admin_in" value="System Configuration, Campus Closures, User Roles &amp; Policies" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#000000;strokeWidth=1.5;fontColor=#000000;fontSize=10;labelBackgroundColor=#FFFFFF;labelBorderColor=#000000;endArrow=block;endFill=1;" edge="1" parent="1" source="entity_admin" target="process0">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="870" y="820"/>
+            </Array>
+          </mxGeometry>
+        </mxCell>
+
+        <!-- Connectors: Process 0 -> Admin -->
+        <mxCell id="flow_admin_out" value="Security Audit Logs, Campus Analytics &amp; Gate Device Metrics" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#000000;strokeWidth=1.5;fontColor=#000000;fontSize=10;labelBackgroundColor=#FFFFFF;labelBorderColor=#000000;endArrow=block;endFill=1;" edge="1" parent="1" source="process0" target="entity_admin">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="930" y="820"/>
+            </Array>
+          </mxGeometry>
+        </mxCell>
+
+        <!-- Connectors: Process 0 -> Turnstile -->
+        <mxCell id="flow_turnstile_out" value="Turnstile Siteverify Token, Client IP &amp; Hostname&#xa;[Automated Bot Protection Challenge Payload]" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#000000;strokeWidth=1.5;fontColor=#000000;fontSize=10;labelBackgroundColor=#FFFFFF;labelBorderColor=#000000;endArrow=block;endFill=1;" edge="1" parent="1" source="process0" target="entity_turnstile">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="1050" y="470"/>
+              <mxPoint x="1050" y="165"/>
+            </Array>
+          </mxGeometry>
+        </mxCell>
+
+        <!-- Connectors: Turnstile -> Process 0 -->
+        <mxCell id="flow_turnstile_in" value="Siteverify Outcome (Success / Failure / Error Codes)&#xa;[Interactive Challenge Validation Response]" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#000000;strokeWidth=1.5;fontColor=#000000;fontSize=10;labelBackgroundColor=#FFFFFF;labelBorderColor=#000000;endArrow=block;endFill=1;" edge="1" parent="1" source="entity_turnstile" target="process0">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="1020" y="205"/>
+              <mxPoint x="1020" y="470"/>
+            </Array>
+          </mxGeometry>
+        </mxCell>
+
+        <!-- Connectors: Process 0 -> Resend -->
+        <mxCell id="flow_resend_out" value="Email Dispatch Payload (Visitor Pass QR Code,&#xa;Visit Request Link &amp; Approval Notifications)" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#000000;strokeWidth=1.5;fontColor=#000000;fontSize=10;labelBackgroundColor=#FFFFFF;labelBorderColor=#000000;endArrow=block;endFill=1;" edge="1" parent="1" source="process0" target="entity_resend">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="1275" y="505"/>
+            </Array>
+          </mxGeometry>
+        </mxCell>
+
+        <!-- Connectors: Resend -> Process 0 -->
+        <mxCell id="flow_resend_in" value="Message Dispatch Receipt &amp; Message ID&#xa;[Delivery Status Confirmation &amp; Bounce Classification]" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#000000;strokeWidth=1.5;fontColor=#000000;fontSize=10;labelBackgroundColor=#FFFFFF;labelBorderColor=#000000;endArrow=block;endFill=1;" edge="1" parent="1" source="entity_resend" target="process0">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="1275" y="545"/>
+            </Array>
+          </mxGeometry>
+        </mxCell>
+
+        <!-- Connectors: Process 0 -> NHTSA -->
+        <mxCell id="flow_nhtsa_out" value="Vehicle Make &amp; Model Specification Query&#xa;[Vehicle Type Parameter: Motorcycle / 4-Wheel / MPV / Truck]" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#000000;strokeWidth=1.5;fontColor=#000000;fontSize=10;labelBackgroundColor=#FFFFFF;labelBorderColor=#000000;endArrow=block;endFill=1;" edge="1" parent="1" source="process0" target="entity_vpic">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="1050" y="670"/>
+              <mxPoint x="1050" y="835"/>
+            </Array>
+          </mxGeometry>
+        </mxCell>
+
+        <!-- Connectors: NHTSA -> Process 0 -->
+        <mxCell id="flow_nhtsa_in" value="Standardized Vehicle Manufacturer &amp; Model Catalog&#xa;[Cached Automobile Catalog &amp; Canonical Nomenclature Data]" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#000000;strokeWidth=1.5;fontColor=#000000;fontSize=10;labelBackgroundColor=#FFFFFF;labelBorderColor=#000000;endArrow=block;endFill=1;" edge="1" parent="1" source="entity_vpic" target="process0">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="1020" y="875"/>
+              <mxPoint x="1020" y="670"/>
+            </Array>
+          </mxGeometry>
+        </mxCell>
+
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>

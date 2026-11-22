@@ -1,0 +1,316 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 2600 1900" width="2600" height="1900">
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M 0 1 L 10 5 L 0 9 z" fill="#000000"/>
+    </marker>
+  </defs>
+
+  <rect width="2600" height="1900" fill="#FFFFFF"/>
+  
+    <!-- Academic Title Block -->
+    <rect x="50" y="30" width="2500" height="110" fill="#FFFFFF" stroke="#000000" stroke-width="2.8"/>
+    <text x="1300" y="65" font-family="Arial, sans-serif" font-size="20" font-weight="bold" text-anchor="middle" fill="#000000" letter-spacing="1">EULOGIO "AMANG" RODRIGUEZ INSTITUTE OF SCIENCE AND TECHNOLOGY</text>
+    <text x="1300" y="95" font-family="Arial, sans-serif" font-size="17" font-weight="bold" text-anchor="middle" fill="#000000">EARIST E-GATEPASS VISITOR ACCESS MANAGEMENT SYSTEM</text>
+    <text x="1300" y="122" font-family="Arial, sans-serif" font-size="14" text-anchor="middle" fill="#000000">Data Flow Diagram — Level 1 Decomposition | Proponents: Mary Joy Cagande, Joseph Habana, Mon Gerald Lanon, Jeferson Tambis | Adviser: Dhani San Jose</text>
+  
+
+  <!-- External Entities -->
+  
+      <g>
+        <rect x="200" y="180" width="360" height="80" fill="#FFFFFF" stroke="#000000" stroke-width="3" rx="6"/>
+        <line x1="200" y1="216" x2="560" y2="216" stroke="#000000" stroke-width="1.8"/>
+        <text x="380" y="205" font-family="Arial, sans-serif" font-size="16" font-weight="bold" text-anchor="middle" fill="#000000">VISITOR</text>
+        <text x="380" y="238" font-family="Arial, sans-serif" font-size="13.5" text-anchor="middle" fill="#000000">Client Web Browser & Kiosk Terminal</text>
+      </g>
+    
+  
+      <g>
+        <rect x="1000" y="180" width="360" height="80" fill="#FFFFFF" stroke="#000000" stroke-width="3" rx="6"/>
+        <line x1="1000" y1="216" x2="1360" y2="216" stroke="#000000" stroke-width="1.8"/>
+        <text x="1180" y="205" font-family="Arial, sans-serif" font-size="16" font-weight="bold" text-anchor="middle" fill="#000000">CLOUDFLARE TURNSTILE</text>
+        <text x="1180" y="238" font-family="Arial, sans-serif" font-size="13.5" text-anchor="middle" fill="#000000">Edge Bot Verification Engine</text>
+      </g>
+    
+  
+      <g>
+        <rect x="1800" y="180" width="360" height="80" fill="#FFFFFF" stroke="#000000" stroke-width="3" rx="6"/>
+        <line x1="1800" y1="216" x2="2160" y2="216" stroke="#000000" stroke-width="1.8"/>
+        <text x="1980" y="205" font-family="Arial, sans-serif" font-size="16" font-weight="bold" text-anchor="middle" fill="#000000">CAMPUS OFFICE PERSONNEL</text>
+        <text x="1980" y="238" font-family="Arial, sans-serif" font-size="13.5" text-anchor="middle" fill="#000000">Host Department Adjudicator</text>
+      </g>
+    
+
+  
+      <g>
+        <rect x="200" y="1720" width="360" height="80" fill="#FFFFFF" stroke="#000000" stroke-width="3" rx="6"/>
+        <line x1="200" y1="1756" x2="560" y2="1756" stroke="#000000" stroke-width="1.8"/>
+        <text x="380" y="1745" font-family="Arial, sans-serif" font-size="16" font-weight="bold" text-anchor="middle" fill="#000000">NHTSA vPIC VEHICLE API</text>
+        <text x="380" y="1778" font-family="Arial, sans-serif" font-size="13.5" text-anchor="middle" fill="#000000">Automotive Catalog Database</text>
+      </g>
+    
+  
+      <g>
+        <rect x="1000" y="1720" width="360" height="80" fill="#FFFFFF" stroke="#000000" stroke-width="3" rx="6"/>
+        <line x1="1000" y1="1756" x2="1360" y2="1756" stroke="#000000" stroke-width="1.8"/>
+        <text x="1180" y="1745" font-family="Arial, sans-serif" font-size="16" font-weight="bold" text-anchor="middle" fill="#000000">RESEND EMAIL SERVICE</text>
+        <text x="1180" y="1778" font-family="Arial, sans-serif" font-size="13.5" text-anchor="middle" fill="#000000">SMTP Transactional Delivery</text>
+      </g>
+    
+  
+      <g>
+        <rect x="1800" y="1720" width="360" height="80" fill="#FFFFFF" stroke="#000000" stroke-width="3" rx="6"/>
+        <line x1="1800" y1="1756" x2="2160" y2="1756" stroke="#000000" stroke-width="1.8"/>
+        <text x="1980" y="1745" font-family="Arial, sans-serif" font-size="16" font-weight="bold" text-anchor="middle" fill="#000000">SECURITY PERSONNEL / GUARD</text>
+        <text x="1980" y="1778" font-family="Arial, sans-serif" font-size="13.5" text-anchor="middle" fill="#000000">Gate Security & Scanner Terminal</text>
+      </g>
+    
+
+  <!-- Processes -->
+  
+      <g>
+        <rect x="200" y="400" width="440" height="140" rx="16" fill="#FFFFFF" stroke="#000000" stroke-width="2.8"/>
+        <line x1="200" y1="438" x2="640" y2="438" stroke="#000000" stroke-width="2"/>
+        <text x="225" y="426" font-family="Arial, sans-serif" font-size="16" font-weight="bold" fill="#000000">1.0</text>
+        <text x="420" y="468" font-family="Arial, sans-serif" font-size="17" font-weight="bold" text-anchor="middle" fill="#000000">Visitor Registration & Biometrics</text>
+        <text x="420" y="494" font-family="Arial, sans-serif" font-size="14" text-anchor="middle" fill="#000000">Validate demographics, PSGC location,</text>
+        <text x="420" y="516" font-family="Arial, sans-serif" font-size="14" text-anchor="middle" fill="#000000">perform OCR on ID and capture live selfie</text>
+      </g>
+    
+  
+      <g>
+        <rect x="1760" y="400" width="440" height="140" rx="16" fill="#FFFFFF" stroke="#000000" stroke-width="2.8"/>
+        <line x1="1760" y1="438" x2="2200" y2="438" stroke="#000000" stroke-width="2"/>
+        <text x="1785" y="426" font-family="Arial, sans-serif" font-size="16" font-weight="bold" fill="#000000">2.0</text>
+        <text x="1980" y="468" font-family="Arial, sans-serif" font-size="17" font-weight="bold" text-anchor="middle" fill="#000000">Office Visit Governance</text>
+        <text x="1980" y="494" font-family="Arial, sans-serif" font-size="14" text-anchor="middle" fill="#000000">Adjudicate visit requests, check office</text>
+        <text x="1980" y="516" font-family="Arial, sans-serif" font-size="14" text-anchor="middle" fill="#000000">operating schedules and staff availability</text>
+      </g>
+    
+  
+      <g>
+        <rect x="980" y="780" width="440" height="140" rx="16" fill="#FFFFFF" stroke="#000000" stroke-width="2.8"/>
+        <line x1="980" y1="818" x2="1420" y2="818" stroke="#000000" stroke-width="2"/>
+        <text x="1005" y="806" font-family="Arial, sans-serif" font-size="16" font-weight="bold" fill="#000000">3.0</text>
+        <text x="1200" y="848" font-family="Arial, sans-serif" font-size="17" font-weight="bold" text-anchor="middle" fill="#000000">Pass Issuance & Cryptography</text>
+        <text x="1200" y="874" font-family="Arial, sans-serif" font-size="14" text-anchor="middle" fill="#000000">Generate SHA-256 token digest, execute</text>
+        <text x="1200" y="896" font-family="Arial, sans-serif" font-size="14" text-anchor="middle" fill="#000000">atomic api.issue_pass, trigger email</text>
+      </g>
+    
+  
+      <g>
+        <rect x="1760" y="1180" width="440" height="140" rx="16" fill="#FFFFFF" stroke="#000000" stroke-width="2.8"/>
+        <line x1="1760" y1="1218" x2="2200" y2="1218" stroke="#000000" stroke-width="2"/>
+        <text x="1785" y="1206" font-family="Arial, sans-serif" font-size="16" font-weight="bold" fill="#000000">4.0</text>
+        <text x="1980" y="1248" font-family="Arial, sans-serif" font-size="17" font-weight="bold" text-anchor="middle" fill="#000000">Gate Scanning & Validation</text>
+        <text x="1980" y="1274" font-family="Arial, sans-serif" font-size="14" text-anchor="middle" fill="#000000">Decode optical QR token, verify validity,</text>
+        <text x="1980" y="1296" font-family="Arial, sans-serif" font-size="14" text-anchor="middle" fill="#000000">display visitor dossier to guard, log entry</text>
+      </g>
+    
+  
+      <g>
+        <rect x="200" y="1180" width="440" height="140" rx="16" fill="#FFFFFF" stroke="#000000" stroke-width="2.8"/>
+        <line x1="200" y1="1218" x2="640" y2="1218" stroke="#000000" stroke-width="2"/>
+        <text x="225" y="1206" font-family="Arial, sans-serif" font-size="16" font-weight="bold" fill="#000000">5.0</text>
+        <text x="420" y="1248" font-family="Arial, sans-serif" font-size="17" font-weight="bold" text-anchor="middle" fill="#000000">Security Monitoring & Audit</text>
+        <text x="420" y="1274" font-family="Arial, sans-serif" font-size="14" text-anchor="middle" fill="#000000">Maintain immutable audit trail, monitor</text>
+        <text x="420" y="1296" font-family="Arial, sans-serif" font-size="14" text-anchor="middle" fill="#000000">real-time occupancy, enforce lockdowns</text>
+      </g>
+    
+
+  <!-- Data Stores -->
+  
+      <g>
+        <line x1="900" y1="450" x2="1380" y2="450" stroke="#000000" stroke-width="2.5"/>
+        <line x1="900" y1="506" x2="1380" y2="506" stroke="#000000" stroke-width="2.5"/>
+        <line x1="900" y1="450" x2="900" y2="506" stroke="#000000" stroke-width="2.5"/>
+        <line x1="955" y1="450" x2="955" y2="506" stroke="#000000" stroke-width="2"/>
+        <text x="927" y="484" font-family="Arial, sans-serif" font-size="15" font-weight="bold" text-anchor="middle" fill="#000000">D1</text>
+        <text x="970" y="484" font-family="Arial, sans-serif" font-size="15" font-weight="bold" fill="#000000">Visitors & Profiles (visitors, returning)</text>
+      </g>
+    
+  
+      <g>
+        <line x1="1480" y1="820" x2="1960" y2="820" stroke="#000000" stroke-width="2.5"/>
+        <line x1="1480" y1="876" x2="1960" y2="876" stroke="#000000" stroke-width="2.5"/>
+        <line x1="1480" y1="820" x2="1480" y2="876" stroke="#000000" stroke-width="2.5"/>
+        <line x1="1535" y1="820" x2="1535" y2="876" stroke="#000000" stroke-width="2"/>
+        <text x="1507" y="854" font-family="Arial, sans-serif" font-size="15" font-weight="bold" text-anchor="middle" fill="#000000">D2</text>
+        <text x="1550" y="854" font-family="Arial, sans-serif" font-size="15" font-weight="bold" fill="#000000">Digital Gate Passes (passes table)</text>
+      </g>
+    
+  
+      <g>
+        <line x1="2060" y1="600" x2="2520" y2="600" stroke="#000000" stroke-width="2.5"/>
+        <line x1="2060" y1="656" x2="2520" y2="656" stroke="#000000" stroke-width="2.5"/>
+        <line x1="2060" y1="600" x2="2060" y2="656" stroke="#000000" stroke-width="2.5"/>
+        <line x1="2115" y1="600" x2="2115" y2="656" stroke="#000000" stroke-width="2"/>
+        <text x="2087" y="634" font-family="Arial, sans-serif" font-size="15" font-weight="bold" text-anchor="middle" fill="#000000">D3</text>
+        <text x="2130" y="634" font-family="Arial, sans-serif" font-size="15" font-weight="bold" fill="#000000">Offices & Closures (campus_offices)</text>
+      </g>
+    
+  
+      <g>
+        <line x1="200" y1="680" x2="640" y2="680" stroke="#000000" stroke-width="2.5"/>
+        <line x1="200" y1="736" x2="640" y2="736" stroke="#000000" stroke-width="2.5"/>
+        <line x1="200" y1="680" x2="200" y2="736" stroke="#000000" stroke-width="2.5"/>
+        <line x1="255" y1="680" x2="255" y2="736" stroke="#000000" stroke-width="2"/>
+        <text x="227" y="714" font-family="Arial, sans-serif" font-size="15" font-weight="bold" text-anchor="middle" fill="#000000">D4</text>
+        <text x="270" y="714" font-family="Arial, sans-serif" font-size="15" font-weight="bold" fill="#000000">PSGC Locations (psgc_locations)</text>
+      </g>
+    
+  
+      <g>
+        <line x1="900" y1="1280" x2="1380" y2="1280" stroke="#000000" stroke-width="2.5"/>
+        <line x1="900" y1="1336" x2="1380" y2="1336" stroke="#000000" stroke-width="2.5"/>
+        <line x1="900" y1="1280" x2="900" y2="1336" stroke="#000000" stroke-width="2.5"/>
+        <line x1="955" y1="1280" x2="955" y2="1336" stroke="#000000" stroke-width="2"/>
+        <text x="927" y="1314" font-family="Arial, sans-serif" font-size="15" font-weight="bold" text-anchor="middle" fill="#000000">D5</text>
+        <text x="970" y="1314" font-family="Arial, sans-serif" font-size="15" font-weight="bold" fill="#000000">Security Audit Ledger (audit_events)</text>
+      </g>
+    
+  
+      <g>
+        <line x1="200" y1="880" x2="640" y2="880" stroke="#000000" stroke-width="2.5"/>
+        <line x1="200" y1="936" x2="640" y2="936" stroke="#000000" stroke-width="2.5"/>
+        <line x1="200" y1="880" x2="200" y2="936" stroke="#000000" stroke-width="2.5"/>
+        <line x1="255" y1="880" x2="255" y2="936" stroke="#000000" stroke-width="2"/>
+        <text x="227" y="914" font-family="Arial, sans-serif" font-size="15" font-weight="bold" text-anchor="middle" fill="#000000">D6</text>
+        <text x="270" y="914" font-family="Arial, sans-serif" font-size="15" font-weight="bold" fill="#000000">Evidence Storage (upload_intents)</text>
+      </g>
+    
+
+  <!-- Flows -->
+  
+      <g>
+        <polyline points="380,260 380,400" fill="none" stroke="#000000" stroke-width="2.2" marker-end="url(#arrow)"/>
+        <rect x="250" y="314" width="300" height="32" fill="#FFFFFF" stroke="#000000" stroke-width="1.2" rx="4"/>
+        <text x="400" y="335" font-family="Arial, sans-serif" font-size="13" font-weight="bold" text-anchor="middle" fill="#000000">Demographics, Required Sex, ID, Selfie</text>
+      </g>
+    
+  
+      <g>
+        <polyline points="640,430 1180,430 1180,260" fill="none" stroke="#000000" stroke-width="2.2" marker-end="url(#arrow)"/>
+        <rect x="760" y="394" width="300" height="32" fill="#FFFFFF" stroke="#000000" stroke-width="1.2" rx="4"/>
+        <text x="910" y="415" font-family="Arial, sans-serif" font-size="13" font-weight="bold" text-anchor="middle" fill="#000000">Turnstile verification token</text>
+      </g>
+    
+  
+      <g>
+        <polyline points="1150,260 1150,470 640,470" fill="none" stroke="#000000" stroke-width="2.2" marker-end="url(#arrow)"/>
+        <rect x="760" y="474" width="300" height="32" fill="#FFFFFF" stroke="#000000" stroke-width="1.2" rx="4"/>
+        <text x="910" y="495" font-family="Arial, sans-serif" font-size="13" font-weight="bold" text-anchor="middle" fill="#000000">Challenge validation result</text>
+      </g>
+    
+
+  
+      <g>
+        <polyline points="420,540 420,680" fill="none" stroke="#000000" stroke-width="2.2" marker-end="url(#arrow)"/>
+        <rect x="290" y="594" width="300" height="32" fill="#FFFFFF" stroke="#000000" stroke-width="1.2" rx="4"/>
+        <text x="440" y="615" font-family="Arial, sans-serif" font-size="13" font-weight="bold" text-anchor="middle" fill="#000000">Query province/city/barangay</text>
+      </g>
+    
+  
+      <g>
+        <polyline points="420,736 420,880" fill="none" stroke="#000000" stroke-width="2.2" marker-end="url(#arrow)"/>
+        <rect x="290" y="794" width="300" height="32" fill="#FFFFFF" stroke="#000000" stroke-width="1.2" rx="4"/>
+        <text x="440" y="815" font-family="Arial, sans-serif" font-size="13" font-weight="bold" text-anchor="middle" fill="#000000">Store ID & selfie upload intent</text>
+      </g>
+    
+  
+      <g>
+        <polyline points="640,490 900,490" fill="none" stroke="#000000" stroke-width="2.2" marker-end="url(#arrow)"/>
+        <rect x="620" y="454" width="300" height="32" fill="#FFFFFF" stroke="#000000" stroke-width="1.2" rx="4"/>
+        <text x="770" y="475" font-family="Arial, sans-serif" font-size="13" font-weight="bold" text-anchor="middle" fill="#000000">Commit visitor demographics</text>
+      </g>
+    
+
+  
+      <g>
+        <polyline points="1980,400 1980,260" fill="none" stroke="#000000" stroke-width="2.2" marker-end="url(#arrow)"/>
+        <rect x="1810" y="314" width="300" height="32" fill="#FFFFFF" stroke="#000000" stroke-width="1.2" rx="4"/>
+        <text x="1960" y="335" font-family="Arial, sans-serif" font-size="13" font-weight="bold" text-anchor="middle" fill="#000000">Pending authorization request</text>
+      </g>
+    
+  
+      <g>
+        <polyline points="2020,260 2020,400" fill="none" stroke="#000000" stroke-width="2.2" marker-end="url(#arrow)"/>
+        <rect x="1890" y="334" width="300" height="32" fill="#FFFFFF" stroke="#000000" stroke-width="1.2" rx="4"/>
+        <text x="2040" y="355" font-family="Arial, sans-serif" font-size="13" font-weight="bold" text-anchor="middle" fill="#000000">Adjudication (Approve/Reject)</text>
+      </g>
+    
+  
+      <g>
+        <polyline points="1980,540 1980,600" fill="none" stroke="#000000" stroke-width="2.2" marker-end="url(#arrow)"/>
+        <rect x="1810" y="554" width="300" height="32" fill="#FFFFFF" stroke="#000000" stroke-width="1.2" rx="4"/>
+        <text x="1960" y="575" font-family="Arial, sans-serif" font-size="13" font-weight="bold" text-anchor="middle" fill="#000000">Lookup operating hours & status</text>
+      </g>
+    
+
+  
+      <g>
+        <polyline points="1760,470 1200,780" fill="none" stroke="#000000" stroke-width="2.2" marker-end="url(#arrow)"/>
+        <rect x="1370" y="604" width="300" height="32" fill="#FFFFFF" stroke="#000000" stroke-width="1.2" rx="4"/>
+        <text x="1520" y="625" font-family="Arial, sans-serif" font-size="13" font-weight="bold" text-anchor="middle" fill="#000000">Approved visit authorization</text>
+      </g>
+    
+  
+      <g>
+        <polyline points="640,520 980,820" fill="none" stroke="#000000" stroke-width="2.2" marker-end="url(#arrow)"/>
+        <rect x="650" y="684" width="300" height="32" fill="#FFFFFF" stroke="#000000" stroke-width="1.2" rx="4"/>
+        <text x="800" y="705" font-family="Arial, sans-serif" font-size="13" font-weight="bold" text-anchor="middle" fill="#000000">Verified walk-in visitor payload</text>
+      </g>
+    
+
+  
+      <g>
+        <polyline points="1420,850 1480,850" fill="none" stroke="#000000" stroke-width="2.2" marker-end="url(#arrow)"/>
+        <rect x="1300" y="814" width="300" height="32" fill="#FFFFFF" stroke="#000000" stroke-width="1.2" rx="4"/>
+        <text x="1450" y="835" font-family="Arial, sans-serif" font-size="13" font-weight="bold" text-anchor="middle" fill="#000000">Atomic commit: api.issue_pass</text>
+      </g>
+    
+  
+      <g>
+        <polyline points="1200,920 1200,1720" fill="none" stroke="#000000" stroke-width="2.2" marker-end="url(#arrow)"/>
+        <rect x="1060" y="1304" width="300" height="32" fill="#FFFFFF" stroke="#000000" stroke-width="1.2" rx="4"/>
+        <text x="1210" y="1325" font-family="Arial, sans-serif" font-size="13" font-weight="bold" text-anchor="middle" fill="#000000">Pass confirmation & QR image link</text>
+      </g>
+    
+
+  
+      <g>
+        <polyline points="1980,1720 1980,1320" fill="none" stroke="#000000" stroke-width="2.2" marker-end="url(#arrow)"/>
+        <rect x="1810" y="1504" width="300" height="32" fill="#FFFFFF" stroke="#000000" stroke-width="1.2" rx="4"/>
+        <text x="1960" y="1525" font-family="Arial, sans-serif" font-size="13" font-weight="bold" text-anchor="middle" fill="#000000">Scanned QR optical token from camera</text>
+      </g>
+    
+  
+      <g>
+        <polyline points="1940,1180 1720,876" fill="none" stroke="#000000" stroke-width="2.2" marker-end="url(#arrow)"/>
+        <rect x="1630" y="1014" width="300" height="32" fill="#FFFFFF" stroke="#000000" stroke-width="1.2" rx="4"/>
+        <text x="1780" y="1035" font-family="Arial, sans-serif" font-size="13" font-weight="bold" text-anchor="middle" fill="#000000">Validate token digest, update pass status</text>
+      </g>
+    
+  
+      <g>
+        <polyline points="1760,1260 1380,1300" fill="none" stroke="#000000" stroke-width="2.2" marker-end="url(#arrow)"/>
+        <rect x="1420" y="1254" width="300" height="32" fill="#FFFFFF" stroke="#000000" stroke-width="1.2" rx="4"/>
+        <text x="1570" y="1275" font-family="Arial, sans-serif" font-size="13" font-weight="bold" text-anchor="middle" fill="#000000">Record physical gate event (timestamp)</text>
+      </g>
+    
+
+  
+      <g>
+        <polyline points="640,1260 900,1300" fill="none" stroke="#000000" stroke-width="2.2" marker-end="url(#arrow)"/>
+        <rect x="620" y="1254" width="300" height="32" fill="#FFFFFF" stroke="#000000" stroke-width="1.2" rx="4"/>
+        <text x="770" y="1275" font-family="Arial, sans-serif" font-size="13" font-weight="bold" text-anchor="middle" fill="#000000">Query audit events & system activity</text>
+      </g>
+    
+  
+      <g>
+        <polyline points="380,540 380,1720" fill="none" stroke="#000000" stroke-width="2.2" marker-end="url(#arrow)"/>
+        <rect x="210" y="1114" width="300" height="32" fill="#FFFFFF" stroke="#000000" stroke-width="1.2" rx="4"/>
+        <text x="360" y="1135" font-family="Arial, sans-serif" font-size="13" font-weight="bold" text-anchor="middle" fill="#000000">VIN / Model decode query & response</text>
+      </g>
+    
+</svg>

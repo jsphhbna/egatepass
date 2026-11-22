@@ -1,0 +1,20 @@
+<mxfile host="app.diagrams.net" modified="2026-11-21T13:00:00.000Z" agent="Mozilla/5.0" version="21.0.0" type="device">
+  <diagram id="egatepass-erd" name="E-GatePass Entity Relationship Diagram">
+    <mxGraphModel dx="2400" dy="1800" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="2400" pageHeight="1800" background="#FFFFFF">
+      <root>
+        <mxCell id="0"/>
+        <mxCell id="1" parent="0"/>
+        <mxCell id="title" value="EULOGIO &quot;AMANG&quot; RODRIGUEZ INSTITUTE OF SCIENCE AND TECHNOLOGY&#xa;EARIST E-GATEPASS VISITOR ACCESS MANAGEMENT SYSTEM&#xa;Entity Relationship Diagram (ERD — Crow's Foot Model)" style="text;html=1;strokeColor=#000000;fillColor=#FFFFFF;align=center;verticalAlign=middle;whiteSpace=wrap;fontStyle=1;fontSize=14;fontColor=#000000;" vertex="1" parent="1">
+          <mxGeometry x="50" y="30" width="2300" height="90" as="geometry"/>
+        </mxCell>
+        <!-- Entities -->
+        <mxCell id="e_visitors" value="VISITORS" style="shape=table;html=1;whiteSpace=wrap;startSize=28;fillColor=#FFFFFF;strokeColor=#000000;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="460" y="480" width="320" height="290" as="geometry"/>
+        </mxCell>
+        <mxCell id="e_passes" value="PASSES" style="shape=table;html=1;whiteSpace=wrap;startSize=28;fillColor=#FFFFFF;strokeColor=#000000;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="940" y="480" width="320" height="270" as="geometry"/>
+        </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>

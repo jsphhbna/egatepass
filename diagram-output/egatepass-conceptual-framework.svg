@@ -1,0 +1,380 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 2600 1900" width="2600" height="1900">
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M 0 1 L 10 5 L 0 9 z" fill="#000000"/>
+    </marker>
+    <marker id="major-arrow" viewBox="0 0 12 12" refX="11" refY="6" markerWidth="9" markerHeight="9" orient="auto-start-reverse">
+      <path d="M 0 1 L 12 6 L 0 11 z" fill="#000000"/>
+    </marker>
+  </defs>
+
+  <rect width="2600" height="1900" fill="#FFFFFF"/>
+  
+    <!-- Academic Title Block -->
+    <rect x="50" y="30" width="2500" height="110" fill="#FFFFFF" stroke="#000000" stroke-width="2.8"/>
+    <text x="1300" y="65" font-family="Arial, sans-serif" font-size="20" font-weight="bold" text-anchor="middle" fill="#000000" letter-spacing="1">EULOGIO "AMANG" RODRIGUEZ INSTITUTE OF SCIENCE AND TECHNOLOGY</text>
+    <text x="1300" y="95" font-family="Arial, sans-serif" font-size="17" font-weight="bold" text-anchor="middle" fill="#000000">EARIST E-GATEPASS VISITOR ACCESS MANAGEMENT SYSTEM</text>
+    <text x="1300" y="122" font-family="Arial, sans-serif" font-size="14" text-anchor="middle" fill="#000000">Conceptual Framework (IPO Model: Input - Process - Output) | Proponents: Mary Joy Cagande, Joseph Habana, Mon Gerald Lanon, Jeferson Tambis | Adviser: Dhani San Jose</text>
+  
+
+  <!-- Pillar 1: INPUT -->
+  
+      <g>
+        <rect x="60" y="160" width="740" height="1500" fill="#FFFFFF" stroke="#000000" stroke-width="3" rx="10"/>
+        <rect x="60" y="160" width="740" height="52" fill="#FFFFFF" stroke="#000000" stroke-width="2.5" rx="10"/>
+        <text x="430" y="188" font-family="Arial, sans-serif" font-size="16" font-weight="bold" text-anchor="middle" fill="#000000">INPUT: SYSTEM INPUTS & INDEPENDENT VARIABLES</text>
+        <text x="430" y="204" font-family="Arial, sans-serif" font-size="12" text-anchor="middle" fill="#000000">Raw Demographic Data, Verification Assets & Hardware Signals</text>
+      </g>
+    
+  
+      <g>
+        <rect x="80" y="235" width="700" height="270" fill="#FFFFFF" stroke="#000000" stroke-width="2" rx="6"/>
+        <line x1="80" y1="267" x2="780" y2="267" stroke="#000000" stroke-width="1.5"/>
+        <text x="96" y="257" font-family="Arial, sans-serif" font-size="14" font-weight="bold" fill="#000000">1. Visitor Demographics & Identity Information</text>
+        
+          <text x="96" y="289" font-family="Arial, sans-serif" font-size="12.5" fill="#000000">• Full Legal Name (First Name, Middle Name, Last Name)</text>
+        
+          <text x="96" y="310" font-family="Arial, sans-serif" font-size="12.5" fill="#000000">• Contact Number (E.164 Standard) & Valid Email Address</text>
+        
+          <text x="96" y="331" font-family="Arial, sans-serif" font-size="12.5" fill="#000000">• Biological Sex (Required Selection: Male / Female)</text>
+        
+          <text x="96" y="352" font-family="Arial, sans-serif" font-size="12.5" fill="#000000">• Residential Locality: Hierarchical PSGC Address Selection</text>
+        
+          <text x="96" y="373" font-family="Arial, sans-serif" font-size="12.5" fill="#000000">• Detailed Purpose of Visit (Academic, Official, Transaction, Event)</text>
+        
+          <text x="96" y="394" font-family="Arial, sans-serif" font-size="12.5" fill="#000000">• Target Campus Office, Department & Faculty Host Selection</text>
+        
+          <text x="96" y="415" font-family="Arial, sans-serif" font-size="12.5" fill="#000000">• Scheduled Date & Permitted Time Window Selection</text>
+        
+          <text x="96" y="436" font-family="Arial, sans-serif" font-size="12.5" fill="#000000">• Consent Acceptance for Data Processing (RA 10173 Compliance)</text>
+        
+      </g>
+    
+  
+      <g>
+        <rect x="80" y="530" width="700" height="270" fill="#FFFFFF" stroke="#000000" stroke-width="2" rx="6"/>
+        <line x1="80" y1="562" x2="780" y2="562" stroke="#000000" stroke-width="1.5"/>
+        <text x="96" y="552" font-family="Arial, sans-serif" font-size="14" font-weight="bold" fill="#000000">2. Physical Identification Evidence & Biometrics</text>
+        
+          <text x="96" y="584" font-family="Arial, sans-serif" font-size="12.5" fill="#000000">• High-Resolution Front Snapshot of Government / School ID Card</text>
+        
+          <text x="96" y="605" font-family="Arial, sans-serif" font-size="12.5" fill="#000000">• Optional Back Snapshot of Identification Document</text>
+        
+          <text x="96" y="626" font-family="Arial, sans-serif" font-size="12.5" fill="#000000">• Live Camera Facial Portrait Capture via Front Webcam</text>
+        
+          <text x="96" y="647" font-family="Arial, sans-serif" font-size="12.5" fill="#000000">• Camera Viewport Calibration (Unmirrored Stream Alignment)</text>
+        
+          <text x="96" y="668" font-family="Arial, sans-serif" font-size="12.5" fill="#000000">• Transient Biometric Vector for Returning Visitor Verification</text>
+        
+          <text x="96" y="689" font-family="Arial, sans-serif" font-size="12.5" fill="#000000">• Visitor Consent Agreement for Data Processing (RA 10173 Compliance)</text>
+        
+          <text x="96" y="710" font-family="Arial, sans-serif" font-size="12.5" fill="#000000">• Immediate In-Memory Staging with Zero-Persistence on Cancellation</text>
+        
+          <text x="96" y="731" font-family="Arial, sans-serif" font-size="12.5" fill="#000000">• Real-time Image Quality & Lighting Assessment</text>
+        
+      </g>
+    
+  
+      <g>
+        <rect x="80" y="825" width="700" height="250" fill="#FFFFFF" stroke="#000000" stroke-width="2" rx="6"/>
+        <line x1="80" y1="857" x2="780" y2="857" stroke="#000000" stroke-width="1.5"/>
+        <text x="96" y="847" font-family="Arial, sans-serif" font-size="14" font-weight="bold" fill="#000000">3. Optional Vehicle Declaration Details</text>
+        
+          <text x="96" y="879" font-family="Arial, sans-serif" font-size="12.5" fill="#000000">• Vehicle Classification (Car, Motorcycle, Van, Utility Vehicle)</text>
+        
+          <text x="96" y="900" font-family="Arial, sans-serif" font-size="12.5" fill="#000000">• Official License Plate Number (Formatted & Normalized Key)</text>
+        
+          <text x="96" y="921" font-family="Arial, sans-serif" font-size="12.5" fill="#000000">• Vehicle Exterior Color & Distinctive Visual Identifiers</text>
+        
+          <text x="96" y="942" font-family="Arial, sans-serif" font-size="12.5" fill="#000000">• Make & Model Classification via NHTSA vPIC Catalog</text>
+        
+          <text x="96" y="963" font-family="Arial, sans-serif" font-size="12.5" fill="#000000">• Driver vs Passenger Declaration for Multi-Visitor Groups</text>
+        
+          <text x="96" y="984" font-family="Arial, sans-serif" font-size="12.5" fill="#000000">• Historical Vehicle Recall for Returning Visitors</text>
+        
+      </g>
+    
+  
+      <g>
+        <rect x="80" y="1100" width="700" height="250" fill="#FFFFFF" stroke="#000000" stroke-width="2" rx="6"/>
+        <line x1="80" y1="1132" x2="780" y2="1132" stroke="#000000" stroke-width="1.5"/>
+        <text x="96" y="1122" font-family="Arial, sans-serif" font-size="14" font-weight="bold" fill="#000000">4. Security Edge & Hardware Peripheral Signals</text>
+        
+          <text x="96" y="1154" font-family="Arial, sans-serif" font-size="12.5" fill="#000000">• Cloudflare Turnstile Cryptographic Client Challenge Token</text>
+        
+          <text x="96" y="1175" font-family="Arial, sans-serif" font-size="12.5" fill="#000000">• Client Device Identifier & Browser User-Agent Fingerprint</text>
+        
+          <text x="96" y="1196" font-family="Arial, sans-serif" font-size="12.5" fill="#000000">• High-Speed Optical Video Stream from Gate Scanner Cameras</text>
+        
+          <text x="96" y="1217" font-family="Arial, sans-serif" font-size="12.5" fill="#000000">• Security Guard Active Session Credentials & Station Device ID</text>
+        
+          <text x="96" y="1238" font-family="Arial, sans-serif" font-size="12.5" fill="#000000">• Campus Emergency Lockdown Status from Administrative Channel</text>
+        
+          <text x="96" y="1259" font-family="Arial, sans-serif" font-size="12.5" fill="#000000">• Hardware Health Status of Kiosk Thermal Printer</text>
+        
+      </g>
+    
+  
+      <g>
+        <rect x="80" y="1375" width="700" height="260" fill="#FFFFFF" stroke="#000000" stroke-width="2" rx="6"/>
+        <line x1="80" y1="1407" x2="780" y2="1407" stroke="#000000" stroke-width="1.5"/>
+        <text x="96" y="1397" font-family="Arial, sans-serif" font-size="14" font-weight="bold" fill="#000000">5. Institutional Policy & Reference Datasets</text>
+        
+          <text x="96" y="1429" font-family="Arial, sans-serif" font-size="12.5" fill="#000000">• Philippine Standard Geographic Code (PSGC) Nationwide Hierarchy</text>
+        
+          <text x="96" y="1450" font-family="Arial, sans-serif" font-size="12.5" fill="#000000">• Institutional Campus Calendar Closures & Declared Holidays</text>
+        
+          <text x="96" y="1471" font-family="Arial, sans-serif" font-size="12.5" fill="#000000">• Campus Operating Hours & Department-Specific Schedule Rules</text>
+        
+          <text x="96" y="1492" font-family="Arial, sans-serif" font-size="12.5" fill="#000000">• Role-Based Access Control (RBAC) Permissions & TOTP MFA Seeds</text>
+        
+          <text x="96" y="1513" font-family="Arial, sans-serif" font-size="12.5" fill="#000000">• Maximum Campus Occupancy Threshold Limits</text>
+        
+      </g>
+    
+
+  <!-- Pillar 2: PROCESS -->
+  
+      <g>
+        <rect x="930" y="160" width="740" height="1500" fill="#FFFFFF" stroke="#000000" stroke-width="3" rx="10"/>
+        <rect x="930" y="160" width="740" height="52" fill="#FFFFFF" stroke="#000000" stroke-width="2.5" rx="10"/>
+        <text x="1300" y="188" font-family="Arial, sans-serif" font-size="16" font-weight="bold" text-anchor="middle" fill="#000000">PROCESS: THROUGHPUT & TRANSFORMATION MECHANISMS</text>
+        <text x="1300" y="204" font-family="Arial, sans-serif" font-size="12" text-anchor="middle" fill="#000000">Algorithmic Validation, Cryptography, Database Transactions & State Control</text>
+      </g>
+    
+  
+      <g>
+        <rect x="950" y="235" width="700" height="270" fill="#FFFFFF" stroke="#000000" stroke-width="2" rx="6"/>
+        <line x1="950" y1="267" x2="1650" y2="267" stroke="#000000" stroke-width="1.5"/>
+        <text x="966" y="257" font-family="Arial, sans-serif" font-size="14" font-weight="bold" fill="#000000">1. Client-Side Parsing & Edge Threat Mitigation</text>
+        
+          <text x="966" y="289" font-family="Arial, sans-serif" font-size="12.5" fill="#000000">• React Form State Machine: Strict Schema Validation & Sanitization</text>
+        
+          <text x="966" y="310" font-family="Arial, sans-serif" font-size="12.5" fill="#000000">• Hierarchical Geographic Resolution against 40,000+ PSGC Records</text>
+        
+          <text x="966" y="331" font-family="Arial, sans-serif" font-size="12.5" fill="#000000">• Client-Side Tesseract.js WebAssembly OCR Text Extraction</text>
+        
+          <text x="966" y="352" font-family="Arial, sans-serif" font-size="12.5" fill="#000000">• Fuzzy Name String Matching (Comparing ID Card Text to Form Input)</text>
+        
+          <text x="966" y="373" font-family="Arial, sans-serif" font-size="12.5" fill="#000000">• Webcam Feed Liveness Assessment & Face Alignment Filtering</text>
+        
+          <text x="966" y="394" font-family="Arial, sans-serif" font-size="12.5" fill="#000000">• Cloudflare Turnstile Siteverify Challenge Validation via Edge API</text>
+        
+          <text x="966" y="415" font-family="Arial, sans-serif" font-size="12.5" fill="#000000">• Transient Blob URL Management & Memory Cleanup on User Cancel</text>
+        
+          <text x="966" y="436" font-family="Arial, sans-serif" font-size="12.5" fill="#000000">• Discreet Camera Overlay System Operation</text>
+        
+      </g>
+    
+  
+      <g>
+        <rect x="950" y="530" width="700" height="270" fill="#FFFFFF" stroke="#000000" stroke-width="2" rx="6"/>
+        <line x1="950" y1="562" x2="1650" y2="562" stroke="#000000" stroke-width="1.5"/>
+        <text x="966" y="552" font-family="Arial, sans-serif" font-size="14" font-weight="bold" fill="#000000">2. Pass Generation & Cryptographic Integrity</text>
+        
+          <text x="966" y="584" font-family="Arial, sans-serif" font-size="12.5" fill="#000000">• Execution of Atomic Stored Procedure: api.issue_pass</text>
+        
+          <text x="966" y="605" font-family="Arial, sans-serif" font-size="12.5" fill="#000000">• Public Reference UUID Generation (Unique Identifier)</text>
+        
+          <text x="966" y="626" font-family="Arial, sans-serif" font-size="12.5" fill="#000000">• Cryptographic SHA-256 HMAC Token Hashing & Salt Ingestion</text>
+        
+          <text x="966" y="647" font-family="Arial, sans-serif" font-size="12.5" fill="#000000">• Encrypted Pass Digest Generation (32-Byte Strict Octet Length)</text>
+        
+          <text x="966" y="668" font-family="Arial, sans-serif" font-size="12.5" fill="#000000">• Dynamic 2D QR Matrix Construction (Error Correction Level M)</text>
+        
+          <text x="966" y="689" font-family="Arial, sans-serif" font-size="12.5" fill="#000000">• Asynchronous Transactional Email Dispatch via Resend REST API</text>
+        
+          <text x="966" y="710" font-family="Arial, sans-serif" font-size="12.5" fill="#000000">• Thermal Receipt Rendering via Canvas for Kiosk Hardware</text>
+        
+          <text x="966" y="731" font-family="Arial, sans-serif" font-size="12.5" fill="#000000">• Fail-Closed Concurrency Fencing & Write Freeze Verification</text>
+        
+      </g>
+    
+  
+      <g>
+        <rect x="950" y="825" width="700" height="250" fill="#FFFFFF" stroke="#000000" stroke-width="2" rx="6"/>
+        <line x1="950" y1="857" x2="1650" y2="857" stroke="#000000" stroke-width="1.5"/>
+        <text x="966" y="847" font-family="Arial, sans-serif" font-size="14" font-weight="bold" fill="#000000">3. Campus Office Routing & Visit Adjudication</text>
+        
+          <text x="966" y="879" font-family="Arial, sans-serif" font-size="12.5" fill="#000000">• Conditional Visit Routing: General Entry vs Restricted Office Review</text>
+        
+          <text x="966" y="900" font-family="Arial, sans-serif" font-size="12.5" fill="#000000">• Real-Time WebSocket Notification to Target Department (/office)</text>
+        
+          <text x="966" y="921" font-family="Arial, sans-serif" font-size="12.5" fill="#000000">• Faculty Host Inspection Queue: Approve / Reject / Reschedule</text>
+        
+          <text x="966" y="942" font-family="Arial, sans-serif" font-size="12.5" fill="#000000">• Automatic Pass State Gating: pending_approval -> approved</text>
+        
+          <text x="966" y="963" font-family="Arial, sans-serif" font-size="12.5" fill="#000000">• Automated Visitor Notification Email on Office Decision</text>
+        
+          <text x="966" y="984" font-family="Arial, sans-serif" font-size="12.5" fill="#000000">• Departmental Working Hours Verification</text>
+        
+      </g>
+    
+  
+      <g>
+        <rect x="950" y="1100" width="700" height="250" fill="#FFFFFF" stroke="#000000" stroke-width="2" rx="6"/>
+        <line x1="950" y1="1132" x2="1650" y2="1132" stroke="#000000" stroke-width="1.5"/>
+        <text x="966" y="1122" font-family="Arial, sans-serif" font-size="14" font-weight="bold" fill="#000000">4. Physical Turnstile Scanning & State Transition</text>
+        
+          <text x="966" y="1154" font-family="Arial, sans-serif" font-size="12.5" fill="#000000">• High-Speed QR Video Frame Ingestion via ZXing (<500ms Latency)</text>
+        
+          <text x="966" y="1175" font-family="Arial, sans-serif" font-size="12.5" fill="#000000">• Token Lookup against Database via PgBouncer Connection Pooler</text>
+        
+          <text x="966" y="1196" font-family="Arial, sans-serif" font-size="12.5" fill="#000000">• Temporal Validity Verification (Current Date & Expiration Window)</text>
+        
+          <text x="966" y="1217" font-family="Arial, sans-serif" font-size="12.5" fill="#000000">• Institutional Calendar Closure & Active Gate Rules Check</text>
+        
+          <text x="966" y="1238" font-family="Arial, sans-serif" font-size="12.5" fill="#000000">• Strict Finite State Machine: issued -> checked_in -> checked_out</text>
+        
+          <text x="966" y="1259" font-family="Arial, sans-serif" font-size="12.5" fill="#000000">• Concurrent Gate Scan Lease Fencing (Advisory Lock Mechanism)</text>
+        
+      </g>
+    
+  
+      <g>
+        <rect x="950" y="1375" width="700" height="260" fill="#FFFFFF" stroke="#000000" stroke-width="2" rx="6"/>
+        <line x1="950" y1="1407" x2="1650" y2="1407" stroke="#000000" stroke-width="1.5"/>
+        <text x="966" y="1397" font-family="Arial, sans-serif" font-size="14" font-weight="bold" fill="#000000">5. Security Oversight, Auditing & Ledger Commit</text>
+        
+          <text x="966" y="1429" font-family="Arial, sans-serif" font-size="12.5" fill="#000000">• Row Level Security (RLS) Enforcement on Database Access</text>
+        
+          <text x="966" y="1450" font-family="Arial, sans-serif" font-size="12.5" fill="#000000">• Append-Only Recording of Entry/Exit Events into visit_events</text>
+        
+          <text x="966" y="1471" font-family="Arial, sans-serif" font-size="12.5" fill="#000000">• System Administrative Trail Recording into immutable audit_events</text>
+        
+          <text x="966" y="1492" font-family="Arial, sans-serif" font-size="12.5" fill="#000000">• Real-Time In-Campus Occupancy Counter Calculation</text>
+        
+          <text x="966" y="1513" font-family="Arial, sans-serif" font-size="12.5" fill="#000000">• Security Alert Flagging for Expired, Duplicate, or Overstay Passes</text>
+        
+          <text x="966" y="1534" font-family="Arial, sans-serif" font-size="12.5" fill="#000000">• Emergency Gate Access Freeze Propagation via Realtime Broker</text>
+        
+      </g>
+    
+
+  <!-- Pillar 3: OUTPUT -->
+  
+      <g>
+        <rect x="1800" y="160" width="740" height="1500" fill="#FFFFFF" stroke="#000000" stroke-width="3" rx="10"/>
+        <rect x="1800" y="160" width="740" height="52" fill="#FFFFFF" stroke="#000000" stroke-width="2.5" rx="10"/>
+        <text x="2170" y="188" font-family="Arial, sans-serif" font-size="16" font-weight="bold" text-anchor="middle" fill="#000000">OUTPUT: SYSTEM DELIVERABLES & DEPENDENT VARIABLES</text>
+        <text x="2170" y="204" font-family="Arial, sans-serif" font-size="12" text-anchor="middle" fill="#000000">Secure Access Passes, Physical Gate Grants, Real-Time Logs & Compliance Audits</text>
+      </g>
+    
+  
+      <g>
+        <rect x="1820" y="235" width="700" height="270" fill="#FFFFFF" stroke="#000000" stroke-width="2" rx="6"/>
+        <line x1="1820" y1="267" x2="2520" y2="267" stroke="#000000" stroke-width="1.5"/>
+        <text x="1836" y="257" font-family="Arial, sans-serif" font-size="14" font-weight="bold" fill="#000000">1. Digital Gate Pass & Visitor Deliverables</text>
+        
+          <text x="1836" y="289" font-family="Arial, sans-serif" font-size="12.5" fill="#000000">• Cryptographically Signed Digital Gate Pass (Responsive Mobile View)</text>
+        
+          <text x="1836" y="310" font-family="Arial, sans-serif" font-size="12.5" fill="#000000">• High-Density Tamper-Resistant Dynamic QR Code Matrix</text>
+        
+          <text x="1836" y="331" font-family="Arial, sans-serif" font-size="12.5" fill="#000000">• Printed Thermal Gate Pass Receipt (Kiosk Self-Service Slips)</text>
+        
+          <text x="1836" y="352" font-family="Arial, sans-serif" font-size="12.5" fill="#000000">• Transactional Confirmation Email with Direct Pass Access Link</text>
+        
+          <text x="1836" y="373" font-family="Arial, sans-serif" font-size="12.5" fill="#000000">• Unique Public Reference Tracking Code for Status Inquiries (/track)</text>
+        
+          <text x="1836" y="394" font-family="Arial, sans-serif" font-size="12.5" fill="#000000">• Clear Visual Ingress Instructions & Campus Security Guidelines</text>
+        
+          <text x="1836" y="415" font-family="Arial, sans-serif" font-size="12.5" fill="#000000">• Real-Time Visit State Display (Approved, Pending, Checked-In)</text>
+        
+      </g>
+    
+  
+      <g>
+        <rect x="1820" y="530" width="700" height="270" fill="#FFFFFF" stroke="#000000" stroke-width="2" rx="6"/>
+        <line x1="1820" y1="562" x2="2520" y2="562" stroke="#000000" stroke-width="1.5"/>
+        <text x="1836" y="552" font-family="Arial, sans-serif" font-size="14" font-weight="bold" fill="#000000">2. Physical Gate Access Control & Operational Grants</text>
+        
+          <text x="1836" y="584" font-family="Arial, sans-serif" font-size="12.5" fill="#000000">• Immediate Electronic Turnstile Gate Unlock Signal (Green Light)</text>
+        
+          <text x="1836" y="605" font-family="Arial, sans-serif" font-size="12.5" fill="#000000">• Sub-Second Optical Scan Feedback for High-Volume Gate Ingress</text>
+        
+          <text x="1836" y="626" font-family="Arial, sans-serif" font-size="12.5" fill="#000000">• Audible & Visual Denial Feedback for Invalid / Expired Passes</text>
+        
+          <text x="1836" y="647" font-family="Arial, sans-serif" font-size="12.5" fill="#000000">• Immediate Gate Lockdown Freeze during Campus Emergencies</text>
+        
+          <text x="1836" y="668" font-family="Arial, sans-serif" font-size="12.5" fill="#000000">• Physical Security Guard Inspection Dossier on Guard Terminal</text>
+        
+          <text x="1836" y="689" font-family="Arial, sans-serif" font-size="12.5" fill="#000000">• Side-by-Side Photo & Identity Verification for Access Adjudication</text>
+        
+          <text x="1836" y="710" font-family="Arial, sans-serif" font-size="12.5" fill="#000000">• Physical Gate Entry Logging with Hardware Device Attribution</text>
+        
+      </g>
+    
+  
+      <g>
+        <rect x="1820" y="825" width="700" height="250" fill="#FFFFFF" stroke="#000000" stroke-width="2" rx="6"/>
+        <line x1="1820" y1="857" x2="2520" y2="857" stroke="#000000" stroke-width="1.5"/>
+        <text x="1836" y="847" font-family="Arial, sans-serif" font-size="14" font-weight="bold" fill="#000000">3. Guard Station & Campus Security Telemetry</text>
+        
+          <text x="1836" y="879" font-family="Arial, sans-serif" font-size="12.5" fill="#000000">• Live In-Campus Visitor Occupancy Headcount Display</text>
+        
+          <text x="1836" y="900" font-family="Arial, sans-serif" font-size="12.5" fill="#000000">• Real-Time Dynamic Activity Stream of Ingress / Egress Events</text>
+        
+          <text x="1836" y="921" font-family="Arial, sans-serif" font-size="12.5" fill="#000000">• Searchable Visitor Verification Dossier with ID & Photo</text>
+        
+          <text x="1836" y="942" font-family="Arial, sans-serif" font-size="12.5" fill="#000000">• Flagged Incident Logs & Manual Guard Intervention Records</text>
+        
+          <text x="1836" y="963" font-family="Arial, sans-serif" font-size="12.5" fill="#000000">• Gate Scanner Device Health & Online/Offline Pairing Status</text>
+        
+          <text x="1836" y="984" font-family="Arial, sans-serif" font-size="12.5" fill="#000000">• Instant Overstay Flagging & Detention Audio-Visual Alert</text>
+        
+      </g>
+    
+  
+      <g>
+        <rect x="1820" y="1100" width="700" height="250" fill="#FFFFFF" stroke="#000000" stroke-width="2" rx="6"/>
+        <line x1="1820" y1="1132" x2="2520" y2="1132" stroke="#000000" stroke-width="1.5"/>
+        <text x="1836" y="1122" font-family="Arial, sans-serif" font-size="14" font-weight="bold" fill="#000000">4. Administrative Governance & Compliance Assets</text>
+        
+          <text x="1836" y="1154" font-family="Arial, sans-serif" font-size="12.5" fill="#000000">• Immutable Security Audit Trail (audit_events & visit_events)</text>
+        
+          <text x="1836" y="1175" font-family="Arial, sans-serif" font-size="12.5" fill="#000000">• Staff Login History, MFA Challenge Logs & Session Traces</text>
+        
+          <text x="1836" y="1196" font-family="Arial, sans-serif" font-size="12.5" fill="#000000">• Institutional Visitor Volume Analytics (Daily / Monthly Peaks)</text>
+        
+          <text x="1836" y="1217" font-family="Arial, sans-serif" font-size="12.5" fill="#000000">• Department-Wise Visitation Reports for Campus Resource Planning</text>
+        
+          <text x="1836" y="1238" font-family="Arial, sans-serif" font-size="12.5" fill="#000000">• Compliance Proof for Philippine Data Privacy Act (RA 10173)</text>
+        
+          <text x="1836" y="1259" font-family="Arial, sans-serif" font-size="12.5" fill="#000000">• Complete Historical Event Logs for Post-Incident Forensics</text>
+        
+      </g>
+    
+  
+      <g>
+        <rect x="1820" y="1375" width="700" height="260" fill="#FFFFFF" stroke="#000000" stroke-width="2" rx="6"/>
+        <line x1="1820" y1="1407" x2="2520" y2="1407" stroke="#000000" stroke-width="1.5"/>
+        <text x="1836" y="1397" font-family="Arial, sans-serif" font-size="14" font-weight="bold" fill="#000000">5. Fast Re-Identification & Return Profiles</text>
+        
+          <text x="1836" y="1429" font-family="Arial, sans-serif" font-size="12.5" fill="#000000">• Returning Visitor Profile Record (Consent-Gated & Time-Limited)</text>
+        
+          <text x="1836" y="1450" font-family="Arial, sans-serif" font-size="12.5" fill="#000000">• Registered Vehicle Catalog for Rapid Future Clearance</text>
+        
+          <text x="1836" y="1471" font-family="Arial, sans-serif" font-size="12.5" fill="#000000">• 30-Second Express Check-In for Frequent Campus Visitors</text>
+        
+          <text x="1836" y="1492" font-family="Arial, sans-serif" font-size="12.5" fill="#000000">• Automated Anonymization & Data Pruning on Expired Records</text>
+        
+          <text x="1836" y="1513" font-family="Arial, sans-serif" font-size="12.5" fill="#000000">• Transient Facial Vector Storage with Expiry Lifecycle</text>
+        
+      </g>
+    
+
+  <!-- Major Horizontal Arrows -->
+  <line x1="800" y1="910" x2="930" y2="910" stroke="#000000" stroke-width="3.5" marker-end="url(#major-arrow)"/>
+  <rect x="825" y="890" width="80" height="36" fill="#FFFFFF" stroke="#000000" stroke-width="1.4" rx="4"/>
+  <text x="865" y="913" font-family="Arial, sans-serif" font-size="13" font-weight="bold" text-anchor="middle" fill="#000000">TRANSFORMS</text>
+
+  <line x1="1670" y1="910" x2="1800" y2="910" stroke="#000000" stroke-width="3.5" marker-end="url(#major-arrow)"/>
+  <rect x="1700" y="890" width="70" height="36" fill="#FFFFFF" stroke="#000000" stroke-width="1.4" rx="4"/>
+  <text x="1735" y="913" font-family="Arial, sans-serif" font-size="13" font-weight="bold" text-anchor="middle" fill="#000000">PRODUCES</text>
+
+  <!-- Feedback Loop -->
+  <polyline points="2170,1660 2170,1780 430,1780 430,1660" fill="none" stroke="#000000" stroke-width="2.5" stroke-dasharray="8,5" marker-end="url(#arrow)"/>
+  <rect x="1000" y="1760" width="600" height="40" fill="#FFFFFF" stroke="#000000" stroke-width="1.6" rx="6"/>
+  <text x="1300" y="1785" font-family="Arial, sans-serif" font-size="14" font-weight="bold" text-anchor="middle" fill="#000000">FEEDBACK &amp; GOVERNANCE LOOP: Returning Profiles • Overstay Alerts • Capacity Limits</text>
+</svg>

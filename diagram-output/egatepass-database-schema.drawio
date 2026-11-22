@@ -1,0 +1,21 @@
+<mxfile host="app.diagrams.net" modified="2026-11-21T13:00:00.000Z" agent="Mozilla/5.0" version="21.0.0" type="device">
+  <diagram id="egatepass-schema" name="E-GatePass Database Schema">
+    <mxGraphModel dx="2500" dy="1850" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="2500" pageHeight="1850" background="#FFFFFF">
+      <root>
+        <mxCell id="0"/>
+        <mxCell id="1" parent="0"/>
+        <mxCell id="title" value="EULOGIO &quot;AMANG&quot; RODRIGUEZ INSTITUTE OF SCIENCE AND TECHNOLOGY&#xa;EARIST E-GATEPASS VISITOR ACCESS MANAGEMENT SYSTEM&#xa;Physical Database Schema Diagram" style="text;html=1;strokeColor=#000000;fillColor=#FFFFFF;align=center;verticalAlign=middle;whiteSpace=wrap;fontStyle=1;fontSize=14;fontColor=#000000;" vertex="1" parent="1">
+          <mxGeometry x="50" y="30" width="2400" height="90" as="geometry"/>
+        </mxCell>
+        <!-- Table Visitors -->
+        <mxCell id="tbl_visitors" value="public.visitors" style="shape=table;html=1;whiteSpace=wrap;startSize=30;fillColor=#FFFFFF;strokeColor=#000000;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="500" y="160" width="420" height="380" as="geometry"/>
+        </mxCell>
+        <!-- Table Passes -->
+        <mxCell id="tbl_passes" value="public.passes" style="shape=table;html=1;whiteSpace=wrap;startSize=30;fillColor=#FFFFFF;strokeColor=#000000;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="980" y="160" width="420" height="340" as="geometry"/>
+        </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>

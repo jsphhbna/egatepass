@@ -83,10 +83,10 @@ describe('Tier 1: Comprehensive Feature Coverage (30 Tests)', () => {
 
     it('T1-F1-04: Front camera applies single mirror transform without double flip', () => {
       const cssProps = inspectScannerCssProperties();
-      expect(cssProps.videoTransform).toBe('scaleX(-1)');
+      expect(cssProps.hasAspectRatio43).toBe(true);
       const css = readFileSync(join(process.cwd(), 'src', 'index.css'), 'utf8');
-      expect(css).toContain('transform: scaleX(-1);');
-      expect(css).not.toContain('transform: scaleX(-1) scaleX(-1)');
+      expect(css).toContain('rotateY(180deg)');
+      expect(css).not.toContain('scaleX(-1)');
     });
 
     it('T1-F1-05: Guard station feed resolves active photo evidence ID for scanned new visitor pass', async () => {

@@ -163,11 +163,11 @@ describe('PART A: Camera Orientation & Unmirrored Returning Visitor Contract', (
     expect(imgBlock).not.toContain("scaleX(-1)");
   });
 
-  it('New Visitor camera mirroring remains intact and unchanged', () => {
-    const newVisitorVideoIdx = getPassSrc.indexOf("style={{ transform: faceWebcam.mirrorPreview ? 'scaleX(-1)' : 'none' }}");
+  it('New Visitor camera mirroring uses non-collapsing 3D transform without scaleX(-1)', () => {
+    const newVisitorVideoIdx = getPassSrc.indexOf("transform: faceWebcam.mirrorPreview ? 'rotateY(180deg) translateZ(0)' : 'none'");
     expect(newVisitorVideoIdx).toBeGreaterThan(0);
 
-    const newVisitorFrozenIdx = getPassSrc.indexOf('alt="Captured face" className="w-full h-full object-cover" style={{ transform: \'scaleX(-1)\' }}');
+    const newVisitorFrozenIdx = getPassSrc.indexOf('alt="Captured face" className="w-full h-full object-cover" style={{ transform: \'rotateY(180deg) translateZ(0)\' }}');
     expect(newVisitorFrozenIdx).toBeGreaterThan(0);
   });
 

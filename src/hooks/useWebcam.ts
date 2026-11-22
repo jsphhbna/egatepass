@@ -6,6 +6,7 @@ export interface UseWebcamOptions {
   height?: number;
   allowCaptureMirroring?: boolean;
   targetAspectRatio?: number;
+  focusMode?: 'continuous' | 'auto' | 'macro' | 'manual';
 }
 
 export interface UseWebcamStartOptions {
@@ -33,6 +34,7 @@ export interface UseWebcamResult {
   setMirrorCapture: (mirror: boolean) => void;
   toggleMirrorPreview: () => void;
   toggleMirrorCapture: () => void;
+  refocus: () => Promise<void>;
   capture: (options?: UseWebcamCaptureOptions) => Blob | null;
 }
 
@@ -125,8 +127,33 @@ async function attachAndVerifyVideoElement(
   }
 }
 
+async function applyContinuousFocus(track: MediaStreamTrack | undefined): Promise<boolean> {
+  if (!track || typeof track.getCapabilities !== 'function' || typeof track.applyConstraints !== 'function') {
+    return false;
+  }
+  try {
+    const capabilities = track.getCapabilities() as any;
+    if (capabilities?.focusMode && Array.isArray(capabilities.focusMode)) {
+      if (capabilities.focusMode.includes('continuous')) {
+        await track.applyConstraints({
+          advanced: [{ focusMode: 'continuous' } as any],
+        });
+        return true;
+      } else if (capabilities.focusMode.includes('macro')) {
+        await track.applyConstraints({
+          advanced: [{ focusMode: 'macro' } as any],
+        });
+        return true;
+      }
+    }
+  } catch {
+    // Graceful fallback on devices that reject focus constraints
+  }
+  return false;
+}
+
 export function useWebcam(options: UseWebcamOptions = {}): UseWebcamResult {
-  const { facingMode = 'user', width = 640, height = 480, allowCaptureMirroring = true, targetAspectRatio } = options;
+  const { facingMode = 'user', width = 640, height = 480, allowCaptureMirroring = true, targetAspectRatio, focusMode } = options;
   const videoElRef = useRef<HTMLVideoElement | null>(null);
   const videoMountWaiters = useRef<Array<(el: HTMLVideoElement) => void>>([]);
 
@@ -246,12 +273,16 @@ export function useWebcam(options: UseWebcamOptions = {}): UseWebcamResult {
     setError(null);
     const targetFacingMode = startOptions?.facingMode ?? facingMode;
     try {
+      const videoConstraints: MediaTrackConstraints = {
+        facingMode: targetFacingMode,
+        width: { ideal: width },
+        height: { ideal: height },
+      };
+      if (focusMode) {
+        (videoConstraints as any).advanced = [{ focusMode }];
+      }
       const stream = await navigator.mediaDevices.getUserMedia({
-        video: {
-          facingMode: targetFacingMode,
-          width: { ideal: width },
-          height: { ideal: height },
-        },
+        video: videoConstraints,
         audio: false,
       });
 
@@ -321,6 +352,9 @@ export function useWebcam(options: UseWebcamOptions = {}): UseWebcamResult {
         }
         setIsActive(true);
         void refreshDeviceCount();
+        if (focusMode || realFacingMode === 'environment') {
+          void applyContinuousFocus(track);
+        }
       }
     } catch (err) {
       if (!mountedRef.current || generation !== generationRef.current) {
@@ -376,12 +410,16 @@ export function useWebcam(options: UseWebcamOptions = {}): UseWebcamResult {
     }
 
     try {
+      const videoConstraints: MediaTrackConstraints = {
+        facingMode: targetFacingMode,
+        width: { ideal: width },
+        height: { ideal: height },
+      };
+      if (focusMode) {
+        (videoConstraints as any).advanced = [{ focusMode }];
+      }
       const stream = await navigator.mediaDevices.getUserMedia({
-        video: {
-          facingMode: targetFacingMode,
-          width: { ideal: width },
-          height: { ideal: height },
-        },
+        video: videoConstraints,
         audio: false,
       });
 
@@ -451,6 +489,9 @@ export function useWebcam(options: UseWebcamOptions = {}): UseWebcamResult {
         }
         setIsActive(true);
         void refreshDeviceCount();
+        if (focusMode || realFacingMode === 'environment') {
+          void applyContinuousFocus(track);
+        }
       }
     } catch (err) {
       if (!mountedRef.current || generation !== generationRef.current) {
@@ -508,6 +549,13 @@ export function useWebcam(options: UseWebcamOptions = {}): UseWebcamResult {
     }
     setMirrorCaptureState((prev) => !prev);
   }, [allowCaptureMirroring]);
+
+  const refocus = useCallback(async () => {
+    if (!streamRef.current) return;
+    const tracks = typeof streamRef.current.getVideoTracks === 'function' ? streamRef.current.getVideoTracks() : streamRef.current.getTracks();
+    const track = tracks?.[0];
+    await applyContinuousFocus(track);
+  }, []);
 
   const capture = useCallback(
     (captureOptions?: UseWebcamCaptureOptions): Blob | null => {
@@ -634,6 +682,7 @@ export function useWebcam(options: UseWebcamOptions = {}): UseWebcamResult {
     setMirrorCapture,
     toggleMirrorPreview,
     toggleMirrorCapture,
+    refocus,
     capture,
   };
 }

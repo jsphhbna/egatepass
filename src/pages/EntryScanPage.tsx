@@ -328,8 +328,8 @@ export function EntryScanPage() {
         <p className="mt-1 text-sm text-white/60">Present the visitor QR code to the camera</p>
       </div>
 
-      <div className="scanner-viewport relative mb-5 overflow-hidden rounded-2xl border border-white/15 bg-black shadow-lg">
-        <div id="entry-qr-reader" className={`h-full w-full ${isMirrored ? '[&_video]:scale-x-[-1]' : '[&_video]:scale-x-1'}`} />
+      <div className={`scanner-viewport relative mb-5 overflow-hidden rounded-2xl border border-white/15 bg-black shadow-lg ${isMirrored ? 'is-mirrored' : 'is-unmirrored'}`}>
+        <div id="entry-qr-reader" className="h-full w-full" />
 
         {/* Camera Controls Overlay */}
         {cameraState === 'active' && (
