@@ -53,9 +53,16 @@ async function handleRequest(request: Request): Promise<Response> {
 
         if (existingAuthUserId) {
           const [{ data: staff }, { data: dev }] = await Promise.all([
-            admin.from('staff_profiles').select('user_id').eq('user_id', existingAuthUserId).maybeSingle(),
+            admin.from('staff_profiles').select('user_id, decommissioned_at').eq('user_id', existingAuthUserId).maybeSingle(),
             admin.from('devices').select('user_id').eq('user_id', existingAuthUserId).maybeSingle(),
           ]);
+
+          if (staff?.decommissioned_at) {
+            return jsonResponse(409, {
+              error: 'decommissioned_account_exists',
+              message: 'This email belongs to a decommissioned account. To reuse this email, permanently delete the decommissioned account from Admin Management first.',
+            });
+          }
 
           if (!staff && !dev) {
             // An authentication account exists but has not been provisioned as staff or device.

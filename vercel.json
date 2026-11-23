@@ -278,6 +278,10 @@
       "destination": "/api/system/decommission-user"
     },
     {
+      "source": "/api/delete-user",
+      "destination": "/api/system/delete-user"
+    },
+    {
       "source": "/api/update-settings",
       "destination": "/api/system/update-settings"
     },

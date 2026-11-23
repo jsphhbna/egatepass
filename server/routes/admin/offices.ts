@@ -57,7 +57,7 @@ const setApprovalPolicySchema = z.object({
 });
 
 const deleteDraftOfficeSchema = z.object({
-  action: z.literal('delete_draft_office'),
+  action: z.enum(['delete_office', 'delete_draft_office']).optional(),
   officeId: pgUuidSchema,
 });
 
@@ -66,8 +66,8 @@ function mapOfficeRpcError(err: unknown, fallbackName?: string): Response | null
   const message = String((err as { message?: string })?.message || '');
   const lower = message.toLowerCase();
 
-  if (code === '42501' || lower.includes('superadmin_required') || lower.includes('administrator required')) {
-    return jsonResponse(403, { error: 'superadmin_required', message: message || 'Insufficient permissions.' });
+  if (code === '42501' || lower.includes('superadmin_required') || lower.includes('administrator required') || lower.includes('administrator_required')) {
+    return jsonResponse(403, { error: 'administrator_required', message: message || 'Insufficient permissions.' });
   }
   if (code === 'P0002' || lower.includes('office_not_found')) {
     return jsonResponse(404, { error: 'office_not_found', message: 'The specified office does not exist.' });
@@ -82,9 +82,17 @@ function mapOfficeRpcError(err: unknown, fallbackName?: string): Response | null
     code === '40900'
     || lower.includes('only_unused_draft_office_may_be_deleted')
     || lower.includes('office_has_dependencies_use_archive')
+    || lower.includes('office_has_historical_records_archival_required')
     || lower.includes('archived_office_cannot_revert_to_draft')
   ) {
-    return jsonResponse(409, { error: message || 'office_state_conflict', message });
+    const isHistorical = lower.includes('historical') || lower.includes('dependencies_use_archive');
+    return jsonResponse(409, {
+      error: isHistorical ? 'office_has_historical_records_archival_required' : (message || 'office_state_conflict'),
+      message: isHistorical
+        ? 'This office has historical visitor records and cannot be permanently deleted. Archive the office instead to preserve compliance audit records while removing it from active selection.'
+        : message,
+      canArchive: true,
+    });
   }
   if (
     code === '22023'
@@ -1227,11 +1235,11 @@ export async function handleRequest(request: Request): Promise<Response> {
       return jsonResponse(200, { ok: true, office: updatedOffice ?? rpcRes });
     }
 
-    if (body?.action === 'delete_draft_office') {
+    if (body?.action === 'delete_draft_office' || body?.action === 'delete_office') {
       const parsed = deleteDraftOfficeSchema.safeParse(body);
       if (!parsed.success) return jsonResponse(400, { error: 'invalid_request', details: parsed.error.issues });
 
-      const { data: rpcRes, error: delErr } = await admin.schema('api').rpc('delete_draft_office', {
+      const { data: rpcRes, error: delErr } = await admin.schema('api').rpc('delete_office', {
         requested_actor_id: actor.id,
         requested_office_id: parsed.data.officeId,
         requested_request_id: randomUUID(),
@@ -1518,7 +1526,7 @@ export async function handleRequest(request: Request): Promise<Response> {
       return jsonResponse(400, { error: 'invalid_office_id', message: 'A valid office id is required.' });
     }
 
-    const { data: rpcRes, error: delErr } = await admin.schema('api').rpc('delete_draft_office', {
+    const { data: rpcRes, error: delErr } = await admin.schema('api').rpc('delete_office', {
       requested_actor_id: actor.id,
       requested_office_id: parsedId.data,
       requested_request_id: randomUUID(),

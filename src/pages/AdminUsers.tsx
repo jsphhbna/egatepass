@@ -101,8 +101,9 @@ export function AdminUsers() {
   const [archiveStaffHandling, setArchiveStaffHandling] = useState<'keep' | 'unassign' | 'deactivate_unshared'>('keep');
   const [archiveReason, setArchiveReason] = useState('');
   const [isArchivingOffice, setIsArchivingOffice] = useState(false);
-  const [deletingDraftOffice, setDeletingDraftOffice] = useState<AdminOfficeRecord | null>(null);
-  const [isDeletingDraftOffice, setIsDeletingDraftOffice] = useState(false);
+  const [deletingOffice, setDeletingOffice] = useState<AdminOfficeRecord | null>(null);
+  const [isDeletingOffice, setIsDeletingOffice] = useState(false);
+  const [historicalOfficeBlocked, setHistoricalOfficeBlocked] = useState<AdminOfficeRecord | null>(null);
   const [republishingOfficeId, setRepublishingOfficeId] = useState<string | null>(null);
   const [closingOffice, setClosingOffice] = useState<AdminOfficeRecord | null>(null);
   const [closureReasonInput, setClosureReasonInput] = useState('');
@@ -657,27 +658,35 @@ export function AdminUsers() {
     }
   }
 
-  async function handleConfirmDeleteDraftOffice() {
-    if (!deletingDraftOffice || isDeletingDraftOffice) return;
-    setIsDeletingDraftOffice(true);
+  async function handleConfirmDeleteOffice() {
+    if (!deletingOffice || isDeletingOffice) return;
+    setIsDeletingOffice(true);
     try {
       const token = await getAccessToken();
-      const res = await fetch(`/api/admin/offices?id=${encodeURIComponent(deletingDraftOffice.id)}`, {
+      const res = await fetch(`/api/admin/offices?id=${encodeURIComponent(deletingOffice.id)}`, {
         method: 'DELETE',
         headers: {
           Authorization: `Bearer ${token}`,
         },
       });
       const data = await res.json().catch(() => null);
-      if (!res.ok) throw new Error(data?.message || data?.error || 'Failed to delete draft office');
-      setAdminOffices((prev) => prev.filter((o) => o.id !== deletingDraftOffice.id));
-      toast.success(`Unused draft office "${deletingDraftOffice.name}" permanently deleted.`);
-      setDeletingDraftOffice(null);
+      if (!res.ok) {
+        if (data?.error === 'office_has_historical_records_archival_required' || data?.canArchive) {
+          const blocked = deletingOffice;
+          setDeletingOffice(null);
+          setHistoricalOfficeBlocked(blocked);
+          return;
+        }
+        throw new Error(data?.message || data?.error || 'Failed to delete office');
+      }
+      setAdminOffices((prev) => prev.filter((o) => o.id !== deletingOffice.id));
+      toast.success(`Office "${deletingOffice.name}" permanently deleted.`);
+      setDeletingOffice(null);
       await loadAdminOffices({ suppressErrorToast: true });
     } catch (err: any) {
-      toast.error(err?.message || 'Failed to delete draft office');
+      toast.error(err?.message || 'Failed to delete office');
     } finally {
-      setIsDeletingDraftOffice(false);
+      setIsDeletingOffice(false);
     }
   }
 
@@ -698,6 +707,9 @@ export function AdminUsers() {
   const [decommissionPassword, setDecommissionPassword] = useState('');
   const [decommissionReason, setDecommissionReason] = useState('');
   const [isDecommissioning, setIsDecommissioning] = useState(false);
+  const [deletingUser, setDeletingUser] = useState<AppUserWithId | null>(null);
+  const [deleteUserPassword, setDeleteUserPassword] = useState('');
+  const [isDeletingUser, setIsDeletingUser] = useState(false);
   const [roleChange, setRoleChange] = useState<{ user: AppUserWithId; newRole: UserRole } | null>(null);
   const [isChangingRole, setIsChangingRole] = useState(false);
   const [reactivatingUserId, setReactivatingUserId] = useState<string | null>(null);
@@ -1032,6 +1044,74 @@ export function AdminUsers() {
       toast.error(err instanceof Error ? err.message : 'Failed to decommission user.');
     } finally {
       setIsDecommissioning(false);
+    }
+  }
+
+  async function handleDeleteUser() {
+    if (!deletingUser || isDeletingUser) return;
+    if (!deleteUserPassword) {
+      toast.error('Please enter your Super Admin password to authorize deletion.');
+      return;
+    }
+
+    setIsDeletingUser(true);
+    try {
+      const token = await getAccessToken();
+      const response = await fetch('/api/delete-user', {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${token}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          targetUid: deletingUser.uid,
+          password: deleteUserPassword,
+        }),
+      });
+
+      const body = (await response.json().catch(() => null)) as {
+        ok?: boolean;
+        error?: string;
+        message?: string;
+        reconciliationRequired?: boolean;
+      } | null;
+
+      if (response.status === 503 && body?.reconciliationRequired) {
+        toast.warning(
+          body.message ||
+            'Profile deleted from database, but Auth deletion requires reconciliation.'
+        );
+        setDeletingUser(null);
+        setDeleteUserPassword('');
+        await loadUsers();
+        return;
+      }
+
+      if (!response.ok) {
+        if (body?.error === 'invalid_superadmin_password') {
+          throw new Error('Incorrect Super Admin password. Please check your password and try again.');
+        }
+        if (body?.error === 'cannot_delete_last_superadmin') {
+          throw new Error('Cannot delete the last remaining Super Admin account.');
+        }
+        if (body?.error === 'cannot_delete_self') {
+          throw new Error('You cannot delete your own Super Admin account.');
+        }
+        if (body?.error === 'target_has_active_incident_holds') {
+          throw new Error('Cannot delete an account with active incident holds locking evidence.');
+        }
+        throw new Error(body?.message || body?.error || 'Failed to delete staff account.');
+      }
+
+      toast.success(`Account for ${deletingUser.name} (${deletingUser.email}) permanently deleted. Email is now available for reuse.`);
+      setDeletingUser(null);
+      setDeleteUserPassword('');
+      await loadUsers();
+    } catch (err) {
+      console.error(err);
+      toast.error(err instanceof Error ? err.message : 'Failed to delete user.');
+    } finally {
+      setIsDeletingUser(false);
     }
   }
 
@@ -1398,7 +1478,24 @@ export function AdminUsers() {
                 <DataTableCell className="text-right">
                   <div className="flex flex-wrap items-center justify-end gap-2">
                     {user.decommissionedAt ? (
-                      <span className="text-xs text-[var(--color-text-muted)] italic">Decommissioned</span>
+                      <div className="flex items-center gap-2">
+                        <span className="text-xs text-[var(--color-text-muted)] italic">Decommissioned</span>
+                        {role === 'superadmin' && user.uid !== uid && (
+                          <Button
+                            variant="destructive"
+                            size="sm"
+                            onClick={() => {
+                              setDeletingUser(user);
+                              setDeleteUserPassword('');
+                            }}
+                            className="inline-flex items-center gap-1"
+                            title="Permanently delete account to free email address"
+                          >
+                            <Trash2 className="h-3.5 w-3.5" />
+                            Delete Account
+                          </Button>
+                        )}
+                      </div>
                     ) : (
                       <>
                         {canManageAdministrativeRoles && user.uid !== uid && (
@@ -1439,17 +1536,32 @@ export function AdminUsers() {
                           </Button>
                         )}
                         {role === 'superadmin' && !user.active && user.uid !== uid && (
-                          <Button
-                            variant="destructive"
-                            size="sm"
-                            onClick={() => {
-                              setDecommissioningUser(user);
-                              setDecommissionPassword('');
-                              setDecommissionReason('');
-                            }}
-                          >
-                            Permanently Decommission
-                          </Button>
+                          <>
+                            <Button
+                              variant="secondary"
+                              size="sm"
+                              onClick={() => {
+                                setDecommissioningUser(user);
+                                setDecommissionPassword('');
+                                setDecommissionReason('');
+                              }}
+                            >
+                              Decommission
+                            </Button>
+                            <Button
+                              variant="destructive"
+                              size="sm"
+                              onClick={() => {
+                                setDeletingUser(user);
+                                setDeleteUserPassword('');
+                              }}
+                              className="inline-flex items-center gap-1"
+                              title="Permanently delete account"
+                            >
+                              <Trash2 className="h-3.5 w-3.5" />
+                              Delete Account
+                            </Button>
+                          </>
                         )}
                         {user.uid === uid && (
                           <span className="text-xs font-medium text-[var(--color-text-muted)]">Current account</span>
@@ -1796,21 +1908,17 @@ export function AdminUsers() {
                                     </button>
                                   )}
 
-                                  {(office.publication_status === 'draft' || !office.verified) &&
-                                    office.publication_status !== 'archived' &&
-                                    !office.hasDependencies && (
-                                      <button
-                                        type="button"
-                                        onClick={() => {
-                                          setActionMenuOfficeId(null);
-                                          setDeletingDraftOffice(office);
-                                        }}
-                                        className="flex w-full items-center gap-2 px-3 py-2 text-xs font-semibold text-[var(--color-danger)] hover:bg-[var(--color-danger-light)]"
-                                      >
-                                        <Trash2 className="h-3.5 w-3.5" />
-                                        Delete Draft
-                                      </button>
-                                    )}
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      setActionMenuOfficeId(null);
+                                      setDeletingOffice(office);
+                                    }}
+                                    className="flex w-full items-center gap-2 px-3 py-2 text-xs font-semibold text-[var(--color-danger)] hover:bg-[var(--color-danger-light)]"
+                                  >
+                                    <Trash2 className="h-3.5 w-3.5" />
+                                    Delete Office
+                                  </button>
                                 </div>
                               </>
                             )}
@@ -2066,6 +2174,91 @@ export function AdminUsers() {
             </Button>
           </div>
         </form>
+      </Modal>
+
+      {/* Permanent Account Deletion Modal */}
+      <Modal
+        isOpen={!!deletingUser}
+        onClose={() => {
+          if (!isDeletingUser) {
+            setDeletingUser(null);
+            setDeleteUserPassword('');
+          }
+        }}
+        title="Permanently Delete Staff Account"
+        preventClose={isDeletingUser}
+        size="md"
+      >
+        <div className="space-y-4">
+          <div className="rounded-lg border border-red-500/30 bg-red-500/10 p-3 text-xs text-red-700">
+            <p className="font-semibold flex items-center gap-1.5 text-red-800">
+              <AlertTriangle className="h-4 w-4 text-red-600 shrink-0" />
+              Permanent Account & Identity Destruction
+            </p>
+            <p className="mt-1 leading-relaxed">
+              This action permanently deletes the staff profile from the database and deletes the Supabase authentication identity. Active sessions will be terminated immediately and the email address will become available for creating a replacement account.
+            </p>
+          </div>
+
+          {deletingUser && (
+            <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] p-3 text-xs space-y-1">
+              <div><span className="text-[var(--color-text-secondary)] font-medium">Name:</span> <strong className="text-[var(--color-text-primary)]">{deletingUser.name}</strong></div>
+              <div><span className="text-[var(--color-text-secondary)] font-medium">Email:</span> <strong className="font-mono text-[var(--color-text-primary)]">{deletingUser.email}</strong></div>
+              <div><span className="text-[var(--color-text-secondary)] font-medium">Role:</span> <strong className="text-[var(--color-text-primary)]">{formatUserRole(deletingUser.role)}</strong></div>
+              <div>
+                <span className="text-[var(--color-text-secondary)] font-medium">Status:</span>{' '}
+                <strong className={deletingUser.decommissionedAt ? 'text-red-700' : deletingUser.active ? 'text-emerald-700' : 'text-amber-700'}>
+                  {deletingUser.decommissionedAt ? 'Decommissioned' : deletingUser.active ? 'Active' : 'Deactivated'}
+                </strong>
+              </div>
+            </div>
+          )}
+
+          <p className="text-xs text-[var(--color-text-secondary)] font-medium">
+            To authorize permanent account deletion, confirm your Super Admin password:
+          </p>
+
+          <FormField
+            label="Super Admin Password"
+            id="delete-admin-password"
+            requirement="required"
+          >
+            <Input
+              id="delete-admin-password"
+              type="password"
+              value={deleteUserPassword}
+              onChange={(e) => setDeleteUserPassword(e.target.value)}
+              placeholder="Enter your current password to authorize"
+              disabled={isDeletingUser}
+              required
+              aria-required="true"
+              autoComplete="current-password"
+            />
+          </FormField>
+
+          <div className="flex justify-end gap-2 pt-2">
+            <Button
+              type="button"
+              variant="secondary"
+              onClick={() => {
+                setDeletingUser(null);
+                setDeleteUserPassword('');
+              }}
+              disabled={isDeletingUser}
+            >
+              Cancel
+            </Button>
+            <Button
+              type="button"
+              variant="destructive"
+              onClick={() => void handleDeleteUser()}
+              loading={isDeletingUser}
+              disabled={isDeletingUser || !deleteUserPassword}
+            >
+              Delete Permanently
+            </Button>
+          </div>
+        </div>
       </Modal>
 
       <Modal
@@ -2500,25 +2693,71 @@ export function AdminUsers() {
         )}
       </Modal>
 
-      {/* Delete Unused Draft Office Confirm Modal */}
+      {/* Delete Office Confirm Modal */}
       <ConfirmModal
-        isOpen={!!deletingDraftOffice}
+        isOpen={!!deletingOffice}
         onClose={() => {
-          if (!isDeletingDraftOffice) setDeletingDraftOffice(null);
+          if (!isDeletingOffice) setDeletingOffice(null);
         }}
-        title="Delete Unused Draft Office?"
+        title="Permanently Delete Office?"
         description={
-          deletingDraftOffice ? (
+          deletingOffice ? (
             <>
-              Permanently delete unused draft office <strong>{deletingDraftOffice.name}</strong>? Offices with any visit history or active dependencies cannot be deleted and must be archived instead.
+              Permanently delete office <strong>{deletingOffice.name}</strong>? Offices without historical visits will be deleted and associated staff assignments unlinked. If this office has historical visit records, permanent deletion will be prevented and archival required.
             </>
           ) : ''
         }
-        confirmText="Delete Draft"
+        confirmText="Delete Office"
         isDestructive
-        onConfirm={() => void handleConfirmDeleteDraftOffice()}
-        loading={isDeletingDraftOffice}
+        onConfirm={() => void handleConfirmDeleteOffice()}
+        loading={isDeletingOffice}
       />
+
+      {/* Historical Office Archival Required Modal */}
+      <Modal
+        isOpen={!!historicalOfficeBlocked}
+        onClose={() => setHistoricalOfficeBlocked(null)}
+        title="Cannot Delete Office with Visit History"
+        size="md"
+      >
+        <div className="space-y-4">
+          <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 p-3 text-xs text-amber-800">
+            <p className="font-semibold flex items-center gap-1.5 text-amber-900">
+              <ShieldAlert className="h-4 w-4 text-amber-600 shrink-0" />
+              Compliance History Protection
+            </p>
+            <p className="mt-1 leading-relaxed">
+              <strong>{historicalOfficeBlocked?.name}</strong> has historical visitor transactions, visits, or passes recorded in the system. To preserve complete audit trails and legal compliance records, this office cannot be permanently deleted.
+            </p>
+          </div>
+
+          <p className="text-xs text-[var(--color-text-secondary)] leading-relaxed">
+            Archiving this office will remove it from public visitor selection while preserving all historical visit logs and audit history intact.
+          </p>
+
+          <div className="flex justify-end gap-2 pt-2">
+            <Button
+              variant="secondary"
+              onClick={() => setHistoricalOfficeBlocked(null)}
+            >
+              Cancel
+            </Button>
+            <Button
+              onClick={() => {
+                const target = historicalOfficeBlocked;
+                setHistoricalOfficeBlocked(null);
+                if (target) {
+                  setArchivingOffice(target);
+                  setArchiveStaffHandling('keep');
+                  setArchiveReason('');
+                }
+              }}
+            >
+              Archive Office Instead
+            </Button>
+          </div>
+        </div>
+      </Modal>
     </div>
   );
 }
